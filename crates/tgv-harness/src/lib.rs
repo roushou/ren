@@ -1,0 +1,23 @@
+//! The coding-agent harnesses TGV serves (Claude Code, Codex, and Pi) and what
+//! TGV knows about each: the attribution hints their requests carry, how to
+//! launch one through the gateway for a session, Pi's bundled extension, the
+//! gateway URL a harness is pointed at, and the host environment launching
+//! reads. See docs/architecture.md.
+//!
+//! The primary type is [`Harness`]. Harnesses own their sign-in, token
+//! refresh, and retries; nothing here handles credentials.
+
+pub mod attribution;
+pub mod endpoint;
+pub mod host;
+pub mod launch;
+pub mod pi;
+
+/// A coding-agent harness TGV serves: the clients of AGENTS.md section 1. The
+/// set is closed; adding one is a new variant, and every match must handle it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Harness {
+    ClaudeCode,
+    Codex,
+    Pi,
+}

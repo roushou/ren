@@ -1,0 +1,40 @@
+[package]
+name = "tgv-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+# The `tgv` binary: command-line parsing and dispatch, doctor, and service
+# definitions. `anyhow` is used only here (docs/architecture.md).
+[[bin]]
+name = "tgv"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1.0"
+clap = { version = "4.6", features = ["derive"] }
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tempfile.workspace = true
+tgv-daemon.workspace = true
+tgv-gateway.workspace = true
+tgv-harness.workspace = true
+tgv-protocol.workspace = true
+tgv-recorder.workspace = true
+tgv-store.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "signal", "sync", "time"] }
+tracing.workspace = true
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+uuid.workspace = true
+
+[dev-dependencies]
+axum.workspace = true
+bytes.workspace = true
+futures-util.workspace = true
+tokio = { workspace = true, features = ["io-util", "macros", "net", "rt-multi-thread", "sync", "time"] }
+
+[lints]
+workspace = true

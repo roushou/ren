@@ -1,0 +1,24 @@
+direction::Direction: request response
+route::Provider: anthropic codex openai
+route::Endpoint: messages count_tokens models responses responses_compact
+route::Method: GET POST MESSAGE
+route::Transport: http websocket
+websocket::Payload: text binary
+messages::EventKind: message_start content_block_start content_block_delta content_block_stop message_delta message_stop ping error
+messages::StopReason: end_turn stop_sequence tool_use max_tokens pause_turn model_context_window_exceeded refusal
+messages::BlockKind: text thinking redacted_thinking tool_use server_tool_use mcp_tool_use web_search_tool_result mcp_tool_result
+messages::DocumentKind: message error
+encoding::ResponseFormat: event_stream json other unspecified websocket_messages
+encoding::ResponseEncoding: identity gzip zstd unsupported
+inspect::ModelOutcome: completed incomplete refused cancelled failed unknown
+inspect::Coverage: complete partial unavailable
+inspect::Limitation: unsupported_format unsupported_encoding capture_gap body_unfinished incomplete_event malformed_event malformed_field event_too_large document_too_large decoded_too_large decoding_error too_many_tool_calls too_many_unknown_kinds no_terminal_event
+inspect::FormatSource: declared inferred
+inspect::KindFamily: event document content_block output_item stop_reason status incomplete_reason
+inspect::InputAccounting: includes_cache excludes_cache
+inspect::TerminalEvent: seen missing
+responses::EventKind: response.queued response.created response.in_progress response.completed response.incomplete response.failed error response.output_item.added response.output_item.done response.content_part.added response.content_part.done response.output_text.delta response.output_text.done response.output_text.annotation.added response.refusal.delta response.refusal.done response.function_call_arguments.delta response.function_call_arguments.done response.custom_tool_call_input.delta response.custom_tool_call_input.done response.reasoning_text.delta response.reasoning_text.done response.reasoning_summary_part.added response.reasoning_summary_part.done response.reasoning_summary_text.delta response.reasoning_summary_text.done codex.response.metadata codex.rate_limits response.interrupt.accepted response.interrupt.failed
+responses::Status: queued in_progress completed incomplete failed cancelled
+responses::IncompleteReason: max_output_tokens max_messages content_filter steered
+responses::ItemKind: message reasoning function_call custom_tool_call apply_patch_call shell_call local_shell_call computer_call mcp_call mcp_approval_request web_search_call file_search_call code_interpreter_call image_generation_call tool_search_call
+websocket::ClientKind: response.create response.interrupt

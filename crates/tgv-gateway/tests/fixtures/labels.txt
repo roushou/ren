@@ -1,0 +1,7 @@
+api::HealthStatus: ok degraded
+api::ErrorCode: not_found invalid_query busy unavailable
+api::preview::RawFormat: utf8 hex
+api::preview::PreviewDecoding: none gzip_magic zstd_magic
+api::preview::PreviewExtent: complete partial truncated gap
+api::preview::TextEnd: intact split_character
+api::preview::DecodeIntegrity: not_decoded verified prefix failed

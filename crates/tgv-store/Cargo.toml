@@ -1,0 +1,33 @@
+[package]
+name = "tgv-store"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+# Persistence: SQLite through SQLx. It implements the recorder's RecordSink
+# and serves reads; never add an HTTP framework or CLI parser
+# (docs/architecture.md).
+[dependencies]
+blake3 = "1.8.7"
+bytes.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serde_with.workspace = true
+sqlx.workspace = true
+strum.workspace = true
+tgv-harness.workspace = true
+tgv-protocol.workspace = true
+tgv-recorder.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["sync"] }
+tracing.workspace = true
+uuid.workspace = true
+zstd.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread", "sync", "time"] }
+
+[lints]
+workspace = true

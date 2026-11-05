@@ -1,0 +1,615 @@
+//! The capture side: what the relay calls while forwarding. Nothing here
+//! blocks or awaits. Admission to the queue is decided with `try_` operations,
+//! and anything that does not fit is counted as omitted.
+
+use super::{
+    item::{AttemptSlots, Item, Piece, Shared, Track},
+    options::CaptureOptions,
+};
+use crate::{
+    batch::{
+        AttemptBody, BodyEnd, CloseChannel, MessageMark, OpenCall, OperatorAction, Recorded,
+        ResponseHead, Stamp, StartAttempt, Unattributed,
+    },
+    capture::{BodyEnding, CallRejection, ChannelEnd, Omission, TerminalRecord},
+    id::{AttemptId, CallId, ChannelId},
+    routing::{ConfigRevision, OperatorRevision, UpstreamId},
+};
+use bytes::Bytes;
+use std::{
+    collections::VecDeque,
+    sync::{Arc, Mutex, PoisonError},
+};
+use tgv_harness::attribution::Attribution;
+use tgv_protocol::{
+    direction::Direction,
+    encoding::{ResponseEncoding, ResponseFormat},
+    route::{Endpoint, Method, Provider, Transport},
+    websocket::Payload,
+};
+use tokio::sync::{OwnedSemaphorePermit, mpsc::OwnedPermit};
+
+/// What the gateway knows when a call is admitted.
+#[derive(Debug, Clone)]
+pub struct CallStart {
+    pub transport: Transport,
+    pub provider: Provider,
+    pub endpoint: Endpoint,
+    pub method: Method,
+    pub config_revision: ConfigRevision,
+    pub attribution: Attribution,
+    /// The operator state the call was planned against, once planned.
+    pub operator_revision: Option<OperatorRevision>,
+    /// The routing plan, once planned.
+    pub plan: Option<Recorded>,
+    /// Attempts the plan allows; their records are reserved at admission.
+    pub attempts: usize,
+}
+
+/// What is known when an attempt starts.
+#[derive(Debug, Clone)]
+pub struct AttemptStart {
+    pub upstream: UpstreamId,
+    /// What TGV changed in the request, if anything.
+    pub changes: Option<Recorded>,
+    pub body: AttemptBody,
+}
+
+impl AttemptStart {
+    /// An attempt that sends the client's request unchanged.
+    pub fn unchanged(upstream: UpstreamId) -> Self {
+        Self {
+            upstream,
+            changes: None,
+            body: AttemptBody::Original,
+        }
+    }
+}
+
+/// Capture of one call and its attempts, one at a time. Dropping it without
+/// [`CallTap::finish`] records the open attempt as interrupted.
+pub struct CallTap {
+    shared: Arc<Shared>,
+    stamp: Stamp,
+    state: Mutex<TapState>,
+}
+
+struct TapState {
+    recording: Recording,
+    request: Tally,
+    attempt: Option<AttemptTally>,
+    ordinal: u32,
+}
+
+/// The open attempt's identity and bodies.
+#[derive(Debug, Clone, Copy)]
+struct AttemptTally {
+    id: AttemptId,
+    /// Present when the attempt sends a changed body.
+    request: Option<Tally>,
+    response: Tally,
+}
+
+/// Reservations taken at admission. The finish slots are always reserved, so
+/// a terminal record is never lost to a full queue.
+enum Recording {
+    Active {
+        /// The open attempt's head and finish slots.
+        current: Option<(Option<OwnedPermit<Item>>, OwnedPermit<Item>)>,
+        /// Slots of the attempts the plan still allows.
+        spare: VecDeque<AttemptSlots>,
+        finish: OwnedPermit<Item>,
+        call: OwnedSemaphorePermit,
+    },
+    Unrecorded,
+    Finished,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct Tally {
+    observed: u64,
+    ending: BodyEnding,
+}
+
+impl Tally {
+    const OPEN: Self = Self {
+        observed: 0,
+        ending: BodyEnding::Open,
+    };
+
+    fn end(self, ending: BodyEnding) -> BodyEnd {
+        BodyEnd {
+            observed_bytes: self.observed,
+            ending: match self.ending {
+                BodyEnding::Open => ending,
+                BodyEnding::Ended | BodyEnding::Unfinished => self.ending,
+            },
+        }
+    }
+}
+
+/// Bytes to capture: copied when borrowed from a network buffer, shared when
+/// the gateway already owns exactly these bytes.
+#[derive(Clone, Copy)]
+enum Source<'a> {
+    Borrowed(&'a [u8]),
+    Shared(&'a Bytes),
+}
+
+impl Source<'_> {
+    fn bytes(&self) -> &[u8] {
+        match self {
+            Self::Borrowed(bytes) => bytes,
+            Self::Shared(bytes) => bytes,
+        }
+    }
+
+    fn piece(&self, from: usize, to: usize) -> Bytes {
+        match self {
+            Self::Borrowed(bytes) => {
+                Bytes::copy_from_slice(bytes.get(from..to).unwrap_or_default())
+            }
+            Self::Shared(bytes) => bytes.slice(from..to),
+        }
+    }
+}
+
+impl CallTap {
+    pub(super) fn start(
+        shared: Arc<Shared>,
+        channel: ChannelId,
+        start: CallStart,
+        attempt: Option<AttemptStart>,
+    ) -> Self {
+        let stamp = Stamp {
+            at: shared.clock.now(),
+            channel,
+            call: CallId::generate(shared.ids.as_ref()),
+        };
+        let first = attempt.map(|attempt| (AttemptId::generate(shared.ids.as_ref()), attempt));
+        let tally = first
+            .as_ref()
+            .map(|(id, attempt)| AttemptTally::new(*id, attempt.body));
+        let attempts = match first {
+            Some(_) => start.attempts.max(1),
+            None => 0,
+        };
+        let recording = match shared.reserve(attempts) {
+            None => {
+                shared.counters.omit(Omission::Unrecorded, 1);
+                Recording::Unrecorded
+            }
+            Some(mut reservation) => {
+                let endpoint = start.endpoint;
+                let current = reservation
+                    .attempts
+                    .pop_front()
+                    .map(|slots| (Some(slots.head), slots.finish));
+                reservation.open.send(Item::Open {
+                    open: OpenCall {
+                        stamp,
+                        transport: start.transport,
+                        provider: start.provider,
+                        endpoint: start.endpoint,
+                        method: start.method,
+                        config_revision: start.config_revision,
+                        attribution: start.attribution,
+                        operator_revision: start.operator_revision,
+                        plan: start.plan,
+                    },
+                    attempt: first.map(|(id, attempt)| attempt.record(stamp, id, 0)),
+                    endpoint,
+                });
+                Recording::Active {
+                    current,
+                    spare: reservation.attempts,
+                    finish: reservation.finish,
+                    call: reservation.call,
+                }
+            }
+        };
+        Self {
+            shared,
+            stamp,
+            state: Mutex::new(TapState {
+                recording,
+                request: Tally::OPEN,
+                attempt: tally,
+                ordinal: 0,
+            }),
+        }
+    }
+
+    pub fn call(&self) -> CallId {
+        self.stamp.call
+    }
+
+    pub fn channel(&self) -> ChannelId {
+        self.stamp.channel
+    }
+
+    fn state(&self) -> std::sync::MutexGuard<'_, TapState> {
+        self.state.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Bytes forwarded in `direction`. They are copied only once admitted, so a
+    /// slice never pins a larger network buffer than the budget accounts for.
+    pub fn data(&self, direction: Direction, bytes: &[u8]) {
+        self.capture(Track::from(direction), Source::Borrowed(bytes), None);
+    }
+
+    /// The whole request as the client sent it, buffered by the gateway. The
+    /// recorder shares these bytes instead of copying them.
+    pub fn request(&self, bytes: &Bytes) {
+        self.capture(Track::Request, Source::Shared(bytes), None);
+        self.end(Direction::Request);
+    }
+
+    /// The open attempt's changed request, shared like [`Self::request`].
+    pub fn attempt_request(&self, bytes: &Bytes) {
+        self.capture(Track::AttemptRequest, Source::Shared(bytes), None);
+        let mut state = self.state();
+        if let Some(Some(tally)) = state
+            .attempt
+            .as_mut()
+            .map(|attempt| attempt.request.as_mut())
+        {
+            tally.ending = BodyEnding::Ended;
+        }
+    }
+
+    /// One whole WebSocket message forwarded in `direction`. Its boundary is
+    /// recorded with its first stored piece; a message whose first piece is
+    /// omitted keeps no boundary, and the body shows the gap.
+    pub fn message(&self, direction: Direction, payload: Payload, bytes: &[u8]) {
+        self.capture(
+            Track::from(direction),
+            Source::Borrowed(bytes),
+            Some(payload),
+        );
+    }
+
+    fn capture(&self, track: Track, source: Source<'_>, message: Option<Payload>) {
+        let bytes = source.bytes();
+        let mut state = self.state();
+        let recording = matches!(state.recording, Recording::Active { .. });
+        if matches!(state.recording, Recording::Finished) || bytes.is_empty() {
+            return;
+        }
+        let tally = match track {
+            Track::Request => Some(&mut state.request),
+            Track::AttemptRequest => state
+                .attempt
+                .as_mut()
+                .and_then(|attempt| attempt.request.as_mut()),
+            Track::Response => state.attempt.as_mut().map(|attempt| &mut attempt.response),
+        };
+        let Some(tally) = tally else {
+            return;
+        };
+        let offset = tally.observed;
+        let len = u64::try_from(bytes.len()).unwrap_or(u64::MAX);
+        tally.observed = offset.saturating_add(len);
+        if !recording {
+            return;
+        }
+        let counters = &self.shared.counters;
+        let limit = u64::try_from(self.shared.options.body_limit_bytes).unwrap_or(u64::MAX);
+        let eligible = usize::try_from(limit.saturating_sub(offset))
+            .unwrap_or(usize::MAX)
+            .min(bytes.len());
+        counters.omit(
+            Omission::PolicyLimit,
+            u64::try_from(bytes.len().saturating_sub(eligible)).unwrap_or(u64::MAX),
+        );
+        let mut mark = message.map(|payload| MessageMark {
+            offset,
+            len,
+            payload,
+            at: self.shared.clock.now().wall,
+        });
+        let mut from = 0;
+        while from < eligible {
+            let to = from
+                .saturating_add(CaptureOptions::PIECE_BYTES)
+                .min(eligible);
+            let piece_len = u64::try_from(to.saturating_sub(from)).unwrap_or(u64::MAX);
+            let piece_offset = offset.saturating_add(u64::try_from(from).unwrap_or(u64::MAX));
+            match self.shared.admit(to.saturating_sub(from)) {
+                Err(reason) => counters.omit(reason, piece_len),
+                Ok(admission) => admission.send(Piece {
+                    call: self.stamp.call,
+                    track,
+                    offset: piece_offset,
+                    bytes: source.piece(from, to),
+                    enqueued: self.shared.clock.now().monotonic,
+                    message: mark.take(),
+                }),
+            }
+            mark = None;
+            from = to;
+        }
+    }
+
+    /// The end of the body in `direction` was observed.
+    pub fn end(&self, direction: Direction) {
+        let mut state = self.state();
+        let tally = match direction {
+            Direction::Request => Some(&mut state.request),
+            Direction::Response => state.attempt.as_mut().map(|attempt| &mut attempt.response),
+        };
+        if let Some(tally) = tally {
+            tally.ending = BodyEnding::Ended;
+        }
+    }
+
+    pub fn response_head(&self, status: u16, format: ResponseFormat, encoding: ResponseEncoding) {
+        let mut state = self.state();
+        let Some(attempt) = state.attempt.map(|attempt| attempt.id) else {
+            return;
+        };
+        let Recording::Active {
+            current: Some((head, _)),
+            ..
+        } = &mut state.recording
+        else {
+            return;
+        };
+        if let Some(slot) = head.take() {
+            slot.send(Item::Head(ResponseHead {
+                stamp: self.stamped(),
+                attempt,
+                status,
+                format,
+                encoding,
+            }));
+        }
+    }
+
+    fn stamped(&self) -> Stamp {
+        Stamp {
+            at: self.shared.clock.now(),
+            ..self.stamp
+        }
+    }
+
+    /// Record the open attempt's terminal and close the call. Bodies whose
+    /// end was not observed are recorded as unfinished. Later calls are
+    /// ignored.
+    pub fn finish(&self, end: TerminalRecord) {
+        let mut state = self.state();
+        self.close_attempt(&mut state, end);
+        self.close_call(&mut state, None);
+    }
+
+    /// Record the open attempt's terminal; the call stays open for its next
+    /// attempt.
+    pub fn finish_attempt(&self, end: TerminalRecord) {
+        let mut state = self.state();
+        self.close_attempt(&mut state, end);
+    }
+
+    /// Start the call's next attempt, after [`Self::finish_attempt`]. The plan
+    /// reserved its records at admission.
+    pub fn next_attempt(&self, attempt: AttemptStart) {
+        let mut state = self.state();
+        if state.attempt.is_some() || matches!(state.recording, Recording::Finished) {
+            return;
+        }
+        let id = AttemptId::generate(self.shared.ids.as_ref());
+        state.ordinal = state.ordinal.saturating_add(1);
+        state.attempt = Some(AttemptTally::new(id, attempt.body));
+        let ordinal = state.ordinal;
+        let stamp = self.stamped();
+        if let Recording::Active { current, spare, .. } = &mut state.recording {
+            match spare.pop_front() {
+                Some(AttemptSlots {
+                    start: Some(start),
+                    head,
+                    finish,
+                }) => {
+                    start.send(Item::Attempt(attempt.record(stamp, id, ordinal)));
+                    *current = Some((Some(head), finish));
+                }
+                Some(AttemptSlots { start: None, .. }) | None => {
+                    // More attempts than the plan allowed: a gateway bug.
+                    tracing::warn!("an attempt beyond the call's plan is not recorded");
+                    self.shared.counters.omit(Omission::Unrecorded, 1);
+                }
+            }
+        }
+    }
+
+    /// Close a call that made no attempt: TGV answered it.
+    pub fn reject(&self, rejection: CallRejection) {
+        let mut state = self.state();
+        self.close_call(&mut state, Some(rejection));
+    }
+
+    fn close_attempt(&self, state: &mut TapState, end: TerminalRecord) {
+        let Some(attempt) = state.attempt.take() else {
+            return;
+        };
+        if let Recording::Active { current, .. } = &mut state.recording
+            && let Some((_, finish)) = current.take()
+        {
+            finish.send(Item::FinishAttempt {
+                stamp: self.stamped(),
+                attempt: attempt.id,
+                end,
+                response: attempt.response.end(BodyEnding::Unfinished),
+                request: attempt
+                    .request
+                    .map(|request| request.end(BodyEnding::Unfinished)),
+            });
+        }
+    }
+
+    fn close_call(&self, state: &mut TapState, rejection: Option<CallRejection>) {
+        let recording = std::mem::replace(&mut state.recording, Recording::Finished);
+        let Recording::Active { finish, call, .. } = recording else {
+            return;
+        };
+        finish.send(Item::FinishCall {
+            stamp: self.stamped(),
+            request: state.request.end(BodyEnding::Unfinished),
+            rejection,
+            _call: call,
+        });
+    }
+}
+
+impl AttemptTally {
+    fn new(id: AttemptId, body: AttemptBody) -> Self {
+        Self {
+            id,
+            request: match body {
+                AttemptBody::Original => None,
+                AttemptBody::Changed => Some(Tally::OPEN),
+            },
+            response: Tally::OPEN,
+        }
+    }
+}
+
+impl AttemptStart {
+    fn record(self, stamp: Stamp, attempt: AttemptId, ordinal: u32) -> StartAttempt {
+        StartAttempt {
+            stamp,
+            attempt,
+            ordinal,
+            upstream: self.upstream,
+            changes: self.changes,
+            body: self.body,
+        }
+    }
+}
+
+impl From<Direction> for Track {
+    fn from(direction: Direction) -> Self {
+        match direction {
+            Direction::Request => Self::Request,
+            Direction::Response => Self::Response,
+        }
+    }
+}
+
+impl Drop for CallTap {
+    fn drop(&mut self) {
+        self.finish(TerminalRecord::DROPPED);
+    }
+}
+
+/// One reserved slot for an operator action. Without one, the command is not
+/// applied: every operator decision is recorded.
+pub struct OperatorSlot {
+    shared: Arc<Shared>,
+    slot: OwnedPermit<Item>,
+    permit: OwnedSemaphorePermit,
+}
+
+impl OperatorSlot {
+    pub(super) fn reserve(shared: Arc<Shared>) -> Option<Self> {
+        let (slot, permit) = shared.reserve_close()?;
+        Some(Self {
+            shared,
+            slot,
+            permit,
+        })
+    }
+
+    /// Record `command`, which made `state` at `revision`. Both documents are
+    /// serialized here and kept as they are; if either cannot be serialized,
+    /// nothing is recorded and the slot is released.
+    pub fn record<C: serde::Serialize, S: serde::Serialize>(
+        self,
+        revision: crate::routing::OperatorRevision,
+        actor: crate::batch::Actor,
+        command: &C,
+        state: &S,
+    ) -> Result<(), serde_json::Error> {
+        let action = OperatorAction {
+            at: self.shared.clock.now(),
+            revision,
+            actor,
+            command: Recorded::of(command)?,
+            state: Recorded::of(state)?,
+        };
+        self.slot.send(Item::Operator {
+            action,
+            _slot: self.permit,
+        });
+        Ok(())
+    }
+}
+
+/// Capture of one WebSocket channel's end. Dropping it without
+/// [`ChannelTap::close`] records the channel as dropped.
+pub struct ChannelTap {
+    shared: Arc<Shared>,
+    channel: ChannelId,
+    state: Mutex<ChannelState>,
+}
+
+struct ChannelState {
+    reservation: Option<(OwnedPermit<Item>, OwnedSemaphorePermit)>,
+    unattributed: Unattributed,
+}
+
+impl ChannelTap {
+    pub(super) fn open(shared: Arc<Shared>, channel: ChannelId) -> Self {
+        let reservation = shared.reserve_close();
+        if reservation.is_none() {
+            shared.counters.omit(Omission::Unrecorded, 1);
+        }
+        Self {
+            shared,
+            channel,
+            state: Mutex::new(ChannelState {
+                reservation,
+                unattributed: Unattributed::default(),
+            }),
+        }
+    }
+
+    pub fn channel(&self) -> ChannelId {
+        self.channel
+    }
+
+    fn state(&self) -> std::sync::MutexGuard<'_, ChannelState> {
+        self.state.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// A message no call owns was forwarded. Its bytes are counted, not stored.
+    pub fn unattributed(&self, bytes: &[u8]) {
+        let len = u64::try_from(bytes.len()).unwrap_or(u64::MAX);
+        let mut state = self.state();
+        state.unattributed.messages = state.unattributed.messages.saturating_add(1);
+        state.unattributed.bytes = state.unattributed.bytes.saturating_add(len);
+        self.shared.counters.omit(Omission::Unattributed, len);
+    }
+
+    /// Record the channel's end. Later calls are ignored.
+    pub fn close(&self, end: ChannelEnd, close_code: Option<u16>) {
+        let mut state = self.state();
+        let Some((slot, channel)) = state.reservation.take() else {
+            return;
+        };
+        slot.send(Item::Close {
+            close: CloseChannel {
+                at: self.shared.clock.now(),
+                channel: self.channel,
+                end,
+                close_code,
+                unattributed: state.unattributed,
+            },
+            _channel: channel,
+        });
+    }
+}
+
+impl Drop for ChannelTap {
+    fn drop(&mut self) {
+        self.close(ChannelEnd::Dropped, None);
+    }
+}

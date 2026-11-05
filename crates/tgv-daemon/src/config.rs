@@ -1,0 +1,487 @@
+//! Strict startup configuration. This revision is immutable for the daemon lifetime.
+
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+use std::{
+    net::{IpAddr, Ipv4Addr, SocketAddr},
+    path::{Path, PathBuf},
+    time::Duration,
+};
+use tgv_gateway::{
+    BufferOptions, ControlOptions, GatewayConfig, OperatorKey, TransportTimeouts, UpstreamAuth,
+    UpstreamEntry, UpstreamTable, UpstreamUrl, WebSocketOptions,
+    policy::{Policy, PolicyConfig},
+};
+use tgv_harness::host::HostEnv;
+use tgv_protocol::route::Provider;
+use tgv_recorder::retention::RetentionPolicy;
+use tgv_recorder::{
+    CaptureOptions,
+    routing::{ConfigRevision, UpstreamId},
+};
+
+/// Why a configuration was refused. Invalid values are named, never echoed:
+/// they can carry credentials.
+#[derive(Debug, thiserror::Error)]
+pub enum ConfigError {
+    #[error("cannot read configuration file")]
+    Read(#[source] std::io::Error),
+    #[error("invalid TOML configuration or unknown configuration field")]
+    Syntax,
+    #[error("unsupported configuration version")]
+    Version,
+    #[error("listen must be loopback; use Tailscale Serve for private remote access")]
+    PublicListener,
+    #[error("max_concurrent_requests must be between 1 and 1024")]
+    Concurrency,
+    #[error("timeouts must be between 1 and 3600 seconds")]
+    Timeout,
+    #[error(transparent)]
+    Capture(#[from] tgv_recorder::CaptureOptionsError),
+    #[error(transparent)]
+    Retention(#[from] tgv_recorder::retention::RetentionError),
+    #[error(transparent)]
+    WebSocket(#[from] tgv_gateway::WebSocketOptionsError),
+    #[error(transparent)]
+    Buffer(#[from] tgv_gateway::BufferOptionsError),
+    #[error(transparent)]
+    Control(#[from] tgv_gateway::ControlOptionsError),
+    #[error("upstream {id}: {source}")]
+    UpstreamUrl {
+        id: String,
+        source: tgv_gateway::UpstreamConfigError,
+    },
+    #[error(transparent)]
+    ProviderUrl(#[from] tgv_gateway::UpstreamConfigError),
+    #[error("upstream {0}: the Codex backend accepts no operator keys")]
+    CodexOperatorKey(String),
+    #[error(transparent)]
+    Upstreams(#[from] tgv_gateway::UpstreamTableError),
+    #[error(transparent)]
+    Policy(#[from] tgv_gateway::policy::PolicyError),
+    #[error("operator key variable {name} for upstream {upstream} is not set")]
+    MissingKey { name: String, upstream: String },
+    #[error("operator key variable {0} is not a valid header value")]
+    InvalidKey(String),
+    #[error("configuration cannot be serialized for its revision")]
+    Revision(#[source] serde_json::Error),
+    #[error("set --data-dir when HOME is unavailable")]
+    NoDataDir,
+}
+
+/// Where operator keys come from while resolving.
+#[derive(Debug, Clone, Copy)]
+enum Keys<'a> {
+    Env(&'a HostEnv),
+    /// Structure only: every key is a placeholder that is never used.
+    Unchecked,
+}
+
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
+/// Editable TOML representation. Use `resolve` before constructing a daemon.
+pub struct Config {
+    pub version: u32,
+    pub listen: SocketAddr,
+    pub data_dir: Option<PathBuf>,
+    pub anthropic_base_url: String,
+    pub codex_base_url: String,
+    pub openai_base_url: String,
+    pub max_concurrent_requests: usize,
+    pub connect_timeout_seconds: u64,
+    pub response_header_timeout_seconds: u64,
+    pub stream_idle_timeout_seconds: u64,
+    pub capture: CaptureOptions,
+    pub retention: RetentionPolicy,
+    pub websocket: WebSocketOptions,
+    /// Extra upstream entries, each with an operator API key. Every
+    /// provider also has a client-credential entry named after it.
+    pub upstreams: Vec<UpstreamConfig>,
+    pub buffer: BufferOptions,
+    pub policy: PolicyConfig,
+    pub control: ControlOptions,
+}
+
+/// An operator-key upstream entry. The key is read from the daemon's
+/// environment at start, never from the file.
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct UpstreamConfig {
+    pub id: UpstreamId,
+    pub provider: Provider,
+    pub base_url: String,
+    /// The environment variable holding the API key.
+    pub operator_key_env: String,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            version: 1,
+            listen: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 8787),
+            data_dir: None,
+            anthropic_base_url: "https://api.anthropic.com".into(),
+            codex_base_url: "https://chatgpt.com/backend-api/codex".into(),
+            openai_base_url: "https://api.openai.com".into(),
+            max_concurrent_requests: 32,
+            connect_timeout_seconds: 10,
+            response_header_timeout_seconds: 120,
+            stream_idle_timeout_seconds: 120,
+            capture: CaptureOptions::default(),
+            retention: RetentionPolicy::default(),
+            websocket: WebSocketOptions::default(),
+            upstreams: Vec::new(),
+            buffer: BufferOptions::default(),
+            policy: PolicyConfig::default(),
+            control: ControlOptions::default(),
+        }
+    }
+}
+
+impl Config {
+    /// Resolve the editable file representation into an immutable runtime
+    /// snapshot, with no environment: configured operator keys are an error.
+    /// Keep `load` usable by remote diagnostics and dry-run launchers, which do
+    /// not use this host's upstream settings.
+    pub fn resolve(&self) -> Result<RuntimeConfig, ConfigError> {
+        self.resolve_with(&HostEnv::default())
+    }
+
+    /// Everything [`Self::resolve_with`] checks, except that operator keys
+    /// are present: for installing a service whose environment differs.
+    pub fn check(&self) -> Result<(), ConfigError> {
+        self.build(Keys::Unchecked).map(drop)
+    }
+
+    /// Resolve with operator keys read from `env`.
+    pub fn resolve_with(&self, env: &HostEnv) -> Result<RuntimeConfig, ConfigError> {
+        self.build(Keys::Env(env))
+    }
+
+    fn key(upstream: &UpstreamConfig, keys: Keys<'_>) -> Result<OperatorKey, ConfigError> {
+        let name = &upstream.operator_key_env;
+        let text = match keys {
+            Keys::Unchecked => "unchecked",
+            Keys::Env(env) => env.get(name).ok_or_else(|| ConfigError::MissingKey {
+                name: name.clone(),
+                upstream: upstream.id.to_string(),
+            })?,
+        };
+        OperatorKey::new(text).ok_or_else(|| ConfigError::InvalidKey(name.clone()))
+    }
+
+    fn build(&self, keys: Keys<'_>) -> Result<RuntimeConfig, ConfigError> {
+        self.validate()?;
+        let extra = self
+            .upstreams
+            .iter()
+            .map(|upstream| {
+                if upstream.provider == Provider::Codex {
+                    return Err(ConfigError::CodexOperatorKey(upstream.id.to_string()));
+                }
+                Ok(UpstreamEntry {
+                    id: upstream.id.clone(),
+                    provider: upstream.provider,
+                    url: UpstreamUrl::parse(&upstream.base_url).map_err(|source| {
+                        ConfigError::UpstreamUrl {
+                            id: upstream.id.to_string(),
+                            source,
+                        }
+                    })?,
+                    auth: UpstreamAuth::OperatorKey(Self::key(upstream, keys)?),
+                })
+            })
+            .collect::<Result<Vec<_>, ConfigError>>()?;
+        let upstreams = UpstreamTable::new(
+            UpstreamUrl::parse(&self.anthropic_base_url)?,
+            UpstreamUrl::parse(&self.codex_base_url)?,
+            UpstreamUrl::parse(&self.openai_base_url)?,
+            extra,
+        )?;
+        let policy = Policy::new(self.policy.clone(), &upstreams.summaries())?;
+        Ok(RuntimeConfig {
+            listen: self.listen,
+            upstreams,
+            policy,
+            max_concurrent_requests: self.max_concurrent_requests,
+            connect_timeout: Duration::from_secs(self.connect_timeout_seconds),
+            response_header_timeout: Duration::from_secs(self.response_header_timeout_seconds),
+            stream_idle_timeout: Duration::from_secs(self.stream_idle_timeout_seconds),
+            capture: self.capture.clone(),
+            retention: self.retention.clone(),
+            websocket: self.websocket,
+            buffer: self.buffer,
+            control: self.control.clone(),
+            revision: self.revision()?,
+        })
+    }
+
+    pub fn revision(&self) -> Result<String, ConfigError> {
+        Ok(
+            Sha256::digest(serde_json::to_vec(self).map_err(ConfigError::Revision)?)
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect(),
+        )
+    }
+
+    pub fn load(path: Option<&Path>) -> Result<Self, ConfigError> {
+        let mut config: Self = match path {
+            Some(path) => {
+                let contents = std::fs::read_to_string(path).map_err(ConfigError::Read)?;
+                // TOML diagnostics can echo credential-bearing invalid values.
+                toml::from_str(&contents).map_err(|_| ConfigError::Syntax)?
+            }
+            None => Self::default(),
+        };
+        if let (Some(path), Some(dir)) = (path, config.data_dir.as_mut())
+            && dir.is_relative()
+        {
+            *dir = path.parent().unwrap_or(Path::new(".")).join(&*dir);
+        }
+        config.validate()?;
+        Ok(config)
+    }
+
+    pub fn validate(&self) -> Result<(), ConfigError> {
+        if self.version != 1 {
+            return Err(ConfigError::Version);
+        }
+        if !self.listen.ip().is_loopback() {
+            return Err(ConfigError::PublicListener);
+        }
+        if !(1..=1024).contains(&self.max_concurrent_requests) {
+            return Err(ConfigError::Concurrency);
+        }
+        if [
+            self.connect_timeout_seconds,
+            self.response_header_timeout_seconds,
+            self.stream_idle_timeout_seconds,
+        ]
+        .iter()
+        .any(|value| !(1..=3600).contains(value))
+        {
+            return Err(ConfigError::Timeout);
+        }
+        self.capture.validate()?;
+        self.retention.validate()?;
+        self.websocket.validate()?;
+        self.buffer.validate()?;
+        self.control.validate()?;
+        Ok(())
+    }
+
+    /// The data directory: the override, then `data_dir`, then
+    /// `$XDG_STATE_HOME/tgv`, then `~/.local/state/tgv`.
+    pub fn resolve_data_dir(
+        &self,
+        override_dir: Option<PathBuf>,
+        env: &HostEnv,
+    ) -> Result<PathBuf, ConfigError> {
+        if let Some(dir) = override_dir.or_else(|| self.data_dir.clone()) {
+            return Ok(dir);
+        }
+        if let Some(dir) = env.absolute_path("XDG_STATE_HOME") {
+            return Ok(dir.join("tgv"));
+        }
+        env.absolute_path("HOME")
+            .map(|home| home.join(".local/state/tgv"))
+            .ok_or(ConfigError::NoDataDir)
+    }
+}
+
+/// Validated settings consumed by daemon assembly. No mutable access or
+/// deserialization bypass: all instances are produced by `Config::resolve`.
+#[derive(Clone)]
+pub struct RuntimeConfig {
+    listen: SocketAddr,
+    upstreams: UpstreamTable,
+    policy: Policy,
+    max_concurrent_requests: usize,
+    connect_timeout: Duration,
+    response_header_timeout: Duration,
+    stream_idle_timeout: Duration,
+    capture: CaptureOptions,
+    retention: RetentionPolicy,
+    websocket: WebSocketOptions,
+    buffer: BufferOptions,
+    control: ControlOptions,
+    revision: String,
+}
+
+impl RuntimeConfig {
+    pub fn listen(&self) -> SocketAddr {
+        self.listen
+    }
+    pub fn upstreams(&self) -> &UpstreamTable {
+        &self.upstreams
+    }
+    pub fn control(&self) -> &ControlOptions {
+        &self.control
+    }
+    /// The gateway's settings from this snapshot.
+    pub fn gateway(&self) -> GatewayConfig {
+        GatewayConfig {
+            max_concurrent_requests: self.max_concurrent_requests,
+            response_header_timeout: self.response_header_timeout,
+            config_revision: ConfigRevision::new(self.revision.as_str()),
+            websocket: self.websocket,
+            buffer: self.buffer,
+            policy: self.policy.clone(),
+            upstreams: self.upstreams.clone(),
+        }
+    }
+    /// Lifecycle records the recorder reserves at once: every admitted call,
+    /// each channel's end, and a margin for calls whose response is still
+    /// draining after their admission returned.
+    pub fn recorder_calls(&self) -> usize {
+        self.max_concurrent_requests
+            .saturating_mul(4)
+            .saturating_add(self.websocket.max_channels.saturating_mul(2))
+    }
+    pub fn transport(&self) -> TransportTimeouts {
+        TransportTimeouts {
+            connect: self.connect_timeout,
+            idle: self.stream_idle_timeout,
+        }
+    }
+    pub fn max_concurrent_requests(&self) -> usize {
+        self.max_concurrent_requests
+    }
+    pub fn connect_timeout(&self) -> Duration {
+        self.connect_timeout
+    }
+    pub fn response_header_timeout(&self) -> Duration {
+        self.response_header_timeout
+    }
+    pub fn stream_idle_timeout(&self) -> Duration {
+        self.stream_idle_timeout
+    }
+    pub fn capture(&self) -> &CaptureOptions {
+        &self.capture
+    }
+    pub fn retention(&self) -> &RetentionPolicy {
+        &self.retention
+    }
+    pub fn revision(&self) -> &str {
+        &self.revision
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rejects_unknown_keys_and_public_listener() {
+        assert!(toml::from_str::<Config>("max_concurrent_request = 10").is_err());
+        let config = Config {
+            listen: "0.0.0.0:8787".parse().unwrap(),
+            ..Config::default()
+        };
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn example_is_valid() {
+        let config: Config = toml::from_str(include_str!("../../../tgv.example.toml")).unwrap();
+        config.resolve().unwrap();
+    }
+
+    #[test]
+    fn runtime_snapshot_is_independent_of_later_document_edits() {
+        let mut config = Config::default();
+        let revision = config.revision().unwrap();
+        let runtime = config.resolve().unwrap();
+        config.listen = "0.0.0.0:1".parse().unwrap();
+        config.max_concurrent_requests = 0;
+        config.connect_timeout_seconds = 0;
+        config.capture.queue_bytes = 0;
+        config.retention.max_calls = 0;
+        config.codex_base_url = "http://example.com".into();
+        assert!(config.resolve().is_err());
+        assert_eq!(runtime.listen(), "127.0.0.1:8787".parse().unwrap());
+        assert_eq!(runtime.max_concurrent_requests(), 32);
+        assert_eq!(runtime.connect_timeout(), Duration::from_secs(10));
+        assert_eq!(runtime.capture().queue_bytes, 64 * 1024 * 1024);
+        assert_eq!(runtime.retention().max_calls, 10_000);
+        assert_eq!(runtime.revision(), revision);
+    }
+
+    #[test]
+    fn runtime_resolution_validates_upstreams_without_echoing_invalid_values() {
+        for base in [
+            "https://user:SECRET@example.com",
+            "https://example.com?token=SECRET",
+            "https://example.com/#SECRET",
+            "http://example.com",
+        ] {
+            let config = Config {
+                openai_base_url: base.into(),
+                ..Config::default()
+            };
+            // Remote diagnostics and launch dry-runs don't consume local upstreams.
+            assert!(config.validate().is_ok());
+            let error = config.resolve().err().unwrap();
+            assert!(!format!("{error:?}").contains("SECRET"));
+        }
+    }
+
+    fn with_operator_key(policy: &str) -> Config {
+        Config {
+            upstreams: vec![UpstreamConfig {
+                id: UpstreamId::parse("anthropic-key").unwrap(),
+                provider: Provider::Anthropic,
+                base_url: "https://api.anthropic.com".into(),
+                operator_key_env: "TGV_FIXTURE_KEY".into(),
+            }],
+            policy: toml::from_str(policy).unwrap(),
+            ..Config::default()
+        }
+    }
+
+    #[test]
+    fn operator_keys_come_from_the_environment_and_never_appear_in_errors() {
+        let config = with_operator_key("");
+        let missing = format!("{:#}", config.resolve().err().unwrap());
+        assert!(missing.contains("TGV_FIXTURE_KEY"), "{missing}");
+        // Structure is checked without the key, for service installs.
+        config.check().unwrap();
+        let env = HostEnv::from_pairs([("TGV_FIXTURE_KEY", "sk-SECRET")]);
+        let runtime = config.resolve_with(&env).unwrap();
+        let entry = runtime
+            .upstreams()
+            .get(&UpstreamId::parse("anthropic-key").unwrap())
+            .unwrap();
+        assert!(!format!("{entry:?}").contains("SECRET"));
+        let invalid = HostEnv::from_pairs([("TGV_FIXTURE_KEY", "sk-\nSECRET")]);
+        let error = format!("{:#}", config.resolve_with(&invalid).err().unwrap());
+        assert!(!error.contains("SECRET"), "{error}");
+    }
+
+    #[test]
+    fn unsafe_upstreams_and_protected_transforms_are_refused_at_load() {
+        let mut codex = with_operator_key("");
+        codex.upstreams[0].provider = Provider::Codex;
+        assert!(codex.check().is_err());
+        let mut reserved = with_operator_key("");
+        reserved.upstreams[0].id = UpstreamId::parse("anthropic").unwrap();
+        assert!(reserved.check().is_err());
+        for step in [
+            r#"{ op = "remove_header", name = "authorization" }"#,
+            r#"{ op = "set_header", name = "user-agent", value = "spoof" }"#,
+            r#"{ op = "json_remove", path = "/system" }"#,
+            r#"{ op = "json_set", path = "/metadata/user_id", value = "x" }"#,
+        ] {
+            let policy = format!(
+                "[[transform]]\nid = \"bad\"\nmatch = {{ provider = \"anthropic\" }}\nsteps = [{step}]\nreason = \"fixture\"\n"
+            );
+            assert!(with_operator_key(&policy).check().is_err(), "{step}");
+        }
+        let fallback = "[[fallback]]\nid = \"f\"\nprovider = \"anthropic\"\nto = \"anthropic\"\non_status = [429]\n";
+        assert!(
+            with_operator_key(fallback).check().is_err(),
+            "must target an operator key"
+        );
+    }
+}

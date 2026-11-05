@@ -1,0 +1,140 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {
+  attemptEnding,
+  callStatus,
+  channelState,
+  messageCounts,
+  statusBadge,
+  duration,
+  elapsed,
+  captureState,
+  modelState,
+  transportState,
+} from '../src/lib/display.ts';
+import type { CallView } from '../src/lib/api.ts';
+import { callFixture, finishedFixture, callId } from './fixtures.ts';
+
+const finished = (overrides: Partial<CallView>) => finishedFixture(callId(1), overrides);
+const kind = (call: CallView) => callStatus(call).kind;
+const unknownLabel = <T>(text: string) => text as T;
+
+test('row states keep model completion separate from HTTP EOF and restart recovery', () => {
+  assert.equal(kind(callFixture()), 'in_progress');
+  assert.equal(kind(finished({})), 'http_complete');
+  assert.equal(
+    kind(finished({ outcome: 'completed', terminal: 'interrupted' })),
+    'model_completed',
+  );
+  assert.equal(kind(finished({ outcome: 'incomplete' })), 'incomplete');
+  assert.equal(kind(finished({ outcome: null, terminal: 'cancelled' })), 'interrupted');
+  assert.deepEqual(callStatus(finished({ terminal: 'cancelled' })), {
+    kind: 'interrupted',
+    terminal: 'cancelled',
+  });
+  for (const overrides of [
+    { status: 429 },
+    { terminal: 'stream_failed' as const },
+    { terminal: 'not_sent' as const },
+    { terminal: 'acceptance_unknown' as const },
+    { outcome: 'failed' as const },
+  ])
+    assert.equal(kind(finished(overrides)), 'error');
+});
+
+test('recovered and unrecognised outcomes are never rounded up to success', () => {
+  const recovered = callFixture(callId(1), { state: 'recovered', ended_at: null });
+  assert.equal(kind(recovered), 'recovered');
+  assert.equal(statusBadge(callStatus(recovered)).tone, 'warning');
+  // Even a recorded 200 head with a completed body is unknown after restart.
+  assert.equal(kind({ ...recovered, status: 200, terminal: 'body_complete' }), 'recovered');
+  assert.equal(kind({ ...recovered, status: 500 }), 'error');
+  assert.equal(modelState(recovered), 'Unknown · restart');
+  assert.equal(kind(finished({ outcome: 'unknown' })), 'unknown');
+  assert.equal(kind(finished({ outcome: unknownLabel('future_outcome') })), 'unknown');
+  assert.equal(kind(finished({ terminal: unknownLabel('future_terminal') })), 'unknown');
+  assert.equal(kind(finished({ state: unknownLabel('future_state') })), 'unknown');
+  assert.equal(kind(finished({ terminal: null, status: 200 })), 'unknown');
+  for (const call of [recovered, finished({ outcome: 'unknown' })])
+    assert.notEqual(statusBadge(callStatus(call)).tone, 'success');
+});
+
+test('badges and transport labels describe each state', () => {
+  assert.deepEqual(statusBadge(callStatus(finished({ outcome: 'completed' }))), {
+    label: 'Model completed',
+    tone: 'success',
+  });
+  assert.equal(statusBadge(callStatus(finished({ outcome: 'refused' }))).label, 'Refused');
+  assert.equal(transportState(finished({})), '200 · body EOF');
+  assert.equal(transportState(callFixture()), 'Transport pending');
+  assert.equal(transportState(callFixture(callId(1), { status: 200 })), '200 · pending');
+  assert.equal(transportState(callFixture(callId(1), { state: 'recovered' })), 'Unknown · restart');
+});
+
+test('duration remains unknown for open calls and formats observed time', () => {
+  assert.equal(duration(callFixture()), null);
+  assert.equal(elapsed(null), '—');
+  assert.equal(elapsed(duration(finished({ ended_at: 1250 as CallView['started_at'] }))), '250 ms');
+  assert.equal(elapsed(duration(finished({ ended_at: 4600 as CallView['started_at'] }))), '3.60 s');
+});
+
+test('capture labels remain independent of model and transport outcomes', () => {
+  const completed = finished({ outcome: 'completed', terminal: 'interrupted' });
+  assert.equal(captureState({ ...completed, capture_complete: false }), 'Partial capture');
+  assert.equal(captureState(completed), 'Complete capture');
+  assert.equal(captureState(callFixture()), 'Recording');
+  assert.equal(captureState(callFixture(callId(1), { state: 'recovered' })), 'Interrupted capture');
+});
+
+test('attempt endings name the recorded cause and phase, and nothing when absent', () => {
+  assert.equal(
+    attemptEnding({ terminal_cause: 'header_timeout', terminal_phase: 'awaiting_head' }),
+    'header timeout · in awaiting head',
+  );
+  assert.equal(attemptEnding({ terminal_cause: null, terminal_phase: 'response' }), 'in response');
+  assert.equal(attemptEnding({ terminal_cause: null, terminal_phase: null }), null);
+});
+
+test('websocket channels say how they ended and what was not stored', () => {
+  const channel = {
+    id: 'c' as never,
+    transport: 'websocket',
+    opened_at: 0 as never,
+    closed_at: null,
+    ending: null,
+    close_code: null,
+    unattributed_messages: 0,
+    unattributed_bytes: 0,
+  } as const;
+  assert.equal(channelState({ ...channel, transport: 'http' }), null);
+  assert.equal(channelState(channel), 'open');
+  assert.equal(
+    channelState({
+      ...channel,
+      ending: 'client_closed',
+      close_code: 1000,
+      unattributed_messages: 2,
+    }),
+    'client closed · code 1000 · 2 messages between calls (not stored)',
+  );
+  const mark = (direction: 'request' | 'response') =>
+    ({ direction, offset: 0, len: 1, payload: 'text', at: 0 as never }) as const;
+  assert.deepEqual(messageCounts([mark('request'), mark('response'), mark('response')]), {
+    request: 1,
+    response: 2,
+  });
+});
+
+test('a call TGV refused says so, whatever else was recorded', () => {
+  const paused = finishedFixture(callId(7), {
+    rejection: 'paused',
+    terminal: null,
+    status: null,
+    response: null,
+  });
+  assert.deepEqual(callStatus(paused), { kind: 'rejected', rejection: 'paused' });
+  assert.deepEqual(statusBadge(callStatus(paused)), { label: 'TGV · paused', tone: 'warning' });
+  // A label from a newer daemon is shown verbatim.
+  const newer = finishedFixture(callId(8), { rejection: unknownLabel('over_quota') });
+  assert.equal(statusBadge(callStatus(newer)).label, 'TGV · over quota');
+});

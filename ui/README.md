@@ -1,0 +1,132 @@
+# TGV UI
+
+An optional SvelteKit 3, Svelte 5, and TypeScript dashboard for browsing traffic,
+sessions, request/response payloads, and recorder health. It reads only the
+daemon's read-only management API. It never reads SQLite or provider credentials,
+and it never proxies inference: Claude Code, Codex, and Pi connect directly to the
+Rust daemon. The daemon stays fully functional with the UI stopped.
+
+```text
+Claude Code / Pi / Codex ───────────────> Rust daemon ──> Providers
+Browser ──> optional SvelteKit server ──> Rust management API
+```
+
+Pages: Traffic (`/traffic`, also `/`), Sessions (`/sessions`, `/sessions/:id`), and
+Recorder (`/recorder`). The selected call (`?call=`) and the filters live in the URL,
+so links, reloads, and Back/Forward work. With **Live updates** on, the UI follows the
+daemon's `/api/live` feed and refreshes when calls change. The UI requires management
+API version 1 and shows an explicit mismatch error for any other version.
+
+## Develop
+
+Use Bun (version pinned in `package.json`) and Node 22.17+. Start the daemon
+separately with `cargo run --locked -- serve`.
+
+```sh
+cd ui
+bun install --frozen-lockfile
+bun run dev
+```
+
+Open http://127.0.0.1:5173. Development and production run the same management
+handlers; there is no separate Vite proxy.
+
+## Build and run
+
+```sh
+bun run build
+bun run start
+```
+
+Open http://127.0.0.1:3000. The [Node adapter](https://svelte.dev/docs/kit/adapter-node)
+produces `build/`. Cargo never builds or embeds the UI.
+
+| Variable                 | Default                          | Purpose                                                                         |
+| ------------------------ | -------------------------------- | ------------------------------------------------------------------------------- |
+| `TGV_GATEWAY_URL`        | `http://127.0.0.1:8787`          | Daemon origin reached by the UI server                                          |
+| `TGV_PUBLIC_GATEWAY_URL` | Same as `TGV_GATEWAY_URL`        | Daemon origin displayed in the header and copied client commands                |
+| `HOST`                   | `127.0.0.1` with `bun run start` | UI listener address                                                             |
+| `PORT`                   | `3000` with `bun run start`      | UI listener port                                                                |
+| `ORIGIN`                 | Inferred from incoming request   | Set to the UI's external origin behind Tailscale Serve or another reverse proxy |
+
+Gateway URLs must be HTTP(S) origins, without credentials, paths, queries, or
+fragments, and must never point at the UI itself. `src/env.ts` validates them.
+`.env` files work in development only: `node build` doesn't load them, so export
+the variables or use a service environment file.
+
+To inspect a VPS daemon from a UI running on your laptop:
+
+```sh
+TGV_GATEWAY_URL=https://your-vps.your-tailnet.ts.net:8443 bun run start
+```
+
+The browser talks only to the UI origin. The UI server relays allowlisted GET/HEAD
+management requests to the daemon. It forwards no browser cookies or credentials
+and doesn't follow redirects. The UI has no authentication of its own: keep it on
+loopback or behind private Tailscale access, like the daemon.
+
+## Payload previews
+
+Payloads are rendered as inert text: images, links, HTML, and Markdown from captures
+are never executed or fetched. They stay in browser memory and are never written to
+browser storage; only the theme preference is stored. Partial, active, corrupt, and
+expired captures are marked explicitly. A parsed message doesn't prove model
+completion or tool execution.
+
+Preview limits (these limit display only, not forwarding or recording):
+
+- At most 256 KiB and 4,096 contiguous chunks per direction, stopping at the first gap.
+- Gzip and Zstandard decoding up to 512 KiB of output (8 MiB Zstandard window), with
+  at most two concurrent preview tasks.
+- Hex view up to 16 KiB. Readable view up to 100 cards, 128 KiB, and 2,000 SSE events.
+
+Use `tgv inspect --body … --output …` for complete captured bytes.
+
+## VPS service
+
+The UI service is independent of the daemon service. The VPS needs Node only if the
+UI runs there. Build in a checkout with Bun and Node, then deploy `build/`,
+`package.json`, and `bun.lock` together to `~/.local/share/tgv-ui`. Install
+dependencies there with `bun install --production --frozen-lockfile --ignore-scripts`.
+Don't deploy `.env` files, or `node_modules` built on another platform. Node must be
+at the absolute path used in the unit, typically `/usr/bin/node`.
+
+Install [`deploy/tgv-ui.service`](../deploy/tgv-ui.service) as
+`~/.config/systemd/user/tgv-ui.service` and create `~/.config/tgv/ui.env`:
+
+```ini
+TGV_GATEWAY_URL=http://127.0.0.1:8787
+TGV_PUBLIC_GATEWAY_URL=https://your-vps.your-tailnet.ts.net:8443
+ORIGIN=https://your-vps.your-tailnet.ts.net:8444
+```
+
+Start it and publish it on a separate **unused** Tailscale Serve port:
+
+```sh
+systemctl --user daemon-reload
+systemctl --user enable --now tgv-ui.service
+curl --fail http://127.0.0.1:3000/health
+tailscale serve status
+tailscale serve --bg --https=8444 http://127.0.0.1:3000
+```
+
+Clients keep using the daemon's port (8443). Preserve existing Serve routes, and
+keep both ports private (never Funnel). For lingering, follow the
+[daemon service instructions](../docs/deployment.md#vps-with-tailscale). Logs:
+`journalctl --user -u tgv-ui.service`. To upgrade, stop only `tgv-ui.service`,
+replace the build and dependencies, and start it again. To remove it, disable the
+service and run `tailscale serve --https=8444 off`. Forwarding and recording are
+unaffected either way.
+
+## Verify
+
+```sh
+bun run format:check
+bun run check
+bun run test
+bun run build
+```
+
+`tests/*.test.ts` holds focused unit tests that Node runs directly. There is no
+browser integration suite: verify UI changes manually with synthetic traffic through
+a separately running daemon.

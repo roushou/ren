@@ -1,0 +1,9 @@
+capture::AttemptTerminal: body_complete terminal_event not_sent refused acceptance_unknown stream_failed cancelled interrupted
+capture::TerminalCause: connect_failed stream_refused header_timeout send_failed idle_timeout body_error upstream_closed client shutdown operator
+capture::AttemptPhase: upload awaiting_head response
+capture::CallState: open finished recovered
+capture::CallRejection: too_large buffer_full upload_timeout upload_failed abandoned paused session_blocked blocked shutdown
+capture::BodyEnding: open ended unfinished
+capture::Omission: policy_limit queue_bytes queue_slots unrecorded storage_failure unattributed
+capture::ChannelEnd: client_closed upstream_closed client_failed upstream_failed drained aborted dropped recovered
+batch::ObservationKind: call_opened attempt_started response_head attempt_finished call_finished call_recovered channel_closed operator_action

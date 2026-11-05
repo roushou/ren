@@ -1,0 +1,115 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  merge_group:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  dprint:
+    name: dprint
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Check Markdown, JSON, and TOML formatting
+        uses: dprint/check@v2.3
+        with:
+          dprint-version: '0.56.0'
+
+  rust:
+    name: Rust (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    env:
+      CARGO_TERM_COLOR: always
+      RUST_BACKTRACE: 1
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Install the repository's pinned Rust toolchain
+        # rustup reads the channel and components from rust-toolchain.toml.
+        run: rustup show active-toolchain
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Check workspace
+        run: cargo check --workspace --locked
+
+      - name: Lint all targets
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
+      - name: Test workspace
+        run: cargo test --workspace --locked
+
+      - name: Build headless daemon
+        run: cargo build --workspace --locked
+
+  ui:
+    name: UI and Pi contracts
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: ui
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: '26'
+          package-manager-cache: false
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: ui/package.json
+
+      - name: Install UI dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Check formatting
+        run: bun run format:check
+
+      - name: Check Svelte and TypeScript
+        run: bun run check
+
+      - name: Test UI behavior
+        run: bun run test
+
+      - name: Build UI
+        run: bun run build
+
+      - name: Test Pi extension contracts
+        working-directory: .
+        run: node --test integrations/pi/tgv.test.mjs

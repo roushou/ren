@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <meta
+      name="description"
+      content="TGV — inspect your LLM gateway traffic, sessions, and capture health."
+    />
+    <script id="theme-init" nonce="%sveltekit.nonce%">
+      // Run before styles paint, without relaxing the server's script policy.
+      (() => {
+        let preference = 'system';
+        try {
+          const saved = localStorage.getItem('tgv.theme');
+          if (saved === 'light' || saved === 'dark') preference = saved;
+        } catch {
+          // Storage can be unavailable in restricted browser contexts.
+        }
+        document.documentElement.dataset.themePreference = preference;
+        document.documentElement.dataset.theme =
+          preference === 'system'
+            ? matchMedia('(prefers-color-scheme: dark)').matches
+              ? 'dark'
+              : 'light'
+            : preference;
+      })();
+    </script>
+    %sveltekit.head%
+  </head>
+  <body data-sveltekit-preload-data="off">
+    <div id="app">%sveltekit.body%</div>
+  </body>
+</html>

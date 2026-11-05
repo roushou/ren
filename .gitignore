@@ -1,0 +1,8 @@
+/target
+/ui/node_modules
+/ui/.svelte-kit
+/ui/dist
+/ui/build
+/ui/.env
+/ui/.env.*
+!/ui/.env.example
