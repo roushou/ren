@@ -679,7 +679,7 @@ impl InstallVps {
                     .args(["serve", "--bg", &format!("--https={port}"), target])
                     .run()?;
             }
-            Route::Gateway => Self::step(&format!(
+            Route::Target => Self::step(&format!(
                 "Tailscale Serve port {port} already proxies to {target}"
             )),
             route @ (Route::Funnel { .. } | Route::Other { .. } | Route::TcpForward) => {

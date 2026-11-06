@@ -1,5 +1,5 @@
 //! What `tailscale status --json` and `tailscale serve status --json` report,
-//! read only as far as publishing the gateway needs.
+//! read only as far as publishing the gateway and the UI needs.
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{collections::BTreeMap, fmt};
@@ -84,13 +84,13 @@ struct Handler {
     other: BTreeMap<String, Value>,
 }
 
-/// How a Serve HTTPS port relates to the gateway's listener.
+/// How a Serve HTTPS port relates to a local listener it should proxy to.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Route {
     /// Nothing listens on the port.
     Free,
-    /// The port already proxies only to the gateway, privately.
-    Gateway,
+    /// The port already proxies only to the target, privately.
+    Target,
     /// The port is open to the internet through Funnel.
     Funnel { host_port: String },
     /// The port serves something else.
@@ -109,7 +109,7 @@ impl ServeStatus {
         serde_json::from_str::<Option<Self>>(json).map(Option::unwrap_or_default)
     }
 
-    /// How `port` relates to a gateway listening at `target`
+    /// How `port` relates to a listener at `target`
     /// (`http://127.0.0.1:8787`).
     pub fn route(&self, port: u16, target: &str) -> Route {
         let port = port.to_string();
@@ -137,7 +137,7 @@ impl ServeStatus {
                         .is_some_and(|proxy| proxy.trim_end_matches('/') == target)
             });
         if ours {
-            Route::Gateway
+            Route::Target
         } else {
             Route::Other {
                 host_port: host_port.clone(),
@@ -152,7 +152,7 @@ impl fmt::Display for Route {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Free => f.write_str("free"),
-            Self::Gateway => f.write_str("proxies to the gateway"),
+            Self::Target => f.write_str("proxies to the target"),
             Self::Funnel { host_port } => write!(f, "{host_port} is public through Funnel"),
             Self::Other {
                 host_port,
@@ -189,7 +189,7 @@ mod tests {
     #[test]
     fn a_proxy_to_the_gateway_is_ours() {
         let json = r#"{"TCP":{"8443":{"HTTPS":true}},"Web":{"vps.t.ts.net:8443":{"Handlers":{"/":{"Proxy":"http://127.0.0.1:8787/"}}}}}"#;
-        assert_eq!(route(json), Route::Gateway);
+        assert_eq!(route(json), Route::Target);
     }
 
     #[test]
