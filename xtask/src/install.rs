@@ -122,6 +122,10 @@ pub enum InstallError {
     },
     #[error("Tailscale reports no MagicDNS name for this node, which the UI's origin needs")]
     NoDnsName,
+    #[error(
+        "Tailscale Serve did not publish port {port}. If it refused this user, run again with --sudo-tailscale (the choice is saved), or allow this user once with `sudo tailscale set --operator=$USER`"
+    )]
+    ServeRefused { port: u16 },
     #[error("Tailscale is {0}, not running: run `tailscale up` first")]
     TailscaleDown(String),
     #[error("Tailscale Serve port {port} is in use ({route}); choose another --https-port")]
@@ -747,10 +751,19 @@ impl InstallVps {
                 Self::step(&format!(
                     "Publishing {target} on the tailnet at port {port}"
                 ));
-                tailscale
+                let served = tailscale
                     .invocation()
                     .args(["serve", "--bg", &format!("--https={port}"), target])
-                    .run()?;
+                    .run();
+                match (served, tailscale) {
+                    (Ok(()), TailscaleCli::Direct | TailscaleCli::Sudo) => {}
+                    // Tailscale refuses Serve changes from a user who is not its
+                    // operator; its own message is already on the terminal.
+                    (Err(InstallError::Failed { .. }), TailscaleCli::Direct) => {
+                        return Err(InstallError::ServeRefused { port });
+                    }
+                    (Err(error), TailscaleCli::Direct | TailscaleCli::Sudo) => return Err(error),
+                }
             }
             Route::Target => Self::step(&format!(
                 "Tailscale Serve port {port} already proxies to {target}"
