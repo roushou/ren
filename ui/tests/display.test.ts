@@ -244,4 +244,8 @@ test('a body preview reads as chips, with gaps spelled out', () => {
       ['gzip', 'error'],
     ],
   );
+  assert.deepEqual(
+    labels({ decoding: { applied: 'brotli', integrity: 'verified', truncated: false } }).at(-1),
+    ['brotli ✓', 'neutral'],
+  );
 });

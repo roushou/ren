@@ -82,9 +82,9 @@ completion or tool execution.
 Preview limits (these limit display only, not forwarding or recording):
 
 - At most 256 KiB and 4,096 contiguous chunks per direction, stopping at the first gap.
-- Gzip and Zstandard decoding up to 512 KiB of output (8 MiB Zstandard window), with
-  at most two concurrent preview tasks.
-- Hex view up to 16 KiB. Readable view up to 100 cards, 128 KiB, and 2,000 SSE events.
+- Gzip, Zstandard, and Brotli decoding up to 512 KiB of output (8 MiB Zstandard
+  window), with at most two concurrent preview tasks.
+- Hex view up to 16 KiB. Readable view up to 400 cards, 512 KiB, and 2,000 SSE events.
 
 Use `tgv inspect --body … --output …` for complete captured bytes.
 

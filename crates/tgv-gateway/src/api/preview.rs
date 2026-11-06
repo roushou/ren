@@ -1,14 +1,15 @@
 //! Bounded presentation of a stored body prefix. Never used by forwarding.
 //!
-//! Compression is inferred from magic bytes for display only; inspection uses
-//! the recorded `Content-Encoding` instead. Decoded output is bounded, so a
+//! Gzip and zstd are recognised by their magic bytes. Brotli has none, so it
+//! is decoded only when the body's attempt recorded `Content-Encoding: br`;
+//! inspection always uses the recorded encoding. Decoded output is bounded, so a
 //! small compressed prefix cannot expand without limit.
 
 use serde::Serialize;
 use serde_with::{DeserializeFromStr, SerializeDisplay};
 use std::io::{self, Read};
 use strum::{Display, EnumString, IntoStaticStr, VariantArray};
-use tgv_protocol::label::Stored;
+use tgv_protocol::{encoding::ResponseEncoding, label::Stored};
 use tgv_recorder::capture::BodyEnding;
 use tgv_store::{PrefixLimit, view::BodyPrefix};
 
@@ -30,6 +31,8 @@ pub enum PreviewDecoding {
     Plain,
     GzipMagic,
     ZstdMagic,
+    /// From the recorded `Content-Encoding`, not from the bytes.
+    Brotli,
 }
 
 /// How much of the body a preview shows.
@@ -138,7 +141,7 @@ impl Previewer {
             PreviewExtent::Partial
         };
         let raw = RawContent::from_bytes(bytes, self.raw_limit);
-        let (text, decoding) = match Compression::infer(bytes) {
+        let (text, decoding) = match Compression::infer(bytes, prefix.encoding.as_ref()) {
             None => (
                 Text::from_bytes(bytes),
                 DecodingPreview {
@@ -251,6 +254,7 @@ impl Text {
 enum Compression {
     Gzip,
     Zstd,
+    Brotli,
 }
 
 struct Decoded {
@@ -260,13 +264,24 @@ struct Decoded {
 }
 
 impl Compression {
-    fn infer(bytes: &[u8]) -> Option<Self> {
+    /// Magic bytes first; then the recorded encoding, for Brotli only.
+    fn infer(bytes: &[u8], recorded: Option<&Stored<ResponseEncoding>>) -> Option<Self> {
         if bytes.starts_with(&[0x1f, 0x8b]) {
             Some(Self::Gzip)
         } else if bytes.starts_with(&[0x28, 0xb5, 0x2f, 0xfd]) {
             Some(Self::Zstd)
         } else {
-            None
+            match recorded {
+                Some(Stored::Known(ResponseEncoding::Brotli)) => Some(Self::Brotli),
+                Some(Stored::Known(
+                    ResponseEncoding::Identity
+                    | ResponseEncoding::Gzip
+                    | ResponseEncoding::Zstd
+                    | ResponseEncoding::Unsupported,
+                ))
+                | Some(Stored::Unknown(_))
+                | None => None,
+            }
         }
     }
 
@@ -274,6 +289,7 @@ impl Compression {
         match self {
             Self::Gzip => PreviewDecoding::GzipMagic,
             Self::Zstd => PreviewDecoding::ZstdMagic,
+            Self::Brotli => PreviewDecoding::Brotli,
         }
     }
 
@@ -285,6 +301,10 @@ impl Compression {
                 decoder.window_log_max(23)?;
                 Ok(Box::new(decoder))
             }
+            Self::Brotli => Ok(Box::new(brotli_decompressor::Decompressor::new(
+                bytes,
+                32 * 1024,
+            ))),
         }
     }
 
@@ -316,7 +336,7 @@ impl Compression {
 mod tests {
     use super::{DecodeIntegrity, PreviewDecoding, PreviewExtent, Previewer, RawFormat, TextEnd};
     use std::io::Write;
-    use tgv_protocol::label::Stored;
+    use tgv_protocol::{encoding::ResponseEncoding, label::Stored};
     use tgv_recorder::capture::BodyEnding;
     use tgv_store::view::{BodyPrefix, BodyView};
 
@@ -331,7 +351,37 @@ mod tests {
             bytes: bytes.to_vec(),
             gap: false,
             truncated: false,
+            encoding: None,
         }
+    }
+
+    #[test]
+    fn brotli_is_decoded_only_when_its_attempt_recorded_it() {
+        let text = br#"{"type":"error","error":{"type":"rate_limit_error"}}"#;
+        let mut encoded = Vec::new();
+        {
+            let mut encoder = brotli::CompressorWriter::new(&mut encoded, 4096, 5, 22);
+            encoder.write_all(text).unwrap();
+        }
+        let previewer = Previewer::default();
+        let recorded = BodyPrefix {
+            encoding: Some(Stored::Known(ResponseEncoding::Brotli)),
+            ..prefix(&encoded)
+        };
+        let preview = previewer.preview(recorded.clone());
+        assert_eq!(preview.text.as_deref().map(str::as_bytes), Some(&text[..]));
+        assert_eq!(preview.decoding.applied, PreviewDecoding::Brotli);
+        assert_eq!(preview.decoding.integrity, DecodeIntegrity::Verified);
+        // The bytes alone do not say Brotli: without the record, no guessing.
+        let unrecorded = previewer.preview(prefix(&encoded));
+        assert_eq!(unrecorded.decoding.applied, PreviewDecoding::Plain);
+        assert!(unrecorded.text.is_none());
+        // A cut stream decodes only as an unverified prefix, or fails.
+        let cut = previewer.preview(BodyPrefix {
+            bytes: encoded[..encoded.len() - 2].to_vec(),
+            ..recorded
+        });
+        assert_ne!(cut.decoding.integrity, DecodeIntegrity::Verified);
     }
 
     #[test]

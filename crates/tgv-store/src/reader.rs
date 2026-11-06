@@ -17,7 +17,10 @@ use sqlx::{
 };
 use std::{path::Path, sync::Arc, time::Duration};
 use tgv_protocol::inspect::ModelOutcome;
-use tgv_protocol::{direction::Direction, label::Labeled};
+use tgv_protocol::{
+    direction::Direction,
+    label::{Labeled, Stored},
+};
 use tgv_recorder::Observation;
 use tgv_recorder::batch::BodyKey;
 use tgv_recorder::{
@@ -253,12 +256,24 @@ impl Reader {
             .bind(i64::from(limit.segments).saturating_add(1))
             .fetch_all(&mut *tx)
             .await?;
+        let encoding = match body {
+            BodyKey::Response(attempt) => sqlx::query_scalar::<_, Option<String>>(
+                "SELECT response_encoding FROM attempts WHERE id = ?",
+            )
+            .bind(attempt.to_string())
+            .fetch_optional(&mut *tx)
+            .await?
+            .flatten()
+            .map(|label| Stored::from_label(&label)),
+            BodyKey::Request(_) | BodyKey::AttemptRequest(_) => None,
+        };
         tx.commit().await?;
         let mut prefix = BodyPrefix {
             body: view,
             bytes: Vec::new(),
             gap: false,
             truncated: false,
+            encoding,
         };
         let mut next = 0_u64;
         for (index, row) in rows.iter().enumerate() {

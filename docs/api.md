@@ -116,7 +116,9 @@ with AND; unknown parameters are rejected.
 `GET /api/calls/{id}/body/{request|response}` returns a bounded preview of the
 first 256 KiB, not a full export; use `tgv inspect --body … --output …` for
 complete captured bytes. The response body is the final attempt's. Previews decode
-gzip and Zstandard where possible and report the extent (`complete`, `partial`,
+gzip and Zstandard (recognised by their magic bytes) and Brotli (when the attempt
+recorded `Content-Encoding: br`, since Brotli has no magic bytes; `decoding.applied`
+is then `brotli`) where possible and report the extent (`complete`, `partial`,
 `truncated`, or `gap`), the observed size (`null` while the body is still open),
 and decoding integrity explicitly. Preview work is bounded and independent of
 forwarding. Bodies may contain private prompts or tool results and share the

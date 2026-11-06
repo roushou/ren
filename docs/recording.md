@@ -126,9 +126,11 @@ events, and absent terminal events. Parsing stops at the first capture gap;
 unknown events continue to pass through unchanged.
 
 Inspection reads only captured bytes. It is bounded to 1 MiB per SSE event, 16 MiB
-per JSON body, 64 MiB of decoded output, and 128 distinct tool calls. Gzip and
-Zstandard are decoded only for inspection; capture and forwarding keep the
-compressed bytes. Other encodings are reported as unavailable. Codex can omit
+per JSON body, 64 MiB of decoded output, and 128 distinct tool calls. Gzip,
+Zstandard, and Brotli are decoded only for inspection; capture and forwarding keep
+the compressed bytes. Other encodings, and several stacked encodings, are reported
+as unavailable. Responses recorded before Brotli support keep the label
+`unsupported`, so their previews stay raw bytes. Codex can omit
 `Content-Type` on `/responses`; TGV then assumes SSE and records the format as
 inferred. Metadata-only capture cannot provide usage or model completion.
 

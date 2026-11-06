@@ -290,7 +290,10 @@ impl<'a> Decoded<'a> {
         let encoding = ResponseEncoding::from_headers(headers);
         match encoding {
             ResponseEncoding::Identity => return Self::Identity(body),
-            ResponseEncoding::Gzip | ResponseEncoding::Zstd | ResponseEncoding::Unsupported => {}
+            ResponseEncoding::Gzip
+            | ResponseEncoding::Zstd
+            | ResponseEncoding::Brotli
+            | ResponseEncoding::Unsupported => {}
         }
         let Ok(mut decoder) = Decompressor::new(encoding) else {
             return Self::Opaque;

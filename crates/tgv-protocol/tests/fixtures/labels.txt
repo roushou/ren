@@ -9,7 +9,7 @@ messages::StopReason: end_turn stop_sequence tool_use max_tokens pause_turn mode
 messages::BlockKind: text thinking redacted_thinking tool_use server_tool_use mcp_tool_use web_search_tool_result mcp_tool_result
 messages::DocumentKind: message error
 encoding::ResponseFormat: event_stream json other unspecified websocket_messages
-encoding::ResponseEncoding: identity gzip zstd unsupported
+encoding::ResponseEncoding: identity gzip zstd brotli unsupported
 inspect::ModelOutcome: completed incomplete refused cancelled failed unknown
 inspect::Coverage: complete partial unavailable
 inspect::Limitation: unsupported_format unsupported_encoding capture_gap body_unfinished incomplete_event malformed_event malformed_field event_too_large document_too_large decoded_too_large decoding_error too_many_tool_calls too_many_unknown_kinds no_terminal_event

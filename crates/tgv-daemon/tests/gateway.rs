@@ -1686,3 +1686,65 @@ async fn a_declared_length_delivered_whole_is_a_complete_body_even_before_the_st
     let call = &recorded(dir.path()).await[0];
     assert!(call.capture_complete);
 }
+
+#[tokio::test]
+async fn brotli_responses_are_recorded_as_brotli_and_previewed_decoded() {
+    use std::io::Write as _;
+    let error = br#"{"type":"error","error":{"type":"rate_limit_error","message":"Error"}}"#;
+    let mut encoded = Vec::new();
+    {
+        let mut encoder = brotli::CompressorWriter::new(&mut encoded, 4096, 5, 22);
+        encoder.write_all(error).unwrap();
+    }
+    let body = Bytes::from(encoded);
+    let upstream = mock(Router::new().fallback(move || {
+        let body = body.clone();
+        async move {
+            Response::builder()
+                .status(429)
+                .header("content-type", "application/json")
+                .header("content-encoding", "br")
+                .body(Body::from(body))
+                .unwrap()
+        }
+    }))
+    .await;
+    let dir = tempfile::tempdir().unwrap();
+    let gateway = TestGateway::start(&config(&upstream), dir.path()).await;
+    let response = client()
+        .post(format!("{}/anthropic/v1/messages", gateway.base()))
+        .body("{}")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+    // Forwarded as sent: still compressed.
+    assert_eq!(response.headers()["content-encoding"], "br");
+    response.bytes().await.unwrap();
+    gateway.stop().await;
+    let id = recorded(dir.path()).await[0].id;
+    let gateway = TestGateway::start(&config(&upstream), dir.path()).await;
+    let preview: serde_json::Value = client()
+        .get(format!("{}/api/calls/{id}/body/response", gateway.base()))
+        .send()
+        .await
+        .unwrap()
+        .bytes()
+        .await
+        .map(|bytes| serde_json::from_slice(&bytes).unwrap())
+        .unwrap();
+    assert_eq!(preview["decoding"]["applied"], "brotli");
+    assert_eq!(preview["decoding"]["integrity"], "verified");
+    assert_eq!(preview["text"].as_str().unwrap().as_bytes(), &error[..]);
+    let detail: serde_json::Value = client()
+        .get(format!("{}/api/calls/{id}", gateway.base()))
+        .send()
+        .await
+        .unwrap()
+        .bytes()
+        .await
+        .map(|bytes| serde_json::from_slice(&bytes).unwrap())
+        .unwrap();
+    assert_eq!(detail["attempts"][0]["response_encoding"], "brotli");
+    gateway.stop().await;
+}

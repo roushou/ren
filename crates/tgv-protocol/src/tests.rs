@@ -539,6 +539,14 @@ fn encode(encoding: ResponseEncoding, body: &[u8]) -> Vec<u8> {
         ResponseEncoding::Identity => body.to_vec(),
         ResponseEncoding::Gzip => gzip(body),
         ResponseEncoding::Zstd => zstd::stream::encode_all(body, 3).unwrap(),
+        ResponseEncoding::Brotli => {
+            let mut encoded = Vec::new();
+            {
+                let mut encoder = brotli::CompressorWriter::new(&mut encoded, 4096, 5, 22);
+                encoder.write_all(body).unwrap();
+            }
+            encoded
+        }
         ResponseEncoding::Unsupported => unreachable!("not generated"),
     }
 }
@@ -563,6 +571,7 @@ proptest! {
             Just(ResponseEncoding::Identity),
             Just(ResponseEncoding::Gzip),
             Just(ResponseEncoding::Zstd),
+            Just(ResponseEncoding::Brotli),
         ],
         crlf in any::<bool>(),
         cuts in proptest::collection::vec(any::<usize>(), 0..32),

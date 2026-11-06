@@ -305,7 +305,7 @@ A transform step is `set_header`, `remove_header`, `json_set`, or `json_remove`
 - **Re-serialization.** The body is re-serialized (key order preserved) only when a
   step changed it, and stored as the attempt's own request body beside the
   client's original. Both are deduplicated, so this is cheap.
-- **Encoded requests.** The model is read from gzip and zstd requests, but body
+- **Encoded requests.** The model is read from gzip, zstd, and Brotli requests, but body
   steps do not run on them and they are not re-encoded.
 - **Never transformed:** responses and error bodies.
 
@@ -473,8 +473,8 @@ events and WebSocket messages alike.
 - Malformed input becomes a typed decode error, recorded as a limitation.
 - Outcome precedence is defined in one place (`ModelOutcome::merge`); `StopReason`
   and `ResponseStatus` cover every documented value plus `Unknown`.
-- Parsing stops at the first capture gap. Gzip and Zstandard are decoded only for
-  inspection; capture and forwarding keep the compressed bytes.
+- Parsing stops at the first capture gap. Gzip, Zstandard, and Brotli are decoded
+  only for inspection; capture and forwarding keep the compressed bytes.
 - Bounds: 1 MiB per SSE event, 16 MiB per JSON body, 64 MiB of decoded output, and
   128 distinct tool calls.
 - Stored inspection columns carry an `inspection_version`.

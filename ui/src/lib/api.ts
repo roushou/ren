@@ -168,7 +168,7 @@ const responseFormats = [
   'websocket_messages',
 ] as const;
 export type ResponseFormat = (typeof responseFormats)[number];
-const responseEncodings = ['identity', 'gzip', 'zstd', 'unsupported'] as const;
+const responseEncodings = ['identity', 'gzip', 'zstd', 'brotli', 'unsupported'] as const;
 export type ResponseEncoding = (typeof responseEncodings)[number];
 const observationKinds = [
   'call_opened',
@@ -204,7 +204,7 @@ const rawFormats = ['utf8', 'hex'] as const;
 export type RawFormat = (typeof rawFormats)[number];
 const textEnds = ['intact', 'split_character'] as const;
 export type TextEnd = (typeof textEnds)[number];
-const previewDecodings = ['none', 'gzip_magic', 'zstd_magic'] as const;
+const previewDecodings = ['none', 'gzip_magic', 'zstd_magic', 'brotli'] as const;
 export type PreviewDecoding = (typeof previewDecodings)[number];
 const decodeIntegrities = ['not_decoded', 'verified', 'prefix', 'failed'] as const;
 export type DecodeIntegrity = (typeof decodeIntegrities)[number];

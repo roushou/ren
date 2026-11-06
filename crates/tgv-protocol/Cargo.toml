@@ -11,6 +11,7 @@ description = "Sans-IO native protocol understanding for the TGV LLM gateway: SS
 # Sans-IO: only pure dependencies (docs/architecture.md). Never
 # add an async runtime, HTTP client or server, database driver, or CLI parser.
 [dependencies]
+brotli-decompressor.workspace = true
 flate2.workspace = true
 http.workspace = true
 serde.workspace = true
@@ -22,6 +23,7 @@ uuid.workspace = true
 zstd.workspace = true
 
 [dev-dependencies]
+brotli.workspace = true
 proptest.workspace = true
 
 [lints]

@@ -28,6 +28,7 @@ uuid = { workspace = true, features = ["v4"] }
 
 [dev-dependencies]
 axum.workspace = true
+brotli.workspace = true
 bytes.workspace = true
 futures-util.workspace = true
 http.workspace = true

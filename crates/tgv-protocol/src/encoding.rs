@@ -55,6 +55,8 @@ pub enum ResponseEncoding {
     Identity,
     Gzip,
     Zstd,
+    /// `Content-Encoding: br`.
+    Brotli,
     /// Several encodings, or one TGV does not decode.
     Unsupported,
 }
@@ -76,6 +78,8 @@ impl ResponseEncoding {
             Self::Gzip
         } else if value.eq_ignore_ascii_case(b"zstd") {
             Self::Zstd
+        } else if value.eq_ignore_ascii_case(b"br") {
+            Self::Brotli
         } else {
             Self::Unsupported
         }
@@ -102,7 +106,12 @@ enum Codec {
     Identity,
     Gzip(Box<flate2::write::MultiGzDecoder<Vec<u8>>>),
     Zstd(Box<ZstdStream>),
+    Brotli(Box<brotli_decompressor::DecompressorWriter<Vec<u8>>>),
 }
+
+/// Brotli's working buffer; the window it decodes with is the stream's own,
+/// at most 16 MiB (large windows are not enabled).
+const BROTLI_BUFFER: usize = 32 * 1024;
 
 struct ZstdStream {
     decoder: zstd::stream::raw::Decoder<'static>,
@@ -128,6 +137,7 @@ impl std::fmt::Debug for Decompressor {
             Codec::Identity => "identity",
             Codec::Gzip(_) => "gzip",
             Codec::Zstd(_) => "zstd",
+            Codec::Brotli(_) => "brotli",
         };
         f.debug_struct("Decompressor")
             .field("codec", &codec)
@@ -155,6 +165,9 @@ impl Decompressor {
                     frame: FrameState::Open,
                 }))
             }
+            ResponseEncoding::Brotli => Codec::Brotli(Box::new(
+                brotli_decompressor::DecompressorWriter::new(Vec::new(), BROTLI_BUFFER),
+            )),
             ResponseEncoding::Unsupported => return Err(DecodeFailure::Unsupported),
         };
         Ok(Self { codec })
@@ -181,6 +194,15 @@ impl Decompressor {
                 Ok(())
             }
             Codec::Zstd(stream) => stream.run(input, &mut out),
+            Codec::Brotli(decoder) => {
+                decoder
+                    .write_all(input)
+                    .map_err(|_| DecodeFailure::Corrupt)?;
+                let decoded = decoder.get_mut();
+                out(decoded);
+                decoded.clear();
+                Ok(())
+            }
         }
     }
 
@@ -199,6 +221,14 @@ impl Decompressor {
                 FrameState::Complete => Ok(()),
                 FrameState::Open => Err(DecodeFailure::Truncated),
             },
+            Codec::Brotli(mut decoder) => {
+                // `close` fails unless the stream reached its final block.
+                let result = decoder.close();
+                let decoded = decoder.get_mut();
+                out(decoded);
+                decoded.clear();
+                result.map_err(|_| DecodeFailure::Truncated)
+            }
         }
     }
 }
@@ -238,6 +268,15 @@ mod tests {
     use super::{DecodeFailure, Decompressor, ResponseEncoding, ResponseFormat};
     use http::{HeaderMap, HeaderValue, header};
     use std::io::Write;
+
+    fn brotli(bytes: &[u8]) -> Vec<u8> {
+        let mut encoded = Vec::new();
+        {
+            let mut encoder = brotli::CompressorWriter::new(&mut encoded, 4096, 5, 22);
+            encoder.write_all(bytes).unwrap();
+        }
+        encoded
+    }
 
     fn gzip(bytes: &[u8]) -> Vec<u8> {
         let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
@@ -331,9 +370,14 @@ mod tests {
 
     #[test]
     fn empty_fragments_after_a_complete_frame_do_not_reopen_it() {
-        for encoding in [ResponseEncoding::Gzip, ResponseEncoding::Zstd] {
+        for encoding in [
+            ResponseEncoding::Gzip,
+            ResponseEncoding::Zstd,
+            ResponseEncoding::Brotli,
+        ] {
             let encoded = match encoding {
                 ResponseEncoding::Gzip => gzip(b"payload"),
+                ResponseEncoding::Brotli => brotli(b"payload"),
                 ResponseEncoding::Zstd
                 | ResponseEncoding::Identity
                 | ResponseEncoding::Unsupported => {
@@ -356,6 +400,38 @@ mod tests {
         assert_eq!(
             Decompressor::new(ResponseEncoding::Unsupported).unwrap_err(),
             DecodeFailure::Unsupported
+        );
+    }
+
+    #[test]
+    fn brotli_decodes_incrementally_and_detects_truncation_and_corruption() {
+        let body: Vec<u8> =
+            br#"{"type":"error","error":{"type":"rate_limit_error","message":"Error"}}"#
+                .iter()
+                .copied()
+                .cycle()
+                .take(40_000)
+                .collect();
+        let encoded = brotli(&body);
+        for chunk in [1, 7, 4096, encoded.len()] {
+            let (decoded, end) = decode(ResponseEncoding::Brotli, &encoded, chunk);
+            assert_eq!(end, Ok(()), "chunk {chunk}");
+            assert_eq!(decoded, body, "chunk {chunk}");
+        }
+        let cut = &encoded[..encoded.len() - 3];
+        let (decoded, end) = decode(ResponseEncoding::Brotli, cut, 64);
+        assert_eq!(end, Err(DecodeFailure::Truncated));
+        assert!(body.starts_with(&decoded));
+        let mut corrupt = encoded.clone();
+        corrupt[0] = 0xff;
+        corrupt[1] = 0xff;
+        let (_, end) = decode(ResponseEncoding::Brotli, &corrupt, 64);
+        assert!(end.is_err());
+        let mut headers = HeaderMap::new();
+        headers.insert(header::CONTENT_ENCODING, HeaderValue::from_static("BR"));
+        assert_eq!(
+            ResponseEncoding::from_headers(&headers),
+            ResponseEncoding::Brotli
         );
     }
 }

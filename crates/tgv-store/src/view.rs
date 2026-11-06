@@ -435,6 +435,8 @@ pub struct BodyPrefix {
     pub gap: bool,
     /// The body continues past the prefix limit.
     pub truncated: bool,
+    /// The `Content-Encoding` its attempt recorded; `None` for request bodies.
+    pub encoding: Option<Stored<ResponseEncoding>>,
 }
 
 /// Real disk usage of one database file.
