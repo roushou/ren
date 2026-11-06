@@ -1975,9 +1975,9 @@ td.zero {
 :root[data-theme='dark'] {
   --chart: #3987e5;
 }
-/* Overview and Usage follow the Recorder console: one bordered block, its
-   sections touching, separated by 1px rules drawn as grid gaps over the
-   border color. Square corners throughout. */
+/* Overview and Usage fill the workspace edge to edge, like Traffic: their
+   sections touch, separated by 1px rules drawn as grid gaps over the border
+   color. No outer margin, square corners throughout. */
 .usage-page,
 .overview {
   flex: 1;
@@ -1988,8 +1988,7 @@ td.zero {
   display: flex;
   flex-direction: column;
   gap: 1px;
-  margin: 16px;
-  border: 1px solid var(--control-border);
+  border-bottom: 1px solid var(--control-border);
   background: var(--control-border);
 }
 .console > * {

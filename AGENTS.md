@@ -328,9 +328,10 @@ The same principles apply in TypeScript:
 - Use discriminated unions for states instead of loose flags.
 - Keep pure logic in `src/lib` modules that can be tested without a browser.
 
-Visual style: square and flush. Panels, sections, tiles, cards, chips, and chart
-marks have square corners and touch, separated by 1px rules (as on the Recorder
-page), never by gaps or margins between them. Only controls (buttons, inputs,
+Visual style: square and flush. Views fill the workspace edge to edge (as Traffic
+does), with no margin around them. Panels, sections, tiles, cards, chips, and chart
+marks have square corners and touch, separated by 1px rules, never by gaps or
+margins between them. Only controls (buttons, inputs,
 selects, segmented controls) round their corners, by 2-3px; switches and status
 dots are round.
 
