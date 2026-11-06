@@ -383,17 +383,77 @@ pub struct SessionView {
     /// outcome: the same calls the `errors` status filter finds.
     pub error_count: u64,
     /// Provider-reported tokens summed over the session's calls.
-    pub tokens: SessionTokens,
+    pub tokens: TokenTotals,
 }
 
-/// Token totals for a session; `None` when no call reported usage. Input
-/// counts cached context too, whichever way each call's provider accounts
-/// it, because cached context is most of a coding agent's input. Token
-/// counts are not subscription allowance or charges.
+/// Provider-reported tokens summed over calls; each is `None` when no call
+/// reported it. Input counts cached context too, whichever way each call's
+/// provider accounts it, because cached context is most of a coding agent's
+/// input; `cache_read` is the part of it read from the provider's cache.
+/// Token counts are not subscription allowance or charges.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-pub struct SessionTokens {
+pub struct TokenTotals {
     pub input: Option<u64>,
     pub output: Option<u64>,
+    pub cache_read: Option<u64>,
+}
+
+impl TokenTotals {
+    pub(super) fn from_row(row: &SqliteRow) -> Result<Self, StoreError> {
+        let row = Columns(row);
+        Ok(Self {
+            input: row.optional_count("input_tokens")?,
+            output: row.optional_count("output_tokens")?,
+            cache_read: row.optional_count("cache_read_tokens")?,
+        })
+    }
+}
+
+/// Calls, errors, and tokens over some set of calls.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct UsageCounts {
+    pub calls: u64,
+    /// The calls the `errors` status filter finds.
+    pub errors: u64,
+    pub tokens: TokenTotals,
+}
+
+impl UsageCounts {
+    pub(super) fn from_row(row: &SqliteRow) -> Result<Self, StoreError> {
+        let columns = Columns(row);
+        Ok(Self {
+            calls: columns.count("calls")?,
+            errors: columns.count("errors")?,
+            tokens: TokenTotals::from_row(row)?,
+        })
+    }
+}
+
+/// Usage over a time range, by the hour and by model.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct UsageView {
+    pub totals: UsageCounts,
+    /// Hours that had calls, oldest first, keyed by the hour's start (UTC).
+    /// Clients group them into local days.
+    pub hours: Vec<UsageBucket>,
+    /// Each reported model's usage, most input first. Calls without a
+    /// reported model are grouped under `null`.
+    pub models: Vec<ModelUsage>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct UsageBucket {
+    pub start: UnixMillis,
+    #[serde(flatten)]
+    pub usage: UsageCounts,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ModelUsage {
+    pub provider: Stored<Provider>,
+    pub model: Option<String>,
+    #[serde(flatten)]
+    pub usage: UsageCounts,
 }
 
 impl SessionView {
@@ -406,13 +466,10 @@ impl SessionView {
             native_id: row.text("native_id")?.unwrap_or_default(),
             first_seen: row.time("first_seen")?,
             last_seen: row.time("last_seen")?,
-            call_count: row.count("call_count")?,
+            call_count: row.count("calls")?,
             turn_count: row.count("turn_count")?,
-            error_count: row.count("error_count")?,
-            tokens: SessionTokens {
-                input: row.optional_count("input_tokens")?,
-                output: row.optional_count("output_tokens")?,
-            },
+            error_count: row.count("errors")?,
+            tokens: TokenTotals::from_row(row.0)?,
         })
     }
 }

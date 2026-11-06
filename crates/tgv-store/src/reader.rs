@@ -4,10 +4,11 @@
 use super::chunk::{ChunkHash, Codec, EncodedChunk};
 use crate::{
     Store, StoreError,
-    query::{CallQuery, Cursor, PageLimit, StatusFilter, ToolFilter},
+    query::{CallQuery, Cursor, PageLimit, StatusFilter, TimeRange, ToolFilter},
     view::{
         AttemptView, BodyPrefix, BodyView, CallDetail, CallPage, CallView, ChannelView, Columns,
-        DiskUsage, MessageView, OperatorActionView, SessionView, StorageView,
+        DiskUsage, MessageView, ModelUsage, OperatorActionView, SessionView, StorageView,
+        UsageBucket, UsageCounts, UsageView,
     },
     writer::BlobAccess,
 };
@@ -185,20 +186,10 @@ impl Reader {
 
     pub async fn sessions(&self, limit: PageLimit) -> Result<Vec<SessionView>, StoreError> {
         let mut sql = QueryBuilder::<Sqlite>::new(
-            "SELECT s.id, s.provider, s.source, s.native_id, s.first_seen, s.last_seen, (SELECT COUNT(*) FROM calls WHERE session = s.id) AS call_count, (SELECT COUNT(*) FROM turns WHERE session = s.id) AS turn_count, (SELECT COUNT(*) FROM calls c WHERE c.session = s.id",
+            "SELECT s.id, s.provider, s.source, s.native_id, s.first_seen, s.last_seen, (SELECT COUNT(*) FROM turns WHERE session = s.id) AS turn_count, ",
         );
-        // The same predicate as the `errors` status filter.
-        sql.push(" AND (c.status >= 400 OR c.terminal IN (");
-        CallQuery::push_terminals(&mut sql, TerminalClass::Failed);
-        sql.push(") OR c.outcome = ")
-            .push_bind(ModelOutcome::Failed.label())
-            .push(")) AS error_count, ");
-        // SUM over no reported usage is NULL, kept as "not reported".
-        sql.push("(SELECT SUM(COALESCE(json_extract(c.usage, '$.input_tokens'), 0) + CASE WHEN json_extract(c.usage, '$.accounting') = ")
-            .push_bind(InputAccounting::ExcludesCache.label())
-            .push(" THEN COALESCE(json_extract(c.usage, '$.cache_read_tokens'), 0) + COALESCE(json_extract(c.usage, '$.cache_creation_tokens'), 0) ELSE 0 END) FROM calls c WHERE c.session = s.id AND c.usage IS NOT NULL) AS input_tokens, ")
-            .push("(SELECT SUM(json_extract(c.usage, '$.output_tokens')) FROM calls c WHERE c.session = s.id AND c.usage IS NOT NULL) AS output_tokens ")
-            .push("FROM sessions s ORDER BY s.last_seen DESC, s.id DESC LIMIT ")
+        CallQuery::push_usage_columns(&mut sql);
+        sql.push(" FROM sessions s LEFT JOIN calls c ON c.session = s.id GROUP BY s.id ORDER BY s.last_seen DESC, s.id DESC LIMIT ")
             .push_bind(i64::from(limit.get()));
         sql.build()
             .fetch_all(&self.pool)
@@ -206,6 +197,57 @@ impl Reader {
             .iter()
             .map(SessionView::from_row)
             .collect()
+    }
+
+    /// Calls, errors, and tokens of the calls started in `range`: in total,
+    /// by the hour, and by model.
+    pub async fn usage(&self, range: TimeRange) -> Result<UsageView, StoreError> {
+        let select = |prefix: &str| {
+            let mut sql = QueryBuilder::<Sqlite>::new(prefix);
+            CallQuery::push_usage_columns(&mut sql);
+            sql.push(" FROM calls c WHERE 1 = 1");
+            CallQuery::push_range(&mut sql, range);
+            sql
+        };
+        let mut totals = select("SELECT ");
+        let totals = totals.build().fetch_one(&self.pool).await?;
+        let mut hours = select("SELECT (c.started_at / 3600000) * 3600000 AS start, ");
+        hours.push(" GROUP BY start ORDER BY start");
+        let hours = hours
+            .build()
+            .fetch_all(&self.pool)
+            .await?
+            .iter()
+            .map(|row| {
+                Ok(UsageBucket {
+                    start: Columns(row).time("start")?,
+                    usage: UsageCounts::from_row(row)?,
+                })
+            })
+            .collect::<Result<_, StoreError>>()?;
+        let mut models = select("SELECT c.provider, c.model, ");
+        models.push(
+            " GROUP BY c.provider, c.model ORDER BY input_tokens DESC NULLS LAST, calls DESC",
+        );
+        let models = models
+            .build()
+            .fetch_all(&self.pool)
+            .await?
+            .iter()
+            .map(|row| {
+                let columns = Columns(row);
+                Ok(ModelUsage {
+                    provider: columns.label("provider")?,
+                    model: columns.text("model")?,
+                    usage: UsageCounts::from_row(row)?,
+                })
+            })
+            .collect::<Result<_, StoreError>>()?;
+        Ok(UsageView {
+            totals: UsageCounts::from_row(&totals)?,
+            hours,
+            models,
+        })
     }
 
     /// The newest `limit` recorded operator commands, oldest first.
@@ -472,6 +514,36 @@ impl EncodedChunk {
 }
 
 impl CallQuery {
+    /// `calls`, `errors`, `input_tokens`, `output_tokens`, and
+    /// `cache_read_tokens` aggregated over the rows of `calls c`. Errors use
+    /// the same predicate as the `errors` status filter. Input adds cached
+    /// context where the provider reported it separately. A token SUM over
+    /// calls that reported no usage is NULL: "not reported", not zero.
+    fn push_usage_columns(sql: &mut QueryBuilder<Sqlite>) {
+        sql.push("COUNT(c.id) AS calls, COALESCE(SUM(CASE WHEN c.status >= 400 OR c.terminal IN (");
+        Self::push_terminals(sql, TerminalClass::Failed);
+        sql.push(") OR c.outcome = ")
+            .push_bind(ModelOutcome::Failed.label())
+            .push(" THEN 1 ELSE 0 END), 0) AS errors, ")
+            .push("SUM(CASE WHEN c.usage IS NULL THEN NULL ELSE COALESCE(json_extract(c.usage, '$.input_tokens'), 0) + CASE WHEN json_extract(c.usage, '$.accounting') = ")
+            .push_bind(InputAccounting::ExcludesCache.label())
+            .push(" THEN COALESCE(json_extract(c.usage, '$.cache_read_tokens'), 0) + COALESCE(json_extract(c.usage, '$.cache_creation_tokens'), 0) ELSE 0 END END) AS input_tokens, ")
+            .push("SUM(json_extract(c.usage, '$.output_tokens')) AS output_tokens, ")
+            .push("SUM(json_extract(c.usage, '$.cache_read_tokens')) AS cache_read_tokens");
+    }
+
+    /// `AND` clauses for calls started within `range`, both ends inclusive.
+    fn push_range(sql: &mut QueryBuilder<Sqlite>, range: TimeRange) {
+        if let Some(from) = range.from() {
+            sql.push(" AND c.started_at >= ")
+                .push_bind(i64::try_from(from.as_millis()).unwrap_or(i64::MAX));
+        }
+        if let Some(until) = range.until() {
+            sql.push(" AND c.started_at <= ")
+                .push_bind(i64::try_from(until.as_millis()).unwrap_or(i64::MAX));
+        }
+    }
+
     /// Append this query's filters as WHERE clauses.
     /// Bind every terminal label of one class, comma-separated.
     fn push_terminals(sql: &mut QueryBuilder<Sqlite>, class: TerminalClass) {
@@ -486,14 +558,7 @@ impl CallQuery {
 
     fn push_filters(&self, sql: &mut QueryBuilder<Sqlite>) {
         let filter = &self.filter;
-        if let Some(from) = filter.time.from() {
-            sql.push(" AND c.started_at >= ")
-                .push_bind(i64::try_from(from.as_millis()).unwrap_or(i64::MAX));
-        }
-        if let Some(until) = filter.time.until() {
-            sql.push(" AND c.started_at <= ")
-                .push_bind(i64::try_from(until.as_millis()).unwrap_or(i64::MAX));
-        }
+        Self::push_range(sql, filter.time);
         if let Some(provider) = filter.provider {
             sql.push(" AND c.provider = ").push_bind(provider.label());
         }

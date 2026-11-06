@@ -1748,3 +1748,69 @@ async fn brotli_responses_are_recorded_as_brotli_and_previewed_decoded() {
     assert_eq!(detail["attempts"][0]["response_encoding"], "brotli");
     gateway.stop().await;
 }
+
+#[tokio::test]
+async fn usage_reports_totals_by_hour_and_model_and_refuses_a_reversed_range() {
+    let upstream = mock(Router::new().fallback(|| async {
+        Response::builder()
+            .header("content-type", "application/json")
+            .body(Body::from(
+                r#"{"type":"message","model":"fixture-model","content":[{"type":"text","text":"hi"}],"stop_reason":"end_turn","usage":{"input_tokens":4,"output_tokens":2,"cache_read_input_tokens":40,"cache_creation_input_tokens":6}}"#,
+            ))
+            .unwrap()
+    }))
+    .await;
+    let dir = tempfile::tempdir().unwrap();
+    let gateway = TestGateway::start(&config(&upstream), dir.path()).await;
+    for _ in 0..2 {
+        client()
+            .post(format!("{}/anthropic/v1/messages", gateway.base()))
+            .body("{}")
+            .send()
+            .await
+            .unwrap()
+            .bytes()
+            .await
+            .unwrap();
+    }
+    gateway.stop().await;
+    let gateway = TestGateway::start(&config(&upstream), dir.path()).await;
+    let read = |query: &'static str| {
+        let base = gateway.base();
+        async move {
+            let response = client()
+                .get(format!("{base}/api/usage{query}"))
+                .send()
+                .await
+                .unwrap();
+            let status = response.status();
+            (status, response.bytes().await.unwrap())
+        }
+    };
+    let (status, body) = read("").await;
+    assert_eq!(status, StatusCode::OK);
+    let usage: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(usage["api_version"], 1);
+    assert_eq!(
+        usage["totals"],
+        serde_json::json!({
+            "calls": 2, "errors": 0,
+            "tokens": { "input": 2 * (4 + 40 + 6), "output": 4, "cache_read": 80 }
+        })
+    );
+    assert_eq!(usage["hours"].as_array().unwrap().len(), 1);
+    assert_eq!(usage["hours"][0]["calls"], 2);
+    assert_eq!(usage["models"][0]["model"], "fixture-model");
+    assert_eq!(usage["models"][0]["provider"], "anthropic");
+    let (status, body) = read("?from_ms=1&until_ms=2").await;
+    assert_eq!(status, StatusCode::OK);
+    let empty: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(empty["totals"]["calls"], 0);
+    assert_eq!(empty["totals"]["tokens"]["input"], serde_json::Value::Null);
+    assert_eq!(
+        read("?from_ms=2&until_ms=1").await.0,
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(read("?bucket=day").await.0, StatusCode::BAD_REQUEST);
+    gateway.stop().await;
+}

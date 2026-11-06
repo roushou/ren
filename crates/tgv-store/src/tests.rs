@@ -1009,3 +1009,97 @@ async fn sessions_total_their_errors_and_tokens_including_cached_input() {
         [(1, 0, None, None), (3, 1, Some(115 + 50), Some(10))]
     );
 }
+
+#[tokio::test]
+async fn usage_totals_by_hour_and_by_model_over_a_range() {
+    use crate::query::TimeRange;
+    use tgv_protocol::inspect::{InputAccounting, Usage};
+    use tgv_recorder::time::UnixMillis;
+    let mut fixture = Fixture::new().await;
+    let usage = |input, cache_read, output| Usage {
+        input_tokens: Some(input),
+        cache_read_tokens: Some(cache_read),
+        cache_creation_tokens: Some(0),
+        output_tokens: Some(output),
+        ..Usage::new(InputAccounting::ExcludesCache)
+    };
+    let start = fixture.clock.now().wall;
+    fixture
+        .record(CallSpec {
+            usage: Some(usage(10, 90, 5)),
+            ..CallSpec::default()
+        })
+        .await;
+    fixture
+        .record(CallSpec {
+            status: 429,
+            ..CallSpec::default()
+        })
+        .await;
+    // Two hours later, a different provider.
+    fixture.clock.advance(Duration::from_secs(2 * 3600));
+    fixture
+        .record(CallSpec {
+            provider: Provider::Codex,
+            usage: Some(usage(1, 0, 2)),
+            ..CallSpec::default()
+        })
+        .await;
+
+    let all = fixture.reader.usage(TimeRange::default()).await.unwrap();
+    assert_eq!((all.totals.calls, all.totals.errors), (3, 1));
+    assert_eq!(
+        (
+            all.totals.tokens.input,
+            all.totals.tokens.output,
+            all.totals.tokens.cache_read
+        ),
+        (Some(101), Some(7), Some(90))
+    );
+    // Hours with calls only, oldest first, each starting on the hour.
+    assert_eq!(
+        all.hours
+            .iter()
+            .map(|h| (h.usage.calls, h.start.as_millis() % 3_600_000))
+            .collect::<Vec<_>>(),
+        [(2, 0), (1, 0)]
+    );
+    // The fixture reports one model for every call; providers stay apart.
+    assert_eq!(
+        all.models
+            .iter()
+            .map(|m| (
+                m.provider.label().to_owned(),
+                m.model.clone(),
+                m.usage.calls
+            ))
+            .collect::<Vec<_>>(),
+        [
+            ("anthropic".to_owned(), Some("claude-test".to_owned()), 2),
+            ("codex".to_owned(), Some("claude-test".to_owned()), 1),
+        ]
+    );
+    // A range keeps only the calls started in it; an empty one reports
+    // nothing, with tokens "not reported" rather than zero.
+    let early = TimeRange::new(
+        Some(start),
+        Some(UnixMillis::from_millis(start.as_millis() + 3_600_000)),
+    )
+    .unwrap();
+    let first = fixture.reader.usage(early).await.unwrap();
+    assert_eq!((first.totals.calls, first.hours.len()), (2, 1));
+    let none = fixture
+        .reader
+        .usage(
+            TimeRange::new(
+                Some(UnixMillis::from_millis(1)),
+                Some(UnixMillis::from_millis(2)),
+            )
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!((none.totals.calls, none.totals.errors), (0, 0));
+    assert_eq!(none.totals.tokens.input, None);
+    assert!(none.hours.is_empty() && none.models.is_empty());
+}

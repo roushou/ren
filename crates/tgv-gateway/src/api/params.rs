@@ -33,6 +33,25 @@ pub(super) struct RawPageQuery {
     pub after: Option<String>,
 }
 
+/// `GET /api/usage` parameters: an inclusive range of call start times.
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct RawUsageQuery {
+    from_ms: Option<u64>,
+    until_ms: Option<u64>,
+}
+
+impl TryFrom<RawUsageQuery> for TimeRange {
+    type Error = QueryError;
+
+    fn try_from(raw: RawUsageQuery) -> Result<Self, Self::Error> {
+        TimeRange::new(
+            raw.from_ms.map(UnixMillis::from_millis),
+            raw.until_ms.map(UnixMillis::from_millis),
+        )
+    }
+}
+
 /// `GET /api/live` parameters.
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]

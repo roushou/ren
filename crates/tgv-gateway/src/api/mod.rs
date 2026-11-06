@@ -27,7 +27,7 @@ use axum::{
 };
 use http::{HeaderValue, StatusCode, header};
 use live::LiveFeed;
-use params::{RawCallQuery, RawLiveQuery, RawPageQuery};
+use params::{RawCallQuery, RawLiveQuery, RawPageQuery, RawUsageQuery};
 use preview::Previewer;
 use serde::Serialize;
 use std::sync::Arc;
@@ -40,7 +40,7 @@ use tgv_recorder::{
 use tgv_store::{
     Reader, StoreError,
     backup::Backup,
-    query::{CallQuery, QueryError},
+    query::{CallQuery, QueryError, TimeRange},
     view::{SessionView, StorageView},
 };
 use tokio::sync::Semaphore;
@@ -206,6 +206,7 @@ impl ApiState {
             .route("/api/calls/{id}/body/{direction}", get(Self::body))
             .route("/api/calls/{id}/body/{direction}/export", get(Self::export))
             .route("/api/sessions", get(Self::sessions))
+            .route("/api/usage", get(Self::usage))
             .route("/api/sessions/{id}/calls", get(Self::session_calls))
             .route("/api/live", get(Self::live))
             .route("/health", get(Self::health))
@@ -336,6 +337,14 @@ impl ApiState {
             body,
         )
             .into_response())
+    }
+
+    async fn usage(
+        State(state): State<Arc<Self>>,
+        Query(raw): Query<RawUsageQuery>,
+    ) -> Result<Response, ApiError> {
+        let range = TimeRange::try_from(raw)?;
+        Ok(Self::versioned(state.reader.usage(range).await?).into_response())
     }
 
     async fn sessions(
