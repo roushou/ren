@@ -159,7 +159,10 @@ cargo xtask install-vps --https-port 8443 --ui-https-port 8444
 ```
 
 It runs the steps below and is safe to repeat: run it again from the commit to
-deploy to upgrade. It refuses a checkout whose tracked files differ from the
+deploy to upgrade. After a successful run it saves its publishing flags
+(`--https-port`, `--ui-https-port`, `--sudo-tailscale`) to
+`~/.config/tgv/install-vps.toml`, so later runs need no flags:
+`cargo xtask install-vps`. Giving any publishing flag replaces the saved set. It refuses a checkout whose tracked files differ from the
 commit (`--allow-dirty` installs a `-dirty` build) and warns when the commit is on
 no remote branch. It builds the release binary while the old daemon keeps
 serving, creates `~/.config/tgv/tgv.toml` only if missing, and checks the

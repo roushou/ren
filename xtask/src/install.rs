@@ -8,6 +8,7 @@
 use crate::{
     daemon::{Admission, CheckStatus, ControlState, DoctorReport},
     invocation::{Echo, Invocation},
+    publish::Publish,
     tailscale::{NodeStatus, Route, ServeStatus},
     ui::{UiDeploy, UiUrls},
 };
@@ -31,13 +32,10 @@ use tgv_harness::host::HostEnv;
 /// Provider credentials and client configuration are never touched.
 #[derive(Args)]
 pub struct InstallVps {
-    /// Publish the listener privately with Tailscale Serve on this HTTPS port
-    /// (for example 8443). Without it, Tailscale is left untouched.
-    #[arg(long, value_parser = clap::value_parser!(u16).range(1..))]
-    https_port: Option<u16>,
-    /// Use `sudo -n` for the Serve step only.
-    #[arg(long, requires = "https_port")]
-    sudo_tailscale: bool,
+    /// Publishing choices; with none given, the ones saved by the last
+    /// successful run.
+    #[command(flatten)]
+    publish: Publish,
     /// Skip `tgv control backup` before replacing a running daemon.
     #[arg(long)]
     skip_backup: bool,
@@ -49,11 +47,6 @@ pub struct InstallVps {
     /// without having changed anything.
     #[arg(long, value_name = "SECONDS", default_value_t = 900)]
     idle_timeout: u64,
-    /// Also build and run the UI as `tgv-ui.service`, published privately
-    /// on this HTTPS port (for example 8444). Without it, the UI is left
-    /// untouched.
-    #[arg(long, requires = "https_port", value_parser = clap::value_parser!(u16).range(1..))]
-    ui_https_port: Option<u16>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -111,6 +104,8 @@ pub enum InstallError {
     Busy { running: usize, waited: u64 },
     #[error("the daemon does not run the build just installed: {0}")]
     BuildMismatch(String),
+    #[error("{} does not hold valid install-vps flags; fix or delete it", .0.display())]
+    SavedOptions(PathBuf),
     #[error("{0} is not on PATH")]
     MissingProgram(&'static str),
     #[error("deploy/tgv-ui.service no longer has the line {0:?} to render")]
@@ -264,15 +259,17 @@ impl InstallVps {
         } else {
             Backup::Run
         };
-        let tailscale = if self.sudo_tailscale {
+        Self::preflight()?;
+        let layout = Layout::new(env)?;
+        let saved = Publish::path(&layout.home);
+        let publish = self.publish.resolve(&saved)?;
+        let tailscale = if publish.sudo_tailscale {
             TailscaleCli::Sudo
         } else {
             TailscaleCli::Direct
         };
-        Self::preflight()?;
-        let layout = Layout::new(env)?;
         let tree = Self::check_tree(&layout, self.allow_dirty)?;
-        let ui = match self.ui_https_port {
+        let ui = match publish.ui_https_port {
             Some(_) => Some(UiDeploy::new(env, &layout.home, &layout.repo)?),
             None => None,
         };
@@ -286,7 +283,7 @@ impl InstallVps {
         let replaced = Self::replace(&layout, &built, backup, tree);
         Self::release(&layout, quiet);
         replaced?;
-        let dns = match self.https_port {
+        let dns = match publish.https_port {
             Some(port) => {
                 let dns = Self::publish(tailscale, port, &format!("http://{}", config.listen))?;
                 let url = Self::url(dns.as_deref(), port);
@@ -297,7 +294,9 @@ impl InstallVps {
             }
             None => None,
         };
-        if let (Some(ui), Some(ui_port), Some(port)) = (&ui, self.ui_https_port, self.https_port) {
+        if let (Some(ui), Some(ui_port), Some(port)) =
+            (&ui, publish.ui_https_port, publish.https_port)
+        {
             let dns = dns.as_deref().ok_or(InstallError::NoDnsName)?;
             ui.install(&UiUrls {
                 gateway: format!("http://{}", config.listen),
@@ -307,6 +306,7 @@ impl InstallVps {
             Self::publish(tailscale, ui_port, UiDeploy::TARGET)?;
             println!("\nUI: {}\n", Self::url(Some(dns), ui_port));
         }
+        publish.save(&saved)?;
         Self::step("Done");
         Ok(())
     }

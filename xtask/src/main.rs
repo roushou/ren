@@ -2,6 +2,7 @@
 mod daemon;
 mod install;
 mod invocation;
+mod publish;
 mod tailscale;
 mod ui;
 
