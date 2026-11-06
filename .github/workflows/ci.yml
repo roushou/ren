@@ -112,4 +112,4 @@ jobs:
 
       - name: Test Pi extension contracts
         working-directory: .
-        run: node --test integrations/pi/tgv.test.mjs
+        run: node --test crates/tgv-harness/pi/tgv.test.mjs

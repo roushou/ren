@@ -201,7 +201,7 @@ Verify with the installed Pi CLI without real credentials or inference charges:
 
 ```sh
 cargo build --locked
-node --test integrations/pi/tgv.test.mjs
+node --test crates/tgv-harness/pi/tgv.test.mjs
 python3 scripts/smoke-pi.py
 ```
 

@@ -48,7 +48,7 @@ pub struct PiCache {
 }
 
 impl PiCache {
-    pub const SOURCE: &'static str = include_str!("../../../integrations/pi/tgv.mjs");
+    pub const SOURCE: &'static str = include_str!("../pi/tgv.mjs");
     /// Shown in dry runs instead of the cache path.
     pub const PLACEHOLDER: &'static str = "<TGV-managed Pi extension>";
 

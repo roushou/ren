@@ -247,7 +247,7 @@ dependencies under "Crates" below. Read the code for current module ownership.
   reads the daemon only through the management API and forwards only allowlisted
   read-only endpoints. It never forwards browser cookies or credentials, never reads
   storage directly, and never proxies inference.
-- `integrations/pi`: the embedded Pi extension and its dependency-free contract tests.
+- `crates/tgv-harness/pi`: the embedded Pi extension and its dependency-free contract tests.
   Pi owns provider authentication, refresh, payload conversion, and retries.
 - `deploy`: systemd units. `scripts`: manual smoke tests for Pi, systemd, and launchd.
 
@@ -347,7 +347,7 @@ Verify changed UI interactions manually in a browser with synthetic traffic. Kee
 focused unit tests and don't add a browser integration suite yet. UI changes don't
 require rebuilding Rust.
 
-Pi integration changes: `node --test integrations/pi/tgv.test.mjs`. When Pi is
+Pi integration changes: `node --test crates/tgv-harness/pi/tgv.test.mjs`. When Pi is
 installed, build TGV and run `python3 scripts/smoke-pi.py`; it uses isolated config
 and OAuth-shaped fixture credentials against local mocks. Passing mock tests does
 not establish live subscription access.
