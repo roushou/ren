@@ -330,7 +330,8 @@ The same principles apply in TypeScript:
 
 Use filesystem routes and typed load functions. Private HTML, route data, and API
 responses are non-cacheable. SvelteKit generates CSP nonces, including for the
-inline theme initializer. Never commit generated assets (`ui/build`, `.svelte-kit`).
+inline theme initializer. The policy lives in `ui/src/csp.ts`; its only inline
+allowance is SvelteKit's route announcer style, by hash, pinned by `tests/csp.test.ts`. Never commit generated assets (`ui/build`, `.svelte-kit`).
 
 ---
 
