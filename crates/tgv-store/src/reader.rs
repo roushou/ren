@@ -7,7 +7,7 @@ use crate::{
     query::{CallQuery, Cursor, PageLimit, StatusFilter, ToolFilter},
     view::{
         AttemptView, BodyPrefix, BodyView, CallDetail, CallPage, CallView, ChannelView, Columns,
-        DiskUsage, MessageView, SessionView, StorageView,
+        DiskUsage, MessageView, OperatorActionView, SessionView, StorageView,
     },
     writer::BlobAccess,
 };
@@ -187,6 +187,20 @@ impl Reader {
             .await?
             .iter()
             .map(SessionView::from_row)
+            .collect()
+    }
+
+    /// The newest `limit` recorded operator commands, oldest first.
+    pub async fn operator_actions(
+        &self,
+        limit: PageLimit,
+    ) -> Result<Vec<OperatorActionView>, StoreError> {
+        sqlx::query("SELECT seq, at_wall, revision, actor, command FROM (SELECT * FROM operator_actions ORDER BY seq DESC LIMIT ?) ORDER BY seq")
+            .bind(i64::from(limit.get()))
+            .fetch_all(&self.pool)
+            .await?
+            .iter()
+            .map(OperatorActionView::from_row)
             .collect()
     }
 

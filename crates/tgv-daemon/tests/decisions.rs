@@ -18,7 +18,6 @@ use axum::{
 };
 use bytes::Bytes;
 use http::StatusCode;
-use sqlx::Connection;
 use std::{
     path::Path,
     sync::{
@@ -33,6 +32,7 @@ use tgv_recorder::{
     capture::{AttemptPhase, AttemptTerminal, CallRejection, TerminalCause},
     routing::UpstreamId,
 };
+use tgv_store::{Reader, query::PageLimit};
 use tokio::{sync::Notify, time::timeout};
 
 mod support;
@@ -127,13 +127,11 @@ fn rejection(call: &tgv_store::view::CallView) -> Option<CallRejection> {
     call.rejection.as_ref().and_then(Stored::known)
 }
 
-async fn operator_actions(dir: &Path) -> i64 {
-    let url = format!("sqlite://{}", dir.join("tgv.sqlite3").display());
-    let mut connection = sqlx::SqliteConnection::connect(&url).await.unwrap();
-    sqlx::query_scalar("SELECT COUNT(*) FROM operator_actions")
-        .fetch_one(&mut connection)
-        .await
-        .unwrap()
+async fn operator_actions(dir: &Path) -> usize {
+    let reader = Reader::open(dir, 1).await.unwrap();
+    let actions = reader.operator_actions(PageLimit::DEFAULT).await.unwrap();
+    reader.close().await;
+    actions.len()
 }
 
 #[tokio::test]

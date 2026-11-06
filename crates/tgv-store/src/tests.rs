@@ -776,6 +776,44 @@ async fn the_last_operator_snapshot_is_returned_as_stored() {
         }));
     }
     store.commit(&batch).await.unwrap();
+    // The log reads back oldest first, documents verbatim; a limit keeps the
+    // newest.
+    let reader = Reader::open(dir.path(), 1).await.unwrap();
+    let actions = reader.operator_actions(PageLimit::DEFAULT).await.unwrap();
+    assert_eq!(
+        actions
+            .iter()
+            .map(|action| (
+                action.revision,
+                action.actor.as_str(),
+                action.command.as_str()
+            ))
+            .collect::<Vec<_>>(),
+        [
+            (
+                OperatorRevision::restore(1),
+                r#"{"kind":"loopback"}"#,
+                r#"{"pause":{"retry_after":9}}"#
+            ),
+            (
+                OperatorRevision::restore(2),
+                r#"{"kind":"loopback"}"#,
+                r#""resume""#
+            ),
+        ]
+    );
+    assert!(
+        actions
+            .iter()
+            .all(|action| action.at == UnixMillis::from_millis(1_000))
+    );
+    let newest = reader
+        .operator_actions(PageLimit::new(1).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(newest.len(), 1);
+    assert_eq!(newest[0].revision, OperatorRevision::restore(2));
+    reader.close().await;
     store.close().await.unwrap();
 
     let (store, recovery) = Store::open(dir.path(), &clock, ids.clone()).await.unwrap();

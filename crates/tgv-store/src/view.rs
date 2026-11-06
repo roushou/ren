@@ -17,7 +17,9 @@ use tgv_protocol::{
     websocket::Payload,
 };
 use tgv_recorder::Observation;
+use tgv_recorder::batch::Recorded;
 use tgv_recorder::inspection::{InspectionRecord, UsageRecord};
+use tgv_recorder::routing::OperatorRevision;
 use tgv_recorder::{
     capture::{
         AttemptPhase, AttemptTerminal, BodyEnding, CallRejection, CallState, ChannelEnd,
@@ -387,6 +389,39 @@ impl SessionView {
             last_seen: row.time("last_seen")?,
             call_count: row.count("call_count")?,
             turn_count: row.count("turn_count")?,
+        })
+    }
+}
+
+/// One recorded operator command, as the gateway serialized it.
+#[derive(Debug, Clone, Serialize)]
+pub struct OperatorActionView {
+    pub seq: u64,
+    pub at: UnixMillis,
+    /// The operator state revision the command made.
+    pub revision: OperatorRevision,
+    /// Who issued it: the recorder's `Actor` document.
+    pub actor: Recorded,
+    /// The gateway's command document, never interpreted by the store.
+    pub command: Recorded,
+}
+
+impl OperatorActionView {
+    pub(super) fn from_row(row: &SqliteRow) -> Result<Self, StoreError> {
+        let row = Columns(row);
+        let document = |column| {
+            row.text(column)?
+                .ok_or(StoreError::Corrupt("operator action"))
+                .and_then(|text| {
+                    Recorded::restore(text).map_err(|_| StoreError::Corrupt("operator action"))
+                })
+        };
+        Ok(Self {
+            seq: row.count("seq")?,
+            at: row.time("at_wall")?,
+            revision: OperatorRevision::restore(row.count("revision")?),
+            actor: document("actor")?,
+            command: document("command")?,
         })
     }
 }

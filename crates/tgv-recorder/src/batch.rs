@@ -140,6 +140,11 @@ impl Recorded {
         serde_json::value::to_raw_value(value).map(Self)
     }
 
+    /// A document read back from storage; it must still be valid JSON.
+    pub fn restore(text: String) -> Result<Self, serde_json::Error> {
+        serde_json::value::RawValue::from_string(text).map(Self)
+    }
+
     pub fn as_str(&self) -> &str {
         self.0.get()
     }
