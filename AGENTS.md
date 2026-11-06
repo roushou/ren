@@ -256,15 +256,15 @@ dependencies under "Crates" below. Read the code for current module ownership.
 "Depends on" names the nearest crates below; a crate may also use lower ones
 directly.
 
-| Crate                    | Primary type                            | Depends on               |
-| ------------------------ | --------------------------------------- | ------------------------ |
-| `tgv-protocol`           | `CallInspector`                         | none of ours             |
-| `tgv-harness`            | `Harness` (`ClaudeCode`, `Codex`, `Pi`) | protocol                 |
-| `tgv-recorder`           | `Recorder`, with its `RecordSink` port  | protocol, harness        |
-| `tgv-store`              | `Store`, which implements `RecordSink`  | recorder                 |
-| `tgv-gateway`            | `Gateway`                               | harness, recorder, store |
-| `tgv-daemon`             | `Daemon`                                | gateway, store           |
-| `tgv-cli` (binary `tgv`) | `Cli`                                   | daemon                   |
+| Crate                                      | Primary type                            | Depends on               |
+| ------------------------------------------ | --------------------------------------- | ------------------------ |
+| `tgv-protocol`                             | `CallInspector`                         | none of ours             |
+| `tgv-harness`                              | `Harness` (`ClaudeCode`, `Codex`, `Pi`) | protocol                 |
+| `tgv-recorder`                             | `Recorder`, with its `RecordSink` port  | protocol, harness        |
+| `tgv-store`                                | `Store`, which implements `RecordSink`  | recorder                 |
+| `tgv-gateway`                              | `Gateway`                               | harness, recorder, store |
+| `tgv-daemon`                               | `Daemon`                                | gateway, store           |
+| `tgv-cli` (package `tgv-rs`, binary `tgv`) | `Cli`                                   | daemon                   |
 
 `docs/architecture.md` lists what each crate owns. These rules apply to every
 crate:
@@ -356,6 +356,13 @@ Service changes: `python3 scripts/smoke-systemd.py --binary <built-tgv>` as a
 non-root user with a systemd user manager (its `--https-port` option needs an unused
 Tailscale Serve port; preserve existing Serve routes and policy), or
 `python3 scripts/smoke-launchd.py` on macOS (tests `target/debug/tgv`).
+
+Publishing: every crate is published to crates.io, and the CLI package is
+`tgv-rs` (crates.io already has a `tgv`). Our own crates' versions in root
+`[workspace.dependencies]` must equal `workspace.package.version`. Check with
+`cargo package --workspace --locked`, which builds each crate from its packaged
+sources, then publish with `cargo publish --workspace --locked` (dependency order).
+A crate may include only files inside its own directory.
 
 Documentation-only changes don't require compiling; check the diff and that every
 referenced path exists.

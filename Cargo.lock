@@ -2334,32 +2334,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "tgv-cli"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "axum",
- "bytes",
- "clap",
- "futures-util",
- "reqwest",
- "serde",
- "serde_json",
- "tempfile",
- "tgv-daemon",
- "tgv-gateway",
- "tgv-harness",
- "tgv-protocol",
- "tgv-recorder",
- "tgv-store",
- "thiserror",
- "tokio",
- "tracing",
- "tracing-subscriber",
- "uuid",
-]
-
-[[package]]
 name = "tgv-daemon"
 version = "0.1.0"
 dependencies = [
@@ -2471,6 +2445,32 @@ dependencies = [
  "thiserror",
  "tokio",
  "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "tgv-rs"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "bytes",
+ "clap",
+ "futures-util",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tgv-daemon",
+ "tgv-gateway",
+ "tgv-harness",
+ "tgv-protocol",
+ "tgv-recorder",
+ "tgv-store",
+ "thiserror",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
  "uuid",
 ]
 

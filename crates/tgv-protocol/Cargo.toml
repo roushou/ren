@@ -2,8 +2,11 @@
 name = "tgv-protocol"
 version.workspace = true
 edition.workspace = true
+homepage.workspace = true
 license.workspace = true
-publish = false
+repository.workspace = true
+rust-version.workspace = true
+description = "Sans-IO native protocol understanding for the TGV LLM gateway: SSE framing, Anthropic Messages and OpenAI Responses vocabularies, and call inspection."
 
 # Sans-IO: only pure dependencies (docs/architecture.md). Never
 # add an async runtime, HTTP client or server, database driver, or CLI parser.

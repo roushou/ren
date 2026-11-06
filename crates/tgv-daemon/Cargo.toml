@@ -2,8 +2,11 @@
 name = "tgv-daemon"
 version.workspace = true
 edition.workspace = true
+homepage.workspace = true
 license.workspace = true
-publish = false
+repository.workspace = true
+rust-version.workspace = true
+description = "Configuration, resource wiring, and lifecycle of the TGV LLM gateway daemon."
 
 # Configuration, resource wiring, and service lifecycle. It holds the host's
 # clock and random IDs and the daemon's task spawns; HTTP handling belongs to

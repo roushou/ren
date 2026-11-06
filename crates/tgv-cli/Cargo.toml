@@ -1,12 +1,24 @@
 [package]
-name = "tgv-cli"
+name = "tgv-rs"
 version.workspace = true
+categories = ["command-line-utilities", "development-tools"]
 edition.workspace = true
+homepage.workspace = true
+keywords = ["llm", "gateway", "proxy", "claude", "codex"]
 license.workspace = true
-publish = false
+readme = "../../README.md"
+repository.workspace = true
+rust-version.workspace = true
+description = "TGV: a personal LLM gateway for Claude Code, Codex, and Pi that forwards and records native provider traffic."
 
 # The `tgv` binary: command-line parsing and dispatch, doctor, and service
 # definitions. `anyhow` is used only here (docs/architecture.md).
+# Published as `tgv-rs` (the `tgv` name is taken on crates.io); the library
+# keeps its role name and the binary stays `tgv`.
+[lib]
+name = "tgv_cli"
+path = "src/lib.rs"
+
 [[bin]]
 name = "tgv"
 path = "src/main.rs"

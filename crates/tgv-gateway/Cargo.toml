@@ -2,8 +2,11 @@
 name = "tgv-gateway"
 version.workspace = true
 edition.workspace = true
+homepage.workspace = true
 license.workspace = true
-publish = false
+repository.workspace = true
+rust-version.workspace = true
+description = "HTTP forwarding, management, and control interface of the TGV LLM gateway."
 
 # TGV's HTTP interface: forwarding, management, and controls. Management uses
 # the store's Reader and Backup; SQL stays in tgv-store. State machines and

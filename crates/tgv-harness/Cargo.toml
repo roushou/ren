@@ -2,8 +2,12 @@
 name = "tgv-harness"
 version.workspace = true
 edition.workspace = true
+exclude = ["pi/*.test.mjs"]
+homepage.workspace = true
 license.workspace = true
-publish = false
+repository.workspace = true
+rust-version.workspace = true
+description = "Claude Code, Codex, and Pi harness support for the TGV LLM gateway: attribution, launch plans, and the embedded Pi extension."
 
 # The harnesses and how TGV launches them. Never add an async runtime, HTTP
 # client or server, database driver, or CLI parser (docs/architecture.md).
