@@ -263,11 +263,10 @@
 </div>
 
 <style>
+  /* Edge to edge like the other views: no margin, no outer frame. */
   .recorder-console {
-    margin: 16px;
-    width: calc(100% - 32px);
-    max-width: 1120px;
-    border: 1px solid var(--control-border);
+    width: 100%;
+    border-bottom: 1px solid var(--control-border);
     flex-shrink: 0;
   }
   dl {
@@ -380,10 +379,6 @@
     margin-top: 6px;
   }
   @media (max-width: 720px) {
-    .recorder-console {
-      margin: 10px;
-      width: calc(100% - 20px);
-    }
     .storage-grid {
       grid-template-columns: minmax(0, 1fr);
     }
