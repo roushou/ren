@@ -1825,3 +1825,54 @@ td > .chip {
   justify-content: flex-end;
   margin: 0;
 }
+
+/* Loading: an indeterminate bar under the header while a view loads. It
+   appears only after a short delay, so fast navigations do not flicker. */
+.app-shell {
+  position: relative;
+}
+.nav-progress {
+  position: absolute;
+  top: 40px;
+  left: 0;
+  right: 0;
+  z-index: 20;
+  height: 2px;
+  overflow: hidden;
+  opacity: 0;
+  animation: progress-in 0s linear 120ms forwards;
+}
+.nav-progress::before {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 35%;
+  background: var(--accent);
+  animation: progress-run 1.1s ease-in-out infinite;
+}
+@keyframes progress-in {
+  to {
+    opacity: 1;
+  }
+}
+@keyframes progress-run {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(300%);
+  }
+}
+.workspace.navigating,
+.list-content.busy {
+  opacity: 0.6;
+  transition: opacity 0.15s ease 0.15s;
+  cursor: progress;
+}
+@media (prefers-reduced-motion: reduce) {
+  .nav-progress::before {
+    width: 100%;
+    animation: none;
+    opacity: 0.6;
+  }
+}

@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { goto, refreshAll } from '$app/navigation';
+  import { goto, preloadCode, refreshAll } from '$app/navigation';
   import { page, navigating } from '$app/state';
   import { createSnapshot } from '#lib/snapshot.svelte.ts';
   import { Workbench, setWorkbench } from '#lib/workbench.svelte.ts';
@@ -91,6 +91,12 @@
       workbench.manual = false;
     }
   }
+  // The views' code is small and static: fetch it once up front, so switching
+  // views waits only for data (which hovering a tab also starts).
+  onMount(() => {
+    for (const route of ['/traffic', '/sessions', '/recorder', '/sessions/[id]'] as const)
+      void preloadCode(route);
+  });
   onMount(() => {
     live = new LiveConnection({ refresh: reload, reload });
     return () => live?.destroy();
@@ -113,18 +119,21 @@
     <nav class="workbench-tabs" aria-label="Workbench views">
       <a
         href="/traffic"
+        data-sveltekit-preload-data="hover"
         class:active={view === 'traffic' && !sessionId}
         aria-current={view === 'traffic' && !sessionId ? 'page' : undefined}
         ><Icon name="logs" size={14} />Traffic</a
       >
       <a
         href="/sessions"
+        data-sveltekit-preload-data="hover"
         class:active={view === 'sessions' || !!sessionId}
         aria-current={view === 'sessions' || !!sessionId ? 'page' : undefined}
         ><Icon name="sessions" size={14} />Sessions</a
       >
       <a
         href="/recorder"
+        data-sveltekit-preload-data="hover"
         class:active={view === 'recorder'}
         aria-current={view === 'recorder' ? 'page' : undefined}
         ><Icon name="storage" size={14} />Recorder{#if loss || degraded}<span
@@ -166,7 +175,14 @@
         onclick={() => void refresh()}>Retry</button
       >
     </div>{/if}
-  <main class="workspace">{@render children()}</main>
+  {#if navigating.to}<div
+      class="nav-progress"
+      role="progressbar"
+      aria-label="Loading view"
+    ></div>{/if}
+  <main class="workspace" class:navigating={!!navigating.to} aria-busy={!!navigating.to}>
+    {@render children()}
+  </main>
   <footer class="statusline" aria-label="Gateway status">
     <span class="read-only">READ ONLY</span>
     <span

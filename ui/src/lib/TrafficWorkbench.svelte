@@ -1,11 +1,11 @@
 <script lang="ts">
-  import { onDestroy } from 'svelte';
+  import { onDestroy, untrack } from 'svelte';
   import { goto } from '$app/navigation';
   import { page, navigating } from '$app/state';
   import { getWorkbench } from './workbench.svelte.ts';
   import { createSnapshot } from './snapshot.svelte.ts';
   import type { Snapshot } from './snapshots.ts';
-  import type { TrafficData } from './loaders.ts';
+  import { offPageSelection, type OffPageSelection, type TrafficData } from './loaders.ts';
   import { CallId, type CallView, type SessionId } from './api.ts';
   import { num, short, title, clock, providerName, providerMark } from './api.ts';
   import {
@@ -61,27 +61,43 @@
     `tgv run ${connectClient}${gatewayOrigin !== 'http://127.0.0.1:8787' && gatewayOrigin !== 'http://localhost:8787' ? ` --gateway ${gatewayOrigin}` : ''}`,
   );
   const linkedCall = $derived(page.url.searchParams.get('call'));
+  // A clicked row is selected at once; the URL catches up a moment later.
+  let pending = $state<CallId | null>(null);
+  $effect(() => {
+    if (pending !== null && linkedCall === pending) pending = null;
+  });
   const selectedId = $derived(
-    linkedCall !== null
-      ? CallId.parse(linkedCall)
-      : page.url.searchParams.get('inspect') === 'off'
-        ? null
-        : calls[0]?.id,
+    pending ??
+      (linkedCall !== null
+        ? CallId.parse(linkedCall)
+        : page.url.searchParams.get('inspect') === 'off'
+          ? null
+          : calls[0]?.id),
   );
   let observed = $state<CallView | undefined>();
-  const offPage = $derived(retained.current.value?.selection);
+  // A linked call that is not on this page is read on its own; the listing
+  // never reloads for a selection.
+  let offPage = $state<OffPageSelection>({ kind: 'none' });
+  $effect(() => {
+    const raw = linkedCall;
+    const listed = calls;
+    if (raw === null || listed.some((call) => call.id === raw)) {
+      offPage = { kind: 'none' };
+      return;
+    }
+    const current = untrack(() => offPage);
+    if (current.kind === 'loaded' && current.call.id === raw) return;
+    const controller = new AbortController();
+    void offPageSelection(fetch, raw, listed, controller.signal).then((result) => {
+      if (!controller.signal.aborted) offPage = result;
+    });
+    return () => controller.abort();
+  });
   const selected = $derived(
-    selectedCall(
-      selectedId,
-      calls,
-      observed,
-      offPage?.kind === 'loaded' ? offPage.call : undefined,
-    ),
+    selectedCall(selectedId, calls, observed, offPage.kind === 'loaded' ? offPage.call : undefined),
   );
   const selectionError = $derived(
-    linkedCall !== null && !selected && snapshot.value?.selection.kind === 'failed'
-      ? snapshot.value.selection.message
-      : '',
+    linkedCall !== null && !selected && offPage.kind === 'failed' ? offPage.message : '',
   );
   $effect(() => {
     workbench.selected = selected;
@@ -140,10 +156,14 @@
     if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey)
       return;
     event.preventDefault();
+    pending = id;
     void goto(callHref(id), {
       reset: false,
       state: page.state,
       persistState: true,
+    }).finally(() => {
+      // Whether it landed or was superseded, the URL decides from here.
+      if (pending === id) pending = null;
     });
   }
   async function closeInspector() {
@@ -358,7 +378,7 @@
           >All sessions <Icon name="arrow" size={14} /></button
         >
       </div>{/if}
-    <div class="list-content">
+    <div class="list-content" class:busy={loading && calls.length > 0} aria-busy={loading}>
       {#if calls.length === 0}
         <div class="empty-state" class:first-run={!filterCount && !sessionId && !after}>
           <div class="empty-icon">

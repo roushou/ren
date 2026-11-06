@@ -22,7 +22,6 @@ export interface TrafficData {
   calls: CallView[];
   next: PageCursor | null;
   session: SessionView | undefined;
-  selection: OffPageSelection;
 }
 
 /** Listing filters `/api/calls` accepts, besides `limit`. */
@@ -41,8 +40,8 @@ const callFilters = [
 export function gatewaySnapshot(fetcher: typeof fetch) {
   const api = new ManagementApi(fetcher);
   return readSnapshot('gateway', async (): Promise<GatewayData> => {
-    const health = await api.health();
-    const storage = await api.storage();
+    // Health reads recorder counters, not storage, so the two run together.
+    const [health, storage] = await Promise.all([api.health(), api.storage()]);
     return { health, storage };
   });
 }
@@ -66,9 +65,11 @@ export async function trafficSnapshot(
     const value = url.searchParams.get(key);
     if (value) params.set(key, value);
   }
-  const rawCall = url.searchParams.get('call');
-  const callId = CallId.parse(rawCall);
-  const key = `${url.pathname}?${params}`;
+  // Kit re-runs a load on any URL change once it reads the whole URL (even
+  // `url.pathname`), but only on a named parameter's change when it reads
+  // parameters by name. So the key comes from the route, and the listing
+  // never reads `call`: selecting a call must not re-read the listing.
+  const key = `${sessionId ? `/sessions/${sessionId}` : '/traffic'}?${params}`;
   return readSnapshot(key, async (): Promise<TrafficData> => {
     // The bounded daemon reader is shared with body previews: query serially.
     let session: SessionView | undefined;
@@ -78,19 +79,31 @@ export async function trafficSnapshot(
     const page = sessionId
       ? await api.sessionCalls(sessionId, params.get('after'))
       : await api.calls(params);
-    let selection: OffPageSelection = { kind: 'none' };
-    if (rawCall && !callId)
-      selection = { kind: 'failed', message: 'The linked call ID is invalid.' };
-    else if (callId && !page.calls.some((call) => call.id === callId)) {
-      try {
-        selection = { kind: 'loaded', call: (await api.call(callId)).call };
-      } catch (error) {
-        selection = {
-          kind: 'failed',
-          message: snapshotError(error, 'Unable to load the selected call.').message,
-        };
-      }
-    }
-    return { calls: page.calls, next: page.next, session, selection };
+    return { calls: page.calls, next: page.next, session };
   });
+}
+
+/**
+ * A `?call=` link to a call that is not in `calls`: read that call alone.
+ * The workbench calls this, not the page load, so changing the selection
+ * never re-reads the listing.
+ */
+export async function offPageSelection(
+  fetcher: typeof fetch,
+  rawCall: string | null,
+  calls: CallView[],
+  signal?: AbortSignal,
+): Promise<OffPageSelection> {
+  if (rawCall === null) return { kind: 'none' };
+  const callId = CallId.parse(rawCall);
+  if (!callId) return { kind: 'failed', message: 'The linked call ID is invalid.' };
+  if (calls.some((call) => call.id === callId)) return { kind: 'none' };
+  try {
+    return { kind: 'loaded', call: (await new ManagementApi(fetcher).call(callId, signal)).call };
+  } catch (error) {
+    return {
+      kind: 'failed',
+      message: snapshotError(error, 'Unable to load the selected call.').message,
+    };
+  }
 }

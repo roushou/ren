@@ -5,6 +5,7 @@ import {
   gatewaySnapshot,
   recorderSnapshot,
   sessionsSnapshot,
+  offPageSelection,
   trafficSnapshot,
 } from '../src/lib/loaders.ts';
 import { ApiVersionError, ManagementApi, SessionId } from '../src/lib/api.ts';
@@ -42,7 +43,7 @@ test('background failure retains only the matching snapshot and recovery clears 
   assert.deepEqual(retainSnapshot(previous, recovered).value, ['new']);
 });
 
-test('gateway reads remain serial and accept degraded recorder health', async () => {
+test('gateway reads health and storage together and accept degraded recorder health', async () => {
   const calls: string[] = [];
   const result = await gatewaySnapshot(async (input) => {
     calls.push(path(input));
@@ -114,40 +115,36 @@ test('responses are parsed at the boundary: labels keep unknown text, shapes are
   assert.match(malformed.error?.message ?? '', /calls\[0\]\.id/);
 });
 
-test('deep links fetch off-page calls and distinguish missing selection from a failed list', async () => {
+test('the listing ignores the selection, and off-page selections load on their own', async () => {
   const older = finishedFixture(callId(9));
   const requested: string[] = [];
+  const fetcher = async (input: RequestInfo | URL) => {
+    requested.push(path(input));
+    return path(input).startsWith('/api/calls?')
+      ? versioned({ calls: [], next: null })
+      : versioned(detailFixture(older));
+  };
   const url = new URL(`http://localhost/traffic?call=${older.id}&model=fixture&unknown=ignored`);
-  const loaded = await trafficSnapshot(
-    async (input) => {
-      requested.push(path(input));
-      return path(input).startsWith('/api/calls?')
-        ? versioned({ calls: [], next: null })
-        : versioned(detailFixture(older));
-    },
-    url,
-    null,
+  const listing = await trafficSnapshot(fetcher, url, null);
+  assert.deepEqual(requested, ['/api/calls?limit=100&model=fixture']);
+  assert.deepEqual(listing.value?.calls, []);
+
+  requested.length = 0;
+  const loaded = await offPageSelection(fetcher, older.id, []);
+  assert.deepEqual(requested, [`/api/calls/${older.id}`]);
+  assert.ok(loaded.kind === 'loaded' && loaded.call.id === older.id);
+  // A listed call needs no read.
+  assert.deepEqual(await offPageSelection(fetcher, older.id, [older]), { kind: 'none' });
+  assert.deepEqual(await offPageSelection(fetcher, null, []), { kind: 'none' });
+
+  const missing = await offPageSelection(
+    async () => versioned({ error: 'not_found' }, { status: 404 }),
+    older.id,
+    [],
   );
-  assert.deepEqual(requested, ['/api/calls?limit=100&model=fixture', `/api/calls/${older.id}`]);
-  assert.equal(loaded.value?.selection.kind, 'loaded');
-  const missing = await trafficSnapshot(
-    async (input) =>
-      path(input).startsWith('/api/calls?')
-        ? versioned({ calls: [], next: null })
-        : versioned({ error: 'not_found' }, { status: 404 }),
-    url,
-    null,
-  );
-  assert.equal(missing.error, null);
-  const selection = missing.value?.selection;
-  assert.ok(selection?.kind === 'failed');
-  assert.match(selection.message, /no longer available/);
-  const invalid = await trafficSnapshot(
-    async () => versioned({ calls: [], next: null }),
-    new URL('http://localhost/traffic?call=nope'),
-    null,
-  );
-  assert.equal(invalid.value?.selection.kind, 'failed');
+  assert.ok(missing.kind === 'failed');
+  assert.match(missing.message, /no longer available/);
+  assert.equal((await offPageSelection(fetcher, 'nope', [])).kind, 'failed');
 });
 
 test('session pages read the session listing with only a cursor', async () => {
