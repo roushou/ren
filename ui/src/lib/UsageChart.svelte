@@ -35,15 +35,12 @@
   );
   let active = $state<number | null>(null);
 
-  /** A column with a 4px rounded top and a square base. */
+  /** A square column on the baseline. */
   function bar(index: number): string {
     const value = values[index];
     const x = GUTTER + index * band + (band - barWidth) / 2;
     const yTop = y(value);
-    const height = HEIGHT - yTop;
-    if (height <= 0) return '';
-    const r = Math.min(4, barWidth / 2, height);
-    return `M${x},${HEIGHT} V${yTop + r} Q${x},${yTop} ${x + r},${yTop} H${x + barWidth - r} Q${x + barWidth},${yTop} ${x + barWidth},${yTop + r} V${HEIGHT} Z`;
+    return HEIGHT - yTop <= 0 ? '' : `M${x},${HEIGHT} V${yTop} H${x + barWidth} V${HEIGHT} Z`;
   }
   const full = (value: number) => value.toLocaleString();
   const tip = $derived.by(() => {
@@ -102,7 +99,7 @@
       {/each}
       {#if tip}
         <g class="usage-tip" transform="translate({tip.x},{tip.y})" aria-hidden="true">
-          <rect width={tip.width} height="44" rx="6" />
+          <rect width={tip.width} height="44" />
           <text x="10" y="19" class="usage-tip-value">{tip.value}</text>
           <text x="10" y="35" class="usage-tip-label">{tip.when}</text>
         </g>

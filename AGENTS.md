@@ -328,6 +328,12 @@ The same principles apply in TypeScript:
 - Use discriminated unions for states instead of loose flags.
 - Keep pure logic in `src/lib` modules that can be tested without a browser.
 
+Visual style: square and flush. Panels, sections, tiles, cards, chips, and chart
+marks have square corners and touch, separated by 1px rules (as on the Recorder
+page), never by gaps or margins between them. Only controls (buttons, inputs,
+selects, segmented controls) round their corners, by 2-3px; switches and status
+dots are round.
+
 Use filesystem routes and typed load functions. Private HTML, route data, and API
 responses are non-cacheable. SvelteKit generates CSP nonces, including for the
 inline theme initializer. The policy lives in `ui/src/csp.ts`; its only inline

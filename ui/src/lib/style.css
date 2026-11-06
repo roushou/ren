@@ -1191,9 +1191,9 @@ tr.selected .row-link {
 /* Message cards: the role's color runs down the left edge and colors the label. */
 .body-card {
   --role: var(--role-system);
-  margin: 10px 0;
+  margin: 0;
   border-left: 2px solid var(--role);
-  border-radius: 0 6px 6px 0;
+  border-bottom: 1px solid var(--line-subtle);
   background: var(--surface-subtle);
 }
 .body-card.user {
@@ -1245,7 +1245,7 @@ tr.selected .row-link {
 }
 .card-detail {
   padding: 1px 6px;
-  border-radius: 4px;
+  border-radius: 0;
   background: var(--surface-inset);
   color: var(--ink);
   font-size: 11px;
@@ -1328,14 +1328,14 @@ tr.selected .row-link {
 }
 .markdown code {
   padding: 1px 5px;
-  border-radius: 4px;
+  border-radius: 0;
   background: var(--surface-inset);
   font-size: 0.92em;
 }
 .markdown .md-code {
   position: relative;
   border: 1px solid var(--line);
-  border-radius: 6px;
+  border-radius: 0;
   background: var(--surface-inset);
 }
 .markdown .md-code pre {
@@ -1394,7 +1394,7 @@ tr.selected .row-link {
 .markdown .md-image {
   padding: 0 4px;
   border: 1px dashed var(--line);
-  border-radius: 4px;
+  border-radius: 0;
   color: var(--muted);
 }
 
@@ -1412,7 +1412,7 @@ tr.selected .row-link {
   gap: 4px;
   padding: 1px 8px;
   border: 1px solid var(--line);
-  border-radius: 999px;
+  border-radius: 0;
   color: var(--muted);
   font-size: 11px;
   line-height: 18px;
@@ -1780,8 +1780,8 @@ td > .chip {
 .markdown .md-tagged {
   margin: 0 0 10px;
   padding: 4px 8px;
-  border: 1px dashed var(--line);
-  border-radius: 6px;
+  border: 1px solid var(--line);
+  border-radius: 0;
   color: var(--muted);
 }
 .markdown .md-tagged > summary {
@@ -1975,25 +1975,44 @@ td.zero {
 :root[data-theme='dark'] {
   --chart: #3987e5;
 }
-/* Sections keep their height; the page scrolls instead of squeezing them. */
-.usage-page > * {
-  flex-shrink: 0;
-}
-.usage-page {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-  padding: 16px;
-  overflow: auto;
+/* Overview and Usage follow the Recorder console: one bordered block, its
+   sections touching, separated by 1px rules drawn as grid gaps over the
+   border color. Square corners throughout. */
+.usage-page,
+.overview {
   flex: 1;
   min-height: 0;
+  overflow: auto;
 }
-.usage-controls {
+.console {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin: 16px;
+  border: 1px solid var(--control-border);
+  background: var(--control-border);
+}
+.console > * {
+  flex-shrink: 0;
+  background: var(--surface);
+}
+.usage-controls,
+.overview-health {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
+  gap: 8px;
+  padding: 10px 12px;
+  background: var(--surface-subtle);
+}
+.overview-health {
+  justify-content: flex-start;
+  gap: 6px;
+}
+.overview-health a.chip {
+  text-decoration: none;
+  cursor: pointer;
 }
 .segmented a {
   padding: 3px 8px;
@@ -2016,16 +2035,15 @@ td.zero {
 .usage-tiles {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(150px, 100%), 1fr));
-  gap: 10px;
+  gap: 1px;
+  background: var(--line);
 }
 .usage-tile {
   display: flex;
   flex-direction: column;
   gap: 2px;
-  padding: 12px 14px;
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  background: var(--surface);
+  padding: 12px;
+  background: var(--surface-subtle);
 }
 .usage-tile > span {
   color: var(--muted);
@@ -2043,10 +2061,8 @@ td.zero {
   color: var(--muted);
 }
 .usage-panel {
-  border: 1px solid var(--line);
-  border-radius: 6px;
+  min-width: 0;
   background: var(--surface);
-  overflow: visible;
 }
 .usage-panel .panel-heading {
   display: flex;
@@ -2054,20 +2070,23 @@ td.zero {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  padding: 10px 14px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--control-border);
 }
 .usage-panel .panel-heading h2 {
   margin: 0;
   font-size: 13px;
 }
-.usage-columns {
+.usage-columns,
+.overview-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(380px, 100%), 1fr));
-  gap: 14px;
+  gap: 1px;
+  background: var(--control-border);
 }
 .usage-chart {
   position: relative;
-  padding: 0 14px 10px;
+  padding: 12px 12px 10px;
 }
 .usage-chart svg {
   display: block;
@@ -2161,33 +2180,7 @@ td.zero {
   gap: 6px;
 }
 
-/* Overview: is everything fine, and what is happening now. */
-.overview {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-  padding: 16px;
-  overflow: auto;
-  flex: 1;
-  min-height: 0;
-}
-.overview > * {
-  flex-shrink: 0;
-}
-.overview-health {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-.overview-health a.chip {
-  text-decoration: none;
-  cursor: pointer;
-}
-.overview-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(380px, 100%), 1fr));
-  gap: 14px;
-}
+/* Overview rows. */
 .overview-list {
   margin: 0;
   padding: 0;
@@ -2226,16 +2219,15 @@ td.zero {
   font-weight: 500;
 }
 .overview-tiles {
-  padding: 0 14px 10px;
+  border-bottom: 1px solid var(--line);
 }
 .overview-connect {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 8px;
-  padding: 10px 14px;
-  border: 1px dashed var(--line);
-  border-radius: 6px;
+  padding: 10px 12px;
+  background: var(--surface-subtle);
 }
 .overview-connect code {
   font-size: 12px;
