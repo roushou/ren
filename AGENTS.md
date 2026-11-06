@@ -6,7 +6,7 @@ Anthropic and OpenAI subscriptions. One executable and one storage format serve 
 a laptop and a VPS reached through Tailscale.
 
 [`docs/architecture.md`](docs/architecture.md) describes how TGV is built and
-lists its known limitations. Section 4 below maps the seven crates.
+lists its known limitations. Section 4 below maps the seven crates and the `xtask` package.
 
 - All code follows the principles (section 2) and the workspace lints.
 - Never describe unbuilt functionality as working. Read the source before assuming
@@ -249,6 +249,12 @@ dependencies under "Crates" below. Read the code for current module ownership.
   storage directly, and never proxies inference.
 - `crates/tgv-harness/pi`: the embedded Pi extension and its dependency-free contract tests.
   Pi owns provider authentication, refresh, payload conversion, and retries.
+- `xtask`: repository tasks run with `cargo xtask` (alias in `.cargo/config.toml`),
+  with `Xtask` as its primary type; unpublished and outside `default-members`.
+  `cargo xtask install-vps` installs or upgrades TGV from a checkout as a
+  systemd user service and can publish it with Tailscale Serve. It is a shell:
+  it runs external commands and reads configuration through `tgv-daemon`'s
+  `Config`. Its Tailscale status parsing is unit-tested.
 - `deploy`: systemd units. `scripts`: manual smoke tests for Pi, systemd, and launchd.
 
 ### Crates
@@ -265,6 +271,7 @@ directly.
 | `tgv-gateway`                              | `Gateway`                               | harness, recorder, store |
 | `tgv-daemon`                               | `Daemon`                                | gateway, store           |
 | `tgv-cli` (package `tgv-rs`, binary `tgv`) | `Cli`                                   | daemon                   |
+| `xtask` (unpublished)                      | `Xtask`                                 | daemon                   |
 
 `docs/architecture.md` lists what each crate owns. These rules apply to every
 crate:

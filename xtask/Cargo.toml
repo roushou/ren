@@ -1,0 +1,23 @@
+[package]
+name = "xtask"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+repository.workspace = true
+
+# Repository tasks run with `cargo xtask` (.cargo/config.toml): host setup
+# from a checkout, never shipped. It is a shell: it runs cargo, systemctl,
+# loginctl, the built tgv, and tailscale, and reads configuration through
+# tgv-daemon's own parser.
+[dependencies]
+clap.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tempfile.workspace = true
+tgv-daemon.workspace = true
+tgv-harness.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true

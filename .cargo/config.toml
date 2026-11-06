@@ -1,0 +1,4 @@
+# `cargo xtask <task>`: repository tasks written in Rust (xtask/). Release
+# profile, so the tasks share dependency builds with the release binary.
+[alias]
+xtask = "run --release --locked --package xtask --"

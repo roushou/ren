@@ -1,0 +1,492 @@
+//! `cargo xtask install-vps`: install or upgrade TGV from this checkout as a
+//! Linux systemd user service, optionally published with Tailscale Serve.
+use crate::{
+    invocation::{Echo, Invocation},
+    tailscale::{NodeStatus, Route, ServeStatus},
+};
+use clap::Args;
+use std::{
+    fs,
+    io::Write as _,
+    os::unix::fs::{DirBuilderExt, PermissionsExt},
+    path::{Path, PathBuf},
+    process::ExitStatus,
+    thread,
+    time::Duration,
+};
+use tgv_daemon::config::{Config, ConfigError};
+use tgv_harness::host::HostEnv;
+
+/// Install or upgrade TGV from this checkout as a systemd user service.
+///
+/// Run on the host, as the user that owns the service, after every `git pull`.
+/// Each step checks the current state and changes only what differs. Provider
+/// credentials and client configuration are never touched.
+#[derive(Args)]
+pub struct InstallVps {
+    /// Publish the listener privately with Tailscale Serve on this HTTPS port
+    /// (for example 8443). Without it, Tailscale is left untouched.
+    #[arg(long, value_parser = clap::value_parser!(u16).range(1..))]
+    https_port: Option<u16>,
+    /// Use `sudo -n` for the Serve step only.
+    #[arg(long, requires = "https_port")]
+    sudo_tailscale: bool,
+    /// Skip `tgv control backup` before replacing a running daemon.
+    #[arg(long)]
+    skip_backup: bool,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum InstallError {
+    #[error("install-vps requires Linux with a systemd user manager")]
+    NotLinux,
+    #[error("run as the regular user that owns the service, not root")]
+    Root,
+    #[error("{0} is not set")]
+    MissingEnv(&'static str),
+    #[error("`{command}` could not start: {source}")]
+    Spawn {
+        command: String,
+        #[source]
+        source: std::io::Error,
+    },
+    #[error("`{command}` exited with {status}{detail}")]
+    Failed {
+        command: String,
+        status: ExitStatus,
+        detail: String,
+    },
+    #[error("unexpected output from `{command}`: {detail}")]
+    Output { command: String, detail: String },
+    #[error("{}: {source}", path.display())]
+    File {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+    #[error("invalid configuration {}: {source}", path.display())]
+    Config {
+        path: PathBuf,
+        #[source]
+        source: ConfigError,
+    },
+    #[error(
+        "backup failed; fix it, or copy {} yourself and pass --skip-backup",
+        data_dir.display()
+    )]
+    Backup { data_dir: PathBuf },
+    #[error(
+        "doctor reported a failed check; see `journalctl --user -u tgv`. To roll back, stop the service, move {} to {}, and start it",
+        previous.display(),
+        binary.display()
+    )]
+    Doctor { previous: PathBuf, binary: PathBuf },
+    #[error("Tailscale is {0}, not running: run `tailscale up` first")]
+    TailscaleDown(String),
+    #[error("Tailscale Serve port {port} is in use ({route}); choose another --https-port")]
+    PortTaken { port: u16, route: Route },
+}
+
+/// Whether to back up history before replacing a running daemon.
+#[derive(Clone, Copy)]
+enum Backup {
+    Run,
+    Skip,
+}
+
+/// How to run `tailscale` for the Serve step.
+#[derive(Clone, Copy)]
+enum TailscaleCli {
+    Direct,
+    Sudo,
+}
+
+impl TailscaleCli {
+    fn invocation(self) -> Invocation {
+        match self {
+            Self::Direct => Invocation::new("tailscale"),
+            Self::Sudo => Invocation::new("sudo").args(["-n", "tailscale"]),
+        }
+    }
+}
+
+/// `loginctl show-user -p Linger --value`.
+enum Linger {
+    Enabled,
+    Disabled,
+}
+
+impl Linger {
+    fn parse(text: &str) -> Self {
+        match text.trim() {
+            "yes" => Self::Enabled,
+            _ => Self::Disabled,
+        }
+    }
+}
+
+/// Where the checkout, binary, configuration, state, and unit live: the
+/// standard paths of docs/deployment.md.
+struct Layout {
+    repo: PathBuf,
+    cargo: PathBuf,
+    user: String,
+    bin_dir: PathBuf,
+    binary: PathBuf,
+    previous: PathBuf,
+    config: PathBuf,
+    data_dir: PathBuf,
+    unit: PathBuf,
+}
+
+const SERVICE: &str = "tgv.service";
+
+impl Layout {
+    fn new(env: &HostEnv) -> Result<Self, InstallError> {
+        let home = env
+            .absolute_path("HOME")
+            .ok_or(InstallError::MissingEnv("HOME"))?;
+        let user = env
+            .get("USER")
+            .ok_or(InstallError::MissingEnv("USER"))?
+            .to_owned();
+        let bin_dir = home.join(".local/bin");
+        Ok(Self {
+            // xtask/ sits at the root of the checkout.
+            repo: Path::new(env!("CARGO_MANIFEST_DIR"))
+                .parent()
+                .map_or_else(|| PathBuf::from("."), Path::to_path_buf),
+            // `cargo xtask` sets CARGO to the cargo running it.
+            cargo: env
+                .absolute_path("CARGO")
+                .unwrap_or_else(|| PathBuf::from("cargo")),
+            user,
+            binary: bin_dir.join("tgv"),
+            previous: bin_dir.join("tgv.previous"),
+            bin_dir,
+            config: home.join(".config/tgv/tgv.toml"),
+            data_dir: home.join(".local/state/tgv"),
+            unit: home.join(".config/systemd/user").join(SERVICE),
+        })
+    }
+
+    /// `tgv` with this layout's configuration and data directory.
+    fn tgv(&self, binary: &Path) -> Invocation {
+        Invocation::new(binary)
+            .arg("--config")
+            .arg(&self.config)
+            .arg("--data-dir")
+            .arg(&self.data_dir)
+    }
+}
+
+impl InstallError {
+    /// Wraps an I/O error with the path it concerns.
+    fn file(path: &Path) -> impl FnOnce(std::io::Error) -> Self + '_ {
+        move |source| Self::File {
+            path: path.to_path_buf(),
+            source,
+        }
+    }
+}
+
+impl InstallVps {
+    pub fn run(self, env: &HostEnv) -> Result<(), InstallError> {
+        let backup = if self.skip_backup {
+            Backup::Skip
+        } else {
+            Backup::Run
+        };
+        let tailscale = if self.sudo_tailscale {
+            TailscaleCli::Sudo
+        } else {
+            TailscaleCli::Direct
+        };
+        Self::preflight()?;
+        let layout = Layout::new(env)?;
+        let built = Self::build(&layout)?;
+        Self::seed_config(&layout)?;
+        let config = Self::load_config(&layout)?;
+        Self::install_binary(&layout, &built, backup)?;
+        Self::install_unit(&layout)?;
+        Self::enable_linger(&layout)?;
+        Self::doctor(&layout)?;
+        if let Some(port) = self.https_port {
+            Self::publish(tailscale, port, &format!("http://{}", config.listen))?;
+        }
+        Self::step("Done");
+        Ok(())
+    }
+
+    fn step(message: &str) {
+        println!("==> {message}");
+    }
+
+    fn preflight() -> Result<(), InstallError> {
+        if !cfg!(target_os = "linux") {
+            return Err(InstallError::NotLinux);
+        }
+        let id = Invocation::new("id").arg("-u");
+        let uid = id.capture()?;
+        let uid: u32 = uid.trim().parse().map_err(|_| InstallError::Output {
+            command: "id -u".to_owned(),
+            detail: uid.trim().to_owned(),
+        })?;
+        if uid == 0 {
+            return Err(InstallError::Root);
+        }
+        Invocation::new("systemctl")
+            .args(["--user", "show-environment"])
+            .capture()
+            .map(drop)
+    }
+
+    fn build(layout: &Layout) -> Result<PathBuf, InstallError> {
+        Self::step("Building the release binary");
+        Invocation::new(&layout.cargo)
+            .args(["build", "--release", "--locked", "--package", "tgv-rs"])
+            .args(["--bin", "tgv", "--manifest-path"])
+            .arg(layout.repo.join("Cargo.toml"))
+            .run()?;
+        let built = layout.repo.join("target/release/tgv");
+        fs::canonicalize(&built).map_err(InstallError::file(&built))
+    }
+
+    fn seed_config(layout: &Layout) -> Result<(), InstallError> {
+        let unit_dir = layout.unit.parent().unwrap_or(Path::new("/"));
+        let config_dir = layout.config.parent().unwrap_or(Path::new("/"));
+        for dir in [config_dir, unit_dir, &layout.bin_dir, &layout.data_dir] {
+            fs::DirBuilder::new()
+                .recursive(true)
+                .mode(0o700)
+                .create(dir)
+                .map_err(InstallError::file(dir))?;
+        }
+        if layout.config.exists() {
+            Self::step(&format!(
+                "Keeping existing configuration {}",
+                layout.config.display()
+            ));
+            return Ok(());
+        }
+        Self::step(&format!(
+            "Creating {} from tgv.example.toml (review it)",
+            layout.config.display()
+        ));
+        let example = layout.repo.join("tgv.example.toml");
+        let contents = fs::read(&example).map_err(InstallError::file(&example))?;
+        Self::write_private(&layout.config, &contents, 0o600)
+    }
+
+    /// The configuration the new binary will run with, checked before the
+    /// running service is touched. Operator keys live in the service's
+    /// environment, so only their presence in the file is checked.
+    fn load_config(layout: &Layout) -> Result<Config, InstallError> {
+        let error = |source| InstallError::Config {
+            path: layout.config.clone(),
+            source,
+        };
+        let config = Config::load(Some(&layout.config)).map_err(error)?;
+        config.check().map_err(error)?;
+        Ok(config)
+    }
+
+    fn service_active() -> Result<bool, InstallError> {
+        Invocation::new("systemctl")
+            .args(["--user", "is-active", "--quiet", SERVICE])
+            .succeeds(Echo::Hide)
+    }
+
+    fn install_binary(layout: &Layout, built: &Path, backup: Backup) -> Result<(), InstallError> {
+        let running = Self::service_active()?;
+        if running && layout.binary.exists() {
+            match backup {
+                Backup::Run => {
+                    Self::step("Backing up history with the running daemon");
+                    if !layout
+                        .tgv(&layout.binary)
+                        .args(["control", "backup"])
+                        .succeeds(Echo::Show)?
+                    {
+                        return Err(InstallError::Backup {
+                            data_dir: layout.data_dir.clone(),
+                        });
+                    }
+                }
+                Backup::Skip => Self::step("Skipping the history backup"),
+            }
+        }
+        if running {
+            Self::step("Stopping the service");
+            Invocation::new("systemctl")
+                .args(["--user", "stop", SERVICE])
+                .run()?;
+        }
+        if layout.binary.exists() {
+            fs::copy(&layout.binary, &layout.previous)
+                .map_err(InstallError::file(&layout.previous))?;
+        }
+        Self::step(&format!("Installing {}", layout.binary.display()));
+        let contents = fs::read(built).map_err(InstallError::file(built))?;
+        Self::write_private(&layout.binary, &contents, 0o755)
+    }
+
+    /// Publishes `contents` at `path` atomically, with `mode`.
+    fn write_private(path: &Path, contents: &[u8], mode: u32) -> Result<(), InstallError> {
+        let dir = path.parent().unwrap_or(Path::new("/"));
+        let mut file = tempfile::Builder::new()
+            .prefix(".tgv.")
+            .tempfile_in(dir)
+            .map_err(InstallError::file(dir))?;
+        file.write_all(contents).map_err(InstallError::file(path))?;
+        file.as_file()
+            .set_permissions(fs::Permissions::from_mode(mode))
+            .map_err(InstallError::file(path))?;
+        file.as_file()
+            .sync_all()
+            .map_err(InstallError::file(path))?;
+        file.persist(path)
+            .map_err(|error| InstallError::file(path)(error.error))?;
+        Ok(())
+    }
+
+    fn install_unit(layout: &Layout) -> Result<(), InstallError> {
+        let rendered = layout
+            .tgv(&layout.binary)
+            .args(["service", "render", "--manager", "systemd", "--binary"])
+            .arg(&layout.binary)
+            .capture()?;
+        let current = fs::read_to_string(&layout.unit).ok();
+        if current.as_deref() == Some(rendered.as_str()) {
+            Self::step(&format!("Unit {} is up to date", layout.unit.display()));
+        } else {
+            Self::step(&format!("Writing {}", layout.unit.display()));
+            let dir = layout.unit.parent().unwrap_or(Path::new("/"));
+            let mut staged = tempfile::Builder::new()
+                .prefix(".tgv.")
+                .suffix(".service")
+                .tempfile_in(dir)
+                .map_err(InstallError::file(dir))?;
+            staged
+                .write_all(rendered.as_bytes())
+                .map_err(InstallError::file(&layout.unit))?;
+            staged
+                .as_file()
+                .sync_all()
+                .map_err(InstallError::file(&layout.unit))?;
+            Invocation::new("systemd-analyze")
+                .args(["--user", "verify"])
+                .arg(staged.path())
+                .capture()?;
+            staged
+                .persist(&layout.unit)
+                .map_err(|error| InstallError::file(&layout.unit)(error.error))?;
+        }
+        Invocation::new("systemctl")
+            .args(["--user", "daemon-reload"])
+            .run()?;
+        Self::step("Enabling and starting the service");
+        Invocation::new("systemctl")
+            .args(["--user", "reset-failed", SERVICE])
+            .succeeds(Echo::Hide)?;
+        Invocation::new("systemctl")
+            .args(["--user", "enable", "--now", SERVICE])
+            .run()
+    }
+
+    fn enable_linger(layout: &Layout) -> Result<(), InstallError> {
+        let linger = Invocation::new("loginctl")
+            .args(["show-user", &layout.user, "-p", "Linger", "--value"])
+            .capture()
+            .map_or(Linger::Disabled, |text| Linger::parse(&text));
+        match linger {
+            Linger::Enabled => Self::step("Lingering is already enabled"),
+            Linger::Disabled => {
+                Self::step("Enabling lingering so the service runs after logout");
+                if !Invocation::new("loginctl")
+                    .args(["enable-linger", &layout.user])
+                    .succeeds(Echo::Show)?
+                {
+                    eprintln!(
+                        "warning: could not enable lingering; ask an administrator to run `loginctl enable-linger {}`",
+                        layout.user
+                    );
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn doctor(layout: &Layout) -> Result<(), InstallError> {
+        Self::step("Checking the daemon with tgv doctor");
+        let doctor = layout.tgv(&layout.binary).arg("doctor");
+        // The unit is Type=exec: started is not yet listening.
+        for _ in 0..10 {
+            if doctor.succeeds(Echo::Hide)? {
+                break;
+            }
+            thread::sleep(Duration::from_secs(1));
+        }
+        if doctor.succeeds(Echo::Show)? {
+            Ok(())
+        } else {
+            Err(InstallError::Doctor {
+                previous: layout.previous.clone(),
+                binary: layout.binary.clone(),
+            })
+        }
+    }
+
+    fn json<T>(
+        invocation: Invocation,
+        command: &str,
+        parse: fn(&str) -> Result<T, serde_json::Error>,
+    ) -> Result<T, InstallError> {
+        let text = invocation.capture()?;
+        parse(&text).map_err(|error| InstallError::Output {
+            command: command.to_owned(),
+            detail: error.to_string(),
+        })
+    }
+
+    fn publish(tailscale: TailscaleCli, port: u16, target: &str) -> Result<(), InstallError> {
+        let node = Self::json(
+            Invocation::new("tailscale").args(["status", "--json"]),
+            "tailscale status --json",
+            NodeStatus::parse,
+        )?;
+        if let Some(state) = node.not_running() {
+            return Err(InstallError::TailscaleDown(state.to_owned()));
+        }
+        let serve = Self::json(
+            Invocation::new("tailscale").args(["serve", "status", "--json"]),
+            "tailscale serve status --json",
+            ServeStatus::parse,
+        )?;
+        match serve.route(port, target) {
+            Route::Free => {
+                Self::step(&format!(
+                    "Publishing {target} on the tailnet at port {port}"
+                ));
+                tailscale
+                    .invocation()
+                    .args(["serve", "--bg", &format!("--https={port}"), target])
+                    .run()?;
+            }
+            Route::Gateway => Self::step(&format!(
+                "Tailscale Serve port {port} already proxies to {target}"
+            )),
+            route @ (Route::Funnel { .. } | Route::Other { .. } | Route::TcpForward) => {
+                return Err(InstallError::PortTaken { port, route });
+            }
+        }
+        let url = node.dns_name().map_or_else(
+            || format!("(port {port} on this node)"),
+            |name| format!("https://{name}:{port}"),
+        );
+        println!(
+            "\nGateway root URL for clients: {url}\n  tgv doctor --gateway {url}\n  tgv run claude --gateway {url}"
+        );
+        Ok(())
+    }
+}

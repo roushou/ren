@@ -189,6 +189,7 @@ tgv-gateway  ─► tgv-harness, tgv-recorder, tgv-store
 tgv-store    ─► tgv-recorder
 tgv-recorder ─► tgv-harness, tgv-protocol
 tgv-harness  ─► tgv-protocol
+xtask        ─► tgv-daemon, tgv-harness   (repository tasks, unpublished)
 ```
 
 | Crate                                      | Primary type                                                                  | Owns                                                                                                                                                                                                                                                                                                                                                                             |
@@ -200,6 +201,7 @@ tgv-harness  ─► tgv-protocol
 | `tgv-gateway`                              | `Gateway`                                                                     | all HTTP routes: forwarding, the read API and `/api/live`, and authenticated controls and backup; route table, header policy, request buffering, upstream entries, the `Upstream` seam and Reqwest implementation, `HttpAttempt`, `WsChannel`, retry facts, policy, `Controls`, `OperatorState`, the running-call registry, ingress and the shutdown drain                       |
 | `tgv-daemon`                               | `Daemon`                                                                      | `Config` → `RuntimeConfig`; resource wiring, listener binding, control-token file, and lifecycle; the system clock and random IDs; the two task spawns                                                                                                                                                                                                                           |
 | `tgv-cli` (package `tgv-rs`, binary `tgv`) | `Cli`                                                                         | capturing `HostEnv` in `main`, commands, doctor, service definitions                                                                                                                                                                                                                                                                                                             |
+| `xtask` (unpublished, `cargo xtask`)       | `Xtask`                                                                       | `install-vps`: installing TGV from a checkout as a systemd user service, published with Tailscale Serve                                                                                                                                                                                                                                                                          |
 
 - **Purity.** `tgv-protocol`'s manifest names only pure dependencies (`bytes`,
   `serde`, `serde_json`, `http` types, and the decompressors), and a source test

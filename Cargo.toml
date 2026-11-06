@@ -7,7 +7,9 @@ members = [
   "crates/tgv-protocol",
   "crates/tgv-recorder",
   "crates/tgv-store",
+  "xtask",
 ]
+# xtask (repository tasks) builds only when asked for.
 default-members = [
   "crates/tgv-cli",
   "crates/tgv-daemon",
@@ -34,6 +36,7 @@ rust-version = "1.99"
 [workspace.dependencies]
 axum = { version = "0.8", features = ["ws"] }
 bytes = "1.12"
+clap = { version = "4.6", features = ["derive"] }
 flate2 = "1.1"
 futures-util = "0.3"
 http = "1.5"

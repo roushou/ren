@@ -149,6 +149,30 @@ the local `launchd.plist(5)` and `launchctl(1)` manuals, and
 
 ## VPS with Tailscale
 
+### Install task
+
+From a checkout on the VPS, as the user that owns the service, with Rust and a
+connected Tailscale:
+
+```sh
+cargo xtask install-vps --https-port 8443
+```
+
+It runs the steps below and is safe to repeat: after `git pull`, the same command
+upgrades. It builds the release binary while the old daemon keeps serving,
+creates `~/.config/tgv/tgv.toml` only if missing, runs `tgv control backup`, stops
+the service, keeps the old binary as `~/.local/bin/tgv.previous`, installs the new
+one, rewrites the unit only if it changed, starts the service, enables lingering,
+and runs `tgv doctor`. It checks the configuration with TGV's own parser before
+stopping anything. With `--https-port`, it adds a Serve route only when that
+port is free, accepts one that already proxies to the configured listener, and
+refuses a port used by anything else or exposed through Funnel. `--sudo-tailscale`
+uses `sudo -n` for that step; `--skip-backup` skips the backup. On a failed
+`doctor` it stops with the rollback instructions. Without `--https-port` it leaves
+Tailscale untouched. Review the configuration after the first run.
+
+### Manual steps
+
 Build on the VPS with Rust and `cargo build --release --locked`, or copy an
 executable built for the VPS's Linux architecture; macOS binaries do not run on
 Linux. A host running a prebuilt executable needs no Bun or Node. Install the
