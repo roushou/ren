@@ -45,19 +45,19 @@ A body export answers with the raw bytes (`application/octet-stream`) only when
 the body was stored whole; otherwise `not_found`. At most two run at once
 (`busy`), and the UI does not forward it.
 
-| Endpoint                                                   | Result                                                                              |
-| ---------------------------------------------------------- | ----------------------------------------------------------------------------------- |
-| `GET /health`                                              | `ok` or `degraded` (HTTP 503), the running build, recorder counters                 |
-| `GET /api/metrics`                                         | Recorder counters and storage usage                                                 |
-| `GET /api/storage`                                         | Active retention policy and disk usage of both database files                       |
-| `GET /api/calls?limit=100`                                 | Filtered, paginated calls, newest first (see [search](#call-search))                |
-| `GET /api/calls/{call-id}`                                 | One call with its attempts, inspection, and observation log                         |
-| `GET /api/calls/{call-id}/body/{request\|response}`        | Bounded body preview                                                                |
-| `GET /api/calls/{call-id}/body/{request\|response}/export` | The complete captured body as raw bytes, as `tgv inspect --body` exports it         |
-| `GET /api/sessions?limit=100`                              | Recent sessions with call, turn, and error counts and token totals                  |
-| `GET /api/usage?from_ms=&until_ms=`                        | Calls, errors, and tokens in total, by UTC hour, and by model (see [usage](#usage)) |
-| `GET /api/sessions/{session-id}/calls?limit=100`           | One session's calls, oldest first                                                   |
-| `GET /api/live?after={seq}`                                | Server-sent events as observations commit                                           |
+| Endpoint                                                   | Result                                                                                      |
+| ---------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| `GET /health`                                              | `ok` or `degraded` (HTTP 503), the build, the operator state (read-only), recorder counters |
+| `GET /api/metrics`                                         | Recorder counters and storage usage                                                         |
+| `GET /api/storage`                                         | Active retention policy and disk usage of both database files                               |
+| `GET /api/calls?limit=100`                                 | Filtered, paginated calls, newest first (see [search](#call-search))                        |
+| `GET /api/calls/{call-id}`                                 | One call with its attempts, inspection, and observation log                                 |
+| `GET /api/calls/{call-id}/body/{request\|response}`        | Bounded body preview                                                                        |
+| `GET /api/calls/{call-id}/body/{request\|response}/export` | The complete captured body as raw bytes, as `tgv inspect --body` exports it                 |
+| `GET /api/sessions?limit=100`                              | Recent sessions with call, turn, and error counts and token totals                          |
+| `GET /api/usage?from_ms=&until_ms=`                        | Calls, errors, and tokens in total, by UTC hour, and by model (see [usage](#usage))         |
+| `GET /api/sessions/{session-id}/calls?limit=100`           | One session's calls, oldest first                                                           |
+| `GET /api/live?after={seq}`                                | Server-sent events as observations commit                                                   |
 
 Omit `after` for the first page; pass the returned `next` cursor unchanged for the
 next one. The CLI accepts the same cursor with `timeline --after`. Pages order by

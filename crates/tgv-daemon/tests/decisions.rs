@@ -344,6 +344,16 @@ async fn pause_and_session_blocks_refuse_calls_and_are_recorded() {
     let response = post(&gateway, "{}").await;
     assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
     assert_eq!(response.headers()["retry-after"], "30");
+    // The read API reports the pause without control credentials.
+    let health = |gateway: &TestGateway| {
+        let url = format!("{}/health", gateway.base());
+        async move { read(client().get(url).send().await.unwrap()).await }
+    };
+    let reported: serde_json::Value = health(&gateway).await;
+    assert_eq!(
+        reported["operator"],
+        serde_json::json!({ "pause": { "state": "paused", "retry_after": 30 }, "blocked_sessions": 0 })
+    );
     assert_eq!(
         control(&gateway, "resume").send().await.unwrap().status(),
         StatusCode::OK
@@ -360,6 +370,9 @@ async fn pause_and_session_blocks_refuse_calls_and_are_recorded() {
     let response = post(&gateway, "{}").await;
     assert_eq!(response.status(), StatusCode::FORBIDDEN);
     assert_eq!(response.headers()["x-should-retry"], "false");
+    let reported: serde_json::Value = health(&gateway).await;
+    assert_eq!(reported["operator"]["pause"]["state"], "running");
+    assert_eq!(reported["operator"]["blocked_sessions"], 1);
     control(&gateway, &format!("sessions/{SESSION}/unblock"))
         .send()
         .await

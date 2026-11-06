@@ -19,6 +19,7 @@ pub(crate) use control::ControlApi;
 pub use control::{ControlOptions, ControlOptionsError, ControlToken};
 
 use crate::build::Build;
+use crate::{control::Controls, operator::Pause};
 use axum::{
     Json, Router,
     extract::{Path, Query, State},
@@ -32,6 +33,7 @@ use preview::Previewer;
 use serde::Serialize;
 use std::sync::Arc;
 use tgv_protocol::direction::Direction;
+use tgv_recorder::time::Clock;
 use tgv_recorder::{
     Recorder, RecorderMetrics,
     id::{CallId, SessionId},
@@ -62,6 +64,8 @@ pub struct ManagementSetup {
 pub(crate) struct ApiState {
     reader: Reader,
     recorder: Recorder,
+    controls: Arc<Controls>,
+    clock: Arc<dyn Clock>,
     retention: RetentionPolicy,
     build: Build,
     previews: Arc<Semaphore>,
@@ -101,7 +105,18 @@ pub enum ErrorCode {
 struct Health<'a> {
     status: HealthStatus,
     build: &'a Build,
+    /// Whether new calls are admitted, read-only: changing it takes the
+    /// control API.
+    operator: OperatorSummary,
     recorder: RecorderMetrics,
+}
+
+/// The operator state as `/health` reports it: the pause, and how many
+/// session blocks are in force now.
+#[derive(Serialize)]
+struct OperatorSummary {
+    pause: Pause,
+    blocked_sessions: usize,
 }
 
 #[derive(Serialize)]
@@ -181,6 +196,8 @@ impl ApiState {
     pub fn new(
         reader: Reader,
         recorder: Recorder,
+        controls: Arc<Controls>,
+        clock: Arc<dyn Clock>,
         retention: RetentionPolicy,
         build: Build,
         shutdown: CancellationToken,
@@ -188,6 +205,8 @@ impl ApiState {
         Self {
             reader,
             recorder,
+            controls,
+            clock,
             retention,
             build,
             previews: Arc::new(Semaphore::new(Self::PREVIEW_PERMITS)),
@@ -243,6 +262,13 @@ impl ApiState {
             Self::versioned(Health {
                 status,
                 build: &state.build,
+                operator: {
+                    let snapshot = state.controls.snapshot();
+                    OperatorSummary {
+                        pause: snapshot.pause(),
+                        blocked_sessions: snapshot.blocked_sessions(state.clock.now().wall),
+                    }
+                },
                 recorder,
             }),
         )

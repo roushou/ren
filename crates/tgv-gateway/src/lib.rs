@@ -378,6 +378,8 @@ impl<U: Upstream> Gateway<U> {
         let api = ApiState::new(
             management.reader,
             self.recorder.clone(),
+            self.controls.clone(),
+            self.clock.clone(),
             management.retention,
             management.build,
             self.shutdown.drain_token(),
