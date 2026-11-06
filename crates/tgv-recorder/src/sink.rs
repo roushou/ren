@@ -62,8 +62,9 @@ pub struct Pruned {
 }
 
 /// One committed row of the observation log, as published to live
-/// subscribers and read back by the store.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+/// subscribers and read back by the store, and as `/api/live` clients read
+/// it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, serde::Deserialize)]
 pub struct Observation {
     pub seq: u64,
     pub at: UnixMillis,

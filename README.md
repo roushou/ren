@@ -45,7 +45,10 @@ Browse what was recorded:
 tgv sessions
 tgv history --limit 10
 tgv inspect <call-id>
+tgv tail
 ```
+
+With a saved gateway, these read the remote daemon.
 
 The optional UI lives in [`ui`](ui/README.md).
 

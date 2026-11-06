@@ -484,3 +484,109 @@ async fn remote_controls_report_the_daemons_answer_and_explain_a_refused_login()
     assert!(String::from_utf8_lossy(&output.stderr).contains("404"));
     server.abort();
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn tail_follows_calls_and_resumes_after_a_daemon_restart() {
+    use axum::{Router, response::IntoResponse};
+    use std::io::{BufRead, BufReader};
+    use std::process::Stdio;
+    use std::time::Duration;
+    let payload = r#"{"type":"message","model":"fixture","content":[{"type":"text","text":"hi"}],"stop_reason":"end_turn","usage":{"input_tokens":7,"output_tokens":2}}"#;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let upstream = tokio::spawn(async move {
+        axum::serve(
+            listener,
+            Router::new().fallback(move || async move {
+                ([("content-type", "application/json")], payload).into_response()
+            }),
+        )
+        .await
+        .unwrap();
+    });
+    let temp = tempfile::tempdir().unwrap();
+    let home = temp.path().join("home");
+    std::fs::create_dir(&home).unwrap();
+    // A fixed port, so the restarted daemon is at the same address.
+    let port = std::net::TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap();
+    let config = Config {
+        listen: port,
+        anthropic_base_url: format!("http://{address}"),
+        ..Config::default()
+    }
+    .resolve()
+    .unwrap();
+    let state = temp.path().join("state");
+    let mut daemon = Daemon::new(config.clone(), &state, tgv_cli::Cli::build());
+    daemon.start().await.unwrap();
+    let gateway = format!("http://{port}");
+
+    let mut tail = std::process::Command::new(env!("CARGO_BIN_EXE_tgv"))
+        .args(["tail", "--gateway", &gateway])
+        .env("NO_COLOR", "1")
+        .env("HOME", &home)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let (lines, received) = std::sync::mpsc::channel();
+    let stdout = tail.stdout.take().unwrap();
+    std::thread::spawn(move || {
+        for line in BufReader::new(stdout).lines() {
+            if lines.send(line.unwrap()).is_err() {
+                break;
+            }
+        }
+    });
+    let next = || received.recv_timeout(Duration::from_secs(10)).unwrap();
+    let call = || {
+        let gateway = gateway.clone();
+        async move {
+            reqwest::Client::builder()
+                .no_proxy()
+                .build()
+                .unwrap()
+                .post(format!("{gateway}/anthropic/v1/messages"))
+                .body("{}")
+                .send()
+                .await
+                .unwrap()
+                .text()
+                .await
+                .unwrap()
+        }
+    };
+    // The feed only sends what happens after tail connects.
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    call().await;
+    let started = next();
+    assert!(
+        started.contains("  started   ") && started.contains("anthropic messages"),
+        "{started}"
+    );
+    let finished = next();
+    assert!(
+        finished.contains("  finished  ")
+            && finished.contains("anthropic fixture  completed 200  in 7 out 2"),
+        "{finished}"
+    );
+
+    // Restart: tail reconnects from its last position and misses nothing.
+    daemon.shutdown();
+    daemon.wait().await.unwrap();
+    let mut daemon = Daemon::new(config, &state, tgv_cli::Cli::build());
+    daemon.start().await.unwrap();
+    call().await;
+    let started = next();
+    assert!(started.contains("  started   "), "{started}");
+    assert!(next().contains("  finished  "));
+
+    tail.kill().unwrap();
+    tail.wait().unwrap();
+    daemon.shutdown();
+    daemon.wait().await.unwrap();
+    upstream.abort();
+}

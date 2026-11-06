@@ -10,6 +10,8 @@ tgv sessions
 tgv timeline <session-id> --limit 100
 tgv inspect <call-id>
 tgv inspect <call-id> --body response --output response.bin
+tgv tail
+tgv tail --json
 ```
 
 Commands emit JSON: `history` a list of calls, `sessions` a list of sessions,
@@ -25,6 +27,15 @@ API below and print the same JSON as from its storage; exports use the body
 export endpoint. `--config` or `--data-dir` without `--gateway` reads this host's
 storage, as does having no gateway at all. A remote read needs the daemon
 running.
+
+`tgv tail` follows the [live feed](#live-feed) of the daemon the CLI targets
+(its local listener, or the gateway) and prints a line as each call starts and
+finishes: time (UTC), call, provider, model, outcome, status, tokens, and
+duration. Attempt and channel records are left out; `--json` prints every
+observation instead, one JSON object per line. It starts from now. When the feed
+ends, for example on a daemon restart, it reconnects every two seconds from the
+last observation it printed, so nothing in between is skipped. It stops on
+interrupt, or if the first connection fails.
 
 ## Endpoints
 

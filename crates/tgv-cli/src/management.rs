@@ -225,6 +225,43 @@ impl Management {
         }
     }
 
+    /// `GET /api/live`: the response that streams the live feed, from after
+    /// `after` when given, else from now. Read it with [`Self::chunk`].
+    pub async fn live(&self, after: Option<u64>) -> Result<reqwest::Response, ManagementError> {
+        let mut url = self.endpoint.url("/api/live");
+        if let Some(after) = after {
+            url.query_pairs_mut()
+                .append_pair("after", &after.to_string());
+        }
+        let response = self
+            .send(self.http.get(url).header("accept", "text/event-stream"))
+            .await?;
+        let status = response.status();
+        if status.is_success() {
+            Ok(response)
+        } else {
+            let body = self.bytes(response).await?;
+            Err(Self::error(status, &body))
+        }
+    }
+
+    /// The next bytes of a streamed response; `None` when it ended cleanly.
+    pub async fn chunk(
+        &self,
+        response: &mut reqwest::Response,
+    ) -> Result<Option<Vec<u8>>, ManagementError> {
+        response
+            .chunk()
+            .await
+            .map(|chunk| chunk.map(Vec::from))
+            .map_err(|source| self.unreachable(source))
+    }
+
+    /// The root URL requests go to.
+    pub fn root(&self) -> &str {
+        self.endpoint.root()
+    }
+
     /// Sends a control request through the gateway, without a token.
     pub async fn control(
         &self,

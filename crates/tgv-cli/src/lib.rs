@@ -8,6 +8,7 @@ pub mod doctor;
 pub mod management;
 pub mod service;
 pub mod style;
+pub mod tail;
 
 use crate::context::Context;
 use crate::style::{Terminal, Tone};
@@ -46,6 +47,7 @@ enum Command {
     Sessions(commands::history::SessionsCmd),
     Timeline(commands::history::TimelineCmd),
     Inspect(commands::history::InspectCmd),
+    Tail(commands::tail::TailCmd),
     Control(commands::control::ControlCmd),
 }
 
@@ -86,6 +88,7 @@ impl Cli {
             Command::Sessions(cmd) => cmd.run(&ctx).await,
             Command::Timeline(cmd) => cmd.run(&ctx).await,
             Command::Inspect(cmd) => cmd.run(&ctx).await,
+            Command::Tail(cmd) => cmd.run(&ctx).await,
             Command::Control(cmd) => cmd.run(&ctx).await,
         }
     }
