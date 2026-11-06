@@ -360,7 +360,13 @@ An attempt's terminal carries the acceptance fact (`body_complete`, `not_sent`,
 `terminal_phase`. Status stays separate from the transport. Dropping a response
 body without an observed end is `interrupted`, because a drop does not prove who
 stopped it; `cancelled` by the client is recorded only when the client's upload
-fails before the response head.
+fails before the response head. The one exception is a body dropped after
+exactly its declared `content-length` was relayed (`LengthDelivered`): that is
+the body's end by its framing, recorded as `body_complete` with cause
+`declared_length`. It happens when an HTTP/2 upstream sends END_STREAM after the
+last DATA frame and Hyper, writing HTTP/1.1 to the client, stops polling once the
+length is written. Reaching the length while the body is still being read ends
+nothing, so trailers still arrive.
 
 ### WebSocket relay
 

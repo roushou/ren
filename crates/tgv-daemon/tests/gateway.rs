@@ -1632,3 +1632,57 @@ async fn the_upstream_seam_receives_policy_filtered_requests_and_typed_failures(
     assert_eq!(terminal(&records[0]), AttemptTerminal::NotSent);
     assert_eq!(terminal(&records[1]), AttemptTerminal::BodyComplete);
 }
+
+#[tokio::test]
+async fn a_declared_length_delivered_whole_is_a_complete_body_even_before_the_stream_ends() {
+    // An HTTP/2 upstream can send a body's last DATA frame and its
+    // END_STREAM separately. The server stops polling once it has written
+    // the declared length to an HTTP/1.1 client, so the end may never be
+    // observed.
+    let dir = tempfile::tempdir().unwrap();
+    let config = Config {
+        listen: "127.0.0.1:0".parse().unwrap(),
+        ..Config::default()
+    };
+    let upstream = Arc::new(ScriptedUpstream {
+        seen: std::sync::Mutex::new(Vec::new()),
+        answer: || {
+            let body = futures_util::stream::iter([Ok::<_, tgv_gateway::attempt::StreamFailure>(
+                http_body::Frame::data(Bytes::from_static(b"{\"input_tokens\":18208}")),
+            )])
+            .chain(futures_util::stream::pending());
+            Ok(http::Response::builder()
+                .header("content-type", "application/json")
+                .header("content-length", "22")
+                .body(UpstreamBody::new(http_body_util::StreamBody::new(body)))
+                .unwrap())
+        },
+    });
+    let gateway = TestGateway::with_upstream(&config, dir.path(), upstream).await;
+    let response = client()
+        .post(format!(
+            "{}/anthropic/v1/messages/count_tokens",
+            gateway.base()
+        ))
+        .body("{}")
+        .send()
+        .await
+        .unwrap();
+    let body = timeout(Duration::from_secs(5), response.bytes())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(body, "{\"input_tokens\":18208}");
+    gateway.stop().await;
+    let id = recorded(dir.path()).await[0].id;
+    assert_eq!(
+        ending(dir.path(), id).await,
+        (
+            AttemptTerminal::BodyComplete,
+            Some(TerminalCause::DeclaredLength),
+            Some(AttemptPhase::Response)
+        )
+    );
+    let call = &recorded(dir.path()).await[0];
+    assert!(call.capture_complete);
+}

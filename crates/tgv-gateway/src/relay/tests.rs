@@ -5,7 +5,7 @@ use crate::{
 };
 use axum::body::Body;
 use bytes::Bytes;
-use futures_util::stream;
+use futures_util::{StreamExt as _, stream};
 use http_body::{Body as _, Frame};
 use http_body_util::{BodyExt, StreamBody};
 use std::{io, sync::Arc};
@@ -313,4 +313,65 @@ async fn a_data_length_does_not_end_a_body_before_its_trailers() {
     let recorded = harness.record(id).await;
     assert_eq!(recorded.terminal, AttemptTerminal::BodyComplete);
     assert_eq!(recorded.response, (3, BodyEnding::Ended));
+}
+
+#[tokio::test]
+async fn a_body_let_go_after_its_declared_length_is_complete_and_short_of_it_interrupted() {
+    for (sent, terminal, cause, ending) in [
+        (
+            &b"abc"[..],
+            AttemptTerminal::BodyComplete,
+            Some(TerminalCause::DeclaredLength),
+            BodyEnding::Ended,
+        ),
+        (
+            &b"ab"[..],
+            AttemptTerminal::Interrupted,
+            None,
+            BodyEnding::Unfinished,
+        ),
+    ] {
+        let harness = Harness::open().await;
+        let (cell, id) = harness.begin();
+        // The data arrives; the stream's end does not (yet).
+        let body = UpstreamBody::new(StreamBody::new(
+            stream::iter([Ok(Frame::data(Bytes::copy_from_slice(sent)))]).chain(stream::pending()),
+        ));
+        let upstream = http::Response::builder()
+            .header("content-length", "3")
+            .body(body)
+            .unwrap();
+        let mut body = Dispatch::new(cell).responded(upstream).unwrap().into_body();
+        assert_eq!(
+            body.frame().await.unwrap().unwrap().into_data().unwrap(),
+            sent
+        );
+        // Reaching the length while the body is still read ends nothing.
+        assert!(!body.is_end_stream());
+        assert_eq!(harness.free(), 0);
+        drop(body);
+        assert_eq!(harness.free(), 1);
+        let recorded = harness.record(id).await;
+        assert_eq!((recorded.terminal, recorded.cause), (terminal, cause));
+        assert_eq!(
+            recorded.response,
+            (u64::try_from(sent.len()).unwrap(), ending)
+        );
+    }
+}
+
+#[test]
+fn only_one_decimal_content_length_is_a_declared_length() {
+    let length = |values: &[&str]| {
+        let mut headers = http::HeaderMap::new();
+        for value in values {
+            headers.append("content-length", value.parse().unwrap());
+        }
+        super::ObservedResponse::declared_length(&headers)
+    };
+    assert_eq!(length(&["22"]), Some(22));
+    assert_eq!(length(&[]), None);
+    assert_eq!(length(&["22", "22"]), None);
+    assert_eq!(length(&["-1"]), None);
+    assert_eq!(length(&["0x16"]), None);
 }

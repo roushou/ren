@@ -48,6 +48,13 @@ pub enum HttpEvent {
     SendFailed(SendFailure),
     /// The response body reached its end.
     BodyEnded,
+    /// The server stopped reading the response body after relaying exactly
+    /// the length its head declared, so the stream's own end was not
+    /// observed. The declared body is complete: HTTP/1.1 frames a body by its
+    /// `content-length`, and HTTP/2 requires DATA to add up to it. An HTTP/2
+    /// upstream can send END_STREAM after the last DATA, and a server writing
+    /// HTTP/1.1 stops polling once the length is written.
+    LengthDelivered,
     BodyFailed(StreamFailure),
     Cancelled(Canceller),
     /// The owner of the attempt was dropped without a terminal: the handler
@@ -102,6 +109,9 @@ pub struct AttemptEnd {
 pub enum EndKind {
     /// The response body reached its end. Not model completion.
     BodyComplete,
+    /// The declared length was relayed whole and the server let go of the
+    /// body before its end was observed. Also not model completion.
+    LengthDelivered,
     Unsent(SendFailure),
     StreamFailed(StreamFailure),
     Cancelled(Canceller),
@@ -169,7 +179,7 @@ impl HttpAttempt {
             HttpEvent::SendFailed(failure) => end(EndKind::Unsent(failure)),
             HttpEvent::Cancelled(by) => end(EndKind::Cancelled(by)),
             HttpEvent::Dropped => end(EndKind::Interrupted),
-            HttpEvent::BodyEnded | HttpEvent::BodyFailed(_) => {
+            HttpEvent::BodyEnded | HttpEvent::LengthDelivered | HttpEvent::BodyFailed(_) => {
                 Err(IllegalTransition::BodyBeforeHead { event })
             }
         }
@@ -190,6 +200,7 @@ impl HttpAttempt {
                 Ok(Transition::to(Self::Streaming { status }))
             }
             HttpEvent::BodyEnded => end(EndKind::BodyComplete),
+            HttpEvent::LengthDelivered => end(EndKind::LengthDelivered),
             HttpEvent::BodyFailed(failure) => end(EndKind::StreamFailed(failure)),
             HttpEvent::Cancelled(by) => end(EndKind::Cancelled(by)),
             HttpEvent::Dropped => end(EndKind::Interrupted),
@@ -220,6 +231,10 @@ impl From<AttemptEnd> for TerminalRecord {
     fn from(end: AttemptEnd) -> Self {
         let (terminal, cause) = match end.how {
             EndKind::BodyComplete => (AttemptTerminal::BodyComplete, None),
+            EndKind::LengthDelivered => (
+                AttemptTerminal::BodyComplete,
+                Some(TerminalCause::DeclaredLength),
+            ),
             EndKind::Unsent(SendFailure::NotSent) => {
                 (AttemptTerminal::NotSent, Some(TerminalCause::ConnectFailed))
             }
@@ -422,6 +437,28 @@ mod tests {
             let ended = record(&events);
             assert_eq!((ended.terminal, ended.phase), (terminal, Some(phase)));
         }
+    }
+
+    #[test]
+    fn a_delivered_declared_length_is_a_complete_body_with_its_cause() {
+        let delivered = record(&[
+            HttpEvent::Responded { status: 200 },
+            HttpEvent::LengthDelivered,
+        ]);
+        assert_eq!(
+            (delivered.terminal, delivered.cause, delivered.phase),
+            (
+                AttemptTerminal::BodyComplete,
+                Some(TerminalCause::DeclaredLength),
+                Some(AttemptPhase::Response)
+            )
+        );
+        assert_eq!(
+            HttpAttempt::DISPATCHED.step(HttpEvent::LengthDelivered),
+            Err(IllegalTransition::BodyBeforeHead {
+                event: HttpEvent::LengthDelivered
+            })
+        );
     }
 
     #[test]

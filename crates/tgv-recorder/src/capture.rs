@@ -86,6 +86,10 @@ pub enum TerminalCause {
     Shutdown,
     /// The operator cancelled the call through the control API.
     Operator,
+    /// With `body_complete`: the response's declared `content-length` was
+    /// relayed whole, and the server stopped reading before the stream's own
+    /// end arrived (an HTTP/2 upstream's END_STREAM, sent after the data).
+    DeclaredLength,
 }
 
 /// How far an attempt had got when it ended.

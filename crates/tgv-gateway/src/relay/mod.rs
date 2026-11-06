@@ -188,10 +188,11 @@ impl Dispatch {
             return Err(end);
         }
         cell.response_head(&response);
+        let declared = ObservedResponse::declared_length(response.headers());
         let (parts, body) = response.into_parts();
         Ok(http::Response::from_parts(
             parts,
-            ObservedResponse::wrap(body, cell),
+            ObservedResponse::wrap(body, cell, declared),
         ))
     }
 
@@ -330,10 +331,14 @@ struct ObservedResponse {
     aborted: BoxFuture<'static, ()>,
     operator: BoxFuture<'static, ()>,
     watch: Watch,
+    /// The body length the response head declared, if any.
+    declared: Option<u64>,
+    /// Body bytes passed on so far.
+    relayed: u64,
 }
 
 impl ObservedResponse {
-    fn wrap(inner: UpstreamBody, cell: Arc<AttemptCell>) -> Body {
+    fn wrap(inner: UpstreamBody, cell: Arc<AttemptCell>, declared: Option<u64>) -> Body {
         let abort = cell.abort.clone();
         let operator = cell.operator.clone();
         let mut response = Self {
@@ -341,6 +346,8 @@ impl ObservedResponse {
             aborted: Box::pin(abort.cancelled_owned()),
             operator: Box::pin(operator.cancelled_owned()),
             watch: Watch::Streaming(cell),
+            declared,
+            relayed: 0,
         };
         // An empty body ends without a poll; a client may never poll it.
         if response.inner.is_end_stream() {
@@ -349,10 +356,28 @@ impl ObservedResponse {
         Body::new(response)
     }
 
+    /// `content-length`, when it is one decimal length.
+    fn declared_length(headers: &http::HeaderMap) -> Option<u64> {
+        let mut values = headers.get_all(http::header::CONTENT_LENGTH).iter();
+        match (values.next(), values.next()) {
+            (Some(value), None) => value.to_str().ok()?.parse().ok(),
+            (None | Some(_), _) => None,
+        }
+    }
+
     fn report(&mut self, event: HttpEvent) {
         if let Watch::Streaming(cell) = std::mem::replace(&mut self.watch, Watch::Done) {
-            if event == HttpEvent::BodyEnded {
-                cell.tap.end(Direction::Response);
+            match event {
+                HttpEvent::BodyEnded | HttpEvent::LengthDelivered => {
+                    cell.tap.end(Direction::Response);
+                }
+                HttpEvent::UploadEnded
+                | HttpEvent::UploadFailed
+                | HttpEvent::Responded { .. }
+                | HttpEvent::SendFailed(_)
+                | HttpEvent::BodyFailed(_)
+                | HttpEvent::Cancelled(_)
+                | HttpEvent::Dropped => {}
             }
             cell.observe(event);
         }
@@ -389,6 +414,9 @@ impl http_body::Body for ObservedResponse {
             Poll::Ready(Some(Ok(frame))) => {
                 if let Some(bytes) = frame.data_ref() {
                     cell.tap.data(Direction::Response, bytes);
+                    this.relayed = this
+                        .relayed
+                        .saturating_add(u64::try_from(bytes.len()).unwrap_or(u64::MAX));
                 }
                 // Trailers can follow data; the end is the stream's, not a length.
                 if this.inner.is_end_stream() {
@@ -419,8 +447,15 @@ impl http_body::Body for ObservedResponse {
 
 impl Drop for ObservedResponse {
     fn drop(&mut self) {
-        // Dropped before its end: the client or the server let go of it.
-        self.report(HttpEvent::Dropped);
+        // Dropped before its end: the client or the server let go of it. A
+        // server writing HTTP/1.1 lets go once the declared length is
+        // written, which is the body's end by its framing; anything short of
+        // that length is an interruption.
+        let event = match self.declared {
+            Some(declared) if declared == self.relayed => HttpEvent::LengthDelivered,
+            Some(_) | None => HttpEvent::Dropped,
+        };
+        self.report(event);
     }
 }
 

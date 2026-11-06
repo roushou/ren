@@ -2341,6 +2341,8 @@ dependencies = [
  "bytes",
  "futures-util",
  "http",
+ "http-body",
+ "http-body-util",
  "reqwest",
  "serde",
  "serde_json",

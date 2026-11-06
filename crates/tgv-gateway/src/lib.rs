@@ -141,9 +141,10 @@ impl GatewayError {
             EndKind::Cancelled(Canceller::Shutdown) => "gateway is shutting down",
             EndKind::Cancelled(Canceller::Client) => "request body failed",
             EndKind::Cancelled(Canceller::Operator) => "cancelled by the TGV operator",
-            EndKind::BodyComplete | EndKind::StreamFailed(_) | EndKind::Interrupted => {
-                "upstream request failed"
-            }
+            EndKind::BodyComplete
+            | EndKind::LengthDelivered
+            | EndKind::StreamFailed(_)
+            | EndKind::Interrupted => "upstream request failed",
         }
     }
 
@@ -159,6 +160,7 @@ impl GatewayError {
                     SendFailure::NotSent | SendFailure::Refused | SendFailure::SendFailed,
                 )
                 | EndKind::BodyComplete
+                | EndKind::LengthDelivered
                 | EndKind::StreamFailed(_)
                 | EndKind::Interrupted => StatusCode::BAD_GATEWAY,
             },

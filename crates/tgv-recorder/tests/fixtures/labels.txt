@@ -1,5 +1,5 @@
 capture::AttemptTerminal: body_complete terminal_event not_sent refused acceptance_unknown stream_failed cancelled interrupted
-capture::TerminalCause: connect_failed stream_refused header_timeout send_failed idle_timeout body_error upstream_closed client shutdown operator
+capture::TerminalCause: connect_failed stream_refused header_timeout send_failed idle_timeout body_error upstream_closed client shutdown operator declared_length
 capture::AttemptPhase: upload awaiting_head response
 capture::CallState: open finished recovered
 capture::CallRejection: too_large buffer_full upload_timeout upload_failed abandoned paused session_blocked blocked shutdown

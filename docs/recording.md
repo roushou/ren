@@ -52,7 +52,11 @@ A **call** is one client request; each try against the upstream is an
 status and the model outcome:
 
 - `body_complete`: the response body reached its end by EOF or framing. Not
-  successful inference, receipt by the client, or completion of agent tools.
+  successful inference, receipt by the client, or completion of agent tools. With
+  cause `declared_length`, the response's `content-length` was relayed whole and
+  the server stopped reading before the stream's own end arrived: an HTTP/2
+  provider can send its end-of-stream after the last data, and the server stops
+  once it has written the declared length to an HTTP/1.1 client.
 - `not_sent`: the connection could not be established, so nothing was sent.
 - `refused`: the request was sent, and the provider reset its HTTP/2 stream with
   `REFUSED_STREAM`, which means it closed the stream before any processing
@@ -68,8 +72,9 @@ status and the model outcome:
   (`response.completed`, `.failed`, `.incomplete`, or `error`). The event, not this
   label, says how the model call ended.
 
-The attempt's `terminal_cause` (`connect_failed`, `header_timeout`, `send_failed`,
-`idle_timeout`, `body_error`, `upstream_closed`, `client`, `shutdown`) and
+The attempt's `terminal_cause` (`connect_failed`, `stream_refused`,
+`header_timeout`, `send_failed`, `idle_timeout`, `body_error`, `upstream_closed`,
+`client`, `shutdown`, `operator`, `declared_length`) and
 `terminal_phase` (`upload`, `awaiting_head`, `response`) say why and how far it
 got.
 

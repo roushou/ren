@@ -80,6 +80,9 @@ const terminalCauses = [
   'shutdown',
   // The TGV operator cancelled the call.
   'operator',
+  // With body_complete: the declared content-length was relayed whole before
+  // the stream's own end was observed.
+  'declared_length',
 ] as const;
 export type TerminalCause = (typeof terminalCauses)[number];
 const attemptPhases = ['upload', 'awaiting_head', 'response'] as const;
