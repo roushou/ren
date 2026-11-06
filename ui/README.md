@@ -84,6 +84,10 @@ Use `tgv inspect --body … --output …` for complete captured bytes.
 
 ## VPS service
 
+From a checkout on the VPS, `cargo xtask install-vps --https-port 8443 --ui-https-port 8444`
+performs the steps below and upgrades the UI along with the daemon (see
+[deployment](../docs/deployment.md#install-task)). To do it by hand:
+
 The UI service is independent of the daemon service. The VPS needs Node only if the
 UI runs there. Build in a checkout with Bun and Node, then deploy `build/`,
 `package.json`, and `bun.lock` together to `~/.local/share/tgv-ui`. Install

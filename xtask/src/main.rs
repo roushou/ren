@@ -3,6 +3,7 @@ mod daemon;
 mod install;
 mod invocation;
 mod tailscale;
+mod ui;
 
 use clap::Parser;
 use std::process::ExitCode;

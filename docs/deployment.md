@@ -155,7 +155,7 @@ From a checkout on the VPS, as the user that owns the service, with Rust and a
 connected Tailscale:
 
 ```sh
-cargo xtask install-vps --https-port 8443
+cargo xtask install-vps --https-port 8443 --ui-https-port 8444
 ```
 
 It runs the steps below and is safe to repeat: run it again from the commit to
@@ -180,6 +180,18 @@ Funnel. `--sudo-tailscale` uses `sudo -n` for that step; `--skip-backup` skips t
 backup. On a failed `doctor` it stops with the rollback instructions. Without
 `--https-port` it leaves Tailscale untouched. Review the configuration after the
 first run.
+
+With `--ui-https-port` (which needs `--https-port`), it also deploys the
+[UI](../ui/README.md#vps-service). It needs Bun and Node on `PATH`. Before
+stopping anything, it builds `ui/` and stages the build with its production
+dependencies in `~/.local/share/tgv-ui.next`. After the daemon is upgraded, it
+writes `~/.config/tgv/ui.env` only if missing (the daemon on loopback, and both
+Tailscale URLs), stops `tgv-ui.service`, keeps the deployed copy as
+`tgv-ui.previous`, swaps in the new one, installs the unit from
+`deploy/tgv-ui.service` with the Node found on `PATH`, starts it, and checks the
+UI's `/health`, which relays the daemon's. It then publishes the UI on that port
+under the same rules as the daemon's port. Without `--ui-https-port`, the UI is
+left untouched.
 
 ### Manual steps
 

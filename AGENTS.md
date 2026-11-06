@@ -260,10 +260,12 @@ dependencies under "Crates" below. Read the code for current module ownership.
   with `Xtask` as its primary type; unpublished and outside `default-members`.
   `cargo xtask install-vps` installs or upgrades TGV from a checkout as a
   systemd user service and can publish it with Tailscale Serve; it restarts a
-  running daemon only between calls, paused, and checks the new build. It is a
+  running daemon only between calls, paused, and checks the new build, and with
+  `--ui-https-port` it builds and deploys the UI as `tgv-ui.service`. It is a
   shell: it runs external commands and reads configuration through
   `tgv-daemon`'s `Config`. Its parsing of Tailscale status and of the installed
-  `tgv`'s output (`daemon`) is unit-tested; the upgrade sequence is not.
+  `tgv`'s output (`daemon`), and its UI unit rendering (`ui`), are unit-tested;
+  the upgrade sequence is not.
 - `deploy`: systemd units. `scripts`: manual smoke tests for Pi, systemd, and launchd.
 
 ### Crates
@@ -332,7 +334,9 @@ inline theme initializer. Never commit generated assets (`ui/build`, `.svelte-ki
 Use the toolchain pinned in `rust-toolchain.toml` and don't update it incidentally.
 New crates inherit workspace settings and lints. Cargo builds only Rust: never run
 frontend tooling from Cargo or embed UI assets. The daemon is headless and works
-with no UI checkout, build, or server.
+with no UI checkout, build, or server. The one exception is a deployment step, not
+a build: `cargo xtask install-vps --ui-https-port` runs Bun to build and deploy the
+UI on the host.
 
 Markdown, JSON, and TOML formatting, from the repository root (dprint 0.56.0,
 matching CI):

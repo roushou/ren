@@ -9,6 +9,7 @@ use crate::{
     daemon::{Admission, CheckStatus, ControlState, DoctorReport},
     invocation::{Echo, Invocation},
     tailscale::{NodeStatus, Route, ServeStatus},
+    ui::{UiDeploy, UiUrls},
 };
 use clap::Args;
 use std::{
@@ -48,6 +49,11 @@ pub struct InstallVps {
     /// without having changed anything.
     #[arg(long, value_name = "SECONDS", default_value_t = 900)]
     idle_timeout: u64,
+    /// Also build and run the UI as `tgv-ui.service`, published privately
+    /// on this HTTPS port (for example 8444). Without it, the UI is left
+    /// untouched.
+    #[arg(long, requires = "https_port", value_parser = clap::value_parser!(u16).range(1..))]
+    ui_https_port: Option<u16>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -105,6 +111,22 @@ pub enum InstallError {
     Busy { running: usize, waited: u64 },
     #[error("the daemon does not run the build just installed: {0}")]
     BuildMismatch(String),
+    #[error("{0} is not on PATH")]
+    MissingProgram(&'static str),
+    #[error("deploy/tgv-ui.service no longer has the line {0:?} to render")]
+    UiTemplate(&'static str),
+    #[error(
+        "the UI does not answer {url}; see `journalctl --user -u tgv-ui`. To roll back, stop tgv-ui, move {} to {}, and start it",
+        previous.display(),
+        dir.display()
+    )]
+    UiHealth {
+        url: String,
+        previous: PathBuf,
+        dir: PathBuf,
+    },
+    #[error("Tailscale reports no MagicDNS name for this node, which the UI's origin needs")]
+    NoDnsName,
     #[error("Tailscale is {0}, not running: run `tailscale up` first")]
     TailscaleDown(String),
     #[error("Tailscale Serve port {port} is in use ({route}); choose another --https-port")]
@@ -171,6 +193,7 @@ impl Linger {
 /// Where the checkout, binary, configuration, state, and unit live: the
 /// standard paths of docs/deployment.md.
 struct Layout {
+    home: PathBuf,
     repo: PathBuf,
     cargo: PathBuf,
     user: String,
@@ -195,6 +218,7 @@ impl Layout {
             .to_owned();
         let bin_dir = home.join(".local/bin");
         Ok(Self {
+            home: home.clone(),
             // xtask/ sits at the root of the checkout.
             repo: Path::new(env!("CARGO_MANIFEST_DIR"))
                 .parent()
@@ -225,7 +249,7 @@ impl Layout {
 
 impl InstallError {
     /// Wraps an I/O error with the path it concerns.
-    fn file(path: &Path) -> impl FnOnce(std::io::Error) -> Self + '_ {
+    pub(crate) fn file(path: &Path) -> impl FnOnce(std::io::Error) -> Self + '_ {
         move |source| Self::File {
             path: path.to_path_buf(),
             source,
@@ -248,21 +272,46 @@ impl InstallVps {
         Self::preflight()?;
         let layout = Layout::new(env)?;
         let tree = Self::check_tree(&layout, self.allow_dirty)?;
+        let ui = match self.ui_https_port {
+            Some(_) => Some(UiDeploy::new(env, &layout.home, &layout.repo)?),
+            None => None,
+        };
         let built = Self::build(&layout)?;
+        if let Some(ui) = &ui {
+            ui.build()?;
+        }
         Self::seed_config(&layout)?;
         let config = Self::load_config(&layout)?;
         let quiet = Self::quiesce(&layout, self.idle_timeout)?;
         let replaced = Self::replace(&layout, &built, backup, tree);
         Self::release(&layout, quiet);
         replaced?;
-        if let Some(port) = self.https_port {
-            Self::publish(tailscale, port, &format!("http://{}", config.listen))?;
+        let dns = match self.https_port {
+            Some(port) => {
+                let dns = Self::publish(tailscale, port, &format!("http://{}", config.listen))?;
+                let url = Self::url(dns.as_deref(), port);
+                println!(
+                    "\nGateway root URL for clients: {url}\n  tgv init --gateway {url}\n  tgv run claude\n"
+                );
+                dns
+            }
+            None => None,
+        };
+        if let (Some(ui), Some(ui_port), Some(port)) = (&ui, self.ui_https_port, self.https_port) {
+            let dns = dns.as_deref().ok_or(InstallError::NoDnsName)?;
+            ui.install(&UiUrls {
+                gateway: format!("http://{}", config.listen),
+                public_gateway: format!("https://{dns}:{port}"),
+                origin: format!("https://{dns}:{ui_port}"),
+            })?;
+            Self::publish(tailscale, ui_port, UiDeploy::TARGET)?;
+            println!("\nUI: {}\n", Self::url(Some(dns), ui_port));
         }
         Self::step("Done");
         Ok(())
     }
 
-    fn step(message: &str) {
+    pub(crate) fn step(message: &str) {
         println!("==> {message}");
     }
 
@@ -366,8 +415,12 @@ impl InstallVps {
     }
 
     fn service_active() -> Result<bool, InstallError> {
+        Self::active(SERVICE)
+    }
+
+    pub(crate) fn active(service: &str) -> Result<bool, InstallError> {
         Invocation::new("systemctl")
-            .args(["--user", "is-active", "--quiet", SERVICE])
+            .args(["--user", "is-active", "--quiet", service])
             .succeeds(Echo::Hide)
     }
 
@@ -538,7 +591,11 @@ impl InstallVps {
     }
 
     /// Publishes `contents` at `path` atomically, with `mode`.
-    fn write_private(path: &Path, contents: &[u8], mode: u32) -> Result<(), InstallError> {
+    pub(crate) fn write_private(
+        path: &Path,
+        contents: &[u8],
+        mode: u32,
+    ) -> Result<(), InstallError> {
         let dir = path.parent().unwrap_or(Path::new("/"));
         let mut file = tempfile::Builder::new()
             .prefix(".tgv.")
@@ -562,12 +619,22 @@ impl InstallVps {
             .args(["service", "render", "--manager", "systemd", "--binary"])
             .arg(&layout.binary)
             .capture()?;
-        let current = fs::read_to_string(&layout.unit).ok();
-        if current.as_deref() == Some(rendered.as_str()) {
-            Self::step(&format!("Unit {} is up to date", layout.unit.display()));
+        Self::start_unit(&layout.unit, &rendered, SERVICE)
+    }
+
+    /// Writes `rendered` to `unit` if it differs (verified first), then
+    /// enables and starts `service`.
+    pub(crate) fn start_unit(
+        unit: &Path,
+        rendered: &str,
+        service: &str,
+    ) -> Result<(), InstallError> {
+        let current = fs::read_to_string(unit).ok();
+        if current.as_deref() == Some(rendered) {
+            Self::step(&format!("Unit {} is up to date", unit.display()));
         } else {
-            Self::step(&format!("Writing {}", layout.unit.display()));
-            let dir = layout.unit.parent().unwrap_or(Path::new("/"));
+            Self::step(&format!("Writing {}", unit.display()));
+            let dir = unit.parent().unwrap_or(Path::new("/"));
             let mut staged = tempfile::Builder::new()
                 .prefix(".tgv.")
                 .suffix(".service")
@@ -575,28 +642,28 @@ impl InstallVps {
                 .map_err(InstallError::file(dir))?;
             staged
                 .write_all(rendered.as_bytes())
-                .map_err(InstallError::file(&layout.unit))?;
+                .map_err(InstallError::file(unit))?;
             staged
                 .as_file()
                 .sync_all()
-                .map_err(InstallError::file(&layout.unit))?;
+                .map_err(InstallError::file(unit))?;
             Invocation::new("systemd-analyze")
                 .args(["--user", "verify"])
                 .arg(staged.path())
                 .capture()?;
             staged
-                .persist(&layout.unit)
-                .map_err(|error| InstallError::file(&layout.unit)(error.error))?;
+                .persist(unit)
+                .map_err(|error| InstallError::file(unit)(error.error))?;
         }
         Invocation::new("systemctl")
             .args(["--user", "daemon-reload"])
             .run()?;
-        Self::step("Enabling and starting the service");
+        Self::step(&format!("Enabling and starting {service}"));
         Invocation::new("systemctl")
-            .args(["--user", "reset-failed", SERVICE])
+            .args(["--user", "reset-failed", service])
             .succeeds(Echo::Hide)?;
         Invocation::new("systemctl")
-            .args(["--user", "enable", "--now", SERVICE])
+            .args(["--user", "enable", "--now", service])
             .run()
     }
 
@@ -655,7 +722,13 @@ impl InstallVps {
         })
     }
 
-    fn publish(tailscale: TailscaleCli, port: u16, target: &str) -> Result<(), InstallError> {
+    /// Publishes `target` privately on `port`, and returns the node's
+    /// MagicDNS name.
+    fn publish(
+        tailscale: TailscaleCli,
+        port: u16,
+        target: &str,
+    ) -> Result<Option<String>, InstallError> {
         let node = Self::json(
             Invocation::new("tailscale").args(["status", "--json"]),
             "tailscale status --json",
@@ -686,13 +759,14 @@ impl InstallVps {
                 return Err(InstallError::PortTaken { port, route });
             }
         }
-        let url = node.dns_name().map_or_else(
+        Ok(node.dns_name().map(str::to_owned))
+    }
+
+    /// `https://<node>:<port>`, or a description when the node has no name.
+    fn url(dns: Option<&str>, port: u16) -> String {
+        dns.map_or_else(
             || format!("(port {port} on this node)"),
             |name| format!("https://{name}:{port}"),
-        );
-        println!(
-            "\nGateway root URL for clients: {url}\n  tgv doctor --gateway {url}\n  tgv run claude --gateway {url}"
-        );
-        Ok(())
+        )
     }
 }

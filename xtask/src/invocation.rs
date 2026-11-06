@@ -2,6 +2,7 @@
 use crate::install::InstallError;
 use std::{
     ffi::{OsStr, OsString},
+    path::{Path, PathBuf},
     process::{Command, Stdio},
 };
 
@@ -17,6 +18,7 @@ pub enum Echo {
 pub struct Invocation {
     program: OsString,
     args: Vec<OsString>,
+    dir: Option<PathBuf>,
 }
 
 impl Invocation {
@@ -24,7 +26,14 @@ impl Invocation {
         Self {
             program: program.as_ref().to_owned(),
             args: Vec::new(),
+            dir: None,
         }
+    }
+
+    /// Runs in `dir` instead of the current directory.
+    pub fn current_dir(mut self, dir: impl AsRef<Path>) -> Self {
+        self.dir = Some(dir.as_ref().to_owned());
+        self
     }
 
     pub fn arg(mut self, arg: impl AsRef<OsStr>) -> Self {
@@ -51,6 +60,9 @@ impl Invocation {
     fn command(&self) -> Command {
         let mut command = Command::new(&self.program);
         command.args(&self.args).stdin(Stdio::null());
+        if let Some(dir) = &self.dir {
+            command.current_dir(dir);
+        }
         command
     }
 
