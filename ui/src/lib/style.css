@@ -1966,3 +1966,197 @@ td.zero {
   white-space: nowrap;
   text-overflow: ellipsis;
 }
+
+/* Usage page. The chart hue was validated against both surfaces
+   (dataviz validate_palette.js: lightness, chroma, contrast). */
+:root {
+  --chart: #2a78d6;
+}
+:root[data-theme='dark'] {
+  --chart: #3987e5;
+}
+/* Sections keep their height; the page scrolls instead of squeezing them. */
+.usage-page > * {
+  flex-shrink: 0;
+}
+.usage-page {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 16px;
+  overflow: auto;
+  flex: 1;
+  min-height: 0;
+}
+.usage-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.segmented a {
+  padding: 3px 8px;
+  border-radius: 2px;
+  color: var(--muted);
+  font-size: 11px;
+  text-decoration: none;
+}
+.segmented a.chosen {
+  color: var(--ink);
+  background: var(--surface-hover);
+}
+.usage-note {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 11px;
+}
+.usage-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 10px;
+}
+.usage-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface);
+}
+.usage-tile > span {
+  color: var(--muted);
+  font-size: 11px;
+}
+.usage-tile > strong {
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--ink);
+}
+.usage-tile > strong.error-count {
+  color: var(--error);
+}
+.usage-tile > small {
+  color: var(--muted);
+}
+.usage-panel {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface);
+  overflow: visible;
+}
+.usage-panel .panel-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 14px;
+}
+.usage-panel .panel-heading h2 {
+  margin: 0;
+  font-size: 13px;
+}
+.usage-columns {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(380px, 1fr));
+  gap: 14px;
+}
+.usage-chart {
+  position: relative;
+  padding: 0 14px 10px;
+}
+.usage-chart svg {
+  display: block;
+  overflow: visible;
+}
+.usage-bar {
+  fill: var(--chart);
+}
+.usage-bar.active {
+  fill: color-mix(in srgb, var(--chart) 75%, var(--ink));
+}
+.usage-grid {
+  stroke: var(--line);
+  stroke-width: 1;
+}
+.usage-axis {
+  fill: var(--muted);
+  font-size: 10.5px;
+  font-family: 'SFMono-Regular', Consolas, monospace;
+}
+.usage-hit {
+  fill: transparent;
+  cursor: default;
+  outline: none;
+}
+.usage-hit:focus-visible {
+  stroke: var(--chart);
+  stroke-width: 1;
+}
+.usage-tip {
+  /* Never under the pointer: it would steal the hover from the bar. */
+  pointer-events: none;
+}
+.usage-tip rect {
+  fill: var(--surface);
+  stroke: var(--control-border);
+}
+.usage-tip-value {
+  fill: var(--ink);
+  font-weight: 600;
+  font-size: 13px;
+}
+.usage-tip-label {
+  fill: var(--muted);
+  font-size: 11px;
+}
+.usage-table {
+  margin-top: 6px;
+  color: var(--muted);
+}
+.usage-table summary {
+  cursor: pointer;
+  font-size: 11px;
+}
+.usage-table table,
+.usage-list {
+  width: 100%;
+  border-collapse: collapse;
+}
+.usage-table td,
+.usage-table th,
+.usage-list td,
+.usage-list th {
+  padding: 6px 14px;
+  border-top: 1px solid var(--line-subtle);
+  text-align: left;
+  font-weight: 400;
+}
+.usage-list th {
+  color: var(--muted);
+  font-size: 11px;
+}
+.usage-list td.numeric,
+.usage-list th.numeric,
+.usage-table td.numeric,
+.usage-table th.numeric {
+  text-align: right;
+}
+.usage-meter {
+  display: block;
+  width: 100%;
+  height: 4px;
+  margin-top: 5px;
+}
+.usage-meter-track {
+  fill: var(--surface-inset);
+}
+.usage-list .row-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}

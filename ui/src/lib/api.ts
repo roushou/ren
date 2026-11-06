@@ -357,7 +357,35 @@ export interface SessionView {
   /** Null from a daemon older than session totals. */
   error_count: number | null;
   /** Input includes cached context; null when no call reported usage. */
-  tokens: { input: number | null; output: number | null };
+  tokens: TokenTotals;
+}
+/** Provider-reported tokens summed over calls; null when none reported them. */
+export interface TokenTotals {
+  /** Includes cached context, whichever way the provider accounts it. */
+  input: number | null;
+  output: number | null;
+  /** The part of input read from the provider's cache. */
+  cache_read: number | null;
+}
+export interface UsageCounts {
+  calls: number;
+  errors: number;
+  tokens: TokenTotals;
+}
+export interface UsageBucket extends UsageCounts {
+  /** The hour's start, UTC. */
+  start: UnixMillis;
+}
+export interface ModelUsage extends UsageCounts {
+  provider: Stored<Provider>;
+  /** Null for calls whose response reported no model. */
+  model: string | null;
+}
+export interface UsageView {
+  totals: UsageCounts;
+  /** Hours with calls, oldest first. */
+  hours: UsageBucket[];
+  models: ModelUsage[];
 }
 export interface FileUsage {
   page_size: number;
@@ -582,6 +610,13 @@ const callPage = object<CallPage>({
   calls: array(callView),
   next: nullable(branded<'PageCursor'>()),
 });
+function tokenTotals(value: unknown, path: string): TokenTotals {
+  return object<TokenTotals>({
+    input: nullable(count),
+    output: nullable(count),
+    cache_read: optional(count),
+  })(value, path);
+}
 const sessions = object<Sessions>({
   sessions: array(
     object<SessionView>({
@@ -596,11 +631,24 @@ const sessions = object<Sessions>({
       error_count: optional(count),
       tokens: (value, path) =>
         value === undefined
-          ? { input: null, output: null }
-          : object<SessionView['tokens']>({ input: nullable(count), output: nullable(count) })(
-              value,
-              path,
-            ),
+          ? { input: null, output: null, cache_read: null }
+          : tokenTotals(value, path),
+    }),
+  ),
+});
+const usageCounts = {
+  calls: count,
+  errors: count,
+  tokens: (value: unknown, path: string) => tokenTotals(value, path),
+};
+const usageView = object<UsageView>({
+  totals: object<UsageCounts>(usageCounts),
+  hours: array(object<UsageBucket>({ start: millis, ...usageCounts })),
+  models: array(
+    object<ModelUsage>({
+      provider: label(providers),
+      model: nullable(string),
+      ...usageCounts,
     }),
   ),
 });
@@ -770,6 +818,14 @@ export class ManagementApi {
   }
   body(id: CallId, direction: Direction, signal?: AbortSignal): Promise<BodyPreview> {
     return this.#read(`/api/calls/${id}/body/${direction}`, bodyPreview, signal);
+  }
+  /** Totals, hours, and models for calls started within the range. */
+  usage(range: { from_ms?: number; until_ms?: number }, signal?: AbortSignal): Promise<UsageView> {
+    const query = new URLSearchParams();
+    if (range.from_ms !== undefined) query.set('from_ms', String(Math.floor(range.from_ms)));
+    if (range.until_ms !== undefined) query.set('until_ms', String(Math.floor(range.until_ms)));
+    const suffix = query.size ? `?${query}` : '';
+    return this.#read(`/api/usage${suffix}`, usageView, signal);
   }
   sessions(limit = 100, signal?: AbortSignal): Promise<Sessions> {
     return this.#read(`/api/sessions?limit=${limit}`, sessions, signal);

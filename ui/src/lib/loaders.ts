@@ -8,7 +8,9 @@ import {
   type SessionId,
   type SessionView,
   type Storage,
+  type UsageView,
 } from './api.ts';
+import { localDayStart, parseRange, rangeStart, type UsageRange } from './usage.ts';
 import { readSnapshot, snapshotError } from './snapshots.ts';
 
 export interface GatewayData {
@@ -49,6 +51,29 @@ export function recorderSnapshot(fetcher: typeof fetch) {
   const api = new ManagementApi(fetcher);
   return readSnapshot('recorder', (): Promise<Metrics> => api.metrics());
 }
+export interface UsageData {
+  range: UsageRange;
+  /** When the window was computed, so the chart's last bar is "now". */
+  now: number;
+  usage: UsageView;
+  /** The most-used sessions in the window's listing (sessions are not range-filtered). */
+  sessions: SessionView[];
+}
+
+/** The Usage page: totals for the range, and the sessions list for its top sessions. */
+export function usageSnapshot(fetcher: typeof fetch, rawRange: string | null) {
+  const api = new ManagementApi(fetcher);
+  const range = parseRange(rawRange);
+  return readSnapshot(`usage?${range}`, async (): Promise<UsageData> => {
+    const now = Date.now();
+    const [usage, sessions] = await Promise.all([
+      api.usage({ from_ms: rangeStart(range, now, localDayStart) }),
+      api.sessions(100),
+    ]);
+    return { range, now, usage, sessions: sessions.sessions };
+  });
+}
+
 export function sessionsSnapshot(fetcher: typeof fetch) {
   const api = new ManagementApi(fetcher);
   return readSnapshot('sessions', async () => (await api.sessions(100)).sessions);

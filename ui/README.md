@@ -11,8 +11,11 @@ Claude Code / Pi / Codex ───────────────> Rust dae
 Browser ──> optional SvelteKit server ──> Rust management API
 ```
 
-Pages: Traffic (`/traffic`, also `/`), Sessions (`/sessions`, `/sessions/:id`), and
-Recorder (`/recorder`). The selected call (`?call=`) and the filters live in the URL,
+Pages: Traffic (`/traffic`, also `/`), Sessions (`/sessions`, `/sessions/:id`), Usage
+(`/usage`: calls, errors, and tokens over the last day by hour, the last week, or all
+retained calls by local day, by model, and the busiest sessions), and Recorder
+(`/recorder`). On Traffic and a session page, `j` and `k` select the next and previous
+call. The selected call (`?call=`) and the filters live in the URL,
 so links, reloads, and Back/Forward work. With **Live updates** on, the UI follows the
 daemon's `/api/live` feed and refreshes when calls change. The UI requires management
 API version 1 and shows an explicit mismatch error for any other version.

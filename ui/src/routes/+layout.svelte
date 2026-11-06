@@ -20,9 +20,11 @@
   const view = $derived(
     page.route.id === '/recorder'
       ? 'recorder'
-      : page.route.id === '/sessions'
-        ? 'sessions'
-        : 'traffic',
+      : page.route.id === '/usage'
+        ? 'usage'
+        : page.route.id === '/sessions'
+          ? 'sessions'
+          : 'traffic',
   );
   const sessionId = $derived(page.params.id ?? null);
   const session = $derived(page.data.traffic?.value?.session);
@@ -33,11 +35,13 @@
       ? 'Page unavailable'
       : view === 'recorder'
         ? 'Recorder & storage'
-        : view === 'sessions'
-          ? 'Sessions'
-          : sessionId
-            ? 'Session activity'
-            : 'Traffic',
+        : view === 'usage'
+          ? 'Usage'
+          : view === 'sessions'
+            ? 'Sessions'
+            : sessionId
+              ? 'Session activity'
+              : 'Traffic',
   );
   const gatewayOrigin = $derived(page.data.gatewayUrl);
   const omissions = $derived(health?.recorder.omissions);
@@ -94,7 +98,7 @@
   // The views' code is small and static: fetch it once up front, so switching
   // views waits only for data (which hovering a tab also starts).
   onMount(() => {
-    for (const route of ['/traffic', '/sessions', '/recorder', '/sessions/[id]'] as const)
+    for (const route of ['/traffic', '/sessions', '/usage', '/recorder', '/sessions/[id]'] as const)
       void preloadCode(route);
   });
   onMount(() => {
@@ -130,6 +134,12 @@
         class:active={view === 'sessions' || !!sessionId}
         aria-current={view === 'sessions' || !!sessionId ? 'page' : undefined}
         ><Icon name="sessions" size={14} />Sessions</a
+      >
+      <a
+        href="/usage"
+        data-sveltekit-preload-data="hover"
+        class:active={view === 'usage'}
+        aria-current={view === 'usage' ? 'page' : undefined}><Icon name="chart" size={14} />Usage</a
       >
       <a
         href="/recorder"

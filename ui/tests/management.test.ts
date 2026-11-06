@@ -113,6 +113,7 @@ test('every allowlisted read uses the same bounded read bridge', async () => {
     `/api/calls/${id}/body/response`,
     '/api/sessions',
     `/api/sessions/${id}/calls`,
+    '/api/usage',
   ]) {
     const response = await managementResponse(
       'http://daemon.test',
