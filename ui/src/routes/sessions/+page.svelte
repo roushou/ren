@@ -43,6 +43,12 @@
             ></thead
           ><tbody
             >{#each visibleSessions as s (s.id)}<tr
+                class="call-row"
+                onclick={(event) => {
+                  if (event.target instanceof Element && event.target.closest('a,button')) return;
+                  if (window.getSelection()?.toString()) return;
+                  void goto(`/sessions/${encodeURIComponent(s.id)}`);
+                }}
                 ><td
                   ><a class="row-link" href={`/sessions/${encodeURIComponent(s.id)}`}
                     ><Icon name="sessions" /><span

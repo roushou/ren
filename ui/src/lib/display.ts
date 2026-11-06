@@ -1,14 +1,16 @@
 import type {
   AttemptTerminal,
+  BodyPreview,
   Build,
   CallState,
   CallView,
   ChannelView,
   MessageView,
   ModelOutcome,
+  Usage,
 } from './api.ts';
 import type { Stored } from './decode.ts';
-import { title } from './api.ts';
+import { bytes, title } from './api.ts';
 import { assertNever, unrecognised } from './decode.ts';
 
 /**
@@ -178,16 +180,273 @@ export function modelState(call: CallView): string {
   }
 }
 
-/** HTTP status and transport terminal, e.g. `200 · body EOF`. */
+/** A short colored label, with an explanation for its tooltip. */
+export interface Chip {
+  label: string;
+  tone: Tone;
+  title: string;
+}
+
+/** The HTTP status: 2xx success, 4xx warning, 5xx error, none while waiting. */
+export function httpChip(status: number | null): Chip {
+  if (status === null) return { label: '—', tone: 'neutral', title: 'No response head yet' };
+  const tone: Tone =
+    status >= 500
+      ? 'error'
+      : status >= 400
+        ? 'warning'
+        : status >= 200 && status < 300
+          ? 'success'
+          : 'neutral';
+  return { label: String(status), tone, title: `HTTP status ${status} from the upstream` };
+}
+
+/**
+ * How the response stream ended, in plain words. This is transport evidence
+ * only: a complete stream is not a completed model call.
+ */
+export function streamChip(call: {
+  terminal: Stored<AttemptTerminal> | null;
+  state?: Stored<CallState>;
+}): Chip {
+  switch (call.terminal) {
+    case null:
+      return call.state === 'recovered'
+        ? { label: 'Unknown', tone: 'warning', title: 'TGV restarted before the stream ended' }
+        : { label: 'Streaming', tone: 'live', title: 'The response is still arriving' };
+    case 'body_complete':
+      return {
+        label: 'Stream complete',
+        tone: 'success',
+        title: 'The response body reached its end',
+      };
+    case 'terminal_event':
+      return {
+        label: 'Stream complete',
+        tone: 'success',
+        title: "The call's terminal event arrived on the WebSocket",
+      };
+    case 'interrupted':
+      return {
+        label: 'Cut off',
+        tone: 'warning',
+        title: 'The response was let go before its end, usually because the client closed it',
+      };
+    case 'cancelled':
+      return {
+        label: 'Cancelled',
+        tone: 'warning',
+        title: 'Stopped by the client, an operator, or shutdown',
+      };
+    case 'stream_failed':
+      return {
+        label: 'Stream failed',
+        tone: 'error',
+        title: 'The response stream broke or went idle',
+      };
+    case 'not_sent':
+      return {
+        label: 'Not sent',
+        tone: 'error',
+        title: 'The upstream connection could not be made',
+      };
+    case 'refused':
+      return {
+        label: 'Refused',
+        tone: 'error',
+        title: 'The upstream refused the stream before processing',
+      };
+    case 'acceptance_unknown':
+      return {
+        label: 'Maybe accepted',
+        tone: 'warning',
+        title: 'No response head arrived; the upstream may have accepted the request',
+      };
+    default:
+      return {
+        label: title(unrecognised(call.terminal)),
+        tone: 'neutral',
+        title: 'A transport ending this UI does not know',
+      };
+  }
+}
+
+/** HTTP status and how the stream ended, e.g. `200 · stream complete`. */
 export function transportState(call: {
   status: number | null;
   terminal: Stored<AttemptTerminal> | null;
   state?: Stored<CallState>;
 }): string {
-  if (call.terminal)
-    return `${call.status ?? '—'} · ${call.terminal === 'body_complete' ? 'body EOF' : title(call.terminal)}`;
-  if (call.state === 'recovered') return 'Unknown · restart';
-  return call.status === null ? 'Transport pending' : `${call.status} · pending`;
+  return `${call.status ?? '—'} · ${streamChip(call).label.toLowerCase()}`;
+}
+
+/** Whether the stored bodies hold everything that was observed. */
+export function captureChip(call: CallView): Chip {
+  const life = lifecycle(call.state);
+  switch (life) {
+    case 'open':
+      return { label: 'Recording', tone: 'live', title: 'Capture is still being written' };
+    case 'recovered':
+      return { label: 'Capture cut off', tone: 'warning', title: 'TGV restarted while recording' };
+    case 'finished':
+      return call.capture_complete
+        ? { label: 'Captured', tone: 'success', title: 'Both bodies ended and were stored whole' }
+        : {
+            label: 'Partial capture',
+            tone: 'warning',
+            title: 'Not every observed byte was stored, or a body did not end',
+          };
+    case 'unknown':
+      return { label: 'Capture unknown', tone: 'neutral', title: 'An unrecognised call state' };
+    default:
+      return assertNever(life);
+  }
+}
+
+/** The model's outcome as a chip, separate from the transport. */
+export function modelChip(call: CallView): Chip {
+  const label = call.outcome
+    ? `Model ${title(call.outcome)}`
+    : lifecycle(call.state) === 'finished'
+      ? 'No model outcome'
+      : modelState(call);
+  const chip = (tone: Tone): Chip => ({
+    label,
+    tone,
+    title: 'What the model reported, separate from how the stream ended',
+  });
+  if (lifecycle(call.state) === 'open') return chip('live');
+  const end = modelEnd(call.outcome);
+  switch (end) {
+    case 'completed':
+      return chip('success');
+    case 'stopped':
+      return chip('warning');
+    case 'failed':
+      return chip('error');
+    case 'none':
+    case 'unknown':
+      return chip('neutral');
+    default:
+      return assertNever(end);
+  }
+}
+
+/** A count in a few characters: 89, 1.2k, 101.7k, 3.4M. */
+export function compact(value: number): string {
+  if (value < 1000) return String(value);
+  if (value < 1_000_000) return `${(value / 1000).toFixed(value < 10_000 ? 1 : 0)}k`;
+  return `${(value / 1_000_000).toFixed(1)}M`;
+}
+
+/**
+ * Tokens in and out. Input counts cached tokens too, whichever way the
+ * provider accounts them, since cached context is most of a coding agent's
+ * input. The tooltip keeps the breakdown.
+ */
+export function tokenSummary(
+  usage: Usage | null,
+): { input: string; output: string; title: string } | null {
+  if (!usage || (usage.input_tokens === null && usage.output_tokens === null)) return null;
+  const cached = (usage.cache_read_tokens ?? 0) + (usage.cache_creation_tokens ?? 0);
+  const fresh = usage.input_tokens ?? 0;
+  const input = usage.accounting === 'excludes_cache' ? fresh + cached : fresh;
+  const parts = [
+    `${(usage.input_tokens ?? 0).toLocaleString()} input`,
+    usage.cache_read_tokens ? `${usage.cache_read_tokens.toLocaleString()} cache read` : '',
+    usage.cache_creation_tokens
+      ? `${usage.cache_creation_tokens.toLocaleString()} cache write`
+      : '',
+    `${(usage.output_tokens ?? 0).toLocaleString()} output`,
+  ].filter(Boolean);
+  return {
+    input: compact(input),
+    output: usage.output_tokens === null ? '—' : compact(usage.output_tokens),
+    title: `${parts.join(' · ')} (provider reported; not subscription allowance or charges)`,
+  };
+}
+
+/** How much of a body the preview holds, as chips: complete in one, gaps spelled out. */
+export function previewChips(preview: BodyPreview): Chip[] {
+  const chips: Chip[] = [];
+  const observed = preview.observed_bytes;
+  const whole =
+    preview.extent === 'complete' && observed !== null && preview.stored_bytes === observed;
+  chips.push({
+    label: bytes(preview.captured_bytes),
+    tone: 'neutral',
+    title: `${bytes(preview.captured_bytes)} shown · ${bytes(preview.stored_bytes)} stored · ${observed === null ? 'observed size unknown' : `${bytes(observed)} observed`}`,
+  });
+  switch (preview.extent) {
+    case 'complete':
+      chips.push(
+        whole
+          ? {
+              label: 'Complete',
+              tone: 'success',
+              title: 'Every observed byte was stored and is shown',
+            }
+          : { label: 'Complete so far', tone: 'live', title: 'Everything stored so far is shown' },
+      );
+      break;
+    case 'partial':
+      chips.push({
+        label: `${bytes(preview.stored_bytes)} of ${observed === null ? '?' : bytes(observed)} stored`,
+        tone: 'warning',
+        title: 'Not every observed byte was stored; missing bytes are not reconstructed',
+      });
+      break;
+    case 'truncated':
+      chips.push({
+        label: 'Preview limit',
+        tone: 'warning',
+        title: 'The preview stops before the end of the stored body',
+      });
+      break;
+    case 'gap':
+      chips.push({
+        label: 'Stops at a gap',
+        tone: 'warning',
+        title: 'The preview stops before bytes that were not stored',
+      });
+      break;
+    default:
+      chips.push({
+        label: title(unrecognised(preview.extent)),
+        tone: 'neutral',
+        title: 'An extent this UI does not know',
+      });
+  }
+  if (preview.ending === 'open')
+    chips.push({ label: 'Recording', tone: 'live', title: 'The body is still arriving' });
+  else if (preview.ending === 'unfinished')
+    chips.push({
+      label: 'Never ended',
+      tone: 'warning',
+      title: 'The body never finished; only captured bytes are shown',
+    });
+  if (preview.decoding.applied !== 'none') {
+    const name =
+      preview.decoding.applied === 'gzip_magic'
+        ? 'gzip'
+        : preview.decoding.applied === 'zstd_magic'
+          ? 'zstd'
+          : title(preview.decoding.applied);
+    const integrity = preview.decoding.integrity;
+    chips.push({
+      label: integrity === 'verified' ? `${name} ✓` : name,
+      tone: integrity === 'failed' ? 'error' : integrity === 'prefix' ? 'warning' : 'neutral',
+      title:
+        integrity === 'verified'
+          ? `Decoded from ${name}; integrity verified. Raw keeps the original bytes.`
+          : integrity === 'prefix'
+            ? `Decoded ${name} prefix; the compressed stream is incomplete, so integrity is unverified.`
+            : integrity === 'failed'
+              ? `The ${name} stream is incomplete, corrupt, or over decoder limits. Raw keeps the original bytes.`
+              : `Decoded from ${name}. Raw keeps the original bytes.`,
+    });
+  }
+  return chips;
 }
 
 /** Why an attempt ended and how far it got, when the daemon recorded it. */

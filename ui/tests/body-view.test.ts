@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { bodyView } from '../src/lib/body-view.ts';
+import { bodyView, toolFields } from '../src/lib/body-view.ts';
 const sse = (...events: unknown[]) => events.map((e) => `data: ${JSON.stringify(e)}\n\n`).join('');
 test('native requests show instructions, messages, tool inputs/results, and other fields as text', () => {
   const result = bodyView(
@@ -53,7 +53,15 @@ test('Anthropic SSE joins tool argument fragments without hiding unknown events'
       { type: 'future_event', value: 42 },
     ),
   );
-  assert.ok(result.cards.some((c) => c.label.includes('read') && c.text.includes('a.txt')));
+  assert.ok(
+    result.cards.some(
+      (c) =>
+        c.kind === 'tool_call' &&
+        c.detail === 'read' &&
+        c.format === 'data' &&
+        c.text.includes('a.txt'),
+    ),
+  );
   assert.ok(result.cards.some((c) => c.label === 'future_event'));
 });
 test('Responses terminal output replaces deltas; partial streams retain their observed content', () => {
@@ -106,7 +114,7 @@ test('malformed data and hostile indices cannot crash or allocate huge readable 
       messages: Array.from({ length: 500 }, () => ({ role: 'user', content: 'hello' })),
     }),
   );
-  assert.equal(bounded.cards.length, 100);
+  assert.equal(bounded.cards.length, 400);
   assert.ok(bounded.notices.length);
 });
 
@@ -129,7 +137,11 @@ test('websocket bodies are read message by message using their byte boundaries',
   });
   // Deltas assemble across messages, as they do across SSE events.
   const response = bodyView(events.join(''), marks, 'response');
-  assert.ok(response.cards.some((card) => card.label === 'assistant' && card.text === 'héllo'));
+  assert.ok(
+    response.cards.some(
+      (card) => card.kind === 'assistant' && card.format === 'prose' && card.text === 'héllo',
+    ),
+  );
   assert.ok(!response.cards.some((card) => card.label.includes('incomplete JSON')));
 
   const create = JSON.stringify({
@@ -139,11 +151,92 @@ test('websocket bodies are read message by message using their byte boundaries',
   });
   const request = bodyView(create, [{ offset: 0, len: encoder.encode(create).length }], 'request');
   assert.deepEqual(
-    request.cards.map((card) => card.label),
-    ['Instructions', 'User', 'Other fields'],
+    request.cards.map((card) => [card.label, card.kind]),
+    [
+      ['Instructions', 'system'],
+      ['User', 'user'],
+      ['Other fields', 'other'],
+    ],
   );
 
   // A message past the end of the preview is reported, not invented.
   const cut = bodyView(events[0], marks, 'response');
   assert.ok(cut.notices.some((notice) => notice.includes('2 messages beyond the preview')));
+});
+
+test('cards say what they hold: roles, thinking, tools, and errors', () => {
+  const view = bodyView(
+    JSON.stringify({
+      system: [
+        { type: 'text', text: 'You are terse.' },
+        { type: 'text', text: 'Use tools.' },
+      ],
+      tools: [{ name: 'Bash', description: 'Run a command\nLong details' }, { name: 'Read' }],
+      messages: [
+        { role: 'user', content: 'list files' },
+        {
+          role: 'assistant',
+          content: [
+            { type: 'thinking', thinking: '' },
+            { type: 'tool_use', id: 'toolu_1', name: 'Bash', input: { command: 'ls' } },
+          ],
+        },
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'tool_result',
+              tool_use_id: 'toolu_1',
+              is_error: true,
+              content: [{ type: 'text', text: 'denied' }],
+            },
+          ],
+        },
+      ],
+    }),
+  );
+  assert.deepEqual(
+    view.cards.map((c) => [c.kind, c.label, c.detail ?? null, c.format]),
+    [
+      ['system', 'System', null, 'prose'],
+      ['user', 'User', null, 'prose'],
+      ['thinking', 'Thinking', null, 'prose'],
+      ['tool_call', 'Tool call', 'Bash', 'data'],
+      ['tool_error', 'Tool error', 'toolu_1', 'data'],
+      ['tools', 'Available tools', '2', 'data'],
+    ],
+  );
+  assert.equal(view.cards[0].text, 'You are terse.\n\nUse tools.');
+  assert.equal(view.cards[4].text, 'denied');
+  assert.equal(view.cards[5].text, 'Bash — Run a command\nRead');
+  // A role this view does not know is kept, not mislabeled.
+  const other = bodyView(JSON.stringify({ messages: [{ role: 'critic', content: 'hm' }] }));
+  assert.deepEqual(
+    other.cards.map((c) => [c.kind, c.label]),
+    [['other', 'Critic']],
+  );
+});
+
+test('tool call arguments read as labeled fields when they are an object', () => {
+  const view = bodyView(
+    JSON.stringify({
+      content: [
+        {
+          type: 'tool_use',
+          id: 'toolu_1',
+          name: 'Bash',
+          input: { command: 'ls -la\ncat x', description: 'List', timeout: 5 },
+        },
+        { type: 'tool_use', id: 'toolu_2', name: 'Echo', input: 'plain text' },
+      ],
+      role: 'assistant',
+    }),
+  );
+  const [bash, echo] = view.cards.filter((c) => c.kind === 'tool_call');
+  assert.deepEqual(toolFields(bash), [
+    ['command', 'ls -la\ncat x'],
+    ['description', 'List'],
+    ['timeout', '5'],
+  ]);
+  assert.equal(toolFields(echo), null);
 });

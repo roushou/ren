@@ -11,11 +11,14 @@
   import {
     isActive,
     callStatus,
+    captureChip,
     statusBadge,
     duration,
     elapsed,
     date,
-    transportState,
+    httpChip,
+    streamChip,
+    tokenSummary,
   } from './display.ts';
   import { emptyFilters, trafficParams, filtersFromParams, selectedCall } from './traffic.ts';
   import { LiveFollow } from './live.ts';
@@ -30,6 +33,7 @@
   const nextAfter = $derived(retained.current.value?.next ?? null);
   const session = $derived(retained.current.value?.session);
   const updated = $derived(retained.current.updated);
+  const today = date(Date.now());
   const liveStatus = $derived(
     LiveFollow.summary(workbench.live, updated ? `Updated ${clock(updated)}` : null),
   );
@@ -125,6 +129,13 @@
       });
     }
   });
+  /** A click anywhere on a row selects it, except on its own links and
+   * buttons, or when the click ended a text selection. */
+  function selectRow(event: MouseEvent, id: CallId) {
+    if (event.target instanceof Element && event.target.closest('a,button,input,select')) return;
+    if (window.getSelection()?.toString()) return;
+    selectCall(event, id);
+  }
   function selectCall(event: MouseEvent, id: CallId) {
     if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey)
       return;
@@ -414,10 +425,21 @@
                 ></thead
               >
               <tbody>
-                {#each group.rows as c (c.id)}{@const badge = statusBadge(callStatus(c))}
-                  <tr class:selected={selectedId === c.id}>
+                {#each group.rows as c (c.id)}{@const badge = statusBadge(
+                    callStatus(c),
+                  )}{@const http = httpChip(c.status)}{@const stream =
+                    streamChip(c)}{@const capture = captureChip(c)}{@const tokens = tokenSummary(
+                    c.usage,
+                  )}
+                  <tr
+                    class="call-row"
+                    class:selected={selectedId === c.id}
+                    onclick={(event) => selectRow(event, c.id)}
+                  >
                     <td class="time-column mono" title={new Date(c.started_at).toLocaleString()}
-                      >{clock(c.started_at)}<small>{date(c.started_at)}</small></td
+                      >{clock(c.started_at)}{#if date(c.started_at) !== today}<small
+                          >{date(c.started_at)}</small
+                        >{/if}</td
                     >
                     <td
                       ><a
@@ -436,23 +458,35 @@
                       ></td
                     >
                     <td
-                      ><span class="model-name" title={c.model ?? title(c.endpoint)}
-                        >{c.model ?? (isActive(c) ? 'Awaiting observation' : 'Not observed')}</span
-                      ><small>{providerName(c.provider)}</small>{#if c.tool_names.length}<small
-                          class="tool-summary"
-                          ><Icon name="tool" size={11} />{c.tool_names.length} tool request{c
-                            .tool_names.length === 1
-                            ? ''
-                            : 's'}</small
+                      ><span class="model-line"
+                        ><span
+                          class="provider-mark tiny {c.provider}"
+                          title={providerName(c.provider)}>{providerMark(c.provider)}</span
+                        ><span class="model-name" title={c.model ?? title(c.endpoint)}
+                          >{c.model ??
+                            (isActive(c) ? 'Awaiting observation' : title(c.endpoint))}</span
+                        ></span
+                      >{#if c.tool_names.length}<span class="tool-chips"
+                          >{#each c.tool_names.slice(0, 3) as name}<span class="chip tool-chip"
+                              ><Icon name="tool" size={10} />{name}</span
+                            >{/each}{#if c.tool_names.length > 3}<span class="chip"
+                              >+{c.tool_names.length - 3}</span
+                            >{/if}</span
                         >{/if}</td
                     >
                     <td
                       ><span class="badge {badge.tone}">{badge.label}</span><small
-                        class="transport-label"
-                        class:warning={c.terminal === 'interrupted' || c.terminal === 'cancelled'}
-                        >{elapsed(duration(c))} · {transportState(c)}</small
-                      >{#if !c.capture_complete && !isActive(c)}<small class="capture-note"
-                          >Partial capture</small
+                        class="outcome-line"
+                        ><span class="status-code {http.tone}" title={http.title}>{http.label}</span
+                        ><span>{elapsed(duration(c))}</span>{#if tokens}<span title={tokens.title}
+                            >{tokens.input} in · {tokens.output} out</span
+                          >{/if}</small
+                      >{#if stream.tone !== 'success' && stream.tone !== 'live'}<span
+                          class="chip {stream.tone}"
+                          title={stream.title}>{stream.label}</span
+                        >{/if}{#if capture.tone === 'warning'}<span
+                          class="chip warning"
+                          title={capture.title}>{capture.label}</span
                         >{/if}</td
                     >
                   </tr>

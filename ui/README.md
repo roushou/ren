@@ -67,8 +67,14 @@ loopback or behind private Tailscale access, like the daemon.
 
 ## Payload previews
 
-Payloads are rendered as inert text: images, links, HTML, and Markdown from captures
-are never executed or fetched. They stay in browser memory and are never written to
+Payloads are rendered inert. Message text is formatted as Markdown (headings, lists,
+code, tables, emphasis) by a small parser in `src/lib/markdown.ts` that builds
+elements, never HTML: raw HTML stays text, links show their address but are not
+clickable, and images are named but never loaded. Agent context wrapped in tags such
+as `<system-reminder>` is folded under its name. Message cards are colored by role
+(user, assistant, thinking, tool call or result, system), and context that repeats on
+every call (system prompt, tool list) starts folded. Payloads stay in browser memory
+and are never written to
 browser storage; only the theme preference is stored. Partial, active, corrupt, and
 expired captures are marked explicitly. A parsed message doesn't prove model
 completion or tool execution.

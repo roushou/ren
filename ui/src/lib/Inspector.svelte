@@ -12,14 +12,17 @@
   import { num, short, title, bytes, clock, providerName, providerMark } from './api.ts';
   import {
     attemptEnding,
+    captureChip,
     channelState,
+    httpChip,
     messageCounts,
-    captureState,
+    modelChip,
     duration,
     elapsed,
     isActive,
-    modelState,
-    transportState,
+    streamChip,
+    tokenSummary,
+    type Chip,
   } from './display.ts';
   import { snapshotError } from './snapshots.ts';
   import { getWorkbench } from './workbench.svelte.ts';
@@ -47,6 +50,7 @@
   const attempts = $derived(detail?.call.id === call.id ? detail.attempts : []);
   const inspection = $derived(attempts.at(-1)?.inspection ?? null);
   const usage = $derived(current.usage ?? inspection?.usage ?? null);
+  const tokens = $derived(tokenSummary(usage));
   // Reload detail after every page refresh (live or manual), which is when the
   // listed row can change. Depend on the id text and the refresh count only:
   // passing detail back up replaces the `call` prop and must not reload again.
@@ -71,15 +75,38 @@
       });
     return () => controller.abort();
   });
-  function volume(body: BodyView | null) {
-    if (!body) return isActive(current) ? 'Recording…' : 'Not recorded';
-    const observed =
-      body.observed_bytes === null
-        ? body.ending === 'open'
-          ? 'unknown while open'
-          : 'unknown'
-        : bytes(body.observed_bytes);
-    return `${bytes(body.stored_bytes)} / ${observed} · ${title(body.ending)}`;
+  /** A body's capture as chips: its size, then anything short of whole. */
+  function volume(body: BodyView | null): Chip[] {
+    if (!body)
+      return [
+        isActive(current)
+          ? { label: 'Recording', tone: 'live', title: 'Nothing stored yet' }
+          : { label: 'Not recorded', tone: 'neutral', title: 'No body was recorded' },
+      ];
+    const chips: Chip[] = [
+      {
+        label: bytes(body.stored_bytes),
+        tone: 'neutral',
+        title: `${bytes(body.stored_bytes)} stored`,
+      },
+    ];
+    if (body.observed_bytes !== null && body.observed_bytes !== body.stored_bytes)
+      chips.push({
+        label: `of ${bytes(body.observed_bytes)} seen`,
+        tone: 'warning',
+        title: 'Not every observed byte was stored',
+      });
+    if (body.ending === 'open')
+      chips.push({ label: 'Recording', tone: 'live', title: 'The body is still arriving' });
+    else if (body.ending === 'ended')
+      chips.push({ label: 'Ended', tone: 'success', title: 'The body reached its end' });
+    else
+      chips.push({
+        label: body.ending === 'unfinished' ? 'Never ended' : title(body.ending),
+        tone: 'warning',
+        title: 'The body did not reach its end',
+      });
+    return chips;
   }
 </script>
 
@@ -116,12 +143,14 @@
         size={12}
       /></button
     >{:else}<p class="inspector-session muted">No reported session</p>{/if}
-  <div class="drawer-status">
-    <span><span class="muted">Model</span><strong>{modelState(current)}</strong></span>
-    <span><span class="muted">Transport</span><strong>{transportState(current)}</strong></span>
-    <span class:warning={!isActive(current) && !current.capture_complete}
-      ><span class="muted">Capture</span><strong>{captureState(current)}</strong></span
-    >
+  <div class="chip-row drawer-chips" aria-label="Call state">
+    {#each [modelChip(current), streamChip(current), captureChip(current)] as chip}<span
+        class="chip {chip.tone}"
+        title={chip.title}>{chip.label}</span
+      >{/each}{#if current.status !== null}{@const http = httpChip(current.status)}<span
+        class="chip mono {http.tone}"
+        title={http.title}>HTTP {http.label}</span
+      >{/if}
   </div>
   {#if current.outcome === 'completed' && current.terminal === 'interrupted'}<p
       class="inspector-notice"
@@ -171,15 +200,31 @@
             </div>{/if}
           <div>
             <dt>Model outcome</dt>
-            <dd>{modelState(current)}</dd>
+            <dd>
+              {#each [modelChip(current)] as chip}<span class="chip {chip.tone}" title={chip.title}
+                  >{chip.label}</span
+                >{/each}
+            </dd>
           </div>
           <div>
-            <dt>HTTP outcome</dt>
-            <dd>{title(current.terminal)}</dd>
+            <dt>Response stream</dt>
+            <dd>
+              {#each [streamChip(current)] as chip}<span class="chip {chip.tone}" title={chip.title}
+                  >{chip.label}</span
+                >{/each}
+            </dd>
           </div>
           <div>
             <dt>Inspection coverage</dt>
-            <dd>{title(inspection?.coverage)}</dd>
+            <dd>
+              <span
+                class="chip"
+                class:success={inspection?.coverage === 'complete'}
+                class:warning={!!inspection && inspection.coverage !== 'complete'}
+                title="How much of the response the inspector understood"
+                >{inspection ? title(inspection.coverage) : 'Not inspected'}</span
+              >
+            </dd>
           </div>
           <div>
             <dt>Stop reason</dt>
@@ -214,18 +259,26 @@
           <span class="subtle-label">Upstream tries</span>
         </div>
         {#if attempts.length}<dl class="detail-list">
-            {#each attempts as attempt (attempt.id)}<div>
+            {#each attempts as attempt (attempt.id)}{@const stream = streamChip(attempt)}
+              <div>
                 <dt>
                   #{attempt.ordinal} <span class="mono">{short(attempt.id)}</span> · {providerName(
                     attempt.upstream,
                   )}
                 </dt>
-                <dd class="mono">
-                  {transportState(attempt)} · {elapsed(duration(attempt))}{attempt.response_format
-                    ? ` · ${title(attempt.response_format)}`
-                    : ''}{attempt.response_encoding && attempt.response_encoding !== 'identity'
-                    ? ` · ${attempt.response_encoding}`
-                    : ''}{attemptEnding(attempt) ? ` · ${attemptEnding(attempt)}` : ''}
+                <dd class="chip-row attempt-chips">
+                  {#if attempt.status !== null}{@const http = httpChip(attempt.status)}<span
+                      class="chip mono {http.tone}"
+                      title={http.title}>{http.label}</span
+                    >{/if}<span
+                    class="chip {stream.tone}"
+                    title={attemptEnding(attempt) ?? stream.title}>{stream.label}</span
+                  ><span class="chip mono">{elapsed(duration(attempt))}</span
+                  >{#if attempt.response_format}<span class="chip"
+                      >{title(attempt.response_format)}</span
+                    >{/if}{#if attempt.response_encoding && attempt.response_encoding !== 'identity'}<span
+                      class="chip">{attempt.response_encoding}</span
+                    >{/if}
                 </dd>
               </div>{/each}
           </dl>{:else}<p class="quiet-empty">
@@ -296,22 +349,18 @@
           <span class="subtle-label">Stored / observed</span>
         </div>
         <dl class="detail-list">
-          <div>
-            <dt>Request</dt>
-            <dd class="mono">{volume(current.request)}</dd>
-          </div>
-          <div>
-            <dt>Response</dt>
-            <dd class="mono">{volume(current.response)}</dd>
-          </div>
+          {#each [['Request', current.request] as const, ['Response', current.response] as const] as [name, body]}<div
+            >
+              <dt>{name}</dt>
+              <dd class="chip-row volume-chips">
+                {#each volume(body) as chip}<span class="chip {chip.tone}" title={chip.title}
+                    >{chip.label}</span
+                  >{/each}
+              </dd>
+            </div>{/each}
         </dl>
       </section>
     {:else if section === 'request' || section === 'response'}
-      {#if section === 'response' && (inspection?.tool_calls.length || current.tool_names.length)}<p
-          class="fine-print"
-        >
-          Tool requests were emitted by the model. Execution is not established by this response.
-        </p>{/if}
       {#key `${current.id}-${section}`}<BodyInspector
           id={current.id}
           initialDirection={section}
@@ -378,12 +427,11 @@
     {/if}
   </div>
   <div class="inspector-footer">
-    <span
-      >Tokens in / out <strong class="mono"
-        >{num(usage?.input_tokens)} / {num(usage?.output_tokens)}</strong
-      ></span
-    ><span>Duration <strong class="mono">{elapsed(duration(current))}</strong></span><small
-      >Provider reported · not subscription allowance or charges</small
-    >
+    {#if tokens}<span title={tokens.title}
+        >Tokens <strong class="mono">{tokens.input}</strong> in
+        <strong class="mono">{tokens.output}</strong> out</span
+      >{:else}<span class="muted">No token usage reported</span>{/if}<span
+      >Duration <strong class="mono">{elapsed(duration(current))}</strong></span
+    ><small>Provider reported · input includes cached context</small>
   </div>
 </aside>

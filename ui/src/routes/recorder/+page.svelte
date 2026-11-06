@@ -203,7 +203,7 @@
           {#each diskCounters as counter (counter.label)}
             <div>
               <dt>{counter.label}</dt>
-              <dd>{format(counter)}</dd>
+              <dd class:zero={counter.value === 0}>{format(counter)}</dd>
             </div>
           {/each}
         </dl>
@@ -249,6 +249,7 @@
                   class:warning={group.attention &&
                     typeof counter.value === 'number' &&
                     counter.value > 0}
+                  class:zero={counter.value === 0}
                 >
                   {format(counter)}
                 </dd>

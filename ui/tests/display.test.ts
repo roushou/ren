@@ -12,6 +12,12 @@ import {
   captureState,
   modelState,
   transportState,
+  streamChip,
+  httpChip,
+  modelChip,
+  compact,
+  tokenSummary,
+  previewChips,
 } from '../src/lib/display.ts';
 import { revision, type CallView } from '../src/lib/api.ts';
 import { callFixture, finishedFixture, callId } from './fixtures.ts';
@@ -66,10 +72,28 @@ test('badges and transport labels describe each state', () => {
     tone: 'success',
   });
   assert.equal(statusBadge(callStatus(finished({ outcome: 'refused' }))).label, 'Refused');
-  assert.equal(transportState(finished({})), '200 · body EOF');
-  assert.equal(transportState(callFixture()), 'Transport pending');
-  assert.equal(transportState(callFixture(callId(1), { status: 200 })), '200 · pending');
-  assert.equal(transportState(callFixture(callId(1), { state: 'recovered' })), 'Unknown · restart');
+  assert.equal(transportState(finished({})), '200 · stream complete');
+  assert.equal(transportState(callFixture()), '— · streaming');
+  assert.equal(transportState(callFixture(callId(1), { status: 200 })), '200 · streaming');
+  assert.equal(transportState(callFixture(callId(1), { state: 'recovered' })), '— · unknown');
+  // Plain words, colored by what they mean.
+  assert.deepEqual(
+    [
+      streamChip(finished({})),
+      streamChip(finished({ terminal: 'interrupted' })),
+      streamChip(finished({ terminal: 'stream_failed' })),
+    ].map((chip) => [chip.label, chip.tone]),
+    [
+      ['Stream complete', 'success'],
+      ['Cut off', 'warning'],
+      ['Stream failed', 'error'],
+    ],
+  );
+  assert.deepEqual(
+    [200, 302, 429, 529, null].map((status) => httpChip(status).tone),
+    ['success', 'neutral', 'warning', 'error', 'neutral'],
+  );
+  assert.equal(modelChip(finished({ outcome: 'completed' })).label, 'Model completed');
 });
 
 test('duration remains unknown for open calls and formats observed time', () => {
@@ -161,4 +185,63 @@ test('builds read like tgv --version, and unknown revisions are kept', () => {
     text: commit.toUpperCase(),
   });
   assert.match(buildLabel(null), /not reported/);
+});
+
+test('token counts are compact and include cached context', () => {
+  assert.deepEqual([89, 1234, 101658, 3_400_000].map(compact), ['89', '1.2k', '102k', '3.4M']);
+  const tokens = tokenSummary({
+    accounting: 'excludes_cache',
+    input_tokens: 96,
+    output_tokens: 89,
+    cache_read_tokens: 101_658,
+    cache_creation_tokens: 777,
+    reasoning_tokens: null,
+  });
+  assert.equal(tokens?.input, '103k');
+  assert.equal(tokens?.output, '89');
+  assert.match(tokens?.title ?? '', /101,658 cache read/);
+  assert.equal(tokenSummary(null), null);
+});
+
+test('a body preview reads as chips, with gaps spelled out', () => {
+  const preview = (over: object) => ({
+    observed_bytes: 1200,
+    stored_bytes: 1200,
+    ending: 'ended',
+    captured_bytes: 1200,
+    extent: 'complete',
+    raw: { text: '', format: 'utf8', truncated: false },
+    text: '',
+    text_end: 'intact',
+    decoding: { applied: 'gzip_magic', integrity: 'verified', truncated: false },
+    ...over,
+  });
+  const labels = (over: object) =>
+    previewChips(preview(over) as Parameters<typeof previewChips>[0]).map((c) => [c.label, c.tone]);
+  assert.deepEqual(labels({}), [
+    ['1.2 KiB', 'neutral'],
+    ['Complete', 'success'],
+    ['gzip ✓', 'neutral'],
+  ]);
+  assert.deepEqual(
+    labels({
+      extent: 'partial',
+      stored_bytes: 600,
+      decoding: { applied: 'none', integrity: 'not_decoded', truncated: false },
+    }),
+    [
+      ['1.2 KiB', 'neutral'],
+      ['600 B of 1.2 KiB stored', 'warning'],
+    ],
+  );
+  assert.deepEqual(
+    labels({
+      ending: 'unfinished',
+      decoding: { applied: 'gzip_magic', integrity: 'failed', truncated: false },
+    }).slice(2),
+    [
+      ['Never ended', 'warning'],
+      ['gzip', 'error'],
+    ],
+  );
 });

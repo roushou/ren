@@ -2,8 +2,6 @@
   import { onMount } from 'svelte';
   import {
     ManagementApi,
-    bytes,
-    title,
     ApiError,
     type BodyPreview,
     type BodyView,
@@ -14,7 +12,9 @@
   } from './api.ts';
   import Icon from './Icon.svelte';
   import CopyButton from './CopyButton.svelte';
-  import { bodyView } from './body-view.ts';
+  import { bodyView, toolFields, type Card, type CardKind } from './body-view.ts';
+  import { previewChips } from './display.ts';
+  import Markdown from './Markdown.svelte';
   import { snapshotError } from './snapshots.ts';
   let {
     id,
@@ -51,6 +51,56 @@
       : null,
   );
   const open = $derived(preview?.ending === 'open');
+  const chips = $derived(preview ? previewChips(preview) : []);
+  /** Cards that start folded: context that is the same on every call. */
+  function folded(card: Card) {
+    return (
+      card.kind === 'system' ||
+      card.kind === 'tools' ||
+      card.label === 'Other fields' ||
+      (card.kind === 'thinking' && !card.text)
+    );
+  }
+  /** Long cards show their start until expanded. */
+  let expanded = $state(new Set<number>());
+  /** The model's own answers are never cut short; context and data are. */
+  const long = (card: Card) => {
+    if (card.kind === 'assistant') return false;
+    // Tagged context folds on its own, so it does not count toward length.
+    const shown =
+      card.format === 'prose'
+        ? card.text.replace(/<([a-z][a-z0-9]*[-_][a-z0-9_-]*)>[\s\S]*?<\/\1>/g, '')
+        : card.text;
+    return shown.length > 2400 || shown.split('\n').length > 40;
+  };
+  let cardList = $state<HTMLElement>();
+  function latest() {
+    const cards = cardList?.querySelectorAll('.body-card');
+    cards?.[cards.length - 1]?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+  }
+  function icon(kind: CardKind) {
+    switch (kind) {
+      case 'user':
+        return 'user';
+      case 'assistant':
+        return 'spark';
+      case 'thinking':
+        return 'thought';
+      case 'tool_call':
+      case 'tool_result':
+      case 'tool_error':
+      case 'tools':
+        return 'tool';
+      case 'error':
+        return 'alert';
+      case 'system':
+        return 'info';
+      case 'other':
+        return 'code';
+      default:
+        return 'code';
+    }
+  }
   async function load(next: Direction, quiet = false) {
     controller?.abort();
     controller = new AbortController();
@@ -155,7 +205,10 @@
       >{following ? 'Live · every 2 seconds' : stopped || 'Snapshot'}{updated
         ? ` · ${new Date(updated).toLocaleTimeString()}`
         : ''}</span
-    >{#if preview}<span class="payload-size">{bytes(preview.captured_bytes)}</span>{/if}
+    >{#if readable && readable.cards.length > 6}<button
+        class="text-button jump-latest"
+        onclick={latest}>Jump to latest <Icon name="chevron" size={12} /></button
+      >{/if}
   </div>
   {#if busy && !preview}<div class="payload-loading" role="status">
       <span class="spinning"><Icon name="refresh" size={20} /></span>
@@ -165,22 +218,10 @@
       {error}{preview ? ' Showing the last loaded snapshot.' : ''}
     </p>{/if}
   {#if preview}
-    <p class="fine-print">
-      {bytes(preview.captured_bytes)} shown · {bytes(preview.stored_bytes)} stored · {preview.observed_bytes !==
-      null
-        ? `${bytes(preview.observed_bytes)} observed`
-        : open
-          ? 'observed size unknown while open'
-          : 'observed size unknown'} · {preview.extent === 'complete'
-        ? 'Complete body'
-        : preview.extent === 'partial'
-          ? 'Partial body'
-          : preview.extent === 'truncated'
-            ? 'Preview limit reached'
-            : preview.extent === 'gap'
-              ? 'Stops at a capture gap'
-              : title(preview.extent)}
-    </p>
+    <div class="chip-row" aria-label="Capture of this body">
+      {#each chips as chip}<span class="chip {chip.tone}" title={chip.title}>{chip.label}</span
+        >{/each}
+    </div>
     {#if open}<p class="callout">
         {following
           ? 'Streaming captured output. Totals arrive when recording ends.'
@@ -189,29 +230,10 @@
     {:else if preview.ending === 'unfinished'}<p class="callout">
         The body never finished. Only the captured bytes are shown; missing bytes are not
         reconstructed.
-      </p>
-    {:else if preview.extent === 'partial'}<p class="callout">
-        Not every observed byte was stored. Missing bytes are not reconstructed.
-      </p>{/if}
-    {#if preview.extent === 'gap'}<p class="callout">
-        Capture gap: preview stops before missing bytes.
-      </p>{/if}
-    {#if preview.extent === 'truncated' || preview.decoding.truncated}<p class="callout">
-        Preview size limit reached. This view may not contain the whole captured body.
       </p>{/if}
     {#if preview.text_end === 'split_character'}<p class="fine-print">
         Captured text ends mid-character. Readable shows only complete UTF-8 characters; Raw retains
         every captured byte.
-      </p>{/if}
-    {#if preview.decoding.applied !== 'none'}<p class="fine-print">
-        {preview.decoding.applied === 'gzip_magic'
-          ? 'Gzip'
-          : preview.decoding.applied === 'zstd_magic'
-            ? 'Zstandard'
-            : title(preview.decoding.applied)} detected from captured bytes. Readable view uses decoded
-        content; Raw preserves the original bytes.{preview.decoding.integrity === 'verified'
-          ? ' Integrity verified.'
-          : ''}
       </p>{/if}
     {#if preview.decoding.integrity === 'prefix'}<p class="callout">
         Unverified decoded prefix: the compressed stream is incomplete. Its final integrity check is
@@ -231,20 +253,50 @@
       <pre class="body-raw">{preview.raw.text || 'Empty captured body.'}</pre>
     {:else if readable}
       {#each readable.notices as notice}<p class="callout">{notice}</p>{/each}
-      {#each readable.cards as card}<article class="body-card">
-          <h5>
-            <span class="message-icon"
-              ><Icon
-                name={card.label.toLowerCase().includes('tool') ? 'tool' : 'sessions'}
-                size={13}
-              /></span
-            >{card.label}
-          </h5>
-          <pre>{card.text || '(empty)'}</pre>
-        </article>{/each}
+      <div class="card-list" bind:this={cardList}>
+        {#each readable.cards as card, index}<details
+            class="body-card {card.kind}"
+            open={!folded(card)}
+          >
+            <summary
+              title={card.kind === 'tool_call'
+                ? 'Requested by the model. Whether it ran is up to your client.'
+                : undefined}
+            >
+              <span class="card-icon"><Icon name={icon(card.kind)} size={13} /></span><span
+                class="card-label">{card.label}</span
+              >{#if card.detail}<code class="card-detail">{card.detail}</code>{/if}
+              {#if card.kind === 'thinking' && !card.text}<span class="card-meta"
+                  >hidden by the provider</span
+                >{:else if folded(card)}<span class="card-meta"
+                  >{card.text.split('\n').length} lines</span
+                >{/if}
+            </summary>
+            {#if card.text}
+              <div class="card-body" class:clamped={long(card) && !expanded.has(index)}>
+                {#if card.format === 'prose'}<Markdown
+                    text={card.text}
+                  />{:else if toolFields(card)}<dl class="tool-fields">
+                    {#each toolFields(card) ?? [] as [key, value]}<dt>{key}</dt>
+                      <dd><pre>{value}</pre></dd>{/each}
+                  </dl>{:else}<pre>{card.text}</pre>{/if}
+              </div>
+              {#if long(card)}<button
+                  class="text-button card-more"
+                  onclick={() => {
+                    const next = new Set(expanded);
+                    if (next.has(index)) next.delete(index);
+                    else next.add(index);
+                    expanded = next;
+                  }}>{expanded.has(index) ? 'Show less' : 'Show all'}</button
+                >{/if}
+            {/if}
+          </details>{/each}
+      </div>
     {:else if !preview.captured_bytes}<p class="fine-print">No body bytes available.</p>
     {:else}<p class="fine-print">
-        No readable text is available. Use Raw to inspect the captured bytes.
+        No readable text: the body is binary, or compressed with an encoding the preview cannot
+        decode. Raw shows the captured bytes.
       </p>{/if}
   {:else if !busy && !error}<p class="fine-print">
       Load a body to inspect messages, tool arguments, and results. Content stays in this view and
