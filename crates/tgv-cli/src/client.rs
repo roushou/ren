@@ -23,11 +23,12 @@ pub const GATEWAY_ENV: &str = "TGV_GATEWAY";
 /// never echoed: a URL can carry credentials.
 #[derive(Debug, thiserror::Error)]
 pub enum ClientError {
-    #[error("{source} (from {origin})")]
+    // The reason is part of the message, not a separate cause, so it is
+    // printed once.
+    #[error("{reason} (from {origin})")]
     Gateway {
         origin: GatewaySource,
-        #[source]
-        source: GatewayEndpointError,
+        reason: GatewayEndpointError,
     },
     #[error("cannot locate client settings: set HOME or XDG_CONFIG_HOME to an absolute path")]
     NoConfigDir,
@@ -91,9 +92,9 @@ impl ClientConfig {
             .as_deref()
             .map(GatewayEndpoint::parse)
             .transpose()
-            .map_err(|source| ClientError::Gateway {
+            .map_err(|reason| ClientError::Gateway {
                 origin: GatewaySource::ClientConfig(path.clone()),
-                source,
+                reason,
             })?;
         Ok(Self { path, gateway })
     }
@@ -183,9 +184,9 @@ impl GatewayChoice {
     pub fn select(flag: Option<&str>, env: &HostEnv) -> Result<Self, ClientError> {
         let named = |value: &str, source: GatewaySource| match GatewayEndpoint::parse(value) {
             Ok(endpoint) => Ok(Self::Selected { endpoint, source }),
-            Err(error) => Err(ClientError::Gateway {
+            Err(reason) => Err(ClientError::Gateway {
                 origin: source,
-                source: error,
+                reason,
             }),
         };
         if let Some(value) = flag {

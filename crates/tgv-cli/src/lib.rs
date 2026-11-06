@@ -6,8 +6,10 @@ mod commands;
 mod context;
 pub mod doctor;
 pub mod service;
+pub mod style;
 
 use crate::context::Context;
+use crate::style::{Terminal, Tone};
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use std::{path::PathBuf, process::ExitCode};
@@ -46,8 +48,20 @@ enum Command {
 }
 
 impl Cli {
-    pub async fn run(self, env: HostEnv) -> Result<ExitCode> {
-        let ctx = Context::new(self.config, self.data_dir, env);
+    /// Runs the command; a failure is reported on stderr and exits 1.
+    pub async fn run(self, env: HostEnv, terminal: Terminal) -> ExitCode {
+        match self.dispatch(env, terminal).await {
+            Ok(code) => code,
+            Err(error) => {
+                // The same text Rust prints for an error returned from main.
+                eprintln!("{} {error:?}", terminal.stderr.paint(Tone::Bad, "Error:"));
+                ExitCode::FAILURE
+            }
+        }
+    }
+
+    async fn dispatch(self, env: HostEnv, terminal: Terminal) -> Result<ExitCode> {
+        let ctx = Context::new(self.config, self.data_dir, env, terminal);
         match self.command {
             Command::Serve(cmd) => cmd.run(&ctx).await,
             Command::Service(cmd) => cmd.run(&ctx),

@@ -138,8 +138,8 @@ Modules carry no lint headers of their own. A module with submodules lives in
   crate-level `#![allow(...)]` with a reason, covering helpers outside `#[test]`
   functions and spawned mock servers. Unit-test modules use `clippy.toml`'s
   `allow-*-in-tests` instead.
-- `anyhow` is used only in `tgv-cli`, the command shell (`main.rs`,
-  `context.rs`, `commands`, and `Cli::run`). Every other module returns its own
+- `anyhow` is used only in `tgv-cli`, the command shell (`context.rs`,
+  `commands`, and `Cli::run`). Every other module returns its own
   `thiserror` enum, including `doctor` and `service` in `tgv-cli`.
 
 ## 3. Testing
@@ -241,8 +241,11 @@ dependencies under "Crates" below. Read the code for current module ownership.
   `#[derive(Args)]` struct with its own execution method, and command groups
   are `#[derive(Subcommand)]` enums. `client` chooses the gateway (`--gateway`,
   `TGV_GATEWAY`, `client.toml`, then the local listener) and owns
-  `client.toml`, which `tgv init` writes. `doctor` and `service` are the doctor
-  report and the service definitions. Refactors preserve existing flags, output
+  `client.toml`, which `tgv init` writes. `style` decides once, per stream,
+  whether stdout and stderr are colored (a terminal, `NO_COLOR`,
+  `CLICOLOR_FORCE`, `TERM=dumb`); JSON and piped output stay plain. `Cli::run`
+  prints errors itself, so they are styled too. `doctor` and `service` are the doctor report and the
+  service definitions. Refactors preserve existing flags, output
   formats, exports, and client passthrough. Its integration tests run the built
   binary (`CARGO_BIN_EXE_tgv`).
 - `ui`: an independent SvelteKit, Svelte 5, and TypeScript server (Node adapter). It

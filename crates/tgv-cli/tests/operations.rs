@@ -495,6 +495,29 @@ async fn init_saves_a_checked_gateway_that_run_and_doctor_then_use() {
     );
     assert_eq!(check("local storage")["status"], "skipped");
     assert_eq!(check("gateway")["status"], "ok");
+    // Piped text stays plain and aligned; CLICOLOR_FORCE colors it.
+    let output = tgv(&["doctor"], None);
+    let text = String::from_utf8(output.stdout).unwrap();
+    assert!(!text.contains('\u{1b}'));
+    assert!(
+        text.lines()
+            .any(|line| line.starts_with("SKIP local storage      "))
+    );
+    let summary = text.lines().last().unwrap();
+    assert!(
+        summary.contains(" ok, ") && summary.contains(" failed, ") && summary.ends_with(" skipped"),
+        "{summary}"
+    );
+    let output = Command::new(env!("CARGO_BIN_EXE_tgv"))
+        .arg("doctor")
+        .env("HOME", &home)
+        .env_remove("XDG_CONFIG_HOME")
+        .env_remove("TGV_GATEWAY")
+        .env_remove("NO_COLOR")
+        .env("CLICOLOR_FORCE", "1")
+        .output()
+        .unwrap();
+    assert!(String::from_utf8_lossy(&output.stdout).contains("\u{1b}["));
 
     // TGV_GATEWAY wins over the file, and --gateway over both.
     let output = tgv(

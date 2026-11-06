@@ -1,4 +1,5 @@
 //! Shared CLI inputs. Configuration and the store reader open only when a command needs them.
+use crate::style::Terminal;
 use anyhow::Result;
 use std::path::PathBuf;
 use tgv_daemon::config::Config;
@@ -10,6 +11,8 @@ pub struct Context {
     pub data_dir_override: Option<PathBuf>,
     /// The process environment, captured once in `main`.
     pub env: HostEnv,
+    /// Whether human-readable output on each stream is colored.
+    pub terminal: Terminal,
 }
 
 impl Context {
@@ -17,11 +20,13 @@ impl Context {
         config_path: Option<PathBuf>,
         data_dir_override: Option<PathBuf>,
         env: HostEnv,
+        terminal: Terminal,
     ) -> Self {
         Self {
             config_path,
             data_dir_override,
             env,
+            terminal,
         }
     }
     pub fn config(&self) -> Result<Config> {

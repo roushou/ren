@@ -1,5 +1,6 @@
 //! Bounded, credential-free diagnostics. Never sign in or issue inference requests.
 use crate::client::GatewayChoice;
+use crate::style::{Styling, Tone};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::{
     path::{Path, PathBuf},
@@ -17,6 +18,34 @@ pub enum Status {
     Warning,
     Failed,
     Skipped,
+}
+
+impl Status {
+    /// The text-report label and its tone.
+    fn label(self) -> (&'static str, Tone) {
+        match self {
+            Self::Ok => ("OK", Tone::Good),
+            Self::Warning => ("WARN", Tone::Warn),
+            Self::Failed => ("FAIL", Tone::Bad),
+            Self::Skipped => ("SKIP", Tone::Muted),
+        }
+    }
+
+    /// The tone a check with this status is shown in.
+    pub(crate) fn tone(self) -> Tone {
+        self.label().1
+    }
+
+    /// How the summary counts `n` checks with this status.
+    fn tally(self, n: usize) -> String {
+        match self {
+            Self::Ok => format!("{n} ok"),
+            Self::Warning if n == 1 => "1 warning".to_owned(),
+            Self::Warning => format!("{n} warnings"),
+            Self::Failed => format!("{n} failed"),
+            Self::Skipped => format!("{n} skipped"),
+        }
+    }
 }
 
 #[derive(Serialize)]
@@ -49,7 +78,8 @@ impl Report {
             message: message.into(),
         });
     }
-    pub fn print(&self, json: bool) -> Result<(), serde_json::Error> {
+    /// Prints the report: JSON, or one aligned line per check and a summary.
+    pub fn print(&self, json: bool, styling: Styling) -> Result<(), serde_json::Error> {
         if json {
             println!(
                 "{}",
@@ -57,18 +87,43 @@ impl Report {
                     &serde_json::json!({"ok": self.success(), "checks": self.checks})
                 )?
             );
-        } else {
-            for check in &self.checks {
-                let label = match check.status {
-                    Status::Ok => "OK",
-                    Status::Warning => "WARN",
-                    Status::Failed => "FAIL",
-                    Status::Skipped => "SKIP",
-                };
-                println!("{label:4} {:18} {}", check.name, check.message);
+            return Ok(());
+        }
+        for check in &self.checks {
+            let (label, tone) = check.status.label();
+            // Pad before painting: escape codes would count as width.
+            let label = styling.paint(tone, &format!("{label:4}"));
+            let name = format!("{:18}", check.name);
+            match check.status {
+                Status::Skipped => println!(
+                    "{label} {} {}",
+                    styling.paint(Tone::Muted, &name),
+                    styling.paint(Tone::Muted, &check.message)
+                ),
+                Status::Ok | Status::Warning | Status::Failed => {
+                    println!(
+                        "{label} {} {}",
+                        styling.paint(Tone::Strong, &name),
+                        check.message
+                    );
+                }
             }
         }
+        println!("\n{}", self.summary(styling));
         Ok(())
+    }
+
+    /// "8 ok, 1 warning, 0 failed, 3 skipped", each nonzero count in its tone.
+    fn summary(&self, styling: Styling) -> String {
+        [Status::Ok, Status::Warning, Status::Failed, Status::Skipped]
+            .into_iter()
+            .map(|status| {
+                let n = self.checks.iter().filter(|c| c.status == status).count();
+                let tone = if n == 0 { Tone::Muted } else { status.tone() };
+                styling.paint(tone, &status.tally(n))
+            })
+            .collect::<Vec<_>>()
+            .join(", ")
     }
 }
 

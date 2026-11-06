@@ -27,7 +27,7 @@ impl DoctorCmd {
             }
             Err(error) => Report::failed("gateway URL", error.to_string()),
         };
-        report.print(self.json)?;
+        report.print(self.json, ctx.terminal.stdout)?;
         Ok(if report.success() {
             ExitCode::SUCCESS
         } else {

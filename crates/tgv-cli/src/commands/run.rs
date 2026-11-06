@@ -1,6 +1,6 @@
-use crate::client::GatewayChoice;
 use crate::context::Context;
 use crate::doctor;
+use crate::{client::GatewayChoice, style::Tone};
 use anyhow::Result;
 use clap::{Args, ValueEnum};
 use std::{ffi::OsString, process::ExitCode};
@@ -51,9 +51,15 @@ impl RunCmd {
             return Ok(ExitCode::SUCCESS);
         }
         let report = doctor::Report::gateway(&gateway).await;
+        let stderr = ctx.terminal.stderr;
         for check in &report.checks {
             if check.status != doctor::Status::Ok {
-                eprintln!("{}: {}", check.name, check.message);
+                let name = format!("{}:", check.name);
+                eprintln!(
+                    "{} {}",
+                    stderr.paint(check.status.tone(), &name),
+                    check.message
+                );
             }
         }
         if !report.success() {
@@ -73,7 +79,8 @@ impl RunCmd {
         let overrides = doctor::Report::credential_overrides(&ctx.env);
         if !overrides.is_empty() {
             eprintln!(
-                "Authentication overrides are set ({}); verify the client is using your intended subscription login.",
+                "{} authentication overrides are set ({}); verify the client is using your intended subscription login.",
+                stderr.paint(Tone::Warn, "warning:"),
                 overrides.join(", ")
             );
         }

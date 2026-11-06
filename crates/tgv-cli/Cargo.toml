@@ -24,6 +24,7 @@ name = "tgv"
 path = "src/main.rs"
 
 [dependencies]
+anstyle = "1.0"
 anyhow = "1.0"
 clap.workspace = true
 reqwest.workspace = true
