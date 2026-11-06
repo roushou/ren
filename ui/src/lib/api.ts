@@ -441,10 +441,22 @@ export interface Build {
   version: string;
   revision: Revision;
 }
+/** Whether new calls are admitted; reported read-only by `/health`. */
+export type Pause =
+  | { state: 'running' }
+  | { state: 'paused'; retry_after: number }
+  | { state: 'unknown'; text: string };
+export interface OperatorSummary {
+  pause: Pause;
+  /** Session blocks in force now. */
+  blocked_sessions: number;
+}
 export interface Health {
   status: Stored<HealthStatus>;
   /** Null for a daemon older than build reporting. */
   build: Build | null;
+  /** Null for a daemon older than operator reporting. */
+  operator: OperatorSummary | null;
   recorder: RecorderMetrics;
 }
 export interface Metrics {
@@ -710,9 +722,19 @@ export const revision: Decoder<Revision> = (value, path) => {
 const build = object<Build>({ version: string, revision });
 const reportedBuild: Decoder<Build | null> = (value, path) =>
   value === undefined || value === null ? null : build(value, path);
+const pause: Decoder<Pause> = (value, path) => {
+  if (!isRecord(value)) throw new ShapeError(path, 'an object');
+  const state = string(value.state, `${path}.state`);
+  if (state === 'running') return { state };
+  if (state === 'paused')
+    return { state, retry_after: count(value.retry_after, `${path}.retry_after`) };
+  return { state: 'unknown', text: state };
+};
+const operatorSummary = object<OperatorSummary>({ pause, blocked_sessions: count });
 const health = object<Health>({
   status: label(healthStatuses),
   build: reportedBuild,
+  operator: optional(operatorSummary),
   recorder: recorderMetrics,
 });
 const metrics = object<Metrics>({ recorder: recorderMetrics, storage: storageView });
@@ -837,8 +859,12 @@ export class ManagementApi {
     return this.#read(`/api/sessions/${id}/calls?${ManagementApi.#page(query)}`, callPage, signal);
   }
 
+  /** `limit` first, the caller's or 100, then the rest of the query. */
   static #page(query: URLSearchParams): string {
-    const params = new URLSearchParams([['limit', '100'], ...query]);
+    const params = new URLSearchParams([
+      ['limit', query.get('limit') ?? '100'],
+      ...[...query].filter(([key]) => key !== 'limit'),
+    ]);
     return params.toString();
   }
 

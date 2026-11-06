@@ -11,7 +11,9 @@ Claude Code / Pi / Codex ───────────────> Rust dae
 Browser ──> optional SvelteKit server ──> Rust management API
 ```
 
-Pages: Traffic (`/traffic`, also `/`), Sessions (`/sessions`, `/sessions/:id`), Usage
+Pages: Overview (`/`: a health line, calls in flight and sessions active in the last
+15 minutes, what needs attention in the last day, and the last 24 hours' usage),
+Traffic (`/traffic`), Sessions (`/sessions`, `/sessions/:id`), Usage
 (`/usage`: calls, errors, and tokens over the last day by hour, the last week, or all
 retained calls by local day, by model, and the busiest sessions), and Recorder
 (`/recorder`). On Traffic and a session page, `j` and `k` select the next and previous

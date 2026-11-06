@@ -74,6 +74,40 @@ export function usageSnapshot(fetcher: typeof fetch, rawRange: string | null) {
   });
 }
 
+export interface OverviewData {
+  now: number;
+  /** The last 24 hours. */
+  usage: UsageView;
+  /** Calls still open, newest first. */
+  active: CallView[];
+  /** Errors and stopped calls in the last 24 hours. */
+  errors: CallView[];
+  stopped: CallView[];
+  sessions: SessionView[];
+}
+
+/** The overview: everything read at once; each read is small. */
+export function overviewSnapshot(fetcher: typeof fetch) {
+  const api = new ManagementApi(fetcher);
+  return readSnapshot('overview', async (): Promise<OverviewData> => {
+    const now = Date.now();
+    const since = String(now - 24 * 3_600_000);
+    const listing = (status: string, limit: number, from?: string) => {
+      const query = new URLSearchParams({ status, limit: String(limit) });
+      if (from) query.set('from_ms', from);
+      return api.calls(query).then((page) => page.calls);
+    };
+    const [usage, active, errors, stopped, sessions] = await Promise.all([
+      api.usage({ from_ms: rangeStart('24h', now, localDayStart) }),
+      listing('active', 50),
+      listing('errors', 10, since),
+      listing('interrupted', 10, since),
+      api.sessions(100),
+    ]);
+    return { now, usage, active, errors, stopped, sessions: sessions.sessions };
+  });
+}
+
 export function sessionsSnapshot(fetcher: typeof fetch) {
   const api = new ManagementApi(fetcher);
   return readSnapshot('sessions', async () => (await api.sessions(100)).sessions);

@@ -18,13 +18,15 @@
   const health = $derived(gateway.current.value?.health);
   const storage = $derived(gateway.current.value?.storage);
   const view = $derived(
-    page.route.id === '/recorder'
-      ? 'recorder'
-      : page.route.id === '/usage'
-        ? 'usage'
-        : page.route.id === '/sessions'
-          ? 'sessions'
-          : 'traffic',
+    page.route.id === '/'
+      ? 'overview'
+      : page.route.id === '/recorder'
+        ? 'recorder'
+        : page.route.id === '/usage'
+          ? 'usage'
+          : page.route.id === '/sessions'
+            ? 'sessions'
+            : 'traffic',
   );
   const sessionId = $derived(page.params.id ?? null);
   const session = $derived(page.data.traffic?.value?.session);
@@ -33,15 +35,17 @@
   const pageTitle = $derived(
     page.error
       ? 'Page unavailable'
-      : view === 'recorder'
-        ? 'Recorder & storage'
-        : view === 'usage'
-          ? 'Usage'
-          : view === 'sessions'
-            ? 'Sessions'
-            : sessionId
-              ? 'Session activity'
-              : 'Traffic',
+      : view === 'overview'
+        ? 'Overview'
+        : view === 'recorder'
+          ? 'Recorder & storage'
+          : view === 'usage'
+            ? 'Usage'
+            : view === 'sessions'
+              ? 'Sessions'
+              : sessionId
+                ? 'Session activity'
+                : 'Traffic',
   );
   const gatewayOrigin = $derived(page.data.gatewayUrl);
   const omissions = $derived(health?.recorder.omissions);
@@ -98,7 +102,14 @@
   // The views' code is small and static: fetch it once up front, so switching
   // views waits only for data (which hovering a tab also starts).
   onMount(() => {
-    for (const route of ['/traffic', '/sessions', '/usage', '/recorder', '/sessions/[id]'] as const)
+    for (const route of [
+      '/',
+      '/traffic',
+      '/sessions',
+      '/usage',
+      '/recorder',
+      '/sessions/[id]',
+    ] as const)
       void preloadCode(route);
   });
   onMount(() => {
@@ -117,10 +128,17 @@
 <svelte:head><title>TGV · {pageTitle}</title></svelte:head>
 <div class="app-shell">
   <header class="workbench-header">
-    <a class="brand" href="/traffic" aria-label="TGV home"
+    <a class="brand" href="/" aria-label="TGV overview"
       ><Icon name="terminal" size={17} /><strong>TGV</strong></a
     >
     <nav class="workbench-tabs" aria-label="Workbench views">
+      <a
+        href="/"
+        data-sveltekit-preload-data="hover"
+        class:active={view === 'overview'}
+        aria-current={view === 'overview' ? 'page' : undefined}
+        ><Icon name="monitor" size={14} />Overview</a
+      >
       <a
         href="/traffic"
         data-sveltekit-preload-data="hover"
@@ -229,7 +247,9 @@
           ? `${num(storage?.usage.calls)} calls retained`
           : view === 'sessions'
             ? `${sessionCount}${sessionCount === 100 ? '+' : ''} sessions loaded`
-            : `${workbench.callCount} calls on page · ${workbench.activeCount} in progress`}</span
+            : view === 'traffic'
+              ? `${workbench.callCount} calls on page · ${workbench.activeCount} in progress`
+              : `${num(storage?.usage.calls)} calls retained`}</span
     >
     <span
       class="snapshot-time mono"
