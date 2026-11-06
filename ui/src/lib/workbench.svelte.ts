@@ -1,4 +1,4 @@
-import { createContext } from 'svelte';
+import { createContext, type Snippet } from 'svelte';
 import type { CallView } from './api.ts';
 import { LiveFollow, type LiveState } from './live.ts';
 
@@ -13,5 +13,19 @@ export class Workbench {
   selected = $state<CallView | undefined>();
   callCount = $state(0);
   activeCount = $state(0);
+  /** What the current view puts in the scope bar: what you are looking at,
+   * and the controls that change it. Unset, the bar names the view. */
+  scope = $state.raw<Snippet | undefined>();
+
+  /** Show `snippet` in the scope bar while the calling component lives.
+   * Call it from a component's script, where effects can be created. */
+  showScope(snippet: Snippet) {
+    $effect(() => {
+      this.scope = snippet;
+      return () => {
+        if (this.scope === snippet) this.scope = undefined;
+      };
+    });
+  }
 }
 export const [getWorkbench, setWorkbench] = createContext<Workbench>();

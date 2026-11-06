@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, tick } from 'svelte';
   import { goto, preloadCode, refreshAll } from '$app/navigation';
   import { page, navigating } from '$app/state';
   import { createSnapshot } from '#lib/snapshot.svelte.ts';
@@ -29,7 +29,38 @@
             : 'traffic',
   );
   const sessionId = $derived(page.params.id ?? null);
-  const session = $derived(page.data.traffic?.value?.session);
+  /** When the scope does not fit on one line it folds behind a button. */
+  let scopeOpen = $state(false);
+  let folded = $state(false);
+  let toolbar = $state<HTMLElement>();
+  let scopeElement = $state<HTMLElement>();
+  /** The scope's width on one line, measured while it is shown inline. */
+  let natural = 0;
+  function fit() {
+    if (!toolbar || !scopeElement) return;
+    if (!folded) {
+      // The content's own width: its groups and the 24px between each.
+      const groups = [...scopeElement.children] as HTMLElement[];
+      natural =
+        groups.reduce((sum, group) => sum + group.offsetWidth, 0) +
+        Math.max(0, groups.length - 1) * 24;
+    }
+    const actions = toolbar.querySelector<HTMLElement>('.page-actions')?.offsetWidth ?? 0;
+    const padding = 24 + 12;
+    folded = !!workbench.scope && natural > toolbar.clientWidth - actions - padding;
+    if (!folded) scopeOpen = false;
+  }
+  $effect(() => {
+    // A new view's scope is measured inline first.
+    void workbench.scope;
+    folded = false;
+    void tick().then(fit);
+  });
+  onMount(() => {
+    const observer = new ResizeObserver(() => fit());
+    if (toolbar) observer.observe(toolbar);
+    return () => observer.disconnect();
+  });
   const sessionCount = $derived(page.data.sessions?.value?.length ?? 0);
   const selected = $derived(workbench.selected);
   const pageTitle = $derived(
@@ -175,12 +206,20 @@
     >
     <ThemeControl />
   </header>
-  <div class="workbench-toolbar">
-    <h1>
-      {pageTitle}{#if sessionId}<span class="mono heading-id"
-          >{short(session?.native_id ?? sessionId)}</span
+  <div class="workbench-toolbar" class:folded class:scope-open={scopeOpen} bind:this={toolbar}>
+    <!-- The nav tab names the view; the bar shows its scope. -->
+    <h1 class="sr-only">{pageTitle}</h1>
+    {#if workbench.scope && folded}<button
+        class="button small scope-toggle"
+        aria-expanded={scopeOpen}
+        aria-controls="scope"
+        onclick={() => (scopeOpen = !scopeOpen)}><Icon name="filter" size={13} /> Scope</button
+      >{/if}
+    <div class="scope" id="scope" bind:this={scopeElement}>
+      {#if workbench.scope}{@render workbench.scope()}{:else}<span class="scope-title"
+          >{pageTitle}</span
         >{/if}
-    </h1>
+    </div>
     <div class="page-actions">
       <label class="toggle-control"
         ><input type="checkbox" bind:checked={workbench.automatic} /><span class="switch"

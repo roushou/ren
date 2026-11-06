@@ -2239,22 +2239,6 @@ td.zero {
   padding: 10px 14px;
 }
 
-/* The narrowing strip under the search toolbar: who, when, and what kind. */
-.narrow-bar {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px 14px;
-  padding: 6px 10px;
-  border-bottom: 1px solid var(--line);
-  background: var(--surface-subtle);
-}
-.narrow-bar .compact-select {
-  max-width: 260px;
-}
-.narrow-bar .model-only {
-  margin-left: auto;
-}
 .session-filter {
   display: inline-flex;
   align-items: center;
@@ -2271,4 +2255,100 @@ td.zero {
 }
 .hidden-count {
   margin-left: 6px;
+}
+
+/* The scope bar: what the view shows, and the controls that change it, on
+   one line. Groups are separated by a thin rule, never wrapped. */
+.workbench-toolbar {
+  flex-wrap: wrap;
+  row-gap: 0;
+}
+.scope {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  min-width: 0;
+  flex-wrap: nowrap;
+  white-space: nowrap;
+}
+.scope-title {
+  font-weight: 600;
+}
+.scope-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.scope-group + .scope-group {
+  margin-left: 12px;
+  padding-left: 12px;
+  border-left: 1px solid var(--line);
+}
+.scope-group.end {
+  margin-left: auto;
+  border-left: 0;
+}
+.scope .compact-select {
+  width: auto;
+  max-width: 220px;
+}
+.scope-identity {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.scope-identity strong {
+  font-weight: 600;
+}
+.scope-figures {
+  display: flex;
+  gap: 12px;
+  color: var(--muted);
+}
+.scope-figures b {
+  color: var(--ink);
+  font-weight: 600;
+}
+/* Folded: the scope did not fit on one line (measured, not a fixed width).
+   It hides behind a button and opens as a flush panel below the bar, its
+   groups stacked, so nothing ever wraps into a ragged second line. */
+.scope-toggle {
+  display: inline-flex;
+}
+.workbench-toolbar.folded .scope {
+  display: none;
+}
+.workbench-toolbar.folded .page-actions {
+  margin-left: auto;
+}
+.workbench-toolbar.folded.scope-open .scope {
+  display: flex;
+  flex-basis: 100%;
+  order: 3;
+  flex-direction: column;
+  align-items: stretch;
+  margin: 4px -12px -4px;
+  border-top: 1px solid var(--line);
+  background: var(--surface-subtle);
+  white-space: normal;
+}
+.workbench-toolbar.folded.scope-open .scope-group {
+  flex-wrap: wrap;
+  margin: 0;
+  padding: 8px 12px;
+  border-left: 0;
+  border-top: 1px solid var(--line-subtle);
+}
+.workbench-toolbar.folded.scope-open .scope-group:first-child {
+  border-top: 0;
+}
+.scope .overview-health {
+  padding: 0;
+  background: none;
+}
+.scope .scope-search {
+  width: 260px;
+  flex-shrink: 1;
 }

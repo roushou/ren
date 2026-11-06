@@ -20,11 +20,11 @@ export function selectedCall(
 export type KindChoice = 'model' | 'all' | 'other';
 /** A start relative to now, kept in the URL as `since=` so it stays relative. */
 export type Since = '1h' | 'today' | '24h' | '7d';
-export const sinceChoices: { since: Since; label: string }[] = [
-  { since: '1h', label: 'Last hour' },
-  { since: 'today', label: 'Today' },
-  { since: '24h', label: '24 h' },
-  { since: '7d', label: '7 days' },
+export const sinceChoices: { since: Since; label: string; title: string }[] = [
+  { since: '1h', label: '1h', title: 'Last hour' },
+  { since: 'today', label: 'Today', title: 'Since midnight' },
+  { since: '24h', label: '24h', title: 'Last 24 hours' },
+  { since: '7d', label: '7d', title: 'Last 7 days' },
 ];
 export const clientChoices = [
   { client: 'claude_code', label: 'Claude Code' },

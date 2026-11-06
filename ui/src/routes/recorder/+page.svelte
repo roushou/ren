@@ -1,11 +1,13 @@
 <script lang="ts">
   import { createSnapshot } from '#lib/snapshot.svelte.ts';
+  import { getWorkbench } from '#lib/workbench.svelte.ts';
   import { num, bytes, type FileUsage } from '#lib/api.ts';
   import { assertNever } from '#lib/decode.ts';
   import { buildLabel } from '#lib/display.ts';
   import Icon from '#lib/Icon.svelte';
   import type { PageProps } from './$types';
   let { data }: PageProps = $props();
+  getWorkbench().showScope(scope);
   const gateway = createSnapshot(() => data.gateway);
   const snapshot = createSnapshot(() => data.recorder);
   const policy = $derived(gateway.current.value?.storage.policy);
@@ -157,6 +159,19 @@
   ]);
 </script>
 
+{#snippet scope()}
+  <div class="scope-group">
+    <span
+      class="chip"
+      class:success={!loss && !degraded && !!recorder}
+      class:warning={loss || degraded}
+      >{!recorder ? 'Loading' : loss || degraded ? 'Needs attention' : 'Healthy'}</span
+    >
+    <span class="muted">Daemon build {buildLabel(gateway.current.value?.health.build ?? null)}</span
+    >
+  </div>
+{/snippet}
+
 <div class="recorder-console">
   <dl class="storage-summary" aria-label="Storage usage">
     <div>
@@ -226,9 +241,6 @@
         <div>
           <h2 id="health-title">Recorder health</h2>
           <p>Counters since gateway startup</p>
-          {#if gateway.current.value}
-            <p>Daemon build {buildLabel(gateway.current.value.health.build)}</p>
-          {/if}
         </div>
         <span
           class="badge"

@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import { page } from '$app/state';
   import { createSnapshot } from '#lib/snapshot.svelte.ts';
+  import { getWorkbench } from '#lib/workbench.svelte.ts';
   import { bytes, num, providerMark, providerName, short } from '#lib/api.ts';
   import { compact, sessionTone, streamChip } from '#lib/display.ts';
   import { activeSessions, ago, healthLine, problems } from '#lib/overview.ts';
@@ -11,6 +12,7 @@
   import Icon from '#lib/Icon.svelte';
   import type { PageProps } from './$types';
   let { data }: PageProps = $props();
+  getWorkbench().showScope(scope);
   const overview = createSnapshot(() => data.overview);
   const gateway = createSnapshot(() => data.gateway);
   const current = $derived(overview.current.value);
@@ -53,16 +55,18 @@
   const command = $derived(`tgv run ${client}${local ? '' : ` --gateway ${origin}`}`);
 </script>
 
+{#snippet scope()}
+  <div class="scope-group overview-health" aria-label="Health">
+    {#each health as item}{#if item.href}<a
+          class="chip {item.tone}"
+          href={item.href}
+          title={item.title}>{item.label}</a
+        >{:else}<span class="chip {item.tone}" title={item.title}>{item.label}</span>{/if}{/each}
+  </div>
+{/snippet}
+
 <div class="overview">
   <div class="console">
-    <section class="overview-health" aria-label="Health">
-      {#each health as item}{#if item.href}<a
-            class="chip {item.tone}"
-            href={item.href}
-            title={item.title}>{item.label}</a
-          >{:else}<span class="chip {item.tone}" title={item.title}>{item.label}</span>{/if}{/each}
-    </section>
-
     {#if !current}
       <div class="empty-state" role="alert">
         <div class="empty-icon"><Icon name="alert" size={26} /></div>

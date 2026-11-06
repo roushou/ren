@@ -1,5 +1,6 @@
 <script lang="ts">
   import { createSnapshot } from '#lib/snapshot.svelte.ts';
+  import { getWorkbench } from '#lib/workbench.svelte.ts';
   import { num, providerMark, providerName, short } from '#lib/api.ts';
   import { compact, sessionTone } from '#lib/display.ts';
   import {
@@ -13,6 +14,7 @@
   import Icon from '#lib/Icon.svelte';
   import type { PageProps } from './$types';
   let { data }: PageProps = $props();
+  getWorkbench().showScope(scope);
   const snapshot = createSnapshot(() => data.usage);
   const current = $derived(snapshot.current.value);
   const range = $derived(current?.range ?? '7d');
@@ -53,22 +55,23 @@
     value === null || value === undefined ? '—' : compact(value);
 </script>
 
+{#snippet scope()}
+  <nav class="scope-group segmented" aria-label="Time range">
+    {#each usageRanges as item}<a
+        href={`/usage?range=${item.range}`}
+        class:chosen={range === item.range}
+        aria-current={range === item.range ? 'page' : undefined}>{item.label}</a
+      >{/each}
+  </nav>
+  <span
+    class="scope-group end usage-note"
+    title="Tokens are what providers report; input includes cached context. They are not subscription allowance or charges."
+    ><Icon name="info" size={12} /> Provider-reported tokens</span
+  >
+{/snippet}
+
 <div class="usage-page">
   <div class="console">
-    <div class="usage-controls">
-      <nav class="segmented" aria-label="Time range">
-        {#each usageRanges as item}<a
-            href={`/usage?range=${item.range}`}
-            class:chosen={range === item.range}
-            aria-current={range === item.range ? 'page' : undefined}>{item.label}</a
-          >{/each}
-      </nav>
-      <span class="usage-note"
-        ><Icon name="info" size={12} /> Provider-reported tokens; input includes cached context. Not subscription
-        allowance or charges.</span
-      >
-    </div>
-
     {#if !current}
       <div class="empty-state">
         <div class="empty-icon"><Icon name="alert" size={26} /></div>

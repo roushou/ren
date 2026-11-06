@@ -21,6 +21,7 @@
     streamChip,
     tokenSummary,
     sessionTone,
+    compact,
   } from './display.ts';
   import {
     type Filters,
@@ -40,6 +41,8 @@
   let { snapshot, sessionId }: { snapshot: Snapshot<TrafficData>; sessionId: SessionId | null } =
     $props();
   const workbench = getWorkbench();
+  // The scope bar shows the narrowing controls, or the session itself.
+  workbench.showScope(scope);
   const retained = createSnapshot(() => snapshot);
   const calls = $derived(retained.current.value?.calls ?? []);
   const nextAfter = $derived(retained.current.value?.next ?? null);
@@ -255,7 +258,7 @@
     if (key === 'client')
       return `Client: ${clientChoices.find((item) => item.client === value)?.label ?? value}`;
     if (key === 'since')
-      return sinceChoices.find((item) => item.since === value)?.label ?? `Since: ${value}`;
+      return sinceChoices.find((item) => item.since === value)?.title ?? `Since: ${value}`;
     if (key === 'kind') return value === 'other' ? 'Bookkeeping calls only' : 'All call kinds';
     if (key === 'from_ms' || key === 'until_ms')
       return `${key === 'from_ms' ? 'From' : 'Until'}: ${new Date(Number(value)).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}`;
@@ -302,6 +305,110 @@
     }
   }
 </script>
+
+{#snippet scope()}
+  {#if sessionId}
+    <div class="scope-group scope-identity">
+      {#if session}<span class="session-dot tone-{sessionTone(session.id)}"></span><span
+          class="provider-mark tiny {session.provider}">{providerMark(session.provider)}</span
+        ><strong class="mono" title="The session ID your client reported"
+          >{short(session.native_id)}</strong
+        ><small class="mono muted" title={`TGV's own ID for this session: ${session.id}`}
+          >TGV {short(session.id)}</small
+        >{:else}<strong class="mono">{short(sessionId)}</strong>{/if}
+    </div>
+    {#if session}<div class="scope-group scope-figures">
+        <span><b class="mono">{num(session.call_count)}</b> calls</span>
+        <span><b class="mono">{num(session.turn_count)}</b> turns</span>
+        <span class:error-count={!!session.error_count}
+          ><b class="mono">{num(session.error_count)}</b> errors</span
+        >
+        <span
+          title="Provider reported; input includes cached context. Not subscription allowance or charges."
+          ><b class="mono">{session.tokens.input === null ? '—' : compact(session.tokens.input)}</b>
+          in ·
+          <b class="mono">{session.tokens.output === null ? '—' : compact(session.tokens.output)}</b
+          > out</span
+        >
+      </div>{/if}
+    <div class="scope-group end">
+      <a class="text-button" href={`/traffic?session=${encodeURIComponent(sessionId)}`}
+        >Narrow in Traffic <Icon name="arrow" size={12} /></a
+      ><a class="text-button" href="/sessions">All sessions <Icon name="arrow" size={12} /></a>
+    </div>
+  {:else}
+    <div class="scope-group">
+      <div class="segmented" aria-label="Client">
+        <button
+          type="button"
+          class:chosen={!applied.get('client')}
+          aria-pressed={!applied.get('client')}
+          onclick={() => pick((f) => (f.client = ''))}>All clients</button
+        >{#each clientChoices as choice}<button
+            type="button"
+            class:chosen={applied.get('client') === choice.client}
+            aria-pressed={applied.get('client') === choice.client}
+            onclick={() => pick((f) => (f.client = choice.client))}>{choice.label}</button
+          >{/each}
+      </div>
+    </div>
+    <div class="scope-group">
+      <select
+        class="compact-select"
+        aria-label="Session"
+        value={applied.get('session') ?? ''}
+        onchange={(e) => pick((f) => (f.session = e.currentTarget.value))}
+        ><option value="">All sessions</option>{#each sessionChoices as choice (choice.id)}<option
+            value={choice.id}
+            >{short(choice.native_id)} · {providerName(choice.provider)} · {date(choice.last_seen)}
+            {clock(choice.last_seen)}</option
+          >{/each}</select
+      >
+    </div>
+    <div class="scope-group">
+      <div class="segmented" aria-label="Time">
+        <button
+          type="button"
+          class:chosen={!applied.get('since') && !applied.get('from_ms')}
+          aria-pressed={!applied.get('since') && !applied.get('from_ms')}
+          onclick={() =>
+            pick((f) => {
+              f.since = '';
+              f.from = '';
+              f.until = '';
+            })}
+          title="No time limit">Any</button
+        >{#each sinceChoices as choice}<button
+            type="button"
+            class:chosen={applied.get('since') === choice.since}
+            aria-pressed={applied.get('since') === choice.since}
+            onclick={() =>
+              pick((f) => {
+                f.since = choice.since;
+                f.from = '';
+                f.until = '';
+              })}
+            title={choice.title}>{choice.label}</button
+          >{/each}
+      </div>
+    </div>
+    <div class="scope-group end">
+      <label
+        class="toggle-control model-only"
+        title="Hide token counts, model listings, and WebSocket handshakes"
+        ><input
+          type="checkbox"
+          checked={(applied.get('kind') ?? 'model') === 'model'}
+          onchange={(e) => pick((f) => (f.kind = e.currentTarget.checked ? 'model' : 'all'))}
+        /><span class="switch"></span><span
+          >Model calls only{#if hidden}<span class="muted hidden-count"
+              >{hidden >= 100 ? '100+' : hidden} hidden</span
+            >{/if}</span
+        ></label
+      >
+    </div>
+  {/if}
+{/snippet}
 
 <svelte:window onkeydown={keydown} />
 {#if selectionError}<div class="notice danger" role="alert">
@@ -376,70 +483,6 @@
             >Search <Icon name="arrow" size={14} /></button
           >
         </div>
-        <div class="narrow-bar" aria-label="Narrow the listing">
-          <div class="segmented" aria-label="Client">
-            <button
-              type="button"
-              class:chosen={!applied.get('client')}
-              aria-pressed={!applied.get('client')}
-              onclick={() => pick((f) => (f.client = ''))}>All clients</button
-            >{#each clientChoices as choice}<button
-                type="button"
-                class:chosen={applied.get('client') === choice.client}
-                aria-pressed={applied.get('client') === choice.client}
-                onclick={() => pick((f) => (f.client = choice.client))}>{choice.label}</button
-              >{/each}
-          </div>
-          <select
-            class="compact-select"
-            aria-label="Session"
-            value={applied.get('session') ?? ''}
-            onchange={(e) => pick((f) => (f.session = e.currentTarget.value))}
-            ><option value="">All sessions</option
-            >{#each sessionChoices as choice (choice.id)}<option value={choice.id}
-                >{short(choice.native_id)} · {providerName(choice.provider)} · {date(
-                  choice.last_seen,
-                )}
-                {clock(choice.last_seen)}</option
-              >{/each}</select
-          >
-          <div class="segmented" aria-label="Time">
-            <button
-              type="button"
-              class:chosen={!applied.get('since') && !applied.get('from_ms')}
-              aria-pressed={!applied.get('since') && !applied.get('from_ms')}
-              onclick={() =>
-                pick((f) => {
-                  f.since = '';
-                  f.from = '';
-                  f.until = '';
-                })}>Any time</button
-            >{#each sinceChoices as choice}<button
-                type="button"
-                class:chosen={applied.get('since') === choice.since}
-                aria-pressed={applied.get('since') === choice.since}
-                onclick={() =>
-                  pick((f) => {
-                    f.since = choice.since;
-                    f.from = '';
-                    f.until = '';
-                  })}>{choice.label}</button
-              >{/each}
-          </div>
-          <label
-            class="toggle-control model-only"
-            title="Hide token counts, model listings, and WebSocket handshakes"
-            ><input
-              type="checkbox"
-              checked={(applied.get('kind') ?? 'model') === 'model'}
-              onchange={(e) => pick((f) => (f.kind = e.currentTarget.checked ? 'model' : 'all'))}
-            /><span class="switch"></span><span
-              >Model calls only{#if hidden}<span class="muted hidden-count"
-                  >{hidden >= 100 ? '100+' : hidden} hidden</span
-                >{/if}</span
-            ></label
-          >
-        </div>
         {#if moreFilters}<div class="advanced-filters" id="advanced-filters">
             <label
               >Model<input
@@ -489,22 +532,7 @@
             <Icon name="alert" size={14} />{filterError}
           </div>{/if}
       </form>
-    {:else}<div class="list-toolbar">
-        <h2>
-          <span class="provider-mark {session?.provider ?? ''}"
-            >{providerMark(session?.provider ?? '')}</span
-          >{providerName(session?.provider ?? 'Client')}
-          <span class="mono" title="The session ID your client reported"
-            >{short(session?.native_id)}</span
-          >{#if sessionId}<small
-              class="mono muted"
-              title={`TGV's own ID for this session: ${sessionId}`}>TGV {short(sessionId)}</small
-            >{/if}
-        </h2>
-        <button class="text-button" onclick={() => goto('/sessions')}
-          >All sessions <Icon name="arrow" size={14} /></button
-        >
-      </div>{/if}
+    {/if}
     <div class="list-content" class:busy={loading && calls.length > 0} aria-busy={loading}>
       {#if calls.length === 0 && retained.current.error && !loading}
         <div class="empty-state" role="alert">

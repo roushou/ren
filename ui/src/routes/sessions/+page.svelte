@@ -1,11 +1,13 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
   import { createSnapshot } from '#lib/snapshot.svelte.ts';
+  import { getWorkbench } from '#lib/workbench.svelte.ts';
   import { num, short, clock, providerName, providerMark } from '#lib/api.ts';
   import { compact, date, span, sessionTone } from '#lib/display.ts';
   import Icon from '#lib/Icon.svelte';
   import type { PageProps } from './$types';
   let { data }: PageProps = $props();
+  getWorkbench().showScope(scope);
   const snapshot = createSnapshot(() => data.sessions);
   const sessions = $derived(snapshot.current.value ?? []);
   let query = $state('');
@@ -16,23 +18,21 @@
   );
 </script>
 
-<section class="panel list-panel sessions-panel">
-  <div class="list-toolbar">
-    <div>
-      <h2>
-        Reported sessions <span class="count-pill"
-          >{sessions.length}{sessions.length === 100 ? '+' : ''}</span
-        >
-      </h2>
-    </div>
-    <label class="search-input"
-      ><Icon name="search" /><input
-        aria-label="Filter sessions"
-        placeholder="Search provider or session ID…"
-        bind:value={query}
-      /></label
-    >
+{#snippet scope()}
+  <div class="scope-group">
+    <strong>{sessions.length}{sessions.length === 100 ? '+' : ''}</strong>
+    <span class="muted">reported sessions · client-reported grouping</span>
   </div>
+  <label class="scope-group end search-input scope-search"
+    ><Icon name="search" /><input
+      aria-label="Filter sessions"
+      placeholder="Search provider or session ID…"
+      bind:value={query}
+    /></label
+  >
+{/snippet}
+
+<section class="panel list-panel sessions-panel">
   <div class="list-content">
     {#if visibleSessions.length}<div class="table-scroll">
         <table>
