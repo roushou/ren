@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { onMount, tick } from 'svelte';
-  import { goto, preloadCode, refreshAll } from '$app/navigation';
+  import { flushSync, onMount, tick } from 'svelte';
+  import { goto, onNavigate, preloadCode, refreshAll } from '$app/navigation';
   import { page, navigating } from '$app/state';
   import { createSnapshot } from '#lib/snapshot.svelte.ts';
   import { Workbench, setWorkbench } from '#lib/workbench.svelte.ts';
@@ -14,6 +14,15 @@
   import type { LayoutProps } from './$types';
   let { data, children }: LayoutProps = $props();
   const workbench = setWorkbench(new Workbench());
+  // The scope bar renders the current page's snippet, but the page owns its
+  // state. Leaving for another page, the snippet is dropped before that
+  // page's data arrives, or it would render the old page against new data.
+  // The new page shows its own scope once it mounts.
+  onNavigate((navigation) => {
+    if (navigation.from?.route.id === navigation.to?.route.id) return;
+    workbench.scope = undefined;
+    flushSync();
+  });
   const gateway = createSnapshot(() => data.gateway);
   const health = $derived(gateway.current.value?.health);
   const storage = $derived(gateway.current.value?.storage);
