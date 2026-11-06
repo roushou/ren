@@ -6,7 +6,7 @@
 //! replaces the binary, checks that the daemon runs the new build, and
 //! resumes.
 use crate::{
-    daemon::{Admission, CheckStatus, ControlState, DoctorReport},
+    daemon::{AfterPause, CheckStatus, ControlState, DoctorReport, Quiesce},
     invocation::{Echo, Invocation},
     publish::Publish,
     tailscale::{NodeStatus, Route, ServeStatus},
@@ -144,6 +144,15 @@ enum Backup {
 enum Tree {
     Clean,
     Modified,
+}
+
+/// Whether the installed daemon runs the build just installed.
+#[derive(Debug, PartialEq, Eq)]
+enum Verdict {
+    Confirmed,
+    /// A `-dirty` build cannot be confirmed; warn and continue.
+    Unconfirmed,
+    Mismatch,
 }
 
 /// What the upgrade did to admission before replacing a running daemon.
@@ -455,20 +464,22 @@ impl InstallVps {
         for _ in 0..polls {
             let state = Self::control_state(layout)?;
             running = state.running();
-            match state.admission() {
-                Admission::Running if running == 0 => {
+            match state.quiesce() {
+                Quiesce::Pause => {
                     Self::control(layout, &["pause", "--retry-after", Self::RETRY_AFTER])?;
-                    if Self::control_state(layout)?.running() == 0 {
-                        Self::step("Paused admission; clients wait and retry");
-                        return Ok(Quiet::Paused);
+                    match Self::control_state(layout)?.after_pause() {
+                        AfterPause::Quiet => {
+                            Self::step("Paused admission; clients wait and retry");
+                            return Ok(Quiet::Paused);
+                        }
+                        AfterPause::SlippedIn { .. } => Self::control(layout, &["resume"])?,
                     }
-                    Self::control(layout, &["resume"])?;
                 }
-                Admission::Paused | Admission::Other(_) if running == 0 => {
+                Quiesce::LeaveAlone => {
                     Self::step("The daemon was already paused; leaving it paused");
                     return Ok(Quiet::LeftAlone);
                 }
-                Admission::Running | Admission::Paused | Admission::Other(_) => {
+                Quiesce::Wait { running } => {
                     if reported != Some(running) {
                         Self::step(&format!(
                             "Waiting for {running} running calls to finish (up to {idle_timeout} seconds)"
@@ -535,28 +546,38 @@ impl InstallVps {
                 "doctor reported no build check".to_owned(),
             ));
         };
-        match (check.status(), tree) {
-            (CheckStatus::Ok, Tree::Clean | Tree::Modified) => {
+        match Self::verdict(check.status(), tree) {
+            Verdict::Confirmed => {
                 Self::step(check.message());
                 Ok(())
             }
+            Verdict::Unconfirmed => {
+                eprintln!("warning: {}", check.message());
+                Ok(())
+            }
+            Verdict::Mismatch => Err(InstallError::BuildMismatch(check.message().to_owned())),
+        }
+    }
+
+    /// Doctor's build check, read for an install from a clean or modified
+    /// checkout: only a clean one must be confirmed.
+    fn verdict(status: &CheckStatus, tree: Tree) -> Verdict {
+        match (status, tree) {
+            (CheckStatus::Ok, Tree::Clean | Tree::Modified) => Verdict::Confirmed,
             (
                 CheckStatus::Warning
                 | CheckStatus::Failed
                 | CheckStatus::Skipped
                 | CheckStatus::Other(_),
                 Tree::Modified,
-            ) => {
-                eprintln!("warning: {}", check.message());
-                Ok(())
-            }
+            ) => Verdict::Unconfirmed,
             (
                 CheckStatus::Warning
                 | CheckStatus::Failed
                 | CheckStatus::Skipped
                 | CheckStatus::Other(_),
                 Tree::Clean,
-            ) => Err(InstallError::BuildMismatch(check.message().to_owned())),
+            ) => Verdict::Mismatch,
         }
     }
 
@@ -781,5 +802,34 @@ impl InstallVps {
             || format!("(port {port} on this node)"),
             |name| format!("https://{name}:{port}"),
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_clean_install_requires_a_confirmed_build() {
+        assert_eq!(
+            InstallVps::verdict(&CheckStatus::Ok, Tree::Clean),
+            Verdict::Confirmed
+        );
+        assert_eq!(
+            InstallVps::verdict(&CheckStatus::Ok, Tree::Modified),
+            Verdict::Confirmed
+        );
+        for status in [
+            CheckStatus::Warning,
+            CheckStatus::Failed,
+            CheckStatus::Skipped,
+            CheckStatus::Other("new".to_owned()),
+        ] {
+            assert_eq!(InstallVps::verdict(&status, Tree::Clean), Verdict::Mismatch);
+            assert_eq!(
+                InstallVps::verdict(&status, Tree::Modified),
+                Verdict::Unconfirmed
+            );
+        }
     }
 }

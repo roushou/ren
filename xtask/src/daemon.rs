@@ -41,9 +41,48 @@ impl From<String> for Admission {
     }
 }
 
+/// What an upgrade does next, from the daemon's state.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Quiesce {
+    /// Nothing runs and calls are admitted: pause admission.
+    Pause,
+    /// Nothing runs, and an operator already paused it (or set a state this
+    /// task does not know): proceed and leave admission as it is.
+    LeaveAlone,
+    /// Calls are running: wait for them.
+    Wait { running: usize },
+}
+
+/// Whether the pause just made left the daemon quiet.
+#[derive(Debug, PartialEq, Eq)]
+pub enum AfterPause {
+    Quiet,
+    /// A call started between the check and the pause: resume and wait.
+    SlippedIn {
+        running: usize,
+    },
+}
+
 impl ControlState {
     pub fn parse(json: &str) -> Result<Self, serde_json::Error> {
         serde_json::from_str(json)
+    }
+
+    pub fn quiesce(&self) -> Quiesce {
+        match (self.admission(), self.running()) {
+            (Admission::Running, 0) => Quiesce::Pause,
+            (Admission::Paused | Admission::Other(_), 0) => Quiesce::LeaveAlone,
+            (Admission::Running | Admission::Paused | Admission::Other(_), running) => {
+                Quiesce::Wait { running }
+            }
+        }
+    }
+
+    pub fn after_pause(&self) -> AfterPause {
+        match self.running() {
+            0 => AfterPause::Quiet,
+            running => AfterPause::SlippedIn { running },
+        }
     }
 
     /// How many calls (HTTP attempts or WebSocket channels) are in flight.
@@ -155,6 +194,40 @@ mod tests {
                 .unwrap()
                 .build()
                 .is_none()
+        );
+    }
+
+    fn state(admission: &str, running: usize) -> ControlState {
+        let calls: Vec<_> = (0..running)
+            .map(|n| serde_json::json!({ "call": format!("0193e0f1-0000-7000-8000-{n:012}"), "transport": "http" }))
+            .collect();
+        ControlState::parse(
+            &serde_json::json!({ "state": { "pause": { "state": admission } }, "running": calls })
+                .to_string(),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn pauses_only_an_idle_daemon_that_admits_calls() {
+        assert_eq!(state("running", 0).quiesce(), Quiesce::Pause);
+        assert_eq!(state("paused", 0).quiesce(), Quiesce::LeaveAlone);
+        assert_eq!(state("draining", 0).quiesce(), Quiesce::LeaveAlone);
+        for admission in ["running", "paused", "draining"] {
+            assert_eq!(
+                state(admission, 2).quiesce(),
+                Quiesce::Wait { running: 2 },
+                "{admission}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_call_that_slipped_in_before_the_pause_is_waited_for() {
+        assert_eq!(state("paused", 0).after_pause(), AfterPause::Quiet);
+        assert_eq!(
+            state("paused", 1).after_pause(),
+            AfterPause::SlippedIn { running: 1 }
         );
     }
 }
