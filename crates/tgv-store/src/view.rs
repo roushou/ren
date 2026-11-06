@@ -76,6 +76,10 @@ impl Columns<'_> {
         Ok(self.0.try_get(column)?)
     }
 
+    pub(super) fn optional_count(&self, column: &str) -> Result<Option<u64>, StoreError> {
+        Ok(self.0.try_get(column)?)
+    }
+
     pub(super) fn time(&self, column: &str) -> Result<UnixMillis, StoreError> {
         Ok(UnixMillis::from_millis(self.0.try_get(column)?))
     }
@@ -375,6 +379,21 @@ pub struct SessionView {
     pub last_seen: UnixMillis,
     pub call_count: u64,
     pub turn_count: u64,
+    /// Calls with an error status, a failed transport, or a failed model
+    /// outcome: the same calls the `errors` status filter finds.
+    pub error_count: u64,
+    /// Provider-reported tokens summed over the session's calls.
+    pub tokens: SessionTokens,
+}
+
+/// Token totals for a session; `None` when no call reported usage. Input
+/// counts cached context too, whichever way each call's provider accounts
+/// it, because cached context is most of a coding agent's input. Token
+/// counts are not subscription allowance or charges.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct SessionTokens {
+    pub input: Option<u64>,
+    pub output: Option<u64>,
 }
 
 impl SessionView {
@@ -389,6 +408,11 @@ impl SessionView {
             last_seen: row.time("last_seen")?,
             call_count: row.count("call_count")?,
             turn_count: row.count("turn_count")?,
+            error_count: row.count("error_count")?,
+            tokens: SessionTokens {
+                input: row.optional_count("input_tokens")?,
+                output: row.optional_count("output_tokens")?,
+            },
         })
     }
 }

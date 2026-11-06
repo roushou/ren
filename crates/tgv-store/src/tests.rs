@@ -51,6 +51,7 @@ struct CallSpec<'a> {
     session: Option<u128>,
     tool: Option<&'a str>,
     status: u16,
+    usage: Option<tgv_protocol::inspect::Usage>,
 }
 
 impl Default for CallSpec<'_> {
@@ -63,6 +64,7 @@ impl Default for CallSpec<'_> {
             session: None,
             tool: None,
             status: 200,
+            usage: None,
         }
     }
 }
@@ -161,6 +163,9 @@ impl Fixture {
         inspector.observe(Observation::Model(WireText::new("claude-test").unwrap()));
         inspector.observe(Observation::Outcome(ModelOutcome::Completed));
         inspector.observe(Observation::TerminalEvent);
+        if let Some(usage) = spec.usage {
+            inspector.observe(Observation::Usage(usage));
+        }
         if let Some(tool) = spec.tool {
             inspector.observe(Observation::ToolCall(tgv_protocol::inspect::ToolCall {
                 call_id: Some(WireText::new("toolu_1").unwrap()),
@@ -953,4 +958,54 @@ async fn a_held_sweep_gate_defers_chunk_removal() {
         .unwrap();
     assert_eq!(pruned.calls, 0);
     assert!(pruned.chunks > 0);
+}
+
+#[tokio::test]
+async fn sessions_total_their_errors_and_tokens_including_cached_input() {
+    use tgv_protocol::inspect::{InputAccounting, Usage};
+    let mut fixture = Fixture::new().await;
+    let usage = |accounting, input, cache_read, cache_creation, output| Usage {
+        input_tokens: Some(input),
+        cache_read_tokens: Some(cache_read),
+        cache_creation_tokens: Some(cache_creation),
+        output_tokens: Some(output),
+        ..Usage::new(accounting)
+    };
+    fixture
+        .record(CallSpec {
+            session: Some(9),
+            usage: Some(usage(InputAccounting::ExcludesCache, 10, 100, 5, 7)),
+            ..CallSpec::default()
+        })
+        .await;
+    fixture
+        .record(CallSpec {
+            session: Some(9),
+            usage: Some(usage(InputAccounting::IncludesCache, 50, 40, 0, 3)),
+            ..CallSpec::default()
+        })
+        .await;
+    fixture
+        .record(CallSpec {
+            session: Some(9),
+            status: 429,
+            ..CallSpec::default()
+        })
+        .await;
+    fixture
+        .record(CallSpec {
+            session: Some(10),
+            ..CallSpec::default()
+        })
+        .await;
+    let sessions = fixture.reader.sessions(PageLimit::DEFAULT).await.unwrap();
+    let totals: Vec<_> = sessions
+        .iter()
+        .map(|s| (s.call_count, s.error_count, s.tokens.input, s.tokens.output))
+        .collect();
+    // Newest first. Cached input is added only where the provider left it out.
+    assert_eq!(
+        totals,
+        [(1, 0, None, None), (3, 1, Some(115 + 50), Some(10))]
+    );
 }

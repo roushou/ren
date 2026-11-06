@@ -54,7 +54,7 @@ the body was stored whole; otherwise `not_found`. At most two run at once
 | `GET /api/calls/{call-id}`                                 | One call with its attempts, inspection, and observation log                 |
 | `GET /api/calls/{call-id}/body/{request\|response}`        | Bounded body preview                                                        |
 | `GET /api/calls/{call-id}/body/{request\|response}/export` | The complete captured body as raw bytes, as `tgv inspect --body` exports it |
-| `GET /api/sessions?limit=100`                              | Recent sessions with call and turn counts                                   |
+| `GET /api/sessions?limit=100`                              | Recent sessions with call, turn, and error counts and token totals          |
 | `GET /api/sessions/{session-id}/calls?limit=100`           | One session's calls, oldest first                                           |
 | `GET /api/live?after={seq}`                                | Server-sent events as observations commit                                   |
 
@@ -67,6 +67,14 @@ return `503` without blocking forwarding. Management responses carry
 `Cache-Control: no-store`. Full body export is CLI-only. The API shares the
 listener's loopback/Tailscale access boundary and has no separate login or
 cross-origin browser access enabled.
+
+### Session totals
+
+Each session in `/api/sessions` carries `error_count`, the calls the `errors` status
+filter would find, and `tokens: {input, output}`, summed from provider-reported
+usage. Input includes cached context whichever way each call's provider accounts
+for it; a total is `null` when no call reported usage. Token counts are not
+subscription allowance or charges.
 
 ### Builds
 

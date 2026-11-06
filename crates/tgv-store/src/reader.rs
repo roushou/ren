@@ -16,7 +16,7 @@ use sqlx::{
     sqlite::{SqliteConnectOptions, SqlitePoolOptions},
 };
 use std::{path::Path, sync::Arc, time::Duration};
-use tgv_protocol::inspect::ModelOutcome;
+use tgv_protocol::inspect::{InputAccounting, ModelOutcome};
 use tgv_protocol::{
     direction::Direction,
     label::{Labeled, Stored},
@@ -184,8 +184,23 @@ impl Reader {
     }
 
     pub async fn sessions(&self, limit: PageLimit) -> Result<Vec<SessionView>, StoreError> {
-        sqlx::query("SELECT s.id, s.provider, s.source, s.native_id, s.first_seen, s.last_seen, (SELECT COUNT(*) FROM calls WHERE session = s.id) AS call_count, (SELECT COUNT(*) FROM turns WHERE session = s.id) AS turn_count FROM sessions s ORDER BY s.last_seen DESC, s.id DESC LIMIT ?")
-            .bind(i64::from(limit.get()))
+        let mut sql = QueryBuilder::<Sqlite>::new(
+            "SELECT s.id, s.provider, s.source, s.native_id, s.first_seen, s.last_seen, (SELECT COUNT(*) FROM calls WHERE session = s.id) AS call_count, (SELECT COUNT(*) FROM turns WHERE session = s.id) AS turn_count, (SELECT COUNT(*) FROM calls c WHERE c.session = s.id",
+        );
+        // The same predicate as the `errors` status filter.
+        sql.push(" AND (c.status >= 400 OR c.terminal IN (");
+        CallQuery::push_terminals(&mut sql, TerminalClass::Failed);
+        sql.push(") OR c.outcome = ")
+            .push_bind(ModelOutcome::Failed.label())
+            .push(")) AS error_count, ");
+        // SUM over no reported usage is NULL, kept as "not reported".
+        sql.push("(SELECT SUM(COALESCE(json_extract(c.usage, '$.input_tokens'), 0) + CASE WHEN json_extract(c.usage, '$.accounting') = ")
+            .push_bind(InputAccounting::ExcludesCache.label())
+            .push(" THEN COALESCE(json_extract(c.usage, '$.cache_read_tokens'), 0) + COALESCE(json_extract(c.usage, '$.cache_creation_tokens'), 0) ELSE 0 END) FROM calls c WHERE c.session = s.id AND c.usage IS NOT NULL) AS input_tokens, ")
+            .push("(SELECT SUM(json_extract(c.usage, '$.output_tokens')) FROM calls c WHERE c.session = s.id AND c.usage IS NOT NULL) AS output_tokens ")
+            .push("FROM sessions s ORDER BY s.last_seen DESC, s.id DESC LIMIT ")
+            .push_bind(i64::from(limit.get()));
+        sql.build()
             .fetch_all(&self.pool)
             .await?
             .iter()
