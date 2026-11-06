@@ -2,6 +2,7 @@
   import { createSnapshot } from '#lib/snapshot.svelte.ts';
   import { num, bytes, type FileUsage } from '#lib/api.ts';
   import { assertNever } from '#lib/decode.ts';
+  import { buildLabel } from '#lib/display.ts';
   import Icon from '#lib/Icon.svelte';
   import type { PageProps } from './$types';
   let { data }: PageProps = $props();
@@ -225,6 +226,9 @@
         <div>
           <h2 id="health-title">Recorder health</h2>
           <p>Counters since gateway startup</p>
+          {#if gateway.current.value}
+            <p>Daemon build {buildLabel(gateway.current.value.health.build)}</p>
+          {/if}
         </div>
         <span
           class="badge"

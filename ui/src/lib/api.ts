@@ -396,8 +396,20 @@ export interface RecorderMetrics {
   dedup: { referenced_bytes: number; new_bytes: number; compressed_bytes: number };
   recovered_calls: number;
 }
+/** What a daemon binary was compiled from (`/health` `build.revision`). */
+export type Revision =
+  | { kind: 'commit'; commit: string; tree: 'clean' | 'modified' }
+  | { kind: 'unknown' }
+  /** Text this UI does not recognize, kept for display. */
+  | { kind: 'unrecognized'; text: string };
+export interface Build {
+  version: string;
+  revision: Revision;
+}
 export interface Health {
   status: Stored<HealthStatus>;
+  /** Null for a daemon older than build reporting. */
+  build: Build | null;
   recorder: RecorderMetrics;
 }
 export interface Metrics {
@@ -617,7 +629,25 @@ const recorderMetrics = object<RecorderMetrics>({
   }),
   recovered_calls: count,
 });
-const health = object<Health>({ status: label(healthStatuses), recorder: recorderMetrics });
+const commitPattern = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
+/** `<commit>`, `<commit>-dirty`, or `unknown`; anything else is kept as text. */
+export const revision: Decoder<Revision> = (value, path) => {
+  const text = string(value, path);
+  if (text === 'unknown') return { kind: 'unknown' };
+  const dirty = text.endsWith('-dirty');
+  const commit = dirty ? text.slice(0, -'-dirty'.length) : text;
+  return commitPattern.test(commit)
+    ? { kind: 'commit', commit, tree: dirty ? 'modified' : 'clean' }
+    : { kind: 'unrecognized', text };
+};
+const build = object<Build>({ version: string, revision });
+const reportedBuild: Decoder<Build | null> = (value, path) =>
+  value === undefined || value === null ? null : build(value, path);
+const health = object<Health>({
+  status: label(healthStatuses),
+  build: reportedBuild,
+  recorder: recorderMetrics,
+});
 const metrics = object<Metrics>({ recorder: recorderMetrics, storage: storageView });
 const storage = object<Storage>({
   policy: object<RetentionPolicy>({

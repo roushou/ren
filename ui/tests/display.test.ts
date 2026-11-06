@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   attemptEnding,
+  buildLabel,
   callStatus,
   channelState,
   messageCounts,
@@ -12,7 +13,7 @@ import {
   modelState,
   transportState,
 } from '../src/lib/display.ts';
-import type { CallView } from '../src/lib/api.ts';
+import { revision, type CallView } from '../src/lib/api.ts';
 import { callFixture, finishedFixture, callId } from './fixtures.ts';
 
 const finished = (overrides: Partial<CallView>) => finishedFixture(callId(1), overrides);
@@ -137,4 +138,27 @@ test('a call TGV refused says so, whatever else was recorded', () => {
   // A label from a newer daemon is shown verbatim.
   const newer = finishedFixture(callId(8), { rejection: unknownLabel('over_quota') });
   assert.equal(statusBadge(callStatus(newer)).label, 'TGV · over quota');
+});
+
+test('builds read like tgv --version, and unknown revisions are kept', () => {
+  const commit = '00a59029501566fad56007fa6efe866f97e99193';
+  assert.equal(
+    buildLabel({ version: '0.1.0', revision: revision(commit, '') }),
+    '0.1.0 (00a590295015)',
+  );
+  assert.equal(
+    buildLabel({ version: '0.1.0', revision: revision(`${commit}-dirty`, '') }),
+    '0.1.0 (00a590295015, modified)',
+  );
+  assert.deepEqual(revision('unknown', ''), { kind: 'unknown' });
+  assert.equal(
+    buildLabel({ version: '0.1.0', revision: revision('unknown', '') }),
+    '0.1.0 (unknown revision)',
+  );
+  assert.deepEqual(revision('v2+abc', ''), { kind: 'unrecognized', text: 'v2+abc' });
+  assert.deepEqual(revision(commit.toUpperCase(), ''), {
+    kind: 'unrecognized',
+    text: commit.toUpperCase(),
+  });
+  assert.match(buildLabel(null), /not reported/);
 });

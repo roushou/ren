@@ -1,5 +1,6 @@
 import type {
   AttemptTerminal,
+  Build,
   CallState,
   CallView,
   ChannelView,
@@ -247,5 +248,21 @@ export function captureState(call: CallView): string {
       return 'Capture unknown';
     default:
       return assertNever(life);
+  }
+}
+
+/** `0.1.0 (00a590295015)`, as `tgv --version` and `tgv doctor` show it. */
+export function buildLabel(build: Build | null): string {
+  if (!build) return 'not reported (daemon predates build reporting)';
+  const revision = build.revision;
+  switch (revision.kind) {
+    case 'commit':
+      return `${build.version} (${revision.commit.slice(0, 12)}${revision.tree === 'modified' ? ', modified' : ''})`;
+    case 'unknown':
+      return `${build.version} (unknown revision)`;
+    case 'unrecognized':
+      return `${build.version} (${revision.text})`;
+    default:
+      return assertNever(revision);
   }
 }
