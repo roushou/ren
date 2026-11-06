@@ -13,6 +13,7 @@ use crate::style::{Terminal, Tone};
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use std::{path::PathBuf, process::ExitCode};
+use tgv_gateway::build::{Build, Revision};
 use tgv_harness::host::HostEnv;
 
 #[derive(Parser)]
@@ -20,7 +21,7 @@ use tgv_harness::host::HostEnv;
 // print the package name (`tgv-cli`) in `--version`.
 #[command(
     name = "tgv",
-    version,
+    version = Cli::VERSION,
     about = "Personal subscription gateway and traffic recorder"
 )]
 pub struct Cli {
@@ -48,6 +49,18 @@ enum Command {
 }
 
 impl Cli {
+    /// `--version`: the package version and the revision build.rs recorded.
+    const VERSION: &str = concat!(env!("CARGO_PKG_VERSION"), " (", env!("TGV_REVISION"), ")");
+
+    /// What this binary was compiled from.
+    pub fn build() -> Build {
+        // build.rs writes only `<commit>`, `<commit>-dirty`, or `unknown`
+        // (pinned by a test), so a parse failure cannot happen; it would
+        // still read as an unknown revision, never as a known one.
+        let revision = env!("TGV_REVISION").parse().unwrap_or(Revision::Unknown);
+        Build::new(env!("CARGO_PKG_VERSION"), revision)
+    }
+
     /// Runs the command; a failure is reported on stderr and exits 1.
     pub async fn run(self, env: HostEnv, terminal: Terminal) -> ExitCode {
         match self.dispatch(env, terminal).await {
@@ -74,5 +87,16 @@ impl Cli {
             Command::Inspect(cmd) => cmd.run(&ctx).await,
             Command::Control(cmd) => cmd.run(&ctx).await,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_recorded_revision_parses() {
+        assert!(env!("TGV_REVISION").parse::<Revision>().is_ok());
+        assert_eq!(Cli::build().version(), env!("CARGO_PKG_VERSION"));
     }
 }

@@ -14,10 +14,12 @@ use std::{
     },
 };
 use tgv_cli::{
+    Cli,
     client::{GatewayChoice, GatewaySource},
     doctor::{Report, Status},
 };
 use tgv_daemon::{Daemon, config::Config};
+use tgv_gateway::build::{Revision, Tree};
 use tgv_harness::{endpoint::GatewayEndpoint, host::HostEnv};
 
 const HEALTH: &str = r#"{"api_version":1,"status":"ok","recorder":{"storage_errors":0,"retention_errors":0,"omissions":{"policy_limit_bytes":0,"queue_bytes_bytes":0,"queue_slots_bytes":0,"storage_failure_bytes":0,"unrecorded_calls":0}}}"#;
@@ -169,6 +171,69 @@ async fn distinguishes_capture_loss_from_storage_failure() {
     }
 }
 
+#[tokio::test]
+async fn reports_whether_the_daemon_runs_this_build() {
+    let ours = Cli::build();
+    let commit = "0123456789abcdef0123456789abcdef01234567";
+    let same = match ours.revision() {
+        Revision::Commit {
+            tree: Tree::Clean, ..
+        } => Status::Ok,
+        // A test binary built from a modified or untracked tree cannot be
+        // confirmed to match anything.
+        Revision::Commit {
+            tree: Tree::Modified,
+            ..
+        }
+        | Revision::Unknown => Status::Warning,
+    };
+    let cases = [
+        (None, Status::Warning, "predates this CLI"),
+        (
+            Some(
+                serde_json::json!({ "version": ours.version(), "revision": ours.revision().to_string() }),
+            ),
+            same,
+            "",
+        ),
+        (
+            Some(serde_json::json!({ "version": "0.0.1", "revision": commit })),
+            Status::Warning,
+            "upgrade the older one",
+        ),
+        (
+            Some(serde_json::json!({ "version": ours.version(), "revision": "not-a-commit" })),
+            Status::Warning,
+            "unrecognized revision \"not-a-commit\"",
+        ),
+    ];
+    for (build, status, message) in cases {
+        let app = Router::new()
+            .route(
+                "/health",
+                get(move || {
+                    let build = build.clone();
+                    async move {
+                        let mut value: serde_json::Value = serde_json::from_str(HEALTH).unwrap();
+                        if let Some(build) = build {
+                            value["build"] = build;
+                        }
+                        axum::Json(value)
+                    }
+                }),
+            )
+            .route("/api/storage", get(|| async { STORAGE }));
+        let (endpoint, task) = mock(app).await;
+        let report = Report::gateway(&endpoint).await;
+        let check = report.checks.iter().find(|c| c.name == "build").unwrap();
+        assert_eq!(check.status, status, "{}", check.message);
+        assert!(check.message.contains(message), "{}", check.message);
+        // A build mismatch never fails the gateway check.
+        assert!(report.success());
+        task.abort();
+    }
+}
+
 #[test]
 fn malformed_config_and_dry_run_do_not_leak_or_create_storage() {
     let temp = tempfile::tempdir().unwrap();
@@ -227,6 +292,7 @@ async fn launch_preserves_arguments_credentials_and_exit_status_without_editing_
         .resolve()
         .unwrap(),
         temp.path(),
+        tgv_cli::Cli::build(),
     );
     daemon.start().await.unwrap();
     let fake = temp.path().join("claude");

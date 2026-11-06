@@ -17,6 +17,7 @@ pub mod preview;
 pub(crate) use control::ControlApi;
 pub use control::{ControlOptions, ControlOptionsError, ControlToken};
 
+use crate::build::Build;
 use axum::{
     Json, Router,
     extract::{Path, Query, State},
@@ -52,6 +53,8 @@ pub struct ManagementSetup {
     pub retention: RetentionPolicy,
     pub control: ControlOptions,
     pub token: ControlToken,
+    /// What `/health` reports as the running build.
+    pub build: Build,
 }
 
 /// What the read API reads from. It never writes.
@@ -59,6 +62,7 @@ pub(crate) struct ApiState {
     reader: Reader,
     recorder: Recorder,
     retention: RetentionPolicy,
+    build: Build,
     previews: Arc<Semaphore>,
     shutdown: CancellationToken,
 }
@@ -92,8 +96,9 @@ pub enum ErrorCode {
 }
 
 #[derive(Serialize)]
-struct Health {
+struct Health<'a> {
     status: HealthStatus,
+    build: &'a Build,
     recorder: RecorderMetrics,
 }
 
@@ -173,12 +178,14 @@ impl ApiState {
         reader: Reader,
         recorder: Recorder,
         retention: RetentionPolicy,
+        build: Build,
         shutdown: CancellationToken,
     ) -> Self {
         Self {
             reader,
             recorder,
             retention,
+            build,
             previews: Arc::new(Semaphore::new(Self::PREVIEW_PERMITS)),
             shutdown,
         }
@@ -224,7 +231,15 @@ impl ApiState {
         } else {
             (StatusCode::SERVICE_UNAVAILABLE, HealthStatus::Degraded)
         };
-        (code, Self::versioned(Health { status, recorder })).into_response()
+        (
+            code,
+            Self::versioned(Health {
+                status,
+                build: &state.build,
+                recorder,
+            }),
+        )
+            .into_response()
     }
 
     async fn metrics(State(state): State<Arc<Self>>) -> Result<Response, ApiError> {

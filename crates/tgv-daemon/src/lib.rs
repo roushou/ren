@@ -12,7 +12,7 @@ use crate::config::RuntimeConfig;
 use crate::host::{RandomIds, SystemClock};
 use std::{io, net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
 use tgv_gateway::{
-    ControlToken, Gateway, ManagementSetup, ReqwestUpstream, Shutdown, Stopped,
+    Build, ControlToken, Gateway, ManagementSetup, ReqwestUpstream, Shutdown, Stopped,
     control::Controls,
     operator::{OperatorState, Pause, RestoreError},
 };
@@ -61,6 +61,7 @@ type Result<T, E = DaemonError> = std::result::Result<T, E>;
 pub struct Daemon {
     config: RuntimeConfig,
     data_dir: PathBuf,
+    build: Build,
     lifecycle: Lifecycle,
 }
 
@@ -83,10 +84,13 @@ impl Daemon {
     const DRAIN_DEADLINE: Duration = Duration::from_secs(10);
     const CAPTURE_DEADLINE: Duration = Duration::from_secs(10);
 
-    pub fn new(config: RuntimeConfig, data_dir: impl Into<PathBuf>) -> Self {
+    /// `build` is what the binary running this daemon was compiled from;
+    /// `/health` reports it.
+    pub fn new(config: RuntimeConfig, data_dir: impl Into<PathBuf>, build: Build) -> Self {
         Self {
             config,
             data_dir: data_dir.into(),
+            build,
             lifecycle: Lifecycle::Ready,
         }
     }
@@ -193,6 +197,7 @@ impl Daemon {
                 retention: config.retention().clone(),
                 control: config.control().clone(),
                 token,
+                build: self.build.clone(),
             },
         );
         let stop = shutdown.clone();

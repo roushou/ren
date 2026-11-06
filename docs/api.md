@@ -26,7 +26,7 @@ Every JSON body carries `"api_version": 1`; errors are `{api_version, error}` wi
 
 | Endpoint                                            | Result                                                               |
 | --------------------------------------------------- | -------------------------------------------------------------------- |
-| `GET /health`                                       | `ok` or `degraded` (HTTP 503) with recorder counters                 |
+| `GET /health`                                       | `ok` or `degraded` (HTTP 503), the running build, recorder counters  |
 | `GET /api/metrics`                                  | Recorder counters and storage usage                                  |
 | `GET /api/storage`                                  | Active retention policy and disk usage of both database files        |
 | `GET /api/calls?limit=100`                          | Filtered, paginated calls, newest first (see [search](#call-search)) |
@@ -45,6 +45,18 @@ return `503` without blocking forwarding. Management responses carry
 `Cache-Control: no-store`. Full body export is CLI-only. The API shares the
 listener's loopback/Tailscale access boundary and has no separate login or
 cross-origin browser access enabled.
+
+### Builds
+
+`/health` reports the build the daemon runs as `build`: `{"version": "0.1.0",
+"revision": "<commit>"}`. The revision is the full git commit the binary was
+compiled from, with `-dirty` when tracked files differed from it, or `unknown`
+when the build had neither git nor packaging metadata. `tgv --version` prints the
+same, and `tgv doctor` compares the two: it is OK only for the same version from
+the same unmodified commit, and a warning otherwise. Untracked files are not
+counted as modifications. The revision is read when the `tgv-rs` package is
+compiled, so after editing a tracked file without staging it, `-dirty` can
+appear only after that package is rebuilt.
 
 ## Live feed
 

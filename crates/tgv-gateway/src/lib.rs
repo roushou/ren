@@ -26,7 +26,8 @@
 //! - configuration: [`GatewayConfig`] (admission limit, header deadline,
 //!   configuration revision, buffer, policy, upstream entries);
 //! - capabilities: an [`Upstream`], a [`Recorder`], the shared [`Controls`],
-//!   a [`Clock`], and the `Reader` and `Backup` in [`ManagementSetup`];
+//!   a [`Clock`], and the `Reader` and `Backup` in [`ManagementSetup`],
+//!   which also names the running [`Build`] that `/health` reports;
 //! - inputs: inference requests on [`Route::ALL`], management reads, and controls;
 //! - outputs: provider responses, management data, and HTTP error responses;
 //! - lifecycle: [`Shutdown`] drains, then aborts, through [`Ingress`].
@@ -41,6 +42,7 @@
 pub mod api;
 pub mod attempt;
 mod buffer;
+pub mod build;
 pub mod channel;
 pub mod control;
 mod headers;
@@ -57,6 +59,7 @@ mod websocket;
 
 pub use api::{ControlOptions, ControlOptionsError, ControlToken, ManagementSetup};
 pub use buffer::{BufferOptions, BufferOptionsError, BufferRefusal, RequestBuffer, RequestLimits};
+pub use build::Build;
 pub use headers::HeaderPolicy;
 pub use ingress::{Ingress, IngressError, Shutdown, Stopped};
 pub use route::{Accepts, Route};
@@ -374,6 +377,7 @@ impl<U: Upstream> Gateway<U> {
             management.reader,
             self.recorder.clone(),
             management.retention,
+            management.build,
             self.shutdown.drain_token(),
         );
         let control = ControlApi::new(

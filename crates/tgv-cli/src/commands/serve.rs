@@ -11,7 +11,11 @@ impl ServeCmd {
     pub async fn run(self, ctx: &Context) -> Result<ExitCode> {
         let config = ctx.config()?;
         let data_dir = ctx.data_dir(&config)?;
-        let mut daemon = Daemon::new(config.resolve_with(&ctx.env)?, data_dir);
+        let mut daemon = Daemon::new(
+            config.resolve_with(&ctx.env)?,
+            data_dir,
+            crate::Cli::build(),
+        );
         // Register before starting: a daemon that cannot observe shutdown
         // signals must not run, and must not report success.
         let mut signal =

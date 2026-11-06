@@ -44,6 +44,12 @@ tracing.workspace = true
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 uuid.workspace = true
 
+# build.rs records the source revision (TGV_REVISION) from git or from
+# cargo's packaging metadata.
+[build-dependencies]
+serde.workspace = true
+serde_json.workspace = true
+
 [dev-dependencies]
 axum.workspace = true
 bytes.workspace = true

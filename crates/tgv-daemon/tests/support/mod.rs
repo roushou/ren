@@ -14,9 +14,10 @@ use std::{
     time::Duration,
 };
 use tgv_daemon::config::Config;
+use tgv_gateway::build::Revision;
 use tgv_gateway::{
-    ControlToken, Gateway, Ingress, IngressError, ManagementSetup, ReqwestUpstream, Shutdown,
-    Stopped, Upstream, control::Controls,
+    Build, ControlToken, Gateway, Ingress, IngressError, ManagementSetup, ReqwestUpstream,
+    Shutdown, Stopped, Upstream, control::Controls,
 };
 use tgv_protocol::{direction::Direction, label::Stored};
 use tgv_recorder::{
@@ -74,6 +75,11 @@ pub fn config(mock: &Mock) -> Config {
         openai_base_url: format!("http://{}", mock.address),
         ..Config::default()
     }
+}
+
+/// The build `/health` reports in tests.
+pub fn build() -> Build {
+    Build::new("0.0.0-test", Revision::Unknown)
 }
 
 pub fn client() -> reqwest::Client {
@@ -236,6 +242,7 @@ impl TestGateway {
             retention: runtime.retention().clone(),
             control: runtime.control().clone(),
             token: ControlToken::parse(Self::CONTROL_TOKEN).unwrap(),
+            build: build(),
         });
         let ingress = Ingress::new(listener, router.clone());
         let server = tokio::spawn(ingress.serve(shutdown.clone(), Self::DRAIN_DEADLINE));

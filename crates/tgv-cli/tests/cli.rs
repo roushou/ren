@@ -34,12 +34,13 @@ fn json(output: &Output) -> Value {
 }
 
 #[test]
-fn version_names_the_tgv_program() {
+fn version_names_the_tgv_program_and_its_revision() {
     let output = cli(&["--version"]);
     success(&output);
+    let build = tgv_cli::Cli::build();
     assert_eq!(
         String::from_utf8_lossy(&output.stdout),
-        format!("tgv {}\n", env!("CARGO_PKG_VERSION"))
+        format!("tgv {} ({})\n", build.version(), build.revision())
     );
 }
 
@@ -123,6 +124,7 @@ async fn recorded_requests_flow_through_lists_inspection_pagination_and_private_
         .resolve()
         .unwrap(),
         temp.path(),
+        tgv_cli::Cli::build(),
     );
     daemon.start().await.unwrap();
     let client = reqwest::Client::builder().no_proxy().build().unwrap();

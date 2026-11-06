@@ -1,4 +1,5 @@
 //! Bounded, credential-free diagnostics. Never sign in or issue inference requests.
+use crate::Cli;
 use crate::client::GatewayChoice;
 use crate::style::{Styling, Tone};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
@@ -7,6 +8,7 @@ use std::{
     time::Duration,
 };
 use tgv_daemon::config::Config;
+use tgv_gateway::build::{Build, Comparison, Revision};
 use tgv_harness::{endpoint::GatewayEndpoint, host::HostEnv};
 use tgv_recorder::retention::RetentionPolicy;
 use tgv_store::{Reader, query::CallQuery};
@@ -358,7 +360,17 @@ impl FileUsage {
 /// The parts of `/health` doctor reports.
 #[derive(Deserialize)]
 struct HealthResponse {
+    /// Absent from daemons older than build reporting.
+    build: Option<ReportedBuild>,
     recorder: RecorderHealth,
+}
+
+/// The daemon's build, with its revision kept as text until parsed, so an
+/// unrecognized one is reported rather than failing the whole health check.
+#[derive(Deserialize)]
+struct ReportedBuild {
+    version: String,
+    revision: String,
 }
 
 #[derive(Deserialize)]
@@ -378,6 +390,51 @@ struct Omissions {
 }
 
 impl Report {
+    /// Whether the daemon runs the same build as this CLI. A mismatch is a
+    /// warning: the API is versioned, but one of them needs an upgrade.
+    fn build(&mut self, local: &Build, remote: Option<ReportedBuild>) {
+        let Some(remote) = remote else {
+            self.add(
+                "build",
+                Status::Warning,
+                format!("daemon does not report its build, so it predates this CLI ({local})"),
+            );
+            return;
+        };
+        let revision = match remote.revision.parse::<Revision>() {
+            Ok(revision) => revision,
+            Err(_) => {
+                self.add(
+                    "build",
+                    Status::Warning,
+                    format!(
+                        "daemon reports an unrecognized revision {:?}; this CLI is {local}",
+                        remote.revision
+                    ),
+                );
+                return;
+            }
+        };
+        let remote = Build::new(remote.version, revision);
+        let (status, message) = match local.compare(&remote) {
+            Comparison::Same => (
+                Status::Ok,
+                format!("daemon runs the same build as this CLI: {local}"),
+            ),
+            Comparison::Different => (
+                Status::Warning,
+                format!("daemon runs {remote} but this CLI is {local}; upgrade the older one"),
+            ),
+            Comparison::Unconfirmed => (
+                Status::Warning,
+                format!(
+                    "cannot confirm that the daemon ({remote}) and this CLI ({local}) are the same build: a revision is unknown or has local modifications"
+                ),
+            ),
+        };
+        self.add("build", status, message);
+    }
+
     /// Diagnose a gateway through its API: health, capture, and storage.
     pub async fn gateway(gateway: &GatewayEndpoint) -> Self {
         let mut report = Self::default();
@@ -394,6 +451,7 @@ impl Report {
         };
         match probe.read::<HealthResponse>(gateway.url("/health")).await {
             Ok((status, health)) if status == 200 || status == 503 => {
+                report.build(&Cli::build(), health.build);
                 let health = health.recorder;
                 let errors = health.storage_errors > 0 || health.retention_errors > 0;
                 report.add("gateway", if status == 200 && !errors {Status::Ok} else {Status::Failed},

@@ -29,6 +29,7 @@ async fn same_daemon_owns_start_shutdown_cancelled_wait_and_restart() {
         .resolve()
         .unwrap(),
         &data,
+        support::build(),
     );
     assert!(!data.exists());
     assert!(daemon.address().is_err());
@@ -81,6 +82,7 @@ async fn failed_start_can_retry_after_listener_and_storage_conflicts_clear() {
         .resolve()
         .unwrap(),
         &data,
+        support::build(),
     );
     assert!(daemon.start().await.is_err());
     assert!(daemon.address().is_err());
@@ -96,6 +98,7 @@ async fn failed_start_can_retry_after_listener_and_storage_conflicts_clear() {
         .resolve()
         .unwrap(),
         &data,
+        support::build(),
     );
     assert!(contender.start().await.is_err());
     assert!(contender.address().is_err());
@@ -121,10 +124,10 @@ async fn dropping_daemon_requests_shutdown_and_releases_storage() {
     }
     .resolve()
     .unwrap();
-    let mut daemon = Daemon::new(config.clone(), dir.path());
+    let mut daemon = Daemon::new(config.clone(), dir.path(), support::build());
     daemon.start().await.unwrap();
     drop(daemon);
-    let mut replacement = Daemon::new(config, dir.path());
+    let mut replacement = Daemon::new(config, dir.path(), support::build());
     timeout(Duration::from_secs(5), async {
         while replacement.start().await.is_err() {
             tokio::time::sleep(Duration::from_millis(10)).await;
@@ -143,7 +146,11 @@ async fn dropping_daemon_requests_shutdown_and_releases_storage() {
 async fn headless_daemon_exposes_only_gateway_and_management_routes() {
     let upstream = mock(Router::new().fallback(|| async { StatusCode::NO_CONTENT })).await;
     let dir = tempfile::tempdir().unwrap();
-    let mut daemon = Daemon::new(config(&upstream).resolve().unwrap(), dir.path());
+    let mut daemon = Daemon::new(
+        config(&upstream).resolve().unwrap(),
+        dir.path(),
+        support::build(),
+    );
     daemon.start().await.unwrap();
     let base = format!("http://{}", daemon.address().unwrap());
     for path in [
@@ -176,6 +183,20 @@ async fn headless_daemon_exposes_only_gateway_and_management_routes() {
     assert_eq!(value["usage"]["calls"], 0);
     assert_eq!(value["policy"]["enabled"], true);
     assert_eq!(value["policy"]["max_storage_bytes"], 2147483648u64);
+    // The daemon reports the build it was given.
+    let health = client()
+        .get(format!("{base}/health"))
+        .send()
+        .await
+        .unwrap()
+        .bytes()
+        .await
+        .unwrap();
+    let health: serde_json::Value = serde_json::from_slice(&health).unwrap();
+    assert_eq!(
+        health["build"],
+        serde_json::json!({ "version": "0.0.0-test", "revision": "unknown" })
+    );
     assert_eq!(
         client()
             .post(format!("{base}/api/storage"))
@@ -214,7 +235,11 @@ async fn shutdown_lets_a_running_stream_finish_before_the_deadline() {
     }))
     .await;
     let dir = tempfile::tempdir().unwrap();
-    let mut daemon = Daemon::new(config(&upstream).resolve().unwrap(), dir.path());
+    let mut daemon = Daemon::new(
+        config(&upstream).resolve().unwrap(),
+        dir.path(),
+        support::build(),
+    );
     daemon.start().await.unwrap();
     let base = format!("http://{}", daemon.address().unwrap());
     let response = client()
@@ -258,7 +283,11 @@ async fn operator_state_survives_a_restart() {
     .await;
     let dir = tempfile::tempdir().unwrap();
     let data = dir.path().join("state");
-    let mut daemon = Daemon::new(config(&upstream).resolve().unwrap(), &data);
+    let mut daemon = Daemon::new(
+        config(&upstream).resolve().unwrap(),
+        &data,
+        support::build(),
+    );
     let client = reqwest::Client::builder().no_proxy().build().unwrap();
     // Each run writes a fresh control token.
     let control = |daemon: &Daemon, path: &str, body: &str| {

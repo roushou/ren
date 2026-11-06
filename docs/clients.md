@@ -22,7 +22,9 @@ tgv run codex --dry-run
 
 `doctor` checks local configuration, upstream URL validity, read-only history,
 Unix storage mode bits, client availability on `PATH`, and the daemon's health
-and storage APIs. It reports capture loss separately from storage failures.
+and storage APIs. It reports capture loss separately from storage failures,
+and warns when the daemon runs a different build from the CLI (see
+[builds](api.md#builds)).
 It does not execute clients, read credential files, run credential helpers, test
 provider connectivity, or consume subscription allowance. Missing clients are
 warnings. Exit code is 0 with no failed checks (warnings can remain), 1 on a failed

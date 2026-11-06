@@ -213,7 +213,8 @@ dependencies under "Crates" below. Read the code for current module ownership.
   upgraded channels. Use Axum's request, response, body, and WebSocket types
   directly; no framework-independent HTTP adapter layer. It also owns retry
   eligibility (`retry`), operator state (`operator`), the `Controls` that hold
-  it with the running-call registry (`control`), and pure call planning
+  it with the running-call registry (`control`), the `Build` that `/health`
+  reports (`build`), and pure call planning
   (`policy`: block, transform, and fallback rules validated at load, with
   protected headers and body paths). `src/purity.rs` keeps `attempt`, `channel`,
   `retry`, and `operator` free of runtime, I/O, storage, and shell-module
@@ -243,7 +244,8 @@ dependencies under "Crates" below. Read the code for current module ownership.
   `TGV_GATEWAY`, `client.toml`, then the local listener) and owns
   `client.toml`, which `tgv init` writes. `style` decides once, per stream,
   whether stdout and stderr are colored (a terminal, `NO_COLOR`,
-  `CLICOLOR_FORCE`, `TERM=dumb`); JSON and piped output stay plain. `Cli::run`
+  `CLICOLOR_FORCE`, `TERM=dumb`); JSON and piped output stay plain. `build.rs` records the
+  source revision (`TGV_REVISION`) for `--version`, `/health`, and `doctor`. `Cli::run`
   prints errors itself, so they are styled too. `doctor` and `service` are the doctor report and the
   service definitions. Refactors preserve existing flags, output
   formats, exports, and client passthrough. Its integration tests run the built
