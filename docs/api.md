@@ -17,7 +17,14 @@ Commands emit JSON: `history` a list of calls, `sessions` a list of sessions,
 observation log. Body exports write the exact captured bytes to a new file, refuse
 incomplete bodies, and never overwrite existing files. They work while the daemon
 runs and after it stops. Use the same data directory (`--data-dir`) for all
-commands. On a remote deployment, run history commands on that host.
+commands.
+
+The commands read the daemon they target. With `--gateway`, or else a gateway
+named by `TGV_GATEWAY` or saved by `tgv init`, they read through that gateway's
+API below and print the same JSON as from its storage; exports use the body
+export endpoint. `--config` or `--data-dir` without `--gateway` reads this host's
+storage, as does having no gateway at all. A remote read needs the daemon
+running.
 
 ## Endpoints
 

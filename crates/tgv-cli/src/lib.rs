@@ -5,6 +5,7 @@ pub mod client;
 mod commands;
 mod context;
 pub mod doctor;
+pub mod management;
 pub mod service;
 pub mod style;
 

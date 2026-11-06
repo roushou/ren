@@ -242,7 +242,9 @@ dependencies under "Crates" below. Read the code for current module ownership.
   `#[derive(Args)]` struct with its own execution method, and command groups
   are `#[derive(Subcommand)]` enums. `client` chooses the gateway (`--gateway`,
   `TGV_GATEWAY`, `client.toml`, then the local listener) and owns
-  `client.toml`, which `tgv init` writes. `style` decides once, per stream,
+  `client.toml`, which `tgv init` writes. `management` is where history and
+  control commands act: this host's storage and token, or a gateway's read and
+  control APIs, printing the same JSON either way. `style` decides once, per stream,
   whether stdout and stderr are colored (a terminal, `NO_COLOR`,
   `CLICOLOR_FORCE`, `TERM=dumb`); JSON and piped output stay plain. `build.rs` records the
   source revision (`TGV_REVISION`) for `--version`, `/health`, and `doctor`. `Cli::run`

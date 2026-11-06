@@ -97,3 +97,17 @@ Serve whose `Tailscale-User-Login` is listed in `control.tailscale_logins`.
 Loopback alone is not enough, because Serve forwards tagged devices and Funnel
 traffic to loopback without an identity. Requests with `Origin` or
 `Sec-Fetch-Site` (browsers) are refused. The UI has no control actions.
+
+`tgv control` targets the daemon the history commands target. On the daemon's
+host it sends the token. Through a gateway (`--gateway`, `TGV_GATEWAY`, or
+`client.toml`) it sends none, so it works only through Tailscale Serve and only
+for a login in the daemon's `tailscale_logins`:
+
+```toml
+[control]
+tailscale_logins = ["you@example.com"]
+```
+
+`tailscale status --json` shows your login (`LoginName` under `User`). Restart
+the daemon after changing it. A refusal for a missing identity or an unlisted
+login says which one it was.

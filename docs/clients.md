@@ -68,8 +68,10 @@ nothing names a gateway and the local daemon fails its preflight, `run` says so
 and points to `tgv init`; no command prompts on its own.
 
 A selected gateway skips local history/upstream checks; remote storage is
-queried through the API. History commands (`sessions`, `history`, `inspect`)
-still read local storage, so run them on the daemon's host.
+queried through the API. History commands (`history`, `sessions`, `timeline`,
+`inspect`) and `tgv control` use the same gateway; `--config` or `--data-dir`
+without `--gateway` keeps them on this host (see [History](api.md#cli) and
+[operator controls](policy.md#operator-controls)).
 Root URLs cannot contain credentials, queries, fragments, or provider suffixes;
 HTTP is allowed only on loopback. Diagnostic requests send no provider credentials,
 disable redirects/retries/environment proxies, and cap each response at 64 KiB

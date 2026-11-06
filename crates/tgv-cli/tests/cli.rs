@@ -222,3 +222,265 @@ async fn recorded_requests_flow_through_lists_inspection_pagination_and_private_
     assert_eq!(output.status.code(), Some(1));
     assert_eq!(std::fs::read(export).unwrap(), payload.as_bytes());
 }
+
+/// `cli` with HOME pointed at an empty directory, so no saved gateway or
+/// `TGV_GATEWAY` from the machine running the tests applies.
+fn isolated(home: &std::path::Path, args: &[&str]) -> Output {
+    Command::new(env!("CARGO_BIN_EXE_tgv"))
+        .args(args)
+        .env("NO_COLOR", "1")
+        .env("TERM", "xterm")
+        .env("HOME", home)
+        .env_remove("XDG_CONFIG_HOME")
+        .env_remove("TGV_GATEWAY")
+        .output()
+        .unwrap()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn history_through_a_gateway_prints_what_local_storage_prints() {
+    use axum::{Router, response::IntoResponse};
+    let payload = r#"{"type":"message","model":"fixture","content":[{"type":"text","text":"hello"}],"stop_reason":"end_turn","usage":{"input_tokens":10,"output_tokens":3}}"#;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let upstream = tokio::spawn(async move {
+        axum::serve(
+            listener,
+            Router::new().fallback(move || async move {
+                ([("content-type", "application/json")], payload).into_response()
+            }),
+        )
+        .await
+        .unwrap();
+    });
+    let temp = tempfile::tempdir().unwrap();
+    let home = temp.path().join("home");
+    std::fs::create_dir(&home).unwrap();
+    let state = temp.path().join("state");
+    let mut daemon = Daemon::new(
+        Config {
+            listen: "127.0.0.1:0".parse().unwrap(),
+            anthropic_base_url: format!("http://{address}"),
+            ..Config::default()
+        }
+        .resolve()
+        .unwrap(),
+        &state,
+        tgv_cli::Cli::build(),
+    );
+    daemon.start().await.unwrap();
+    let gateway = format!("http://{}", daemon.address().unwrap());
+    let client = reqwest::Client::builder().no_proxy().build().unwrap();
+    for _ in 0..2 {
+        let response = client
+            .post(format!("{gateway}/anthropic/v1/messages"))
+            .header(
+                "x-claude-code-session-id",
+                "00000000-0000-4000-8000-000000000004",
+            )
+            .body(r#"{"messages":[]}"#)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.text().await.unwrap(), payload);
+    }
+    // Capture is committed shortly after the response.
+    let data = state.to_str().unwrap();
+    for _ in 0..100 {
+        let output = isolated(&home, &["--data-dir", data, "history"]);
+        if json(&output).as_array().unwrap().len() == 2 {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+
+    // The same command, from storage and through the gateway, prints the
+    // same bytes.
+    let both = |args: &[&str]| {
+        let local = isolated(&home, &[&["--data-dir", data], args].concat());
+        let remote = isolated(&home, &[args, &["--gateway", &gateway]].concat());
+        success(&local);
+        success(&remote);
+        assert_eq!(
+            String::from_utf8_lossy(&remote.stdout),
+            String::from_utf8_lossy(&local.stdout),
+            "{args:?}"
+        );
+        json(&local)
+    };
+    let calls = both(&["history"]);
+    assert_eq!(calls.as_array().unwrap().len(), 2);
+    let id = calls[0]["id"].as_str().unwrap().to_owned();
+    both(&["history", "--limit", "1"]);
+    let sessions = both(&["sessions"]);
+    let session = sessions[0]["id"].as_str().unwrap().to_owned();
+    let page = both(&["timeline", &session, "--limit", "1"]);
+    let after = page["next"].as_str().unwrap().to_owned();
+    both(&["timeline", &session, "--limit", "1", "--after", &after]);
+    both(&["inspect", &id]);
+
+    // A saved gateway applies without --gateway; --data-dir still means
+    // this host.
+    let saved = isolated(&home, &["init", "--gateway", &gateway]);
+    success(&saved);
+    let remote = isolated(&home, &["history"]);
+    let local = isolated(&home, &["--data-dir", data, "history"]);
+    success(&remote);
+    assert_eq!(remote.stdout, local.stdout);
+    std::fs::remove_file(home.join(".config/tgv/client.toml")).unwrap();
+
+    // Exports are byte for byte the same, and private.
+    for direction in ["request", "response"] {
+        let local = temp.path().join(format!("{direction}.local"));
+        let remote = temp.path().join(format!("{direction}.remote"));
+        success(&isolated(
+            &home,
+            &[
+                "--data-dir",
+                data,
+                "inspect",
+                &id,
+                "--body",
+                direction,
+                "--output",
+                local.to_str().unwrap(),
+            ],
+        ));
+        success(&isolated(
+            &home,
+            &[
+                "inspect",
+                &id,
+                "--body",
+                direction,
+                "--output",
+                remote.to_str().unwrap(),
+                "--gateway",
+                &gateway,
+            ],
+        ));
+        assert_eq!(
+            std::fs::read(&remote).unwrap(),
+            std::fs::read(&local).unwrap()
+        );
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&remote).unwrap().permissions().mode();
+            assert_eq!(mode & 0o777, 0o600);
+        }
+    }
+    assert_eq!(
+        std::fs::read(temp.path().join("response.remote")).unwrap(),
+        payload.as_bytes()
+    );
+
+    // An unknown call fails remotely too, and leaves no export behind.
+    let missing = temp.path().join("missing.bin");
+    let output = isolated(
+        &home,
+        &[
+            "inspect",
+            "33333333-3333-4333-8333-333333333333",
+            "--body",
+            "request",
+            "--output",
+            missing.to_str().unwrap(),
+            "--gateway",
+            &gateway,
+        ],
+    );
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("no such record"));
+    assert!(!missing.exists());
+
+    // Controls through a gateway carry no token: the daemon wants a
+    // Tailscale identity, and the CLI says how to provide one.
+    let output = isolated(&home, &["control", "state", "--gateway", &gateway]);
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("Tailscale identity"),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    // On this host, the token from the data directory still works.
+    let config = temp.path().join("tgv.toml");
+    std::fs::write(
+        &config,
+        format!("version = 1\nlisten = \"{}\"\n", daemon.address().unwrap()),
+    )
+    .unwrap();
+    let output = isolated(
+        &home,
+        &[
+            "--config",
+            config.to_str().unwrap(),
+            "--data-dir",
+            data,
+            "control",
+            "state",
+        ],
+    );
+    success(&output);
+    assert_eq!(json(&output)["state"]["pause"]["state"], "running");
+
+    daemon.shutdown();
+    daemon.wait().await.unwrap();
+    upstream.abort();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn remote_controls_report_the_daemons_answer_and_explain_a_refused_login() {
+    use axum::{
+        Json, Router,
+        http::StatusCode,
+        routing::{get, post},
+    };
+    let app = Router::new()
+        .route(
+            "/control/v1/state",
+            get(|| async {
+                Json(serde_json::json!({ "api_version": 1, "state": { "pause": { "state": "running" } }, "running": [] }))
+            }),
+        )
+        .route(
+            "/control/v1/pause",
+            post(|| async {
+                (StatusCode::FORBIDDEN, Json(serde_json::json!({ "api_version": 1, "error": "forbidden" })))
+            }),
+        )
+        .route(
+            "/control/v1/calls/{call}/cancel",
+            post(|| async {
+                (StatusCode::NOT_FOUND, Json(serde_json::json!({ "api_version": 1, "error": "not_running" })))
+            }),
+        );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let gateway = format!("http://{}", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let home = tempfile::tempdir().unwrap();
+
+    let output = isolated(home.path(), &["control", "--gateway", &gateway, "state"]);
+    success(&output);
+    assert_eq!(json(&output)["running"], serde_json::json!([]));
+
+    let output = isolated(home.path(), &["control", "pause", "--gateway", &gateway]);
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("tailscale_logins"));
+
+    // Other refusals are printed like the local command prints them.
+    let output = isolated(
+        home.path(),
+        &[
+            "control",
+            "cancel",
+            "33333333-3333-4333-8333-333333333333",
+            "--gateway",
+            &gateway,
+        ],
+    );
+    assert!(!output.status.success());
+    assert_eq!(json(&output)["error"], "not_running");
+    assert!(String::from_utf8_lossy(&output.stderr).contains("404"));
+    server.abort();
+}
