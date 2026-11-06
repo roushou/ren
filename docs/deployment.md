@@ -158,18 +158,28 @@ connected Tailscale:
 cargo xtask install-vps --https-port 8443
 ```
 
-It runs the steps below and is safe to repeat: after `git pull`, the same command
-upgrades. It builds the release binary while the old daemon keeps serving,
-creates `~/.config/tgv/tgv.toml` only if missing, runs `tgv control backup`, stops
-the service, keeps the old binary as `~/.local/bin/tgv.previous`, installs the new
-one, rewrites the unit only if it changed, starts the service, enables lingering,
-and runs `tgv doctor`. It checks the configuration with TGV's own parser before
-stopping anything. With `--https-port`, it adds a Serve route only when that
-port is free, accepts one that already proxies to the configured listener, and
-refuses a port used by anything else or exposed through Funnel. `--sudo-tailscale`
-uses `sudo -n` for that step; `--skip-backup` skips the backup. On a failed
-`doctor` it stops with the rollback instructions. Without `--https-port` it leaves
-Tailscale untouched. Review the configuration after the first run.
+It runs the steps below and is safe to repeat: run it again from the commit to
+deploy to upgrade. It refuses a checkout whose tracked files differ from the
+commit (`--allow-dirty` installs a `-dirty` build) and warns when the commit is on
+no remote branch. It builds the release binary while the old daemon keeps
+serving, creates `~/.config/tgv/tgv.toml` only if missing, and checks the
+configuration with TGV's own parser before stopping anything.
+
+It then replaces a running daemon only between calls. It waits until no call is
+running (up to `--idle-timeout`, 900 seconds by default, then stops without
+changing anything), pauses admission so new calls get `503` with `retry-after: 10`
+and clients wait, runs `tgv control backup`, stops the service, keeps the old
+binary as `~/.local/bin/tgv.previous`, installs the new one, rewrites the unit
+only if it changed, starts the service, enables lingering, and runs `tgv doctor`.
+It requires doctor's build check to confirm the daemon runs the build just
+installed, then resumes admission, also when a later step failed. A daemon an
+operator had already paused stays paused. With `--https-port`, it adds a Serve
+route only when that port is free, accepts one that already proxies to the
+configured listener, and refuses a port used by anything else or exposed through
+Funnel. `--sudo-tailscale` uses `sudo -n` for that step; `--skip-backup` skips the
+backup. On a failed `doctor` it stops with the rollback instructions. Without
+`--https-port` it leaves Tailscale untouched. Review the configuration after the
+first run.
 
 ### Manual steps
 

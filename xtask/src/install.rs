@@ -1,6 +1,12 @@
 //! `cargo xtask install-vps`: install or upgrade TGV from this checkout as a
 //! Linux systemd user service, optionally published with Tailscale Serve.
+//!
+//! An upgrade restarts the daemon only between calls: it waits until none is
+//! running, pauses admission (clients get `503` with `retry-after` and wait),
+//! replaces the binary, checks that the daemon runs the new build, and
+//! resumes.
 use crate::{
+    daemon::{Admission, CheckStatus, ControlState, DoctorReport},
     invocation::{Echo, Invocation},
     tailscale::{NodeStatus, Route, ServeStatus},
 };
@@ -19,9 +25,9 @@ use tgv_harness::host::HostEnv;
 
 /// Install or upgrade TGV from this checkout as a systemd user service.
 ///
-/// Run on the host, as the user that owns the service, after every `git pull`.
-/// Each step checks the current state and changes only what differs. Provider
-/// credentials and client configuration are never touched.
+/// Run on the host, as the user that owns the service, from the commit to
+/// deploy. Each step checks the current state and changes only what differs.
+/// Provider credentials and client configuration are never touched.
 #[derive(Args)]
 pub struct InstallVps {
     /// Publish the listener privately with Tailscale Serve on this HTTPS port
@@ -34,6 +40,14 @@ pub struct InstallVps {
     /// Skip `tgv control backup` before replacing a running daemon.
     #[arg(long)]
     skip_backup: bool,
+    /// Install even though tracked files differ from the commit; the daemon
+    /// then reports a `-dirty` revision.
+    #[arg(long)]
+    allow_dirty: bool,
+    /// How long to wait for running calls to finish before giving up,
+    /// without having changed anything.
+    #[arg(long, value_name = "SECONDS", default_value_t = 900)]
+    idle_timeout: u64,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -81,6 +95,16 @@ pub enum InstallError {
         binary.display()
     )]
     Doctor { previous: PathBuf, binary: PathBuf },
+    #[error(
+        "tracked files differ from the commit; commit them, or pass --allow-dirty to deploy a -dirty build"
+    )]
+    Dirty,
+    #[error(
+        "{running} calls were still running after {waited} seconds; nothing was changed. Run again between sessions, or raise --idle-timeout"
+    )]
+    Busy { running: usize, waited: u64 },
+    #[error("the daemon does not run the build just installed: {0}")]
+    BuildMismatch(String),
     #[error("Tailscale is {0}, not running: run `tailscale up` first")]
     TailscaleDown(String),
     #[error("Tailscale Serve port {port} is in use ({route}); choose another --https-port")]
@@ -92,6 +116,25 @@ pub enum InstallError {
 enum Backup {
     Run,
     Skip,
+}
+
+/// Whether tracked files match the commit being installed.
+#[derive(Clone, Copy)]
+enum Tree {
+    Clean,
+    Modified,
+}
+
+/// What the upgrade did to admission before replacing a running daemon.
+#[must_use]
+enum Quiet {
+    /// No daemon was running.
+    Stopped,
+    /// This task paused admission, and resumes it when done.
+    Paused,
+    /// An operator had already paused it (or set a state this task does not
+    /// know); it is left as it was.
+    LeftAlone,
 }
 
 /// How to run `tailscale` for the Serve step.
@@ -204,13 +247,14 @@ impl InstallVps {
         };
         Self::preflight()?;
         let layout = Layout::new(env)?;
+        let tree = Self::check_tree(&layout, self.allow_dirty)?;
         let built = Self::build(&layout)?;
         Self::seed_config(&layout)?;
         let config = Self::load_config(&layout)?;
-        Self::install_binary(&layout, &built, backup)?;
-        Self::install_unit(&layout)?;
-        Self::enable_linger(&layout)?;
-        Self::doctor(&layout)?;
+        let quiet = Self::quiesce(&layout, self.idle_timeout)?;
+        let replaced = Self::replace(&layout, &built, backup, tree);
+        Self::release(&layout, quiet);
+        replaced?;
         if let Some(port) = self.https_port {
             Self::publish(tailscale, port, &format!("http://{}", config.listen))?;
         }
@@ -239,6 +283,36 @@ impl InstallVps {
             .args(["--user", "show-environment"])
             .capture()
             .map(drop)
+    }
+
+    /// Refuses modified tracked files unless allowed, and warns when the
+    /// commit is on no remote branch, so the deployed source is saved
+    /// somewhere other than this host.
+    fn check_tree(layout: &Layout, allow_dirty: bool) -> Result<Tree, InstallError> {
+        let git = || Invocation::new("git").arg("-C").arg(&layout.repo);
+        let status = git()
+            .args(["status", "--porcelain", "--untracked-files=no"])
+            .capture()?;
+        let tree = if status.trim().is_empty() {
+            Tree::Clean
+        } else if allow_dirty {
+            eprintln!("warning: tracked files differ from the commit; installing a -dirty build");
+            Tree::Modified
+        } else {
+            return Err(InstallError::Dirty);
+        };
+        let commit = git().args(["rev-parse", "--short=12", "HEAD"]).capture()?;
+        let remotes = git()
+            .args(["branch", "--remotes", "--contains", "HEAD"])
+            .capture()?;
+        if remotes.trim().is_empty() {
+            eprintln!(
+                "warning: commit {} is on no remote branch; push it so the deployed source is saved",
+                commit.trim()
+            );
+        }
+        Self::step(&format!("Installing commit {}", commit.trim()));
+        Ok(tree)
     }
 
     fn build(layout: &Layout) -> Result<PathBuf, InstallError> {
@@ -295,6 +369,138 @@ impl InstallVps {
         Invocation::new("systemctl")
             .args(["--user", "is-active", "--quiet", SERVICE])
             .succeeds(Echo::Hide)
+    }
+
+    /// Seconds between checks for running calls.
+    const POLL: Duration = Duration::from_secs(2);
+    /// The `retry-after` clients get while the daemon is replaced.
+    const RETRY_AFTER: &str = "10";
+
+    fn control_state(layout: &Layout) -> Result<ControlState, InstallError> {
+        Self::json(
+            layout.tgv(&layout.binary).args(["control", "state"]),
+            "tgv control state",
+            ControlState::parse,
+        )
+    }
+
+    /// Waits until no call is running and pauses admission, so the restart
+    /// interrupts nothing. A call can start between the check and the pause;
+    /// then admission resumes and the wait continues. Polls are counted
+    /// rather than timed, so this reads no clock.
+    fn quiesce(layout: &Layout, idle_timeout: u64) -> Result<Quiet, InstallError> {
+        if !Self::service_active()? || !layout.binary.exists() {
+            return Ok(Quiet::Stopped);
+        }
+        let polls = idle_timeout.div_ceil(Self::POLL.as_secs()).max(1);
+        let mut reported = None;
+        let mut running = 0;
+        for _ in 0..polls {
+            let state = Self::control_state(layout)?;
+            running = state.running();
+            match state.admission() {
+                Admission::Running if running == 0 => {
+                    Self::control(layout, &["pause", "--retry-after", Self::RETRY_AFTER])?;
+                    if Self::control_state(layout)?.running() == 0 {
+                        Self::step("Paused admission; clients wait and retry");
+                        return Ok(Quiet::Paused);
+                    }
+                    Self::control(layout, &["resume"])?;
+                }
+                Admission::Paused | Admission::Other(_) if running == 0 => {
+                    Self::step("The daemon was already paused; leaving it paused");
+                    return Ok(Quiet::LeftAlone);
+                }
+                Admission::Running | Admission::Paused | Admission::Other(_) => {
+                    if reported != Some(running) {
+                        Self::step(&format!(
+                            "Waiting for {running} running calls to finish (up to {idle_timeout} seconds)"
+                        ));
+                        reported = Some(running);
+                    }
+                }
+            }
+            thread::sleep(Self::POLL);
+        }
+        Err(InstallError::Busy {
+            running,
+            waited: idle_timeout,
+        })
+    }
+
+    fn control(layout: &Layout, args: &[&str]) -> Result<(), InstallError> {
+        layout
+            .tgv(&layout.binary)
+            .arg("control")
+            .args(args)
+            .capture()
+            .map(drop)
+    }
+
+    /// Resumes admission if this task paused it, whether or not the upgrade
+    /// succeeded: leaving clients refused would not help either way.
+    fn release(layout: &Layout, quiet: Quiet) {
+        match quiet {
+            Quiet::Stopped | Quiet::LeftAlone => {}
+            Quiet::Paused => match Self::control(layout, &["resume"]) {
+                Ok(()) => Self::step("Resumed admission"),
+                Err(error) => eprintln!(
+                    "warning: could not resume admission ({error}); once the daemon runs, run `{} control resume`",
+                    layout.binary.display()
+                ),
+            },
+        }
+    }
+
+    /// Everything that changes a running installation.
+    fn replace(
+        layout: &Layout,
+        built: &Path,
+        backup: Backup,
+        tree: Tree,
+    ) -> Result<(), InstallError> {
+        Self::install_binary(layout, built, backup)?;
+        Self::install_unit(layout)?;
+        Self::enable_linger(layout)?;
+        Self::doctor(layout)?;
+        Self::verify_build(layout, tree)
+    }
+
+    /// The installed CLI and the daemon must report the same build.
+    fn verify_build(layout: &Layout, tree: Tree) -> Result<(), InstallError> {
+        let report = Self::json(
+            layout.tgv(&layout.binary).args(["doctor", "--json"]),
+            "tgv doctor --json",
+            DoctorReport::parse,
+        )?;
+        let Some(check) = report.build() else {
+            return Err(InstallError::BuildMismatch(
+                "doctor reported no build check".to_owned(),
+            ));
+        };
+        match (check.status(), tree) {
+            (CheckStatus::Ok, Tree::Clean | Tree::Modified) => {
+                Self::step(check.message());
+                Ok(())
+            }
+            (
+                CheckStatus::Warning
+                | CheckStatus::Failed
+                | CheckStatus::Skipped
+                | CheckStatus::Other(_),
+                Tree::Modified,
+            ) => {
+                eprintln!("warning: {}", check.message());
+                Ok(())
+            }
+            (
+                CheckStatus::Warning
+                | CheckStatus::Failed
+                | CheckStatus::Skipped
+                | CheckStatus::Other(_),
+                Tree::Clean,
+            ) => Err(InstallError::BuildMismatch(check.message().to_owned())),
+        }
     }
 
     fn install_binary(layout: &Layout, built: &Path, backup: Backup) -> Result<(), InstallError> {

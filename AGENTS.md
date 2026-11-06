@@ -259,9 +259,11 @@ dependencies under "Crates" below. Read the code for current module ownership.
 - `xtask`: repository tasks run with `cargo xtask` (alias in `.cargo/config.toml`),
   with `Xtask` as its primary type; unpublished and outside `default-members`.
   `cargo xtask install-vps` installs or upgrades TGV from a checkout as a
-  systemd user service and can publish it with Tailscale Serve. It is a shell:
-  it runs external commands and reads configuration through `tgv-daemon`'s
-  `Config`. Its Tailscale status parsing is unit-tested.
+  systemd user service and can publish it with Tailscale Serve; it restarts a
+  running daemon only between calls, paused, and checks the new build. It is a
+  shell: it runs external commands and reads configuration through
+  `tgv-daemon`'s `Config`. Its parsing of Tailscale status and of the installed
+  `tgv`'s output (`daemon`) is unit-tested; the upgrade sequence is not.
 - `deploy`: systemd units. `scripts`: manual smoke tests for Pi, systemd, and launchd.
 
 ### Crates

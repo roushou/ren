@@ -1,4 +1,5 @@
 //! `cargo xtask`: repository tasks, run from a checkout.
+mod daemon;
 mod install;
 mod invocation;
 mod tailscale;
