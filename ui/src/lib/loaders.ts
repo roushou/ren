@@ -11,6 +11,7 @@ import {
   type UsageView,
 } from './api.ts';
 import { localDayStart, parseRange, rangeStart, type UsageRange } from './usage.ts';
+import { listingQuery } from './traffic.ts';
 import { readSnapshot, snapshotError } from './snapshots.ts';
 
 export interface GatewayData {
@@ -24,11 +25,17 @@ export interface TrafficData {
   calls: CallView[];
   next: PageCursor | null;
   session: SessionView | undefined;
+  /** Sessions for the picker; empty on a session page. */
+  sessions: SessionView[];
+  /** How many calls the default "model calls only" hides (at most 100), or null when not hiding. */
+  hidden: number | null;
 }
 
 /** Listing filters `/api/calls` accepts, besides `limit`. */
 const callFilters = [
   'q',
+  'session',
+  'client',
   'provider',
   'model',
   'tool',
@@ -118,27 +125,44 @@ export async function trafficSnapshot(
   sessionId: SessionId | null,
 ) {
   const api = new ManagementApi(fetcher);
-  const params = new URLSearchParams();
-  // Session listings accept only a cursor; the global listing accepts filters.
-  for (const key of sessionId ? (['after'] as const) : callFilters) {
+  // Read by name: Kit re-runs a load on any URL change once it reads the
+  // whole URL (even `url.pathname`), but only on a named parameter's change
+  // when it reads parameters by name. So the key comes from the route, and
+  // the listing never reads `call`: selecting a call must not re-read it.
+  const named = new URLSearchParams();
+  for (const key of [...callFilters, 'kind', 'since']) {
     const value = url.searchParams.get(key);
-    if (value) params.set(key, value);
+    if (value) named.set(key, value);
   }
-  // Kit re-runs a load on any URL change once it reads the whole URL (even
-  // `url.pathname`), but only on a named parameter's change when it reads
-  // parameters by name. So the key comes from the route, and the listing
-  // never reads `call`: selecting a call must not re-read the listing.
-  const key = `${sessionId ? `/sessions/${sessionId}` : '/traffic'}?${params}`;
+  const key = `${sessionId ? `/sessions/${sessionId}` : '/traffic'}?${named}`;
   return readSnapshot(key, async (): Promise<TrafficData> => {
-    // The bounded daemon reader is shared with body previews: query serially.
-    let session: SessionView | undefined;
     if (sessionId) {
-      session = (await api.sessions(100)).sessions.find((item) => item.id === sessionId);
+      // A session's own listing accepts only a cursor.
+      const [sessions, page] = await Promise.all([
+        api.sessions(100),
+        api.sessionCalls(sessionId, named.get('after')),
+      ]);
+      const session = sessions.sessions.find((item) => item.id === sessionId);
+      return { calls: page.calls, next: page.next, session, sessions: [], hidden: null };
     }
-    const page = sessionId
-      ? await api.sessionCalls(sessionId, params.get('after'))
-      : await api.calls(params);
-    return { calls: page.calls, next: page.next, session };
+    const params = listingQuery(named, callFilters, Date.now());
+    const hiding = params.get('kind') === 'model';
+    const hiddenQuery = new URLSearchParams(params);
+    hiddenQuery.set('kind', 'other');
+    hiddenQuery.set('limit', '100');
+    hiddenQuery.delete('after');
+    const [page, sessions, hidden] = await Promise.all([
+      api.calls(params),
+      api.sessions(100),
+      hiding ? api.calls(hiddenQuery).then((other) => other.calls.length) : Promise.resolve(null),
+    ]);
+    return {
+      calls: page.calls,
+      next: page.next,
+      session: undefined,
+      sessions: sessions.sessions,
+      hidden,
+    };
   });
 }
 

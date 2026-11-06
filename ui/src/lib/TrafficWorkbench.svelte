@@ -23,6 +23,9 @@
     sessionTone,
   } from './display.ts';
   import {
+    type Filters,
+    clientChoices,
+    sinceChoices,
     emptyFilters,
     trafficParams,
     filtersFromParams,
@@ -227,11 +230,33 @@
     if (key === 'from_ms') filters.from = '';
     else if (key === 'until_ms') filters.until = '';
     else if (key === 'has_tools') filters.has_tools = false;
-    else if (['q', 'provider', 'model', 'tool', 'status'].includes(key))
-      filters[key as 'q' | 'provider' | 'model' | 'tool' | 'status'] = '';
+    else if (key === 'kind') filters.kind = 'model';
+    else if (
+      ['q', 'session', 'client', 'since', 'provider', 'model', 'tool', 'status'].includes(key)
+    )
+      filters[
+        key as 'q' | 'session' | 'client' | 'since' | 'provider' | 'model' | 'tool' | 'status'
+      ] = '';
     applyFilters();
   }
+  /** Narrow to one choice and apply at once. */
+  function pick(change: (filters: Filters) => void) {
+    change(filters);
+    applyFilters();
+  }
+  const sessionChoices = $derived(retained.current.value?.sessions ?? []);
+  const hidden = $derived(retained.current.value?.hidden ?? null);
+  function sessionName(id: string) {
+    const found = sessionChoices.find((item) => item.id === id);
+    return found ? short(found.native_id) : short(id);
+  }
   function chipLabel(key: string, value: string) {
+    if (key === 'session') return `Session: ${sessionName(value)}`;
+    if (key === 'client')
+      return `Client: ${clientChoices.find((item) => item.client === value)?.label ?? value}`;
+    if (key === 'since')
+      return sinceChoices.find((item) => item.since === value)?.label ?? `Since: ${value}`;
+    if (key === 'kind') return value === 'other' ? 'Bookkeeping calls only' : 'All call kinds';
     if (key === 'from_ms' || key === 'until_ms')
       return `${key === 'from_ms' ? 'From' : 'Until'}: ${new Date(Number(value)).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}`;
     return key === 'has_tools'
@@ -349,6 +374,70 @@
               >{/if}</button
           ><button class="button primary" type="submit"
             >Search <Icon name="arrow" size={14} /></button
+          >
+        </div>
+        <div class="narrow-bar" aria-label="Narrow the listing">
+          <div class="segmented" aria-label="Client">
+            <button
+              type="button"
+              class:chosen={!applied.get('client')}
+              aria-pressed={!applied.get('client')}
+              onclick={() => pick((f) => (f.client = ''))}>All clients</button
+            >{#each clientChoices as choice}<button
+                type="button"
+                class:chosen={applied.get('client') === choice.client}
+                aria-pressed={applied.get('client') === choice.client}
+                onclick={() => pick((f) => (f.client = choice.client))}>{choice.label}</button
+              >{/each}
+          </div>
+          <select
+            class="compact-select"
+            aria-label="Session"
+            value={applied.get('session') ?? ''}
+            onchange={(e) => pick((f) => (f.session = e.currentTarget.value))}
+            ><option value="">All sessions</option
+            >{#each sessionChoices as choice (choice.id)}<option value={choice.id}
+                >{short(choice.native_id)} · {providerName(choice.provider)} · {date(
+                  choice.last_seen,
+                )}
+                {clock(choice.last_seen)}</option
+              >{/each}</select
+          >
+          <div class="segmented" aria-label="Time">
+            <button
+              type="button"
+              class:chosen={!applied.get('since') && !applied.get('from_ms')}
+              aria-pressed={!applied.get('since') && !applied.get('from_ms')}
+              onclick={() =>
+                pick((f) => {
+                  f.since = '';
+                  f.from = '';
+                  f.until = '';
+                })}>Any time</button
+            >{#each sinceChoices as choice}<button
+                type="button"
+                class:chosen={applied.get('since') === choice.since}
+                aria-pressed={applied.get('since') === choice.since}
+                onclick={() =>
+                  pick((f) => {
+                    f.since = choice.since;
+                    f.from = '';
+                    f.until = '';
+                  })}>{choice.label}</button
+              >{/each}
+          </div>
+          <label
+            class="toggle-control model-only"
+            title="Hide token counts, model listings, and WebSocket handshakes"
+            ><input
+              type="checkbox"
+              checked={(applied.get('kind') ?? 'model') === 'model'}
+              onchange={(e) => pick((f) => (f.kind = e.currentTarget.checked ? 'model' : 'all'))}
+            /><span class="switch"></span><span
+              >Model calls only{#if hidden}<span class="muted hidden-count"
+                  >{hidden >= 100 ? '100+' : hidden} hidden</span
+                >{/if}</span
+            ></label
           >
         </div>
         {#if moreFilters}<div class="advanced-filters" id="advanced-filters">
@@ -527,11 +616,18 @@
                           class="mono session-line"
                           title={c.attribution.hint?.session ??
                             'No session identifier was reported'}
-                          >{#if c.session}<span class="session-dot tone-{sessionTone(c.session)}"
-                            ></span>{/if}{#if !previous || previous.session !== c.session}{c
-                              .attribution.hint
-                              ? short(c.attribution.hint.session)
-                              : 'No session'}{/if}</small
+                          >{#if c.session}{@const session = c.session}<button
+                              type="button"
+                              class="session-filter"
+                              title="Show only this session's calls"
+                              aria-label={`Show only session ${short(c.attribution.hint?.session ?? session)}`}
+                              onclick={() => pick((f) => (f.session = session))}
+                              ><span class="session-dot tone-{sessionTone(session)}"
+                              ></span>{#if !previous || previous.session !== c.session}{c
+                                  .attribution.hint
+                                  ? short(c.attribution.hint.session)
+                                  : 'Session'}{/if}</button
+                            >{:else if !previous || previous.session !== c.session}No session{/if}</small
                         >{/if}</td
                     >
                     <td

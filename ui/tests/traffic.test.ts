@@ -6,6 +6,10 @@ import {
   selectedCall,
   turnGroups,
   neighbour,
+  listingQuery,
+  sinceStart,
+  parseSince,
+  filtersFromParams,
 } from '../src/lib/traffic.ts';
 import { callFixture, finishedFixture, callId } from './fixtures.ts';
 
@@ -95,4 +99,46 @@ test('j and k step through calls and stop at the ends', () => {
   assert.equal(neighbour(calls, calls[0].id, -1)?.id, calls[0].id);
   assert.equal(neighbour(calls, null, 1)?.id, calls[0].id);
   assert.equal(neighbour([], null, 1), undefined);
+});
+
+test('the listing defaults to model calls and resolves since against now', () => {
+  const now = Date.UTC(2026, 10, 6, 18, 0);
+  const keys = ['q', 'session', 'client', 'status', 'from_ms', 'after'] as const;
+  const query = (search: string) =>
+    Object.fromEntries(listingQuery(new URLSearchParams(search), keys, now));
+  assert.deepEqual(query(''), { kind: 'model' });
+  assert.deepEqual(query('kind=all&client=codex'), { client: 'codex' });
+  assert.deepEqual(query('kind=other'), { kind: 'other' });
+  assert.deepEqual(query('kind=nonsense'), { kind: 'model' });
+  assert.deepEqual(query('since=1h&session=abc'), {
+    session: 'abc',
+    kind: 'model',
+    from_ms: String(now - 3_600_000),
+  });
+  // An unknown `since` is ignored rather than guessed at.
+  assert.deepEqual(query('since=year'), { kind: 'model' });
+  assert.equal(sinceStart('24h', now), now - 86_400_000);
+  assert.equal(parseSince('today'), 'today');
+});
+
+test('narrowing filters round-trip through the URL', () => {
+  const filters = {
+    ...emptyFilters(),
+    session: '33333333-3333-4333-8333-333333333333',
+    client: 'claude_code',
+    kind: 'all' as const,
+    since: 'today',
+  };
+  const params = trafficParams(filters);
+  assert.equal(
+    params,
+    'session=33333333-3333-4333-8333-333333333333&client=claude_code&since=today&kind=all',
+  );
+  const back = filtersFromParams(new URLSearchParams(params));
+  assert.deepEqual(
+    [back.session, back.client, back.kind, back.since],
+    [filters.session, filters.client, 'all', 'today'],
+  );
+  // The default kind stays out of the URL.
+  assert.equal(trafficParams(emptyFilters()), '');
 });

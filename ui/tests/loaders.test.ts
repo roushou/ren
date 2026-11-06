@@ -123,14 +123,22 @@ test('the listing ignores the selection, and off-page selections load on their o
   const requested: string[] = [];
   const fetcher = async (input: RequestInfo | URL) => {
     requested.push(path(input));
+    if (path(input).startsWith('/api/sessions?')) return versioned({ sessions: [] });
     return path(input).startsWith('/api/calls?')
       ? versioned({ calls: [], next: null })
       : versioned(detailFixture(older));
   };
   const url = new URL(`http://localhost/traffic?call=${older.id}&model=fixture&unknown=ignored`);
   const listing = await trafficSnapshot(fetcher, url, null);
-  assert.deepEqual(requested, ['/api/calls?limit=100&model=fixture']);
+  // The listing (model calls by default), the sessions for the picker, and
+  // how many calls the default hides; never the selected call.
+  assert.deepEqual(requested, [
+    '/api/calls?limit=100&model=fixture&kind=model',
+    '/api/sessions?limit=100',
+    '/api/calls?limit=100&model=fixture&kind=other',
+  ]);
   assert.deepEqual(listing.value?.calls, []);
+  assert.equal(listing.value?.hidden, 0);
 
   requested.length = 0;
   const loaded = await offPageSelection(fetcher, older.id, []);

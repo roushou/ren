@@ -16,8 +16,69 @@ export function selectedCall(
   return calls.find((call) => call.id === id) ?? (offPage?.id === id ? offPage : undefined);
 }
 
+/** Which calls the listing shows; absent from the URL means model calls only. */
+export type KindChoice = 'model' | 'all' | 'other';
+/** A start relative to now, kept in the URL as `since=` so it stays relative. */
+export type Since = '1h' | 'today' | '24h' | '7d';
+export const sinceChoices: { since: Since; label: string }[] = [
+  { since: '1h', label: 'Last hour' },
+  { since: 'today', label: 'Today' },
+  { since: '24h', label: '24 h' },
+  { since: '7d', label: '7 days' },
+];
+export const clientChoices = [
+  { client: 'claude_code', label: 'Claude Code' },
+  { client: 'codex', label: 'Codex' },
+  { client: 'pi', label: 'Pi' },
+] as const;
+
+export function parseKind(text: string | null): KindChoice {
+  return text === 'all' || text === 'other' ? text : 'model';
+}
+export function parseSince(text: string | null): Since | null {
+  return text === '1h' || text === 'today' || text === '24h' || text === '7d' ? text : null;
+}
+/** The start of a `since` choice, relative to `now`, in the browser's day. */
+export function sinceStart(since: Since, now: number): number {
+  switch (since) {
+    case '1h':
+      return now - 3_600_000;
+    case 'today': {
+      const date = new Date(now);
+      date.setHours(0, 0, 0, 0);
+      return date.getTime();
+    }
+    case '24h':
+      return now - 24 * 3_600_000;
+    case '7d':
+      return now - 7 * 24 * 3_600_000;
+  }
+}
+
+/**
+ * The listing's API query from the page URL: filters pass through, `kind`
+ * defaults to model calls, and `since` becomes `from_ms` as of `now`.
+ */
+export function listingQuery(url: URLSearchParams, keys: readonly string[], now: number) {
+  const params = new URLSearchParams();
+  for (const key of keys) {
+    const value = url.get(key);
+    if (value) params.set(key, value);
+  }
+  const kind = parseKind(url.get('kind'));
+  if (kind === 'all') params.delete('kind');
+  else params.set('kind', kind);
+  const since = parseSince(url.get('since'));
+  if (since) params.set('from_ms', String(sinceStart(since, now)));
+  return params;
+}
+
 export interface Filters {
   q: string;
+  session: string;
+  client: string;
+  kind: KindChoice;
+  since: string;
   provider: string;
   model: string;
   tool: string;
@@ -28,6 +89,10 @@ export interface Filters {
 }
 export const emptyFilters = (): Filters => ({
   q: '',
+  session: '',
+  client: '',
+  kind: 'model',
+  since: '',
   provider: '',
   model: '',
   tool: '',
@@ -38,10 +103,20 @@ export const emptyFilters = (): Filters => ({
 });
 export function trafficParams(filters: Filters): string {
   const params = new URLSearchParams();
-  for (const key of ['q', 'provider', 'model', 'tool', 'status'] as const) {
+  for (const key of [
+    'q',
+    'session',
+    'client',
+    'since',
+    'provider',
+    'model',
+    'tool',
+    'status',
+  ] as const) {
     const value = filters[key].trim();
     if (value) params.set(key, value);
   }
+  if (filters.kind !== 'model') params.set('kind', filters.kind);
   if (filters.has_tools) params.set('has_tools', 'true');
   let from: number | undefined, until: number | undefined;
   for (const key of ['from', 'until'] as const) {
@@ -59,9 +134,11 @@ export function trafficParams(filters: Filters): string {
 
 export function filtersFromParams(params: URLSearchParams): Filters {
   const filters = emptyFilters();
-  for (const key of ['q', 'provider', 'model', 'tool', 'status'] as const) {
+  for (const key of ['q', 'session', 'client', 'provider', 'model', 'tool', 'status'] as const) {
     filters[key] = params.get(key) ?? '';
   }
+  filters.kind = parseKind(params.get('kind'));
+  filters.since = parseSince(params.get('since')) ?? '';
   filters.has_tools = params.get('has_tools') === 'true';
   for (const key of ['from', 'until'] as const) {
     const raw = params.get(`${key}_ms`);

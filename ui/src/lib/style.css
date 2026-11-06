@@ -2238,3 +2238,37 @@ td.zero {
   margin: 0;
   padding: 10px 14px;
 }
+
+/* The narrowing strip under the search toolbar: who, when, and what kind. */
+.narrow-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 14px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface-subtle);
+}
+.narrow-bar .compact-select {
+  max-width: 260px;
+}
+.narrow-bar .model-only {
+  margin-left: auto;
+}
+.session-filter {
+  display: inline-flex;
+  align-items: center;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.session-filter:hover {
+  color: var(--ink);
+  text-decoration: underline;
+}
+.hidden-count {
+  margin-left: 6px;
+}
