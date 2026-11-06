@@ -2,7 +2,7 @@
   import { goto } from '$app/navigation';
   import { createSnapshot } from '#lib/snapshot.svelte.ts';
   import { num, short, clock, providerName, providerMark } from '#lib/api.ts';
-  import { date } from '#lib/display.ts';
+  import { compact, date, span, sessionTone } from '#lib/display.ts';
   import Icon from '#lib/Icon.svelte';
   import type { PageProps } from './$types';
   let { data }: PageProps = $props();
@@ -38,8 +38,11 @@
         <table>
           <thead
             ><tr
-              ><th>Session</th><th>Provider</th><th>Requests</th><th>Turns</th><th>Last activity</th
-              ><th></th></tr
+              ><th>Session</th><th>Provider</th><th class="numeric">Requests</th><th class="numeric"
+                >Turns</th
+              ><th class="numeric">Errors</th><th class="numeric">Tokens in · out</th><th
+                class="numeric">Active for</th
+              ><th>Last activity</th><th></th></tr
             ></thead
           ><tbody
             >{#each visibleSessions as s (s.id)}<tr
@@ -51,9 +54,11 @@
                 }}
                 ><td
                   ><a class="row-link" href={`/sessions/${encodeURIComponent(s.id)}`}
-                    ><Icon name="sessions" /><span
-                      ><strong class="mono">{short(s.native_id)}</strong><small class="mono"
-                        >{short(s.id)}</small
+                    ><span class="session-dot tone-{sessionTone(s.id)}"></span><span
+                      ><strong class="mono" title="The session ID your client reported"
+                        >{short(s.native_id)}</strong
+                      ><small class="mono" title={`TGV's own ID for this session: ${s.id}`}
+                        >TGV {short(s.id)}</small
                       ></span
                     ></a
                   ></td
@@ -62,8 +67,22 @@
                     ><span class="provider-mark {s.provider}">{providerMark(s.provider)}</span
                     >{providerName(s.provider)}</span
                   ></td
-                ><td class="mono">{num(s.call_count)}</td><td class="mono">{num(s.turn_count)}</td
-                ><td><span>{date(s.last_seen)}</span><small>{clock(s.last_seen)}</small></td><td
+                ><td class="mono numeric">{num(s.call_count)}</td><td class="mono numeric"
+                  >{num(s.turn_count)}</td
+                ><td
+                  class="mono numeric"
+                  class:error-count={!!s.error_count}
+                  class:zero={s.error_count === 0}>{num(s.error_count)}</td
+                ><td
+                  class="mono numeric"
+                  title="Provider reported; input includes cached context. Not subscription allowance or charges."
+                  >{s.tokens.input === null ? '—' : compact(s.tokens.input)} · {s.tokens.output ===
+                  null
+                    ? '—'
+                    : compact(s.tokens.output)}</td
+                ><td class="mono numeric">{span(s.last_seen - s.first_seen)}</td><td
+                  ><span>{date(s.last_seen)}</span><small>{clock(s.last_seen)}</small></td
+                ><td
                   ><a
                     class="icon-button"
                     aria-label={`Open session ${s.id}`}

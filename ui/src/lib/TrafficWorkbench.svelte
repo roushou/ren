@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { onDestroy, untrack } from 'svelte';
+  import { onDestroy, onMount, untrack } from 'svelte';
+  import { invalidateAll } from '$app/navigation';
   import { goto } from '$app/navigation';
   import { page, navigating } from '$app/state';
   import { getWorkbench } from './workbench.svelte.ts';
@@ -19,8 +20,16 @@
     httpChip,
     streamChip,
     tokenSummary,
+    sessionTone,
   } from './display.ts';
-  import { emptyFilters, trafficParams, filtersFromParams, selectedCall } from './traffic.ts';
+  import {
+    emptyFilters,
+    trafficParams,
+    filtersFromParams,
+    selectedCall,
+    turnGroups,
+    neighbour,
+  } from './traffic.ts';
   import { LiveFollow } from './live.ts';
   import Icon from './Icon.svelte';
   import Inspector from './Inspector.svelte';
@@ -60,6 +69,16 @@
   const connectionCommand = $derived(
     `tgv run ${connectClient}${gatewayOrigin !== 'http://127.0.0.1:8787' && gatewayOrigin !== 'http://localhost:8787' ? ` --gateway ${gatewayOrigin}` : ''}`,
   );
+  // On a phone the list and the call are separate screens: nothing is
+  // selected until a row is tapped.
+  let narrow = $state(false);
+  onMount(() => {
+    const query = window.matchMedia('(max-width: 760px)');
+    narrow = query.matches;
+    const change = () => (narrow = query.matches);
+    query.addEventListener('change', change);
+    return () => query.removeEventListener('change', change);
+  });
   const linkedCall = $derived(page.url.searchParams.get('call'));
   // A clicked row is selected at once; the URL catches up a moment later.
   let pending = $state<CallId | null>(null);
@@ -70,7 +89,7 @@
     pending ??
       (linkedCall !== null
         ? CallId.parse(linkedCall)
-        : page.url.searchParams.get('inspect') === 'off'
+        : page.url.searchParams.get('inspect') === 'off' || narrow
           ? null
           : calls[0]?.id),
   );
@@ -109,20 +128,9 @@
     workbench.callCount = 0;
     workbench.activeCount = 0;
   });
-  const groups = $derived.by(() => {
-    if (!sessionId) return [{ id: 'recent', label: 'Recent calls', rows: calls }];
-    const map = new Map<string, { id: string; label: string; rows: CallView[] }>();
-    for (const call of calls) {
-      const id = call.turn ?? `unassigned-${call.id}`;
-      let group = map.get(id);
-      if (!group) {
-        group = { id, label: call.turn ? `Turn ${short(call.turn)}` : 'Turn unassigned', rows: [] };
-        map.set(id, group);
-      }
-      group.rows.push(call);
-    }
-    return [...map.values()];
-  });
+  const groups = $derived(
+    sessionId ? turnGroups(calls) : [{ id: 'recent', label: 'Recent calls', rows: calls }],
+  );
   function callHref(id: CallId) {
     const url = new URL(page.url.href);
     url.searchParams.set('call', id);
@@ -133,6 +141,7 @@
     // Canonicalize the initial selection through Kit's data-loading navigation. Live
     // refreshes must never switch the inspector when a newer call arrives.
     if (
+      !narrow &&
       !page.url.searchParams.has('call') &&
       page.url.searchParams.get('inspect') !== 'off' &&
       calls.length
@@ -229,7 +238,31 @@
       ? 'Has tool calls'
       : `${key === 'q' ? 'Search' : title(key)}: ${value}`;
   }
+  /** `j` and `k` select the next and previous call, as in a mail reader. */
+  function step(direction: 1 | -1) {
+    const next = neighbour(calls, selectedId, direction);
+    if (!next || next.id === selectedId) return;
+    pending = next.id;
+    void goto(callHref(next.id), {
+      reset: false,
+      state: page.state,
+      persistState: true,
+    }).finally(() => {
+      if (pending === next.id) pending = null;
+    });
+    document.getElementById(`call-${next.id}`)?.closest('tr')?.scrollIntoView({ block: 'nearest' });
+  }
   function keydown(event: KeyboardEvent) {
+    const typing =
+      event.target instanceof HTMLElement &&
+      (event.target.matches('input,textarea,select') || event.target.isContentEditable);
+    if (!typing && !event.metaKey && !event.ctrlKey && !event.altKey) {
+      if (event.key === 'j' || event.key === 'k') {
+        event.preventDefault();
+        step(event.key === 'j' ? 1 : -1);
+        return;
+      }
+    }
     if (event.key === 'Escape' && selected) void closeInspector();
     if (
       event.key === '/' &&
@@ -372,14 +405,35 @@
           <span class="provider-mark {session?.provider ?? ''}"
             >{providerMark(session?.provider ?? '')}</span
           >{providerName(session?.provider ?? 'Client')}
-          <span class="mono muted">{short(session?.native_id)}</span>
+          <span class="mono" title="The session ID your client reported"
+            >{short(session?.native_id)}</span
+          >{#if sessionId}<small
+              class="mono muted"
+              title={`TGV's own ID for this session: ${sessionId}`}>TGV {short(sessionId)}</small
+            >{/if}
         </h2>
         <button class="text-button" onclick={() => goto('/sessions')}
           >All sessions <Icon name="arrow" size={14} /></button
         >
       </div>{/if}
     <div class="list-content" class:busy={loading && calls.length > 0} aria-busy={loading}>
-      {#if calls.length === 0}
+      {#if calls.length === 0 && retained.current.error && !loading}
+        <div class="empty-state" role="alert">
+          <div class="empty-icon"><Icon name="alert" size={26} /></div>
+          <h2>
+            {retained.current.error.kind === 'incompatible'
+              ? 'This UI and the daemon disagree'
+              : "Can't reach TGV"}
+          </h2>
+          <p>{retained.current.error.message}</p>
+          <p class="muted">
+            Nothing is shown because nothing could be read, not because nothing was recorded.
+          </p>
+          <button class="button" onclick={() => void invalidateAll()}
+            ><Icon name="refresh" size={14} /> Retry</button
+          >
+        </div>
+      {:else if calls.length === 0}
         <div class="empty-state" class:first-run={!filterCount && !sessionId && !after}>
           <div class="empty-icon">
             <Icon name={loading ? 'refresh' : filterCount ? 'search' : 'logs'} size={26} />
@@ -445,7 +499,7 @@
                 ></thead
               >
               <tbody>
-                {#each group.rows as c (c.id)}{@const badge = statusBadge(
+                {#each group.rows as c, index (c.id)}{@const badge = statusBadge(
                     callStatus(c),
                   )}{@const http = httpChip(c.status)}{@const stream =
                     streamChip(c)}{@const capture = captureChip(c)}{@const tokens = tokenSummary(
@@ -469,13 +523,16 @@
                         onclick={(event) => selectCall(event, c.id)}
                         aria-label={`Inspect call ${c.id}`}
                         aria-current={selectedId === c.id ? 'true' : undefined}>{short(c.id)}</a
-                      ><small
-                        class="mono"
-                        title={c.attribution.hint?.session ?? 'No session identifier was reported'}
-                        >{c.attribution.hint
-                          ? short(c.attribution.hint.session)
-                          : 'Unattributed'}</small
-                      ></td
+                      >{#if !sessionId}{@const previous = group.rows[index - 1]}<small
+                          class="mono session-line"
+                          title={c.attribution.hint?.session ??
+                            'No session identifier was reported'}
+                          >{#if c.session}<span class="session-dot tone-{sessionTone(c.session)}"
+                            ></span>{/if}{#if !previous || previous.session !== c.session}{c
+                              .attribution.hint
+                              ? short(c.attribution.hint.session)
+                              : 'No session'}{/if}</small
+                        >{/if}</td
                     >
                     <td
                       ><span class="model-line"

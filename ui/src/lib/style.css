@@ -1876,3 +1876,93 @@ td > .chip {
     opacity: 0.6;
   }
 }
+
+/* Session colors: a dot that groups a session's rows at a glance. */
+.session-dot {
+  display: inline-block;
+  flex-shrink: 0;
+  width: 8px;
+  height: 8px;
+  margin-right: 6px;
+  border-radius: 50%;
+  background: var(--muted);
+  vertical-align: middle;
+}
+.session-dot.tone-0 {
+  background: #d08770;
+}
+.session-dot.tone-1 {
+  background: #ebcb8b;
+}
+.session-dot.tone-2 {
+  background: #a3be8c;
+}
+.session-dot.tone-3 {
+  background: #88c0d0;
+}
+.session-dot.tone-4 {
+  background: #81a1c1;
+}
+.session-dot.tone-5 {
+  background: #b48ead;
+}
+.session-dot.tone-6 {
+  background: #8fbcbb;
+}
+.session-dot.tone-7 {
+  background: #bf616a;
+}
+th.numeric,
+td.numeric {
+  text-align: right;
+}
+td.error-count {
+  color: var(--error);
+  font-weight: 600;
+}
+td.zero {
+  color: var(--muted);
+  opacity: 0.55;
+}
+/* Values never break inside: a status code, a duration, a token count. */
+.outcome-line > *,
+.mono.numeric,
+.status-code,
+.chip {
+  white-space: nowrap;
+}
+.outcome-line {
+  flex-wrap: wrap;
+  column-gap: 8px;
+  row-gap: 0;
+}
+.thinking-chip {
+  color: var(--role-thinking);
+  border-color: color-mix(in srgb, var(--role-thinking) 35%, transparent);
+}
+.session-line {
+  display: flex;
+  align-items: center;
+  min-height: 16px;
+}
+/* Phones: the list and the selected call are separate screens. */
+@media (max-width: 760px) {
+  .traffic-workspace.with-inspector {
+    grid-template-rows: minmax(0, 1fr);
+  }
+  .traffic-workspace.with-inspector > .list-panel {
+    display: none;
+  }
+  .traffic-workspace.with-inspector > .inspector-pane {
+    border-top: 0;
+  }
+}
+.model-line {
+  min-width: 0;
+}
+.model-line .model-name {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}

@@ -354,6 +354,10 @@ export interface SessionView {
   last_seen: UnixMillis;
   call_count: number;
   turn_count: number;
+  /** Null from a daemon older than session totals. */
+  error_count: number | null;
+  /** Input includes cached context; null when no call reported usage. */
+  tokens: { input: number | null; output: number | null };
 }
 export interface FileUsage {
   page_size: number;
@@ -589,9 +593,21 @@ const sessions = object<Sessions>({
       last_seen: millis,
       call_count: count,
       turn_count: count,
+      error_count: optional(count),
+      tokens: (value, path) =>
+        value === undefined
+          ? { input: null, output: null }
+          : object<SessionView['tokens']>({ input: nullable(count), output: nullable(count) })(
+              value,
+              path,
+            ),
     }),
   ),
 });
+/** A field a newer daemon adds: absent from an older one reads as null. */
+function optional<T>(decode: Decoder<T>): Decoder<T | null> {
+  return (value, path) => (value === undefined || value === null ? null : decode(value, path));
+}
 const fileUsage = object<FileUsage>({ page_size: count, page_count: count, freelist_count: count });
 const storageView = object<StorageView>({
   disk: object<StorageView['disk']>({ metadata: fileUsage, blobs: fileUsage }),

@@ -525,3 +525,22 @@ export function buildLabel(build: Build | null): string {
       return assertNever(revision);
   }
 }
+
+/** How long something lasted, at a glance: 45 s, 12 min, 1 h 23 min. */
+export function span(ms: number): string {
+  const seconds = Math.max(0, Math.round(ms / 1000));
+  if (seconds < 60) return `${seconds} s`;
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `${minutes} min`;
+  const hours = Math.floor(minutes / 60);
+  return minutes % 60 ? `${hours} h ${minutes % 60} min` : `${hours} h`;
+}
+
+/** Sessions get one of eight colors, the same for an ID everywhere. A class,
+ * not an inline style, so the CSP stays strict. */
+export const SESSION_TONES = 8;
+export function sessionTone(id: string): number {
+  let hash = 0;
+  for (const char of id) hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
+  return hash % SESSION_TONES;
+}

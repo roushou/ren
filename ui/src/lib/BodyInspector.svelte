@@ -52,6 +52,16 @@
   );
   const open = $derived(preview?.ending === 'open');
   const chips = $derived(preview ? previewChips(preview) : []);
+  /** Thinking the provider withheld is a fact about the response, not a
+   * message: it becomes a chip instead of an empty card. */
+  const hiddenThinking = $derived(
+    readable?.cards.filter((card) => card.kind === 'thinking' && !card.text).length ?? 0,
+  );
+  const cards = $derived(
+    readable?.cards
+      .map((card, index) => ({ card, index }))
+      .filter(({ card }) => !(card.kind === 'thinking' && !card.text)) ?? [],
+  );
   /** Cards that start folded: context that is the same on every call. */
   function folded(card: Card) {
     return (
@@ -205,9 +215,8 @@
       >{following ? 'Live · every 2 seconds' : stopped || 'Snapshot'}{updated
         ? ` · ${new Date(updated).toLocaleTimeString()}`
         : ''}</span
-    >{#if readable && readable.cards.length > 6}<button
-        class="text-button jump-latest"
-        onclick={latest}>Jump to latest <Icon name="chevron" size={12} /></button
+    >{#if cards.length > 6}<button class="text-button jump-latest" onclick={latest}
+        >Jump to latest <Icon name="chevron" size={12} /></button
       >{/if}
   </div>
   {#if busy && !preview}<div class="payload-loading" role="status">
@@ -220,7 +229,11 @@
   {#if preview}
     <div class="chip-row" aria-label="Capture of this body">
       {#each chips as chip}<span class="chip {chip.tone}" title={chip.title}>{chip.label}</span
-        >{/each}
+        >{/each}{#if mode === 'readable' && hiddenThinking}<span
+          class="chip thinking-chip"
+          title="The model thought before answering; the provider sent only a signature, not the text"
+          >Thinking hidden</span
+        >{/if}
     </div>
     {#if open}<p class="callout">
         {following
@@ -254,7 +267,7 @@
     {:else if readable}
       {#each readable.notices as notice}<p class="callout">{notice}</p>{/each}
       <div class="card-list" bind:this={cardList}>
-        {#each readable.cards as card, index}<details
+        {#each cards as { card, index } (index)}<details
             class="body-card {card.kind}"
             open={!folded(card)}
           >
@@ -266,10 +279,7 @@
               <span class="card-icon"><Icon name={icon(card.kind)} size={13} /></span><span
                 class="card-label">{card.label}</span
               >{#if card.detail}<code class="card-detail">{card.detail}</code>{/if}
-              {#if card.kind === 'thinking' && !card.text}<span class="card-meta"
-                  >hidden by the provider</span
-                >{:else if folded(card)}<span class="card-meta"
-                  >{card.text.split('\n').length} lines</span
+              {#if folded(card)}<span class="card-meta">{card.text.split('\n').length} lines</span
                 >{/if}
             </summary>
             {#if card.text}

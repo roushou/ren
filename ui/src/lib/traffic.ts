@@ -74,3 +74,43 @@ export function filtersFromParams(params: URLSearchParams): Filters {
   }
   return filters;
 }
+
+/** A run of calls shown under one heading on a session page. */
+export interface TurnGroup {
+  id: string;
+  label: string;
+  rows: CallView[];
+}
+
+/**
+ * A session's calls grouped by turn, in order. Calls outside any turn that
+ * follow one another share one group, so a run of them is one heading, not
+ * one per call.
+ */
+export function turnGroups(calls: CallView[]): TurnGroup[] {
+  const groups: TurnGroup[] = [];
+  for (const call of calls) {
+    const last = groups.at(-1);
+    const key = call.turn ?? null;
+    if (last && (last.rows[0].turn ?? null) === key) {
+      last.rows.push(call);
+      continue;
+    }
+    groups.push({
+      // A turn can recur after calls outside it, so a group is keyed by its
+      // first call, which is unique.
+      id: `${key ?? 'outside'}-${call.id}`,
+      label: key ? `Turn ${key.slice(0, 8)}` : 'Outside a turn',
+      rows: [call],
+    });
+  }
+  return groups;
+}
+
+/** The call `step` places after (1) or before (-1) `current`, staying in range. */
+export function neighbour(calls: CallView[], current: CallId | null | undefined, step: 1 | -1) {
+  if (!calls.length) return undefined;
+  const index = calls.findIndex((call) => call.id === current);
+  if (index === -1) return calls[0];
+  return calls[Math.min(calls.length - 1, Math.max(0, index + step))];
+}

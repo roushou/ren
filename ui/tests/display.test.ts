@@ -18,6 +18,8 @@ import {
   compact,
   tokenSummary,
   previewChips,
+  span,
+  sessionTone,
 } from '../src/lib/display.ts';
 import { revision, type CallView } from '../src/lib/api.ts';
 import { callFixture, finishedFixture, callId } from './fixtures.ts';
@@ -248,4 +250,16 @@ test('a body preview reads as chips, with gaps spelled out', () => {
     labels({ decoding: { applied: 'brotli', integrity: 'verified', truncated: false } }).at(-1),
     ['brotli ✓', 'neutral'],
   );
+});
+
+test('spans read at a glance, and session colors are stable', () => {
+  assert.deepEqual([45_000, 12 * 60_000, 83 * 60_000, 120 * 60_000].map(span), [
+    '45 s',
+    '12 min',
+    '1 h 23 min',
+    '2 h',
+  ]);
+  const id = 'cecf7cbd-be7f-4563-9d85-3d5bea8fd082';
+  assert.equal(sessionTone(id), sessionTone(id));
+  assert.ok(sessionTone(id) >= 0 && sessionTone(id) < 8);
 });

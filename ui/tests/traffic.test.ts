@@ -1,6 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { emptyFilters, trafficParams, selectedCall } from '../src/lib/traffic.ts';
+import {
+  emptyFilters,
+  trafficParams,
+  selectedCall,
+  turnGroups,
+  neighbour,
+} from '../src/lib/traffic.ts';
 import { callFixture, finishedFixture, callId } from './fixtures.ts';
 
 test('empty traffic, failed initial loads, and dismissed selections have no inspector', () => {
@@ -58,4 +64,35 @@ test('URL filters restore datetime-local values without changing their absolute 
     trafficParams(original),
   );
   assert.equal(filtersFromParams(new URLSearchParams('from_ms=invalid')).from, '');
+});
+
+test('runs of calls outside a turn share one group; turns keep theirs', () => {
+  const turn = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}` as never;
+  const calls = [
+    finishedFixture(callId(1)),
+    finishedFixture(callId(2)),
+    finishedFixture(callId(3), { turn: turn(7) }),
+    finishedFixture(callId(4), { turn: turn(7) }),
+    finishedFixture(callId(5)),
+  ];
+  assert.deepEqual(
+    turnGroups(calls).map((g) => [g.label, g.rows.length]),
+    [
+      ['Outside a turn', 2],
+      ['Turn 00000000', 2],
+      ['Outside a turn', 1],
+    ],
+  );
+  // A turn that resumes after an outside call is a new group with its own key.
+  const resumed = turnGroups([...calls, finishedFixture(callId(6), { turn: turn(7) })]);
+  assert.equal(new Set(resumed.map((g) => g.id)).size, resumed.length);
+});
+
+test('j and k step through calls and stop at the ends', () => {
+  const calls = [1, 2, 3].map((n) => finishedFixture(callId(n)));
+  assert.equal(neighbour(calls, calls[0].id, 1)?.id, calls[1].id);
+  assert.equal(neighbour(calls, calls[2].id, 1)?.id, calls[2].id);
+  assert.equal(neighbour(calls, calls[0].id, -1)?.id, calls[0].id);
+  assert.equal(neighbour(calls, null, 1)?.id, calls[0].id);
+  assert.equal(neighbour([], null, 1), undefined);
 });

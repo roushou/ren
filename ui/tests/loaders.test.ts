@@ -105,6 +105,9 @@ test('responses are parsed at the boundary: labels keep unknown text, shapes are
     });
   });
   assert.equal(sessions.value?.[0].provider, 'future_provider');
+  // A daemon older than session totals reports none: null, never zero.
+  assert.equal(sessions.value?.[0].error_count, null);
+  assert.deepEqual(sessions.value?.[0].tokens, { input: null, output: null });
   const malformed = await trafficSnapshot(
     async () => versioned({ calls: [{ ...callFixture(), id: 'not-a-uuid' }], next: null }),
     new URL('http://localhost/traffic'),
