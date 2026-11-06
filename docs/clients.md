@@ -47,16 +47,27 @@ environment overrides, excluding inherited credentials and your client arguments
 it performs no network or client operations. Launch options target Claude Code
 2.1.316, Codex CLI 0.164.0, and Pi 1.0.0.
 
-For a remote daemon, supply its trusted Tailscale HTTPS **root** URL:
+For a remote daemon, save its trusted Tailscale HTTPS **root** URL once:
 
 ```sh
-tgv doctor --gateway https://tgv.your-tailnet.ts.net
-tgv run claude --gateway https://tgv.your-tailnet.ts.net
-tgv run codex --gateway https://tgv.your-tailnet.ts.net -- --model <model-id>
+tgv init --gateway https://tgv.your-tailnet.ts.net
+tgv run claude
+tgv run codex -- --model <model-id>
 ```
 
-Explicit gateway selection skips local history/upstream checks; remote storage is
-queried through the API. Without it, the configured listener supplies the address.
+`tgv init` checks the gateway's health and saves the URL only if the check
+passes, to `$XDG_CONFIG_HOME/tgv/client.toml` (or `~/.config/tgv/client.toml`),
+owner-only. Without `--gateway`, it asks on a terminal, offering the saved URL
+as the default; with no terminal it fails instead of waiting. This file is
+separate from the daemon's `tgv.toml`. `run` and `doctor` choose the gateway in
+this order: `--gateway`, the `TGV_GATEWAY` environment variable, `client.toml`,
+then the configured local listener. `doctor` reports which one it used. When
+nothing names a gateway and the local daemon fails its preflight, `run` says so
+and points to `tgv init`; no command prompts on its own.
+
+A selected gateway skips local history/upstream checks; remote storage is
+queried through the API. History commands (`sessions`, `history`, `inspect`)
+still read local storage, so run them on the daemon's host.
 Root URLs cannot contain credentials, queries, fragments, or provider suffixes;
 HTTP is allowed only on loopback. Diagnostic requests send no provider credentials,
 disable redirects/retries/environment proxies, and cap each response at 64 KiB

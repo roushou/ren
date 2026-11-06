@@ -63,6 +63,11 @@ impl GatewayEndpoint {
         Ok(Self(url))
     }
 
+    /// The root URL as text, for saving and display.
+    pub fn root(&self) -> &str {
+        self.0.as_str()
+    }
+
     pub fn url(&self, path: &str) -> Url {
         let mut url = self.0.clone();
         url.set_path(path);

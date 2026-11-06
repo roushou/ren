@@ -1,4 +1,5 @@
 //! Bounded, credential-free diagnostics. Never sign in or issue inference requests.
+use crate::client::GatewayChoice;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::{
     path::{Path, PathBuf},
@@ -34,6 +35,13 @@ impl Report {
     pub fn success(&self) -> bool {
         !self.checks.iter().any(|c| c.status == Status::Failed)
     }
+    /// A report with one failed check, for a diagnosis that cannot start.
+    pub(crate) fn failed(name: &'static str, message: impl Into<String>) -> Self {
+        let mut report = Self::default();
+        report.add(name, Status::Failed, message);
+        report
+    }
+
     fn add(&mut self, name: &'static str, status: Status, message: impl Into<String>) {
         self.checks.push(Check {
             name,
@@ -66,12 +74,12 @@ impl Report {
 
 impl Report {
     /// Diagnose this host: configuration, storage, client executables, and the
-    /// gateway (the local listener unless `explicit_gateway` names another).
+    /// gateway: the selected one, or the local listener when none is.
     pub async fn local(
         env: &HostEnv,
         config_path: Option<&Path>,
         data_dir: Option<PathBuf>,
-        explicit_gateway: Option<&str>,
+        gateway: &GatewayChoice,
     ) -> Self {
         let mut report = Self::default();
         let config = match Config::load(config_path) {
@@ -84,11 +92,16 @@ impl Report {
                 return report;
             }
         };
-        if explicit_gateway.is_some() {
+        report.add("gateway choice", Status::Ok, gateway.describe());
+        let remote = match gateway {
+            GatewayChoice::Selected { .. } => true,
+            GatewayChoice::LocalListener => false,
+        };
+        if remote {
             report.add(
                 "local storage",
                 Status::Skipped,
-                "explicit gateway selected; storage is checked through its API",
+                "gateway selected; storage is checked through its API",
             );
             report.add(
                 "upstream config",
@@ -138,7 +151,7 @@ impl Report {
                 ),
             );
         }
-        match GatewayEndpoint::resolve(explicit_gateway, config.listen) {
+        match gateway.endpoint(config.listen) {
             Ok(gateway) => report.checks.extend(Self::gateway(&gateway).await.checks),
             Err(error) => report.add("gateway URL", Status::Failed, error.to_string()),
         }

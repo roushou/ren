@@ -203,14 +203,18 @@ keeps systemd's user manager running after logout and starts it at boot. Neither
 requires keeping an SSH session open. HTTPS certificates must already be enabled
 for the tailnet, or Tailscale will provide its setup flow.
 
-On the client machine, use the private HTTPS **root URL** printed by Serve:
+On the client machine, save the private HTTPS **root URL** printed by Serve once
+(see [Clients](clients.md#diagnose-and-launch)), then launch as usual:
 
 ```sh
-tgv doctor --gateway https://your-vps.your-tailnet.ts.net:8443
-tgv run claude --gateway https://your-vps.your-tailnet.ts.net:8443
-tgv run codex --gateway https://your-vps.your-tailnet.ts.net:8443
-tgv run pi --gateway https://your-vps.your-tailnet.ts.net:8443 -- --model openai/<model-id>
+tgv init --gateway https://your-vps.your-tailnet.ts.net:8443
+tgv doctor
+tgv run claude
+tgv run codex
+tgv run pi -- --model openai/<model-id>
 ```
+
+`--gateway` or `TGV_GATEWAY` still override the saved URL for one command.
 
 This URL is the headless daemon, not the UI. Launchers append the native route
 prefixes; manual client configurations use `/anthropic`, `/codex`, or `/openai/v1`

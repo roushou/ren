@@ -32,6 +32,13 @@ tgv run codex
 tgv run pi -- --model anthropic/<model-id>
 ```
 
+When the daemon runs on another machine, such as a VPS on your tailnet, save its
+URL once on the machine you code from, and the same commands use it:
+
+```sh
+tgv init --gateway https://your-vps.your-tailnet.ts.net:8443
+```
+
 Browse what was recorded:
 
 ```sh

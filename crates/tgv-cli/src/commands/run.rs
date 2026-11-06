@@ -1,16 +1,18 @@
+use crate::client::GatewayChoice;
 use crate::context::Context;
 use crate::doctor;
 use anyhow::Result;
 use clap::{Args, ValueEnum};
 use std::{ffi::OsString, process::ExitCode};
-use tgv_harness::{Harness, endpoint::GatewayEndpoint};
+use tgv_harness::Harness;
 
 /// Launch a client through TGV for this session without editing its files.
 #[derive(Args)]
 pub struct RunCmd {
     #[arg(value_enum)]
     client: Client,
-    /// Gateway root URL (default: the configured local listener).
+    /// Gateway root URL (default: TGV_GATEWAY, then client.toml, then the
+    /// configured local listener).
     #[arg(long)]
     gateway: Option<String>,
     /// Print only TGV's overrides as JSON; do not contact or launch anything.
@@ -41,7 +43,8 @@ impl From<Client> for Harness {
 impl RunCmd {
     pub async fn run(self, ctx: &Context) -> Result<ExitCode> {
         let config = ctx.config()?;
-        let gateway = GatewayEndpoint::resolve(self.gateway.as_deref(), config.listen)?;
+        let choice = GatewayChoice::select(self.gateway.as_deref(), &ctx.env)?;
+        let gateway = choice.endpoint(config.listen)?;
         let plan = Harness::from(self.client).launch(&gateway);
         if self.dry_run {
             println!("{}", serde_json::to_string_pretty(&plan)?);
@@ -53,10 +56,20 @@ impl RunCmd {
                 eprintln!("{}: {}", check.name, check.message);
             }
         }
-        anyhow::ensure!(
-            report.success(),
-            "gateway preflight failed; run tgv doctor for details"
-        );
+        if !report.success() {
+            match choice {
+                GatewayChoice::Selected { source, .. } => {
+                    anyhow::bail!(
+                        "gateway preflight failed for {} (from {source}); run tgv doctor for details",
+                        gateway.root()
+                    )
+                }
+                GatewayChoice::LocalListener => anyhow::bail!(
+                    "gateway preflight failed for the local daemon at {}; to use a remote gateway, run `tgv init` or pass --gateway",
+                    gateway.root()
+                ),
+            }
+        }
         let overrides = doctor::Report::credential_overrides(&ctx.env);
         if !overrides.is_empty() {
             eprintln!(

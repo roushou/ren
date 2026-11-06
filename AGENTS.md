@@ -239,7 +239,9 @@ dependencies under "Crates" below. Read the code for current module ownership.
   (`lib.rs`) and a thin `main.rs` that sets up logging and captures `HostEnv`.
   `commands` holds clap parsing and dispatch: each command is a
   `#[derive(Args)]` struct with its own execution method, and command groups
-  are `#[derive(Subcommand)]` enums. `doctor` and `service` are the doctor
+  are `#[derive(Subcommand)]` enums. `client` chooses the gateway (`--gateway`,
+  `TGV_GATEWAY`, `client.toml`, then the local listener) and owns
+  `client.toml`, which `tgv init` writes. `doctor` and `service` are the doctor
   report and the service definitions. Refactors preserve existing flags, output
   formats, exports, and client passthrough. Its integration tests run the built
   binary (`CARGO_BIN_EXE_tgv`).

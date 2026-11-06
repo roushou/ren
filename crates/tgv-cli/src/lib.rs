@@ -1,6 +1,7 @@
 //! The `tgv` command line, with [`Cli`] as its primary type: arguments and
 //! dispatch, where each command owns its argument struct and execution, plus
 //! the doctor report and service definitions the commands produce.
+pub mod client;
 mod commands;
 mod context;
 pub mod doctor;
@@ -34,6 +35,7 @@ pub struct Cli {
 enum Command {
     Serve(commands::serve::ServeCmd),
     Service(commands::service::ServiceCmd),
+    Init(commands::init::InitCmd),
     Doctor(commands::doctor::DoctorCmd),
     Run(commands::run::RunCmd),
     History(commands::history::HistoryCmd),
@@ -49,6 +51,7 @@ impl Cli {
         match self.command {
             Command::Serve(cmd) => cmd.run(&ctx).await,
             Command::Service(cmd) => cmd.run(&ctx),
+            Command::Init(cmd) => cmd.run(&ctx).await,
             Command::Doctor(cmd) => cmd.run(&ctx).await,
             Command::Run(cmd) => cmd.run(&ctx).await,
             Command::History(cmd) => cmd.run(&ctx).await,

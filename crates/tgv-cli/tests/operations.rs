@@ -7,13 +7,16 @@
 )]
 use axum::{Router, body::Body, response::Response, routing::get};
 use std::{
-    process::Command,
+    process::{Command, Stdio},
     sync::{
         Arc,
         atomic::{AtomicUsize, Ordering},
     },
 };
-use tgv_cli::doctor::{Report, Status};
+use tgv_cli::{
+    client::{GatewayChoice, GatewaySource},
+    doctor::{Report, Status},
+};
 use tgv_daemon::{Daemon, config::Config};
 use tgv_harness::{endpoint::GatewayEndpoint, host::HostEnv};
 
@@ -26,6 +29,14 @@ async fn mock(app: Router) -> (GatewayEndpoint, tokio::task::JoinHandle<()>) {
         GatewayEndpoint::parse(&format!("http://{}", listener.local_addr().unwrap())).unwrap();
     let task = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
     (endpoint, task)
+}
+
+/// A gateway chosen with --gateway.
+fn flag(gateway: &str) -> GatewayChoice {
+    GatewayChoice::Selected {
+        endpoint: GatewayEndpoint::parse(gateway).unwrap(),
+        source: GatewaySource::Flag,
+    }
 }
 
 #[tokio::test]
@@ -44,7 +55,7 @@ async fn explicit_gateway_and_dry_run_ignore_unused_local_upstreams() {
     )
     .unwrap();
     let gateway = endpoint.url("/").to_string();
-    let report = Report::local(&HostEnv::default(), Some(&config), None, Some(&gateway)).await;
+    let report = Report::local(&HostEnv::default(), Some(&config), None, &flag(&gateway)).await;
     assert!(report.success());
     assert!(
         report
@@ -165,6 +176,9 @@ fn malformed_config_and_dry_run_do_not_leak_or_create_storage() {
     std::fs::write(&config, "unknown = 'SECRET'\n").unwrap();
     let output = Command::new(env!("CARGO_BIN_EXE_tgv"))
         .args(["--config", config.to_str().unwrap(), "doctor", "--json"])
+        .env("HOME", temp.path())
+        .env_remove("XDG_CONFIG_HOME")
+        .env_remove("TGV_GATEWAY")
         .output()
         .unwrap();
     assert_eq!(output.status.code(), Some(1));
@@ -252,7 +266,7 @@ async fn launch_preserves_arguments_credentials_and_exit_status_without_editing_
         &HostEnv::default(),
         None,
         Some(temp.path().to_owned()),
-        Some(&gateway),
+        &flag(&gateway),
     )
     .await;
     assert!(report.success());
@@ -272,7 +286,7 @@ async fn launch_preserves_arguments_credentials_and_exit_status_without_editing_
         &HostEnv::default(),
         Some(&config),
         Some(temp.path().to_owned()),
-        None,
+        &GatewayChoice::LocalListener,
     )
     .await;
     assert!(local_report.success());
@@ -398,5 +412,114 @@ async fn pi_launcher_materializes_only_bundled_code_and_preserves_client_argumen
         ["--model", "anthropic/fixture", "literal $PROMPT"]
     );
     assert_eq!(std::fs::read_dir(home).unwrap().count(), 0);
+    task.abort();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn init_saves_a_checked_gateway_that_run_and_doctor_then_use() {
+    use std::os::unix::fs::PermissionsExt;
+    let (endpoint, task) = mock(
+        Router::new()
+            .route("/health", get(|| async { HEALTH }))
+            .route("/api/storage", get(|| async { STORAGE })),
+    )
+    .await;
+    let temp = tempfile::tempdir().unwrap();
+    let home = temp.path().join("home");
+    std::fs::create_dir(&home).unwrap();
+    let file = home.join(".config/tgv/client.toml");
+    let tgv = |args: &[&str], gateway_env: Option<&str>| {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_tgv"));
+        command
+            .args(args)
+            .env("HOME", &home)
+            .env_remove("XDG_CONFIG_HOME")
+            .env_remove("TGV_GATEWAY")
+            .stdin(Stdio::null());
+        if let Some(value) = gateway_env {
+            command.env("TGV_GATEWAY", value);
+        }
+        command.output().unwrap()
+    };
+
+    // Without a terminal, init never waits for an answer.
+    let output = tgv(&["init"], None);
+    assert_eq!(output.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("--gateway"));
+    assert!(!file.exists());
+    // A gateway that fails its check is not saved.
+    let output = tgv(&["init", "--gateway", "http://127.0.0.1:1"], None);
+    assert_eq!(output.status.code(), Some(1));
+    assert!(!file.exists());
+
+    let gateway = endpoint.url("/").to_string();
+    let output = tgv(&["init", "--gateway", &gateway], None);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        std::fs::read_to_string(&file).unwrap(),
+        format!("gateway = \"{gateway}\"\n")
+    );
+    assert_eq!(
+        std::fs::metadata(&file).unwrap().permissions().mode() & 0o777,
+        0o600
+    );
+
+    // run and doctor use the saved gateway without --gateway.
+    let output = tgv(&["run", "claude", "--dry-run"], None);
+    assert!(output.status.success());
+    let plan: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(
+        plan["environment"]["ANTHROPIC_BASE_URL"],
+        format!("{gateway}anthropic")
+    );
+    let output = tgv(&["doctor", "--json"], None);
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let check = |name: &str| {
+        report["checks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|check| check["name"] == name)
+            .cloned()
+            .unwrap()
+    };
+    assert!(
+        check("gateway choice")["message"]
+            .as_str()
+            .unwrap()
+            .contains("client.toml")
+    );
+    assert_eq!(check("local storage")["status"], "skipped");
+    assert_eq!(check("gateway")["status"], "ok");
+
+    // TGV_GATEWAY wins over the file, and --gateway over both.
+    let output = tgv(
+        &["run", "claude", "--dry-run"],
+        Some("https://env.example.ts.net"),
+    );
+    let plan: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(
+        plan["environment"]["ANTHROPIC_BASE_URL"],
+        "https://env.example.ts.net/anthropic"
+    );
+    let output = tgv(
+        &[
+            "run",
+            "claude",
+            "--dry-run",
+            "--gateway",
+            "https://flag.example.ts.net",
+        ],
+        Some("https://env.example.ts.net"),
+    );
+    let plan: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(
+        plan["environment"]["ANTHROPIC_BASE_URL"],
+        "https://flag.example.ts.net/anthropic"
+    );
     task.abort();
 }
