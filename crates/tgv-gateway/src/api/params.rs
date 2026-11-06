@@ -2,11 +2,13 @@
 
 use serde::Deserialize;
 use std::str::FromStr;
+use tgv_harness::Harness;
 use tgv_protocol::route::Provider;
+use tgv_recorder::id::SessionId;
 use tgv_recorder::time::UnixMillis;
 use tgv_store::query::{
-    CallFilter, CallQuery, Cursor, PageLimit, QueryError, SearchText, StatusFilter, TimeRange,
-    ToolFilter,
+    CallFilter, CallQuery, Cursor, KindFilter, PageLimit, QueryError, SearchText, StatusFilter,
+    TimeRange, ToolFilter,
 };
 
 /// `GET /api/calls` parameters.
@@ -15,6 +17,9 @@ use tgv_store::query::{
 pub(super) struct RawCallQuery {
     limit: Option<u32>,
     after: Option<String>,
+    session: Option<String>,
+    client: Option<String>,
+    kind: Option<String>,
     provider: Option<String>,
     model: Option<String>,
     tool: Option<String>,
@@ -79,6 +84,15 @@ impl TryFrom<RawCallQuery> for CallQuery {
             limit: raw.limit.map_or(Ok(PageLimit::DEFAULT), PageLimit::new)?,
             after: raw.after.as_deref().map(Cursor::from_str).transpose()?,
             filter: CallFilter {
+                session: label(raw.session)
+                    .map(|value| SessionId::from_str(&value).map_err(|_| QueryError::Filter))
+                    .transpose()?,
+                client: label(raw.client)
+                    .map(|value| Harness::from_str(&value).map_err(|_| QueryError::Filter))
+                    .transpose()?,
+                kind: label(raw.kind)
+                    .map(|value| KindFilter::from_str(&value).map_err(|_| QueryError::Filter))
+                    .transpose()?,
                 provider: label(raw.provider)
                     .map(|value| Provider::from_str(&value).map_err(|_| QueryError::Filter))
                     .transpose()?,

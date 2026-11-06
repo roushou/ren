@@ -4,8 +4,12 @@
 use serde_with::{DeserializeFromStr, SerializeDisplay};
 use std::{fmt, str::FromStr};
 use strum::{Display, EnumString, IntoStaticStr, VariantArray};
+use tgv_harness::Harness;
 use tgv_protocol::route::Provider;
-use tgv_recorder::{id::CallId, time::UnixMillis};
+use tgv_recorder::{
+    id::{CallId, SessionId},
+    time::UnixMillis,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum QueryError {
@@ -109,6 +113,19 @@ pub enum StatusFilter {
     Interrupted,
 }
 
+/// Model calls, or the bookkeeping around them.
+#[derive(Display, EnumString, IntoStaticStr, VariantArray)]
+#[strum(serialize_all = "snake_case")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SerializeDisplay, DeserializeFromStr)]
+pub enum KindFilter {
+    /// Calls that ask a model for output: messages and responses, sent over
+    /// HTTP or as a WebSocket message.
+    Model,
+    /// Everything else: token counts, model listings, and the WebSocket
+    /// handshakes that open a channel.
+    Other,
+}
+
 /// Whether the model requested tools.
 #[derive(Display, EnumString, IntoStaticStr, VariantArray)]
 #[strum(serialize_all = "snake_case")]
@@ -147,6 +164,11 @@ impl TimeRange {
 /// Filters for a call listing. Every field narrows the result.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct CallFilter {
+    /// Calls TGV grouped into this session.
+    pub session: Option<SessionId>,
+    /// Calls attributed to this harness by its own headers or metadata.
+    pub client: Option<Harness>,
+    pub kind: Option<KindFilter>,
     pub provider: Option<Provider>,
     pub model: Option<SearchText>,
     pub tool: Option<SearchText>,

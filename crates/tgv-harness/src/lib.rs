@@ -15,7 +15,19 @@ pub mod pi;
 
 /// A coding-agent harness TGV serves: the clients of AGENTS.md section 1. The
 /// set is closed; adding one is a new variant, and every match must handle it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Its labels name it in queries (`?client=`).
+#[derive(strum::Display, strum::EnumString, strum::IntoStaticStr, strum::VariantArray)]
+#[strum(serialize_all = "snake_case")]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    serde_with::SerializeDisplay,
+    serde_with::DeserializeFromStr,
+)]
 pub enum Harness {
     ClaudeCode,
     Codex,

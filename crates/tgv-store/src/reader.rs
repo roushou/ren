@@ -4,7 +4,7 @@
 use super::chunk::{ChunkHash, Codec, EncodedChunk};
 use crate::{
     Store, StoreError,
-    query::{CallQuery, Cursor, PageLimit, StatusFilter, TimeRange, ToolFilter},
+    query::{CallQuery, Cursor, KindFilter, PageLimit, StatusFilter, TimeRange, ToolFilter},
     view::{
         AttemptView, BodyPrefix, BodyView, CallDetail, CallPage, CallView, ChannelView, Columns,
         DiskUsage, MessageView, ModelUsage, OperatorActionView, SessionView, StorageView,
@@ -17,10 +17,12 @@ use sqlx::{
     sqlite::{SqliteConnectOptions, SqlitePoolOptions},
 };
 use std::{path::Path, sync::Arc, time::Duration};
+use tgv_harness::attribution::HintSource;
 use tgv_protocol::inspect::{InputAccounting, ModelOutcome};
 use tgv_protocol::{
     direction::Direction,
     label::{Labeled, Stored},
+    route::{Endpoint, Method},
 };
 use tgv_recorder::Observation;
 use tgv_recorder::batch::BodyKey;
@@ -581,6 +583,38 @@ impl CallQuery {
                 .push(")) > 0 OR EXISTS (SELECT 1 FROM json_each(c.tool_names) t WHERE instr(lower(t.value), lower(")
                 .push_bind(text)
                 .push(")) > 0))");
+        }
+        if let Some(session) = filter.session {
+            sql.push(" AND c.session = ").push_bind(session.to_string());
+        }
+        if let Some(client) = filter.client {
+            // The harness is known from the convention that attributed the call.
+            sql.push(" AND json_extract(c.attribution, '$.hint.source') IN (");
+            let mut sources = sql.separated(", ");
+            for source in HintSource::ALL
+                .iter()
+                .filter(|source| source.harness() == client)
+            {
+                sources.push_bind(source.label());
+            }
+            sql.push(")");
+        }
+        if let Some(kind) = filter.kind {
+            // A WebSocket handshake is recorded as a GET on a model endpoint.
+            sql.push(match kind {
+                KindFilter::Model => " AND c.method <> ",
+                KindFilter::Other => " AND NOT (c.method <> ",
+            })
+            .push_bind(Method::Get.label())
+            .push(" AND c.endpoint IN (");
+            let mut endpoints = sql.separated(", ");
+            for endpoint in Endpoint::ALL.iter().filter(|endpoint| endpoint.generates()) {
+                endpoints.push_bind(endpoint.label());
+            }
+            sql.push(match kind {
+                KindFilter::Model => ")",
+                KindFilter::Other => "))",
+            });
         }
         if let Some(tools) = filter.tools {
             sql.push(match tools {

@@ -8,6 +8,7 @@
 
 mod headers;
 
+use crate::Harness;
 use serde_with::{DeserializeFromStr, SerializeDisplay};
 use strum::{Display, EnumString, IntoStaticStr, VariantArray};
 use tgv_protocol::native::{MessageHints, NativeSessionId, NativeThreadId, NativeTurnId};
@@ -23,6 +24,17 @@ pub enum HintSource {
     PiExtensionHeaders,
     /// The `client_metadata` of a Codex WebSocket `response.create`.
     CodexMessageMetadata,
+}
+
+impl HintSource {
+    /// The harness whose requests use this convention.
+    pub fn harness(self) -> Harness {
+        match self {
+            Self::ClaudeCodeHeaders => Harness::ClaudeCode,
+            Self::CodexHeaders | Self::CodexMessageMetadata => Harness::Codex,
+            Self::PiExtensionHeaders => Harness::Pi,
+        }
+    }
 }
 
 /// Why some hints were discarded.

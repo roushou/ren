@@ -27,6 +27,17 @@ pub enum Endpoint {
     ResponsesCompact,
 }
 
+impl Endpoint {
+    /// Whether a call to this endpoint asks a model for output, as opposed
+    /// to counting tokens or listing models.
+    pub fn generates(self) -> bool {
+        match self {
+            Self::Messages | Self::Responses | Self::ResponsesCompact => true,
+            Self::CountTokens | Self::Models => false,
+        }
+    }
+}
+
 /// How a call was requested: an HTTP method, or a WebSocket message.
 #[derive(Display, EnumString, IntoStaticStr, VariantArray)]
 #[strum(serialize_all = "snake_case")]

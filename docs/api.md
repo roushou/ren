@@ -115,10 +115,17 @@ Observations describe what was recorded, not model or tool state.
 ## Call search
 
 `GET /api/calls` filters all retained calls and returns `{calls, next}` newest
-first. Parameters: `q`, `provider` (`anthropic`, `openai`, `codex`), `model`,
-`tool`, `has_tools`, `status` (`active`, `finished`, `errors`, `interrupted`),
-`from_ms`, `until_ms` (inclusive), `limit` (1–1000), and `after`. Filters combine
-with AND; unknown parameters are rejected.
+first. Parameters: `q`, `session` (a TGV session ID), `client` (`claude_code`,
+`codex`, `pi`), `kind` (`model`, `other`), `provider` (`anthropic`, `openai`,
+`codex`), `model`, `tool`, `has_tools`, `status` (`active`, `finished`, `errors`,
+`interrupted`), `from_ms`, `until_ms` (inclusive), `limit` (1–1000), and `after`.
+Filters combine with AND; unknown parameters are rejected.
+
+- `client` matches the harness whose own headers or metadata attributed the call;
+  a call with no attribution matches no client.
+- `kind=model` keeps calls that ask a model for output (messages and responses,
+  over HTTP or as a WebSocket message); `kind=other` keeps the rest: token counts,
+  model listings, and the WebSocket handshakes that open a channel.
 
 - `q` matches call IDs, reported models, and observed tool names,
   case-insensitively; `%` and `_` are literal. Search strings are at most 128 UTF-8

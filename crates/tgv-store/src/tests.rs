@@ -52,6 +52,9 @@ struct CallSpec<'a> {
     tool: Option<&'a str>,
     status: u16,
     usage: Option<tgv_protocol::inspect::Usage>,
+    endpoint: Endpoint,
+    method: Method,
+    source: HintSource,
 }
 
 impl Default for CallSpec<'_> {
@@ -65,6 +68,9 @@ impl Default for CallSpec<'_> {
             tool: None,
             status: 200,
             usage: None,
+            endpoint: Endpoint::Messages,
+            method: Method::Post,
+            source: HintSource::ClaudeCodeHeaders,
         }
     }
 }
@@ -122,12 +128,12 @@ impl Fixture {
             stamp,
             transport: Transport::Http,
             provider: spec.provider,
-            endpoint: Endpoint::Messages,
-            method: Method::Post,
+            endpoint: spec.endpoint,
+            method: spec.method,
             config_revision: ConfigRevision::new("rev-1"),
             attribution: Attribution {
                 hint: spec.session.map(|session| SessionHint {
-                    source: HintSource::ClaudeCodeHeaders,
+                    source: spec.source,
                     session: NativeSessionId::new(Uuid::from_u128(session)).unwrap(),
                     turn: NativeTurnId::new(Uuid::from_u128(session + 1000)),
                     thread: None,
@@ -1102,4 +1108,137 @@ async fn usage_totals_by_hour_and_by_model_over_a_range() {
     assert_eq!((none.totals.calls, none.totals.errors), (0, 0));
     assert_eq!(none.totals.tokens.input, None);
     assert!(none.hours.is_empty() && none.models.is_empty());
+}
+
+#[tokio::test]
+async fn calls_narrow_by_session_client_and_kind() {
+    use crate::query::{CallFilter, KindFilter};
+    use tgv_harness::Harness;
+    let mut fixture = Fixture::new().await;
+    let claude = fixture
+        .record(CallSpec {
+            session: Some(1),
+            ..CallSpec::default()
+        })
+        .await;
+    let count = fixture
+        .record(CallSpec {
+            session: Some(1),
+            endpoint: Endpoint::CountTokens,
+            ..CallSpec::default()
+        })
+        .await;
+    let handshake = fixture
+        .record(CallSpec {
+            provider: Provider::Codex,
+            session: Some(2),
+            source: HintSource::CodexHeaders,
+            endpoint: Endpoint::Responses,
+            method: Method::Get,
+            ..CallSpec::default()
+        })
+        .await;
+    let codex = fixture
+        .record(CallSpec {
+            provider: Provider::Codex,
+            session: Some(2),
+            source: HintSource::CodexMessageMetadata,
+            endpoint: Endpoint::Responses,
+            method: Method::Message,
+            ..CallSpec::default()
+        })
+        .await;
+    let unattributed = fixture.record(CallSpec::default()).await;
+    let ids = |filter: CallFilter| {
+        let reader = fixture.reader.clone();
+        async move {
+            let mut ids: Vec<_> = reader
+                .calls(&CallQuery {
+                    filter,
+                    ..CallQuery::default()
+                })
+                .await
+                .unwrap()
+                .calls
+                .into_iter()
+                .map(|call| call.id)
+                .collect();
+            ids.sort();
+            ids
+        }
+    };
+    let sorted = |mut ids: Vec<CallId>| {
+        ids.sort();
+        ids
+    };
+    let all = ids(CallFilter::default()).await;
+    assert_eq!(all.len(), 5);
+    let first_session = fixture
+        .reader
+        .call(claude)
+        .await
+        .unwrap()
+        .call
+        .session
+        .unwrap();
+    assert_eq!(
+        ids(CallFilter {
+            session: Some(first_session),
+            ..CallFilter::default()
+        })
+        .await,
+        sorted(vec![claude, count])
+    );
+    // Both Codex conventions count as Codex; an unattributed call is no client's.
+    assert_eq!(
+        ids(CallFilter {
+            client: Some(Harness::Codex),
+            ..CallFilter::default()
+        })
+        .await,
+        sorted(vec![handshake, codex])
+    );
+    assert_eq!(
+        ids(CallFilter {
+            client: Some(Harness::ClaudeCode),
+            ..CallFilter::default()
+        })
+        .await,
+        sorted(vec![claude, count])
+    );
+    assert!(
+        ids(CallFilter {
+            client: Some(Harness::Pi),
+            ..CallFilter::default()
+        })
+        .await
+        .is_empty()
+    );
+    // Model calls exclude token counts and WebSocket handshakes; Other is the rest.
+    assert_eq!(
+        ids(CallFilter {
+            kind: Some(KindFilter::Model),
+            ..CallFilter::default()
+        })
+        .await,
+        sorted(vec![claude, codex, unattributed])
+    );
+    assert_eq!(
+        ids(CallFilter {
+            kind: Some(KindFilter::Other),
+            ..CallFilter::default()
+        })
+        .await,
+        sorted(vec![count, handshake])
+    );
+    // Filters combine with AND.
+    assert_eq!(
+        ids(CallFilter {
+            client: Some(Harness::Codex),
+            kind: Some(KindFilter::Model),
+            ..CallFilter::default()
+        })
+        .await,
+        vec![codex]
+    );
 }

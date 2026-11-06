@@ -1115,6 +1115,9 @@ async fn live_previews_advance_without_claiming_completion_and_traffic_filters_v
         "from_ms=2&until_ms=1",
         "after=bad",
         "typo=1",
+        "session=not-a-uuid",
+        "client=cursor",
+        "kind=everything",
     ] {
         assert_eq!(
             client
@@ -1124,6 +1127,24 @@ async fn live_previews_advance_without_claiming_completion_and_traffic_filters_v
                 .unwrap()
                 .status(),
             StatusCode::BAD_REQUEST
+        );
+    }
+    // The narrowing filters parse, and combine with the others.
+    for query in [
+        "client=claude_code&kind=model",
+        "client=codex",
+        "kind=other",
+        "session=33333333-3333-4333-8333-333333333333&status=finished",
+    ] {
+        assert_eq!(
+            client
+                .get(format!("{base}/api/calls?{query}"))
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::OK,
+            "{query}"
         );
     }
     let response = client

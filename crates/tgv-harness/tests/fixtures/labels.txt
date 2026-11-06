@@ -1,2 +1,3 @@
+tgv_harness::Harness: claude_code codex pi
 attribution::HintSource: claude_code_headers codex_headers pi_extension_headers codex_message_metadata
 attribution::HintIssue: invalid_or_duplicate_header invalid_turn_metadata conflicting_identifiers turn_without_session

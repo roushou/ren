@@ -54,7 +54,12 @@ macro_rules! table {
 #[test]
 fn every_label_is_pinned() {
     use tgv_store::{chunk, query};
-    let table = table![chunk::Codec, query::StatusFilter, query::ToolFilter,];
+    let table = table![
+        chunk::Codec,
+        query::KindFilter,
+        query::StatusFilter,
+        query::ToolFilter,
+    ];
     let pinned = include_str!("fixtures/labels.txt");
     assert!(
         table == pinned,
