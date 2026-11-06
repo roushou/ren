@@ -23,18 +23,22 @@ commands. On a remote deployment, run history commands on that host.
 
 Every JSON body carries `"api_version": 1`; errors are `{api_version, error}` with
 `error` one of `not_found`, `invalid_query`, `busy`, or `unavailable`.
+A body export answers with the raw bytes (`application/octet-stream`) only when
+the body was stored whole; otherwise `not_found`. At most two run at once
+(`busy`), and the UI does not forward it.
 
-| Endpoint                                            | Result                                                               |
-| --------------------------------------------------- | -------------------------------------------------------------------- |
-| `GET /health`                                       | `ok` or `degraded` (HTTP 503), the running build, recorder counters  |
-| `GET /api/metrics`                                  | Recorder counters and storage usage                                  |
-| `GET /api/storage`                                  | Active retention policy and disk usage of both database files        |
-| `GET /api/calls?limit=100`                          | Filtered, paginated calls, newest first (see [search](#call-search)) |
-| `GET /api/calls/{call-id}`                          | One call with its attempts, inspection, and observation log          |
-| `GET /api/calls/{call-id}/body/{request\|response}` | Bounded body preview                                                 |
-| `GET /api/sessions?limit=100`                       | Recent sessions with call and turn counts                            |
-| `GET /api/sessions/{session-id}/calls?limit=100`    | One session's calls, oldest first                                    |
-| `GET /api/live?after={seq}`                         | Server-sent events as observations commit                            |
+| Endpoint                                                   | Result                                                                      |
+| ---------------------------------------------------------- | --------------------------------------------------------------------------- |
+| `GET /health`                                              | `ok` or `degraded` (HTTP 503), the running build, recorder counters         |
+| `GET /api/metrics`                                         | Recorder counters and storage usage                                         |
+| `GET /api/storage`                                         | Active retention policy and disk usage of both database files               |
+| `GET /api/calls?limit=100`                                 | Filtered, paginated calls, newest first (see [search](#call-search))        |
+| `GET /api/calls/{call-id}`                                 | One call with its attempts, inspection, and observation log                 |
+| `GET /api/calls/{call-id}/body/{request\|response}`        | Bounded body preview                                                        |
+| `GET /api/calls/{call-id}/body/{request\|response}/export` | The complete captured body as raw bytes, as `tgv inspect --body` exports it |
+| `GET /api/sessions?limit=100`                              | Recent sessions with call and turn counts                                   |
+| `GET /api/sessions/{session-id}/calls?limit=100`           | One session's calls, oldest first                                           |
+| `GET /api/live?after={seq}`                                | Server-sent events as observations commit                                   |
 
 Omit `after` for the first page; pass the returned `next` cursor unchanged for the
 next one. The CLI accepts the same cursor with `timeline --after`. Pages order by

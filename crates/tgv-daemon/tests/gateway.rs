@@ -985,6 +985,27 @@ async fn body_previews_are_read_only_private_and_distinguish_capture_limits() {
                 client().post(&url).send().await.unwrap().status(),
                 StatusCode::METHOD_NOT_ALLOWED
             );
+            // A full export only of a body stored whole, byte for byte.
+            let export = client().get(format!("{url}/export")).send().await.unwrap();
+            assert_eq!(export.headers()["cache-control"], "no-store");
+            if limit == 1024 {
+                assert_eq!(export.status(), StatusCode::OK);
+                assert_eq!(export.headers()["content-type"], "application/octet-stream");
+                let expected: &[u8] = if direction == "request" {
+                    br#"{"messages":[{"role":"user","content":"hello"}]}"#
+                } else {
+                    br#"{"content":[{"type":"text","text":"<script>fixture</script>"}]}"#
+                };
+                assert_eq!(export.bytes().await.unwrap(), expected);
+            } else {
+                assert_eq!(export.status(), StatusCode::NOT_FOUND);
+                let value: serde_json::Value =
+                    serde_json::from_slice(&export.bytes().await.unwrap()).unwrap();
+                assert_eq!(
+                    value,
+                    serde_json::json!({ "api_version": 1, "error": "not_found" })
+                );
+            }
         }
         assert_eq!(
             client()

@@ -2,6 +2,7 @@
 //! live observation feed, and authenticated controls under `/control/v1`.
 //!
 //! Every JSON response carries `api_version`, which the UI checks at load.
+//! The one non-JSON success is a complete body export, sent as raw bytes.
 //! Query strings are parsed once into store query types; unknown parameters
 //! are rejected. Read handlers use only the store's `Reader`; control handlers
 //! apply commands through `Controls` and run backups through `Backup`.
@@ -64,6 +65,7 @@ pub(crate) struct ApiState {
     retention: RetentionPolicy,
     build: Build,
     previews: Arc<Semaphore>,
+    exports: Arc<Semaphore>,
     shutdown: CancellationToken,
 }
 
@@ -173,6 +175,8 @@ impl ApiState {
     pub const API_VERSION: u32 = 1;
     /// Body previews decode off the async runtime; at most this many at once.
     const PREVIEW_PERMITS: usize = 2;
+    /// A body export is held in memory whole; at most this many at once.
+    const EXPORT_PERMITS: usize = 2;
 
     pub fn new(
         reader: Reader,
@@ -187,6 +191,7 @@ impl ApiState {
             retention,
             build,
             previews: Arc::new(Semaphore::new(Self::PREVIEW_PERMITS)),
+            exports: Arc::new(Semaphore::new(Self::EXPORT_PERMITS)),
             shutdown,
         }
     }
@@ -199,6 +204,7 @@ impl ApiState {
             .route("/api/calls", get(Self::calls))
             .route("/api/calls/{id}", get(Self::call))
             .route("/api/calls/{id}/body/{direction}", get(Self::body))
+            .route("/api/calls/{id}/body/{direction}/export", get(Self::export))
             .route("/api/sessions", get(Self::sessions))
             .route("/api/sessions/{id}/calls", get(Self::session_calls))
             .route("/api/live", get(Self::live))
@@ -299,6 +305,37 @@ impl ApiState {
         .await
         .map_err(|error| ApiError::Store(StoreError::Worker(error)))?;
         Ok(Self::versioned(preview).into_response())
+    }
+
+    /// A complete captured body, byte for byte as `tgv inspect --body`
+    /// exports it. Only bodies stored whole are exported, so one never
+    /// exceeds the capture body limit; it is buffered to send its length.
+    async fn export(
+        State(state): State<Arc<Self>>,
+        Path((id, direction)): Path<(CallId, Direction)>,
+    ) -> Result<Response, ApiError> {
+        let _permit = state
+            .exports
+            .clone()
+            .try_acquire_owned()
+            .map_err(|_| ApiError::Busy)?;
+        let key = state.reader.body_key(id, direction).await?;
+        let mut body = Vec::new();
+        state
+            .reader
+            .export(key, |bytes| {
+                body.extend_from_slice(bytes);
+                Ok(())
+            })
+            .await?;
+        Ok((
+            [(
+                header::CONTENT_TYPE,
+                HeaderValue::from_static("application/octet-stream"),
+            )],
+            body,
+        )
+            .into_response())
     }
 
     async fn sessions(
