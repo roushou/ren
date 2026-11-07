@@ -357,16 +357,20 @@
       </div>
     </div>
     <div class="scope-group">
-      <select
-        class="compact-select"
-        aria-label="Session"
-        value={applied.get('session') ?? ''}
-        onchange={(e) => pick((f) => (f.session = e.currentTarget.value))}
-        ><option value="">All sessions</option>{#each sessionChoices as choice (choice.id)}<option
-            value={choice.id}
-            >{short(choice.native_id)} · {providerName(choice.provider)} · {date(choice.last_seen)}
-            {clock(choice.last_seen)}</option
-          >{/each}</select
+      <span class="select-control"
+        ><select
+          class="compact-select"
+          aria-label="Session"
+          value={applied.get('session') ?? ''}
+          onchange={(e) => pick((f) => (f.session = e.currentTarget.value))}
+          ><option value="">All sessions</option>{#each sessionChoices as choice (choice.id)}<option
+              value={choice.id}
+              >{short(choice.native_id)} · {providerName(choice.provider)} · {date(
+                choice.last_seen,
+              )}
+              {clock(choice.last_seen)}</option
+            >{/each}</select
+        ><Icon name="chevron" size={12} /></span
       >
     </div>
     <div class="scope-group">

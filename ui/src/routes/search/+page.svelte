@@ -23,88 +23,128 @@
       : hit.session
         ? `/sessions/${encodeURIComponent(hit.session)}?call=${encodeURIComponent(hit.call)}`
         : `/traffic?call=${encodeURIComponent(hit.call)}`;
+  /** The input takes the keyboard when the page opens, and on `/`. */
+  let input = $state<HTMLInputElement>();
+  $effect(() => {
+    if (!current?.q) input?.focus();
+  });
+  function onKeydown(event: KeyboardEvent) {
+    const typing =
+      event.target instanceof HTMLElement &&
+      (event.target.matches('input,textarea,select') || event.target.isContentEditable);
+    if (event.key === '/' && !typing) {
+      event.preventDefault();
+      input?.focus();
+      input?.select();
+    }
+  }
 </script>
 
+<svelte:window onkeydown={onKeydown} />
+
 {#snippet scope()}
-  <form class="scope-group search-input scope-search" method="GET" action="/search">
-    <Icon name="search" />
-    <input
-      name="q"
-      aria-label="Search history"
-      placeholder={'Words, or "a phrase", in prompts, replies, and tools…'}
-      value={current?.q ?? ''}
-    />
-    {#if current?.field}<input type="hidden" name="field" value={current.field} />{/if}
-  </form>
-  <nav class="scope-group segmented" aria-label="Field">
-    <a
-      href={fieldHref(null)}
-      class:chosen={!current?.field}
-      aria-current={!current?.field ? 'page' : undefined}>All</a
-    >
-    {#each SEARCH_FIELDS as field (field)}<a
-        href={fieldHref(field)}
-        class:chosen={current?.field === field}
-        aria-current={current?.field === field ? 'page' : undefined}>{searchFieldLabel(field)}</a
-      >{/each}
-  </nav>
+  <div class="scope-group">
+    <span class="scope-title">Search</span>
+    <span class="muted">Prompts, replies, and tool input and output · press / to search</span>
+  </div>
 {/snippet}
 
-<section class="panel list-panel">
-  <div class="list-content">
-    {#if !current}
+{#snippet searchForm(hero: boolean)}
+  <form class="search-form" class:hero method="GET" action="/search" role="search">
+    <label class="search-box">
+      <Icon name="search" size={hero ? 18 : 15} />
+      <input
+        bind:this={input}
+        name="q"
+        type="search"
+        aria-label="Search recorded history"
+        placeholder={'Search prompts, replies, commands, file paths, errors…'}
+        value={current?.q ?? ''}
+        autocomplete="off"
+        spellcheck="false"
+      />
+      {#if current?.field}<input type="hidden" name="field" value={current.field} />{/if}
+      <button class="button primary search-submit" type="submit">Search</button>
+    </label>
+    <nav class="segmented search-fields" aria-label="Search in">
+      <a
+        href={fieldHref(null)}
+        class:chosen={!current?.field}
+        aria-current={!current?.field ? 'page' : undefined}>Everything</a
+      >
+      {#each SEARCH_FIELDS as field (field)}<a
+          href={fieldHref(field)}
+          class:chosen={current?.field === field}
+          aria-current={current?.field === field ? 'page' : undefined}>{searchFieldLabel(field)}</a
+        >{/each}
+    </nav>
+  </form>
+{/snippet}
+
+<section class="panel list-panel search-panel">
+  {#if !current}
+    <div class="list-content">
       <div class="empty-state">
         <div class="empty-icon"><Icon name="alert" size={25} /></div>
         <h2>Search could not run</h2>
         <p>{snapshot.current.error?.message ?? 'Loading…'}</p>
       </div>
-    {:else if !page}
-      <div class="empty-state">
-        <div class="empty-icon"><Icon name="search" size={25} /></div>
+    </div>
+  {:else if !page}
+    <div class="list-content">
+      <div class="search-hero">
         <h2>Search recorded history</h2>
-        <p>
-          Find what prompts, replies, and tool calls said: a command, a file path, an error. All
-          words must match; quote a phrase. Punctuation separates words, so search
+        <p class="muted">
+          Find what your agents' prompts, replies, and tool calls said: a command, a file path, an
+          error message.
+        </p>
+        {@render searchForm(true)}
+        <p class="search-hint muted">
+          All words must match. Put a phrase in quotes. Punctuation separates words, so search
           <span class="mono">"install-vps"</span> as a phrase.
         </p>
       </div>
-    {:else if page.hits.length}
-      <ul class="search-hits">
-        {#each page.hits as hit (`${hit.call}-${hit.field}`)}
-          <li>
-            <a class="search-hit" href={hitHref(hit)}>
-              <span class="search-hit-meta">
-                {#if hit.session}<span class="session-dot tone-{sessionTone(hit.session)}"
-                  ></span>{/if}
-                <span class="chip">{searchFieldLabel(hit.field)}</span>
-                <span class="muted">{date(hit.started_at)} {clock(hit.started_at)}</span>
-                <span class="muted end"
-                  >{hit.turn ? 'Open turn' : 'Open call'}
-                  <Icon name="arrow" size={12} /></span
+    </div>
+  {:else}
+    <div class="search-bar">{@render searchForm(false)}</div>
+    <div class="list-content">
+      {#if page.hits.length}
+        <ul class="search-hits">
+          {#each page.hits as hit (`${hit.call}-${hit.field}`)}
+            <li>
+              <a class="search-hit" href={hitHref(hit)}>
+                <span class="search-hit-meta">
+                  {#if hit.session}<span class="session-dot tone-{sessionTone(hit.session)}"
+                    ></span>{/if}
+                  <span class="chip">{searchFieldLabel(hit.field)}</span>
+                  <span class="muted">{date(hit.started_at)} {clock(hit.started_at)}</span>
+                  <span class="muted end"
+                    >{hit.turn ? 'Open turn' : 'Open call'} <Icon name="arrow" size={12} /></span
+                  >
+                </span>
+                <span class="search-snippet"
+                  >{#each snippetParts(hit.snippet) as part, index (index)}{#if part.match}<mark
+                        >{part.text}</mark
+                      >{:else}{part.text}{/if}{/each}</span
                 >
-              </span>
-              <span class="search-snippet"
-                >{#each snippetParts(hit.snippet) as part, index (index)}{#if part.match}<mark
-                      >{part.text}</mark
-                    >{:else}{part.text}{/if}{/each}</span
-              >
-            </a>
-          </li>
-        {/each}
-      </ul>
-    {:else}
-      <div class="empty-state">
-        <div class="empty-icon"><Icon name="search" size={25} /></div>
-        <h2>No matches</h2>
-        <p>Try fewer words, another field, or a phrase in quotes.</p>
-      </div>
-    {/if}
-  </div>
-  {#if page}<div class="table-footer">
+              </a>
+            </li>
+          {/each}
+        </ul>
+      {:else}
+        <div class="empty-state">
+          <div class="empty-icon"><Icon name="search" size={25} /></div>
+          <h2>No matches for “{current.q}”</h2>
+          <p>Try fewer words, search everything, or put a phrase in quotes.</p>
+        </div>
+      {/if}
+    </div>
+    <div class="table-footer">
       <span
         >{num(page.hits.length)}{page.hits.length === 50 ? '+' : ''} matches, newest first · {num(
           page.indexed_calls,
         )} calls indexed</span
       >
-    </div>{/if}
+    </div>
+  {/if}
 </section>
