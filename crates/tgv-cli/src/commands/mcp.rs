@@ -6,13 +6,12 @@
 //! Stdout carries only protocol messages; logs go to stderr.
 use crate::commands::history::TargetArgs;
 use crate::context::Context;
-use crate::management::{Management, Target};
+use crate::management::Management;
 use crate::mcp::{BodyExcerpt, McpServer, PendingCall, Step, ToolCall, ToolOutcome};
 use anyhow::Result;
 use clap::Args;
 use serde_json::Value;
 use std::process::ExitCode;
-use tgv_harness::endpoint::GatewayEndpoint;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader, Stdin, Stdout};
 
 /// Serve recorded history to coding agents over MCP (stdio).
@@ -35,12 +34,7 @@ impl McpCmd {
     const LINE_LIMIT: u64 = 1 << 20;
 
     pub async fn run(self, ctx: &Context) -> Result<ExitCode> {
-        let gateway = match self.target.select(ctx)? {
-            Target::Remote(gateway) => gateway,
-            Target::Local => {
-                Management::new(GatewayEndpoint::resolve(None, ctx.config()?.listen)?)?
-            }
-        };
+        let gateway = self.target.gateway(ctx)?;
         tracing::info!(gateway = gateway.root(), "MCP server reading from stdin");
         let mut server = McpServer::new(crate::Cli::build().version());
         let mut input = BufReader::new(tokio::io::stdin());

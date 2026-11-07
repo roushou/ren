@@ -195,14 +195,21 @@ impl PendingCall {
     /// The reply carrying `outcome`: data as compact JSON text, a failure as
     /// a tool error the model can read.
     pub fn answer(self, outcome: ToolOutcome) -> Value {
-        let (text, is_error) = match outcome {
-            ToolOutcome::Data(value) => (value.to_string(), false),
-            ToolOutcome::Failed(message) => (message, true),
+        self.reply.complete(outcome.into_result())
+    }
+}
+
+impl ToolOutcome {
+    /// A `tools/call` result: one text block, and whether it is an error.
+    fn into_result(self) -> Value {
+        let (text, is_error) = match self {
+            Self::Data(value) => (value.to_string(), false),
+            Self::Failed(message) => (message, true),
         };
-        self.reply.complete(json!({
+        json!({
             "content": [{ "type": "text", "text": text }],
             "isError": is_error,
-        }))
+        })
     }
 }
 
@@ -284,7 +291,9 @@ impl McpServer {
             (Method::ToolsCall, Era::Modern(_) | Era::Legacy(_)) => {
                 return Ok(match Self::call(params)? {
                     Ok(tool) => Step::Run(PendingCall { tool, reply }),
-                    Err(message) => Step::Reply(reply.complete(Self::argument_error(message))),
+                    Err(message) => {
+                        Step::Reply(reply.complete(ToolOutcome::Failed(message).into_result()))
+                    }
                 });
             }
             (Method::Discover, Era::Legacy(_)) | (Method::Initialize, Era::Modern(_)) => {
@@ -362,13 +371,6 @@ impl McpServer {
             }
         };
         Ok(ToolCall::parse(tool, arguments).map_err(|error| format!("{tool}: {error}")))
-    }
-
-    fn argument_error(message: String) -> Value {
-        json!({
-            "content": [{ "type": "text", "text": message }],
-            "isError": true,
-        })
     }
 
     fn supported() -> Vec<&'static str> {

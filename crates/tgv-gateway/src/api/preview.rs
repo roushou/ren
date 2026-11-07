@@ -266,12 +266,15 @@ struct Decoded {
 impl Compression {
     /// Magic bytes first; then the recorded encoding, for Brotli only.
     fn infer(bytes: &[u8], recorded: Option<&Stored<ResponseEncoding>>) -> Option<Self> {
-        if bytes.starts_with(&[0x1f, 0x8b]) {
-            Some(Self::Gzip)
-        } else if bytes.starts_with(&[0x28, 0xb5, 0x2f, 0xfd]) {
-            Some(Self::Zstd)
-        } else {
-            match recorded {
+        match ResponseEncoding::sniff(bytes) {
+            Some(ResponseEncoding::Gzip) => Some(Self::Gzip),
+            Some(ResponseEncoding::Zstd) => Some(Self::Zstd),
+            Some(
+                ResponseEncoding::Identity
+                | ResponseEncoding::Brotli
+                | ResponseEncoding::Unsupported,
+            )
+            | None => match recorded {
                 Some(Stored::Known(ResponseEncoding::Brotli)) => Some(Self::Brotli),
                 Some(Stored::Known(
                     ResponseEncoding::Identity
@@ -281,7 +284,7 @@ impl Compression {
                 ))
                 | Some(Stored::Unknown(_))
                 | None => None,
-            }
+            },
         }
     }
 

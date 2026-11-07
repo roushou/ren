@@ -511,16 +511,11 @@ async fn a_turns_activity_reads_the_same_locally_through_a_gateway_and_over_mcp(
         ],
     );
     assert_eq!(data(&replies[0]), turns);
-    let mut over_mcp = data(&replies[1]);
-    over_mcp.as_object_mut().unwrap().remove("api_version");
-    assert_eq!(over_mcp, turn);
+    // Both sides strip the API version, so they match as they are.
+    assert_eq!(data(&replies[1]), turn);
     assert_eq!(data(&replies[2])["reply"], activity["reply"]);
-    let mut over_mcp = data(&replies[3]);
-    over_mcp.as_object_mut().unwrap().remove("api_version");
-    assert_eq!(over_mcp, report);
-    let mut over_mcp = data(&replies[4]);
-    over_mcp.as_object_mut().unwrap().remove("api_version");
-    assert_eq!(over_mcp, found);
+    assert_eq!(data(&replies[3]), report);
+    assert_eq!(data(&replies[4]), found);
     assert_eq!(data(&replies[5]), exposures);
 
     daemon.shutdown();

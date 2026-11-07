@@ -49,6 +49,21 @@ impl PageLimit {
     }
 }
 
+/// The number, as the read API and the CLI take it.
+impl fmt::Display for PageLimit {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+impl FromStr for PageLimit {
+    type Err = QueryError;
+
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        Self::new(text.parse().map_err(|_| QueryError::Limit)?)
+    }
+}
+
 /// A position in a call listing: the last call of the previous page.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Cursor {

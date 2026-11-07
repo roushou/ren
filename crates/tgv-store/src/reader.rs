@@ -117,13 +117,7 @@ impl Reader {
         limit: PageLimit,
         after: Option<Cursor>,
     ) -> Result<CallPage, StoreError> {
-        let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM sessions WHERE id = ?)")
-            .bind(session.to_string())
-            .fetch_one(&self.pool)
-            .await?;
-        if !exists {
-            return Err(StoreError::NotFound);
-        }
+        self.require_session(session).await?;
         let (time, call) = after.map_or((-1, String::new()), |cursor| {
             (
                 i64::try_from(cursor.started_at.as_millis()).unwrap_or(i64::MAX),
@@ -231,7 +225,7 @@ impl Reader {
             let mut sql = QueryBuilder::<Sqlite>::new(prefix);
             CallQuery::push_usage_columns(&mut sql);
             sql.push(" FROM calls c WHERE 1 = 1");
-            CallQuery::push_range(&mut sql, range);
+            range.push_started(&mut sql);
             sql
         };
         let mut totals = select("SELECT ");
@@ -557,18 +551,6 @@ impl CallQuery {
             .push("SUM(json_extract(c.usage, '$.cache_read_tokens')) AS cache_read_tokens");
     }
 
-    /// `AND` clauses for calls started within `range`, both ends inclusive.
-    fn push_range(sql: &mut QueryBuilder<Sqlite>, range: TimeRange) {
-        if let Some(from) = range.from() {
-            sql.push(" AND c.started_at >= ")
-                .push_bind(i64::try_from(from.as_millis()).unwrap_or(i64::MAX));
-        }
-        if let Some(until) = range.until() {
-            sql.push(" AND c.started_at <= ")
-                .push_bind(i64::try_from(until.as_millis()).unwrap_or(i64::MAX));
-        }
-    }
-
     /// Append this query's filters as WHERE clauses.
     /// Bind every terminal label of one class, comma-separated.
     fn push_terminals(sql: &mut QueryBuilder<Sqlite>, class: TerminalClass) {
@@ -583,7 +565,7 @@ impl CallQuery {
 
     fn push_filters(&self, sql: &mut QueryBuilder<Sqlite>) {
         let filter = &self.filter;
-        Self::push_range(sql, filter.time);
+        filter.time.push_started(sql);
         if let Some(provider) = filter.provider {
             sql.push(" AND c.provider = ").push_bind(provider.label());
         }
@@ -750,13 +732,7 @@ impl Reader {
         limit: PageLimit,
         index: Option<&SearchIndex>,
     ) -> Result<Vec<TurnSummary>, StoreError> {
-        let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM sessions WHERE id = ?)")
-            .bind(session.to_string())
-            .fetch_one(&self.pool)
-            .await?;
-        if !exists {
-            return Err(StoreError::NotFound);
-        }
+        self.require_session(session).await?;
         let mut sql = QueryBuilder::<Sqlite>::new(
             "SELECT t.id, t.native_id, MIN(c.started_at) AS started_at, \
              CASE WHEN COUNT(c.ended_at) = COUNT(*) THEN MAX(c.ended_at) END AS ended_at, ",
@@ -822,13 +798,7 @@ impl Reader {
     /// A session's context and cost measurements, from call records alone:
     /// no body is read, so it stays fast for long sessions.
     pub async fn session_report(&self, session: SessionId) -> Result<SessionReport, StoreError> {
-        let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM sessions WHERE id = ?)")
-            .bind(session.to_string())
-            .fetch_one(&self.pool)
-            .await?;
-        if !exists {
-            return Err(StoreError::NotFound);
-        }
+        self.require_session(session).await?;
         let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM calls WHERE session = ?")
             .bind(session.to_string())
             .fetch_one(&self.pool)
@@ -855,15 +825,7 @@ impl Reader {
         call: CallId,
         budget: ActivityBudget,
     ) -> Result<CallActivity, StoreError> {
-        let row = sqlx::query(AssertSqlSafe(format!(
-            "{} WHERE c.id = ?",
-            CallView::SELECT
-        )))
-        .bind(call.to_string())
-        .fetch_optional(&self.pool)
-        .await?
-        .ok_or(StoreError::NotFound)?;
-        let view = CallView::from_row(&row)?;
+        let view = self.call_view(call).await?;
         Ok(self
             .read_call(view, Reach::Exchange)
             .await?
@@ -931,6 +893,27 @@ impl Reader {
         call: CallId,
         max_chars: usize,
     ) -> Result<CallDocuments, StoreError> {
+        let view = self.call_view(call).await?;
+        Ok(self
+            .read_call(view, Reach::Exchange)
+            .await?
+            .documents(max_chars, &self.scanner))
+    }
+
+    /// `NotFound` unless the store has `session`.
+    async fn require_session(&self, session: SessionId) -> Result<(), StoreError> {
+        let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM sessions WHERE id = ?)")
+            .bind(session.to_string())
+            .fetch_one(&self.pool)
+            .await?;
+        if exists {
+            Ok(())
+        } else {
+            Err(StoreError::NotFound)
+        }
+    }
+
+    async fn call_view(&self, call: CallId) -> Result<CallView, StoreError> {
         let row = sqlx::query(AssertSqlSafe(format!(
             "{} WHERE c.id = ?",
             CallView::SELECT
@@ -939,11 +922,7 @@ impl Reader {
         .fetch_optional(&self.pool)
         .await?
         .ok_or(StoreError::NotFound)?;
-        let view = CallView::from_row(&row)?;
-        Ok(self
-            .read_call(view, Reach::Exchange)
-            .await?
-            .documents(max_chars, &self.scanner))
+        CallView::from_row(&row)
     }
 
     async fn turn_calls(&self, turn: TurnId, limit: i64) -> Result<Vec<CallView>, StoreError> {
@@ -1017,6 +996,21 @@ impl Reader {
         .fetch_all(&self.pool)
         .await?;
         Ok(Some(CapturedPrefix::new(prefix, &messages)))
+    }
+}
+
+impl TimeRange {
+    /// `AND` clauses for calls (aliased `c`) started within the range, both
+    /// ends inclusive.
+    pub(crate) fn push_started(self, sql: &mut QueryBuilder<Sqlite>) {
+        if let Some(from) = self.from() {
+            sql.push(" AND c.started_at >= ")
+                .push_bind(i64::try_from(from.as_millis()).unwrap_or(i64::MAX));
+        }
+        if let Some(until) = self.until() {
+            sql.push(" AND c.started_at <= ")
+                .push_bind(i64::try_from(until.as_millis()).unwrap_or(i64::MAX));
+        }
     }
 }
 

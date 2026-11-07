@@ -6,13 +6,12 @@
 //! is skipped. It stops on interrupt, or when the first connection fails.
 use crate::commands::history::TargetArgs;
 use crate::context::Context;
-use crate::management::{Management, Target};
+use crate::management::Management;
 use crate::style::{Styling, Tone};
 use crate::tail::{CallSummary, ClockTime, LiveDecoder, LiveEvent, Shown};
 use anyhow::Result;
 use clap::Args;
 use std::{process::ExitCode, time::Duration};
-use tgv_harness::endpoint::GatewayEndpoint;
 use tgv_recorder::Observation;
 
 /// Follow calls as they start and finish (`--json`: every observation).
@@ -37,12 +36,7 @@ impl TailCmd {
     const RECONNECT: Duration = Duration::from_secs(2);
 
     pub async fn run(self, ctx: &Context) -> Result<ExitCode> {
-        let gateway = match self.target.select(ctx)? {
-            Target::Remote(gateway) => gateway,
-            Target::Local => {
-                Management::new(GatewayEndpoint::resolve(None, ctx.config()?.listen)?)?
-            }
-        };
+        let gateway = self.target.gateway(ctx)?;
         let stderr = ctx.terminal.stderr;
         let mut after = None;
         let mut response = gateway.live(after).await?;

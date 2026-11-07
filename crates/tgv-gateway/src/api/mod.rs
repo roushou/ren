@@ -49,7 +49,7 @@ use tgv_store::{
     search::{ExposureQuery, ExposureView, SearchError, SearchIndex},
     view::{SessionView, StorageView},
 };
-use tokio::sync::Semaphore;
+use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use tokio_util::sync::CancellationToken;
 
 /// Resources and settings for the gateway's management and control routes.
@@ -86,6 +86,13 @@ pub(crate) struct ApiState {
     previews: Arc<Semaphore>,
     exports: Arc<Semaphore>,
     shutdown: CancellationToken,
+}
+
+impl ApiState {
+    /// One of a bounded pool's permits, or `Busy` when all are taken.
+    fn permit(pool: &Arc<Semaphore>) -> Result<OwnedSemaphorePermit, ApiError> {
+        pool.clone().try_acquire_owned().map_err(|_| ApiError::Busy)
+    }
 }
 
 /// A response body tagged with the API version.
@@ -351,11 +358,7 @@ impl ApiState {
         State(state): State<Arc<Self>>,
         Path((id, direction)): Path<(CallId, Direction)>,
     ) -> Result<Response, ApiError> {
-        let permit = state
-            .previews
-            .clone()
-            .try_acquire_owned()
-            .map_err(|_| ApiError::Busy)?;
+        let permit = ApiState::permit(&state.previews)?;
         let previewer = Previewer::default();
         let key = state.reader.body_key(id, direction).await?;
         let prefix = state
@@ -380,11 +383,7 @@ impl ApiState {
         State(state): State<Arc<Self>>,
         Path((id, direction)): Path<(CallId, Direction)>,
     ) -> Result<Response, ApiError> {
-        let _permit = state
-            .exports
-            .clone()
-            .try_acquire_owned()
-            .map_err(|_| ApiError::Busy)?;
+        let _permit = ApiState::permit(&state.exports)?;
         let key = state.reader.body_key(id, direction).await?;
         let mut body = Vec::new();
         state
@@ -442,11 +441,7 @@ impl ApiState {
         if raw.after.is_some() {
             return Err(ApiError::Query(QueryError::Cursor));
         }
-        let _permit = state
-            .previews
-            .clone()
-            .try_acquire_owned()
-            .map_err(|_| ApiError::Busy)?;
+        let _permit = ApiState::permit(&state.previews)?;
         let turns = state
             .reader
             .session_turns(id, raw.limit()?, Some(&state.search))
@@ -497,11 +492,7 @@ impl ApiState {
         State(state): State<Arc<Self>>,
         Path(id): Path<TurnId>,
     ) -> Result<Response, ApiError> {
-        let _permit = state
-            .previews
-            .clone()
-            .try_acquire_owned()
-            .map_err(|_| ApiError::Busy)?;
+        let _permit = ApiState::permit(&state.previews)?;
         let turn = state
             .reader
             .turn_activity(id, ActivityBudget::DEFAULT)
@@ -514,11 +505,7 @@ impl ApiState {
         State(state): State<Arc<Self>>,
         Path(id): Path<CallId>,
     ) -> Result<Response, ApiError> {
-        let _permit = state
-            .previews
-            .clone()
-            .try_acquire_owned()
-            .map_err(|_| ApiError::Busy)?;
+        let _permit = ApiState::permit(&state.previews)?;
         let call = state
             .reader
             .call_activity(id, ActivityBudget::DEFAULT)

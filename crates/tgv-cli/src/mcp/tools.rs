@@ -146,6 +146,10 @@ impl Field {
             .map_err(|_| ArgumentError(format!("{} is not a TGV ID", self.0)))
     }
 
+    fn optional_id<T: FromStr>(self, value: Option<String>) -> Result<Option<T>, ArgumentError> {
+        Self::present(value).map(|id| self.id(&id)).transpose()
+    }
+
     fn cursor(self, value: Option<String>) -> Result<Option<Cursor>, ArgumentError> {
         Self::present(value)
             .map(|value| {
@@ -161,20 +165,16 @@ impl Field {
 
     fn limit(self, value: Option<u32>, default: u32) -> Result<PageLimit, ArgumentError> {
         let limit = value.unwrap_or(default);
-        if limit > ToolCall::MAX_ROWS {
-            return Err(ArgumentError(format!(
-                "{} must be between 1 and {}",
-                self.0,
-                ToolCall::MAX_ROWS
-            )));
-        }
-        PageLimit::new(limit).map_err(|_| {
-            ArgumentError(format!(
-                "{} must be between 1 and {}",
-                self.0,
-                ToolCall::MAX_ROWS
-            ))
-        })
+        PageLimit::new(limit)
+            .ok()
+            .filter(|_| limit <= ToolCall::MAX_ROWS)
+            .ok_or_else(|| {
+                ArgumentError(format!(
+                    "{} must be between 1 and {}",
+                    self.0,
+                    ToolCall::MAX_ROWS
+                ))
+            })
     }
 
     fn range(from: Option<u64>, until: Option<u64>) -> Result<TimeRange, ArgumentError> {
@@ -298,9 +298,7 @@ impl ToolCall {
                             SearchTerms::MAX_BYTES
                         ))
                     })?,
-                    session: Field::present(args.session_id)
-                        .map(|id| Field("session_id").id(&id))
-                        .transpose()?,
+                    session: Field("session_id").optional_id(args.session_id)?,
                     client: Field("client").label::<Harness>(args.client)?,
                     field: Field("field").label::<SearchField>(args.field)?,
                     time: Field::range(args.from_ms, args.until_ms)?,
@@ -313,9 +311,7 @@ impl ToolCall {
                     limit: Field("limit").limit(args.limit, Self::DEFAULT_ROWS)?,
                     after: Field("after").cursor(args.after)?,
                     filter: CallFilter {
-                        session: Field::present(args.session_id)
-                            .map(|id| Field("session_id").id(&id))
-                            .transpose()?,
+                        session: Field("session_id").optional_id(args.session_id)?,
                         client: Field("client").label::<Harness>(args.client)?,
                         kind: Field("kind").label::<KindFilter>(args.kind)?,
                         provider: Field("provider").label::<Provider>(args.provider)?,
@@ -392,9 +388,7 @@ impl ToolCall {
             ToolName::ListExposures => {
                 let args: ExposureArgs = Self::arguments(arguments)?;
                 Ok(Self::ListExposures(ExposureQuery {
-                    session: Field::present(args.session_id)
-                        .map(|id| Field("session_id").id(&id))
-                        .transpose()?,
+                    session: Field("session_id").optional_id(args.session_id)?,
                     time: Field::range(args.from_ms, args.until_ms)?,
                     limit: Field("limit").limit(args.limit, Self::DEFAULT_ROWS)?,
                 }))
@@ -444,7 +438,7 @@ impl ToolName {
                     "has_tools": { "type": "boolean", "description": "Whether the model called tools." },
                     "from_ms": Self::time("Calls started at or after this time."),
                     "until_ms": Self::time("Calls started at or before this time."),
-                    "limit": Self::limit(Self::search_default()),
+                    "limit": Self::limit(ToolCall::DEFAULT_ROWS),
                     "after": Self::string("A previous answer's `next` value, unchanged."),
                 }),
                 json!([]),
@@ -452,7 +446,7 @@ impl ToolName {
             Self::ListSessions => (
                 "List sessions",
                 "Recent sessions, newest first, with their call, turn, and error counts and token totals.",
-                json!({ "limit": Self::limit(Self::search_default()) }),
+                json!({ "limit": Self::limit(ToolCall::DEFAULT_ROWS) }),
                 json!([]),
             ),
             Self::SessionCalls => (
@@ -553,10 +547,6 @@ impl ToolName {
                 "openWorldHint": false,
             },
         })
-    }
-
-    fn search_default() -> u32 {
-        ToolCall::DEFAULT_ROWS
     }
 
     fn labels<T: Labeled>() -> Vec<&'static str> {

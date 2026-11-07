@@ -355,14 +355,7 @@ impl SearchIndex {
         if let Some(client) = query.client {
             sql.push(" AND c.client = ").push_bind(client.label());
         }
-        if let Some(from) = query.time.from() {
-            sql.push(" AND c.started_at >= ")
-                .push_bind(i64::try_from(from.as_millis()).unwrap_or(i64::MAX));
-        }
-        if let Some(until) = query.time.until() {
-            sql.push(" AND c.started_at <= ")
-                .push_bind(i64::try_from(until.as_millis()).unwrap_or(i64::MAX));
-        }
+        query.time.push_started(&mut sql);
         sql.push(" ORDER BY c.started_at DESC, documents.rowid DESC LIMIT ")
             .push_bind(i64::from(query.limit.get()));
         let rows = sql.build().fetch_all(&self.pool).await?;
@@ -395,14 +388,7 @@ impl SearchIndex {
         if let Some(session) = query.session {
             sql.push(" AND c.session = ").push_bind(session.to_string());
         }
-        if let Some(from) = query.time.from() {
-            sql.push(" AND c.started_at >= ")
-                .push_bind(i64::try_from(from.as_millis()).unwrap_or(i64::MAX));
-        }
-        if let Some(until) = query.time.until() {
-            sql.push(" AND c.started_at <= ")
-                .push_bind(i64::try_from(until.as_millis()).unwrap_or(i64::MAX));
-        }
+        query.time.push_started(&mut sql);
         sql.push(" ORDER BY c.started_at DESC, e.rowid LIMIT ")
             .push_bind(i64::from(query.limit.get()));
         sql.build()

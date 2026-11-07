@@ -250,7 +250,11 @@ impl ActivityReader {
         }
         let encoding = body
             .encoding
-            .unwrap_or_else(|| Self::sniff_encoding(body.bytes));
+            // Requests record no `Content-Encoding`: recognise compression
+            // by its magic bytes.
+            .unwrap_or_else(|| {
+                ResponseEncoding::sniff(body.bytes).unwrap_or(ResponseEncoding::Identity)
+            });
         let Ok(mut decoder) = Decompressor::new(encoding) else {
             limitations.push(ActivityLimitation::UnsupportedEncoding);
             return None;
@@ -282,18 +286,6 @@ impl ActivityReader {
             SseOutput::Discarded(_) => {}
         });
         Some(Decoded::Events(events))
-    }
-
-    /// Request compression, recognised by magic bytes; requests record no
-    /// `Content-Encoding`.
-    fn sniff_encoding(bytes: &[u8]) -> ResponseEncoding {
-        if bytes.starts_with(&[0x1f, 0x8b]) {
-            ResponseEncoding::Gzip
-        } else if bytes.starts_with(&[0x28, 0xb5, 0x2f, 0xfd]) {
-            ResponseEncoding::Zstd
-        } else {
-            ResponseEncoding::Identity
-        }
     }
 
     fn dedup(limitations: Vec<ActivityLimitation>) -> Vec<ActivityLimitation> {

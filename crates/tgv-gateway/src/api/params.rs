@@ -2,31 +2,42 @@
 
 use serde::Deserialize;
 use std::str::FromStr;
-use tgv_harness::Harness;
-use tgv_protocol::route::Provider;
-use tgv_recorder::id::SessionId;
 use tgv_recorder::time::UnixMillis;
 use tgv_store::query::{
-    CallFilter, CallQuery, Cursor, KindFilter, PageLimit, QueryError, SearchText, StatusFilter,
-    TimeRange, ToolFilter,
+    CallFilter, CallQuery, Cursor, PageLimit, QueryError, SearchText, TimeRange,
 };
-use tgv_store::search::{ExposureQuery, SearchField, SearchQuery, SearchTerms};
+use tgv_store::search::{ExposureQuery, SearchQuery, SearchTerms};
+
+/// A label filter as sent: blank means absent, and anything else must be
+/// one of the filter's labels.
+#[derive(Debug, Default, Deserialize)]
+#[serde(transparent)]
+pub(super) struct RawLabel(Option<String>);
+
+impl RawLabel {
+    fn parse<T: FromStr>(self) -> Result<Option<T>, QueryError> {
+        self.0
+            .filter(|value| !value.trim().is_empty())
+            .map(|value| T::from_str(&value).map_err(|_| QueryError::Filter))
+            .transpose()
+    }
+}
 
 /// `GET /api/calls` parameters.
 #[derive(Debug, Default, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[serde(deny_unknown_fields, default)]
 pub(super) struct RawCallQuery {
     limit: Option<u32>,
     after: Option<String>,
-    session: Option<String>,
-    client: Option<String>,
-    kind: Option<String>,
-    provider: Option<String>,
+    session: RawLabel,
+    client: RawLabel,
+    kind: RawLabel,
+    provider: RawLabel,
     model: Option<String>,
     tool: Option<String>,
     q: Option<String>,
-    status: Option<String>,
-    has_tools: Option<String>,
+    status: RawLabel,
+    has_tools: RawLabel,
     from_ms: Option<u64>,
     until_ms: Option<u64>,
 }
@@ -60,12 +71,12 @@ impl TryFrom<RawUsageQuery> for TimeRange {
 
 /// `GET /api/search` parameters.
 #[derive(Debug, Default, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[serde(deny_unknown_fields, default)]
 pub(super) struct RawSearchQuery {
     q: Option<String>,
-    session: Option<String>,
-    client: Option<String>,
-    field: Option<String>,
+    session: RawLabel,
+    client: RawLabel,
+    field: RawLabel,
     from_ms: Option<u64>,
     until_ms: Option<u64>,
     limit: Option<u32>,
@@ -73,18 +84,11 @@ pub(super) struct RawSearchQuery {
 
 impl RawSearchQuery {
     pub fn parse(self) -> Result<SearchQuery, super::ApiError> {
-        let label = |value: Option<String>| value.filter(|value| !value.trim().is_empty());
         Ok(SearchQuery {
             terms: SearchTerms::parse(self.q.as_deref().unwrap_or_default())?,
-            session: label(self.session)
-                .map(|value| SessionId::from_str(&value).map_err(|_| QueryError::Filter))
-                .transpose()?,
-            client: label(self.client)
-                .map(|value| Harness::from_str(&value).map_err(|_| QueryError::Filter))
-                .transpose()?,
-            field: label(self.field)
-                .map(|value| SearchField::from_str(&value).map_err(|_| QueryError::Filter))
-                .transpose()?,
+            session: self.session.parse()?,
+            client: self.client.parse()?,
+            field: self.field.parse()?,
             time: TimeRange::new(
                 self.from_ms.map(UnixMillis::from_millis),
                 self.until_ms.map(UnixMillis::from_millis),
@@ -96,9 +100,9 @@ impl RawSearchQuery {
 
 /// `GET /api/exposures` parameters.
 #[derive(Debug, Default, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[serde(deny_unknown_fields, default)]
 pub(super) struct RawExposureQuery {
-    session: Option<String>,
+    session: RawLabel,
     from_ms: Option<u64>,
     until_ms: Option<u64>,
     limit: Option<u32>,
@@ -107,11 +111,7 @@ pub(super) struct RawExposureQuery {
 impl RawExposureQuery {
     pub fn parse(self) -> Result<ExposureQuery, QueryError> {
         Ok(ExposureQuery {
-            session: self
-                .session
-                .filter(|value| !value.trim().is_empty())
-                .map(|value| SessionId::from_str(&value).map_err(|_| QueryError::Filter))
-                .transpose()?,
+            session: self.session.parse()?,
             time: TimeRange::new(
                 self.from_ms.map(UnixMillis::from_millis),
                 self.until_ms.map(UnixMillis::from_millis),
@@ -143,32 +143,19 @@ impl TryFrom<RawCallQuery> for CallQuery {
 
     fn try_from(raw: RawCallQuery) -> Result<Self, Self::Error> {
         let text = |value: Option<String>| value.as_deref().map(SearchText::new).transpose();
-        let label = |value: Option<String>| value.filter(|value| !value.trim().is_empty());
         Ok(Self {
             limit: raw.limit.map_or(Ok(PageLimit::DEFAULT), PageLimit::new)?,
             after: raw.after.as_deref().map(Cursor::from_str).transpose()?,
             filter: CallFilter {
-                session: label(raw.session)
-                    .map(|value| SessionId::from_str(&value).map_err(|_| QueryError::Filter))
-                    .transpose()?,
-                client: label(raw.client)
-                    .map(|value| Harness::from_str(&value).map_err(|_| QueryError::Filter))
-                    .transpose()?,
-                kind: label(raw.kind)
-                    .map(|value| KindFilter::from_str(&value).map_err(|_| QueryError::Filter))
-                    .transpose()?,
-                provider: label(raw.provider)
-                    .map(|value| Provider::from_str(&value).map_err(|_| QueryError::Filter))
-                    .transpose()?,
+                session: raw.session.parse()?,
+                client: raw.client.parse()?,
+                kind: raw.kind.parse()?,
+                provider: raw.provider.parse()?,
                 model: text(raw.model)?,
                 tool: text(raw.tool)?,
                 text: text(raw.q)?,
-                status: label(raw.status)
-                    .map(|value| StatusFilter::from_str(&value).map_err(|_| QueryError::Filter))
-                    .transpose()?,
-                tools: label(raw.has_tools)
-                    .map(|value| ToolFilter::from_str(&value).map_err(|_| QueryError::Filter))
-                    .transpose()?,
+                status: raw.status.parse()?,
+                tools: raw.has_tools.parse()?,
                 time: TimeRange::new(
                     raw.from_ms.map(UnixMillis::from_millis),
                     raw.until_ms.map(UnixMillis::from_millis),

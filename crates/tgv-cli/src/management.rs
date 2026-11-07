@@ -176,10 +176,7 @@ impl Management {
 
     /// `GET /api/usage`: calls, errors, and tokens for calls started in `range`.
     pub async fn usage(&self, range: TimeRange) -> Result<Value, ManagementError> {
-        let query: Vec<_> = [("from_ms", range.from()), ("until_ms", range.until())]
-            .into_iter()
-            .filter_map(|(name, time)| time.map(|time| (name, time.as_millis().to_string())))
-            .collect();
+        let query = QueryParams::default().range(range).0;
         Ok(Value::Object(self.read("/api/usage", &query).await?))
     }
 
@@ -212,36 +209,20 @@ impl Management {
             tools,
             time,
         } = filter;
-        let mut params = vec![("limit", limit.get().to_string())];
-        let labels = [
-            ("after", after.as_ref().map(ToString::to_string)),
-            ("session", session.as_ref().map(ToString::to_string)),
-            ("client", client.map(|value| value.to_string())),
-            ("kind", kind.map(|value| value.to_string())),
-            ("provider", provider.map(|value| value.to_string())),
-            (
-                "model",
-                model.as_ref().map(|value| value.as_str().to_owned()),
-            ),
-            ("tool", tool.as_ref().map(|value| value.as_str().to_owned())),
-            ("q", text.as_ref().map(|value| value.as_str().to_owned())),
-            ("status", status.map(|value| value.to_string())),
-            ("has_tools", tools.map(|value| value.to_string())),
-            (
-                "from_ms",
-                time.from().map(|time| time.as_millis().to_string()),
-            ),
-            (
-                "until_ms",
-                time.until().map(|time| time.as_millis().to_string()),
-            ),
-        ];
-        params.extend(
-            labels
-                .into_iter()
-                .filter_map(|(name, value)| value.map(|value| (name, value))),
-        );
-        params
+        QueryParams::default()
+            .with("limit", limit.get())
+            .opt("after", after.as_ref())
+            .opt("session", session.as_ref())
+            .opt("client", *client)
+            .opt("kind", *kind)
+            .opt("provider", *provider)
+            .opt("model", model.as_ref().map(|value| value.as_str()))
+            .opt("tool", tool.as_ref().map(|value| value.as_str()))
+            .opt("q", text.as_ref().map(|value| value.as_str()))
+            .opt("status", *status)
+            .opt("has_tools", *tools)
+            .range(*time)
+            .0
     }
 
     /// `GET /api/sessions?limit=`: the sessions.
@@ -257,8 +238,10 @@ impl Management {
         limit: PageLimit,
         after: Option<&Cursor>,
     ) -> Result<Value, ManagementError> {
-        let mut query = vec![("limit", limit.get().to_string())];
-        query.extend(after.map(|cursor| ("after", cursor.to_string())));
+        let query = QueryParams::default()
+            .with("limit", limit.get())
+            .opt("after", after)
+            .0;
         let path = format!("/api/sessions/{session}/calls");
         Ok(Value::Object(self.read(&path, &query).await?))
     }
@@ -284,50 +267,24 @@ impl Management {
 
     /// `GET /api/search`: matching documents, newest call first.
     pub async fn search_history(&self, query: &SearchQuery) -> Result<Value, ManagementError> {
-        let mut params = vec![
-            ("q", query.terms.to_string()),
-            ("limit", query.limit.get().to_string()),
-        ];
-        let labels = [
-            ("session", query.session.map(|session| session.to_string())),
-            ("client", query.client.map(|client| client.to_string())),
-            ("field", query.field.map(|field| field.to_string())),
-            (
-                "from_ms",
-                query.time.from().map(|time| time.as_millis().to_string()),
-            ),
-            (
-                "until_ms",
-                query.time.until().map(|time| time.as_millis().to_string()),
-            ),
-        ];
-        params.extend(
-            labels
-                .into_iter()
-                .filter_map(|(name, value)| value.map(|value| (name, value))),
-        );
+        let params = QueryParams::default()
+            .with("q", &query.terms)
+            .with("limit", query.limit.get())
+            .opt("session", query.session)
+            .opt("client", query.client)
+            .opt("field", query.field)
+            .range(query.time)
+            .0;
         Ok(Value::Object(self.read("/api/search", &params).await?))
     }
 
     /// `GET /api/exposures`: credentials calls carried, newest first.
     pub async fn exposures(&self, query: &ExposureQuery) -> Result<Value, ManagementError> {
-        let mut params = vec![("limit", query.limit.get().to_string())];
-        let labels = [
-            ("session", query.session.map(|session| session.to_string())),
-            (
-                "from_ms",
-                query.time.from().map(|time| time.as_millis().to_string()),
-            ),
-            (
-                "until_ms",
-                query.time.until().map(|time| time.as_millis().to_string()),
-            ),
-        ];
-        params.extend(
-            labels
-                .into_iter()
-                .filter_map(|(name, value)| value.map(|value| (name, value))),
-        );
+        let params = QueryParams::default()
+            .with("limit", query.limit.get())
+            .opt("session", query.session)
+            .range(query.time)
+            .0;
         Self::field(self.read("/api/exposures", &params).await?, "exposures")
     }
 
@@ -537,6 +494,31 @@ impl Management {
             },
             None => ManagementError::Shape { status },
         }
+    }
+}
+
+/// Query parameters as the read API parses them back, in order: absent
+/// values are left out.
+#[derive(Default)]
+struct QueryParams(Vec<(&'static str, String)>);
+
+impl QueryParams {
+    fn with(mut self, name: &'static str, value: impl std::fmt::Display) -> Self {
+        self.0.push((name, value.to_string()));
+        self
+    }
+
+    fn opt(self, name: &'static str, value: Option<impl std::fmt::Display>) -> Self {
+        match value {
+            Some(value) => self.with(name, value),
+            None => self,
+        }
+    }
+
+    /// `from_ms` and `until_ms`, for the ends `range` has.
+    fn range(self, range: TimeRange) -> Self {
+        self.opt("from_ms", range.from().map(|time| time.as_millis()))
+            .opt("until_ms", range.until().map(|time| time.as_millis()))
     }
 }
 

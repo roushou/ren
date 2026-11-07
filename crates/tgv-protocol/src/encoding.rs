@@ -62,6 +62,18 @@ pub enum ResponseEncoding {
 }
 
 impl ResponseEncoding {
+    /// A compressed body's encoding recognised by its magic bytes: gzip or
+    /// zstd. Brotli has none, so it is never sniffed.
+    pub fn sniff(bytes: &[u8]) -> Option<Self> {
+        if bytes.starts_with(&[0x1f, 0x8b]) {
+            Some(Self::Gzip)
+        } else if bytes.starts_with(&[0x28, 0xb5, 0x2f, 0xfd]) {
+            Some(Self::Zstd)
+        } else {
+            None
+        }
+    }
+
     pub fn from_headers(headers: &HeaderMap) -> Self {
         let mut values = headers.get_all(header::CONTENT_ENCODING).iter();
         let first = values.next();
@@ -298,6 +310,20 @@ mod tests {
         }
         let end = decoder.finish(|bytes| decoded.extend_from_slice(bytes));
         (decoded, end)
+    }
+
+    #[test]
+    fn magic_bytes_name_gzip_and_zstd_only() {
+        assert_eq!(
+            ResponseEncoding::sniff(&[0x1f, 0x8b, 8]),
+            Some(ResponseEncoding::Gzip)
+        );
+        assert_eq!(
+            ResponseEncoding::sniff(&[0x28, 0xb5, 0x2f, 0xfd, 0]),
+            Some(ResponseEncoding::Zstd)
+        );
+        assert_eq!(ResponseEncoding::sniff(b"{\"model\":1}"), None);
+        assert_eq!(ResponseEncoding::sniff(&[0x1f]), None);
     }
 
     #[test]

@@ -2,7 +2,7 @@
 //! selected, the same views through that gateway's management API; the JSON
 //! printed is the same either way.
 use crate::context::Context;
-use crate::management::{HostFlags, Target};
+use crate::management::{HostFlags, Management, Target};
 use anyhow::{Context as _, Result};
 use clap::{Args, ValueEnum};
 use serde::Serialize;
@@ -13,6 +13,7 @@ use std::{
     process::ExitCode,
 };
 use tgv_harness::Harness;
+use tgv_harness::endpoint::GatewayEndpoint;
 use tgv_protocol::direction::Direction;
 use tgv_recorder::id::{CallId, SessionId, TurnId};
 use tgv_store::activity::ActivityBudget;
@@ -38,19 +39,31 @@ impl TargetArgs {
         };
         Ok(Target::select(self.gateway.as_deref(), host, &ctx.env)?)
     }
+
+    /// The gateway to read through, for a command that needs the API even
+    /// on this host: the local daemon's listener when no gateway is named.
+    pub fn gateway(&self, ctx: &Context) -> Result<Management> {
+        match self.select(ctx)? {
+            Target::Remote(gateway) => Ok(gateway),
+            Target::Local => Ok(Management::new(GatewayEndpoint::resolve(
+                None,
+                ctx.config()?.listen,
+            )?)?),
+        }
+    }
 }
 
 /// List recent calls as JSON, newest first.
 #[derive(Args)]
 pub struct HistoryCmd {
-    #[arg(long, default_value_t = 20, value_parser = clap::value_parser!(u32).range(1..=1000))]
-    limit: u32,
+    #[arg(long, default_value = "20")]
+    limit: PageLimit,
     #[command(flatten)]
     target: TargetArgs,
 }
 impl HistoryCmd {
     pub async fn run(self, ctx: &Context) -> Result<ExitCode> {
-        let limit = PageLimit::new(self.limit)?;
+        let limit = self.limit;
         match self.target.select(ctx)? {
             Target::Local => {
                 let query = CallQuery {
@@ -72,14 +85,14 @@ impl HistoryCmd {
 /// List sessions grouped by explicit client-provided identifiers.
 #[derive(Args)]
 pub struct SessionsCmd {
-    #[arg(long, default_value_t = 20, value_parser = clap::value_parser!(u32).range(1..=1000))]
-    limit: u32,
+    #[arg(long, default_value = "20")]
+    limit: PageLimit,
     #[command(flatten)]
     target: TargetArgs,
 }
 impl SessionsCmd {
     pub async fn run(self, ctx: &Context) -> Result<ExitCode> {
-        let limit = PageLimit::new(self.limit)?;
+        let limit = self.limit;
         match self.target.select(ctx)? {
             Target::Local => HistoryCmd::print(&ctx.reader().await?.sessions(limit).await?),
             Target::Remote(gateway) => HistoryCmd::print(&gateway.sessions(limit).await?),
@@ -91,8 +104,8 @@ impl SessionsCmd {
 #[derive(Args)]
 pub struct TimelineCmd {
     id: SessionId,
-    #[arg(long, default_value_t = 100, value_parser = clap::value_parser!(u32).range(1..=1000))]
-    limit: u32,
+    #[arg(long, default_value = "100")]
+    limit: PageLimit,
     /// The `next` cursor of the previous page.
     #[arg(long)]
     after: Option<Cursor>,
@@ -101,7 +114,7 @@ pub struct TimelineCmd {
 }
 impl TimelineCmd {
     pub async fn run(self, ctx: &Context) -> Result<ExitCode> {
-        let limit = PageLimit::new(self.limit)?;
+        let limit = self.limit;
         match self.target.select(ctx)? {
             Target::Local => HistoryCmd::print(
                 &ctx.reader()
@@ -122,14 +135,14 @@ impl TimelineCmd {
 #[derive(Args)]
 pub struct TurnsCmd {
     id: SessionId,
-    #[arg(long, default_value_t = 20, value_parser = clap::value_parser!(u32).range(1..=1000))]
-    limit: u32,
+    #[arg(long, default_value = "20")]
+    limit: PageLimit,
     #[command(flatten)]
     target: TargetArgs,
 }
 impl TurnsCmd {
     pub async fn run(self, ctx: &Context) -> Result<ExitCode> {
-        let limit = PageLimit::new(self.limit)?;
+        let limit = self.limit;
         match self.target.select(ctx)? {
             Target::Local => {
                 let index = ctx.search_index().await?;
@@ -162,8 +175,8 @@ pub struct SearchCmd {
     /// Only this part of a call.
     #[arg(long)]
     field: Option<SearchField>,
-    #[arg(long, default_value_t = 20, value_parser = clap::value_parser!(u32).range(1..=1000))]
-    limit: u32,
+    #[arg(long, default_value = "20")]
+    limit: PageLimit,
     #[command(flatten)]
     target: TargetArgs,
 }
@@ -175,7 +188,7 @@ impl SearchCmd {
             client: self.client,
             field: self.field,
             time: TimeRange::default(),
-            limit: PageLimit::new(self.limit)?,
+            limit: self.limit,
         };
         match self.target.select(ctx)? {
             Target::Local => {
@@ -195,8 +208,8 @@ pub struct ExposuresCmd {
     /// Only this TGV session.
     #[arg(long)]
     session: Option<SessionId>,
-    #[arg(long, default_value_t = 50, value_parser = clap::value_parser!(u32).range(1..=1000))]
-    limit: u32,
+    #[arg(long, default_value = "50")]
+    limit: PageLimit,
     #[command(flatten)]
     target: TargetArgs,
 }
@@ -205,7 +218,7 @@ impl ExposuresCmd {
         let query = ExposureQuery {
             session: self.session,
             time: TimeRange::default(),
-            limit: PageLimit::new(self.limit)?,
+            limit: self.limit,
         };
         match self.target.select(ctx)? {
             Target::Local => {
