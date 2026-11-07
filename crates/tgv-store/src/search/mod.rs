@@ -8,181 +8,33 @@
 //! another [`SearchIndex::VERSION`], is rebuilt. It has its own single
 //! writer, so indexing never contends with capture, and it is not backed up.
 
-use crate::activity::{ActivityBudget, Excerpt, ReadCall};
-use crate::query::{PageLimit, TimeRange};
-use crate::secrets::{Detection, ScannerError, SecretKind, SecretScanner};
+mod document;
+mod indexer;
+mod query;
+
+pub use document::{CallDocuments, Document, Exposure, SearchField};
+pub use indexer::{Indexer, PassReport};
+pub use query::{
+    ExposureQuery, ExposureView, SearchError, SearchHit, SearchPage, SearchQuery, SearchTerms,
+};
+
+use crate::activity::Excerpt;
 use crate::view::{Columns, FileUsage, IndexUsage};
-use crate::{Reader, Store, StoreError};
-use serde::Serialize;
-use serde_with::{DeserializeFromStr, SerializeDisplay};
+use crate::{Store, StoreError};
 use sqlx::{
     Connection, QueryBuilder, Row, Sqlite, SqliteConnection, SqlitePool,
     sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous},
 };
 use std::{
     collections::{HashMap, HashSet},
-    fmt,
     path::Path,
     time::Duration,
 };
-use strum::{Display, EnumString, IntoStaticStr, VariantArray};
-use tgv_harness::Harness;
 use tgv_protocol::label::{Labeled, Stored};
 use tgv_recorder::{
-    id::{CallId, SessionId, TurnId},
+    id::{CallId, TurnId},
     time::UnixMillis,
 };
-
-/// Which part of a call a document holds.
-#[derive(Display, EnumString, IntoStaticStr, VariantArray)]
-#[strum(serialize_all = "snake_case")]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SerializeDisplay, DeserializeFromStr)]
-pub enum SearchField {
-    /// The user's own words, without the context clients add.
-    Prompt,
-    /// The model's text output.
-    Reply,
-    /// Tool calls the model requested: name, targets, and input.
-    ToolInput,
-    /// Tool results the client sent back.
-    ToolOutput,
-}
-
-/// One searchable text of a call.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Document {
-    pub field: SearchField,
-    pub text: String,
-}
-
-/// A call's documents, with what search filters on.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CallDocuments {
-    pub call: CallId,
-    pub session: Option<SessionId>,
-    pub turn: Option<TurnId>,
-    pub client: Option<Harness>,
-    pub started_at: UnixMillis,
-    /// The start of the user's prompt, redacted: what a turn listing shows.
-    pub prompt: Option<Excerpt>,
-    pub documents: Vec<Document>,
-    /// Secrets the call carried; never the secrets themselves.
-    pub exposures: Vec<Exposure>,
-}
-
-/// A call's searchable texts, before redaction.
-struct CallTexts {
-    /// All of the newest user input, including context the client added:
-    /// it is sent to the provider too, so it is scanned for secrets.
-    user_input: String,
-    /// The user's own words, which the prompt document keeps.
-    prompt: Option<String>,
-    reply: String,
-    tool_input: String,
-    tool_output: String,
-}
-
-impl ReadCall {
-    fn texts(&self, harness: Option<Harness>) -> CallTexts {
-        let tool_input = self
-            .response
-            .tool_uses
-            .iter()
-            .map(|tool| {
-                let targets: Vec<String> = harness
-                    .map(|harness| harness.effects(tool))
-                    .unwrap_or_default()
-                    .into_iter()
-                    .map(|effect| effect.target)
-                    .collect();
-                let input = match &tool.input {
-                    tgv_protocol::activity::ToolInput::Json(value) => value.to_string(),
-                    tgv_protocol::activity::ToolInput::Text(text) => text.clone(),
-                };
-                format!("{} {} {}", tool.name, targets.join(" "), input)
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
-        let tool_output = self
-            .request
-            .tool_results
-            .iter()
-            .map(|result| result.output.as_str())
-            .collect::<Vec<_>>()
-            .join("\n");
-        CallTexts {
-            user_input: self.request.user_text.join("\n"),
-            prompt: self.prompt(),
-            reply: self.response.reply.clone(),
-            tool_input,
-            tool_output,
-        }
-    }
-
-    /// The secrets the call carried, by field, without building its
-    /// documents.
-    pub fn exposures(&self, scanner: &SecretScanner) -> Vec<Exposure> {
-        let texts = self.texts(self.harness());
-        let mut exposures = Vec::new();
-        for (field, text) in [
-            (SearchField::Prompt, &texts.user_input),
-            (SearchField::Reply, &texts.reply),
-            (SearchField::ToolInput, &texts.tool_input),
-            (SearchField::ToolOutput, &texts.tool_output),
-        ] {
-            Exposure::merge(&mut exposures, field, scanner.detect(text));
-        }
-        exposures
-    }
-
-    /// The call's documents, each cut to `max_chars` after its secrets are
-    /// redacted, and the secrets found. The prompt's secrets are those of
-    /// all the newest user input; its document keeps only the user's words.
-    pub fn documents(&self, max_chars: usize, scanner: &SecretScanner) -> CallDocuments {
-        let harness = self.harness();
-        let texts = self.texts(harness);
-        let mut exposures = Vec::new();
-        Exposure::merge(
-            &mut exposures,
-            SearchField::Prompt,
-            scanner.detect(&texts.user_input),
-        );
-        let mut documents = Vec::new();
-        let mut add = |field: SearchField, redacted: &str| {
-            if !redacted.trim().is_empty() {
-                documents.push(Document {
-                    field,
-                    text: Excerpt::cut(redacted, max_chars).text,
-                });
-            }
-        };
-        let prompt = texts.prompt.as_ref().map(|prompt| scanner.redact(prompt).0);
-        if let Some(prompt) = &prompt {
-            add(SearchField::Prompt, prompt);
-        }
-        for (field, text) in [
-            (SearchField::Reply, &texts.reply),
-            (SearchField::ToolInput, &texts.tool_input),
-            (SearchField::ToolOutput, &texts.tool_output),
-        ] {
-            let (redacted, found) = scanner.redact(text);
-            Exposure::merge(&mut exposures, field, found);
-            add(field, &redacted);
-        }
-        CallDocuments {
-            call: self.view.id,
-            session: self.view.session,
-            turn: self.view.turn,
-            client: harness,
-            started_at: self.view.started_at,
-            prompt: prompt
-                .filter(|prompt| !prompt.trim().is_empty())
-                .map(|prompt| Excerpt::cut(&prompt, ActivityBudget::SUMMARY.prompt_chars)),
-            documents,
-            exposures,
-        }
-    }
-}
 
 /// What the index knows of one turn's prompt.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -192,158 +44,6 @@ pub struct IndexedPrompt {
     pub earliest_call: UnixMillis,
     /// The first prompt among the turn's indexed calls.
     pub prompt: Option<Excerpt>,
-}
-
-/// A secret a call carried, by field: what the scanner keeps of it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct Exposure {
-    pub field: SearchField,
-    pub kind: SecretKind,
-    pub hint: String,
-    pub fingerprint: String,
-    /// How often it appears in the field.
-    pub count: u64,
-}
-
-impl Exposure {
-    /// Add `found` in `field` to `exposures`, counting repeats of one
-    /// secret once per field.
-    fn merge(exposures: &mut Vec<Self>, field: SearchField, found: Vec<Detection>) {
-        for detection in found {
-            match exposures.iter_mut().find(|known| {
-                known.field == field
-                    && known.kind == detection.kind
-                    && known.fingerprint == detection.fingerprint
-            }) {
-                Some(known) => known.count = known.count.saturating_add(1),
-                None => exposures.push(Self {
-                    field,
-                    kind: detection.kind,
-                    hint: detection.hint,
-                    fingerprint: detection.fingerprint,
-                    count: 1,
-                }),
-            }
-        }
-    }
-}
-
-/// Why search text was refused.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-pub enum SearchError {
-    #[error(
-        "search text must have 1 to {} bytes and at least one word",
-        SearchTerms::MAX_BYTES
-    )]
-    Terms,
-}
-
-/// What to look for: words, all of which must match, and "quoted phrases".
-/// Every term becomes a quoted FTS5 string, so input can never inject query
-/// syntax.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SearchTerms {
-    raw: String,
-    terms: Vec<String>,
-}
-
-impl SearchTerms {
-    pub const MAX_BYTES: usize = 256;
-
-    pub fn parse(text: &str) -> Result<Self, SearchError> {
-        if text.len() > Self::MAX_BYTES {
-            return Err(SearchError::Terms);
-        }
-        let mut terms = Vec::new();
-        for (index, part) in text.split('"').enumerate() {
-            // Odd parts were inside quotes: phrases. Even ones are words.
-            if index % 2 == 1 {
-                if !part.trim().is_empty() {
-                    terms.push(part.trim().to_owned());
-                }
-            } else {
-                terms.extend(part.split_whitespace().map(str::to_owned));
-            }
-        }
-        if terms.is_empty() {
-            return Err(SearchError::Terms);
-        }
-        Ok(Self {
-            raw: text.trim().to_owned(),
-            terms,
-        })
-    }
-
-    /// The FTS5 expression: each term a quoted string, all required.
-    pub fn expression(&self) -> String {
-        self.terms
-            .iter()
-            .map(|term| format!("\"{}\"", term.replace('"', "\"\"")))
-            .collect::<Vec<_>>()
-            .join(" AND ")
-    }
-}
-
-/// The text as given, which parses back to the same terms.
-impl fmt::Display for SearchTerms {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.raw)
-    }
-}
-
-/// One search, newest matches first.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SearchQuery {
-    pub terms: SearchTerms,
-    pub session: Option<SessionId>,
-    pub client: Option<Harness>,
-    pub field: Option<SearchField>,
-    pub time: TimeRange,
-    pub limit: PageLimit,
-}
-
-/// Which exposures to list.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ExposureQuery {
-    pub session: Option<SessionId>,
-    pub time: TimeRange,
-    pub limit: PageLimit,
-}
-
-/// A secret one call carried, as listed: never the secret itself.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct ExposureView {
-    pub call: CallId,
-    pub session: Option<SessionId>,
-    pub turn: Option<TurnId>,
-    pub client: Option<Stored<Harness>>,
-    pub started_at: UnixMillis,
-    pub field: Stored<SearchField>,
-    pub kind: Stored<SecretKind>,
-    pub hint: String,
-    pub fingerprint: String,
-    pub count: u64,
-}
-
-/// One matching document.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct SearchHit {
-    pub call: CallId,
-    pub session: Option<SessionId>,
-    pub turn: Option<TurnId>,
-    pub client: Option<Stored<Harness>>,
-    pub started_at: UnixMillis,
-    pub field: Stored<SearchField>,
-    /// The matching text around the match, terms marked «like this».
-    pub snippet: String,
-}
-
-/// Search results, and how much history the index covers.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct SearchPage {
-    pub hits: Vec<SearchHit>,
-    /// Calls indexed so far; fewer than retained while backfilling.
-    pub indexed_calls: u64,
 }
 
 /// The search index: a pool on `search.sqlite3`. Clones share it.
@@ -739,114 +439,6 @@ impl SearchIndex {
         row.try_get::<String, _>("call")?
             .parse()
             .map_err(|_| StoreError::Corrupt("search call"))
-    }
-}
-
-/// What one indexing pass did.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-#[must_use]
-pub struct PassReport {
-    pub indexed: u64,
-    pub removed: u64,
-    /// More finished calls wait: run the next pass soon.
-    pub more: bool,
-}
-
-/// Fills the index from finished calls, oldest end first, and removes what
-/// retention deleted. Each pass is bounded; the caller paces them.
-pub struct Indexer {
-    index: SearchIndex,
-    reader: Reader,
-    scanner: SecretScanner,
-    /// The last finished call indexed or skipped, by end time and ID.
-    cursor: Option<(UnixMillis, CallId)>,
-    /// Where the next retention sweep resumes.
-    sweep_after: Option<CallId>,
-}
-
-impl Indexer {
-    /// Calls read from the store per pass.
-    const PAGE: i64 = 100;
-    /// Calls whose bodies are read and indexed per pass.
-    const BATCH: usize = 20;
-    /// Indexed IDs checked against the store per pass.
-    const SWEEP: i64 = 500;
-    /// How far back a caught-up cursor looks again: capture commits a call's
-    /// end shortly after its end time, so a later commit can sort earlier.
-    const SLACK_MS: u64 = 60_000;
-
-    pub fn new(index: SearchIndex, reader: Reader) -> Result<Self, ScannerError> {
-        Ok(Self {
-            index,
-            reader,
-            scanner: SecretScanner::new()?,
-            cursor: None,
-            sweep_after: None,
-        })
-    }
-
-    pub async fn pass(&mut self) -> Result<PassReport, StoreError> {
-        let mut report = PassReport::default();
-        let page = self.reader.finished_calls(self.cursor, Self::PAGE).await?;
-        let ids: Vec<CallId> = page.iter().map(|(_, call)| *call).collect();
-        let known = self.index.indexed(&ids).await?;
-        let mut batch = Vec::new();
-        let mut last = None;
-        for (ended, call) in &page {
-            if batch.len() >= Self::BATCH {
-                report.more = true;
-                break;
-            }
-            last = Some((*ended, *call));
-            if known.contains(call) {
-                continue;
-            }
-            match self
-                .reader
-                .read_documents(*call, SearchIndex::FIELD_CHARS, &self.scanner)
-                .await
-            {
-                Ok(documents) => batch.push(documents),
-                // Pruned between the listing and the read.
-                Err(StoreError::NotFound) => {}
-                Err(error) => return Err(error),
-            }
-        }
-        self.index.add(&batch).await?;
-        report.indexed = u64::try_from(batch.len()).unwrap_or(u64::MAX);
-        let full = i64::try_from(page.len()).unwrap_or(i64::MAX) >= Self::PAGE;
-        report.more |= full;
-        self.cursor = match (last, report.more) {
-            (Some(last), true) => Some(last),
-            // Caught up: look back a little next time, and dedupe by ID.
-            (Some((ended, _)), false) => Some((
-                UnixMillis::from_millis(ended.as_millis().saturating_sub(Self::SLACK_MS)),
-                CallId::restore(uuid::Uuid::nil()),
-            )),
-            (None, _) => self.cursor,
-        };
-        report.removed = self.sweep().await?;
-        Ok(report)
-    }
-
-    /// Remove indexed calls the store no longer has.
-    async fn sweep(&mut self) -> Result<u64, StoreError> {
-        let page = self
-            .index
-            .indexed_page(self.sweep_after, Self::SWEEP)
-            .await?;
-        self.sweep_after = if i64::try_from(page.len()).unwrap_or(i64::MAX) < Self::SWEEP {
-            None
-        } else {
-            page.last().copied()
-        };
-        let existing = self.reader.existing_calls(&page).await?;
-        let gone: Vec<CallId> = page
-            .into_iter()
-            .filter(|call| !existing.contains(call))
-            .collect();
-        self.index.remove(&gone).await?;
-        Ok(u64::try_from(gone.len()).unwrap_or(u64::MAX))
     }
 }
 
