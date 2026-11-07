@@ -12,7 +12,9 @@ use serde::Serialize;
 use serde_json::Value;
 use serde_with::{DeserializeFromStr, SerializeDisplay};
 use strum::{Display, EnumString, IntoStaticStr, VariantArray};
-use tgv_protocol::activity::{ResultStatus, ToolInput, ToolResult, ToolUse};
+use tgv_protocol::activity::{
+    ActivityLimitation, Reading, ResultStatus, ToolInput, ToolResult, ToolUse,
+};
 use tgv_protocol::label::Labeled;
 
 /// What a tool call does to the workspace, as its input states it.
@@ -271,6 +273,76 @@ impl Harness {
     }
 }
 
+/// A call's reading as its client uses it: the user's own words, what each
+/// tool call does, and each result's status. Without a known client the text
+/// is taken as it is and tool calls have no effects.
+#[derive(Debug, Clone, PartialEq)]
+pub struct InterpretedCall {
+    /// All of the newest user input, client context included. It is sent to
+    /// the provider too, so it is what secrets are looked for in.
+    pub user_text: Vec<String>,
+    /// The user's own words, when the request starts with them.
+    pub prompt: Option<String>,
+    pub tool_uses: Vec<InterpretedTool>,
+    /// The results the request carried, each with its status resolved.
+    pub tool_results: Vec<ToolResult>,
+    pub reply: String,
+    /// The request's limitations, then the response's, each once.
+    pub limitations: Vec<ActivityLimitation>,
+}
+
+/// A tool call and what it does.
+#[derive(Debug, Clone, PartialEq)]
+pub struct InterpretedTool {
+    pub tool: ToolUse,
+    pub effects: Vec<ToolEffect>,
+}
+
+impl InterpretedCall {
+    pub fn new(harness: Option<Harness>, reading: Reading) -> Self {
+        let Reading { request, response } = reading;
+        let prompt = match harness {
+            Some(harness) => harness.prompt(&request.user_text),
+            None => {
+                let text = request.user_text.join("\n\n");
+                (!text.trim().is_empty()).then_some(text)
+            }
+        };
+        let tool_uses = response
+            .tool_uses
+            .into_iter()
+            .map(|tool| InterpretedTool {
+                effects: harness
+                    .map(|harness| harness.effects(&tool))
+                    .unwrap_or_default(),
+                tool,
+            })
+            .collect();
+        let tool_results = request
+            .tool_results
+            .into_iter()
+            .map(|result| ToolResult {
+                status: harness.map_or(result.status, |harness| harness.result_status(&result)),
+                ..result
+            })
+            .collect();
+        let mut limitations = request.limitations;
+        for limitation in response.limitations {
+            if !limitations.contains(&limitation) {
+                limitations.push(limitation);
+            }
+        }
+        Self {
+            user_text: request.user_text,
+            prompt,
+            tool_uses,
+            tool_results,
+            reply: response.reply,
+            limitations,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -444,5 +516,62 @@ mod tests {
             Harness::ClaudeCode.result_status(&result("Exit code: 1", ResultStatus::Succeeded)),
             ResultStatus::Succeeded
         );
+    }
+
+    #[test]
+    fn a_call_is_read_as_its_client_uses_it() {
+        use tgv_protocol::activity::{RequestActivity, ResponseActivity};
+        let reading = Reading {
+            request: RequestActivity {
+                user_text: vec![
+                    "<system-reminder>context</system-reminder>".to_owned(),
+                    "Make the tests pass".to_owned(),
+                ],
+                tool_results: vec![ToolResult {
+                    id: "a".to_owned(),
+                    status: ResultStatus::Unreported,
+                    output: "Exit code: 2\nfailed".to_owned(),
+                }],
+                limitations: vec![ActivityLimitation::Truncated],
+            },
+            response: ResponseActivity {
+                tool_uses: vec![tool(
+                    "Bash",
+                    "tool_use",
+                    ToolInput::Json(json!({ "command": "cargo test" })),
+                )],
+                reply: "Running.".to_owned(),
+                limitations: vec![
+                    ActivityLimitation::Truncated,
+                    ActivityLimitation::UnfinishedToolCall,
+                ],
+            },
+        };
+        let claude = InterpretedCall::new(Some(Harness::ClaudeCode), reading.clone());
+        assert_eq!(claude.prompt.as_deref(), Some("Make the tests pass"));
+        assert_eq!(claude.user_text.len(), 2);
+        assert_eq!(claude.tool_uses[0].effects[0].kind, EffectKind::RunCommand);
+        // Claude Code reports errors with a flag, never an exit code.
+        assert_eq!(claude.tool_results[0].status, ResultStatus::Unreported);
+        assert_eq!(
+            claude.limitations,
+            [
+                ActivityLimitation::Truncated,
+                ActivityLimitation::UnfinishedToolCall
+            ]
+        );
+        assert_eq!(claude.reply, "Running.");
+
+        let codex = InterpretedCall::new(Some(Harness::Codex), reading.clone());
+        assert_eq!(codex.tool_results[0].status, ResultStatus::Failed);
+
+        // Without a known client, nothing is filtered or guessed.
+        let unknown = InterpretedCall::new(None, reading);
+        assert_eq!(
+            unknown.prompt.as_deref(),
+            Some("<system-reminder>context</system-reminder>\n\nMake the tests pass")
+        );
+        assert!(unknown.tool_uses[0].effects.is_empty());
+        assert_eq!(unknown.tool_results[0].status, ResultStatus::Unreported);
     }
 }
