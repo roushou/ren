@@ -187,7 +187,7 @@
   });
 </script>
 
-<svelte:head><title>TGV · {pageTitle}</title></svelte:head>
+<svelte:head><title>TGV - {pageTitle}</title></svelte:head>
 <div class="app-shell">
   <header class="workbench-header">
     <a class="brand" href="/" aria-label="TGV overview"
