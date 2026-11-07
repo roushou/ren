@@ -1,0 +1,122 @@
+{
+  "api_version": 2,
+  "calls": [
+    {
+      "id": "00000000-0000-0000-0000-000000000007",
+      "channel": "00000000-0000-0000-0000-000000000006",
+      "started_at": 1800000000000,
+      "ended_at": 1800000000000,
+      "provider": "anthropic",
+      "endpoint": "messages",
+      "method": "POST",
+      "config_revision": "<config revision>",
+      "session": "00000000-0000-0000-0000-000000000004",
+      "turn": "00000000-0000-0000-0000-000000000005",
+      "attribution": {
+        "hint": {
+          "source": "claude_code_headers",
+          "session": "00000000-0000-4000-8000-0000000000aa",
+          "turn": "00000000-0000-4000-8000-0000000000bb",
+          "thread": null
+        },
+        "issues": []
+      },
+      "state": "finished",
+      "terminal": "body_complete",
+      "status": 200,
+      "model": "claude-test",
+      "outcome": "completed",
+      "stop_reason": "tool_use",
+      "tool_names": ["Bash"],
+      "usage": {
+        "accounting": "excludes_cache",
+        "input_tokens": 12,
+        "output_tokens": 30,
+        "cache_read_tokens": 3000,
+        "cache_creation_tokens": 40,
+        "reasoning_tokens": null
+      },
+      "capture_complete": true,
+      "request": {
+        "observed_bytes": 372,
+        "stored_bytes": 372,
+        "ending": "ended"
+      },
+      "response": {
+        "observed_bytes": 1065,
+        "stored_bytes": 1065,
+        "ending": "ended"
+      },
+      "rejection": null,
+      "operator_revision": 0,
+      "plan": {
+        "admission": "admit",
+        "candidates": ["anthropic"],
+        "transforms": [],
+        "fallback": null,
+        "retry": {
+          "fall_over_on": []
+        }
+      }
+    },
+    {
+      "id": "00000000-0000-0000-0000-000000000002",
+      "channel": "00000000-0000-0000-0000-000000000001",
+      "started_at": 1800000000000,
+      "ended_at": 1800000000000,
+      "provider": "anthropic",
+      "endpoint": "messages",
+      "method": "POST",
+      "config_revision": "<config revision>",
+      "session": "00000000-0000-0000-0000-000000000004",
+      "turn": "00000000-0000-0000-0000-000000000005",
+      "attribution": {
+        "hint": {
+          "source": "claude_code_headers",
+          "session": "00000000-0000-4000-8000-0000000000aa",
+          "turn": "00000000-0000-4000-8000-0000000000bb",
+          "thread": null
+        },
+        "issues": []
+      },
+      "state": "finished",
+      "terminal": "body_complete",
+      "status": 200,
+      "model": "claude-test",
+      "outcome": "completed",
+      "stop_reason": "tool_use",
+      "tool_names": ["Bash"],
+      "usage": {
+        "accounting": "excludes_cache",
+        "input_tokens": 12,
+        "output_tokens": 30,
+        "cache_read_tokens": 3000,
+        "cache_creation_tokens": 40,
+        "reasoning_tokens": null
+      },
+      "capture_complete": true,
+      "request": {
+        "observed_bytes": 93,
+        "stored_bytes": 93,
+        "ending": "ended"
+      },
+      "response": {
+        "observed_bytes": 1065,
+        "stored_bytes": 1065,
+        "ending": "ended"
+      },
+      "rejection": null,
+      "operator_revision": 0,
+      "plan": {
+        "admission": "admit",
+        "candidates": ["anthropic"],
+        "transforms": [],
+        "fallback": null,
+        "retry": {
+          "fall_over_on": []
+        }
+      }
+    }
+  ],
+  "next": null
+}

@@ -14,9 +14,11 @@ mod control;
 mod live;
 mod params;
 pub mod preview;
+mod route;
 
 pub(crate) use control::ControlApi;
 pub use control::{ControlOptions, ControlOptionsError, ControlToken};
+pub use route::ApiRead;
 
 use crate::build::Build;
 use crate::{control::Controls, operator::Pause};
@@ -26,28 +28,17 @@ use axum::{
     response::{IntoResponse, Response, Sse, sse::KeepAlive},
     routing::get,
 };
-use http::{HeaderValue, StatusCode, header};
+use http::{HeaderValue, StatusCode, Uri, header};
 use live::LiveFeed;
-use params::{
-    RawCallQuery, RawExposureQuery, RawLiveQuery, RawPageQuery, RawSearchQuery, RawUsageQuery,
-};
+use params::RawLiveQuery;
 use preview::Previewer;
 use serde::Serialize;
 use std::sync::Arc;
 use tgv_protocol::direction::Direction;
 use tgv_recorder::time::Clock;
-use tgv_recorder::{
-    Recorder, RecorderMetrics,
-    id::{CallId, SessionId, TurnId},
-    retention::RetentionPolicy,
-};
+use tgv_recorder::{Recorder, RecorderMetrics, id::CallId, retention::RetentionPolicy};
 use tgv_store::{
-    Reader, StoreError,
-    activity::{ActivityBudget, TurnSummary},
-    backup::Backup,
-    query::{CallQuery, QueryError, TimeRange},
-    search::{ExposureView, SearchError},
-    view::{SessionView, StorageView},
+    Reader, StoreError, backup::Backup, query::QueryError, search::SearchError, view::StorageView,
 };
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use tokio_util::sync::CancellationToken;
@@ -150,21 +141,6 @@ struct Storage<'a> {
 }
 
 #[derive(Serialize)]
-struct Sessions {
-    sessions: Vec<SessionView>,
-}
-
-#[derive(Serialize)]
-struct Exposures {
-    exposures: Vec<ExposureView>,
-}
-
-#[derive(Serialize)]
-struct Turns {
-    turns: Vec<TurnSummary>,
-}
-
-#[derive(Serialize)]
 struct ErrorBody {
     error: ErrorCode,
 }
@@ -218,7 +194,7 @@ impl IntoResponse for ApiError {
 
 impl ApiState {
     /// Clients reject responses whose version they do not understand.
-    pub const API_VERSION: u32 = 1;
+    pub const API_VERSION: u32 = 2;
     /// Body previews decode off the async runtime; at most this many at once.
     const PREVIEW_PERMITS: usize = 2;
     /// A body export is held in memory whole; at most this many at once.
@@ -251,22 +227,15 @@ impl ApiState {
 
     /// The API routes, with private response headers on every one.
     pub fn router(self) -> Router {
-        Router::new()
+        let mut router = Router::new();
+        for route in ApiRead::ROUTES {
+            router = router.route(route, get(Self::read));
+        }
+        router
             .route("/api/metrics", get(Self::metrics))
             .route("/api/storage", get(Self::storage))
-            .route("/api/calls", get(Self::calls))
-            .route("/api/calls/{id}", get(Self::call))
             .route("/api/calls/{id}/body/{direction}", get(Self::body))
             .route("/api/calls/{id}/body/{direction}/export", get(Self::export))
-            .route("/api/sessions", get(Self::sessions))
-            .route("/api/usage", get(Self::usage))
-            .route("/api/sessions/{id}/calls", get(Self::session_calls))
-            .route("/api/sessions/{id}/turns", get(Self::session_turns))
-            .route("/api/sessions/{id}/report", get(Self::session_report))
-            .route("/api/turns/{id}", get(Self::turn))
-            .route("/api/search", get(Self::search))
-            .route("/api/exposures", get(Self::exposures))
-            .route("/api/calls/{id}/activity", get(Self::call_activity))
             .route("/api/live", get(Self::live))
             .route("/health", get(Self::health))
             .layer(axum::middleware::map_response(Self::private))
@@ -333,19 +302,10 @@ impl ApiState {
         .into_response())
     }
 
-    async fn calls(
-        State(state): State<Arc<Self>>,
-        Query(raw): Query<RawCallQuery>,
-    ) -> Result<Response, ApiError> {
-        let query = CallQuery::try_from(raw)?;
-        Ok(Self::versioned(state.reader.calls(&query).await?).into_response())
-    }
-
-    async fn call(
-        State(state): State<Arc<Self>>,
-        Path(id): Path<CallId>,
-    ) -> Result<Response, ApiError> {
-        Ok(Self::versioned(state.reader.call(id).await?).into_response())
+    /// Any history read: the URI says which, the reader answers.
+    async fn read(State(state): State<Arc<Self>>, uri: Uri) -> Result<Response, ApiError> {
+        let ApiRead(request) = ApiRead::parse(&uri)?;
+        Ok(Self::versioned(state.reader.serve(&request).await?).into_response())
     }
 
     async fn body(
@@ -395,99 +355,6 @@ impl ApiState {
             body,
         )
             .into_response())
-    }
-
-    async fn usage(
-        State(state): State<Arc<Self>>,
-        Query(raw): Query<RawUsageQuery>,
-    ) -> Result<Response, ApiError> {
-        let range = TimeRange::try_from(raw)?;
-        Ok(Self::versioned(state.reader.usage(range).await?).into_response())
-    }
-
-    async fn sessions(
-        State(state): State<Arc<Self>>,
-        Query(raw): Query<RawPageQuery>,
-    ) -> Result<Response, ApiError> {
-        let sessions = state.reader.sessions(raw.limit()?).await?;
-        Ok(Self::versioned(Sessions { sessions }).into_response())
-    }
-
-    async fn session_calls(
-        State(state): State<Arc<Self>>,
-        Path(id): Path<SessionId>,
-        Query(raw): Query<RawPageQuery>,
-    ) -> Result<Response, ApiError> {
-        let page = state
-            .reader
-            .session_calls(id, raw.limit()?, raw.after()?)
-            .await?;
-        Ok(Self::versioned(page).into_response())
-    }
-
-    /// A session's turns, newest first. Reading prompts parses request
-    /// bodies, so these share the preview permits.
-    async fn session_turns(
-        State(state): State<Arc<Self>>,
-        Path(id): Path<SessionId>,
-        Query(raw): Query<RawPageQuery>,
-    ) -> Result<Response, ApiError> {
-        if raw.after.is_some() {
-            return Err(ApiError::Query(QueryError::Cursor));
-        }
-        let turns = state.reader.session_turns(id, raw.limit()?).await?;
-        Ok(Self::versioned(Turns { turns }).into_response())
-    }
-
-    /// A session's context and cost report, from call records alone.
-    async fn session_report(
-        State(state): State<Arc<Self>>,
-        Path(id): Path<SessionId>,
-    ) -> Result<Response, ApiError> {
-        Ok(Self::versioned(state.reader.session_report(id).await?).into_response())
-    }
-
-    /// Credentials calls carried, newest first: never the secrets.
-    async fn exposures(
-        State(state): State<Arc<Self>>,
-        Query(raw): Query<RawExposureQuery>,
-    ) -> Result<Response, ApiError> {
-        let exposures = state.reader.exposures(&raw.parse()?).await?;
-        Ok(Self::versioned(Exposures { exposures }).into_response())
-    }
-
-    /// Full-text search over indexed prompts, replies, and tool input and
-    /// output, newest call first.
-    async fn search(
-        State(state): State<Arc<Self>>,
-        Query(raw): Query<RawSearchQuery>,
-    ) -> Result<Response, ApiError> {
-        let query = raw.parse()?;
-        Ok(Self::versioned(state.reader.search(&query).await?).into_response())
-    }
-
-    /// One turn's activity, read from its calls' bodies.
-    async fn turn(
-        State(state): State<Arc<Self>>,
-        Path(id): Path<TurnId>,
-    ) -> Result<Response, ApiError> {
-        let turn = state
-            .reader
-            .turn_activity(id, ActivityBudget::DEFAULT)
-            .await?;
-        Ok(Self::versioned(turn).into_response())
-    }
-
-    /// One call's activity, read from its bodies.
-    async fn call_activity(
-        State(state): State<Arc<Self>>,
-        Path(id): Path<CallId>,
-    ) -> Result<Response, ApiError> {
-        let call = state
-            .reader
-            .call_activity(id, ActivityBudget::DEFAULT)
-            .await?;
-        Ok(Self::versioned(call).into_response())
     }
 
     /// `after` comes from the query, or from `Last-Event-ID` when a browser

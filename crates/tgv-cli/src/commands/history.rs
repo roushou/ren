@@ -2,7 +2,7 @@
 //! selected, the same views through that gateway's management API; the JSON
 //! printed is the same either way.
 use crate::context::Context;
-use crate::management::{HostFlags, Management, Target};
+use crate::management::{History, HostFlags, Management, Target};
 use anyhow::{Context as _, Result};
 use clap::{Args, ValueEnum};
 use serde::Serialize;
@@ -16,8 +16,8 @@ use tgv_harness::Harness;
 use tgv_harness::endpoint::GatewayEndpoint;
 use tgv_protocol::direction::Direction;
 use tgv_recorder::id::{CallId, SessionId, TurnId};
-use tgv_store::activity::ActivityBudget;
 use tgv_store::query::{CallQuery, Cursor, PageLimit, TimeRange};
+use tgv_store::read::ReadRequest;
 use tgv_store::search::{ExposureQuery, SearchField, SearchQuery, SearchTerms};
 
 /// Which daemon a history or control command reads from.
@@ -38,6 +38,19 @@ impl TargetArgs {
             HostFlags::Absent
         };
         Ok(Target::select(self.gateway.as_deref(), host, &ctx.env)?)
+    }
+
+    /// Where history is read: this host's storage, or the selected gateway.
+    pub async fn history(&self, ctx: &Context) -> Result<History> {
+        Ok(match self.select(ctx)? {
+            Target::Local => History::Local(ctx.reader().await?),
+            Target::Remote(gateway) => History::Remote(gateway),
+        })
+    }
+
+    /// Print the answer to one read.
+    async fn print(&self, ctx: &Context, request: ReadRequest) -> Result<ExitCode> {
+        HistoryCmd::print(&self.history(ctx).await?.serve(&request).await?)
     }
 
     /// The gateway to read through, for a command that needs the API even
@@ -63,17 +76,11 @@ pub struct HistoryCmd {
 }
 impl HistoryCmd {
     pub async fn run(self, ctx: &Context) -> Result<ExitCode> {
-        let limit = self.limit;
-        match self.target.select(ctx)? {
-            Target::Local => {
-                let query = CallQuery {
-                    limit,
-                    ..CallQuery::default()
-                };
-                Self::print(&ctx.reader().await?.calls(&query).await?.calls)
-            }
-            Target::Remote(gateway) => Self::print(&gateway.calls(limit).await?),
-        }
+        let request = ReadRequest::Calls(CallQuery {
+            limit: self.limit,
+            ..CallQuery::default()
+        });
+        self.target.print(ctx, request).await
     }
 
     pub(crate) fn print(value: &impl Serialize) -> Result<ExitCode> {
@@ -92,11 +99,9 @@ pub struct SessionsCmd {
 }
 impl SessionsCmd {
     pub async fn run(self, ctx: &Context) -> Result<ExitCode> {
-        let limit = self.limit;
-        match self.target.select(ctx)? {
-            Target::Local => HistoryCmd::print(&ctx.reader().await?.sessions(limit).await?),
-            Target::Remote(gateway) => HistoryCmd::print(&gateway.sessions(limit).await?),
-        }
+        self.target
+            .print(ctx, ReadRequest::Sessions(self.limit))
+            .await
     }
 }
 
@@ -114,20 +119,12 @@ pub struct TimelineCmd {
 }
 impl TimelineCmd {
     pub async fn run(self, ctx: &Context) -> Result<ExitCode> {
-        let limit = self.limit;
-        match self.target.select(ctx)? {
-            Target::Local => HistoryCmd::print(
-                &ctx.reader()
-                    .await?
-                    .session_calls(self.id, limit, self.after)
-                    .await?,
-            ),
-            Target::Remote(gateway) => HistoryCmd::print(
-                &gateway
-                    .session_calls(self.id, limit, self.after.as_ref())
-                    .await?,
-            ),
-        }
+        let request = ReadRequest::SessionCalls {
+            session: self.id,
+            limit: self.limit,
+            after: self.after,
+        };
+        self.target.print(ctx, request).await
     }
 }
 
@@ -142,13 +139,11 @@ pub struct TurnsCmd {
 }
 impl TurnsCmd {
     pub async fn run(self, ctx: &Context) -> Result<ExitCode> {
-        let limit = self.limit;
-        match self.target.select(ctx)? {
-            Target::Local => {
-                HistoryCmd::print(&ctx.reader().await?.session_turns(self.id, limit).await?)
-            }
-            Target::Remote(gateway) => HistoryCmd::print(&gateway.turns(self.id, limit).await?),
-        }
+        let request = ReadRequest::Turns {
+            session: self.id,
+            limit: self.limit,
+        };
+        self.target.print(ctx, request).await
     }
 }
 
@@ -176,18 +171,15 @@ pub struct SearchCmd {
 }
 impl SearchCmd {
     pub async fn run(self, ctx: &Context) -> Result<ExitCode> {
-        let query = SearchQuery {
+        let request = ReadRequest::Search(SearchQuery {
             terms: SearchTerms::parse(&self.text.join(" "))?,
             session: self.session,
             client: self.client,
             field: self.field,
             time: TimeRange::default(),
             limit: self.limit,
-        };
-        match self.target.select(ctx)? {
-            Target::Local => HistoryCmd::print(&ctx.reader().await?.search(&query).await?),
-            Target::Remote(gateway) => HistoryCmd::print(&gateway.search_history(&query).await?),
-        }
+        });
+        self.target.print(ctx, request).await
     }
 }
 
@@ -206,15 +198,12 @@ pub struct ExposuresCmd {
 }
 impl ExposuresCmd {
     pub async fn run(self, ctx: &Context) -> Result<ExitCode> {
-        let query = ExposureQuery {
+        let request = ReadRequest::Exposures(ExposureQuery {
             session: self.session,
             time: TimeRange::default(),
             limit: self.limit,
-        };
-        match self.target.select(ctx)? {
-            Target::Local => HistoryCmd::print(&ctx.reader().await?.exposures(&query).await?),
-            Target::Remote(gateway) => HistoryCmd::print(&gateway.exposures(&query).await?),
-        }
+        });
+        self.target.print(ctx, request).await
     }
 }
 
@@ -229,10 +218,7 @@ pub struct ReportCmd {
 }
 impl ReportCmd {
     pub async fn run(self, ctx: &Context) -> Result<ExitCode> {
-        match self.target.select(ctx)? {
-            Target::Local => HistoryCmd::print(&ctx.reader().await?.session_report(self.id).await?),
-            Target::Remote(gateway) => HistoryCmd::print(&gateway.report(self.id).await?),
-        }
+        self.target.print(ctx, ReadRequest::Report(self.id)).await
     }
 }
 
@@ -246,15 +232,7 @@ pub struct TurnCmd {
 }
 impl TurnCmd {
     pub async fn run(self, ctx: &Context) -> Result<ExitCode> {
-        match self.target.select(ctx)? {
-            Target::Local => HistoryCmd::print(
-                &ctx.reader()
-                    .await?
-                    .turn_activity(self.id, ActivityBudget::DEFAULT)
-                    .await?,
-            ),
-            Target::Remote(gateway) => HistoryCmd::print(&gateway.turn(self.id).await?),
-        }
+        self.target.print(ctx, ReadRequest::Turn(self.id)).await
     }
 }
 
@@ -267,15 +245,9 @@ pub struct ActivityCmd {
 }
 impl ActivityCmd {
     pub async fn run(self, ctx: &Context) -> Result<ExitCode> {
-        match self.target.select(ctx)? {
-            Target::Local => HistoryCmd::print(
-                &ctx.reader()
-                    .await?
-                    .call_activity(self.id, ActivityBudget::DEFAULT)
-                    .await?,
-            ),
-            Target::Remote(gateway) => HistoryCmd::print(&gateway.activity(self.id).await?),
-        }
+        self.target
+            .print(ctx, ReadRequest::CallActivity(self.id))
+            .await
     }
 }
 
@@ -292,13 +264,10 @@ pub struct InspectCmd {
 }
 impl InspectCmd {
     pub async fn run(self, ctx: &Context) -> Result<ExitCode> {
-        let target = self.target.select(ctx)?;
         let (Some(direction), Some(output)) = (self.body, self.output) else {
-            return match target {
-                Target::Local => HistoryCmd::print(&ctx.reader().await?.call(self.id).await?),
-                Target::Remote(gateway) => HistoryCmd::print(&gateway.call(self.id).await?),
-            };
+            return self.target.print(ctx, ReadRequest::Call(self.id)).await;
         };
+        let target = self.target.select(ctx)?;
         let direction = Direction::from(direction);
         match target {
             Target::Local => {

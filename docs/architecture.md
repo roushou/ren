@@ -624,8 +624,20 @@ state; it is logged, not recorded in `operator_actions`.
   `journal_size_limit` is set on both. Busy readers return `503` without blocking
   forwarding.
 - **Pagination.** Keyset pagination through one `Cursor` type.
-- **Responses.** Typed DTOs. Each carries `api_version`; the UI checks
-  compatibility at load and shows an explicit mismatch error.
+- **One read path.** Every history read is a `ReadRequest` (`tgv-store::read`)
+  that `Reader::serve` answers with a `ReadResponse`, whose JSON is the API's
+  body. `ApiRead` (`tgv-gateway`) is where each read lives in HTTP: the server
+  parses a URI into a `ReadRequest` and serves it from one handler, and the
+  CLI's client builds the URI from the same `ReadRequest`; a round-trip test
+  keeps the two directions one table. The CLI's `History` reads this host's
+  storage or a gateway through it, and MCP tools are `ReadRequest`s too, so
+  every surface answers the same JSON.
+- **Responses.** Each carries `api_version` (2); the UI checks compatibility at
+  load and shows an explicit mismatch error. `crates/tgv-daemon/tests/contract.rs`
+  pins each read's answer to a fixed synthetic history in
+  `ui/tests/fixtures/api/`, and the UI's decoder tests parse those files, so a
+  contract change fails a test on whichever side it breaks
+  (`TGV_UPDATE_FIXTURES=1` regenerates them).
 - **Live feed.** `/api/live?after=<seq>` (or `Last-Event-ID`) replays retained
   observations, then streams new ones; it emits `gone` when the position was
   pruned. The SvelteKit server streams it without buffering, through an explicit

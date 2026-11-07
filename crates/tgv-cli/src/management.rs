@@ -12,11 +12,12 @@ use crate::client::{ClientError, GatewayChoice};
 use reqwest::{Method, StatusCode};
 use serde_json::{Map, Value};
 use std::time::Duration;
+use tgv_gateway::ApiRead;
 use tgv_harness::{endpoint::GatewayEndpoint, host::HostEnv};
 use tgv_protocol::direction::Direction;
-use tgv_recorder::id::{CallId, SessionId, TurnId};
-use tgv_store::query::{CallFilter, CallQuery, Cursor, PageLimit, TimeRange};
-use tgv_store::search::{ExposureQuery, SearchQuery};
+use tgv_recorder::id::CallId;
+use tgv_store::Reader;
+use tgv_store::read::ReadRequest;
 
 /// Where a history or control command acts.
 pub enum Target {
@@ -24,6 +25,23 @@ pub enum Target {
     Local,
     /// A gateway's management and control APIs.
     Remote(Management),
+}
+
+/// Where history is read: this host's storage, or a gateway's read API.
+/// Both answer a [`ReadRequest`] with the same JSON, since the API's body is
+/// the reader's response.
+pub enum History {
+    Local(Reader),
+    Remote(Management),
+}
+
+impl History {
+    pub async fn serve(&self, request: &ReadRequest) -> Result<Value, ManagementError> {
+        match self {
+            Self::Local(reader) => Ok(serde_json::to_value(reader.serve(request).await?)?),
+            Self::Remote(gateway) => gateway.serve(request).await,
+        }
+    }
 }
 
 /// A client for one gateway's management and control APIs.
@@ -46,6 +64,10 @@ pub enum ManagementError {
         #[source]
         source: reqwest::Error,
     },
+    #[error("reading this host's history failed")]
+    Store(#[from] tgv_store::StoreError),
+    #[error("cannot encode a history answer")]
+    Json(#[from] serde_json::Error),
     #[error("the gateway's answer is not management API JSON ({status})")]
     Shape { status: StatusCode },
     #[error(
@@ -148,7 +170,7 @@ impl Target {
 
 impl Management {
     /// The read API version this CLI parses.
-    const API_VERSION: u64 = 1;
+    const API_VERSION: u64 = 2;
 
     pub fn new(endpoint: GatewayEndpoint) -> Result<Self, ManagementError> {
         let http = reqwest::Client::builder()
@@ -161,25 +183,6 @@ impl Management {
         Ok(Self { http, endpoint })
     }
 
-    /// `GET /api/calls?limit=`: the calls, newest first.
-    pub async fn calls(&self, limit: PageLimit) -> Result<Value, ManagementError> {
-        let query = [("limit", limit.get().to_string())];
-        Self::field(self.read("/api/calls", &query).await?, "calls")
-    }
-
-    /// `GET /api/calls` with every filter of `query`: one page, `{calls, next}`.
-    pub async fn search(&self, query: &CallQuery) -> Result<Value, ManagementError> {
-        Ok(Value::Object(
-            self.read("/api/calls", &Self::call_params(query)).await?,
-        ))
-    }
-
-    /// `GET /api/usage`: calls, errors, and tokens for calls started in `range`.
-    pub async fn usage(&self, range: TimeRange) -> Result<Value, ManagementError> {
-        let query = QueryParams::default().range(range).0;
-        Ok(Value::Object(self.read("/api/usage", &query).await?))
-    }
-
     /// `GET /api/calls/{id}/body/{direction}`: a bounded preview of a body.
     pub async fn preview(
         &self,
@@ -187,127 +190,7 @@ impl Management {
         direction: Direction,
     ) -> Result<Value, ManagementError> {
         let path = format!("/api/calls/{call}/body/{direction}");
-        Ok(Value::Object(self.read(&path, &[]).await?))
-    }
-
-    /// The query parameters the read API parses back into `query`.
-    fn call_params(query: &CallQuery) -> Vec<(&'static str, String)> {
-        let CallQuery {
-            filter,
-            limit,
-            after,
-        } = query;
-        let CallFilter {
-            session,
-            client,
-            kind,
-            provider,
-            model,
-            tool,
-            text,
-            status,
-            tools,
-            time,
-        } = filter;
-        QueryParams::default()
-            .with("limit", limit.get())
-            .opt("after", after.as_ref())
-            .opt("session", session.as_ref())
-            .opt("client", *client)
-            .opt("kind", *kind)
-            .opt("provider", *provider)
-            .opt("model", model.as_ref().map(|value| value.as_str()))
-            .opt("tool", tool.as_ref().map(|value| value.as_str()))
-            .opt("q", text.as_ref().map(|value| value.as_str()))
-            .opt("status", *status)
-            .opt("has_tools", *tools)
-            .range(*time)
-            .0
-    }
-
-    /// `GET /api/sessions?limit=`: the sessions.
-    pub async fn sessions(&self, limit: PageLimit) -> Result<Value, ManagementError> {
-        let query = [("limit", limit.get().to_string())];
-        Self::field(self.read("/api/sessions", &query).await?, "sessions")
-    }
-
-    /// `GET /api/sessions/{id}/calls`: one page, `{calls, next}`.
-    pub async fn session_calls(
-        &self,
-        session: SessionId,
-        limit: PageLimit,
-        after: Option<&Cursor>,
-    ) -> Result<Value, ManagementError> {
-        let query = QueryParams::default()
-            .with("limit", limit.get())
-            .opt("after", after)
-            .0;
-        let path = format!("/api/sessions/{session}/calls");
-        Ok(Value::Object(self.read(&path, &query).await?))
-    }
-
-    /// `GET /api/sessions/{id}/turns`: the session's turns, newest first.
-    pub async fn turns(
-        &self,
-        session: SessionId,
-        limit: PageLimit,
-    ) -> Result<Value, ManagementError> {
-        let query = [("limit", limit.get().to_string())];
-        let path = format!("/api/sessions/{session}/turns");
-        Self::field(self.read(&path, &query).await?, "turns")
-    }
-
-    /// `GET /api/sessions/{id}/report`: the session's context and cost report.
-    pub async fn report(&self, session: SessionId) -> Result<Value, ManagementError> {
-        Ok(Value::Object(
-            self.read(&format!("/api/sessions/{session}/report"), &[])
-                .await?,
-        ))
-    }
-
-    /// `GET /api/search`: matching documents, newest call first.
-    pub async fn search_history(&self, query: &SearchQuery) -> Result<Value, ManagementError> {
-        let params = QueryParams::default()
-            .with("q", &query.terms)
-            .with("limit", query.limit.get())
-            .opt("session", query.session)
-            .opt("client", query.client)
-            .opt("field", query.field)
-            .range(query.time)
-            .0;
-        Ok(Value::Object(self.read("/api/search", &params).await?))
-    }
-
-    /// `GET /api/exposures`: credentials calls carried, newest first.
-    pub async fn exposures(&self, query: &ExposureQuery) -> Result<Value, ManagementError> {
-        let params = QueryParams::default()
-            .with("limit", query.limit.get())
-            .opt("session", query.session)
-            .range(query.time)
-            .0;
-        Self::field(self.read("/api/exposures", &params).await?, "exposures")
-    }
-
-    /// `GET /api/turns/{id}`: one turn's activity.
-    pub async fn turn(&self, turn: TurnId) -> Result<Value, ManagementError> {
-        Ok(Value::Object(
-            self.read(&format!("/api/turns/{turn}"), &[]).await?,
-        ))
-    }
-
-    /// `GET /api/calls/{id}/activity`: one call's activity.
-    pub async fn activity(&self, call: CallId) -> Result<Value, ManagementError> {
-        Ok(Value::Object(
-            self.read(&format!("/api/calls/{call}/activity"), &[])
-                .await?,
-        ))
-    }
-
-    /// `GET /api/calls/{id}`: the call with its attempts and observations.
-    pub async fn call(&self, call: CallId) -> Result<Value, ManagementError> {
-        Ok(Value::Object(
-            self.read(&format!("/api/calls/{call}"), &[]).await?,
-        ))
+        Ok(Value::Object(self.read(&path).await?))
     }
 
     /// Writes a complete captured body through `write`, and returns its
@@ -420,16 +303,20 @@ impl Management {
         }
     }
 
-    /// A successful read's body, without `api_version`.
-    async fn read(
-        &self,
-        path: &str,
-        query: &[(&str, String)],
-    ) -> Result<Map<String, Value>, ManagementError> {
+    /// One history read, through the read API: its JSON body.
+    pub async fn serve(&self, request: &ReadRequest) -> Result<Value, ManagementError> {
+        Ok(Value::Object(
+            self.read(&ApiRead(request.clone()).uri()).await?,
+        ))
+    }
+
+    /// A successful read's body, without `api_version`. `uri` is a path and
+    /// query string.
+    async fn read(&self, uri: &str) -> Result<Map<String, Value>, ManagementError> {
+        let (path, query) = uri.split_once('?').unwrap_or((uri, ""));
         let mut url = self.endpoint.url(path);
         if !query.is_empty() {
-            url.query_pairs_mut()
-                .extend_pairs(query.iter().map(|(name, value)| (*name, value.as_str())));
+            url.set_query(Some(query));
         }
         let response = self.send(self.http.get(url)).await?;
         let status = response.status();
@@ -447,12 +334,6 @@ impl Management {
             }),
             None => Err(ManagementError::Shape { status }),
         }
-    }
-
-    fn field(mut map: Map<String, Value>, name: &str) -> Result<Value, ManagementError> {
-        map.shift_remove(name).ok_or(ManagementError::Shape {
-            status: StatusCode::OK,
-        })
     }
 
     async fn send(
@@ -497,66 +378,9 @@ impl Management {
     }
 }
 
-/// Query parameters as the read API parses them back, in order: absent
-/// values are left out.
-#[derive(Default)]
-struct QueryParams(Vec<(&'static str, String)>);
-
-impl QueryParams {
-    fn with(mut self, name: &'static str, value: impl std::fmt::Display) -> Self {
-        self.0.push((name, value.to_string()));
-        self
-    }
-
-    fn opt(self, name: &'static str, value: Option<impl std::fmt::Display>) -> Self {
-        match value {
-            Some(value) => self.with(name, value),
-            None => self,
-        }
-    }
-
-    /// `from_ms` and `until_ms`, for the ends `range` has.
-    fn range(self, range: TimeRange) -> Self {
-        self.opt("from_ms", range.from().map(|time| time.as_millis()))
-            .opt("until_ms", range.until().map(|time| time.as_millis()))
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn call_queries_become_the_parameters_the_read_api_parses() {
-        let mut query = CallQuery {
-            limit: PageLimit::new(5).unwrap(),
-            ..CallQuery::default()
-        };
-        assert_eq!(Management::call_params(&query), [("limit", "5".to_owned())]);
-        query.filter.client = Some("claude_code".parse().unwrap());
-        query.filter.status = Some("errors".parse().unwrap());
-        query.filter.tools = Some("false".parse().unwrap());
-        query.filter.text = Some(tgv_store::query::SearchText::new("opus").unwrap());
-        query.filter.time =
-            TimeRange::new(Some(tgv_recorder::time::UnixMillis::from_millis(1)), None).unwrap();
-        query.after = Some("12:00000000-0000-0000-0000-000000000001".parse().unwrap());
-        let params: Vec<_> = Management::call_params(&query)
-            .into_iter()
-            .map(|(name, value)| format!("{name}={value}"))
-            .collect();
-        assert_eq!(
-            params,
-            [
-                "limit=5",
-                "after=12:00000000-0000-0000-0000-000000000001",
-                "client=claude_code",
-                "q=opus",
-                "status=errors",
-                "has_tools=false",
-                "from_ms=1",
-            ]
-        );
-    }
 
     #[test]
     fn error_answers_keep_their_code() {

@@ -1,0 +1,41 @@
+{
+  "api_version": 2,
+  "session": "00000000-0000-0000-0000-000000000004",
+  "totals": {
+    "calls": 2,
+    "calls_with_usage": 2,
+    "peak_context_tokens": 3052,
+    "context_tokens": 6104,
+    "cache_read_tokens": 6000,
+    "cache_written_tokens": 80,
+    "output_tokens": 60,
+    "cache_hit_percent": 98
+  },
+  "turns": [
+    {
+      "turn": "00000000-0000-0000-0000-000000000005",
+      "started_at": 1800000000000,
+      "ended_at": 1800000000000,
+      "call_count": 2,
+      "idle_before_ms": null,
+      "context_start_tokens": 3052,
+      "context_end_tokens": 3052,
+      "cache_hit_percent": 98,
+      "cache_written_tokens": 80,
+      "output_tokens": 60
+    }
+  ],
+  "findings": [
+    {
+      "kind": "secret_exposure",
+      "call": "00000000-0000-0000-0000-000000000007",
+      "turn": "00000000-0000-0000-0000-000000000005",
+      "field": "tool_output",
+      "secret": "anthropic_key",
+      "hint": "sk-ant-…a1b2",
+      "fingerprint": "309f8cc369d11252",
+      "count": 1
+    }
+  ],
+  "omitted_calls": 0
+}

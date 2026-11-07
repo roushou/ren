@@ -14,14 +14,12 @@ use tgv_protocol::{
     label::{Labeled, Stored},
     route::Provider,
 };
-use tgv_recorder::{
-    id::{CallId, SessionId, TurnId},
-    time::UnixMillis,
-};
+use tgv_recorder::{id::CallId, time::UnixMillis};
 use tgv_store::query::{
     CallFilter, CallQuery, Cursor, KindFilter, PageLimit, SearchText, StatusFilter, TimeRange,
     ToolFilter,
 };
+use tgv_store::read::ReadRequest;
 use tgv_store::search::{ExposureQuery, SearchField, SearchQuery, SearchTerms};
 
 /// The tools, in the order `tools/list` returns them.
@@ -46,29 +44,13 @@ pub enum ToolName {
 /// A tool call with its arguments parsed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ToolCall {
-    SearchHistory(SearchQuery),
-    SearchCalls(CallQuery),
-    ListSessions(PageLimit),
-    SessionCalls {
-        session: SessionId,
-        limit: PageLimit,
-        after: Option<Cursor>,
-    },
-    SessionReport(SessionId),
-    ListTurns {
-        session: SessionId,
-        limit: PageLimit,
-    },
-    GetTurn(TurnId),
-    GetCall(CallId),
-    GetCallActivity(CallId),
+    /// A history read, as the read API serves it.
+    Read(ReadRequest),
     GetBody {
         call: CallId,
         direction: Direction,
         budget: BodyBudget,
     },
-    Usage(TimeRange),
-    ListExposures(ExposureQuery),
 }
 
 /// Why a tool refused its arguments; the model reads it and can retry.
@@ -288,10 +270,10 @@ impl ToolCall {
     /// The call `tool` names, with `arguments` parsed and checked.
     pub fn parse(tool: ToolName, arguments: Map<String, Value>) -> Result<Self, ArgumentError> {
         let arguments = Value::Object(arguments);
-        match tool {
+        let read = match tool {
             ToolName::SearchHistory => {
                 let args: HistoryArgs = Self::arguments(arguments)?;
-                Ok(Self::SearchHistory(SearchQuery {
+                ReadRequest::Search(SearchQuery {
                     terms: SearchTerms::parse(&args.query).map_err(|_| {
                         ArgumentError(format!(
                             "query must have 1 to {} bytes and at least one word",
@@ -303,11 +285,11 @@ impl ToolCall {
                     field: Field("field").label::<SearchField>(args.field)?,
                     time: Field::range(args.from_ms, args.until_ms)?,
                     limit: Field("limit").limit(args.limit, Self::DEFAULT_ROWS)?,
-                }))
+                })
             }
             ToolName::SearchCalls => {
                 let args: SearchArgs = Self::arguments(arguments)?;
-                Ok(Self::SearchCalls(CallQuery {
+                ReadRequest::Calls(CallQuery {
                     limit: Field("limit").limit(args.limit, Self::DEFAULT_ROWS)?,
                     after: Field("after").cursor(args.after)?,
                     filter: CallFilter {
@@ -328,50 +310,46 @@ impl ToolCall {
                         }),
                         time: Field::range(args.from_ms, args.until_ms)?,
                     },
-                }))
+                })
             }
             ToolName::ListSessions => {
                 let args: PageArgs = Self::arguments(arguments)?;
-                Ok(Self::ListSessions(
-                    Field("limit").limit(args.limit, Self::DEFAULT_ROWS)?,
-                ))
+                ReadRequest::Sessions(Field("limit").limit(args.limit, Self::DEFAULT_ROWS)?)
             }
             ToolName::SessionCalls => {
                 let args: SessionArgs = Self::arguments(arguments)?;
-                Ok(Self::SessionCalls {
+                ReadRequest::SessionCalls {
                     session: Field("session_id").id(&args.session_id)?,
                     limit: Field("limit").limit(args.limit, Self::MAX_ROWS)?,
                     after: Field("after").cursor(args.after)?,
-                })
+                }
             }
             ToolName::SessionReport => {
                 let args: ReportArgs = Self::arguments(arguments)?;
-                Ok(Self::SessionReport(
-                    Field("session_id").id(&args.session_id)?,
-                ))
+                ReadRequest::Report(Field("session_id").id(&args.session_id)?)
             }
             ToolName::ListTurns => {
                 let args: TurnsArgs = Self::arguments(arguments)?;
-                Ok(Self::ListTurns {
+                ReadRequest::Turns {
                     session: Field("session_id").id(&args.session_id)?,
                     limit: Field("limit").limit(args.limit, Self::DEFAULT_ROWS)?,
-                })
+                }
             }
             ToolName::GetTurn => {
                 let args: TurnArgs = Self::arguments(arguments)?;
-                Ok(Self::GetTurn(Field("turn_id").id(&args.turn_id)?))
+                ReadRequest::Turn(Field("turn_id").id(&args.turn_id)?)
             }
             ToolName::GetCall => {
                 let args: CallArgs = Self::arguments(arguments)?;
-                Ok(Self::GetCall(Field("call_id").id(&args.call_id)?))
+                ReadRequest::Call(Field("call_id").id(&args.call_id)?)
             }
             ToolName::GetCallActivity => {
                 let args: CallArgs = Self::arguments(arguments)?;
-                Ok(Self::GetCallActivity(Field("call_id").id(&args.call_id)?))
+                ReadRequest::CallActivity(Field("call_id").id(&args.call_id)?)
             }
             ToolName::GetBody => {
                 let args: BodyArgs = Self::arguments(arguments)?;
-                Ok(Self::GetBody {
+                return Ok(Self::GetBody {
                     call: Field("call_id").id(&args.call_id)?,
                     direction: Field("direction")
                         .label::<Direction>(Some(args.direction))?
@@ -379,21 +357,22 @@ impl ToolCall {
                             ArgumentError("direction must be request or response".to_owned())
                         })?,
                     budget: BodyBudget::new(args.max_chars)?,
-                })
+                });
             }
             ToolName::Usage => {
                 let args: RangeArgs = Self::arguments(arguments)?;
-                Ok(Self::Usage(Field::range(args.from_ms, args.until_ms)?))
+                ReadRequest::Usage(Field::range(args.from_ms, args.until_ms)?)
             }
             ToolName::ListExposures => {
                 let args: ExposureArgs = Self::arguments(arguments)?;
-                Ok(Self::ListExposures(ExposureQuery {
+                ReadRequest::Exposures(ExposureQuery {
                     session: Field("session_id").optional_id(args.session_id)?,
                     time: Field::range(args.from_ms, args.until_ms)?,
                     limit: Field("limit").limit(args.limit, Self::DEFAULT_ROWS)?,
-                }))
+                })
             }
-        }
+        };
+        Ok(Self::Read(read))
     }
 
     fn arguments<T: for<'de> Deserialize<'de>>(arguments: Value) -> Result<T, ArgumentError> {
@@ -661,7 +640,7 @@ mod tests {
             })),
         )
         .unwrap();
-        let ToolCall::SearchCalls(query) = call else {
+        let ToolCall::Read(ReadRequest::Calls(query)) = call else {
             panic!("not a search: {call:?}");
         };
         assert_eq!(query.limit.get(), 20);

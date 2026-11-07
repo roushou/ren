@@ -217,8 +217,9 @@ dependencies under "Crates" below. Read the code for current module ownership.
   `call_exposures`, and `search_texts` with its FTS5 index, in `tgv.sqlite3`;
   `RecordSink::undigested` lists calls to derive again), and implements the recorder's `RecordSink`. It owns the versioned migrations for
   `tgv.sqlite3` (`crates/tgv-store/migrations`); never edit one that has
-  shipped. Its tests include `tests/recorder.rs`, the recorder against the real
-  store.
+  shipped. Every history read is a `ReadRequest` that `Reader::serve` answers
+  (`read`); the API, the CLI, and MCP all ask through it. Its tests include
+  `tests/recorder.rs`, the recorder against the real store.
 - `crates/tgv-gateway`: TGV's HTTP interface, with `Gateway` as its primary type.
   It owns forwarding, management, and control routes on one listener, assembled
   by `Gateway::router` or `Gateway::into_ingress`. Forwarding uses a declarative
@@ -240,7 +241,10 @@ dependencies under "Crates" below. Read the code for current module ownership.
   control credentials through `ManagementSetup`; SQL stays in `tgv-store`, and
   forwarding records only through the recorder.
   - `src/api`: the versioned read-only management API (`ApiState`), body previews,
-    and the `/api/live` SSE feed. Reads only through `Reader`.
+    and the `/api/live` SSE feed. Reads only through `Reader`. `ApiRead`
+    (`route`) is where each `ReadRequest` lives in HTTP, in both directions:
+    the server parses URIs with it (one handler serves every read) and the
+    CLI's client builds them with it.
   - `src/api/control.rs`: the mutating `/control/v1` API over the gateway's
     `Controls` (token or Tailscale identity; browsers refused), and its
     `[control]` configuration (`ControlOptions`) and `ControlToken`. Handler state
@@ -264,7 +268,8 @@ dependencies under "Crates" below. Read the code for current module ownership.
   `TGV_GATEWAY`, `client.toml`, then the local listener) and owns
   `client.toml`, which `tgv init` writes. `management` is where history and
   control commands act: this host's storage and token, or a gateway's read and
-  control APIs, printing the same JSON either way. `tail` is the pure core of
+  control APIs, printing the same JSON either way (`History` serves a
+  `ReadRequest` from either). `tail` is the pure core of
   `tgv tail`: the live feed decoded through the protocol crate's SSE framer, and
   its lines. `mcp` is the pure core of `tgv mcp` (a source test keeps it free
   of runtime and I/O): JSON-RPC over stdio in both MCP eras, and the read-only

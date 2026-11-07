@@ -187,7 +187,7 @@ async fn agents_read_recorded_traffic_over_stdio_in_both_protocol_eras() {
     assert_eq!(replies.len(), 2);
     assert_eq!(replies[0]["result"]["protocolVersion"], "2025-06-18");
     let sessions = data(&replies[1]);
-    assert_eq!(sessions.as_array().unwrap().len(), 1);
+    assert_eq!(sessions["sessions"].as_array().unwrap().len(), 1);
     assert!(replies[1]["result"].get("resultType").is_none());
 
     // An unreachable gateway is a tool error the model can read, not a
@@ -330,7 +330,7 @@ async fn a_turns_activity_reads_the_same_locally_through_a_gateway_and_over_mcp(
     let data_dir = state.to_str().unwrap();
     let mut sessions = Value::Null;
     for _ in 0..100 {
-        sessions = cli_json(&home, &["--data-dir", data_dir, "sessions"]);
+        sessions = cli_json(&home, &["--data-dir", data_dir, "sessions"])["sessions"].clone();
         if sessions[0]["call_count"] == 2 {
             break;
         }
@@ -344,10 +344,11 @@ async fn a_turns_activity_reads_the_same_locally_through_a_gateway_and_over_mcp(
         cli_json(&home, &["turns", &session_id, "--gateway", &gateway]),
         turns
     );
-    assert_eq!(turns.as_array().unwrap().len(), 1);
-    assert_eq!(turns[0]["call_count"], 2);
-    assert_eq!(turns[0]["prompt"]["text"], "Why do the tests fail?");
-    let turn_id = turns[0]["turn"].as_str().unwrap().to_owned();
+    let listed = &turns["turns"];
+    assert_eq!(listed.as_array().unwrap().len(), 1);
+    assert_eq!(listed[0]["call_count"], 2);
+    assert_eq!(listed[0]["prompt"]["text"], "Why do the tests fail?");
+    let turn_id = listed[0]["turn"].as_str().unwrap().to_owned();
     let turn = cli_json(&home, &["--data-dir", data_dir, "turn", &turn_id]);
     assert_eq!(
         cli_json(&home, &["turn", &turn_id, "--gateway", &gateway]),
@@ -454,10 +455,11 @@ async fn a_turns_activity_reads_the_same_locally_through_a_gateway_and_over_mcp(
         cli_json(&home, &["exposures", "--gateway", &gateway]),
         exposures
     );
-    assert_eq!(exposures.as_array().unwrap().len(), 1, "{exposures}");
-    assert_eq!(exposures[0]["kind"], "openai_key");
-    assert_eq!(exposures[0]["field"], "prompt");
-    assert_eq!(exposures[0]["hint"], "sk-proj-…Q9z8");
+    let listed = &exposures["exposures"];
+    assert_eq!(listed.as_array().unwrap().len(), 1, "{exposures}");
+    assert_eq!(listed[0]["kind"], "openai_key");
+    assert_eq!(listed[0]["field"], "prompt");
+    assert_eq!(listed[0]["hint"], "sk-proj-…Q9z8");
     let report = cli_json(&home, &["--data-dir", data_dir, "report", &session_id]);
     let kinds: Vec<_> = report["findings"]
         .as_array()

@@ -1,0 +1,17 @@
+{
+  "api_version": 2,
+  "exposures": [
+    {
+      "call": "00000000-0000-0000-0000-000000000007",
+      "session": "00000000-0000-0000-0000-000000000004",
+      "turn": "00000000-0000-0000-0000-000000000005",
+      "client": "claude_code",
+      "started_at": 1800000000000,
+      "field": "tool_output",
+      "kind": "anthropic_key",
+      "hint": "sk-ant-…a1b2",
+      "fingerprint": "309f8cc369d11252",
+      "count": 1
+    }
+  ]
+}

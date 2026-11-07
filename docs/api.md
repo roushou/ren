@@ -20,8 +20,10 @@ tgv tail
 tgv tail --json
 ```
 
-Commands emit JSON: `history` a list of calls, `sessions` a list of sessions,
-`timeline` a page `{calls, next}`, `turns` a session's turns, `report` a
+Commands emit the same JSON the read API answers (without `api_version`),
+whether they read this host's storage or a gateway: `history` and `timeline` a
+page `{calls, next}`, `sessions` `{sessions}`, `turns` `{turns}` for a session,
+`exposures` `{exposures}`, `report` a
 session's [context and cost report](#session-report), `turn` and
 `activity` what a turn or a call did (see [activity](#activity)), `search`
 matching prompts, replies, and tool calls (see [search](#search)), and `inspect`
@@ -196,8 +198,10 @@ stderr.
 
 ## Endpoints
 
-Every JSON body carries `"api_version": 1`; errors are `{api_version, error}` with
-`error` one of `not_found`, `invalid_query`, `busy`, or `unavailable`.
+Every JSON body carries `"api_version": 2`; errors are `{api_version, error}` with
+`error` one of `not_found`, `invalid_query`, `busy`, or `unavailable`. An
+identifier that is not one is `not_found`; an unknown query parameter is
+`invalid_query`. The control API (`/control/v1`) keeps its own version, 1.
 A body export answers with the raw bytes (`application/octet-stream`) only when
 the body was stored whole; otherwise `not_found`. At most two run at once
 (`busy`), and the UI does not forward it.

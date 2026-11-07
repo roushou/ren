@@ -20,7 +20,7 @@ import {
 } from './decode.ts';
 
 /** The management API version this UI understands. */
-export const API_VERSION = 1;
+export const API_VERSION = 2;
 
 // Identities. TGV's own ids are UUIDs; native client ids keep separate types.
 export type CallId = Brand<string, 'CallId'>;

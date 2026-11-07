@@ -56,22 +56,7 @@ impl McpCmd {
 
     async fn execute(gateway: &Management, pending: PendingCall) -> Value {
         let outcome = match &pending.tool {
-            ToolCall::SearchHistory(query) => gateway.search_history(query).await.map(Ok),
-            ToolCall::SearchCalls(query) => gateway.search(query).await.map(Ok),
-            ToolCall::ListSessions(limit) => gateway.sessions(*limit).await.map(Ok),
-            ToolCall::SessionCalls {
-                session,
-                limit,
-                after,
-            } => gateway
-                .session_calls(*session, *limit, after.as_ref())
-                .await
-                .map(Ok),
-            ToolCall::SessionReport(session) => gateway.report(*session).await.map(Ok),
-            ToolCall::ListTurns { session, limit } => gateway.turns(*session, *limit).await.map(Ok),
-            ToolCall::GetTurn(turn) => gateway.turn(*turn).await.map(Ok),
-            ToolCall::GetCall(call) => gateway.call(*call).await.map(Ok),
-            ToolCall::GetCallActivity(call) => gateway.activity(*call).await.map(Ok),
+            ToolCall::Read(request) => gateway.serve(request).await.map(Ok),
             ToolCall::GetBody {
                 call,
                 direction,
@@ -83,8 +68,6 @@ impl McpCmd {
                     .await
                     .map(|preview| BodyExcerpt::new(preview, budget).map(BodyExcerpt::into_value))
             }
-            ToolCall::Usage(range) => gateway.usage(*range).await.map(Ok),
-            ToolCall::ListExposures(query) => gateway.exposures(query).await.map(Ok),
         };
         pending.answer(match outcome {
             Ok(Ok(data)) => ToolOutcome::Data(data),

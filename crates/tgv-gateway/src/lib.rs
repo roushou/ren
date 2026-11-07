@@ -57,7 +57,7 @@ mod route;
 pub mod upstream;
 mod websocket;
 
-pub use api::{ControlOptions, ControlOptionsError, ControlToken, ManagementSetup};
+pub use api::{ApiRead, ControlOptions, ControlOptionsError, ControlToken, ManagementSetup};
 pub use buffer::{BufferOptions, BufferOptionsError, BufferRefusal, RequestBuffer, RequestLimits};
 pub use build::Build;
 pub use headers::HeaderPolicy;

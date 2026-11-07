@@ -81,10 +81,14 @@ async fn history_keeps_direct_json_and_missing_ids_fail_on_stderr() {
         .await
         .unwrap();
     store.close().await.unwrap();
-    for name in ["history", "sessions"] {
+    // Each prints the read API's body for the same read.
+    for (name, empty) in [
+        ("history", serde_json::json!({ "calls": [], "next": null })),
+        ("sessions", serde_json::json!({ "sessions": [] })),
+    ] {
         let output = cli(&["--data-dir", temp.path().to_str().unwrap(), name]);
         success(&output);
-        assert_eq!(json(&output), serde_json::json!([]));
+        assert_eq!(json(&output), empty);
         assert!(output.stderr.is_empty());
     }
     let output = cli(&[
@@ -150,7 +154,7 @@ async fn recorded_requests_flow_through_lists_inspection_pagination_and_private_
     let data = temp.path().to_str().unwrap();
     let output = cli(&["--data-dir", data, "history"]);
     success(&output);
-    let records = json(&output);
+    let records = json(&output)["calls"].clone();
     let stored = Reader::open(temp.path(), 1)
         .await
         .unwrap()
@@ -166,7 +170,7 @@ async fn recorded_requests_flow_through_lists_inspection_pagination_and_private_
     assert_eq!(detail["call"], records[0]);
     assert_eq!(detail["attempts"][0]["inspection"]["outcome"], "completed");
     let output = cli(&["--data-dir", data, "sessions"]);
-    let sessions = json(&output);
+    let sessions = json(&output)["sessions"].clone();
     let session = sessions[0]["id"].as_str().unwrap();
     let output = cli(&["--data-dir", data, "timeline", session, "--limit", "1"]);
     success(&output);
@@ -288,7 +292,7 @@ async fn history_through_a_gateway_prints_what_local_storage_prints() {
     let data = state.to_str().unwrap();
     for _ in 0..100 {
         let output = isolated(&home, &["--data-dir", data, "history"]);
-        if json(&output).as_array().unwrap().len() == 2 {
+        if json(&output)["calls"].as_array().unwrap().len() == 2 {
             break;
         }
         tokio::time::sleep(std::time::Duration::from_millis(20)).await;
@@ -308,11 +312,11 @@ async fn history_through_a_gateway_prints_what_local_storage_prints() {
         );
         json(&local)
     };
-    let calls = both(&["history"]);
+    let calls = both(&["history"])["calls"].clone();
     assert_eq!(calls.as_array().unwrap().len(), 2);
     let id = calls[0]["id"].as_str().unwrap().to_owned();
     both(&["history", "--limit", "1"]);
-    let sessions = both(&["sessions"]);
+    let sessions = both(&["sessions"])["sessions"].clone();
     let session = sessions[0]["id"].as_str().unwrap().to_owned();
     let page = both(&["timeline", &session, "--limit", "1"]);
     let after = page["next"].as_str().unwrap().to_owned();

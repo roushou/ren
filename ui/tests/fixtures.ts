@@ -170,5 +170,5 @@ export const storageFixture = (): Storage => ({
 });
 
 /** A JSON response in the daemon's versioned envelope. */
-export const versioned = (body: object, init?: ResponseInit, version: unknown = 1) =>
+export const versioned = (body: object, init?: ResponseInit, version: unknown = 2) =>
   Response.json({ api_version: version, ...body }, init);

@@ -1,0 +1,60 @@
+{
+  "api_version": 2,
+  "hits": [
+    {
+      "call": "00000000-0000-0000-0000-000000000007",
+      "session": "00000000-0000-0000-0000-000000000004",
+      "turn": "00000000-0000-0000-0000-000000000005",
+      "client": "claude_code",
+      "started_at": 1800000000000,
+      "field": "tool_output",
+      "snippet": "test «parser» ... FAILED\nK=«redacted: anthropic_key»"
+    },
+    {
+      "call": "00000000-0000-0000-0000-000000000007",
+      "session": "00000000-0000-0000-0000-000000000004",
+      "turn": "00000000-0000-0000-0000-000000000005",
+      "client": "claude_code",
+      "started_at": 1800000000000,
+      "field": "tool_input",
+      "snippet": "Bash cargo test «parser» {\"command\":\"cargo test «parser»\"}"
+    },
+    {
+      "call": "00000000-0000-0000-0000-000000000007",
+      "session": "00000000-0000-0000-0000-000000000004",
+      "turn": "00000000-0000-0000-0000-000000000005",
+      "client": "claude_code",
+      "started_at": 1800000000000,
+      "field": "reply",
+      "snippet": "Running the «parser» tests."
+    },
+    {
+      "call": "00000000-0000-0000-0000-000000000002",
+      "session": "00000000-0000-0000-0000-000000000004",
+      "turn": "00000000-0000-0000-0000-000000000005",
+      "client": "claude_code",
+      "started_at": 1800000000000,
+      "field": "tool_input",
+      "snippet": "Bash cargo test «parser» {\"command\":\"cargo test «parser»\"}"
+    },
+    {
+      "call": "00000000-0000-0000-0000-000000000002",
+      "session": "00000000-0000-0000-0000-000000000004",
+      "turn": "00000000-0000-0000-0000-000000000005",
+      "client": "claude_code",
+      "started_at": 1800000000000,
+      "field": "reply",
+      "snippet": "Running the «parser» tests."
+    },
+    {
+      "call": "00000000-0000-0000-0000-000000000002",
+      "session": "00000000-0000-0000-0000-000000000004",
+      "turn": "00000000-0000-0000-0000-000000000005",
+      "client": "claude_code",
+      "started_at": 1800000000000,
+      "field": "prompt",
+      "snippet": "Fix the «parser»"
+    }
+  ],
+  "indexed_calls": 2
+}

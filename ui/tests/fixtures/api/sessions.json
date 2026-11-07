@@ -1,0 +1,21 @@
+{
+  "api_version": 2,
+  "sessions": [
+    {
+      "id": "00000000-0000-0000-0000-000000000004",
+      "provider": "anthropic",
+      "source": "claude_code_headers",
+      "native_id": "00000000-0000-4000-8000-0000000000aa",
+      "first_seen": 1800000000000,
+      "last_seen": 1800000000000,
+      "call_count": 2,
+      "turn_count": 1,
+      "error_count": 0,
+      "tokens": {
+        "input": 6104,
+        "output": 60,
+        "cache_read": 6000
+      }
+    }
+  ]
+}

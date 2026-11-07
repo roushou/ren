@@ -61,13 +61,13 @@ test('gateway reads health and storage together and accept degraded recorder hea
 
 test('every response is version-checked and a mismatch is reported distinctly', async () => {
   const unversioned = async () => Response.json(healthFixture());
-  for (const fetcher of [2, null, '1']
+  for (const fetcher of [1, null, '2']
     .map((version) => async () => versioned(healthFixture(), undefined, version))
     .concat(unversioned)) {
     const result = await gatewaySnapshot(fetcher);
     assert.equal(result.value, null);
     assert.equal(result.error?.kind, 'incompatible');
-    assert.match(result.error?.message ?? '', /requires version 1/);
+    assert.match(result.error?.message ?? '', /requires version 2/);
   }
   // Error bodies (non-2xx) keep their status message instead.
   const busy = await recorderSnapshot(async () => versioned({ error: 'busy' }, { status: 503 }));

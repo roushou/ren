@@ -1,0 +1,37 @@
+{
+  "api_version": 2,
+  "totals": {
+    "calls": 2,
+    "errors": 0,
+    "tokens": {
+      "input": 6104,
+      "output": 60,
+      "cache_read": 6000
+    }
+  },
+  "hours": [
+    {
+      "start": 1800000000000,
+      "calls": 2,
+      "errors": 0,
+      "tokens": {
+        "input": 6104,
+        "output": 60,
+        "cache_read": 6000
+      }
+    }
+  ],
+  "models": [
+    {
+      "provider": "anthropic",
+      "model": "claude-test",
+      "calls": 2,
+      "errors": 0,
+      "tokens": {
+        "input": 6104,
+        "output": 60,
+        "cache_read": 6000
+      }
+    }
+  ]
+}

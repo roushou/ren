@@ -15,6 +15,7 @@ pub mod activity;
 pub mod backup;
 pub mod chunk;
 pub mod query;
+pub mod read;
 mod reader;
 pub mod search;
 pub mod view;

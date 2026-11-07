@@ -13,6 +13,7 @@ use anyhow::Result;
 use clap::Args;
 use std::{process::ExitCode, time::Duration};
 use tgv_recorder::Observation;
+use tgv_store::read::ReadRequest;
 
 /// Follow calls as they start and finish (`--json`: every observation).
 #[derive(Args)]
@@ -149,7 +150,7 @@ impl TailCmd {
 
     /// The call's view, if it can be read; a tail line never fails on it.
     async fn summary(gateway: &Management, call: tgv_recorder::id::CallId) -> Option<CallSummary> {
-        let detail = gateway.call(call).await.ok()?;
+        let detail = gateway.serve(&ReadRequest::Call(call)).await.ok()?;
         serde_json::from_value(detail.get("call")?.clone()).ok()
     }
 }

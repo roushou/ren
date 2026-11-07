@@ -580,7 +580,9 @@ mod tests {
                 r#"{{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{{"name":"list_sessions","arguments":{{"limit":5}},{MODERN_META}}}}}"#
             ),
         );
-        assert!(matches!(pending.tool, ToolCall::ListSessions(limit) if limit.get() == 5));
+        assert!(
+            matches!(pending.tool, ToolCall::Read(tgv_store::read::ReadRequest::Sessions(limit)) if limit.get() == 5)
+        );
         let answer = pending.answer(ToolOutcome::Data(json!([{ "id": "s" }])));
         assert_eq!(answer["id"], 7);
         assert_eq!(answer["result"]["resultType"], "complete");
