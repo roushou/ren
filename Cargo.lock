@@ -2487,9 +2487,11 @@ dependencies = [
 name = "tgv-recorder"
 version = "0.1.0"
 dependencies = [
+ "blake3",
  "bytes",
  "fastcdc",
  "proptest",
+ "regex",
  "serde",
  "serde_json",
  "serde_with",
@@ -2538,7 +2540,6 @@ version = "0.1.0"
 dependencies = [
  "blake3",
  "bytes",
- "regex",
  "serde",
  "serde_json",
  "serde_with",

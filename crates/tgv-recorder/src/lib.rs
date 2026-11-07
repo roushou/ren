@@ -26,6 +26,7 @@ pub mod metrics;
 pub mod options;
 pub mod retention;
 pub mod routing;
+pub mod secrets;
 mod sink;
 mod tap;
 mod task;

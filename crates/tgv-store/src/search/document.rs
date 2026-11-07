@@ -2,11 +2,11 @@
 //! it carried.
 
 use crate::activity::{ActivityBudget, Excerpt, ReadCall};
-use crate::secrets::{Detection, SecretKind, SecretScanner};
 use serde::Serialize;
 use serde_with::{DeserializeFromStr, SerializeDisplay};
 use strum::{Display, EnumString, IntoStaticStr, VariantArray};
 use tgv_harness::Harness;
+use tgv_recorder::secrets::{Detection, SecretKind, SecretScanner};
 use tgv_recorder::{
     id::{CallId, SessionId, TurnId},
     time::UnixMillis,

@@ -8,13 +8,13 @@
 //! documented thresholds, never causes: TGV cannot see the provider's cache.
 
 use crate::search::{ExposureView, SearchField};
-use crate::secrets::SecretKind;
 use crate::view::CallView;
 use serde::{Serialize, Serializer};
 use serde_with::{DeserializeFromStr, SerializeDisplay};
 use strum::{Display, EnumString, IntoStaticStr, VariantArray};
 use tgv_protocol::inspect::InputAccounting;
 use tgv_protocol::label::Stored;
+use tgv_recorder::secrets::SecretKind;
 use tgv_recorder::{
     id::{CallId, SessionId, TurnId},
     time::UnixMillis,

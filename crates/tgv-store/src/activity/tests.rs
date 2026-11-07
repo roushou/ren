@@ -133,7 +133,7 @@ fn a_turn_joins_prompt_tool_calls_results_and_effects() {
         vec![first, second, third],
         0,
         ActivityBudget::DEFAULT,
-        &crate::secrets::SecretScanner::new().unwrap(),
+        &tgv_recorder::secrets::SecretScanner::new().unwrap(),
     );
     assert_eq!(turn.client, Some(Harness::ClaudeCode));
     assert_eq!(
@@ -205,7 +205,7 @@ fn codex_exit_codes_and_unattributed_calls() {
         vec![codex, answer],
         3,
         ActivityBudget::DEFAULT,
-        &crate::secrets::SecretScanner::new().unwrap(),
+        &tgv_recorder::secrets::SecretScanner::new().unwrap(),
     );
     assert_eq!(turn.commands, ["make"]);
     assert_eq!(turn.failed_tool_calls, 1);
@@ -258,7 +258,7 @@ fn a_turn_with_a_call_still_open_has_not_ended() {
             response: ResponseActivity::default(),
         }
     };
-    let scanner = crate::secrets::SecretScanner::new().unwrap();
+    let scanner = tgv_recorder::secrets::SecretScanner::new().unwrap();
     let assemble = |calls| {
         TurnActivity::assemble(head(), calls, 0, ActivityBudget::DEFAULT, &scanner).ended_at
     };
@@ -422,7 +422,7 @@ mod report {
             vec![first, second],
             0,
             ActivityBudget::DEFAULT,
-            &crate::secrets::SecretScanner::new().unwrap(),
+            &tgv_recorder::secrets::SecretScanner::new().unwrap(),
         );
         let json = serde_json::to_value(&turn.findings).unwrap();
         let first_call = CallId::restore(id(1)).to_string();
@@ -473,7 +473,7 @@ fn secrets_a_turn_carried_are_findings_without_the_secret() {
         },
         response: ResponseActivity::default(),
     };
-    let scanner = crate::secrets::SecretScanner::new().unwrap();
+    let scanner = tgv_recorder::secrets::SecretScanner::new().unwrap();
     let documents = call.documents(64, &scanner);
     assert_eq!(documents.exposures.len(), 2);
     assert!(

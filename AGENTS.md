@@ -193,7 +193,10 @@ dependencies under "Crates" below. Read the code for current module ownership.
   (`time`), terminals and other recorded facts (`capture`), routing facts and
   `OperatorRevision` (`routing`), batches (`batch`), the content-defined
   `Chunker` (`chunk`), the stored inspection format (`inspection`), and
-  `RetentionPolicy` (`retention`). It has no database, HTTP, or CLI dependency.
+  `RetentionPolicy` (`retention`), and credential detection and redaction
+  (`secrets`: `SecretScanner`, well-known formats only, never storing a secret),
+  so text is sanitized before anything is persisted. It has no database, HTTP,
+  or CLI dependency.
 - `crates/tgv-store`: persistence (SQLx, SQLite WAL), with `Store`, the single
   writer, as its primary type; `Reader` is its read-only pool and `Backup` the
   online backup, which holds the `SweepGate`. `tgv.sqlite3` holds the
@@ -203,10 +206,7 @@ dependencies under "Crates" below. Read the code for current module ownership.
   activity assembled from stored bodies at read time (`activity`, with the
   session context and cost report in `activity::report`), the full-text search
   index (`search`: `SearchIndex` on the derived, rebuildable `search.sqlite3`,
-  filled by `Indexer` passes, its only writer), credential detection and
-  redaction (`secrets`: `SecretScanner`, well-known formats only, never storing a
-  secret), and
-  implements the recorder's `RecordSink`. It owns the versioned migrations for
+  filled by `Indexer` passes, its only writer), and implements the recorder's `RecordSink`. It owns the versioned migrations for
   `tgv.sqlite3` (`crates/tgv-store/migrations`); never edit one that has
   shipped. Its tests include `tests/recorder.rs`, the recorder against the real
   store.

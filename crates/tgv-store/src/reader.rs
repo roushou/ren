@@ -7,7 +7,6 @@ use crate::activity::{
     report::SessionReport,
 };
 use crate::search::{CallDocuments, IndexCursor, IndexedPrompt, SearchIndex};
-use crate::secrets::SecretScanner;
 use crate::{
     Store, StoreError,
     query::{CallQuery, Cursor, KindFilter, PageLimit, StatusFilter, TimeRange, ToolFilter},
@@ -39,6 +38,7 @@ use tgv_protocol::{
 };
 use tgv_recorder::Observation;
 use tgv_recorder::batch::BodyKey;
+use tgv_recorder::secrets::SecretScanner;
 use tgv_recorder::time::UnixMillis;
 use tgv_recorder::{
     capture::{AttemptTerminal, CallState, TerminalClass},

@@ -297,7 +297,7 @@ fn the_index_budget_is_its_live_size_in_proportion_to_kept_calls() {
 
 #[tokio::test]
 async fn exposures_are_listed_newest_first_and_removed_with_their_call() {
-    use crate::secrets::SecretKind;
+    use tgv_recorder::secrets::SecretKind;
     let dir = tempfile::tempdir().unwrap();
     let index = SearchIndex::open(dir.path()).await.unwrap();
     let exposure = |field| Exposure {

@@ -2,11 +2,11 @@
 
 use super::SearchField;
 use crate::query::{PageLimit, TimeRange};
-use crate::secrets::SecretKind;
 use serde::Serialize;
 use std::fmt;
 use tgv_harness::Harness;
 use tgv_protocol::label::Stored;
+use tgv_recorder::secrets::SecretKind;
 use tgv_recorder::{
     id::{CallId, SessionId, TurnId},
     time::UnixMillis,

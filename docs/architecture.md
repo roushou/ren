@@ -521,7 +521,7 @@ still has, so stale rows of just-deleted calls never cause extra deletions. Sear
 become quoted FTS5 strings joined by `AND`, so input never reaches the query
 grammar.
 
-`SecretScanner` (`tgv-store::secrets`) finds credentials in fixed, documented
+`SecretScanner` (`tgv-recorder::secrets`) finds credentials in fixed, documented
 formats with linear-time regular expressions, never by entropy. The indexer scans
 each call's raw newest user input, reply, and tool input and output, redacts what
 it finds before indexing, and stores each exposure's kind, field, masked hint, and

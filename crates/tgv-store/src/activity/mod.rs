@@ -9,7 +9,6 @@
 
 pub mod report;
 
-use crate::secrets::SecretScanner;
 use crate::view::{CallView, TokenTotals};
 use report::{CallMetrics, Finding, FindingKind, LargeToolOutput, RepeatedFailure, SecretExposure};
 use serde::Serialize;
@@ -24,6 +23,7 @@ use tgv_protocol::{
     },
     label::Stored,
 };
+use tgv_recorder::secrets::SecretScanner;
 use tgv_recorder::{
     id::{CallId, SessionId, TurnId},
     time::UnixMillis,
