@@ -21,7 +21,8 @@ backed up, and pruned.
   start, response head, and finish) before forwarding starts, so terminals are never
   dropped for queue pressure. If even that capacity is unavailable, the call is
   unrecorded and a separate counter increments. Omitted body bytes are counted by
-  reason: `policy_limit`, `queue_bytes`, `queue_slots`, and `storage_failure`.
+  reason: `policy_limit`, `queue_bytes`, `queue_slots`, `storage_failure`, and
+  `unattributed` (WebSocket messages while no call is open).
   Offsets and body endings (`ended`, `unfinished`, `open`) expose gaps.
 - `GET /health` reports the queue, omissions, storage and retention errors, commit
   latency and lag, deduplication, pruning, and recovered-call counters. Storage or

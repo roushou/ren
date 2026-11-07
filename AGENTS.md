@@ -267,8 +267,8 @@ dependencies under "Crates" below. Read the code for current module ownership.
   running daemon only between calls, paused, and checks the new build, and with
   `--ui-https-port` it builds and deploys the UI as `tgv-ui.service`. It is a
   shell: it runs external commands and reads configuration through
-  `tgv-daemon`'s `Config`. Its parsing of Tailscale status and of the installed
-  `tgv`'s output (`daemon`), its UI unit rendering (`ui`), its saved flags
+  `tgv-daemon`'s `Config`. Its parsing of Tailscale status (`tailscale`) and of the
+  installed `tgv`'s output (`daemon`), its UI unit rendering (`ui`), its saved flags
   (`publish`), and the upgrade's wait, pause, and build-check decisions are
   unit-tested; the commands it runs are exercised only by running it.
 - `deploy`: systemd units. `scripts`: manual smoke tests for Pi, systemd, and launchd.

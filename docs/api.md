@@ -29,9 +29,10 @@ storage, as does having no gateway at all. A remote read needs the daemon
 running.
 
 `tgv tail` follows the [live feed](#live-feed) of the daemon the CLI targets
-(its local listener, or the gateway) and prints a line as each call starts and
-finishes: time (UTC), call, provider, model, outcome, status, tokens, and
-duration. Attempt and channel records are left out; `--json` prints every
+(its local listener, or the gateway) and prints a line as each call starts (provider, endpoint, and session) and
+finishes (model, outcome, status, tokens, and duration), and when an operator
+changes the operator state. Each line starts with the time (UTC) and the call.
+Attempt and channel records are left out; `--json` prints every
 observation instead, one JSON object per line. It starts from now. When the feed
 ends, for example on a daemon restart, it reconnects every two seconds from the
 last observation it printed, so nothing in between is skipped. It stops on
@@ -65,7 +66,7 @@ start time and call ID; refresh from the beginning to see late arrivals that sor
 before a cursor. Limits are 1–1000. Recording is asynchronous, so new data appears
 shortly after forwarding, typically within the 50 ms commit interval. Busy readers
 return `503` without blocking forwarding. Management responses carry
-`Cache-Control: no-store`. Full body export is CLI-only. The API shares the
+`Cache-Control: no-store`. The UI does not relay full body exports; use `tgv inspect` or the export endpoint. The API shares the
 listener's loopback/Tailscale access boundary and has no separate login or
 cross-origin browser access enabled.
 
@@ -102,14 +103,15 @@ appear only after that package is rebuilt.
 
 ## Live feed
 
-`GET /api/live` streams `observation` events, one per committed lifecycle record
+`GET /api/live` streams `observation` events, one per committed observation
 (`call_opened`, `attempt_started`, `response_head`, `attempt_finished`,
-`call_finished`, `call_recovered`). Each event's `id` is its sequence number. Without
+`call_finished`, `call_recovered`, `channel_closed`, `operator_action`). Each event's `id` is its sequence number. Without
 `after`, only new observations are sent; with `after` (or a `Last-Event-ID` header,
 which browsers send on reconnect) the feed first replays retained observations after
 that position. A `gone` event means the position was removed by retention: reload
 and reconnect without `after`. A `lagged` event means the subscriber fell behind
-and the feed is catching up from storage. The stream ends when the daemon shuts down.
+and the feed is catching up from storage. An `error` event means the daemon could not read its store; the feed then ends.
+The stream also ends when the daemon shuts down.
 Observations describe what was recorded, not model or tool state.
 
 ## Call search

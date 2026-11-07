@@ -69,7 +69,7 @@ and points to `tgv init`; no command prompts on its own.
 
 A selected gateway skips local history/upstream checks; remote storage is
 queried through the API. History commands (`history`, `sessions`, `timeline`,
-`inspect`) and `tgv control` use the same gateway; `--config` or `--data-dir`
+`inspect`), `tgv tail`, and `tgv control` use the same gateway; `--config` or `--data-dir`
 without `--gateway` keeps them on this host (see [History](api.md#cli) and
 [operator controls](policy.md#operator-controls)).
 Root URLs cannot contain credentials, queries, fragments, or provider suffixes;

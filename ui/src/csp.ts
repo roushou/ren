@@ -7,7 +7,8 @@ type CspDirectives = NonNullable<
 
 /**
  * The UI's Content Security Policy, which SvelteKit sends with a per-response
- * nonce. Everything is same-origin, and no inline script or style runs.
+ * nonce. Everything is same-origin; no inline script runs without the
+ * per-response nonce, and no inline style runs.
  *
  * The one exception is SvelteKit's route announcer, the visually hidden
  * `<div id="svelte-announcer" style="…">` it renders for screen readers.

@@ -201,7 +201,7 @@ xtask        ─► tgv-daemon, tgv-harness   (repository tasks, unpublished)
 | `tgv-gateway`                              | `Gateway`                                                                     | all HTTP routes: forwarding, the read API and `/api/live`, and authenticated controls and backup; route table, header policy, request buffering, upstream entries, the `Upstream` seam and Reqwest implementation, `HttpAttempt`, `WsChannel`, retry facts, policy, `Controls`, `OperatorState`, the running-call registry, ingress and the shutdown drain, the `Build` `/health` reports |
 | `tgv-daemon`                               | `Daemon`                                                                      | `Config` → `RuntimeConfig`; resource wiring, listener binding, control-token file, and lifecycle; the system clock and random IDs; the two task spawns                                                                                                                                                                                                                                    |
 | `tgv-cli` (package `tgv-rs`, binary `tgv`) | `Cli`                                                                         | capturing `HostEnv` in `main`, recording the source revision (`build.rs`), commands, gateway choice and `client.toml`, history and controls on this host or through a gateway's APIs (`management`), `tgv tail` (`tail`), doctor and its build comparison, service definitions                                                                                                            |
-| `xtask` (unpublished, `cargo xtask`)       | `Xtask`                                                                       | `install-vps`: installing or upgrading TGV from a checkout as a systemd user service between calls, published with Tailscale Serve                                                                                                                                                                                                                                                        |
+| `xtask` (unpublished, `cargo xtask`)       | `Xtask`                                                                       | `install-vps`: installing or upgrading TGV from a checkout as a systemd user service between calls, published with Tailscale Serve, and with `--ui-https-port` the UI as `tgv-ui.service`; its publishing flags are saved for later runs                                                                                                                                                  |
 
 - **Purity.** `tgv-protocol`'s manifest names only pure dependencies (`bytes`,
   `serde`, `serde_json`, `http` types, and the decompressors), and a source test
@@ -281,8 +281,8 @@ when the configuration loads.
 ### Upstream entries
 
 ```rust
-pub struct UpstreamEntry { id: UpstreamId, provider: Provider, base: SecureBaseUrl, auth: UpstreamAuth }
-pub enum UpstreamAuth { ClientOwned, OperatorKey(SecretRef) }   // never a subscription token
+pub struct UpstreamEntry { id: UpstreamId, provider: Provider, url: UpstreamUrl, auth: UpstreamAuth }
+pub enum UpstreamAuth { ClientOwned, OperatorKey(OperatorKey) }   // never a subscription token
 ```
 
 `UpstreamTable` holds one client-credential entry per provider (named after it)
@@ -314,10 +314,10 @@ A transform step is `set_header`, `remove_header`, `json_set`, or `json_remove`
 Retry eligibility (`retry`) is a pure function of three separate facts:
 
 ```rust
-pub enum Transport {                       // what happened on the wire
-    NotSent(SendFailure),                  // connect/DNS/TLS error, HTTP/2 REFUSED_STREAM
-    AcceptanceUnknown(UnknownCause),       // write on a reused connection failed, header timeout
-    Responded,                             // status line received
+pub enum WireFact {                        // what happened on the wire, from a SendFailure or a status
+    NotAccepted,                           // connect/DNS/TLS error, HTTP/2 REFUSED_STREAM
+    AcceptanceUnknown,                     // write on a reused connection failed, header timeout
+    Responded { status: u16 },             // status line received
 }
 pub enum Delivery { Nothing, Started }     // has anything reached the client?
 ```
@@ -578,8 +578,9 @@ state; it is logged, not recorded in `operator_actions`.
   Loopback alone is not enough, because Serve forwards tagged devices and Funnel
   traffic to loopback without identity headers.
 - **Configuration.** A raw TOML `Config` becomes a `RuntimeConfig` through
-  `TryFrom`, with a revision. One `SecureBaseUrl` rule is shared by the gateway
-  endpoint and the upstreams. The host environment (`HostEnv`) is read once, in
+  `TryFrom`, with a revision. The gateway endpoint (`GatewayEndpoint`) and the
+  upstreams (`UpstreamUrl`) both require HTTPS, or HTTP on loopback, without
+  credentials, queries, or fragments. The host environment (`HostEnv`) is read once, in
   `main`.
 - **Redaction.** One allowlist decides which header names are stored. Header
   values are never stored, except allowlisted correlation UUIDs.

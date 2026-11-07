@@ -20,7 +20,7 @@ use tgv_harness::host::HostEnv;
 
 #[derive(Parser)]
 // The program is `tgv`, whatever the package is called: clap would otherwise
-// print the package name (`tgv-cli`) in `--version`.
+// print the package name (`tgv-rs`) in `--version`.
 #[command(
     name = "tgv",
     version = Cli::VERSION,

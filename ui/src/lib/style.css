@@ -184,8 +184,7 @@ pre {
 .muted {
   color: var(--muted);
 }
-.warning,
-.capture-note {
+.warning {
   color: var(--warning);
 }
 .numeric {
@@ -297,10 +296,6 @@ pre {
   align-items: center;
   gap: 9px;
   min-width: 0;
-}
-.heading-id {
-  color: var(--accent-foreground);
-  font-size: 11px;
 }
 .page-actions {
   display: flex;
@@ -742,11 +737,6 @@ tr.selected .row-link {
   height: 15px;
   font-size: 10px;
 }
-.tool-summary {
-  display: flex;
-  gap: 4px;
-  align-items: center;
-}
 .table-footer {
   display: flex;
   align-items: center;
@@ -846,24 +836,6 @@ tr.selected .row-link {
   flex: 1;
   min-width: 150px;
 }
-.list-toolbar {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
-  padding: 9px 12px;
-  border-bottom: 1px solid var(--line);
-}
-.list-toolbar h2 {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-}
-.list-toolbar .search-input {
-  min-width: 150px;
-  max-width: 300px;
-}
 .count-pill {
   display: inline-flex;
   align-items: center;
@@ -942,25 +914,6 @@ tr.selected .row-link {
   margin: 0 12px 8px;
   font-size: 11px;
   flex-shrink: 0;
-}
-.drawer-status {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 5px 14px;
-  padding: 8px 12px;
-  border-top: 1px solid var(--line);
-  border-bottom: 1px solid var(--line);
-  font-size: 11px;
-  flex-shrink: 0;
-}
-.drawer-status > span {
-  display: inline-flex;
-  align-items: baseline;
-  gap: 6px;
-}
-.drawer-status strong {
-  font-family: 'SFMono-Regular', Consolas, monospace;
-  font-weight: 400;
 }
 .inspector-notice {
   font-size: 11px;
@@ -1189,10 +1142,6 @@ tr.selected .row-link {
   color: var(--muted);
   font-size: 11px;
   padding: 8px 0 0;
-}
-.payload-size {
-  margin-left: auto;
-  font-family: 'SFMono-Regular', Consolas, monospace;
 }
 .payload-loading {
   display: flex;
@@ -1461,9 +1410,6 @@ tr.selected .row-link {
   background: var(--live-soft);
   color: var(--live);
 }
-.chip .chip-key {
-  color: var(--muted);
-}
 .chip.mono,
 .chip-row .mono {
   font-family: 'SFMono-Regular', Consolas, monospace;
@@ -1483,9 +1429,6 @@ tr.selected .row-link {
 }
 tr.call-row {
   cursor: pointer;
-}
-.message-icon {
-  display: inline-flex;
 }
 .statusline {
   display: flex;
@@ -1604,9 +1547,6 @@ tr.call-row {
   .inspector-session {
     margin-bottom: 4px;
   }
-  .drawer-status {
-    padding: 5px 10px;
-  }
   .inspector-footer {
     padding: 5px 10px;
   }
@@ -1723,10 +1663,6 @@ tr.call-row {
   }
   .table-footer {
     align-items: start;
-  }
-  .list-toolbar .search-input {
-    max-width: 100%;
-    flex: 1;
   }
 }
 @media (pointer: coarse) {
@@ -2019,7 +1955,6 @@ td.zero {
   flex-shrink: 0;
   background: var(--surface);
 }
-.usage-controls,
 .overview-health {
   display: flex;
   flex-wrap: wrap;

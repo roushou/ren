@@ -16,8 +16,12 @@ Pages: Overview (`/`: a health line, calls in flight and sessions active in the 
 Traffic (`/traffic`), Sessions (`/sessions`, `/sessions/:id`), Usage
 (`/usage`: calls, errors, and tokens over the last day by hour, the last week, or all
 retained calls by local day, by model, and the busiest sessions), and Recorder
-(`/recorder`). On Traffic and a session page, `j` and `k` select the next and previous
-call. The selected call (`?call=`) and the filters live in the URL,
+(`/recorder`). The bar under the tabs shows each page's scope and the controls that
+change it, such as Traffic's client, session, time, and model-calls-only narrowing;
+when they don't fit on one line they fold behind a **Scope** button. Traffic shows
+model calls only by default, hiding token counts, model listings, and WebSocket
+handshakes until that switch is off. On Traffic and a session page, `j` and `k` select
+the next and previous call, `/` focuses search, and `Escape` closes the inspector. The selected call (`?call=`) and the filters live in the URL,
 so links, reloads, and Back/Forward work. With **Live updates** on, the UI follows the
 daemon's `/api/live` feed and refreshes when calls change. The UI requires management
 API version 1 and shows an explicit mismatch error for any other version.
