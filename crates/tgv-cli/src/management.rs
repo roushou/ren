@@ -16,6 +16,7 @@ use tgv_harness::{endpoint::GatewayEndpoint, host::HostEnv};
 use tgv_protocol::direction::Direction;
 use tgv_recorder::id::{CallId, SessionId, TurnId};
 use tgv_store::query::{CallFilter, CallQuery, Cursor, PageLimit, TimeRange};
+use tgv_store::search::SearchQuery;
 
 /// Where a history or control command acts.
 pub enum Target {
@@ -279,6 +280,33 @@ impl Management {
             self.read(&format!("/api/sessions/{session}/report"), &[])
                 .await?,
         ))
+    }
+
+    /// `GET /api/search`: matching documents, newest call first.
+    pub async fn search_history(&self, query: &SearchQuery) -> Result<Value, ManagementError> {
+        let mut params = vec![
+            ("q", query.terms.to_string()),
+            ("limit", query.limit.get().to_string()),
+        ];
+        let labels = [
+            ("session", query.session.map(|session| session.to_string())),
+            ("client", query.client.map(|client| client.to_string())),
+            ("field", query.field.map(|field| field.to_string())),
+            (
+                "from_ms",
+                query.time.from().map(|time| time.as_millis().to_string()),
+            ),
+            (
+                "until_ms",
+                query.time.until().map(|time| time.as_millis().to_string()),
+            ),
+        ];
+        params.extend(
+            labels
+                .into_iter()
+                .filter_map(|(name, value)| value.map(|value| (name, value))),
+        );
+        Ok(Value::Object(self.read("/api/search", &params).await?))
     }
 
     /// `GET /api/turns/{id}`: one turn's activity.

@@ -1089,6 +1089,38 @@ const turns = object<Turns>({
     }),
   ),
 });
+const searchFields = ['prompt', 'reply', 'tool_input', 'tool_output'] as const;
+export type SearchField = (typeof searchFields)[number];
+export const SEARCH_FIELDS = searchFields;
+export interface SearchHit {
+  call: CallId;
+  session: SessionId | null;
+  turn: TurnId | null;
+  client: Stored<Harness> | null;
+  started_at: UnixMillis;
+  field: Stored<SearchField>;
+  /** The text around the match, matched terms marked «like this». */
+  snippet: string;
+}
+export interface SearchPage {
+  hits: SearchHit[];
+  /** Calls indexed so far; fewer than retained while the daemon backfills. */
+  indexed_calls: number;
+}
+const searchPage = object<SearchPage>({
+  hits: array(
+    object<SearchHit>({
+      call: CallId.decode,
+      session: nullable(SessionId.decode),
+      turn: nullable(TurnId.decode),
+      client: nullable(label(harnesses)),
+      started_at: millis,
+      field: label(searchFields),
+      snippet: string,
+    }),
+  ),
+  indexed_calls: count,
+});
 const sessionReport = object<SessionReport>({
   session: SessionId.decode,
   totals: object<ReportTotals>({
@@ -1186,6 +1218,10 @@ export class ManagementApi {
   /** What one turn did, read from its calls' bodies. */
   turn(id: TurnId, signal?: AbortSignal): Promise<TurnActivity> {
     return this.#read(`/api/turns/${id}`, turnActivity, signal);
+  }
+  /** Full-text search: `q`, and optionally `field`, `session`, `client`, `limit`. */
+  search(query: URLSearchParams, signal?: AbortSignal): Promise<SearchPage> {
+    return this.#read(`/api/search?${query}`, searchPage, signal);
   }
   /** What one call's bodies show. */
   callActivity(id: CallId, signal?: AbortSignal): Promise<CallActivity> {

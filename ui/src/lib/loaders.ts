@@ -1,11 +1,14 @@
 import {
   CallId,
   ManagementApi,
+  SEARCH_FIELDS,
   type CallView,
   type Health,
   type Metrics,
   type PageCursor,
   type SessionId,
+  type SearchField,
+  type SearchPage,
   type SessionReport,
   type SessionView,
   type Storage,
@@ -219,4 +222,28 @@ export function reportSnapshot(fetcher: typeof fetch, sessionId: SessionId) {
 export function turnSnapshot(fetcher: typeof fetch, turnId: TurnId) {
   const api = new ManagementApi(fetcher);
   return readSnapshot(`/turns/${turnId}`, () => api.turn(turnId));
+}
+
+export interface SearchData {
+  /** The text searched for; empty before a search. */
+  q: string;
+  field: SearchField | null;
+  /** Null before a search. */
+  page: SearchPage | null;
+}
+
+/** A search from the page's URL: `?q=` and optionally `?field=`. */
+export function searchSnapshot(fetcher: typeof fetch, url: URL) {
+  const api = new ManagementApi(fetcher);
+  const q = (url.searchParams.get('q') ?? '').trim();
+  const raw = url.searchParams.get('field');
+  const field = (SEARCH_FIELDS as readonly string[]).includes(raw ?? '')
+    ? (raw as SearchField)
+    : null;
+  return readSnapshot(`/search?${q}&${field ?? ''}`, async (): Promise<SearchData> => {
+    if (!q) return { q, field, page: null };
+    const query = new URLSearchParams({ q, limit: '50' });
+    if (field) query.set('field', field);
+    return { q, field, page: await api.search(query) };
+  });
 }

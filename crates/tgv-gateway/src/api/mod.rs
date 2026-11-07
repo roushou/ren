@@ -28,7 +28,7 @@ use axum::{
 };
 use http::{HeaderValue, StatusCode, header};
 use live::LiveFeed;
-use params::{RawCallQuery, RawLiveQuery, RawPageQuery, RawUsageQuery};
+use params::{RawCallQuery, RawLiveQuery, RawPageQuery, RawSearchQuery, RawUsageQuery};
 use preview::Previewer;
 use serde::Serialize;
 use std::sync::Arc;
@@ -44,6 +44,7 @@ use tgv_store::{
     activity::{ActivityBudget, TurnSummary},
     backup::Backup,
     query::{CallQuery, QueryError, TimeRange},
+    search::{SearchError, SearchIndex},
     view::{SessionView, StorageView},
 };
 use tokio::sync::Semaphore;
@@ -53,6 +54,8 @@ use tokio_util::sync::CancellationToken;
 /// The host opens storage and supplies the token; the gateway owns HTTP handling.
 pub struct ManagementSetup {
     pub reader: Reader,
+    /// The full-text index the daemon's indexer fills.
+    pub search: SearchIndex,
     pub backup: Backup,
     pub retention: RetentionPolicy,
     pub control: ControlOptions,
@@ -61,9 +64,18 @@ pub struct ManagementSetup {
     pub build: Build,
 }
 
+/// What the read API reads and reports, from the management setup.
+pub(crate) struct ReadSources {
+    pub reader: Reader,
+    pub search: SearchIndex,
+    pub retention: RetentionPolicy,
+    pub build: Build,
+}
+
 /// What the read API reads from. It never writes.
 pub(crate) struct ApiState {
     reader: Reader,
+    search: SearchIndex,
     recorder: Recorder,
     controls: Arc<Controls>,
     clock: Arc<dyn Clock>,
@@ -154,6 +166,8 @@ enum ApiError {
     NotFound,
     #[error(transparent)]
     Query(#[from] QueryError),
+    #[error(transparent)]
+    Search(#[from] SearchError),
     #[error("too many concurrent reads")]
     Busy,
     #[error("store unavailable: {0}")]
@@ -180,7 +194,7 @@ impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         let (status, error) = match &self {
             Self::NotFound => (StatusCode::NOT_FOUND, ErrorCode::NotFound),
-            Self::Query(_) => (StatusCode::BAD_REQUEST, ErrorCode::InvalidQuery),
+            Self::Query(_) | Self::Search(_) => (StatusCode::BAD_REQUEST, ErrorCode::InvalidQuery),
             Self::Busy => (StatusCode::SERVICE_UNAVAILABLE, ErrorCode::Busy),
             Self::Store(error) => {
                 tracing::warn!(%error, "management query failed");
@@ -200,16 +214,21 @@ impl ApiState {
     const EXPORT_PERMITS: usize = 2;
 
     pub fn new(
-        reader: Reader,
+        sources: ReadSources,
         recorder: Recorder,
         controls: Arc<Controls>,
         clock: Arc<dyn Clock>,
-        retention: RetentionPolicy,
-        build: Build,
         shutdown: CancellationToken,
     ) -> Self {
+        let ReadSources {
+            reader,
+            search,
+            retention,
+            build,
+        } = sources;
         Self {
             reader,
+            search,
             recorder,
             controls,
             clock,
@@ -236,6 +255,7 @@ impl ApiState {
             .route("/api/sessions/{id}/turns", get(Self::session_turns))
             .route("/api/sessions/{id}/report", get(Self::session_report))
             .route("/api/turns/{id}", get(Self::turn))
+            .route("/api/search", get(Self::search))
             .route("/api/calls/{id}/activity", get(Self::call_activity))
             .route("/api/live", get(Self::live))
             .route("/health", get(Self::health))
@@ -428,6 +448,16 @@ impl ApiState {
         Path(id): Path<SessionId>,
     ) -> Result<Response, ApiError> {
         Ok(Self::versioned(state.reader.session_report(id).await?).into_response())
+    }
+
+    /// Full-text search over indexed prompts, replies, and tool input and
+    /// output, newest call first.
+    async fn search(
+        State(state): State<Arc<Self>>,
+        Query(raw): Query<RawSearchQuery>,
+    ) -> Result<Response, ApiError> {
+        let query = raw.parse()?;
+        Ok(Self::versioned(state.search.search(&query).await?).into_response())
     }
 
     /// One turn's activity, read from its calls' bodies.

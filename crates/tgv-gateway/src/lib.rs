@@ -71,7 +71,7 @@ pub use upstream::{
 pub use websocket::{WebSocketMode, WebSocketOptions, WebSocketOptionsError};
 
 use crate::{
-    api::{ApiState, ControlApi},
+    api::{ApiState, ControlApi, ReadSources},
     attempt::{AttemptEnd, Canceller, EndKind, HttpEvent, SendFailure},
     control::{Cancel, Controls},
     policy::{Admission, CallFacts, CallPlan, Policy, Rejection, RequestJson, StepRecord},
@@ -376,12 +376,15 @@ impl<U: Upstream> Gateway<U> {
     /// All HTTP routes. Tests can drive this same router without a connection.
     pub fn router(self: Arc<Self>, management: ManagementSetup) -> Router {
         let api = ApiState::new(
-            management.reader,
+            ReadSources {
+                reader: management.reader,
+                search: management.search,
+                retention: management.retention,
+                build: management.build,
+            },
             self.recorder.clone(),
             self.controls.clone(),
             self.clock.clone(),
-            management.retention,
-            management.build,
             self.shutdown.drain_token(),
         );
         let control = ControlApi::new(

@@ -39,7 +39,9 @@
               ? 'report'
               : page.route.id === '/turns/[id]'
                 ? 'turn'
-                : 'traffic',
+                : page.route.id === '/search'
+                  ? 'search'
+                  : 'traffic',
   );
   /** A session page's ID; reports and turns belong under Sessions too. */
   const sessionId = $derived(page.route.id === '/sessions/[id]' ? (page.params.id ?? null) : null);
@@ -95,9 +97,11 @@
                 ? 'Session report'
                 : view === 'turn'
                   ? 'Turn'
-                  : sessionId
-                    ? 'Session activity'
-                    : 'Traffic',
+                  : view === 'search'
+                    ? 'Search'
+                    : sessionId
+                      ? 'Session activity'
+                      : 'Traffic',
   );
   const gatewayOrigin = $derived(page.data.gatewayUrl);
   const omissions = $derived(health?.recorder.omissions);
@@ -125,6 +129,7 @@
       page.data.recorder?.error ??
       page.data.report?.error ??
       page.data.turn?.error ??
+      page.data.search?.error ??
       null,
   );
   const error = $derived(refreshError || failure?.message || '');
@@ -165,6 +170,7 @@
       '/sessions/[id]',
       '/sessions/[id]/report',
       '/turns/[id]',
+      '/search',
     ] as const)
       void preloadCode(route);
   });
@@ -210,6 +216,13 @@
         class:active={underSessions}
         aria-current={underSessions ? 'page' : undefined}
         ><Icon name="sessions" size={14} />Sessions</a
+      >
+      <a
+        href="/search"
+        data-sveltekit-preload-data="hover"
+        class:active={view === 'search'}
+        aria-current={view === 'search' ? 'page' : undefined}
+        ><Icon name="search" size={14} />Search</a
       >
       <a
         href="/usage"

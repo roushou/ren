@@ -22,12 +22,14 @@ use tgv_store::query::{
     CallFilter, CallQuery, Cursor, KindFilter, PageLimit, SearchText, StatusFilter, TimeRange,
     ToolFilter,
 };
+use tgv_store::search::{SearchField, SearchQuery, SearchTerms};
 
 /// The tools, in the order `tools/list` returns them.
 #[derive(Display, EnumString, IntoStaticStr, VariantArray)]
 #[strum(serialize_all = "snake_case")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SerializeDisplay, DeserializeFromStr)]
 pub enum ToolName {
+    SearchHistory,
     SearchCalls,
     ListSessions,
     SessionCalls,
@@ -43,6 +45,7 @@ pub enum ToolName {
 /// A tool call with its arguments parsed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ToolCall {
+    SearchHistory(SearchQuery),
     SearchCalls(CallQuery),
     ListSessions(PageLimit),
     SessionCalls {
@@ -201,6 +204,18 @@ struct SearchArgs {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+struct HistoryArgs {
+    query: String,
+    session_id: Option<String>,
+    client: Option<String>,
+    field: Option<String>,
+    from_ms: Option<u64>,
+    until_ms: Option<u64>,
+    limit: Option<u32>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct PageArgs {
     limit: Option<u32>,
 }
@@ -263,6 +278,24 @@ impl ToolCall {
     pub fn parse(tool: ToolName, arguments: Map<String, Value>) -> Result<Self, ArgumentError> {
         let arguments = Value::Object(arguments);
         match tool {
+            ToolName::SearchHistory => {
+                let args: HistoryArgs = Self::arguments(arguments)?;
+                Ok(Self::SearchHistory(SearchQuery {
+                    terms: SearchTerms::parse(&args.query).map_err(|_| {
+                        ArgumentError(format!(
+                            "query must have 1 to {} bytes and at least one word",
+                            SearchTerms::MAX_BYTES
+                        ))
+                    })?,
+                    session: Field::present(args.session_id)
+                        .map(|id| Field("session_id").id(&id))
+                        .transpose()?,
+                    client: Field("client").label::<Harness>(args.client)?,
+                    field: Field("field").label::<SearchField>(args.field)?,
+                    time: Field::range(args.from_ms, args.until_ms)?,
+                    limit: Field("limit").limit(args.limit, Self::DEFAULT_ROWS)?,
+                }))
+            }
             ToolName::SearchCalls => {
                 let args: SearchArgs = Self::arguments(arguments)?;
                 Ok(Self::SearchCalls(CallQuery {
@@ -361,6 +394,20 @@ impl ToolName {
 
     fn definition(self) -> Value {
         let (title, description, properties, required) = match self {
+            Self::SearchHistory => (
+                "Search history",
+                "Full-text search over what recorded calls contain: the user's prompts, the model's replies, and tool inputs (commands, file paths, patches) and outputs. Words must all match; \"quoted text\" matches as a phrase; punctuation separates words, so search a hyphenated name as a phrase. Returns {hits, indexed_calls}, newest call first; each hit has the call, session, turn, field, and a snippet with matches marked «like this». Use get_turn or get_call_activity on a hit for the rest. Calls are indexed shortly after they finish.",
+                json!({
+                    "query": { "type": "string", "maxLength": SearchTerms::MAX_BYTES, "description": "Words and \"quoted phrases\" to find." },
+                    "session_id": Self::string("Only this TGV session, as list_sessions returns it."),
+                    "client": Self::labels_property::<Harness>("Only calls from this coding agent."),
+                    "field": Self::labels_property::<SearchField>("Only this part of a call."),
+                    "from_ms": Self::time("Calls started at or after this time."),
+                    "until_ms": Self::time("Calls started at or before this time."),
+                    "limit": Self::limit(ToolCall::DEFAULT_ROWS),
+                }),
+                json!(["query"]),
+            ),
             Self::SearchCalls => (
                 "Search calls",
                 "Find recorded calls, newest first. Filters combine with AND. `q` matches call IDs, reported models, and tool names (never bodies). Model and tool filters use the inspection saved when a call finishes. Returns {calls, next}; pass `next` as `after` for the next page.",
@@ -652,7 +699,8 @@ mod tests {
     #[test]
     fn definitions_list_the_vocabularies_they_accept() {
         let definitions = ToolName::definitions();
-        let search = &definitions[0];
+        let search = &definitions[1];
+        assert_eq!(definitions[0]["name"], "search_history");
         assert_eq!(search["name"], "search_calls");
         assert_eq!(search["annotations"]["readOnlyHint"], true);
         assert_eq!(search["inputSchema"]["additionalProperties"], false);
@@ -661,7 +709,7 @@ mod tests {
             json!(["active", "finished", "errors", "interrupted"])
         );
         assert_eq!(
-            definitions[8]["inputSchema"]["required"],
+            definitions[9]["inputSchema"]["required"],
             json!(["call_id", "direction"])
         );
     }

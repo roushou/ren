@@ -197,9 +197,9 @@ xtask        ─► tgv-daemon, tgv-harness   (repository tasks, unpublished)
 | `tgv-protocol`                             | `CallInspector`                                                               | `Provider`, `Endpoint`, `Method`, `Transport`, `Direction`; `Stored<T>` and the label trait; SSE framing; encodings; Anthropic Messages and OpenAI Responses wire types; WebSocket message classification (`Payload`, `CloseCode`, `ClientMessage`, `UpstreamMessage`, `InterruptOutcome`); the native identifiers and `MessageHints` the wire carries; inspection; the activity reader (`activity`) |
 | `tgv-harness`                              | `Harness` enum: `ClaudeCode`, `Codex`, `Pi`                                   | attribution (`Attribution`, `SessionHint`, hint sources and issues); launch plans; the Pi extension cache; `GatewayEndpoint`, the URL a harness is pointed at; `HostEnv`; what each harness's tools and messages mean (`tools`)                                                                                                                                                                      |
 | `tgv-recorder`                             | `Recorder`; `RecorderTask` runs it; `RecordSink` is its port                  | `ChannelId`, `CallId`, `AttemptId`, `SessionId`, `TurnId`; `Clock`, `IdSource`, and their test implementations; recorded facts (terminals, causes, phases, rejections, body endings, omissions, `ChannelEnd`, `ConfigRevision`, `UpstreamId`, `OperatorRevision`); the stored inspection format; the `Chunker`; batches; `RetentionPolicy`; taps, queue, metrics, live broadcast                     |
-| `tgv-store`                                | `Store`, which implements `RecordSink`; `Reader` and `Backup` are its handles | SQLite and migrations, the stored chunk format, queries, views, turn and call activity read from bodies (`activity`), retention, `Recovery`, the sweep gate, backup                                                                                                                                                                                                                                  |
+| `tgv-store`                                | `Store`, which implements `RecordSink`; `Reader` and `Backup` are its handles | SQLite and migrations, the stored chunk format, queries, views, turn and call activity read from bodies (`activity`), the derived full-text index (`search`), retention, `Recovery`, the sweep gate, backup                                                                                                                                                                                          |
 | `tgv-gateway`                              | `Gateway`                                                                     | all HTTP routes: forwarding, the read API and `/api/live`, and authenticated controls and backup; route table, header policy, request buffering, upstream entries, the `Upstream` seam and Reqwest implementation, `HttpAttempt`, `WsChannel`, retry facts, policy, `Controls`, `OperatorState`, the running-call registry, ingress and the shutdown drain, the `Build` `/health` reports            |
-| `tgv-daemon`                               | `Daemon`                                                                      | `Config` → `RuntimeConfig`; resource wiring, listener binding, control-token file, and lifecycle; the system clock and random IDs; the two task spawns                                                                                                                                                                                                                                               |
+| `tgv-daemon`                               | `Daemon`                                                                      | `Config` → `RuntimeConfig`; resource wiring, listener binding, control-token file, and lifecycle; the system clock and random IDs; the three task spawns (recorder, server, search indexer)                                                                                                                                                                                                          |
 | `tgv-cli` (package `tgv-rs`, binary `tgv`) | `Cli`                                                                         | capturing `HostEnv` in `main`, recording the source revision (`build.rs`), commands, gateway choice and `client.toml`, history and controls on this host or through a gateway's APIs (`management`), `tgv tail` (`tail`), the pure MCP core of `tgv mcp` (`mcp`), doctor and its build comparison, service definitions                                                                               |
 | `xtask` (unpublished, `cargo xtask`)       | `Xtask`                                                                       | `install-vps`: installing or upgrading TGV from a checkout as a systemd user service between calls, published with Tailscale Serve, and with `--ui-https-port` the UI as `tgv-ui.service`; its publishing flags are saved for later runs                                                                                                                                                             |
 
@@ -500,6 +500,20 @@ come from the provider-reported usage, by its input accounting, and recorded
 times; findings (`FindingKind`) apply fixed thresholds and state measurements,
 never causes. Turn activity adds the findings that need bodies.
 
+### Search
+
+`search.sqlite3` is a full-text index (SQLite FTS5, `unicode61` tokenizer) of
+each finished call's documents: the user's prompt, the reply, tool input (name,
+targets, input), and tool output, each at most 32 KiB, from the activity reader.
+It is derived and disposable: not migrated, not backed up, rebuilt when missing
+or when `SearchIndex::VERSION` changes. `Indexer` is its only writer: a daemon
+task reads finished calls in end-time order through its own read connection,
+indexes up to 20 per pass, pauses 200 ms while backfilling and 5 s once caught
+up, and on every pass removes up to 500 indexed calls that retention deleted.
+It stops with HTTP; an interrupted pass rolls back and is repeated. Search terms
+become quoted FTS5 strings joined by `AND`, so input never reaches the query
+grammar.
+
 ### Storage
 
 **The log.** `observations(seq, at_wall, at_mono, channel, call?, attempt?, kind, schema, payload)`.
@@ -647,6 +661,9 @@ state; it is logged, not recorded in `operator_actions`.
 - Activity is computed from bodies on each read: it is neither stored nor
   searchable, a turn reads at most 100 calls, and turn listings have no paging.
   Reports do not detect compaction, and time to first token is not recorded.
+- Search matches whole words (punctuation splits them), indexes at most 32 KiB
+  per field of each call, and lags a call's end by up to 5 seconds. Its file
+  size is not in `/api/storage` or retention's storage budget.
   Its parsing runs on an async worker, bounded only by the preview permits.
 - The container image is built from a checkout; none is published, and
   `install-vps` does not manage containers.

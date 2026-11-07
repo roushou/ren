@@ -40,6 +40,10 @@ backed up, and pruned.
   identified by BLAKE3 hash, stored once, and compressed with Zstandard when that
   makes them smaller. Repeated conversation prefixes across turns are therefore
   stored once. Storage is host-local; a process lock prevents two daemon writers.
+- `search.sqlite3` is a full-text index of what calls show (prompts, replies,
+  tool input and output; see [search](api.md#search)). It is derived from the
+  bodies above, never the source of truth: delete it and the daemon rebuilds it.
+  It holds excerpts of the same private content, owner-only.
 - Records commit in groups every 50 ms (`capture.commit_interval_ms`) or sooner
   under load. Accepted records drain on normal shutdown. A crash can lose queued
   records; calls left open are marked `recovered` on the next startup, an unknown
@@ -160,7 +164,9 @@ The backup is a data directory: copy `<data-dir>/backup` elsewhere (another disk
 or host) with any file tool, since it is not written while no backup runs. To
 restore, stop TGV and replace `tgv.sqlite3` and `blobs.sqlite3` in the data
 directory with the backup's two files, removing any `-wal` and `-shm` files
-beside them. It needs as much free space as the history uses.
+beside them. It needs as much free space as the history uses. The search index is
+not backed up: delete `search.sqlite3` too, and the daemon rebuilds it from the
+restored history.
 
 ## Retention
 

@@ -238,6 +238,7 @@ impl TestGateway {
         let address = listener.local_addr().unwrap();
         let router = gateway.router(ManagementSetup {
             reader,
+            search: tgv_store::search::SearchIndex::open(dir).await.unwrap(),
             backup,
             retention: runtime.retention().clone(),
             control: runtime.control().clone(),

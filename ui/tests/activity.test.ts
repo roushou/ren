@@ -2,7 +2,13 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { ManagementApi, SessionId, TurnId } from '../src/lib/api.ts';
 import { ShapeError } from '../src/lib/decode.ts';
-import { effectLabel, findingLine, resultBadge, turnRows } from '../src/lib/activity.ts';
+import {
+  effectLabel,
+  findingLine,
+  resultBadge,
+  snippetParts,
+  turnRows,
+} from '../src/lib/activity.ts';
 import { uuid, versioned } from './fixtures.ts';
 
 const session = uuid(1);
@@ -174,4 +180,17 @@ test('a turn decodes its calls, tool calls, effects, and results', async () => {
     new ManagementApi(answering(`/api/turns/${turn}`, broken)).turn(id),
     ShapeError,
   );
+});
+
+test('snippets split into marked matches without trusting any markup', () => {
+  assert.deepEqual(snippetParts('test «parser» ... «FAILED»!'), [
+    { text: 'test ', match: false },
+    { text: 'parser', match: true },
+    { text: ' ... ', match: false },
+    { text: 'FAILED', match: true },
+    { text: '!', match: false },
+  ]);
+  // An unclosed marker is plain text; HTML stays text for the view to escape.
+  assert.deepEqual(snippetParts('a «b <script>'), [{ text: 'a «b <script>', match: false }]);
+  assert.deepEqual(snippetParts(''), []);
 });

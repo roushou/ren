@@ -15,7 +15,8 @@ Pages: Overview (`/`: a health line, calls in flight and sessions active in the 
 15 minutes, what needs attention in the last day, and the last 24 hours' usage),
 Traffic (`/traffic`), Sessions (`/sessions`, `/sessions/:id`, each session's context and
 cache report at `/sessions/:id/report`, and what a turn did at `/turns/:id`: its prompt,
-tool calls with their effects and reported results, files, commands, and findings), Usage
+tool calls with their effects and reported results, files, commands, and findings), Search
+(`/search`: full-text search over prompts, replies, and tool input and output), Usage
 (`/usage`: calls, errors, and tokens over the last day by hour, the last week, or all
 retained calls by local day, by model, and the busiest sessions), and Recorder
 (`/recorder`). The bar under the tabs shows each page's scope and the controls that

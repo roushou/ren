@@ -159,7 +159,7 @@ async fn agents_read_recorded_traffic_over_stdio_in_both_protocol_eras() {
         replies[0]["result"]["_meta"]["io.modelcontextprotocol/serverInfo"]["version"],
         tgv_cli::Cli::build().version()
     );
-    assert_eq!(replies[1]["result"]["tools"].as_array().unwrap().len(), 10);
+    assert_eq!(replies[1]["result"]["tools"].as_array().unwrap().len(), 11);
     let body = data(&replies[2]);
     assert_eq!(body["extent"], "complete");
     assert_eq!(body["text"], payload);
@@ -378,6 +378,73 @@ async fn a_turns_activity_reads_the_same_locally_through_a_gateway_and_over_mcp(
     assert_eq!(report["turns"][0]["call_count"], 2);
     assert_eq!(report["turns"][0]["output_tokens"], 9);
 
+    // The daemon's indexer makes the turn searchable shortly after it ends.
+    let mut found = Value::Null;
+    for _ in 0..150 {
+        let output = Command::new(env!("CARGO_BIN_EXE_tgv"))
+            .args([
+                "--data-dir",
+                data_dir,
+                "search",
+                "parser",
+                "--field",
+                "tool_output",
+            ])
+            .env("HOME", &home)
+            .output()
+            .unwrap();
+        if output.status.success() {
+            found = serde_json::from_slice(&output.stdout).unwrap();
+            if found["hits"]
+                .as_array()
+                .is_some_and(|hits| !hits.is_empty())
+            {
+                break;
+            }
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    assert_eq!(found["indexed_calls"], 2, "{found}");
+    assert_eq!(found["hits"][0]["field"], "tool_output");
+    assert_eq!(found["hits"][0]["snippet"], "test «parser» ... FAILED");
+    assert_eq!(found["hits"][0]["session"], session_id.as_str());
+    assert_eq!(
+        cli_json(
+            &home,
+            &[
+                "search",
+                "parser",
+                "--field",
+                "tool_output",
+                "--gateway",
+                &gateway
+            ]
+        ),
+        found
+    );
+    let prompt = cli_json(
+        &home,
+        &["--data-dir", data_dir, "search", r#""tests fail""#],
+    );
+    let fields: Vec<_> = prompt["hits"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|hit| hit["field"].as_str().unwrap().to_owned())
+        .collect();
+    // The reply ("Tests fail in parser.rs.") and the prompt both match,
+    // newest call first; Claude Code's system reminder is not indexed.
+    assert_eq!(fields, ["reply", "prompt"]);
+    assert!(
+        cli_json(
+            &home,
+            &["--data-dir", data_dir, "search", "system-reminder"]
+        )["hits"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+
     // An agent asks the same over MCP.
     let replies = session(
         &home,
@@ -403,6 +470,11 @@ async fn a_turns_activity_reads_the_same_locally_through_a_gateway_and_over_mcp(
                 "tools/call",
                 json!({ "name": "session_report", "arguments": { "session_id": session_id } }),
             ),
+            modern(
+                5,
+                "tools/call",
+                json!({ "name": "search_history", "arguments": { "query": "parser", "field": "tool_output" } }),
+            ),
         ],
     );
     assert_eq!(data(&replies[0]), turns);
@@ -413,6 +485,9 @@ async fn a_turns_activity_reads_the_same_locally_through_a_gateway_and_over_mcp(
     let mut over_mcp = data(&replies[3]);
     over_mcp.as_object_mut().unwrap().remove("api_version");
     assert_eq!(over_mcp, report);
+    let mut over_mcp = data(&replies[4]);
+    over_mcp.as_object_mut().unwrap().remove("api_version");
+    assert_eq!(over_mcp, found);
 
     daemon.shutdown();
     daemon.wait().await.unwrap();

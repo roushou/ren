@@ -62,6 +62,7 @@ impl McpCmd {
 
     async fn execute(gateway: &Management, pending: PendingCall) -> Value {
         let outcome = match &pending.tool {
+            ToolCall::SearchHistory(query) => gateway.search_history(query).await.map(Ok),
             ToolCall::SearchCalls(query) => gateway.search(query).await.map(Ok),
             ToolCall::ListSessions(limit) => gateway.sessions(*limit).await.map(Ok),
             ToolCall::SessionCalls {

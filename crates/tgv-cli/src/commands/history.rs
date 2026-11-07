@@ -12,10 +12,13 @@ use std::{
     path::{Path, PathBuf},
     process::ExitCode,
 };
+use tgv_harness::Harness;
 use tgv_protocol::direction::Direction;
 use tgv_recorder::id::{CallId, SessionId, TurnId};
+use tgv_store::StoreError;
 use tgv_store::activity::ActivityBudget;
-use tgv_store::query::{CallQuery, Cursor, PageLimit};
+use tgv_store::query::{CallQuery, Cursor, PageLimit, TimeRange};
+use tgv_store::search::{SearchField, SearchIndex, SearchQuery, SearchTerms};
 
 /// Which daemon a history or control command reads from.
 #[derive(Args)]
@@ -133,6 +136,56 @@ impl TurnsCmd {
                 HistoryCmd::print(&ctx.reader().await?.session_turns(self.id, limit).await?)
             }
             Target::Remote(gateway) => HistoryCmd::print(&gateway.turns(self.id, limit).await?),
+        }
+    }
+}
+
+/// Search prompts, replies, and tool input and output, newest first. Words
+/// must all match; "quoted text" matches as a phrase. The daemon indexes
+/// calls shortly after they finish, and backfills history on first start.
+#[derive(Args)]
+pub struct SearchCmd {
+    /// What to look for.
+    #[arg(required = true, num_args = 1..)]
+    text: Vec<String>,
+    /// Only this TGV session.
+    #[arg(long)]
+    session: Option<SessionId>,
+    /// Only calls from this client.
+    #[arg(long)]
+    client: Option<Harness>,
+    /// Only this part of a call.
+    #[arg(long)]
+    field: Option<SearchField>,
+    #[arg(long, default_value_t = 20, value_parser = clap::value_parser!(u32).range(1..=1000))]
+    limit: u32,
+    #[command(flatten)]
+    target: TargetArgs,
+}
+impl SearchCmd {
+    pub async fn run(self, ctx: &Context) -> Result<ExitCode> {
+        let query = SearchQuery {
+            terms: SearchTerms::parse(&self.text.join(" "))?,
+            session: self.session,
+            client: self.client,
+            field: self.field,
+            time: TimeRange::default(),
+            limit: PageLimit::new(self.limit)?,
+        };
+        match self.target.select(ctx)? {
+            Target::Local => {
+                let dir = ctx.data_dir(&ctx.config()?)?;
+                let index = match SearchIndex::open_read(&dir).await {
+                    Ok(index) => index,
+                    Err(StoreError::NotFound) => anyhow::bail!(
+                        "no search index in {}: the daemon builds it while running",
+                        dir.display()
+                    ),
+                    Err(error) => return Err(error.into()),
+                };
+                HistoryCmd::print(&index.search(&query).await?)
+            }
+            Target::Remote(gateway) => HistoryCmd::print(&gateway.search_history(&query).await?),
         }
     }
 }

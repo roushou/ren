@@ -6,6 +6,7 @@ use crate::activity::{
     ActivityBudget, CallActivity, Excerpt, ReadCall, TurnActivity, TurnHead, TurnSummary,
     report::SessionReport,
 };
+use crate::search::CallDocuments;
 use crate::{
     Store, StoreError,
     query::{CallQuery, Cursor, KindFilter, PageLimit, StatusFilter, TimeRange, ToolFilter},
@@ -20,6 +21,7 @@ use sqlx::{
     AssertSqlSafe, QueryBuilder, Row, Sqlite, SqlitePool,
     sqlite::{SqliteConnectOptions, SqlitePoolOptions},
 };
+use std::collections::HashSet;
 use std::{path::Path, sync::Arc, time::Duration};
 use tgv_harness::attribution::HintSource;
 use tgv_protocol::activity::{
@@ -36,6 +38,7 @@ use tgv_protocol::{
 };
 use tgv_recorder::Observation;
 use tgv_recorder::batch::BodyKey;
+use tgv_recorder::time::UnixMillis;
 use tgv_recorder::{
     capture::{AttemptTerminal, CallState, TerminalClass},
     id::{CallId, SessionId, TurnId},
@@ -820,6 +823,70 @@ impl Reader {
             .read_call(view, Direction::Response)
             .await?
             .activity(budget))
+    }
+
+    /// Finished calls after `cursor`, by end time and ID, for the indexer.
+    pub async fn finished_calls(
+        &self,
+        cursor: Option<(UnixMillis, CallId)>,
+        limit: i64,
+    ) -> Result<Vec<(UnixMillis, CallId)>, StoreError> {
+        let (time, call) = cursor.map_or((-1, String::new()), |(time, call)| {
+            (
+                i64::try_from(time.as_millis()).unwrap_or(i64::MAX),
+                call.to_string(),
+            )
+        });
+        sqlx::query("SELECT id, ended_at FROM calls WHERE ended_at IS NOT NULL AND (ended_at, id) > (?, ?) ORDER BY ended_at, id LIMIT ?")
+            .bind(time)
+            .bind(call)
+            .bind(limit)
+            .fetch_all(&self.pool)
+            .await?
+            .iter()
+            .map(|row| {
+                let columns = Columns(row);
+                Ok((columns.time("ended_at")?, columns.id("id")?))
+            })
+            .collect()
+    }
+
+    /// Which of `calls` the store still has.
+    pub async fn existing_calls(&self, calls: &[CallId]) -> Result<HashSet<CallId>, StoreError> {
+        let mut existing = HashSet::new();
+        for chunk in calls.chunks(500) {
+            let mut sql = QueryBuilder::<Sqlite>::new("SELECT id FROM calls WHERE id IN (");
+            let mut list = sql.separated(", ");
+            for call in chunk {
+                list.push_bind(call.to_string());
+            }
+            sql.push(")");
+            for row in sql.build().fetch_all(&self.pool).await? {
+                existing.insert(Columns(&row).id("id")?);
+            }
+        }
+        Ok(existing)
+    }
+
+    /// A call's searchable documents, read from its bodies.
+    pub async fn read_documents(
+        &self,
+        call: CallId,
+        max_chars: usize,
+    ) -> Result<CallDocuments, StoreError> {
+        let row = sqlx::query(AssertSqlSafe(format!(
+            "{} WHERE c.id = ?",
+            CallView::SELECT
+        )))
+        .bind(call.to_string())
+        .fetch_optional(&self.pool)
+        .await?
+        .ok_or(StoreError::NotFound)?;
+        let view = CallView::from_row(&row)?;
+        Ok(self
+            .read_call(view, Direction::Response)
+            .await?
+            .documents(max_chars))
     }
 
     async fn turn_calls(&self, turn: TurnId, limit: i64) -> Result<Vec<CallView>, StoreError> {

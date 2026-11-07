@@ -20,7 +20,11 @@ use tgv_gateway::{IngressError, UpstreamConfigError};
 use tgv_recorder::CaptureOptionsError;
 use tgv_recorder::{Recorder, RecorderSetup, id::IdSource, time::Clock};
 use tgv_store::StoreError;
-use tgv_store::{Reader, Store, backup::Backup};
+use tgv_store::{
+    Reader, Store,
+    backup::Backup,
+    search::{Indexer, SearchIndex},
+};
 use tokio::{net::TcpListener, task::JoinHandle};
 
 /// Why the daemon could not start, run, or stop cleanly.
@@ -83,6 +87,9 @@ impl Daemon {
     /// How long in-flight calls may continue after shutdown is requested.
     const DRAIN_DEADLINE: Duration = Duration::from_secs(10);
     const CAPTURE_DEADLINE: Duration = Duration::from_secs(10);
+    /// The indexer's pause while it is backfilling, and once caught up.
+    const INDEX_BUSY_PAUSE: Duration = Duration::from_millis(200);
+    const INDEX_IDLE_PAUSE: Duration = Duration::from_secs(5);
 
     /// `build` is what the binary running this daemon was compiled from;
     /// `/health` reports it.
@@ -177,6 +184,27 @@ impl Daemon {
                 return Err(error.into());
             }
         };
+        // Search is derived data: the indexer has its own read connection
+        // and the only writer of `search.sqlite3`, off the forwarding path.
+        let search = SearchIndex::open(data_dir).await?;
+        let mut indexer = Indexer::new(search.clone(), Reader::open(data_dir, 1).await?);
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "process wiring: the daemon owns the search indexer task"
+        )]
+        let indexing = tokio::spawn(async move {
+            loop {
+                let pause = match indexer.pass().await {
+                    Ok(report) if report.more => Self::INDEX_BUSY_PAUSE,
+                    Ok(_) => Self::INDEX_IDLE_PAUSE,
+                    Err(error) => {
+                        tracing::warn!(%error, "search indexing failed; retrying");
+                        Self::INDEX_IDLE_PAUSE
+                    }
+                };
+                tokio::time::sleep(pause).await;
+            }
+        });
         let shutdown = Shutdown::default();
         let controls = Arc::new(Controls::restore(operator));
         let token = ControlToken::generate(ids.as_ref());
@@ -193,6 +221,7 @@ impl Daemon {
             listener,
             ManagementSetup {
                 reader,
+                search,
                 backup,
                 retention: config.retention().clone(),
                 control: config.control().clone(),
@@ -208,6 +237,9 @@ impl Daemon {
         let task = tokio::spawn(async move {
             let serve_result = ingress.serve(stop.clone(), Self::DRAIN_DEADLINE).await;
             stop.abort();
+            // Indexing is resumable: a pass cut short rolls back and is
+            // repeated on the next start.
+            indexing.abort();
             match &serve_result {
                 Ok(Stopped::Drained) => {}
                 Ok(Stopped::Aborted) => {

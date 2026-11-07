@@ -1,6 +1,6 @@
 const id = '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}';
 const readablePath = new RegExp(
-  `^/(?:health|api/(?:metrics|storage|calls|sessions|usage|live|calls/${id}(?:/body/(?:request|response)|/activity)?|sessions/${id}/(?:calls|turns|report)|turns/${id}))$`,
+  `^/(?:health|api/(?:metrics|storage|calls|sessions|usage|live|search|calls/${id}(?:/body/(?:request|response)|/activity)?|sessions/${id}/(?:calls|turns|report)|turns/${id}))$`,
 );
 const livePath = '/api/live';
 const eventId = /^\d{1,20}$/;

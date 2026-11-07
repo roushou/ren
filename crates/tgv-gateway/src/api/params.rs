@@ -10,6 +10,7 @@ use tgv_store::query::{
     CallFilter, CallQuery, Cursor, KindFilter, PageLimit, QueryError, SearchText, StatusFilter,
     TimeRange, ToolFilter,
 };
+use tgv_store::search::{SearchField, SearchQuery, SearchTerms};
 
 /// `GET /api/calls` parameters.
 #[derive(Debug, Default, Deserialize)]
@@ -54,6 +55,42 @@ impl TryFrom<RawUsageQuery> for TimeRange {
             raw.from_ms.map(UnixMillis::from_millis),
             raw.until_ms.map(UnixMillis::from_millis),
         )
+    }
+}
+
+/// `GET /api/search` parameters.
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct RawSearchQuery {
+    q: Option<String>,
+    session: Option<String>,
+    client: Option<String>,
+    field: Option<String>,
+    from_ms: Option<u64>,
+    until_ms: Option<u64>,
+    limit: Option<u32>,
+}
+
+impl RawSearchQuery {
+    pub fn parse(self) -> Result<SearchQuery, super::ApiError> {
+        let label = |value: Option<String>| value.filter(|value| !value.trim().is_empty());
+        Ok(SearchQuery {
+            terms: SearchTerms::parse(self.q.as_deref().unwrap_or_default())?,
+            session: label(self.session)
+                .map(|value| SessionId::from_str(&value).map_err(|_| QueryError::Filter))
+                .transpose()?,
+            client: label(self.client)
+                .map(|value| Harness::from_str(&value).map_err(|_| QueryError::Filter))
+                .transpose()?,
+            field: label(self.field)
+                .map(|value| SearchField::from_str(&value).map_err(|_| QueryError::Filter))
+                .transpose()?,
+            time: TimeRange::new(
+                self.from_ms.map(UnixMillis::from_millis),
+                self.until_ms.map(UnixMillis::from_millis),
+            )?,
+            limit: self.limit.map_or(Ok(PageLimit::DEFAULT), PageLimit::new)?,
+        })
     }
 }
 

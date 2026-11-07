@@ -5,6 +5,7 @@ import type {
   EffectKind,
   Finding,
   ResultStatus,
+  SearchField,
   SessionReport,
   ToolResultView,
   TurnId,
@@ -139,4 +140,37 @@ export function turnRows(report: SessionReport, summaries: TurnSummary[]): TurnR
 /** Text with how much was left out, for an excerpt. */
 export function omitted(chars: number): string {
   return chars ? `… ${chars.toLocaleString()} more characters not shown` : '';
+}
+
+/** A snippet's text in runs, `match` where the daemon marked «a match». */
+export function snippetParts(snippet: string): { text: string; match: boolean }[] {
+  const parts: { text: string; match: boolean }[] = [];
+  let rest = snippet;
+  while (rest) {
+    const open = rest.indexOf('«');
+    const close = open === -1 ? -1 : rest.indexOf('»', open + 1);
+    if (open === -1 || close === -1) {
+      parts.push({ text: rest, match: false });
+      break;
+    }
+    if (open > 0) parts.push({ text: rest.slice(0, open), match: false });
+    parts.push({ text: rest.slice(open + 1, close), match: true });
+    rest = rest.slice(close + 1);
+  }
+  return parts;
+}
+
+export function searchFieldLabel(field: Stored<SearchField>): string {
+  switch (field) {
+    case 'prompt':
+      return 'Prompt';
+    case 'reply':
+      return 'Reply';
+    case 'tool_input':
+      return 'Tool input';
+    case 'tool_output':
+      return 'Tool output';
+    default:
+      return unrecognised(field).replaceAll('_', ' ');
+  }
 }
