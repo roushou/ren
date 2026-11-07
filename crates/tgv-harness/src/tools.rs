@@ -8,7 +8,7 @@
 //! is still reported with its name.
 
 use crate::Harness;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use serde_with::{DeserializeFromStr, SerializeDisplay};
 use strum::{Display, EnumString, IntoStaticStr, VariantArray};
@@ -32,7 +32,7 @@ pub enum EffectKind {
 }
 
 /// One effect with its target: a path, command, pattern, task, or URL.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ToolEffect {
     pub kind: EffectKind,
     pub target: String,

@@ -166,10 +166,11 @@ dependencies under "Crates" below. Read the code for current module ownership.
 - `crates/tgv-protocol`: sans-IO native protocol understanding, with
   `CallInspector` as its primary type: SSE framing, Anthropic Messages and OpenAI
   Responses wire vocabularies, incremental decompression, per-call inspection
-  (`inspect`, whose `pipeline` also reads WebSocket messages), WebSocket
-  message classification, and the activity reader (`activity`: a request's
-  newest user input and a response's tool calls with their inputs, read on
-  demand from stored bodies).
+  (`inspect`, whose `pipeline` also reads WebSocket messages and hands every
+  frame to the response's activity reader as it streams), WebSocket message
+  classification, and the activity reader (`activity`: a request's newest user
+  input, gathered by `RequestReader`, and a response's tool calls with their
+  inputs and its reply, read by `ResponseReader`; `Reading` pairs the two).
   It also owns the label machinery (`label`, with `Stored<T>`), the `Provider`,
   `Endpoint`, `Method`, and `Transport` vocabularies (`route`), `Direction`, and
   the native identifiers and message hints the wire carries (`native`). Its
@@ -181,7 +182,8 @@ dependencies under "Crates" below. Read the code for current module ownership.
   (`Harness::launch`), the bundled Pi extension cache (`pi`), the gateway URL a
   harness is pointed at (`endpoint`), `HostEnv` (`host`), the host environment
   that launching and configuration read, and what each harness's tools and
-  messages mean for activity (`tools`: effects, prompt text, exit codes). It performs filesystem and process I/O
+  messages mean for activity (`tools`: effects, prompt text, exit codes, and
+  `InterpretedCall`, a `Reading` read as its client uses it). It performs filesystem and process I/O
   but has no async runtime, HTTP, database, or CLI dependency.
 - `crates/tgv-recorder`: the bounded capture queue between forwarding and
   storage, with `Recorder` as its primary type. `CallTap` (and `ChannelTap` for a
@@ -195,7 +197,9 @@ dependencies under "Crates" below. Read the code for current module ownership.
   `Chunker` (`chunk`), the stored inspection format (`inspection`), and
   `RetentionPolicy` (`retention`), and credential detection and redaction
   (`secrets`: `SecretScanner`, well-known formats only, never storing a secret),
-  so text is sanitized before anything is persisted. It has no database, HTTP,
+  so text is sanitized before anything is persisted, and the stored form of a
+  call's text (`digest`: `CallDigest::seal` redacts and cuts an
+  `InterpretedCall` to a `DigestBudget`, keeping only what each secret leaves). It has no database, HTTP,
   or CLI dependency.
 - `crates/tgv-store`: persistence (SQLx, SQLite WAL), with `Store`, the single
   writer, as its primary type; `Reader` is its read-only pool and `Backup` the

@@ -510,3 +510,66 @@ fn secrets_a_turn_carried_are_findings_without_the_secret() {
         .collect();
     assert_eq!(fields, ["prompt", "tool_output"]);
 }
+
+/// The sealed digest's search texts and exposures are what the store derives
+/// from the same call today, so moving derivation to write time keeps them.
+#[test]
+fn a_sealed_digest_matches_todays_documents() {
+    use tgv_harness::tools::InterpretedCall;
+    use tgv_protocol::activity::Reading;
+    use tgv_recorder::digest::{CallDigest, DigestBudget};
+    let scanner = tgv_recorder::secrets::SecretScanner::new().unwrap();
+    let key = format!("sk-ant-{}a1b2", "api03xY9z".repeat(5));
+    let call = |user: &str, output: &str| ReadCall {
+        view: view(1, HintSource::ClaudeCodeHeaders),
+        request: RequestActivity {
+            user_text: vec![
+                "<system-reminder>context</system-reminder>".to_owned(),
+                user.to_owned(),
+            ],
+            tool_results: vec![result("a", ResultStatus::Succeeded, output)],
+            limitations: Vec::new(),
+        },
+        response: ResponseActivity {
+            tool_uses: vec![
+                tool("b", "Read", json!({ "file_path": "src/lib.rs" })),
+                tool("c", "Bash", json!({ "command": "cargo test" })),
+            ],
+            reply: "Looking.".to_owned(),
+            limitations: Vec::new(),
+        },
+    };
+    for read in [
+        call("Make the tests pass", "fn main() {}"),
+        call(&format!("Use {key}"), &format!("K={key} and {key}")),
+    ] {
+        let documents = read.documents(crate::search::SearchIndex::FIELD_CHARS, &scanner);
+        let digest = CallDigest::seal(
+            InterpretedCall::new(
+                read.harness(),
+                Reading {
+                    request: read.request.clone(),
+                    response: read.response.clone(),
+                },
+            ),
+            &scanner,
+            DigestBudget::STORED,
+        );
+        let today: Vec<_> = documents
+            .documents
+            .iter()
+            .map(|document| (document.field, document.text.clone()))
+            .collect();
+        let sealed: Vec<_> = digest
+            .search
+            .iter()
+            .map(|text| (text.field, text.text.clone()))
+            .collect();
+        assert_eq!(sealed, today);
+        assert_eq!(digest.exposures, documents.exposures);
+        assert_eq!(
+            digest.prompt.map(|prompt| prompt.text),
+            documents.prompt.map(|prompt| prompt.text)
+        );
+    }
+}

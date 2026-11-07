@@ -2,10 +2,9 @@
 //! it carried.
 
 use crate::activity::{ActivityBudget, Excerpt, ReadCall};
-use serde::Serialize;
 use tgv_harness::Harness;
-pub use tgv_recorder::digest::SearchField;
-use tgv_recorder::secrets::{Detection, SecretKind, SecretScanner};
+pub use tgv_recorder::digest::{Exposure, SearchField};
+use tgv_recorder::secrets::SecretScanner;
 use tgv_recorder::{
     id::{CallId, SessionId, TurnId},
     time::UnixMillis,
@@ -143,40 +142,6 @@ impl ReadCall {
                 .map(|prompt| Excerpt::cut(&prompt, ActivityBudget::SUMMARY.prompt_chars)),
             documents,
             exposures,
-        }
-    }
-}
-
-/// A secret a call carried, by field: what the scanner keeps of it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct Exposure {
-    pub field: SearchField,
-    pub kind: SecretKind,
-    pub hint: String,
-    pub fingerprint: String,
-    /// How often it appears in the field.
-    pub count: u64,
-}
-
-impl Exposure {
-    /// Add `found` in `field` to `exposures`, counting repeats of one
-    /// secret once per field.
-    fn merge(exposures: &mut Vec<Self>, field: SearchField, found: Vec<Detection>) {
-        for detection in found {
-            match exposures.iter_mut().find(|known| {
-                known.field == field
-                    && known.kind == detection.kind
-                    && known.fingerprint == detection.fingerprint
-            }) {
-                Some(known) => known.count = known.count.saturating_add(1),
-                None => exposures.push(Self {
-                    field,
-                    kind: detection.kind,
-                    hint: detection.hint,
-                    fingerprint: detection.fingerprint,
-                    count: 1,
-                }),
-            }
         }
     }
 }
