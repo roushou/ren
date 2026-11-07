@@ -178,7 +178,7 @@ the body was stored whole; otherwise `not_found`. At most two run at once
 | ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
 | `GET /health`                                                          | `ok` or `degraded` (HTTP 503), the build, the operator state (read-only), recorder counters |
 | `GET /api/metrics`                                                     | Recorder counters and storage usage                                                         |
-| `GET /api/storage`                                                     | Active retention policy and disk usage of both database files                               |
+| `GET /api/storage`                                                     | Active retention policy and disk usage of the database files and the search index           |
 | `GET /api/calls?limit=100`                                             | Filtered, paginated calls, newest first (see [search](#call-search))                        |
 | `GET /api/calls/{call-id}`                                             | One call with its attempts, inspection, and observation log                                 |
 | `GET /api/calls/{call-id}/body/{request\|response}`                    | Bounded body preview                                                                        |

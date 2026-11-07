@@ -520,6 +520,32 @@ pub struct BodyPrefix {
     pub encoding: Option<Stored<ResponseEncoding>>,
 }
 
+/// The search index's disk use, and how much of it belongs to calls the
+/// store still has: rows of calls retention just deleted stay until the
+/// indexer's next pass removes them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct IndexUsage {
+    pub file: FileUsage,
+    pub indexed_calls: u64,
+    /// Indexed calls the store no longer has.
+    pub stale_calls: u64,
+}
+
+impl IndexUsage {
+    /// The index's live pages, in proportion to the indexed calls the store
+    /// still has. Counting the stale rows too would make retention delete
+    /// more calls than it needs before the indexer catches up.
+    pub fn budget_bytes(self) -> u64 {
+        let live = self.file.live_bytes();
+        let kept = self.indexed_calls.saturating_sub(self.stale_calls);
+        if self.indexed_calls == 0 {
+            return live;
+        }
+        let share = u128::from(live) * u128::from(kept) / u128::from(self.indexed_calls);
+        u64::try_from(share).unwrap_or(u64::MAX)
+    }
+}
+
 /// Real disk usage of one database file.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct FileUsage {
@@ -540,18 +566,24 @@ impl FileUsage {
     }
 }
 
-/// Disk usage of both files, as retention measures it.
+/// Disk usage of the store's files and the search index, as retention
+/// measures it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct DiskUsage {
     pub metadata: FileUsage,
     pub blobs: FileUsage,
+    /// `None` until the daemon first builds the index.
+    pub search: Option<IndexUsage>,
 }
 
 impl DiskUsage {
+    /// What retention budgets: live pages of both store files, and the
+    /// index's share for calls the store still has.
     pub fn live_bytes(self) -> u64 {
         self.metadata
             .live_bytes()
             .saturating_add(self.blobs.live_bytes())
+            .saturating_add(self.search.map_or(0, IndexUsage::budget_bytes))
     }
 }
 

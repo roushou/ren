@@ -182,6 +182,12 @@ and observations are deleted together; session counts and orphan turns/sessions 
 updated in the same transaction. Open calls are protected; recovered calls are
 eligible. Recording never waits for pruning.
 
+The storage limit counts live pages of `tgv.sqlite3` and `blobs.sqlite3`, plus the
+search index's live pages in proportion to the indexed calls the store still has.
+Index rows of just-deleted calls stay until the indexer's next pass (within
+seconds) and do not count, so retention never deletes extra calls while the index
+catches up. `tgv doctor` and the Recorder page show the index's size and coverage.
+
 Limits are eventual, not hard disk quotas: active work and maintenance intervals
 can exceed them. Because bodies are deduplicated, removing a call frees only the
 chunks nothing else references. Freed pages are reused rather than returned to

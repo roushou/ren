@@ -393,8 +393,15 @@ export interface FileUsage {
   page_count: number;
   freelist_count: number;
 }
+/** The search index's disk use; stale calls are ones retention deleted. */
+export interface IndexUsage {
+  file: FileUsage;
+  indexed_calls: number;
+  stale_calls: number;
+}
 export interface StorageView {
-  disk: { metadata: FileUsage; blobs: FileUsage };
+  /** `search` is null before the index is built, or from an older daemon. */
+  disk: { metadata: FileUsage; blobs: FileUsage; search: IndexUsage | null };
   calls: number;
   open_calls: number;
   chunks: number;
@@ -671,7 +678,13 @@ function optional<T>(decode: Decoder<T>): Decoder<T | null> {
 }
 const fileUsage = object<FileUsage>({ page_size: count, page_count: count, freelist_count: count });
 const storageView = object<StorageView>({
-  disk: object<StorageView['disk']>({ metadata: fileUsage, blobs: fileUsage }),
+  disk: object<StorageView['disk']>({
+    metadata: fileUsage,
+    blobs: fileUsage,
+    search: optional(
+      object<IndexUsage>({ file: fileUsage, indexed_calls: count, stale_calls: count }),
+    ),
+  }),
   calls: count,
   open_calls: count,
   chunks: count,

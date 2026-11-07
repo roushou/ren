@@ -340,6 +340,16 @@ struct StorageUsage {
 struct DiskUsage {
     metadata: FileUsage,
     blobs: FileUsage,
+    /// Absent from daemons older than search, and null before it is built.
+    #[serde(default)]
+    search: Option<IndexUsage>,
+}
+
+#[derive(Deserialize)]
+struct IndexUsage {
+    file: FileUsage,
+    indexed_calls: u64,
+    stale_calls: u64,
 }
 
 #[derive(Deserialize)]
@@ -476,26 +486,31 @@ impl Report {
             .read::<StorageResponse>(gateway.url("/api/storage"))
             .await
         {
-            Ok((200, storage)) if storage.policy.validate().is_ok() => report.add(
-                "storage API",
-                Status::Ok,
-                format!(
-                    "{} retained calls, {} bytes on disk, {} open calls; retention {}",
-                    storage.usage.calls,
-                    storage
-                        .usage
-                        .disk
-                        .metadata
-                        .live_bytes()
-                        .saturating_add(storage.usage.disk.blobs.live_bytes()),
-                    storage.usage.open_calls,
-                    if storage.policy.enabled {
-                        "enabled"
-                    } else {
-                        "disabled"
-                    }
-                ),
-            ),
+            Ok((200, storage)) if storage.policy.validate().is_ok() => {
+                let usage = &storage.usage;
+                let search = usage.disk.search.as_ref();
+                report.add(
+                    "storage API",
+                    Status::Ok,
+                    format!(
+                        "{} retained calls, {} bytes on disk, {} open calls; retention {}",
+                        usage.calls,
+                        usage
+                            .disk
+                            .metadata
+                            .live_bytes()
+                            .saturating_add(usage.disk.blobs.live_bytes())
+                            .saturating_add(search.map_or(0, |index| index.file.live_bytes())),
+                        usage.open_calls,
+                        if storage.policy.enabled {
+                            "enabled"
+                        } else {
+                            "disabled"
+                        }
+                    ),
+                );
+                report.add_search_index(search, usage.calls.saturating_sub(usage.open_calls));
+            }
             Ok(_) => report.add(
                 "storage API",
                 Status::Failed,
@@ -508,6 +523,40 @@ impl Report {
             ),
         }
         report
+    }
+}
+
+impl Report {
+    /// How much of the finished history the search index covers.
+    fn add_search_index(&mut self, search: Option<&IndexUsage>, finished: u64) {
+        match search {
+            None => self.add(
+                "search index",
+                Status::Warning,
+                "the gateway reports no search index; a daemon with search builds it while running",
+            ),
+            Some(index) => {
+                let kept = index.indexed_calls.saturating_sub(index.stale_calls);
+                if kept >= finished {
+                    self.add(
+                        "search index",
+                        Status::Ok,
+                        format!(
+                            "{kept} of {finished} finished calls indexed, {} bytes on disk",
+                            index.file.live_bytes()
+                        ),
+                    );
+                } else {
+                    self.add(
+                        "search index",
+                        Status::Warning,
+                        format!(
+                            "{kept} of {finished} finished calls indexed; the daemon indexes the rest within seconds, longer while it backfills after a start"
+                        ),
+                    );
+                }
+            }
+        }
     }
 }
 

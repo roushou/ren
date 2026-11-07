@@ -142,6 +142,18 @@
     { label: 'Metadata · free pages', value: usage && free(usage.disk.metadata), unit: 'bytes' },
     { label: 'Blobs · live', value: usage && live(usage.disk.blobs), unit: 'bytes' },
     { label: 'Blobs · free pages', value: usage && free(usage.disk.blobs), unit: 'bytes' },
+    {
+      label: 'Search index · live',
+      value: usage?.disk.search ? live(usage.disk.search.file) : undefined,
+      unit: 'bytes',
+    },
+    {
+      label: 'Search index · calls',
+      value: usage?.disk.search
+        ? usage.disk.search.indexed_calls - usage.disk.search.stale_calls
+        : undefined,
+      unit: 'count',
+    },
     { label: 'Chunks', value: usage?.chunks, unit: 'count' },
     { label: 'Referenced body bytes', value: usage?.referenced_bytes, unit: 'bytes' },
     { label: 'Unique chunk bytes', value: usage?.unique_bytes, unit: 'bytes' },
@@ -180,7 +192,15 @@
     </div>
     <div>
       <dt>Live disk usage</dt>
-      <dd>{usage ? bytes(live(usage.disk.metadata) + live(usage.disk.blobs)) : '—'}</dd>
+      <dd>
+        {usage
+          ? bytes(
+              live(usage.disk.metadata) +
+                live(usage.disk.blobs) +
+                (usage.disk.search ? live(usage.disk.search.file) : 0),
+            )
+          : '—'}
+      </dd>
     </div>
     <div>
       <dt>Open calls</dt>
@@ -208,7 +228,9 @@
           <dd>{num(policy?.max_calls)}</dd>
         </div>
         <div>
-          <dt>Storage budget <span>Live pages of metadata and blob files</span></dt>
+          <dt>
+            Storage budget <span>Live pages of the metadata, blob, and search index files</span>
+          </dt>
           <dd>{policy ? bytes(policy.max_storage_bytes) : '—'}</dd>
         </div>
       </dl>

@@ -146,7 +146,7 @@ export function recorderFixture(overrides: Partial<RecorderMetrics> = {}): Recor
 export function storageViewFixture(): StorageView {
   const file = { page_size: 4096, page_count: 10, freelist_count: 2 };
   return {
-    disk: { metadata: file, blobs: file },
+    disk: { metadata: file, blobs: file, search: null },
     calls: 0,
     open_calls: 0,
     chunks: 0,

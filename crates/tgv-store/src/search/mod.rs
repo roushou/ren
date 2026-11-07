@@ -10,12 +10,12 @@
 
 use crate::activity::{Excerpt, ReadCall};
 use crate::query::{PageLimit, TimeRange};
-use crate::view::Columns;
+use crate::view::{Columns, FileUsage, IndexUsage};
 use crate::{Reader, Store, StoreError};
 use serde::Serialize;
 use serde_with::{DeserializeFromStr, SerializeDisplay};
 use sqlx::{
-    QueryBuilder, Row, Sqlite, SqlitePool,
+    Connection, QueryBuilder, Row, Sqlite, SqliteConnection, SqlitePool,
     sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous},
 };
 use std::{collections::HashSet, fmt, path::Path, time::Duration};
@@ -290,6 +290,49 @@ impl SearchIndex {
             return Err(StoreError::NotFound);
         }
         Ok(Self { pool })
+    }
+
+    /// The index file's disk use, measured through a short read-only
+    /// connection that also reads the store's calls beside it. `None` when
+    /// no index has been built.
+    pub async fn usage(dir: &Path) -> Result<Option<IndexUsage>, StoreError> {
+        let path = dir.join(Self::FILE);
+        if !path.is_file() {
+            return Ok(None);
+        }
+        let metadata = dir.join(Store::METADATA_FILE);
+        let metadata = metadata.to_str().ok_or(StoreError::NonUtf8Path)?;
+        let options = SqliteConnectOptions::new()
+            .filename(&path)
+            .read_only(true)
+            .busy_timeout(Duration::from_secs(5));
+        let mut connection = SqliteConnection::connect_with(&options).await?;
+        let file = FileUsage::measure(&mut connection, "main").await?;
+        let version: i64 = sqlx::query_scalar("PRAGMA user_version")
+            .fetch_one(&mut connection)
+            .await?;
+        let (indexed_calls, stale_calls) = if version == Self::VERSION {
+            sqlx::query("ATTACH DATABASE ? AS meta")
+                .bind(metadata)
+                .execute(&mut connection)
+                .await?;
+            let row = sqlx::query("SELECT COUNT(*) AS indexed, COALESCE(SUM(call NOT IN (SELECT id FROM meta.calls)), 0) AS stale FROM indexed_calls")
+                .fetch_one(&mut connection)
+                .await?;
+            (
+                row.try_get::<u64, _>("indexed")?,
+                row.try_get::<u64, _>("stale")?,
+            )
+        } else {
+            // About to be rebuilt: its rows describe nothing retained.
+            (0, 0)
+        };
+        connection.close().await?;
+        Ok(Some(IndexUsage {
+            file,
+            indexed_calls,
+            stale_calls,
+        }))
     }
 
     /// Add calls' documents, one transaction for all of them.

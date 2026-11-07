@@ -1,6 +1,6 @@
 // The overview page's pure logic: the health line, what needs attention,
 // and which sessions are active. No browser needed.
-import type { CallView, FileUsage, Health, SessionView, Storage } from './api.ts';
+import type { CallView, FileUsage, Health, IndexUsage, SessionView, Storage } from './api.ts';
 import { bytes } from './api.ts';
 import { buildLabel, callStatus, statusBadge, type Chip } from './display.ts';
 
@@ -90,7 +90,11 @@ export function healthLine(
       });
   }
   if (storage) {
-    const used = live(storage.usage.disk.metadata) + live(storage.usage.disk.blobs);
+    const search = storage.usage.disk.search;
+    const used =
+      live(storage.usage.disk.metadata) +
+      live(storage.usage.disk.blobs) +
+      (search ? indexBudgetBytes(search) : 0);
     const budget = storage.policy.max_storage_bytes;
     const share = storage.policy.enabled && budget ? used / budget : null;
     items.push(
@@ -161,4 +165,15 @@ export function ago(ms: number, now: number): string {
   const minutes = Math.round(seconds / 60);
   if (minutes < 60) return `${minutes} min ago`;
   return `${Math.round(minutes / 60)} h ago`;
+}
+
+/**
+ * The search index's share of the storage budget, as the daemon counts it:
+ * its live pages in proportion to the indexed calls the store still has.
+ */
+export function indexBudgetBytes(search: IndexUsage): number {
+  const live = (search.file.page_count - search.file.freelist_count) * search.file.page_size;
+  if (!search.indexed_calls) return live;
+  const kept = Math.max(0, search.indexed_calls - search.stale_calls);
+  return Math.floor((live * kept) / search.indexed_calls);
 }

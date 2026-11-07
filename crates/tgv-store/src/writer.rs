@@ -3,6 +3,7 @@
 use super::chunk::{ChunkHash, EncodedChunk};
 use crate::{
     StoreError,
+    search::SearchIndex,
     view::{DiskUsage, FileUsage},
 };
 use bytes::Bytes;
@@ -14,7 +15,7 @@ use std::{
     collections::HashSet,
     fs::{File, OpenOptions},
     future::Future,
-    path::Path,
+    path::{Path, PathBuf},
     sync::Arc,
     time::Duration,
 };
@@ -42,6 +43,8 @@ use tgv_recorder::{
 /// Owns the data directory for one daemon run.
 pub struct Store {
     connection: SqliteConnection,
+    /// The data directory, for measuring the search index beside it.
+    dir: PathBuf,
     ids: Arc<dyn IdSource>,
     sweeps: SweepGate,
     _lock: File,
@@ -128,6 +131,7 @@ impl Store {
         Self::attach_blobs(&mut connection, dir, BlobAccess::Write).await?;
         let mut store = Self {
             connection,
+            dir: dir.to_path_buf(),
             ids,
             sweeps: SweepGate::default(),
             _lock: lock,
@@ -435,7 +439,7 @@ impl Store {
     }
 
     pub async fn disk_usage(&mut self) -> Result<DiskUsage, StoreError> {
-        DiskUsage::measure(&mut self.connection).await
+        DiskUsage::measure(&mut self.connection, &self.dir).await
     }
 
     /// Move WAL contents into the database files and restart the logs.
@@ -463,16 +467,24 @@ pub(super) enum BlobAccess {
 }
 
 impl DiskUsage {
-    pub(super) async fn measure(connection: &mut SqliteConnection) -> Result<Self, StoreError> {
+    /// Both store files through `connection`, and the search index in `dir`.
+    pub(super) async fn measure(
+        connection: &mut SqliteConnection,
+        dir: &Path,
+    ) -> Result<Self, StoreError> {
         Ok(Self {
             metadata: FileUsage::measure(connection, "main").await?,
             blobs: FileUsage::measure(connection, "blobs").await?,
+            search: SearchIndex::usage(dir).await?,
         })
     }
 }
 
 impl FileUsage {
-    async fn measure(connection: &mut SqliteConnection, schema: &str) -> Result<Self, StoreError> {
+    pub(crate) async fn measure(
+        connection: &mut SqliteConnection,
+        schema: &str,
+    ) -> Result<Self, StoreError> {
         let mut values = [0_u64; 3];
         for (value, pragma) in values
             .iter_mut()

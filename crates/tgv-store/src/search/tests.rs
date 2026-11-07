@@ -194,3 +194,67 @@ async fn another_index_version_is_rebuilt_and_readers_need_a_built_index() {
         assert_eq!(mode & 0o077, 0, "the index holds private text");
     }
 }
+
+#[tokio::test]
+async fn index_usage_budgets_only_the_share_of_calls_the_store_still_has() {
+    use std::sync::Arc;
+    use tgv_recorder::{
+        id::SequentialIds,
+        time::{ManualClock, UnixMillis},
+    };
+    let dir = tempfile::tempdir().unwrap();
+    assert_eq!(SearchIndex::usage(dir.path()).await.unwrap(), None);
+    let clock = ManualClock::at(UnixMillis::EPOCH);
+    let (mut store, _) = Store::open(dir.path(), &clock, Arc::new(SequentialIds::default()))
+        .await
+        .unwrap();
+    let index = SearchIndex::open(dir.path()).await.unwrap();
+    // The store has none of these calls: as if retention just deleted them.
+    index
+        .add(&[
+            call(
+                1,
+                None,
+                None,
+                &[(SearchField::Reply, &"words ".repeat(2_000))],
+            ),
+            call(
+                2,
+                None,
+                None,
+                &[(SearchField::Reply, &"more ".repeat(2_000))],
+            ),
+        ])
+        .await
+        .unwrap();
+    let usage = SearchIndex::usage(dir.path()).await.unwrap().unwrap();
+    assert_eq!(usage.indexed_calls, 2);
+    assert_eq!(usage.stale_calls, 2);
+    assert!(usage.file.live_bytes() > 0);
+    assert_eq!(usage.budget_bytes(), 0);
+    // The store measures it too, and its total leaves the stale rows out.
+    let disk = store.disk_usage().await.unwrap();
+    assert_eq!(disk.search, Some(usage));
+    assert_eq!(
+        disk.live_bytes(),
+        disk.metadata.live_bytes() + disk.blobs.live_bytes()
+    );
+}
+
+#[test]
+fn the_index_budget_is_its_live_size_in_proportion_to_kept_calls() {
+    let usage = |indexed_calls, stale_calls| crate::view::IndexUsage {
+        file: crate::view::FileUsage {
+            page_size: 4096,
+            page_count: 110,
+            freelist_count: 10,
+        },
+        indexed_calls,
+        stale_calls,
+    };
+    assert_eq!(usage(0, 0).budget_bytes(), 409_600);
+    assert_eq!(usage(4, 0).budget_bytes(), 409_600);
+    assert_eq!(usage(4, 1).budget_bytes(), 307_200);
+    assert_eq!(usage(4, 4).budget_bytes(), 0);
+    assert_eq!(usage(4, 9).budget_bytes(), 0);
+}

@@ -54,6 +54,8 @@ pub struct PrefixLimit {
 #[derive(Clone)]
 pub struct Reader {
     pool: SqlitePool,
+    /// The data directory, for measuring the search index beside it.
+    dir: Arc<Path>,
 }
 
 impl Reader {
@@ -68,18 +70,19 @@ impl Reader {
             .pragma("query_only", "ON")
             .busy_timeout(Duration::from_secs(5));
         let dir: Arc<Path> = dir.into();
+        let attach = dir.clone();
         let pool = SqlitePoolOptions::new()
             .max_connections(connections.max(1))
             .acquire_timeout(Duration::from_secs(5))
             .after_connect(move |connection, _| {
-                let dir = dir.clone();
+                let dir = attach.clone();
                 Box::pin(
                     async move { Store::attach_blobs(connection, &dir, BlobAccess::Read).await },
                 )
             })
             .connect_with(options)
             .await?;
-        Ok(Self { pool })
+        Ok(Self { pool, dir })
     }
 
     /// Newest calls first, filtered.
@@ -475,7 +478,7 @@ impl Reader {
 
     pub async fn storage(&self) -> Result<StorageView, StoreError> {
         let mut connection = self.pool.acquire().await?;
-        let disk = DiskUsage::measure(&mut connection).await?;
+        let disk = DiskUsage::measure(&mut connection, &self.dir).await?;
         let calls =
             sqlx::query("SELECT COUNT(*) AS calls, COALESCE(SUM(state = ?), 0) AS open FROM calls")
                 .bind(CallState::Open.label())

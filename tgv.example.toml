@@ -27,8 +27,9 @@ commit_interval_ms = 50
 enabled = true
 max_age_seconds = 604800 # 7 days, measured from call start
 max_calls = 10000
-# Disk pages in use across tgv.sqlite3 and blobs.sqlite3. Bodies are
-# deduplicated, so deleting a call frees only chunks nothing else references.
+# Disk pages in use across tgv.sqlite3 and blobs.sqlite3, plus the search
+# index's share for retained calls. Bodies are deduplicated, so deleting a
+# call frees only chunks nothing else references.
 max_storage_bytes = 2147483648 # 2 GiB
 
 [websocket]

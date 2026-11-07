@@ -1,6 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { activeSessions, ago, healthLine, problems } from '../src/lib/overview.ts';
+import {
+  activeSessions,
+  ago,
+  healthLine,
+  indexBudgetBytes,
+  problems,
+} from '../src/lib/overview.ts';
 import type { Health, SessionView, Storage } from '../src/lib/api.ts';
 import {
   callId,
@@ -21,6 +27,7 @@ const storage = (used: number, budget: number, enabled = true): Storage => {
       disk: {
         metadata: { page_size: 1, page_count: used, freelist_count: 0 },
         blobs: { page_size: 1, page_count: 0, freelist_count: 0 },
+        search: null,
       },
     },
   };
@@ -107,4 +114,11 @@ test('active sessions and relative times', () => {
     [now, now - 30_000, now - 12 * 60_000, now - 3 * 3_600_000].map((t) => ago(t, now)),
     ['just now', '30 s ago', '12 min ago', '3 h ago'],
   );
+});
+
+test('the search index counts toward storage only for calls still retained', () => {
+  const file = { page_size: 1, page_count: 110, freelist_count: 10 };
+  assert.equal(indexBudgetBytes({ file, indexed_calls: 0, stale_calls: 0 }), 100);
+  assert.equal(indexBudgetBytes({ file, indexed_calls: 4, stale_calls: 1 }), 75);
+  assert.equal(indexBudgetBytes({ file, indexed_calls: 4, stale_calls: 4 }), 0);
 });

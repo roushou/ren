@@ -510,7 +510,10 @@ or when `SearchIndex::VERSION` changes. `Indexer` is its only writer: a daemon
 task reads finished calls in end-time order through its own read connection,
 indexes up to 20 per pass, pauses 200 ms while backfilling and 5 s once caught
 up, and on every pass removes up to 500 indexed calls that retention deleted.
-It stops with HTTP; an interrupted pass rolls back and is repeated. Search terms
+It stops with HTTP; an interrupted pass rolls back and is repeated. `/api/storage`
+reports the file (`disk.search`: pages, indexed and stale calls), and retention's
+storage budget counts its live pages in proportion to the indexed calls the store
+still has, so stale rows of just-deleted calls never cause extra deletions. Search terms
 become quoted FTS5 strings joined by `AND`, so input never reaches the query
 grammar.
 
@@ -662,8 +665,7 @@ state; it is logged, not recorded in `operator_actions`.
   searchable, a turn reads at most 100 calls, and turn listings have no paging.
   Reports do not detect compaction, and time to first token is not recorded.
 - Search matches whole words (punctuation splits them), indexes at most 32 KiB
-  per field of each call, and lags a call's end by up to 5 seconds. Its file
-  size is not in `/api/storage` or retention's storage budget.
+  per field of each call, and lags a call's end by up to 5 seconds.
   Its parsing runs on an async worker, bounded only by the preview permits.
 - The container image is built from a checkout; none is published, and
   `install-vps` does not manage containers.
