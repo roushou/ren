@@ -393,17 +393,13 @@ export interface FileUsage {
   page_count: number;
   freelist_count: number;
 }
-/** The search index's disk use; stale calls are ones retention deleted. */
-export interface IndexUsage {
-  file: FileUsage;
-  indexed_calls: number;
-  stale_calls: number;
-}
 export interface StorageView {
-  /** `search` is null before the index is built, or from an older daemon. */
-  disk: { metadata: FileUsage; blobs: FileUsage; search: IndexUsage | null };
+  /** The search index is part of the metadata file. */
+  disk: { metadata: FileUsage; blobs: FileUsage };
   calls: number;
   open_calls: number;
+  /** Calls whose activity is derived; null from an older daemon. */
+  digested_calls: number | null;
   chunks: number;
   /** Raw bytes all stored segments reference. */
   referenced_bytes: number;
@@ -681,12 +677,10 @@ const storageView = object<StorageView>({
   disk: object<StorageView['disk']>({
     metadata: fileUsage,
     blobs: fileUsage,
-    search: optional(
-      object<IndexUsage>({ file: fileUsage, indexed_calls: count, stale_calls: count }),
-    ),
   }),
   calls: count,
   open_calls: count,
+  digested_calls: optional(count),
   chunks: count,
   referenced_bytes: count,
   unique_bytes: count,
@@ -853,6 +847,7 @@ const activityLimitations = [
   'unexpected_shape',
   'unfinished_tool_call',
   'too_many_tool_calls',
+  'not_yet_derived',
 ] as const;
 export type ActivityLimitation = (typeof activityLimitations)[number];
 const findingKinds = [

@@ -38,6 +38,9 @@ pub enum ActivityLimitation {
     /// A tool call's block was opened but never closed.
     UnfinishedToolCall,
     TooManyToolCalls,
+    /// The call's activity has not been derived yet: it finished moments
+    /// ago, or was recorded before this build.
+    NotYetDerived,
 }
 
 /// What a client said about a tool result.

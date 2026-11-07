@@ -145,13 +145,7 @@ impl TurnsCmd {
         let limit = self.limit;
         match self.target.select(ctx)? {
             Target::Local => {
-                let index = ctx.search_index().await?;
-                HistoryCmd::print(
-                    &ctx.reader()
-                        .await?
-                        .session_turns(self.id, limit, index.as_ref())
-                        .await?,
-                )
+                HistoryCmd::print(&ctx.reader().await?.session_turns(self.id, limit).await?)
             }
             Target::Remote(gateway) => HistoryCmd::print(&gateway.turns(self.id, limit).await?),
         }
@@ -191,10 +185,7 @@ impl SearchCmd {
             limit: self.limit,
         };
         match self.target.select(ctx)? {
-            Target::Local => {
-                let index = ctx.required_search_index().await?;
-                HistoryCmd::print(&index.search(&query).await?)
-            }
+            Target::Local => HistoryCmd::print(&ctx.reader().await?.search(&query).await?),
             Target::Remote(gateway) => HistoryCmd::print(&gateway.search_history(&query).await?),
         }
     }
@@ -221,10 +212,7 @@ impl ExposuresCmd {
             limit: self.limit,
         };
         match self.target.select(ctx)? {
-            Target::Local => {
-                let index = ctx.required_search_index().await?;
-                HistoryCmd::print(&index.exposures(&query).await?)
-            }
+            Target::Local => HistoryCmd::print(&ctx.reader().await?.exposures(&query).await?),
             Target::Remote(gateway) => HistoryCmd::print(&gateway.exposures(&query).await?),
         }
     }
@@ -242,22 +230,7 @@ pub struct ReportCmd {
 impl ReportCmd {
     pub async fn run(self, ctx: &Context) -> Result<ExitCode> {
         match self.target.select(ctx)? {
-            Target::Local => {
-                let mut report = ctx.reader().await?.session_report(self.id).await?;
-                // Exposures come from the daemon's search index, when built.
-                if let Some(index) = ctx.search_index().await? {
-                    report.add_exposures(
-                        index
-                            .exposures(&ExposureQuery {
-                                session: Some(self.id),
-                                time: TimeRange::default(),
-                                limit: PageLimit::new(PageLimit::MAX)?,
-                            })
-                            .await?,
-                    );
-                }
-                HistoryCmd::print(&report)
-            }
+            Target::Local => HistoryCmd::print(&ctx.reader().await?.session_report(self.id).await?),
             Target::Remote(gateway) => HistoryCmd::print(&gateway.report(self.id).await?),
         }
     }

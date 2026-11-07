@@ -1,11 +1,12 @@
-//! Agent activity, read from stored bodies when asked: for a turn, the
-//! user's prompt, each call's tool calls with what they touched and how
-//! their results came back, and the files and commands of the whole turn.
+//! Agent activity: for a turn, the user's prompt, each call's tool calls
+//! with what they touched and how their results came back, and the files and
+//! commands of the whole turn.
 //!
-//! Derived from captured bytes at read time, never stored, and never part of
-//! forwarding. A tool call is what the model requested; a result's status is
-//! what the client reported; an effect is what the tool's input names.
-//! Turns are the client's own groupings, never inferred.
+//! Assembled from the digests the recorder derived when each call finished
+//! (`call_digests`); no body is read. A tool call is what the model
+//! requested; a result's status is what the client reported; an effect is
+//! what the tool's input names. Turns are the client's own groupings, never
+//! inferred.
 
 pub mod report;
 
@@ -18,11 +19,11 @@ use tgv_harness::{
     tools::{EffectKind, ToolEffect},
 };
 use tgv_protocol::{
-    activity::{ActivityLimitation, RequestActivity, ResponseActivity, ResultStatus, ToolResult},
+    activity::{ActivityLimitation, ResultStatus},
     label::Stored,
 };
+use tgv_recorder::digest::CallDigest;
 pub use tgv_recorder::digest::Excerpt;
-use tgv_recorder::secrets::SecretScanner;
 use tgv_recorder::{
     id::{CallId, SessionId, TurnId},
     time::UnixMillis,
@@ -139,12 +140,12 @@ pub struct TurnHead {
     pub native_id: String,
 }
 
-/// One call with what its bodies showed.
+/// One call with its digest: what its bodies showed, derived when it
+/// finished. `None` until the recorder has derived it.
 #[derive(Debug, Clone)]
 pub struct ReadCall {
     pub view: CallView,
-    pub request: RequestActivity,
-    pub response: ResponseActivity,
+    pub digest: Option<CallDigest>,
 }
 
 impl ReadCall {
@@ -158,17 +159,6 @@ impl ReadCall {
             .map(|source| source.harness())
     }
 
-    /// The user's own words in this call's request, if it starts with them.
-    pub fn prompt(&self) -> Option<String> {
-        self.harness().map_or_else(
-            || {
-                let text = self.request.user_text.join("\n\n");
-                (!text.trim().is_empty()).then_some(text)
-            },
-            |harness| harness.prompt(&self.request.user_text),
-        )
-    }
-
     /// This call alone, with results matched only within it.
     pub fn activity(self, budget: ActivityBudget) -> CallActivity {
         let results = self.results(budget.output_chars);
@@ -176,20 +166,17 @@ impl ReadCall {
         self.into_activity(&results, &mut answered, budget)
     }
 
-    /// The tool results this request carried, with the status the client
-    /// reported, by the tool call each answers.
+    /// The tool results this request carried, by the tool call each answers.
     fn results(&self, output_chars: usize) -> Vec<(String, ResultView)> {
-        let harness = self.harness();
-        self.request
-            .tool_results
+        self.digest
             .iter()
-            .map(|result: &ToolResult| {
+            .flat_map(|digest| &digest.tool_results)
+            .map(|result| {
                 (
                     result.id.clone(),
                     ResultView {
-                        status: harness
-                            .map_or(result.status, |harness| harness.result_status(result)),
-                        output: Excerpt::cut(&result.output, output_chars),
+                        status: result.status,
+                        output: result.output.narrow(output_chars),
                     },
                 )
             })
@@ -202,53 +189,53 @@ impl ReadCall {
         answered: &mut Vec<String>,
         budget: ActivityBudget,
     ) -> CallActivity {
-        let harness = self.harness();
         let metrics = CallMetrics::of(&self.view);
-        let prompt = self
-            .prompt()
-            .map(|prompt| Excerpt::cut(&prompt, budget.prompt_chars));
-        let own_results: Vec<&str> = self
-            .request
-            .tool_results
-            .iter()
-            .map(|result| result.id.as_str())
-            .collect();
-        let earlier_results = own_results
-            .iter()
-            .filter(|id| !answered.iter().any(|known| known == *id))
-            .count();
-        let tool_calls = self
-            .response
-            .tool_uses
-            .iter()
-            .map(|tool| {
-                if let Some(id) = &tool.id {
-                    answered.push(id.clone());
-                }
-                ToolCallView {
-                    id: tool.id.clone(),
-                    name: tool.name.clone(),
-                    effects: harness
-                        .map(|harness| harness.effects(tool))
-                        .unwrap_or_default(),
-                    input: Excerpt::of_input(&tool.input, budget.input_chars),
-                    result: tool.id.as_ref().and_then(|id| {
-                        results
-                            .iter()
-                            .find(|(result, _)| result == id)
-                            .map(|(_, view)| view.clone())
-                    }),
-                }
-            })
-            .collect();
-        let reply = (!self.response.reply.trim().is_empty())
-            .then(|| Excerpt::cut(&self.response.reply, budget.reply_chars));
-        let mut limitations = self.request.limitations;
-        for limitation in self.response.limitations {
-            if !limitations.contains(&limitation) {
-                limitations.push(limitation);
+        let (prompt, tool_calls, reply, earlier_results, limitations) = match self.digest {
+            Some(digest) => {
+                let earlier_results = digest
+                    .tool_results
+                    .iter()
+                    .filter(|result| !answered.contains(&result.id))
+                    .count();
+                let tool_calls = digest
+                    .tool_uses
+                    .into_iter()
+                    .map(|tool| {
+                        if let Some(id) = &tool.id {
+                            answered.push(id.clone());
+                        }
+                        ToolCallView {
+                            result: tool.id.as_ref().and_then(|id| {
+                                results
+                                    .iter()
+                                    .find(|(result, _)| result == id)
+                                    .map(|(_, view)| view.clone())
+                            }),
+                            input: tool.input.narrow(budget.input_chars),
+                            id: tool.id,
+                            name: tool.name,
+                            effects: tool.effects,
+                        }
+                    })
+                    .collect();
+                (
+                    digest
+                        .prompt
+                        .map(|prompt| prompt.narrow(budget.prompt_chars)),
+                    tool_calls,
+                    digest.reply.map(|reply| reply.narrow(budget.reply_chars)),
+                    earlier_results,
+                    digest.limitations,
+                )
             }
-        }
+            None => (
+                None,
+                Vec::new(),
+                None,
+                0,
+                vec![ActivityLimitation::NotYetDerived],
+            ),
+        };
         CallActivity {
             call: self.view.id,
             started_at: self.view.started_at,
@@ -274,14 +261,18 @@ impl TurnActivity {
         calls: Vec<ReadCall>,
         omitted_calls: u64,
         budget: ActivityBudget,
-        scanner: &SecretScanner,
     ) -> Self {
         let client = calls.iter().find_map(ReadCall::harness);
         let exposures: Vec<Finding> = calls
             .iter()
             .flat_map(|call| {
                 let (id, turn) = (call.view.id, call.view.turn);
-                call.exposures(scanner).into_iter().map(move |exposure| {
+                let exposures = call
+                    .digest
+                    .as_ref()
+                    .map(|digest| digest.exposures.clone())
+                    .unwrap_or_default();
+                exposures.into_iter().map(move |exposure| {
                     Finding::SecretExposure(SecretExposure {
                         call: id,
                         turn,
@@ -370,9 +361,7 @@ impl TurnActivity {
                     continue;
                 };
                 let target = tool.effects.first().map(|effect| effect.target.clone());
-                let chars = u64::try_from(result.output.text.chars().count())
-                    .unwrap_or(u64::MAX)
-                    .saturating_add(result.output.omitted_chars);
+                let chars = result.output.total_chars();
                 if chars >= FindingKind::LARGE_OUTPUT_CHARS {
                     findings.push(Finding::LargeToolOutput(LargeToolOutput {
                         call: call.call,

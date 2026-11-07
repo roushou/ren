@@ -1,5 +1,65 @@
 use super::*;
 use crate::view::{AttributionView, SessionHintView};
+use tgv_harness::tools::InterpretedCall;
+use tgv_protocol::activity::{Reading, RequestActivity, ResponseActivity};
+use tgv_recorder::digest::{CallDigest, DigestBudget};
+use tgv_recorder::secrets::SecretScanner;
+
+/// A call as its bodies read, sealed into the digest the recorder would
+/// store for it.
+#[derive(Clone)]
+struct ReadCall {
+    view: CallView,
+    request: RequestActivity,
+    response: ResponseActivity,
+}
+
+impl ReadCall {
+    fn read(self) -> super::ReadCall {
+        let harness = self
+            .view
+            .attribution
+            .hint
+            .as_ref()
+            .and_then(|hint| hint.source.known())
+            .map(|source| source.harness());
+        let digest = CallDigest::seal(
+            InterpretedCall::new(
+                harness,
+                Reading {
+                    request: self.request,
+                    response: self.response,
+                },
+            ),
+            &SecretScanner::new().unwrap(),
+            DigestBudget::STORED,
+        );
+        super::ReadCall {
+            view: self.view,
+            digest: Some(digest),
+        }
+    }
+
+    fn activity(self, budget: ActivityBudget) -> CallActivity {
+        self.read().activity(budget)
+    }
+}
+
+/// A turn from calls as their bodies read.
+fn assemble(
+    head: TurnHead,
+    calls: Vec<ReadCall>,
+    omitted: u64,
+    budget: ActivityBudget,
+    _scanner: &SecretScanner,
+) -> TurnActivity {
+    TurnActivity::assemble(
+        head,
+        calls.into_iter().map(ReadCall::read).collect(),
+        omitted,
+        budget,
+    )
+}
 use serde_json::json;
 use tgv_harness::attribution::HintSource;
 use tgv_protocol::activity::ToolInput;
@@ -129,7 +189,7 @@ fn a_turn_joins_prompt_tool_calls_results_and_effects() {
         },
         response: ResponseActivity::default(),
     };
-    let turn = TurnActivity::assemble(
+    let turn = assemble(
         head(),
         vec![first, second, third],
         0,
@@ -201,7 +261,7 @@ fn codex_exit_codes_and_unattributed_calls() {
         },
         response: ResponseActivity::default(),
     };
-    let turn = TurnActivity::assemble(
+    let turn = assemble(
         head(),
         vec![codex, answer],
         3,
@@ -260,9 +320,7 @@ fn a_turn_with_a_call_still_open_has_not_ended() {
         }
     };
     let scanner = tgv_recorder::secrets::SecretScanner::new().unwrap();
-    let assemble = |calls| {
-        TurnActivity::assemble(head(), calls, 0, ActivityBudget::DEFAULT, &scanner).ended_at
-    };
+    let assemble = |calls| assemble(head(), calls, 0, ActivityBudget::DEFAULT, &scanner).ended_at;
     assert_eq!(
         assemble(vec![call(1, Some(1500)), call(2, Some(2500))]),
         Some(UnixMillis::from_millis(2500))
@@ -418,7 +476,7 @@ mod report {
             },
             response: ResponseActivity::default(),
         };
-        let turn = TurnActivity::assemble(
+        let turn = assemble(
             head(),
             vec![first, second],
             0,
@@ -474,27 +532,8 @@ fn secrets_a_turn_carried_are_findings_without_the_secret() {
         },
         response: ResponseActivity::default(),
     };
-    let scanner = tgv_recorder::secrets::SecretScanner::new().unwrap();
-    let documents = call.documents(64, &scanner);
-    assert_eq!(documents.exposures.len(), 2);
-    assert!(
-        documents
-            .exposures
-            .iter()
-            .all(|exposure| exposure.hint == "sk-ant-…a1b2")
-    );
-    // The prompt document holds only the user's words; tool output is
-    // indexed redacted.
-    let texts: Vec<_> = documents
-        .documents
-        .iter()
-        .map(|document| document.text.as_str())
-        .collect();
-    assert_eq!(texts, ["Deploy it", "export K=«redacted: anthropic_key»"]);
-    // Reading exposures alone finds the same as building the documents.
-    assert_eq!(call.exposures(&scanner), documents.exposures);
-
-    let turn = TurnActivity::assemble(head(), vec![call], 0, ActivityBudget::DEFAULT, &scanner);
+    let call = call.read();
+    let turn = TurnActivity::assemble(head(), vec![call], 0, ActivityBudget::DEFAULT);
     let json = serde_json::to_string(&turn.findings).unwrap();
     assert!(!json.contains("api03"), "{json}");
     let fields: Vec<_> = turn
@@ -509,67 +548,4 @@ fn secrets_a_turn_carried_are_findings_without_the_secret() {
         })
         .collect();
     assert_eq!(fields, ["prompt", "tool_output"]);
-}
-
-/// The sealed digest's search texts and exposures are what the store derives
-/// from the same call today, so moving derivation to write time keeps them.
-#[test]
-fn a_sealed_digest_matches_todays_documents() {
-    use tgv_harness::tools::InterpretedCall;
-    use tgv_protocol::activity::Reading;
-    use tgv_recorder::digest::{CallDigest, DigestBudget};
-    let scanner = tgv_recorder::secrets::SecretScanner::new().unwrap();
-    let key = format!("sk-ant-{}a1b2", "api03xY9z".repeat(5));
-    let call = |user: &str, output: &str| ReadCall {
-        view: view(1, HintSource::ClaudeCodeHeaders),
-        request: RequestActivity {
-            user_text: vec![
-                "<system-reminder>context</system-reminder>".to_owned(),
-                user.to_owned(),
-            ],
-            tool_results: vec![result("a", ResultStatus::Succeeded, output)],
-            limitations: Vec::new(),
-        },
-        response: ResponseActivity {
-            tool_uses: vec![
-                tool("b", "Read", json!({ "file_path": "src/lib.rs" })),
-                tool("c", "Bash", json!({ "command": "cargo test" })),
-            ],
-            reply: "Looking.".to_owned(),
-            limitations: Vec::new(),
-        },
-    };
-    for read in [
-        call("Make the tests pass", "fn main() {}"),
-        call(&format!("Use {key}"), &format!("K={key} and {key}")),
-    ] {
-        let documents = read.documents(crate::search::SearchIndex::FIELD_CHARS, &scanner);
-        let digest = CallDigest::seal(
-            InterpretedCall::new(
-                read.harness(),
-                Reading {
-                    request: read.request.clone(),
-                    response: read.response.clone(),
-                },
-            ),
-            &scanner,
-            DigestBudget::STORED,
-        );
-        let today: Vec<_> = documents
-            .documents
-            .iter()
-            .map(|document| (document.field, document.text.clone()))
-            .collect();
-        let sealed: Vec<_> = digest
-            .search
-            .iter()
-            .map(|text| (text.field, text.text.clone()))
-            .collect();
-        assert_eq!(sealed, today);
-        assert_eq!(digest.exposures, documents.exposures);
-        assert_eq!(
-            digest.prompt.map(|prompt| prompt.text),
-            documents.prompt.map(|prompt| prompt.text)
-        );
-    }
 }

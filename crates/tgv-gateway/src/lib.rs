@@ -378,7 +378,6 @@ impl<U: Upstream> Gateway<U> {
         let api = ApiState::new(
             ReadSources {
                 reader: management.reader,
-                search: management.search,
                 retention: management.retention,
                 build: management.build,
             },

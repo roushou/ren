@@ -50,6 +50,22 @@ impl Excerpt {
             ToolInput::Text(text) => Self::cut(text, max_chars),
         }
     }
+
+    /// This excerpt cut further, still counting everything left out.
+    pub fn narrow(&self, max_chars: usize) -> Self {
+        let cut = Self::cut(&self.text, max_chars);
+        Self {
+            omitted_chars: cut.omitted_chars.saturating_add(self.omitted_chars),
+            text: cut.text,
+        }
+    }
+
+    /// The whole text's length, in characters.
+    pub fn total_chars(&self) -> u64 {
+        u64::try_from(self.text.chars().count())
+            .unwrap_or(u64::MAX)
+            .saturating_add(self.omitted_chars)
+    }
 }
 
 /// How much of each text a digest keeps. Views cut further; the full text

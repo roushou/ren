@@ -143,15 +143,8 @@
     { label: 'Blobs · live', value: usage && live(usage.disk.blobs), unit: 'bytes' },
     { label: 'Blobs · free pages', value: usage && free(usage.disk.blobs), unit: 'bytes' },
     {
-      label: 'Search index · live',
-      value: usage?.disk.search ? live(usage.disk.search.file) : undefined,
-      unit: 'bytes',
-    },
-    {
-      label: 'Search index · calls',
-      value: usage?.disk.search
-        ? usage.disk.search.indexed_calls - usage.disk.search.stale_calls
-        : undefined,
+      label: 'Calls with derived activity',
+      value: usage?.digested_calls ?? undefined,
       unit: 'count',
     },
     { label: 'Chunks', value: usage?.chunks, unit: 'count' },
@@ -193,13 +186,7 @@
     <div>
       <dt>Live disk usage</dt>
       <dd>
-        {usage
-          ? bytes(
-              live(usage.disk.metadata) +
-                live(usage.disk.blobs) +
-                (usage.disk.search ? live(usage.disk.search.file) : 0),
-            )
-          : '—'}
+        {usage ? bytes(live(usage.disk.metadata) + live(usage.disk.blobs)) : '—'}
       </dd>
     </div>
     <div>

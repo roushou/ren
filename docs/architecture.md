@@ -197,9 +197,9 @@ xtask        ─► tgv-daemon, tgv-harness   (repository tasks, unpublished)
 | `tgv-protocol`                             | `CallInspector`                                                               | `Provider`, `Endpoint`, `Method`, `Transport`, `Direction`; `Stored<T>` and the label trait; SSE framing; encodings; Anthropic Messages and OpenAI Responses wire types; WebSocket message classification (`Payload`, `CloseCode`, `ClientMessage`, `UpstreamMessage`, `InterruptOutcome`); the native identifiers and `MessageHints` the wire carries; inspection; the activity reader (`activity`) |
 | `tgv-harness`                              | `Harness` enum: `ClaudeCode`, `Codex`, `Pi`                                   | attribution (`Attribution`, `SessionHint`, hint sources and issues); launch plans; the Pi extension cache; `GatewayEndpoint`, the URL a harness is pointed at; `HostEnv`; what each harness's tools and messages mean (`tools`)                                                                                                                                                                      |
 | `tgv-recorder`                             | `Recorder`; `RecorderTask` runs it; `RecordSink` is its port                  | `ChannelId`, `CallId`, `AttemptId`, `SessionId`, `TurnId`; `Clock`, `IdSource`, and their test implementations; recorded facts (terminals, causes, phases, rejections, body endings, omissions, `ChannelEnd`, `ConfigRevision`, `UpstreamId`, `OperatorRevision`); the stored inspection format; the `Chunker`; batches; `RetentionPolicy`; taps, queue, metrics, live broadcast                     |
-| `tgv-store`                                | `Store`, which implements `RecordSink`; `Reader` and `Backup` are its handles | SQLite and migrations, the stored chunk format, queries, views, turn and call activity read from bodies (`activity`), the derived full-text index (`search`), retention, `Recovery`, the sweep gate, backup                                                                                                                                                                                          |
+| `tgv-store`                                | `Store`, which implements `RecordSink`; `Reader` and `Backup` are its handles | SQLite and migrations, the stored chunk format, queries, views, turn and call activity assembled from stored digests (`activity`), full-text search and exposures over the digests (`search`), retention, `Recovery`, the sweep gate, backup                                                                                                                                                         |
 | `tgv-gateway`                              | `Gateway`                                                                     | all HTTP routes: forwarding, the read API and `/api/live`, and authenticated controls and backup; route table, header policy, request buffering, upstream entries, the `Upstream` seam and Reqwest implementation, `HttpAttempt`, `WsChannel`, retry facts, policy, `Controls`, `OperatorState`, the running-call registry, ingress and the shutdown drain, the `Build` `/health` reports            |
-| `tgv-daemon`                               | `Daemon`                                                                      | `Config` → `RuntimeConfig`; resource wiring, listener binding, control-token file, and lifecycle; the system clock and random IDs; the three task spawns (recorder, server, search indexer)                                                                                                                                                                                                          |
+| `tgv-daemon`                               | `Daemon`                                                                      | `Config` → `RuntimeConfig`; resource wiring, listener binding, control-token file, and lifecycle; the system clock and random IDs; the two task spawns (recorder, server)                                                                                                                                                                                                                            |
 | `tgv-cli` (package `tgv-rs`, binary `tgv`) | `Cli`                                                                         | capturing `HostEnv` in `main`, recording the source revision (`build.rs`), commands, gateway choice and `client.toml`, history and controls on this host or through a gateway's APIs (`management`), `tgv tail` (`tail`), the pure MCP core of `tgv mcp` (`mcp`), doctor and its build comparison, service definitions                                                                               |
 | `xtask` (unpublished, `cargo xtask`)       | `Xtask`                                                                       | `install-vps`: installing or upgrading TGV from a checkout as a systemd user service between calls, published with Tailscale Serve, and with `--ui-https-port` the UI as `tgv-ui.service`; its publishing flags are saved for later runs                                                                                                                                                             |
 
@@ -492,53 +492,47 @@ events and WebSocket messages alike.
 
 ### Activity
 
-Activity is what a call's bodies show an agent doing, derived when the read API
-asks and never stored. `ActivityReader` (`tgv-protocol`, pure) reads a request's
-newest user input (the messages or input items after the model's last output:
-user text, and tool results with their error flag) and a response's text and
-tool calls with their inputs, from a document, SSE events, or WebSocket
-messages, after the same decompression inspection uses. `Harness` (`tools`)
-says what each client's tools touch, which user text is the client's own
-context, and how Codex reports exit codes. The store's `activity` module reads
-each call's body prefix (16 MiB) and assembles a turn: tool results are matched
-to the tool calls they answer anywhere in the turn. A tool call is requested,
-not executed; a status is client-reported; unreadable input is a limitation.
-The work runs on the read pool under the preview permits, so it never touches
-forwarding or capture.
+Activity is what a call's bodies show an agent doing. It is derived once, by
+the recorder, when a call finishes, and stored as the call's digest (see
+Recorder). `RequestReader` gathers a request's newest user input (the messages
+or input items after the model's last output: user text, and tool results with
+their error flag); the inspection pipeline hands every response frame to a
+`ResponseReader` for its text and tool calls with their inputs, from a document,
+SSE events, or WebSocket messages, after the same decompression inspection uses.
+`InterpretedCall` (`tgv-harness`) applies what each client's tools touch, which
+user text is the client's own context, and how Codex reports exit codes.
+`CallDigest::seal` redacts every text and cuts it to `DigestBudget::STORED`:
+prompt and reply 4,000 characters, each tool input and output 2,000, each
+searchable field 32 KiB. The store's `activity` module assembles a turn from its
+calls' digests, matching tool results to the tool calls they answer anywhere in
+the turn, and cuts excerpts further to the view's budget. No body is read. A
+tool call is requested, not executed; a status is client-reported; what could
+not be read is a limitation, and a call whose digest is not derived yet says so
+(`not_yet_derived`).
 
-The session report (`activity::report`) reads only call rows. Per-call metrics
-come from the provider-reported usage, by its input accounting, and recorded
-times; findings (`FindingKind`) apply fixed thresholds and state measurements,
-never causes. Turn activity adds the findings that need bodies.
+The session report (`activity::report`) reads call rows and the exposures table.
+Per-call metrics come from the provider-reported usage, by its input
+accounting, and recorded times; findings (`FindingKind`) apply fixed thresholds
+and state measurements, never causes. Turn activity adds the findings that need
+tool results.
 
 ### Search
 
-`search.sqlite3` is a full-text index (SQLite FTS5, `unicode61` tokenizer) of
-each finished call's documents: the user's prompt, the reply, tool input (name,
-targets, input), and tool output, each at most 32 KiB, from the activity reader.
-It also keeps the start of each call's prompt, redacted, so a session's turn
-listing reads prompts from it and parses request bodies only for turns not yet
-indexed. It is derived and disposable: not migrated, not backed up, rebuilt when missing,
-when `SearchIndex::VERSION` changes, or when the file fails to open or its
-integrity check. Retention leaves an index it cannot measure out of the storage
-total rather than stopping. `Indexer` is its only writer: a daemon
-task reads finished calls in end-time order through its own read connection,
-indexes up to 20 per pass, pauses 200 ms while backfilling and 5 s once caught
-up, and on every pass removes up to 500 indexed calls that retention deleted.
-It stops with HTTP; an interrupted pass rolls back and is repeated. `/api/storage`
-reports the file (`disk.search`: pages, indexed and stale calls), and retention's
-storage budget counts its live pages in proportion to the indexed calls the store
-still has, so stale rows of just-deleted calls never cause extra deletions. Search terms
-become quoted FTS5 strings joined by `AND`, so input never reaches the query
-grammar.
+Search reads the full-text index `search` (SQLite FTS5, `unicode61` tokenizer,
+external content over `search_texts`) in `tgv.sqlite3`: each finished call's
+prompt, reply, tool input (name, targets, input), and tool output, redacted, at
+most 32 KiB per field, written with the call's digest. Retention removes a call's
+rows with it, and the index's pages count toward the storage budget as part of
+the metadata file. Search terms become quoted FTS5 strings joined by `AND`, so
+input never reaches the query grammar.
 
 `SecretScanner` (`tgv-recorder::secrets`) finds credentials in fixed, documented
-formats with linear-time regular expressions, never by entropy. The indexer scans
-each call's raw newest user input, reply, and tool input and output, redacts what
-it finds before indexing, and stores each exposure's kind, field, masked hint, and
-a truncated BLAKE3 fingerprint in the index's `exposures` table, never the secret.
-Turn activity runs the same scanner over the bodies it reads; session reports add
-the index's exposures as findings.
+formats with linear-time regular expressions, never by entropy. Sealing a
+digest scans the call's raw newest user input (client context included), reply,
+and each tool input and output, redacts what it finds, and keeps each exposure's
+kind, field, masked hint, and a truncated BLAKE3 fingerprint in
+`call_exposures`, never the secret. Turn activity and session reports show
+these as findings.
 
 ### Storage
 
@@ -687,11 +681,12 @@ state; it is logged, not recorded in `operator_actions`.
 - The public OpenAI WebSocket mode is refused.
 - The UI has no control actions.
 - Backups go only to `<data-dir>/backup`, and only through a running daemon.
-- Activity is computed from bodies on each read: it is neither stored nor
-  searchable, a turn reads at most 100 calls, and turn listings have no paging.
-  Reports do not detect compaction, and time to first token is not recorded.
-- Search matches whole words (punctuation splits them), indexes at most 32 KiB
-  per field of each call, and lags a call's end by up to 5 seconds.
-  Its parsing runs on an async worker, bounded only by the preview permits.
+- Activity keeps excerpts, not full text (`DigestBudget::STORED`); a turn reads
+  at most 100 calls, and turn listings have no paging. Reports do not detect
+  compaction, and time to first token is not recorded.
+- Search matches whole words (punctuation splits them) and indexes at most
+  32 KiB per field of each call.
+- Deriving a digest (request parsing and secret scanning) runs on the recorder
+  task, which shares the forwarding runtime.
 - The container image is built from a checkout; none is published, and
   `install-vps` does not manage containers.

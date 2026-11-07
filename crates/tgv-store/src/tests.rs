@@ -1243,66 +1243,232 @@ async fn calls_narrow_by_session_client_and_kind() {
     );
 }
 
-#[tokio::test]
-async fn the_indexer_backfills_in_bounded_passes_and_removes_what_the_store_lost() {
-    use crate::search::{Backlog, CallDocuments, Indexer, SearchIndex};
-    let mut fixture = Fixture::new().await;
-    let mut calls = Vec::new();
-    for n in 0..25 {
-        let request = format!(
-            "{{\"model\":\"claude\",\"messages\":[{{\"role\":\"user\",\"content\":\"needle {n}\"}}]}}"
+mod digests {
+    use super::*;
+    use crate::query::TimeRange;
+    use crate::search::{ExposureQuery, SearchField, SearchQuery, SearchTerms};
+    use serde_json::json;
+    use tgv_harness::{Harness, tools::InterpretedCall};
+    use tgv_protocol::activity::{
+        Reading, RequestActivity, ResponseActivity, ResultStatus, ToolInput, ToolResult, ToolUse,
+    };
+    use tgv_recorder::{
+        digest::{CallDigest, DigestBudget},
+        secrets::SecretScanner,
+    };
+
+    impl Fixture {
+        /// Store the digest the recorder would derive from `reading`.
+        async fn digest(&mut self, call: CallId, harness: Option<Harness>, reading: Reading) {
+            let digest = CallDigest::seal(
+                InterpretedCall::new(harness, reading),
+                &SecretScanner::new().unwrap(),
+                DigestBudget::STORED,
+            );
+            let mut batch = Batch::default();
+            batch.push(Op::Digest {
+                call,
+                digest: Box::new(digest),
+            });
+            self.store.commit(&batch).await.unwrap();
+        }
+    }
+
+    fn prompt(text: &str) -> RequestActivity {
+        RequestActivity {
+            user_text: vec![text.to_owned()],
+            ..RequestActivity::default()
+        }
+    }
+
+    fn query(text: &str) -> SearchQuery {
+        SearchQuery {
+            terms: SearchTerms::parse(text).unwrap(),
+            session: None,
+            client: None,
+            field: None,
+            time: TimeRange::default(),
+            limit: PageLimit::new(20).unwrap(),
+        }
+    }
+
+    #[tokio::test]
+    async fn stored_digests_are_searched_filtered_and_listed() {
+        let mut fixture = Fixture::new().await;
+        let claude = fixture
+            .record(CallSpec {
+                session: Some(10),
+                ..CallSpec::default()
+            })
+            .await;
+        let codex = fixture
+            .record(CallSpec {
+                session: Some(20),
+                source: HintSource::CodexHeaders,
+                ..CallSpec::default()
+            })
+            .await;
+        let undigested = fixture.record(CallSpec::default()).await;
+        let key = format!("sk-ant-{}a1b2", "api03xY9z".repeat(5));
+        fixture
+            .digest(
+                claude,
+                Some(Harness::ClaudeCode),
+                Reading {
+                    request: prompt(&format!("Why does the migration fail with {key}?")),
+                    response: ResponseActivity {
+                        tool_uses: vec![ToolUse {
+                            id: Some("t1".to_owned()),
+                            kind: "tool_use".to_owned(),
+                            name: "Bash".to_owned(),
+                            input: ToolInput::Json(json!({ "command": "cargo xtask install-vps" })),
+                        }],
+                        ..ResponseActivity::default()
+                    },
+                },
+            )
+            .await;
+        fixture
+            .digest(
+                codex,
+                Some(Harness::Codex),
+                Reading {
+                    request: RequestActivity {
+                        tool_results: vec![ToolResult {
+                            id: "t1".to_owned(),
+                            status: ResultStatus::Unreported,
+                            output: "test migration ... FAILED".to_owned(),
+                        }],
+                        ..RequestActivity::default()
+                    },
+                    response: ResponseActivity::default(),
+                },
+            )
+            .await;
+        let reader = &fixture.reader;
+
+        let page = reader.search(&query("migration")).await.unwrap();
+        assert_eq!(page.indexed_calls, 2);
+        let calls: Vec<_> = page.hits.iter().map(|hit| hit.call).collect();
+        // Newest call first; the call without a digest is not searchable yet.
+        assert_eq!(calls, [codex, claude]);
+        assert_eq!(
+            page.hits[1].snippet,
+            "Why does the «migration» fail with «redacted: anthropic_key»?"
         );
-        calls.push(
-            fixture
-                .record(CallSpec {
-                    request: request.as_bytes(),
-                    session: Some(1),
-                    ..CallSpec::default()
-                })
-                .await,
+        assert_eq!(page.hits[1].field, Stored::Known(SearchField::Prompt));
+        assert_eq!(
+            page.hits[1].client,
+            Some(Stored::Known(Harness::ClaudeCode))
+        );
+        assert!(!page.hits.iter().any(|hit| hit.call == undigested));
+
+        // Punctuation splits words: a hyphenated name is found as a phrase.
+        let page = reader.search(&query(r#""install-vps""#)).await.unwrap();
+        assert_eq!(page.hits.len(), 1);
+        assert_eq!(page.hits[0].field, Stored::Known(SearchField::ToolInput));
+
+        let mut filtered = query("migration");
+        filtered.client = Some(Harness::Codex);
+        assert_eq!(reader.search(&filtered).await.unwrap().hits[0].call, codex);
+        filtered.client = None;
+        filtered.field = Some(SearchField::Prompt);
+        assert_eq!(reader.search(&filtered).await.unwrap().hits[0].call, claude);
+        filtered.field = None;
+        filtered.session = reader.call(codex).await.unwrap().call.session;
+        let hits = reader.search(&filtered).await.unwrap().hits;
+        assert_eq!(hits.iter().map(|hit| hit.call).collect::<Vec<_>>(), [codex]);
+        filtered.session = None;
+        let codex_start = reader.call(codex).await.unwrap().call.started_at;
+        filtered.time = TimeRange::new(Some(codex_start), None).unwrap();
+        assert_eq!(reader.search(&filtered).await.unwrap().hits.len(), 1);
+        // An FTS5 operator in the text is searched for, never executed.
+        assert!(
+            reader
+                .search(&query("NEAR("))
+                .await
+                .unwrap()
+                .hits
+                .is_empty()
+        );
+
+        let exposures = reader
+            .exposures(&ExposureQuery {
+                session: None,
+                time: TimeRange::default(),
+                limit: PageLimit::new(10).unwrap(),
+            })
+            .await
+            .unwrap();
+        assert_eq!(exposures.len(), 1);
+        assert_eq!(exposures[0].call, claude);
+        assert_eq!(exposures[0].hint, "sk-ant-…a1b2");
+        assert_eq!(
+            exposures[0].client,
+            Some(Stored::Known(Harness::ClaudeCode))
         );
     }
-    let index = SearchIndex::open(fixture.dir.path()).await.unwrap();
-    // A call retention deleted after it was indexed.
-    let gone = CallId::restore(Uuid::from_u128(u128::MAX));
-    index
-        .add(&[CallDocuments {
-            call: gone,
-            session: None,
-            turn: None,
-            client: None,
-            started_at: UnixMillis::from_millis(0),
-            prompt: None,
-            documents: Vec::new(),
-            exposures: Vec::new(),
-        }])
-        .await
-        .unwrap();
-    let mut indexer = Indexer::new(
-        index.clone(),
-        Reader::open(fixture.dir.path(), 1).await.unwrap(),
-    );
 
-    let first = indexer.pass().await.unwrap();
-    assert_eq!(first.indexed, 20);
-    assert_eq!(first.backlog, Backlog::Behind);
-    assert_eq!(first.removed, 1);
-    let second = indexer.pass().await.unwrap();
-    assert_eq!(second.indexed, 5);
-    assert_eq!(second.backlog, Backlog::CaughtUp);
-    // Caught up, a pass looks back over recent calls but indexes none twice.
-    let third = indexer.pass().await.unwrap();
-    assert_eq!((third.indexed, third.removed), (0, 0));
-    assert_eq!(index.indexed(&calls).await.unwrap().len(), 25);
-    assert!(index.indexed(&[gone]).await.unwrap().is_empty());
-
-    // A call that ends later is found by the next pass.
-    let late = fixture
-        .record(CallSpec {
-            session: Some(1),
-            ..CallSpec::default()
-        })
-        .await;
-    assert_eq!(indexer.pass().await.unwrap().indexed, 1);
-    assert_eq!(index.indexed(&[late]).await.unwrap().len(), 1);
+    #[tokio::test]
+    async fn turns_list_the_first_prompt_their_digests_hold() {
+        let mut fixture = Fixture::new().await;
+        // One Claude Code turn: a prompt, then a tool loop without one.
+        let first = fixture
+            .record(CallSpec {
+                session: Some(5),
+                ..CallSpec::default()
+            })
+            .await;
+        let second = fixture
+            .record(CallSpec {
+                session: Some(5),
+                ..CallSpec::default()
+            })
+            .await;
+        fixture
+            .digest(
+                second,
+                Some(Harness::ClaudeCode),
+                Reading {
+                    request: RequestActivity::default(),
+                    response: ResponseActivity::default(),
+                },
+            )
+            .await;
+        let session = fixture
+            .reader
+            .call(first)
+            .await
+            .unwrap()
+            .call
+            .session
+            .unwrap();
+        let listed = fixture
+            .reader
+            .session_turns(session, PageLimit::new(10).unwrap())
+            .await
+            .unwrap();
+        // Not derived yet: no prompt is claimed.
+        assert_eq!(listed[0].prompt, None);
+        fixture
+            .digest(
+                first,
+                Some(Harness::ClaudeCode),
+                Reading {
+                    request: prompt(&"Fix the parser ".repeat(40)),
+                    response: ResponseActivity::default(),
+                },
+            )
+            .await;
+        let listed = fixture
+            .reader
+            .session_turns(session, PageLimit::new(10).unwrap())
+            .await
+            .unwrap();
+        let prompt = listed[0].prompt.as_ref().unwrap();
+        assert_eq!(prompt.text.chars().count(), 300);
+        // The user's words, trimmed.
+        assert_eq!(prompt.total_chars(), 599);
+        assert_eq!(listed[0].call_count, 2);
+    }
 }

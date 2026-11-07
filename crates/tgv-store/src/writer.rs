@@ -4,7 +4,6 @@ use super::chunk::{ChunkHash, EncodedChunk};
 use crate::Reader;
 use crate::{
     StoreError,
-    search::SearchIndex,
     view::{DiskUsage, FileUsage},
 };
 use bytes::Bytes;
@@ -16,7 +15,7 @@ use std::{
     collections::HashSet,
     fs::{File, OpenOptions},
     future::Future,
-    path::{Path, PathBuf},
+    path::Path,
     sync::Arc,
     time::Duration,
 };
@@ -45,8 +44,6 @@ use tgv_recorder::{
 /// Owns the data directory for one daemon run.
 pub struct Store {
     connection: SqliteConnection,
-    /// The data directory, for measuring the search index beside it.
-    dir: PathBuf,
     ids: Arc<dyn IdSource>,
     sweeps: SweepGate,
     /// Reads stored bodies back, for digests derived again.
@@ -132,10 +129,18 @@ impl Store {
             .busy_timeout(Duration::from_secs(5));
         let mut connection = SqliteConnection::connect_with(&options).await?;
         sqlx::migrate!("./migrations").run(&mut connection).await?;
+        // Earlier builds kept the search index in a file of its own; it is
+        // now part of the metadata file.
+        for file in ["search.sqlite3", "search.sqlite3-wal", "search.sqlite3-shm"] {
+            match std::fs::remove_file(dir.join(file)) {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error.into()),
+            }
+        }
         Self::attach_blobs(&mut connection, dir, BlobAccess::Write).await?;
         let mut store = Self {
             connection,
-            dir: dir.to_path_buf(),
             ids,
             sweeps: SweepGate::default(),
             bodies: Reader::open(dir, 1).await?,
@@ -444,7 +449,7 @@ impl Store {
     }
 
     pub async fn disk_usage(&mut self) -> Result<DiskUsage, StoreError> {
-        DiskUsage::measure(&mut self.connection, &self.dir).await
+        DiskUsage::measure(&mut self.connection).await
     }
 
     /// Move WAL contents into the database files and restart the logs.
@@ -472,24 +477,11 @@ pub(super) enum BlobAccess {
 }
 
 impl DiskUsage {
-    /// Both store files through `connection`, and the search index in `dir`
-    /// when it can be measured.
-    pub(super) async fn measure(
-        connection: &mut SqliteConnection,
-        dir: &Path,
-    ) -> Result<Self, StoreError> {
+    /// Both store files, through `connection`.
+    pub(super) async fn measure(connection: &mut SqliteConnection) -> Result<Self, StoreError> {
         Ok(Self {
             metadata: FileUsage::measure(connection, "main").await?,
             blobs: FileUsage::measure(connection, "blobs").await?,
-            // The index is derived: failing to measure it must not stop
-            // retention, which measures disk use before each prune.
-            search: match SearchIndex::usage(dir).await {
-                Ok(usage) => usage,
-                Err(error) => {
-                    tracing::warn!(%error, "search index usage unreadable; left out of storage");
-                    None
-                }
-            },
         })
     }
 }

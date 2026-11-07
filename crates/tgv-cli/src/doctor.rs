@@ -333,6 +333,8 @@ struct StorageResponse {
 struct StorageUsage {
     calls: u64,
     open_calls: u64,
+    /// Absent from daemons older than digests.
+    digested_calls: Option<u64>,
     disk: DiskUsage,
 }
 
@@ -340,16 +342,6 @@ struct StorageUsage {
 struct DiskUsage {
     metadata: FileUsage,
     blobs: FileUsage,
-    /// Absent from daemons older than search, and null before it is built.
-    #[serde(default)]
-    search: Option<IndexUsage>,
-}
-
-#[derive(Deserialize)]
-struct IndexUsage {
-    file: FileUsage,
-    indexed_calls: u64,
-    stale_calls: u64,
 }
 
 #[derive(Deserialize)]
@@ -488,7 +480,6 @@ impl Report {
         {
             Ok((200, storage)) if storage.policy.validate().is_ok() => {
                 let usage = &storage.usage;
-                let search = usage.disk.search.as_ref();
                 report.add(
                     "storage API",
                     Status::Ok,
@@ -499,8 +490,7 @@ impl Report {
                             .disk
                             .metadata
                             .live_bytes()
-                            .saturating_add(usage.disk.blobs.live_bytes())
-                            .saturating_add(search.map_or(0, |index| index.file.live_bytes())),
+                            .saturating_add(usage.disk.blobs.live_bytes()),
                         usage.open_calls,
                         if storage.policy.enabled {
                             "enabled"
@@ -509,7 +499,10 @@ impl Report {
                         }
                     ),
                 );
-                report.add_search_index(search, usage.calls.saturating_sub(usage.open_calls));
+                report.add_digests(
+                    usage.digested_calls,
+                    usage.calls.saturating_sub(usage.open_calls),
+                );
             }
             Ok(_) => report.add(
                 "storage API",
@@ -527,35 +520,27 @@ impl Report {
 }
 
 impl Report {
-    /// How much of the finished history the search index covers.
-    fn add_search_index(&mut self, search: Option<&IndexUsage>, finished: u64) {
-        match search {
+    /// How much of the finished history has its activity derived: what
+    /// turns, reports, and search read.
+    fn add_digests(&mut self, digested: Option<u64>, finished: u64) {
+        match digested {
             None => self.add(
-                "search index",
+                "digests",
                 Status::Warning,
-                "the gateway reports no search index; a daemon with search builds it while running",
+                "the gateway reports no digests; upgrade the daemon",
             ),
-            Some(index) => {
-                let kept = index.indexed_calls.saturating_sub(index.stale_calls);
-                if kept >= finished {
-                    self.add(
-                        "search index",
-                        Status::Ok,
-                        format!(
-                            "{kept} of {finished} finished calls indexed, {} bytes on disk",
-                            index.file.live_bytes()
-                        ),
-                    );
-                } else {
-                    self.add(
-                        "search index",
-                        Status::Warning,
-                        format!(
-                            "{kept} of {finished} finished calls indexed; the daemon indexes the rest within seconds, longer while it backfills after a start"
-                        ),
-                    );
-                }
-            }
+            Some(digested) if digested >= finished => self.add(
+                "digests",
+                Status::Ok,
+                format!("{digested} of {finished} finished calls derived"),
+            ),
+            Some(digested) => self.add(
+                "digests",
+                Status::Warning,
+                format!(
+                    "{digested} of {finished} finished calls derived; the daemon derives the rest from stored bodies within seconds, longer for a large history"
+                ),
+            ),
         }
     }
 }

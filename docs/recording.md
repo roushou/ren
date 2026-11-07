@@ -40,12 +40,13 @@ backed up, and pruned.
   identified by BLAKE3 hash, stored once, and compressed with Zstandard when that
   makes them smaller. Repeated conversation prefixes across turns are therefore
   stored once. Storage is host-local; a process lock prevents two daemon writers.
-- `search.sqlite3` is a full-text index of what calls show (prompts, replies,
-  tool input and output; see [search](api.md#search)). It is derived from the
-  bodies above, never the source of truth: delete it and the daemon rebuilds it.
-  It holds excerpts of the same private content, owner-only, with credentials in
-  well-known formats replaced by `«redacted: kind»`; their kinds, masked hints,
-  and fingerprints are listed as [exposures](api.md#exposed-secrets).
+- `tgv.sqlite3` also holds each finished call's derived activity and its
+  full-text index (prompts, replies, tool input and output; see
+  [search](api.md#search)): excerpts of the same private content, with
+  credentials in well-known formats replaced by `«redacted: kind»`; their kinds,
+  masked hints, and fingerprints are listed as
+  [exposures](api.md#exposed-secrets). They are derived from the bodies above,
+  and the daemon derives them again from the bodies when its format changes.
 - Records commit in groups every 50 ms (`capture.commit_interval_ms`) or sooner
   under load. Accepted records drain on normal shutdown. A crash can lose queued
   records; calls left open are marked `recovered` on the next startup, an unknown
@@ -166,9 +167,8 @@ The backup is a data directory: copy `<data-dir>/backup` elsewhere (another disk
 or host) with any file tool, since it is not written while no backup runs. To
 restore, stop TGV and replace `tgv.sqlite3` and `blobs.sqlite3` in the data
 directory with the backup's two files, removing any `-wal` and `-shm` files
-beside them. It needs as much free space as the history uses. The search index is
-not backed up: delete `search.sqlite3` too, and the daemon rebuilds it from the
-restored history.
+beside them. It needs as much free space as the history uses. The backup includes
+the search index.
 
 ## Retention
 
@@ -184,11 +184,9 @@ and observations are deleted together; session counts and orphan turns/sessions 
 updated in the same transaction. Open calls are protected; recovered calls are
 eligible. Recording never waits for pruning.
 
-The storage limit counts live pages of `tgv.sqlite3` and `blobs.sqlite3`, plus the
-search index's live pages in proportion to the indexed calls the store still has.
-Index rows of just-deleted calls stay until the indexer's next pass (within
-seconds) and do not count, so retention never deletes extra calls while the index
-catches up. `tgv doctor` and the Recorder page show the index's size and coverage.
+The storage limit counts live pages of `tgv.sqlite3` (search index included) and
+`blobs.sqlite3`. A call's derived activity, exposures, and index rows are deleted
+with it.
 
 Limits are eventual, not hard disk quotas: active work and maintenance intervals
 can exceed them. Because bodies are deduplicated, removing a call frees only the

@@ -125,3 +125,13 @@ fn a_digest_round_trips_through_its_stored_form() {
     let stored = serde_json::to_string(&digest).unwrap();
     assert_eq!(serde_json::from_str::<CallDigest>(&stored).unwrap(), digest);
 }
+
+#[test]
+fn narrowing_an_excerpt_keeps_count_of_what_was_left_out() {
+    let stored = Excerpt::cut(&"a".repeat(50), 20);
+    let narrow = stored.narrow(5);
+    assert_eq!(narrow.text, "aaaaa");
+    assert_eq!(narrow.omitted_chars, 45);
+    assert_eq!(narrow.total_chars(), 50);
+    assert_eq!(stored.narrow(100), stored);
+}

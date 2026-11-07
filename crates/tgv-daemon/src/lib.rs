@@ -21,11 +21,7 @@ use tgv_recorder::CaptureOptionsError;
 use tgv_recorder::secrets::SecretScanner;
 use tgv_recorder::{Recorder, RecorderSetup, id::IdSource, time::Clock};
 use tgv_store::StoreError;
-use tgv_store::{
-    Reader, Store,
-    backup::Backup,
-    search::{Indexer, SearchIndex},
-};
+use tgv_store::{Reader, Store, backup::Backup};
 use tokio::{net::TcpListener, task::JoinHandle};
 
 /// Why the daemon could not start, run, or stop cleanly.
@@ -183,33 +179,6 @@ impl Daemon {
                 return Err(error.into());
             }
         };
-        // Search is derived data: the indexer has its own read connection
-        // and the only writer of `search.sqlite3`, off the forwarding path.
-        let search = SearchIndex::open(data_dir).await?;
-        let mut indexer = Indexer::new(search.clone(), Reader::open(data_dir, 1).await?);
-        #[expect(
-            clippy::disallowed_methods,
-            reason = "process wiring: the daemon owns the search indexer task"
-        )]
-        let indexing = tokio::spawn(async move {
-            loop {
-                let pause = match indexer.pass().await {
-                    Ok(report) => {
-                        tracing::debug!(
-                            indexed = report.indexed,
-                            removed = report.removed,
-                            "search index pass"
-                        );
-                        report.pause()
-                    }
-                    Err(error) => {
-                        tracing::warn!(%error, "search indexing failed; retrying");
-                        Indexer::IDLE_PAUSE
-                    }
-                };
-                tokio::time::sleep(pause).await;
-            }
-        });
         let shutdown = Shutdown::default();
         let controls = Arc::new(Controls::restore(operator));
         let token = ControlToken::generate(ids.as_ref());
@@ -226,7 +195,6 @@ impl Daemon {
             listener,
             ManagementSetup {
                 reader,
-                search,
                 backup,
                 retention: config.retention().clone(),
                 control: config.control().clone(),
@@ -242,11 +210,6 @@ impl Daemon {
         let task = tokio::spawn(async move {
             let serve_result = ingress.serve(stop.clone(), Self::DRAIN_DEADLINE).await;
             stop.abort();
-            // Indexing is resumable: a pass cut short rolls back and is
-            // repeated on the next start. Wait for it to stop, so it no
-            // longer reads the store while capture drains and the store closes.
-            indexing.abort();
-            let _ = indexing.await;
             match &serve_result {
                 Ok(Stopped::Drained) => {}
                 Ok(Stopped::Aborted) => {

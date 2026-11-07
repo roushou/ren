@@ -32,6 +32,7 @@ pub struct PageLimit(u32);
 impl PageLimit {
     pub const MAX: u32 = 1000;
     pub const DEFAULT: Self = Self(100);
+    pub const LARGEST: Self = Self(Self::MAX);
 
     pub fn new(limit: u32) -> Result<Self, QueryError> {
         (1..=Self::MAX)

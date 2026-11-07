@@ -132,8 +132,8 @@ Modules carry no lint headers of their own. A module with submodules lives in
 
 - The only exemptions are the capability implementations themselves, marked with
   `#[expect(clippy::disallowed_methods, reason = "…")]`: `HostEnv::capture`, the
-  daemon's `SystemClock` and `RandomIds` (`tgv_daemon::host`), and the daemon's three
-  task spawns (recorder, server, search indexer).
+  daemon's `SystemClock` and `RandomIds` (`tgv_daemon::host`), and the daemon's two
+  task spawns (recorder and server).
 - Integration-test crates (`crates/*/tests/*.rs`) act as a shell: each has one
   crate-level `#![allow(...)]` with a reason, covering helpers outside `#[test]`
   functions and spawned mock servers. Unit-test modules use `clippy.toml`'s
@@ -208,12 +208,12 @@ dependencies under "Crates" below. Read the code for current module ownership.
   observation log and query tables; `blobs.sqlite3` holds deduplicated,
   content-defined body chunks, in the format `chunk` defines (hash, codec,
   encoding). It contains typed query parameters and read views, turn and call
-  activity assembled from stored bodies at read time (`activity`, with the
+  activity assembled from the calls' stored digests (`activity`, with the
   session context and cost report in `activity::report`), the full-text search
-  index (`search`: `SearchIndex` on the derived, rebuildable `search.sqlite3`,
-  filled by `Indexer` passes, its only writer), the stored digests the recorder
-  derives for each finished call (`call_digests`, `call_exposures`, and
-  `search_texts` with its FTS5 index, in `tgv.sqlite3`), and implements the recorder's `RecordSink`. It owns the versioned migrations for
+  and exposure listings (`search`, `Reader::search` and `Reader::exposures`) over
+  the digests the recorder derives for each finished call (`call_digests`,
+  `call_exposures`, and `search_texts` with its FTS5 index, in `tgv.sqlite3`;
+  `RecordSink::undigested` lists calls to derive again), and implements the recorder's `RecordSink`. It owns the versioned migrations for
   `tgv.sqlite3` (`crates/tgv-store/migrations`); never edit one that has
   shipped. Its tests include `tests/recorder.rs`, the recorder against the real
   store.
@@ -245,8 +245,8 @@ dependencies under "Crates" below. Read the code for current module ownership.
     stays crate-private; configuration and token types are exported at the root.
 - `crates/tgv-daemon`: configuration, resource wiring, and lifecycle, with
   `Daemon` as its primary type (`lib.rs`). It opens storage, binds the listener,
-  writes the control token, constructs the gateway and recorder, owns the three
-  task spawns (recorder, server, and search indexer, stopped with HTTP), and
+  writes the control token, constructs the gateway and recorder, owns the two
+  task spawns (recorder and server), and
   coordinates HTTP shutdown before capture drain. It defines no
   HTTP routes or handlers and has no production Axum dependency. `config` turns
   `Config` into a `RuntimeConfig`. `host` holds `SystemClock` and `RandomIds`.

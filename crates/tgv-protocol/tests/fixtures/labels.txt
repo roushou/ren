@@ -22,7 +22,7 @@ responses::Status: queued in_progress completed incomplete failed cancelled
 responses::IncompleteReason: max_output_tokens max_messages content_filter steered
 responses::ItemKind: message reasoning function_call custom_tool_call apply_patch_call shell_call local_shell_call computer_call mcp_call mcp_approval_request web_search_call file_search_call code_interpreter_call image_generation_call tool_search_call
 websocket::ClientKind: response.create response.interrupt
-activity::ActivityLimitation: unsupported_endpoint capture_gap truncated unsupported_encoding decoding_error decoded_too_large not_json unexpected_shape unfinished_tool_call too_many_tool_calls
+activity::ActivityLimitation: unsupported_endpoint capture_gap truncated unsupported_encoding decoding_error decoded_too_large not_json unexpected_shape unfinished_tool_call too_many_tool_calls not_yet_derived
 activity::ResultStatus: succeeded failed unreported
 activity::anthropic::MessageRole: user assistant system
 activity::anthropic::UserBlockKind: text tool_result

@@ -4,7 +4,7 @@ use anyhow::Result;
 use std::path::PathBuf;
 use tgv_daemon::config::Config;
 use tgv_harness::host::HostEnv;
-use tgv_store::{Reader, StoreError, search::SearchIndex};
+use tgv_store::Reader;
 
 pub struct Context {
     pub config_path: Option<PathBuf>,
@@ -39,25 +39,5 @@ impl Context {
     pub async fn reader(&self) -> Result<Reader> {
         let path = self.data_dir(&self.config()?)?;
         Ok(Reader::open(&path, 1).await?)
-    }
-    /// The search index the daemon builds, read-only; `None` before a daemon
-    /// has built it.
-    pub async fn search_index(&self) -> Result<Option<SearchIndex>> {
-        let dir = self.data_dir(&self.config()?)?;
-        match SearchIndex::open_read(&dir).await {
-            Ok(index) => Ok(Some(index)),
-            Err(StoreError::NotFound) => Ok(None),
-            Err(error) => Err(error.into()),
-        }
-    }
-    /// The search index, for a command that needs one.
-    pub async fn required_search_index(&self) -> Result<SearchIndex> {
-        match self.search_index().await? {
-            Some(index) => Ok(index),
-            None => anyhow::bail!(
-                "no search index in {}: the daemon builds it while running",
-                self.data_dir(&self.config()?)?.display()
-            ),
-        }
     }
 }

@@ -6,7 +6,7 @@ use crate::activity::{
     ActivityBudget, CallActivity, Excerpt, ReadCall, TurnActivity, TurnHead, TurnSummary,
     report::SessionReport,
 };
-use crate::search::{CallDocuments, IndexCursor, IndexedPrompt, SearchIndex};
+use crate::search::ExposureQuery;
 use crate::{
     Store, StoreError,
     query::{CallQuery, Cursor, KindFilter, PageLimit, StatusFilter, TimeRange, ToolFilter},
@@ -21,15 +21,11 @@ use sqlx::{
     AssertSqlSafe, QueryBuilder, Row, Sqlite, SqlitePool,
     sqlite::{SqliteConnectOptions, SqlitePoolOptions},
 };
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::{path::Path, sync::Arc, time::Duration};
+use tgv_harness::Harness;
 use tgv_harness::attribution::HintSource;
-use tgv_protocol::activity::{
-    ActivityLimitation, ActivityLimits, ActivityReader, BodyExtent, CapturedBody, RequestActivity,
-    ResponseActivity,
-};
 use tgv_protocol::encoding::{ResponseEncoding, ResponseFormat};
-use tgv_protocol::inspect::pipeline::Protocol;
 use tgv_protocol::inspect::{InputAccounting, ModelOutcome};
 use tgv_protocol::{
     direction::Direction,
@@ -38,8 +34,7 @@ use tgv_protocol::{
 };
 use tgv_recorder::Observation;
 use tgv_recorder::batch::BodyKey;
-use tgv_recorder::secrets::SecretScanner;
-use tgv_recorder::time::UnixMillis;
+use tgv_recorder::digest::CallDigest;
 use tgv_recorder::{
     capture::{AttemptTerminal, BodyEnding, CallState, TerminalClass},
     digest::{Captured, StoredBody, StoredExchange, StoredResponse},
@@ -55,11 +50,7 @@ pub struct PrefixLimit {
 
 #[derive(Clone)]
 pub struct Reader {
-    pool: SqlitePool,
-    /// Finds credentials in turns' bodies, for their findings.
-    scanner: Arc<SecretScanner>,
-    /// The data directory, for measuring the search index beside it.
-    dir: Arc<Path>,
+    pub(crate) pool: SqlitePool,
 }
 
 impl Reader {
@@ -86,11 +77,7 @@ impl Reader {
             })
             .connect_with(options)
             .await?;
-        Ok(Self {
-            pool,
-            dir,
-            scanner: Arc::new(SecretScanner::new()?),
-        })
+        Ok(Self { pool })
     }
 
     /// Newest calls first, filtered.
@@ -480,7 +467,7 @@ impl Reader {
 
     pub async fn storage(&self) -> Result<StorageView, StoreError> {
         let mut connection = self.pool.acquire().await?;
-        let disk = DiskUsage::measure(&mut connection, &self.dir).await?;
+        let disk = DiskUsage::measure(&mut connection).await?;
         let calls =
             sqlx::query("SELECT COUNT(*) AS calls, COALESCE(SUM(state = ?), 0) AS open FROM calls")
                 .bind(CallState::Open.label())
@@ -496,6 +483,7 @@ impl Reader {
             disk,
             calls: calls.try_get("calls")?,
             open_calls: calls.try_get("open")?,
+            digested_calls: self.digested_count().await?,
             chunks: chunks.try_get("chunks")?,
             referenced_bytes: referenced,
             unique_bytes: chunks.try_get("unique_bytes")?,
@@ -534,6 +522,20 @@ impl EncodedChunk {
 }
 
 impl CallQuery {
+    /// An `AND` clause for calls (aliased `c`) a harness made: known from
+    /// the convention that attributed each one.
+    pub(crate) fn push_client(sql: &mut QueryBuilder<Sqlite>, client: Harness) {
+        sql.push(" AND json_extract(c.attribution, '$.hint.source') IN (");
+        let mut sources = sql.separated(", ");
+        for source in HintSource::ALL
+            .iter()
+            .filter(|source| source.harness() == client)
+        {
+            sources.push_bind(source.label());
+        }
+        sql.push(")");
+    }
+
     /// `calls`, `errors`, `input_tokens`, `output_tokens`, and
     /// `cache_read_tokens` aggregated over the rows of `calls c`. Errors use
     /// the same predicate as the `errors` status filter. Input adds cached
@@ -594,16 +596,7 @@ impl CallQuery {
             sql.push(" AND c.session = ").push_bind(session.to_string());
         }
         if let Some(client) = filter.client {
-            // The harness is known from the convention that attributed the call.
-            sql.push(" AND json_extract(c.attribution, '$.hint.source') IN (");
-            let mut sources = sql.separated(", ");
-            for source in HintSource::ALL
-                .iter()
-                .filter(|source| source.harness() == client)
-            {
-                sources.push_bind(source.label());
-            }
-            sql.push(")");
+            Self::push_client(sql, client);
         }
         if let Some(kind) = filter.kind {
             // A WebSocket handshake is recorded as a GET on a model endpoint.
@@ -674,8 +667,8 @@ impl CallPage {
 
 /// Agent activity, read from stored bodies when asked (`crate::activity`).
 impl Reader {
-    /// The most of one body read for activity: enough for a long
-    /// conversation, which clients resend on every call.
+    /// The most of one body read to derive a digest again: enough for a
+    /// long conversation, which clients resend on every call.
     const ACTIVITY_READ: PrefixLimit = PrefixLimit {
         bytes: 16 * 1024 * 1024,
         segments: 4096,
@@ -684,10 +677,9 @@ impl Reader {
     const MAX_TURN_CALLS: i64 = 100;
     /// The most calls a session report reads, oldest first.
     const MAX_REPORT_CALLS: i64 = 5_000;
-    /// Calls read for a turn listing's prompt.
-    const PROMPT_CALLS: i64 = 3;
 
-    /// One turn: its prompt, calls, tool calls, and effects.
+    /// One turn: its prompt, calls, tool calls, and effects, from its
+    /// calls' digests.
     pub async fn turn_activity(
         &self,
         turn: TurnId,
@@ -710,28 +702,17 @@ impl Reader {
             .await?;
         let views = self.turn_calls(turn, Self::MAX_TURN_CALLS).await?;
         let read = i64::try_from(views.len()).unwrap_or(i64::MAX);
-        let mut calls = Vec::with_capacity(views.len());
-        for view in views {
-            calls.push(self.read_call(view, Reach::Exchange).await?);
-        }
+        let calls = self.digested(views).await?;
         let omitted = u64::try_from(total.saturating_sub(read)).unwrap_or(0);
-        Ok(TurnActivity::assemble(
-            head,
-            calls,
-            omitted,
-            budget,
-            &self.scanner,
-        ))
+        Ok(TurnActivity::assemble(head, calls, omitted, budget))
     }
 
-    /// A session's turns, newest first, each with the start of its prompt.
-    /// Prompts come from `index` where it has the turn's first call, and are
-    /// read from request bodies only for turns it has not indexed yet.
+    /// A session's turns, newest first, each with the start of its prompt:
+    /// the first one among its calls' digests.
     pub async fn session_turns(
         &self,
         session: SessionId,
         limit: PageLimit,
-        index: Option<&SearchIndex>,
     ) -> Result<Vec<TurnSummary>, StoreError> {
         self.require_session(session).await?;
         let mut sql = QueryBuilder::<Sqlite>::new(
@@ -748,56 +729,60 @@ impl Reader {
             .iter()
             .map(|row| Columns(row).id::<TurnId>("id"))
             .collect::<Result<Vec<_>, _>>()?;
-        let indexed = match index {
-            Some(index) => index.turn_prompts(&ids).await?,
-            None => HashMap::new(),
-        };
+        let mut prompts = self.turn_prompts(&ids).await?;
         let mut turns = Vec::with_capacity(rows.len());
         for (row, turn) in rows.iter().zip(ids) {
             let columns = Columns(row);
-            let started_at = columns.time("started_at")?;
-            let prompt = match indexed.get(&turn) {
-                Some(IndexedPrompt {
-                    prompt: Some(prompt),
-                    ..
-                }) => Some(prompt.clone()),
-                Some(IndexedPrompt {
-                    earliest_call,
-                    prompt: None,
-                }) if *earliest_call == started_at => None,
-                Some(_) | None => self.read_prompt(turn).await?,
-            };
             turns.push(TurnSummary {
                 turn,
                 native_id: columns.text("native_id")?.unwrap_or_default(),
-                started_at,
+                started_at: columns.time("started_at")?,
                 ended_at: columns.optional_time("ended_at")?,
                 call_count: columns.count("calls")?,
                 error_count: columns.count("errors")?,
                 tokens: TokenTotals::from_row(row)?,
-                prompt,
+                prompt: prompts
+                    .remove(&turn)
+                    .map(|prompt| prompt.narrow(ActivityBudget::SUMMARY.prompt_chars)),
             });
         }
         Ok(turns)
     }
 
-    /// A turn's prompt read from the request bodies of its first calls, for
-    /// a turn the search index has not reached.
-    async fn read_prompt(&self, turn: TurnId) -> Result<Option<Excerpt>, StoreError> {
-        for view in self.turn_calls(turn, Self::PROMPT_CALLS).await? {
-            let call = self.read_call(view, Reach::Request).await?;
-            if let Some(text) = call.prompt() {
-                return Ok(Some(Excerpt::cut(
-                    &text,
-                    ActivityBudget::SUMMARY.prompt_chars,
-                )));
-            }
+    /// Each turn's prompt: the first one, by call start, among its calls'
+    /// digests.
+    async fn turn_prompts(&self, turns: &[TurnId]) -> Result<HashMap<TurnId, Excerpt>, StoreError> {
+        let mut prompts = HashMap::new();
+        if turns.is_empty() {
+            return Ok(prompts);
         }
-        Ok(None)
+        let mut sql = QueryBuilder::<Sqlite>::new(
+            "SELECT c.turn, d.prompt, d.prompt_omitted FROM calls c JOIN call_digests d ON d.call = c.id WHERE d.prompt IS NOT NULL AND c.turn IN (",
+        );
+        let mut list = sql.separated(", ");
+        for turn in turns {
+            list.push_bind(turn.to_string());
+        }
+        sql.push(") ORDER BY c.started_at, c.id");
+        for row in sql.build().fetch_all(&self.pool).await? {
+            let columns = Columns(&row);
+            let turn: TurnId = columns.id("turn")?;
+            if prompts.contains_key(&turn) {
+                continue;
+            }
+            prompts.insert(
+                turn,
+                Excerpt {
+                    text: columns.text("prompt")?.unwrap_or_default(),
+                    omitted_chars: columns.count("prompt_omitted")?,
+                },
+            );
+        }
+        Ok(prompts)
     }
 
-    /// A session's context and cost measurements, from call records alone:
-    /// no body is read, so it stays fast for long sessions.
+    /// A session's context and cost measurements, from call records alone,
+    /// with the secrets its calls carried.
     pub async fn session_report(&self, session: SessionId) -> Result<SessionReport, StoreError> {
         self.require_session(session).await?;
         let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM calls WHERE session = ?")
@@ -817,7 +802,16 @@ impl Reader {
         .collect::<Result<_, _>>()?;
         let read = i64::try_from(calls.len()).unwrap_or(i64::MAX);
         let omitted = u64::try_from(total.saturating_sub(read)).unwrap_or(0);
-        Ok(SessionReport::build(session, &calls, omitted))
+        let mut report = SessionReport::build(session, &calls, omitted);
+        report.add_exposures(
+            self.exposures(&ExposureQuery {
+                session: Some(session),
+                time: TimeRange::default(),
+                limit: PageLimit::LARGEST,
+            })
+            .await?,
+        );
+        Ok(report)
     }
 
     /// One call's activity, with results matched only within the call.
@@ -827,78 +821,43 @@ impl Reader {
         budget: ActivityBudget,
     ) -> Result<CallActivity, StoreError> {
         let view = self.call_view(call).await?;
-        Ok(self
-            .read_call(view, Reach::Exchange)
-            .await?
-            .activity(budget))
+        let mut calls = self.digested(vec![view]).await?;
+        calls
+            .pop()
+            .map(|call| call.activity(budget))
+            .ok_or(StoreError::NotFound)
     }
 
-    /// Finished calls from `cursor` on, in end-time and ID order.
-    pub(crate) async fn finished_calls(
-        &self,
-        cursor: IndexCursor,
-        limit: i64,
-    ) -> Result<Vec<(UnixMillis, CallId)>, StoreError> {
-        let millis = |time: UnixMillis| i64::try_from(time.as_millis()).unwrap_or(i64::MAX);
-        let mut sql = QueryBuilder::<Sqlite>::new(
-            "SELECT id, ended_at FROM calls WHERE ended_at IS NOT NULL",
-        );
-        match cursor {
-            IndexCursor::Start => {}
-            IndexCursor::After(ended, call) => {
-                sql.push(" AND (ended_at, id) > (")
-                    .push_bind(millis(ended))
-                    .push(", ")
-                    .push_bind(call.to_string())
-                    .push(")");
-            }
-            IndexCursor::Since(ended) => {
-                sql.push(" AND ended_at >= ").push_bind(millis(ended));
-            }
-        }
-        sql.push(" ORDER BY ended_at, id LIMIT ").push_bind(limit);
-        sql.build()
-            .fetch_all(&self.pool)
-            .await?
-            .iter()
-            .map(|row| {
-                let columns = Columns(row);
-                Ok((columns.time("ended_at")?, columns.id("id")?))
-            })
-            .collect()
-    }
-
-    /// Which of `calls` the store still has.
-    pub(crate) async fn existing_calls(
-        &self,
-        calls: &[CallId],
-    ) -> Result<HashSet<CallId>, StoreError> {
-        let mut existing = HashSet::new();
-        for chunk in calls.chunks(500) {
-            let mut sql = QueryBuilder::<Sqlite>::new("SELECT id FROM calls WHERE id IN (");
+    /// Calls with their digests, in the order given.
+    async fn digested(&self, views: Vec<CallView>) -> Result<Vec<ReadCall>, StoreError> {
+        let mut digests: HashMap<CallId, CallDigest> = HashMap::new();
+        if !views.is_empty() {
+            let mut sql = QueryBuilder::<Sqlite>::new(
+                "SELECT call, digest FROM call_digests WHERE call IN (",
+            );
             let mut list = sql.separated(", ");
-            for call in chunk {
-                list.push_bind(call.to_string());
+            for view in &views {
+                list.push_bind(view.id.to_string());
             }
             sql.push(")");
             for row in sql.build().fetch_all(&self.pool).await? {
-                existing.insert(Columns(&row).id("id")?);
+                let columns = Columns(&row);
+                // A digest this build cannot read is derived again; until
+                // then the call shows as not yet derived.
+                if let Ok(digest) =
+                    serde_json::from_str::<CallDigest>(&columns.text("digest")?.unwrap_or_default())
+                {
+                    digests.insert(columns.id("call")?, digest);
+                }
             }
         }
-        Ok(existing)
-    }
-
-    /// A call's searchable documents, read from its bodies.
-    pub(crate) async fn read_documents(
-        &self,
-        call: CallId,
-        max_chars: usize,
-    ) -> Result<CallDocuments, StoreError> {
-        let view = self.call_view(call).await?;
-        Ok(self
-            .read_call(view, Reach::Exchange)
-            .await?
-            .documents(max_chars, &self.scanner))
+        Ok(views
+            .into_iter()
+            .map(|view| ReadCall {
+                digest: digests.remove(&view.id),
+                view,
+            })
+            .collect())
     }
 
     /// `NotFound` unless the store has `session`.
@@ -938,46 +897,6 @@ impl Reader {
         .iter()
         .map(CallView::from_row)
         .collect()
-    }
-
-    /// A call with its bodies read, as far as `reach`. A body the call's
-    /// view says was never stored is not looked up.
-    async fn read_call(&self, view: CallView, reach: Reach) -> Result<ReadCall, StoreError> {
-        let Some(protocol) = view.endpoint.known().and_then(Protocol::for_endpoint) else {
-            let unsupported = vec![ActivityLimitation::UnsupportedEndpoint];
-            return Ok(ReadCall {
-                view,
-                request: RequestActivity {
-                    limitations: unsupported,
-                    ..RequestActivity::default()
-                },
-                response: ResponseActivity::default(),
-            });
-        };
-        let reader = ActivityReader::new(protocol, ActivityLimits::default());
-        let request = match view.request {
-            Some(_) => match self.captured(BodyKey::Request(view.id)).await? {
-                Some(body) => reader.request(body.as_captured()),
-                None => RequestActivity::default(),
-            },
-            None => RequestActivity::default(),
-        };
-        let response = match (reach, &view.response) {
-            (Reach::Request, _) | (Reach::Exchange, None) => ResponseActivity::default(),
-            (Reach::Exchange, Some(_)) => match self.body_key(view.id, Direction::Response).await {
-                Ok(key) => match self.captured(key).await? {
-                    Some(body) => reader.response(body.as_captured()),
-                    None => ResponseActivity::default(),
-                },
-                Err(StoreError::NotFound) => ResponseActivity::default(),
-                Err(error) => return Err(error),
-            },
-        };
-        Ok(ReadCall {
-            view,
-            request,
-            response,
-        })
     }
 
     /// Up to `limit` finished calls whose digest is missing or older than
@@ -1080,19 +999,9 @@ impl TimeRange {
     }
 }
 
-/// How much of a call's exchange to read.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Reach {
-    /// Only the request: what the user asked.
-    Request,
-    /// The request and the final attempt's response.
-    Exchange,
-}
-
-/// A stored body prefix, ready for the activity reader.
+/// A stored body prefix, ready to replay.
 struct CapturedPrefix {
     bytes: Vec<u8>,
-    extent: BodyExtent,
     encoding: Option<ResponseEncoding>,
     messages: Option<Vec<std::ops::Range<usize>>>,
     /// Observed bytes are missing from `bytes`: a gap, the read limit, or
@@ -1103,13 +1012,6 @@ struct CapturedPrefix {
 
 impl CapturedPrefix {
     fn new(prefix: BodyPrefix, messages: &[(i64, i64)]) -> Self {
-        let extent = if prefix.gap {
-            BodyExtent::Gap
-        } else if prefix.truncated || !prefix.body.complete() {
-            BodyExtent::Truncated
-        } else {
-            BodyExtent::Complete
-        };
         let len = prefix.bytes.len();
         // Messages past the prefix are left out; the extent already says so.
         let messages = (!messages.is_empty()).then(|| {
@@ -1134,7 +1036,6 @@ impl CapturedPrefix {
                     .is_some_and(|observed| prefix.body.stored_bytes < observed),
             ending: prefix.body.ending.known().unwrap_or(BodyEnding::Unfinished),
             bytes: prefix.bytes,
-            extent,
             messages,
         }
     }
@@ -1150,15 +1051,6 @@ impl CapturedPrefix {
             ending: self.ending,
             messages: self.messages,
             bytes: self.bytes,
-        }
-    }
-
-    fn as_captured(&self) -> CapturedBody<'_> {
-        CapturedBody {
-            bytes: &self.bytes,
-            extent: self.extent,
-            encoding: self.encoding,
-            messages: self.messages.as_deref(),
         }
     }
 }

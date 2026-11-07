@@ -73,16 +73,19 @@ status is what the client reported: Anthropic's `is_error`, or for Codex the
 exit code its output states; other Responses results are `unreported`. Effects
 come from each client's own tool names and input fields; a tool TGV does not
 know has none. Turns are the client's grouping (Claude Code's prompt ID, Codex's
-turn ID); Pi sends none, so use `tgv activity <call-id>` for its calls. A turn
-reads at most 100 calls (`omitted_calls` counts the rest) and 16 MiB of each
-body; `limitations` on each call say what could not be read (`truncated`,
-`capture_gap`, `not_json`, `unfinished_tool_call`, …). Text is excerpted;
-`omitted_chars` says how much was left out. Nothing here is stored or searchable:
-it is computed from bodies, so it disappears with them under retention.
+turn ID); Pi sends none, so use `tgv activity <call-id>` for its calls. The daemon derives
+each call's activity once, when the call finishes, from up to 16 MiB of each
+body, and stores it with secrets redacted; a turn reads at most 100 calls
+(`omitted_calls` counts the rest). `limitations` on each call say what could not
+be read (`truncated`, `capture_gap`, `not_json`, `unfinished_tool_call`, …), or
+`not_yet_derived` for a call that finished moments ago or was recorded by an
+older daemon, which derives it from the stored bodies after it starts. Text is
+excerpted; `omitted_chars` says how much was left out, and the full text stays in
+the body. Retention removes activity with its call.
 
 `tgv turns <session-id>` lists a session's turns newest first (`--limit`, up to
 1000; no paging), each with its call and error counts, tokens, and the start of
-its prompt (with any secrets redacted once the daemon has indexed the turn). A
+its prompt, with secrets redacted. A
 turn's `ended_at` is `null` while any of its calls is still running.
 
 ## Search
@@ -97,15 +100,15 @@ and commands it names, and its input), and tool output. All words must match;
 
 Results are newest call first: each names the call, session, turn, client,
 field, and a snippet with matches marked `«like this»`. `indexed_calls` says how
-much history the index covers. The daemon indexes calls a few seconds after they
-finish and, on first start, backfills retained history (80 calls take about two
-seconds). Calls retention removes leave the index too. Without `--gateway`, the
-command reads the index file the local daemon built.
+much history is searchable: every finished call, once its activity is derived
+(see above). After an upgrade the daemon derives retained history in the
+background (80 calls take about three seconds). Calls retention removes leave
+the index too.
 
 ## Exposed secrets
 
-`tgv exposures` lists credentials that calls carried, newest first. The search
-indexer scans every finished call's newest user input (including context the
+`tgv exposures` lists credentials that calls carried, newest first. The daemon
+scans every finished call's newest user input (including context the
 client adds, such as Claude Code's reminders, since that is sent to the provider
 too), tool input and output, and the model's reply, for well-known formats only:
 `anthropic_key` (`sk-ant-…`), `openai_key` (`sk-…`, `sk-proj-…`), `github_token`
@@ -117,7 +120,7 @@ a false alarm, but a key in another format is not found.
 The secret itself is never stored or shown: an exposure keeps its `kind`, the
 `field` it was in, a masked `hint` (the known prefix and last four characters,
 `sk-ant-…a1b2`), a `fingerprint` (16 hex characters of its BLAKE3 hash, equal for
-repeats of one secret), and how often it appeared. The search index stores the
+repeats of one secret), and how often it appeared. Activity and search keep
 text with each secret replaced by `«redacted: kind»`; captured bodies are kept as
 recorded. Session reports and `tgv turn` list exposures as `secret_exposure`
 findings, and the Overview's health line counts the last day's. A secret sent to
@@ -203,7 +206,7 @@ the body was stored whole; otherwise `not_found`. At most two run at once
 | ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
 | `GET /health`                                                          | `ok` or `degraded` (HTTP 503), the build, the operator state (read-only), recorder counters |
 | `GET /api/metrics`                                                     | Recorder counters and storage usage                                                         |
-| `GET /api/storage`                                                     | Active retention policy and disk usage of the database files and the search index           |
+| `GET /api/storage`                                                     | Active retention policy, disk usage of the database files, and calls with derived activity  |
 | `GET /api/calls?limit=100`                                             | Filtered, paginated calls, newest first (see [search](#call-search))                        |
 | `GET /api/calls/{call-id}`                                             | One call with its attempts, inspection, and observation log                                 |
 | `GET /api/calls/{call-id}/body/{request\|response}`                    | Bounded body preview                                                                        |

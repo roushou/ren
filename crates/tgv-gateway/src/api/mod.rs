@@ -45,8 +45,8 @@ use tgv_store::{
     Reader, StoreError,
     activity::{ActivityBudget, TurnSummary},
     backup::Backup,
-    query::{CallQuery, PageLimit, QueryError, TimeRange},
-    search::{ExposureQuery, ExposureView, SearchError, SearchIndex},
+    query::{CallQuery, QueryError, TimeRange},
+    search::{ExposureView, SearchError},
     view::{SessionView, StorageView},
 };
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
@@ -56,8 +56,6 @@ use tokio_util::sync::CancellationToken;
 /// The host opens storage and supplies the token; the gateway owns HTTP handling.
 pub struct ManagementSetup {
     pub reader: Reader,
-    /// The full-text index the daemon's indexer fills.
-    pub search: SearchIndex,
     pub backup: Backup,
     pub retention: RetentionPolicy,
     pub control: ControlOptions,
@@ -69,7 +67,6 @@ pub struct ManagementSetup {
 /// What the read API reads and reports, from the management setup.
 pub(crate) struct ReadSources {
     pub reader: Reader,
-    pub search: SearchIndex,
     pub retention: RetentionPolicy,
     pub build: Build,
 }
@@ -77,7 +74,6 @@ pub(crate) struct ReadSources {
 /// What the read API reads from. It never writes.
 pub(crate) struct ApiState {
     reader: Reader,
-    search: SearchIndex,
     recorder: Recorder,
     controls: Arc<Controls>,
     clock: Arc<dyn Clock>,
@@ -237,13 +233,11 @@ impl ApiState {
     ) -> Self {
         let ReadSources {
             reader,
-            search,
             retention,
             build,
         } = sources;
         Self {
             reader,
-            search,
             recorder,
             controls,
             clock,
@@ -441,11 +435,7 @@ impl ApiState {
         if raw.after.is_some() {
             return Err(ApiError::Query(QueryError::Cursor));
         }
-        let _permit = ApiState::permit(&state.previews)?;
-        let turns = state
-            .reader
-            .session_turns(id, raw.limit()?, Some(&state.search))
-            .await?;
+        let turns = state.reader.session_turns(id, raw.limit()?).await?;
         Ok(Self::versioned(Turns { turns }).into_response())
     }
 
@@ -454,18 +444,7 @@ impl ApiState {
         State(state): State<Arc<Self>>,
         Path(id): Path<SessionId>,
     ) -> Result<Response, ApiError> {
-        let mut report = state.reader.session_report(id).await?;
-        report.add_exposures(
-            state
-                .search
-                .exposures(&ExposureQuery {
-                    session: Some(id),
-                    time: TimeRange::default(),
-                    limit: PageLimit::new(PageLimit::MAX)?,
-                })
-                .await?,
-        );
-        Ok(Self::versioned(report).into_response())
+        Ok(Self::versioned(state.reader.session_report(id).await?).into_response())
     }
 
     /// Credentials calls carried, newest first: never the secrets.
@@ -473,7 +452,7 @@ impl ApiState {
         State(state): State<Arc<Self>>,
         Query(raw): Query<RawExposureQuery>,
     ) -> Result<Response, ApiError> {
-        let exposures = state.search.exposures(&raw.parse()?).await?;
+        let exposures = state.reader.exposures(&raw.parse()?).await?;
         Ok(Self::versioned(Exposures { exposures }).into_response())
     }
 
@@ -484,7 +463,7 @@ impl ApiState {
         Query(raw): Query<RawSearchQuery>,
     ) -> Result<Response, ApiError> {
         let query = raw.parse()?;
-        Ok(Self::versioned(state.search.search(&query).await?).into_response())
+        Ok(Self::versioned(state.reader.search(&query).await?).into_response())
     }
 
     /// One turn's activity, read from its calls' bodies.
@@ -492,7 +471,6 @@ impl ApiState {
         State(state): State<Arc<Self>>,
         Path(id): Path<TurnId>,
     ) -> Result<Response, ApiError> {
-        let _permit = ApiState::permit(&state.previews)?;
         let turn = state
             .reader
             .turn_activity(id, ActivityBudget::DEFAULT)
@@ -505,7 +483,6 @@ impl ApiState {
         State(state): State<Arc<Self>>,
         Path(id): Path<CallId>,
     ) -> Result<Response, ApiError> {
-        let _permit = ApiState::permit(&state.previews)?;
         let call = state
             .reader
             .call_activity(id, ActivityBudget::DEFAULT)
