@@ -815,6 +815,15 @@ export class ApiError extends Error {
     this.status = status;
     this.code = code;
   }
+
+  /**
+   * `null` for a 404, from a daemon too old to have the endpoint; every
+   * other failure is rethrown, so it is reported rather than read as absence.
+   */
+  static absentWhenNotFound(error: unknown): null {
+    if (error instanceof ApiError && error.status === 404) return null;
+    throw error;
+  }
 }
 
 // Activity and reports: what a turn or call did, read from recorded bodies,

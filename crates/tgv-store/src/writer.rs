@@ -467,7 +467,8 @@ pub(super) enum BlobAccess {
 }
 
 impl DiskUsage {
-    /// Both store files through `connection`, and the search index in `dir`.
+    /// Both store files through `connection`, and the search index in `dir`
+    /// when it can be measured.
     pub(super) async fn measure(
         connection: &mut SqliteConnection,
         dir: &Path,
@@ -475,7 +476,15 @@ impl DiskUsage {
         Ok(Self {
             metadata: FileUsage::measure(connection, "main").await?,
             blobs: FileUsage::measure(connection, "blobs").await?,
-            search: SearchIndex::usage(dir).await?,
+            // The index is derived: failing to measure it must not stop
+            // retention, which measures disk use before each prune.
+            search: match SearchIndex::usage(dir).await {
+                Ok(usage) => usage,
+                Err(error) => {
+                    tracing::warn!(%error, "search index usage unreadable; left out of storage");
+                    None
+                }
+            },
         })
     }
 }

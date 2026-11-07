@@ -2029,6 +2029,8 @@ td.zero {
   font-weight: 600;
   color: var(--ink);
 }
+/* Any count of failures: a tile's figure, or a span within its note. */
+.error-count,
 .usage-tile > strong.error-count {
   color: var(--error);
 }
@@ -2393,6 +2395,9 @@ td.zero {
 .turn-table td small {
   display: block;
   color: var(--muted);
+}
+.turn-table td small.error-count {
+  color: var(--error);
 }
 .turn-prompt {
   max-width: 520px;

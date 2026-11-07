@@ -247,6 +247,30 @@ fn excerpts_count_what_they_leave_out() {
     assert_eq!(Excerpt::cut("", 2).omitted_chars, 0);
 }
 
+#[test]
+fn a_turn_with_a_call_still_open_has_not_ended() {
+    let call = |n: u128, ended: Option<u64>| {
+        let mut view = view(n, HintSource::ClaudeCodeHeaders);
+        view.ended_at = ended.map(UnixMillis::from_millis);
+        ReadCall {
+            view,
+            request: RequestActivity::default(),
+            response: ResponseActivity::default(),
+        }
+    };
+    let scanner = crate::secrets::SecretScanner::new().unwrap();
+    let assemble = |calls| {
+        TurnActivity::assemble(head(), calls, 0, ActivityBudget::DEFAULT, &scanner).ended_at
+    };
+    assert_eq!(
+        assemble(vec![call(1, Some(1500)), call(2, Some(2500))]),
+        Some(UnixMillis::from_millis(2500))
+    );
+    // The last call is still running: the turn's end is unknown, not the
+    // first call's end.
+    assert_eq!(assemble(vec![call(1, Some(1500)), call(2, None)]), None);
+}
+
 mod report {
     use super::*;
     use crate::activity::report::{Finding, SessionReport};
@@ -330,6 +354,19 @@ mod report {
         let json = serde_json::to_value(&report).unwrap();
         assert_eq!(json["findings"][1]["kind"], "cache_rebuild");
         assert_eq!(json["findings"][1]["cache_written_tokens"], 82_000);
+    }
+
+    #[test]
+    fn a_turn_row_with_a_call_still_open_has_not_ended() {
+        let mut open = call(2, Some(1), None);
+        open.ended_at = None;
+        let calls = [call(1, Some(1), None), open, call(5, Some(2), None)];
+        let report = SessionReport::build(SessionId::restore(id(9)), &calls, 0);
+        assert_eq!(report.turns[0].ended_at, None);
+        assert_eq!(
+            report.turns[1].ended_at,
+            Some(UnixMillis::from_millis(6_000))
+        );
     }
 
     #[test]

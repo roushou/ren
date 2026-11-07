@@ -240,6 +240,37 @@ async fn index_usage_budgets_only_the_share_of_calls_the_store_still_has() {
         disk.live_bytes(),
         disk.metadata.live_bytes() + disk.blobs.live_bytes()
     );
+    // An index that cannot be read is left out, so retention still runs.
+    index.pool.close().await;
+    std::fs::write(
+        dir.path().join(SearchIndex::FILE),
+        "garbage, not SQLite ".repeat(512),
+    )
+    .unwrap();
+    assert!(SearchIndex::usage(dir.path()).await.is_err());
+    assert_eq!(store.disk_usage().await.unwrap().search, None);
+}
+
+#[tokio::test]
+async fn a_corrupt_index_is_deleted_and_built_again() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join(SearchIndex::FILE),
+        "garbage, not SQLite ".repeat(512),
+    )
+    .unwrap();
+    let index = SearchIndex::open(dir.path()).await.unwrap();
+    assert_eq!(index.indexed_count().await.unwrap(), 0);
+    index
+        .add(&[call(
+            1,
+            None,
+            None,
+            &[(SearchField::Reply, "after the rebuild")],
+        )])
+        .await
+        .unwrap();
+    assert_eq!(index.indexed_count().await.unwrap(), 1);
 }
 
 #[test]

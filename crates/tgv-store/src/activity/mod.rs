@@ -336,7 +336,12 @@ impl TurnActivity {
             native_id: head.native_id,
             client,
             started_at: calls.first().map(|call| call.started_at),
-            ended_at: calls.iter().filter_map(|call| call.ended_at).max(),
+            // A turn has ended only once every call it made has.
+            ended_at: calls
+                .iter()
+                .map(|call| call.ended_at)
+                .collect::<Option<Vec<_>>>()
+                .and_then(|ends| ends.into_iter().max()),
             prompt: calls.iter().find_map(|call| call.prompt.clone()),
             files_read: Vec::new(),
             files_written: Vec::new(),

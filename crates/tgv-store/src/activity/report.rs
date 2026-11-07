@@ -242,13 +242,44 @@ struct TurnRow {
     metrics: TurnMetrics,
     read: u64,
     context: u64,
+    end: TurnEnd,
+}
+
+/// Where a turn's calls have got to: a turn has ended only once every call
+/// it made has.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TurnEnd {
+    /// No call added yet.
+    Empty,
+    /// Every call so far has ended; the latest end.
+    Ended(UnixMillis),
+    /// A call has no end yet, so neither has the turn.
+    Open,
+}
+
+impl TurnEnd {
+    fn add(self, call_end: Option<UnixMillis>) -> Self {
+        match (self, call_end) {
+            (Self::Open, _) | (_, None) => Self::Open,
+            (Self::Empty, Some(end)) => Self::Ended(end),
+            (Self::Ended(earlier), Some(end)) => Self::Ended(earlier.max(end)),
+        }
+    }
+
+    fn at(self) -> Option<UnixMillis> {
+        match self {
+            Self::Ended(end) => Some(end),
+            Self::Empty | Self::Open => None,
+        }
+    }
 }
 
 impl TurnRow {
     fn add(&mut self, call: &CallView, metrics: &CallMetrics) {
         let row = &mut self.metrics;
         row.call_count = row.call_count.saturating_add(1);
-        row.ended_at = row.ended_at.max(call.ended_at);
+        self.end = self.end.add(call.ended_at);
+        row.ended_at = self.end.at();
         if let Some(context) = metrics.context_tokens {
             row.context_start_tokens.get_or_insert(context);
             row.context_end_tokens = Some(context);
@@ -373,6 +404,7 @@ impl SessionReport {
                             },
                             read: 0,
                             context: 0,
+                            end: TurnEnd::Empty,
                         });
                         rows.len().saturating_sub(1)
                     }

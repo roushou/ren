@@ -755,7 +755,8 @@ impl Reader {
             return Err(StoreError::NotFound);
         }
         let mut sql = QueryBuilder::<Sqlite>::new(
-            "SELECT t.id, t.native_id, MIN(c.started_at) AS started_at, MAX(c.ended_at) AS ended_at, ",
+            "SELECT t.id, t.native_id, MIN(c.started_at) AS started_at, \
+             CASE WHEN COUNT(c.ended_at) = COUNT(*) THEN MAX(c.ended_at) END AS ended_at, ",
         );
         CallQuery::push_usage_columns(&mut sql);
         sql.push(" FROM turns t JOIN calls c ON c.turn = t.id WHERE t.session = ")

@@ -297,7 +297,27 @@ impl SearchIndex {
     ];
 
     /// Open the index for writing and reading, creating or rebuilding it.
+    /// The index is derived, so a file that cannot be opened or fails its
+    /// integrity check is deleted and built again rather than stopping the
+    /// daemon.
     pub async fn open(dir: &Path) -> Result<Self, StoreError> {
+        match Self::connect(dir).await {
+            Ok(index) => Ok(index),
+            Err(error) => {
+                tracing::warn!(%error, "search index unusable; rebuilding it");
+                for suffix in ["", "-wal", "-shm"] {
+                    match std::fs::remove_file(dir.join(format!("{}{suffix}", Self::FILE))) {
+                        Ok(()) => {}
+                        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                        Err(error) => return Err(error.into()),
+                    }
+                }
+                Self::connect(dir).await
+            }
+        }
+    }
+
+    async fn connect(dir: &Path) -> Result<Self, StoreError> {
         let path = dir.join(Self::FILE);
         Store::private_file(&path)?;
         let options = SqliteConnectOptions::new()
@@ -310,6 +330,15 @@ impl SearchIndex {
             .acquire_timeout(Duration::from_secs(5))
             .connect_with(options)
             .await?;
+        let check: String = sqlx::query_scalar("PRAGMA quick_check")
+            .fetch_one(&pool)
+            .await?;
+        if check != "ok" {
+            pool.close().await;
+            return Err(StoreError::Corrupt(
+                "search index failed its integrity check",
+            ));
+        }
         let version: i64 = sqlx::query_scalar("PRAGMA user_version")
             .fetch_one(&pool)
             .await?;

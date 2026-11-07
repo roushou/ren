@@ -505,8 +505,10 @@ never causes. Turn activity adds the findings that need bodies.
 `search.sqlite3` is a full-text index (SQLite FTS5, `unicode61` tokenizer) of
 each finished call's documents: the user's prompt, the reply, tool input (name,
 targets, input), and tool output, each at most 32 KiB, from the activity reader.
-It is derived and disposable: not migrated, not backed up, rebuilt when missing
-or when `SearchIndex::VERSION` changes. `Indexer` is its only writer: a daemon
+It is derived and disposable: not migrated, not backed up, rebuilt when missing,
+when `SearchIndex::VERSION` changes, or when the file fails to open or its
+integrity check. Retention leaves an index it cannot measure out of the storage
+total rather than stopping. `Indexer` is its only writer: a daemon
 task reads finished calls in end-time order through its own read connection,
 indexes up to 20 per pass, pauses 200 ms while backfilling and 5 s once caught
 up, and on every pass removes up to 500 indexed calls that retention deleted.

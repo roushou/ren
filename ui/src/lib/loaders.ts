@@ -1,4 +1,5 @@
 import {
+  ApiError,
   CallId,
   ManagementApi,
   SEARCH_FIELDS,
@@ -123,7 +124,7 @@ export function overviewSnapshot(fetcher: typeof fetch) {
       api
         .exposures(Number(since))
         .then((page) => page.exposures)
-        .catch(() => null),
+        .catch(ApiError.absentWhenNotFound),
     ]);
     return { now, usage, active, errors, stopped, sessions: sessions.sessions, exposures };
   });

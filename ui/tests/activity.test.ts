@@ -1,11 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { ManagementApi, SessionId, TurnId } from '../src/lib/api.ts';
+import { ApiError, ManagementApi, SessionId, TurnId } from '../src/lib/api.ts';
 import { ShapeError } from '../src/lib/decode.ts';
 import {
   effectLabel,
   findingLine,
   resultBadge,
+  rowPrompt,
   snippetParts,
   turnRows,
 } from '../src/lib/activity.ts';
@@ -106,6 +107,13 @@ test('a session report decodes, keeps unknown findings, and reads as measurement
   ]);
   assert.equal(rows.length, 1);
   assert.equal(rows[0].summary?.prompt?.text, 'Fix the tests');
+  assert.equal(rowPrompt(rows[0]), 'Fix the tests');
+  // A turn the listing did not reach had its prompt not loaded, not missing.
+  assert.equal(rowPrompt({ ...rows[0], summary: null }), 'Prompt not loaded');
+  assert.equal(
+    rowPrompt({ ...rows[0], summary: { ...rows[0].summary!, prompt: null } }),
+    'No prompt read',
+  );
   // Only findings that point into the turn are attached to it.
   assert.deepEqual(
     rows[0].findings.map((line) => line.title),
@@ -223,4 +231,10 @@ test('an exposed secret reads as what happened, never the secret', () => {
     count: 1,
   });
   assert.match(reply.detail, /^JSON Web Token eyJ…abcd in the model's reply\./);
+});
+
+test('only a 404 reads as an endpoint the daemon lacks', () => {
+  assert.equal(ApiError.absentWhenNotFound(new ApiError(404)), null);
+  assert.throws(() => ApiError.absentWhenNotFound(new ApiError(503)), ApiError);
+  assert.throws(() => ApiError.absentWhenNotFound(new ShapeError('$', 'an object')));
 });

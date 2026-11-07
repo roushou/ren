@@ -152,6 +152,15 @@ export function turnRows(report: SessionReport, summaries: TurnSummary[]): TurnR
     }));
 }
 
+/**
+ * A row's prompt text. A turn outside the listing that was read had its
+ * prompt not loaded, which is not the same as having none.
+ */
+export function rowPrompt(row: TurnRow): string {
+  if (row.summary === null) return 'Prompt not loaded';
+  return row.summary.prompt?.text ?? 'No prompt read';
+}
+
 /** Text with how much was left out, for an excerpt. */
 export function omitted(chars: number): string {
   return chars ? `… ${chars.toLocaleString()} more characters not shown` : '';

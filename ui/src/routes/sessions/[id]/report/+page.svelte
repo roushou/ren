@@ -3,7 +3,7 @@
   import { getWorkbench } from '#lib/workbench.svelte.ts';
   import { num, short, clock, providerMark, type CallId, type TurnId } from '#lib/api.ts';
   import { compact, date, span, sessionTone } from '#lib/display.ts';
-  import { findingLine, turnRows, type FindingLine } from '#lib/activity.ts';
+  import { findingLine, rowPrompt, turnRows, type FindingLine } from '#lib/activity.ts';
   import Icon from '#lib/Icon.svelte';
   import type { PageProps } from './$types';
   let { data }: PageProps = $props();
@@ -131,9 +131,7 @@
                       ></td
                     >
                     <td class="turn-prompt">
-                      <a class="row-link" href={turnHref(metrics.turn)}
-                        >{row.summary?.prompt?.text ?? 'No prompt read'}</a
-                      >
+                      <a class="row-link" href={turnHref(metrics.turn)}>{rowPrompt(row)}</a>
                       {#each row.findings as line, index (index)}<span class="chip {line.tone}"
                           >{line.title}</span
                         >{/each}

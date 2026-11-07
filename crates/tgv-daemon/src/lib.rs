@@ -239,8 +239,10 @@ impl Daemon {
             let serve_result = ingress.serve(stop.clone(), Self::DRAIN_DEADLINE).await;
             stop.abort();
             // Indexing is resumable: a pass cut short rolls back and is
-            // repeated on the next start.
+            // repeated on the next start. Wait for it to stop, so it no
+            // longer reads the store while capture drains and the store closes.
             indexing.abort();
+            let _ = indexing.await;
             match &serve_result {
                 Ok(Stopped::Drained) => {}
                 Ok(Stopped::Aborted) => {

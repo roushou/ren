@@ -572,7 +572,8 @@ impl FileUsage {
 pub struct DiskUsage {
     pub metadata: FileUsage,
     pub blobs: FileUsage,
-    /// `None` until the daemon first builds the index.
+    /// `None` until the daemon first builds the index, or when it cannot be
+    /// measured.
     pub search: Option<IndexUsage>,
 }
 
