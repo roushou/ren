@@ -334,6 +334,20 @@ pre {
 .sessions-panel {
   flex: 1;
 }
+/* A session row mixes one- and two-line cells: center them all on one line,
+   and keep right-aligned figures clear of the text column after them. */
+.sessions-panel th,
+.sessions-panel td {
+  padding: 9px 14px;
+  vertical-align: middle;
+}
+.sessions-panel th,
+.sessions-panel td {
+  white-space: nowrap;
+}
+.sessions-panel .numeric + :not(.numeric) {
+  padding-left: 32px;
+}
 .list-panel > :not(.list-content) {
   flex-shrink: 0;
 }
