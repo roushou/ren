@@ -25,6 +25,8 @@ pub mod inspection;
 mod item;
 pub mod metrics;
 pub mod options;
+#[cfg(test)]
+mod purity;
 mod recording;
 pub mod retention;
 pub mod routing;

@@ -412,3 +412,5 @@ impl RecorderCore {
     }
 }
 
+#[cfg(test)]
+mod tests;

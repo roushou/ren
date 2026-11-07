@@ -458,7 +458,14 @@ WebSocket's end).
 ### Recorder
 
 `RecorderTask` runs inspection, digests, group commits, retention,
-and the live broadcast, writing through `RecordSink`. It runs on the observation
+and the live broadcast, writing through `RecordSink`. Its pure part is
+`RecorderCore`: records, in queue order and without the permits they carried,
+go in, and a batch of operations comes out, with chunking, inspection, request
+gathering, and digest sealing done along the way; the task holds the byte
+budgets until commit, commits, prunes, and keeps the metrics. The tap's
+arithmetic (which bytes fit the body limit, and how they split into pieces) is
+`CaptureOptions::split`. A source test keeps both, and the digest, free of
+runtime and I/O. It runs on the observation
 thread: a thread of its own with a current-thread runtime
 (`tgv_daemon::host::ObservationThread`), so its CPU work (chunking, hashing,
 inspection, deriving and sealing digests) and its storage writes never occupy a
@@ -682,8 +689,11 @@ state; it is logged, not recorded in `operator_actions`.
   real recorder and store in a temporary directory, a fixed clock, and sequential
   IDs, forwarding to a loopback mock upstream (for Reqwest's behaviour) or a
   scripted `Upstream` (for the seam itself).
-- Store tests use SQLite in temporary directories; `tgv-store/tests/recorder.rs`
-  runs the recorder against the real store.
+- The recorder's core is tested alone (`recording/tests.rs`: records in,
+  operations out, with no runtime, queue, or store), and the tap's capture
+  split with a property test. Store tests use SQLite in temporary directories;
+  `tgv-store/tests/recorder.rs` runs the recorder against the real store, and
+  `tgv-daemon/tests/contract.rs` pins the read API's JSON for the UI.
 - Full-daemon tests (`tests/daemon.rs`) only cover wiring, lifecycle, and shutdown.
 - Every label is pinned in its crate's `tests/fixtures/labels.txt`.
 

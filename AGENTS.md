@@ -189,9 +189,12 @@ dependencies under "Crates" below. Read the code for current module ownership.
 - `crates/tgv-recorder`: the bounded capture queue between forwarding and
   storage, with `Recorder` as its primary type. `CallTap` (and `ChannelTap` for a
   WebSocket's end) is the forwarding side; `RecorderTask` (run by the daemon on
-  its observation thread)
-  runs inspection, group commits, retention, and the live broadcast, writing
-  through the `RecordSink` port. Omissions are counted by reason in
+  its observation thread) is the shell around the pure `RecorderCore`
+  (`recording`: records in queue order in, a batch of operations out, with
+  chunking, inspection, and digests), and runs group commits, retention,
+  rederive passes, and the live broadcast, writing through the `RecordSink`
+  port. `CaptureOptions::split` is the tap's pure capture arithmetic, and
+  `src/purity.rs` keeps the pure modules free of runtime and I/O. Omissions are counted by reason in
   `RecorderMetrics`, readable after shutdown through `RecorderMeter`. It also
   owns what is recorded: TGV's identities and `IdSource` (`id`), `Clock`
   (`time`), terminals and other recorded facts (`capture`), routing facts and

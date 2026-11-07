@@ -2,10 +2,7 @@
 //! blocks or awaits. Admission to the queue is decided with `try_` operations,
 //! and anything that does not fit is counted as omitted.
 
-use super::{
-    item::{AttemptSlots, Item, Piece, Shared, Track},
-    options::CaptureOptions,
-};
+use super::item::{AttemptSlots, Item, Piece, Shared, Track};
 use crate::{
     batch::{
         AttemptBody, BodyEnd, CloseChannel, MessageMark, OpenCall, OperatorAction, Recorded,
@@ -294,40 +291,30 @@ impl CallTap {
             return;
         }
         let counters = &self.shared.counters;
-        let limit = u64::try_from(self.shared.options.body_limit_bytes).unwrap_or(u64::MAX);
-        let eligible = usize::try_from(limit.saturating_sub(offset))
-            .unwrap_or(usize::MAX)
-            .min(bytes.len());
-        counters.omit(
-            Omission::PolicyLimit,
-            u64::try_from(bytes.len().saturating_sub(eligible)).unwrap_or(u64::MAX),
-        );
+        let split = self.shared.options.split(offset, bytes.len());
+        counters.omit(Omission::PolicyLimit, split.over_limit);
         let mut mark = message.map(|payload| MessageMark {
             offset,
             len,
             payload,
             at: self.shared.clock.now().wall,
         });
-        let mut from = 0;
-        while from < eligible {
-            let to = from
-                .saturating_add(CaptureOptions::PIECE_BYTES)
-                .min(eligible);
-            let piece_len = u64::try_from(to.saturating_sub(from)).unwrap_or(u64::MAX);
-            let piece_offset = offset.saturating_add(u64::try_from(from).unwrap_or(u64::MAX));
-            match self.shared.admit(to.saturating_sub(from)) {
+        for piece in split.pieces {
+            let piece_len = u64::try_from(piece.len()).unwrap_or(u64::MAX);
+            let piece_offset =
+                offset.saturating_add(u64::try_from(piece.start).unwrap_or(u64::MAX));
+            match self.shared.admit(piece.len()) {
                 Err(reason) => counters.omit(reason, piece_len),
                 Ok(admission) => admission.send(Piece {
                     call: self.stamp.call,
                     track,
                     offset: piece_offset,
-                    bytes: source.piece(from, to),
+                    bytes: source.piece(piece.start, piece.end),
                     enqueued: self.shared.clock.now().monotonic,
                     message: mark.take(),
                 }),
             }
             mark = None;
-            from = to;
         }
     }
 
