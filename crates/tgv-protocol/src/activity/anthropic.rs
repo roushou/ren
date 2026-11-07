@@ -282,16 +282,13 @@ impl Response {
             match block.kind {
                 BlockKind::Text => replies.push(block.text),
                 BlockKind::ToolUse | BlockKind::ServerToolUse | BlockKind::McpToolUse => {
+                    if !activity.has_room(self.limits.max_tool_uses) {
+                        continue;
+                    }
                     if !block.closed {
                         activity
                             .limitations
                             .push(ActivityLimitation::UnfinishedToolCall);
-                    }
-                    if activity.tool_uses.len() >= self.limits.max_tool_uses {
-                        activity
-                            .limitations
-                            .push(ActivityLimitation::TooManyToolCalls);
-                        continue;
                     }
                     let input = if block.partial_input.is_empty() {
                         block
@@ -313,7 +310,7 @@ impl Response {
                 | BlockKind::McpToolResult => {}
             }
         }
-        activity.reply = replies.join("\n");
+        activity.set_reply(replies);
         activity
     }
 }

@@ -179,20 +179,11 @@ impl Response {
                 continue;
             };
             if kind == ItemKind::Message {
-                let text = ActivityReader::text(item.get("content"));
-                if !text.is_empty() {
-                    replies.push(text);
-                }
+                replies.push(ActivityReader::text(item.get("content")));
                 continue;
             }
-            if !kind.is_tool_call() {
+            if !kind.is_tool_call() || !activity.has_room(self.limits.max_tool_uses) {
                 continue;
-            }
-            if activity.tool_uses.len() >= self.limits.max_tool_uses {
-                activity
-                    .limitations
-                    .push(ActivityLimitation::TooManyToolCalls);
-                break;
             }
             let input = match kind {
                 ItemKind::FunctionCall | ItemKind::McpCall => {
@@ -232,7 +223,7 @@ impl Response {
                 input,
             });
         }
-        activity.reply = replies.join("\n");
+        activity.set_reply(replies);
         activity
     }
 }

@@ -100,6 +100,33 @@ pub struct ResponseActivity {
     pub limitations: Vec<ActivityLimitation>,
 }
 
+impl ResponseActivity {
+    /// Whether another tool call fits under `max`. Past it the response
+    /// says so once, and later tool calls are left out.
+    fn has_room(&mut self, max: usize) -> bool {
+        if self.tool_uses.len() < max {
+            return true;
+        }
+        if !self
+            .limitations
+            .contains(&ActivityLimitation::TooManyToolCalls)
+        {
+            self.limitations.push(ActivityLimitation::TooManyToolCalls);
+        }
+        false
+    }
+
+    /// The reply from the response's text parts, in order, without empty
+    /// ones.
+    fn set_reply(&mut self, parts: Vec<String>) {
+        self.reply = parts
+            .into_iter()
+            .filter(|part| !part.is_empty())
+            .collect::<Vec<_>>()
+            .join("\n");
+    }
+}
+
 /// How much of a stored body was read.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BodyExtent {

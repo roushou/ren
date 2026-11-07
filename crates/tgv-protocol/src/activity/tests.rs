@@ -235,3 +235,47 @@ fn unreadable_bodies_are_limitations_never_facts() {
     );
     assert!(corrupt.tool_uses.is_empty());
 }
+
+#[test]
+fn both_readers_cap_tool_calls_alike_and_keep_later_text() {
+    let limited = |protocol| {
+        ActivityReader::new(
+            protocol,
+            ActivityLimits {
+                max_tool_uses: 1,
+                ..ActivityLimits::default()
+            },
+        )
+    };
+    let messages = json!({
+        "type": "message",
+        "content": [
+            { "type": "text", "text": "" },
+            { "type": "tool_use", "id": "a", "name": "Read", "input": {} },
+            { "type": "tool_use", "id": "b", "name": "Read", "input": {} },
+            { "type": "tool_use", "id": "c", "name": "Read", "input": {} },
+            { "type": "text", "text": "After." },
+        ],
+    })
+    .to_string();
+    let responses = json!({
+        "object": "response",
+        "output": [
+            { "type": "message", "content": [{ "type": "output_text", "text": "" }] },
+            { "type": "function_call", "call_id": "a", "name": "shell", "arguments": "{}" },
+            { "type": "function_call", "call_id": "b", "name": "shell", "arguments": "{}" },
+            { "type": "function_call", "call_id": "c", "name": "shell", "arguments": "{}" },
+            { "type": "message", "content": [{ "type": "output_text", "text": "After." }] },
+        ],
+    })
+    .to_string();
+    for activity in [
+        limited(Protocol::Messages).response(body(messages.as_bytes())),
+        limited(Protocol::Responses).response(body(responses.as_bytes())),
+    ] {
+        assert_eq!(activity.tool_uses.len(), 1);
+        assert_eq!(activity.limitations, [ActivityLimitation::TooManyToolCalls]);
+        // Empty text parts leave no blank lines; text after the cap is kept.
+        assert_eq!(activity.reply, "After.");
+    }
+}
