@@ -43,6 +43,7 @@ pub mod api;
 pub mod attempt;
 mod buffer;
 pub mod build;
+pub mod call;
 pub mod channel;
 pub mod control;
 mod headers;
@@ -73,9 +74,9 @@ pub use websocket::{WebSocketMode, WebSocketOptions, WebSocketOptionsError};
 use crate::{
     api::{ApiState, ControlApi, ReadSources},
     attempt::{AttemptEnd, Canceller, EndKind, HttpEvent, SendFailure},
+    call::{CallRun, CallStep, CallStop, Dispatched, Refused},
     control::{Cancel, Controls},
     policy::{Admission, CallFacts, CallPlan, Policy, Rejection, RequestJson, StepRecord},
-    retry::{Delivery, RetryDecision, WireFact},
 };
 use axum::{
     Router,
@@ -307,17 +308,6 @@ struct AttemptChanges<'a> {
     body: AttemptBody,
 }
 
-/// What came back from dispatch.
-enum Dispatched {
-    Responded(http::Response<UpstreamBody>),
-    Failed(SendFailure),
-    /// The attempt ended elsewhere (its upload failed) while dispatch waited.
-    Ended,
-    Aborted,
-    /// The operator cancelled the call before its head arrived.
-    Cancelled,
-}
-
 /// What came back from a WebSocket handshake.
 enum Handshaken {
     Connected(Connected),
@@ -522,9 +512,9 @@ impl<U: Upstream> Gateway<U> {
         let mut admission = Some(admission);
         let mut tap: Option<Arc<CallTap>> = None;
         let mut registered = None;
-        let mut index = 0;
+        let mut run = CallRun::new(plan.candidates.len());
         loop {
-            let Some(prepared) = plan.candidates.get(index).and_then(|upstream| {
+            let Some(prepared) = plan.candidates.get(run.candidate()).and_then(|upstream| {
                 self.prepare(&plan, upstream, &parts.headers, buffered.bytes(), &decoded)
             }) else {
                 // Policy validates every candidate against the same table.
@@ -578,26 +568,30 @@ impl<U: Upstream> Gateway<U> {
                 result = tokio::time::timeout(deadline, self.upstream.send(request)) => match result {
                     Err(_) => Dispatched::Failed(SendFailure::HeaderTimeout),
                     Ok(Err(failure)) => Dispatched::Failed(failure),
-                    Ok(Ok(response)) => Dispatched::Responded(response),
+                    Ok(Ok(response)) => Dispatched::Responded {
+                        status: response.status().as_u16(),
+                        response,
+                    },
                 },
             };
-            let next = index.saturating_add(1) < plan.candidates.len();
-            let retry = |wire: WireFact| {
-                next && plan.retry.eligible(wire, Delivery::Nothing) == RetryDecision::NextCandidate
-            };
-            let end = match dispatched {
-                Dispatched::Responded(response) => {
-                    if retry(WireFact::Responded {
-                        status: response.status().as_u16(),
-                    }) {
-                        admission = cell.hand_over();
+            let end = match run.step(dispatched, &plan.retry) {
+                CallStep::FallOver { refused, next } => {
+                    admission = cell.hand_over();
+                    match refused {
                         // Read and record the refusal; nothing reached the client.
-                        if let Ok(response) = dispatch.responded(response) {
-                            Self::drain(response.into_body()).await;
+                        Refused::Response(response) => {
+                            if let Ok(response) = dispatch.responded(response) {
+                                Self::drain(response.into_body()).await;
+                            }
                         }
-                        index = index.saturating_add(1);
-                        continue;
+                        Refused::Failure(failure) => {
+                            let _first = dispatch.stopped(HttpEvent::SendFailed(failure));
+                        }
                     }
+                    run = next;
+                    continue;
+                }
+                CallStep::Relay(response) => {
                     // The call stays cancellable while its response streams.
                     cell.hold(Box::new(registered.take()));
                     match dispatch.responded(response) {
@@ -605,20 +599,16 @@ impl<U: Upstream> Gateway<U> {
                         Err(end) => end,
                     }
                 }
-                Dispatched::Failed(failure) => {
-                    if retry(WireFact::from(failure)) {
-                        admission = cell.hand_over();
-                        let _first = dispatch.stopped(HttpEvent::SendFailed(failure));
-                        index = index.saturating_add(1);
-                        continue;
-                    }
+                CallStep::Stop(CallStop::Failed(failure)) => {
                     dispatch.stopped(HttpEvent::SendFailed(failure))
                 }
-                Dispatched::Aborted => dispatch.stopped(HttpEvent::Cancelled(Canceller::Shutdown)),
-                Dispatched::Cancelled => {
+                CallStep::Stop(CallStop::Shutdown) => {
+                    dispatch.stopped(HttpEvent::Cancelled(Canceller::Shutdown))
+                }
+                CallStep::Stop(CallStop::Operator) => {
                     dispatch.stopped(HttpEvent::Cancelled(Canceller::Operator))
                 }
-                Dispatched::Ended => dispatch.concluded(),
+                CallStep::Stop(CallStop::Ended) => dispatch.concluded(),
             };
             return GatewayError::Ended(end).into_response();
         }

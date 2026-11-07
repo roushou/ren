@@ -206,7 +206,7 @@ xtask        ─► tgv-daemon, tgv-harness   (repository tasks, unpublished)
 - **Purity.** `tgv-protocol`'s manifest names only pure dependencies (`bytes`,
   `serde`, `serde_json`, `http` types, and the decompressors), and a source test
   (`sources_stay_free_of_runtime_and_io`) rejects runtime and I/O paths. Inside
-  `tgv-gateway`, `src/purity.rs` keeps `attempt`, `channel`, `retry`, and
+  `tgv-gateway`, `src/purity.rs` keeps `attempt`, `call`, `channel`, `retry`, and
   `operator` free of runtime, I/O, storage, and shell-module dependencies.
 - **Ports point down.** The recorder declares `RecordSink`, `Clock`, and
   `IdSource`; the store implements `RecordSink`; the daemon implements the system
@@ -334,6 +334,15 @@ pub enum Delivery { Nothing, Started }     // has anything reached the client?
   body to a pooled connection doesn't count.
 - A refused attempt's response is read (64 KiB and 5 s at most) and recorded
   before the next candidate is tried. Each retry is a distinct attempt.
+- **The call's way through its candidates** is the pure machine `CallRun`
+  (`call`): after each attempt's dispatch ends, `step` decides from the outcome
+  and the retry policy whether to fall over to the next candidate (recording
+  the refused response or failure), relay the response, or stop the call, and
+  consumes its old position. `Gateway::forward` only carries out those steps.
+  Every decision is made before anything reached the client, so it always asks
+  the policy with `Delivery::Nothing`. A property test checks that a call never
+  makes more attempts than it has candidates and always ends by relaying or
+  stopping.
 - **Why retries are narrow.** The client runs tools and only ever receives one
   response, so duplicate tool execution is not the risk. The risks are duplicated
   subscription allowance, duplicated server-side tools (for example web search),

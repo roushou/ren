@@ -1,5 +1,5 @@
-//! The gateway's state machines and decisions (`attempt`, `channel`, `retry`,
-//! `operator`) stay pure: no runtime, I/O, or dependency on the gateway's shell
+//! The gateway's state machines and decisions (`attempt`, `call`, `channel`,
+//! `retry`, `operator`) stay pure: no runtime, I/O, or dependency on the gateway's shell
 //! modules. The crate itself depends on Tokio and Axum, so this is checked on
 //! the sources rather than by the manifest.
 
@@ -7,6 +7,7 @@
 fn pure_modules_stay_free_of_runtime_and_io_dependencies() {
     let sources = [
         ("attempt.rs", include_str!("attempt.rs")),
+        ("call.rs", include_str!("call.rs")),
         ("channel.rs", include_str!("channel.rs")),
         ("operator.rs", include_str!("operator.rs")),
         ("retry.rs", include_str!("retry.rs")),

@@ -225,7 +225,8 @@ dependencies under "Crates" below. Read the code for current module ownership.
   by `Gateway::router` or `Gateway::into_ingress`. Forwarding uses a declarative
   route table, the header policy, request buffering with a global
   byte budget, the typed upstream entries with their credential override, the
-  candidate loop, the relay that drives the pure `HttpAttempt` machine
+  candidate loop that carries out `CallRun`, the relay that drives the pure
+  `HttpAttempt` machine
   (`attempt`), the WebSocket relay that drives `WsChannel` (`channel`), the
   `Upstream` seam (HTTP send and WebSocket connect) with its Reqwest
   implementation, and the ingress with the shutdown drain, which also waits for
@@ -235,8 +236,10 @@ dependencies under "Crates" below. Read the code for current module ownership.
   it with the running-call registry (`control`), the `Build` that `/health`
   reports (`build`), and pure call planning
   (`policy`: block, transform, and fallback rules validated at load, with
-  protected headers and body paths). `src/purity.rs` keeps `attempt`, `channel`,
-  `retry`, and `operator` free of runtime, I/O, storage, and shell-module
+  protected headers and body paths), and the call's way through its
+  candidates (`call`: `CallRun`, which `Gateway::forward` carries out).
+  `src/purity.rs` keeps `attempt`, `call`, `channel`, `retry`, and `operator`
+  free of runtime, I/O, storage, and shell-module
   dependencies. Management receives `Reader`, `Backup`, retention settings, and
   control credentials through `ManagementSetup`; SQL stays in `tgv-store`, and
   forwarding records only through the recorder.
