@@ -170,7 +170,7 @@ impl Target {
 
 impl Management {
     /// The read API version this CLI parses.
-    const API_VERSION: u64 = 2;
+    const API_VERSION: u64 = 1;
 
     pub fn new(endpoint: GatewayEndpoint) -> Result<Self, ManagementError> {
         let http = reqwest::Client::builder()

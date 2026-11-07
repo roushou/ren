@@ -1,4 +1,4 @@
-# TGV architecture v2
+# Design record: derive once, read cheaply
 
 Status: phases 1 to 7 are built and deployed (November 2026); phase 8,
 deterministic simulation, is not started. This is the design record: the
@@ -8,7 +8,9 @@ current state.
 
 The plan's premise: backward compatibility is not a goal, so storage, the
 management API, the CLI's JSON, and the MCP tools may change, while the
-operator's recorded history is kept (section 6).
+operator's recorded history is kept (section 6). There is one release: the
+API's version stays 1, and no compatibility code is kept for builds
+before it.
 
 ## 1. Why change
 
@@ -28,7 +30,7 @@ shows it:
 | Local and remote reads diverge     | Ten CLI commands have a local path (typed structs) and a remote path (untyped JSON), with orchestration duplicated (report + exposures, budgets, index availability).                                                                                                                  |
 | Hidden state machines              | The call's candidate loop in `Gateway::forward` (an index and three `Option`s); `AttemptCell`'s mutexes; the recorder's `accept`. The recorder's tap, queue and task have no unit tests.                                                                                               |
 
-v2 restores the original rule and extends it: **every fact derived from
+The redesign restores the original rule and extends it: **every fact derived from
 traffic is derived once, at write time, by one pure pipeline, off the
 forwarding runtime, and stored with a version so it can be derived again.**
 
@@ -149,7 +151,7 @@ the same pure pipeline:
 
 ### 3.4 What reads become
 
-| View                 | v1                                           | v2                                             |
+| View                 | Before                                       | After                                          |
 | -------------------- | -------------------------------------------- | ---------------------------------------------- |
 | Turn activity        | parse ≤ 200 bodies, scan secrets             | read ≤ 100 digests, pair tools by ID           |
 | Call activity        | parse 2 bodies                               | read 1 digest                                  |
@@ -225,13 +227,13 @@ Rust tests write one JSON sample per `ReadResponse` variant to
 `ui/tests/fixtures/api/`. The UI's decoder tests parse every sample, so a
 change on either side that breaks the contract fails a test instead of a page.
 The UI's hand-written decoders stay (parse at the boundary); the fixtures pin
-them to the server. The API version becomes 2.
+them to the server.
 
 ## 6. Storage changes and upgrade
 
 - One new migration (shipped migrations are not edited). It adds the tables
   in 3.2 and drops nothing the recorder still writes.
-- `search.sqlite3` is deleted on first start of v2.
+- `search.sqlite3` is deleted on first start.
 - Existing calls get digests from `Rederive`. Nothing recorded is lost.
 - Pruning, backup, and recovery gain the new tables through foreign keys and
   the existing transaction boundaries.
@@ -307,7 +309,7 @@ Still seven crates and one `xtask`; no new crate is needed.
 | `tgv-gateway`  | `CallRun`; route table and codec; handlers shrink to the table                                                                                        |
 | `tgv-daemon`   | two runtimes and the `Spawner`; loses the indexer task                                                                                                |
 | `tgv-cli`      | `History = Local                                                                                                                                      | Remote(ApiClient)``; ``management.rs``, ``QueryParams``, and per-command dual paths go; MCP tools map to ``ReadRequest` |
-| `ui`           | API v2 decoders, contract fixtures; pages unchanged in behavior                                                                                       |
+| `ui`           | API decoders, contract fixtures; pages unchanged in behavior                                                                                          |
 
 ## 10. Phases
 
@@ -317,14 +319,14 @@ stay in separate commits.
 1. **Digest core, unwired.** `CallReader`, `Harness::interpret`,
    `Digest::seal`, scanner moved to the recorder. Pure tests only.
 2. **Write-time projections.** Migration; recorder derives and stores
-   digests, exposures, FTS, and turn rollups; `Rederive`. Reads still use v1
+   digests, exposures, FTS, and turn rollups; `Rederive`. Reads still use the earlier
    paths, and the equivalence test compares them.
 3. **Reads from projections.** Turn, call activity, turns, report, search, and
    exposures read rows. Delete the indexer, `search.sqlite3`, and read-time
    parsing. Deploy here: this is the CPU fix.
 4. **Observation runtime.** Daemon's two runtimes and `Spawner`.
 5. **One read service.** `ReadRequest`, route table, `ApiClient`, `History`,
-   MCP over it, API v2, contract fixtures, UI decoders.
+   MCP over it, contract fixtures, UI decoders.
 6. **`CallRun`.** Then `AttemptCell` simplification.
 7. **`RecorderCore` and `CaptureBudget`.**
 8. **Optional:** deterministic simulation suite.
@@ -431,7 +433,7 @@ stay in separate commits.
 - **A second runtime** isolates forwarding by construction. Alternative:
   `spawn_blocking` around the CPU stages only, which is smaller but relies on
   every future change remembering it. Recommended: the runtime.
-- **API v2 breaks clients.** The UI, CLI, and MCP server ship from this
+- **The API changes shape.** The UI, CLI, and MCP server ship from this
   repository together; MCP clients re-read tool schemas each session.
 - **Out of scope:** event-sourcing the application, actors beyond the
   recorder, a generated TypeScript client.

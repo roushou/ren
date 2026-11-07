@@ -46,13 +46,6 @@ impl ActivityBudget {
         input_chars: 400,
         output_chars: 400,
     };
-    /// For turn listings: the start of each prompt.
-    pub const SUMMARY: Self = Self {
-        prompt_chars: 300,
-        reply_chars: 0,
-        input_chars: 0,
-        output_chars: 0,
-    };
 }
 
 /// A tool result, as the client reported it.
@@ -130,6 +123,11 @@ pub struct TurnSummary {
     pub error_count: u64,
     pub tokens: TokenTotals,
     pub prompt: Option<Excerpt>,
+}
+
+impl TurnSummary {
+    /// How much of its prompt a listed turn shows.
+    pub const PROMPT_CHARS: usize = 300;
 }
 
 /// A turn's identity, before its calls are read.

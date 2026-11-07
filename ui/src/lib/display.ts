@@ -521,8 +521,9 @@ export function captureState(call: CallView): string {
 }
 
 /** `0.1.0 (00a590295015)`, as `tgv --version` and `tgv doctor` show it. */
+/** A build as text; `—` before health has loaded. */
 export function buildLabel(build: Build | null): string {
-  if (!build) return 'not reported (daemon predates build reporting)';
+  if (!build) return '—';
   const revision = build.revision;
   switch (revision.kind) {
     case 'commit':

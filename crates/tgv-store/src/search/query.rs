@@ -126,6 +126,6 @@ pub struct SearchHit {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct SearchPage {
     pub hits: Vec<SearchHit>,
-    /// Calls indexed so far; fewer than retained while backfilling.
+    /// Calls indexed: every finished call whose digest is derived.
     pub indexed_calls: u64,
 }

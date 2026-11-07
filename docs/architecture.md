@@ -648,7 +648,7 @@ state; it is logged, not recorded in `operator_actions`.
   keeps the two directions one table. The CLI's `History` reads this host's
   storage or a gateway through it, and MCP tools are `ReadRequest`s too, so
   every surface answers the same JSON.
-- **Responses.** Each carries `api_version` (2); the UI checks compatibility at
+- **Responses.** Each carries `api_version` (1); the UI checks compatibility at
   load and shows an explicit mismatch error. `crates/tgv-daemon/tests/contract.rs`
   pins each read's answer to a fixed synthetic history in
   `ui/tests/fixtures/api/`, and the UI's decoder tests parse those files, so a

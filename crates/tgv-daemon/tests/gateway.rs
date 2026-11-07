@@ -761,7 +761,7 @@ async fn tool_follow_up_is_grouped_and_visible_through_read_only_api() {
             assert_eq!(response.headers()["cache-control"], "no-store");
             let value: serde_json::Value =
                 serde_json::from_slice(&response.bytes().await.unwrap()).unwrap();
-            assert_eq!(value["api_version"], 2);
+            assert_eq!(value["api_version"], 1);
             if value["sessions"][0]["call_count"] == 2 {
                 break value["sessions"].clone();
             }
@@ -967,7 +967,7 @@ async fn body_previews_are_read_only_private_and_distinguish_capture_limits() {
                 assert_eq!(
                     value,
                     serde_json::json!({
-                        "api_version": 2,
+                        "api_version": 1,
                         "observed_bytes": request.len(), "stored_bytes": request.len(),
                         "ending": "ended", "captured_bytes": request.len(),
                         "extent": "complete",
@@ -1003,7 +1003,7 @@ async fn body_previews_are_read_only_private_and_distinguish_capture_limits() {
                     serde_json::from_slice(&export.bytes().await.unwrap()).unwrap();
                 assert_eq!(
                     value,
-                    serde_json::json!({ "api_version": 2, "error": "not_found" })
+                    serde_json::json!({ "api_version": 1, "error": "not_found" })
                 );
             }
         }
@@ -1811,7 +1811,7 @@ async fn usage_reports_totals_by_hour_and_model_and_refuses_a_reversed_range() {
     let (status, body) = read("").await;
     assert_eq!(status, StatusCode::OK);
     let usage: serde_json::Value = serde_json::from_slice(&body).unwrap();
-    assert_eq!(usage["api_version"], 2);
+    assert_eq!(usage["api_version"], 1);
     assert_eq!(
         usage["totals"],
         serde_json::json!({

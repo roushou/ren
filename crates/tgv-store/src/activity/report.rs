@@ -303,8 +303,8 @@ impl TurnRow {
 }
 
 impl SessionReport {
-    /// Add the secrets the session's calls carried, from the search index,
-    /// as findings in call order.
+    /// Add the secrets the session's calls carried, from their digests'
+    /// exposures, as findings in call order.
     pub fn add_exposures(&mut self, exposures: Vec<ExposureView>) {
         let mut timed: Vec<(UnixMillis, Finding)> = exposures
             .into_iter()

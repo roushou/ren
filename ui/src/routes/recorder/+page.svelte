@@ -216,7 +216,7 @@
         </div>
         <div>
           <dt>
-            Storage budget <span>Live pages of the metadata, blob, and search index files</span>
+            Storage budget <span>Live pages of the metadata and blob files (search included)</span>
           </dt>
           <dd>{policy ? bytes(policy.max_storage_bytes) : '—'}</dd>
         </div>

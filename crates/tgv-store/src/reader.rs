@@ -458,13 +458,6 @@ impl Reader {
             .await?)
     }
 
-    /// The newest committed observation, if any.
-    pub async fn latest_seq(&self) -> Result<Option<u64>, StoreError> {
-        Ok(sqlx::query_scalar("SELECT MAX(seq) FROM observations")
-            .fetch_one(&self.pool)
-            .await?)
-    }
-
     pub async fn storage(&self) -> Result<StorageView, StoreError> {
         let mut connection = self.pool.acquire().await?;
         let disk = DiskUsage::measure(&mut connection).await?;
@@ -743,7 +736,7 @@ impl Reader {
                 tokens: TokenTotals::from_row(row)?,
                 prompt: prompts
                     .remove(&turn)
-                    .map(|prompt| prompt.narrow(ActivityBudget::SUMMARY.prompt_chars)),
+                    .map(|prompt| prompt.narrow(TurnSummary::PROMPT_CHARS)),
             });
         }
         Ok(turns)

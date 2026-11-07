@@ -188,7 +188,7 @@ test('builds read like tgv --version, and unknown revisions are kept', () => {
     kind: 'unrecognized',
     text: commit.toUpperCase(),
   });
-  assert.match(buildLabel(null), /not reported/);
+  assert.equal(buildLabel(null), '—');
 });
 
 test('a missing count or percentage reads as an em dash', () => {

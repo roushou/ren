@@ -55,6 +55,8 @@ pub enum DaemonError {
         "the recorder stopped without finishing; unfinished records will be recovered on restart"
     )]
     CaptureLost,
+    #[error(transparent)]
+    Scanner(#[from] tgv_recorder::secrets::ScannerError),
     #[error("cannot start the observation thread")]
     ObservationThread(#[source] io::Error),
     #[error("{0} task failed")]
@@ -165,7 +167,7 @@ impl Daemon {
                 // dequeued, after admission is released: leave headroom.
                 max_calls: config.recorder_calls(),
                 live_buffer: 1024,
-                scanner: Arc::new(SecretScanner::new().map_err(StoreError::from)?),
+                scanner: Arc::new(SecretScanner::new()?),
             },
             clock.clone(),
             ids.clone(),

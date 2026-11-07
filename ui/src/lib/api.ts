@@ -20,7 +20,7 @@ import {
 } from './decode.ts';
 
 /** The management API version this UI understands. */
-export const API_VERSION = 2;
+export const API_VERSION = 1;
 
 // Identities. TGV's own ids are UUIDs; native client ids keep separate types.
 export type CallId = Brand<string, 'CallId'>;
@@ -398,8 +398,8 @@ export interface StorageView {
   disk: { metadata: FileUsage; blobs: FileUsage };
   calls: number;
   open_calls: number;
-  /** Calls whose activity is derived; null from an older daemon. */
-  digested_calls: number | null;
+  /** Calls whose activity is derived: every finished call, once derived. */
+  digested_calls: number;
   chunks: number;
   /** Raw bytes all stored segments reference. */
   referenced_bytes: number;
@@ -457,10 +457,8 @@ export interface OperatorSummary {
 }
 export interface Health {
   status: Stored<HealthStatus>;
-  /** Null for a daemon older than build reporting. */
-  build: Build | null;
-  /** Null for a daemon older than operator reporting. */
-  operator: OperatorSummary | null;
+  build: Build;
+  operator: OperatorSummary;
   recorder: RecorderMetrics;
 }
 export interface Metrics {
@@ -630,7 +628,7 @@ function tokenTotals(value: unknown, path: string): TokenTotals {
   return object<TokenTotals>({
     input: nullable(count),
     output: nullable(count),
-    cache_read: optional(count),
+    cache_read: nullable(count),
   })(value, path);
 }
 const sessions = object<Sessions>({
@@ -644,11 +642,8 @@ const sessions = object<Sessions>({
       last_seen: millis,
       call_count: count,
       turn_count: count,
-      error_count: optional(count),
-      tokens: (value, path) =>
-        value === undefined
-          ? { input: null, output: null, cache_read: null }
-          : tokenTotals(value, path),
+      error_count: count,
+      tokens: tokenTotals,
     }),
   ),
 });
@@ -668,10 +663,6 @@ const usageView = object<UsageView>({
     }),
   ),
 });
-/** A field a newer daemon adds: absent from an older one reads as null. */
-function optional<T>(decode: Decoder<T>): Decoder<T | null> {
-  return (value, path) => (value === undefined || value === null ? null : decode(value, path));
-}
 const fileUsage = object<FileUsage>({ page_size: count, page_count: count, freelist_count: count });
 const storageView = object<StorageView>({
   disk: object<StorageView['disk']>({
@@ -680,7 +671,7 @@ const storageView = object<StorageView>({
   }),
   calls: count,
   open_calls: count,
-  digested_calls: optional(count),
+  digested_calls: count,
   chunks: count,
   referenced_bytes: count,
   unique_bytes: count,
@@ -728,8 +719,6 @@ export const revision: Decoder<Revision> = (value, path) => {
     : { kind: 'unrecognized', text };
 };
 const build = object<Build>({ version: string, revision });
-const reportedBuild: Decoder<Build | null> = (value, path) =>
-  value === undefined || value === null ? null : build(value, path);
 const pause: Decoder<Pause> = (value, path) => {
   if (!isRecord(value)) throw new ShapeError(path, 'an object');
   const state = string(value.state, `${path}.state`);
@@ -741,8 +730,8 @@ const pause: Decoder<Pause> = (value, path) => {
 const operatorSummary = object<OperatorSummary>({ pause, blocked_sessions: count });
 const health = object<Health>({
   status: label(healthStatuses),
-  build: reportedBuild,
-  operator: optional(operatorSummary),
+  build,
+  operator: operatorSummary,
   recorder: recorderMetrics,
 });
 const metrics = object<Metrics>({ recorder: recorderMetrics, storage: storageView });
@@ -808,15 +797,6 @@ export class ApiError extends Error {
     );
     this.status = status;
     this.code = code;
-  }
-
-  /**
-   * `null` for a 404, from a daemon too old to have the endpoint; every
-   * other failure is rethrown, so it is reported rather than read as absence.
-   */
-  static absentWhenNotFound(error: unknown): null {
-    if (error instanceof ApiError && error.status === 404) return null;
-    throw error;
   }
 }
 

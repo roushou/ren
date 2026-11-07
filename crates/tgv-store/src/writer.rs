@@ -129,15 +129,6 @@ impl Store {
             .busy_timeout(Duration::from_secs(5));
         let mut connection = SqliteConnection::connect_with(&options).await?;
         sqlx::migrate!("./migrations").run(&mut connection).await?;
-        // Earlier builds kept the search index in a file of its own; it is
-        // now part of the metadata file.
-        for file in ["search.sqlite3", "search.sqlite3-wal", "search.sqlite3-shm"] {
-            match std::fs::remove_file(dir.join(file)) {
-                Ok(()) => {}
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-                Err(error) => return Err(error.into()),
-            }
-        }
         Self::attach_blobs(&mut connection, dir, BlobAccess::Write).await?;
         let mut store = Self {
             connection,

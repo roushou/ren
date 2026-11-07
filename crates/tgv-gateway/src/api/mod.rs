@@ -171,8 +171,7 @@ impl From<StoreError> for ApiError {
             | StoreError::Json(_)
             | StoreError::Worker(_)
             | StoreError::NonUtf8Path
-            | StoreError::Corrupt(_)
-            | StoreError::Scanner(_) => Self::Store(error),
+            | StoreError::Corrupt(_) => Self::Store(error),
         }
     }
 }
@@ -194,7 +193,7 @@ impl IntoResponse for ApiError {
 
 impl ApiState {
     /// Clients reject responses whose version they do not understand.
-    pub const API_VERSION: u32 = 2;
+    pub const API_VERSION: u32 = 1;
     /// Body previews decode off the async runtime; at most this many at once.
     const PREVIEW_PERMITS: usize = 2;
     /// A body export is held in memory whole; at most this many at once.

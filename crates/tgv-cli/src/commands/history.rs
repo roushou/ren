@@ -5,7 +5,6 @@ use crate::context::Context;
 use crate::management::{History, HostFlags, Management, Target};
 use anyhow::{Context as _, Result};
 use clap::{Args, ValueEnum};
-use serde::Serialize;
 use std::{
     fs::{File, OpenOptions},
     io::Write,
@@ -50,7 +49,9 @@ impl TargetArgs {
 
     /// Print the answer to one read.
     async fn print(&self, ctx: &Context, request: ReadRequest) -> Result<ExitCode> {
-        HistoryCmd::print(&self.history(ctx).await?.serve(&request).await?)
+        let answer = self.history(ctx).await?.serve(&request).await?;
+        println!("{}", serde_json::to_string_pretty(&answer)?);
+        Ok(ExitCode::SUCCESS)
     }
 
     /// The gateway to read through, for a command that needs the API even
@@ -81,11 +82,6 @@ impl HistoryCmd {
             ..CallQuery::default()
         });
         self.target.print(ctx, request).await
-    }
-
-    pub(crate) fn print(value: &impl Serialize) -> Result<ExitCode> {
-        println!("{}", serde_json::to_string_pretty(value)?);
-        Ok(ExitCode::SUCCESS)
     }
 }
 
@@ -149,7 +145,7 @@ impl TurnsCmd {
 
 /// Search prompts, replies, and tool input and output, newest first. Words
 /// must all match; "quoted text" matches as a phrase. The daemon indexes
-/// calls shortly after they finish, and backfills history on first start.
+/// calls as they finish.
 #[derive(Args)]
 pub struct SearchCmd {
     /// What to look for.

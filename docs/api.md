@@ -80,8 +80,8 @@ each call's activity once, when the call finishes, from up to 16 MiB of each
 body, and stores it with secrets redacted; a turn reads at most 100 calls
 (`omitted_calls` counts the rest). `limitations` on each call say what could not
 be read (`truncated`, `capture_gap`, `not_json`, `unfinished_tool_call`, …), or
-`not_yet_derived` for a call that finished moments ago or was recorded by an
-older daemon, which derives it from the stored bodies after it starts. Text is
+`not_yet_derived` for a call that finished moments ago, or whose activity the
+daemon is deriving again from its stored bodies. Text is
 excerpted; `omitted_chars` says how much was left out, and the full text stays in
 the body. Retention removes activity with its call.
 
@@ -103,9 +103,7 @@ and commands it names, and its input), and tool output. All words must match;
 Results are newest call first: each names the call, session, turn, client,
 field, and a snippet with matches marked `«like this»`. `indexed_calls` says how
 much history is searchable: every finished call, once its activity is derived
-(see above). After an upgrade the daemon derives retained history in the
-background (80 calls take about three seconds). Calls retention removes leave
-the index too.
+(see above). Calls retention removes leave the index too.
 
 ## Exposed secrets
 
@@ -198,10 +196,10 @@ stderr.
 
 ## Endpoints
 
-Every JSON body carries `"api_version": 2`; errors are `{api_version, error}` with
+Every JSON body carries `"api_version": 1`; errors are `{api_version, error}` with
 `error` one of `not_found`, `invalid_query`, `busy`, or `unavailable`. An
 identifier that is not one is `not_found`; an unknown query parameter is
-`invalid_query`. The control API (`/control/v1`) keeps its own version, 1.
+`invalid_query`. The control API (`/control/v1`) is versioned separately.
 A body export answers with the raw bytes (`application/octet-stream`) only when
 the body was stored whole; otherwise `not_found`. At most two run at once
 (`busy`), and the UI does not forward it.

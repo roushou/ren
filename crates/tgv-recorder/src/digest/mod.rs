@@ -44,13 +44,6 @@ impl Excerpt {
         }
     }
 
-    pub fn of_input(input: &ToolInput, max_chars: usize) -> Self {
-        match input {
-            ToolInput::Json(value) => Self::cut(&value.to_string(), max_chars),
-            ToolInput::Text(text) => Self::cut(text, max_chars),
-        }
-    }
-
     /// This excerpt cut further, still counting everything left out.
     pub fn narrow(&self, max_chars: usize) -> Self {
         let cut = Self::cut(&self.text, max_chars);

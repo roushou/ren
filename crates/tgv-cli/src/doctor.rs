@@ -333,8 +333,7 @@ struct StorageResponse {
 struct StorageUsage {
     calls: u64,
     open_calls: u64,
-    /// Absent from daemons older than digests.
-    digested_calls: Option<u64>,
+    digested_calls: u64,
     disk: DiskUsage,
 }
 
@@ -362,8 +361,7 @@ impl FileUsage {
 /// The parts of `/health` doctor reports.
 #[derive(Deserialize)]
 struct HealthResponse {
-    /// Absent from daemons older than build reporting.
-    build: Option<ReportedBuild>,
+    build: ReportedBuild,
     recorder: RecorderHealth,
 }
 
@@ -394,15 +392,7 @@ struct Omissions {
 impl Report {
     /// Whether the daemon runs the same build as this CLI. A mismatch is a
     /// warning: the API is versioned, but one of them needs an upgrade.
-    fn build(&mut self, local: &Build, remote: Option<ReportedBuild>) {
-        let Some(remote) = remote else {
-            self.add(
-                "build",
-                Status::Warning,
-                format!("daemon does not report its build, so it predates this CLI ({local})"),
-            );
-            return;
-        };
+    fn build(&mut self, local: &Build, remote: ReportedBuild) {
         let revision = match remote.revision.parse::<Revision>() {
             Ok(revision) => revision,
             Err(_) => {
@@ -522,25 +512,21 @@ impl Report {
 impl Report {
     /// How much of the finished history has its activity derived: what
     /// turns, reports, and search read.
-    fn add_digests(&mut self, digested: Option<u64>, finished: u64) {
-        match digested {
-            None => self.add(
-                "digests",
-                Status::Warning,
-                "the gateway reports no digests; upgrade the daemon",
-            ),
-            Some(digested) if digested >= finished => self.add(
+    fn add_digests(&mut self, digested: u64, finished: u64) {
+        if digested >= finished {
+            self.add(
                 "digests",
                 Status::Ok,
                 format!("{digested} of {finished} finished calls derived"),
-            ),
-            Some(digested) => self.add(
+            );
+        } else {
+            self.add(
                 "digests",
                 Status::Warning,
                 format!(
                     "{digested} of {finished} finished calls derived; the daemon derives the rest from stored bodies within seconds, longer for a large history"
                 ),
-            ),
+            );
         }
     }
 }

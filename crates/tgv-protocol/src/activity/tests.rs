@@ -3,17 +3,52 @@ use crate::encoding::ResponseFormat;
 use serde_json::json;
 use std::io::Write;
 
-fn reader(protocol: Protocol) -> ActivityReader {
-    ActivityReader::new(protocol, ActivityLimits::default())
+use crate::CallInspector;
+use crate::inspect::pipeline::{InspectionLimits, ResponseReading};
+
+/// A request, gathered whole and read.
+fn request(protocol: Protocol, bytes: &[u8]) -> RequestActivity {
+    let mut reader = RequestReader::new(protocol, ActivityLimits::default());
+    reader.feed(bytes);
+    reader.finish(BodyEnd::Complete)
 }
 
-fn body(bytes: &[u8]) -> CapturedBody<'_> {
-    CapturedBody {
-        bytes,
-        extent: BodyExtent::Complete,
-        encoding: None,
-        messages: None,
+/// A response read by the inspection pipeline: one document, a stream, or
+/// WebSocket messages (each fed as one announced message).
+fn read(
+    protocol: Protocol,
+    format: ResponseFormat,
+    encoding: ResponseEncoding,
+    limits: ActivityLimits,
+    messages: &[&[u8]],
+) -> ResponseReading {
+    let mut inspector = CallInspector::new(
+        protocol,
+        format,
+        encoding,
+        InspectionLimits {
+            activity: limits,
+            ..InspectionLimits::default()
+        },
+    );
+    for message in messages {
+        if format == ResponseFormat::WebSocketMessages {
+            inspector.message(u64::try_from(message.len()).unwrap());
+        }
+        inspector.feed(message);
     }
+    inspector.finish(BodyEnd::Complete)
+}
+
+fn response(protocol: Protocol, format: ResponseFormat, bytes: &[u8]) -> ResponseActivity {
+    read(
+        protocol,
+        format,
+        ResponseEncoding::Identity,
+        ActivityLimits::default(),
+        &[bytes],
+    )
+    .activity
 }
 
 fn sse(events: &[Value]) -> Vec<u8> {
@@ -32,7 +67,7 @@ fn messages_requests_yield_the_newest_user_input() {
         "messages": [{ "role": "user", "content": "Fix the failing test" }],
     })
     .to_string();
-    let activity = reader(Protocol::Messages).request(body(first.as_bytes()));
+    let activity = request(Protocol::Messages, first.as_bytes());
     assert_eq!(activity.user_text, ["Fix the failing test"]);
     assert!(activity.tool_results.is_empty());
     assert!(activity.limitations.is_empty());
@@ -50,7 +85,7 @@ fn messages_requests_yield_the_newest_user_input() {
         ],
     })
     .to_string();
-    let activity = reader(Protocol::Messages).request(body(later.as_bytes()));
+    let activity = request(Protocol::Messages, later.as_bytes());
     assert_eq!(activity.user_text, ["<system-reminder>x</system-reminder>"]);
     assert!(activity.limitations.is_empty());
     assert_eq!(
@@ -82,10 +117,14 @@ fn messages_streams_assemble_tool_input_from_deltas() {
     let mut gzip = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
     gzip.write_all(&stream).unwrap();
     let compressed = gzip.finish().unwrap();
-    let activity = reader(Protocol::Messages).response(CapturedBody {
-        encoding: Some(ResponseEncoding::Gzip),
-        ..body(&compressed)
-    });
+    let activity = read(
+        Protocol::Messages,
+        ResponseFormat::EventStream,
+        ResponseEncoding::Gzip,
+        ActivityLimits::default(),
+        &[&compressed],
+    )
+    .activity;
     assert_eq!(activity.reply, "Reading it.");
     assert_eq!(activity.tool_uses.len(), 2);
     assert_eq!(activity.tool_uses[0].name, "Read");
@@ -116,7 +155,11 @@ fn messages_documents_read_content_blocks() {
         ],
     })
     .to_string();
-    let activity = reader(Protocol::Messages).response(body(document.as_bytes()));
+    let activity = response(
+        Protocol::Messages,
+        ResponseFormat::Json,
+        document.as_bytes(),
+    );
     assert_eq!(activity.reply, "Done.");
     assert_eq!(activity.tool_uses[0].kind, "tool_use");
     assert!(activity.limitations.is_empty());
@@ -124,7 +167,7 @@ fn messages_documents_read_content_blocks() {
 
 #[test]
 fn responses_requests_read_items_after_the_models_last_output() {
-    let request = json!({
+    let body = json!({
         "model": "gpt",
         "input": [
             { "type": "message", "role": "user", "content": [{ "type": "input_text", "text": "Add a test" }] },
@@ -136,8 +179,8 @@ fn responses_requests_read_items_after_the_models_last_output() {
     })
     .to_string();
     // Codex may compress its request with zstd; no encoding is recorded.
-    let compressed = zstd::encode_all(request.as_bytes(), 1).unwrap();
-    let activity = reader(Protocol::Responses).request(body(&compressed));
+    let compressed = zstd::encode_all(body.as_bytes(), 1).unwrap();
+    let activity = request(Protocol::Responses, &compressed);
     assert!(activity.user_text.is_empty());
     let ids: Vec<_> = activity
         .tool_results
@@ -155,10 +198,10 @@ fn responses_requests_read_items_after_the_models_last_output() {
     })
     .to_string();
     let range = 0..frame.len();
-    let activity = reader(Protocol::Responses).request(CapturedBody {
-        messages: Some(std::slice::from_ref(&range)),
-        ..body(frame.as_bytes())
-    });
+    let mut reader = RequestReader::new(Protocol::Responses, ActivityLimits::default());
+    reader.message();
+    reader.feed(&frame.as_bytes()[range]);
+    let activity = reader.finish(BodyEnd::Complete);
     assert_eq!(activity.user_text, ["Now run it"]);
 }
 
@@ -174,7 +217,7 @@ fn responses_streams_read_done_items_or_the_terminal_response() {
         json!({ "type": "response.output_item.done", "item": patch }),
         json!({ "type": "response.completed", "response": { "output": [] } }),
     ]);
-    let activity = reader(Protocol::Responses).response(body(&stream));
+    let activity = response(Protocol::Responses, ResponseFormat::EventStream, &stream);
     assert_eq!(activity.reply, "Running tests.");
     assert_eq!(activity.tool_uses.len(), 2);
     assert_eq!(
@@ -191,62 +234,62 @@ fn responses_streams_read_done_items_or_the_terminal_response() {
     let terminal =
         json!({ "type": "response.completed", "response": { "output": [function] } }).to_string();
     let range = 0..terminal.len();
-    let activity = reader(Protocol::Responses).response(CapturedBody {
-        messages: Some(std::slice::from_ref(&range)),
-        ..body(terminal.as_bytes())
-    });
+    let activity = read(
+        Protocol::Responses,
+        ResponseFormat::WebSocketMessages,
+        ResponseEncoding::Identity,
+        ActivityLimits::default(),
+        &[&terminal.as_bytes()[range]],
+    )
+    .activity;
     assert_eq!(activity.tool_uses[0].id.as_deref(), Some("call_9"));
 }
 
 #[test]
 fn unreadable_bodies_are_limitations_never_facts() {
-    let reader = reader(Protocol::Messages);
-    let not_json = reader.request(body(b"{not json"));
+    let not_json = request(Protocol::Messages, b"{not json");
     assert_eq!(not_json.limitations, [ActivityLimitation::NotJson]);
-    let shape = reader.request(body(b"{\"messages\": 3}"));
+    let shape = request(Protocol::Messages, b"{\"messages\": 3}");
     assert_eq!(shape.limitations, [ActivityLimitation::UnexpectedShape]);
-    let cut = reader.request(CapturedBody {
-        extent: BodyExtent::Truncated,
-        ..body(b"{\"messages\": [")
-    });
+    let mut cut = RequestReader::new(Protocol::Messages, ActivityLimits::default());
+    cut.feed(b"{\"messages\": [");
     assert_eq!(
-        cut.limitations,
+        cut.finish(BodyEnd::Unfinished).limitations,
         [ActivityLimitation::Truncated, ActivityLimitation::NotJson]
     );
-    let gap = reader.response(CapturedBody {
-        extent: BodyExtent::Gap,
-        encoding: Some(ResponseEncoding::Unsupported),
-        ..body(b"x")
-    });
-    assert_eq!(
-        gap.limitations,
-        [
-            ActivityLimitation::CaptureGap,
-            ActivityLimitation::UnsupportedEncoding
-        ]
+    // A response that cannot be decoded is the inspection's limitation, and
+    // shows no activity.
+    let corrupt = read(
+        Protocol::Messages,
+        ResponseFormat::EventStream,
+        ResponseEncoding::Gzip,
+        ActivityLimits::default(),
+        &[b"\x1f\x8b\x08garbage"],
     );
-    let corrupt = reader.response(CapturedBody {
-        encoding: Some(ResponseEncoding::Gzip),
-        ..body(b"\x1f\x8b\x08garbage")
-    });
     assert!(
         corrupt
-            .limitations
-            .contains(&ActivityLimitation::DecodingError)
+            .inspection
+            .limitations()
+            .contains(&crate::inspect::Limitation::DecodingError)
     );
-    assert!(corrupt.tool_uses.is_empty());
+    assert!(corrupt.activity.tool_uses.is_empty());
+    assert!(corrupt.activity.reply.is_empty());
 }
 
 #[test]
 fn both_readers_cap_tool_calls_alike_and_keep_later_text() {
-    let limited = |protocol| {
-        ActivityReader::new(
+    let limited = |protocol, document: &str| {
+        read(
             protocol,
+            ResponseFormat::Json,
+            ResponseEncoding::Identity,
             ActivityLimits {
                 max_tool_uses: 1,
                 ..ActivityLimits::default()
             },
+            &[document.as_bytes()],
         )
+        .activity
     };
     let messages = json!({
         "type": "message",
@@ -271,8 +314,8 @@ fn both_readers_cap_tool_calls_alike_and_keep_later_text() {
     })
     .to_string();
     for activity in [
-        limited(Protocol::Messages).response(body(messages.as_bytes())),
-        limited(Protocol::Responses).response(body(responses.as_bytes())),
+        limited(Protocol::Messages, &messages),
+        limited(Protocol::Responses, &responses),
     ] {
         assert_eq!(activity.tool_uses.len(), 1);
         assert_eq!(activity.limitations, [ActivityLimitation::TooManyToolCalls]);
@@ -334,9 +377,9 @@ fn responses() -> Vec<(Protocol, ResponseFormat, Vec<u8>)> {
 
 proptest::proptest! {
     /// Read while streaming, in any pieces, a response shows the same
-    /// activity as the whole stored body read at once.
+    /// activity as when it arrives in one piece.
     #[test]
-    fn streamed_activity_equals_the_stored_bodys(
+    fn streamed_activity_is_independent_of_piece_boundaries(
         which in 0..4_usize,
         gzip in proptest::bool::ANY,
         cuts in proptest::collection::vec(proptest::num::usize::ANY, 0..24),
@@ -349,10 +392,7 @@ proptest::proptest! {
         } else {
             (plain, ResponseEncoding::Identity)
         };
-        let stored = reader(protocol).response(CapturedBody {
-            encoding: Some(encoding),
-            ..body(&bytes)
-        });
+        let stored = read(protocol, format, encoding, ActivityLimits::default(), &[&bytes]).activity;
         let mut inspector = crate::CallInspector::new(
             protocol,
             format,
@@ -373,7 +413,7 @@ proptest::proptest! {
 }
 
 proptest::proptest! {
-    /// A request gathered in any pieces reads as the whole stored body does.
+    /// A request gathered in any pieces reads as it does in one piece.
     #[test]
     fn a_gathered_request_reads_as_the_stored_one(
         gzip in proptest::bool::ANY,
@@ -398,7 +438,7 @@ proptest::proptest! {
         } else {
             plain
         };
-        let stored = reader(Protocol::Messages).request(body(&bytes));
+        let stored = request(Protocol::Messages, &bytes);
         let mut gathered = RequestReader::new(Protocol::Messages, ActivityLimits::default());
         let mut points: Vec<usize> = cuts.iter().map(|cut| cut % (bytes.len() + 1)).collect();
         points.sort_unstable();

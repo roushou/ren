@@ -1,7 +1,8 @@
 //! What a call's captured bodies show an agent doing: the user text and tool
 //! results its request carries, and the tool calls and reply text its
-//! response holds. Read on demand from stored bodies, never on the
-//! forwarding path.
+//! response holds. Read as the bytes are captured: a request is gathered by
+//! [`RequestReader`], and a response's frames feed a [`ResponseReader`]
+//! through the inspection pipeline. Never on the forwarding path.
 //!
 //! These are facts about the bytes. A tool call in a response was requested,
 //! not executed; a tool result in a request is what the client reported.
@@ -11,11 +12,10 @@ pub mod anthropic;
 pub mod openai;
 
 use crate::encoding::{Decompressor, ResponseEncoding};
-use crate::inspect::pipeline::Protocol;
-use crate::sse::{SseFramer, SseLimits, SseOutput};
-use serde_json::Value;
+use crate::inspect::pipeline::{BodyEnd, Protocol};
+use crate::sse::SseLimits;
+use serde_json::{Map, Value};
 use serde_with::{DeserializeFromStr, SerializeDisplay};
-use std::ops::Range;
 use strum::{Display, EnumString, IntoStaticStr, VariantArray};
 
 /// Why activity is partial.
@@ -39,7 +39,7 @@ pub enum ActivityLimitation {
     UnfinishedToolCall,
     TooManyToolCalls,
     /// The call's activity has not been derived yet: it finished moments
-    /// ago, or was recorded before this build.
+    /// ago, or its digest is being derived again from the stored bodies.
     NotYetDerived,
 }
 
@@ -130,26 +130,14 @@ impl ResponseActivity {
     }
 }
 
-/// How much of a stored body was read.
+/// How much of a request was gathered.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum BodyExtent {
+enum Extent {
     Complete,
-    /// More was stored, or more will be: the bytes stop early.
+    /// The body continues past the gathered bytes.
     Truncated,
     /// Bytes are missing before the end.
     Gap,
-}
-
-/// One stored body, as the store hands it over.
-#[derive(Debug, Clone, Copy)]
-pub struct CapturedBody<'a> {
-    pub bytes: &'a [u8],
-    pub extent: BodyExtent,
-    /// The recorded `Content-Encoding`; `None` when none was recorded, as for
-    /// requests, whose compression is recognised by its magic bytes.
-    pub encoding: Option<ResponseEncoding>,
-    /// WebSocket message boundaries within `bytes`; `None` for HTTP.
-    pub messages: Option<&'a [Range<usize>]>,
 }
 
 /// Bounds on one read.
@@ -228,7 +216,7 @@ impl ResponseReader {
         };
         let mut limitations = self.limitations;
         limitations.append(&mut activity.limitations);
-        activity.limitations = ActivityReader::dedup(limitations);
+        activity.limitations = ActivityLimitation::unique(limitations);
         activity
     }
 }
@@ -238,9 +226,10 @@ impl ResponseReader {
 /// needed; up to `max_request_bytes` are kept.
 #[derive(Debug)]
 pub struct RequestReader {
-    reader: ActivityReader,
+    protocol: Protocol,
+    limits: ActivityLimits,
     bytes: Vec<u8>,
-    extent: BodyExtent,
+    extent: Extent,
     /// A WebSocket call's request is one message.
     framing: RequestFraming,
 }
@@ -254,9 +243,10 @@ enum RequestFraming {
 impl RequestReader {
     pub fn new(protocol: Protocol, limits: ActivityLimits) -> Self {
         Self {
-            reader: ActivityReader::new(protocol, limits),
+            protocol,
+            limits,
             bytes: Vec::new(),
-            extent: BodyExtent::Complete,
+            extent: Extent::Complete,
             framing: RequestFraming::Http,
         }
     }
@@ -268,16 +258,15 @@ impl RequestReader {
 
     /// The next contiguous captured bytes.
     pub fn feed(&mut self, bytes: &[u8]) {
-        if self.extent != BodyExtent::Complete {
+        if self.extent != Extent::Complete {
             return;
         }
         let room = self
-            .reader
             .limits
             .max_request_bytes
             .saturating_sub(self.bytes.len());
         if bytes.len() > room {
-            self.extent = BodyExtent::Truncated;
+            self.extent = Extent::Truncated;
         }
         self.bytes
             .extend_from_slice(bytes.get(..room.min(bytes.len())).unwrap_or_default());
@@ -285,26 +274,82 @@ impl RequestReader {
 
     /// Captured bytes are missing here; nothing after them is read.
     pub fn gap(&mut self) {
-        self.extent = BodyExtent::Gap;
+        self.extent = Extent::Gap;
     }
 
-    pub fn finish(self, end: crate::inspect::pipeline::BodyEnd) -> RequestActivity {
+    /// The newest user input, once the body ended as `end` says.
+    pub fn finish(self, end: BodyEnd) -> RequestActivity {
         let extent = match (self.extent, end) {
-            (BodyExtent::Complete, crate::inspect::pipeline::BodyEnd::Unfinished) => {
-                BodyExtent::Truncated
-            }
-            (extent, _) => extent,
+            (Extent::Complete, BodyEnd::Unfinished) => Extent::Truncated,
+            (extent, BodyEnd::Complete | BodyEnd::Unfinished) => extent,
         };
-        let whole = 0..self.bytes.len();
-        self.reader.request(CapturedBody {
-            bytes: &self.bytes,
-            extent,
-            encoding: None,
-            messages: match self.framing {
-                RequestFraming::Http => None,
-                RequestFraming::Message => Some(std::slice::from_ref(&whole)),
+        let mut limitations = Vec::new();
+        match extent {
+            Extent::Complete => {}
+            Extent::Truncated => limitations.push(ActivityLimitation::Truncated),
+            Extent::Gap => limitations.push(ActivityLimitation::CaptureGap),
+        }
+        let protocol = self.protocol;
+        let document = match self.framing {
+            // A WebSocket message is the document as the client sent it.
+            RequestFraming::Message => Some(self.bytes),
+            RequestFraming::Http => self.decoded(extent, &mut limitations),
+        };
+        let Some(document) = document else {
+            return RequestActivity {
+                limitations,
+                ..RequestActivity::default()
+            };
+        };
+        let mut activity = match serde_json::from_slice::<Value>(&document) {
+            Ok(Value::Object(request)) => match protocol {
+                Protocol::Messages => anthropic::Request::new(&request).activity(),
+                Protocol::Responses => openai::Request::new(&request).activity(),
             },
-        })
+            Ok(_) => RequestActivity {
+                limitations: vec![ActivityLimitation::UnexpectedShape],
+                ..RequestActivity::default()
+            },
+            Err(_) => RequestActivity {
+                limitations: vec![ActivityLimitation::NotJson],
+                ..RequestActivity::default()
+            },
+        };
+        limitations.append(&mut activity.limitations);
+        activity.limitations = ActivityLimitation::unique(limitations);
+        activity
+    }
+
+    /// The body decompressed. Requests record no `Content-Encoding`, so
+    /// compression is recognised by its magic bytes.
+    fn decoded(
+        &self,
+        extent: Extent,
+        limitations: &mut Vec<ActivityLimitation>,
+    ) -> Option<Vec<u8>> {
+        let encoding = ResponseEncoding::sniff(&self.bytes).unwrap_or(ResponseEncoding::Identity);
+        let Ok(mut decoder) = Decompressor::new(encoding) else {
+            limitations.push(ActivityLimitation::UnsupportedEncoding);
+            return None;
+        };
+        let mut decoded = Vec::new();
+        let mut oversized = false;
+        let max = self.limits.max_decoded_bytes;
+        let mut keep = |bytes: &[u8]| {
+            let room = max.saturating_sub(decoded.len());
+            oversized |= bytes.len() > room;
+            decoded.extend_from_slice(bytes.get(..room.min(bytes.len())).unwrap_or_default());
+        };
+        let decoding = decoder.decode(&self.bytes, &mut keep);
+        let finished = decoding.and_then(|()| decoder.finish(&mut keep));
+        match (finished, extent) {
+            (Ok(()), _) | (Err(_), Extent::Truncated | Extent::Gap) => {}
+            (Err(_), Extent::Complete) => limitations.push(ActivityLimitation::DecodingError),
+        }
+        if oversized {
+            limitations.push(ActivityLimitation::DecodedTooLarge);
+        }
+        Some(decoded)
     }
 }
 
@@ -330,137 +375,9 @@ impl Reading {
     }
 }
 
-/// Reads activity from one protocol's bodies.
-#[derive(Debug, Clone, Copy)]
-pub struct ActivityReader {
-    protocol: Protocol,
-    limits: ActivityLimits,
-}
-
-/// Decoded body content: one document, a stream of events, or messages.
-enum Decoded {
-    Document(Vec<u8>),
-    Events(Vec<Vec<u8>>),
-}
-
-impl ActivityReader {
-    pub fn new(protocol: Protocol, limits: ActivityLimits) -> Self {
-        Self { protocol, limits }
-    }
-
-    /// The newest user input in a request body.
-    pub fn request(&self, body: CapturedBody<'_>) -> RequestActivity {
-        let mut limitations = Vec::new();
-        let document = match self.decode(body, &mut limitations) {
-            Some(Decoded::Document(bytes)) => Some(bytes),
-            // A WebSocket call's request is one message.
-            Some(Decoded::Events(mut events)) => events.pop(),
-            None => None,
-        };
-        let Some(document) = document else {
-            return RequestActivity {
-                limitations,
-                ..RequestActivity::default()
-            };
-        };
-        let mut activity = match serde_json::from_slice::<Value>(&document) {
-            Ok(Value::Object(request)) => match self.protocol {
-                Protocol::Messages => anthropic::Request::new(&request).activity(),
-                Protocol::Responses => openai::Request::new(&request).activity(),
-            },
-            Ok(_) => RequestActivity {
-                limitations: vec![ActivityLimitation::UnexpectedShape],
-                ..RequestActivity::default()
-            },
-            Err(_) => RequestActivity {
-                limitations: vec![ActivityLimitation::NotJson],
-                ..RequestActivity::default()
-            },
-        };
-        limitations.append(&mut activity.limitations);
-        activity.limitations = Self::dedup(limitations);
-        activity
-    }
-
-    /// The tool calls and reply text in a response body.
-    pub fn response(&self, body: CapturedBody<'_>) -> ResponseActivity {
-        let mut limitations = Vec::new();
-        let mut reader = ResponseReader::new(self.protocol, self.limits);
-        match self.decode(body, &mut limitations) {
-            Some(Decoded::Document(bytes)) => reader.document_bytes(&bytes),
-            Some(Decoded::Events(events)) => {
-                for event in &events {
-                    reader.event_bytes(event);
-                }
-            }
-            None => {}
-        }
-        let mut activity = reader.finish();
-        limitations.append(&mut activity.limitations);
-        activity.limitations = Self::dedup(limitations);
-        activity
-    }
-
-    /// The body's content, decompressed and split into events or messages.
-    fn decode(
-        &self,
-        body: CapturedBody<'_>,
-        limitations: &mut Vec<ActivityLimitation>,
-    ) -> Option<Decoded> {
-        match body.extent {
-            BodyExtent::Complete => {}
-            BodyExtent::Truncated => limitations.push(ActivityLimitation::Truncated),
-            BodyExtent::Gap => limitations.push(ActivityLimitation::CaptureGap),
-        }
-        if let Some(messages) = body.messages {
-            return Some(Decoded::Events(
-                messages
-                    .iter()
-                    .filter_map(|range| body.bytes.get(range.clone()).map(<[u8]>::to_vec))
-                    .collect(),
-            ));
-        }
-        let encoding = body
-            .encoding
-            // Requests record no `Content-Encoding`: recognise compression
-            // by its magic bytes.
-            .unwrap_or_else(|| {
-                ResponseEncoding::sniff(body.bytes).unwrap_or(ResponseEncoding::Identity)
-            });
-        let Ok(mut decoder) = Decompressor::new(encoding) else {
-            limitations.push(ActivityLimitation::UnsupportedEncoding);
-            return None;
-        };
-        let mut decoded = Vec::new();
-        let mut oversized = false;
-        let max = self.limits.max_decoded_bytes;
-        let mut keep = |bytes: &[u8]| {
-            let room = max.saturating_sub(decoded.len());
-            oversized |= bytes.len() > room;
-            decoded.extend_from_slice(bytes.get(..room.min(bytes.len())).unwrap_or_default());
-        };
-        let decoding = decoder.decode(body.bytes, &mut keep);
-        let finished = decoding.and_then(|()| decoder.finish(&mut keep));
-        match (finished, body.extent) {
-            (Ok(()), _) | (Err(_), BodyExtent::Truncated | BodyExtent::Gap) => {}
-            (Err(_), BodyExtent::Complete) => limitations.push(ActivityLimitation::DecodingError),
-        }
-        if oversized {
-            limitations.push(ActivityLimitation::DecodedTooLarge);
-        }
-        if decoded.trim_ascii_start().first() == Some(&b'{') {
-            return Some(Decoded::Document(decoded));
-        }
-        let mut framer = SseFramer::new(self.limits.sse);
-        let mut events = Vec::new();
-        framer.feed(&decoded, |output| match output {
-            SseOutput::Event { data, .. } => events.push(data.to_vec()),
-            SseOutput::Discarded(_) => {}
-        });
-        Some(Decoded::Events(events))
-    }
-
-    fn dedup(limitations: Vec<ActivityLimitation>) -> Vec<ActivityLimitation> {
+impl ActivityLimitation {
+    /// `limitations` in order, each once.
+    fn unique(limitations: Vec<Self>) -> Vec<Self> {
         let mut unique = Vec::with_capacity(limitations.len());
         for limitation in limitations {
             if !unique.contains(&limitation) {
@@ -471,22 +388,32 @@ impl ActivityReader {
     }
 }
 
-/// Reading native JSON without panicking on any shape.
-impl ActivityReader {
-    fn str<'a>(object: &'a serde_json::Map<String, Value>, key: &str) -> Option<&'a str> {
-        object.get(key).and_then(Value::as_str)
+impl ToolInput {
+    /// A tool input from a JSON string, kept as text when it is not JSON.
+    pub fn parse(text: &str) -> Self {
+        serde_json::from_str(text).map_or_else(|_| Self::Text(text.to_owned()), Self::Json)
+    }
+}
+
+/// A native JSON object, read without panicking on any shape.
+#[derive(Debug, Clone, Copy)]
+struct Fields<'a>(&'a Map<String, Value>);
+
+impl<'a> Fields<'a> {
+    fn str(self, key: &str) -> Option<&'a str> {
+        self.0.get(key).and_then(Value::as_str)
     }
 
-    fn array<'a>(object: &'a serde_json::Map<String, Value>, key: &str) -> &'a [Value] {
-        object
+    fn array(self, key: &str) -> &'a [Value] {
+        self.0
             .get(key)
             .and_then(Value::as_array)
             .map_or(&[], Vec::as_slice)
     }
 
-    /// Text from a string, or from the `text` of an array of blocks.
-    fn text(value: Option<&Value>) -> String {
-        match value {
+    /// A content field as text: a string, or the text of its blocks.
+    fn text(self, key: &str) -> String {
+        match self.0.get(key) {
             Some(Value::String(text)) => text.clone(),
             Some(Value::Array(blocks)) => blocks
                 .iter()
@@ -497,12 +424,6 @@ impl ActivityReader {
                 String::new()
             }
         }
-    }
-
-    /// A tool input from a JSON string, kept as text when it is not JSON.
-    fn input_from_text(text: &str) -> ToolInput {
-        serde_json::from_str(text)
-            .map_or_else(|_| ToolInput::Text(text.to_owned()), ToolInput::Json)
     }
 }
 

@@ -1,7 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  ApiError,
   CallId,
   ManagementApi,
   SessionId,
@@ -245,12 +244,6 @@ test('an exposed secret reads as what happened, never the secret', () => {
     count: 1,
   });
   assert.match(reply.detail, /^JSON Web Token eyJ…abcd in the model's reply\./);
-});
-
-test('only a 404 reads as an endpoint the daemon lacks', () => {
-  assert.equal(ApiError.absentWhenNotFound(new ApiError(404)), null);
-  assert.throws(() => ApiError.absentWhenNotFound(new ApiError(503)), ApiError);
-  assert.throws(() => ApiError.absentWhenNotFound(new ShapeError('$', 'an object')));
 });
 
 test('harnesses read by name, and an unknown one keeps its text', () => {

@@ -62,8 +62,6 @@ test('each problem says what is wrong, and where to look', () => {
     title: 'Storage or retention errors since the daemon started',
     href: '/recorder',
   });
-  // An older daemon reports no operator state: nothing is claimed about it.
-  assert.equal(healthLine(healthFixture(), null, null).length, 2);
   assert.deepEqual(labels(healthLine(null, null, 'Cannot reach TGV.')), [
     ["Can't reach TGV", 'error'],
   ]);

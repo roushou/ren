@@ -2,8 +2,8 @@
 //! text and tool calls, from a document or from streaming events.
 
 use super::{
-    ActivityLimitation, ActivityLimits, ActivityReader, RequestActivity, ResponseActivity,
-    ResultStatus, ToolInput, ToolResult, ToolUse,
+    ActivityLimitation, ActivityLimits, Fields, RequestActivity, ResponseActivity, ResultStatus,
+    ToolInput, ToolResult, ToolUse,
 };
 use crate::label::Labeled;
 use crate::messages::{BlockKind, EventKind};
@@ -92,14 +92,17 @@ impl<'a> Request<'a> {
     }
 
     fn block(block: &Map<String, Value>, activity: &mut RequestActivity) {
-        match ActivityReader::str(block, "type").and_then(UserBlockKind::from_label) {
+        match Fields(block)
+            .str("type")
+            .and_then(UserBlockKind::from_label)
+        {
             Some(UserBlockKind::Text) => {
-                if let Some(text) = ActivityReader::str(block, "text") {
+                if let Some(text) = Fields(block).str("text") {
                     activity.user_text.push(text.to_owned());
                 }
             }
             Some(UserBlockKind::ToolResult) => {
-                let Some(id) = ActivityReader::str(block, "tool_use_id") else {
+                let Some(id) = Fields(block).str("tool_use_id") else {
                     activity
                         .limitations
                         .push(ActivityLimitation::UnexpectedShape);
@@ -112,7 +115,7 @@ impl<'a> Request<'a> {
                 activity.tool_results.push(ToolResult {
                     id: id.to_owned(),
                     status,
-                    output: ActivityReader::text(block.get("content")),
+                    output: Fields(block).text("content"),
                 });
             }
             None => {}
@@ -156,7 +159,8 @@ impl Response {
     /// A complete response document: its content blocks, all closed.
     pub(super) fn document(&mut self, document: Map<String, Value>) {
         self.blocks.clear();
-        for (index, block) in ActivityReader::array(&document, "content")
+        for (index, block) in Fields(&document)
+            .array("content")
             .iter()
             .filter_map(Value::as_object)
             .enumerate()
@@ -174,7 +178,7 @@ impl Response {
             .and_then(Value::as_u64)
             .and_then(|index| usize::try_from(index).ok());
         match (
-            ActivityReader::str(event, "type").and_then(EventKind::from_label),
+            Fields(event).str("type").and_then(EventKind::from_label),
             index,
         ) {
             (Some(EventKind::ContentBlockStart), Some(index)) => {
@@ -193,16 +197,16 @@ impl Response {
                 let Some(Some(block)) = self.blocks.get_mut(index) else {
                     return;
                 };
-                match ActivityReader::str(delta, "type").and_then(DeltaKind::from_label) {
+                match Fields(delta).str("type").and_then(DeltaKind::from_label) {
                     Some(DeltaKind::TextDelta) => {
                         block
                             .text
-                            .push_str(ActivityReader::str(delta, "text").unwrap_or_default());
+                            .push_str(Fields(delta).str("text").unwrap_or_default());
                     }
                     Some(DeltaKind::InputJsonDelta) => {
-                        block.partial_input.push_str(
-                            ActivityReader::str(delta, "partial_json").unwrap_or_default(),
-                        );
+                        block
+                            .partial_input
+                            .push_str(Fields(delta).str("partial_json").unwrap_or_default());
                     }
                     None => {}
                 }
@@ -236,16 +240,14 @@ impl Response {
 
     /// A block as a document or a start event first shows it.
     fn start(block: &Map<String, Value>) -> Option<Block> {
-        let kind = ActivityReader::str(block, "type").and_then(BlockKind::from_label)?;
+        let kind = Fields(block).str("type").and_then(BlockKind::from_label)?;
         Some(Block {
             kind,
-            id: ActivityReader::str(block, "id").map(str::to_owned),
-            name: ActivityReader::str(block, "name").map(str::to_owned),
+            id: Fields(block).str("id").map(str::to_owned),
+            name: Fields(block).str("name").map(str::to_owned),
             input: block.get("input").cloned(),
             partial_input: String::new(),
-            text: ActivityReader::str(block, "text")
-                .unwrap_or_default()
-                .to_owned(),
+            text: Fields(block).str("text").unwrap_or_default().to_owned(),
             closed: false,
         })
     }
@@ -282,7 +284,7 @@ impl Response {
                             .input
                             .map_or(ToolInput::Json(Value::Null), ToolInput::Json)
                     } else {
-                        ActivityReader::input_from_text(&block.partial_input)
+                        ToolInput::parse(&block.partial_input)
                     };
                     activity.tool_uses.push(ToolUse {
                         id: block.id,

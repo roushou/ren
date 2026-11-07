@@ -15,7 +15,7 @@ import {
   callId,
   detailFixture,
   finishedFixture,
-  healthFixture,
+  healthBody,
   storageFixture,
   storageViewFixture,
   recorderFixture,
@@ -49,7 +49,7 @@ test('gateway reads health and storage together and accept degraded recorder hea
   const result = await gatewaySnapshot(async (input) => {
     calls.push(path(input));
     return path(input) === '/health'
-      ? versioned(healthFixture({ storage_errors: 1 }), { status: 503 })
+      ? versioned(healthBody({ storage_errors: 1 }), { status: 503 })
       : versioned(storageFixture());
   });
   assert.deepEqual(calls, ['/health', '/api/storage']);
@@ -60,14 +60,14 @@ test('gateway reads health and storage together and accept degraded recorder hea
 });
 
 test('every response is version-checked and a mismatch is reported distinctly', async () => {
-  const unversioned = async () => Response.json(healthFixture());
-  for (const fetcher of [1, null, '2']
-    .map((version) => async () => versioned(healthFixture(), undefined, version))
+  const unversioned = async () => Response.json(healthBody());
+  for (const fetcher of [2, null, '1']
+    .map((version) => async () => versioned(healthBody(), undefined, version))
     .concat(unversioned)) {
     const result = await gatewaySnapshot(fetcher);
     assert.equal(result.value, null);
     assert.equal(result.error?.kind, 'incompatible');
-    assert.match(result.error?.message ?? '', /requires version 2/);
+    assert.match(result.error?.message ?? '', /requires version 1/);
   }
   // Error bodies (non-2xx) keep their status message instead.
   const busy = await recorderSnapshot(async () => versioned({ error: 'busy' }, { status: 503 }));
@@ -101,13 +101,15 @@ test('responses are parsed at the boundary: labels keep unknown text, shapes are
           last_seen: 2,
           call_count: 3,
           turn_count: 1,
+          error_count: 0,
+          tokens: { input: null, output: null, cache_read: null },
         },
       ],
     });
   });
+  // A label this UI does not know is kept as text.
   assert.equal(sessions.value?.[0].provider, 'future_provider');
-  // A daemon older than session totals reports none: null, never zero.
-  assert.equal(sessions.value?.[0].error_count, null);
+  // Tokens no call reported are null, never zero.
   assert.deepEqual(sessions.value?.[0].tokens, { input: null, output: null, cache_read: null });
   const malformed = await trafficSnapshot(
     async () => versioned({ calls: [{ ...callFixture(), id: 'not-a-uuid' }], next: null }),

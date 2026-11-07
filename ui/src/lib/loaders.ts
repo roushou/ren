@@ -1,5 +1,4 @@
 import {
-  ApiError,
   CallId,
   ManagementApi,
   parseSearchField,
@@ -120,11 +119,7 @@ export function overviewSnapshot(fetcher: typeof fetch) {
       listing('errors', 10, since),
       listing('interrupted', 10, since),
       api.sessions(100),
-      // A daemon without exposures answers 404: the overview still loads.
-      api
-        .exposures(Number(since))
-        .then((page) => page.exposures)
-        .catch(ApiError.absentWhenNotFound),
+      api.exposures(Number(since)).then((page) => page.exposures),
     ]);
     return { now, usage, active, errors, stopped, sessions: sessions.sessions, exposures };
   });

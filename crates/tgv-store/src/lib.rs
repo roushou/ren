@@ -46,8 +46,6 @@ pub enum StoreError {
     NotFound,
     #[error("body capture is incomplete; inspect its metadata instead")]
     IncompleteBody,
-    #[error(transparent)]
-    Scanner(#[from] tgv_recorder::secrets::ScannerError),
 }
 
 #[cfg(test)]

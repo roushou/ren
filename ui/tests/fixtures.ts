@@ -159,9 +159,15 @@ export function storageViewFixture(): StorageView {
 
 export const healthFixture = (overrides: Partial<RecorderMetrics> = {}): Health => ({
   status: overrides.storage_errors ? 'degraded' : 'ok',
-  build: null,
-  operator: null,
+  build: { version: '0.1.0', revision: { kind: 'unknown' } },
+  operator: { pause: { state: 'running' }, blocked_sessions: 0 },
   recorder: recorderFixture(overrides),
+});
+
+/** `/health` as the daemon sends it: the build's revision is text. */
+export const healthBody = (overrides: Partial<RecorderMetrics> = {}) => ({
+  ...healthFixture(overrides),
+  build: { version: '0.1.0', revision: 'unknown' },
 });
 
 export const storageFixture = (): Storage => ({
@@ -170,5 +176,5 @@ export const storageFixture = (): Storage => ({
 });
 
 /** A JSON response in the daemon's versioned envelope. */
-export const versioned = (body: object, init?: ResponseInit, version: unknown = 2) =>
+export const versioned = (body: object, init?: ResponseInit, version: unknown = 1) =>
   Response.json({ api_version: version, ...body }, init);

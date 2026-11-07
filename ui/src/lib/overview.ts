@@ -62,34 +62,32 @@ export function healthLine(
           },
   );
   const operator = health.operator;
-  if (operator) {
-    const pause = operator.pause;
-    switch (pause.state) {
-      case 'running':
-        items.push({ label: 'Admitting calls', tone: 'success', title: 'Not paused' });
-        break;
-      case 'paused':
-        items.push({
-          label: `Paused · retry in ${pause.retry_after} s`,
-          tone: 'warning',
-          title: 'Every new call gets 503; `tgv control resume` admits them again',
-        });
-        break;
-      case 'unknown':
-        items.push({
-          label: pause.text,
-          tone: 'neutral',
-          title: 'An admission state this UI does not know',
-        });
-        break;
-    }
-    if (operator.blocked_sessions)
+  const pause = operator.pause;
+  switch (pause.state) {
+    case 'running':
+      items.push({ label: 'Admitting calls', tone: 'success', title: 'Not paused' });
+      break;
+    case 'paused':
       items.push({
-        label: `${operator.blocked_sessions} session${operator.blocked_sessions === 1 ? '' : 's'} blocked`,
+        label: `Paused · retry in ${pause.retry_after} s`,
         tone: 'warning',
-        title: 'Calls from blocked sessions get 403; `tgv control unblock` lifts a block',
+        title: 'Every new call gets 503; `tgv control resume` admits them again',
       });
+      break;
+    case 'unknown':
+      items.push({
+        label: pause.text,
+        tone: 'neutral',
+        title: 'An admission state this UI does not know',
+      });
+      break;
   }
+  if (operator.blocked_sessions)
+    items.push({
+      label: `${operator.blocked_sessions} session${operator.blocked_sessions === 1 ? '' : 's'} blocked`,
+      tone: 'warning',
+      title: 'Calls from blocked sessions get 403; `tgv control unblock` lifts a block',
+    });
   if (storage) {
     const used = live(storage.usage.disk.metadata) + live(storage.usage.disk.blobs);
     const budget = storage.policy.max_storage_bytes;

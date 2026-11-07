@@ -179,7 +179,7 @@ async fn headless_daemon_exposes_only_gateway_and_management_routes() {
     );
     let value: serde_json::Value =
         serde_json::from_slice(&response.bytes().await.unwrap()).unwrap();
-    assert_eq!(value["api_version"], 2);
+    assert_eq!(value["api_version"], 1);
     assert_eq!(value["usage"]["calls"], 0);
     assert_eq!(value["policy"]["enabled"], true);
     assert_eq!(value["policy"]["max_storage_bytes"], 2147483648u64);

@@ -373,7 +373,7 @@ async fn a_turns_activity_reads_the_same_locally_through_a_gateway_and_over_mcp(
     let activity = cli_json(&home, &["--data-dir", data_dir, "activity", &call]);
     assert_eq!(activity["reply"]["text"], "Tests fail in parser.rs.");
 
-    // The daemon's indexer makes the turn searchable shortly after it ends.
+    // The recorder makes each call searchable as it finishes.
     let mut found = Value::Null;
     for _ in 0..150 {
         let output = Command::new(env!("CARGO_BIN_EXE_tgv"))

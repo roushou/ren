@@ -2,8 +2,8 @@
 //! and a response's output items, from a document or from streaming events.
 
 use super::{
-    ActivityLimitation, ActivityLimits, ActivityReader, RequestActivity, ResponseActivity,
-    ResultStatus, ToolInput, ToolResult, ToolUse,
+    ActivityLimitation, ActivityLimits, Fields, RequestActivity, ResponseActivity, ResultStatus,
+    ToolInput, ToolResult, ToolUse,
 };
 use crate::label::Labeled;
 use crate::responses::{EventKind, ItemKind};
@@ -81,9 +81,9 @@ impl<'a> Request<'a> {
             .iter()
             .filter_map(Value::as_object)
         {
-            let kind = ActivityReader::str(item, "type");
+            let kind = Fields(item).str("type");
             if kind.and_then(ToolOutputKind::from_label).is_some() {
-                let Some(id) = ActivityReader::str(item, "call_id") else {
+                let Some(id) = Fields(item).str("call_id") else {
                     activity
                         .limitations
                         .push(ActivityLimitation::UnexpectedShape);
@@ -92,12 +92,12 @@ impl<'a> Request<'a> {
                 activity.tool_results.push(ToolResult {
                     id: id.to_owned(),
                     status: ResultStatus::Unreported,
-                    output: ActivityReader::text(item.get("output")),
+                    output: Fields(item).text("output"),
                 });
             } else if kind.is_none_or(|kind| ItemKind::from_label(kind) == Some(ItemKind::Message))
                 && Self::role(item) == Some(InputRole::User)
             {
-                let text = ActivityReader::text(item.get("content"));
+                let text = Fields(item).text("content");
                 if !text.is_empty() {
                     activity.user_text.push(text);
                 }
@@ -107,7 +107,7 @@ impl<'a> Request<'a> {
     }
 
     fn role(item: &Map<String, Value>) -> Option<InputRole> {
-        ActivityReader::str(item, "role").and_then(InputRole::from_label)
+        Fields(item).str("role").and_then(InputRole::from_label)
     }
 
     /// Whether the model produced this item: an assistant message, its
@@ -116,7 +116,7 @@ impl<'a> Request<'a> {
         let Some(item) = item.as_object() else {
             return false;
         };
-        match ActivityReader::str(item, "type").and_then(ItemKind::from_label) {
+        match Fields(item).str("type").and_then(ItemKind::from_label) {
             Some(ItemKind::Message) | None => Self::role(item) == Some(InputRole::Assistant),
             Some(kind) => kind == ItemKind::Reasoning || kind.is_tool_call(),
         }
@@ -149,7 +149,7 @@ impl Response {
     }
 
     pub(super) fn event(&mut self, mut event: Map<String, Value>) {
-        let kind = ActivityReader::str(&event, "type").and_then(EventKind::from_label);
+        let kind = Fields(&event).str("type").and_then(EventKind::from_label);
         if kind == Some(EventKind::OutputItemDone) {
             if let Some(Value::Object(item)) = event.remove("item") {
                 self.done.push(item);
@@ -169,7 +169,8 @@ impl Response {
     pub(super) fn finish(self) -> ResponseActivity {
         match (self.done.is_empty(), &self.terminal) {
             (true, Some(response)) => self.items(
-                ActivityReader::array(response, "output")
+                Fields(response)
+                    .array("output")
                     .iter()
                     .filter_map(Value::as_object),
             ),
@@ -181,29 +182,23 @@ impl Response {
         let mut activity = ResponseActivity::default();
         let mut replies = Vec::new();
         for item in items {
-            let Some(kind) = ActivityReader::str(item, "type").and_then(ItemKind::from_label)
-            else {
+            let Some(kind) = Fields(item).str("type").and_then(ItemKind::from_label) else {
                 continue;
             };
             if kind == ItemKind::Message {
-                replies.push(ActivityReader::text(item.get("content")));
+                replies.push(Fields(item).text("content"));
                 continue;
             }
             if !kind.is_tool_call() || !activity.has_room(self.limits.max_tool_uses) {
                 continue;
             }
             let input = match kind {
-                ItemKind::FunctionCall | ItemKind::McpCall => {
-                    ActivityReader::str(item, "arguments").map_or(
-                        ToolInput::Json(Value::Null),
-                        ActivityReader::input_from_text,
-                    )
+                ItemKind::FunctionCall | ItemKind::McpCall => Fields(item)
+                    .str("arguments")
+                    .map_or(ToolInput::Json(Value::Null), ToolInput::parse),
+                ItemKind::CustomToolCall => {
+                    ToolInput::Text(Fields(item).str("input").unwrap_or_default().to_owned())
                 }
-                ItemKind::CustomToolCall => ToolInput::Text(
-                    ActivityReader::str(item, "input")
-                        .unwrap_or_default()
-                        .to_owned(),
-                ),
                 ItemKind::LocalShellCall | ItemKind::ShellCall | ItemKind::WebSearchCall => {
                     ToolInput::Json(item.get("action").cloned().unwrap_or(Value::Null))
                 }
@@ -220,11 +215,13 @@ impl Response {
                 | ItemKind::ToolSearchCall => ToolInput::Json(Value::Object(item.clone())),
             };
             activity.tool_uses.push(ToolUse {
-                id: ActivityReader::str(item, "call_id")
-                    .or_else(|| ActivityReader::str(item, "id"))
+                id: Fields(item)
+                    .str("call_id")
+                    .or_else(|| Fields(item).str("id"))
                     .map(str::to_owned),
                 kind: kind.label().to_owned(),
-                name: ActivityReader::str(item, "name")
+                name: Fields(item)
+                    .str("name")
                     .unwrap_or_else(|| kind.label())
                     .to_owned(),
                 input,

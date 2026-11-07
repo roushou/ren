@@ -22,8 +22,8 @@ use tgv_daemon::{Daemon, config::Config};
 use tgv_gateway::build::{Revision, Tree};
 use tgv_harness::{endpoint::GatewayEndpoint, host::HostEnv};
 
-const HEALTH: &str = r#"{"api_version":1,"status":"ok","recorder":{"storage_errors":0,"retention_errors":0,"omissions":{"policy_limit_bytes":0,"queue_bytes_bytes":0,"queue_slots_bytes":0,"storage_failure_bytes":0,"unrecorded_calls":0}}}"#;
-const STORAGE: &str = r#"{"api_version":1,"policy":{"enabled":true,"max_age_seconds":600,"max_calls":10,"max_storage_bytes":1048576},"usage":{"calls":0,"open_calls":0,"disk":{"metadata":{"page_size":4096,"page_count":10,"freelist_count":0},"blobs":{"page_size":16384,"page_count":2,"freelist_count":0}}}}"#;
+const HEALTH: &str = r#"{"api_version":1,"status":"ok","build":{"version":"0.0.1","revision":"unknown"},"recorder":{"storage_errors":0,"retention_errors":0,"omissions":{"policy_limit_bytes":0,"queue_bytes_bytes":0,"queue_slots_bytes":0,"storage_failure_bytes":0,"unrecorded_calls":0}}}"#;
+const STORAGE: &str = r#"{"api_version":1,"policy":{"enabled":true,"max_age_seconds":600,"max_calls":10,"max_storage_bytes":1048576},"usage":{"calls":0,"open_calls":0,"digested_calls":0,"disk":{"metadata":{"page_size":4096,"page_count":10,"freelist_count":0},"blobs":{"page_size":16384,"page_count":2,"freelist_count":0}}}}"#;
 
 async fn mock(app: Router) -> (GatewayEndpoint, tokio::task::JoinHandle<()>) {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -188,21 +188,18 @@ async fn reports_whether_the_daemon_runs_this_build() {
         | Revision::Unknown => Status::Warning,
     };
     let cases = [
-        (None, Status::Warning, "predates this CLI"),
         (
-            Some(
-                serde_json::json!({ "version": ours.version(), "revision": ours.revision().to_string() }),
-            ),
+            serde_json::json!({ "version": ours.version(), "revision": ours.revision().to_string() }),
             same,
             "",
         ),
         (
-            Some(serde_json::json!({ "version": "0.0.1", "revision": commit })),
+            serde_json::json!({ "version": "0.0.1", "revision": commit }),
             Status::Warning,
             "upgrade the older one",
         ),
         (
-            Some(serde_json::json!({ "version": ours.version(), "revision": "not-a-commit" })),
+            serde_json::json!({ "version": ours.version(), "revision": "not-a-commit" }),
             Status::Warning,
             "unrecognized revision \"not-a-commit\"",
         ),
@@ -215,9 +212,7 @@ async fn reports_whether_the_daemon_runs_this_build() {
                     let build = build.clone();
                     async move {
                         let mut value: serde_json::Value = serde_json::from_str(HEALTH).unwrap();
-                        if let Some(build) = build {
-                            value["build"] = build;
-                        }
+                        value["build"] = build;
                         axum::Json(value)
                     }
                 }),
