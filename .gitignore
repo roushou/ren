@@ -6,3 +6,5 @@
 /ui/.env
 /ui/.env.*
 !/ui/.env.example
+/deploy/container/*.env
+/deploy/container/tgv.toml

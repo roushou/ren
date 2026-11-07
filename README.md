@@ -10,7 +10,7 @@ as it happens, without changing a byte of the traffic.
 [![CI](https://github.com/roushou/tgv/actions/workflows/ci.yml/badge.svg)](https://github.com/roushou/tgv/actions/workflows/ci.yml)
 [![License: MIT or Apache-2.0](https://img.shields.io/badge/license-MIT%20%2F%20Apache--2.0-blue)](#license)
 
-[Install](#install) · [Clients](docs/clients.md) · [Deployment](docs/deployment.md) ·
+[Install](#install) · [Clients](docs/clients.md) · [Deploy](#deploy) ·
 [Architecture](docs/architecture.md)
 
 </div>
@@ -88,6 +88,22 @@ With a saved gateway, these read the remote daemon.
 
 The optional UI lives in [`ui`](ui/README.md).
 
+## Deploy
+
+`tgv serve` runs in the foreground; for a background service, pick one:
+
+| Where                          | How                                                               | Guide                                                       |
+| ------------------------------ | ----------------------------------------------------------------- | ----------------------------------------------------------- |
+| macOS                          | launchd agent, from `tgv service render --manager launchd`        | [launchd](docs/deployment.md#macos-launchd)                 |
+| Linux                          | systemd user service, from `tgv service render --manager systemd` | [systemd](docs/deployment.md#linux-systemd)                 |
+| VPS on your tailnet            | `cargo xtask install-vps --https-port 8443`                       | [VPS with Tailscale](docs/deployment.md#vps-with-tailscale) |
+| Docker or Podman               | `docker compose up -d --build` in `deploy/container`              | [Compose](docs/deployment.md#compose)                       |
+| Podman, rootless under systemd | Quadlet files in `deploy/container/quadlet`                       | [Podman Quadlet](docs/deployment.md#podman-quadlet)         |
+
+The daemon always listens on loopback. Remote clients reach it through
+Tailscale Serve, from the host or from a sidecar container; TGV has no public
+listener.
+
 ## Screenshots
 
 <details>
@@ -114,7 +130,8 @@ The optional UI lives in [`ui`](ui/README.md).
 - [Recording](docs/recording.md): capture, inspection, backup, and retention
 - [History and API](docs/api.md): CLI history commands and the management API
 - [Policy](docs/policy.md): buffering, rules, failover, and operator controls
-- [Deployment](docs/deployment.md): launchd, systemd, and Tailscale
+- [Deployment](docs/deployment.md): launchd, systemd, containers (Docker and
+  Podman), and Tailscale
 - [Architecture](docs/architecture.md): how TGV is built
 - [AGENTS.md](AGENTS.md): contributor guidance
 

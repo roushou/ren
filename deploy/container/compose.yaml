@@ -1,0 +1,47 @@
+# TGV and a Tailscale sidecar, for `docker compose` or `podman compose`.
+# See docs/deployment.md#containers. From this directory:
+#
+#   cp ../../tgv.example.toml tgv.toml && chmod 0644 tgv.toml
+#   docker compose up -d --build
+#
+# The two containers share one network namespace, so Tailscale Serve reaches
+# TGV's loopback listener and adds the identity headers the control API
+# checks. Nothing is published on the host.
+name: tgv
+
+services:
+  tailscale:
+    image: docker.io/tailscale/tailscale:stable
+    environment:
+      TS_HOSTNAME: ${TS_HOSTNAME:-tgv}
+      # Needed for the first start only; the node key is kept in the volume.
+      # Without it, the log prints a login URL.
+      TS_AUTHKEY: ${TS_AUTHKEY:-}
+      TS_STATE_DIR: /var/lib/tailscale
+      TS_USERSPACE: "true"
+      TS_SERVE_CONFIG: /config/serve.json
+    volumes:
+      - tailscale-state:/var/lib/tailscale
+      - ./tailscale-serve.json:/config/serve.json:ro,z
+    restart: unless-stopped
+
+  tgv:
+    image: localhost/tgv:latest
+    build:
+      context: ../..
+    network_mode: service:tailscale
+    depends_on:
+      - tailscale
+    command: ["--config", "/etc/tgv/tgv.toml", "serve"]
+    # Operator API keys named by `operator_key_env` in tgv.toml, if any:
+    # env_file: tgv.env
+    volumes:
+      - tgv-data:/data
+      - ./tgv.toml:/etc/tgv/tgv.toml:ro,z
+    # Active requests get 10 seconds, then capture drains.
+    stop_grace_period: 30s
+    restart: unless-stopped
+
+volumes:
+  tailscale-state:
+  tgv-data:

@@ -623,3 +623,5 @@ state; it is logged, not recorded in `operator_actions`.
 - The public OpenAI WebSocket mode is refused.
 - The UI has no control actions.
 - Backups go only to `<data-dir>/backup`, and only through a running daemon.
+- The container image is built from a checkout; none is published, and
+  `install-vps` does not manage containers.

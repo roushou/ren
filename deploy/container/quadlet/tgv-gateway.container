@@ -1,0 +1,26 @@
+# Podman Quadlet: the TGV daemon in the TGV pod. Build the image first:
+#   podman build -t localhost/tgv:latest <checkout>
+# No AutoUpdate: upgrades restart TGV between calls, not whenever an image changes.
+[Unit]
+Description=TGV gateway for coding agents
+# Stop before Tailscale, so open streams can finish.
+After=tgv-tailscale.service
+
+[Container]
+ContainerName=tgv-gateway
+Image=localhost/tgv:latest
+Pod=tgv.pod
+Exec=--config /etc/tgv/tgv.toml serve
+Volume=tgv-data.volume:/data
+Volume=%h/.config/tgv/tgv.toml:/etc/tgv/tgv.toml:ro,Z
+# Operator API keys named by `operator_key_env` in tgv.toml, if any:
+# EnvironmentFile=%h/.config/tgv/tgv.env
+# Active requests get 10 seconds, then capture drains.
+StopTimeout=30
+
+[Service]
+Restart=on-failure
+TimeoutStopSec=45
+
+[Install]
+WantedBy=default.target

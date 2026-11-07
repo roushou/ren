@@ -1,0 +1,11 @@
+# Only untracked build output: excluding a tracked file would mark the
+# image's recorded revision as dirty.
+target
+ui/node_modules
+ui/.svelte-kit
+ui/dist
+ui/build
+ui/.env
+ui/.env.*
+deploy/container/*.env
+deploy/container/tgv.toml

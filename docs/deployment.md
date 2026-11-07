@@ -281,3 +281,85 @@ not downgrade a migrated database without restoring a matching backup.
 References: [Tailscale Serve CLI](https://tailscale.com/docs/reference/tailscale-cli/serve),
 [Serve access and identity](https://tailscale.com/docs/features/tailscale-serve), and
 [systemd user lingering](https://www.freedesktop.org/software/systemd/man/latest/loginctl.html).
+
+## Containers
+
+The [`Dockerfile`](../Dockerfile) builds the daemon image for Docker and Podman
+alike. It runs `tgv serve` as a non-root user (uid 65532) with its data in
+`/data/tgv`, on the `/data` volume, and contains only the binary, the C runtime, and CA certificates.
+The UI is not included. Build it from the checkout:
+
+```sh
+docker build -t localhost/tgv:latest .
+podman build -t localhost/tgv:latest .
+```
+
+The listener stays on loopback inside the container; TGV refuses any other
+address. Don't publish a port or use host networking. Instead, a Tailscale
+container shares TGV's network namespace and serves it over HTTPS on the
+tailnet with Tailscale Serve. That sidecar is a separate
+tailnet device (named `tgv` by default) and serves on its own port 443. Serve
+adds the identity headers that `control.tailscale_logins` checks, and nothing
+else can reach the listener. Its route is
+[`deploy/container/tailscale-serve.json`](../deploy/container/tailscale-serve.json),
+with Funnel off.
+
+Both setups below need a configuration file. Copy `tgv.example.toml` and review
+it; keep `listen` on loopback and leave `data_dir` unset, so the data lands in
+the volume. Operator API keys go in the container environment, never in the
+file. The sidecar needs a Tailscale [auth key](https://tailscale.com/kb/1085/auth-keys)
+for its first start only; without one, its log prints a login URL.
+
+Containers keep the daemon's shutdown budget (10 seconds for running calls,
+then capture drain), so both setups allow 30 seconds before killing it. Upgrade
+by rebuilding the image and restarting TGV between sessions, after
+`tgv control backup` when the schema changes. Don't use `podman auto-update` or
+an image watcher: they restart whenever the image changes, mid-stream.
+
+### Compose
+
+[`deploy/container/compose.yaml`](../deploy/container/compose.yaml) runs with
+`docker compose` or `podman compose`. From `deploy/container`:
+
+```sh
+cp ../../tgv.example.toml tgv.toml
+chmod 0644 tgv.toml
+echo 'TS_AUTHKEY=tskey-auth-...' > .env
+docker compose up -d --build
+docker compose exec tgv tgv --config /etc/tgv/tgv.toml doctor
+```
+
+`tgv.toml` must be readable by the container's user, hence `0644`; it holds no
+secrets. `.env`, `tgv.toml`, and `*.env` there are ignored by git and by image
+builds. For operator keys, uncomment `env_file: tgv.env`. Run other commands the
+same way, for example `docker compose exec tgv tgv control backup`.
+Logs: `docker compose logs tgv`.
+
+### Podman Quadlet
+
+On Linux, the [Quadlet files](../deploy/container/quadlet) are the recommended
+Podman setup: rootless, supervised by your systemd user manager like
+`tgv.service`, with logs in the journal. They define a `tgv` pod, its
+`tgv-tailscale` and `tgv-gateway` containers (units `tgv-tailscale.service` and
+`tgv-gateway.service`, which leaves the name `tgv.service` to the host unit),
+and the `tgv-data` and `tgv-tailscale` volumes. The pod maps your user to the
+image's user, so `tgv.toml` may stay `0600` and TGV's files belong to you; read
+the volume through `podman exec` or `podman unshare`, since Podman keeps its top
+directory private. Requires Podman 5.0 or later.
+
+```sh
+podman build -t localhost/tgv:latest .
+(umask 077; mkdir -p "$HOME/.config/tgv" "$HOME/.config/containers/systemd")
+cp -n tgv.example.toml "$HOME/.config/tgv/tgv.toml"
+cp deploy/container/tailscale-serve.json "$HOME/.config/tgv/"
+(umask 077; echo 'TS_AUTHKEY=tskey-auth-...' > "$HOME/.config/tgv/tailscale.env")
+cp deploy/container/quadlet/* "$HOME/.config/containers/systemd/"
+systemctl --user daemon-reload
+systemctl --user start tgv-pod.service
+podman exec tgv-gateway tgv --config /etc/tgv/tgv.toml doctor
+```
+
+Quadlet units are generated, so they are started rather than enabled; their
+`[Install]` section starts them at login, and at boot with lingering
+(`loginctl enable-linger "$USER"`). Logs: `journalctl --user -u tgv-gateway`.
+Stop with `systemctl --user stop tgv-pod.service`; TGV stops before Tailscale.

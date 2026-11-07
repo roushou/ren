@@ -271,7 +271,9 @@ dependencies under "Crates" below. Read the code for current module ownership.
   installed `tgv`'s output (`daemon`), its UI unit rendering (`ui`), its saved flags
   (`publish`), and the upgrade's wait, pause, and build-check decisions are
   unit-tested; the commands it runs are exercised only by running it.
-- `deploy`: systemd units. `scripts`: manual smoke tests for Pi, systemd, and launchd.
+- `deploy`: systemd units, and in `deploy/container` the compose file, Podman
+  Quadlet files, and Tailscale Serve route for the root `Dockerfile`
+  (`docs/deployment.md#containers`). `scripts`: manual smoke tests for Pi, systemd, and launchd.
 
 ### Crates
 
