@@ -167,6 +167,64 @@ impl Default for ActivityLimits {
     }
 }
 
+/// A response's activity, built from one document or from its events in
+/// order, as they arrive.
+pub struct ResponseReader {
+    protocol: ProtocolResponse,
+    limitations: Vec<ActivityLimitation>,
+}
+
+enum ProtocolResponse {
+    Messages(anthropic::Response),
+    Responses(openai::Response),
+}
+
+impl ResponseReader {
+    pub fn new(protocol: Protocol, limits: ActivityLimits) -> Self {
+        Self {
+            protocol: match protocol {
+                Protocol::Messages => ProtocolResponse::Messages(anthropic::Response::new(limits)),
+                Protocol::Responses => ProtocolResponse::Responses(openai::Response::new(limits)),
+            },
+            limitations: Vec::new(),
+        }
+    }
+
+    /// One streamed event's data, or one WebSocket message.
+    pub fn event_bytes(&mut self, data: &[u8]) {
+        // An event that is not a JSON object holds nothing to read.
+        if let Ok(Value::Object(event)) = serde_json::from_slice::<Value>(data) {
+            match &mut self.protocol {
+                ProtocolResponse::Messages(response) => response.event(&event),
+                ProtocolResponse::Responses(response) => response.event(event),
+            }
+        }
+    }
+
+    /// A whole response document.
+    pub fn document_bytes(&mut self, bytes: &[u8]) {
+        match serde_json::from_slice::<Value>(bytes) {
+            Ok(Value::Object(document)) => match &mut self.protocol {
+                ProtocolResponse::Messages(response) => response.document(document),
+                ProtocolResponse::Responses(response) => response.document(document),
+            },
+            Ok(_) => self.limitations.push(ActivityLimitation::UnexpectedShape),
+            Err(_) => self.limitations.push(ActivityLimitation::NotJson),
+        }
+    }
+
+    pub fn finish(self) -> ResponseActivity {
+        let mut activity = match self.protocol {
+            ProtocolResponse::Messages(response) => response.finish(),
+            ProtocolResponse::Responses(response) => response.finish(),
+        };
+        let mut limitations = self.limitations;
+        limitations.append(&mut activity.limitations);
+        activity.limitations = ActivityReader::dedup(limitations);
+        activity
+    }
+}
+
 /// Reads activity from one protocol's bodies.
 #[derive(Debug, Clone, Copy)]
 pub struct ActivityReader {
@@ -222,35 +280,17 @@ impl ActivityReader {
     /// The tool calls and reply text in a response body.
     pub fn response(&self, body: CapturedBody<'_>) -> ResponseActivity {
         let mut limitations = Vec::new();
-        let mut activity = match self.decode(body, &mut limitations) {
-            Some(Decoded::Document(bytes)) => match serde_json::from_slice::<Value>(&bytes) {
-                Ok(Value::Object(document)) => match self.protocol {
-                    Protocol::Messages => anthropic::Response::document(&document, self.limits),
-                    Protocol::Responses => openai::Response::new(self.limits).document(&document),
-                },
-                Ok(_) => ResponseActivity {
-                    limitations: vec![ActivityLimitation::UnexpectedShape],
-                    ..ResponseActivity::default()
-                },
-                Err(_) => ResponseActivity {
-                    limitations: vec![ActivityLimitation::NotJson],
-                    ..ResponseActivity::default()
-                },
-            },
+        let mut reader = ResponseReader::new(self.protocol, self.limits);
+        match self.decode(body, &mut limitations) {
+            Some(Decoded::Document(bytes)) => reader.document_bytes(&bytes),
             Some(Decoded::Events(events)) => {
-                let events = events.iter().filter_map(|event| {
-                    match serde_json::from_slice::<Value>(event) {
-                        Ok(Value::Object(event)) => Some(event),
-                        Ok(_) | Err(_) => None,
-                    }
-                });
-                match self.protocol {
-                    Protocol::Messages => anthropic::Response::events(events, self.limits),
-                    Protocol::Responses => openai::Response::new(self.limits).events(events),
+                for event in &events {
+                    reader.event_bytes(event);
                 }
             }
-            None => ResponseActivity::default(),
-        };
+            None => {}
+        }
+        let mut activity = reader.finish();
         limitations.append(&mut activity.limitations);
         activity.limitations = Self::dedup(limitations);
         activity

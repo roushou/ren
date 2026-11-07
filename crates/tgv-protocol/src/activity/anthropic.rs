@@ -144,7 +144,7 @@ pub(super) struct Response {
 }
 
 impl Response {
-    fn new(limits: ActivityLimits) -> Self {
+    pub(super) fn new(limits: ActivityLimits) -> Self {
         Self {
             limits,
             blocks: Vec::new(),
@@ -152,36 +152,22 @@ impl Response {
         }
     }
 
-    pub(super) fn document(
-        document: &Map<String, Value>,
-        limits: ActivityLimits,
-    ) -> ResponseActivity {
-        let mut response = Self::new(limits);
-        for (index, block) in ActivityReader::array(document, "content")
+    /// A complete response document: its content blocks, all closed.
+    pub(super) fn document(&mut self, document: Map<String, Value>) {
+        self.blocks.clear();
+        for (index, block) in ActivityReader::array(&document, "content")
             .iter()
             .filter_map(Value::as_object)
             .enumerate()
         {
             if let Some(mut block) = Self::start(block) {
                 block.closed = true;
-                response.put(index, block);
+                self.put(index, block);
             }
         }
-        response.finish()
     }
 
-    pub(super) fn events(
-        events: impl Iterator<Item = Map<String, Value>>,
-        limits: ActivityLimits,
-    ) -> ResponseActivity {
-        let mut response = Self::new(limits);
-        for event in events {
-            response.event(&event);
-        }
-        response.finish()
-    }
-
-    fn event(&mut self, event: &Map<String, Value>) {
+    pub(super) fn event(&mut self, event: &Map<String, Value>) {
         let index = event
             .get("index")
             .and_then(Value::as_u64)
@@ -272,7 +258,7 @@ impl Response {
         }
     }
 
-    fn finish(self) -> ResponseActivity {
+    pub(super) fn finish(self) -> ResponseActivity {
         let mut activity = ResponseActivity {
             limitations: self.limitations,
             ..ResponseActivity::default()

@@ -125,48 +125,54 @@ impl<'a> Request<'a> {
 
 /// A Responses response: its output items, from a document, from
 /// `response.output_item.done` events, or from the terminal response event.
+/// Fed one event at a time.
 pub(super) struct Response {
     limits: ActivityLimits,
+    done: Vec<Map<String, Value>>,
+    terminal: Option<Map<String, Value>>,
 }
 
 impl Response {
     pub(super) fn new(limits: ActivityLimits) -> Self {
-        Self { limits }
-    }
-
-    pub(super) fn document(&self, document: &Map<String, Value>) -> ResponseActivity {
-        self.items(
-            ActivityReader::array(document, "output")
-                .iter()
-                .filter_map(Value::as_object),
-        )
-    }
-
-    pub(super) fn events(
-        &self,
-        events: impl Iterator<Item = Map<String, Value>>,
-    ) -> ResponseActivity {
-        let mut done = Vec::new();
-        let mut terminal = None;
-        for event in events {
-            let kind = ActivityReader::str(&event, "type").and_then(EventKind::from_label);
-            if kind == Some(EventKind::OutputItemDone) {
-                if let Some(item) = event.get("item").and_then(Value::as_object) {
-                    done.push(item.clone());
-                }
-            } else if matches!(
-                kind,
-                Some(EventKind::Completed | EventKind::Incomplete | EventKind::Failed)
-            ) {
-                terminal = event.get("response").and_then(Value::as_object).cloned();
-            }
+        Self {
+            limits,
+            done: Vec::new(),
+            terminal: None,
         }
-        // Items arrive done one by one; the terminal event repeats them all
-        // when it carries output, and is the only source when no item event
-        // was captured.
-        match (done.is_empty(), terminal) {
-            (true, Some(response)) => self.document(&response),
-            (false, Some(_) | None) | (true, None) => self.items(done.iter()),
+    }
+
+    /// A complete response document: its output is the whole answer.
+    pub(super) fn document(&mut self, document: Map<String, Value>) {
+        self.done.clear();
+        self.terminal = Some(document);
+    }
+
+    pub(super) fn event(&mut self, mut event: Map<String, Value>) {
+        let kind = ActivityReader::str(&event, "type").and_then(EventKind::from_label);
+        if kind == Some(EventKind::OutputItemDone) {
+            if let Some(Value::Object(item)) = event.remove("item") {
+                self.done.push(item);
+            }
+        } else if matches!(
+            kind,
+            Some(EventKind::Completed | EventKind::Incomplete | EventKind::Failed)
+        ) && let Some(Value::Object(response)) = event.remove("response")
+        {
+            self.terminal = Some(response);
+        }
+    }
+
+    /// Items arrive done one by one; the terminal event repeats them all
+    /// when it carries output, and is the only source when no item event
+    /// was captured.
+    pub(super) fn finish(self) -> ResponseActivity {
+        match (self.done.is_empty(), &self.terminal) {
+            (true, Some(response)) => self.items(
+                ActivityReader::array(response, "output")
+                    .iter()
+                    .filter_map(Value::as_object),
+            ),
+            (false, Some(_) | None) | (true, None) => self.items(self.done.iter()),
         }
     }
 
