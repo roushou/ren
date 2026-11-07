@@ -9,7 +9,7 @@ pub mod config;
 pub mod host;
 
 use crate::config::RuntimeConfig;
-use crate::host::{RandomIds, SystemClock};
+use crate::host::{ObservationThread, RandomIds, SystemClock};
 use std::{io, net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
 use tgv_gateway::{
     Build, ControlToken, Gateway, ManagementSetup, ReqwestUpstream, Shutdown, Stopped,
@@ -51,6 +51,12 @@ pub enum DaemonError {
     Persistence(#[source] StoreError),
     #[error("capture shutdown timed out; unfinished records will be recovered on restart")]
     CaptureTimeout,
+    #[error(
+        "the recorder stopped without finishing; unfinished records will be recovered on restart"
+    )]
+    CaptureLost,
+    #[error("cannot start the observation thread")]
+    ObservationThread(#[source] io::Error),
     #[error("{0} task failed")]
     Task(&'static str, #[source] tokio::task::JoinError),
 }
@@ -164,18 +170,15 @@ impl Daemon {
             clock.clone(),
             ids.clone(),
         )?;
-        #[expect(
-            clippy::disallowed_methods,
-            reason = "process wiring: the daemon owns the recorder task"
-        )]
-        let mut worker = tokio::spawn(task.run());
+        let mut worker =
+            ObservationThread::start(task.run()).map_err(DaemonError::ObservationThread)?;
         let reader = match Reader::open(data_dir, 4).await {
             Ok(reader) => reader,
             Err(error) => {
                 // No requests have been admitted. Release startup resources
                 // before reporting failure so this instance can retry safely.
                 drop(recorder);
-                let _ = worker.await;
+                let _ = worker.join().await;
                 return Err(error.into());
             }
         };
@@ -220,13 +223,11 @@ impl Daemon {
             // The server dropped every request owner, so the recorder's senders
             // are closing. Drain accepted capture before releasing the lock.
             let capture_result =
-                match tokio::time::timeout(Self::CAPTURE_DEADLINE, &mut worker).await {
-                    Ok(result) => result
-                        .map_err(|error| DaemonError::Task("capture", error))?
-                        .map_err(DaemonError::Persistence),
+                match tokio::time::timeout(Self::CAPTURE_DEADLINE, worker.join()).await {
+                    Ok(Some(result)) => result.map_err(DaemonError::Persistence),
+                    Ok(None) => Err(DaemonError::CaptureLost),
                     Err(_) => {
                         worker.abort();
-                        let _ = worker.await;
                         Err(DaemonError::CaptureTimeout)
                     }
                 };

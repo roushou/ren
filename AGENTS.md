@@ -132,8 +132,9 @@ Modules carry no lint headers of their own. A module with submodules lives in
 
 - The only exemptions are the capability implementations themselves, marked with
   `#[expect(clippy::disallowed_methods, reason = "…")]`: `HostEnv::capture`, the
-  daemon's `SystemClock` and `RandomIds` (`tgv_daemon::host`), and the daemon's two
-  task spawns (recorder and server).
+  daemon's `SystemClock` and `RandomIds` (`tgv_daemon::host`), and the daemon's server
+  task spawn. The recorder runs on `ObservationThread` (`tgv_daemon::host`), a
+  thread with its own runtime.
 - Integration-test crates (`crates/*/tests/*.rs`) act as a shell: each has one
   crate-level `#![allow(...)]` with a reason, covering helpers outside `#[test]`
   functions and spawned mock servers. Unit-test modules use `clippy.toml`'s
@@ -187,7 +188,8 @@ dependencies under "Crates" below. Read the code for current module ownership.
   but has no async runtime, HTTP, database, or CLI dependency.
 - `crates/tgv-recorder`: the bounded capture queue between forwarding and
   storage, with `Recorder` as its primary type. `CallTap` (and `ChannelTap` for a
-  WebSocket's end) is the forwarding side; `RecorderTask` (spawned by the daemon)
+  WebSocket's end) is the forwarding side; `RecorderTask` (run by the daemon on
+  its observation thread)
   runs inspection, group commits, retention, and the live broadcast, writing
   through the `RecordSink` port. Omissions are counted by reason in
   `RecorderMetrics`, readable after shutdown through `RecorderMeter`. It also
@@ -245,11 +247,12 @@ dependencies under "Crates" below. Read the code for current module ownership.
     stays crate-private; configuration and token types are exported at the root.
 - `crates/tgv-daemon`: configuration, resource wiring, and lifecycle, with
   `Daemon` as its primary type (`lib.rs`). It opens storage, binds the listener,
-  writes the control token, constructs the gateway and recorder, owns the two
-  task spawns (recorder and server), and
+  writes the control token, constructs the gateway and recorder, owns the
+  server task and the observation thread the recorder runs on, and
   coordinates HTTP shutdown before capture drain. It defines no
   HTTP routes or handlers and has no production Axum dependency. `config` turns
-  `Config` into a `RuntimeConfig`. `host` holds `SystemClock` and `RandomIds`.
+  `Config` into a `RuntimeConfig`. `host` holds `SystemClock`, `RandomIds`, and
+  `ObservationThread`.
   Its integration tests hold `TestGateway` (`tests/support`) and the gateway,
   WebSocket, decision, and full-daemon tests; they use the gateway's complete
   router with test capabilities.

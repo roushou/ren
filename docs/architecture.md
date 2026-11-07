@@ -199,7 +199,7 @@ xtask        ─► tgv-daemon, tgv-harness   (repository tasks, unpublished)
 | `tgv-recorder`                             | `Recorder`; `RecorderTask` runs it; `RecordSink` is its port                  | `ChannelId`, `CallId`, `AttemptId`, `SessionId`, `TurnId`; `Clock`, `IdSource`, and their test implementations; recorded facts (terminals, causes, phases, rejections, body endings, omissions, `ChannelEnd`, `ConfigRevision`, `UpstreamId`, `OperatorRevision`); the stored inspection format; the `Chunker`; batches; `RetentionPolicy`; taps, queue, metrics, live broadcast                     |
 | `tgv-store`                                | `Store`, which implements `RecordSink`; `Reader` and `Backup` are its handles | SQLite and migrations, the stored chunk format, queries, views, turn and call activity assembled from stored digests (`activity`), full-text search and exposures over the digests (`search`), retention, `Recovery`, the sweep gate, backup                                                                                                                                                         |
 | `tgv-gateway`                              | `Gateway`                                                                     | all HTTP routes: forwarding, the read API and `/api/live`, and authenticated controls and backup; route table, header policy, request buffering, upstream entries, the `Upstream` seam and Reqwest implementation, `HttpAttempt`, `WsChannel`, retry facts, policy, `Controls`, `OperatorState`, the running-call registry, ingress and the shutdown drain, the `Build` `/health` reports            |
-| `tgv-daemon`                               | `Daemon`                                                                      | `Config` → `RuntimeConfig`; resource wiring, listener binding, control-token file, and lifecycle; the system clock and random IDs; the two task spawns (recorder, server)                                                                                                                                                                                                                            |
+| `tgv-daemon`                               | `Daemon`                                                                      | `Config` → `RuntimeConfig`; resource wiring, listener binding, control-token file, and lifecycle; the system clock and random IDs; the server task, and the observation thread (`ObservationThread`), whose own current-thread runtime runs the recorder                                                                                                                                             |
 | `tgv-cli` (package `tgv-rs`, binary `tgv`) | `Cli`                                                                         | capturing `HostEnv` in `main`, recording the source revision (`build.rs`), commands, gateway choice and `client.toml`, history and controls on this host or through a gateway's APIs (`management`), `tgv tail` (`tail`), the pure MCP core of `tgv mcp` (`mcp`), doctor and its build comparison, service definitions                                                                               |
 | `xtask` (unpublished, `cargo xtask`)       | `Xtask`                                                                       | `install-vps`: installing or upgrading TGV from a checkout as a systemd user service between calls, published with Tailscale Serve, and with `--ui-https-port` the UI as `tgv-ui.service`; its publishing flags are saved for later runs                                                                                                                                                             |
 
@@ -448,8 +448,12 @@ WebSocket's end).
 
 ### Recorder
 
-`RecorderTask` (spawned by the daemon) runs inspection, group commits, retention,
-and the live broadcast, writing through `RecordSink`.
+`RecorderTask` runs inspection, digests, group commits, retention,
+and the live broadcast, writing through `RecordSink`. It runs on the observation
+thread: a thread of its own with a current-thread runtime
+(`tgv_daemon::host::ObservationThread`), so its CPU work (chunking, hashing,
+inspection, deriving and sealing digests) and its storage writes never occupy a
+forwarding worker. Taps reach it only through the bounded queue.
 
 - **Group commit.** Every 50 ms (`capture.commit_interval_ms`), or sooner at 512
   operations or 4 MiB of chunk data, with `synchronous=NORMAL`. A power loss can
@@ -686,7 +690,5 @@ state; it is logged, not recorded in `operator_actions`.
   compaction, and time to first token is not recorded.
 - Search matches whole words (punctuation splits them) and indexes at most
   32 KiB per field of each call.
-- Deriving a digest (request parsing and secret scanning) runs on the recorder
-  task, which shares the forwarding runtime.
 - The container image is built from a checkout; none is published, and
   `install-vps` does not manage containers.
