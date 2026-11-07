@@ -13,7 +13,8 @@ mod indexer;
 mod query;
 
 pub use document::{CallDocuments, Document, Exposure, SearchField};
-pub use indexer::{Indexer, PassReport};
+pub(crate) use indexer::IndexCursor;
+pub use indexer::{Backlog, Indexer, PassReport};
 pub use query::{
     ExposureQuery, ExposureView, SearchError, SearchHit, SearchPage, SearchQuery, SearchTerms,
 };

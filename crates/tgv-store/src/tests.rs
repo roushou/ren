@@ -1242,3 +1242,67 @@ async fn calls_narrow_by_session_client_and_kind() {
         vec![codex]
     );
 }
+
+#[tokio::test]
+async fn the_indexer_backfills_in_bounded_passes_and_removes_what_the_store_lost() {
+    use crate::search::{Backlog, CallDocuments, Indexer, SearchIndex};
+    let mut fixture = Fixture::new().await;
+    let mut calls = Vec::new();
+    for n in 0..25 {
+        let request = format!(
+            "{{\"model\":\"claude\",\"messages\":[{{\"role\":\"user\",\"content\":\"needle {n}\"}}]}}"
+        );
+        calls.push(
+            fixture
+                .record(CallSpec {
+                    request: request.as_bytes(),
+                    session: Some(1),
+                    ..CallSpec::default()
+                })
+                .await,
+        );
+    }
+    let index = SearchIndex::open(fixture.dir.path()).await.unwrap();
+    // A call retention deleted after it was indexed.
+    let gone = CallId::restore(Uuid::from_u128(u128::MAX));
+    index
+        .add(&[CallDocuments {
+            call: gone,
+            session: None,
+            turn: None,
+            client: None,
+            started_at: UnixMillis::from_millis(0),
+            prompt: None,
+            documents: Vec::new(),
+            exposures: Vec::new(),
+        }])
+        .await
+        .unwrap();
+    let mut indexer = Indexer::new(
+        index.clone(),
+        Reader::open(fixture.dir.path(), 1).await.unwrap(),
+    );
+
+    let first = indexer.pass().await.unwrap();
+    assert_eq!(first.indexed, 20);
+    assert_eq!(first.backlog, Backlog::Behind);
+    assert_eq!(first.removed, 1);
+    let second = indexer.pass().await.unwrap();
+    assert_eq!(second.indexed, 5);
+    assert_eq!(second.backlog, Backlog::CaughtUp);
+    // Caught up, a pass looks back over recent calls but indexes none twice.
+    let third = indexer.pass().await.unwrap();
+    assert_eq!((third.indexed, third.removed), (0, 0));
+    assert_eq!(index.indexed(&calls).await.unwrap().len(), 25);
+    assert!(index.indexed(&[gone]).await.unwrap().is_empty());
+
+    // A call that ends later is found by the next pass.
+    let late = fixture
+        .record(CallSpec {
+            session: Some(1),
+            ..CallSpec::default()
+        })
+        .await;
+    assert_eq!(indexer.pass().await.unwrap().indexed, 1);
+    assert_eq!(index.indexed(&[late]).await.unwrap().len(), 1);
+}

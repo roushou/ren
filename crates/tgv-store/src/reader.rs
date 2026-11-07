@@ -6,7 +6,7 @@ use crate::activity::{
     ActivityBudget, CallActivity, Excerpt, ReadCall, TurnActivity, TurnHead, TurnSummary,
     report::SessionReport,
 };
-use crate::search::{CallDocuments, IndexedPrompt, SearchIndex};
+use crate::search::{CallDocuments, IndexCursor, IndexedPrompt, SearchIndex};
 use crate::secrets::SecretScanner;
 use crate::{
     Store, StoreError,
@@ -870,22 +870,31 @@ impl Reader {
             .activity(budget))
     }
 
-    /// Finished calls after `cursor`, by end time and ID, for the indexer.
-    pub async fn finished_calls(
+    /// Finished calls from `cursor` on, in end-time and ID order.
+    pub(crate) async fn finished_calls(
         &self,
-        cursor: Option<(UnixMillis, CallId)>,
+        cursor: IndexCursor,
         limit: i64,
     ) -> Result<Vec<(UnixMillis, CallId)>, StoreError> {
-        let (time, call) = cursor.map_or((-1, String::new()), |(time, call)| {
-            (
-                i64::try_from(time.as_millis()).unwrap_or(i64::MAX),
-                call.to_string(),
-            )
-        });
-        sqlx::query("SELECT id, ended_at FROM calls WHERE ended_at IS NOT NULL AND (ended_at, id) > (?, ?) ORDER BY ended_at, id LIMIT ?")
-            .bind(time)
-            .bind(call)
-            .bind(limit)
+        let millis = |time: UnixMillis| i64::try_from(time.as_millis()).unwrap_or(i64::MAX);
+        let mut sql = QueryBuilder::<Sqlite>::new(
+            "SELECT id, ended_at FROM calls WHERE ended_at IS NOT NULL",
+        );
+        match cursor {
+            IndexCursor::Start => {}
+            IndexCursor::After(ended, call) => {
+                sql.push(" AND (ended_at, id) > (")
+                    .push_bind(millis(ended))
+                    .push(", ")
+                    .push_bind(call.to_string())
+                    .push(")");
+            }
+            IndexCursor::Since(ended) => {
+                sql.push(" AND ended_at >= ").push_bind(millis(ended));
+            }
+        }
+        sql.push(" ORDER BY ended_at, id LIMIT ").push_bind(limit);
+        sql.build()
             .fetch_all(&self.pool)
             .await?
             .iter()
@@ -897,7 +906,10 @@ impl Reader {
     }
 
     /// Which of `calls` the store still has.
-    pub async fn existing_calls(&self, calls: &[CallId]) -> Result<HashSet<CallId>, StoreError> {
+    pub(crate) async fn existing_calls(
+        &self,
+        calls: &[CallId],
+    ) -> Result<HashSet<CallId>, StoreError> {
         let mut existing = HashSet::new();
         for chunk in calls.chunks(500) {
             let mut sql = QueryBuilder::<Sqlite>::new("SELECT id FROM calls WHERE id IN (");
@@ -914,11 +926,10 @@ impl Reader {
     }
 
     /// A call's searchable documents, read from its bodies.
-    pub async fn read_documents(
+    pub(crate) async fn read_documents(
         &self,
         call: CallId,
         max_chars: usize,
-        scanner: &SecretScanner,
     ) -> Result<CallDocuments, StoreError> {
         let row = sqlx::query(AssertSqlSafe(format!(
             "{} WHERE c.id = ?",
@@ -932,7 +943,7 @@ impl Reader {
         Ok(self
             .read_call(view, Reach::Exchange)
             .await?
-            .documents(max_chars, scanner))
+            .documents(max_chars, &self.scanner))
     }
 
     async fn turn_calls(&self, turn: TurnId, limit: i64) -> Result<Vec<CallView>, StoreError> {

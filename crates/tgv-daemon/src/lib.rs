@@ -87,9 +87,6 @@ impl Daemon {
     /// How long in-flight calls may continue after shutdown is requested.
     const DRAIN_DEADLINE: Duration = Duration::from_secs(10);
     const CAPTURE_DEADLINE: Duration = Duration::from_secs(10);
-    /// The indexer's pause while it is backfilling, and once caught up.
-    const INDEX_BUSY_PAUSE: Duration = Duration::from_millis(200);
-    const INDEX_IDLE_PAUSE: Duration = Duration::from_secs(5);
 
     /// `build` is what the binary running this daemon was compiled from;
     /// `/health` reports it.
@@ -187,8 +184,7 @@ impl Daemon {
         // Search is derived data: the indexer has its own read connection
         // and the only writer of `search.sqlite3`, off the forwarding path.
         let search = SearchIndex::open(data_dir).await?;
-        let mut indexer = Indexer::new(search.clone(), Reader::open(data_dir, 1).await?)
-            .map_err(StoreError::from)?;
+        let mut indexer = Indexer::new(search.clone(), Reader::open(data_dir, 1).await?);
         #[expect(
             clippy::disallowed_methods,
             reason = "process wiring: the daemon owns the search indexer task"
@@ -196,11 +192,17 @@ impl Daemon {
         let indexing = tokio::spawn(async move {
             loop {
                 let pause = match indexer.pass().await {
-                    Ok(report) if report.more => Self::INDEX_BUSY_PAUSE,
-                    Ok(_) => Self::INDEX_IDLE_PAUSE,
+                    Ok(report) => {
+                        tracing::debug!(
+                            indexed = report.indexed,
+                            removed = report.removed,
+                            "search index pass"
+                        );
+                        report.pause()
+                    }
                     Err(error) => {
                         tracing::warn!(%error, "search indexing failed; retrying");
-                        Self::INDEX_IDLE_PAUSE
+                        Indexer::IDLE_PAUSE
                     }
                 };
                 tokio::time::sleep(pause).await;
