@@ -67,7 +67,7 @@ test('UI bridge refuses inference, unknown endpoints and writes before making a 
     '/api/sessions/11111111-1111-4111-8111-111111111111/report/extra',
     '/api/turns',
     '/api/turns/not-an-id',
-    '/api/calls/11111111-1111-4111-8111-111111111111/activity/extra',
+    '/api/calls/11111111-1111-4111-8111-111111111111/activity',
     '/api/live/extra',
     '/api/calls/11111111-1111-4111-8111-111111111111/body/headers',
   ]) {
@@ -120,7 +120,6 @@ test('every allowlisted read uses the same bounded read bridge', async () => {
     `/api/sessions/${id}/turns`,
     `/api/sessions/${id}/report`,
     `/api/turns/${id}`,
-    `/api/calls/${id}/activity`,
     '/api/search',
     '/api/exposures',
     '/api/usage',

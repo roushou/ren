@@ -2,7 +2,7 @@ import {
   ApiError,
   CallId,
   ManagementApi,
-  SEARCH_FIELDS,
+  parseSearchField,
   type CallView,
   type ExposureView,
   type Health,
@@ -245,11 +245,9 @@ export interface SearchData {
 export function searchSnapshot(fetcher: typeof fetch, url: URL) {
   const api = new ManagementApi(fetcher);
   const q = (url.searchParams.get('q') ?? '').trim();
-  const raw = url.searchParams.get('field');
-  const field = (SEARCH_FIELDS as readonly string[]).includes(raw ?? '')
-    ? (raw as SearchField)
-    : null;
-  return readSnapshot(`/search?${q}&${field ?? ''}`, async (): Promise<SearchData> => {
+  const field = parseSearchField(url.searchParams.get('field'));
+  const key = new URLSearchParams({ q, field: field ?? '' });
+  return readSnapshot(`/search?${key}`, async (): Promise<SearchData> => {
     if (!q) return { q, field, page: null };
     const query = new URLSearchParams({ q, limit: '50' });
     if (field) query.set('field', field);

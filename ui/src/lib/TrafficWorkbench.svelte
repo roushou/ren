@@ -21,11 +21,12 @@
     streamChip,
     tokenSummary,
     sessionTone,
-    compact,
+    compactOrDash,
   } from './display.ts';
   import {
     type Filters,
     clientChoices,
+    connectChoices,
     sinceChoices,
     emptyFilters,
     trafficParams,
@@ -34,6 +35,7 @@
     turnGroups,
     neighbour,
   } from './traffic.ts';
+  import { harnessLabel } from './activity.ts';
   import { LiveFollow } from './live.ts';
   import Icon from './Icon.svelte';
   import Inspector from './Inspector.svelte';
@@ -327,10 +329,9 @@
         >
         <span
           title="Provider reported; input includes cached context. Not subscription allowance or charges."
-          ><b class="mono">{session.tokens.input === null ? '—' : compact(session.tokens.input)}</b>
+          ><b class="mono">{compactOrDash(session.tokens.input)}</b>
           in ·
-          <b class="mono">{session.tokens.output === null ? '—' : compact(session.tokens.output)}</b
-          > out</span
+          <b class="mono">{compactOrDash(session.tokens.output)}</b> out</span
         >
       </div>{/if}
     <div class="scope-group end">
@@ -586,14 +587,10 @@
             >
           {:else if !loading && !sessionId}<div class="connect-box">
               <div class="connect-tabs" aria-label="Client to connect">
-                {#each ['claude', 'codex', 'pi'] as client}<button
-                    class:active={connectClient === client}
-                    onclick={() => (connectClient = client)}
-                    >{client === 'claude'
-                      ? 'Claude Code'
-                      : client === 'codex'
-                        ? 'Codex'
-                        : 'Pi'}</button
+                {#each connectChoices as choice}<button
+                    class:active={connectClient === choice.run}
+                    onclick={() => (connectClient = choice.run)}
+                    >{harnessLabel(choice.harness)}</button
                   >{/each}
               </div>
               <div class="command-line">

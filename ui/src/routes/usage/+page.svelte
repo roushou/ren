@@ -2,7 +2,7 @@
   import { createSnapshot } from '#lib/snapshot.svelte.ts';
   import { getWorkbench } from '#lib/workbench.svelte.ts';
   import { num, providerMark, providerName, short } from '#lib/api.ts';
-  import { compact, sessionTone } from '#lib/display.ts';
+  import { compactOrDash, sessionTone } from '#lib/display.ts';
   import {
     cacheShare,
     usageMeasures,
@@ -51,8 +51,6 @@
       .sort((a, b) => (b.tokens.input ?? 0) - (a.tokens.input ?? 0))
       .slice(0, 5),
   );
-  const tokens = (value: number | null | undefined) =>
-    value === null || value === undefined ? '—' : compact(value);
 </script>
 
 {#snippet scope()}
@@ -89,12 +87,14 @@
           ><small>{errorRate === null ? '—' : `${(errorRate * 100).toFixed(1)}% of calls`}</small>
         </div>
         <div class="usage-tile">
-          <span>Tokens in</span><strong class="mono">{tokens(totals?.tokens.input)}</strong><small
-            >{share === null ? '—' : `${Math.round(share * 100)}% read from cache`}</small
-          >
+          <span>Tokens in</span><strong class="mono"
+            >{compactOrDash(totals?.tokens.input ?? null)}</strong
+          ><small>{share === null ? '—' : `${Math.round(share * 100)}% read from cache`}</small>
         </div>
         <div class="usage-tile">
-          <span>Tokens out</span><strong class="mono">{tokens(totals?.tokens.output)}</strong>
+          <span>Tokens out</span><strong class="mono"
+            >{compactOrDash(totals?.tokens.output ?? null)}</strong
+          >
         </div>
       </section>
 
@@ -155,8 +155,8 @@
                       class:error-count={!!model.errors}
                       class:zero={!model.errors}>{num(model.errors)}</td
                     >
-                    <td class="mono numeric">{tokens(model.tokens.input)}</td>
-                    <td class="mono numeric">{tokens(model.tokens.output)}</td>
+                    <td class="mono numeric">{compactOrDash(model.tokens.input)}</td>
+                    <td class="mono numeric">{compactOrDash(model.tokens.output)}</td>
                   </tr>
                 {/each}
               </tbody>
@@ -194,8 +194,8 @@
                       class:error-count={!!session.error_count}
                       class:zero={session.error_count === 0}>{num(session.error_count)}</td
                     >
-                    <td class="mono numeric">{tokens(session.tokens.input)}</td>
-                    <td class="mono numeric">{tokens(session.tokens.output)}</td>
+                    <td class="mono numeric">{compactOrDash(session.tokens.input)}</td>
+                    <td class="mono numeric">{compactOrDash(session.tokens.output)}</td>
                   </tr>
                 {/each}
               </tbody>

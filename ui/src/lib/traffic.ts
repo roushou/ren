@@ -1,4 +1,5 @@
-import type { CallId, CallView } from './api.ts';
+import { HARNESSES, type CallId, type CallView } from './api.ts';
+import { harnessLabel } from './activity.ts';
 
 /**
  * The call the inspector shows. A finished live observation of the same call
@@ -26,10 +27,12 @@ export const sinceChoices: { since: Since; label: string; title: string }[] = [
   { since: '24h', label: '24h', title: 'Last 24 hours' },
   { since: '7d', label: '7d', title: 'Last 7 days' },
 ];
-export const clientChoices = [
-  { client: 'claude_code', label: 'Claude Code' },
-  { client: 'codex', label: 'Codex' },
-  { client: 'pi', label: 'Pi' },
+export const clientChoices = HARNESSES.map((client) => ({ client, label: harnessLabel(client) }));
+/** The harnesses `tgv run` launches, by the name it takes for each. */
+export const connectChoices = [
+  { run: 'claude', harness: 'claude_code' },
+  { run: 'codex', harness: 'codex' },
+  { run: 'pi', harness: 'pi' },
 ] as const;
 
 export function parseKind(text: string | null): KindChoice {

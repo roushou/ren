@@ -830,6 +830,7 @@ export class ApiError extends Error {
 // and where a session's context and cache tokens went.
 const harnesses = ['claude_code', 'codex', 'pi'] as const;
 export type Harness = (typeof harnesses)[number];
+export const HARNESSES = harnesses;
 const effectKinds = [
   'read_file',
   'write_file',
@@ -1149,6 +1150,10 @@ const turns = object<Turns>({
 const searchFields = ['prompt', 'reply', 'tool_input', 'tool_output'] as const;
 export type SearchField = (typeof searchFields)[number];
 export const SEARCH_FIELDS = searchFields;
+/** A `?field=` value: a known search field, or null for any other text or none. */
+export function parseSearchField(text: string | null): SearchField | null {
+  return searchFields.find((field) => field === text) ?? null;
+}
 export interface SearchHit {
   call: CallId;
   session: SessionId | null;
@@ -1317,10 +1322,6 @@ export class ManagementApi {
     const query = new URLSearchParams({ limit: '100' });
     if (from_ms !== undefined) query.set('from_ms', String(Math.floor(from_ms)));
     return this.#read(`/api/exposures?${query}`, exposures, signal);
-  }
-  /** What one call's bodies show. */
-  callActivity(id: CallId, signal?: AbortSignal): Promise<CallActivity> {
-    return this.#read(`/api/calls/${id}/activity`, callActivity, signal);
   }
 
   /** `limit` first, the caller's or 100, then the rest of the query. */

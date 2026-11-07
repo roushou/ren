@@ -339,6 +339,16 @@ export function compact(value: number): string {
   return `${(value / 1_000_000).toFixed(1)}M`;
 }
 
+/** A count as `compact` writes it, or an em dash when none was reported. */
+export function compactOrDash(value: number | null): string {
+  return value === null ? '—' : compact(value);
+}
+
+/** A whole percentage, e.g. `87%`, or an em dash when there is none. */
+export function percentOrDash(value: number | null): string {
+  return value === null ? '—' : `${value}%`;
+}
+
 /**
  * Tokens in and out. Input counts cached tokens too, whichever way the
  * provider accounts them, since cached context is most of a coding agent's

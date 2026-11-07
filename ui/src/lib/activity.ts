@@ -4,19 +4,24 @@ import type {
   CallId,
   EffectKind,
   Finding,
+  Harness,
   ResultStatus,
   SearchField,
+  SearchHit,
   SecretKind,
+  SessionId,
   SessionReport,
   ToolResultView,
   TurnId,
   TurnMetrics,
   TurnSummary,
 } from './api.ts';
+import { title } from './api.ts';
 import { assertNever, unrecognised, type Stored } from './decode.ts';
-import { compact, span } from './display.ts';
+import { compact, span, type Tone as DisplayTone } from './display.ts';
 
-export type Tone = 'success' | 'warning' | 'error' | 'neutral';
+/** Activity is read from finished records, so it has no live tone. */
+export type Tone = Exclude<DisplayTone, 'live'>;
 
 /** A finding as one line: what was measured, never a claimed cause. */
 export interface FindingLine {
@@ -86,7 +91,7 @@ export function findingLine(finding: Finding): FindingLine {
     case 'unrecognized':
       return {
         tone: 'neutral',
-        title: finding.text.replaceAll('_', ' '),
+        title: title(finding.text),
         detail: 'A finding this UI does not know.',
         call: null,
         turn: null,
@@ -111,7 +116,7 @@ export function effectLabel(kind: Stored<EffectKind>): string {
     case 'fetch':
       return 'Fetched';
     default:
-      return unrecognised(kind).replaceAll('_', ' ');
+      return title(unrecognised(kind));
   }
 }
 
@@ -127,7 +132,7 @@ export function resultBadge(result: ToolResultView | null): { tone: Tone; label:
     case 'unreported':
       return { tone: 'neutral', label: 'Not reported' };
     default:
-      return { tone: 'neutral', label: unrecognised(status).replaceAll('_', ' ') };
+      return { tone: 'neutral', label: title(unrecognised(status)) };
   }
 }
 
@@ -195,7 +200,7 @@ export function searchFieldLabel(field: Stored<SearchField>): string {
     case 'tool_output':
       return 'Tool output';
     default:
-      return unrecognised(field).replaceAll('_', ' ');
+      return title(unrecognised(field));
   }
 }
 
@@ -220,6 +225,58 @@ export function secretKindLabel(kind: Stored<SecretKind>): string {
     case 'jwt':
       return 'JSON Web Token';
     default:
-      return unrecognised(kind).replaceAll('_', ' ');
+      return title(unrecognised(kind));
   }
+}
+
+/** A harness by the name its maker gives it. */
+export function harnessLabel(harness: Stored<Harness>): string {
+  switch (harness) {
+    case 'claude_code':
+      return 'Claude Code';
+    case 'codex':
+      return 'Codex';
+    case 'pi':
+      return 'Pi';
+    default:
+      return title(unrecognised(harness));
+  }
+}
+
+/** A call, selected in its session's traffic. */
+export function callHref(session: SessionId, call: CallId): string {
+  return `/sessions/${encodeURIComponent(session)}?call=${encodeURIComponent(call)}`;
+}
+
+/** What one turn did. */
+export function turnHref(turn: TurnId): string {
+  return `/turns/${encodeURIComponent(turn)}`;
+}
+
+/** A search hit: its turn, else its call in its session, else the call in Traffic. */
+export function searchHitHref(hit: SearchHit): string {
+  if (hit.turn) return turnHref(hit.turn);
+  if (hit.session) return callHref(hit.session, hit.call);
+  return `/traffic?call=${encodeURIComponent(hit.call)}`;
+}
+
+/** Where a finding's link leads, and what it says. */
+export interface FindingLink {
+  href: string;
+  label: 'Open turn' | 'Open call';
+}
+
+/**
+ * Where a finding leads from a page. A session's report opens the finding's
+ * turn, else its call; a turn's own page opens only the call, since the turn
+ * is already shown.
+ */
+export function findingLink(
+  line: FindingLine,
+  session: SessionId,
+  page: 'session' | 'turn',
+): FindingLink | null {
+  if (page === 'session' && line.turn) return { href: turnHref(line.turn), label: 'Open turn' };
+  if (line.call) return { href: callHref(session, line.call), label: 'Open call' };
+  return null;
 }

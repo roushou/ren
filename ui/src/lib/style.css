@@ -340,9 +340,6 @@ pre {
 .sessions-panel td {
   padding: 9px 14px;
   vertical-align: middle;
-}
-.sessions-panel th,
-.sessions-panel td {
   white-space: nowrap;
 }
 .sessions-panel .numeric + :not(.numeric) {

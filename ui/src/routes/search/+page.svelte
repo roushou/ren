@@ -1,9 +1,9 @@
 <script lang="ts">
   import { createSnapshot } from '#lib/snapshot.svelte.ts';
   import { getWorkbench } from '#lib/workbench.svelte.ts';
-  import { num, clock, SEARCH_FIELDS, type SearchField, type SearchHit } from '#lib/api.ts';
+  import { num, clock, SEARCH_FIELDS, type SearchField } from '#lib/api.ts';
   import { date, sessionTone } from '#lib/display.ts';
-  import { searchFieldLabel, snippetParts } from '#lib/activity.ts';
+  import { searchFieldLabel, searchHitHref, snippetParts } from '#lib/activity.ts';
   import Icon from '#lib/Icon.svelte';
   import type { PageProps } from './$types';
   let { data }: PageProps = $props();
@@ -17,12 +17,6 @@
     if (field) query.set('field', field);
     return `/search?${query}`;
   };
-  const hitHref = (hit: SearchHit) =>
-    hit.turn
-      ? `/turns/${encodeURIComponent(hit.turn)}`
-      : hit.session
-        ? `/sessions/${encodeURIComponent(hit.session)}?call=${encodeURIComponent(hit.call)}`
-        : `/traffic?call=${encodeURIComponent(hit.call)}`;
   /** The input takes the keyboard when the page opens, and on `/`. */
   let input = $state<HTMLInputElement>();
   $effect(() => {
@@ -112,7 +106,7 @@
         <ul class="search-hits">
           {#each page.hits as hit (`${hit.call}-${hit.field}`)}
             <li>
-              <a class="search-hit" href={hitHref(hit)}>
+              <a class="search-hit" href={searchHitHref(hit)}>
                 <span class="search-hit-meta">
                   {#if hit.session}<span class="session-dot tone-{sessionTone(hit.session)}"
                     ></span>{/if}

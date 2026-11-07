@@ -1,14 +1,28 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { ApiError, ManagementApi, SessionId, TurnId } from '../src/lib/api.ts';
+import {
+  ApiError,
+  CallId,
+  ManagementApi,
+  SessionId,
+  TurnId,
+  parseSearchField,
+  type SearchHit,
+} from '../src/lib/api.ts';
 import { ShapeError } from '../src/lib/decode.ts';
 import {
+  callHref,
   effectLabel,
   findingLine,
+  findingLink,
+  harnessLabel,
   resultBadge,
+  searchHitHref,
+  turnHref,
   rowPrompt,
   snippetParts,
   turnRows,
+  type FindingLine,
 } from '../src/lib/activity.ts';
 import { uuid, versioned } from './fixtures.ts';
 
@@ -237,4 +251,68 @@ test('only a 404 reads as an endpoint the daemon lacks', () => {
   assert.equal(ApiError.absentWhenNotFound(new ApiError(404)), null);
   assert.throws(() => ApiError.absentWhenNotFound(new ApiError(503)), ApiError);
   assert.throws(() => ApiError.absentWhenNotFound(new ShapeError('$', 'an object')));
+});
+
+test('harnesses read by name, and an unknown one keeps its text', () => {
+  assert.deepEqual((['claude_code', 'codex', 'pi'] as const).map(harnessLabel), [
+    'Claude Code',
+    'Codex',
+    'Pi',
+  ]);
+  assert.equal(harnessLabel('new_agent' as never), 'new agent');
+});
+
+test('a search field parses from its label and nothing else', () => {
+  assert.equal(parseSearchField('tool_output'), 'tool_output');
+  assert.equal(parseSearchField('prompt'), 'prompt');
+  for (const text of [null, '', 'Prompt', 'tool output', 'everything']) {
+    assert.equal(parseSearchField(text), null);
+  }
+});
+
+test('links to calls, turns, hits, and findings encode their IDs', () => {
+  const sessionId = SessionId.parse(session);
+  const turnId = TurnId.parse(turn);
+  const callId = CallId.parse(call);
+  assert.ok(sessionId && turnId && callId);
+  assert.equal(callHref(sessionId, callId), `/sessions/${session}?call=${call}`);
+  assert.equal(turnHref(turnId), `/turns/${turn}`);
+
+  const hit = (overrides: Partial<SearchHit>): SearchHit => ({
+    call: callId,
+    session: sessionId,
+    turn: turnId,
+    client: 'codex',
+    started_at: 0 as never,
+    field: 'prompt',
+    snippet: '',
+    ...overrides,
+  });
+  assert.equal(searchHitHref(hit({})), `/turns/${turn}`);
+  assert.equal(searchHitHref(hit({ turn: null })), `/sessions/${session}?call=${call}`);
+  assert.equal(searchHitHref(hit({ turn: null, session: null })), `/traffic?call=${call}`);
+
+  const line = (overrides: Partial<FindingLine>): FindingLine => ({
+    tone: 'warning',
+    title: 'Cache rebuilt',
+    detail: '',
+    call: callId,
+    turn: turnId,
+    ...overrides,
+  });
+  // A session report opens the turn first; a turn's page opens only the call.
+  assert.deepEqual(findingLink(line({}), sessionId, 'session'), {
+    href: `/turns/${turn}`,
+    label: 'Open turn',
+  });
+  assert.deepEqual(findingLink(line({ turn: null }), sessionId, 'session'), {
+    href: `/sessions/${session}?call=${call}`,
+    label: 'Open call',
+  });
+  assert.deepEqual(findingLink(line({}), sessionId, 'turn'), {
+    href: `/sessions/${session}?call=${call}`,
+    label: 'Open call',
+  });
+  assert.equal(findingLink(line({ call: null, turn: null }), sessionId, 'session'), null);
+  assert.equal(findingLink(line({ call: null }), sessionId, 'turn'), null);
 });

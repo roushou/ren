@@ -16,6 +16,8 @@ import {
   httpChip,
   modelChip,
   compact,
+  compactOrDash,
+  percentOrDash,
   tokenSummary,
   previewChips,
   span,
@@ -187,6 +189,15 @@ test('builds read like tgv --version, and unknown revisions are kept', () => {
     text: commit.toUpperCase(),
   });
   assert.match(buildLabel(null), /not reported/);
+});
+
+test('a missing count or percentage reads as an em dash', () => {
+  assert.equal(compactOrDash(null), '—');
+  assert.equal(compactOrDash(0), '0');
+  assert.equal(compactOrDash(101_658), '102k');
+  assert.equal(percentOrDash(null), '—');
+  assert.equal(percentOrDash(0), '0%');
+  assert.equal(percentOrDash(87), '87%');
 });
 
 test('token counts are compact and include cached context', () => {

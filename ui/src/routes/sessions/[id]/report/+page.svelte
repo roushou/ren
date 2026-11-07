@@ -1,9 +1,10 @@
 <script lang="ts">
   import { createSnapshot } from '#lib/snapshot.svelte.ts';
   import { getWorkbench } from '#lib/workbench.svelte.ts';
-  import { num, short, clock, providerMark, type CallId, type TurnId } from '#lib/api.ts';
-  import { compact, date, span, sessionTone } from '#lib/display.ts';
-  import { findingLine, rowPrompt, turnRows, type FindingLine } from '#lib/activity.ts';
+  import { num, short, clock, providerMark } from '#lib/api.ts';
+  import { compact, compactOrDash, date, percentOrDash, span, sessionTone } from '#lib/display.ts';
+  import { findingLine, rowPrompt, turnHref, turnRows } from '#lib/activity.ts';
+  import FindingList from '#lib/FindingList.svelte';
   import Icon from '#lib/Icon.svelte';
   import type { PageProps } from './$types';
   let { data }: PageProps = $props();
@@ -14,12 +15,6 @@
   const session = $derived(current?.session);
   const rows = $derived(current ? turnRows(current.report, current.turns) : []);
   const findings = $derived(report ? report.findings.map(findingLine) : []);
-  const tokens = (value: number | null) => (value === null ? '—' : compact(value));
-  const callHref = (call: CallId) =>
-    `/sessions/${encodeURIComponent(data.sessionId)}?call=${encodeURIComponent(call)}`;
-  const turnHref = (turn: TurnId) => `/turns/${encodeURIComponent(turn)}`;
-  const findingHref = (line: FindingLine) =>
-    line.turn ? turnHref(line.turn) : line.call ? callHref(line.call) : null;
 </script>
 
 {#snippet scope()}
@@ -61,7 +56,7 @@
         </div>
         <div class="usage-tile">
           <span>Read from cache</span><strong class="mono"
-            >{totals.cache_hit_percent === null ? '—' : `${totals.cache_hit_percent}%`}</strong
+            >{percentOrDash(totals.cache_hit_percent)}</strong
           ><small>{compact(totals.cache_read_tokens)} of {compact(totals.context_tokens)}</small>
         </div>
         <div class="usage-tile">
@@ -87,18 +82,7 @@
           <span class="muted">Measured against fixed thresholds; causes are not inferred</span>
         </header>
         {#if findings.length}
-          <ul class="finding-list">
-            {#each findings as line, index (index)}
-              {@const href = findingHref(line)}
-              <li>
-                <span class="chip {line.tone}">{line.title}</span>
-                <span class="finding-detail">{line.detail}</span>
-                {#if href}<a class="text-button" {href}
-                    >{line.turn ? 'Open turn' : 'Open call'} <Icon name="arrow" size={12} /></a
-                  >{/if}
-              </li>
-            {/each}
-          </ul>
+          <FindingList {findings} session={data.sessionId} page="session" />
         {:else}
           <p class="quiet-empty">No cache rebuilds or large context steps in this session.</p>
         {/if}
@@ -147,15 +131,11 @@
                       >{metrics.idle_before_ms === null ? '—' : span(metrics.idle_before_ms)}</td
                     >
                     <td class="mono numeric"
-                      >{tokens(metrics.context_start_tokens)} → {tokens(
+                      >{compactOrDash(metrics.context_start_tokens)} → {compactOrDash(
                         metrics.context_end_tokens,
                       )}</td
                     >
-                    <td class="mono numeric"
-                      >{metrics.cache_hit_percent === null
-                        ? '—'
-                        : `${metrics.cache_hit_percent}%`}</td
-                    >
+                    <td class="mono numeric">{percentOrDash(metrics.cache_hit_percent)}</td>
                     <td class="mono numeric">{compact(metrics.cache_written_tokens)}</td>
                     <td class="mono numeric">{compact(metrics.output_tokens)}</td>
                   </tr>

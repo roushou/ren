@@ -6,6 +6,7 @@ import {
   recorderSnapshot,
   sessionsSnapshot,
   offPageSelection,
+  searchSnapshot,
   trafficSnapshot,
 } from '../src/lib/loaders.ts';
 import { ApiVersionError, ManagementApi, SessionId } from '../src/lib/api.ts';
@@ -178,4 +179,38 @@ test('session pages read the session listing with only a cursor', async () => {
   ]);
   assert.equal(page.value?.next, '5:cursor');
   assert.equal(SessionId.parse('../evil'), null);
+});
+
+test('search reads nothing without a query and keeps only a known field', async () => {
+  const empty = await searchSnapshot(async () => {
+    throw new Error('Must not search without a query');
+  }, new URL('http://ui.test/search?q=%20%20&field=prompt'));
+  assert.deepEqual(empty.value, { q: '', field: 'prompt', page: null });
+
+  const calls: string[] = [];
+  const fetcher: typeof fetch = async (input) => {
+    calls.push(path(input));
+    return versioned({ hits: [], indexed_calls: 3 });
+  };
+  const known = await searchSnapshot(
+    fetcher,
+    new URL('http://ui.test/search?q=a%26b&field=tool_output'),
+  );
+  assert.deepEqual(known.value, {
+    q: 'a&b',
+    field: 'tool_output',
+    page: { hits: [], indexed_calls: 3 },
+  });
+  const unknown = await searchSnapshot(
+    fetcher,
+    new URL('http://ui.test/search?q=a&field=everything'),
+  );
+  assert.equal(unknown.value?.field, null);
+  assert.deepEqual(calls, [
+    '/api/search?q=a%26b&limit=50&field=tool_output',
+    '/api/search?q=a&limit=50',
+  ]);
+  // The key encodes the query, so `&` in the text stays part of it.
+  assert.equal(known.key, '/search?q=a%26b&field=tool_output');
+  assert.equal(unknown.key, '/search?q=a&field=');
 });

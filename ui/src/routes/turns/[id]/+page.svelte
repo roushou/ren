@@ -1,9 +1,17 @@
 <script lang="ts">
   import { createSnapshot } from '#lib/snapshot.svelte.ts';
   import { getWorkbench } from '#lib/workbench.svelte.ts';
-  import { num, short, clock, title, type CallId } from '#lib/api.ts';
-  import { compact, date, span, sessionTone } from '#lib/display.ts';
-  import { effectLabel, findingLine, omitted, resultBadge } from '#lib/activity.ts';
+  import { num, short, clock, title } from '#lib/api.ts';
+  import { compactOrDash, date, span, sessionTone } from '#lib/display.ts';
+  import {
+    callHref,
+    effectLabel,
+    findingLine,
+    harnessLabel,
+    omitted,
+    resultBadge,
+  } from '#lib/activity.ts';
+  import FindingList from '#lib/FindingList.svelte';
   import Icon from '#lib/Icon.svelte';
   import type { PageProps } from './$types';
   let { data }: PageProps = $props();
@@ -11,10 +19,6 @@
   const snapshot = createSnapshot(() => data.turn);
   const turn = $derived(snapshot.current.value);
   const findings = $derived(turn ? turn.findings.map(findingLine) : []);
-  const clients: Record<string, string> = { claude_code: 'Claude Code', codex: 'Codex', pi: 'Pi' };
-  const callHref = (call: CallId) =>
-    turn ? `/sessions/${encodeURIComponent(turn.session)}?call=${encodeURIComponent(call)}` : '#';
-  const tokens = (value: number | null) => (value === null ? '—' : compact(value));
 </script>
 
 {#snippet scope()}
@@ -24,7 +28,7 @@
       >{turn ? short(turn.native_id) : short(data.turnId)}</strong
     >
     <span class="muted"
-      >Turn{turn?.client ? ` · ${clients[turn.client] ?? title(turn.client)}` : ''}{turn?.started_at
+      >Turn{turn?.client ? ` · ${harnessLabel(turn.client)}` : ''}{turn?.started_at
         ? ` · ${date(turn.started_at)} ${clock(turn.started_at)}`
         : ''}</span
     >
@@ -92,17 +96,7 @@
       {#if findings.length}
         <section class="panel usage-panel" aria-labelledby="turn-findings-title">
           <header class="panel-heading"><h2 id="turn-findings-title">Findings</h2></header>
-          <ul class="finding-list">
-            {#each findings as line, index (index)}
-              <li>
-                <span class="chip {line.tone}">{line.title}</span>
-                <span class="finding-detail">{line.detail}</span>
-                {#if line.call}<a class="text-button" href={callHref(line.call)}
-                    >Open call <Icon name="arrow" size={12} /></a
-                  >{/if}
-              </li>
-            {/each}
-          </ul>
+          <FindingList {findings} session={turn.session} page="turn" />
         </section>
       {/if}
 
@@ -134,17 +128,17 @@
               <span class="mono">{clock(call.started_at)}</span>
               <span class="model-name">{call.model ?? 'No model reported'}</span>
               <span class="muted mono" title="Provider-reported tokens; not cost"
-                >{tokens(call.metrics.context_tokens)} context · {tokens(
+                >{compactOrDash(call.metrics.context_tokens)} context · {compactOrDash(
                   call.metrics.cache_written_tokens,
-                )} written · {tokens(call.metrics.output_tokens)} out{call.metrics.duration_ms ===
-                null
+                )} written · {compactOrDash(call.metrics.output_tokens)} out{call.metrics
+                  .duration_ms === null
                   ? ''
                   : ` · ${span(call.metrics.duration_ms)}`}</span
               >
               {#each call.limitations as limitation (limitation)}<span class="chip warning"
                   >{title(limitation)}</span
                 >{/each}
-              <a class="text-button end" href={callHref(call.call)}
+              <a class="text-button end" href={callHref(turn.session, call.call)}
                 >Inspect <Icon name="arrow" size={12} /></a
               >
             </header>

@@ -4,7 +4,7 @@
   import { createSnapshot } from '#lib/snapshot.svelte.ts';
   import { getWorkbench } from '#lib/workbench.svelte.ts';
   import { bytes, num, providerMark, providerName, short } from '#lib/api.ts';
-  import { compact, sessionTone, streamChip } from '#lib/display.ts';
+  import { compactOrDash, sessionTone, streamChip } from '#lib/display.ts';
   import { activeSessions, ago, healthLine, problems } from '#lib/overview.ts';
   import { cacheShare, usagePoints } from '#lib/usage.ts';
   import UsageChart from '#lib/UsageChart.svelte';
@@ -36,8 +36,6 @@
   const totals = $derived(current?.usage.totals);
   const share = $derived(totals ? cacheShare(totals) : null);
   const points = $derived(current ? usagePoints(current.usage.hours, '24h', current.now) : []);
-  const tokens = (value: number | null | undefined) =>
-    value === null || value === undefined ? '—' : compact(value);
   const hour = (start: number) => {
     const date = new Date(start);
     const time = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -120,7 +118,7 @@
                     <span class="mono">{short(session.native_id)}</span>
                     <small>{providerName(session.provider)}</small>
                     <span class="overview-meta mono"
-                      >{num(session.call_count)} calls · {tokens(session.tokens.input)} in · {ago(
+                      >{num(session.call_count)} calls · {compactOrDash(session.tokens.input)} in · {ago(
                         session.last_seen,
                         now,
                       )}</span
@@ -177,12 +175,14 @@
             >
           </div>
           <div class="usage-tile">
-            <span>Tokens in</span><strong class="mono">{tokens(totals?.tokens.input)}</strong><small
-              >{share === null ? '—' : `${Math.round(share * 100)}% from cache`}</small
-            >
+            <span>Tokens in</span><strong class="mono"
+              >{compactOrDash(totals?.tokens.input ?? null)}</strong
+            ><small>{share === null ? '—' : `${Math.round(share * 100)}% from cache`}</small>
           </div>
           <div class="usage-tile">
-            <span>Tokens out</span><strong class="mono">{tokens(totals?.tokens.output)}</strong>
+            <span>Tokens out</span><strong class="mono"
+              >{compactOrDash(totals?.tokens.output ?? null)}</strong
+            >
           </div>
         </div>
         {#if totals?.calls}<UsageChart

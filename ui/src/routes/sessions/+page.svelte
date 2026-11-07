@@ -3,7 +3,7 @@
   import { createSnapshot } from '#lib/snapshot.svelte.ts';
   import { getWorkbench } from '#lib/workbench.svelte.ts';
   import { num, short, clock, providerName, providerMark } from '#lib/api.ts';
-  import { compact, date, span, sessionTone } from '#lib/display.ts';
+  import { compactOrDash, date, span, sessionTone } from '#lib/display.ts';
   import Icon from '#lib/Icon.svelte';
   import type { PageProps } from './$types';
   let { data }: PageProps = $props();
@@ -76,10 +76,7 @@
                 ><td
                   class="mono numeric"
                   title="Provider reported; input includes cached context. Not subscription allowance or charges."
-                  >{s.tokens.input === null ? '—' : compact(s.tokens.input)} · {s.tokens.output ===
-                  null
-                    ? '—'
-                    : compact(s.tokens.output)}</td
+                  >{compactOrDash(s.tokens.input)} · {compactOrDash(s.tokens.output)}</td
                 ><td class="mono numeric">{span(s.last_seen - s.first_seen)}</td><td
                   ><span>{date(s.last_seen)}</span><small>{clock(s.last_seen)}</small></td
                 ><td
