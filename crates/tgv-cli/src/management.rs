@@ -16,7 +16,7 @@ use tgv_harness::{endpoint::GatewayEndpoint, host::HostEnv};
 use tgv_protocol::direction::Direction;
 use tgv_recorder::id::{CallId, SessionId, TurnId};
 use tgv_store::query::{CallFilter, CallQuery, Cursor, PageLimit, TimeRange};
-use tgv_store::search::SearchQuery;
+use tgv_store::search::{ExposureQuery, SearchQuery};
 
 /// Where a history or control command acts.
 pub enum Target {
@@ -307,6 +307,28 @@ impl Management {
                 .filter_map(|(name, value)| value.map(|value| (name, value))),
         );
         Ok(Value::Object(self.read("/api/search", &params).await?))
+    }
+
+    /// `GET /api/exposures`: credentials calls carried, newest first.
+    pub async fn exposures(&self, query: &ExposureQuery) -> Result<Value, ManagementError> {
+        let mut params = vec![("limit", query.limit.get().to_string())];
+        let labels = [
+            ("session", query.session.map(|session| session.to_string())),
+            (
+                "from_ms",
+                query.time.from().map(|time| time.as_millis().to_string()),
+            ),
+            (
+                "until_ms",
+                query.time.until().map(|time| time.as_millis().to_string()),
+            ),
+        ];
+        params.extend(
+            labels
+                .into_iter()
+                .filter_map(|(name, value)| value.map(|value| (name, value))),
+        );
+        Self::field(self.read("/api/exposures", &params).await?, "exposures")
     }
 
     /// `GET /api/turns/{id}`: one turn's activity.

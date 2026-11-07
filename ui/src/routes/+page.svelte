@@ -21,6 +21,7 @@
       gateway.current.value?.health ?? null,
       gateway.current.value?.storage ?? null,
       gateway.current.error?.message ?? null,
+      current?.exposures ?? null,
     ),
   );
   // Elapsed times tick between refreshes.

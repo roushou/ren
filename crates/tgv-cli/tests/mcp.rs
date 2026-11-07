@@ -159,7 +159,7 @@ async fn agents_read_recorded_traffic_over_stdio_in_both_protocol_eras() {
         replies[0]["result"]["_meta"]["io.modelcontextprotocol/serverInfo"]["version"],
         tgv_cli::Cli::build().version()
     );
-    assert_eq!(replies[1]["result"]["tools"].as_array().unwrap().len(), 11);
+    assert_eq!(replies[1]["result"]["tools"].as_array().unwrap().len(), 12);
     let body = data(&replies[2]);
     assert_eq!(body["extent"], "complete");
     assert_eq!(body["text"], payload);
@@ -294,10 +294,13 @@ async fn a_turns_activity_reads_the_same_locally_through_a_gateway_and_over_mcp(
     daemon.start().await.unwrap();
     let gateway = format!("http://{}", daemon.address().unwrap());
     let client = reqwest::Client::builder().no_proxy().build().unwrap();
+    // A synthetic key in the client's injected context, assembled at run
+    // time so no token-shaped literal is in the source.
+    let secret = format!("sk-proj-{}Q9z8", "Ab1Cd2Ef3".repeat(4));
     let requests = [
         json!({ "model": "fixture", "messages": [
             { "role": "user", "content": [
-                { "type": "text", "text": "<system-reminder>context</system-reminder>" },
+                { "type": "text", "text": format!("<system-reminder>OPENAI_API_KEY={secret}</system-reminder>") },
                 { "type": "text", "text": "Why do the tests fail?" },
             ] },
         ] }),
@@ -369,15 +372,6 @@ async fn a_turns_activity_reads_the_same_locally_through_a_gateway_and_over_mcp(
     let activity = cli_json(&home, &["--data-dir", data_dir, "activity", &call]);
     assert_eq!(activity["reply"]["text"], "Tests fail in parser.rs.");
 
-    let report = cli_json(&home, &["--data-dir", data_dir, "report", &session_id]);
-    assert_eq!(
-        cli_json(&home, &["report", &session_id, "--gateway", &gateway]),
-        report
-    );
-    assert_eq!(report["totals"]["calls"], 2);
-    assert_eq!(report["turns"][0]["call_count"], 2);
-    assert_eq!(report["turns"][0]["output_tokens"], 9);
-
     // The daemon's indexer makes the turn searchable shortly after it ends.
     let mut found = Value::Null;
     for _ in 0..150 {
@@ -405,6 +399,15 @@ async fn a_turns_activity_reads_the_same_locally_through_a_gateway_and_over_mcp(
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     }
     assert_eq!(found["indexed_calls"], 2, "{found}");
+    // Indexed now, so both reports include the same exposures.
+    let report = cli_json(&home, &["--data-dir", data_dir, "report", &session_id]);
+    assert_eq!(
+        cli_json(&home, &["report", &session_id, "--gateway", &gateway]),
+        report
+    );
+    assert_eq!(report["totals"]["calls"], 2);
+    assert_eq!(report["turns"][0]["call_count"], 2);
+    assert_eq!(report["turns"][0]["output_tokens"], 9);
     assert_eq!(found["hits"][0]["field"], "tool_output");
     assert_eq!(found["hits"][0]["snippet"], "test «parser» ... FAILED");
     assert_eq!(found["hits"][0]["session"], session_id.as_str());
@@ -445,6 +448,31 @@ async fn a_turns_activity_reads_the_same_locally_through_a_gateway_and_over_mcp(
             .is_empty()
     );
 
+    // The key is an exposure: listed, in the report, and never shown.
+    let exposures = cli_json(&home, &["--data-dir", data_dir, "exposures"]);
+    assert_eq!(
+        cli_json(&home, &["exposures", "--gateway", &gateway]),
+        exposures
+    );
+    assert_eq!(exposures.as_array().unwrap().len(), 1, "{exposures}");
+    assert_eq!(exposures[0]["kind"], "openai_key");
+    assert_eq!(exposures[0]["field"], "prompt");
+    assert_eq!(exposures[0]["hint"], "sk-proj-…Q9z8");
+    let report = cli_json(&home, &["--data-dir", data_dir, "report", &session_id]);
+    let kinds: Vec<_> = report["findings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|finding| finding["kind"].as_str().unwrap().to_owned())
+        .collect();
+    assert_eq!(kinds, ["secret_exposure"]);
+    let turn_findings =
+        cli_json(&home, &["--data-dir", data_dir, "turn", &turn_id])["findings"].clone();
+    assert!(turn_findings.to_string().contains("secret_exposure"));
+    for shown in [&exposures, &report, &turn_findings] {
+        assert!(!shown.to_string().contains(&secret), "{shown}");
+    }
+
     // An agent asks the same over MCP.
     let replies = session(
         &home,
@@ -475,6 +503,11 @@ async fn a_turns_activity_reads_the_same_locally_through_a_gateway_and_over_mcp(
                 "tools/call",
                 json!({ "name": "search_history", "arguments": { "query": "parser", "field": "tool_output" } }),
             ),
+            modern(
+                6,
+                "tools/call",
+                json!({ "name": "list_exposures", "arguments": {} }),
+            ),
         ],
     );
     assert_eq!(data(&replies[0]), turns);
@@ -488,6 +521,7 @@ async fn a_turns_activity_reads_the_same_locally_through_a_gateway_and_over_mcp(
     let mut over_mcp = data(&replies[4]);
     over_mcp.as_object_mut().unwrap().remove("api_version");
     assert_eq!(over_mcp, found);
+    assert_eq!(data(&replies[5]), exposures);
 
     daemon.shutdown();
     daemon.wait().await.unwrap();

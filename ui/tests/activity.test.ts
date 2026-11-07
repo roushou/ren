@@ -194,3 +194,33 @@ test('snippets split into marked matches without trusting any markup', () => {
   assert.deepEqual(snippetParts('a «b <script>'), [{ text: 'a «b <script>', match: false }]);
   assert.deepEqual(snippetParts(''), []);
 });
+
+test('an exposed secret reads as what happened, never the secret', () => {
+  const line = findingLine({
+    kind: 'secret_exposure',
+    call: uuid(3) as never,
+    turn: null,
+    field: 'tool_output',
+    secret: 'github_token',
+    hint: 'ghp_…wxyz',
+    fingerprint: '0123456789abcdef',
+    count: 2,
+  });
+  assert.equal(line.tone, 'error');
+  assert.equal(line.title, 'Secret exposed');
+  assert.equal(
+    line.detail,
+    'GitHub token ghp_…wxyz in the tool output, sent to the provider (2 times). Rotate it: TGV cannot recall it.',
+  );
+  const reply = findingLine({
+    kind: 'secret_exposure',
+    call: uuid(3) as never,
+    turn: null,
+    field: 'reply',
+    secret: 'jwt',
+    hint: 'eyJ…abcd',
+    fingerprint: 'f',
+    count: 1,
+  });
+  assert.match(reply.detail, /^JSON Web Token eyJ…abcd in the model's reply\./);
+});

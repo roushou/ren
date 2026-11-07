@@ -10,6 +10,7 @@
 
 use crate::activity::{Excerpt, ReadCall};
 use crate::query::{PageLimit, TimeRange};
+use crate::secrets::{ScannerError, SecretKind, SecretScanner};
 use crate::view::{Columns, FileUsage, IndexUsage};
 use crate::{Reader, Store, StoreError};
 use serde::Serialize;
@@ -58,53 +59,82 @@ pub struct CallDocuments {
     pub client: Option<Harness>,
     pub started_at: UnixMillis,
     pub documents: Vec<Document>,
+    /// Secrets the call carried; never the secrets themselves.
+    pub exposures: Vec<Exposure>,
 }
 
 impl ReadCall {
     /// The call's documents, each cut to `max_chars`.
-    pub fn documents(&self, max_chars: usize) -> CallDocuments {
+    /// The call's documents, each cut to `max_chars` after its secrets are
+    /// redacted, and the secrets found. The scan covers all of the newest
+    /// user input, including context the client added, since that is sent
+    /// to the provider too; the prompt document keeps only the user's words.
+    pub fn documents(&self, max_chars: usize, scanner: &SecretScanner) -> CallDocuments {
         let harness = self.harness();
         let mut documents = Vec::new();
-        let mut push = |field, text: String| {
+        let mut exposures: Vec<Exposure> = Vec::new();
+        let mut scan = |field: SearchField, text: &str| {
+            for detection in scanner.redact(text).1 {
+                match exposures.iter_mut().find(|known| {
+                    known.field == field
+                        && known.kind == detection.kind
+                        && known.fingerprint == detection.fingerprint
+                }) {
+                    Some(known) => known.count = known.count.saturating_add(1),
+                    None => exposures.push(Exposure {
+                        field,
+                        kind: detection.kind,
+                        hint: detection.hint,
+                        fingerprint: detection.fingerprint,
+                        count: 1,
+                    }),
+                }
+            }
+        };
+        let reply = self.response.reply.clone();
+        let tool_input = self
+            .response
+            .tool_uses
+            .iter()
+            .map(|tool| {
+                let targets: Vec<String> = harness
+                    .map(|harness| harness.effects(tool))
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|effect| effect.target)
+                    .collect();
+                let input = match &tool.input {
+                    tgv_protocol::activity::ToolInput::Json(value) => value.to_string(),
+                    tgv_protocol::activity::ToolInput::Text(text) => text.clone(),
+                };
+                format!("{} {} {}", tool.name, targets.join(" "), input)
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        let tool_output = self
+            .request
+            .tool_results
+            .iter()
+            .map(|result| result.output.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
+        scan(SearchField::Prompt, &self.request.user_text.join("\n"));
+        scan(SearchField::Reply, &reply);
+        scan(SearchField::ToolInput, &tool_input);
+        scan(SearchField::ToolOutput, &tool_output);
+        for (field, text) in [
+            (SearchField::Prompt, self.prompt().unwrap_or_default()),
+            (SearchField::Reply, reply),
+            (SearchField::ToolInput, tool_input),
+            (SearchField::ToolOutput, tool_output),
+        ] {
             if !text.trim().is_empty() {
                 documents.push(Document {
                     field,
-                    text: Excerpt::cut(&text, max_chars).text,
+                    text: Excerpt::cut(&scanner.redact(&text).0, max_chars).text,
                 });
             }
-        };
-        push(SearchField::Prompt, self.prompt().unwrap_or_default());
-        push(SearchField::Reply, self.response.reply.clone());
-        push(
-            SearchField::ToolInput,
-            self.response
-                .tool_uses
-                .iter()
-                .map(|tool| {
-                    let targets: Vec<String> = harness
-                        .map(|harness| harness.effects(tool))
-                        .unwrap_or_default()
-                        .into_iter()
-                        .map(|effect| effect.target)
-                        .collect();
-                    let input = match &tool.input {
-                        tgv_protocol::activity::ToolInput::Json(value) => value.to_string(),
-                        tgv_protocol::activity::ToolInput::Text(text) => text.clone(),
-                    };
-                    format!("{} {} {}", tool.name, targets.join(" "), input)
-                })
-                .collect::<Vec<_>>()
-                .join("\n"),
-        );
-        push(
-            SearchField::ToolOutput,
-            self.request
-                .tool_results
-                .iter()
-                .map(|result| result.output.as_str())
-                .collect::<Vec<_>>()
-                .join("\n"),
-        );
+        }
         CallDocuments {
             call: self.view.id,
             session: self.view.session,
@@ -112,8 +142,20 @@ impl ReadCall {
             client: harness,
             started_at: self.view.started_at,
             documents,
+            exposures,
         }
     }
+}
+
+/// A secret a call carried, by field: what the scanner keeps of it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Exposure {
+    pub field: SearchField,
+    pub kind: SecretKind,
+    pub hint: String,
+    pub fingerprint: String,
+    /// How often it appears in the field.
+    pub count: u64,
 }
 
 /// Why search text was refused.
@@ -190,6 +232,29 @@ pub struct SearchQuery {
     pub limit: PageLimit,
 }
 
+/// Which exposures to list.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExposureQuery {
+    pub session: Option<SessionId>,
+    pub time: TimeRange,
+    pub limit: PageLimit,
+}
+
+/// A secret one call carried, as listed: never the secret itself.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ExposureView {
+    pub call: CallId,
+    pub session: Option<SessionId>,
+    pub turn: Option<TurnId>,
+    pub client: Option<Stored<Harness>>,
+    pub started_at: UnixMillis,
+    pub field: Stored<SearchField>,
+    pub kind: Stored<SecretKind>,
+    pub hint: String,
+    pub fingerprint: String,
+    pub count: u64,
+}
+
 /// One matching document.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct SearchHit {
@@ -220,10 +285,12 @@ pub struct SearchIndex {
 impl SearchIndex {
     pub const FILE: &str = "search.sqlite3";
     /// The index format. Another version on disk is dropped and rebuilt.
-    pub const VERSION: i64 = 1;
+    pub const VERSION: i64 = 2;
     /// The most characters of one field of one call that are indexed.
     pub const FIELD_CHARS: usize = 32 * 1024;
-    const SCHEMA: [&str; 3] = [
+    const SCHEMA: [&str; 5] = [
+        "CREATE TABLE IF NOT EXISTS exposures (call TEXT NOT NULL, field TEXT NOT NULL, kind TEXT NOT NULL, hint TEXT NOT NULL, fingerprint TEXT NOT NULL, count INTEGER NOT NULL)",
+        "CREATE INDEX IF NOT EXISTS exposures_call ON exposures(call)",
         "CREATE TABLE IF NOT EXISTS indexed_calls (call TEXT PRIMARY KEY, session TEXT, turn TEXT, client TEXT, started_at INTEGER NOT NULL) WITHOUT ROWID",
         "CREATE INDEX IF NOT EXISTS indexed_calls_started ON indexed_calls(started_at)",
         "CREATE VIRTUAL TABLE IF NOT EXISTS documents USING fts5(text, call UNINDEXED, field UNINDEXED, tokenize = 'unicode61 remove_diacritics 2')",
@@ -249,6 +316,7 @@ impl SearchIndex {
         if version != Self::VERSION {
             let mut tx = pool.begin().await?;
             for drop in [
+                "DROP TABLE IF EXISTS exposures",
                 "DROP TABLE IF EXISTS documents",
                 "DROP TABLE IF EXISTS indexed_calls",
             ] {
@@ -348,6 +416,17 @@ impl SearchIndex {
                 .bind(i64::try_from(call.started_at.as_millis()).unwrap_or(i64::MAX))
                 .execute(&mut *tx)
                 .await?;
+            for exposure in &call.exposures {
+                sqlx::query("INSERT INTO exposures(call, field, kind, hint, fingerprint, count) VALUES (?, ?, ?, ?, ?, ?)")
+                    .bind(&id)
+                    .bind(exposure.field.label())
+                    .bind(exposure.kind.label())
+                    .bind(&exposure.hint)
+                    .bind(&exposure.fingerprint)
+                    .bind(i64::try_from(exposure.count).unwrap_or(i64::MAX))
+                    .execute(&mut *tx)
+                    .await?;
+            }
             for document in &call.documents {
                 sqlx::query("INSERT INTO documents(text, call, field) VALUES (?, ?, ?)")
                     .bind(&document.text)
@@ -402,7 +481,7 @@ impl SearchIndex {
             return Ok(());
         }
         let mut tx = self.pool.begin().await?;
-        for table in ["documents", "indexed_calls"] {
+        for table in ["exposures", "documents", "indexed_calls"] {
             let mut sql =
                 QueryBuilder::<Sqlite>::new(format!("DELETE FROM {table} WHERE call IN ("));
             let mut list = sql.separated(", ");
@@ -463,6 +542,48 @@ impl SearchIndex {
         })
     }
 
+    /// Secrets calls carried, newest call first.
+    pub async fn exposures(&self, query: &ExposureQuery) -> Result<Vec<ExposureView>, StoreError> {
+        let mut sql = QueryBuilder::<Sqlite>::new(
+            "SELECT e.call, e.field, e.kind, e.hint, e.fingerprint, e.count, c.session, c.turn, c.client, c.started_at FROM exposures e JOIN indexed_calls c ON c.call = e.call WHERE 1 = 1",
+        );
+        if let Some(session) = query.session {
+            sql.push(" AND c.session = ").push_bind(session.to_string());
+        }
+        if let Some(from) = query.time.from() {
+            sql.push(" AND c.started_at >= ")
+                .push_bind(i64::try_from(from.as_millis()).unwrap_or(i64::MAX));
+        }
+        if let Some(until) = query.time.until() {
+            sql.push(" AND c.started_at <= ")
+                .push_bind(i64::try_from(until.as_millis()).unwrap_or(i64::MAX));
+        }
+        sql.push(" ORDER BY c.started_at DESC, e.rowid LIMIT ")
+            .push_bind(i64::from(query.limit.get()));
+        sql.build()
+            .fetch_all(&self.pool)
+            .await?
+            .iter()
+            .map(|row| {
+                let columns = Columns(row);
+                Ok(ExposureView {
+                    call: columns.id("call")?,
+                    session: columns.optional_id("session")?,
+                    turn: columns.optional_id("turn")?,
+                    client: columns
+                        .text("client")?
+                        .map(|label| Stored::from_label(&label)),
+                    started_at: columns.time("started_at")?,
+                    field: columns.label("field")?,
+                    kind: columns.label("kind")?,
+                    hint: columns.text("hint")?.unwrap_or_default(),
+                    fingerprint: columns.text("fingerprint")?.unwrap_or_default(),
+                    count: columns.count("count")?,
+                })
+            })
+            .collect()
+    }
+
     pub async fn indexed_count(&self) -> Result<u64, StoreError> {
         let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM indexed_calls")
             .fetch_one(&self.pool)
@@ -492,6 +613,7 @@ pub struct PassReport {
 pub struct Indexer {
     index: SearchIndex,
     reader: Reader,
+    scanner: SecretScanner,
     /// The last finished call indexed or skipped, by end time and ID.
     cursor: Option<(UnixMillis, CallId)>,
     /// Where the next retention sweep resumes.
@@ -509,13 +631,14 @@ impl Indexer {
     /// end shortly after its end time, so a later commit can sort earlier.
     const SLACK_MS: u64 = 60_000;
 
-    pub fn new(index: SearchIndex, reader: Reader) -> Self {
-        Self {
+    pub fn new(index: SearchIndex, reader: Reader) -> Result<Self, ScannerError> {
+        Ok(Self {
             index,
             reader,
+            scanner: SecretScanner::new()?,
             cursor: None,
             sweep_after: None,
-        }
+        })
     }
 
     pub async fn pass(&mut self) -> Result<PassReport, StoreError> {
@@ -536,7 +659,7 @@ impl Indexer {
             }
             match self
                 .reader
-                .read_documents(*call, SearchIndex::FIELD_CHARS)
+                .read_documents(*call, SearchIndex::FIELD_CHARS, &self.scanner)
                 .await
             {
                 Ok(documents) => batch.push(documents),

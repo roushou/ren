@@ -133,6 +133,7 @@ fn a_turn_joins_prompt_tool_calls_results_and_effects() {
         vec![first, second, third],
         0,
         ActivityBudget::DEFAULT,
+        &crate::secrets::SecretScanner::new().unwrap(),
     );
     assert_eq!(turn.client, Some(Harness::ClaudeCode));
     assert_eq!(
@@ -199,7 +200,13 @@ fn codex_exit_codes_and_unattributed_calls() {
         },
         response: ResponseActivity::default(),
     };
-    let turn = TurnActivity::assemble(head(), vec![codex, answer], 3, ActivityBudget::DEFAULT);
+    let turn = TurnActivity::assemble(
+        head(),
+        vec![codex, answer],
+        3,
+        ActivityBudget::DEFAULT,
+        &crate::secrets::SecretScanner::new().unwrap(),
+    );
     assert_eq!(turn.commands, ["make"]);
     assert_eq!(turn.failed_tool_calls, 1);
     assert_eq!(turn.omitted_calls, 3);
@@ -373,7 +380,13 @@ mod report {
             },
             response: ResponseActivity::default(),
         };
-        let turn = TurnActivity::assemble(head(), vec![first, second], 0, ActivityBudget::DEFAULT);
+        let turn = TurnActivity::assemble(
+            head(),
+            vec![first, second],
+            0,
+            ActivityBudget::DEFAULT,
+            &crate::secrets::SecretScanner::new().unwrap(),
+        );
         let json = serde_json::to_value(&turn.findings).unwrap();
         let first_call = CallId::restore(id(1)).to_string();
         let failed_calls = vec![first_call.clone(); 3];
@@ -399,4 +412,61 @@ mod report {
         );
         assert_eq!(turn.calls[0].metrics.duration_ms, Some(500));
     }
+}
+
+#[test]
+fn secrets_a_turn_carried_are_findings_without_the_secret() {
+    use crate::activity::report::Finding;
+    // Assembled at run time: no token-shaped literal in the source.
+    let key = format!("sk-ant-{}a1b2", "api03xY9z".repeat(5));
+    let call = ReadCall {
+        view: view(1, HintSource::ClaudeCodeHeaders),
+        request: RequestActivity {
+            // Client context is sent to the provider too: it is scanned.
+            user_text: vec![
+                format!("<system-reminder>ANTHROPIC_API_KEY={key}</system-reminder>"),
+                "Deploy it".to_owned(),
+            ],
+            tool_results: vec![result(
+                "a",
+                ResultStatus::Succeeded,
+                &format!("export K={key}"),
+            )],
+            limitations: Vec::new(),
+        },
+        response: ResponseActivity::default(),
+    };
+    let scanner = crate::secrets::SecretScanner::new().unwrap();
+    let documents = call.documents(64, &scanner);
+    assert_eq!(documents.exposures.len(), 2);
+    assert!(
+        documents
+            .exposures
+            .iter()
+            .all(|exposure| exposure.hint == "sk-ant-…a1b2")
+    );
+    // The prompt document holds only the user's words; tool output is
+    // indexed redacted.
+    let texts: Vec<_> = documents
+        .documents
+        .iter()
+        .map(|document| document.text.as_str())
+        .collect();
+    assert_eq!(texts, ["Deploy it", "export K=«redacted: anthropic_key»"]);
+
+    let turn = TurnActivity::assemble(head(), vec![call], 0, ActivityBudget::DEFAULT, &scanner);
+    let json = serde_json::to_string(&turn.findings).unwrap();
+    assert!(!json.contains("api03"), "{json}");
+    let fields: Vec<_> = turn
+        .findings
+        .iter()
+        .map(|finding| match finding {
+            Finding::SecretExposure(exposure) => exposure.field.label().to_owned(),
+            other @ (Finding::CacheRebuild(_)
+            | Finding::ContextGrowth(_)
+            | Finding::LargeToolOutput(_)
+            | Finding::RepeatedFailure(_)) => panic!("{other:?}"),
+        })
+        .collect();
+    assert_eq!(fields, ["prompt", "tool_output"]);
 }

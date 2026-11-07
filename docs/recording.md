@@ -43,7 +43,9 @@ backed up, and pruned.
 - `search.sqlite3` is a full-text index of what calls show (prompts, replies,
   tool input and output; see [search](api.md#search)). It is derived from the
   bodies above, never the source of truth: delete it and the daemon rebuilds it.
-  It holds excerpts of the same private content, owner-only.
+  It holds excerpts of the same private content, owner-only, with credentials in
+  well-known formats replaced by `«redacted: kind»`; their kinds, masked hints,
+  and fingerprints are listed as [exposures](api.md#exposed-secrets).
 - Records commit in groups every 50 ms (`capture.commit_interval_ms`) or sooner
   under load. Accepted records drain on normal shutdown. A crash can lose queued
   records; calls left open are marked `recovered` on the next startup, an unknown

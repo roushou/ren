@@ -7,6 +7,7 @@ use crate::activity::{
     report::SessionReport,
 };
 use crate::search::CallDocuments;
+use crate::secrets::SecretScanner;
 use crate::{
     Store, StoreError,
     query::{CallQuery, Cursor, KindFilter, PageLimit, StatusFilter, TimeRange, ToolFilter},
@@ -54,6 +55,8 @@ pub struct PrefixLimit {
 #[derive(Clone)]
 pub struct Reader {
     pool: SqlitePool,
+    /// Finds credentials in turns' bodies, for their findings.
+    scanner: Arc<SecretScanner>,
     /// The data directory, for measuring the search index beside it.
     dir: Arc<Path>,
 }
@@ -82,7 +85,11 @@ impl Reader {
             })
             .connect_with(options)
             .await?;
-        Ok(Self { pool, dir })
+        Ok(Self {
+            pool,
+            dir,
+            scanner: Arc::new(SecretScanner::new()?),
+        })
     }
 
     /// Newest calls first, filtered.
@@ -725,7 +732,13 @@ impl Reader {
             calls.push(self.read_call(view, Direction::Response).await?);
         }
         let omitted = u64::try_from(total.saturating_sub(read)).unwrap_or(0);
-        Ok(TurnActivity::assemble(head, calls, omitted, budget))
+        Ok(TurnActivity::assemble(
+            head,
+            calls,
+            omitted,
+            budget,
+            &self.scanner,
+        ))
     }
 
     /// A session's turns, newest first, each with the start of its prompt.
@@ -876,6 +889,7 @@ impl Reader {
         &self,
         call: CallId,
         max_chars: usize,
+        scanner: &SecretScanner,
     ) -> Result<CallDocuments, StoreError> {
         let row = sqlx::query(AssertSqlSafe(format!(
             "{} WHERE c.id = ?",
@@ -889,7 +903,7 @@ impl Reader {
         Ok(self
             .read_call(view, Direction::Response)
             .await?
-            .documents(max_chars))
+            .documents(max_chars, scanner))
     }
 
     async fn turn_calls(&self, turn: TurnId, limit: i64) -> Result<Vec<CallView>, StoreError> {

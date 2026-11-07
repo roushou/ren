@@ -7,11 +7,14 @@
 //! subscription allowance. Findings state measurements against fixed,
 //! documented thresholds, never causes: TGV cannot see the provider's cache.
 
+use crate::search::{ExposureView, SearchField};
+use crate::secrets::SecretKind;
 use crate::view::CallView;
 use serde::{Serialize, Serializer};
 use serde_with::{DeserializeFromStr, SerializeDisplay};
 use strum::{Display, EnumString, IntoStaticStr, VariantArray};
 use tgv_protocol::inspect::InputAccounting;
+use tgv_protocol::label::Stored;
 use tgv_recorder::{
     id::{CallId, SessionId, TurnId},
     time::UnixMillis,
@@ -70,6 +73,8 @@ pub enum FindingKind {
     LargeToolOutput,
     /// The same tool on the same target failed again and again in a turn.
     RepeatedFailure,
+    /// A credential in a well-known format was in what a call carried.
+    SecretExposure,
 }
 
 /// A call read less than half of the earlier peak context from the cache
@@ -119,6 +124,20 @@ pub struct RepeatedFailure {
     pub calls: Vec<CallId>,
 }
 
+/// A credential a call carried: in the user's input, a tool's input or
+/// output (all sent to the provider), or the model's reply. Never the
+/// secret itself: its format, a masked hint, and a fingerprint.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct SecretExposure {
+    pub call: CallId,
+    pub turn: Option<TurnId>,
+    pub field: Stored<SearchField>,
+    pub secret: Stored<SecretKind>,
+    pub hint: String,
+    pub fingerprint: String,
+    pub count: u64,
+}
+
 /// One finding, serialized with its `kind` label first.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Finding {
@@ -126,6 +145,7 @@ pub enum Finding {
     ContextGrowth(ContextGrowth),
     LargeToolOutput(LargeToolOutput),
     RepeatedFailure(RepeatedFailure),
+    SecretExposure(SecretExposure),
 }
 
 impl FindingKind {
@@ -151,6 +171,7 @@ impl Finding {
             Self::ContextGrowth(_) => FindingKind::ContextGrowth,
             Self::LargeToolOutput(_) => FindingKind::LargeToolOutput,
             Self::RepeatedFailure(_) => FindingKind::RepeatedFailure,
+            Self::SecretExposure(_) => FindingKind::SecretExposure,
         }
     }
 }
@@ -170,6 +191,7 @@ impl Serialize for Finding {
             Self::ContextGrowth(detail) => Tagged { kind, detail }.serialize(serializer),
             Self::LargeToolOutput(detail) => Tagged { kind, detail }.serialize(serializer),
             Self::RepeatedFailure(detail) => Tagged { kind, detail }.serialize(serializer),
+            Self::SecretExposure(detail) => Tagged { kind, detail }.serialize(serializer),
         }
     }
 }
@@ -250,6 +272,31 @@ impl TurnRow {
 }
 
 impl SessionReport {
+    /// Add the secrets the session's calls carried, from the search index,
+    /// as findings in call order.
+    pub fn add_exposures(&mut self, exposures: Vec<ExposureView>) {
+        let mut timed: Vec<(UnixMillis, Finding)> = exposures
+            .into_iter()
+            .map(|exposure| {
+                (
+                    exposure.started_at,
+                    Finding::SecretExposure(SecretExposure {
+                        call: exposure.call,
+                        turn: exposure.turn,
+                        field: exposure.field,
+                        secret: exposure.kind,
+                        hint: exposure.hint,
+                        fingerprint: exposure.fingerprint,
+                        count: exposure.count,
+                    }),
+                )
+            })
+            .collect();
+        timed.sort_by_key(|(at, _)| *at);
+        self.findings
+            .extend(timed.into_iter().map(|(_, finding)| finding));
+    }
+
     /// The report over `calls`, a session's calls in start order.
     pub fn build(session: SessionId, calls: &[CallView], omitted_calls: u64) -> Self {
         let mut totals = ReportTotals::default();

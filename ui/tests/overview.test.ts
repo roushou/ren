@@ -14,6 +14,7 @@ import {
   healthFixture,
   recorderFixture,
   storageFixture,
+  uuid,
 } from './fixtures.ts';
 
 const labels = (items: { label: string; tone: string }[]) =>
@@ -121,4 +122,31 @@ test('the search index counts toward storage only for calls still retained', () 
   assert.equal(indexBudgetBytes({ file, indexed_calls: 0, stale_calls: 0 }), 100);
   assert.equal(indexBudgetBytes({ file, indexed_calls: 4, stale_calls: 1 }), 75);
   assert.equal(indexBudgetBytes({ file, indexed_calls: 4, stale_calls: 4 }), 0);
+});
+
+test('exposed secrets turn the health line red and link to their session', () => {
+  const health = healthFixture();
+  const exposure = {
+    call: callId(1),
+    session: uuid(9) as never,
+    turn: null,
+    client: null,
+    started_at: 1 as never,
+    field: 'prompt' as const,
+    kind: 'openai_key' as const,
+    hint: 'sk-…abcd',
+    fingerprint: '0123456789abcdef',
+    count: 1,
+  };
+  const items = healthLine(health, storageFixture(), null, [exposure]);
+  const secrets = items.at(-1);
+  assert.equal(secrets?.label, '1 secret exposed · 24 h');
+  assert.equal(secrets?.tone, 'error');
+  assert.equal(secrets?.href, `/sessions/${uuid(9)}/report`);
+  assert.equal(healthLine(health, storageFixture(), null, []).at(-1)?.tone, 'success');
+  // A daemon without exposures adds no item.
+  assert.equal(
+    healthLine(health, storageFixture(), null, null).length,
+    healthLine(health, storageFixture(), null).length,
+  );
 });

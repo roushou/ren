@@ -20,6 +20,7 @@ fn call(
                 text: (*text).to_owned(),
             })
             .collect(),
+        exposures: Vec::new(),
     }
 }
 
@@ -257,4 +258,47 @@ fn the_index_budget_is_its_live_size_in_proportion_to_kept_calls() {
     assert_eq!(usage(4, 1).budget_bytes(), 307_200);
     assert_eq!(usage(4, 4).budget_bytes(), 0);
     assert_eq!(usage(4, 9).budget_bytes(), 0);
+}
+
+#[tokio::test]
+async fn exposures_are_listed_newest_first_and_removed_with_their_call() {
+    use crate::secrets::SecretKind;
+    let dir = tempfile::tempdir().unwrap();
+    let index = SearchIndex::open(dir.path()).await.unwrap();
+    let exposure = |field| Exposure {
+        field,
+        kind: SecretKind::GithubToken,
+        hint: "ghp_…wxyz".to_owned(),
+        fingerprint: "0123456789abcdef".to_owned(),
+        count: 2,
+    };
+    let mut first = call(1, Some(10), Some(Harness::Codex), &[]);
+    first.exposures = vec![exposure(SearchField::ToolOutput)];
+    let mut second = call(2, Some(20), None, &[]);
+    second.exposures = vec![exposure(SearchField::Prompt)];
+    index.add(&[first, second]).await.unwrap();
+    let all = ExposureQuery {
+        session: None,
+        time: TimeRange::default(),
+        limit: PageLimit::new(10).unwrap(),
+    };
+    let listed = index.exposures(&all).await.unwrap();
+    let calls: Vec<_> = listed.iter().map(|exposure| exposure.call).collect();
+    assert_eq!(
+        calls,
+        [
+            CallId::restore(Uuid::from_u128(2)),
+            CallId::restore(Uuid::from_u128(1))
+        ]
+    );
+    assert_eq!(listed[1].kind, Stored::Known(SecretKind::GithubToken));
+    assert_eq!(listed[1].count, 2);
+    let mut one = all.clone();
+    one.session = Some(SessionId::restore(Uuid::from_u128(10)));
+    assert_eq!(index.exposures(&one).await.unwrap().len(), 1);
+    index
+        .remove(&[CallId::restore(Uuid::from_u128(1))])
+        .await
+        .unwrap();
+    assert_eq!(index.exposures(&all).await.unwrap().len(), 1);
 }

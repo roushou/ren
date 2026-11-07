@@ -28,7 +28,9 @@ use axum::{
 };
 use http::{HeaderValue, StatusCode, header};
 use live::LiveFeed;
-use params::{RawCallQuery, RawLiveQuery, RawPageQuery, RawSearchQuery, RawUsageQuery};
+use params::{
+    RawCallQuery, RawExposureQuery, RawLiveQuery, RawPageQuery, RawSearchQuery, RawUsageQuery,
+};
 use preview::Previewer;
 use serde::Serialize;
 use std::sync::Arc;
@@ -43,8 +45,8 @@ use tgv_store::{
     Reader, StoreError,
     activity::{ActivityBudget, TurnSummary},
     backup::Backup,
-    query::{CallQuery, QueryError, TimeRange},
-    search::{SearchError, SearchIndex},
+    query::{CallQuery, PageLimit, QueryError, TimeRange},
+    search::{ExposureQuery, ExposureView, SearchError, SearchIndex},
     view::{SessionView, StorageView},
 };
 use tokio::sync::Semaphore;
@@ -150,6 +152,11 @@ struct Sessions {
 }
 
 #[derive(Serialize)]
+struct Exposures {
+    exposures: Vec<ExposureView>,
+}
+
+#[derive(Serialize)]
 struct Turns {
     turns: Vec<TurnSummary>,
 }
@@ -185,7 +192,8 @@ impl From<StoreError> for ApiError {
             | StoreError::Json(_)
             | StoreError::Worker(_)
             | StoreError::NonUtf8Path
-            | StoreError::Corrupt(_) => Self::Store(error),
+            | StoreError::Corrupt(_)
+            | StoreError::Scanner(_) => Self::Store(error),
         }
     }
 }
@@ -256,6 +264,7 @@ impl ApiState {
             .route("/api/sessions/{id}/report", get(Self::session_report))
             .route("/api/turns/{id}", get(Self::turn))
             .route("/api/search", get(Self::search))
+            .route("/api/exposures", get(Self::exposures))
             .route("/api/calls/{id}/activity", get(Self::call_activity))
             .route("/api/live", get(Self::live))
             .route("/health", get(Self::health))
@@ -447,7 +456,27 @@ impl ApiState {
         State(state): State<Arc<Self>>,
         Path(id): Path<SessionId>,
     ) -> Result<Response, ApiError> {
-        Ok(Self::versioned(state.reader.session_report(id).await?).into_response())
+        let mut report = state.reader.session_report(id).await?;
+        report.add_exposures(
+            state
+                .search
+                .exposures(&ExposureQuery {
+                    session: Some(id),
+                    time: TimeRange::default(),
+                    limit: PageLimit::new(PageLimit::MAX)?,
+                })
+                .await?,
+        );
+        Ok(Self::versioned(report).into_response())
+    }
+
+    /// Credentials calls carried, newest first: never the secrets.
+    async fn exposures(
+        State(state): State<Arc<Self>>,
+        Query(raw): Query<RawExposureQuery>,
+    ) -> Result<Response, ApiError> {
+        let exposures = state.search.exposures(&raw.parse()?).await?;
+        Ok(Self::versioned(Exposures { exposures }).into_response())
     }
 
     /// Full-text search over indexed prompts, replies, and tool input and

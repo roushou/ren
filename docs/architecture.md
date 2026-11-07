@@ -517,6 +517,14 @@ still has, so stale rows of just-deleted calls never cause extra deletions. Sear
 become quoted FTS5 strings joined by `AND`, so input never reaches the query
 grammar.
 
+`SecretScanner` (`tgv-store::secrets`) finds credentials in fixed, documented
+formats with linear-time regular expressions, never by entropy. The indexer scans
+each call's raw newest user input, reply, and tool input and output, redacts what
+it finds before indexing, and stores each exposure's kind, field, masked hint, and
+a truncated BLAKE3 fingerprint in the index's `exposures` table, never the secret.
+Turn activity runs the same scanner over the bodies it reads; session reports add
+the index's exposures as findings.
+
 ### Storage
 
 **The log.** `observations(seq, at_wall, at_mono, channel, call?, attempt?, kind, schema, payload)`.

@@ -9,8 +9,10 @@
 
 pub mod report;
 
+use crate::search::SearchIndex;
+use crate::secrets::SecretScanner;
 use crate::view::{CallView, TokenTotals};
-use report::{CallMetrics, Finding, FindingKind, LargeToolOutput, RepeatedFailure};
+use report::{CallMetrics, Finding, FindingKind, LargeToolOutput, RepeatedFailure, SecretExposure};
 use serde::Serialize;
 use std::collections::HashSet;
 use tgv_harness::{
@@ -299,8 +301,26 @@ impl TurnActivity {
         calls: Vec<ReadCall>,
         omitted_calls: u64,
         budget: ActivityBudget,
+        scanner: &SecretScanner,
     ) -> Self {
         let client = calls.iter().find_map(ReadCall::harness);
+        let exposures: Vec<Finding> = calls
+            .iter()
+            .flat_map(|call| {
+                let documents = call.documents(SearchIndex::FIELD_CHARS, scanner);
+                documents.exposures.into_iter().map(move |exposure| {
+                    Finding::SecretExposure(SecretExposure {
+                        call: documents.call,
+                        turn: documents.turn,
+                        field: exposure.field.into(),
+                        secret: exposure.kind.into(),
+                        hint: exposure.hint,
+                        fingerprint: exposure.fingerprint,
+                        count: exposure.count,
+                    })
+                })
+            })
+            .collect();
         let results: Vec<_> = calls
             .iter()
             .flat_map(|call| call.results(budget.output_chars))
@@ -324,7 +344,10 @@ impl TurnActivity {
             tool_calls: 0,
             failed_tool_calls: 0,
             unanswered_tool_calls: 0,
-            findings: Self::tool_findings(&calls),
+            findings: Self::tool_findings(&calls)
+                .into_iter()
+                .chain(exposures)
+                .collect(),
             calls: Vec::new(),
             omitted_calls,
         };

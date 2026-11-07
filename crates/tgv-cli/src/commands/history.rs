@@ -18,7 +18,7 @@ use tgv_recorder::id::{CallId, SessionId, TurnId};
 use tgv_store::StoreError;
 use tgv_store::activity::ActivityBudget;
 use tgv_store::query::{CallQuery, Cursor, PageLimit, TimeRange};
-use tgv_store::search::{SearchField, SearchIndex, SearchQuery, SearchTerms};
+use tgv_store::search::{ExposureQuery, SearchField, SearchIndex, SearchQuery, SearchTerms};
 
 /// Which daemon a history or control command reads from.
 #[derive(Args)]
@@ -190,6 +190,44 @@ impl SearchCmd {
     }
 }
 
+/// List credentials calls carried (API keys, tokens, private keys), newest
+/// first: their format, where they appeared, a masked hint, and a
+/// fingerprint. The secrets themselves are never stored or shown.
+#[derive(Args)]
+pub struct ExposuresCmd {
+    /// Only this TGV session.
+    #[arg(long)]
+    session: Option<SessionId>,
+    #[arg(long, default_value_t = 50, value_parser = clap::value_parser!(u32).range(1..=1000))]
+    limit: u32,
+    #[command(flatten)]
+    target: TargetArgs,
+}
+impl ExposuresCmd {
+    pub async fn run(self, ctx: &Context) -> Result<ExitCode> {
+        let query = ExposureQuery {
+            session: self.session,
+            time: TimeRange::default(),
+            limit: PageLimit::new(self.limit)?,
+        };
+        match self.target.select(ctx)? {
+            Target::Local => {
+                let dir = ctx.data_dir(&ctx.config()?)?;
+                let index = match SearchIndex::open_read(&dir).await {
+                    Ok(index) => index,
+                    Err(StoreError::NotFound) => anyhow::bail!(
+                        "no search index in {}: the daemon builds it while running",
+                        dir.display()
+                    ),
+                    Err(error) => return Err(error.into()),
+                };
+                HistoryCmd::print(&index.exposures(&query).await?)
+            }
+            Target::Remote(gateway) => HistoryCmd::print(&gateway.exposures(&query).await?),
+        }
+    }
+}
+
 /// Report a session's context and cost: per turn, context size, prompt-cache
 /// hits and writes, output, and idle time, with cache rebuilds and the
 /// largest context growth. Token counts are provider-reported, not cost.
@@ -202,7 +240,25 @@ pub struct ReportCmd {
 impl ReportCmd {
     pub async fn run(self, ctx: &Context) -> Result<ExitCode> {
         match self.target.select(ctx)? {
-            Target::Local => HistoryCmd::print(&ctx.reader().await?.session_report(self.id).await?),
+            Target::Local => {
+                let mut report = ctx.reader().await?.session_report(self.id).await?;
+                // Exposures come from the daemon's search index, when built.
+                let dir = ctx.data_dir(&ctx.config()?)?;
+                match SearchIndex::open_read(&dir).await {
+                    Ok(index) => report.add_exposures(
+                        index
+                            .exposures(&ExposureQuery {
+                                session: Some(self.id),
+                                time: TimeRange::default(),
+                                limit: PageLimit::new(PageLimit::MAX)?,
+                            })
+                            .await?,
+                    ),
+                    Err(StoreError::NotFound) => {}
+                    Err(error) => return Err(error.into()),
+                }
+                HistoryCmd::print(&report)
+            }
             Target::Remote(gateway) => HistoryCmd::print(&gateway.report(self.id).await?),
         }
     }

@@ -850,7 +850,20 @@ const findingKinds = [
   'context_growth',
   'large_tool_output',
   'repeated_failure',
+  'secret_exposure',
 ] as const;
+const secretKinds = [
+  'anthropic_key',
+  'openai_key',
+  'github_token',
+  'aws_access_key',
+  'google_api_key',
+  'slack_token',
+  'stripe_live_key',
+  'private_key',
+  'jwt',
+] as const;
+export type SecretKind = (typeof secretKinds)[number];
 export type FindingKind = (typeof findingKinds)[number];
 
 /** Text cut to a budget; `omitted_chars` says how much was left out. */
@@ -932,6 +945,17 @@ export type Finding =
       target: string | null;
       failures: number;
       calls: CallId[];
+    }
+  | {
+      kind: 'secret_exposure';
+      call: CallId;
+      turn: TurnId | null;
+      field: Stored<SearchField>;
+      /** The credential's format; the secret itself is never sent. */
+      secret: Stored<SecretKind>;
+      hint: string;
+      fingerprint: string;
+      count: number;
     }
   /** A finding a newer daemon reports, kept by its label for display. */
   | { kind: 'unrecognized'; text: string };
@@ -1066,6 +1090,17 @@ const finding: Decoder<Finding> = (value, path) => {
         failures: count,
         calls: array(CallId.decode),
       })(value, path);
+    case 'secret_exposure':
+      return object<Extract<Finding, { kind: 'secret_exposure' }>>({
+        kind: () => 'secret_exposure',
+        call: CallId.decode,
+        turn: nullable(TurnId.decode),
+        field: label(searchFields),
+        secret: label(secretKinds),
+        hint: string,
+        fingerprint: string,
+        count: count,
+      })(value, path);
     default:
       return { kind: 'unrecognized', text: unrecognised(kind) };
   }
@@ -1133,6 +1168,38 @@ const searchPage = object<SearchPage>({
     }),
   ),
   indexed_calls: count,
+});
+/** A credential one call carried: never the secret itself. */
+export interface ExposureView {
+  call: CallId;
+  session: SessionId | null;
+  turn: TurnId | null;
+  client: Stored<Harness> | null;
+  started_at: UnixMillis;
+  field: Stored<SearchField>;
+  kind: Stored<SecretKind>;
+  hint: string;
+  fingerprint: string;
+  count: number;
+}
+export interface Exposures {
+  exposures: ExposureView[];
+}
+const exposures = object<Exposures>({
+  exposures: array(
+    object<ExposureView>({
+      call: CallId.decode,
+      session: nullable(SessionId.decode),
+      turn: nullable(TurnId.decode),
+      client: nullable(label(harnesses)),
+      started_at: millis,
+      field: label(searchFields),
+      kind: label(secretKinds),
+      hint: string,
+      fingerprint: string,
+      count: count,
+    }),
+  ),
 });
 const sessionReport = object<SessionReport>({
   session: SessionId.decode,
@@ -1235,6 +1302,12 @@ export class ManagementApi {
   /** Full-text search: `q`, and optionally `field`, `session`, `client`, `limit`. */
   search(query: URLSearchParams, signal?: AbortSignal): Promise<SearchPage> {
     return this.#read(`/api/search?${query}`, searchPage, signal);
+  }
+  /** Credentials calls carried, newest first, from `from_ms` on. */
+  exposures(from_ms?: number, signal?: AbortSignal): Promise<Exposures> {
+    const query = new URLSearchParams({ limit: '100' });
+    if (from_ms !== undefined) query.set('from_ms', String(Math.floor(from_ms)));
+    return this.#read(`/api/exposures?${query}`, exposures, signal);
   }
   /** What one call's bodies show. */
   callActivity(id: CallId, signal?: AbortSignal): Promise<CallActivity> {

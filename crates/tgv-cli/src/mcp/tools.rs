@@ -22,7 +22,7 @@ use tgv_store::query::{
     CallFilter, CallQuery, Cursor, KindFilter, PageLimit, SearchText, StatusFilter, TimeRange,
     ToolFilter,
 };
-use tgv_store::search::{SearchField, SearchQuery, SearchTerms};
+use tgv_store::search::{ExposureQuery, SearchField, SearchQuery, SearchTerms};
 
 /// The tools, in the order `tools/list` returns them.
 #[derive(Display, EnumString, IntoStaticStr, VariantArray)]
@@ -40,6 +40,7 @@ pub enum ToolName {
     GetCallActivity,
     GetBody,
     Usage,
+    ListExposures,
 }
 
 /// A tool call with its arguments parsed.
@@ -67,6 +68,7 @@ pub enum ToolCall {
         budget: BodyBudget,
     },
     Usage(TimeRange),
+    ListExposures(ExposureQuery),
 }
 
 /// Why a tool refused its arguments; the model reads it and can retry.
@@ -263,6 +265,15 @@ struct BodyArgs {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+struct ExposureArgs {
+    session_id: Option<String>,
+    from_ms: Option<u64>,
+    until_ms: Option<u64>,
+    limit: Option<u32>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct RangeArgs {
     from_ms: Option<u64>,
     until_ms: Option<u64>,
@@ -377,6 +388,16 @@ impl ToolCall {
             ToolName::Usage => {
                 let args: RangeArgs = Self::arguments(arguments)?;
                 Ok(Self::Usage(Field::range(args.from_ms, args.until_ms)?))
+            }
+            ToolName::ListExposures => {
+                let args: ExposureArgs = Self::arguments(arguments)?;
+                Ok(Self::ListExposures(ExposureQuery {
+                    session: Field::present(args.session_id)
+                        .map(|id| Field("session_id").id(&id))
+                        .transpose()?,
+                    time: Field::range(args.from_ms, args.until_ms)?,
+                    limit: Field("limit").limit(args.limit, Self::DEFAULT_ROWS)?,
+                }))
             }
         }
     }
@@ -499,6 +520,17 @@ impl ToolName {
                 json!({
                     "from_ms": Self::time("Calls started at or after this time."),
                     "until_ms": Self::time("Calls started at or before this time."),
+                }),
+                json!([]),
+            ),
+            Self::ListExposures => (
+                "List exposures",
+                "Credentials that recorded calls carried, newest first: API keys and tokens in well-known formats (Anthropic, OpenAI, GitHub, AWS, Google, Slack, Stripe), private key blocks, and JWTs, found in the user's input, tool input or output (all sent to the provider), or the model's reply. Each has the call, session, turn, field, the secret's format, a masked hint, a fingerprint (equal for the same secret), and how often it appeared. The secrets themselves are never stored or returned. A secret sent to a provider should be rotated: TGV cannot recall it.",
+                json!({
+                    "session_id": Self::string("Only this TGV session, as list_sessions returns it."),
+                    "from_ms": Self::time("Calls started at or after this time."),
+                    "until_ms": Self::time("Calls started at or before this time."),
+                    "limit": Self::limit(ToolCall::DEFAULT_ROWS),
                 }),
                 json!([]),
             ),

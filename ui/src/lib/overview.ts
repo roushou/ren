@@ -1,6 +1,14 @@
 // The overview page's pure logic: the health line, what needs attention,
 // and which sessions are active. No browser needed.
-import type { CallView, FileUsage, Health, IndexUsage, SessionView, Storage } from './api.ts';
+import type {
+  CallView,
+  ExposureView,
+  FileUsage,
+  Health,
+  IndexUsage,
+  SessionView,
+  Storage,
+} from './api.ts';
 import { bytes } from './api.ts';
 import { buildLabel, callStatus, statusBadge, type Chip } from './display.ts';
 
@@ -21,6 +29,7 @@ export function healthLine(
   health: Health | null,
   storage: Storage | null,
   error: string | null,
+  exposures: ExposureView[] | null = null,
 ): HealthItem[] {
   if (!health)
     return [
@@ -111,6 +120,25 @@ export function healthLine(
             title:
               'Live storage against the retention budget; the oldest calls are removed past it',
             href: '/recorder',
+          },
+    );
+  }
+  if (exposures) {
+    const newest = exposures[0];
+    items.push(
+      newest
+        ? {
+            label: `${exposures.length}${exposures.length === 100 ? '+' : ''} secret${exposures.length === 1 ? '' : 's'} exposed · 24 h`,
+            tone: 'error',
+            title: 'Credentials in well-known formats found in calls; rotate them',
+            href: newest.session
+              ? `/sessions/${encodeURIComponent(newest.session)}/report`
+              : `/traffic?call=${encodeURIComponent(newest.call)}`,
+          }
+        : {
+            label: 'No secrets seen · 24 h',
+            tone: 'success',
+            title: 'No credentials in well-known formats found in the last day',
           },
     );
   }

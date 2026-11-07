@@ -1,6 +1,7 @@
-activity::report::FindingKind: cache_rebuild context_growth large_tool_output repeated_failure
+activity::report::FindingKind: cache_rebuild context_growth large_tool_output repeated_failure secret_exposure
 chunk::Codec: raw zstd
 query::KindFilter: model other
 query::StatusFilter: active finished errors interrupted
 query::ToolFilter: true false
 search::SearchField: prompt reply tool_input tool_output
+secrets::SecretKind: anthropic_key openai_key github_token aws_access_key google_api_key slack_token stripe_live_key private_key jwt

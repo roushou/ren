@@ -6,6 +6,7 @@ import type {
   Finding,
   ResultStatus,
   SearchField,
+  SecretKind,
   SessionReport,
   ToolResultView,
   TurnId,
@@ -67,6 +68,20 @@ export function findingLine(finding: Finding): FindingLine {
         detail: `${finding.tool}${finding.target ? ` ${finding.target}` : ''} failed ${finding.failures} times.`,
         call: finding.calls[0] ?? null,
         turn: null,
+      };
+    case 'secret_exposure':
+      return {
+        tone: 'error',
+        title: 'Secret exposed',
+        detail:
+          `${secretKindLabel(finding.secret)} ${finding.hint} ` +
+          (finding.field === 'reply'
+            ? "in the model's reply"
+            : `in the ${searchFieldLabel(finding.field).toLowerCase()}, sent to the provider`) +
+          (finding.count > 1 ? ` (${finding.count} times)` : '') +
+          '. Rotate it: TGV cannot recall it.',
+        call: finding.call,
+        turn: finding.turn,
       };
     case 'unrecognized':
       return {
@@ -172,5 +187,30 @@ export function searchFieldLabel(field: Stored<SearchField>): string {
       return 'Tool output';
     default:
       return unrecognised(field).replaceAll('_', ' ');
+  }
+}
+
+export function secretKindLabel(kind: Stored<SecretKind>): string {
+  switch (kind) {
+    case 'anthropic_key':
+      return 'Anthropic API key';
+    case 'openai_key':
+      return 'OpenAI API key';
+    case 'github_token':
+      return 'GitHub token';
+    case 'aws_access_key':
+      return 'AWS access key';
+    case 'google_api_key':
+      return 'Google API key';
+    case 'slack_token':
+      return 'Slack token';
+    case 'stripe_live_key':
+      return 'Stripe live key';
+    case 'private_key':
+      return 'Private key';
+    case 'jwt':
+      return 'JSON Web Token';
+    default:
+      return unrecognised(kind).replaceAll('_', ' ');
   }
 }

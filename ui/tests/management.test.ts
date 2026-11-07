@@ -122,6 +122,7 @@ test('every allowlisted read uses the same bounded read bridge', async () => {
     `/api/turns/${id}`,
     `/api/calls/${id}/activity`,
     '/api/search',
+    '/api/exposures',
     '/api/usage',
   ]) {
     const response = await managementResponse(

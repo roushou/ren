@@ -10,7 +10,7 @@ use tgv_store::query::{
     CallFilter, CallQuery, Cursor, KindFilter, PageLimit, QueryError, SearchText, StatusFilter,
     TimeRange, ToolFilter,
 };
-use tgv_store::search::{SearchField, SearchQuery, SearchTerms};
+use tgv_store::search::{ExposureQuery, SearchField, SearchQuery, SearchTerms};
 
 /// `GET /api/calls` parameters.
 #[derive(Debug, Default, Deserialize)]
@@ -84,6 +84,33 @@ impl RawSearchQuery {
                 .transpose()?,
             field: label(self.field)
                 .map(|value| SearchField::from_str(&value).map_err(|_| QueryError::Filter))
+                .transpose()?,
+            time: TimeRange::new(
+                self.from_ms.map(UnixMillis::from_millis),
+                self.until_ms.map(UnixMillis::from_millis),
+            )?,
+            limit: self.limit.map_or(Ok(PageLimit::DEFAULT), PageLimit::new)?,
+        })
+    }
+}
+
+/// `GET /api/exposures` parameters.
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct RawExposureQuery {
+    session: Option<String>,
+    from_ms: Option<u64>,
+    until_ms: Option<u64>,
+    limit: Option<u32>,
+}
+
+impl RawExposureQuery {
+    pub fn parse(self) -> Result<ExposureQuery, QueryError> {
+        Ok(ExposureQuery {
+            session: self
+                .session
+                .filter(|value| !value.trim().is_empty())
+                .map(|value| SessionId::from_str(&value).map_err(|_| QueryError::Filter))
                 .transpose()?,
             time: TimeRange::new(
                 self.from_ms.map(UnixMillis::from_millis),

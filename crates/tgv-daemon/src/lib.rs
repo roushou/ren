@@ -187,7 +187,8 @@ impl Daemon {
         // Search is derived data: the indexer has its own read connection
         // and the only writer of `search.sqlite3`, off the forwarding path.
         let search = SearchIndex::open(data_dir).await?;
-        let mut indexer = Indexer::new(search.clone(), Reader::open(data_dir, 1).await?);
+        let mut indexer = Indexer::new(search.clone(), Reader::open(data_dir, 1).await?)
+            .map_err(StoreError::from)?;
         #[expect(
             clippy::disallowed_methods,
             reason = "process wiring: the daemon owns the search indexer task"

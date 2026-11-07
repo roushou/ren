@@ -90,6 +90,7 @@ impl McpCmd {
                     .map(|preview| BodyExcerpt::new(preview, budget).map(BodyExcerpt::into_value))
             }
             ToolCall::Usage(range) => gateway.usage(*range).await.map(Ok),
+            ToolCall::ListExposures(query) => gateway.exposures(query).await.map(Ok),
         };
         pending.answer(match outcome {
             Ok(Ok(data)) => ToolOutcome::Data(data),

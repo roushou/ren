@@ -53,7 +53,7 @@ macro_rules! table {
 
 #[test]
 fn every_label_is_pinned() {
-    use tgv_store::{activity, chunk, query, search};
+    use tgv_store::{activity, chunk, query, search, secrets};
     let table = table![
         activity::report::FindingKind,
         chunk::Codec,
@@ -61,6 +61,7 @@ fn every_label_is_pinned() {
         query::StatusFilter,
         query::ToolFilter,
         search::SearchField,
+        secrets::SecretKind,
     ];
     let pinned = include_str!("fixtures/labels.txt");
     assert!(

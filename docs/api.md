@@ -13,6 +13,7 @@ tgv report <session-id>
 tgv turn <turn-id>
 tgv activity <call-id>
 tgv search "cargo test" --field tool_input
+tgv exposures
 tgv inspect <call-id>
 tgv inspect <call-id> --body response --output response.bin
 tgv tail
@@ -100,6 +101,28 @@ finish and, on first start, backfills retained history (80 calls take about two
 seconds). Calls retention removes leave the index too. Without `--gateway`, the
 command reads the index file the local daemon built.
 
+## Exposed secrets
+
+`tgv exposures` lists credentials that calls carried, newest first. The search
+indexer scans every finished call's newest user input (including context the
+client adds, such as Claude Code's reminders, since that is sent to the provider
+too), tool input and output, and the model's reply, for well-known formats only:
+`anthropic_key` (`sk-ant-…`), `openai_key` (`sk-…`, `sk-proj-…`), `github_token`
+(`ghp_…`, `github_pat_…`), `aws_access_key` (`AKIA…`), `google_api_key` (`AIza…`),
+`slack_token` (`xox…`), `stripe_live_key` (`sk_live_…`), `private_key` (a PEM
+block), and `jwt`. It does not guess at random-looking text, so a finding is rarely
+a false alarm, but a key in another format is not found.
+
+The secret itself is never stored or shown: an exposure keeps its `kind`, the
+`field` it was in, a masked `hint` (the known prefix and last four characters,
+`sk-ant-…a1b2`), a `fingerprint` (16 hex characters of its BLAKE3 hash, equal for
+repeats of one secret), and how often it appeared. The search index stores the
+text with each secret replaced by `«redacted: kind»`; captured bodies are kept as
+recorded. Session reports and `tgv turn` list exposures as `secret_exposure`
+findings, and the Overview's health line counts the last day's. A secret sent to
+a provider should be rotated: TGV cannot recall it. The scan covers the newest
+input of each call, not the system prompt or older history a client resends.
+
 ## Session report
 
 `tgv report <session-id>` shows where a session's context and prompt-cache
@@ -145,6 +168,7 @@ Its tools are read-only:
 | `list_sessions`     | Recent sessions with their counts and token totals                                                                |
 | `session_calls`     | One session's calls, oldest first; `{calls, next}`                                                                |
 | `search_history`    | [Full-text search](#search), as `tgv search` returns it                                                           |
+| `list_exposures`    | [Exposed secrets](#exposed-secrets), as `tgv exposures` lists them                                                |
 | `session_report`    | A session's context and cost report, as `tgv report` shows it                                                     |
 | `list_turns`        | A session's turns, newest first, as `tgv turns` lists them                                                        |
 | `get_turn`          | What one turn did, as `tgv turn` shows it: prompt, tool calls with effects and results, files, commands           |
@@ -188,6 +212,7 @@ the body was stored whole; otherwise `not_found`. At most two run at once
 | `GET /api/sessions/{session-id}/calls?limit=100`                       | One session's calls, oldest first                                                           |
 | `GET /api/sessions/{session-id}/turns?limit=100`                       | A session's turns, newest first, with prompt excerpts (see [activity](#activity))           |
 | `GET /api/search?q=&field=&session=&client=&from_ms=&until_ms=&limit=` | [Full-text search](#search), newest call first                                              |
+| `GET /api/exposures?session=&from_ms=&until_ms=&limit=`                | [Exposed secrets](#exposed-secrets), newest call first                                      |
 | `GET /api/sessions/{session-id}/report`                                | A session's [context and cost report](#session-report)                                      |
 | `GET /api/turns/{turn-id}`                                             | One turn's [activity](#activity)                                                            |
 | `GET /api/calls/{call-id}/activity`                                    | One call's [activity](#activity)                                                            |

@@ -3,6 +3,7 @@ import {
   ManagementApi,
   SEARCH_FIELDS,
   type CallView,
+  type ExposureView,
   type Health,
   type Metrics,
   type PageCursor,
@@ -97,6 +98,8 @@ export interface OverviewData {
   errors: CallView[];
   stopped: CallView[];
   sessions: SessionView[];
+  /** Credentials found in the last 24 hours; null from a daemon without them. */
+  exposures: ExposureView[] | null;
 }
 
 /** The overview: everything read at once; each read is small. */
@@ -110,14 +113,19 @@ export function overviewSnapshot(fetcher: typeof fetch) {
       if (from) query.set('from_ms', from);
       return api.calls(query).then((page) => page.calls);
     };
-    const [usage, active, errors, stopped, sessions] = await Promise.all([
+    const [usage, active, errors, stopped, sessions, exposures] = await Promise.all([
       api.usage({ from_ms: rangeStart('24h', now, localDayStart) }),
       listing('active', 50),
       listing('errors', 10, since),
       listing('interrupted', 10, since),
       api.sessions(100),
+      // A daemon without exposures answers 404: the overview still loads.
+      api
+        .exposures(Number(since))
+        .then((page) => page.exposures)
+        .catch(() => null),
     ]);
-    return { now, usage, active, errors, stopped, sessions: sessions.sessions };
+    return { now, usage, active, errors, stopped, sessions: sessions.sessions, exposures };
   });
 }
 

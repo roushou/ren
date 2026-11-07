@@ -17,6 +17,7 @@ pub mod chunk;
 pub mod query;
 mod reader;
 pub mod search;
+pub mod secrets;
 pub mod view;
 mod writer;
 
@@ -45,6 +46,8 @@ pub enum StoreError {
     NotFound,
     #[error("body capture is incomplete; inspect its metadata instead")]
     IncompleteBody,
+    #[error(transparent)]
+    Scanner(#[from] secrets::ScannerError),
 }
 
 #[cfg(test)]
