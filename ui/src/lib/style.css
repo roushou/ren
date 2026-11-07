@@ -224,8 +224,30 @@ pre {
   border-right: 1px solid var(--line);
   font-family: 'SFMono-Regular', Consolas, monospace;
 }
-.brand svg {
-  color: var(--accent-foreground);
+/* The wordmark: three split-flap tiles, cut through by the header's own colour. */
+.flaps {
+  display: flex;
+  gap: 2px;
+}
+.flap {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 17px;
+  height: 21px;
+  background: var(--accent);
+  color: var(--on-accent);
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1;
+}
+.flap::after {
+  content: '';
+  position: absolute;
+  inset: 50% 0 auto;
+  height: 1px;
+  margin-top: -0.5px;
+  background: var(--sidebar);
 }
 .workbench-tabs {
   display: flex;
@@ -1606,8 +1628,10 @@ tr.call-row {
     padding: 0 8px;
     gap: 5px;
   }
-  .brand svg {
-    width: 13px;
+  .flap {
+    width: 14px;
+    height: 18px;
+    font-size: 11px;
   }
   .workbench-tabs a {
     padding: 7px 9px;

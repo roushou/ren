@@ -169,7 +169,9 @@
 <div class="app-shell">
   <header class="workbench-header">
     <a class="brand" href="/" aria-label="TGV overview"
-      ><Icon name="terminal" size={17} /><strong>TGV</strong></a
+      ><span class="flaps" aria-hidden="true"
+        ><span class="flap">T</span><span class="flap">G</span><span class="flap">V</span></span
+      ></a
     >
     <nav class="workbench-tabs" aria-label="Workbench views">
       <a
