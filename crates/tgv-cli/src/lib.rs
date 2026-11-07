@@ -6,6 +6,7 @@ mod commands;
 mod context;
 pub mod doctor;
 pub mod management;
+pub mod mcp;
 pub mod service;
 pub mod style;
 pub mod tail;
@@ -49,6 +50,7 @@ enum Command {
     Inspect(commands::history::InspectCmd),
     Tail(commands::tail::TailCmd),
     Control(commands::control::ControlCmd),
+    Mcp(commands::mcp::McpCmd),
 }
 
 impl Cli {
@@ -90,6 +92,7 @@ impl Cli {
             Command::Inspect(cmd) => cmd.run(&ctx).await,
             Command::Tail(cmd) => cmd.run(&ctx).await,
             Command::Control(cmd) => cmd.run(&ctx).await,
+            Command::Mcp(cmd) => cmd.run(&ctx).await,
         }
     }
 }

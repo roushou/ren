@@ -30,6 +30,8 @@ clap.workspace = true
 reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+serde_with.workspace = true
+strum.workspace = true
 tempfile.workspace = true
 tgv-daemon.workspace = true
 tgv-gateway.workspace = true
@@ -38,7 +40,7 @@ tgv-protocol.workspace = true
 tgv-recorder.workspace = true
 tgv-store.workspace = true
 thiserror.workspace = true
-tokio = { workspace = true, features = ["macros", "rt-multi-thread", "signal", "sync", "time"] }
+tokio = { workspace = true, features = ["io-std", "io-util", "macros", "rt-multi-thread", "signal", "sync", "time"] }
 toml.workspace = true
 tracing.workspace = true
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }

@@ -2503,6 +2503,8 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
+ "serde_with",
+ "strum",
  "tempfile",
  "tgv-daemon",
  "tgv-gateway",

@@ -86,6 +86,13 @@ tgv tail
 
 With a saved gateway, these read the remote daemon.
 
+Let your agents look it up themselves through the
+[MCP server](docs/api.md#mcp-server):
+
+```sh
+claude mcp add --scope user tgv -- tgv mcp
+```
+
 The optional UI lives in [`ui`](ui/README.md).
 
 ## Deploy
@@ -128,7 +135,8 @@ listener.
 
 - [Clients](docs/clients.md): launching and configuring Claude Code, Codex, and Pi
 - [Recording](docs/recording.md): capture, inspection, backup, and retention
-- [History and API](docs/api.md): CLI history commands and the management API
+- [History and API](docs/api.md): CLI history commands, the MCP server for
+  agents, and the management API
 - [Policy](docs/policy.md): buffering, rules, failover, and operator controls
 - [Deployment](docs/deployment.md): launchd, systemd, containers (Docker and
   Podman), and Tailscale

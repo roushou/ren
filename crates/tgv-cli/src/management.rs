@@ -15,7 +15,7 @@ use std::time::Duration;
 use tgv_harness::{endpoint::GatewayEndpoint, host::HostEnv};
 use tgv_protocol::direction::Direction;
 use tgv_recorder::id::{CallId, SessionId};
-use tgv_store::query::{Cursor, PageLimit};
+use tgv_store::query::{CallFilter, CallQuery, Cursor, PageLimit, TimeRange};
 
 /// Where a history or control command acts.
 pub enum Target {
@@ -164,6 +164,83 @@ impl Management {
     pub async fn calls(&self, limit: PageLimit) -> Result<Value, ManagementError> {
         let query = [("limit", limit.get().to_string())];
         Self::field(self.read("/api/calls", &query).await?, "calls")
+    }
+
+    /// `GET /api/calls` with every filter of `query`: one page, `{calls, next}`.
+    pub async fn search(&self, query: &CallQuery) -> Result<Value, ManagementError> {
+        Ok(Value::Object(
+            self.read("/api/calls", &Self::call_params(query)).await?,
+        ))
+    }
+
+    /// `GET /api/usage`: calls, errors, and tokens for calls started in `range`.
+    pub async fn usage(&self, range: TimeRange) -> Result<Value, ManagementError> {
+        let query: Vec<_> = [("from_ms", range.from()), ("until_ms", range.until())]
+            .into_iter()
+            .filter_map(|(name, time)| time.map(|time| (name, time.as_millis().to_string())))
+            .collect();
+        Ok(Value::Object(self.read("/api/usage", &query).await?))
+    }
+
+    /// `GET /api/calls/{id}/body/{direction}`: a bounded preview of a body.
+    pub async fn preview(
+        &self,
+        call: CallId,
+        direction: Direction,
+    ) -> Result<Value, ManagementError> {
+        let path = format!("/api/calls/{call}/body/{direction}");
+        Ok(Value::Object(self.read(&path, &[]).await?))
+    }
+
+    /// The query parameters the read API parses back into `query`.
+    fn call_params(query: &CallQuery) -> Vec<(&'static str, String)> {
+        let CallQuery {
+            filter,
+            limit,
+            after,
+        } = query;
+        let CallFilter {
+            session,
+            client,
+            kind,
+            provider,
+            model,
+            tool,
+            text,
+            status,
+            tools,
+            time,
+        } = filter;
+        let mut params = vec![("limit", limit.get().to_string())];
+        let labels = [
+            ("after", after.as_ref().map(ToString::to_string)),
+            ("session", session.as_ref().map(ToString::to_string)),
+            ("client", client.map(|value| value.to_string())),
+            ("kind", kind.map(|value| value.to_string())),
+            ("provider", provider.map(|value| value.to_string())),
+            (
+                "model",
+                model.as_ref().map(|value| value.as_str().to_owned()),
+            ),
+            ("tool", tool.as_ref().map(|value| value.as_str().to_owned())),
+            ("q", text.as_ref().map(|value| value.as_str().to_owned())),
+            ("status", status.map(|value| value.to_string())),
+            ("has_tools", tools.map(|value| value.to_string())),
+            (
+                "from_ms",
+                time.from().map(|time| time.as_millis().to_string()),
+            ),
+            (
+                "until_ms",
+                time.until().map(|time| time.as_millis().to_string()),
+            ),
+        ];
+        params.extend(
+            labels
+                .into_iter()
+                .filter_map(|(name, value)| value.map(|value| (name, value))),
+        );
+        params
     }
 
     /// `GET /api/sessions?limit=`: the sessions.
@@ -382,6 +459,38 @@ impl Management {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn call_queries_become_the_parameters_the_read_api_parses() {
+        let mut query = CallQuery {
+            limit: PageLimit::new(5).unwrap(),
+            ..CallQuery::default()
+        };
+        assert_eq!(Management::call_params(&query), [("limit", "5".to_owned())]);
+        query.filter.client = Some("claude_code".parse().unwrap());
+        query.filter.status = Some("errors".parse().unwrap());
+        query.filter.tools = Some("false".parse().unwrap());
+        query.filter.text = Some(tgv_store::query::SearchText::new("opus").unwrap());
+        query.filter.time =
+            TimeRange::new(Some(tgv_recorder::time::UnixMillis::from_millis(1)), None).unwrap();
+        query.after = Some("12:00000000-0000-0000-0000-000000000001".parse().unwrap());
+        let params: Vec<_> = Management::call_params(&query)
+            .into_iter()
+            .map(|(name, value)| format!("{name}={value}"))
+            .collect();
+        assert_eq!(
+            params,
+            [
+                "limit=5",
+                "after=12:00000000-0000-0000-0000-000000000001",
+                "client=claude_code",
+                "q=opus",
+                "status=errors",
+                "has_tools=false",
+                "from_ms=1",
+            ]
+        );
+    }
 
     #[test]
     fn error_answers_keep_their_code() {

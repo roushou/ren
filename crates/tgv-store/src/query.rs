@@ -94,7 +94,7 @@ impl SearchText {
             .ok_or(QueryError::SearchText)
     }
 
-    pub(super) fn as_str(&self) -> &str {
+    pub fn as_str(&self) -> &str {
         &self.0
     }
 }
@@ -152,11 +152,11 @@ impl TimeRange {
         }
     }
 
-    pub(super) fn from(self) -> Option<UnixMillis> {
+    pub fn from(self) -> Option<UnixMillis> {
         self.from
     }
 
-    pub(super) fn until(self) -> Option<UnixMillis> {
+    pub fn until(self) -> Option<UnixMillis> {
         self.until
     }
 }

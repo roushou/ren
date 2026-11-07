@@ -246,7 +246,9 @@ dependencies under "Crates" below. Read the code for current module ownership.
   control commands act: this host's storage and token, or a gateway's read and
   control APIs, printing the same JSON either way. `tail` is the pure core of
   `tgv tail`: the live feed decoded through the protocol crate's SSE framer, and
-  its lines. `style` decides once, per stream,
+  its lines. `mcp` is the pure core of `tgv mcp` (a source test keeps it free
+  of runtime and I/O): JSON-RPC over stdio in both MCP eras, and the read-only
+  tools, whose arguments parse into `tgv_store::query` types. `style` decides once, per stream,
   whether stdout and stderr are colored (a terminal, `NO_COLOR`,
   `CLICOLOR_FORCE`, `TERM=dumb`); JSON and piped output stay plain. `build.rs` records the
   source revision (`TGV_REVISION`) for `--version`, `/health`, and `doctor`. `Cli::run`

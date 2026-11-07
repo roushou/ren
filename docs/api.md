@@ -38,6 +38,41 @@ ends, for example on a daemon restart, it reconnects every two seconds from the
 last observation it printed, so nothing in between is skipped. It stops on
 interrupt, or if the first connection fails.
 
+## MCP server
+
+`tgv mcp` serves this history to coding agents as a
+[Model Context Protocol](https://modelcontextprotocol.io) server over stdio, so an
+agent can look up what it, or another agent, did:
+
+```sh
+claude mcp add --scope user tgv -- tgv mcp
+codex mcp add tgv -- tgv mcp
+```
+
+Its tools are read-only:
+
+| Tool            | Returns                                                                                                           |
+| --------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `search_calls`  | Calls, newest first, filtered as in [call search](#call-search) (`session_id` names the session); `{calls, next}` |
+| `list_sessions` | Recent sessions with their counts and token totals                                                                |
+| `session_calls` | One session's calls, oldest first; `{calls, next}`                                                                |
+| `get_call`      | One call with its attempts, inspection, and observation log, as `tgv inspect` prints it                           |
+| `get_body`      | An excerpt of a [body preview](#body-previews): decoded text (or raw bytes), at most `max_chars` (default 20,000) |
+| `usage`         | Calls, errors, and tokens, as [`/api/usage`](#usage)                                                              |
+
+Listings return at most 100 rows. Invalid arguments, unknown IDs, and an
+unreachable daemon are tool errors that the agent reads and can correct.
+
+It reads through the management API of the daemon the CLI targets, like
+`tgv tail`: the local listener, or the gateway from `--gateway`, `TGV_GATEWAY`,
+or `tgv init`. The daemon must be running. Bodies may contain private prompts
+and tool output, and an agent reading them sends them to its provider like any
+other context. It serves protocol revision `2026-07-28`, where every request
+carries its version, and, after an `initialize` handshake, the earlier revisions
+`2025-11-25`, `2025-06-18`, `2025-03-26`, and `2024-11-05`. Requests are answered
+in order, one at a time; stdout carries only protocol messages and logs go to
+stderr.
+
 ## Endpoints
 
 Every JSON body carries `"api_version": 1`; errors are `{api_version, error}` with
