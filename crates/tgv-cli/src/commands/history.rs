@@ -13,7 +13,8 @@ use std::{
     process::ExitCode,
 };
 use tgv_protocol::direction::Direction;
-use tgv_recorder::id::{CallId, SessionId};
+use tgv_recorder::id::{CallId, SessionId, TurnId};
+use tgv_store::activity::ActivityBudget;
 use tgv_store::query::{CallQuery, Cursor, PageLimit};
 
 /// Which daemon a history or control command reads from.
@@ -111,6 +112,70 @@ impl TimelineCmd {
                     .session_calls(self.id, limit, self.after.as_ref())
                     .await?,
             ),
+        }
+    }
+}
+
+/// List a session's turns, newest first, each with the start of its prompt.
+#[derive(Args)]
+pub struct TurnsCmd {
+    id: SessionId,
+    #[arg(long, default_value_t = 20, value_parser = clap::value_parser!(u32).range(1..=1000))]
+    limit: u32,
+    #[command(flatten)]
+    target: TargetArgs,
+}
+impl TurnsCmd {
+    pub async fn run(self, ctx: &Context) -> Result<ExitCode> {
+        let limit = PageLimit::new(self.limit)?;
+        match self.target.select(ctx)? {
+            Target::Local => {
+                HistoryCmd::print(&ctx.reader().await?.session_turns(self.id, limit).await?)
+            }
+            Target::Remote(gateway) => HistoryCmd::print(&gateway.turns(self.id, limit).await?),
+        }
+    }
+}
+
+/// Show what a turn did: its prompt, tool calls and their results, and the
+/// files and commands they touched, read from the recorded bodies.
+#[derive(Args)]
+pub struct TurnCmd {
+    id: TurnId,
+    #[command(flatten)]
+    target: TargetArgs,
+}
+impl TurnCmd {
+    pub async fn run(self, ctx: &Context) -> Result<ExitCode> {
+        match self.target.select(ctx)? {
+            Target::Local => HistoryCmd::print(
+                &ctx.reader()
+                    .await?
+                    .turn_activity(self.id, ActivityBudget::DEFAULT)
+                    .await?,
+            ),
+            Target::Remote(gateway) => HistoryCmd::print(&gateway.turn(self.id).await?),
+        }
+    }
+}
+
+/// Show what one call's bodies show: user input, tool calls, and reply.
+#[derive(Args)]
+pub struct ActivityCmd {
+    id: CallId,
+    #[command(flatten)]
+    target: TargetArgs,
+}
+impl ActivityCmd {
+    pub async fn run(self, ctx: &Context) -> Result<ExitCode> {
+        match self.target.select(ctx)? {
+            Target::Local => HistoryCmd::print(
+                &ctx.reader()
+                    .await?
+                    .call_activity(self.id, ActivityBudget::DEFAULT)
+                    .await?,
+            ),
+            Target::Remote(gateway) => HistoryCmd::print(&gateway.activity(self.id).await?),
         }
     }
 }

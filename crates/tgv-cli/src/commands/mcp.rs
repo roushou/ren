@@ -72,7 +72,10 @@ impl McpCmd {
                 .session_calls(*session, *limit, after.as_ref())
                 .await
                 .map(Ok),
+            ToolCall::ListTurns { session, limit } => gateway.turns(*session, *limit).await.map(Ok),
+            ToolCall::GetTurn(turn) => gateway.turn(*turn).await.map(Ok),
             ToolCall::GetCall(call) => gateway.call(*call).await.map(Ok),
+            ToolCall::GetCallActivity(call) => gateway.activity(*call).await.map(Ok),
             ToolCall::GetBody {
                 call,
                 direction,

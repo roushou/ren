@@ -12,6 +12,7 @@ pub mod endpoint;
 pub mod host;
 pub mod launch;
 pub mod pi;
+pub mod tools;
 
 /// A coding-agent harness TGV serves: the clients of AGENTS.md section 1. The
 /// set is closed; adding one is a new variant, and every match must handle it.

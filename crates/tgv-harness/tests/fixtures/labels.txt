@@ -1,3 +1,7 @@
 tgv_harness::Harness: claude_code codex pi
 attribution::HintSource: claude_code_headers codex_headers pi_extension_headers codex_message_metadata
 attribution::HintIssue: invalid_or_duplicate_header invalid_turn_metadata conflicting_identifiers turn_without_session
+tools::EffectKind: read_file write_file run_command search delegate fetch
+tools::ClaudeCodeTool: Read Write Edit MultiEdit NotebookEdit Bash Glob Grep Task Agent WebFetch WebSearch
+tools::CodexTool: shell container.exec exec_command local_shell_call shell_call apply_patch apply_patch_call view_image read_file web_search_call
+tools::PiTool: read write edit bash grep find ls

@@ -490,6 +490,12 @@ fn incomplete_trailing_events_are_reported() {
 fn sources_stay_free_of_runtime_and_io() {
     let sources = [
         ("lib.rs", include_str!("lib.rs")),
+        ("activity/mod.rs", include_str!("activity/mod.rs")),
+        (
+            "activity/anthropic.rs",
+            include_str!("activity/anthropic.rs"),
+        ),
+        ("activity/openai.rs", include_str!("activity/openai.rs")),
         ("direction.rs", include_str!("direction.rs")),
         ("encoding.rs", include_str!("encoding.rs")),
         ("inspect/mod.rs", include_str!("inspect/mod.rs")),

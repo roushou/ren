@@ -8,6 +8,9 @@ Read history from the CLI or the daemon's read-only management API.
 tgv history --limit 10
 tgv sessions
 tgv timeline <session-id> --limit 100
+tgv turns <session-id>
+tgv turn <turn-id>
+tgv activity <call-id>
 tgv inspect <call-id>
 tgv inspect <call-id> --body response --output response.bin
 tgv tail
@@ -15,8 +18,9 @@ tgv tail --json
 ```
 
 Commands emit JSON: `history` a list of calls, `sessions` a list of sessions,
-`timeline` a page `{calls, next}`, and `inspect` one call with its attempts and
-observation log. Body exports write the exact captured bytes to a new file, refuse
+`timeline` a page `{calls, next}`, `turns` a session's turns, `turn` and
+`activity` what a turn or a call did (see [activity](#activity)), and `inspect`
+one call with its attempts and observation log. Body exports write the exact captured bytes to a new file, refuse
 incomplete bodies, and never overwrite existing files. They work while the daemon
 runs and after it stops. Use the same data directory (`--data-dir`) for all
 commands.
@@ -38,6 +42,38 @@ ends, for example on a daemon restart, it reconnects every two seconds from the
 last observation it printed, so nothing in between is skipped. It stops on
 interrupt, or if the first connection fails.
 
+## Activity
+
+`tgv turn` shows what an agent did for one user prompt, read from the recorded
+bodies when asked:
+
+- `prompt`: the user's own words, without the context a client adds to user
+  messages (Claude Code's `<system-reminder>` blocks, Codex's environment and
+  `AGENTS.md` instructions);
+- `calls`: each call's tool calls, with their input, their `effects` (`read_file`,
+  `write_file`, `run_command`, `search`, `delegate`, or `fetch`, and the path,
+  command, pattern, task, or URL the input names), and the `result` a later
+  request in the turn carried (`succeeded`, `failed`, or `unreported`; `null`
+  when none answered), plus the start of the model's reply;
+- `files_read`, `files_written`, `commands`, and counts of tool calls, failed
+  ones, and unanswered ones.
+
+A tool call is what the model requested, not proof that it ran. A result's
+status is what the client reported: Anthropic's `is_error`, or for Codex the
+exit code its output states; other Responses results are `unreported`. Effects
+come from each client's own tool names and input fields; a tool TGV does not
+know has none. Turns are the client's grouping (Claude Code's prompt ID, Codex's
+turn ID); Pi sends none, so use `tgv activity <call-id>` for its calls. A turn
+reads at most 100 calls (`omitted_calls` counts the rest) and 16 MiB of each
+body; `limitations` on each call say what could not be read (`truncated`,
+`capture_gap`, `not_json`, `unfinished_tool_call`, …). Text is excerpted;
+`omitted_chars` says how much was left out. Nothing here is stored or searchable:
+it is computed from bodies, so it disappears with them under retention.
+
+`tgv turns <session-id>` lists a session's turns newest first (`--limit`, up to
+1000; no paging), each with its call and error counts, tokens, and the start of
+its prompt.
+
 ## MCP server
 
 `tgv mcp` serves this history to coding agents as a
@@ -51,14 +87,17 @@ codex mcp add tgv -- tgv mcp
 
 Its tools are read-only:
 
-| Tool            | Returns                                                                                                           |
-| --------------- | ----------------------------------------------------------------------------------------------------------------- |
-| `search_calls`  | Calls, newest first, filtered as in [call search](#call-search) (`session_id` names the session); `{calls, next}` |
-| `list_sessions` | Recent sessions with their counts and token totals                                                                |
-| `session_calls` | One session's calls, oldest first; `{calls, next}`                                                                |
-| `get_call`      | One call with its attempts, inspection, and observation log, as `tgv inspect` prints it                           |
-| `get_body`      | An excerpt of a [body preview](#body-previews): decoded text (or raw bytes), at most `max_chars` (default 20,000) |
-| `usage`         | Calls, errors, and tokens, as [`/api/usage`](#usage)                                                              |
+| Tool                | Returns                                                                                                           |
+| ------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `search_calls`      | Calls, newest first, filtered as in [call search](#call-search) (`session_id` names the session); `{calls, next}` |
+| `list_sessions`     | Recent sessions with their counts and token totals                                                                |
+| `session_calls`     | One session's calls, oldest first; `{calls, next}`                                                                |
+| `list_turns`        | A session's turns, newest first, as `tgv turns` lists them                                                        |
+| `get_turn`          | What one turn did, as `tgv turn` shows it: prompt, tool calls with effects and results, files, commands           |
+| `get_call_activity` | One call's activity, as `tgv activity` shows it                                                                   |
+| `get_call`          | One call with its attempts, inspection, and observation log, as `tgv inspect` prints it                           |
+| `get_body`          | An excerpt of a [body preview](#body-previews): decoded text (or raw bytes), at most `max_chars` (default 20,000) |
+| `usage`             | Calls, errors, and tokens, as [`/api/usage`](#usage)                                                              |
 
 Listings return at most 100 rows. Invalid arguments, unknown IDs, and an
 unreachable daemon are tool errors that the agent reads and can correct.
@@ -93,6 +132,9 @@ the body was stored whole; otherwise `not_found`. At most two run at once
 | `GET /api/sessions?limit=100`                              | Recent sessions with call, turn, and error counts and token totals                          |
 | `GET /api/usage?from_ms=&until_ms=`                        | Calls, errors, and tokens in total, by UTC hour, and by model (see [usage](#usage))         |
 | `GET /api/sessions/{session-id}/calls?limit=100`           | One session's calls, oldest first                                                           |
+| `GET /api/sessions/{session-id}/turns?limit=100`           | A session's turns, newest first, with prompt excerpts (see [activity](#activity))           |
+| `GET /api/turns/{turn-id}`                                 | One turn's [activity](#activity)                                                            |
+| `GET /api/calls/{call-id}/activity`                        | One call's [activity](#activity)                                                            |
 | `GET /api/live?after={seq}`                                | Server-sent events as observations commit                                                   |
 
 Omit `after` for the first page; pass the returned `next` cursor unchanged for the

@@ -159,7 +159,7 @@ async fn agents_read_recorded_traffic_over_stdio_in_both_protocol_eras() {
         replies[0]["result"]["_meta"]["io.modelcontextprotocol/serverInfo"]["version"],
         tgv_cli::Cli::build().version()
     );
-    assert_eq!(replies[1]["result"]["tools"].as_array().unwrap().len(), 6);
+    assert_eq!(replies[1]["result"]["tools"].as_array().unwrap().len(), 9);
     let body = data(&replies[2]);
     assert_eq!(body["extent"], "complete");
     assert_eq!(body["text"], payload);
@@ -208,6 +208,194 @@ async fn agents_read_recorded_traffic_over_stdio_in_both_protocol_eras() {
             .unwrap()
             .contains("cannot reach the gateway")
     );
+
+    daemon.shutdown();
+    daemon.wait().await.unwrap();
+    upstream.abort();
+}
+
+/// Runs the built `tgv` with an isolated HOME and returns its stdout as JSON.
+fn cli_json(home: &std::path::Path, args: &[&str]) -> Value {
+    let output = Command::new(env!("CARGO_BIN_EXE_tgv"))
+        .args(args)
+        .env("HOME", home)
+        .env_remove("XDG_CONFIG_HOME")
+        .env_remove("TGV_GATEWAY")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{args:?}: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    serde_json::from_slice(&output.stdout).unwrap()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_turns_activity_reads_the_same_locally_through_a_gateway_and_over_mcp() {
+    use axum::{Router, response::IntoResponse};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    // The first response streams a Bash tool call; the second answers in text.
+    let first = [
+        r#"{"type":"message_start","message":{"model":"fixture"}}"#,
+        r#"{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_1","name":"Bash","input":{}}}"#,
+        r#"{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"command\":"}}"#,
+        r#"{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"\"cargo test\"}"}}"#,
+        r#"{"type":"content_block_stop","index":0}"#,
+        r#"{"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":5}}"#,
+        r#"{"type":"message_stop"}"#,
+    ]
+    .iter()
+    .map(|event| {
+        let name = serde_json::from_str::<Value>(event).unwrap()["type"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        format!("event: {name}\ndata: {event}\n\n")
+    })
+    .collect::<String>();
+    let second = r#"{"type":"message","model":"fixture","content":[{"type":"text","text":"Tests fail in parser.rs."}],"stop_reason":"end_turn","usage":{"input_tokens":3,"output_tokens":4}}"#;
+    let count = std::sync::Arc::new(AtomicUsize::new(0));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let upstream = tokio::spawn(async move {
+        axum::serve(
+            listener,
+            Router::new().fallback(move || {
+                let count = count.clone();
+                let first = first.clone();
+                async move {
+                    if count.fetch_add(1, Ordering::SeqCst) == 0 {
+                        ([("content-type", "text/event-stream")], first).into_response()
+                    } else {
+                        ([("content-type", "application/json")], second).into_response()
+                    }
+                }
+            }),
+        )
+        .await
+        .unwrap();
+    });
+    let temp = tempfile::tempdir().unwrap();
+    let home = temp.path().join("home");
+    std::fs::create_dir(&home).unwrap();
+    let state = temp.path().join("state");
+    let mut daemon = Daemon::new(
+        Config {
+            listen: "127.0.0.1:0".parse().unwrap(),
+            anthropic_base_url: format!("http://{address}"),
+            ..Config::default()
+        }
+        .resolve()
+        .unwrap(),
+        &state,
+        tgv_cli::Cli::build(),
+    );
+    daemon.start().await.unwrap();
+    let gateway = format!("http://{}", daemon.address().unwrap());
+    let client = reqwest::Client::builder().no_proxy().build().unwrap();
+    let requests = [
+        json!({ "model": "fixture", "messages": [
+            { "role": "user", "content": [
+                { "type": "text", "text": "<system-reminder>context</system-reminder>" },
+                { "type": "text", "text": "Why do the tests fail?" },
+            ] },
+        ] }),
+        json!({ "model": "fixture", "messages": [
+            { "role": "user", "content": "Why do the tests fail?" },
+            { "role": "assistant", "content": [{ "type": "tool_use", "id": "toolu_1", "name": "Bash", "input": { "command": "cargo test" } }] },
+            { "role": "user", "content": [{ "type": "tool_result", "tool_use_id": "toolu_1", "is_error": true, "content": "test parser ... FAILED" }] },
+        ] }),
+    ];
+    for request in requests {
+        let response = client
+            .post(format!("{gateway}/anthropic/v1/messages"))
+            .header(
+                "x-claude-code-session-id",
+                "00000000-0000-4000-8000-000000000004",
+            )
+            .header(
+                "x-claude-code-prompt-id",
+                "00000000-0000-4000-8000-000000000005",
+            )
+            .body(request.to_string())
+            .send()
+            .await
+            .unwrap();
+        response.bytes().await.unwrap();
+    }
+    let data_dir = state.to_str().unwrap();
+    let mut sessions = Value::Null;
+    for _ in 0..100 {
+        sessions = cli_json(&home, &["--data-dir", data_dir, "sessions"]);
+        if sessions[0]["call_count"] == 2 {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    let session_id = sessions[0]["id"].as_str().unwrap().to_owned();
+
+    // Locally and through the gateway, the same JSON.
+    let turns = cli_json(&home, &["--data-dir", data_dir, "turns", &session_id]);
+    assert_eq!(
+        cli_json(&home, &["turns", &session_id, "--gateway", &gateway]),
+        turns
+    );
+    assert_eq!(turns.as_array().unwrap().len(), 1);
+    assert_eq!(turns[0]["call_count"], 2);
+    assert_eq!(turns[0]["prompt"]["text"], "Why do the tests fail?");
+    let turn_id = turns[0]["turn"].as_str().unwrap().to_owned();
+    let turn = cli_json(&home, &["--data-dir", data_dir, "turn", &turn_id]);
+    assert_eq!(
+        cli_json(&home, &["turn", &turn_id, "--gateway", &gateway]),
+        turn
+    );
+    assert_eq!(turn["client"], "claude_code");
+    assert_eq!(turn["commands"], json!(["cargo test"]));
+    assert_eq!(turn["failed_tool_calls"], 1);
+    let bash = &turn["calls"][0]["tool_calls"][0];
+    assert_eq!(bash["name"], "Bash");
+    assert_eq!(
+        bash["effects"],
+        json!([{ "kind": "run_command", "target": "cargo test" }])
+    );
+    assert_eq!(bash["result"]["status"], "failed");
+    assert_eq!(bash["result"]["output"]["text"], "test parser ... FAILED");
+    assert_eq!(
+        turn["calls"][1]["reply"]["text"],
+        "Tests fail in parser.rs."
+    );
+    let call = turn["calls"][1]["call"].as_str().unwrap().to_owned();
+    let activity = cli_json(&home, &["--data-dir", data_dir, "activity", &call]);
+    assert_eq!(activity["reply"]["text"], "Tests fail in parser.rs.");
+
+    // An agent asks the same over MCP.
+    let replies = session(
+        &home,
+        &gateway,
+        &[
+            modern(
+                1,
+                "tools/call",
+                json!({ "name": "list_turns", "arguments": { "session_id": session_id } }),
+            ),
+            modern(
+                2,
+                "tools/call",
+                json!({ "name": "get_turn", "arguments": { "turn_id": turn_id } }),
+            ),
+            modern(
+                3,
+                "tools/call",
+                json!({ "name": "get_call_activity", "arguments": { "call_id": call } }),
+            ),
+        ],
+    );
+    assert_eq!(data(&replies[0]), turns);
+    let mut over_mcp = data(&replies[1]);
+    over_mcp.as_object_mut().unwrap().remove("api_version");
+    assert_eq!(over_mcp, turn);
+    assert_eq!(data(&replies[2])["reply"], activity["reply"]);
 
     daemon.shutdown();
     daemon.wait().await.unwrap();

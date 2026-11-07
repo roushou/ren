@@ -11,6 +11,7 @@
 //! This module is shell: it performs I/O. Its batch, query, and view types are
 //! plain data, and chunking is sans-IO.
 
+pub mod activity;
 pub mod backup;
 pub mod chunk;
 pub mod query;

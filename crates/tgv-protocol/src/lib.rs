@@ -16,6 +16,7 @@
 //!
 //! [`Limitation`]: inspect::Limitation
 
+pub mod activity;
 pub mod direction;
 pub mod encoding;
 pub mod inspect;

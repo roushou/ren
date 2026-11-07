@@ -15,7 +15,7 @@ use tgv_protocol::{
     route::Provider,
 };
 use tgv_recorder::{
-    id::{CallId, SessionId},
+    id::{CallId, SessionId, TurnId},
     time::UnixMillis,
 };
 use tgv_store::query::{
@@ -31,7 +31,10 @@ pub enum ToolName {
     SearchCalls,
     ListSessions,
     SessionCalls,
+    ListTurns,
+    GetTurn,
     GetCall,
+    GetCallActivity,
     GetBody,
     Usage,
 }
@@ -46,7 +49,13 @@ pub enum ToolCall {
         limit: PageLimit,
         after: Option<Cursor>,
     },
+    ListTurns {
+        session: SessionId,
+        limit: PageLimit,
+    },
+    GetTurn(TurnId),
     GetCall(CallId),
+    GetCallActivity(CallId),
     GetBody {
         call: CallId,
         direction: Direction,
@@ -204,6 +213,19 @@ struct SessionArgs {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+struct TurnsArgs {
+    session_id: String,
+    limit: Option<u32>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TurnArgs {
+    turn_id: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct CallArgs {
     call_id: String,
 }
@@ -274,9 +296,24 @@ impl ToolCall {
                     after: Field("after").cursor(args.after)?,
                 })
             }
+            ToolName::ListTurns => {
+                let args: TurnsArgs = Self::arguments(arguments)?;
+                Ok(Self::ListTurns {
+                    session: Field("session_id").id(&args.session_id)?,
+                    limit: Field("limit").limit(args.limit, Self::DEFAULT_ROWS)?,
+                })
+            }
+            ToolName::GetTurn => {
+                let args: TurnArgs = Self::arguments(arguments)?;
+                Ok(Self::GetTurn(Field("turn_id").id(&args.turn_id)?))
+            }
             ToolName::GetCall => {
                 let args: CallArgs = Self::arguments(arguments)?;
                 Ok(Self::GetCall(Field("call_id").id(&args.call_id)?))
+            }
+            ToolName::GetCallActivity => {
+                let args: CallArgs = Self::arguments(arguments)?;
+                Ok(Self::GetCallActivity(Field("call_id").id(&args.call_id)?))
             }
             ToolName::GetBody => {
                 let args: BodyArgs = Self::arguments(arguments)?;
@@ -346,9 +383,30 @@ impl ToolName {
                 }),
                 json!(["session_id"]),
             ),
+            Self::ListTurns => (
+                "List turns",
+                "A session's turns (one user prompt and everything the agent did for it), newest first: each turn's ID, start and end, call and error counts, tokens, and the start of its prompt. Turns are the client's own grouping; calls without one (Pi) have none.",
+                json!({
+                    "session_id": Self::string("A TGV session ID, as list_sessions returns it."),
+                    "limit": Self::limit(ToolCall::DEFAULT_ROWS),
+                }),
+                json!(["session_id"]),
+            ),
+            Self::GetTurn => (
+                "Get turn",
+                "What one turn did, read from its recorded bodies: the user's prompt; each call's tool calls with their inputs, effects (files read or written, commands run, searches, subagents), and the result status the client reported (`result` is null when no later request answered); reply excerpts; and the turn's files, commands, and failed or unanswered tool calls. A tool call is what the model requested, not proof it ran.",
+                json!({ "turn_id": Self::string("A TGV turn ID, as list_turns returns it.") }),
+                json!(["turn_id"]),
+            ),
             Self::GetCall => (
                 "Get call",
                 "One call in detail: its attempts and upstream decisions, the inspection of its request and response (model, tool calls, stop reason, token usage), and its observation log.",
+                json!({ "call_id": Self::string("A TGV call ID.") }),
+                json!(["call_id"]),
+            ),
+            Self::GetCallActivity => (
+                "Get call activity",
+                "One call's activity, as get_turn shows each call: user input, tool calls with effects, and the reply. Use it for calls that belong to no turn.",
                 json!({ "call_id": Self::string("A TGV call ID.") }),
                 json!(["call_id"]),
             ),
@@ -583,7 +641,7 @@ mod tests {
             json!(["active", "finished", "errors", "interrupted"])
         );
         assert_eq!(
-            definitions[4]["inputSchema"]["required"],
+            definitions[7]["inputSchema"]["required"],
             json!(["call_id", "direction"])
         );
     }

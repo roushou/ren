@@ -166,8 +166,10 @@ dependencies under "Crates" below. Read the code for current module ownership.
 - `crates/tgv-protocol`: sans-IO native protocol understanding, with
   `CallInspector` as its primary type: SSE framing, Anthropic Messages and OpenAI
   Responses wire vocabularies, incremental decompression, per-call inspection
-  (`inspect`, whose `pipeline` also reads WebSocket messages), and WebSocket
-  message classification.
+  (`inspect`, whose `pipeline` also reads WebSocket messages), WebSocket
+  message classification, and the activity reader (`activity`: a request's
+  newest user input and a response's tool calls with their inputs, read on
+  demand from stored bodies).
   It also owns the label machinery (`label`, with `Stored<T>`), the `Provider`,
   `Endpoint`, `Method`, and `Transport` vocabularies (`route`), `Direction`, and
   the native identifiers and message hints the wire carries (`native`). Its
@@ -177,8 +179,9 @@ dependencies under "Crates" below. Read the code for current module ownership.
   as its primary type: attribution (`attribution`, with its private `headers`
   parser implementing `Harness::attribution`), session launch plans
   (`Harness::launch`), the bundled Pi extension cache (`pi`), the gateway URL a
-  harness is pointed at (`endpoint`), and `HostEnv` (`host`), the host environment
-  that launching and configuration read. It performs filesystem and process I/O
+  harness is pointed at (`endpoint`), `HostEnv` (`host`), the host environment
+  that launching and configuration read, and what each harness's tools and
+  messages mean for activity (`tools`: effects, prompt text, exit codes). It performs filesystem and process I/O
   but has no async runtime, HTTP, database, or CLI dependency.
 - `crates/tgv-recorder`: the bounded capture queue between forwarding and
   storage, with `Recorder` as its primary type. `CallTap` (and `ChannelTap` for a
@@ -196,8 +199,9 @@ dependencies under "Crates" below. Read the code for current module ownership.
   online backup, which holds the `SweepGate`. `tgv.sqlite3` holds the
   observation log and query tables; `blobs.sqlite3` holds deduplicated,
   content-defined body chunks, in the format `chunk` defines (hash, codec,
-  encoding). It contains typed query parameters and read views and implements
-  the recorder's `RecordSink`. It owns the versioned migrations for
+  encoding). It contains typed query parameters and read views, turn and call
+  activity assembled from stored bodies at read time (`activity`), and
+  implements the recorder's `RecordSink`. It owns the versioned migrations for
   `tgv.sqlite3` (`crates/tgv-store/migrations`); never edit one that has
   shipped. Its tests include `tests/recorder.rs`, the recorder against the real
   store.

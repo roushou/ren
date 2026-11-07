@@ -1,4 +1,4 @@
 mcp::ModernVersion: 2026-07-28
 mcp::LegacyVersion: 2025-11-25 2025-06-18 2025-03-26 2024-11-05
 mcp::Method: server/discover initialize ping tools/list tools/call
-mcp::ToolName: search_calls list_sessions session_calls get_call get_body usage
+mcp::ToolName: search_calls list_sessions session_calls list_turns get_turn get_call get_call_activity get_body usage

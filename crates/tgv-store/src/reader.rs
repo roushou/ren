@@ -2,13 +2,16 @@
 //! its own short transaction; readers never block the writer.
 
 use super::chunk::{ChunkHash, Codec, EncodedChunk};
+use crate::activity::{
+    ActivityBudget, CallActivity, Excerpt, ReadCall, TurnActivity, TurnHead, TurnSummary,
+};
 use crate::{
     Store, StoreError,
     query::{CallQuery, Cursor, KindFilter, PageLimit, StatusFilter, TimeRange, ToolFilter},
     view::{
         AttemptView, BodyPrefix, BodyView, CallDetail, CallPage, CallView, ChannelView, Columns,
         DiskUsage, MessageView, ModelUsage, OperatorActionView, SessionView, StorageView,
-        UsageBucket, UsageCounts, UsageView,
+        TokenTotals, UsageBucket, UsageCounts, UsageView,
     },
     writer::BlobAccess,
 };
@@ -18,6 +21,12 @@ use sqlx::{
 };
 use std::{path::Path, sync::Arc, time::Duration};
 use tgv_harness::attribution::HintSource;
+use tgv_protocol::activity::{
+    ActivityLimitation, ActivityLimits, ActivityReader, BodyExtent, CapturedBody, RequestActivity,
+    ResponseActivity,
+};
+use tgv_protocol::encoding::ResponseEncoding;
+use tgv_protocol::inspect::pipeline::Protocol;
 use tgv_protocol::inspect::{InputAccounting, ModelOutcome};
 use tgv_protocol::{
     direction::Direction,
@@ -28,7 +37,7 @@ use tgv_recorder::Observation;
 use tgv_recorder::batch::BodyKey;
 use tgv_recorder::{
     capture::{AttemptTerminal, CallState, TerminalClass},
-    id::{CallId, SessionId},
+    id::{CallId, SessionId, TurnId},
 };
 
 /// Bounds on a body prefix read.
@@ -663,5 +672,239 @@ impl CallPage {
             .flatten();
         calls.shrink_to_fit();
         Ok(Self { calls, next })
+    }
+}
+
+/// Agent activity, read from stored bodies when asked (`crate::activity`).
+impl Reader {
+    /// The most of one body read for activity: enough for a long
+    /// conversation, which clients resend on every call.
+    const ACTIVITY_READ: PrefixLimit = PrefixLimit {
+        bytes: 16 * 1024 * 1024,
+        segments: 4096,
+    };
+    /// The most calls one turn's activity reads.
+    const MAX_TURN_CALLS: i64 = 100;
+    /// Calls read for a turn listing's prompt.
+    const PROMPT_CALLS: i64 = 3;
+
+    /// One turn: its prompt, calls, tool calls, and effects.
+    pub async fn turn_activity(
+        &self,
+        turn: TurnId,
+        budget: ActivityBudget,
+    ) -> Result<TurnActivity, StoreError> {
+        let row = sqlx::query("SELECT id, session, native_id FROM turns WHERE id = ?")
+            .bind(turn.to_string())
+            .fetch_optional(&self.pool)
+            .await?
+            .ok_or(StoreError::NotFound)?;
+        let columns = Columns(&row);
+        let head = TurnHead {
+            turn: columns.id("id")?,
+            session: columns.id("session")?,
+            native_id: columns.text("native_id")?.unwrap_or_default(),
+        };
+        let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM calls WHERE turn = ?")
+            .bind(turn.to_string())
+            .fetch_one(&self.pool)
+            .await?;
+        let views = self.turn_calls(turn, Self::MAX_TURN_CALLS).await?;
+        let read = i64::try_from(views.len()).unwrap_or(i64::MAX);
+        let mut calls = Vec::with_capacity(views.len());
+        for view in views {
+            calls.push(self.read_call(view, Direction::Response).await?);
+        }
+        let omitted = u64::try_from(total.saturating_sub(read)).unwrap_or(0);
+        Ok(TurnActivity::assemble(head, calls, omitted, budget))
+    }
+
+    /// A session's turns, newest first, each with the start of its prompt.
+    pub async fn session_turns(
+        &self,
+        session: SessionId,
+        limit: PageLimit,
+    ) -> Result<Vec<TurnSummary>, StoreError> {
+        let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM sessions WHERE id = ?)")
+            .bind(session.to_string())
+            .fetch_one(&self.pool)
+            .await?;
+        if !exists {
+            return Err(StoreError::NotFound);
+        }
+        let mut sql = QueryBuilder::<Sqlite>::new(
+            "SELECT t.id, t.native_id, MIN(c.started_at) AS started_at, MAX(c.ended_at) AS ended_at, ",
+        );
+        CallQuery::push_usage_columns(&mut sql);
+        sql.push(" FROM turns t JOIN calls c ON c.turn = t.id WHERE t.session = ")
+            .push_bind(session.to_string())
+            .push(" GROUP BY t.id ORDER BY started_at DESC, t.id DESC LIMIT ")
+            .push_bind(i64::from(limit.get()));
+        let rows = sql.build().fetch_all(&self.pool).await?;
+        let mut turns = Vec::with_capacity(rows.len());
+        for row in &rows {
+            let columns = Columns(row);
+            let turn: TurnId = columns.id("id")?;
+            let mut prompt = None;
+            for view in self.turn_calls(turn, Self::PROMPT_CALLS).await? {
+                let call = self.read_call(view, Direction::Request).await?;
+                if let Some(text) = call.prompt() {
+                    prompt = Some(text);
+                    break;
+                }
+            }
+            turns.push(TurnSummary {
+                turn,
+                native_id: columns.text("native_id")?.unwrap_or_default(),
+                started_at: columns.time("started_at")?,
+                ended_at: columns.optional_time("ended_at")?,
+                call_count: columns.count("calls")?,
+                error_count: columns.count("errors")?,
+                tokens: TokenTotals::from_row(row)?,
+                prompt: prompt
+                    .map(|text| Excerpt::cut(&text, ActivityBudget::SUMMARY.prompt_chars)),
+            });
+        }
+        Ok(turns)
+    }
+
+    /// One call's activity, with results matched only within the call.
+    pub async fn call_activity(
+        &self,
+        call: CallId,
+        budget: ActivityBudget,
+    ) -> Result<CallActivity, StoreError> {
+        let row = sqlx::query(AssertSqlSafe(format!(
+            "{} WHERE c.id = ?",
+            CallView::SELECT
+        )))
+        .bind(call.to_string())
+        .fetch_optional(&self.pool)
+        .await?
+        .ok_or(StoreError::NotFound)?;
+        let view = CallView::from_row(&row)?;
+        Ok(self
+            .read_call(view, Direction::Response)
+            .await?
+            .activity(budget))
+    }
+
+    async fn turn_calls(&self, turn: TurnId, limit: i64) -> Result<Vec<CallView>, StoreError> {
+        sqlx::query(AssertSqlSafe(format!(
+            "{} WHERE c.turn = ? ORDER BY c.started_at, c.id LIMIT ?",
+            CallView::SELECT
+        )))
+        .bind(turn.to_string())
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await?
+        .iter()
+        .map(CallView::from_row)
+        .collect()
+    }
+
+    /// A call with its bodies read: the request, and with `through` set to
+    /// the response direction, the final attempt's response too.
+    async fn read_call(&self, view: CallView, through: Direction) -> Result<ReadCall, StoreError> {
+        let Some(protocol) = view.endpoint.known().and_then(Protocol::for_endpoint) else {
+            let unsupported = vec![ActivityLimitation::UnsupportedEndpoint];
+            return Ok(ReadCall {
+                view,
+                request: RequestActivity {
+                    limitations: unsupported,
+                    ..RequestActivity::default()
+                },
+                response: ResponseActivity::default(),
+            });
+        };
+        let reader = ActivityReader::new(protocol, ActivityLimits::default());
+        let request = match self.captured(BodyKey::Request(view.id)).await? {
+            Some(body) => reader.request(body.as_captured()),
+            None => RequestActivity::default(),
+        };
+        let response = match through {
+            Direction::Request => ResponseActivity::default(),
+            Direction::Response => match self.body_key(view.id, Direction::Response).await {
+                Ok(key) => match self.captured(key).await? {
+                    Some(body) => reader.response(body.as_captured()),
+                    None => ResponseActivity::default(),
+                },
+                Err(StoreError::NotFound) => ResponseActivity::default(),
+                Err(error) => return Err(error),
+            },
+        };
+        Ok(ReadCall {
+            view,
+            request,
+            response,
+        })
+    }
+
+    /// A body's stored prefix with its message boundaries; `None` when the
+    /// body was never recorded.
+    async fn captured(&self, key: BodyKey) -> Result<Option<CapturedPrefix>, StoreError> {
+        let prefix = match self.body_prefix(key, Self::ACTIVITY_READ).await {
+            Ok(prefix) => prefix,
+            Err(StoreError::NotFound) => return Ok(None),
+            Err(error) => return Err(error),
+        };
+        let messages: Vec<(i64, i64)> = sqlx::query_as(
+            "SELECT byte_offset, len FROM messages WHERE owner = ? AND direction = ? ORDER BY byte_offset LIMIT ?",
+        )
+        .bind(key.owner())
+        .bind(key.direction().label())
+        .bind(Self::MAX_MESSAGES)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(Some(CapturedPrefix::new(prefix, &messages)))
+    }
+}
+
+/// A stored body prefix, ready for the activity reader.
+struct CapturedPrefix {
+    bytes: Vec<u8>,
+    extent: BodyExtent,
+    encoding: Option<ResponseEncoding>,
+    messages: Option<Vec<std::ops::Range<usize>>>,
+}
+
+impl CapturedPrefix {
+    fn new(prefix: BodyPrefix, messages: &[(i64, i64)]) -> Self {
+        let extent = if prefix.gap {
+            BodyExtent::Gap
+        } else if prefix.truncated || !prefix.body.complete() {
+            BodyExtent::Truncated
+        } else {
+            BodyExtent::Complete
+        };
+        let len = prefix.bytes.len();
+        // Messages past the prefix are left out; the extent already says so.
+        let messages = (!messages.is_empty()).then(|| {
+            messages
+                .iter()
+                .filter_map(|&(offset, size)| {
+                    let start = usize::try_from(offset).ok()?;
+                    let end = start.checked_add(usize::try_from(size).ok()?)?;
+                    (end <= len).then_some(start..end)
+                })
+                .collect()
+        });
+        Self {
+            encoding: prefix
+                .encoding
+                .map(|encoding| encoding.known().unwrap_or(ResponseEncoding::Unsupported)),
+            bytes: prefix.bytes,
+            extent,
+            messages,
+        }
+    }
+
+    fn as_captured(&self) -> CapturedBody<'_> {
+        CapturedBody {
+            bytes: &self.bytes,
+            extent: self.extent,
+            encoding: self.encoding,
+            messages: self.messages.as_deref(),
+        }
     }
 }

@@ -53,11 +53,15 @@ macro_rules! table {
 
 #[test]
 fn every_label_is_pinned() {
-    use tgv_harness::attribution;
+    use tgv_harness::{attribution, tools};
     let table = table![
         tgv_harness::Harness,
         attribution::HintSource,
         attribution::HintIssue,
+        tools::EffectKind,
+        tools::ClaudeCodeTool,
+        tools::CodexTool,
+        tools::PiTool,
     ];
     let pinned = include_str!("fixtures/labels.txt");
     assert!(

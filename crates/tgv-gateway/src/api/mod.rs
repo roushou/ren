@@ -36,11 +36,12 @@ use tgv_protocol::direction::Direction;
 use tgv_recorder::time::Clock;
 use tgv_recorder::{
     Recorder, RecorderMetrics,
-    id::{CallId, SessionId},
+    id::{CallId, SessionId, TurnId},
     retention::RetentionPolicy,
 };
 use tgv_store::{
     Reader, StoreError,
+    activity::{ActivityBudget, TurnSummary},
     backup::Backup,
     query::{CallQuery, QueryError, TimeRange},
     view::{SessionView, StorageView},
@@ -137,6 +138,11 @@ struct Sessions {
 }
 
 #[derive(Serialize)]
+struct Turns {
+    turns: Vec<TurnSummary>,
+}
+
+#[derive(Serialize)]
 struct ErrorBody {
     error: ErrorCode,
 }
@@ -227,6 +233,9 @@ impl ApiState {
             .route("/api/sessions", get(Self::sessions))
             .route("/api/usage", get(Self::usage))
             .route("/api/sessions/{id}/calls", get(Self::session_calls))
+            .route("/api/sessions/{id}/turns", get(Self::session_turns))
+            .route("/api/turns/{id}", get(Self::turn))
+            .route("/api/calls/{id}/activity", get(Self::call_activity))
             .route("/api/live", get(Self::live))
             .route("/health", get(Self::health))
             .layer(axum::middleware::map_response(Self::private))
@@ -391,6 +400,59 @@ impl ApiState {
             .session_calls(id, raw.limit()?, raw.after()?)
             .await?;
         Ok(Self::versioned(page).into_response())
+    }
+
+    /// A session's turns, newest first. Reading prompts parses request
+    /// bodies, so these share the preview permits.
+    async fn session_turns(
+        State(state): State<Arc<Self>>,
+        Path(id): Path<SessionId>,
+        Query(raw): Query<RawPageQuery>,
+    ) -> Result<Response, ApiError> {
+        if raw.after.is_some() {
+            return Err(ApiError::Query(QueryError::Cursor));
+        }
+        let _permit = state
+            .previews
+            .clone()
+            .try_acquire_owned()
+            .map_err(|_| ApiError::Busy)?;
+        let turns = state.reader.session_turns(id, raw.limit()?).await?;
+        Ok(Self::versioned(Turns { turns }).into_response())
+    }
+
+    /// One turn's activity, read from its calls' bodies.
+    async fn turn(
+        State(state): State<Arc<Self>>,
+        Path(id): Path<TurnId>,
+    ) -> Result<Response, ApiError> {
+        let _permit = state
+            .previews
+            .clone()
+            .try_acquire_owned()
+            .map_err(|_| ApiError::Busy)?;
+        let turn = state
+            .reader
+            .turn_activity(id, ActivityBudget::DEFAULT)
+            .await?;
+        Ok(Self::versioned(turn).into_response())
+    }
+
+    /// One call's activity, read from its bodies.
+    async fn call_activity(
+        State(state): State<Arc<Self>>,
+        Path(id): Path<CallId>,
+    ) -> Result<Response, ApiError> {
+        let _permit = state
+            .previews
+            .clone()
+            .try_acquire_owned()
+            .map_err(|_| ApiError::Busy)?;
+        let call = state
+            .reader
+            .call_activity(id, ActivityBudget::DEFAULT)
+            .await?;
+        Ok(Self::versioned(call).into_response())
     }
 
     /// `after` comes from the query, or from `Last-Event-ID` when a browser

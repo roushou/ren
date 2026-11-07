@@ -14,7 +14,7 @@ use serde_json::{Map, Value};
 use std::time::Duration;
 use tgv_harness::{endpoint::GatewayEndpoint, host::HostEnv};
 use tgv_protocol::direction::Direction;
-use tgv_recorder::id::{CallId, SessionId};
+use tgv_recorder::id::{CallId, SessionId, TurnId};
 use tgv_store::query::{CallFilter, CallQuery, Cursor, PageLimit, TimeRange};
 
 /// Where a history or control command acts.
@@ -260,6 +260,32 @@ impl Management {
         query.extend(after.map(|cursor| ("after", cursor.to_string())));
         let path = format!("/api/sessions/{session}/calls");
         Ok(Value::Object(self.read(&path, &query).await?))
+    }
+
+    /// `GET /api/sessions/{id}/turns`: the session's turns, newest first.
+    pub async fn turns(
+        &self,
+        session: SessionId,
+        limit: PageLimit,
+    ) -> Result<Value, ManagementError> {
+        let query = [("limit", limit.get().to_string())];
+        let path = format!("/api/sessions/{session}/turns");
+        Self::field(self.read(&path, &query).await?, "turns")
+    }
+
+    /// `GET /api/turns/{id}`: one turn's activity.
+    pub async fn turn(&self, turn: TurnId) -> Result<Value, ManagementError> {
+        Ok(Value::Object(
+            self.read(&format!("/api/turns/{turn}"), &[]).await?,
+        ))
+    }
+
+    /// `GET /api/calls/{id}/activity`: one call's activity.
+    pub async fn activity(&self, call: CallId) -> Result<Value, ManagementError> {
+        Ok(Value::Object(
+            self.read(&format!("/api/calls/{call}/activity"), &[])
+                .await?,
+        ))
     }
 
     /// `GET /api/calls/{id}`: the call with its attempts and observations.
