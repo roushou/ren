@@ -216,7 +216,7 @@ impl McpServer {
     const NAME: &str = "tgv";
     const PROTOCOL_VERSION: &str = "io.modelcontextprotocol/protocolVersion";
     const CLIENT_CAPABILITIES: &str = "io.modelcontextprotocol/clientCapabilities";
-    const INSTRUCTIONS: &str = "TGV records the traffic between coding agents (Claude Code, Codex, and Pi) and their model providers. These read-only tools look up recorded calls: search_calls finds calls, newest first, by text, session, client, model, tool, or status; list_sessions and session_calls follow a session's calls in order; list_turns and get_turn show what each user prompt led to (tool calls, their results, files written, commands run); get_call shows one call's attempts, inspection, and observation log; get_body reads a bounded excerpt of a request or response body; usage totals calls, errors, and tokens. Times are Unix milliseconds (UTC). Pass a listing's `next` value as `after` to read the next page. Bodies may hold private prompts and tool output. Token counts are what providers reported, not subscription allowance or cost.";
+    const INSTRUCTIONS: &str = "TGV records the traffic between coding agents (Claude Code, Codex, and Pi) and their model providers. These read-only tools look up recorded calls: search_calls finds calls, newest first, by text, session, client, model, tool, or status; list_sessions and session_calls follow a session's calls in order; session_report shows where context and prompt-cache tokens went; list_turns and get_turn show what each user prompt led to (tool calls, their results, files written, commands run); get_call shows one call's attempts, inspection, and observation log; get_body reads a bounded excerpt of a request or response body; usage totals calls, errors, and tokens. Times are Unix milliseconds (UTC). Pass a listing's `next` value as `after` to read the next page. Bodies may hold private prompts and tool output. Token counts are what providers reported, not subscription allowance or cost.";
 
     /// A server reporting `version` (TGV's own) as its implementation version.
     pub fn new(version: impl Into<String>) -> Self {
@@ -494,6 +494,7 @@ mod tests {
                 "search_calls",
                 "list_sessions",
                 "session_calls",
+                "session_report",
                 "list_turns",
                 "get_turn",
                 "get_call",
@@ -553,7 +554,7 @@ mod tests {
             &mut server,
             r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#,
         );
-        assert_eq!(list["result"]["tools"].as_array().unwrap().len(), 9);
+        assert_eq!(list["result"]["tools"].as_array().unwrap().len(), 10);
         assert!(list["result"].get("resultType").is_none());
         let ping = reply(&mut server, r#"{"jsonrpc":"2.0","id":"p","method":"ping"}"#);
         assert_eq!(ping["result"], json!({}));

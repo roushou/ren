@@ -234,6 +234,7 @@ impl ApiState {
             .route("/api/usage", get(Self::usage))
             .route("/api/sessions/{id}/calls", get(Self::session_calls))
             .route("/api/sessions/{id}/turns", get(Self::session_turns))
+            .route("/api/sessions/{id}/report", get(Self::session_report))
             .route("/api/turns/{id}", get(Self::turn))
             .route("/api/calls/{id}/activity", get(Self::call_activity))
             .route("/api/live", get(Self::live))
@@ -419,6 +420,14 @@ impl ApiState {
             .map_err(|_| ApiError::Busy)?;
         let turns = state.reader.session_turns(id, raw.limit()?).await?;
         Ok(Self::versioned(Turns { turns }).into_response())
+    }
+
+    /// A session's context and cost report, from call records alone.
+    async fn session_report(
+        State(state): State<Arc<Self>>,
+        Path(id): Path<SessionId>,
+    ) -> Result<Response, ApiError> {
+        Ok(Self::versioned(state.reader.session_report(id).await?).into_response())
     }
 
     /// One turn's activity, read from its calls' bodies.

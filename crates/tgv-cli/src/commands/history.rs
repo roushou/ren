@@ -137,6 +137,24 @@ impl TurnsCmd {
     }
 }
 
+/// Report a session's context and cost: per turn, context size, prompt-cache
+/// hits and writes, output, and idle time, with cache rebuilds and the
+/// largest context growth. Token counts are provider-reported, not cost.
+#[derive(Args)]
+pub struct ReportCmd {
+    id: SessionId,
+    #[command(flatten)]
+    target: TargetArgs,
+}
+impl ReportCmd {
+    pub async fn run(self, ctx: &Context) -> Result<ExitCode> {
+        match self.target.select(ctx)? {
+            Target::Local => HistoryCmd::print(&ctx.reader().await?.session_report(self.id).await?),
+            Target::Remote(gateway) => HistoryCmd::print(&gateway.report(self.id).await?),
+        }
+    }
+}
+
 /// Show what a turn did: its prompt, tool calls and their results, and the
 /// files and commands they touched, read from the recorded bodies.
 #[derive(Args)]

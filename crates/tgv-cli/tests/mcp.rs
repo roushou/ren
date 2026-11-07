@@ -159,7 +159,7 @@ async fn agents_read_recorded_traffic_over_stdio_in_both_protocol_eras() {
         replies[0]["result"]["_meta"]["io.modelcontextprotocol/serverInfo"]["version"],
         tgv_cli::Cli::build().version()
     );
-    assert_eq!(replies[1]["result"]["tools"].as_array().unwrap().len(), 9);
+    assert_eq!(replies[1]["result"]["tools"].as_array().unwrap().len(), 10);
     let body = data(&replies[2]);
     assert_eq!(body["extent"], "complete");
     assert_eq!(body["text"], payload);
@@ -369,6 +369,15 @@ async fn a_turns_activity_reads_the_same_locally_through_a_gateway_and_over_mcp(
     let activity = cli_json(&home, &["--data-dir", data_dir, "activity", &call]);
     assert_eq!(activity["reply"]["text"], "Tests fail in parser.rs.");
 
+    let report = cli_json(&home, &["--data-dir", data_dir, "report", &session_id]);
+    assert_eq!(
+        cli_json(&home, &["report", &session_id, "--gateway", &gateway]),
+        report
+    );
+    assert_eq!(report["totals"]["calls"], 2);
+    assert_eq!(report["turns"][0]["call_count"], 2);
+    assert_eq!(report["turns"][0]["output_tokens"], 9);
+
     // An agent asks the same over MCP.
     let replies = session(
         &home,
@@ -389,6 +398,11 @@ async fn a_turns_activity_reads_the_same_locally_through_a_gateway_and_over_mcp(
                 "tools/call",
                 json!({ "name": "get_call_activity", "arguments": { "call_id": call } }),
             ),
+            modern(
+                4,
+                "tools/call",
+                json!({ "name": "session_report", "arguments": { "session_id": session_id } }),
+            ),
         ],
     );
     assert_eq!(data(&replies[0]), turns);
@@ -396,6 +410,9 @@ async fn a_turns_activity_reads_the_same_locally_through_a_gateway_and_over_mcp(
     over_mcp.as_object_mut().unwrap().remove("api_version");
     assert_eq!(over_mcp, turn);
     assert_eq!(data(&replies[2])["reply"], activity["reply"]);
+    let mut over_mcp = data(&replies[3]);
+    over_mcp.as_object_mut().unwrap().remove("api_version");
+    assert_eq!(over_mcp, report);
 
     daemon.shutdown();
     daemon.wait().await.unwrap();

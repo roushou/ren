@@ -9,6 +9,7 @@ tgv history --limit 10
 tgv sessions
 tgv timeline <session-id> --limit 100
 tgv turns <session-id>
+tgv report <session-id>
 tgv turn <turn-id>
 tgv activity <call-id>
 tgv inspect <call-id>
@@ -18,7 +19,8 @@ tgv tail --json
 ```
 
 Commands emit JSON: `history` a list of calls, `sessions` a list of sessions,
-`timeline` a page `{calls, next}`, `turns` a session's turns, `turn` and
+`timeline` a page `{calls, next}`, `turns` a session's turns, `report` a
+session's [context and cost report](#session-report), `turn` and
 `activity` what a turn or a call did (see [activity](#activity)), and `inspect`
 one call with its attempts and observation log. Body exports write the exact captured bytes to a new file, refuse
 incomplete bodies, and never overwrite existing files. They work while the daemon
@@ -56,7 +58,12 @@ bodies when asked:
   request in the turn carried (`succeeded`, `failed`, or `unreported`; `null`
   when none answered), plus the start of the model's reply;
 - `files_read`, `files_written`, `commands`, and counts of tool calls, failed
-  ones, and unanswered ones.
+  ones, and unanswered ones;
+- each call's `metrics` (context, cache read and written, and output tokens,
+  request bytes, duration), as in the [session report](#session-report);
+- `findings`: `large_tool_output` (a tool result of at least 20,000 characters,
+  which every later call carries) and `repeated_failure` (one tool failing on
+  one target at least 3 times in the turn).
 
 A tool call is what the model requested, not proof that it ran. A result's
 status is what the client reported: Anthropic's `is_error`, or for Codex the
@@ -73,6 +80,32 @@ it is computed from bodies, so it disappears with them under retention.
 `tgv turns <session-id>` lists a session's turns newest first (`--limit`, up to
 1000; no paging), each with its call and error counts, tokens, and the start of
 its prompt.
+
+## Session report
+
+`tgv report <session-id>` shows where a session's context and prompt-cache
+tokens went, from its call records alone (no body is read, so it is fast):
+
+- `turns`: for each turn, its calls, the idle time before it (since the
+  session's previous call ended), context tokens at its first and last call,
+  the cache hit percent (cache reads over context), tokens written to the cache,
+  and output tokens;
+- `totals` over the session's calls that reported usage, including the peak
+  context;
+- `findings`, in call order:
+  - `cache_rebuild`: a call read less than half of the earlier peak context from
+    the cache and wrote at least half of it again (at least 10,000 tokens). It
+    reports `idle_before_ms`; a provider's cache entries expire, but TGV cannot
+    see its cache, so the cause is not stated.
+  - `context_growth`: the 5 largest steps of at least 10,000 tokens past the
+    session's earlier peak.
+
+Context is new input plus cache reads and writes for Anthropic, and input for
+OpenAI, whose input already counts cached tokens. Findings need an earlier peak
+of at least 10,000 tokens, so a session's start is not reported. Peaks are
+session-wide, so a subagent's smaller context is neither a rebuild nor growth.
+Token counts are provider-reported, not cost or subscription allowance. A report
+reads at most 5,000 calls (`omitted_calls` counts the rest).
 
 ## MCP server
 
@@ -92,6 +125,7 @@ Its tools are read-only:
 | `search_calls`      | Calls, newest first, filtered as in [call search](#call-search) (`session_id` names the session); `{calls, next}` |
 | `list_sessions`     | Recent sessions with their counts and token totals                                                                |
 | `session_calls`     | One session's calls, oldest first; `{calls, next}`                                                                |
+| `session_report`    | A session's context and cost report, as `tgv report` shows it                                                     |
 | `list_turns`        | A session's turns, newest first, as `tgv turns` lists them                                                        |
 | `get_turn`          | What one turn did, as `tgv turn` shows it: prompt, tool calls with effects and results, files, commands           |
 | `get_call_activity` | One call's activity, as `tgv activity` shows it                                                                   |
@@ -133,6 +167,7 @@ the body was stored whole; otherwise `not_found`. At most two run at once
 | `GET /api/usage?from_ms=&until_ms=`                        | Calls, errors, and tokens in total, by UTC hour, and by model (see [usage](#usage))         |
 | `GET /api/sessions/{session-id}/calls?limit=100`           | One session's calls, oldest first                                                           |
 | `GET /api/sessions/{session-id}/turns?limit=100`           | A session's turns, newest first, with prompt excerpts (see [activity](#activity))           |
+| `GET /api/sessions/{session-id}/report`                    | A session's [context and cost report](#session-report)                                      |
 | `GET /api/turns/{turn-id}`                                 | One turn's [activity](#activity)                                                            |
 | `GET /api/calls/{call-id}/activity`                        | One call's [activity](#activity)                                                            |
 | `GET /api/live?after={seq}`                                | Server-sent events as observations commit                                                   |

@@ -31,6 +31,7 @@ pub enum ToolName {
     SearchCalls,
     ListSessions,
     SessionCalls,
+    SessionReport,
     ListTurns,
     GetTurn,
     GetCall,
@@ -49,6 +50,7 @@ pub enum ToolCall {
         limit: PageLimit,
         after: Option<Cursor>,
     },
+    SessionReport(SessionId),
     ListTurns {
         session: SessionId,
         limit: PageLimit,
@@ -220,6 +222,12 @@ struct TurnsArgs {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+struct ReportArgs {
+    session_id: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct TurnArgs {
     turn_id: String,
 }
@@ -295,6 +303,12 @@ impl ToolCall {
                     limit: Field("limit").limit(args.limit, Self::MAX_ROWS)?,
                     after: Field("after").cursor(args.after)?,
                 })
+            }
+            ToolName::SessionReport => {
+                let args: ReportArgs = Self::arguments(arguments)?;
+                Ok(Self::SessionReport(
+                    Field("session_id").id(&args.session_id)?,
+                ))
             }
             ToolName::ListTurns => {
                 let args: TurnsArgs = Self::arguments(arguments)?;
@@ -381,6 +395,12 @@ impl ToolName {
                     "limit": Self::limit(ToolCall::MAX_ROWS),
                     "after": Self::string("A previous answer's `next` value, unchanged."),
                 }),
+                json!(["session_id"]),
+            ),
+            Self::SessionReport => (
+                "Session report",
+                "Why a session was slow or used many tokens, from its call records: per turn, context size at start and end, prompt-cache hit percent, tokens written to the cache, output tokens, and idle time before it; session totals; and findings: `cache_rebuild` (a call wrote most of the context to the cache again, with the idle time before it) and `context_growth` (the largest steps past the earlier peak). Token counts are provider-reported, not cost or subscription allowance. get_turn adds `large_tool_output` and `repeated_failure` findings.",
+                json!({ "session_id": Self::string("A TGV session ID, as list_sessions returns it.") }),
                 json!(["session_id"]),
             ),
             Self::ListTurns => (
@@ -641,7 +661,7 @@ mod tests {
             json!(["active", "finished", "errors", "interrupted"])
         );
         assert_eq!(
-            definitions[7]["inputSchema"]["required"],
+            definitions[8]["inputSchema"]["required"],
             json!(["call_id", "direction"])
         );
     }

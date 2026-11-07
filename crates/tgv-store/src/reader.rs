@@ -4,6 +4,7 @@
 use super::chunk::{ChunkHash, Codec, EncodedChunk};
 use crate::activity::{
     ActivityBudget, CallActivity, Excerpt, ReadCall, TurnActivity, TurnHead, TurnSummary,
+    report::SessionReport,
 };
 use crate::{
     Store, StoreError,
@@ -685,6 +686,8 @@ impl Reader {
     };
     /// The most calls one turn's activity reads.
     const MAX_TURN_CALLS: i64 = 100;
+    /// The most calls a session report reads, oldest first.
+    const MAX_REPORT_CALLS: i64 = 5_000;
     /// Calls read for a turn listing's prompt.
     const PROMPT_CALLS: i64 = 3;
 
@@ -766,6 +769,36 @@ impl Reader {
             });
         }
         Ok(turns)
+    }
+
+    /// A session's context and cost measurements, from call records alone:
+    /// no body is read, so it stays fast for long sessions.
+    pub async fn session_report(&self, session: SessionId) -> Result<SessionReport, StoreError> {
+        let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM sessions WHERE id = ?)")
+            .bind(session.to_string())
+            .fetch_one(&self.pool)
+            .await?;
+        if !exists {
+            return Err(StoreError::NotFound);
+        }
+        let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM calls WHERE session = ?")
+            .bind(session.to_string())
+            .fetch_one(&self.pool)
+            .await?;
+        let calls: Vec<CallView> = sqlx::query(AssertSqlSafe(format!(
+            "{} WHERE c.session = ? ORDER BY c.started_at, c.id LIMIT ?",
+            CallView::SELECT
+        )))
+        .bind(session.to_string())
+        .bind(Self::MAX_REPORT_CALLS)
+        .fetch_all(&self.pool)
+        .await?
+        .iter()
+        .map(CallView::from_row)
+        .collect::<Result<_, _>>()?;
+        let read = i64::try_from(calls.len()).unwrap_or(i64::MAX);
+        let omitted = u64::try_from(total.saturating_sub(read)).unwrap_or(0);
+        Ok(SessionReport::build(session, &calls, omitted))
     }
 
     /// One call's activity, with results matched only within the call.

@@ -200,7 +200,8 @@ dependencies under "Crates" below. Read the code for current module ownership.
   observation log and query tables; `blobs.sqlite3` holds deduplicated,
   content-defined body chunks, in the format `chunk` defines (hash, codec,
   encoding). It contains typed query parameters and read views, turn and call
-  activity assembled from stored bodies at read time (`activity`), and
+  activity assembled from stored bodies at read time (`activity`, with the
+  session context and cost report in `activity::report`), and
   implements the recorder's `RecordSink`. It owns the versioned migrations for
   `tgv.sqlite3` (`crates/tgv-store/migrations`); never edit one that has
   shipped. Its tests include `tests/recorder.rs`, the recorder against the real

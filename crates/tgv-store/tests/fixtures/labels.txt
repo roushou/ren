@@ -1,3 +1,4 @@
+activity::report::FindingKind: cache_rebuild context_growth large_tool_output repeated_failure
 chunk::Codec: raw zstd
 query::KindFilter: model other
 query::StatusFilter: active finished errors interrupted

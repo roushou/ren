@@ -273,6 +273,14 @@ impl Management {
         Self::field(self.read(&path, &query).await?, "turns")
     }
 
+    /// `GET /api/sessions/{id}/report`: the session's context and cost report.
+    pub async fn report(&self, session: SessionId) -> Result<Value, ManagementError> {
+        Ok(Value::Object(
+            self.read(&format!("/api/sessions/{session}/report"), &[])
+                .await?,
+        ))
+    }
+
     /// `GET /api/turns/{id}`: one turn's activity.
     pub async fn turn(&self, turn: TurnId) -> Result<Value, ManagementError> {
         Ok(Value::Object(

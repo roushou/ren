@@ -7,7 +7,10 @@
 //! what the client reported; an effect is what the tool's input names.
 //! Turns are the client's own groupings, never inferred.
 
+pub mod report;
+
 use crate::view::{CallView, TokenTotals};
+use report::{CallMetrics, Finding, FindingKind, LargeToolOutput, RepeatedFailure};
 use serde::Serialize;
 use std::collections::HashSet;
 use tgv_harness::{
@@ -104,6 +107,7 @@ pub struct CallActivity {
     pub model: Option<String>,
     pub status: Option<u16>,
     pub outcome: Option<Stored<tgv_protocol::inspect::ModelOutcome>>,
+    pub metrics: CallMetrics,
     /// The user's own words, when this request starts with them.
     pub prompt: Option<Excerpt>,
     pub tool_calls: Vec<ToolCallView>,
@@ -132,6 +136,8 @@ pub struct TurnActivity {
     pub failed_tool_calls: u64,
     /// Tool calls no request in the turn answered.
     pub unanswered_tool_calls: u64,
+    /// Large tool outputs and repeated failures in the turn.
+    pub findings: Vec<Finding>,
     pub calls: Vec<CallActivity>,
     /// Calls beyond the read limit, left out.
     pub omitted_calls: u64,
@@ -222,6 +228,7 @@ impl ReadCall {
         budget: ActivityBudget,
     ) -> CallActivity {
         let harness = self.harness();
+        let metrics = CallMetrics::of(&self.view);
         let prompt = self
             .prompt()
             .map(|prompt| Excerpt::cut(&prompt, budget.prompt_chars));
@@ -274,6 +281,7 @@ impl ReadCall {
             model: self.view.model,
             status: self.view.status,
             outcome: self.view.outcome,
+            metrics,
             prompt,
             tool_calls,
             earlier_results: u64::try_from(earlier_results).unwrap_or(u64::MAX),
@@ -316,6 +324,7 @@ impl TurnActivity {
             tool_calls: 0,
             failed_tool_calls: 0,
             unanswered_tool_calls: 0,
+            findings: Self::tool_findings(&calls),
             calls: Vec::new(),
             omitted_calls,
         };
@@ -346,6 +355,55 @@ impl TurnActivity {
         }
         turn.calls = calls;
         turn
+    }
+
+    /// Tool outputs of at least [`FindingKind::LARGE_OUTPUT_CHARS`], and
+    /// tools that failed [`FindingKind::REPEATED_FAILURES`] times or more
+    /// on one target, in the order they first appeared.
+    fn tool_findings(calls: &[CallActivity]) -> Vec<Finding> {
+        let mut findings = Vec::new();
+        let mut failures: Vec<(String, Option<String>, Vec<CallId>)> = Vec::new();
+        for call in calls {
+            for tool in &call.tool_calls {
+                let Some(result) = &tool.result else {
+                    continue;
+                };
+                let target = tool.effects.first().map(|effect| effect.target.clone());
+                let chars = u64::try_from(result.output.text.chars().count())
+                    .unwrap_or(u64::MAX)
+                    .saturating_add(result.output.omitted_chars);
+                if chars >= FindingKind::LARGE_OUTPUT_CHARS {
+                    findings.push(Finding::LargeToolOutput(LargeToolOutput {
+                        call: call.call,
+                        tool: tool.name.clone(),
+                        tool_call_id: tool.id.clone(),
+                        target: target.clone(),
+                        output_chars: chars,
+                    }));
+                }
+                if result.status == ResultStatus::Failed {
+                    match failures
+                        .iter_mut()
+                        .find(|(name, known, _)| *name == tool.name && *known == target)
+                    {
+                        Some((_, _, calls)) => calls.push(call.call),
+                        None => failures.push((tool.name.clone(), target, vec![call.call])),
+                    }
+                }
+            }
+        }
+        findings.extend(failures.into_iter().filter_map(|(tool, target, calls)| {
+            let failures = u64::try_from(calls.len()).unwrap_or(u64::MAX);
+            (failures >= FindingKind::REPEATED_FAILURES).then_some(Finding::RepeatedFailure(
+                RepeatedFailure {
+                    tool,
+                    target,
+                    failures,
+                    calls,
+                },
+            ))
+        }));
+        findings
     }
 }
 

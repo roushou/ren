@@ -239,3 +239,164 @@ fn excerpts_count_what_they_leave_out() {
     );
     assert_eq!(Excerpt::cut("", 2).omitted_chars, 0);
 }
+
+mod report {
+    use super::*;
+    use crate::activity::report::{Finding, SessionReport};
+    use tgv_protocol::inspect::InputAccounting;
+    use tgv_recorder::inspection::UsageRecord;
+
+    /// A call at `second`, lasting one second, in `turn`, with Anthropic
+    /// usage: new input, cache read, cache written, output.
+    fn call(second: u64, turn: Option<u128>, usage: Option<(u64, u64, u64, u64)>) -> CallView {
+        let mut call = view(u128::from(second), HintSource::ClaudeCodeHeaders);
+        call.started_at = UnixMillis::from_millis(second * 1000);
+        call.ended_at = Some(UnixMillis::from_millis(second * 1000 + 1000));
+        call.turn = turn.map(|turn| TurnId::restore(id(turn)));
+        call.usage = usage.map(|(input, read, written, output)| UsageRecord {
+            accounting: InputAccounting::ExcludesCache.into(),
+            input_tokens: Some(input),
+            output_tokens: Some(output),
+            cache_read_tokens: Some(read),
+            cache_creation_tokens: Some(written),
+            reasoning_tokens: None,
+        });
+        call
+    }
+
+    #[test]
+    fn rebuilds_after_idle_and_growth_are_found_but_subagents_are_not() {
+        let calls = [
+            // A small side call opens the session; the first real call's
+            // cache write after it is neither a rebuild nor growth.
+            call(0, None, Some((1_200, 0, 0, 20))),
+            // Turn 1: the cache is first written, then read.
+            call(1, Some(1), Some((2, 0, 50_000, 100))),
+            call(10, Some(1), Some((2, 50_000, 1_000, 100))),
+            // A subagent's first call: small, its own cache.
+            call(12, Some(1), Some((2, 4_000, 15_000, 50))),
+            call(20, Some(1), Some((2, 51_000, 30_000, 300))),
+            // A side call outside any turn, without usage.
+            call(30, None, None),
+            // Turn 2, an hour later: everything is written again.
+            call(3_600, Some(2), Some((4, 0, 82_000, 200))),
+            call(3_610, Some(2), Some((2, 82_000, 1_000, 200))),
+        ];
+        let report = SessionReport::build(SessionId::restore(id(9)), &calls, 0);
+        assert_eq!(report.totals.calls, 8);
+        assert_eq!(report.totals.calls_with_usage, 7);
+        assert_eq!(report.totals.peak_context_tokens, 83_002);
+        let kinds: Vec<_> = report.findings.iter().map(Finding::kind).collect();
+        assert_eq!(
+            kinds,
+            [
+                report::FindingKind::ContextGrowth,
+                report::FindingKind::CacheRebuild
+            ]
+        );
+        let Finding::ContextGrowth(growth) = &report.findings[0] else {
+            panic!("{:?}", report.findings[0]);
+        };
+        assert_eq!(growth.earlier_peak_tokens, 51_002);
+        assert_eq!(growth.context_tokens, 81_002);
+        let Finding::CacheRebuild(rebuild) = &report.findings[1] else {
+            panic!("{:?}", report.findings[1]);
+        };
+        assert_eq!(rebuild.call, CallId::restore(id(3_600)));
+        assert_eq!(rebuild.cache_written_tokens, 82_000);
+        assert_eq!(rebuild.earlier_peak_tokens, 81_002);
+        assert_eq!(rebuild.idle_before_ms, Some(3_569_000));
+
+        assert_eq!(report.turns.len(), 2);
+        let first = &report.turns[0];
+        assert_eq!(first.call_count, 4);
+        // It starts as the side call ends.
+        assert_eq!(first.idle_before_ms, Some(0));
+        assert_eq!(first.context_start_tokens, Some(50_002));
+        assert_eq!(first.context_end_tokens, Some(81_002));
+        assert_eq!(first.cache_written_tokens, 96_000);
+        let second = &report.turns[1];
+        assert_eq!(second.idle_before_ms, Some(3_569_000));
+        // 82,000 read of 82,004 + 83,002 seen.
+        assert_eq!(second.cache_hit_percent, Some(49));
+
+        let json = serde_json::to_value(&report).unwrap();
+        assert_eq!(json["findings"][1]["kind"], "cache_rebuild");
+        assert_eq!(json["findings"][1]["cache_written_tokens"], 82_000);
+    }
+
+    #[test]
+    fn openai_input_already_counts_cached_tokens() {
+        let mut call = call(0, Some(1), None);
+        call.usage = Some(UsageRecord {
+            accounting: InputAccounting::IncludesCache.into(),
+            input_tokens: Some(10_000),
+            output_tokens: Some(5),
+            cache_read_tokens: Some(9_000),
+            cache_creation_tokens: None,
+            reasoning_tokens: None,
+        });
+        let metrics = report::CallMetrics::of(&call);
+        assert_eq!(metrics.context_tokens, Some(10_000));
+        assert_eq!(metrics.duration_ms, Some(1_000));
+        let report = SessionReport::build(SessionId::restore(id(9)), &[call], 2);
+        assert_eq!(report.totals.cache_hit_percent, Some(90));
+        assert_eq!(report.omitted_calls, 2);
+    }
+
+    #[test]
+    fn turns_report_large_outputs_and_repeated_failures() {
+        let tools: Vec<_> = (0..3)
+            .map(|n| tool(&format!("t{n}"), "Bash", json!({ "command": "cargo test" })))
+            .chain([tool("big", "Read", json!({ "file_path": "big.log" }))])
+            .collect();
+        let first = ReadCall {
+            view: view(1, HintSource::ClaudeCodeHeaders),
+            request: RequestActivity::default(),
+            response: ResponseActivity {
+                tool_uses: tools,
+                reply: String::new(),
+                limitations: Vec::new(),
+            },
+        };
+        let second = ReadCall {
+            view: view(2, HintSource::ClaudeCodeHeaders),
+            request: RequestActivity {
+                user_text: Vec::new(),
+                tool_results: vec![
+                    result("t0", ResultStatus::Failed, "boom"),
+                    result("t1", ResultStatus::Failed, "boom"),
+                    result("t2", ResultStatus::Failed, "boom"),
+                    result("big", ResultStatus::Succeeded, &"x".repeat(25_000)),
+                ],
+                limitations: Vec::new(),
+            },
+            response: ResponseActivity::default(),
+        };
+        let turn = TurnActivity::assemble(head(), vec![first, second], 0, ActivityBudget::DEFAULT);
+        let json = serde_json::to_value(&turn.findings).unwrap();
+        let first_call = CallId::restore(id(1)).to_string();
+        let failed_calls = vec![first_call.clone(); 3];
+        assert_eq!(
+            json,
+            json!([
+                {
+                    "kind": "large_tool_output",
+                    "call": first_call,
+                    "tool": "Read",
+                    "tool_call_id": "big",
+                    "target": "big.log",
+                    "output_chars": 25_000,
+                },
+                {
+                    "kind": "repeated_failure",
+                    "tool": "Bash",
+                    "target": "cargo test",
+                    "failures": 3,
+                    "calls": failed_calls,
+                },
+            ])
+        );
+        assert_eq!(turn.calls[0].metrics.duration_ms, Some(500));
+    }
+}

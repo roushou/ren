@@ -495,6 +495,11 @@ not executed; a status is client-reported; unreadable input is a limitation.
 The work runs on the read pool under the preview permits, so it never touches
 forwarding or capture.
 
+The session report (`activity::report`) reads only call rows. Per-call metrics
+come from the provider-reported usage, by its input accounting, and recorded
+times; findings (`FindingKind`) apply fixed thresholds and state measurements,
+never causes. Turn activity adds the findings that need bodies.
+
 ### Storage
 
 **The log.** `observations(seq, at_wall, at_mono, channel, call?, attempt?, kind, schema, payload)`.
@@ -641,6 +646,7 @@ state; it is logged, not recorded in `operator_actions`.
 - Backups go only to `<data-dir>/backup`, and only through a running daemon.
 - Activity is computed from bodies on each read: it is neither stored nor
   searchable, a turn reads at most 100 calls, and turn listings have no paging.
+  Reports do not detect compaction, and time to first token is not recorded.
   Its parsing runs on an async worker, bounded only by the preview permits.
 - The container image is built from a checkout; none is published, and
   `install-vps` does not manage containers.
