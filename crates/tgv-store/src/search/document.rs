@@ -3,29 +3,13 @@
 
 use crate::activity::{ActivityBudget, Excerpt, ReadCall};
 use serde::Serialize;
-use serde_with::{DeserializeFromStr, SerializeDisplay};
-use strum::{Display, EnumString, IntoStaticStr, VariantArray};
 use tgv_harness::Harness;
+pub use tgv_recorder::digest::SearchField;
 use tgv_recorder::secrets::{Detection, SecretKind, SecretScanner};
 use tgv_recorder::{
     id::{CallId, SessionId, TurnId},
     time::UnixMillis,
 };
-
-/// Which part of a call a document holds.
-#[derive(Display, EnumString, IntoStaticStr, VariantArray)]
-#[strum(serialize_all = "snake_case")]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SerializeDisplay, DeserializeFromStr)]
-pub enum SearchField {
-    /// The user's own words, without the context clients add.
-    Prompt,
-    /// The model's text output.
-    Reply,
-    /// Tool calls the model requested: name, targets, and input.
-    ToolInput,
-    /// Tool results the client sent back.
-    ToolOutput,
-}
 
 /// One searchable text of a call.
 #[derive(Debug, Clone, PartialEq, Eq)]

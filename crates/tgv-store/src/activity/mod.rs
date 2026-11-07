@@ -18,41 +18,15 @@ use tgv_harness::{
     tools::{EffectKind, ToolEffect},
 };
 use tgv_protocol::{
-    activity::{
-        ActivityLimitation, RequestActivity, ResponseActivity, ResultStatus, ToolInput, ToolResult,
-    },
+    activity::{ActivityLimitation, RequestActivity, ResponseActivity, ResultStatus, ToolResult},
     label::Stored,
 };
+pub use tgv_recorder::digest::Excerpt;
 use tgv_recorder::secrets::SecretScanner;
 use tgv_recorder::{
     id::{CallId, SessionId, TurnId},
     time::UnixMillis,
 };
-
-/// Text cut to a budget, saying how much was left out.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct Excerpt {
-    pub text: String,
-    pub omitted_chars: u64,
-}
-
-impl Excerpt {
-    /// `text`, cut to `max_chars` characters.
-    pub fn cut(text: &str, max_chars: usize) -> Self {
-        let total = text.chars().count();
-        Self {
-            text: text.chars().take(max_chars).collect(),
-            omitted_chars: u64::try_from(total.saturating_sub(max_chars)).unwrap_or(u64::MAX),
-        }
-    }
-
-    fn of_input(input: &ToolInput, max_chars: usize) -> Self {
-        match input {
-            ToolInput::Json(value) => Self::cut(&value.to_string(), max_chars),
-            ToolInput::Text(text) => Self::cut(text, max_chars),
-        }
-    }
-}
 
 /// How much text each part of an activity view keeps.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -19,6 +19,7 @@
 pub mod batch;
 pub mod capture;
 pub mod chunk;
+pub mod digest;
 pub mod id;
 pub mod inspection;
 mod item;

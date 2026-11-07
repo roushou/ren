@@ -2,6 +2,7 @@ use super::*;
 use crate::view::{AttributionView, SessionHintView};
 use serde_json::json;
 use tgv_harness::attribution::HintSource;
+use tgv_protocol::activity::ToolInput;
 use tgv_protocol::{
     activity::{ToolResult, ToolUse},
     route::{Endpoint, Method, Provider},
