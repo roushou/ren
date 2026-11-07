@@ -58,6 +58,14 @@ pub struct SecretScanner {
     patterns: Vec<(Pattern, Regex)>,
 }
 
+impl std::fmt::Debug for SecretScanner {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SecretScanner")
+            .field("patterns", &self.patterns.len())
+            .finish()
+    }
+}
+
 /// Why the scanner could not be built: its patterns are constants, so this
 /// is a defect, not an input problem.
 #[derive(Debug, thiserror::Error)]

@@ -9,11 +9,13 @@ use super::{
 };
 use crate::{
     batch::{AttemptBody, Batch, BodyKey, FinishAttempt, FinishCall, Op, Segment},
-    capture::{BodyEnding, Omission},
+    capture::Omission,
     chunk::Chunker,
+    digest::{CallDigest, DigestBudget},
     id::CallId,
     inspection::InspectionRecord,
     retention::RetentionPolicy,
+    secrets::SecretScanner,
     time::{Clock, Monotonic},
 };
 use std::{
@@ -21,9 +23,11 @@ use std::{
     sync::{Arc, atomic::Ordering},
     time::Duration,
 };
+use tgv_harness::{Harness, tools::InterpretedCall};
 use tgv_protocol::{
     CallInspector,
-    inspect::pipeline::{BodyEnd as InspectedEnd, InspectionLimits, Protocol},
+    activity::{ActivityLimits, Reading, RequestReader, ResponseActivity},
+    inspect::pipeline::{InspectionLimits, Protocol},
 };
 use tokio::{
     sync::{OwnedSemaphorePermit, broadcast, mpsc},
@@ -45,11 +49,20 @@ pub struct RecorderTask<S> {
     pub(super) batch: Batch,
     pub(super) held: Vec<OwnedSemaphorePermit>,
     pub(super) oldest: Option<Monotonic>,
+    /// Redacts every digest's text before it is stored.
+    pub(super) scanner: Arc<SecretScanner>,
 }
 
 /// Recorder state for a call between its open and finish records.
 pub(super) struct CallInProgress {
     protocol: Option<Protocol>,
+    /// The harness whose hints attributed the call.
+    harness: Option<Harness>,
+    /// The request as it is captured, read when it ends.
+    reading: Option<RequestReader>,
+    /// What the latest attempt's response showed: the final one's, once the
+    /// call finishes.
+    response_activity: ResponseActivity,
     request: BodyCapture,
     /// The open attempt's changed request, if it sends one.
     attempt_request: Option<BodyCapture>,
@@ -134,6 +147,11 @@ impl<S: RecordSink> RecorderTask<S> {
     const MAINTENANCE: Duration = Duration::from_secs(60);
     /// Checkpoint the WALs every this many maintenance passes.
     const CHECKPOINT_EVERY: u32 = 5;
+    /// Calls whose digest is derived again from storage per pass.
+    const REDERIVE_BATCH: usize = 25;
+    /// The pause between passes while calls wait, and once none do.
+    const REDERIVE_BUSY: Duration = Duration::from_millis(250);
+    const REDERIVE_IDLE: Duration = Duration::from_secs(30);
     const PRUNE_ROUNDS: u32 = 8;
 
     pub async fn run(mut self) -> Result<(), S::Error> {
@@ -142,6 +160,7 @@ impl<S: RecordSink> RecorderTask<S> {
         let mut maintenance = tokio::time::interval(Self::MAINTENANCE);
         maintenance.set_missed_tick_behavior(MissedTickBehavior::Delay);
         let mut passes = 0_u32;
+        let mut rederive = Box::pin(tokio::time::sleep(Duration::ZERO));
         loop {
             tokio::select! {
                 item = self.receiver.recv() => match item {
@@ -154,6 +173,10 @@ impl<S: RecordSink> RecorderTask<S> {
                     None => break,
                 },
                 _ = commit.tick() => self.commit().await,
+                () = &mut rederive => {
+                    let pause = self.rederive().await;
+                    rederive.set(tokio::time::sleep(pause));
+                }
                 _ = maintenance.tick() => {
                     self.commit().await;
                     passes = passes.wrapping_add(1);
@@ -179,10 +202,20 @@ impl<S: RecordSink> RecorderTask<S> {
             } => {
                 self.observe_age(open.stamp.at.monotonic);
                 let call = open.stamp.call;
+                let protocol = Protocol::for_endpoint(endpoint);
                 self.calls.insert(
                     call,
                     CallInProgress {
-                        protocol: Protocol::for_endpoint(endpoint),
+                        protocol,
+                        harness: open
+                            .attribution
+                            .hint
+                            .as_ref()
+                            .map(|hint| hint.source.harness()),
+                        reading: protocol.map(|protocol| {
+                            RequestReader::new(protocol, ActivityLimits::default())
+                        }),
+                        response_activity: ResponseActivity::default(),
                         request: BodyCapture::new(BodyKey::Request(call)),
                         attempt_request: None,
                         // Replaced when the first attempt starts.
@@ -248,13 +281,9 @@ impl<S: RecordSink> RecorderTask<S> {
                     if call.response.received() < response.observed_bytes {
                         inspector.gap();
                     }
-                    let end = match response.ending {
-                        BodyEnding::Ended => InspectedEnd::Complete,
-                        BodyEnding::Open | BodyEnding::Unfinished => InspectedEnd::Unfinished,
-                    };
-                    Some(Box::new(InspectionRecord::from(
-                        &inspector.finish(end).inspection,
-                    )))
+                    let reading = inspector.finish(response.ending.end());
+                    call.response_activity = reading.activity;
+                    Some(Box::new(InspectionRecord::from(&reading.inspection)))
                 });
                 self.batch.push(Op::FinishAttempt(FinishAttempt {
                     stamp,
@@ -272,14 +301,38 @@ impl<S: RecordSink> RecorderTask<S> {
                 _call,
             } => {
                 self.observe_age(stamp.at.monotonic);
-                if let Some(mut call) = self.calls.remove(&stamp.call) {
+                let digest = self.calls.remove(&stamp.call).map(|mut call| {
                     call.request.flush(&mut self.batch);
-                }
+                    let reading = match call.reading {
+                        Some(mut reader) => {
+                            // Observed bytes that never reached the recorder are a gap.
+                            if call.request.received() < request.observed_bytes {
+                                reader.gap();
+                            }
+                            Reading {
+                                request: reader.finish(request.ending.end()),
+                                response: call.response_activity,
+                            }
+                        }
+                        None => Reading::unsupported(),
+                    };
+                    CallDigest::seal(
+                        InterpretedCall::new(call.harness, reading),
+                        &self.scanner,
+                        DigestBudget::STORED,
+                    )
+                });
                 self.batch.push(Op::FinishCall(FinishCall {
                     stamp,
                     request,
                     rejection,
                 }));
+                if let Some(digest) = digest {
+                    self.batch.push(Op::Digest {
+                        call: stamp.call,
+                        digest: Box::new(digest),
+                    });
+                }
             }
         }
     }
@@ -320,7 +373,19 @@ impl<S: RecordSink> RecorderTask<S> {
         }
         let continuity = body.push(piece.offset, &piece.bytes, &mut self.batch);
         match piece.track {
-            Track::Request | Track::AttemptRequest => {}
+            Track::AttemptRequest => {}
+            Track::Request => {
+                if let Some(reader) = &mut call.reading {
+                    match continuity {
+                        Continuity::Contiguous => {}
+                        Continuity::AfterGap => reader.gap(),
+                    }
+                    if piece.message.is_some() {
+                        reader.message();
+                    }
+                    reader.feed(&piece.bytes);
+                }
+            }
             Track::Response => {
                 if let Some(inspector) = &mut call.inspector {
                     match continuity {
@@ -332,6 +397,39 @@ impl<S: RecordSink> RecorderTask<S> {
                     }
                     inspector.feed(&piece.bytes);
                 }
+            }
+        }
+    }
+
+    /// Derive digests again from stored bodies: for calls recorded before
+    /// digests existed or by an older version. Returns the pause before the
+    /// next pass: short while calls wait, long once none do.
+    async fn rederive(&mut self) -> Duration {
+        match self
+            .sink
+            .undigested(CallDigest::VERSION, Self::REDERIVE_BATCH)
+            .await
+        {
+            Ok(exchanges) => {
+                let full = exchanges.len() >= Self::REDERIVE_BATCH;
+                for exchange in exchanges {
+                    let call = exchange.call;
+                    let digest = exchange.digest(&self.scanner);
+                    self.batch.push(Op::Digest {
+                        call,
+                        digest: Box::new(digest),
+                    });
+                }
+                self.commit().await;
+                if full {
+                    Self::REDERIVE_BUSY
+                } else {
+                    Self::REDERIVE_IDLE
+                }
+            }
+            Err(error) => {
+                tracing::warn!(%error, "deriving digests from stored bodies failed; retrying");
+                Self::REDERIVE_IDLE
             }
         }
     }

@@ -1,6 +1,7 @@
 //! The single writer: ownership, migrations, recovery, commits, and retention.
 
 use super::chunk::{ChunkHash, EncodedChunk};
+use crate::Reader;
 use crate::{
     StoreError,
     search::SearchIndex,
@@ -24,6 +25,7 @@ use tgv_protocol::{
     label::{Labeled, Stored},
     route::Transport,
 };
+use tgv_recorder::digest::{CallDigest, StoredExchange};
 use tgv_recorder::{Committed, Observation, Pruned, RecordSink};
 use tgv_recorder::{
     batch::{
@@ -47,6 +49,8 @@ pub struct Store {
     dir: PathBuf,
     ids: Arc<dyn IdSource>,
     sweeps: SweepGate,
+    /// Reads stored bodies back, for digests derived again.
+    bodies: Reader,
     _lock: File,
 }
 
@@ -134,6 +138,7 @@ impl Store {
             dir: dir.to_path_buf(),
             ids,
             sweeps: SweepGate::default(),
+            bodies: Reader::open(dir, 1).await?,
             _lock: lock,
         };
         recovery.calls = store.recover(clock.now()).await?;
@@ -601,7 +606,68 @@ impl MetadataTx<'_> {
             Op::FinishCall(finish) => self.finish_call(finish).await.map(Some),
             Op::CloseChannel(close) => self.close_channel(close).await.map(Some),
             Op::Operator(action) => self.operator(action).await.map(Some),
+            Op::Digest { call, digest } => self.digest(*call, digest).await.map(|()| None),
         }
+    }
+
+    /// Store a call's digest, replacing an earlier one with its exposures
+    /// and searchable texts. A call pruned since its digest was derived is
+    /// skipped.
+    async fn digest(&mut self, call: CallId, digest: &CallDigest) -> Result<(), StoreError> {
+        let id = call.to_string();
+        let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM calls WHERE id = ?)")
+            .bind(&id)
+            .fetch_one(&mut *self.tx)
+            .await?;
+        if !exists {
+            return Ok(());
+        }
+        for statement in [
+            "DELETE FROM call_exposures WHERE call = ?",
+            "DELETE FROM search_texts WHERE call = ?",
+        ] {
+            sqlx::query(statement)
+                .bind(&id)
+                .execute(&mut *self.tx)
+                .await?;
+        }
+        sqlx::query(
+            "INSERT INTO call_digests(call, version, prompt, prompt_omitted, digest) VALUES (?1, ?2, ?3, ?4, ?5) ON CONFLICT(call) DO UPDATE SET version = ?2, prompt = ?3, prompt_omitted = ?4, digest = ?5",
+        )
+        .bind(&id)
+        .bind(i64::from(digest.version))
+        .bind(digest.prompt.as_ref().map(|prompt| prompt.text.as_str()))
+        .bind(
+            digest
+                .prompt
+                .as_ref()
+                .map(|prompt| i64::try_from(prompt.omitted_chars).unwrap_or(i64::MAX)),
+        )
+        .bind(serde_json::to_string(digest)?)
+        .execute(&mut *self.tx)
+        .await?;
+        for exposure in &digest.exposures {
+            sqlx::query(
+                "INSERT INTO call_exposures(call, field, kind, hint, fingerprint, count) VALUES (?, ?, ?, ?, ?, ?)",
+            )
+            .bind(&id)
+            .bind(exposure.field.label())
+            .bind(exposure.kind.label())
+            .bind(&exposure.hint)
+            .bind(&exposure.fingerprint)
+            .bind(i64::try_from(exposure.count).unwrap_or(i64::MAX))
+            .execute(&mut *self.tx)
+            .await?;
+        }
+        for text in &digest.search {
+            sqlx::query("INSERT INTO search_texts(call, field, text) VALUES (?, ?, ?)")
+                .bind(&id)
+                .bind(text.field.label())
+                .bind(&text.text)
+                .execute(&mut *self.tx)
+                .await?;
+        }
+        Ok(())
     }
 
     async fn operator(&mut self, action: &OperatorAction) -> Result<Observation, StoreError> {
@@ -979,6 +1045,14 @@ impl RecordSink for Store {
 
     fn checkpoint(&mut self) -> impl Future<Output = Result<(), StoreError>> + Send {
         Store::checkpoint(self)
+    }
+
+    fn undigested(
+        &mut self,
+        version: u32,
+        limit: usize,
+    ) -> impl Future<Output = Result<Vec<StoredExchange>, StoreError>> + Send {
+        self.bodies.undigested(version, limit)
     }
 
     fn close(self) -> impl Future<Output = Result<(), StoreError>> + Send {

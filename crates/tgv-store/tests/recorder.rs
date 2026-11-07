@@ -16,7 +16,11 @@ use tgv_protocol::{
     label::Stored,
     route::{Endpoint, Method, Provider, Transport},
 };
+use tgv_recorder::RecordSink;
+use tgv_recorder::digest::CallDigest;
 use tgv_recorder::routing::UpstreamId;
+use tgv_recorder::secrets::SecretScanner;
+use tgv_recorder::time::Clock;
 use tgv_recorder::{
     AttemptStart, CallStart, CallTap, CaptureOptions, Recorder, RecorderMetrics, RecorderSetup,
     RecorderTask,
@@ -62,6 +66,7 @@ impl Harness {
             retention: RetentionPolicy::default(),
             max_calls,
             live_buffer: 64,
+            scanner: std::sync::Arc::new(tgv_recorder::secrets::SecretScanner::new().unwrap()),
         };
         let (recorder, task) = Recorder::new(store, recovery.calls, setup, clock, ids).unwrap();
         Self {
@@ -402,4 +407,295 @@ async fn a_failed_commit_keeps_lifecycle_records_and_reports_the_lost_bytes() {
         detail.call.outcome,
         Some(Stored::Known(ModelOutcome::Completed))
     );
+}
+
+/// A Messages request whose newest user input mentions `word` and carries a
+/// synthetic key, and a streamed response with text and a tool call.
+fn exchange(word: &str) -> (Vec<u8>, Vec<u8>) {
+    let key = format!("sk-ant-{}a1b2", "api03xY9z".repeat(5));
+    let request = serde_json::json!({
+        "model": "claude-test",
+        "messages": [
+            { "role": "user", "content": format!("Find the {word} with {key}") },
+            { "role": "assistant", "content": [{ "type": "tool_use", "id": "t1", "name": "Bash", "input": {} }] },
+            { "role": "user", "content": [
+                { "type": "tool_result", "tool_use_id": "t1", "content": format!("{word} found; K={key}") },
+                { "type": "text", "text": format!("Now explain the {word}") },
+            ] },
+        ],
+    })
+    .to_string()
+    .into_bytes();
+    let event = |name: &str, data: serde_json::Value| format!("event: {name}\ndata: {data}\n\n");
+    let response = [
+        event("message_start", serde_json::json!({ "type": "message_start", "message": { "model": "claude-test" } })),
+        event("content_block_start", serde_json::json!({ "type": "content_block_start", "index": 0, "content_block": { "type": "text", "text": "" } })),
+        event("content_block_delta", serde_json::json!({ "type": "content_block_delta", "index": 0, "delta": { "type": "text_delta", "text": format!("The {word} is here.") } })),
+        event("content_block_stop", serde_json::json!({ "type": "content_block_stop", "index": 0 })),
+        event("content_block_start", serde_json::json!({ "type": "content_block_start", "index": 1, "content_block": { "type": "tool_use", "id": "t2", "name": "Read", "input": {} } })),
+        event("content_block_delta", serde_json::json!({ "type": "content_block_delta", "index": 1, "delta": { "type": "input_json_delta", "partial_json": "{\"file_path\":\"src/lib.rs\"}" } })),
+        event("content_block_stop", serde_json::json!({ "type": "content_block_stop", "index": 1 })),
+        event("message_delta", serde_json::json!({ "type": "message_delta", "delta": { "stop_reason": "tool_use" } })),
+        event("message_stop", serde_json::json!({ "type": "message_stop" })),
+    ]
+    .concat()
+    .into_bytes();
+    (request, response)
+}
+
+async fn stored_digest(dir: &std::path::Path, call: CallId) -> Option<CallDigest> {
+    let options = sqlx::sqlite::SqliteConnectOptions::new()
+        .filename(dir.join("tgv.sqlite3"))
+        .read_only(true);
+    let mut connection = sqlx::ConnectOptions::connect(&options).await.unwrap();
+    let digest: Option<String> =
+        sqlx::query_scalar("SELECT digest FROM call_digests WHERE call = ?")
+            .bind(call.to_string())
+            .fetch_optional(&mut connection)
+            .await
+            .unwrap();
+    digest.map(|digest| serde_json::from_str(&digest).unwrap())
+}
+
+async fn count(dir: &std::path::Path, sql: &'static str) -> i64 {
+    let options = sqlx::sqlite::SqliteConnectOptions::new()
+        .filename(dir.join("tgv.sqlite3"))
+        .read_only(true);
+    let mut connection = sqlx::ConnectOptions::connect(&options).await.unwrap();
+    sqlx::query_scalar(sql)
+        .fetch_one(&mut connection)
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn a_digest_derived_while_recording_equals_one_derived_from_storage() {
+    let harness = Harness::new(CaptureOptions::default(), 4).await;
+    let mut calls = Vec::new();
+    for word in ["needle", "haystack"] {
+        let (request, response) = exchange(word);
+        let tap = harness.start();
+        calls.push(tap.call());
+        tap.data(Direction::Request, &request);
+        tap.end(Direction::Request);
+        tap.response_head(200, ResponseFormat::EventStream, ResponseEncoding::Identity);
+        // Arbitrary fragments, including inside an event.
+        for piece in response.chunks(11) {
+            tap.data(Direction::Response, piece);
+        }
+        tap.end(Direction::Response);
+        tap.finish(ended(AttemptTerminal::BodyComplete));
+    }
+    let (dir, _metrics, _reader) = harness.drain().await;
+
+    let live = stored_digest(dir.path(), calls[0]).await.unwrap();
+    assert_eq!(live.prompt.as_ref().unwrap().text, "Now explain the needle");
+    assert_eq!(live.reply.as_ref().unwrap().text, "The needle is here.");
+    assert_eq!(live.tool_uses[0].name, "Read");
+    assert_eq!(
+        live.tool_results[0].output.text,
+        "needle found; K=«redacted: anthropic_key»"
+    );
+    // The key in the first message is history, not this request's input;
+    // the tool output that repeats it is.
+    assert_eq!(live.exposures.len(), 1);
+    let stored = serde_json::to_string(&live).unwrap();
+    assert!(!stored.contains("api03"));
+    assert_eq!(
+        count(
+            dir.path(),
+            "SELECT COUNT(*) FROM search WHERE search MATCH 'needle'"
+        )
+        .await,
+        3
+    );
+    assert_eq!(
+        count(dir.path(), "SELECT COUNT(*) FROM call_exposures").await,
+        2
+    );
+
+    // Derived again from the stored bodies, through the sink port.
+    let clock = ManualClock::at(UnixMillis::from_millis(10_000));
+    let (mut store, _) = Store::open(dir.path(), &clock, Arc::new(SequentialIds::default()))
+        .await
+        .unwrap();
+    let scanner = SecretScanner::new().unwrap();
+    let exchanges = store.undigested(CallDigest::VERSION + 1, 10).await.unwrap();
+    assert_eq!(exchanges.len(), 2);
+    for exchange in exchanges {
+        let call = exchange.call;
+        let replayed = exchange.digest(&scanner);
+        assert_eq!(Some(replayed), stored_digest(dir.path(), call).await);
+    }
+    // Current digests are not listed again.
+    assert!(
+        store
+            .undigested(CallDigest::VERSION, 10)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+
+    // Retention deletes a call's derived rows with it, index included.
+    let policy = RetentionPolicy {
+        max_calls: 1,
+        ..RetentionPolicy::default()
+    };
+    store.prune(&policy, clock.now().wall).await.unwrap();
+    store.close().await.unwrap();
+    assert_eq!(stored_digest(dir.path(), calls[0]).await, None);
+    assert!(stored_digest(dir.path(), calls[1]).await.is_some());
+    assert_eq!(
+        count(
+            dir.path(),
+            "SELECT COUNT(*) FROM search WHERE search MATCH 'needle'"
+        )
+        .await,
+        0
+    );
+    assert_eq!(
+        count(
+            dir.path(),
+            "SELECT COUNT(*) FROM search WHERE search MATCH 'haystack'"
+        )
+        .await,
+        3
+    );
+    assert_eq!(
+        count(dir.path(), "SELECT COUNT(*) FROM call_exposures").await,
+        1
+    );
+}
+
+#[tokio::test]
+async fn a_websocket_calls_digest_is_derived_from_its_messages_alike() {
+    use tgv_protocol::websocket::Payload;
+    let harness = Harness::new(CaptureOptions::default(), 4).await;
+    let channel = harness
+        .recorder
+        .channel(tgv_recorder::id::ChannelId::restore(uuid::Uuid::from_u128(
+            77,
+        )));
+    let tap = harness.recorder.start_in(
+        channel.channel(),
+        CallStart {
+            transport: Transport::WebSocket,
+            provider: Provider::OpenAi,
+            endpoint: Endpoint::Responses,
+            method: Method::Message,
+            config_revision: ConfigRevision::new("rev"),
+            attribution: Attribution::default(),
+            operator_revision: None,
+            plan: None,
+            attempts: 1,
+        },
+        AttemptStart::unchanged(UpstreamId::default_for(Provider::OpenAi)),
+    );
+    let call = tap.call();
+    let create = serde_json::json!({ "type": "response.create", "input": [
+        { "type": "message", "role": "user", "content": [{ "type": "input_text", "text": "Run the suite" }] },
+    ] })
+    .to_string();
+    tap.message(Direction::Request, Payload::Text, create.as_bytes());
+    tap.end(Direction::Request);
+    tap.response_head(
+        101,
+        ResponseFormat::WebSocketMessages,
+        ResponseEncoding::Identity,
+    );
+    let item = serde_json::json!({ "type": "function_call", "call_id": "c1", "name": "shell", "arguments": "{\"command\":[\"cargo\",\"test\"]}" });
+    for event in [
+        serde_json::json!({ "type": "response.created", "response": {} }),
+        serde_json::json!({ "type": "response.output_item.done", "item": item }),
+        serde_json::json!({ "type": "response.completed", "response": { "output": [item] } }),
+    ] {
+        tap.message(
+            Direction::Response,
+            Payload::Text,
+            event.to_string().as_bytes(),
+        );
+    }
+    tap.end(Direction::Response);
+    tap.finish(ended(AttemptTerminal::TerminalEvent));
+    drop(tap);
+    drop(channel);
+    let (dir, _metrics, _reader) = harness.drain().await;
+    let live = stored_digest(dir.path(), call).await.unwrap();
+    assert_eq!(live.prompt.as_ref().unwrap().text, "Run the suite");
+    assert_eq!(live.tool_uses[0].name, "shell");
+
+    let clock = ManualClock::at(UnixMillis::from_millis(10_000));
+    let (mut store, _) = Store::open(dir.path(), &clock, Arc::new(SequentialIds::default()))
+        .await
+        .unwrap();
+    let scanner = SecretScanner::new().unwrap();
+    let exchanges = store.undigested(CallDigest::VERSION + 1, 10).await.unwrap();
+    let replayed = exchanges
+        .into_iter()
+        .find(|exchange| exchange.call == call)
+        .unwrap()
+        .digest(&scanner);
+    assert_eq!(replayed, live);
+    store.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn the_recorder_derives_missing_digests_from_stored_bodies() {
+    let harness = Harness::new(CaptureOptions::default(), 4).await;
+    let (request, response) = exchange("needle");
+    let tap = harness.start();
+    let call = tap.call();
+    complete(&tap, &request, &response);
+    drop(tap);
+    let (dir, _metrics, _reader) = harness.drain().await;
+    let live = stored_digest(dir.path(), call).await.unwrap();
+
+    // As if recorded before digests existed.
+    let options =
+        sqlx::sqlite::SqliteConnectOptions::new().filename(dir.path().join("tgv.sqlite3"));
+    let mut connection = sqlx::ConnectOptions::connect(&options).await.unwrap();
+    sqlx::query("DELETE FROM call_digests")
+        .execute(&mut connection)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM search_texts")
+        .execute(&mut connection)
+        .await
+        .unwrap();
+    sqlx::Connection::close(connection).await.unwrap();
+    assert_eq!(stored_digest(dir.path(), call).await, None);
+
+    // The next recorder run derives it again on its first pass.
+    let clock = Arc::new(ManualClock::at(UnixMillis::from_millis(20_000)));
+    let ids = Arc::new(SequentialIds::default());
+    let (store, recovery) = Store::open(dir.path(), clock.as_ref(), ids.clone())
+        .await
+        .unwrap();
+    let setup = RecorderSetup {
+        options: CaptureOptions::default(),
+        retention: RetentionPolicy::default(),
+        max_calls: 4,
+        live_buffer: 64,
+        scanner: Arc::new(SecretScanner::new().unwrap()),
+    };
+    let (recorder, task) = Recorder::new(store, recovery.calls, setup, clock, ids).unwrap();
+    let (result, ()) = tokio::join!(task.run(), async move {
+        for _ in 0..100 {
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            if count(dir.path(), "SELECT COUNT(*) FROM call_digests").await > 0 {
+                break;
+            }
+        }
+        drop(recorder);
+        assert_eq!(stored_digest(dir.path(), call).await, Some(live));
+        assert_eq!(
+            count(
+                dir.path(),
+                "SELECT COUNT(*) FROM search WHERE search MATCH 'needle'"
+            )
+            .await,
+            3
+        );
+    });
+    result.unwrap();
 }

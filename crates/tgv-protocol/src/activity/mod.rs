@@ -314,6 +314,19 @@ pub struct Reading {
     pub response: ResponseActivity,
 }
 
+impl Reading {
+    /// A call on an endpoint whose bodies hold no activity TGV reads.
+    pub fn unsupported() -> Self {
+        Self {
+            request: RequestActivity {
+                limitations: vec![ActivityLimitation::UnsupportedEndpoint],
+                ..RequestActivity::default()
+            },
+            response: ResponseActivity::default(),
+        }
+    }
+}
+
 /// Reads activity from one protocol's bodies.
 #[derive(Debug, Clone, Copy)]
 pub struct ActivityReader {

@@ -18,6 +18,7 @@ use tgv_gateway::{
 };
 use tgv_gateway::{IngressError, UpstreamConfigError};
 use tgv_recorder::CaptureOptionsError;
+use tgv_recorder::secrets::SecretScanner;
 use tgv_recorder::{Recorder, RecorderSetup, id::IdSource, time::Clock};
 use tgv_store::StoreError;
 use tgv_store::{
@@ -162,6 +163,7 @@ impl Daemon {
                 // dequeued, after admission is released: leave headroom.
                 max_calls: config.recorder_calls(),
                 live_buffer: 1024,
+                scanner: Arc::new(SecretScanner::new().map_err(StoreError::from)?),
             },
             clock.clone(),
             ids.clone(),

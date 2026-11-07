@@ -217,6 +217,7 @@ impl TestGateway {
                 retention: runtime.retention().clone(),
                 max_calls: runtime.recorder_calls(),
                 live_buffer: 64,
+                scanner: std::sync::Arc::new(tgv_recorder::secrets::SecretScanner::new().unwrap()),
             },
             clock.clone(),
             ids,

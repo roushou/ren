@@ -28,7 +28,7 @@ use tgv_protocol::activity::{
     ActivityLimitation, ActivityLimits, ActivityReader, BodyExtent, CapturedBody, RequestActivity,
     ResponseActivity,
 };
-use tgv_protocol::encoding::ResponseEncoding;
+use tgv_protocol::encoding::{ResponseEncoding, ResponseFormat};
 use tgv_protocol::inspect::pipeline::Protocol;
 use tgv_protocol::inspect::{InputAccounting, ModelOutcome};
 use tgv_protocol::{
@@ -41,7 +41,8 @@ use tgv_recorder::batch::BodyKey;
 use tgv_recorder::secrets::SecretScanner;
 use tgv_recorder::time::UnixMillis;
 use tgv_recorder::{
-    capture::{AttemptTerminal, CallState, TerminalClass},
+    capture::{AttemptTerminal, BodyEnding, CallState, TerminalClass},
+    digest::{Captured, StoredBody, StoredExchange, StoredResponse},
     id::{CallId, SessionId, TurnId},
 };
 
@@ -979,6 +980,71 @@ impl Reader {
         })
     }
 
+    /// Up to `limit` finished calls whose digest is missing or older than
+    /// `version`, newest first, with their stored bodies.
+    pub(crate) async fn undigested(
+        &self,
+        version: u32,
+        limit: usize,
+    ) -> Result<Vec<StoredExchange>, StoreError> {
+        let calls: Vec<String> = sqlx::query_scalar(
+            "SELECT c.id FROM calls c LEFT JOIN call_digests d ON d.call = c.id WHERE c.state <> 'open' AND (d.call IS NULL OR d.version < ?) ORDER BY c.started_at DESC, c.id DESC LIMIT ?",
+        )
+        .bind(i64::from(version))
+        .bind(i64::try_from(limit).unwrap_or(i64::MAX))
+        .fetch_all(&self.pool)
+        .await?;
+        let mut exchanges = Vec::with_capacity(calls.len());
+        for call in calls {
+            let call: CallId = call
+                .parse()
+                .map_err(|_| StoreError::Corrupt("identifier"))?;
+            let view = match self.call_view(call).await {
+                Ok(view) => view,
+                // Pruned since it was listed.
+                Err(StoreError::NotFound) => continue,
+                Err(error) => return Err(error),
+            };
+            let request = self
+                .captured(BodyKey::Request(call))
+                .await?
+                .map(CapturedPrefix::into_stored);
+            let response = match self.body_key(call, Direction::Response).await {
+                Ok(key) => {
+                    let format: Option<String> = sqlx::query_scalar(
+                        "SELECT a.response_format FROM attempts a JOIN calls c ON c.final_attempt = a.id WHERE c.id = ?",
+                    )
+                    .bind(call.to_string())
+                    .fetch_optional(&self.pool)
+                    .await?
+                    .flatten();
+                    self.captured(key).await?.map(|prefix| StoredResponse {
+                        format: format
+                            .and_then(|label| ResponseFormat::from_label(&label))
+                            .unwrap_or(ResponseFormat::Other),
+                        encoding: prefix.encoding.unwrap_or(ResponseEncoding::Identity),
+                        body: prefix.into_stored(),
+                    })
+                }
+                Err(StoreError::NotFound) => None,
+                Err(error) => return Err(error),
+            };
+            exchanges.push(StoredExchange {
+                call,
+                endpoint: view.endpoint.known(),
+                harness: view
+                    .attribution
+                    .hint
+                    .as_ref()
+                    .and_then(|hint| hint.source.known())
+                    .map(|source| source.harness()),
+                request,
+                response,
+            });
+        }
+        Ok(exchanges)
+    }
+
     /// A body's stored prefix with its message boundaries; `None` when the
     /// body was never recorded.
     async fn captured(&self, key: BodyKey) -> Result<Option<CapturedPrefix>, StoreError> {
@@ -1029,6 +1095,10 @@ struct CapturedPrefix {
     extent: BodyExtent,
     encoding: Option<ResponseEncoding>,
     messages: Option<Vec<std::ops::Range<usize>>>,
+    /// Observed bytes are missing from `bytes`: a gap, the read limit, or
+    /// bytes never stored.
+    missing: bool,
+    ending: BodyEnding,
 }
 
 impl CapturedPrefix {
@@ -1056,9 +1126,30 @@ impl CapturedPrefix {
             encoding: prefix
                 .encoding
                 .map(|encoding| encoding.known().unwrap_or(ResponseEncoding::Unsupported)),
+            missing: prefix.gap
+                || prefix.truncated
+                || prefix
+                    .body
+                    .observed_bytes
+                    .is_some_and(|observed| prefix.body.stored_bytes < observed),
+            ending: prefix.body.ending.known().unwrap_or(BodyEnding::Unfinished),
             bytes: prefix.bytes,
             extent,
             messages,
+        }
+    }
+
+    /// The prefix as the recorder replays it.
+    fn into_stored(self) -> StoredBody {
+        StoredBody {
+            complete: if self.missing {
+                Captured::Partial
+            } else {
+                Captured::Whole
+            },
+            ending: self.ending,
+            messages: self.messages,
+            bytes: self.bytes,
         }
     }
 

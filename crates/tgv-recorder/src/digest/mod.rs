@@ -1,6 +1,10 @@
 //! What a call's text becomes when it is stored: excerpts cut to a budget,
 //! by field, after its secrets are redacted.
 
+mod replay;
+
+pub use replay::{Captured, StoredBody, StoredExchange, StoredResponse};
+
 use crate::secrets::{Detection, SecretKind, SecretScanner};
 use serde::{Deserialize, Serialize};
 use serde_with::{DeserializeFromStr, SerializeDisplay};

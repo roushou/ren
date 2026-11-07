@@ -463,6 +463,17 @@ and the live broadcast, writing through `RecordSink`.
   about 3.4× (asserted above 3×).
 - **Live broadcast** is a bounded ring of committed observations. A slow
   subscriber gets `lagged` and catches up from the database.
+- **Digests.** As a call's bytes flow, the recorder gathers its request
+  (`RequestReader`) and reads each attempt's response activity alongside
+  inspection. When the call finishes it interprets the final attempt's reading
+  for the call's harness (`InterpretedCall`) and seals it (`CallDigest::seal`):
+  every text redacted, then cut to `DigestBudget::STORED`. The digest is written
+  in the same batch as the call's finish.
+- **Rederive.** A pass on the recorder task asks the sink for finished calls whose
+  digest is missing or older than `CallDigest::VERSION` (25 at a time, newest
+  first; every 250 ms while some wait, else every 30 s) and replays their stored
+  bodies through the same readers. Tests check that a digest derived while
+  recording equals one derived from storage, for HTTP and WebSocket calls.
 
 ### Inspection
 
@@ -541,7 +552,10 @@ the index's exposures as findings.
 
 **Query tables.** `channels`, `calls`, `attempts`, `sessions`, `turns`,
 `operator_actions` (the newest 10,000), the `operator_state` snapshot, and the
-search columns. The writer updates them directly, in the same transaction as the
+search columns. Derived from each finished call: `call_digests` (version, prompt,
+and the digest as JSON), `call_exposures`, and `search_texts` with its FTS5 index
+`search` (external content, kept in step by triggers). They reference `calls`
+with `ON DELETE CASCADE`, so retention removes them with their call. The writer updates them directly, in the same transaction as the
 log; there is no generic reducer framework.
 
 **Bodies.**

@@ -8,6 +8,7 @@
 //! call's data.
 
 use super::inspection::InspectionRecord;
+use crate::digest::CallDigest;
 use crate::{
     capture::{BodyEnding, CallRejection, ChannelEnd, TerminalRecord},
     id::{AttemptId, CallId, ChannelId},
@@ -80,7 +81,8 @@ impl Batch {
                 .ops
                 .into_iter()
                 .filter(|op| match op {
-                    Op::Segments { .. } => false,
+                    // Derived data: derived again from the stored bodies.
+                    Op::Segments { .. } | Op::Digest { .. } => false,
                     // Boundaries stay: the bodies' stored byte counts show
                     // which bytes they frame were lost.
                     Op::Message { .. }
@@ -181,6 +183,12 @@ pub enum Op {
     FinishCall(FinishCall),
     CloseChannel(CloseChannel),
     Operator(OperatorAction),
+    /// What a finished call's bodies showed, derived as they were recorded
+    /// or again from storage. It replaces any earlier digest of the call.
+    Digest {
+        call: CallId,
+        digest: Box<CallDigest>,
+    },
 }
 
 /// Who issued an operator command.

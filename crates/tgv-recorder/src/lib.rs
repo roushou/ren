@@ -42,6 +42,7 @@ pub use task::RecorderTask;
 use crate::{
     id::{ChannelId, IdSource},
     retention::RetentionPolicy,
+    secrets::SecretScanner,
     time::Clock,
 };
 use item::Shared;
@@ -75,6 +76,8 @@ pub struct RecorderSetup {
     pub max_calls: usize,
     /// Committed observations kept for live subscribers that fall behind.
     pub live_buffer: usize,
+    /// Redacts the text of every call's digest before it is stored.
+    pub scanner: Arc<SecretScanner>,
 }
 
 /// A handle to the recorder: starts call taps, reads metrics, and subscribes
@@ -120,6 +123,7 @@ impl Recorder {
             batch: Default::default(),
             held: Vec::new(),
             oldest: None,
+            scanner: setup.scanner,
         };
         Ok((
             Self {

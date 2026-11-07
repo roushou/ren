@@ -199,7 +199,8 @@ dependencies under "Crates" below. Read the code for current module ownership.
   (`secrets`: `SecretScanner`, well-known formats only, never storing a secret),
   so text is sanitized before anything is persisted, and the stored form of a
   call's text (`digest`: `CallDigest::seal` redacts and cuts an
-  `InterpretedCall` to a `DigestBudget`, keeping only what each secret leaves). It has no database, HTTP,
+  `InterpretedCall` to a `DigestBudget`, keeping only what each secret leaves;
+  `StoredExchange` replays a call's stored bodies to derive it again). It has no database, HTTP,
   or CLI dependency.
 - `crates/tgv-store`: persistence (SQLx, SQLite WAL), with `Store`, the single
   writer, as its primary type; `Reader` is its read-only pool and `Backup` the
@@ -210,7 +211,9 @@ dependencies under "Crates" below. Read the code for current module ownership.
   activity assembled from stored bodies at read time (`activity`, with the
   session context and cost report in `activity::report`), the full-text search
   index (`search`: `SearchIndex` on the derived, rebuildable `search.sqlite3`,
-  filled by `Indexer` passes, its only writer), and implements the recorder's `RecordSink`. It owns the versioned migrations for
+  filled by `Indexer` passes, its only writer), the stored digests the recorder
+  derives for each finished call (`call_digests`, `call_exposures`, and
+  `search_texts` with its FTS5 index, in `tgv.sqlite3`), and implements the recorder's `RecordSink`. It owns the versioned migrations for
   `tgv.sqlite3` (`crates/tgv-store/migrations`); never edit one that has
   shipped. Its tests include `tests/recorder.rs`, the recorder against the real
   store.

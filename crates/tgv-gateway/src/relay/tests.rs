@@ -55,6 +55,7 @@ impl Harness {
             retention: RetentionPolicy::default(),
             max_calls: 4,
             live_buffer: 16,
+            scanner: std::sync::Arc::new(tgv_recorder::secrets::SecretScanner::new().unwrap()),
         };
         let (recorder, task) = Recorder::new(store, recovery.calls, setup, clock, ids).unwrap();
         Self {
