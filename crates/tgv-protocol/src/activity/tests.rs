@@ -1,4 +1,5 @@
 use super::*;
+use crate::encoding::ResponseFormat;
 use serde_json::json;
 use std::io::Write;
 
@@ -277,5 +278,96 @@ fn both_readers_cap_tool_calls_alike_and_keep_later_text() {
         assert_eq!(activity.limitations, [ActivityLimitation::TooManyToolCalls]);
         // Empty text parts leave no blank lines; text after the cap is kept.
         assert_eq!(activity.reply, "After.");
+    }
+}
+
+/// One finished response of each protocol, as streamed and as a document.
+fn responses() -> Vec<(Protocol, ResponseFormat, Vec<u8>)> {
+    let function = json!({ "type": "function_call", "call_id": "call_9", "name": "shell", "arguments": "{\"command\":[\"cargo\",\"test\"]}" });
+    let message = json!({ "type": "message", "role": "assistant", "content": [{ "type": "output_text", "text": "Running tests." }] });
+    vec![
+        (
+            Protocol::Messages,
+            ResponseFormat::EventStream,
+            sse(&[
+                json!({ "type": "message_start", "message": {} }),
+                json!({ "type": "content_block_start", "index": 0, "content_block": { "type": "text", "text": "" } }),
+                json!({ "type": "content_block_delta", "index": 0, "delta": { "type": "text_delta", "text": "Reading «it»." } }),
+                json!({ "type": "content_block_stop", "index": 0 }),
+                json!({ "type": "content_block_start", "index": 1, "content_block": { "type": "tool_use", "id": "toolu_2", "name": "Read", "input": {} } }),
+                json!({ "type": "content_block_delta", "index": 1, "delta": { "type": "input_json_delta", "partial_json": "{\"file_pa" } }),
+                json!({ "type": "content_block_delta", "index": 1, "delta": { "type": "input_json_delta", "partial_json": "th\":\"src/lib.rs\"}" } }),
+                json!({ "type": "content_block_stop", "index": 1 }),
+                json!({ "type": "message_delta", "delta": { "stop_reason": "tool_use" }, "usage": { "output_tokens": 9 } }),
+                json!({ "type": "message_stop" }),
+            ]),
+        ),
+        (
+            Protocol::Messages,
+            ResponseFormat::Json,
+            json!({ "type": "message", "content": [
+                { "type": "text", "text": "Done." },
+                { "type": "tool_use", "id": "toolu_4", "name": "Edit", "input": { "file_path": "a.rs" } },
+            ], "stop_reason": "end_turn" })
+            .to_string()
+            .into_bytes(),
+        ),
+        (
+            Protocol::Responses,
+            ResponseFormat::EventStream,
+            sse(&[
+                json!({ "type": "response.created", "response": {} }),
+                json!({ "type": "response.output_item.done", "item": message }),
+                json!({ "type": "response.output_item.done", "item": function }),
+                json!({ "type": "response.completed", "response": { "output": [] } }),
+            ]),
+        ),
+        (
+            Protocol::Responses,
+            ResponseFormat::Json,
+            json!({ "object": "response", "status": "completed", "output": [message, function] })
+                .to_string()
+                .into_bytes(),
+        ),
+    ]
+}
+
+proptest::proptest! {
+    /// Read while streaming, in any pieces, a response shows the same
+    /// activity as the whole stored body read at once.
+    #[test]
+    fn streamed_activity_equals_the_stored_bodys(
+        which in 0..4_usize,
+        gzip in proptest::bool::ANY,
+        cuts in proptest::collection::vec(proptest::num::usize::ANY, 0..24),
+    ) {
+        let (protocol, format, plain) = responses().swap_remove(which);
+        let (bytes, encoding) = if gzip {
+            let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+            encoder.write_all(&plain).unwrap();
+            (encoder.finish().unwrap(), ResponseEncoding::Gzip)
+        } else {
+            (plain, ResponseEncoding::Identity)
+        };
+        let stored = reader(protocol).response(CapturedBody {
+            encoding: Some(encoding),
+            ..body(&bytes)
+        });
+        let mut inspector = crate::CallInspector::new(
+            protocol,
+            format,
+            encoding,
+            crate::inspect::pipeline::InspectionLimits::default(),
+        );
+        let mut points: Vec<usize> = cuts.iter().map(|cut| cut % (bytes.len() + 1)).collect();
+        points.sort_unstable();
+        let mut from = 0;
+        for point in points.into_iter().chain([bytes.len()]) {
+            inspector.feed(&bytes[from..point.max(from)]);
+            from = point.max(from);
+        }
+        let streamed = inspector.finish(crate::inspect::pipeline::BodyEnd::Complete).activity;
+        proptest::prop_assert!(!stored.reply.is_empty());
+        proptest::prop_assert_eq!(streamed, stored);
     }
 }

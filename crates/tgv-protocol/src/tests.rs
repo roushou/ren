@@ -36,7 +36,7 @@ fn inspect_chunks(
     for chunk in chunks {
         inspector.feed(chunk);
     }
-    inspector.finish(end)
+    inspector.finish(end).inspection
 }
 
 fn inspect(
@@ -367,7 +367,7 @@ fn compressed_streams_after_a_gap_report_the_gap_only() {
     inspector.feed(head);
     inspector.gap();
     inspector.feed(tail);
-    let report = inspector.finish(BodyEnd::Complete);
+    let report = inspector.finish(BodyEnd::Complete).inspection;
     assert_eq!(
         report.limitations(),
         [Limitation::CaptureGap, Limitation::NoTerminalEvent]
@@ -420,7 +420,7 @@ fn decoded_size_is_bounded() {
         limits,
     );
     inspector.feed(&body);
-    let report = inspector.finish(BodyEnd::Complete);
+    let report = inspector.finish(BodyEnd::Complete).inspection;
     assert_eq!(
         report.limitations(),
         [Limitation::DecodedTooLarge, Limitation::NoTerminalEvent]
@@ -627,7 +627,7 @@ fn inspect_messages(messages: &[Vec<u8>], cuts: &[usize], end: BodyEnd) -> Inspe
             inspector.feed(piece);
         }
     }
-    inspector.finish(end)
+    inspector.finish(end).inspection
 }
 
 #[test]
@@ -649,7 +649,7 @@ fn websocket_messages_are_inspected_as_events() {
     let last = messages.last().unwrap();
     inspector.message(u64::try_from(last.len()).unwrap());
     inspector.feed(&last[..10]);
-    let report = inspector.finish(BodyEnd::Unfinished);
+    let report = inspector.finish(BodyEnd::Unfinished).inspection;
     assert_eq!(report.outcome(), None);
     assert!(report.limitations().contains(&Limitation::IncompleteEvent));
 
@@ -661,7 +661,7 @@ fn websocket_messages_are_inspected_as_events() {
         InspectionLimits::default(),
     );
     inspector.feed(last);
-    let report = inspector.finish(BodyEnd::Complete);
+    let report = inspector.finish(BodyEnd::Complete).inspection;
     assert_eq!(report.outcome(), None);
     assert!(report.limitations().contains(&Limitation::IncompleteEvent));
 }

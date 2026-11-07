@@ -169,11 +169,13 @@ impl Default for ActivityLimits {
 
 /// A response's activity, built from one document or from its events in
 /// order, as they arrive.
+#[derive(Debug)]
 pub struct ResponseReader {
     protocol: ProtocolResponse,
     limitations: Vec<ActivityLimitation>,
 }
 
+#[derive(Debug)]
 enum ProtocolResponse {
     Messages(anthropic::Response),
     Responses(openai::Response),

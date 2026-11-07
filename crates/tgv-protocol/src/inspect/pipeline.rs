@@ -1,4 +1,6 @@
-//! Inspection of one response body, fed incrementally as it is captured.
+//! Inspection of one response body, fed incrementally as it is captured:
+//! the inspection report and the response's activity (tool calls and reply
+//! text), each frame decoded once and shown to both.
 //!
 //! The caller feeds contiguous captured bytes with [`CallInspector::feed`],
 //! reports missing capture with [`CallInspector::gap`], and ends with
@@ -6,6 +8,7 @@
 //! completion stays independent of model completion.
 
 use super::{EventClass, FormatSource, InspectionReport, Inspector, Limitation, ReportLimits};
+use crate::activity::{ActivityLimits, ResponseActivity, ResponseReader};
 use crate::{
     encoding::{DecodeFailure, Decompressor, ResponseEncoding, ResponseFormat},
     messages, responses,
@@ -80,6 +83,7 @@ pub struct InspectionLimits {
     /// Largest decoded body, after decompression.
     pub max_decoded_bytes: u64,
     pub report: ReportLimits,
+    pub activity: ActivityLimits,
 }
 
 impl Default for InspectionLimits {
@@ -89,6 +93,7 @@ impl Default for InspectionLimits {
             max_document_bytes: 16 * 1024 * 1024,
             max_decoded_bytes: 64 * 1024 * 1024,
             report: ReportLimits::default(),
+            activity: ActivityLimits::default(),
         }
     }
 }
@@ -96,8 +101,53 @@ impl Default for InspectionLimits {
 /// Inspects one response body.
 #[derive(Debug)]
 pub struct CallInspector {
-    inspector: Inspector,
+    readers: Readers,
     state: State,
+}
+
+/// What one response's frames feed.
+#[derive(Debug)]
+struct Readers {
+    inspector: Inspector,
+    /// `None` when the body cannot be interpreted.
+    activity: Option<ResponseReader>,
+}
+
+/// What a response showed: its inspection report and its activity.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ResponseReading {
+    pub inspection: InspectionReport,
+    pub activity: ResponseActivity,
+}
+
+impl Readers {
+    fn event(&mut self, protocol: Protocol, name: EventName<'_>, data: &[u8]) {
+        protocol.observe_event(name, data, &mut self.inspector);
+        if let Some(activity) = &mut self.activity {
+            activity.event_bytes(data);
+        }
+    }
+
+    fn document(&mut self, protocol: Protocol, bytes: &[u8]) {
+        protocol.observe_document(bytes, &mut self.inspector);
+        if let Some(activity) = &mut self.activity {
+            activity.document_bytes(bytes);
+        }
+    }
+
+    fn limit(&mut self, reason: Limitation) {
+        self.inspector.limit(reason);
+    }
+
+    fn finish(self) -> ResponseReading {
+        ResponseReading {
+            inspection: self.inspector.finish(),
+            activity: self
+                .activity
+                .map(ResponseReader::finish)
+                .unwrap_or_default(),
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -107,7 +157,7 @@ enum State {
         format: FormatSource,
         reason: Limitation,
     },
-    Active(Active),
+    Active(Box<Active>),
     /// A gap, limit, or decoding failure ended interpretation. The reason is
     /// already a limitation; later bytes are ignored.
     Stopped,
@@ -191,8 +241,11 @@ impl CallInspector {
             return Self::unavailable(source, Limitation::UnsupportedEncoding);
         };
         Self {
-            inspector: Inspector::new(source, limits.report),
-            state: State::Active(Active {
+            readers: Readers {
+                inspector: Inspector::new(source, limits.report),
+                activity: Some(ResponseReader::new(protocol, limits.activity)),
+            },
+            state: State::Active(Box::new(Active {
                 protocol,
                 limits,
                 decoder,
@@ -202,13 +255,16 @@ impl CallInspector {
                     BodyKind::Messages => Body::Messages(MessageBuffer::default()),
                 },
                 decoded_bytes: 0,
-            }),
+            })),
         }
     }
 
     fn unavailable(format: FormatSource, reason: Limitation) -> Self {
         Self {
-            inspector: Inspector::new(format, ReportLimits::default()),
+            readers: Readers {
+                inspector: Inspector::new(format, ReportLimits::default()),
+                activity: None,
+            },
             state: State::Unavailable { format, reason },
         }
     }
@@ -223,7 +279,7 @@ impl CallInspector {
             return;
         };
         if buffer.current != Message::None {
-            self.inspector.limit(Limitation::IncompleteEvent);
+            self.readers.limit(Limitation::IncompleteEvent);
         }
         buffer.bytes.clear();
         match usize::try_from(len) {
@@ -232,15 +288,13 @@ impl CallInspector {
                 buffer.current = Message::Buffering;
                 if len == 0 {
                     buffer.current = Message::None;
-                    active
-                        .protocol
-                        .observe_event(EventName::Absent, &[], &mut self.inspector);
+                    self.readers.event(active.protocol, EventName::Absent, &[]);
                 }
             }
             Ok(_) | Err(_) => {
                 buffer.remaining = usize::try_from(len).unwrap_or(usize::MAX);
                 buffer.current = Message::Skipping;
-                self.inspector.limit(Limitation::EventTooLarge);
+                self.readers.limit(Limitation::EventTooLarge);
             }
         }
     }
@@ -250,19 +304,19 @@ impl CallInspector {
         let State::Active(active) = &mut self.state else {
             return;
         };
-        let inspector = &mut self.inspector;
+        let readers = &mut self.readers;
         let Active {
             protocol,
             limits,
             decoder,
             body,
             decoded_bytes,
-        } = active;
+        } = &mut **active;
         let mut stop = None;
         let decoded = decoder.decode(bytes, |decoded| {
             if stop.is_none() {
                 stop = body
-                    .absorb(*protocol, limits, decoded_bytes, decoded, inspector)
+                    .absorb(*protocol, limits, decoded_bytes, decoded, readers)
                     .err();
             }
         });
@@ -273,7 +327,7 @@ impl CallInspector {
             }
         });
         if let Some(reason) = stop {
-            self.inspector.limit(reason);
+            self.readers.limit(reason);
             self.state = State::Stopped;
         }
     }
@@ -284,38 +338,35 @@ impl CallInspector {
         match self.state {
             State::Unavailable { .. } => {}
             State::Active(_) | State::Stopped => {
-                self.inspector.limit(Limitation::CaptureGap);
+                self.readers.limit(Limitation::CaptureGap);
                 self.state = State::Stopped;
             }
         }
     }
 
-    pub fn finish(self, end: BodyEnd) -> InspectionReport {
-        let Self {
-            mut inspector,
-            state,
-        } = self;
+    pub fn finish(self, end: BodyEnd) -> ResponseReading {
+        let Self { mut readers, state } = self;
         match state {
-            State::Unavailable { format, reason } => return Inspector::unavailable(format, reason),
+            State::Unavailable { format, reason } => {
+                return ResponseReading {
+                    inspection: Inspector::unavailable(format, reason),
+                    activity: ResponseActivity::default(),
+                };
+            }
             State::Stopped => {}
-            State::Active(Active {
-                protocol,
-                limits,
-                decoder,
-                mut body,
-                mut decoded_bytes,
-            }) => {
+            State::Active(active) => {
+                let Active {
+                    protocol,
+                    limits,
+                    decoder,
+                    mut body,
+                    mut decoded_bytes,
+                } = *active;
                 let mut stop = None;
                 let decoded = decoder.finish(|decoded| {
                     if stop.is_none() {
                         stop = body
-                            .absorb(
-                                protocol,
-                                &limits,
-                                &mut decoded_bytes,
-                                decoded,
-                                &mut inspector,
-                            )
+                            .absorb(protocol, &limits, &mut decoded_bytes, decoded, &mut readers)
                             .err();
                     }
                 });
@@ -330,16 +381,16 @@ impl CallInspector {
                     ) => Err(Some(Limitation::DecodingError)),
                 };
                 match (stop, decoded) {
-                    (Some(reason), _) | (None, Err(Some(reason))) => inspector.limit(reason),
+                    (Some(reason), _) | (None, Err(Some(reason))) => readers.limit(reason),
                     (None, Err(None)) => {}
-                    (None, Ok(())) => body.finish(protocol, end, &mut inspector),
+                    (None, Ok(())) => body.finish(protocol, end, &mut readers),
                 }
             }
         }
         if end == BodyEnd::Unfinished {
-            inspector.limit(Limitation::BodyUnfinished);
+            readers.limit(Limitation::BodyUnfinished);
         }
-        inspector.finish()
+        readers.finish()
     }
 }
 
@@ -351,7 +402,7 @@ impl Body {
         limits: &InspectionLimits,
         decoded_bytes: &mut u64,
         bytes: &[u8],
-        inspector: &mut Inspector,
+        readers: &mut Readers,
     ) -> Result<(), Limitation> {
         *decoded_bytes =
             decoded_bytes.saturating_add(u64::try_from(bytes.len()).unwrap_or(u64::MAX));
@@ -361,10 +412,8 @@ impl Body {
         match self {
             Self::Stream(framer) => {
                 framer.feed(bytes, |output| match output {
-                    SseOutput::Event { name, data } => {
-                        protocol.observe_event(name, data, inspector)
-                    }
-                    SseOutput::Discarded(_) => inspector.limit(Limitation::EventTooLarge),
+                    SseOutput::Event { name, data } => readers.event(protocol, name, data),
+                    SseOutput::Discarded(_) => readers.limit(Limitation::EventTooLarge),
                 });
                 Ok(())
             }
@@ -377,26 +426,26 @@ impl Body {
                     Ok(())
                 }
             }
-            Self::Messages(buffer) => buffer.absorb(protocol, bytes, inspector),
+            Self::Messages(buffer) => buffer.absorb(protocol, bytes, readers),
         }
     }
 
-    fn finish(self, protocol: Protocol, end: BodyEnd, inspector: &mut Inspector) {
+    fn finish(self, protocol: Protocol, end: BodyEnd, readers: &mut Readers) {
         match (self, end) {
             (Self::Stream(framer), BodyEnd::Complete | BodyEnd::Unfinished) => {
                 if framer.end() == StreamEnd::PartialEvent {
-                    inspector.limit(Limitation::IncompleteEvent);
+                    readers.limit(Limitation::IncompleteEvent);
                 }
             }
             (Self::Document(buffer), BodyEnd::Complete) => {
-                protocol.observe_document(&buffer, inspector);
+                readers.document(protocol, &buffer);
             }
             // A truncated document is not parsed: a prefix could still be
             // valid JSON and would invent facts.
             (Self::Document(_), BodyEnd::Unfinished) => {}
             (Self::Messages(buffer), BodyEnd::Complete | BodyEnd::Unfinished) => {
                 if buffer.current != Message::None {
-                    inspector.limit(Limitation::IncompleteEvent);
+                    readers.limit(Limitation::IncompleteEvent);
                 }
             }
         }
@@ -408,7 +457,7 @@ impl MessageBuffer {
         &mut self,
         protocol: Protocol,
         mut bytes: &[u8],
-        inspector: &mut Inspector,
+        readers: &mut Readers,
     ) -> Result<(), Limitation> {
         while !bytes.is_empty() {
             let (part, rest) = bytes.split_at(self.remaining.min(bytes.len()));
@@ -422,7 +471,7 @@ impl MessageBuffer {
             }
             if self.remaining == 0 {
                 if self.current == Message::Buffering {
-                    protocol.observe_event(EventName::Absent, &self.bytes, inspector);
+                    readers.event(protocol, EventName::Absent, &self.bytes);
                 }
                 self.bytes.clear();
                 self.current = Message::None;

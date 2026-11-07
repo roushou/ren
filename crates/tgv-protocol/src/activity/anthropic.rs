@@ -136,6 +136,7 @@ struct Block {
 
 /// A Messages response: a document's content, or the blocks its events
 /// build.
+#[derive(Debug)]
 pub(super) struct Response {
     limits: ActivityLimits,
     /// By stream index.

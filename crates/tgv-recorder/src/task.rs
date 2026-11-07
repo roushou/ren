@@ -252,7 +252,9 @@ impl<S: RecordSink> RecorderTask<S> {
                         BodyEnding::Ended => InspectedEnd::Complete,
                         BodyEnding::Open | BodyEnding::Unfinished => InspectedEnd::Unfinished,
                     };
-                    Some(Box::new(InspectionRecord::from(&inspector.finish(end))))
+                    Some(Box::new(InspectionRecord::from(
+                        &inspector.finish(end).inspection,
+                    )))
                 });
                 self.batch.push(Op::FinishAttempt(FinishAttempt {
                     stamp,
