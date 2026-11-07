@@ -24,7 +24,7 @@ use tgv_harness::host::HostEnv;
 #[command(
     name = "tgv",
     version = Cli::VERSION,
-    about = "Personal subscription gateway and traffic recorder"
+    about = "Self-hosted gateway and flight recorder for coding agents"
 )]
 pub struct Cli {
     #[arg(long, global = true)]

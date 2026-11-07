@@ -1,11 +1,45 @@
-# TGV
+<div align="center">
 
-A personal LLM gateway for Claude Code, Codex, and Pi. TGV forwards native
-provider traffic unchanged, using your own Anthropic and OpenAI subscriptions,
-and records it for inspection through a CLI, a read-only API, and an optional
-web UI. It runs on a laptop or on a VPS reached through Tailscale.
+<img src="docs/wordmark.svg" alt="TGV" height="60">
 
-<img width="2880" height="1800" alt="tgv-dark" src="https://github.com/user-attachments/assets/799b9c5b-6cc3-479b-afcf-d00db5263211" />
+<h3>Self-hosted gateway and flight recorder for coding agents</h3>
+
+See every request, response, tool call, and token from Claude Code, Codex, and Pi
+as it happens, without changing a byte of the traffic.
+
+[![CI](https://github.com/roushou/tgv/actions/workflows/ci.yml/badge.svg)](https://github.com/roushou/tgv/actions/workflows/ci.yml)
+[![License: MIT or Apache-2.0](https://img.shields.io/badge/license-MIT%20%2F%20Apache--2.0-blue)](#license)
+
+[Install](#install) · [Clients](docs/clients.md) · [Deployment](docs/deployment.md) ·
+[Architecture](docs/architecture.md)
+
+</div>
+
+<img alt="TGV's Traffic view in the dark theme: a session's calls, with a response rendered in the inspector" src="https://github.com/user-attachments/assets/799b9c5b-6cc3-479b-afcf-d00db5263211" />
+
+## Overview
+
+TGV sits between your coding agents and their providers. `tgv run claude` (or
+`codex`, or `pi`) points a client at TGV for one session without editing its
+configuration. TGV forwards each request unchanged with the client's own
+sign-in, records the request and response on the side, and serves that history
+to the CLI, a read-only API, and the optional web UI, on the same machine or
+from another one on your tailnet.
+
+## What you get
+
+- **Live traffic:** every call as it streams, grouped by session and turn.
+- **Full inspection:** readable or raw requests and responses, complete bodies to
+  export.
+- **Usage:** calls, errors, and tokens by hour, day, model, and session.
+- **Truthful outcomes:** interrupted and unknown endings never count as success.
+- **Faithful forwarding:** payloads pass through unchanged; capture loss is
+  counted.
+- **Operator controls:** pause, block, or cancel from the CLI or another machine.
+- **Opt-in failover:** retry a rate-limited call with an Anthropic API key, only
+  when that is safe.
+- **Your machine, your data:** your clients' own sign-in; history stays on your
+  host.
 
 ## Install
 
@@ -59,19 +93,19 @@ The optional UI lives in [`ui`](ui/README.md).
 <details>
 <summary>Light theme</summary>
 
-<img width="2880" height="1800" alt="tgv-light" src="https://github.com/user-attachments/assets/58a6a4aa-265a-49ef-ac98-c8f7ee76b3be" />
+<img alt="TGV's Traffic view in the light theme" src="https://github.com/user-attachments/assets/58a6a4aa-265a-49ef-ac98-c8f7ee76b3be" />
 </details>
 
 <details>
 <summary>Overview</summary>
 
-<img width="2880" height="1800" alt="tgv-overview" src="https://github.com/user-attachments/assets/9762a3c8-ae96-4de4-be7e-6cc0039c8703" />
+<img width="2880" height="1800" alt="TGV's Overview: health, live calls, problems, and the last 24 hours" src="https://github.com/user-attachments/assets/9762a3c8-ae96-4de4-be7e-6cc0039c8703" />
 </details>
 
 <details>
 <summary>Sessions</summary>
 
-<img width="2880" height="1800" alt="tgv-sessions" src="https://github.com/user-attachments/assets/3888ef16-6e8b-476a-b5a0-3f08105d1b64" />
+<img width="2880" height="1800" alt="TGV's Sessions: calls, turns, errors, and tokens per session" src="https://github.com/user-attachments/assets/3888ef16-6e8b-476a-b5a0-3f08105d1b64" />
 </details>
 
 ## Documentation

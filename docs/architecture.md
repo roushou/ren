@@ -52,7 +52,7 @@ The central ideas:
 
 ## 2. Requirements
 
-TGV targets heavy personal use: several concurrent agents all day, MB-sized tool
+TGV targets heavy use by one operator: several concurrent agents all day, MB-sized tool
 outputs, weeks of retention, and tens of GB of history.
 
 | #  | Requirement                                                                                                                                                     |

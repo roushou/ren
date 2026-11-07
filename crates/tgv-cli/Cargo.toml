@@ -9,7 +9,7 @@ license.workspace = true
 readme = "../../README.md"
 repository.workspace = true
 rust-version.workspace = true
-description = "TGV: a personal LLM gateway for Claude Code, Codex, and Pi that forwards and records native provider traffic."
+description = "TGV: a self-hosted gateway and flight recorder for coding agents (Claude Code, Codex, and Pi) that forwards native provider traffic unchanged and records it."
 
 # The `tgv` binary: command-line parsing and dispatch, doctor, and service
 # definitions. `anyhow` is used only here (docs/architecture.md).

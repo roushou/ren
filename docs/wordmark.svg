@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="153" height="60" viewBox="0 0 51 20" shape-rendering="crispEdges">
+  <title>TGV</title>
+  <!-- The UI's split-flap wordmark: three tiles, each cut by a transparent split line. -->
+  <defs>
+    <clipPath id="split">
+      <rect x="0" y="0" width="51" height="9.7" />
+      <rect x="0" y="10.3" width="51" height="9.7" />
+    </clipPath>
+  </defs>
+  <g clip-path="url(#split)">
+    <g fill="#b56948">
+      <rect x="0" y="0" width="16" height="20" />
+      <rect x="17.5" y="0" width="16" height="20" />
+      <rect x="35" y="0" width="16" height="20" />
+    </g>
+    <g fill="#ffffff">
+      <!-- T -->
+      <path d="M3 4H13V6H9V16H7V6H3Z" />
+      <!-- G -->
+      <path transform="translate(17.5 0)" d="M3 4H13V6H5V14H11V12H8V10H13V16H3Z" />
+      <!-- V -->
+      <path transform="translate(35 0)" d="M3 4H5V11H3Z M11 4H13V11H11Z M5 11H7V14H5Z M9 11H11V14H9Z M7 14H9V16H7Z" />
+    </g>
+  </g>
+</svg>

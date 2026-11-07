@@ -1,8 +1,8 @@
 # TGV contributor guidance
 
-TGV is a personal LLM gateway for Claude Code, Codex, and Pi. It forwards native
-provider traffic while recording, inspecting, and exposing it, using the user's own
-Anthropic and OpenAI subscriptions. One executable and one storage format serve both
+TGV is a self-hosted gateway and flight recorder for coding agents (Claude Code,
+Codex, and Pi). It forwards native provider traffic while recording, inspecting,
+and exposing it, using the operator's own Anthropic and OpenAI subscriptions. One executable and one storage format serve both
 a laptop and a VPS reached through Tailscale.
 
 [`docs/architecture.md`](docs/architecture.md) describes how TGV is built and

@@ -1,6 +1,6 @@
 # Example systemd user service: ~/.config/systemd/user/tgv.service
 [Unit]
-Description=TGV personal LLM gateway
+Description=TGV gateway for coding agents
 StartLimitIntervalSec=60
 StartLimitBurst=5
 
