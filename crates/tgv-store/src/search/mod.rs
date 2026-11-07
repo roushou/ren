@@ -8,9 +8,9 @@
 //! another [`SearchIndex::VERSION`], is rebuilt. It has its own single
 //! writer, so indexing never contends with capture, and it is not backed up.
 
-use crate::activity::{Excerpt, ReadCall};
+use crate::activity::{ActivityBudget, Excerpt, ReadCall};
 use crate::query::{PageLimit, TimeRange};
-use crate::secrets::{ScannerError, SecretKind, SecretScanner};
+use crate::secrets::{Detection, ScannerError, SecretKind, SecretScanner};
 use crate::view::{Columns, FileUsage, IndexUsage};
 use crate::{Reader, Store, StoreError};
 use serde::Serialize;
@@ -19,7 +19,12 @@ use sqlx::{
     Connection, QueryBuilder, Row, Sqlite, SqliteConnection, SqlitePool,
     sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous},
 };
-use std::{collections::HashSet, fmt, path::Path, time::Duration};
+use std::{
+    collections::{HashMap, HashSet},
+    fmt,
+    path::Path,
+    time::Duration,
+};
 use strum::{Display, EnumString, IntoStaticStr, VariantArray};
 use tgv_harness::Harness;
 use tgv_protocol::label::{Labeled, Stored};
@@ -58,40 +63,27 @@ pub struct CallDocuments {
     pub turn: Option<TurnId>,
     pub client: Option<Harness>,
     pub started_at: UnixMillis,
+    /// The start of the user's prompt, redacted: what a turn listing shows.
+    pub prompt: Option<Excerpt>,
     pub documents: Vec<Document>,
     /// Secrets the call carried; never the secrets themselves.
     pub exposures: Vec<Exposure>,
 }
 
+/// A call's searchable texts, before redaction.
+struct CallTexts {
+    /// All of the newest user input, including context the client added:
+    /// it is sent to the provider too, so it is scanned for secrets.
+    user_input: String,
+    /// The user's own words, which the prompt document keeps.
+    prompt: Option<String>,
+    reply: String,
+    tool_input: String,
+    tool_output: String,
+}
+
 impl ReadCall {
-    /// The call's documents, each cut to `max_chars`.
-    /// The call's documents, each cut to `max_chars` after its secrets are
-    /// redacted, and the secrets found. The scan covers all of the newest
-    /// user input, including context the client added, since that is sent
-    /// to the provider too; the prompt document keeps only the user's words.
-    pub fn documents(&self, max_chars: usize, scanner: &SecretScanner) -> CallDocuments {
-        let harness = self.harness();
-        let mut documents = Vec::new();
-        let mut exposures: Vec<Exposure> = Vec::new();
-        let mut scan = |field: SearchField, text: &str| {
-            for detection in scanner.redact(text).1 {
-                match exposures.iter_mut().find(|known| {
-                    known.field == field
-                        && known.kind == detection.kind
-                        && known.fingerprint == detection.fingerprint
-                }) {
-                    Some(known) => known.count = known.count.saturating_add(1),
-                    None => exposures.push(Exposure {
-                        field,
-                        kind: detection.kind,
-                        hint: detection.hint,
-                        fingerprint: detection.fingerprint,
-                        count: 1,
-                    }),
-                }
-            }
-        };
-        let reply = self.response.reply.clone();
+    fn texts(&self, harness: Option<Harness>) -> CallTexts {
         let tool_input = self
             .response
             .tool_uses
@@ -118,22 +110,64 @@ impl ReadCall {
             .map(|result| result.output.as_str())
             .collect::<Vec<_>>()
             .join("\n");
-        scan(SearchField::Prompt, &self.request.user_text.join("\n"));
-        scan(SearchField::Reply, &reply);
-        scan(SearchField::ToolInput, &tool_input);
-        scan(SearchField::ToolOutput, &tool_output);
+        CallTexts {
+            user_input: self.request.user_text.join("\n"),
+            prompt: self.prompt(),
+            reply: self.response.reply.clone(),
+            tool_input,
+            tool_output,
+        }
+    }
+
+    /// The secrets the call carried, by field, without building its
+    /// documents.
+    pub fn exposures(&self, scanner: &SecretScanner) -> Vec<Exposure> {
+        let texts = self.texts(self.harness());
+        let mut exposures = Vec::new();
         for (field, text) in [
-            (SearchField::Prompt, self.prompt().unwrap_or_default()),
-            (SearchField::Reply, reply),
-            (SearchField::ToolInput, tool_input),
-            (SearchField::ToolOutput, tool_output),
+            (SearchField::Prompt, &texts.user_input),
+            (SearchField::Reply, &texts.reply),
+            (SearchField::ToolInput, &texts.tool_input),
+            (SearchField::ToolOutput, &texts.tool_output),
         ] {
-            if !text.trim().is_empty() {
+            Exposure::merge(&mut exposures, field, scanner.detect(text));
+        }
+        exposures
+    }
+
+    /// The call's documents, each cut to `max_chars` after its secrets are
+    /// redacted, and the secrets found. The prompt's secrets are those of
+    /// all the newest user input; its document keeps only the user's words.
+    pub fn documents(&self, max_chars: usize, scanner: &SecretScanner) -> CallDocuments {
+        let harness = self.harness();
+        let texts = self.texts(harness);
+        let mut exposures = Vec::new();
+        Exposure::merge(
+            &mut exposures,
+            SearchField::Prompt,
+            scanner.detect(&texts.user_input),
+        );
+        let mut documents = Vec::new();
+        let mut add = |field: SearchField, redacted: &str| {
+            if !redacted.trim().is_empty() {
                 documents.push(Document {
                     field,
-                    text: Excerpt::cut(&scanner.redact(&text).0, max_chars).text,
+                    text: Excerpt::cut(redacted, max_chars).text,
                 });
             }
+        };
+        let prompt = texts.prompt.as_ref().map(|prompt| scanner.redact(prompt).0);
+        if let Some(prompt) = &prompt {
+            add(SearchField::Prompt, prompt);
+        }
+        for (field, text) in [
+            (SearchField::Reply, &texts.reply),
+            (SearchField::ToolInput, &texts.tool_input),
+            (SearchField::ToolOutput, &texts.tool_output),
+        ] {
+            let (redacted, found) = scanner.redact(text);
+            Exposure::merge(&mut exposures, field, found);
+            add(field, &redacted);
         }
         CallDocuments {
             call: self.view.id,
@@ -141,10 +175,23 @@ impl ReadCall {
             turn: self.view.turn,
             client: harness,
             started_at: self.view.started_at,
+            prompt: prompt
+                .filter(|prompt| !prompt.trim().is_empty())
+                .map(|prompt| Excerpt::cut(&prompt, ActivityBudget::SUMMARY.prompt_chars)),
             documents,
             exposures,
         }
     }
+}
+
+/// What the index knows of one turn's prompt.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IndexedPrompt {
+    /// When the turn's earliest indexed call started: when it is the turn's
+    /// first call, a missing prompt means the turn has none.
+    pub earliest_call: UnixMillis,
+    /// The first prompt among the turn's indexed calls.
+    pub prompt: Option<Excerpt>,
 }
 
 /// A secret a call carried, by field: what the scanner keeps of it.
@@ -156,6 +203,29 @@ pub struct Exposure {
     pub fingerprint: String,
     /// How often it appears in the field.
     pub count: u64,
+}
+
+impl Exposure {
+    /// Add `found` in `field` to `exposures`, counting repeats of one
+    /// secret once per field.
+    fn merge(exposures: &mut Vec<Self>, field: SearchField, found: Vec<Detection>) {
+        for detection in found {
+            match exposures.iter_mut().find(|known| {
+                known.field == field
+                    && known.kind == detection.kind
+                    && known.fingerprint == detection.fingerprint
+            }) {
+                Some(known) => known.count = known.count.saturating_add(1),
+                None => exposures.push(Self {
+                    field,
+                    kind: detection.kind,
+                    hint: detection.hint,
+                    fingerprint: detection.fingerprint,
+                    count: 1,
+                }),
+            }
+        }
+    }
 }
 
 /// Why search text was refused.
@@ -285,14 +355,15 @@ pub struct SearchIndex {
 impl SearchIndex {
     pub const FILE: &str = "search.sqlite3";
     /// The index format. Another version on disk is dropped and rebuilt.
-    pub const VERSION: i64 = 2;
+    pub const VERSION: i64 = 3;
     /// The most characters of one field of one call that are indexed.
     pub const FIELD_CHARS: usize = 32 * 1024;
-    const SCHEMA: [&str; 5] = [
+    const SCHEMA: [&str; 6] = [
         "CREATE TABLE IF NOT EXISTS exposures (call TEXT NOT NULL, field TEXT NOT NULL, kind TEXT NOT NULL, hint TEXT NOT NULL, fingerprint TEXT NOT NULL, count INTEGER NOT NULL)",
         "CREATE INDEX IF NOT EXISTS exposures_call ON exposures(call)",
-        "CREATE TABLE IF NOT EXISTS indexed_calls (call TEXT PRIMARY KEY, session TEXT, turn TEXT, client TEXT, started_at INTEGER NOT NULL) WITHOUT ROWID",
+        "CREATE TABLE IF NOT EXISTS indexed_calls (call TEXT PRIMARY KEY, session TEXT, turn TEXT, client TEXT, started_at INTEGER NOT NULL, prompt TEXT, prompt_omitted INTEGER) WITHOUT ROWID",
         "CREATE INDEX IF NOT EXISTS indexed_calls_started ON indexed_calls(started_at)",
+        "CREATE INDEX IF NOT EXISTS indexed_calls_turn ON indexed_calls(turn, started_at)",
         "CREATE VIRTUAL TABLE IF NOT EXISTS documents USING fts5(text, call UNINDEXED, field UNINDEXED, tokenize = 'unicode61 remove_diacritics 2')",
     ];
 
@@ -437,12 +508,14 @@ impl SearchIndex {
         let mut tx = self.pool.begin().await?;
         for call in calls {
             let id = call.call.to_string();
-            sqlx::query("INSERT OR REPLACE INTO indexed_calls(call, session, turn, client, started_at) VALUES (?, ?, ?, ?, ?)")
+            sqlx::query("INSERT OR REPLACE INTO indexed_calls(call, session, turn, client, started_at, prompt, prompt_omitted) VALUES (?, ?, ?, ?, ?, ?, ?)")
                 .bind(&id)
                 .bind(call.session.map(|session| session.to_string()))
                 .bind(call.turn.map(|turn| turn.to_string()))
                 .bind(call.client.map(Labeled::label))
                 .bind(i64::try_from(call.started_at.as_millis()).unwrap_or(i64::MAX))
+                .bind(call.prompt.as_ref().map(|prompt| prompt.text.as_str()))
+                .bind(call.prompt.as_ref().map(|prompt| i64::try_from(prompt.omitted_chars).unwrap_or(i64::MAX)))
                 .execute(&mut *tx)
                 .await?;
             for exposure in &call.exposures {
@@ -467,6 +540,48 @@ impl SearchIndex {
         }
         tx.commit().await?;
         Ok(())
+    }
+
+    /// What the index knows of each of `turns`' prompts: when its earliest
+    /// indexed call started, and the first prompt among its indexed calls.
+    /// A turn none of whose calls is indexed is absent.
+    pub async fn turn_prompts(
+        &self,
+        turns: &[TurnId],
+    ) -> Result<HashMap<TurnId, IndexedPrompt>, StoreError> {
+        let mut prompts: HashMap<TurnId, IndexedPrompt> = HashMap::new();
+        if turns.is_empty() {
+            return Ok(prompts);
+        }
+        let mut sql = QueryBuilder::<Sqlite>::new(
+            "SELECT turn, started_at, prompt, prompt_omitted FROM indexed_calls WHERE turn IN (",
+        );
+        let mut list = sql.separated(", ");
+        for turn in turns {
+            list.push_bind(turn.to_string());
+        }
+        sql.push(") ORDER BY started_at, call");
+        for row in sql.build().fetch_all(&self.pool).await? {
+            let columns = Columns(&row);
+            let Some(turn) = columns.optional_id::<TurnId>("turn")? else {
+                continue;
+            };
+            let prompt = match columns.text("prompt")? {
+                Some(text) => Some(Excerpt {
+                    text,
+                    omitted_chars: columns.count("prompt_omitted")?,
+                }),
+                None => None,
+            };
+            let indexed = prompts.entry(turn).or_insert(IndexedPrompt {
+                earliest_call: columns.time("started_at")?,
+                prompt: None,
+            });
+            if indexed.prompt.is_none() {
+                indexed.prompt = prompt;
+            }
+        }
+        Ok(prompts)
     }
 
     /// Which of `calls` are indexed.

@@ -490,6 +490,8 @@ fn secrets_a_turn_carried_are_findings_without_the_secret() {
         .map(|document| document.text.as_str())
         .collect();
     assert_eq!(texts, ["Deploy it", "export K=«redacted: anthropic_key»"]);
+    // Reading exposures alone finds the same as building the documents.
+    assert_eq!(call.exposures(&scanner), documents.exposures);
 
     let turn = TurnActivity::assemble(head(), vec![call], 0, ActivityBudget::DEFAULT, &scanner);
     let json = serde_json::to_string(&turn.findings).unwrap();

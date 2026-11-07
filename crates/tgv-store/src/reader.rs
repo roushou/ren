@@ -6,7 +6,7 @@ use crate::activity::{
     ActivityBudget, CallActivity, Excerpt, ReadCall, TurnActivity, TurnHead, TurnSummary,
     report::SessionReport,
 };
-use crate::search::CallDocuments;
+use crate::search::{CallDocuments, IndexedPrompt, SearchIndex};
 use crate::secrets::SecretScanner;
 use crate::{
     Store, StoreError,
@@ -22,7 +22,7 @@ use sqlx::{
     AssertSqlSafe, QueryBuilder, Row, Sqlite, SqlitePool,
     sqlite::{SqliteConnectOptions, SqlitePoolOptions},
 };
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::{path::Path, sync::Arc, time::Duration};
 use tgv_harness::attribution::HintSource;
 use tgv_protocol::activity::{
@@ -729,7 +729,7 @@ impl Reader {
         let read = i64::try_from(views.len()).unwrap_or(i64::MAX);
         let mut calls = Vec::with_capacity(views.len());
         for view in views {
-            calls.push(self.read_call(view, Direction::Response).await?);
+            calls.push(self.read_call(view, Reach::Exchange).await?);
         }
         let omitted = u64::try_from(total.saturating_sub(read)).unwrap_or(0);
         Ok(TurnActivity::assemble(
@@ -742,10 +742,13 @@ impl Reader {
     }
 
     /// A session's turns, newest first, each with the start of its prompt.
+    /// Prompts come from `index` where it has the turn's first call, and are
+    /// read from request bodies only for turns it has not indexed yet.
     pub async fn session_turns(
         &self,
         session: SessionId,
         limit: PageLimit,
+        index: Option<&SearchIndex>,
     ) -> Result<Vec<TurnSummary>, StoreError> {
         let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM sessions WHERE id = ?)")
             .bind(session.to_string())
@@ -764,31 +767,56 @@ impl Reader {
             .push(" GROUP BY t.id ORDER BY started_at DESC, t.id DESC LIMIT ")
             .push_bind(i64::from(limit.get()));
         let rows = sql.build().fetch_all(&self.pool).await?;
+        let ids = rows
+            .iter()
+            .map(|row| Columns(row).id::<TurnId>("id"))
+            .collect::<Result<Vec<_>, _>>()?;
+        let indexed = match index {
+            Some(index) => index.turn_prompts(&ids).await?,
+            None => HashMap::new(),
+        };
         let mut turns = Vec::with_capacity(rows.len());
-        for row in &rows {
+        for (row, turn) in rows.iter().zip(ids) {
             let columns = Columns(row);
-            let turn: TurnId = columns.id("id")?;
-            let mut prompt = None;
-            for view in self.turn_calls(turn, Self::PROMPT_CALLS).await? {
-                let call = self.read_call(view, Direction::Request).await?;
-                if let Some(text) = call.prompt() {
-                    prompt = Some(text);
-                    break;
-                }
-            }
+            let started_at = columns.time("started_at")?;
+            let prompt = match indexed.get(&turn) {
+                Some(IndexedPrompt {
+                    prompt: Some(prompt),
+                    ..
+                }) => Some(prompt.clone()),
+                Some(IndexedPrompt {
+                    earliest_call,
+                    prompt: None,
+                }) if *earliest_call == started_at => None,
+                Some(_) | None => self.read_prompt(turn).await?,
+            };
             turns.push(TurnSummary {
                 turn,
                 native_id: columns.text("native_id")?.unwrap_or_default(),
-                started_at: columns.time("started_at")?,
+                started_at,
                 ended_at: columns.optional_time("ended_at")?,
                 call_count: columns.count("calls")?,
                 error_count: columns.count("errors")?,
                 tokens: TokenTotals::from_row(row)?,
-                prompt: prompt
-                    .map(|text| Excerpt::cut(&text, ActivityBudget::SUMMARY.prompt_chars)),
+                prompt,
             });
         }
         Ok(turns)
+    }
+
+    /// A turn's prompt read from the request bodies of its first calls, for
+    /// a turn the search index has not reached.
+    async fn read_prompt(&self, turn: TurnId) -> Result<Option<Excerpt>, StoreError> {
+        for view in self.turn_calls(turn, Self::PROMPT_CALLS).await? {
+            let call = self.read_call(view, Reach::Request).await?;
+            if let Some(text) = call.prompt() {
+                return Ok(Some(Excerpt::cut(
+                    &text,
+                    ActivityBudget::SUMMARY.prompt_chars,
+                )));
+            }
+        }
+        Ok(None)
     }
 
     /// A session's context and cost measurements, from call records alone:
@@ -837,7 +865,7 @@ impl Reader {
         .ok_or(StoreError::NotFound)?;
         let view = CallView::from_row(&row)?;
         Ok(self
-            .read_call(view, Direction::Response)
+            .read_call(view, Reach::Exchange)
             .await?
             .activity(budget))
     }
@@ -902,7 +930,7 @@ impl Reader {
         .ok_or(StoreError::NotFound)?;
         let view = CallView::from_row(&row)?;
         Ok(self
-            .read_call(view, Direction::Response)
+            .read_call(view, Reach::Exchange)
             .await?
             .documents(max_chars, scanner))
     }
@@ -921,9 +949,9 @@ impl Reader {
         .collect()
     }
 
-    /// A call with its bodies read: the request, and with `through` set to
-    /// the response direction, the final attempt's response too.
-    async fn read_call(&self, view: CallView, through: Direction) -> Result<ReadCall, StoreError> {
+    /// A call with its bodies read, as far as `reach`. A body the call's
+    /// view says was never stored is not looked up.
+    async fn read_call(&self, view: CallView, reach: Reach) -> Result<ReadCall, StoreError> {
         let Some(protocol) = view.endpoint.known().and_then(Protocol::for_endpoint) else {
             let unsupported = vec![ActivityLimitation::UnsupportedEndpoint];
             return Ok(ReadCall {
@@ -936,13 +964,16 @@ impl Reader {
             });
         };
         let reader = ActivityReader::new(protocol, ActivityLimits::default());
-        let request = match self.captured(BodyKey::Request(view.id)).await? {
-            Some(body) => reader.request(body.as_captured()),
+        let request = match view.request {
+            Some(_) => match self.captured(BodyKey::Request(view.id)).await? {
+                Some(body) => reader.request(body.as_captured()),
+                None => RequestActivity::default(),
+            },
             None => RequestActivity::default(),
         };
-        let response = match through {
-            Direction::Request => ResponseActivity::default(),
-            Direction::Response => match self.body_key(view.id, Direction::Response).await {
+        let response = match (reach, &view.response) {
+            (Reach::Request, _) | (Reach::Exchange, None) => ResponseActivity::default(),
+            (Reach::Exchange, Some(_)) => match self.body_key(view.id, Direction::Response).await {
                 Ok(key) => match self.captured(key).await? {
                     Some(body) => reader.response(body.as_captured()),
                     None => ResponseActivity::default(),
@@ -976,6 +1007,15 @@ impl Reader {
         .await?;
         Ok(Some(CapturedPrefix::new(prefix, &messages)))
     }
+}
+
+/// How much of a call's exchange to read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Reach {
+    /// Only the request: what the user asked.
+    Request,
+    /// The request and the final attempt's response.
+    Exchange,
 }
 
 /// A stored body prefix, ready for the activity reader.

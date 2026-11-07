@@ -9,7 +9,6 @@
 
 pub mod report;
 
-use crate::search::SearchIndex;
 use crate::secrets::SecretScanner;
 use crate::view::{CallView, TokenTotals};
 use report::{CallMetrics, Finding, FindingKind, LargeToolOutput, RepeatedFailure, SecretExposure};
@@ -307,11 +306,11 @@ impl TurnActivity {
         let exposures: Vec<Finding> = calls
             .iter()
             .flat_map(|call| {
-                let documents = call.documents(SearchIndex::FIELD_CHARS, scanner);
-                documents.exposures.into_iter().map(move |exposure| {
+                let (id, turn) = (call.view.id, call.view.turn);
+                call.exposures(scanner).into_iter().map(move |exposure| {
                     Finding::SecretExposure(SecretExposure {
-                        call: documents.call,
-                        turn: documents.turn,
+                        call: id,
+                        turn,
                         field: exposure.field.into(),
                         secret: exposure.kind.into(),
                         hint: exposure.hint,

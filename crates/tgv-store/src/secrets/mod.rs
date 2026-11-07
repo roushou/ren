@@ -145,6 +145,14 @@ impl SecretScanner {
         kept
     }
 
+    /// What `text` carries, without redacting it.
+    pub fn detect(&self, text: &str) -> Vec<Detection> {
+        self.find(text)
+            .into_iter()
+            .map(|(range, kind)| Self::detection(kind, text.get(range).unwrap_or_default()))
+            .collect()
+    }
+
     /// `text` with each secret replaced by `«redacted: kind»`, and what was
     /// found.
     pub fn redact(&self, text: &str) -> (String, Vec<Detection>) {
@@ -160,14 +168,18 @@ impl SecretScanner {
             redacted.push_str(text.get(next..range.start).unwrap_or_default());
             redacted.push_str(&format!("«redacted: {}»", kind.label()));
             next = range.end;
-            detections.push(Detection {
-                kind,
-                hint: Self::hint(kind, secret),
-                fingerprint: Self::fingerprint(secret),
-            });
+            detections.push(Self::detection(kind, secret));
         }
         redacted.push_str(text.get(next..).unwrap_or_default());
         (redacted, detections)
+    }
+
+    fn detection(kind: SecretKind, secret: &str) -> Detection {
+        Detection {
+            kind,
+            hint: Self::hint(kind, secret),
+            fingerprint: Self::fingerprint(secret),
+        }
     }
 
     /// The format's known prefix and the last four characters.

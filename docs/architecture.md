@@ -505,7 +505,9 @@ never causes. Turn activity adds the findings that need bodies.
 `search.sqlite3` is a full-text index (SQLite FTS5, `unicode61` tokenizer) of
 each finished call's documents: the user's prompt, the reply, tool input (name,
 targets, input), and tool output, each at most 32 KiB, from the activity reader.
-It is derived and disposable: not migrated, not backed up, rebuilt when missing,
+It also keeps the start of each call's prompt, redacted, so a session's turn
+listing reads prompts from it and parses request bodies only for turns not yet
+indexed. It is derived and disposable: not migrated, not backed up, rebuilt when missing,
 when `SearchIndex::VERSION` changes, or when the file fails to open or its
 integrity check. Retention leaves an index it cannot measure out of the storage
 total rather than stopping. `Indexer` is its only writer: a daemon

@@ -13,6 +13,7 @@ fn call(
         turn: None,
         client,
         started_at: UnixMillis::from_millis(u64::try_from(n).unwrap() * 1000),
+        prompt: None,
         documents: documents
             .iter()
             .map(|(field, text)| Document {
@@ -332,4 +333,42 @@ async fn exposures_are_listed_newest_first_and_removed_with_their_call() {
         .await
         .unwrap();
     assert_eq!(index.exposures(&all).await.unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn a_turn_prompt_is_its_earliest_indexed_one() {
+    let dir = tempfile::tempdir().unwrap();
+    let index = SearchIndex::open(dir.path()).await.unwrap();
+    let turn = |n: u128| TurnId::restore(Uuid::from_u128(n));
+    let in_turn = |n: u128, t: u128, prompt: Option<&str>| CallDocuments {
+        turn: Some(turn(t)),
+        prompt: prompt.map(|text| Excerpt::cut(text, 4)),
+        ..call(n, None, None, &[])
+    };
+    index
+        .add(&[
+            // Turn 1: a prompt, then a tool loop with none.
+            in_turn(11, 1, None),
+            in_turn(10, 1, Some("Fix the parser")),
+            // Turn 2: indexed, without a prompt.
+            in_turn(20, 2, None),
+        ])
+        .await
+        .unwrap();
+    let prompts = index
+        .turn_prompts(&[turn(1), turn(2), turn(3)])
+        .await
+        .unwrap();
+    let first = &prompts[&turn(1)];
+    assert_eq!(first.earliest_call, UnixMillis::from_millis(10_000));
+    assert_eq!(
+        first.prompt,
+        Some(Excerpt {
+            text: "Fix ".to_owned(),
+            omitted_chars: 10
+        })
+    );
+    assert_eq!(prompts[&turn(2)].prompt, None);
+    // Nothing indexed: the caller reads the bodies instead.
+    assert!(!prompts.contains_key(&turn(3)));
 }

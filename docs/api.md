@@ -82,8 +82,8 @@ it is computed from bodies, so it disappears with them under retention.
 
 `tgv turns <session-id>` lists a session's turns newest first (`--limit`, up to
 1000; no paging), each with its call and error counts, tokens, and the start of
-its prompt. A turn's `ended_at` is `null` while any of its calls is still
-running.
+its prompt (with any secrets redacted once the daemon has indexed the turn). A
+turn's `ended_at` is `null` while any of its calls is still running.
 
 ## Search
 

@@ -15,10 +15,9 @@ use std::{
 use tgv_harness::Harness;
 use tgv_protocol::direction::Direction;
 use tgv_recorder::id::{CallId, SessionId, TurnId};
-use tgv_store::StoreError;
 use tgv_store::activity::ActivityBudget;
 use tgv_store::query::{CallQuery, Cursor, PageLimit, TimeRange};
-use tgv_store::search::{ExposureQuery, SearchField, SearchIndex, SearchQuery, SearchTerms};
+use tgv_store::search::{ExposureQuery, SearchField, SearchQuery, SearchTerms};
 
 /// Which daemon a history or control command reads from.
 #[derive(Args)]
@@ -133,7 +132,13 @@ impl TurnsCmd {
         let limit = PageLimit::new(self.limit)?;
         match self.target.select(ctx)? {
             Target::Local => {
-                HistoryCmd::print(&ctx.reader().await?.session_turns(self.id, limit).await?)
+                let index = ctx.search_index().await?;
+                HistoryCmd::print(
+                    &ctx.reader()
+                        .await?
+                        .session_turns(self.id, limit, index.as_ref())
+                        .await?,
+                )
             }
             Target::Remote(gateway) => HistoryCmd::print(&gateway.turns(self.id, limit).await?),
         }
@@ -174,15 +179,7 @@ impl SearchCmd {
         };
         match self.target.select(ctx)? {
             Target::Local => {
-                let dir = ctx.data_dir(&ctx.config()?)?;
-                let index = match SearchIndex::open_read(&dir).await {
-                    Ok(index) => index,
-                    Err(StoreError::NotFound) => anyhow::bail!(
-                        "no search index in {}: the daemon builds it while running",
-                        dir.display()
-                    ),
-                    Err(error) => return Err(error.into()),
-                };
+                let index = ctx.required_search_index().await?;
                 HistoryCmd::print(&index.search(&query).await?)
             }
             Target::Remote(gateway) => HistoryCmd::print(&gateway.search_history(&query).await?),
@@ -212,15 +209,7 @@ impl ExposuresCmd {
         };
         match self.target.select(ctx)? {
             Target::Local => {
-                let dir = ctx.data_dir(&ctx.config()?)?;
-                let index = match SearchIndex::open_read(&dir).await {
-                    Ok(index) => index,
-                    Err(StoreError::NotFound) => anyhow::bail!(
-                        "no search index in {}: the daemon builds it while running",
-                        dir.display()
-                    ),
-                    Err(error) => return Err(error.into()),
-                };
+                let index = ctx.required_search_index().await?;
                 HistoryCmd::print(&index.exposures(&query).await?)
             }
             Target::Remote(gateway) => HistoryCmd::print(&gateway.exposures(&query).await?),
@@ -243,9 +232,8 @@ impl ReportCmd {
             Target::Local => {
                 let mut report = ctx.reader().await?.session_report(self.id).await?;
                 // Exposures come from the daemon's search index, when built.
-                let dir = ctx.data_dir(&ctx.config()?)?;
-                match SearchIndex::open_read(&dir).await {
-                    Ok(index) => report.add_exposures(
+                if let Some(index) = ctx.search_index().await? {
+                    report.add_exposures(
                         index
                             .exposures(&ExposureQuery {
                                 session: Some(self.id),
@@ -253,9 +241,7 @@ impl ReportCmd {
                                 limit: PageLimit::new(PageLimit::MAX)?,
                             })
                             .await?,
-                    ),
-                    Err(StoreError::NotFound) => {}
-                    Err(error) => return Err(error.into()),
+                    );
                 }
                 HistoryCmd::print(&report)
             }

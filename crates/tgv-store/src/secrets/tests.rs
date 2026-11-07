@@ -108,6 +108,8 @@ fn redaction_replaces_secrets_and_keeps_only_a_hint_and_fingerprint() {
     assert_ne!(found[0].fingerprint, found[2].fingerprint);
     assert_eq!(found[0].fingerprint.len(), 16);
     assert!(!key.contains(&found[0].fingerprint));
+    // Detecting finds the same, without redacting.
+    assert_eq!(scanner.detect(&text), found);
     // Nothing found: the text is unchanged.
     assert_eq!(scanner.redact("plain text").0, "plain text");
 }

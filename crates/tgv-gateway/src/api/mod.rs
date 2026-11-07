@@ -447,7 +447,10 @@ impl ApiState {
             .clone()
             .try_acquire_owned()
             .map_err(|_| ApiError::Busy)?;
-        let turns = state.reader.session_turns(id, raw.limit()?).await?;
+        let turns = state
+            .reader
+            .session_turns(id, raw.limit()?, Some(&state.search))
+            .await?;
         Ok(Self::versioned(Turns { turns }).into_response())
     }
 
