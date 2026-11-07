@@ -2426,6 +2426,7 @@ dependencies = [
  "http",
  "http-body",
  "http-body-util",
+ "proptest",
  "reqwest",
  "serde",
  "serde_json",
