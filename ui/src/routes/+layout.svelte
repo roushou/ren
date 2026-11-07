@@ -35,9 +35,17 @@
           ? 'usage'
           : page.route.id === '/sessions'
             ? 'sessions'
-            : 'traffic',
+            : page.route.id === '/sessions/[id]/report'
+              ? 'report'
+              : page.route.id === '/turns/[id]'
+                ? 'turn'
+                : 'traffic',
   );
-  const sessionId = $derived(page.params.id ?? null);
+  /** A session page's ID; reports and turns belong under Sessions too. */
+  const sessionId = $derived(page.route.id === '/sessions/[id]' ? (page.params.id ?? null) : null);
+  const underSessions = $derived(
+    view === 'sessions' || view === 'report' || view === 'turn' || !!sessionId,
+  );
   /** When the scope does not fit on one line it folds behind a button. */
   let scopeOpen = $state(false);
   let folded = $state(false);
@@ -83,9 +91,13 @@
             ? 'Usage'
             : view === 'sessions'
               ? 'Sessions'
-              : sessionId
-                ? 'Session activity'
-                : 'Traffic',
+              : view === 'report'
+                ? 'Session report'
+                : view === 'turn'
+                  ? 'Turn'
+                  : sessionId
+                    ? 'Session activity'
+                    : 'Traffic',
   );
   const gatewayOrigin = $derived(page.data.gatewayUrl);
   const omissions = $derived(health?.recorder.omissions);
@@ -111,6 +123,8 @@
       page.data.traffic?.error ??
       page.data.sessions?.error ??
       page.data.recorder?.error ??
+      page.data.report?.error ??
+      page.data.turn?.error ??
       null,
   );
   const error = $derived(refreshError || failure?.message || '');
@@ -149,6 +163,8 @@
       '/usage',
       '/recorder',
       '/sessions/[id]',
+      '/sessions/[id]/report',
+      '/turns/[id]',
     ] as const)
       void preloadCode(route);
   });
@@ -191,8 +207,8 @@
       <a
         href="/sessions"
         data-sveltekit-preload-data="hover"
-        class:active={view === 'sessions' || !!sessionId}
-        aria-current={view === 'sessions' || !!sessionId ? 'page' : undefined}
+        class:active={underSessions}
+        aria-current={underSessions ? 'page' : undefined}
         ><Icon name="sessions" size={14} />Sessions</a
       >
       <a

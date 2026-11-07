@@ -12,6 +12,7 @@ import {
   nullable,
   object,
   string,
+  unrecognised,
   ShapeError,
   type Brand,
   type Decoder,
@@ -803,6 +804,321 @@ export class ApiError extends Error {
   }
 }
 
+// Activity and reports: what a turn or call did, read from recorded bodies,
+// and where a session's context and cache tokens went.
+const harnesses = ['claude_code', 'codex', 'pi'] as const;
+export type Harness = (typeof harnesses)[number];
+const effectKinds = [
+  'read_file',
+  'write_file',
+  'run_command',
+  'search',
+  'delegate',
+  'fetch',
+] as const;
+export type EffectKind = (typeof effectKinds)[number];
+const resultStatuses = ['succeeded', 'failed', 'unreported'] as const;
+export type ResultStatus = (typeof resultStatuses)[number];
+const activityLimitations = [
+  'unsupported_endpoint',
+  'capture_gap',
+  'truncated',
+  'unsupported_encoding',
+  'decoding_error',
+  'decoded_too_large',
+  'not_json',
+  'unexpected_shape',
+  'unfinished_tool_call',
+  'too_many_tool_calls',
+] as const;
+export type ActivityLimitation = (typeof activityLimitations)[number];
+const findingKinds = [
+  'cache_rebuild',
+  'context_growth',
+  'large_tool_output',
+  'repeated_failure',
+] as const;
+export type FindingKind = (typeof findingKinds)[number];
+
+/** Text cut to a budget; `omitted_chars` says how much was left out. */
+export interface Excerpt {
+  text: string;
+  omitted_chars: number;
+}
+export interface ToolEffect {
+  kind: Stored<EffectKind>;
+  /** The path, command, pattern, task, or URL the tool's input names. */
+  target: string;
+}
+/** A tool result as the client reported it. */
+export interface ToolResultView {
+  status: Stored<ResultStatus>;
+  output: Excerpt;
+}
+/** A tool call the model requested: requested, not proof that it ran. */
+export interface ToolCallActivity {
+  id: string | null;
+  name: string;
+  effects: ToolEffect[];
+  input: Excerpt;
+  /** Null when no later request in the turn answered it. */
+  result: ToolResultView | null;
+}
+/** Provider-reported tokens and recorded sizes and times; not cost. */
+export interface CallMetrics {
+  context_tokens: number | null;
+  cache_read_tokens: number | null;
+  cache_written_tokens: number | null;
+  output_tokens: number | null;
+  request_bytes: number | null;
+  duration_ms: number | null;
+}
+export interface CallActivity {
+  call: CallId;
+  started_at: UnixMillis;
+  ended_at: UnixMillis | null;
+  model: string | null;
+  status: number | null;
+  outcome: Stored<ModelOutcome> | null;
+  metrics: CallMetrics;
+  prompt: Excerpt | null;
+  tool_calls: ToolCallActivity[];
+  /** Results this request carried for tool calls outside the turn. */
+  earlier_results: number;
+  reply: Excerpt | null;
+  limitations: Stored<ActivityLimitation>[];
+}
+export type Finding =
+  | {
+      kind: 'cache_rebuild';
+      call: CallId;
+      turn: TurnId | null;
+      cache_read_tokens: number;
+      cache_written_tokens: number;
+      earlier_peak_tokens: number;
+      idle_before_ms: number | null;
+    }
+  | {
+      kind: 'context_growth';
+      call: CallId;
+      turn: TurnId | null;
+      earlier_peak_tokens: number;
+      context_tokens: number;
+    }
+  | {
+      kind: 'large_tool_output';
+      call: CallId;
+      tool: string;
+      tool_call_id: string | null;
+      target: string | null;
+      output_chars: number;
+    }
+  | {
+      kind: 'repeated_failure';
+      tool: string;
+      target: string | null;
+      failures: number;
+      calls: CallId[];
+    }
+  /** A finding a newer daemon reports, kept by its label for display. */
+  | { kind: 'unrecognized'; text: string };
+export interface TurnActivity {
+  turn: TurnId;
+  session: SessionId;
+  native_id: NativeTurnId;
+  client: Stored<Harness> | null;
+  started_at: UnixMillis | null;
+  ended_at: UnixMillis | null;
+  prompt: Excerpt | null;
+  files_read: string[];
+  files_written: string[];
+  commands: string[];
+  tool_calls: number;
+  failed_tool_calls: number;
+  unanswered_tool_calls: number;
+  findings: Finding[];
+  calls: CallActivity[];
+  omitted_calls: number;
+}
+export interface TurnSummary {
+  turn: TurnId;
+  native_id: NativeTurnId;
+  started_at: UnixMillis;
+  ended_at: UnixMillis | null;
+  call_count: number;
+  error_count: number;
+  tokens: TokenTotals;
+  prompt: Excerpt | null;
+}
+export interface Turns {
+  turns: TurnSummary[];
+}
+export interface TurnMetrics {
+  turn: TurnId;
+  started_at: UnixMillis;
+  ended_at: UnixMillis | null;
+  call_count: number;
+  idle_before_ms: number | null;
+  context_start_tokens: number | null;
+  context_end_tokens: number | null;
+  cache_hit_percent: number | null;
+  cache_written_tokens: number;
+  output_tokens: number;
+}
+export interface ReportTotals {
+  calls: number;
+  calls_with_usage: number;
+  peak_context_tokens: number;
+  context_tokens: number;
+  cache_read_tokens: number;
+  cache_written_tokens: number;
+  output_tokens: number;
+  cache_hit_percent: number | null;
+}
+export interface SessionReport {
+  session: SessionId;
+  totals: ReportTotals;
+  turns: TurnMetrics[];
+  findings: Finding[];
+  omitted_calls: number;
+}
+
+const excerpt = object<Excerpt>({ text: string, omitted_chars: count });
+const callMetrics = object<CallMetrics>({
+  context_tokens: nullable(count),
+  cache_read_tokens: nullable(count),
+  cache_written_tokens: nullable(count),
+  output_tokens: nullable(count),
+  request_bytes: nullable(count),
+  duration_ms: nullable(count),
+});
+const callActivity = object<CallActivity>({
+  call: CallId.decode,
+  started_at: millis,
+  ended_at: nullable(millis),
+  model: nullable(string),
+  status: nullable(count),
+  outcome: nullable(label(modelOutcomes)),
+  metrics: callMetrics,
+  prompt: nullable(excerpt),
+  tool_calls: array(
+    object<ToolCallActivity>({
+      id: nullable(string),
+      name: string,
+      effects: array(object<ToolEffect>({ kind: label(effectKinds), target: string })),
+      input: excerpt,
+      result: nullable(object<ToolResultView>({ status: label(resultStatuses), output: excerpt })),
+    }),
+  ),
+  earlier_results: count,
+  reply: nullable(excerpt),
+  limitations: array(label(activityLimitations)),
+});
+/** A finding by its `kind`; an unknown kind keeps only its label. */
+const finding: Decoder<Finding> = (value, path) => {
+  const kind = label(findingKinds)(isRecord(value) ? value.kind : undefined, `${path}.kind`);
+  switch (kind) {
+    case 'cache_rebuild':
+      return object<Extract<Finding, { kind: 'cache_rebuild' }>>({
+        kind: () => 'cache_rebuild',
+        call: CallId.decode,
+        turn: nullable(TurnId.decode),
+        cache_read_tokens: count,
+        cache_written_tokens: count,
+        earlier_peak_tokens: count,
+        idle_before_ms: nullable(count),
+      })(value, path);
+    case 'context_growth':
+      return object<Extract<Finding, { kind: 'context_growth' }>>({
+        kind: () => 'context_growth',
+        call: CallId.decode,
+        turn: nullable(TurnId.decode),
+        earlier_peak_tokens: count,
+        context_tokens: count,
+      })(value, path);
+    case 'large_tool_output':
+      return object<Extract<Finding, { kind: 'large_tool_output' }>>({
+        kind: () => 'large_tool_output',
+        call: CallId.decode,
+        tool: string,
+        tool_call_id: nullable(string),
+        target: nullable(string),
+        output_chars: count,
+      })(value, path);
+    case 'repeated_failure':
+      return object<Extract<Finding, { kind: 'repeated_failure' }>>({
+        kind: () => 'repeated_failure',
+        tool: string,
+        target: nullable(string),
+        failures: count,
+        calls: array(CallId.decode),
+      })(value, path);
+    default:
+      return { kind: 'unrecognized', text: unrecognised(kind) };
+  }
+};
+const turnActivity = object<TurnActivity>({
+  turn: TurnId.decode,
+  session: SessionId.decode,
+  native_id: branded<'NativeTurnId'>(),
+  client: nullable(label(harnesses)),
+  started_at: nullable(millis),
+  ended_at: nullable(millis),
+  prompt: nullable(excerpt),
+  files_read: array(string),
+  files_written: array(string),
+  commands: array(string),
+  tool_calls: count,
+  failed_tool_calls: count,
+  unanswered_tool_calls: count,
+  findings: array(finding),
+  calls: array(callActivity),
+  omitted_calls: count,
+});
+const turns = object<Turns>({
+  turns: array(
+    object<TurnSummary>({
+      turn: TurnId.decode,
+      native_id: branded<'NativeTurnId'>(),
+      started_at: millis,
+      ended_at: nullable(millis),
+      call_count: count,
+      error_count: count,
+      tokens: (value, path) => tokenTotals(value, path),
+      prompt: nullable(excerpt),
+    }),
+  ),
+});
+const sessionReport = object<SessionReport>({
+  session: SessionId.decode,
+  totals: object<ReportTotals>({
+    calls: count,
+    calls_with_usage: count,
+    peak_context_tokens: count,
+    context_tokens: count,
+    cache_read_tokens: count,
+    cache_written_tokens: count,
+    output_tokens: count,
+    cache_hit_percent: nullable(count),
+  }),
+  turns: array(
+    object<TurnMetrics>({
+      turn: TurnId.decode,
+      started_at: millis,
+      ended_at: nullable(millis),
+      call_count: count,
+      idle_before_ms: nullable(count),
+      context_start_tokens: nullable(count),
+      context_end_tokens: nullable(count),
+      cache_hit_percent: nullable(count),
+      cache_written_tokens: count,
+      output_tokens: count,
+    }),
+  ),
+  findings: array(finding),
+  omitted_calls: count,
+});
+
 /** Check the version envelope, then decode the fields beside it. */
 const versioned =
   <T>(decode: Decoder<T>): Decoder<T> =>
@@ -857,6 +1173,23 @@ export class ManagementApi {
     const query = new URLSearchParams();
     if (after) query.set('after', after);
     return this.#read(`/api/sessions/${id}/calls?${ManagementApi.#page(query)}`, callPage, signal);
+  }
+
+  /** A session's turns, newest first, with the start of each prompt. */
+  turns(id: SessionId, limit = 100, signal?: AbortSignal): Promise<Turns> {
+    return this.#read(`/api/sessions/${id}/turns?limit=${limit}`, turns, signal);
+  }
+  /** Where a session's context and cache tokens went, from its call records. */
+  report(id: SessionId, signal?: AbortSignal): Promise<SessionReport> {
+    return this.#read(`/api/sessions/${id}/report`, sessionReport, signal);
+  }
+  /** What one turn did, read from its calls' bodies. */
+  turn(id: TurnId, signal?: AbortSignal): Promise<TurnActivity> {
+    return this.#read(`/api/turns/${id}`, turnActivity, signal);
+  }
+  /** What one call's bodies show. */
+  callActivity(id: CallId, signal?: AbortSignal): Promise<CallActivity> {
+    return this.#read(`/api/calls/${id}/activity`, callActivity, signal);
   }
 
   /** `limit` first, the caller's or 100, then the rest of the query. */

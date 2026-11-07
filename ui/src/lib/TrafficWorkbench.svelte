@@ -135,7 +135,9 @@
     workbench.activeCount = 0;
   });
   const groups = $derived(
-    sessionId ? turnGroups(calls) : [{ id: 'recent', label: 'Recent calls', rows: calls }],
+    sessionId
+      ? turnGroups(calls)
+      : [{ id: 'recent', label: 'Recent calls', turn: null, rows: calls }],
   );
   function callHref(id: CallId) {
     const url = new URL(page.url.href);
@@ -332,7 +334,9 @@
         >
       </div>{/if}
     <div class="scope-group end">
-      <a class="text-button" href={`/traffic?session=${encodeURIComponent(sessionId)}`}
+      <a class="text-button" href={`/sessions/${encodeURIComponent(sessionId)}/report`}
+        >Turns and report <Icon name="arrow" size={12} /></a
+      ><a class="text-button" href={`/traffic?session=${encodeURIComponent(sessionId)}`}
         >Narrow in Traffic <Icon name="arrow" size={12} /></a
       ><a class="text-button" href="/sessions">All sessions <Icon name="arrow" size={12} /></a>
     </div>
@@ -605,7 +609,11 @@
             {#if sessionId}<div class="turn-heading">
                 <Icon name="sessions" size={13} /><strong>{group.label}</strong><span
                   >{group.rows.length} call{group.rows.length === 1 ? '' : 's'}</span
-                >
+                >{#if group.turn}<a
+                    class="text-button turn-link"
+                    href={`/turns/${encodeURIComponent(group.turn)}`}
+                    >What this turn did <Icon name="arrow" size={12} /></a
+                  >{/if}
               </div>{/if}
             <table class="requests-table">
               <thead

@@ -64,6 +64,10 @@ test('UI bridge refuses inference, unknown endpoints and writes before making a 
     '/api/attempts',
     '/api/attempts/11111111-1111-4111-8111-111111111111',
     '/api/sessions/11111111-1111-4111-8111-111111111111/timeline',
+    '/api/sessions/11111111-1111-4111-8111-111111111111/report/extra',
+    '/api/turns',
+    '/api/turns/not-an-id',
+    '/api/calls/11111111-1111-4111-8111-111111111111/activity/extra',
     '/api/live/extra',
     '/api/calls/11111111-1111-4111-8111-111111111111/body/headers',
   ]) {
@@ -113,6 +117,10 @@ test('every allowlisted read uses the same bounded read bridge', async () => {
     `/api/calls/${id}/body/response`,
     '/api/sessions',
     `/api/sessions/${id}/calls`,
+    `/api/sessions/${id}/turns`,
+    `/api/sessions/${id}/report`,
+    `/api/turns/${id}`,
+    `/api/calls/${id}/activity`,
     '/api/usage',
   ]) {
     const response = await managementResponse(

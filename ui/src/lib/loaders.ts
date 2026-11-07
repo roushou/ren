@@ -6,8 +6,11 @@ import {
   type Metrics,
   type PageCursor,
   type SessionId,
+  type SessionReport,
   type SessionView,
   type Storage,
+  type TurnId,
+  type TurnSummary,
   type UsageView,
 } from './api.ts';
 import { localDayStart, parseRange, rangeStart, type UsageRange } from './usage.ts';
@@ -189,4 +192,31 @@ export async function offPageSelection(
       message: snapshotError(error, 'Unable to load the selected call.').message,
     };
   }
+}
+
+export interface ReportData {
+  report: SessionReport;
+  /** The turn listing, for prompts and error counts. */
+  turns: TurnSummary[];
+  session: SessionView | undefined;
+}
+
+/** A session's report, with its turns' prompts and its listing row. */
+export function reportSnapshot(fetcher: typeof fetch, sessionId: SessionId) {
+  const api = new ManagementApi(fetcher);
+  return readSnapshot(`/sessions/${sessionId}/report`, async (): Promise<ReportData> => {
+    const [report, turns, sessions] = await Promise.all([
+      api.report(sessionId),
+      api.turns(sessionId, 100),
+      api.sessions(100),
+    ]);
+    const session = sessions.sessions.find((item) => item.id === sessionId);
+    return { report, turns: turns.turns, session };
+  });
+}
+
+/** What one turn did, read from its calls' bodies. */
+export function turnSnapshot(fetcher: typeof fetch, turnId: TurnId) {
+  const api = new ManagementApi(fetcher);
+  return readSnapshot(`/turns/${turnId}`, () => api.turn(turnId));
 }

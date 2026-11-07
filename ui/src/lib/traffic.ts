@@ -156,6 +156,8 @@ export function filtersFromParams(params: URLSearchParams): Filters {
 export interface TurnGroup {
   id: string;
   label: string;
+  /** The turn the group's calls belong to; null outside a turn. */
+  turn: CallView['turn'];
   rows: CallView[];
 }
 
@@ -178,6 +180,7 @@ export function turnGroups(calls: CallView[]): TurnGroup[] {
       // first call, which is unique.
       id: `${key ?? 'outside'}-${call.id}`,
       label: key ? `Turn ${key.slice(0, 8)}` : 'Outside a turn',
+      turn: key,
       rows: [call],
     });
   }

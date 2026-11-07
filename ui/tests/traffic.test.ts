@@ -87,6 +87,11 @@ test('runs of calls outside a turn share one group; turns keep theirs', () => {
       ['Outside a turn', 1],
     ],
   );
+  // Turn groups name their turn, which links to what it did; others do not.
+  assert.deepEqual(
+    turnGroups(calls).map((g) => g.turn === null),
+    [true, false, true],
+  );
   // A turn that resumes after an outside call is a new group with its own key.
   const resumed = turnGroups([...calls, finishedFixture(callId(6), { turn: turn(7) })]);
   assert.equal(new Set(resumed.map((g) => g.id)).size, resumed.length);
