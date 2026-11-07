@@ -5,6 +5,8 @@ provider traffic unchanged, using your own Anthropic and OpenAI subscriptions,
 and records it for inspection through a CLI, a read-only API, and an optional
 web UI. It runs on a laptop or on a VPS reached through Tailscale.
 
+<img width="2880" height="1800" alt="tgv-dark" src="https://github.com/user-attachments/assets/799b9c5b-6cc3-479b-afcf-d00db5263211" />
+
 ## Install
 
 With the Rust toolchain pinned in `rust-toolchain.toml`:
@@ -51,6 +53,26 @@ tgv tail
 With a saved gateway, these read the remote daemon.
 
 The optional UI lives in [`ui`](ui/README.md).
+
+## Screenshots
+
+<details>
+<summary>Light theme</summary>
+
+<img width="2880" height="1800" alt="tgv-light" src="https://github.com/user-attachments/assets/58a6a4aa-265a-49ef-ac98-c8f7ee76b3be" />
+</details>
+
+<details>
+<summary>Overview</summary>
+
+<img width="2880" height="1800" alt="tgv-overview" src="https://github.com/user-attachments/assets/9762a3c8-ae96-4de4-be7e-6cc0039c8703" />
+</details>
+
+<details>
+<summary>Sessions</summary>
+
+<img width="2880" height="1800" alt="tgv-sessions" src="https://github.com/user-attachments/assets/3888ef16-6e8b-476a-b5a0-3f08105d1b64" />
+</details>
 
 ## Documentation
 
