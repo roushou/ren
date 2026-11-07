@@ -1,33 +1,24 @@
-//! The recorder task: drains the queue in order, cuts bodies into chunks,
-//! inspects responses incrementally, and commits in batches.
+//! The recorder task, the shell around [`RecorderCore`]: it drains the queue
+//! in order, holds each piece's byte budget until it commits, commits the
+//! core's batches through the sink, prunes, derives missing digests, and
+//! keeps the metrics.
 
 use super::{
-    item::{Item, Piece, Track},
+    item::Item,
     metrics::Counters,
     options::CaptureOptions,
+    recording::RecorderCore,
     sink::{Observation, RecordSink},
 };
 use crate::{
-    batch::{AttemptBody, Batch, BodyKey, FinishAttempt, FinishCall, Op, Segment},
     capture::Omission,
-    chunk::Chunker,
-    digest::{CallDigest, DigestBudget},
-    id::CallId,
-    inspection::InspectionRecord,
+    digest::CallDigest,
     retention::RetentionPolicy,
-    secrets::SecretScanner,
     time::{Clock, Monotonic},
 };
 use std::{
-    collections::HashMap,
     sync::{Arc, atomic::Ordering},
     time::Duration,
-};
-use tgv_harness::{Harness, tools::InterpretedCall};
-use tgv_protocol::{
-    CallInspector,
-    activity::{ActivityLimits, Reading, RequestReader, ResponseActivity},
-    inspect::pipeline::{InspectionLimits, Protocol},
 };
 use tokio::{
     sync::{OwnedSemaphorePermit, broadcast, mpsc},
@@ -45,99 +36,15 @@ pub struct RecorderTask<S> {
     pub(super) clock: Arc<dyn Clock>,
     pub(super) options: CaptureOptions,
     pub(super) retention: RetentionPolicy,
-    pub(super) calls: HashMap<CallId, CallInProgress>,
-    pub(super) batch: Batch,
+    pub(super) core: RecorderCore,
     pub(super) held: Vec<OwnedSemaphorePermit>,
     pub(super) oldest: Option<Monotonic>,
-    /// Redacts every digest's text before it is stored.
-    pub(super) scanner: Arc<SecretScanner>,
-}
-
-/// Recorder state for a call between its open and finish records.
-pub(super) struct CallInProgress {
-    protocol: Option<Protocol>,
-    /// The harness whose hints attributed the call.
-    harness: Option<Harness>,
-    /// The request as it is captured, read when it ends.
-    reading: Option<RequestReader>,
-    /// What the latest attempt's response showed: the final one's, once the
-    /// call finishes.
-    response_activity: ResponseActivity,
-    request: BodyCapture,
-    /// The open attempt's changed request, if it sends one.
-    attempt_request: Option<BodyCapture>,
-    response: BodyCapture,
-    inspector: Option<CallInspector>,
-}
-
-/// One body being cut into chunks.
-struct BodyCapture {
-    key: BodyKey,
-    chunker: Chunker,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Checkpoint {
     Run,
     Skip,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Continuity {
-    Contiguous,
-    /// Bytes before this piece were omitted.
-    AfterGap,
-}
-
-impl BodyCapture {
-    fn new(key: BodyKey) -> Self {
-        Self {
-            key,
-            chunker: Chunker::at(0),
-        }
-    }
-
-    fn push(&mut self, offset: u64, bytes: &[u8], batch: &mut Batch) -> Continuity {
-        let continuity = if offset == self.chunker.next_offset() {
-            Continuity::Contiguous
-        } else {
-            self.flush(batch);
-            self.chunker = Chunker::at(offset);
-            Continuity::AfterGap
-        };
-        let mut cuts = Vec::new();
-        self.chunker.push(bytes, &mut cuts);
-        self.emit(cuts, batch);
-        continuity
-    }
-
-    fn flush(&mut self, batch: &mut Batch) {
-        let mut cuts = Vec::new();
-        self.chunker.flush(&mut cuts);
-        self.emit(cuts, batch);
-    }
-
-    fn emit(&self, cuts: Vec<crate::chunk::Cut>, batch: &mut Batch) {
-        if cuts.is_empty() {
-            return;
-        }
-        let segments = cuts
-            .into_iter()
-            .map(|cut| Segment {
-                offset: cut.offset,
-                chunk: batch.add_chunk(cut.bytes),
-            })
-            .collect();
-        batch.push(Op::Segments {
-            body: self.key,
-            segments,
-        });
-    }
-
-    /// The end of the contiguous bytes received since the last gap.
-    fn received(&self) -> u64 {
-        self.chunker.next_offset()
-    }
 }
 
 impl<S: RecordSink> RecorderTask<S> {
@@ -166,7 +73,8 @@ impl<S: RecordSink> RecorderTask<S> {
                 item = self.receiver.recv() => match item {
                     Some(item) => {
                         self.accept(item);
-                        if self.batch.ops() >= Self::MAX_BATCH_OPS || self.batch.data_bytes() >= Self::MAX_BATCH_BYTES {
+                        let pending = self.core.pending();
+                        if pending.ops() >= Self::MAX_BATCH_OPS || pending.data_bytes() >= Self::MAX_BATCH_BYTES {
                             self.commit().await;
                         }
                     }
@@ -193,212 +101,14 @@ impl<S: RecordSink> RecorderTask<S> {
         self.sink.close().await
     }
 
+    /// Hand a record to the core; keep the bytes' budget until they commit.
     fn accept(&mut self, item: Item) {
-        match item {
-            Item::Open {
-                open,
-                attempt,
-                endpoint,
-            } => {
-                self.observe_age(open.stamp.at.monotonic);
-                let call = open.stamp.call;
-                let protocol = Protocol::for_endpoint(endpoint);
-                self.calls.insert(
-                    call,
-                    CallInProgress {
-                        protocol,
-                        harness: open
-                            .attribution
-                            .hint
-                            .as_ref()
-                            .map(|hint| hint.source.harness()),
-                        reading: protocol.map(|protocol| {
-                            RequestReader::new(protocol, ActivityLimits::default())
-                        }),
-                        response_activity: ResponseActivity::default(),
-                        request: BodyCapture::new(BodyKey::Request(call)),
-                        attempt_request: None,
-                        // Replaced when the first attempt starts.
-                        response: BodyCapture::new(BodyKey::Request(call)),
-                        inspector: None,
-                    },
-                );
-                self.batch.push(Op::OpenCall(open));
-                if let Some(attempt) = attempt {
-                    self.attempt(attempt);
-                }
-            }
-            Item::Attempt(attempt) => {
-                self.observe_age(attempt.stamp.at.monotonic);
-                self.attempt(attempt);
-            }
-            Item::Head(head) => {
-                self.observe_age(head.stamp.at.monotonic);
-                if let Some(call) = self.calls.get_mut(&head.stamp.call) {
-                    call.inspector = call.protocol.map(|protocol| {
-                        CallInspector::new(
-                            protocol,
-                            head.format,
-                            head.encoding,
-                            InspectionLimits::default(),
-                        )
-                    });
-                }
-                self.batch.push(Op::ResponseHead(head));
-            }
-            Item::Data {
-                piece,
-                slot,
-                budget,
-            } => {
-                drop(slot);
-                self.held.push(budget);
-                self.data(piece);
-            }
-            Item::Close { close, _channel } => {
-                self.observe_age(close.at.monotonic);
-                self.batch.push(Op::CloseChannel(close));
-            }
-            Item::Operator { action, _slot } => {
-                self.observe_age(action.at.monotonic);
-                self.batch.push(Op::Operator(action));
-            }
-            Item::FinishAttempt {
-                stamp,
-                attempt,
-                end,
-                response,
-                request,
-            } => {
-                self.observe_age(stamp.at.monotonic);
-                let inspection = self.calls.get_mut(&stamp.call).and_then(|call| {
-                    if let Some(mut changed) = call.attempt_request.take() {
-                        changed.flush(&mut self.batch);
-                    }
-                    call.response.flush(&mut self.batch);
-                    let mut inspector = call.inspector.take()?;
-                    // Observed bytes that never reached the recorder are a gap.
-                    if call.response.received() < response.observed_bytes {
-                        inspector.gap();
-                    }
-                    let reading = inspector.finish(response.ending.end());
-                    call.response_activity = reading.activity;
-                    Some(Box::new(InspectionRecord::from(&reading.inspection)))
-                });
-                self.batch.push(Op::FinishAttempt(FinishAttempt {
-                    stamp,
-                    attempt,
-                    end,
-                    response,
-                    request,
-                    inspection,
-                }));
-            }
-            Item::FinishCall {
-                stamp,
-                request,
-                rejection,
-                _call,
-            } => {
-                self.observe_age(stamp.at.monotonic);
-                let digest = self.calls.remove(&stamp.call).map(|mut call| {
-                    call.request.flush(&mut self.batch);
-                    let reading = match call.reading {
-                        Some(mut reader) => {
-                            // Observed bytes that never reached the recorder are a gap.
-                            if call.request.received() < request.observed_bytes {
-                                reader.gap();
-                            }
-                            Reading {
-                                request: reader.finish(request.ending.end()),
-                                response: call.response_activity,
-                            }
-                        }
-                        None => Reading::unsupported(),
-                    };
-                    CallDigest::seal(
-                        InterpretedCall::new(call.harness, reading),
-                        &self.scanner,
-                        DigestBudget::STORED,
-                    )
-                });
-                self.batch.push(Op::FinishCall(FinishCall {
-                    stamp,
-                    request,
-                    rejection,
-                }));
-                if let Some(digest) = digest {
-                    self.batch.push(Op::Digest {
-                        call: stamp.call,
-                        digest: Box::new(digest),
-                    });
-                }
-            }
+        let (record, budget) = item.into_record();
+        self.observe_age(record.at());
+        if let Some(budget) = budget {
+            self.held.push(budget);
         }
-    }
-
-    /// An attempt started: its bodies are captured from here on.
-    fn attempt(&mut self, attempt: crate::batch::StartAttempt) {
-        if let Some(call) = self.calls.get_mut(&attempt.stamp.call) {
-            call.response = BodyCapture::new(BodyKey::Response(attempt.attempt));
-            call.attempt_request = match attempt.body {
-                AttemptBody::Original => None,
-                AttemptBody::Changed => {
-                    Some(BodyCapture::new(BodyKey::AttemptRequest(attempt.attempt)))
-                }
-            };
-            call.inspector = None;
-        }
-        self.batch.push(Op::StartAttempt(attempt));
-    }
-
-    fn data(&mut self, piece: Piece) {
-        self.observe_age(piece.enqueued);
-        let Some(call) = self.calls.get_mut(&piece.call) else {
-            return;
-        };
-        let body = match piece.track {
-            Track::Request => &mut call.request,
-            Track::Response => &mut call.response,
-            Track::AttemptRequest => match &mut call.attempt_request {
-                Some(body) => body,
-                None => return,
-            },
-        };
-        if let Some(mark) = piece.message {
-            self.batch.push(Op::Message {
-                body: body.key,
-                mark,
-            });
-        }
-        let continuity = body.push(piece.offset, &piece.bytes, &mut self.batch);
-        match piece.track {
-            Track::AttemptRequest => {}
-            Track::Request => {
-                if let Some(reader) = &mut call.reading {
-                    match continuity {
-                        Continuity::Contiguous => {}
-                        Continuity::AfterGap => reader.gap(),
-                    }
-                    if piece.message.is_some() {
-                        reader.message();
-                    }
-                    reader.feed(&piece.bytes);
-                }
-            }
-            Track::Response => {
-                if let Some(inspector) = &mut call.inspector {
-                    match continuity {
-                        Continuity::Contiguous => {}
-                        Continuity::AfterGap => inspector.gap(),
-                    }
-                    if let Some(mark) = piece.message {
-                        inspector.message(mark.len);
-                    }
-                    inspector.feed(&piece.bytes);
-                }
-            }
-        }
+        self.core.accept(record);
     }
 
     /// Derive digests again from stored bodies: for calls recorded before
@@ -412,14 +122,7 @@ impl<S: RecordSink> RecorderTask<S> {
         {
             Ok(exchanges) => {
                 let full = exchanges.len() >= Self::REDERIVE_BATCH;
-                for exchange in exchanges {
-                    let call = exchange.call;
-                    let digest = exchange.digest(&self.scanner);
-                    self.batch.push(Op::Digest {
-                        call,
-                        digest: Box::new(digest),
-                    });
-                }
+                self.core.rederived(exchanges);
                 self.commit().await;
                 if full {
                     Self::REDERIVE_BUSY
@@ -442,15 +145,10 @@ impl<S: RecordSink> RecorderTask<S> {
     /// so terminals survive; the lost bytes are counted and the bodies' stored
     /// byte counts show the loss.
     async fn commit(&mut self) {
-        // Streaming responses are cut at each commit, so live previews advance.
-        // Requests keep content-defined cuts, where deduplication matters.
-        for call in self.calls.values_mut() {
-            call.response.flush(&mut self.batch);
-        }
-        if self.batch.is_empty() {
+        let batch = self.core.take_batch();
+        if batch.is_empty() {
             return;
         }
-        let batch = std::mem::take(&mut self.batch);
         let held = std::mem::take(&mut self.held);
         let started = self.clock.now().monotonic;
         let committed = match self.sink.commit(&batch).await {

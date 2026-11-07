@@ -9,16 +9,13 @@
 //! needs.
 
 use super::{metrics::Counters, options::CaptureOptions};
+pub(super) use crate::recording::{Piece, Record, Track};
 use crate::{
-    batch::{
-        BodyEnd, CloseChannel, MessageMark, OpenCall, OperatorAction, ResponseHead, Stamp,
-        StartAttempt,
-    },
+    batch::{BodyEnd, CloseChannel, OpenCall, OperatorAction, ResponseHead, Stamp, StartAttempt},
     capture::{CallRejection, Omission, TerminalRecord},
-    id::{AttemptId, CallId, IdSource},
-    time::{Clock, Monotonic},
+    id::{AttemptId, IdSource},
+    time::Clock,
 };
-use bytes::Bytes;
 use std::sync::Arc;
 use tgv_protocol::route::Endpoint;
 use tokio::sync::{
@@ -71,25 +68,67 @@ pub(super) enum Item {
     },
 }
 
-/// Which body a piece belongs to.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum Track {
-    /// The call's request, as the client sent it.
-    Request,
-    /// The current attempt's request, as a transform changed it.
-    AttemptRequest,
-    Response,
-}
-
-/// A piece of body data at its offset in the body.
-pub(super) struct Piece {
-    pub call: CallId,
-    pub track: Track,
-    pub offset: u64,
-    pub bytes: Bytes,
-    pub enqueued: Monotonic,
-    /// Set on the first piece of a WebSocket message: the whole message.
-    pub message: Option<MessageMark>,
+impl Item {
+    /// The record for the core, and the byte budget a data piece holds until
+    /// its bytes commit. Every other permit is released here, as the item is
+    /// dequeued.
+    pub(super) fn into_record(self) -> (Record, Option<OwnedSemaphorePermit>) {
+        match self {
+            Self::Open {
+                open,
+                attempt,
+                endpoint,
+            } => (
+                Record::Open {
+                    open,
+                    attempt,
+                    endpoint,
+                },
+                None,
+            ),
+            Self::Attempt(attempt) => (Record::Attempt(attempt), None),
+            Self::Head(head) => (Record::Head(head), None),
+            Self::Data {
+                piece,
+                slot,
+                budget,
+            } => {
+                drop(slot);
+                (Record::Data(piece), Some(budget))
+            }
+            Self::Close { close, _channel } => (Record::Close(close), None),
+            Self::FinishAttempt {
+                stamp,
+                attempt,
+                end,
+                response,
+                request,
+            } => (
+                Record::FinishAttempt {
+                    stamp,
+                    attempt,
+                    end,
+                    response,
+                    request,
+                },
+                None,
+            ),
+            Self::FinishCall {
+                stamp,
+                request,
+                rejection,
+                _call,
+            } => (
+                Record::FinishCall {
+                    stamp,
+                    request,
+                    rejection,
+                },
+                None,
+            ),
+            Self::Operator { action, _slot } => (Record::Operator(action), None),
+        }
+    }
 }
 
 /// State shared by every tap.

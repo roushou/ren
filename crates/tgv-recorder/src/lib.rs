@@ -25,6 +25,7 @@ pub mod inspection;
 mod item;
 pub mod metrics;
 pub mod options;
+mod recording;
 pub mod retention;
 pub mod routing;
 pub mod secrets;
@@ -47,10 +48,8 @@ use crate::{
 };
 use item::Shared;
 use metrics::{Counters, QueueMetrics};
-use std::{
-    collections::HashMap,
-    sync::{Arc, atomic::Ordering},
-};
+use recording::RecorderCore;
+use std::sync::{Arc, atomic::Ordering};
 use tokio::sync::broadcast;
 
 /// The recorder's counters, readable after every [`Recorder`] handle is
@@ -119,11 +118,9 @@ impl Recorder {
             clock,
             options: setup.options,
             retention: setup.retention,
-            calls: HashMap::new(),
-            batch: Default::default(),
+            core: RecorderCore::new(setup.scanner),
             held: Vec::new(),
             oldest: None,
-            scanner: setup.scanner,
         };
         Ok((
             Self {
