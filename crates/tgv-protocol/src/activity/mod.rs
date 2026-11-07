@@ -153,6 +153,8 @@ pub struct CapturedBody<'a> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ActivityLimits {
     pub max_decoded_bytes: usize,
+    /// The most request bytes gathered for reading: the capture limit.
+    pub max_request_bytes: usize,
     pub max_tool_uses: usize,
     pub sse: SseLimits,
 }
@@ -161,6 +163,7 @@ impl Default for ActivityLimits {
     fn default() -> Self {
         Self {
             max_decoded_bytes: 64 * 1024 * 1024,
+            max_request_bytes: 16 * 1024 * 1024,
             max_tool_uses: 256,
             sse: SseLimits::default(),
         }
@@ -225,6 +228,90 @@ impl ResponseReader {
         activity.limitations = ActivityReader::dedup(limitations);
         activity
     }
+}
+
+/// A request body, gathered as it is captured and read once it ends. The
+/// newest user input is at the end of a conversation, so the whole body is
+/// needed; up to `max_request_bytes` are kept.
+#[derive(Debug)]
+pub struct RequestReader {
+    reader: ActivityReader,
+    bytes: Vec<u8>,
+    extent: BodyExtent,
+    /// A WebSocket call's request is one message.
+    framing: RequestFraming,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RequestFraming {
+    Http,
+    Message,
+}
+
+impl RequestReader {
+    pub fn new(protocol: Protocol, limits: ActivityLimits) -> Self {
+        Self {
+            reader: ActivityReader::new(protocol, limits),
+            bytes: Vec::new(),
+            extent: BodyExtent::Complete,
+            framing: RequestFraming::Http,
+        }
+    }
+
+    /// The request is a WebSocket message: its bytes are one document.
+    pub fn message(&mut self) {
+        self.framing = RequestFraming::Message;
+    }
+
+    /// The next contiguous captured bytes.
+    pub fn feed(&mut self, bytes: &[u8]) {
+        if self.extent != BodyExtent::Complete {
+            return;
+        }
+        let room = self
+            .reader
+            .limits
+            .max_request_bytes
+            .saturating_sub(self.bytes.len());
+        if bytes.len() > room {
+            self.extent = BodyExtent::Truncated;
+        }
+        self.bytes
+            .extend_from_slice(bytes.get(..room.min(bytes.len())).unwrap_or_default());
+    }
+
+    /// Captured bytes are missing here; nothing after them is read.
+    pub fn gap(&mut self) {
+        self.extent = BodyExtent::Gap;
+    }
+
+    pub fn finish(self, end: crate::inspect::pipeline::BodyEnd) -> RequestActivity {
+        let extent = match (self.extent, end) {
+            (BodyExtent::Complete, crate::inspect::pipeline::BodyEnd::Unfinished) => {
+                BodyExtent::Truncated
+            }
+            (extent, _) => extent,
+        };
+        let whole = 0..self.bytes.len();
+        self.reader.request(CapturedBody {
+            bytes: &self.bytes,
+            extent,
+            encoding: None,
+            messages: match self.framing {
+                RequestFraming::Http => None,
+                RequestFraming::Message => Some(std::slice::from_ref(&whole)),
+            },
+        })
+    }
+}
+
+/// What a call's bodies showed: its request's newest input and its final
+/// response's output. Raw text: it is sealed (redacted and cut) before it is
+/// stored.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct Reading {
+    pub request: RequestActivity,
+    pub response: ResponseActivity,
 }
 
 /// Reads activity from one protocol's bodies.

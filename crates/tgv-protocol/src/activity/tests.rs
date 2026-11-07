@@ -371,3 +371,76 @@ proptest::proptest! {
         proptest::prop_assert_eq!(streamed, stored);
     }
 }
+
+proptest::proptest! {
+    /// A request gathered in any pieces reads as the whole stored body does.
+    #[test]
+    fn a_gathered_request_reads_as_the_stored_one(
+        gzip in proptest::bool::ANY,
+        cuts in proptest::collection::vec(proptest::num::usize::ANY, 0..16),
+    ) {
+        let plain = json!({
+            "messages": [
+                { "role": "user", "content": "Fix the failing test" },
+                { "role": "assistant", "content": [{ "type": "tool_use", "id": "toolu_1", "name": "Bash", "input": {} }] },
+                { "role": "user", "content": [
+                    { "type": "tool_result", "tool_use_id": "toolu_1", "is_error": true, "content": "exit 1" },
+                    { "type": "text", "text": "Now try «this»" },
+                ] },
+            ],
+        })
+        .to_string()
+        .into_bytes();
+        let bytes = if gzip {
+            let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+            encoder.write_all(&plain).unwrap();
+            encoder.finish().unwrap()
+        } else {
+            plain
+        };
+        let stored = reader(Protocol::Messages).request(body(&bytes));
+        let mut gathered = RequestReader::new(Protocol::Messages, ActivityLimits::default());
+        let mut points: Vec<usize> = cuts.iter().map(|cut| cut % (bytes.len() + 1)).collect();
+        points.sort_unstable();
+        let mut from = 0;
+        for point in points.into_iter().chain([bytes.len()]) {
+            gathered.feed(&bytes[from..point.max(from)]);
+            from = point.max(from);
+        }
+        let gathered = gathered.finish(crate::inspect::pipeline::BodyEnd::Complete);
+        proptest::prop_assert_eq!(&gathered.user_text, &["Now try «this»".to_owned()]);
+        proptest::prop_assert_eq!(gathered, stored);
+    }
+}
+
+#[test]
+fn a_gathered_request_says_what_it_missed() {
+    let request = json!({ "messages": [{ "role": "user", "content": "hi" }] }).to_string();
+    let limits = ActivityLimits {
+        max_request_bytes: 10,
+        ..ActivityLimits::default()
+    };
+    let mut over = RequestReader::new(Protocol::Messages, limits);
+    over.feed(request.as_bytes());
+    let over = over.finish(crate::inspect::pipeline::BodyEnd::Complete);
+    assert!(over.limitations.contains(&ActivityLimitation::Truncated));
+    assert!(over.user_text.is_empty());
+
+    let mut cut = RequestReader::new(Protocol::Messages, ActivityLimits::default());
+    cut.feed(&request.as_bytes()[..5]);
+    cut.gap();
+    cut.feed(&request.as_bytes()[5..]);
+    let cut = cut.finish(crate::inspect::pipeline::BodyEnd::Complete);
+    assert!(cut.limitations.contains(&ActivityLimitation::CaptureGap));
+
+    // A WebSocket call's request is its one message.
+    let create = json!({ "type": "response.create", "input": [
+        { "type": "message", "role": "user", "content": [{ "type": "input_text", "text": "Run it" }] },
+    ] })
+    .to_string();
+    let mut message = RequestReader::new(Protocol::Responses, ActivityLimits::default());
+    message.message();
+    message.feed(create.as_bytes());
+    let message = message.finish(crate::inspect::pipeline::BodyEnd::Complete);
+    assert_eq!(message.user_text, ["Run it"]);
+}
