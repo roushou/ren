@@ -15,6 +15,8 @@
     Band,
     Board,
     LivePlace,
+    type BandBy,
+    type BandSeries,
     type BandStyle,
     type Density,
     Feed,
@@ -45,6 +47,21 @@
   });
 
   const view = $derived(LivePlace.parse(page.url.searchParams));
+  const band = $derived(
+    current
+      ? new Band(current.sessions, current.calls, Math.max(now, current.read), view.by)
+      : null,
+  );
+  /** The series the wall is narrowed to: the band's, or the bare key while it draws nothing. */
+  const only = $derived(
+    view.series
+      ? {
+          by: view.by,
+          label: band?.series.find((series) => series.key === view.series)?.label ?? view.series,
+          keys: band?.series.find((series) => series.key === view.series)?.members ?? [view.series],
+        }
+      : null,
+  );
   const board = $derived(
     current
       ? new Board({
@@ -55,12 +72,29 @@
           windowMs: LivePlace.windows[current.window].ms,
           focus: view.focus,
           pins: view.pins,
+          only,
         })
       : null,
   );
-  const band = $derived(
-    current && board ? new Band(current.sessions, current.calls, board.now) : null,
-  );
+  /** The band series under the pointer: its layer stands out and its cards are outlined. */
+  let hoveredSeries = $state<string | null>(null);
+  const seriesHref = (key: string) =>
+    LivePlace.href({ ...view, series: view.series === key ? null : key });
+  const byHref = (by: BandBy) => LivePlace.href({ ...view, by, series: null });
+  const byLabels: Record<BandBy, string> = {
+    client: 'Client',
+    provider: 'Provider',
+    model: 'Model',
+  };
+  /** Whether a card belongs to the hovered band series. */
+  function inHoveredSeries(tile: Tile): boolean {
+    if (!hoveredSeries || !band) return false;
+    const key = Band.sessionKey(view.by, tile.session, tile.model);
+    return band.seriesOf(key)?.key === hoveredSeries;
+  }
+  /** The band's height in SVG units, drawn at the same height in pixels. */
+  const BAND_HEIGHT = 120;
+  const rate = (value: number) => (value < 10 ? value.toFixed(1) : String(Math.round(value)));
   const windowOptions = (Object.keys(LivePlace.windows) as LiveWindow[]).map((value) => ({
     value,
     label: LivePlace.windows[value].label,
@@ -232,6 +266,12 @@
           title="Active sessions without a tile: the board keeps the busiest and most recent {Board.maxTiles}"
           >{board.overflow} not shown</a
         >{/if}
+      {#if only}<a
+          class="chip live-only"
+          href={LivePlace.href({ ...view, series: null })}
+          title="The wall shows only sessions in this series; select to show every session"
+          >only {only.label} <Icon name="close" size={11} /></a
+        >{/if}
       {#if current && (current.truncated.calls || current.truncated.sessions)}<span
           class="chip warning"
           title="The window holds more than the page reads at once ({LivePlace.windows[
@@ -243,18 +283,28 @@
     </div>
   {/if}
   <div class="scope-group end">
+    <nav class="segmented live-modes" aria-label="Band grouping">
+      {#each ['client', 'provider', 'model'] as const as by (by)}
+        <a
+          href={byHref(by)}
+          class:chosen={view.by === by}
+          aria-current={view.by === by ? 'page' : undefined}
+          title="Output tokens by {by}">{byLabels[by]}</a
+        >
+      {/each}
+    </nav>
     <nav class="segmented live-modes" aria-label="Band style">
-      <a
-        href={bandHref('area')}
-        class:chosen={view.band === 'area'}
-        aria-current={view.band === 'area' ? 'page' : undefined}
-        title="One chart per client">Area</a
-      >
       <a
         href={bandHref('ribbon')}
         class:chosen={view.band === 'ribbon'}
         aria-current={view.band === 'ribbon' ? 'page' : undefined}
-        title="Every client stacked into one chart: its top edge is the total">Ribbon</a
+        title="Every series stacked into one chart: its top edge is the total">Ribbon</a
+      >
+      <a
+        href={bandHref('area')}
+        class:chosen={view.band === 'area'}
+        aria-current={view.band === 'area' ? 'page' : undefined}
+        title="Each series in its own lane, on one scale">Area</a
       >
     </nav>
     <nav class="segmented live-modes" aria-label="Board density">
@@ -307,9 +357,15 @@
   {/each}
 {/snippet}
 
-{#snippet marks(row: Band['rows'][number])}
-  {#each row.marks as mark (mark.key)}
-    <rect class="live-band-mark {mark.tone}" x={mark.at * 1000 - 1.5} y="2" width="3" height="9" />
+{#snippet marks(series: BandSeries, top: number)}
+  {#each series.marks as mark (mark.key)}
+    <rect
+      class="live-band-mark {mark.tone}"
+      x={mark.at * 1000 - 1.5}
+      y={top + 2}
+      width="3"
+      height="9"
+    />
   {/each}
 {/snippet}
 
@@ -332,74 +388,93 @@
       <p>{snapshot.current.error?.message ?? 'Loading…'}</p>
     </div>
   {:else}
-    {#if band}
+    {#if band && band.series.length}
       <section
         class="live-band"
-        aria-label="Output tokens by client"
-        title="Output tokens per client over the last {span(Band.spanMs)}"
+        aria-label="Output tokens by {view.by}"
+        title="Output tokens per {view.by} over the last {span(
+          Band.spanMs,
+        )}, counted when each call finishes"
       >
-        <div class="live-band-labels">
-          {#each band.rows as row (row.harness)}
-            <div
-              class="live-band-label"
-              title="Output tokens per second over the last {span(
-                Band.rateMs,
-              )}, counted when each call finishes"
-            >
-              <strong
-                ><span class="harness-mark harness-{row.harness}"></span>{harnessLabel(
-                  row.harness,
-                )}</strong
-              >
-              <span class="mono"
-                >{row.rate < 10 ? row.rate.toFixed(1) : Math.round(row.rate)} tok/s</span
-              >
-            </div>
-          {/each}
-        </div>
-        <div class="live-band-charts">
+        <svg
+          class="live-band-chart"
+          class:hovering={hoveredSeries !== null}
+          viewBox="0 0 1000 {BAND_HEIGHT}"
+          preserveAspectRatio="none"
+          aria-hidden="true"
+        >
+          {@render ticks(BAND_HEIGHT)}
           {#if view.band === 'ribbon'}
-            <svg
-              class="live-band-row ribbon"
-              viewBox="0 0 1000 137"
-              preserveAspectRatio="none"
-              aria-hidden="true"
-            >
-              {@render ticks(137)}
-              <line class="live-band-tick" x1="0" y1="68.5" x2="1000" y2="68.5" />
-              {#each band.rows as row, index (row.harness)}
-                {#if row.bins.some((value) => value > 0)}
-                  {@const layer = band.layer(index, 137)}
-                  <path class="live-band-area harness-{row.harness}" d={layer.area} />
-                  <path class="live-band-line harness-{row.harness}" d={layer.line} />
-                {/if}
-              {/each}
-              {#each band.rows as row (row.harness)}
-                {@render marks(row)}
-              {/each}
-            </svg>
-            <span class="live-band-scale mono" aria-hidden="true">{band.ribbonMax} tok/s</span>
+            <line
+              class="live-band-tick"
+              x1="0"
+              y1={BAND_HEIGHT / 2}
+              x2="1000"
+              y2={BAND_HEIGHT / 2}
+            />
+            {#each band.series as series, index (series.key)}
+              {#if series.bins.some((value) => value > 0)}
+                {@const layer = band.layer(index, BAND_HEIGHT)}
+                <g class={series.swatch} class:lit={hoveredSeries === series.key}>
+                  <path class="live-band-area" d={layer.area} />
+                  <path class="live-band-line" d={layer.line} />
+                </g>
+              {/if}
+            {/each}
+            {#each band.series as series (series.key)}
+              {@render marks(series, 0)}
+            {/each}
           {:else}
-            {#each band.rows as row (row.harness)}
-              <svg
-                class="live-band-row harness-{row.harness}"
-                viewBox="0 0 1000 46"
-                preserveAspectRatio="none"
-                aria-hidden="true"
-              >
-                {@render ticks(46)}
-                <path class="live-band-area" d={band.area(row, 46)} />
-                <path class="live-band-line" d={band.line(row, 46)} />
-                {@render marks(row)}
-              </svg>
+            {#each band.series as series, index (series.key)}
+              {@const row = band.row(index, BAND_HEIGHT)}
+              <g class={series.swatch} class:lit={hoveredSeries === series.key}>
+                {#if index > 0}<line
+                    class="live-band-rule"
+                    x1="0"
+                    y1={row.top}
+                    x2="1000"
+                    y2={row.top}
+                  />{/if}
+                <path class="live-band-area" d={row.area} />
+                <path class="live-band-line" d={row.line} />
+              </g>
+              {@render marks(series, row.top)}
             {/each}
           {/if}
-          <div class="live-band-axis mono" aria-hidden="true">
-            <span>−10m</span><span>−8m</span><span>−6m</span><span>−4m</span><span>−2m</span><span
-              >now</span
+        </svg>
+        <div class="live-legend" class:rows={view.band === 'area'}>
+          {#each band.series as series (series.key)}
+            <a
+              class="live-legend-chip {series.swatch}"
+              class:chosen={view.series === series.key}
+              href={seriesHref(series.key)}
+              title={series.members.length > 1
+                ? `${series.members.map((key) => Band.label(view.by, key)).join(', ')}: select to show only their sessions`
+                : view.series === series.key
+                  ? 'Show every session'
+                  : `Show only ${series.label} sessions`}
+              onpointerenter={() => (hoveredSeries = series.key)}
+              onpointerleave={() => (hoveredSeries = null)}
+              onfocus={() => (hoveredSeries = series.key)}
+              onblur={() => (hoveredSeries = null)}
+              ><span class="harness-mark"></span><b>{series.label}</b><span class="mono"
+                >{rate(series.rate)} tok/s</span
+              ></a
             >
-          </div>
+          {/each}
         </div>
+        <span class="live-band-scale mono" aria-hidden="true"
+          >{view.band === 'ribbon' ? band.ribbonMax : band.max} tok/s</span
+        >
+        <div class="live-band-axis mono" aria-hidden="true">
+          <span>−10m</span><span>−8m</span><span>−6m</span><span>−4m</span><span>−2m</span><span
+            >now</span
+          >
+        </div>
+      </section>
+    {:else if band}
+      <section class="live-band empty" aria-label="Output tokens">
+        <span class="mono">No output in the last {span(Band.spanMs)}</span>
       </section>
     {/if}
     <section class="live-now" aria-label="Now" aria-live="off">
@@ -480,7 +555,7 @@
             class="live-tile {harnessClass(tile)} {attention ? `attention-${attention}` : ''}"
             class:quiet={tile.quiet && !focused}
             class:focused
-            class:highlighted={highlighted === tile.session.id}
+            class:highlighted={highlighted === tile.session.id || inHoveredSeries(tile)}
           >
             <header class="live-tile-head">
               <a class="live-open" href={sessionHref(tile.session.id)} title="Open the session"
@@ -693,47 +768,57 @@
     background: var(--harness);
   }
 
-  /* The band: output tokens per client, as calls finish. */
+  /* Providers and models take a slot's colour; clients keep their own. */
+  .series-0 {
+    --harness: var(--accent);
+  }
+  .series-1 {
+    --harness: var(--harness-codex);
+  }
+  .series-2 {
+    --harness: var(--role-tool);
+  }
+  .series-3 {
+    --harness: var(--role-thinking);
+  }
+  .series-other {
+    --harness: var(--muted);
+  }
+
+  /*
+   * The band: output tokens, as calls finish, in one chart of fixed height
+   * whatever the number of series; its legend sits inside it, top left.
+   */
   .live-band {
-    display: grid;
+    position: relative;
     flex: none;
-    grid-template-columns: 150px minmax(0, 1fr);
+    height: 120px;
   }
-  .live-band-label {
+  .live-band.empty {
     display: flex;
-    flex-direction: column;
-    justify-content: center;
-    height: 46px;
-    padding: 0 12px 0 16px;
-    border-right: 1px solid var(--line);
-    border-bottom: 1px solid var(--line);
-  }
-  .live-band-label strong {
-    display: flex;
-    overflow: hidden;
-    white-space: nowrap;
     align-items: center;
-    font-size: 12.5px;
-    font-weight: 600;
-  }
-  .live-band-label .mono {
+    height: 30px;
+    padding: 0 16px;
     color: var(--muted);
     font-size: 11px;
   }
-  .live-band-row {
+  .live-band-chart {
     display: block;
     width: 100%;
-    height: 46px;
-    border-bottom: 1px solid var(--line);
+    height: 100%;
   }
   .live-band-tick {
     stroke: var(--line);
     stroke-dasharray: 2 3;
     vector-effect: non-scaling-stroke;
   }
+  .live-band-rule {
+    stroke: var(--line);
+    vector-effect: non-scaling-stroke;
+  }
   .live-band-area {
     fill: var(--harness);
-    opacity: 0.16;
+    opacity: 0.28;
   }
   .live-band-line {
     fill: none;
@@ -741,27 +826,77 @@
     stroke-width: 1.4;
     vector-effect: non-scaling-stroke;
   }
+  .live-band-chart g {
+    transition: opacity 120ms;
+  }
+  .live-band-chart.hovering g:not(.lit) {
+    opacity: 0.25;
+  }
   .live-band-mark.warning {
     fill: var(--warning);
   }
   .live-band-mark.error {
     fill: var(--error);
   }
-  /* Time labels sit inside the chart, along its bottom edge. */
-  .live-band-charts {
-    position: relative;
-    min-width: 0;
+  .live-legend {
+    position: absolute;
+    top: 6px;
+    left: 8px;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 1px;
+    max-height: calc(100% - 22px);
   }
-  .live-band-row.ribbon {
-    height: 138px;
+  /* In Area, each chip sits at the top of its own lane. */
+  .live-legend.rows {
+    top: 0;
+    bottom: 0;
+    display: grid;
+    grid-auto-rows: minmax(0, 1fr);
+    gap: 0;
+    max-height: none;
   }
-  .live-band-row.ribbon .live-band-area {
-    opacity: 0.28;
+  .live-legend.rows .live-legend-chip {
+    align-self: start;
+    justify-self: start;
+    margin-top: 3px;
   }
+  .live-legend-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 1px 6px;
+    border-radius: 2px;
+    background: color-mix(in srgb, var(--surface) 82%, transparent);
+    color: var(--ink);
+    font-size: 11.5px;
+    line-height: 18px;
+    text-decoration: none;
+    white-space: nowrap;
+  }
+  .live-legend-chip:hover,
+  .live-legend-chip:focus-visible {
+    background: var(--row-hover);
+  }
+  .live-legend-chip.chosen {
+    box-shadow: inset 0 0 0 1px var(--harness);
+  }
+  .live-legend-chip .harness-mark {
+    margin-right: 0;
+  }
+  .live-legend-chip b {
+    font-weight: 600;
+  }
+  .live-legend-chip .mono {
+    color: var(--muted);
+    font-size: 10.5px;
+  }
+  /* Below the error ticks, which mark the top edge. */
   span.live-band-scale.mono {
     position: absolute;
-    top: 2px;
-    left: 4px;
+    top: 13px;
+    right: 6px;
     color: var(--muted);
     font-size: 9.5px;
     opacity: 0.7;
@@ -779,6 +914,11 @@
     font-size: 9.5px;
     opacity: 0.7;
     pointer-events: none;
+  }
+  .live-only {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
   }
 
   /* The wall: fixed slots that fill the workspace; tiles touch, split by 1px rules. */
@@ -1388,9 +1528,6 @@
     .live-tile.focused {
       grid-column: auto;
       grid-row: span 2;
-    }
-    .live-band {
-      grid-template-columns: 96px minmax(0, 1fr);
     }
     .live-now-label {
       width: 96px;

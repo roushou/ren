@@ -3,6 +3,7 @@
 // No browser, no fetching; tested in tests/board.test.ts.
 import type {
   CallView,
+  Provider,
   EffectKind,
   Excerpt,
   Finding,
@@ -162,6 +163,8 @@ export interface BoardInput {
   focus: SessionId | null;
   /** Sessions kept on the wall while they are active, however quiet. */
   pins: SessionId[];
+  /** Only sessions in these band series, when the viewer picked one. */
+  only: { by: BandBy; keys: string[] } | null;
 }
 
 export class Board {
@@ -189,7 +192,24 @@ export class Board {
   constructor(input: BoardInput) {
     this.now = input.now;
     const bySession = Board.bySession(input.calls);
-    const active = Board.activeSessions(input.sessions, bySession, input.now, input.windowMs);
+    const only = input.only;
+    const active = Board.activeSessions(
+      input.sessions,
+      bySession,
+      input.now,
+      input.windowMs,
+    ).filter(
+      (session) =>
+        !only ||
+        only.keys.includes(
+          Band.sessionKey(
+            only.by,
+            session,
+            (bySession.get(session.id) ?? []).findLast((call) => call.model !== null)?.model ??
+              null,
+          ),
+        ),
+    );
     this.focus = active.some((session) => session.id === input.focus) ? input.focus : null;
     const pins = new Set(input.pins);
     const shown = Board.shown(active, bySession, this.focus, pins);
@@ -864,6 +884,10 @@ export interface LiveView {
   focus: SessionId | null;
   /** Sessions kept on the wall, in the order they were pinned. */
   pins: SessionId[];
+  /** What the band groups by. */
+  by: BandBy;
+  /** The band series the wall is narrowed to, by its key. */
+  series: string | null;
 }
 export type Density = 'comfortable' | 'compact';
 /** How the band draws its clients: a row each, or stacked into one ribbon. */
@@ -896,14 +920,27 @@ export class LivePlace {
     const window = params.get('window');
     return {
       density: params.get('density') === 'compact' ? 'compact' : 'comfortable',
-      band: params.get('band') === 'ribbon' ? 'ribbon' : 'area',
+      band: params.get('band') === 'area' ? 'area' : 'ribbon',
       window: LivePlace.isWindow(window) ? window : LivePlace.defaultWindow,
       focus: SessionId.parse(params.get('focus')),
       pins: [...new Set(params.getAll('pin').flatMap((raw) => SessionId.parse(raw) ?? []))].slice(
         0,
         Board.maxTiles,
       ),
+      by: LivePlace.parseBy(params.get('by')),
+      series: params.get('series') || null,
     };
+  }
+
+  static parseBy(text: string | null): BandBy {
+    switch (text) {
+      case 'provider':
+        return 'provider';
+      case 'model':
+        return 'model';
+      default:
+        return 'client';
+    }
   }
 
   static isWindow(text: string | null): text is LiveWindow {
@@ -914,7 +951,9 @@ export class LivePlace {
     const params = new URLSearchParams();
     if (view.window !== LivePlace.defaultWindow) params.set('window', view.window);
     if (view.density === 'compact') params.set('density', 'compact');
-    if (view.band === 'ribbon') params.set('band', 'ribbon');
+    if (view.band === 'area') params.set('band', 'area');
+    if (view.by !== 'client') params.set('by', view.by);
+    if (view.series) params.set('series', view.series);
     if (view.focus) params.set('focus', view.focus);
     for (const pin of view.pins) params.append('pin', pin);
     const query = params.toString();
@@ -938,9 +977,21 @@ export class LivePlace {
   }
 }
 
-/** One harness's row in the activity band. */
-export interface BandRow {
-  harness: Harness;
+/** What the band groups output by. */
+export type BandBy = 'client' | 'provider' | 'model';
+
+/**
+ * One series in the activity band: a client, a provider, or a model, or
+ * every series past the biggest few, merged as `other`.
+ */
+export interface BandSeries {
+  /** The client, provider, or model it stands for; `other` for the merged rest. */
+  key: string;
+  label: string;
+  /** The keys it covers: its own, or every one merged into `other`. */
+  members: string[];
+  /** The CSS class that colours it. */
+  swatch: string;
   /** Output tokens per second in each bin, oldest first. */
   bins: number[];
   /** Output tokens per second over the last `Band.rateMs`. */
@@ -950,7 +1001,10 @@ export interface BandRow {
 }
 
 /**
- * Output tokens per harness over recent minutes. Usage arrives when a call
+ * Output tokens over recent minutes, by client, provider, or model. Only
+ * series with output or a bad ending in the span are drawn, the biggest
+ * `maxSeries` on their own and the rest as one `other`, so the band never
+ * grows with the number of clients TGV knows. Usage arrives when a call
  * finishes, so each call's tokens are drawn at its end: the band trails the
  * stream, and tokens still streaming are not in it.
  */
@@ -958,39 +1012,130 @@ export class Band {
   static readonly spanMs = 10 * 60_000;
   static readonly binMs = 15_000;
   static readonly rateMs = 60_000;
+  static readonly maxSeries = 4;
+  /** The merged series' key; no client, provider, or model is named this. */
+  static readonly other = '__other';
 
-  readonly rows: BandRow[];
-  /** The scale shared by every row, in tokens per second. */
+  /** Biggest first: the ribbon stacks them from the bottom. */
+  readonly series: BandSeries[];
+  /** The scale shared by every series drawn alone, in tokens per second. */
   readonly max: number;
-  /** The ribbon's scale: every client stacked, in tokens per second. */
+  /** The ribbon's scale: every series stacked, in tokens per second. */
   readonly ribbonMax: number;
 
-  constructor(sessions: SessionView[], calls: CallView[], now: number) {
+  constructor(sessions: SessionView[], calls: CallView[], now: number, by: BandBy = 'client') {
     const bySession = new Map(sessions.map((session) => [session.id, session]));
     const count = Band.spanMs / Band.binMs;
     const from = now - Band.spanMs;
-    this.rows = HARNESSES.map((harness): BandRow => {
-      const own = calls.filter((call) => Band.harnessOf(call, bySession) === harness);
-      const bins = Array.from({ length: count }, () => 0);
-      let recent = 0;
-      const marks: BandRow['marks'] = [];
-      for (const call of own) {
-        if (call.ended_at === null || call.ended_at < from || call.ended_at > now) continue;
-        const out = call.usage?.output_tokens ?? 0;
-        const index = Math.min(count - 1, Math.floor((call.ended_at - from) / Band.binMs));
-        bins[index] = (bins[index] ?? 0) + out / (Band.binMs / 1000);
-        if (now - call.ended_at <= Band.rateMs) recent += out;
-        const tone = statusBadge(callStatus(call)).tone;
-        if (tone === 'warning' || tone === 'error')
-          marks.push({ key: call.id, at: (call.ended_at - from) / Band.spanMs, tone });
-      }
-      return { harness, bins, rate: recent / (Band.rateMs / 1000), marks };
-    });
-    this.max = Band.scale(Math.max(0, ...this.rows.flatMap((row) => row.bins)));
+    const groups = new Map<
+      string,
+      { bins: number[]; recent: number; total: number; marks: BandSeries['marks'] }
+    >();
+    for (const call of calls) {
+      if (call.ended_at === null || call.ended_at < from || call.ended_at > now) continue;
+      const key = Band.callKey(by, call, bySession);
+      const group = groups.get(key) ?? {
+        bins: Array.from({ length: count }, () => 0),
+        recent: 0,
+        total: 0,
+        marks: [],
+      };
+      groups.set(key, group);
+      const out = call.usage?.output_tokens ?? 0;
+      const index = Math.min(count - 1, Math.floor((call.ended_at - from) / Band.binMs));
+      group.bins[index] = (group.bins[index] ?? 0) + out / (Band.binMs / 1000);
+      group.total += out;
+      if (now - call.ended_at <= Band.rateMs) group.recent += out;
+      const tone = statusBadge(callStatus(call)).tone;
+      if (tone === 'warning' || tone === 'error')
+        group.marks.push({ key: call.id, at: (call.ended_at - from) / Band.spanMs, tone });
+    }
+    const ranked = [...groups]
+      .filter(([, group]) => group.total > 0 || group.marks.length > 0)
+      .sort(([a, x], [b, y]) => y.total - x.total || a.localeCompare(b));
+    const own = ranked.length > Band.maxSeries + 1 ? ranked.slice(0, Band.maxSeries) : ranked;
+    const rest = ranked.slice(own.length);
+    const rate = (recent: number) => recent / (Band.rateMs / 1000);
+    this.series = own.map(([key, group], slot) => ({
+      key,
+      label: Band.label(by, key),
+      members: [key],
+      swatch: Band.swatch(by, key, slot),
+      bins: group.bins,
+      rate: rate(group.recent),
+      marks: group.marks,
+    }));
+    if (rest.length) {
+      this.series.push({
+        key: Band.other,
+        label: `${rest.length} more`,
+        members: rest.map(([key]) => key),
+        swatch: 'series-other',
+        bins: Array.from({ length: count }, (_, index) =>
+          rest.reduce((sum, [, group]) => sum + (group.bins[index] ?? 0), 0),
+        ),
+        rate: rate(rest.reduce((sum, [, group]) => sum + group.recent, 0)),
+        marks: rest.flatMap(([, group]) => group.marks),
+      });
+    }
+    this.max = Band.scale(Math.max(0, ...this.series.flatMap((series) => series.bins)));
     const totals = Array.from({ length: count }, (_, index) =>
-      this.rows.reduce((sum, row) => sum + (row.bins[index] ?? 0), 0),
+      this.series.reduce((sum, series) => sum + (series.bins[index] ?? 0), 0),
     );
     this.ribbonMax = Band.scale(Math.max(0, ...totals));
+  }
+
+  /** What a call counts toward, grouped `by`. */
+  static callKey(by: BandBy, call: CallView, sessions: Map<SessionId, SessionView>): string {
+    switch (by) {
+      case 'client':
+        return Band.harnessOf(call, sessions) ?? 'unknown';
+      case 'provider':
+        return call.provider;
+      case 'model':
+        return call.model ?? 'unknown';
+      default:
+        return assertNever(by);
+    }
+  }
+
+  /** What a session counts toward, grouped `by`: its client, provider, or newest model. */
+  static sessionKey(by: BandBy, session: SessionView, model: string | null): string {
+    switch (by) {
+      case 'client':
+        return Board.harness(session.source) ?? 'unknown';
+      case 'provider':
+        return session.provider;
+      case 'model':
+        return model ?? 'unknown';
+      default:
+        return assertNever(by);
+    }
+  }
+
+  static label(by: BandBy, key: string): string {
+    switch (by) {
+      case 'client':
+        return (HARNESSES as readonly string[]).includes(key)
+          ? harnessLabel(key as Harness)
+          : 'Unknown client';
+      case 'provider':
+        return providerName(key as Stored<Provider>);
+      case 'model':
+        return key === 'unknown' ? 'Unknown model' : key;
+      default:
+        return assertNever(by);
+    }
+  }
+
+  /** Clients keep the colour their cards use; providers and models take a slot's. */
+  static swatch(by: BandBy, key: string, slot: number): string {
+    return by === 'client' ? `harness-${key}` : `series-${slot}`;
+  }
+
+  /** The series a key is drawn in: its own, `other`, or none when it had no output. */
+  seriesOf(key: string): BandSeries | null {
+    return this.series.find((series) => series.members.includes(key)) ?? null;
   }
 
   /** A round scale above a peak, never below 50 tok/s, so a trickle does not look like a flood. */
@@ -1010,24 +1155,31 @@ export class Band {
       : null;
   }
 
-  /** A row's bins as an SVG line in a 1000 × `height` box. */
-  line(row: BandRow, height: number): string {
-    return `M${Band.points(row.bins, this.max, height).join(' L')}`;
-  }
-
-  /** The same line closed down to the baseline, for the fill under it. */
-  area(row: BandRow, height: number): string {
-    return `${this.line(row, height)} L1000,${height} L0,${height} Z`;
+  /**
+   * The series at `index` drawn alone in its own slice of a 1000 × `height`
+   * box: the slices split the height evenly, first at the top.
+   */
+  row(index: number, height: number): { line: string; area: string; top: number } {
+    const slice = height / Math.max(1, this.series.length);
+    const top = index * slice;
+    const bins = this.series[index]?.bins ?? [];
+    const points = Band.points(bins, this.max, slice, top);
+    const base = (top + slice).toFixed(1);
+    return {
+      line: `M${points.join(' L')}`,
+      area: `M${points.join(' L')} L1000,${base} L0,${base} Z`,
+      top,
+    };
   }
 
   /**
-   * The ribbon layer of the row at `index`: rows stack in order, the first at
-   * the bottom, so the top edge of the last layer is every client together.
+   * The ribbon layer of the series at `index`: series stack in order, the
+   * first at the bottom, so the top edge of the last layer is all of them.
    */
   layer(index: number, height: number): { line: string; area: string } {
     const sum = (upTo: number) =>
-      this.rows[0]?.bins.map((_, bin) =>
-        this.rows.slice(0, upTo).reduce((total, row) => total + (row.bins[bin] ?? 0), 0),
+      this.series[0]?.bins.map((_, bin) =>
+        this.series.slice(0, upTo).reduce((total, series) => total + (series.bins[bin] ?? 0), 0),
       ) ?? [];
     const upper = Band.points(sum(index + 1), this.ribbonMax, height);
     const lower = Band.points(sum(index), this.ribbonMax, height).reverse();
@@ -1035,9 +1187,9 @@ export class Band {
   }
 
   /** Bins as points across a 1000-wide box, held flat to both edges. */
-  static points(bins: number[], max: number, height: number): string[] {
-    const step = 1000 / bins.length;
-    const y = (value: number) => (height - (value / max) * (height - 3)).toFixed(1);
+  static points(bins: number[], max: number, height: number, top = 0): string[] {
+    const step = 1000 / Math.max(1, bins.length);
+    const y = (value: number) => (top + height - (value / max) * (height - 3)).toFixed(1);
     return [
       `0,${y(bins[0] ?? 0)}`,
       ...bins.map((value, index) => `${(index * step + step / 2).toFixed(1)},${y(value)}`),

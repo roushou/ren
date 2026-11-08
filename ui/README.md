@@ -23,8 +23,12 @@ drop the `cd` into the turn's directory), with what the turn read, wrote, and ra
 card's header links to its session; hovering it shows the card's actions: open the turn,
 open the current call, pin the card so it stays on the board while its session is active
 (`?pin=`), and expand it (`?focus=`) over four slots with every call of the turn and its
-tools' input and output (`Escape` closes it). This is below a band of output tokens per client, drawn as a row each (**Area**) or stacked into
-one chart whose top edge is the total (**Ribbon**), and a **Now** strip of what happened
+tools' input and output (`Escape` closes it). This is below a band of
+output tokens over the last 10 minutes, grouped by client, provider, or model (`?by=`):
+one chart of fixed height that draws only what had output, the biggest four on their own
+and the rest merged, stacked so its top edge is the total (**Ribbon**, the default) or
+each in its own lane (**Area**). Its legend sits inside the chart; hovering a series
+outlines its cards, and selecting it shows only its sessions (`?series=`). Then comes a **Now** strip of what happened
 lately, newest first: new sessions, prompts, finished calls, failed tools, bad endings,
 and rate limits, with calls still waiting for a response head kept first. Sessions with a call open, then the most recent, get the
 eight cards; quiet ones dim. Text appears once each call finishes and its activity is

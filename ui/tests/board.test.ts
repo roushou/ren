@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { Band, Board, Feed, LivePlace, type BoardInput } from '../src/lib/board.ts';
+import { Band, Board, Feed, LivePlace, type BoardInput, type LiveView } from '../src/lib/board.ts';
 import { LiveReader } from '../src/lib/loaders.ts';
 import {
   type CallActivity,
@@ -97,6 +97,7 @@ const board = (input: Partial<BoardInput>) =>
     windowMs: WINDOW,
     focus: null,
     pins: [],
+    only: null,
     ...input,
   });
 
@@ -303,44 +304,43 @@ test('turns to read: each session newest turn, with a signature that moves with 
   assert.notEqual(Board.turnsToRead([sid(1)], after)[0].signature, first.signature);
 });
 
-test('the URL place parses density, band style, and window once', () => {
-  assert.deepEqual(LivePlace.parse(new URLSearchParams('')), {
+test('the URL place parses density, band, grouping, and window once', () => {
+  const plain: LiveView = {
     density: 'comfortable',
-    band: 'area',
+    band: 'ribbon',
     window: '15m',
     focus: null,
     pins: [],
-  });
+    by: 'client',
+    series: null,
+  };
+  assert.deepEqual(LivePlace.parse(new URLSearchParams('')), plain);
   const view = LivePlace.parse(
-    new URLSearchParams('density=compact&band=ribbon&window=1h&focus=x'),
+    new URLSearchParams('density=compact&band=area&window=1h&focus=x&by=model&series=m-a'),
   );
   // A focus that is not a session ID is dropped.
   assert.deepEqual(view, {
     density: 'compact',
-    band: 'ribbon',
+    band: 'area',
     window: '1h',
     focus: null,
     pins: [],
+    by: 'model',
+    series: 'm-a',
   });
-  assert.equal(LivePlace.href(view), '/live?window=1h&density=compact&band=ribbon');
   assert.equal(
-    LivePlace.href({
-      density: 'comfortable',
-      band: 'ribbon',
-      window: '15m',
-      focus: null,
-      pins: [],
-    }),
-    '/live?band=ribbon',
+    LivePlace.href(view),
+    '/live?window=1h&density=compact&band=area&by=model&series=m-a',
   );
-  assert.equal(
-    LivePlace.href({ density: 'comfortable', band: 'area', window: '15m', focus: null, pins: [] }),
-    '/live',
-  );
+  // Ribbon and grouping by client are the defaults, kept off the URL.
+  assert.equal(LivePlace.href(plain), '/live');
+  assert.equal(LivePlace.href({ ...plain, band: 'area' }), '/live?band=area');
   const focused = LivePlace.parse(new URLSearchParams(`focus=${sid(1).toUpperCase()}`));
   assert.equal(focused.focus, sid(1));
   assert.equal(LivePlace.href(focused), `/live?focus=${sid(1)}`);
-  assert.equal(LivePlace.parse(new URLSearchParams('band=seismo')).band, 'area');
+  assert.equal(LivePlace.parse(new URLSearchParams('band=seismo')).band, 'ribbon');
+  assert.equal(LivePlace.parse(new URLSearchParams('by=harness')).by, 'client');
+  assert.equal(LivePlace.parse(new URLSearchParams('series=')).series, null);
   // Unknown windows, and names inherited from Object, fall back to the default.
   assert.equal(LivePlace.parse(new URLSearchParams('window=2d')).window, '15m');
   assert.equal(LivePlace.parse(new URLSearchParams('window=toString')).window, '15m');
@@ -476,6 +476,7 @@ test('a session with nothing on its lane is quiet; an open call is not', () => {
     windowMs: WINDOW,
     focus: null,
     pins: [],
+    only: null,
   });
   assert.deepEqual(
     board.tiles.map((tile) => tile.quiet),
@@ -496,6 +497,7 @@ test("a tile's attention is its worst alert", () => {
     windowMs: WINDOW,
     focus: null,
     pins: [],
+    only: null,
   });
   assert.equal(board.attention(sid(1)), 'warning');
   assert.notEqual(board.attention(sid(2)), null);
@@ -504,18 +506,30 @@ test("a tile's attention is its worst alert", () => {
 
 test('the band counts output tokens per client when each call ends', () => {
   const band = new Band(
-    [session(1), session(2, { source: 'codex_headers' })],
+    [
+      session(1),
+      session(2, { source: 'codex_headers' }),
+      session(3, { source: 'pi_extension_headers' }),
+    ],
     [
       done(1, 1, { usage: usage(600), ended_at: ms(NOW - 30_000) }),
       done(2, 1, { usage: usage(300), ended_at: ms(NOW - 120_000) }),
       done(3, 2, { usage: usage(150), ended_at: ms(NOW - 59_000), status: 429 }),
       // Outside the span: not drawn.
       done(4, 1, { usage: usage(9999), ended_at: ms(NOW - Band.spanMs - 1) }),
+      done(5, 3, { usage: usage(9999), ended_at: ms(NOW - Band.spanMs - 1) }),
     ],
     NOW,
   );
-  const [claude, codex, pi] = band.rows;
-  assert.equal(claude?.harness, 'claude_code');
+  // Biggest first, and a client with nothing in the span is not drawn at all.
+  assert.deepEqual(
+    band.series.map((series) => [series.key, series.label, series.swatch]),
+    [
+      ['claude_code', 'Claude Code', 'harness-claude_code'],
+      ['codex', 'Codex', 'harness-codex'],
+    ],
+  );
+  const [claude, codex] = band.series;
   assert.equal(claude?.rate, 600 / 60);
   assert.equal(
     claude?.bins.reduce((a, b) => a + b, 0),
@@ -523,16 +537,64 @@ test('the band counts output tokens per client when each call ends', () => {
   );
   assert.equal(codex?.rate, 150 / 60);
   assert.equal(codex?.marks.length, 1);
-  assert.equal(pi?.rate, 0);
   assert.ok(band.max >= 50);
-  // The ribbon stacks every client, so its scale covers their sum.
+  // The ribbon stacks every series, so its scale covers their sum.
   assert.ok(band.ribbonMax >= band.max);
-  const top = band.layer(2, 100).line;
+  const top = band.layer(1, 100).line;
   const bottom = band.layer(0, 100).line;
-  assert.equal(top.split(' L').length, band.rows[0]!.bins.length + 2);
+  assert.equal(top.split(' L').length, (claude?.bins.length ?? 0) + 2);
   assert.notEqual(top, bottom);
   // The first layer sits on the baseline: its closing edge runs back along y = height.
   assert.match(band.layer(0, 100).area, /L1000,100\.0 .* L0,100\.0 Z$/);
+  // In Area each series gets an even slice of the height, first at the top.
+  assert.equal(band.row(1, 100).top, 50);
+  assert.match(band.row(0, 100).area, /L1000,50\.0 L0,50\.0 Z$/);
+});
+
+test('the band groups by provider or model, and merges past the biggest four', () => {
+  const models = ['m-a', 'm-b', 'm-c', 'm-d', 'm-e', 'm-f'];
+  const calls = models.map((model, n) =>
+    done(n + 1, 1, {
+      model,
+      provider: n % 2 ? 'openai' : 'anthropic',
+      usage: usage(100 * (models.length - n)),
+      ended_at: ms(NOW - 30_000),
+    }),
+  );
+  const byModel = new Band([session(1)], calls, NOW, 'model');
+  assert.deepEqual(
+    byModel.series.map((series) => series.key),
+    ['m-a', 'm-b', 'm-c', 'm-d', Band.other],
+  );
+  const other = byModel.series.at(-1);
+  assert.deepEqual(other?.members, ['m-e', 'm-f']);
+  assert.equal(other?.label, '2 more');
+  assert.equal(other?.swatch, 'series-other');
+  assert.equal(byModel.seriesOf('m-f')?.key, Band.other);
+  assert.equal(byModel.seriesOf('m-z'), null);
+  // One past the limit is drawn on its own: merging a single series hides its name for nothing.
+  const five = new Band([session(1)], calls.slice(0, 5), NOW, 'model');
+  assert.equal(five.series.length, 5);
+  assert.ok(!five.series.some((series) => series.key === Band.other));
+  const byProvider = new Band([session(1)], calls, NOW, 'provider');
+  assert.deepEqual(
+    byProvider.series.map((series) => [series.label, series.swatch]),
+    [
+      ['Anthropic', 'series-0'],
+      ['OpenAI', 'series-1'],
+    ],
+  );
+});
+
+test('picking a band series narrows the wall to its sessions', () => {
+  const sessions = [session(1), session(2, { source: 'codex_headers', provider: 'openai' })];
+  const calls = [done(1, 1, { model: 'm-a' }), done(2, 2, { model: 'm-b' })];
+  const ids = (input: Partial<BoardInput>) =>
+    board({ sessions, calls, ...input }).tiles.map((tile) => tile.session.id);
+  assert.deepEqual(ids({}), [sid(1), sid(2)]);
+  assert.deepEqual(ids({ only: { by: 'client', keys: ['codex'] } }), [sid(2)]);
+  assert.deepEqual(ids({ only: { by: 'provider', keys: ['anthropic'] } }), [sid(1)]);
+  assert.deepEqual(ids({ only: { by: 'model', keys: ['m-b', 'm-a'] } }), [sid(1), sid(2)]);
 });
 
 test('the feed tells what happened lately, ongoing waits first, newest next', () => {
