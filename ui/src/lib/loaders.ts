@@ -63,9 +63,23 @@ export function gatewaySnapshot(fetcher: typeof fetch) {
     return { health, storage };
   });
 }
+export interface RecorderData {
+  metrics: Metrics;
+  /** The start of the hour of the oldest retained call; null when none, or unread. */
+  oldest: number | null;
+}
+
+/** The Recorder page: its counters, and the oldest retained call for the history limit. */
 export function recorderSnapshot(fetcher: typeof fetch) {
   const api = new ManagementApi(fetcher);
-  return readSnapshot('recorder', (): Promise<Metrics> => api.metrics());
+  return readSnapshot('recorder', async (): Promise<RecorderData> => {
+    const [metrics, retained] = await Promise.all([
+      api.metrics(),
+      // Usage over every retained call lists its hours oldest first.
+      api.usage({}).catch(() => null),
+    ]);
+    return { metrics, oldest: retained?.hours[0]?.start ?? null };
+  });
 }
 export interface UsageData {
   range: UsageRange;

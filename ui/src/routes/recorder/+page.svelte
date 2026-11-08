@@ -4,7 +4,9 @@
   import { num, bytes, type FileUsage } from '#lib/api.ts';
   import { assertNever } from '#lib/decode.ts';
   import { buildLabel } from '#lib/display.ts';
+  import { RecorderReport } from '#lib/recorder.ts';
   import Icon from '#lib/Icon.svelte';
+  import StateGlyph from '#lib/StateGlyph.svelte';
   import type { PageProps } from './$types';
   let { data }: PageProps = $props();
   getWorkbench().showScope(scope);
@@ -13,26 +15,33 @@
   const policy = $derived(gateway.current.value?.storage.policy);
   // `/api/metrics` is fresher; `/health` keeps counters visible if storage reads fail.
   const recorder = $derived(
-    snapshot.current.value?.recorder ?? gateway.current.value?.health.recorder,
+    snapshot.current.value?.metrics.recorder ?? gateway.current.value?.health.recorder,
   );
-  const usage = $derived(snapshot.current.value?.storage ?? gateway.current.value?.storage.usage);
+  const usage = $derived(
+    snapshot.current.value?.metrics.storage ?? gateway.current.value?.storage.usage,
+  );
+  const report = $derived(
+    recorder
+      ? new RecorderReport(
+          recorder,
+          usage ?? null,
+          policy ?? null,
+          snapshot.current.value?.oldest ?? null,
+          Date.now(),
+        )
+      : null,
+  );
+  const verdict = $derived(report?.verdict ?? null);
+  /** The share of a queue limit in use, for its meter. */
+  const share = (used: number, capacity: number) =>
+    capacity > 0 ? Math.min(1, used / capacity) : 0;
   const live = (file: FileUsage) =>
     Math.max(0, file.page_count - file.freelist_count) * file.page_size;
   const free = (file: FileUsage) => file.freelist_count * file.page_size;
   const ratio = (numerator: number, denominator: number) =>
     denominator > 0 ? `${(numerator / denominator).toFixed(2)}×` : '—';
-  const omitted = $derived(
-    recorder
-      ? recorder.omissions.policy_limit_bytes +
-          recorder.omissions.queue_bytes_bytes +
-          recorder.omissions.queue_slots_bytes +
-          recorder.omissions.storage_failure_bytes
-      : 0,
-  );
-  const loss = $derived(!!recorder && (omitted > 0 || recorder.omissions.unrecorded_calls > 0));
-  const degraded = $derived(
-    !!recorder && (recorder.storage_errors > 0 || recorder.retention_errors > 0),
-  );
+  /** Spaces kept in the text itself: markup whitespace between inline items collapses. */
+  const SEPARATOR = '\u00a0· ';
   type Unit = 'count' | 'bytes' | 'ms' | 'text';
   type Counter = { label: string; value: number | string | undefined; unit: Unit };
   function format(counter: Counter) {
@@ -50,67 +59,9 @@
         return assertNever(counter.unit);
     }
   }
-  const counterGroups = $derived<{ title: string; attention: boolean; counters: Counter[] }[]>([
-    {
-      title: 'Queue',
-      attention: false,
-      counters: [
-        {
-          label: 'Queued records',
-          value: recorder && `${num(recorder.queue.items)} / ${num(recorder.queue.capacity)}`,
-          unit: 'text',
-        },
-        {
-          label: 'Queued bytes',
-          value:
-            recorder && `${bytes(recorder.queue.bytes)} / ${bytes(recorder.queue.byte_capacity)}`,
-          unit: 'text',
-        },
-      ],
-    },
-    {
-      title: 'Capture loss',
-      attention: true,
-      counters: [
-        { label: 'Unrecorded calls', value: recorder?.omissions.unrecorded_calls, unit: 'count' },
-        {
-          label: 'Omitted · capture policy limit',
-          value: recorder?.omissions.policy_limit_bytes,
-          unit: 'bytes',
-        },
-        {
-          label: 'Omitted · queue byte limit',
-          value: recorder?.omissions.queue_bytes_bytes,
-          unit: 'bytes',
-        },
-        {
-          label: 'Omitted · queue slot limit',
-          value: recorder?.omissions.queue_slots_bytes,
-          unit: 'bytes',
-        },
-        {
-          label: 'Omitted · storage failure',
-          value: recorder?.omissions.storage_failure_bytes,
-          unit: 'bytes',
-        },
-        {
-          label: 'Not stored · WebSocket between calls',
-          value: recorder?.omissions.unattributed_bytes,
-          unit: 'bytes',
-        },
-      ],
-    },
-    {
-      title: 'Errors',
-      attention: true,
-      counters: [
-        { label: 'Storage errors', value: recorder?.storage_errors, unit: 'count' },
-        { label: 'Retention errors', value: recorder?.retention_errors, unit: 'count' },
-      ],
-    },
+  const counterGroups = $derived<{ title: string; counters: Counter[] }[]>([
     {
       title: 'Commits',
-      attention: false,
       counters: [
         { label: 'Commits', value: recorder?.commits, unit: 'count' },
         { label: 'Last commit latency', value: recorder?.last_commit_ms, unit: 'ms' },
@@ -121,7 +72,6 @@
     },
     {
       title: 'Retention activity',
-      attention: false,
       counters: [
         { label: 'Pruned calls', value: recorder?.pruned_calls, unit: 'count' },
         { label: 'Pruned chunks', value: recorder?.pruned_chunks, unit: 'count' },
@@ -129,7 +79,6 @@
     },
     {
       title: 'Writes since startup',
-      attention: false,
       counters: [
         { label: 'Referenced bytes', value: recorder?.dedup.referenced_bytes, unit: 'bytes' },
         { label: 'New chunk bytes', value: recorder?.dedup.new_bytes, unit: 'bytes' },
@@ -166,34 +115,59 @@
 
 {#snippet scope()}
   <div class="scope-group">
-    <span
-      class="chip"
-      class:success={!loss && !degraded && !!recorder}
-      class:warning={loss || degraded}
-      >{!recorder ? 'Loading' : loss || degraded ? 'Needs attention' : 'Healthy'}</span
-    >
     <span class="muted">Daemon build {buildLabel(gateway.current.value?.health.build ?? null)}</span
     >
   </div>
 {/snippet}
 
 <div class="recorder-console">
-  <dl class="storage-summary" aria-label="Storage usage">
-    <div>
-      <dt>Retained calls</dt>
-      <dd>{num(usage?.calls)}</dd>
-    </div>
-    <div>
-      <dt>Live disk usage</dt>
-      <dd>
-        {usage ? bytes(live(usage.disk.metadata) + live(usage.disk.blobs)) : '—'}
-      </dd>
-    </div>
-    <div>
-      <dt>Open calls</dt>
-      <dd>{num(usage?.open_calls)}</dd>
-    </div>
-  </dl>
+  {#if verdict}
+    <section class="rec-verdict state-edge {verdict.tone}" aria-label="How recording stands">
+      <strong>{verdict.headline}</strong>
+      {#each verdict.facts as fact (fact)}<span class="muted">{SEPARATOR}{fact}</span>{/each}
+      {#if usage?.open_calls}<span class="muted"
+          >{SEPARATOR}{num(usage.open_calls)} call{usage.open_calls === 1 ? '' : 's'} open</span
+        >{/if}
+    </section>
+  {/if}
+  {#if report}
+    <section class="rec-gauges" aria-label="Retention limits">
+      {#each report.gauges as gauge (gauge.label)}
+        <div class="rec-gauge" class:binding={gauge.binding}>
+          <div class="rec-gauge-head">
+            <span>{gauge.label}</span>
+            {#if gauge.binding}<span
+                class="rec-binding"
+                title="Retention prunes for this limit first">prunes first</span
+              >{/if}
+            <span class="mono end"
+              >{gauge.share === null ? '' : RecorderReport.percent(gauge.share)}</span
+            >
+          </div>
+          <div class="mono rec-gauge-value">
+            <strong>{gauge.used}</strong> <span class="muted">of {gauge.limit}</span>
+          </div>
+          <svg class="rec-meter" viewBox="0 0 100 6" preserveAspectRatio="none" aria-hidden="true"
+            ><rect
+              class="track"
+              x="0"
+              y="0"
+              width="100"
+              height="6"
+            />{#if gauge.share !== null}<rect
+                class="fill"
+                class:high={gauge.share >= 0.9}
+                class:mid={gauge.share >= 0.7 && gauge.share < 0.9}
+                x="0"
+                y="0"
+                height="6"
+                width={Math.min(1, gauge.share) * 100}
+              />{/if}</svg
+          >
+        </div>
+      {/each}
+    </section>
+  {/if}
   <div class="storage-grid">
     <section class="recorder-panel" aria-labelledby="retention-title">
       <header class="panel-heading">
@@ -251,14 +225,67 @@
           <h2 id="health-title">Recorder health</h2>
           <p>Counters since gateway startup</p>
         </div>
-        <span
-          class="badge"
-          class:success={!loss && !degraded && !!recorder}
-          class:warning={loss || degraded}
-        >
-          {!recorder ? 'Loading' : loss || degraded ? 'Attention' : 'Healthy'}
-        </span>
       </header>
+      {#if recorder}
+        <section class="counter-group" aria-label="Queue">
+          <h3>Queue</h3>
+          <dl class="health-list">
+            {#each [{ label: 'Records', used: recorder.queue.items, capacity: recorder.queue.capacity, text: `${num(recorder.queue.items)} / ${num(recorder.queue.capacity)}` }, { label: 'Bytes', used: recorder.queue.bytes, capacity: recorder.queue.byte_capacity, text: `${bytes(recorder.queue.bytes)} / ${bytes(recorder.queue.byte_capacity)}` }] as meter (meter.label)}
+              <div class="rec-queue">
+                <dt>{meter.label}</dt>
+                <svg
+                  class="rec-meter"
+                  viewBox="0 0 100 6"
+                  preserveAspectRatio="none"
+                  aria-hidden="true"
+                  ><rect class="track" x="0" y="0" width="100" height="6" /><rect
+                    class="fill"
+                    class:high={share(meter.used, meter.capacity) >= 0.9}
+                    class:mid={share(meter.used, meter.capacity) >= 0.7 &&
+                      share(meter.used, meter.capacity) < 0.9}
+                    x="0"
+                    y="0"
+                    height="6"
+                    width={share(meter.used, meter.capacity) * 100}
+                  /></svg
+                >
+                <dd>{meter.text}</dd>
+              </div>
+            {/each}
+          </dl>
+        </section>
+      {/if}
+      {#if report}
+        <section class="counter-group" aria-label="Loss and errors">
+          <h3>Loss and errors</h3>
+          {#each report.notes as note (note.label)}
+            <div class="rec-note {note.severity}">
+              <i></i>
+              <div>
+                <strong>{note.label}</strong>
+                <small>{note.detail}</small>
+              </div>
+              <span class="mono">{note.value}</span>
+            </div>
+          {/each}
+          {#if report.quiet.length}
+            <details class="rec-quiet">
+              <summary
+                ><StateGlyph mark="yours" />{report.notes.some(
+                  (note) => note.severity !== 'neutral',
+                )
+                  ? `${report.quiet.length} other counters at 0`
+                  : `Nothing lost or failed since startup · ${report.quiet.length} counters at 0`}</summary
+              >
+              <ul>
+                {#each report.quiet as label (label)}<li>
+                    <span>{label}</span><span class="mono">0</span>
+                  </li>{/each}
+              </ul>
+            </details>
+          {/if}
+        </section>
+      {/if}
       {#each counterGroups as group (group.title)}
         <section class="counter-group" aria-label={group.title}>
           <h3>{group.title}</h3>
@@ -266,12 +293,7 @@
             {#each group.counters as counter (counter.label)}
               <div>
                 <dt>{counter.label}</dt>
-                <dd
-                  class:warning={group.attention &&
-                    typeof counter.value === 'number' &&
-                    counter.value > 0}
-                  class:zero={counter.value === 0}
-                >
+                <dd class:zero={counter.value === 0}>
                   {format(counter)}
                 </dd>
               </div>
@@ -300,26 +322,159 @@
     white-space: nowrap;
     text-align: right;
   }
-  .storage-summary {
+  .muted {
+    color: var(--muted);
+  }
+  .mono {
+    font-family: 'SFMono-Regular', Consolas, monospace;
+    font-variant-numeric: tabular-nums;
+  }
+  /* The verdict: how recording stands, edged by the worst counter. */
+  .rec-verdict {
+    padding: 10px 16px 10px 18px;
+    border-bottom: 1px solid var(--control-border);
+    background: var(--surface);
+    font-size: 13.5px;
+  }
+  .rec-verdict.error {
+    --state: var(--error);
+  }
+  .rec-verdict.warning {
+    --state: var(--warning);
+  }
+  .rec-verdict.success {
+    --state: var(--success);
+  }
+  .rec-verdict strong {
+    font-weight: 600;
+  }
+  /* Limits: how close retention is to pruning, the nearest one marked. */
+  .rec-gauges {
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 1px;
     border-bottom: 1px solid var(--control-border);
-    background: var(--surface-subtle);
+    background: var(--control-border);
   }
-  .storage-summary > div {
+  .rec-gauge {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    min-width: 0;
+    padding: 10px 16px 12px;
+    background: var(--surface);
+  }
+  .rec-gauge-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--muted);
+    font-size: 11.5px;
+  }
+  .rec-gauge-head .end {
+    margin-left: auto;
+  }
+  .rec-binding {
+    padding: 0 5px;
+    border: 1px solid currentColor;
+    border-radius: 2px;
+    color: var(--ink);
+    font-size: 10.5px;
+  }
+  .rec-gauge-value {
+    overflow: hidden;
+    font-size: 12px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .rec-gauge-value strong {
+    font-size: 18px;
+    font-weight: 500;
+  }
+  .rec-meter {
+    display: block;
+    width: 100%;
+    height: 6px;
+  }
+  .rec-meter .track {
+    fill: var(--line);
+  }
+  .rec-meter .fill {
+    fill: var(--chart);
+  }
+  .rec-meter .fill.mid {
+    fill: var(--warning);
+  }
+  .rec-meter .fill.high {
+    fill: var(--error);
+  }
+  .rec-queue {
+    grid-template-columns: 70px minmax(0, 1fr) auto !important;
+    align-items: center !important;
+  }
+  /* Loss and errors: only what is not zero gets a row, with what it means. */
+  .rec-note {
+    display: grid;
+    grid-template-columns: 4px minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 0 12px;
+    padding-right: 12px;
+    border-bottom: 1px solid var(--line-subtle);
+  }
+  .rec-note > i {
+    align-self: stretch;
+    background: var(--line);
+  }
+  .rec-note.error > i {
+    background: var(--error);
+  }
+  .rec-note.warning > i {
+    background: var(--warning);
+  }
+  .rec-note > div {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    padding: 7px 0;
+  }
+  .rec-note strong {
+    font-weight: 500;
+  }
+  .rec-note.error strong,
+  .rec-note.error .mono {
+    color: var(--error);
+  }
+  .rec-note.warning strong,
+  .rec-note.warning .mono {
+    color: var(--warning);
+  }
+  .rec-note small {
+    color: var(--muted);
+    font-size: 11px;
+  }
+  .rec-quiet summary {
+    display: flex;
+    align-items: center;
+    padding: 8px 12px;
+    color: var(--muted);
+    font-size: 12px;
+    cursor: pointer;
+  }
+  .rec-quiet summary:hover {
+    color: var(--ink);
+  }
+  .rec-quiet ul {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+  .rec-quiet li {
     display: flex;
     justify-content: space-between;
-    align-items: center;
-    gap: 12px;
-    padding: 12px;
-    min-width: 0;
-  }
-  .storage-summary > div + div {
-    border-left: 1px solid var(--line);
-  }
-  .storage-summary dt {
-    font-size: 11px;
+    padding: 6px 12px 6px 26px;
+    border-top: 1px solid var(--line-subtle);
     color: var(--muted);
+    font-size: 12px;
   }
   .storage-grid {
     display: grid;
@@ -407,11 +562,8 @@
       border-left: 0;
       border-top: 1px solid var(--control-border);
     }
-    .storage-summary > div {
-      flex-direction: column;
-      align-items: start;
-      gap: 4px;
-      padding: 10px;
+    .rec-gauges {
+      grid-template-columns: minmax(0, 1fr);
     }
     .panel-note {
       margin-top: 0;

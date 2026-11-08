@@ -87,7 +87,9 @@ test('responses are parsed at the boundary: labels keep unknown text, shapes are
   const metrics = await recorderSnapshot(async () =>
     versioned({ recorder: recorderFixture(), storage: storageViewFixture() }),
   );
-  assert.equal(metrics.value?.storage.disk.blobs.page_size, 4096);
+  assert.equal(metrics.value?.metrics.storage.disk.blobs.page_size, 4096);
+  // The usage read failed to parse (this fake answers every path alike): no oldest call, no failure.
+  assert.equal(metrics.value?.oldest, null);
   const sessions = await sessionsSnapshot(async (input) => {
     assert.equal(path(input), '/api/sessions?limit=100');
     return versioned({

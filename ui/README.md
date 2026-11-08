@@ -48,7 +48,10 @@ tool calls with their effects and reported results, files, commands, and finding
 (`/search`: full-text search over prompts, replies, and tool input and output), Usage
 (`/usage`: calls, errors, and tokens over the last day by hour, the last week, or all
 retained calls by local day, by model, and the busiest sessions), and Recorder
-(`/recorder`). The gateway address in the header opens each client's `tgv run` command,
+(`/recorder`: whether recording is healthy, how close storage, calls, and history are to
+their retention limits with the nearest marked as the one pruned for first, and only the
+loss and error counters that are not zero; bytes past the capture policy are noted as
+left out by design, never as loss, here, in the Recorder tab, and in the footer). The gateway address in the header opens each client's `tgv run` command,
 ready to copy. The bar under the tabs shows each page's scope and the controls that
 change it, such as Traffic's client, session, time, and model-calls-only narrowing;
 when they don't fit on one line they fold behind a **Scope** button. Traffic shows
