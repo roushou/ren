@@ -7,6 +7,7 @@
 //! Tests substitute a scripted upstream; the daemon uses [`ReqwestUpstream`].
 
 use crate::attempt::{SendFailure, StreamFailure};
+use crate::route::{BoundRoute, Route};
 use axum::body::Body;
 use bytes::Bytes;
 use http_body::{Frame, SizeHint};
@@ -413,6 +414,23 @@ impl UpstreamTable {
             Provider::Codex => &self.codex,
             Provider::OpenAi => &self.openai,
         }
+    }
+
+    /// The forwarding routes: [`Route::ALL`], each bound to its provider's
+    /// native entry.
+    pub fn routes(&self) -> Vec<BoundRoute> {
+        Route::ALL
+            .iter()
+            .map(|route| {
+                let entry = self.native(route.provider);
+                BoundRoute {
+                    path: route.path.into(),
+                    forward: route.forward,
+                    upstream: entry.id.clone(),
+                    api: entry.api,
+                }
+            })
+            .collect()
     }
 
     pub fn get(&self, id: &UpstreamId) -> Option<&UpstreamEntry> {

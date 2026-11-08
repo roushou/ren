@@ -28,7 +28,7 @@
 //! - capabilities: an [`Upstream`], a [`Recorder`], the shared [`Controls`],
 //!   a [`Clock`], and the `Reader` and `Backup` in [`ManagementSetup`],
 //!   which also names the running [`Build`] that `/health` reports;
-//! - inputs: inference requests on [`Route::ALL`], management reads, and controls;
+//! - inputs: inference requests on the upstream table's routes, management reads, and controls;
 //! - outputs: provider responses, management data, and HTTP error responses;
 //! - lifecycle: [`Shutdown`] drains, then aborts, through [`Ingress`].
 //!
@@ -63,7 +63,7 @@ pub use buffer::{BufferOptions, BufferOptionsError, BufferRefusal, RequestBuffer
 pub use build::Build;
 pub use headers::HeaderPolicy;
 pub use ingress::{Ingress, IngressError, Shutdown, Stopped};
-pub use route::{Accepts, BoundRoute, Route};
+pub use route::{Accepts, BoundRoute, Forward, Route};
 pub use upstream::{
     AuthOverride, Connected, OperatorKey, ReqwestUpstream, Socket, TransportTimeouts, Upstream,
     UpstreamAuth, UpstreamBody, UpstreamConfigError, UpstreamEntry, UpstreamHandshake,
@@ -394,18 +394,21 @@ impl<U: Upstream> Gateway<U> {
             .merge(control.router())
     }
 
-    /// The forwarding routes, built from [`Route::ALL`] bound to the upstream
-    /// table. Every other method on a route path is refused; other paths fall
+    /// The forwarding routes, built from the upstream table's bound routes.
+    /// Every other method on a route path is refused; other paths fall
     /// through to management routes.
     fn forwarding_router(self: Arc<Self>) -> Router {
-        Route::ALL.into_iter().fold(Router::new(), |router, route| {
-            let bound = Arc::new(route.bind(&self.config.upstreams));
+        let routes = self.config.upstreams.routes();
+        routes.into_iter().fold(Router::new(), |router, bound| {
+            let accepts = bound.forward.accepts;
+            let path = bound.path.clone();
+            let bound = Arc::new(bound);
             let gateway = self.clone();
             let target = bound.clone();
             let forward =
                 move |request: Request| async move { gateway.forward(&target, request).await };
-            let refuse = move |request: Request| async move { Self::refuse(route, &request) };
-            let methods: MethodRouter = match route.accepts {
+            let refuse = move |request: Request| async move { Self::refuse(accepts, &request) };
+            let methods: MethodRouter = match accepts {
                 Accepts::Post | Accepts::PostOrRefusedHandshake => post(forward),
                 Accepts::PostOrWebSocket => {
                     let gateway = self.clone();
@@ -418,13 +421,13 @@ impl<U: Upstream> Gateway<U> {
                 // Axum's GET also answers HEAD; keep the upstream method explicit.
                 Accepts::Get => get(forward).head(refuse),
             };
-            router.route(route.path, methods.fallback(refuse))
+            router.route(&path, methods.fallback(refuse))
         })
     }
 
     /// A method the route does not accept.
-    fn refuse(route: Route, request: &Request) -> Response {
-        match route.accepts {
+    fn refuse(accepts: Accepts, request: &Request) -> Response {
+        match accepts {
             Accepts::PostOrRefusedHandshake
                 if request.headers().contains_key(http::header::UPGRADE) =>
             {
@@ -437,7 +440,7 @@ impl<U: Upstream> Gateway<U> {
         }
         (
             StatusCode::METHOD_NOT_ALLOWED,
-            [(http::header::ALLOW, route.accepts.method().label())],
+            [(http::header::ALLOW, accepts.method().label())],
         )
             .into_response()
     }
@@ -449,7 +452,7 @@ impl<U: Upstream> Gateway<U> {
     }
 
     async fn forward(&self, bound: &BoundRoute, request: Request) -> Response {
-        let route = bound.route;
+        let route = bound.forward;
         let provider = bound.api.provider();
         let (mut parts, body) = request.into_parts();
         if parts.headers.contains_key(http::header::UPGRADE) {
@@ -703,9 +706,9 @@ impl<U: Upstream> Gateway<U> {
     /// A WebSocket handshake: connect upstream first, so a refusal reaches the
     /// client as the upstream sent it, then upgrade the client and relay.
     async fn handshake(self: Arc<Self>, bound: &BoundRoute, request: Request) -> Response {
-        let route = bound.route;
+        let route = bound.forward;
         if !request.headers().contains_key(http::header::UPGRADE) {
-            return Self::refuse(route, &request);
+            return Self::refuse(route.accepts, &request);
         }
         match self.config.websocket.mode {
             WebSocketMode::Refuse => {
