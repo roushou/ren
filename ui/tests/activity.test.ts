@@ -251,7 +251,7 @@ test('harnesses read by name, and an unknown one keeps its text', () => {
     'Claude Code',
     'Codex',
     'Pi',
-    'opencode',
+    'OpenCode',
   ]);
   assert.equal(harnessLabel('new_agent' as never), 'new agent');
 });

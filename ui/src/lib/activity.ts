@@ -239,7 +239,7 @@ export function harnessLabel(harness: Stored<Harness>): string {
     case 'pi':
       return 'Pi';
     case 'opencode':
-      return 'opencode';
+      return 'OpenCode';
     default:
       return title(unrecognised(harness));
   }
