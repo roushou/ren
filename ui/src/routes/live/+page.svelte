@@ -477,6 +477,7 @@
     --harness-claude_code: var(--accent);
     --harness-codex: var(--provider-codex-ink);
     --harness-pi: var(--role-tool);
+    --harness-opencode: var(--role-thinking);
     --harness-unknown: var(--muted);
     --mono: 'SFMono-Regular', Consolas, 'Liberation Mono', monospace;
   }
@@ -491,6 +492,9 @@
   }
   .harness-pi {
     --harness: var(--harness-pi);
+  }
+  .harness-opencode {
+    --harness: var(--harness-opencode);
   }
   .harness-unknown {
     --harness: var(--harness-unknown);

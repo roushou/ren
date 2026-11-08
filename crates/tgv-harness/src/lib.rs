@@ -1,8 +1,8 @@
-//! The coding-agent harnesses TGV serves (Claude Code, Codex, and Pi) and what
-//! TGV knows about each: the attribution hints their requests carry, how to
-//! launch one through the gateway for a session, Pi's bundled extension, the
-//! gateway URL a harness is pointed at, and the host environment launching
-//! reads. See docs/architecture.md.
+//! The coding-agent harnesses TGV serves (Claude Code, Codex, Pi, and
+//! opencode) and what TGV knows about each: the attribution hints their
+//! requests carry, how to launch one through the gateway for a session, Pi's
+//! bundled extension, the gateway URL a harness is pointed at, and the host
+//! environment launching reads. See docs/architecture.md.
 //!
 //! The primary type is [`Harness`]. Harnesses own their sign-in, token
 //! refresh, and retries; nothing here handles credentials.
@@ -33,4 +33,6 @@ pub enum Harness {
     ClaudeCode,
     Codex,
     Pi,
+    #[strum(to_string = "opencode")]
+    OpenCode,
 }

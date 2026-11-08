@@ -185,7 +185,7 @@ impl Report {
                 Err(error) => report.add("local storage", Status::Failed, error.to_string()),
             }
         }
-        for executable in ["claude", "codex", "pi"] {
+        for executable in ["claude", "codex", "pi", "opencode"] {
             let present = Self::executable_available(env, executable);
             report.add(
                 executable,

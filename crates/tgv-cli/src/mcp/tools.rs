@@ -663,7 +663,7 @@ mod tests {
         let error = |tool, value| ToolCall::parse(tool, args(value)).unwrap_err().to_string();
         assert_eq!(
             error(ToolName::SearchCalls, json!({ "client": "vim" })),
-            "client must be one of: claude_code, codex, pi"
+            "client must be one of: claude_code, codex, pi, opencode"
         );
         assert!(
             error(ToolName::SearchCalls, json!({ "limit": 101 })).contains("between 1 and 100")

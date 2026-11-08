@@ -2,10 +2,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { LaunchCommand, launchClients } from '../src/lib/launch.ts';
 
-test('every client tgv run launches is offered, Pi included', () => {
+test('every client tgv run launches is offered, Pi and opencode included', () => {
   assert.deepEqual(
     launchClients.map((client) => client.run),
-    ['claude', 'codex', 'pi'],
+    ['claude', 'codex', 'pi', 'opencode'],
   );
 });
 
