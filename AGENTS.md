@@ -173,7 +173,9 @@ dependencies under "Crates" below. Read the code for current module ownership.
   input, gathered by `RequestReader`, and a response's tool calls with their
   inputs and its reply, read by `ResponseReader`; `Reading` pairs the two).
   It also owns the label machinery (`label`, with `Stored<T>`), the `Provider`,
-  `Endpoint`, `Method`, and `Transport` vocabularies (`route`), `Direction`, and
+  `Wire`, `Endpoint`, `Method`, and `Transport` vocabularies (`route`, where
+  `Provider::speak` pairs a provider with a wire format it offers as an
+  `Api`), `Direction`, and
   the native identifiers and message hints the wire carries (`native`). Its
   manifest allows only pure dependencies, and a test keeps its sources free of
   I/O.

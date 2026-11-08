@@ -1,5 +1,6 @@
 direction::Direction: request response
 route::Provider: anthropic codex openai
+route::Wire: anthropic_messages openai_responses
 route::Endpoint: messages count_tokens models responses responses_compact
 route::Method: GET POST MESSAGE
 route::Transport: http websocket
