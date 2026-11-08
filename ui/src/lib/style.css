@@ -2714,3 +2714,64 @@ td.zero {
     min-height: 36px;
   }
 }
+
+/*
+ * Session states, shared by Live and the overview: one colour each, never a
+ * client's, carried as `--state` by a `state-*` class.
+ */
+.state-responding {
+  --state: var(--live);
+}
+.state-waiting {
+  --state: var(--ink);
+}
+.state-slow,
+.state-warning {
+  --state: var(--warning);
+}
+.state-client {
+  --state: var(--role-thinking);
+}
+.state-yours {
+  --state: var(--success);
+}
+.state-failed {
+  --state: var(--error);
+}
+.state-unknown {
+  --state: var(--muted);
+}
+/* The state edge: a 3px bar down the element's left side. Idle has none. */
+.state-edge {
+  position: relative;
+}
+.state-edge::before {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 3px;
+  background: var(--state, transparent);
+  content: '';
+  pointer-events: none;
+}
+.state-edge.state-idle::before {
+  background: transparent;
+}
+.state-edge.state-responding::before {
+  animation: state-breathe 1.6s ease-in-out infinite;
+}
+/* Unknown is dashed grey: it must never read as an ending, good or bad. */
+.state-edge.state-unknown::before {
+  background: repeating-linear-gradient(to bottom, var(--muted) 0 6px, transparent 6px 10px);
+}
+@keyframes state-breathe {
+  50% {
+    opacity: 0.45;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .state-edge.state-responding::before {
+    animation: none;
+  }
+}
