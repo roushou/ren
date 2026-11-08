@@ -9,6 +9,8 @@
   import { clock, providerName, short } from '#lib/api.ts';
   import { compactOrDash, span } from '#lib/display.ts';
   import { harnessLabel } from '#lib/activity.ts';
+  import { unrecognised, type Stored } from '#lib/decode.ts';
+  import type { EffectKind, Excerpt } from '#lib/api.ts';
   import {
     Band,
     Board,
@@ -19,8 +21,13 @@
     type FeedItem,
     type LiveWindow,
     type Tile,
+    type ResultMark,
+    type ToolLine,
+    type TurnCall,
+    type TurnTally,
+    type UnreadCall,
   } from '#lib/board.ts';
-  import Icon from '#lib/Icon.svelte';
+  import Icon, { type IconName } from '#lib/Icon.svelte';
   import Select from '#lib/Select.svelte';
   import Markdown from '#lib/Markdown.svelte';
   import type { PageProps } from './$types';
@@ -46,6 +53,7 @@
           turns: current.turns,
           now: Math.max(now, current.read),
           windowMs: LivePlace.windows[current.window].ms,
+          focus: view.focus,
         })
       : null,
   );
@@ -66,7 +74,92 @@
     if (seconds < 3) return 'now';
     return seconds < 60 ? `${seconds}s` : `${Math.round(seconds / 60)}m`;
   }
-  const emptySlots = $derived(Math.max(0, Board.maxTiles - (board?.tiles.length ?? 0)));
+  const emptySlots = $derived(board ? Math.max(0, board.capacity - board.tiles.length) : 0);
+  const focusHref = (tile: Tile) =>
+    LivePlace.href({ ...view, focus: board?.focus === tile.session.id ? null : tile.session.id });
+  /** Escape closes the expanded card, unless a control has the key. */
+  function onkeydown(event: KeyboardEvent) {
+    if (event.key !== 'Escape' || !board?.focus || event.defaultPrevented) return;
+    const target = event.target;
+    if (
+      target instanceof HTMLElement &&
+      target.closest('input, select, textarea, [role="listbox"]')
+    )
+      return;
+    goto(LivePlace.href({ ...view, focus: null }));
+  }
+  function effectIcon(effect: Stored<EffectKind> | null): IconName {
+    switch (effect) {
+      case null:
+        return 'tool';
+      case 'read_file':
+        return 'file';
+      case 'write_file':
+        return 'pencil';
+      case 'run_command':
+        return 'terminal';
+      case 'search':
+        return 'search';
+      case 'delegate':
+        return 'branch';
+      case 'fetch':
+        return 'globe';
+      default:
+        unrecognised(effect);
+        return 'tool';
+    }
+  }
+  /** The last part of the turn's directory, as the card names it. */
+  const folder = (dir: string) => dir.replace(/\/+$/, '').split('/').at(-1) || dir;
+  function tallyParts(tally: TurnTally): string[] {
+    return [`read ${tally.read}`, `wrote ${tally.wrote}`, `ran ${tally.ran}`];
+  }
+  /** A call not read yet: open (waiting for its head, or responding), or just finished. */
+  function unreadLabel(unread: UnreadCall, now: number): string {
+    const { call } = unread;
+    if (call.state !== 'open') return 'finished · reading';
+    const state = call.status === null ? 'waiting for response' : 'responding';
+    return `${state} · ${span(now - call.started_at)}`;
+  }
+  function callLabel(call: TurnCall): string {
+    const parts = [`call ${call.index ?? '—'}`];
+    if (call.durationMs !== null) parts.push(span(call.durationMs));
+    if (call.output !== null) parts.push(`out ${compactOrDash(call.output)}`);
+    return parts.join(' · ');
+  }
+  /**
+   * The expanded card opens on its newest call and follows new ones while
+   * it is scrolled to the end; scrolling up stops the following.
+   */
+  function stickToEnd(node: HTMLElement, active: boolean) {
+    let following = active;
+    let atEnd = true;
+    const toEnd = () => (node.scrollTop = node.scrollHeight);
+    const onscroll = () => (atEnd = node.scrollHeight - node.scrollTop - node.clientHeight < 24);
+    const observer = new MutationObserver(() => {
+      if (following && atEnd) toEnd();
+    });
+    node.addEventListener('scroll', onscroll);
+    observer.observe(node, { childList: true, subtree: true, characterData: true });
+    if (active) toEnd();
+    return {
+      update(next: boolean) {
+        if (next && !following) {
+          atEnd = true;
+          toEnd();
+        }
+        following = next;
+      },
+      destroy() {
+        observer.disconnect();
+        node.removeEventListener('scroll', onscroll);
+      },
+    };
+  }
+  const more = (excerpt: Excerpt) =>
+    excerpt.omitted_chars
+      ? `\n… ${excerpt.omitted_chars.toLocaleString('en')} more characters`
+      : '';
   const densityHref = (density: Density) => LivePlace.href({ ...view, density });
   const bandHref = (style: BandStyle) => LivePlace.href({ ...view, band: style });
 
@@ -88,12 +181,27 @@
   }
   /** The newest thing the session did, for a row. */
   function lastLine(tile: Tile): string {
-    const step = tile.steps.at(-1);
-    if (step?.kind === 'tool') return `${step.name}${step.target ? ` ${step.target}` : ''}`;
-    if (step?.kind === 'reply') return step.text;
+    const line = tile.lines.at(-1);
+    if (line?.kind === 'tools')
+      return `${line.tool.name}${line.tool.target ? ` ${line.tool.target}` : ''}`;
+    if (line?.kind === 'reply') return line.text;
     return tile.prompt?.text ?? '';
   }
 </script>
+
+{#snippet toolLine(tool: ToolLine, count: number, result: ResultMark)}
+  <div class="live-tool effect-{tool.effect ?? 'none'}">
+    <span class="live-tool-icon"><Icon name={effectIcon(tool.effect)} size={12} /></span>
+    <b
+      >{tool.name}{#if count > 1}<span class="live-count"> ×{count}</span>{/if}</b
+    >
+    {#if tool.target}<span class="live-target" title={tool.target}>{tool.target}</span>{/if}
+    <span class="live-result {result.tone}">{result.label}</span>
+    {#if tool.output}<span class="live-output" class:error={tool.result.tone === 'error'}
+        >⎿ {tool.output}</span
+      >{/if}
+  </div>
+{/snippet}
 
 {#snippet scope()}
   {#if board}
@@ -205,6 +313,8 @@
     >{short(tile.session.native_id)}</span
   >
 {/snippet}
+
+<svelte:window {onkeydown} />
 
 <div class="live-page">
   {#if !current || !board}
@@ -356,9 +466,11 @@
         {#each board.tiles as tile (tile.session.id)}
           {@const attention = board.attention(tile.session.id)}
           {@const chip = Board.phaseChip(tile.phase, board.now)}
+          {@const focused = board.focus === tile.session.id}
           <article
             class="live-tile {harnessClass(tile)} {attention ? `attention-${attention}` : ''}"
-            class:quiet={tile.quiet}
+            class:quiet={tile.quiet && !focused}
+            class:focused
             class:highlighted={highlighted === tile.session.id}
           >
             <header class="live-tile-head">
@@ -375,26 +487,53 @@
                 title="Context the newest call carried; provider-reported"
                 >ctx {compactOrDash(tile.context)}</span
               >
+              <a
+                class="icon-button live-expand"
+                href={focusHref(tile)}
+                aria-label={focused ? 'Collapse this card' : 'Expand this card'}
+                title={focused
+                  ? 'Collapse (Esc)'
+                  : 'Expand: the whole turn, with tool input and output'}
+                ><Icon name={focused ? 'shrink' : 'expand'} size={13} /></a
+              >
             </header>
-            <div class="live-tile-body">
+            <div class="live-tile-body" class:full={focused} use:stickToEnd={focused}>
               {#if tile.prompt}
                 <p class="live-sent"><span class="live-who">You</span>{tile.prompt.text}</p>
               {/if}
-              {#each tile.steps as step (step.key)}
-                {#if step.kind === 'tool'}
-                  <p class="live-step-tool">
-                    <span class="live-tool-tag">tool</span><b>{step.name}</b>
-                    {#if step.target}<span class="live-target">{step.target}</span>{/if}
-                    <span class="live-result {step.result.tone}">{step.result.label}</span>
-                  </p>
-                {:else}
-                  <div class="live-step-reply"><Markdown text={step.text} /></div>
-                {/if}
+              {#if focused}
+                {#each tile.calls as call (call.key)}
+                  <p class="live-sep">{callLabel(call)}</p>
+                  {#if call.reply}<div class="live-step-reply">
+                      <Markdown text={call.reply} />
+                    </div>{/if}
+                  {#each call.tools as tool (tool.key)}
+                    {@render toolLine(tool, 1, tool.result)}
+                    <pre class="live-io" title="Input the model sent">{tool.input.text}{more(
+                        tool.input,
+                      )}</pre>
+                    {#if tool.reported && tool.reported.text.trim()}<pre
+                        class="live-io reported {tool.result.tone}"
+                        title="Output the client reported">{tool.reported.text}{more(
+                          tool.reported,
+                        )}</pre>{/if}
+                  {/each}
+                {/each}
+              {:else}
+                {#each tile.lines as line (line.key)}
+                  {#if line.kind === 'tools'}
+                    {@render toolLine(line.tool, line.count, line.result)}
+                  {:else}
+                    <div class="live-step-reply"><Markdown text={line.text} /></div>
+                  {/if}
+                {/each}
+              {/if}
+              {#each tile.unread as unread (unread.call.id)}
+                <p class="live-sep live" class:open={unread.call.state === 'open'}>
+                  call {unread.index} · {unreadLabel(unread, board.now)}
+                </p>
               {/each}
-              {#if tile.pending}<p class="live-wait">
-                  {tile.pending} call{tile.pending > 1 ? 's' : ''} not read yet
-                </p>{/if}
-              {#if !tile.prompt && !tile.steps.length && !tile.pending}
+              {#if !tile.prompt && !tile.lines.length && !tile.unread.length}
                 <p class="live-wait">
                   {tile.turnId
                     ? 'Text appears once a call finishes and is read.'
@@ -402,6 +541,15 @@
                 </p>
               {/if}
             </div>
+            {#if tile.tally}
+              <div class="live-tally mono" title="What the turn did, as the client reported it">
+                {#if tile.workdir}<span class="live-workdir" title={tile.workdir}
+                    >{folder(tile.workdir)}</span
+                  >{/if}
+                {#each tallyParts(tile.tally) as part (part)}<span>{part}</span>{/each}
+                {#if tile.tally.failed}<span class="error">{tile.tally.failed} failed</span>{/if}
+              </div>
+            {/if}
             <footer class="live-tile-foot mono">
               <div class="live-foot-state">
                 <span class="live-state {chip.tone}" title={chip.title}>{chip.label}</span>
@@ -879,24 +1027,117 @@
     font-family: var(--mono);
     font-size: 11.5px;
   }
-  .live-step-tool {
-    display: flex;
+  /* A tool call: effect glyph, name, what it touched, result; what came back below. */
+  .live-tool {
+    flex: none;
+    display: grid;
+    grid-template-columns: 14px auto minmax(0, 1fr) auto;
+    column-gap: 6px;
     align-items: baseline;
-    gap: 6px;
-    min-width: 0;
-    padding-left: 7px;
-    border-left: 2px solid var(--line);
+    margin: 0 0 4px;
     color: var(--muted);
     font-family: var(--mono);
     font-size: 11.5px;
     white-space: nowrap;
   }
-  .live-tool-tag {
+  .live-tool-icon {
+    display: inline-flex;
+    align-self: center;
     color: var(--muted);
   }
-  .live-step-tool b {
+  .live-tool.effect-write_file .live-tool-icon {
+    color: var(--accent);
+  }
+  .live-tool b {
     color: var(--ink);
     font-weight: 500;
+  }
+  .live-count {
+    color: var(--muted);
+    font-weight: 400;
+  }
+  .live-output {
+    grid-column: 3 / 5;
+    overflow: hidden;
+    color: var(--muted);
+    font-size: 11px;
+    opacity: 0.8;
+    text-overflow: ellipsis;
+  }
+  .live-output.error {
+    color: var(--error);
+    opacity: 1;
+  }
+  /* A call boundary in the expanded card, and calls not read yet. */
+  .live-tile-body > .live-sep {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 6px 0 4px;
+    color: var(--muted);
+    font-family: var(--mono);
+    font-size: 10.5px;
+    white-space: nowrap;
+  }
+  .live-sep::after {
+    flex: 1;
+    height: 1px;
+    background: var(--line);
+    content: '';
+  }
+  .live-sep.open {
+    color: var(--ink);
+  }
+  .live-io {
+    flex: none;
+    max-height: 13.5em;
+    margin: 0 0 6px 20px;
+    padding: 4px 7px;
+    overflow: auto;
+    background: var(--surface-inset);
+    color: var(--muted);
+    font: 11px/1.5 var(--mono);
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+  .live-io.reported {
+    border-left: 2px solid var(--line);
+  }
+  .live-io.reported.error {
+    border-left-color: var(--error);
+  }
+  .live-tally {
+    display: flex;
+    gap: 10px;
+    padding: 4px 12px;
+    overflow: hidden;
+    border-top: 1px solid var(--line);
+    color: var(--muted);
+    font-size: 11px;
+    white-space: nowrap;
+  }
+  .live-workdir {
+    overflow: hidden;
+    color: var(--ink);
+    text-overflow: ellipsis;
+  }
+  .live-tally .error {
+    color: var(--error);
+  }
+  .live-expand {
+    flex: none;
+    margin: -3px -6px -3px 0;
+  }
+  /* The expanded card covers four slots and reads top down, scrolling. */
+  .live-tile.focused {
+    grid-column: span 2;
+    grid-row: span 2;
+  }
+  .live-tile-body.full {
+    justify-content: flex-start;
+    overflow-y: auto;
+    -webkit-mask-image: none;
+    mask-image: none;
   }
   .live-result {
     flex: none;
@@ -1051,6 +1292,10 @@
     }
     .live-slot {
       display: none;
+    }
+    .live-tile.focused {
+      grid-column: auto;
+      grid-row: span 2;
     }
     .live-band {
       grid-template-columns: 96px minmax(0, 1fr);

@@ -89,7 +89,15 @@ function turn(n: number, s: number, calls: CallActivity[], overrides: Partial<Tu
   } satisfies TurnActivity;
 }
 const board = (input: Partial<BoardInput>) =>
-  new Board({ sessions: [], calls: [], turns: new Map(), now: NOW, windowMs: WINDOW, ...input });
+  new Board({
+    sessions: [],
+    calls: [],
+    turns: new Map(),
+    now: NOW,
+    windowMs: WINDOW,
+    focus: null,
+    ...input,
+  });
 
 test('the phase separates waiting for a head, streaming, the client turn, and endings', () => {
   assert.equal(Board.phase([open(1, 1)], NOW).kind, 'awaiting');
@@ -165,11 +173,14 @@ test('the wall shows the busiest and most recent sessions, in the order they app
   );
 });
 
-test('a tile reads its newest turn: prompt, latest steps, and what is not derived yet', () => {
-  const steps = Array.from({ length: Board.maxSteps + 2 }, (_, n) => ({
+test('a tile reads its newest turn: prompt, lines, and what is not derived yet', () => {
+  // Reads and greps alternate, so no two neighbours merge.
+  const steps = Array.from({ length: Board.maxLines + 2 }, (_, n) => ({
     id: `tool-${n}`,
-    name: 'Read',
-    effects: [{ kind: 'read_file' as const, target: `src/${n}.ts` }],
+    name: n % 2 ? 'Grep' : 'Read',
+    effects: [
+      { kind: n % 2 ? ('search' as const) : ('read_file' as const), target: `src/${n}.ts` },
+    ],
     input: { text: '{}', omitted_chars: 0 },
     result: { status: 'succeeded' as const, output: { text: 'ok', omitted_chars: 0 } },
   }));
@@ -201,9 +212,21 @@ test('a tile reads its newest turn: prompt, latest steps, and what is not derive
   }).tiles;
   assert.equal(tile.harness, 'claude_code');
   assert.equal(tile.prompt?.text, 'Fix the flaky test');
-  assert.equal(tile.steps.length, Board.maxSteps);
-  assert.deepEqual(tile.steps.at(-1), { kind: 'reply', key: `${callId(2)}:reply`, text: 'Done.' });
-  assert.equal(tile.pending, 1);
+  assert.equal(tile.lines.length, Board.maxLines);
+  assert.deepEqual(tile.lines.at(-1), { kind: 'reply', key: `${callId(2)}:reply`, text: 'Done.' });
+  // The expanded card keeps every read call, numbered as the header counts them.
+  assert.deepEqual(
+    tile.calls.map((call) => [call.index, call.tools.length]),
+    [
+      [1, Board.maxLines + 2],
+      [2, 0],
+    ],
+  );
+  assert.deepEqual(
+    tile.unread.map((unread) => [unread.call.id, unread.index]),
+    [[callId(3), 3]],
+  );
+  assert.deepEqual(tile.tally, { read: 0, wrote: 0, ran: 0, failed: 0 });
   // Context adds the cache back when the provider reports input without it.
   assert.equal(tile.context, 1000);
   assert.equal(tile.cached, 0.8);
@@ -284,17 +307,25 @@ test('the URL place parses density, band style, and window once', () => {
     density: 'comfortable',
     band: 'area',
     window: '15m',
+    focus: null,
   });
   const view = LivePlace.parse(
     new URLSearchParams('density=compact&band=ribbon&window=1h&focus=x'),
   );
-  assert.deepEqual(view, { density: 'compact', band: 'ribbon', window: '1h' });
+  // A focus that is not a session ID is dropped.
+  assert.deepEqual(view, { density: 'compact', band: 'ribbon', window: '1h', focus: null });
   assert.equal(LivePlace.href(view), '/live?window=1h&density=compact&band=ribbon');
   assert.equal(
-    LivePlace.href({ density: 'comfortable', band: 'ribbon', window: '15m' }),
+    LivePlace.href({ density: 'comfortable', band: 'ribbon', window: '15m', focus: null }),
     '/live?band=ribbon',
   );
-  assert.equal(LivePlace.href({ density: 'comfortable', band: 'area', window: '15m' }), '/live');
+  assert.equal(
+    LivePlace.href({ density: 'comfortable', band: 'area', window: '15m', focus: null }),
+    '/live',
+  );
+  const focused = LivePlace.parse(new URLSearchParams(`focus=${sid(1).toUpperCase()}`));
+  assert.equal(focused.focus, sid(1));
+  assert.equal(LivePlace.href(focused), `/live?focus=${sid(1)}`);
   assert.equal(LivePlace.parse(new URLSearchParams('band=seismo')).band, 'area');
   // Unknown windows, and names inherited from Object, fall back to the default.
   assert.equal(LivePlace.parse(new URLSearchParams('window=2d')).window, '15m');
@@ -404,7 +435,9 @@ test('a missing tool result is expected until a later call in the turn has been 
     result: null,
   };
   const labels = (calls: CallActivity[]) =>
-    Board.steps(turn(1, 1, calls)).map((step) => (step.kind === 'tool' ? step.result.label : ''));
+    Board.turnCalls(turn(1, 1, calls), new Map(), null)
+      .flatMap((call) => call.tools)
+      .map((tool) => tool.result.label);
   // A later call was read and carried no result for it: missing.
   assert.deepEqual(
     labels([activity(1, { tool_calls: [tool] }), activity(2, { tool_calls: [tool] })]),
@@ -427,6 +460,7 @@ test('a session with nothing on its lane is quiet; an open call is not', () => {
     turns: new Map(),
     now: NOW,
     windowMs: WINDOW,
+    focus: null,
   });
   assert.deepEqual(
     board.tiles.map((tile) => tile.quiet),
@@ -445,6 +479,7 @@ test("a tile's attention is its worst alert", () => {
     turns: new Map(),
     now: NOW,
     windowMs: WINDOW,
+    focus: null,
   });
   assert.equal(board.attention(sid(1)), 'warning');
   assert.notEqual(board.attention(sid(2)), null);
@@ -571,4 +606,94 @@ test('each hint source names its harness, opencode included', () => {
     ).map(Board.harness),
     ['claude_code', 'codex', 'codex', 'pi', 'opencode'],
   );
+});
+
+const tool = (
+  id: string,
+  name: string,
+  kind: 'read_file' | 'run_command' | 'write_file',
+  target: string,
+  status: 'succeeded' | 'failed' | null = 'succeeded',
+) => ({
+  id,
+  name,
+  effects: [{ kind, target }],
+  input: { text: `{"target":"${target}"}`, omitted_chars: 0 },
+  result:
+    status === null ? null : { status, output: { text: `\n  ${id} out\nmore`, omitted_chars: 0 } },
+});
+
+test('a card merges like tool calls across calls, until the model says something', () => {
+  const calls = Board.turnCalls(
+    turn(1, 1, [
+      activity(1, { tool_calls: [tool('a', 'Bash', 'run_command', 'cargo test')] }),
+      activity(2, { tool_calls: [tool('b', 'Bash', 'run_command', 'cargo test', 'failed')] }),
+      activity(3, { tool_calls: [tool('c', 'Bash', 'run_command', 'cargo clippy')] }),
+      activity(4, {
+        reply: { text: 'Fixing the reader.', omitted_chars: 0 },
+        tool_calls: [tool('d', 'Edit', 'write_file', 'src/reader.rs')],
+      }),
+      activity(5, { tool_calls: [tool('e', 'Bash', 'run_command', 'cargo test')] }),
+      activity(6, { tool_calls: [tool('f', 'Bash', 'run_command', 'cargo test')] }),
+    ]),
+    new Map(),
+    null,
+  );
+  const lines = Board.lines(calls).map((line) =>
+    line.kind === 'reply'
+      ? `reply ${line.text}`
+      : `${line.tool.name} ×${line.count} ${line.tool.target} ${line.result.label}`,
+  );
+  // The reply comes before the tools its call asked for, and breaks the run.
+  assert.deepEqual(lines, [
+    'Bash ×3 cargo clippy 1 failed',
+    'reply Fixing the reader.',
+    'Edit ×1 src/reader.rs Succeeded',
+    'Bash ×2 cargo test 2 ok',
+  ]);
+  // The output line is the first one with text in it.
+  assert.equal(calls[0]?.tools[0]?.output, 'a out');
+});
+
+test("a card drops the cd into the turn's directory and paths under it", () => {
+  assert.deepEqual(Board.changeDirectory('cd "/a b" && ls'), { dir: '/a b', rest: 'ls' });
+  assert.deepEqual(Board.changeDirectory('cd /repo; make'), { dir: '/repo', rest: 'make' });
+  assert.equal(Board.changeDirectory('cargo test'), null);
+  const activityTurn = turn(1, 1, [], {
+    commands: [
+      'cd /Users/me/dev/doppel && cargo test',
+      'cd /Users/me/dev/doppel && cargo clippy',
+      'cd /tmp && ls',
+    ],
+  });
+  const workdir = Board.workdir(activityTurn);
+  assert.equal(workdir, '/Users/me/dev/doppel');
+  assert.equal(
+    Board.shorten(
+      'cd /Users/me/dev/doppel && cargo test --manifest-path /Users/me/dev/doppel/Cargo.toml',
+      workdir,
+    ),
+    'cargo test --manifest-path Cargo.toml',
+  );
+  assert.equal(Board.shorten('/Users/me/dev/doppel/src/main.rs', workdir), 'src/main.rs');
+  assert.equal(Board.shorten('ls /Users/me/dev/doppel', workdir), 'ls .');
+  // A cd somewhere else is kept: it says where the command ran.
+  assert.equal(Board.shorten('cd /tmp && ls', workdir), 'cd /tmp && ls');
+  assert.equal(Board.shorten('cd /tmp && ls', null), 'cd /tmp && ls');
+  assert.equal(Board.workdir(turn(1, 1, [], { commands: ['cargo test'] })), null);
+});
+
+test('an expanded card comes first, with four beside it and the rest counted', () => {
+  const sessions = Array.from({ length: Board.maxTiles + 1 }, (_, n) => session(n));
+  const focused = board({ sessions, focus: sid(6) });
+  assert.equal(focused.focus, sid(6));
+  assert.equal(focused.tiles[0]?.session.id, sid(6));
+  assert.equal(focused.tiles.length, 1 + Board.besideFocus);
+  assert.equal(focused.capacity, 1 + Board.besideFocus);
+  assert.equal(focused.overflow, sessions.length - focused.tiles.length);
+  // A focus on a session that is not active is ignored.
+  const gone = board({ sessions, focus: sid(50) });
+  assert.equal(gone.focus, null);
+  assert.equal(gone.tiles.length, Board.maxTiles);
+  assert.equal(gone.capacity, Board.maxTiles);
 });

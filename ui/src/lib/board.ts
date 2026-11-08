@@ -3,17 +3,17 @@
 // No browser, no fetching; tested in tests/board.test.ts.
 import type {
   CallView,
+  EffectKind,
   Excerpt,
   Finding,
   Harness,
   HintSource,
-  SessionId,
   SessionView,
   ToolCallActivity,
   TurnActivity,
   TurnId,
 } from './api.ts';
-import { HARNESSES, providerName } from './api.ts';
+import { HARNESSES, providerName, SessionId } from './api.ts';
 import { findingLine, harnessLabel, resultBadge } from './activity.ts';
 import { assertNever, unrecognised, type Stored } from './decode.ts';
 import { callStatus, sessionTone, span, statusBadge, type Tone } from './display.ts';
@@ -35,10 +35,55 @@ export type SessionPhase =
   /** No call open, and the last one completed. */
   | { kind: 'idle'; since: number };
 
-/** One line of what the session's current turn did, newest last. */
-export type Step =
-  | { kind: 'tool'; key: string; name: string; target: string | null; result: ResultMark }
+/** A tool call the model asked for: what it touched and what came back. */
+export interface ToolLine {
+  key: string;
+  name: string;
+  effect: Stored<EffectKind> | null;
+  /** What it touched, with the session's directory taken off. */
+  target: string | null;
+  result: ResultMark;
+  /** The first line of what the client reported back. */
+  output: string | null;
+  /** The tool's input and reported output, for the expanded card. */
+  input: Excerpt;
+  reported: Excerpt | null;
+}
+
+/** A model call of the current turn, for the expanded card. */
+export interface TurnCall {
+  key: string;
+  /** Its place among the turn's calls on the board, from 1. */
+  index: number | null;
+  durationMs: number | null;
+  output: number | null;
+  reply: string | null;
+  tools: ToolLine[];
+}
+
+/**
+ * One line of a card, newest last: a reply, or a run of like tool calls
+ * (same tool, same kind of effect, nothing said between them), drawn as its
+ * newest call with a count.
+ */
+export type CardLine =
+  | { kind: 'tools'; key: string; tool: ToolLine; count: number; result: ResultMark }
   | { kind: 'reply'; key: string; text: string };
+
+/** What the turn has done so far, as the client reported it. */
+export interface TurnTally {
+  read: number;
+  wrote: number;
+  ran: number;
+  failed: number;
+}
+
+/** A call of the turn not read yet: still open, or just finished. */
+export interface UnreadCall {
+  call: CallView;
+  index: number;
+}
+
 export interface ResultMark {
   label: string;
   tone: Exclude<Tone, 'live'>;
@@ -67,9 +112,15 @@ export interface Tile {
   /** That turn's activity, when it was read. */
   turn: TurnActivity | null;
   prompt: Excerpt | null;
-  steps: Step[];
+  /** The turn's read calls, oldest first, for the expanded card. */
+  calls: TurnCall[];
+  /** The card's lines: the newest `maxLines`, like tool calls merged. */
+  lines: CardLine[];
   /** Calls in the turn whose text is not derived yet (still open, or just finished). */
-  pending: number;
+  unread: UnreadCall[];
+  /** The directory the turn's commands change into, when they agree on one. */
+  workdir: string | null;
+  tally: TurnTally | null;
   /** Context the newest call carried, in tokens: provider-reported. */
   context: number | null;
   /** The share of that context read from cache, 0–1. */
@@ -105,6 +156,8 @@ export interface BoardInput {
   now: number;
   /** How far back a session counts as active. */
   windowMs: number;
+  /** The session expanded on the wall, if any. */
+  focus: SessionId | null;
 }
 
 export class Board {
@@ -114,10 +167,14 @@ export class Board {
   static readonly maxTiles = 8;
   /** Waiting this long for a response head is worth a look. */
   static readonly slowHeadMs = 30_000;
-  /** Steps kept per tile; the oldest fade out at the top. */
-  static readonly maxSteps = 10;
+  /** An expanded card covers four slots, leaving this many beside it. */
+  static readonly besideFocus = 4;
+  /** Lines kept per card; the oldest fade out at the top. */
+  static readonly maxLines = 10;
 
   readonly tiles: Tile[];
+  /** The expanded session, when it is on the board; its tile comes first. */
+  readonly focus: SessionId | null;
   /** Sessions active in the window that did not fit. */
   readonly overflow: number;
   readonly alerts: Alert[];
@@ -129,14 +186,21 @@ export class Board {
     this.now = input.now;
     const bySession = Board.bySession(input.calls);
     const active = Board.activeSessions(input.sessions, bySession, input.now, input.windowMs);
-    this.overflow = Math.max(0, active.length - Board.maxTiles);
-    this.tiles = Board.shown(active, bySession).map((session) =>
+    this.focus = active.some((session) => session.id === input.focus) ? input.focus : null;
+    const shown = Board.shown(active, bySession, this.focus);
+    this.overflow = active.length - shown.length;
+    this.tiles = shown.map((session) =>
       Board.tile(session, bySession.get(session.id) ?? [], input.turns, input.now),
     );
     this.alerts = this.tiles
       .flatMap((tile) => Board.alerts(tile, bySession.get(tile.session.id) ?? [], input.now))
       .sort((a, b) => b.at - a.at);
     this.feed = new Feed(input, this.alerts).items;
+  }
+
+  /** Tiles the wall has room for: eight, or the expanded one and four beside it. */
+  get capacity(): number {
+    return this.focus ? 1 + Board.besideFocus : Board.maxTiles;
   }
 
   /** The worst thing to look at in a session, for its tile's top rule. */
@@ -206,16 +270,23 @@ export class Board {
    * The sessions that get a tile: those with an open call, then the most
    * recently seen, up to `maxTiles`. They are drawn in the order they first
    * appeared, so a tile keeps its place while its session stays on the board.
+   * An expanded session comes first, with `besideFocus` others after it.
    */
-  static shown(active: SessionView[], calls: Map<SessionId, CallView[]>): SessionView[] {
+  static shown(
+    active: SessionView[],
+    calls: Map<SessionId, CallView[]>,
+    focus: SessionId | null = null,
+  ): SessionView[] {
     const busy = (session: SessionView) =>
       (calls.get(session.id) ?? []).some((call) => call.state === 'open') ? 1 : 0;
+    const focused = active.find((session) => session.id === focus);
+    const others = active.filter((session) => session !== focused);
     const chosen = new Set(
-      active
+      others
         .toSorted((a, b) => busy(b) - busy(a) || b.last_seen - a.last_seen)
-        .slice(0, Board.maxTiles),
+        .slice(0, focused ? Board.besideFocus : Board.maxTiles),
     );
-    return active.filter((session) => chosen.has(session));
+    return [...(focused ? [focused] : []), ...others.filter((session) => chosen.has(session))];
   }
 
   static harness(source: Stored<HintSource>): Stored<Harness> | null {
@@ -292,23 +363,121 @@ export class Board {
     }
   }
 
-  static steps(turn: TurnActivity): Step[] {
-    const steps: Step[] = turn.calls.flatMap((call, callIndex): Step[] => [
-      ...call.tool_calls.map((tool, index): Step => {
-        const effect = tool.effects[0];
+  /**
+   * The turn's read calls, oldest first. `order` numbers the turn's calls on
+   * the board, so a call keeps the number its card header counts to.
+   */
+  static turnCalls(
+    turn: TurnActivity,
+    order: Map<string, number>,
+    workdir: string | null,
+  ): TurnCall[] {
+    return turn.calls
+      .filter((call) => !call.limitations.includes('not_yet_derived'))
+      .map((call): TurnCall => {
+        const callIndex = turn.calls.indexOf(call);
         return {
-          kind: 'tool',
-          key: `${call.call}:${tool.id ?? index}`,
-          name: tool.name,
-          target: effect?.target ?? null,
-          result: Board.result(turn, callIndex, tool),
+          key: call.call,
+          index: order.get(call.call) ?? null,
+          durationMs: call.ended_at === null ? null : call.ended_at - call.started_at,
+          output: call.metrics.output_tokens,
+          reply: call.reply && call.reply.text.trim() ? call.reply.text : null,
+          tools: call.tool_calls.map((tool, index): ToolLine => {
+            const effect = tool.effects[0] ?? null;
+            return {
+              key: `${call.call}:${tool.id ?? index}`,
+              name: tool.name,
+              effect: effect?.kind ?? null,
+              target: effect ? Board.shorten(effect.target, workdir) : null,
+              result: Board.result(turn, callIndex, tool),
+              output: tool.result ? Board.firstLine(tool.result.output.text) : null,
+              input: tool.input,
+              reported: tool.result?.output ?? null,
+            };
+          }),
         };
-      }),
-      ...(call.reply && call.reply.text.trim()
-        ? [{ kind: 'reply' as const, key: `${call.call}:reply`, text: call.reply.text }]
-        : []),
-    ]);
-    return steps.slice(-Board.maxSteps);
+      });
+  }
+
+  /**
+   * A card's lines, newest last. Within a call the reply comes first (the
+   * model writes, then asks for tools); like tool calls with nothing said
+   * between them merge into one line, across calls.
+   */
+  static lines(calls: TurnCall[]): CardLine[] {
+    const lines: CardLine[] = [];
+    let run: ToolLine[] = [];
+    const close = () => {
+      const tool = run.at(-1);
+      if (tool) lines.push(Board.run(run, tool));
+      run = [];
+    };
+    for (const call of calls) {
+      if (call.reply) {
+        close();
+        lines.push({ kind: 'reply', key: `${call.key}:reply`, text: call.reply });
+      }
+      for (const tool of call.tools) {
+        const last = run.at(-1);
+        if (last && (last.name !== tool.name || last.effect !== tool.effect)) close();
+        run.push(tool);
+      }
+    }
+    close();
+    return lines.slice(-Board.maxLines);
+  }
+
+  /** A run of like tool calls as one line: the newest, a count, and a tally of results. */
+  static run(run: ToolLine[], tool: ToolLine): CardLine {
+    const failed = run.filter((line) => line.result.tone === 'error').length;
+    const succeeded = run.filter((line) => line.result.label === 'Succeeded').length;
+    const result: ResultMark =
+      run.length === 1
+        ? tool.result
+        : failed
+          ? { label: `${failed} failed`, tone: 'error' }
+          : succeeded === run.length
+            ? { label: `${run.length} ok`, tone: 'success' }
+            : tool.result;
+    return { kind: 'tools', key: tool.key, tool, count: run.length, result };
+  }
+
+  /** `cd <dir> && …` or `cd <dir>; …` at the start of a command: the directory and the rest. */
+  static changeDirectory(command: string): { dir: string; rest: string } | null {
+    const match = /^cd\s+(?:"([^"]+)"|'([^']+)'|(\S+))\s*(?:&&|;)\s*/.exec(command);
+    const dir = match ? (match[1] ?? match[2] ?? match[3]) : undefined;
+    return match && dir ? { dir, rest: command.slice(match[0].length) } : null;
+  }
+
+  /** The directory most of the turn's commands change into first. */
+  static workdir(turn: TurnActivity): string | null {
+    const counts = new Map<string, number>();
+    for (const command of turn.commands) {
+      const dir = Board.changeDirectory(command)?.dir;
+      if (dir) counts.set(dir, (counts.get(dir) ?? 0) + 1);
+    }
+    let best: string | null = null;
+    for (const [dir, count] of counts)
+      if (best === null || count > (counts.get(best) ?? 0)) best = dir;
+    return best;
+  }
+
+  /** A tool's target as the card shows it: no `cd` into the workdir, paths relative to it. */
+  static shorten(target: string, workdir: string | null): string {
+    if (!workdir) return target;
+    const cd = Board.changeDirectory(target);
+    const text = cd && cd.dir === workdir ? cd.rest : target;
+    const root = workdir.replace(/\/+$/, '');
+    return text.split(`${root}/`).join('').split(root).join('.');
+  }
+
+  /** The first line with text in it, clipped. */
+  static firstLine(text: string): string | null {
+    const line = text
+      .split('\n')
+      .map((part) => part.trim())
+      .find((part) => part.length > 0);
+    return line ? Feed.clip(line, 160) : null;
   }
 
   /**
@@ -363,11 +532,10 @@ export class Board {
           : usage.input_tokens
         : null;
     const turnCalls = turnId ? calls.filter((call) => call.turn === turnId) : [];
-    const derived = new Set(
-      (turn?.calls ?? [])
-        .filter((call) => !call.limitations.includes('not_yet_derived'))
-        .map((call) => call.call as string),
-    );
+    const order = new Map(turnCalls.map((call, index) => [call.id as string, index + 1]));
+    const workdir = turn ? Board.workdir(turn) : null;
+    const readCalls = turn ? Board.turnCalls(turn, order, workdir) : [];
+    const derived = new Set(readCalls.map((call) => call.key));
     return {
       session,
       harness: Board.harness(session.source),
@@ -378,8 +546,20 @@ export class Board {
       turnId,
       turn,
       prompt: turn?.prompt ?? null,
-      steps: turn ? Board.steps(turn) : [],
-      pending: turnCalls.filter((call) => !derived.has(call.id)).length,
+      calls: readCalls,
+      lines: Board.lines(readCalls),
+      unread: turnCalls.flatMap((call, index) =>
+        derived.has(call.id) ? [] : [{ call, index: index + 1 }],
+      ),
+      workdir,
+      tally: turn
+        ? {
+            read: turn.files_read.length,
+            wrote: turn.files_written.length,
+            ran: turn.commands.length,
+            failed: turn.failed_tool_calls,
+          }
+        : null,
       context,
       cached: context ? Math.min(1, read / context) : null,
       lane,
@@ -670,6 +850,8 @@ export interface LiveView {
   density: Density;
   band: BandStyle;
   window: LiveWindow;
+  /** The session whose card is expanded. */
+  focus: SessionId | null;
 }
 export type Density = 'comfortable' | 'compact';
 /** How the band draws its clients: a row each, or stacked into one ribbon. */
@@ -701,6 +883,7 @@ export class LivePlace {
       density: params.get('density') === 'compact' ? 'compact' : 'comfortable',
       band: params.get('band') === 'ribbon' ? 'ribbon' : 'area',
       window: LivePlace.isWindow(window) ? window : LivePlace.defaultWindow,
+      focus: SessionId.parse(params.get('focus')),
     };
   }
 
@@ -713,6 +896,7 @@ export class LivePlace {
     if (view.window !== LivePlace.defaultWindow) params.set('window', view.window);
     if (view.density === 'compact') params.set('density', 'compact');
     if (view.band === 'ribbon') params.set('band', 'ribbon');
+    if (view.focus) params.set('focus', view.focus);
     const query = params.toString();
     return query ? `/live?${query}` : '/live';
   }
