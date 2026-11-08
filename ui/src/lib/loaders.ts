@@ -21,7 +21,7 @@ import {
 import { localDayStart, parseRange, rangeStart, type UsageRange } from './usage.ts';
 import { listingQuery } from './traffic.ts';
 import { readSnapshot, snapshotError, type Snapshot } from './snapshots.ts';
-import { Board } from './board.ts';
+import { Board, LivePlace, type LiveWindow } from './board.ts';
 
 export interface GatewayData {
   health: Health;
@@ -260,6 +260,9 @@ export interface LiveData {
   calls: CallView[];
   /** The newest turn of each session shown, where it was read. */
   turns: Map<TurnId, TurnActivity>;
+  window: LiveWindow;
+  /** A listing came back full: older calls or sessions in the window were not read. */
+  truncated: { calls: boolean; sessions: boolean };
 }
 
 /**
@@ -270,18 +273,19 @@ export interface LiveData {
 export class LiveReader {
   readonly #turns = new Map<TurnId, { signature: string; turn: TurnActivity }>();
 
-  read(fetcher: typeof fetch): Promise<Snapshot<LiveData>> {
+  read(fetcher: typeof fetch, window: LiveWindow): Promise<Snapshot<LiveData>> {
     const api = new ManagementApi(fetcher);
-    return readSnapshot('live', async (): Promise<LiveData> => {
+    const spec = LivePlace.windows[window];
+    return readSnapshot(`live:${window}`, async (): Promise<LiveData> => {
       const read = Date.now();
       const recent = new URLSearchParams({
         kind: 'model',
-        from_ms: String(read - Board.windowMs),
-        limit: '500',
+        from_ms: String(read - spec.ms),
+        limit: String(spec.calls),
       });
       const open = new URLSearchParams({ kind: 'model', status: 'active', limit: '100' });
       const [sessions, recentPage, openPage] = await Promise.all([
-        api.sessions(100),
+        api.sessions(spec.sessions),
         api.calls(recent),
         api.calls(open),
       ]);
@@ -292,7 +296,7 @@ export class LiveReader {
       ];
       const bySession = Board.bySession(calls);
       const shown = Board.shown(
-        Board.activeSessions(sessions.sessions, bySession, read),
+        Board.activeSessions(sessions.sessions, bySession, read, spec.ms),
         bySession,
       ).map((session) => session.id);
       const turns = new Map<TurnId, TurnActivity>();
@@ -317,7 +321,22 @@ export class LiveReader {
         }),
       );
       for (const turn of this.#turns.keys()) if (!turns.has(turn)) this.#turns.delete(turn);
-      return { read, sessions: sessions.sessions, calls, turns };
+      // Sessions come newest first: a full page whose oldest is still in the window may miss some.
+      const oldest = sessions.sessions.at(-1);
+      return {
+        read,
+        sessions: sessions.sessions,
+        calls,
+        turns,
+        window,
+        truncated: {
+          calls: recentPage.calls.length >= spec.calls,
+          sessions:
+            sessions.sessions.length >= spec.sessions &&
+            oldest !== undefined &&
+            read - oldest.last_seen <= spec.ms,
+        },
+      };
     });
   }
 }

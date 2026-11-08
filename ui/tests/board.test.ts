@@ -16,6 +16,7 @@ const ms = (value: number) => value as UnixMillis;
 const sid = (n: number) => uuid(100 + n) as SessionView['id'];
 const tid = (n: number) => uuid(200 + n) as TurnId;
 const NOW = 10_000_000;
+const WINDOW = LivePlace.windows['15m'].ms;
 
 function session(n: number, overrides: Partial<SessionView> = {}): SessionView {
   return {
@@ -88,7 +89,7 @@ function turn(n: number, s: number, calls: CallActivity[], overrides: Partial<Tu
   } satisfies TurnActivity;
 }
 const board = (input: Partial<BoardInput>) =>
-  new Board({ sessions: [], calls: [], turns: new Map(), now: NOW, ...input });
+  new Board({ sessions: [], calls: [], turns: new Map(), now: NOW, windowMs: WINDOW, ...input });
 
 test('the phase separates waiting for a head, streaming, the client turn, and endings', () => {
   assert.equal(Board.phase([open(1, 1)], NOW).kind, 'awaiting');
@@ -122,11 +123,7 @@ test('a slow response head turns its chip to a warning and raises an alert', () 
 });
 
 test('tiles keep the order sessions first appeared in, whatever is busiest', () => {
-  const sessions = [
-    session(2),
-    session(1),
-    session(3, { last_seen: ms(NOW - Board.windowMs - 1) }),
-  ];
+  const sessions = [session(2), session(1), session(3, { last_seen: ms(NOW - WINDOW - 1) })];
   const first = board({ sessions, calls: [open(1, 2)] });
   const second = board({ sessions, calls: [open(1, 1)] });
   assert.deepEqual(
@@ -282,17 +279,40 @@ test('turns to read: each session newest turn, with a signature that moves with 
   assert.notEqual(Board.turnsToRead([sid(1)], after)[0].signature, first.signature);
 });
 
-test('the URL place parses density and band style once', () => {
+test('the URL place parses density, band style, and window once', () => {
   assert.deepEqual(LivePlace.parse(new URLSearchParams('')), {
     density: 'comfortable',
     band: 'area',
+    window: '15m',
   });
-  const compact = LivePlace.parse(new URLSearchParams('density=compact&band=ribbon&focus=x'));
-  assert.deepEqual(compact, { density: 'compact', band: 'ribbon' });
-  assert.equal(LivePlace.href(compact), '/live?density=compact&band=ribbon');
-  assert.equal(LivePlace.href({ density: 'comfortable', band: 'ribbon' }), '/live?band=ribbon');
-  assert.equal(LivePlace.href({ density: 'comfortable', band: 'area' }), '/live');
+  const view = LivePlace.parse(
+    new URLSearchParams('density=compact&band=ribbon&window=1h&focus=x'),
+  );
+  assert.deepEqual(view, { density: 'compact', band: 'ribbon', window: '1h' });
+  assert.equal(LivePlace.href(view), '/live?window=1h&density=compact&band=ribbon');
+  assert.equal(
+    LivePlace.href({ density: 'comfortable', band: 'ribbon', window: '15m' }),
+    '/live?band=ribbon',
+  );
+  assert.equal(LivePlace.href({ density: 'comfortable', band: 'area', window: '15m' }), '/live');
   assert.equal(LivePlace.parse(new URLSearchParams('band=seismo')).band, 'area');
+  // Unknown windows, and names inherited from Object, fall back to the default.
+  assert.equal(LivePlace.parse(new URLSearchParams('window=2d')).window, '15m');
+  assert.equal(LivePlace.parse(new URLSearchParams('window=toString')).window, '15m');
+  assert.equal(LivePlace.longer('15m'), '1h');
+  assert.equal(LivePlace.longer('4h'), null);
+});
+
+test('the window decides which sessions count as active', () => {
+  const sessions = [
+    session(1, { last_seen: ms(NOW - 10 * 60_000) }),
+    session(2, { last_seen: ms(NOW - 2 * 60 * 60_000) }),
+  ];
+  const active = (window: '5m' | '15m' | '1h' | '4h') =>
+    Board.activeSessions(sessions, new Map(), NOW, LivePlace.windows[window].ms).map((s) => s.id);
+  assert.deepEqual(active('5m'), []);
+  assert.deepEqual(active('15m'), [sid(1)]);
+  assert.deepEqual(active('4h'), [sid(1), sid(2)]);
 });
 
 test('the reader reads a turn again only when its calls change or text is still pending', async () => {
@@ -311,20 +331,53 @@ test('the reader reads a turn again only when its calls change or text is still 
   const reader = new LiveReader();
   const turnReads = () => reads.filter((path) => path.startsWith('/api/turns')).length;
 
-  await reader.read(fetcher);
+  await reader.read(fetcher, '15m');
   assert.equal(turnReads(), 1);
   // Still being derived: read again.
   pending = false;
-  await reader.read(fetcher);
+  await reader.read(fetcher, '15m');
   assert.equal(turnReads(), 2);
   // Settled and unchanged: served from the cache.
-  const cached = await reader.read(fetcher);
+  const cached = await reader.read(fetcher, '15m');
   assert.equal(turnReads(), 2);
   assert.equal(cached.value?.turns.get(tid(1))?.prompt?.text, 'Fix the flaky test');
   // A new call in the turn changes it.
   calls = [...calls, open(2, 1, { turn: tid(1) })];
-  await reader.read(fetcher);
+  await reader.read(fetcher, '15m');
   assert.equal(turnReads(), 3);
+});
+
+test('the reader reads as far back as the window and says when a listing came back full', async () => {
+  const paths: string[] = [];
+  let full = false;
+  const fetcher = (async (input: Parameters<typeof fetch>[0]) => {
+    const path = String(input);
+    paths.push(path);
+    if (path.startsWith('/api/sessions'))
+      return versioned({ sessions: [session(1, { last_seen: ms(Date.now()) })] });
+    if (path.startsWith('/api/calls')) {
+      const limit = Number(new URL(path, 'http://ui').searchParams.get('limit'));
+      const count = full && path.includes('from_ms') ? limit : 1;
+      return versioned({
+        calls: Array.from({ length: count }, (_, n) => done(n + 1, 1)),
+        next: null,
+      });
+    }
+    return versioned(turn(1, 1, []));
+  }) as typeof fetch;
+
+  const hour = await new LiveReader().read(fetcher, '1h');
+  assert.equal(hour.key, 'live:1h');
+  const from = paths
+    .map((path) => new URL(path, 'http://ui').searchParams)
+    .find((params) => params.has('from_ms'));
+  assert.equal(from?.get('limit'), String(LivePlace.windows['1h'].calls));
+  assert.ok(Date.now() - Number(from?.get('from_ms')) >= LivePlace.windows['1h'].ms);
+  assert.deepEqual(hour.value?.truncated, { calls: false, sessions: false });
+
+  full = true;
+  const partial = await new LiveReader().read(fetcher, '1h');
+  assert.equal(partial.value?.truncated.calls, true);
 });
 
 test('a turn that cannot be read leaves the board readable', async () => {
@@ -336,7 +389,7 @@ test('a turn that cannot be read leaves the board readable', async () => {
       return versioned({ calls: [done(1, 1, { turn: tid(1) })], next: null });
     return versioned({ error: { code: 'unavailable', message: 'busy' } }, { status: 503 });
   }) as typeof fetch;
-  const snapshot = await new LiveReader().read(fetcher);
+  const snapshot = await new LiveReader().read(fetcher, '15m');
   assert.equal(snapshot.error, null);
   assert.equal(snapshot.value?.turns.size, 0);
   assert.equal(snapshot.value?.calls.length, 1);
@@ -373,6 +426,7 @@ test('a session with nothing on its lane is quiet; an open call is not', () => {
     calls: [done(1, 1, { started_at: ms(NOW - 400_000), ended_at: ms(NOW - 300_000) }), open(2, 2)],
     turns: new Map(),
     now: NOW,
+    windowMs: WINDOW,
   });
   assert.deepEqual(
     board.tiles.map((tile) => tile.quiet),
@@ -390,6 +444,7 @@ test("a tile's attention is its worst alert", () => {
     ],
     turns: new Map(),
     now: NOW,
+    windowMs: WINDOW,
   });
   assert.equal(board.attention(sid(1)), 'warning');
   assert.notEqual(board.attention(sid(2)), null);
