@@ -37,8 +37,6 @@
   const band = $derived(
     current && board ? new Band(current.sessions, current.calls, board.now) : null,
   );
-  /** The session whose line in the attention strip is under the pointer. */
-  let highlighted = $state<string | null>(null);
   const emptySlots = $derived(Math.max(0, Board.maxTiles - (board?.tiles.length ?? 0)));
   const densityHref = (density: Density) => LivePlace.href({ density });
 
@@ -82,8 +80,12 @@
           title="Active sessions without a tile: the board keeps the busiest and most recent {Board.maxTiles}"
           >{board.overflow} not shown</a
         >{/if}
-      {#if board.alerts.length}<a class="chip warning" href="#live-attention"
-          >{board.alerts.length} to look at</a
+      {#if board.alerts[0]}<a
+          class="chip {board.alerts.some((alert) => alert.tone === 'error') ? 'error' : 'warning'}"
+          href={board.alerts[0].href}
+          title={board.alerts
+            .map((alert) => `${shortSession(alert.session)} ${alert.label}: ${alert.detail}`)
+            .join('\n')}>{board.alerts.length} to look at</a
         >{/if}
     </div>
   {/if}
@@ -202,26 +204,6 @@
         </div>
       </section>
     {/if}
-    <section class="live-attention" id="live-attention" aria-label="Attention">
-      <span class="live-attention-label">Attention</span>
-      {#each board.alerts.slice(0, 8) as alert (alert.key)}
-        <a
-          class="live-attention-item {alert.tone}"
-          href={alert.href}
-          title={alert.detail}
-          onpointerenter={() => (highlighted = alert.session)}
-          onpointerleave={() => (highlighted = null)}
-          ><i></i><b>{shortSession(alert.session)}</b>{alert.label}<span class="muted"
-            >{alert.detail}</span
-          ></a
-        >
-      {:else}
-        <span class="live-attention-item calm"><i></i>Nothing needs a look</span>
-      {/each}
-      {#if board.alerts.length > 8}<span class="live-attention-item muted"
-          >+{board.alerts.length - 8} more</span
-        >{/if}
-    </section>
     {#if !board.tiles.length}
       <div class="empty-state">
         <div class="empty-icon"><Icon name="pulse" size={26} /></div>
@@ -270,7 +252,6 @@
           <article
             class="live-tile {harnessClass(tile)} {attention ? `attention-${attention}` : ''}"
             class:quiet={tile.quiet}
-            class:highlighted={highlighted === tile.session.id}
           >
             <header class="live-tile-head">
               <a class="live-open" href={sessionHref(tile.session.id)} title="Open the session"
@@ -481,76 +462,6 @@
     pointer-events: none;
   }
 
-  /* Attention: a label column aligned with the band, items split by rules. */
-  .live-attention {
-    display: flex;
-    flex: none;
-    align-items: stretch;
-    min-height: 30px;
-    overflow-x: auto;
-    scrollbar-width: none;
-  }
-  .live-attention::-webkit-scrollbar {
-    display: none;
-  }
-  .live-attention-label {
-    display: flex;
-    flex: none;
-    align-items: center;
-    width: 150px;
-    box-sizing: border-box;
-    padding: 0 12px 0 16px;
-    border-right: 1px solid var(--line);
-    color: var(--muted);
-    font-size: 11px;
-    font-weight: 500;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-  }
-  .live-attention-item {
-    display: flex;
-    flex: none;
-    align-items: center;
-    gap: 6px;
-    padding: 0 12px;
-    border-right: 1px solid var(--line);
-    font-family: var(--mono);
-    font-size: 11.5px;
-    white-space: nowrap;
-  }
-  .live-attention-item i {
-    flex: none;
-    width: 7px;
-    height: 7px;
-    background: var(--muted);
-  }
-  .live-attention-item b {
-    color: var(--ink);
-    font-weight: 500;
-  }
-  .live-attention-item.warning {
-    color: var(--warning);
-  }
-  .live-attention-item.warning i {
-    background: var(--warning);
-  }
-  .live-attention-item.error {
-    color: var(--error);
-  }
-  .live-attention-item.error i {
-    background: var(--error);
-  }
-  .live-attention-item.calm {
-    color: var(--muted);
-  }
-  .live-attention-item.calm i {
-    border-radius: 50%;
-    background: var(--success);
-  }
-  a.live-attention-item:hover {
-    background: var(--row-hover);
-  }
-
   /* The wall: fixed slots that fill the workspace; tiles touch, split by 1px rules. */
   /* A fixed 4 × 2 wall that fills the rest of the page; tiles clip their own text. */
   .live-wall {
@@ -589,7 +500,6 @@
   }
   .live-tile.quiet:hover,
   .live-tile.quiet:focus-within,
-  .live-tile.quiet.highlighted,
   .live-rows tr.quiet:hover {
     opacity: 1;
   }
@@ -599,9 +509,8 @@
   .live-tile.attention-error {
     box-shadow: inset 0 2px 0 var(--error);
   }
-  /* Hovering a tile, or its line in the attention strip, outlines it in its client's colour. */
-  .live-tile:hover::after,
-  .live-tile.highlighted::after {
+  /* Hovering a tile outlines it in its client's colour. */
+  .live-tile:hover::after {
     position: absolute;
     inset: 0;
     box-shadow: inset 0 0 0 2px var(--harness);
@@ -924,9 +833,6 @@
     }
     div.live-band-axis.mono {
       left: 96px;
-    }
-    .live-attention-label {
-      width: 96px;
     }
     .live-rows .lane-column,
     .live-rows .live-latest {
