@@ -6,20 +6,22 @@ use crate::Harness;
 use crate::attribution::{Attribution, HintIssue, HintSource, SessionHint};
 use http::HeaderMap;
 use serde::Deserialize;
+use sha2::{Digest, Sha256};
 use tgv_protocol::native::{NativeSessionId, NativeThreadId, NativeTurnId};
 use uuid::Uuid;
 
 impl Harness {
     const PI_SESSION: &'static str = "x-tgv-pi-session-id";
     const PI_TURN: &'static str = "x-tgv-pi-turn-id";
+    const OPENCODE_SESSION: &'static str = "x-opencode-session-id";
     const MAX_TURN_METADATA: usize = 8192;
 
     /// What `headers` say about attribution, on a route that expects `route`'s
     /// headers (`None`: a route no harness owns, such as the public OpenAI API).
-    /// Pi's extension headers are recognised on every route and take
-    /// precedence, since Pi reaches TGV through the other harnesses' routes. A
-    /// turn without a session carries no grouping; every discarded hint leaves
-    /// an issue.
+    /// Pi's extension headers, then opencode's session header, are recognised
+    /// on every route and take precedence, since Pi and opencode reach TGV
+    /// through the other harnesses' routes. A turn without a session carries
+    /// no grouping; every discarded hint leaves an issue.
     pub fn attribution(route: Option<Self>, headers: &HeaderMap) -> Attribution {
         let mut reading = HeaderReading::new(headers);
         let claim = if headers.contains_key(Self::PI_SESSION) || headers.contains_key(Self::PI_TURN)
@@ -30,11 +32,21 @@ impl Harness {
                 turn: reading.uuid(Self::PI_TURN),
                 thread: None,
             }
+        } else if headers.contains_key(Self::OPENCODE_SESSION) {
+            // opencode names no turn; a subagent's call names its own child
+            // session, as opencode does.
+            Claim {
+                source: Some(HintSource::OpenCodeHeaders),
+                session: reading.opencode_session(),
+                turn: None,
+                thread: None,
+            }
         } else {
             match route {
                 // Public Responses headers do not establish a Codex client
-                // identity, and Pi has no headers but its extension's.
-                None | Some(Self::Pi) => Claim::default(),
+                // identity, Pi has no headers but its extension's, and
+                // opencode's were read above.
+                None | Some(Self::Pi | Self::OpenCode) => Claim::default(),
                 Some(Self::ClaudeCode) => {
                     let session = reading.uuid("x-claude-code-session-id");
                     let turn = reading.uuid("x-claude-code-prompt-id");
@@ -107,6 +119,15 @@ impl<'a> HeaderReading<'a> {
         }
     }
 
+    fn opencode_session(&mut self) -> Option<Uuid> {
+        let value = self.header(Harness::OPENCODE_SESSION, OpenCodeSessionId::MAX_LEN)?;
+        let id = OpenCodeSessionId::parse(value).map(OpenCodeSessionId::uuid);
+        if id.is_none() {
+            self.issue(HintIssue::InvalidOrDuplicateHeader);
+        }
+        id
+    }
+
     fn finish(mut self, claim: Claim) -> Attribution {
         let session = claim.session.and_then(NativeSessionId::new);
         if session.is_none() && claim.turn.is_some() {
@@ -175,6 +196,37 @@ impl<'a> HeaderReading<'a> {
 
     fn conflicts(left: Option<Uuid>, right: Option<Uuid>) -> bool {
         matches!((left, right), (Some(a), Some(b)) if a != b)
+    }
+}
+
+/// opencode's own session identifier: `ses_`, then ASCII letters and digits
+/// (opencode 2.x writes 26). It is not a UUID, and TGV's native session
+/// identifiers are, so the hint carries a UUID derived from it; the original
+/// is never stored.
+struct OpenCodeSessionId<'a>(&'a str);
+
+impl<'a> OpenCodeSessionId<'a> {
+    const PREFIX: &'static str = "ses_";
+    const MAX_LEN: usize = 132;
+    const NAMESPACE: &'static [u8] = b"tgv:opencode-session:";
+
+    fn parse(value: &'a str) -> Option<Self> {
+        let rest = value.strip_prefix(Self::PREFIX)?;
+        (!rest.is_empty() && rest.bytes().all(|byte| byte.is_ascii_alphanumeric()))
+            .then_some(Self(value))
+    }
+
+    /// A version 8 UUID from the namespaced SHA-256 of the identifier: the
+    /// same session always gives the same UUID, and different sessions
+    /// collide only as SHA-256 does.
+    fn uuid(self) -> Uuid {
+        let digest = Sha256::new()
+            .chain_update(Self::NAMESPACE)
+            .chain_update(self.0.as_bytes())
+            .finalize();
+        let mut bytes = [0; 16];
+        bytes.copy_from_slice(&digest[..16]);
+        uuid::Builder::from_custom_bytes(bytes).into_uuid()
     }
 }
 
@@ -310,6 +362,75 @@ mod tests {
             Harness::attribution(Some(Harness::Codex), &headers).issues,
             [HintIssue::InvalidOrDuplicateHeader]
         );
+    }
+
+    #[test]
+    fn opencode_sessions_group_on_every_route_without_storing_the_raw_id() {
+        let raw = "ses_7f3a91c0d2e4AbCdEfGh123456";
+        let mut headers = HeaderMap::new();
+        headers.insert("x-opencode-session-id", raw.parse().unwrap());
+        headers.insert("x-opencode-project", "PROJECT".parse().unwrap());
+        headers.insert("x-claude-code-session-id", header(id(1)));
+        headers.insert("session-id", header(id(2)));
+        let mut sessions = Vec::new();
+        for route in [
+            Some(Harness::ClaudeCode),
+            Some(Harness::Codex),
+            Some(Harness::Pi),
+            Some(Harness::OpenCode),
+            None,
+        ] {
+            let attribution = Harness::attribution(route, &headers);
+            let hint = attribution.hint.unwrap();
+            assert_eq!(hint.source, HintSource::OpenCodeHeaders);
+            assert_eq!(hint.source.harness(), Harness::OpenCode);
+            assert_eq!((hint.turn, hint.thread), (None, None));
+            assert_eq!(hint.session.as_uuid().get_version_num(), 8);
+            assert!(attribution.issues.is_empty());
+            let json = serde_json::to_string(&attribution).unwrap();
+            assert!(!json.contains(raw) && !json.contains("PROJECT"));
+            sessions.push(hint.session);
+        }
+        // One opencode session is one TGV session, whatever the route.
+        assert!(sessions.windows(2).all(|pair| pair[0] == pair[1]));
+
+        // Another session gets another identifier.
+        headers.insert(
+            "x-opencode-session-id",
+            "ses_7f3a91c0d2e4AbCdEfGh123457".parse().unwrap(),
+        );
+        let other = Harness::attribution(None, &headers).hint.unwrap().session;
+        assert_ne!(other, sessions[0]);
+
+        // Pi's extension headers still come first.
+        headers.insert("x-tgv-pi-session-id", header(id(3)));
+        let hint = Harness::attribution(None, &headers).hint.unwrap();
+        assert_eq!(hint.source, HintSource::PiExtensionHeaders);
+    }
+
+    #[test]
+    fn malformed_opencode_sessions_never_fall_back() {
+        for raw in [
+            "ses_",
+            "ses_with space",
+            "ses_a-b",
+            "SES_abc",
+            "550e8400-e29b-41d4-a716-446655440000",
+            &format!("ses_{}", "a".repeat(129)),
+        ] {
+            let mut headers = HeaderMap::new();
+            headers.insert("x-opencode-session-id", raw.parse().unwrap());
+            headers.insert("x-claude-code-session-id", header(id(1)));
+            let attribution = Harness::attribution(Some(Harness::ClaudeCode), &headers);
+            assert!(attribution.hint.is_none(), "{raw}");
+            assert_eq!(attribution.issues, [HintIssue::InvalidOrDuplicateHeader]);
+        }
+        let mut headers = HeaderMap::new();
+        headers.append("x-opencode-session-id", "ses_a".parse().unwrap());
+        headers.append("x-opencode-session-id", "ses_a".parse().unwrap());
+        let attribution = Harness::attribution(None, &headers);
+        assert!(attribution.hint.is_none());
+        assert_eq!(attribution.issues, [HintIssue::InvalidOrDuplicateHeader]);
     }
 
     #[test]

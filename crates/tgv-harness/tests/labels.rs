@@ -63,6 +63,7 @@ fn every_label_is_pinned() {
         tools::ClaudeCodeTool,
         tools::CodexTool,
         tools::PiTool,
+        tools::OpenCodeTool,
     ];
     let pinned = include_str!("fixtures/labels.txt");
     assert!(

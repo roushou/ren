@@ -247,10 +247,11 @@ test('an exposed secret reads as what happened, never the secret', () => {
 });
 
 test('harnesses read by name, and an unknown one keeps its text', () => {
-  assert.deepEqual((['claude_code', 'codex', 'pi'] as const).map(harnessLabel), [
+  assert.deepEqual((['claude_code', 'codex', 'pi', 'opencode'] as const).map(harnessLabel), [
     'Claude Code',
     'Codex',
     'Pi',
+    'opencode',
   ]);
   assert.equal(harnessLabel('new_agent' as never), 'new agent');
 });

@@ -6,6 +6,7 @@ export const launchClients = [
   { run: 'claude', harness: 'claude_code' },
   { run: 'codex', harness: 'codex' },
   { run: 'pi', harness: 'pi' },
+  { run: 'opencode', harness: 'opencode' },
 ] as const satisfies readonly { run: string; harness: Harness }[];
 
 export type LaunchClient = (typeof launchClients)[number]['run'];

@@ -226,6 +226,8 @@ export class Board {
         return 'codex';
       case 'pi_extension_headers':
         return 'pi';
+      case 'opencode_headers':
+        return 'opencode';
       default:
         unrecognised(source);
         return null;

@@ -502,3 +502,18 @@ function usage(output: number): CallView['usage'] {
     reasoning_tokens: null,
   };
 }
+
+test('each hint source names its harness, opencode included', () => {
+  assert.deepEqual(
+    (
+      [
+        'claude_code_headers',
+        'codex_headers',
+        'codex_message_metadata',
+        'pi_extension_headers',
+        'opencode_headers',
+      ] as const
+    ).map(Board.harness),
+    ['claude_code', 'codex', 'codex', 'pi', 'opencode'],
+  );
+});

@@ -1,7 +1,7 @@
 # TGV contributor guidance
 
 TGV is a self-hosted gateway and flight recorder for coding agents (Claude Code,
-Codex, and Pi). It forwards native provider traffic while recording, inspecting,
+Codex, Pi, and opencode). It forwards native provider traffic while recording, inspecting,
 and exposing it, using the operator's own Anthropic and OpenAI subscriptions. One executable and one storage format serve both
 a laptop and a VPS reached through Tailscale.
 
@@ -179,7 +179,7 @@ dependencies under "Crates" below. Read the code for current module ownership.
   the native identifiers and message hints the wire carries (`native`). Its
   manifest allows only pure dependencies, and a test keeps its sources free of
   I/O.
-- `crates/tgv-harness`: the harnesses, with `Harness` (`ClaudeCode`, `Codex`, `Pi`)
+- `crates/tgv-harness`: the harnesses, with `Harness` (`ClaudeCode`, `Codex`, `Pi`, `OpenCode`)
   as its primary type: attribution (`attribution`, with its private `headers`
   parser implementing `Harness::attribution`), session launch plans
   (`Harness::launch`), the bundled Pi extension cache (`pi`), the gateway URL a
@@ -316,16 +316,16 @@ dependencies under "Crates" below. Read the code for current module ownership.
 "Depends on" names the nearest crates below; a crate may also use lower ones
 directly.
 
-| Crate                                      | Primary type                            | Depends on               |
-| ------------------------------------------ | --------------------------------------- | ------------------------ |
-| `tgv-protocol`                             | `CallInspector`                         | none of ours             |
-| `tgv-harness`                              | `Harness` (`ClaudeCode`, `Codex`, `Pi`) | protocol                 |
-| `tgv-recorder`                             | `Recorder`, with its `RecordSink` port  | protocol, harness        |
-| `tgv-store`                                | `Store`, which implements `RecordSink`  | recorder                 |
-| `tgv-gateway`                              | `Gateway`                               | harness, recorder, store |
-| `tgv-daemon`                               | `Daemon`                                | gateway, store           |
-| `tgv-cli` (package `tgv-rs`, binary `tgv`) | `Cli`                                   | daemon                   |
-| `xtask` (unpublished)                      | `Xtask`                                 | daemon                   |
+| Crate                                      | Primary type                                        | Depends on               |
+| ------------------------------------------ | --------------------------------------------------- | ------------------------ |
+| `tgv-protocol`                             | `CallInspector`                                     | none of ours             |
+| `tgv-harness`                              | `Harness` (`ClaudeCode`, `Codex`, `Pi`, `OpenCode`) | protocol                 |
+| `tgv-recorder`                             | `Recorder`, with its `RecordSink` port              | protocol, harness        |
+| `tgv-store`                                | `Store`, which implements `RecordSink`              | recorder                 |
+| `tgv-gateway`                              | `Gateway`                                           | harness, recorder, store |
+| `tgv-daemon`                               | `Daemon`                                            | gateway, store           |
+| `tgv-cli` (package `tgv-rs`, binary `tgv`) | `Cli`                                               | daemon                   |
+| `xtask` (unpublished)                      | `Xtask`                                             | daemon                   |
 
 `docs/architecture.md` lists what each crate owns. These rules apply to every
 crate:
@@ -341,7 +341,7 @@ crate:
 - **Ports point down.** A capability trait is declared by the lowest crate that
   consumes it and implemented by a higher one. A crate never depends on a crate
   above it in the table.
-- **Harnesses.** Claude Code, Codex, and Pi (the clients of section 1) are one
+- **Harnesses.** Claude Code, Codex, Pi, and opencode (the clients of section 1) are one
   closed enum, `Harness`. Don't add a per-harness trait.
 - Don't add a crate without first adding it to this table and to
   `docs/architecture.md`.
