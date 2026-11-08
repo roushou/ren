@@ -12,7 +12,14 @@ Browser ──> optional SvelteKit server ──> Rust management API
 ```
 
 Pages: Overview (`/`: a health line, calls in flight and sessions active in the last
-15 minutes, what needs attention in the last day, and the last 24 hours' usage),
+15 minutes, what needs attention in the last day, and the last 24 hours' usage), Live
+(`/live`: the sessions active in the last 15 minutes as they work, on a four-by-two board
+of cards or as rows: each session's client and provider, its state, and its current
+turn's prompt, tool calls, and replies, above a band of output tokens per client and a
+strip of what needs a look. Sessions with a call open, then the most recent, get the
+eight cards; quiet ones dim. Text appears once each call finishes and its activity is
+derived; whether a call is waiting for its response head or streaming is shown as it
+happens),
 Traffic (`/traffic`), Sessions (`/sessions`, `/sessions/:id`, each session's context and
 cache report at `/sessions/:id/report`, and what a turn did at `/turns/:id`: its prompt,
 tool calls with their effects and reported results, files, commands, and findings), Search

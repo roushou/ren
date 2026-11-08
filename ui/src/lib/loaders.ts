@@ -13,13 +13,15 @@ import {
   type SessionReport,
   type SessionView,
   type Storage,
+  type TurnActivity,
   type TurnId,
   type TurnSummary,
   type UsageView,
 } from './api.ts';
 import { localDayStart, parseRange, rangeStart, type UsageRange } from './usage.ts';
 import { listingQuery } from './traffic.ts';
-import { readSnapshot, snapshotError } from './snapshots.ts';
+import { readSnapshot, snapshotError, type Snapshot } from './snapshots.ts';
+import { Board } from './board.ts';
 
 export interface GatewayData {
   health: Health;
@@ -248,4 +250,74 @@ export function searchSnapshot(fetcher: typeof fetch, url: URL) {
     if (field) query.set('field', field);
     return { q, field, page: await api.search(query) };
   });
+}
+
+export interface LiveData {
+  /** When the snapshot was read: elapsed times count from the page's own clock. */
+  read: number;
+  sessions: SessionView[];
+  /** Model calls started in the board's window, and every call still open. */
+  calls: CallView[];
+  /** The newest turn of each session shown, where it was read. */
+  turns: Map<TurnId, TurnActivity>;
+}
+
+/**
+ * Reads the Live page. Turn activity is the costly read, and it changes
+ * only when one of the turn's calls does, so a turn is read again only
+ * then, or while some of its text is still being derived.
+ */
+export class LiveReader {
+  readonly #turns = new Map<TurnId, { signature: string; turn: TurnActivity }>();
+
+  read(fetcher: typeof fetch): Promise<Snapshot<LiveData>> {
+    const api = new ManagementApi(fetcher);
+    return readSnapshot('live', async (): Promise<LiveData> => {
+      const read = Date.now();
+      const recent = new URLSearchParams({
+        kind: 'model',
+        from_ms: String(read - Board.windowMs),
+        limit: '500',
+      });
+      const open = new URLSearchParams({ kind: 'model', status: 'active', limit: '100' });
+      const [sessions, recentPage, openPage] = await Promise.all([
+        api.sessions(100),
+        api.calls(recent),
+        api.calls(open),
+      ]);
+      const calls = [
+        ...new Map(
+          [...recentPage.calls, ...openPage.calls].map((call) => [call.id, call]),
+        ).values(),
+      ];
+      const bySession = Board.bySession(calls);
+      const shown = Board.shown(
+        Board.activeSessions(sessions.sessions, bySession, read),
+        bySession,
+      ).map((session) => session.id);
+      const turns = new Map<TurnId, TurnActivity>();
+      await Promise.all(
+        Board.turnsToRead(shown, calls).map(async ({ turn, signature }) => {
+          const cached = this.#turns.get(turn);
+          const settled =
+            cached?.signature === signature &&
+            cached.turn.calls.every((call) => !call.limitations.includes('not_yet_derived'));
+          if (cached && settled) {
+            turns.set(turn, cached.turn);
+            return;
+          }
+          try {
+            const activity = await api.turn(turn);
+            this.#turns.set(turn, { signature, turn: activity });
+            turns.set(turn, activity);
+          } catch {
+            // A turn that cannot be read leaves its tile without text, not the page empty.
+            if (cached) turns.set(turn, cached.turn);
+          }
+        }),
+      );
+      for (const turn of this.#turns.keys()) if (!turns.has(turn)) this.#turns.delete(turn);
+      return { read, sessions: sessions.sessions, calls, turns };
+    });
+  }
 }

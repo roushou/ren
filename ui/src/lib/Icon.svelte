@@ -41,6 +41,9 @@
     arrow: ['M5 12h14m-5-5 5 5-5 5'],
     shield: ['m12 3 8 3v6c0 5-8 9-8 9s-8-4-8-9V6l8-3Z', 'm8 12 3 3 5-6'],
     terminal: ['m4 6 6 6-6 6m9 0h7'],
+    grid: ['M3 3h8v8H3zM13 3h8v8h-8zM3 13h8v8H3zM13 13h8v8h-8z'],
+    rows: ['M3 5h18M3 12h18M3 19h18'],
+    pulse: ['M2 12h4l3-8 6 16 3-8h4'],
     info: ['M12 11v6m0-10h.01', 'M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z'],
   };
   export type IconName = keyof typeof paths;

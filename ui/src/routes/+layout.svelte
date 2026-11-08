@@ -29,19 +29,21 @@
   const view = $derived(
     page.route.id === '/'
       ? 'overview'
-      : page.route.id === '/recorder'
-        ? 'recorder'
-        : page.route.id === '/usage'
-          ? 'usage'
-          : page.route.id === '/sessions'
-            ? 'sessions'
-            : page.route.id === '/sessions/[id]/report'
-              ? 'report'
-              : page.route.id === '/turns/[id]'
-                ? 'turn'
-                : page.route.id === '/search'
-                  ? 'search'
-                  : 'traffic',
+      : page.route.id === '/live'
+        ? 'live'
+        : page.route.id === '/recorder'
+          ? 'recorder'
+          : page.route.id === '/usage'
+            ? 'usage'
+            : page.route.id === '/sessions'
+              ? 'sessions'
+              : page.route.id === '/sessions/[id]/report'
+                ? 'report'
+                : page.route.id === '/turns/[id]'
+                  ? 'turn'
+                  : page.route.id === '/search'
+                    ? 'search'
+                    : 'traffic',
   );
   /** A session page's ID; reports and turns belong under Sessions too. */
   const sessionId = $derived(page.route.id === '/sessions/[id]' ? (page.params.id ?? null) : null);
@@ -87,21 +89,23 @@
       ? 'Page unavailable'
       : view === 'overview'
         ? 'Overview'
-        : view === 'recorder'
-          ? 'Recorder & storage'
-          : view === 'usage'
-            ? 'Usage'
-            : view === 'sessions'
-              ? 'Sessions'
-              : view === 'report'
-                ? 'Session report'
-                : view === 'turn'
-                  ? 'Turn'
-                  : view === 'search'
-                    ? 'Search'
-                    : sessionId
-                      ? 'Session activity'
-                      : 'Traffic',
+        : view === 'live'
+          ? 'Live'
+          : view === 'recorder'
+            ? 'Recorder & storage'
+            : view === 'usage'
+              ? 'Usage'
+              : view === 'sessions'
+                ? 'Sessions'
+                : view === 'report'
+                  ? 'Session report'
+                  : view === 'turn'
+                    ? 'Turn'
+                    : view === 'search'
+                      ? 'Search'
+                      : sessionId
+                        ? 'Session activity'
+                        : 'Traffic',
   );
   const gatewayOrigin = $derived(page.data.gatewayUrl);
   const omissions = $derived(health?.recorder.omissions);
@@ -125,6 +129,7 @@
   const failure = $derived<SnapshotError | null>(
     gateway.current.error ??
       page.data.traffic?.error ??
+      page.data.live?.error ??
       page.data.sessions?.error ??
       page.data.recorder?.error ??
       page.data.report?.error ??
@@ -163,6 +168,7 @@
   onMount(() => {
     for (const route of [
       '/',
+      '/live',
       '/traffic',
       '/sessions',
       '/usage',
@@ -202,6 +208,12 @@
         class:active={view === 'overview'}
         aria-current={view === 'overview' ? 'page' : undefined}
         ><Icon name="monitor" size={14} />Overview</a
+      >
+      <a
+        href="/live"
+        data-sveltekit-preload-data="hover"
+        class:active={view === 'live'}
+        aria-current={view === 'live' ? 'page' : undefined}><Icon name="pulse" size={14} />Live</a
       >
       <a
         href="/traffic"

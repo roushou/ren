@@ -1,0 +1,428 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { Band, Board, LivePlace, type BoardInput } from '../src/lib/board.ts';
+import { LiveReader } from '../src/lib/loaders.ts';
+import {
+  type CallActivity,
+  type CallView,
+  type SessionView,
+  type TurnActivity,
+  type TurnId,
+  type UnixMillis,
+} from '../src/lib/api.ts';
+import { callFixture, callId, finishedFixture, uuid, versioned } from './fixtures.ts';
+
+const ms = (value: number) => value as UnixMillis;
+const sid = (n: number) => uuid(100 + n) as SessionView['id'];
+const tid = (n: number) => uuid(200 + n) as TurnId;
+const NOW = 10_000_000;
+
+function session(n: number, overrides: Partial<SessionView> = {}): SessionView {
+  return {
+    id: sid(n),
+    provider: 'anthropic',
+    source: 'claude_code_headers',
+    native_id: `native-${n}` as SessionView['native_id'],
+    first_seen: ms(NOW - 60_000 + n),
+    last_seen: ms(NOW - 1000),
+    call_count: 1,
+    turn_count: 1,
+    error_count: 0,
+    tokens: { input: null, output: null, cache_read: null },
+    ...overrides,
+  };
+}
+const open = (n: number, s: number, overrides: Partial<CallView> = {}) =>
+  callFixture(callId(n), { session: sid(s), started_at: ms(NOW - 5000), ...overrides });
+const done = (n: number, s: number, overrides: Partial<CallView> = {}) =>
+  finishedFixture(callId(n), {
+    session: sid(s),
+    started_at: ms(NOW - 20_000),
+    ended_at: ms(NOW - 10_000),
+    outcome: 'completed',
+    ...overrides,
+  });
+function activity(n: number, overrides: Partial<CallActivity> = {}): CallActivity {
+  return {
+    call: callId(n),
+    started_at: ms(NOW - 20_000),
+    ended_at: ms(NOW - 10_000),
+    model: 'fixture-model',
+    status: 200,
+    outcome: 'completed',
+    metrics: {
+      context_tokens: null,
+      cache_read_tokens: null,
+      cache_written_tokens: null,
+      output_tokens: null,
+      request_bytes: null,
+      duration_ms: null,
+    },
+    prompt: null,
+    tool_calls: [],
+    earlier_results: 0,
+    reply: null,
+    limitations: [],
+    ...overrides,
+  };
+}
+function turn(n: number, s: number, calls: CallActivity[], overrides: Partial<TurnActivity> = {}) {
+  return {
+    turn: tid(n),
+    session: sid(s),
+    native_id: `turn-${n}` as TurnActivity['native_id'],
+    client: 'claude_code',
+    started_at: ms(NOW - 30_000),
+    ended_at: null,
+    prompt: { text: 'Fix the flaky test', omitted_chars: 0 },
+    files_read: [],
+    files_written: [],
+    commands: [],
+    tool_calls: 0,
+    failed_tool_calls: 0,
+    unanswered_tool_calls: 0,
+    findings: [],
+    calls,
+    omitted_calls: 0,
+    ...overrides,
+  } satisfies TurnActivity;
+}
+const board = (input: Partial<BoardInput>) =>
+  new Board({ sessions: [], calls: [], turns: new Map(), now: NOW, ...input });
+
+test('the phase separates waiting for a head, streaming, the client turn, and endings', () => {
+  assert.equal(Board.phase([open(1, 1)], NOW).kind, 'awaiting');
+  assert.equal(Board.phase([open(1, 1, { status: 200 })], NOW).kind, 'responding');
+  // A completed call that asked for tools hands the turn to the client: inferred.
+  const client = Board.phase([done(1, 1, { tool_names: ['Bash'] })], NOW);
+  assert.equal(client.kind, 'client');
+  assert.match(Board.phaseChip(client, NOW).title, /inferred/);
+  assert.equal(Board.phase([done(1, 1)], NOW).kind, 'idle');
+  // An unknown ending is never rounded up to idle or success.
+  const unknown = Board.phase([done(1, 1, { outcome: 'unknown', state: 'recovered' })], NOW);
+  assert.equal(unknown.kind, 'stopped');
+  const limited = Board.phase([done(1, 1, { status: 429, outcome: null })], NOW);
+  assert.equal(limited.kind === 'stopped' && limited.label, 'Error 429');
+  // The newest open call wins over an older finished one.
+  assert.equal(Board.phase([done(1, 1), open(2, 1)], NOW).kind, 'awaiting');
+});
+
+test('a slow response head turns its chip to a warning and raises an alert', () => {
+  const quick = Board.phaseChip({ kind: 'awaiting', call: open(1, 1), since: NOW - 5000 }, NOW);
+  assert.equal(quick.tone, 'live');
+  const slow = board({
+    sessions: [session(1)],
+    calls: [open(1, 1, { started_at: ms(NOW - Board.slowHeadMs - 1000) })],
+  });
+  assert.equal(Board.phaseChip(slow.tiles[0].phase, NOW).tone, 'warning');
+  assert.deepEqual(
+    slow.alerts.map((alert) => alert.label),
+    ['No response head'],
+  );
+});
+
+test('tiles keep the order sessions first appeared in, whatever is busiest', () => {
+  const sessions = [
+    session(2),
+    session(1),
+    session(3, { last_seen: ms(NOW - Board.windowMs - 1) }),
+  ];
+  const first = board({ sessions, calls: [open(1, 2)] });
+  const second = board({ sessions, calls: [open(1, 1)] });
+  assert.deepEqual(
+    first.tiles.map((tile) => tile.session.id),
+    [sid(1), sid(2)],
+  );
+  assert.deepEqual(
+    second.tiles.map((tile) => tile.session.id),
+    first.tiles.map((tile) => tile.session.id),
+  );
+  // A session outside the window stays while a call is still open.
+  const longCall = board({ sessions, calls: [open(1, 3)] });
+  assert.ok(longCall.tiles.some((tile) => tile.session.id === sid(3)));
+  assert.equal(longCall.inFlight, 1);
+});
+
+test('sessions beyond the tile limit are counted, not dropped silently', () => {
+  const sessions = Array.from({ length: Board.maxTiles + 3 }, (_, n) => session(n));
+  const full = board({ sessions });
+  assert.equal(full.tiles.length, Board.maxTiles);
+  assert.equal(full.overflow, 3);
+});
+
+test('the wall shows the busiest and most recent sessions, in the order they appeared', () => {
+  const sessions = Array.from({ length: Board.maxTiles + 2 }, (_, n) =>
+    // Session 0 appeared first but was seen longest ago.
+    session(n, { last_seen: ms(NOW - 60_000 + n * 1000) }),
+  );
+  const full = board({ sessions, calls: [open(1, 0)] });
+  const shown = full.tiles.map((tile) => tile.session.id);
+  // Session 0 has an open call, so it stays; session 1 is the oldest idle one and leaves.
+  assert.equal(shown[0], sid(0));
+  assert.ok(!shown.includes(sid(1)));
+  assert.deepEqual(
+    shown,
+    [...shown].sort(
+      (a, b) => sessions.findIndex((s) => s.id === a) - sessions.findIndex((s) => s.id === b),
+    ),
+  );
+});
+
+test('a tile reads its newest turn: prompt, latest steps, and what is not derived yet', () => {
+  const steps = Array.from({ length: Board.maxSteps + 2 }, (_, n) => ({
+    id: `tool-${n}`,
+    name: 'Read',
+    effects: [{ kind: 'read_file' as const, target: `src/${n}.ts` }],
+    input: { text: '{}', omitted_chars: 0 },
+    result: { status: 'succeeded' as const, output: { text: 'ok', omitted_chars: 0 } },
+  }));
+  const activityTurn = turn(1, 1, [
+    activity(1, { tool_calls: steps }),
+    activity(2, { reply: { text: 'Done.', omitted_chars: 0 } }),
+    activity(3, { limitations: ['not_yet_derived'] }),
+  ]);
+  const calls = [
+    done(1, 1, { turn: tid(1), started_at: ms(NOW - 40_000) }),
+    done(2, 1, {
+      turn: tid(1),
+      started_at: ms(NOW - 30_000),
+      usage: {
+        accounting: 'excludes_cache',
+        input_tokens: 100,
+        output_tokens: 50,
+        cache_read_tokens: 800,
+        cache_creation_tokens: 100,
+        reasoning_tokens: null,
+      },
+    }),
+    open(3, 1, { turn: tid(1) }),
+  ];
+  const [tile] = board({
+    sessions: [session(1)],
+    calls,
+    turns: new Map([[tid(1), activityTurn]]),
+  }).tiles;
+  assert.equal(tile.harness, 'claude_code');
+  assert.equal(tile.prompt?.text, 'Fix the flaky test');
+  assert.equal(tile.steps.length, Board.maxSteps);
+  assert.deepEqual(tile.steps.at(-1), { kind: 'reply', key: `${callId(2)}:reply`, text: 'Done.' });
+  assert.equal(tile.pending, 1);
+  // Context adds the cache back when the provider reports input without it.
+  assert.equal(tile.context, 1000);
+  assert.equal(tile.cached, 0.8);
+});
+
+test('the lane places calls in the window and runs open ones to now', () => {
+  const lane = Board.lane(
+    [
+      done(1, 1, {
+        started_at: ms(NOW - Board.laneMs - 60_000),
+        ended_at: ms(NOW - Board.laneMs - 1),
+      }),
+      done(2, 1, {
+        started_at: ms(NOW - Board.laneMs / 2),
+        ended_at: ms(NOW - Board.laneMs / 4),
+        status: 500,
+      }),
+      open(3, 1, { started_at: ms(NOW - Board.laneMs - 1000) }),
+    ],
+    NOW,
+  );
+  assert.deepEqual(
+    lane.map(({ call, start, end, open, tone }) => [call.id, start, end, open, tone]),
+    [
+      [callId(2), 0.5, 0.75, false, 'error'],
+      [callId(3), 0, 1, true, 'live'],
+    ],
+  );
+});
+
+test('alerts group rate limits, list bad endings, and surface exposures and repeated failures', () => {
+  const exposure = {
+    kind: 'secret_exposure' as const,
+    call: callId(4),
+    turn: tid(1),
+    field: 'tool_output' as const,
+    secret: 'github_token' as const,
+    hint: 'ghp_…',
+    fingerprint: 'abc',
+    count: 1,
+  };
+  const growth = {
+    kind: 'context_growth' as const,
+    call: callId(4),
+    turn: tid(1),
+    earlier_peak_tokens: 1,
+    context_tokens: 2,
+  };
+  const alerts = board({
+    sessions: [session(1)],
+    calls: [
+      done(1, 1, { status: 429, outcome: null }),
+      done(2, 1, { status: 429, outcome: null }),
+      done(3, 1, { terminal: 'cancelled', outcome: null }),
+      done(4, 1, { turn: tid(1) }),
+    ],
+    turns: new Map([[tid(1), turn(1, 1, [activity(4)], { findings: [exposure, growth] })]]),
+  }).alerts;
+  assert.deepEqual(alerts.map((alert) => alert.label).sort(), [
+    '2 × 429',
+    'Cancelled',
+    'Secret exposed',
+  ]);
+  assert.ok(alerts.every((alert) => alert.href.startsWith('/')));
+});
+
+test('turns to read: each session newest turn, with a signature that moves with its calls', () => {
+  const before = [done(1, 1, { turn: tid(1) }), open(2, 1, { turn: tid(2) }), done(3, 2)];
+  const after = [done(1, 1, { turn: tid(1) }), done(2, 1, { turn: tid(2) }), done(3, 2)];
+  const [first] = Board.turnsToRead([sid(1), sid(2)], before);
+  assert.equal(first.turn, tid(2));
+  assert.equal(Board.turnsToRead([sid(2)], before).length, 0);
+  assert.notEqual(Board.turnsToRead([sid(1)], after)[0].signature, first.signature);
+});
+
+test('the URL place parses density once', () => {
+  assert.deepEqual(LivePlace.parse(new URLSearchParams('')), { density: 'comfortable' });
+  const compact = LivePlace.parse(new URLSearchParams('density=compact&focus=x'));
+  assert.deepEqual(compact, { density: 'compact' });
+  assert.equal(LivePlace.href(compact), '/live?density=compact');
+  assert.equal(LivePlace.href({ density: 'comfortable' }), '/live');
+});
+
+test('the reader reads a turn again only when its calls change or text is still pending', async () => {
+  const reads: string[] = [];
+  let calls = [done(1, 1, { turn: tid(1) })];
+  let pending = true;
+  const fetcher = (async (input: Parameters<typeof fetch>[0]) => {
+    const path = String(input);
+    reads.push(path.split('?')[0]);
+    if (path.startsWith('/api/sessions'))
+      return versioned({ sessions: [session(1, { last_seen: ms(Date.now()) })] });
+    if (path.startsWith('/api/calls')) return versioned({ calls, next: null });
+    const limitations = pending ? ['not_yet_derived'] : [];
+    return versioned(turn(1, 1, [activity(1, { limitations: limitations as never })]));
+  }) as typeof fetch;
+  const reader = new LiveReader();
+  const turnReads = () => reads.filter((path) => path.startsWith('/api/turns')).length;
+
+  await reader.read(fetcher);
+  assert.equal(turnReads(), 1);
+  // Still being derived: read again.
+  pending = false;
+  await reader.read(fetcher);
+  assert.equal(turnReads(), 2);
+  // Settled and unchanged: served from the cache.
+  const cached = await reader.read(fetcher);
+  assert.equal(turnReads(), 2);
+  assert.equal(cached.value?.turns.get(tid(1))?.prompt?.text, 'Fix the flaky test');
+  // A new call in the turn changes it.
+  calls = [...calls, open(2, 1, { turn: tid(1) })];
+  await reader.read(fetcher);
+  assert.equal(turnReads(), 3);
+});
+
+test('a turn that cannot be read leaves the board readable', async () => {
+  const fetcher = (async (input: Parameters<typeof fetch>[0]) => {
+    const path = String(input);
+    if (path.startsWith('/api/sessions'))
+      return versioned({ sessions: [session(1, { last_seen: ms(Date.now()) })] });
+    if (path.startsWith('/api/calls'))
+      return versioned({ calls: [done(1, 1, { turn: tid(1) })], next: null });
+    return versioned({ error: { code: 'unavailable', message: 'busy' } }, { status: 503 });
+  }) as typeof fetch;
+  const snapshot = await new LiveReader().read(fetcher);
+  assert.equal(snapshot.error, null);
+  assert.equal(snapshot.value?.turns.size, 0);
+  assert.equal(snapshot.value?.calls.length, 1);
+});
+
+test('a missing tool result is expected until a later call in the turn has been read', () => {
+  const tool = {
+    id: 'tool',
+    name: 'Bash',
+    effects: [],
+    input: { text: '{}', omitted_chars: 0 },
+    result: null,
+  };
+  const labels = (calls: CallActivity[]) =>
+    Board.steps(turn(1, 1, calls)).map((step) => (step.kind === 'tool' ? step.result.label : ''));
+  // A later call was read and carried no result for it: missing.
+  assert.deepEqual(
+    labels([activity(1, { tool_calls: [tool] }), activity(2, { tool_calls: [tool] })]),
+    ['No result', 'No result yet'],
+  );
+  // The later call is not read yet: it may still carry the result.
+  assert.deepEqual(
+    labels([
+      activity(1, { tool_calls: [tool] }),
+      activity(2, { limitations: ['not_yet_derived'] }),
+    ]),
+    ['No result yet'],
+  );
+});
+
+test('a session with nothing on its lane is quiet; an open call is not', () => {
+  const board = new Board({
+    sessions: [session(1), session(2)],
+    calls: [done(1, 1, { started_at: ms(NOW - 400_000), ended_at: ms(NOW - 300_000) }), open(2, 2)],
+    turns: new Map(),
+    now: NOW,
+  });
+  assert.deepEqual(
+    board.tiles.map((tile) => tile.quiet),
+    [true, false],
+  );
+});
+
+test("a tile's attention is its worst alert", () => {
+  const board = new Board({
+    sessions: [session(1), session(2), session(3)],
+    calls: [
+      done(1, 1, { status: 429, outcome: null }),
+      done(2, 2, { terminal: 'cancelled', outcome: null }),
+      done(3, 3),
+    ],
+    turns: new Map(),
+    now: NOW,
+  });
+  assert.equal(board.attention(sid(1)), 'warning');
+  assert.notEqual(board.attention(sid(2)), null);
+  assert.equal(board.attention(sid(3)), null);
+});
+
+test('the band counts output tokens per client when each call ends', () => {
+  const band = new Band(
+    [session(1), session(2, { source: 'codex_headers' })],
+    [
+      done(1, 1, { usage: usage(600), ended_at: ms(NOW - 30_000) }),
+      done(2, 1, { usage: usage(300), ended_at: ms(NOW - 120_000) }),
+      done(3, 2, { usage: usage(150), ended_at: ms(NOW - 59_000), status: 429 }),
+      // Outside the span: not drawn.
+      done(4, 1, { usage: usage(9999), ended_at: ms(NOW - Band.spanMs - 1) }),
+    ],
+    NOW,
+  );
+  const [claude, codex, pi] = band.rows;
+  assert.equal(claude?.harness, 'claude_code');
+  assert.equal(claude?.rate, 600 / 60);
+  assert.equal(
+    claude?.bins.reduce((a, b) => a + b, 0),
+    (600 + 300) / (Band.binMs / 1000),
+  );
+  assert.equal(codex?.rate, 150 / 60);
+  assert.equal(codex?.marks.length, 1);
+  assert.equal(pi?.rate, 0);
+  assert.ok(band.max >= 50);
+});
+
+function usage(output: number): CallView['usage'] {
+  return {
+    accounting: 'includes_cache',
+    input_tokens: 1000,
+    output_tokens: output,
+    cache_read_tokens: 0,
+    cache_creation_tokens: 0,
+    reasoning_tokens: null,
+  };
+}
