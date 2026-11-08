@@ -52,6 +52,7 @@ fn config(mock: &Mock, policy: &str) -> Config {
         upstreams: vec![UpstreamConfig {
             id: UpstreamId::parse("anthropic-key").unwrap(),
             provider: Provider::Anthropic,
+            wire: None,
             base_url: format!("http://{}/fallback", mock.address),
             operator_key_env: TestGateway::OPERATOR_KEY_ENV.into(),
         }],

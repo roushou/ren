@@ -290,8 +290,9 @@ pub enum UpstreamAuth { ClientOwned, OperatorKey(OperatorKey) }   // never a sub
 
 `UpstreamTable` holds one client-credential native entry per provider (named
 after it, always present: `UpstreamTable::native`) and operator-key entries from
-`[[upstreams]]`. Keys are read through `HostEnv`
-when the daemon starts and never appear in `Debug`. Dispatching to an operator-key
+`[[upstreams]]`, whose optional `wire` is parsed with `Provider::speak` (the
+provider's `native_api` when omitted). Keys are read through `HostEnv` when the
+daemon starts and never appear in `Debug`. Dispatching to an operator-key
 entry is a _protected override_: the client's credentials and the OAuth
 `anthropic-beta` value are replaced by the key. It is recorded with the upstream
 ID, never with header values. Codex accepts no operator keys.

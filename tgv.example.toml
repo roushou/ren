@@ -69,6 +69,7 @@ tailscale_logins = []
 # [[upstreams]]
 # id = "anthropic-key"
 # provider = "anthropic"
+# wire = "anthropic_messages" # optional: the provider's own wire format
 # base_url = "https://api.anthropic.com"
 # operator_key_env = "TGV_ANTHROPIC_API_KEY"
 #
