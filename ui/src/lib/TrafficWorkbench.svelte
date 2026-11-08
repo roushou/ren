@@ -26,7 +26,6 @@
   import {
     type Filters,
     clientChoices,
-    connectChoices,
     sinceChoices,
     emptyFilters,
     trafficParams,
@@ -35,11 +34,12 @@
     turnGroups,
     neighbour,
   } from './traffic.ts';
-  import { harnessLabel } from './activity.ts';
   import { LiveFollow } from './live.ts';
   import Icon from './Icon.svelte';
   import Inspector from './Inspector.svelte';
-  import CopyButton from './CopyButton.svelte';
+  import Select, { type SelectOption } from './Select.svelte';
+  import Segmented, { type SegmentedOption } from './Segmented.svelte';
+  import ConnectClient from './ConnectClient.svelte';
   let { snapshot, sessionId }: { snapshot: Snapshot<TrafficData>; sessionId: SessionId | null } =
     $props();
   const workbench = getWorkbench();
@@ -71,12 +71,7 @@
   });
   let filterError = $state('');
   let moreFilters = $state(false);
-  let connectClient = $state('claude');
   let searchInput = $state<HTMLInputElement>();
-  const gatewayOrigin = $derived(page.data.gatewayUrl);
-  const connectionCommand = $derived(
-    `tgv run ${connectClient}${gatewayOrigin !== 'http://127.0.0.1:8787' && gatewayOrigin !== 'http://localhost:8787' ? ` --gateway ${gatewayOrigin}` : ''}`,
-  );
   // On a phone the list and the call are separate screens: nothing is
   // selected until a row is tapped.
   let narrow = $state(false);
@@ -252,6 +247,40 @@
     applyFilters();
   }
   const sessionChoices = $derived(retained.current.value?.sessions ?? []);
+  const sessionOptions = $derived<SelectOption<string>[]>([
+    { value: '', label: 'All sessions' },
+    ...sessionChoices.map((choice) => ({
+      value: choice.id,
+      label: short(choice.native_id),
+      hint: `${providerName(choice.provider)} · ${date(choice.last_seen)} ${clock(choice.last_seen)}`,
+    })),
+  ]);
+  const clientOptions: SegmentedOption<string>[] = [
+    { value: '', label: 'All clients' },
+    ...clientChoices.map((choice) => ({ value: choice.client, label: choice.label })),
+  ];
+  // A custom from–until range (`range`) is none of these, so none is chosen.
+  const sinceOptions: SegmentedOption<string>[] = [
+    { value: '', label: 'Any', title: 'No time limit' },
+    ...sinceChoices.map((choice) => ({
+      value: choice.since,
+      label: choice.label,
+      title: choice.title,
+    })),
+  ];
+  const providerOptions: SelectOption<string>[] = [
+    { value: '', label: 'All providers' },
+    { value: 'anthropic', label: 'Anthropic' },
+    { value: 'openai', label: 'OpenAI' },
+    { value: 'codex', label: 'Codex' },
+  ];
+  const statusOptions: SelectOption<string>[] = [
+    { value: '', label: 'All statuses' },
+    { value: 'active', label: 'In progress' },
+    { value: 'finished', label: 'Finished' },
+    { value: 'errors', label: 'Errors' },
+    { value: 'interrupted', label: 'Interrupted / cancelled' },
+  ];
   const hidden = $derived(retained.current.value?.hidden ?? null);
   function sessionName(id: string) {
     const found = sessionChoices.find((item) => item.id === id);
@@ -343,63 +372,35 @@
     </div>
   {:else}
     <div class="scope-group">
-      <div class="segmented" aria-label="Client">
-        <button
-          type="button"
-          class:chosen={!applied.get('client')}
-          aria-pressed={!applied.get('client')}
-          onclick={() => pick((f) => (f.client = ''))}>All clients</button
-        >{#each clientChoices as choice}<button
-            type="button"
-            class:chosen={applied.get('client') === choice.client}
-            aria-pressed={applied.get('client') === choice.client}
-            onclick={() => pick((f) => (f.client = choice.client))}>{choice.label}</button
-          >{/each}
-      </div>
+      <Segmented
+        label="Client"
+        options={clientOptions}
+        value={applied.get('client') ?? ''}
+        onchange={(client) => pick((f) => (f.client = client))}
+      />
     </div>
     <div class="scope-group">
-      <span class="select-control"
-        ><select
-          class="compact-select"
-          aria-label="Session"
-          value={applied.get('session') ?? ''}
-          onchange={(e) => pick((f) => (f.session = e.currentTarget.value))}
-          ><option value="">All sessions</option>{#each sessionChoices as choice (choice.id)}<option
-              value={choice.id}
-              >{short(choice.native_id)} · {providerName(choice.provider)} · {date(
-                choice.last_seen,
-              )}
-              {clock(choice.last_seen)}</option
-            >{/each}</select
-        ><Icon name="chevron" size={12} /></span
-      >
+      <Select
+        label="Session"
+        size="compact"
+        options={sessionOptions}
+        value={applied.get('session') ?? ''}
+        placeholder={sessionName(applied.get('session') ?? '')}
+        onchange={(session) => pick((f) => (f.session = session))}
+      />
     </div>
     <div class="scope-group">
-      <div class="segmented" aria-label="Time">
-        <button
-          type="button"
-          class:chosen={!applied.get('since') && !applied.get('from_ms')}
-          aria-pressed={!applied.get('since') && !applied.get('from_ms')}
-          onclick={() =>
-            pick((f) => {
-              f.since = '';
-              f.from = '';
-              f.until = '';
-            })}
-          title="No time limit">Any</button
-        >{#each sinceChoices as choice}<button
-            type="button"
-            class:chosen={applied.get('since') === choice.since}
-            aria-pressed={applied.get('since') === choice.since}
-            onclick={() =>
-              pick((f) => {
-                f.since = choice.since;
-                f.from = '';
-                f.until = '';
-              })}
-            title={choice.title}>{choice.label}</button
-          >{/each}
-      </div>
+      <Segmented
+        label="Time"
+        options={sinceOptions}
+        value={applied.get('since') ?? (applied.get('from_ms') ? 'range' : '')}
+        onchange={(since) =>
+          pick((f) => {
+            f.since = since;
+            f.from = '';
+            f.until = '';
+          })}
+      />
     </div>
     <div class="scope-group end">
       <label
@@ -469,16 +470,13 @@
               maxlength="128"
               bind:value={filters.q}
             /><kbd>/</kbd></label
-          ><select
-            class="compact-select"
-            aria-label="Provider"
+          ><Select
+            label="Provider"
+            class="provider-select"
+            options={providerOptions}
             bind:value={filters.provider}
-            onchange={() => {
-              queueMicrotask(applyFilters);
-            }}
-            ><option value="">All providers</option><option value="anthropic">Anthropic</option
-            ><option value="openai">OpenAI</option><option value="codex">Codex</option></select
-          ><button
+            onchange={applyFilters}
+          /><button
             class="button"
             type="button"
             class:chosen={moreFilters}
@@ -505,14 +503,15 @@
                 maxlength="128"
                 bind:value={filters.tool}
               /></label
-            ><label
-              >Status<select bind:value={filters.status}
-                ><option value="">All statuses</option><option value="active">In progress</option
-                ><option value="finished">Finished</option><option value="errors">Errors</option
-                ><option value="interrupted">Interrupted / cancelled</option></select
-              ></label
-            ><label
-              >From · local time<input type="datetime-local" bind:value={filters.from} /></label
+            >
+            <div class="filter-field">
+              <span aria-hidden="true">Status</span><Select
+                label="Status"
+                options={statusOptions}
+                bind:value={filters.status}
+              />
+            </div>
+            <label>From · local time<input type="datetime-local" bind:value={filters.from} /></label
             ><label
               >Until · local time<input type="datetime-local" bind:value={filters.until} /></label
             ><label class="check-label"
@@ -585,21 +584,10 @@
           {#if !loading && (filterCount || !!after)}<button class="button" onclick={resetFilters}
               >Clear filters & return to first page</button
             >
-          {:else if !loading && !sessionId}<div class="connect-box">
-              <div class="connect-tabs" aria-label="Client to connect">
-                {#each connectChoices as choice}<button
-                    class:active={connectClient === choice.run}
-                    onclick={() => (connectClient = choice.run)}
-                    >{harnessLabel(choice.harness)}</button
-                  >{/each}
-              </div>
-              <div class="command-line">
-                <Icon name="terminal" size={16} /><code>{connectionCommand}</code><CopyButton
-                  text={connectionCommand}
-                  label="Copy launch command"
-                />
-              </div>
-            </div>
+          {:else if !loading && !sessionId}<ConnectClient
+              layout="box"
+              gatewayOrigin={page.data.gatewayUrl}
+            />
             <span class="empty-footnote"
               ><Icon name="shield" size={12} /> Uses your client’s existing sign-in</span
             >{/if}

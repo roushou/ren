@@ -28,12 +28,6 @@ export const sinceChoices: { since: Since; label: string; title: string }[] = [
   { since: '7d', label: '7d', title: 'Last 7 days' },
 ];
 export const clientChoices = HARNESSES.map((client) => ({ client, label: harnessLabel(client) }));
-/** The harnesses `tgv run` launches, by the name it takes for each. */
-export const connectChoices = [
-  { run: 'claude', harness: 'claude_code' },
-  { run: 'codex', harness: 'codex' },
-  { run: 'pi', harness: 'pi' },
-] as const;
 
 export function parseKind(text: string | null): KindChoice {
   return text === 'all' || text === 'other' ? text : 'model';

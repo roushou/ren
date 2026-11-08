@@ -12,6 +12,7 @@
   } from './api.ts';
   import Icon from './Icon.svelte';
   import CopyButton from './CopyButton.svelte';
+  import Segmented, { type SegmentedOption } from './Segmented.svelte';
   import { bodyView, toolFields, type Card, type CardKind } from './body-view.ts';
   import { previewChips } from './display.ts';
   import Markdown from './Markdown.svelte';
@@ -31,6 +32,10 @@
   const api = new ManagementApi();
   let direction = $state<Direction>('request');
   let mode = $state<'readable' | 'raw'>('readable');
+  const modes: SegmentedOption<'readable' | 'raw'>[] = [
+    { value: 'readable', label: 'Readable' },
+    { value: 'raw', label: 'Raw', icon: 'code' },
+  ];
   let preview = $state<BodyPreview | null>(null);
   let error = $state('');
   let following = $state(false);
@@ -181,17 +186,7 @@
 
 <section class="body-inspector" aria-label="Captured payload">
   <div class="payload-toolbar">
-    <div class="segmented" aria-label="Payload view">
-      <button
-        class:chosen={mode === 'readable'}
-        aria-pressed={mode === 'readable'}
-        onclick={() => (mode = 'readable')}>Readable</button
-      ><button
-        class:chosen={mode === 'raw'}
-        aria-pressed={mode === 'raw'}
-        onclick={() => (mode = 'raw')}><Icon name="code" size={13} /> Raw</button
-      >
-    </div>
+    <Segmented label="Payload view" options={modes} bind:value={mode} />
     <div class="payload-actions">
       <label class="toggle-control"
         ><input

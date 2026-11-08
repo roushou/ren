@@ -8,7 +8,7 @@
   import { activeSessions, ago, healthLine, problems } from '#lib/overview.ts';
   import { cacheShare, usagePoints } from '#lib/usage.ts';
   import UsageChart from '#lib/UsageChart.svelte';
-  import CopyButton from '#lib/CopyButton.svelte';
+  import ConnectClient from '#lib/ConnectClient.svelte';
   import Icon from '#lib/Icon.svelte';
   import type { PageProps } from './$types';
   let { data }: PageProps = $props();
@@ -48,10 +48,6 @@
     const s = Math.max(0, Math.round(ms / 1000));
     return s < 60 ? `${s} s` : `${Math.floor(s / 60)} min ${s % 60} s`;
   };
-  let client = $state<'claude' | 'codex'>('claude');
-  const origin = $derived(page.data.gatewayUrl);
-  const local = $derived(origin === 'http://127.0.0.1:8787' || origin === 'http://localhost:8787');
-  const command = $derived(`tgv run ${client}${local ? '' : ` --gateway ${origin}`}`);
 </script>
 
 {#snippet scope()}
@@ -193,18 +189,7 @@
           />{/if}
       </section>
 
-      <section class="overview-connect" aria-label="Connect a client">
-        <Icon name="terminal" size={14} />
-        <span class="muted">Start a session through TGV:</span>
-        <div class="segmented">
-          <button class:chosen={client === 'claude'} onclick={() => (client = 'claude')}
-            >Claude Code</button
-          ><button class:chosen={client === 'codex'} onclick={() => (client = 'codex')}
-            >Codex</button
-          >
-        </div>
-        <code>{command}</code><CopyButton text={command} label="Copy launch command" />
-      </section>
+      <ConnectClient layout="inline" gatewayOrigin={page.data.gatewayUrl} />
     {/if}
   </div>
 </div>

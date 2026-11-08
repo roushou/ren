@@ -1,4 +1,4 @@
-<script lang="ts">
+<script lang="ts" module>
   const paths = {
     sun: [
       'M12 3V1m0 22v-2M3 12H1m22 0h-2M4.2 4.2l1.4 1.4m12.8 12.8 1.4 1.4M4.2 19.8l1.4-1.4M18.4 5.6l1.4-1.4',
@@ -43,7 +43,11 @@
     terminal: ['m4 6 6 6-6 6m9 0h7'],
     info: ['M12 11v6m0-10h.01', 'M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z'],
   };
-  let { name, size = 16 }: { name: keyof typeof paths; size?: number } = $props();
+  export type IconName = keyof typeof paths;
+</script>
+
+<script lang="ts">
+  let { name, size = 16 }: { name: IconName; size?: number } = $props();
 </script>
 
 <svg

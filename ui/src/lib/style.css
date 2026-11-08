@@ -552,8 +552,8 @@ kbd {
   padding: 0 3px;
   color: var(--muted);
 }
-.compact-select {
-  max-width: 125px;
+.provider-select {
+  max-width: 140px;
   font-size: 11px;
 }
 .advanced-filters {
@@ -564,7 +564,8 @@ kbd {
   background: var(--surface-subtle);
   border-bottom: 1px solid var(--line);
 }
-.advanced-filters > label {
+.advanced-filters > label,
+.advanced-filters > .filter-field {
   display: flex;
   flex-direction: column;
   gap: 5px;
@@ -572,7 +573,7 @@ kbd {
   color: var(--muted);
 }
 .advanced-filters input,
-.advanced-filters select {
+.advanced-filters .select-trigger {
   width: 100%;
 }
 .advanced-filters .check-label {
@@ -792,21 +793,23 @@ tr.selected .row-link {
   text-align: left;
   margin-top: 6px;
 }
-.connect-tabs {
-  display: flex;
-  border-bottom: 1px solid var(--line);
+/* Segmented (Segmented.svelte) with look="tabs": an underlined row of tabs. */
+.segmented.tabs {
   gap: 15px;
   padding: 0 12px;
+  border-bottom: 1px solid var(--line);
 }
-.connect-tabs button {
+.segmented.tabs button {
   padding: 7px 0;
   border-bottom: 2px solid transparent;
+  border-radius: 0;
   font-size: 11px;
   color: var(--muted);
 }
-.connect-tabs button.active {
+.segmented.tabs button.chosen {
   border-color: var(--accent);
   color: var(--accent-foreground);
+  background: none;
 }
 .command-line {
   display: flex;
@@ -1687,8 +1690,7 @@ tr.call-row {
   .detail-tabs button,
   .row-link,
   .segmented button,
-  .recorder-status,
-  .connect-tabs button {
+  .recorder-status {
     min-height: 36px;
   }
   input,
@@ -2195,7 +2197,7 @@ td.zero {
 .overview-tiles {
   border-bottom: 1px solid var(--line);
 }
-.overview-connect {
+.connect-inline {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -2203,7 +2205,7 @@ td.zero {
   padding: 10px 12px;
   background: var(--surface-subtle);
 }
-.overview-connect code {
+.connect-inline code {
   font-size: 12px;
 }
 .usage-panel .panel-heading h2 .status-dot {
@@ -2264,33 +2266,10 @@ td.zero {
   margin-left: auto;
   border-left: 0;
 }
-.scope .compact-select {
-  width: auto;
-  max-width: 220px;
-}
-/* A select in the scope bar sits on the same line, at the same height, as
-   the segmented controls beside it, with the UI's own chevron. */
-.select-control {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  color: var(--muted);
-}
-.select-control select {
-  height: 22px;
-  padding: 0 24px 0 8px;
-  line-height: 20px;
-  appearance: none;
-  -webkit-appearance: none;
-  border-radius: 2px;
-  color: var(--ink);
-  cursor: pointer;
-}
-.select-control svg {
-  position: absolute;
-  right: 6px;
-  transform: rotate(90deg);
-  pointer-events: none;
+/* The session select sits on the scope bar's line, at the height of the
+   segmented controls beside it. */
+.scope .select-trigger {
+  max-width: 260px;
 }
 .scope-identity {
   display: flex;
@@ -2629,4 +2608,109 @@ td.zero {
   color: var(--ink);
   background: var(--warning-soft);
   box-shadow: inset 0 -1px var(--warning);
+}
+
+/* Select (Select.svelte): a control that opens a square listbox in the top
+   layer. Only the button rounds its corners; the list is a flush panel with
+   1px rules between its options. */
+.select-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  height: 29px;
+  padding: 0 7px 0 8px;
+  border: 1px solid var(--control-border);
+  border-radius: 3px;
+  background: var(--surface);
+  color: var(--ink);
+  text-align: left;
+}
+.select-trigger.compact {
+  height: 22px;
+  padding: 0 6px 0 8px;
+  border-radius: 2px;
+  font-size: 11px;
+}
+.select-trigger:hover:not(:disabled) {
+  border-color: var(--accent-border);
+}
+.select-trigger[aria-expanded='true'] {
+  border-color: var(--accent);
+}
+.select-trigger > svg {
+  flex: none;
+  color: var(--muted);
+  transform: rotate(90deg);
+}
+.select-trigger[aria-expanded='true'] > svg {
+  transform: rotate(-90deg);
+}
+.select-value {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.select-placeholder,
+.select-hint {
+  color: var(--muted);
+}
+.select-hint {
+  margin-left: 6px;
+}
+.select-list {
+  position: fixed;
+  inset: auto;
+  z-index: 30;
+  margin: 0;
+  padding: 0;
+  overflow: hidden auto;
+  list-style: none;
+  border: 1px solid var(--control-border);
+  border-radius: 0;
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: 0 4px 12px color-mix(in srgb, #000 12%, transparent);
+  font-size: 12px;
+}
+.select-list li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+  padding: 0 8px;
+  border-bottom: 1px solid var(--line-subtle);
+  white-space: nowrap;
+  cursor: pointer;
+}
+.select-list li:last-child {
+  border-bottom: 0;
+}
+.select-list.compact li {
+  min-height: 24px;
+  font-size: 11px;
+}
+.select-list li.active {
+  background: var(--surface-hover);
+}
+.select-list li[aria-selected='true'] {
+  color: var(--accent-text);
+}
+.select-list li > .select-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.select-list li > svg {
+  flex: none;
+  margin-left: auto;
+  padding-left: 4px;
+}
+@media (pointer: coarse) {
+  .select-trigger,
+  .select-list li,
+  .select-list.compact li {
+    min-height: 36px;
+  }
 }

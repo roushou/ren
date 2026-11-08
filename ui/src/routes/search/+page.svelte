@@ -5,12 +5,17 @@
   import { date, sessionTone } from '#lib/display.ts';
   import { searchFieldLabel, searchHitHref, snippetParts } from '#lib/activity.ts';
   import Icon from '#lib/Icon.svelte';
+  import Segmented, { type SegmentedOption } from '#lib/Segmented.svelte';
   import type { PageProps } from './$types';
   let { data }: PageProps = $props();
   getWorkbench().showScope(scope);
   const snapshot = createSnapshot(() => data.search);
   const current = $derived(snapshot.current.value);
   const page = $derived(current?.page ?? null);
+  const fieldOptions: SegmentedOption<SearchField | ''>[] = [
+    { value: '', label: 'Everything' },
+    ...SEARCH_FIELDS.map((field) => ({ value: field, label: searchFieldLabel(field) })),
+  ];
   const fieldHref = (field: SearchField | null) => {
     const query = new URLSearchParams();
     if (current?.q) query.set('q', current.q);
@@ -60,18 +65,13 @@
       {#if current?.field}<input type="hidden" name="field" value={current.field} />{/if}
       <button class="button primary search-submit" type="submit">Search</button>
     </label>
-    <nav class="segmented search-fields" aria-label="Search in">
-      <a
-        href={fieldHref(null)}
-        class:chosen={!current?.field}
-        aria-current={!current?.field ? 'page' : undefined}>Everything</a
-      >
-      {#each SEARCH_FIELDS as field (field)}<a
-          href={fieldHref(field)}
-          class:chosen={current?.field === field}
-          aria-current={current?.field === field ? 'page' : undefined}>{searchFieldLabel(field)}</a
-        >{/each}
-    </nav>
+    <Segmented
+      label="Search in"
+      class="search-fields"
+      options={fieldOptions}
+      value={current?.field ?? ''}
+      href={(field) => fieldHref(field || null)}
+    />
   </form>
 {/snippet}
 

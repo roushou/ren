@@ -12,6 +12,7 @@
   } from '#lib/usage.ts';
   import UsageChart from '#lib/UsageChart.svelte';
   import Icon from '#lib/Icon.svelte';
+  import Segmented, { type SegmentedOption } from '#lib/Segmented.svelte';
   import type { PageProps } from './$types';
   let { data }: PageProps = $props();
   getWorkbench().showScope(scope);
@@ -21,6 +22,10 @@
   const totals = $derived(current?.usage.totals);
   const points = $derived(current ? usagePoints(current.usage.hours, range, current.now) : []);
   let measure = $state<UsageMeasure>('input');
+  const measureOptions: SegmentedOption<UsageMeasure>[] = usageMeasures.map((item) => ({
+    value: item.measure,
+    label: item.label,
+  }));
   const measureLabel = $derived(
     usageMeasures.find((item) => item.measure === measure)?.label ?? 'Tokens in',
   );
@@ -101,13 +106,7 @@
       <section class="panel usage-panel" aria-labelledby="usage-chart-title">
         <header class="panel-heading">
           <h2 id="usage-chart-title">{measureLabel} per {byHour ? 'hour' : 'day'}</h2>
-          <div class="segmented" aria-label="Measure">
-            {#each usageMeasures as item}<button
-                class:chosen={measure === item.measure}
-                aria-pressed={measure === item.measure}
-                onclick={() => (measure = item.measure)}>{item.label}</button
-              >{/each}
-          </div>
+          <Segmented label="Measure" options={measureOptions} bind:value={measure} />
         </header>
         {#if totals?.calls}
           <UsageChart {points} {measure} label={measureLabel} {period} />
