@@ -97,7 +97,8 @@ TGV-specific applications:
   (`tests/labels.rs`); add a new vocabulary there, and treat a changed line as a
   storage format change. Labels read from storage or the wire use `Stored<T>`,
   which keeps unknown text.
-- **Keep the unknown:** wire enums for Anthropic Messages, OpenAI Responses, and SSE
+- **Keep the unknown:** wire enums for Anthropic Messages, OpenAI Responses, OpenAI
+  Chat Completions, and SSE
   events keep an `Unknown(Raw…)` variant. `#[serde(other)]` loses the value, so don't
   use it on wire data.
 - **Sans-IO core:** SSE framing, native protocol parsing, inspection, attempt
@@ -165,8 +166,9 @@ dependencies under "Crates" below. Read the code for current module ownership.
 - `docs/architecture.md`: how TGV is built, and its known limitations. The other
   `docs/*.md` files are operator guides linked from `README.md`.
 - `crates/tgv-protocol`: sans-IO native protocol understanding, with
-  `CallInspector` as its primary type: SSE framing, Anthropic Messages and OpenAI
-  Responses wire vocabularies, incremental decompression, per-call inspection
+  `CallInspector` as its primary type: SSE framing, Anthropic Messages, OpenAI
+  Responses, and OpenAI Chat Completions (`chat`) wire vocabularies,
+  incremental decompression, per-call inspection
   (`inspect`, whose `pipeline` also reads WebSocket messages and hands every
   frame to the response's activity reader as it streams), WebSocket message
   classification, and the activity reader (`activity`: a request's newest user

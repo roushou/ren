@@ -263,6 +263,125 @@ async fn a_direct_entry_has_routes_of_its_own_and_a_fallback_only_entry_has_none
 }
 
 #[tokio::test]
+async fn a_chat_completions_entry_streams_and_records_model_usage_and_tool_calls() {
+    use tgv_protocol::inspect::{Coverage, ModelOutcome, TerminalEvent};
+    use tgv_store::activity::ActivityBudget;
+    // Two tool calls whose arguments arrive in fragments, then the usage
+    // chunk the request asked for, then `[DONE]`.
+    const STREAM: &str = concat!(
+        "data: {\"object\":\"chat.completion.chunk\",\"model\":\"fixture-chat\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"Checking.\"},\"finish_reason\":null}]}\n\n",
+        "data: {\"object\":\"chat.completion.chunk\",\"model\":\"fixture-chat\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_read\",\"type\":\"function\",\"function\":{\"name\":\"read_file\",\"arguments\":\"{\\\"path\"}}]},\"finish_reason\":null}]}\n\n",
+        "data: {\"object\":\"chat.completion.chunk\",\"model\":\"fixture-chat\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":1,\"id\":\"call_list\",\"type\":\"function\",\"function\":{\"name\":\"list_dir\",\"arguments\":\"{}\"}}]},\"finish_reason\":null}]}\n\n",
+        "data: {\"object\":\"chat.completion.chunk\",\"model\":\"fixture-chat\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"\\\":\\\"a.rs\\\"}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\n",
+        "data: {\"object\":\"chat.completion.chunk\",\"model\":\"fixture-chat\",\"choices\":[],\"usage\":{\"prompt_tokens\":42,\"completion_tokens\":17,\"total_tokens\":59,\"prompt_tokens_details\":{\"cached_tokens\":32}}}\n\n",
+        "data: [DONE]\n\n",
+    );
+    let mock = mock(Router::new().fallback(|request: Request| async move {
+        assert_eq!(request.uri().path(), "/chat/v1/chat/completions");
+        let auth = request.headers()["authorization"]
+            .to_str()
+            .unwrap()
+            .to_owned();
+        Response::builder()
+            .header("content-type", "text/event-stream")
+            .header("x-seen-auth", auth)
+            .body(Body::from(STREAM))
+            .unwrap()
+    }))
+    .await;
+    let dir = tempfile::tempdir().unwrap();
+    let mut config = config(&mock, "");
+    config.upstreams[0] = UpstreamConfig {
+        id: UpstreamId::parse("deepseek-chat").unwrap(),
+        provider: Provider::DeepSeek,
+        wire: Some(Wire::OpenAiChatCompletions),
+        base_url: format!("http://{}/chat", mock.address),
+        operator_key_env: TestGateway::OPERATOR_KEY_ENV.into(),
+        ingress: EntryIngress::Direct,
+    };
+    let gateway = TestGateway::start(&config, dir.path()).await;
+    let request = r#"{"model":"fixture-chat","stream":true,"stream_options":{"include_usage":true},"messages":[{"role":"user","content":"Read a.rs"}]}"#;
+    let response = client()
+        .post(format!(
+            "{}/upstreams/deepseek-chat/v1/chat/completions",
+            gateway.base()
+        ))
+        .header("authorization", "Bearer CLIENT-KEY")
+        .body(request)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response.headers()["x-seen-auth"],
+        format!("Bearer {}", TestGateway::OPERATOR_KEY)
+    );
+    // Forwarded byte for byte.
+    assert_eq!(response.bytes().await.unwrap(), STREAM.as_bytes());
+    gateway.stop().await;
+
+    let calls = recorded(dir.path()).await;
+    let call = &calls[0];
+    assert_eq!(call.provider, Stored::Known(Provider::DeepSeek));
+    assert_eq!(call.wire, Some(Stored::Known(Wire::OpenAiChatCompletions)));
+    let detail = detail(dir.path(), call.id).await;
+    let [attempt] = detail.attempts.as_slice() else {
+        panic!("one attempt expected, got {}", detail.attempts.len());
+    };
+    let inspection = attempt.inspection.as_ref().unwrap();
+    assert_eq!(inspection.coverage, Stored::Known(Coverage::Complete));
+    assert_eq!(
+        inspection.terminal_event,
+        Stored::Known(TerminalEvent::Seen)
+    );
+    assert_eq!(
+        inspection.outcome,
+        Some(Stored::Known(ModelOutcome::Completed))
+    );
+    assert_eq!(inspection.model.as_deref(), Some("fixture-chat"));
+    let usage = inspection.usage.as_ref().unwrap();
+    assert_eq!(
+        (
+            usage.input_tokens,
+            usage.output_tokens,
+            usage.cache_read_tokens
+        ),
+        (Some(42), Some(17), Some(32))
+    );
+    let names: Vec<_> = inspection
+        .tool_calls
+        .iter()
+        .map(|call| (call.call_id.as_deref(), call.name.as_deref()))
+        .collect();
+    assert_eq!(
+        names,
+        [
+            (Some("call_read"), Some("read_file")),
+            (Some("call_list"), Some("list_dir"))
+        ]
+    );
+
+    // The digest assembled each call's fragmented arguments.
+    let reader = Reader::open(dir.path(), 1).await.unwrap();
+    let activity = reader
+        .call_activity(call.id, ActivityBudget::DEFAULT)
+        .await
+        .unwrap();
+    reader.close().await;
+    let activity = serde_json::to_value(&activity).unwrap();
+    assert_eq!(activity["model"], "fixture-chat");
+    assert_eq!(activity["tool_calls"][0]["name"], "read_file");
+    assert!(
+        activity["tool_calls"][0]["input"]
+            .to_string()
+            .contains("a.rs"),
+        "{activity}"
+    );
+    assert_eq!(activity["tool_calls"][1]["name"], "list_dir");
+    assert_eq!(activity["limitations"], serde_json::json!([]));
+}
+
+#[tokio::test]
 async fn statuses_the_policy_does_not_list_pass_through_without_failover() {
     let reached = Arc::new(AtomicUsize::new(0));
     let mock = mock(upstream(StatusCode::SERVICE_UNAVAILABLE, reached.clone())).await;

@@ -1,5 +1,5 @@
-//! The forwarding route table, pinned, with one fallback-only and two direct
-//! configured entries. Clients are configured with these paths, so a
+//! The forwarding route table, pinned, with one fallback-only and three
+//! direct configured entries, one of them on Chat Completions. Clients are configured with these paths, so a
 //! refactor must never change one silently: each line is the
 //! ingress path, what it accepts, its method, the upstream entry it goes to,
 //! that entry's provider, the native endpoint and upstream path, and the
@@ -15,17 +15,17 @@ use tgv_gateway::{
     UpstreamTable, UpstreamUrl,
 };
 use tgv_protocol::label::Labeled;
-use tgv_protocol::route::Provider;
+use tgv_protocol::route::{Api, Provider, Wire};
 use tgv_recorder::routing::UpstreamId;
 
 #[test]
 fn every_route_is_pinned() {
     let url = || UpstreamUrl::parse("https://example.com").unwrap();
     // Configured entries mount routes only when they opt in.
-    let configured = |id: &str, provider: Provider, ingress| ConfiguredEntry {
+    let configured = |id: &str, api: Api, ingress| ConfiguredEntry {
         entry: UpstreamEntry {
             id: UpstreamId::parse(id).unwrap(),
-            api: provider.native_api(),
+            api,
             url: url(),
             auth: UpstreamAuth::OperatorKey(OperatorKey::new("fixture").unwrap()),
         },
@@ -41,15 +41,26 @@ fn every_route_is_pinned() {
         vec![
             configured(
                 "anthropic-key",
-                Provider::Anthropic,
+                Provider::Anthropic.native_api(),
                 EntryIngress::FallbackOnly,
             ),
             configured(
                 "anthropic-direct",
-                Provider::Anthropic,
+                Provider::Anthropic.native_api(),
                 EntryIngress::Direct,
             ),
-            configured("openai-direct", Provider::OpenAi, EntryIngress::Direct),
+            configured(
+                "openai-direct",
+                Provider::OpenAi.native_api(),
+                EntryIngress::Direct,
+            ),
+            configured(
+                "deepseek-chat",
+                Provider::DeepSeek
+                    .speak(Wire::OpenAiChatCompletions)
+                    .unwrap(),
+                EntryIngress::Direct,
+            ),
         ],
     )
     .unwrap();

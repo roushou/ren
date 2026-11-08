@@ -106,6 +106,9 @@ impl TransformStep {
             Endpoint::Responses | Endpoint::ResponsesCompact => {
                 &["/previous_response_id", "/client_metadata"]
             }
+            // The end-user identifiers a provider attributes abuse to, and
+            // the client's stored-completion metadata.
+            Endpoint::ChatCompletions => &["/user", "/safety_identifier", "/metadata"],
             Endpoint::Models => &[],
         }
     }

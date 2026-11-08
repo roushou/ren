@@ -125,7 +125,7 @@ lets running calls continue for up to 10 seconds, then cancels what remains
 ## Response inspection
 
 `inspect` includes each attempt's `inspection`, derived by the recorder from the
-captured Anthropic Messages and OpenAI Responses bodies; `history` rows carry its
+captured Anthropic Messages, OpenAI Responses, and OpenAI Chat Completions bodies; `history` rows carry its
 summary (`model`, `outcome`, `stop_reason`, `usage`, `tool_names`). It reports model,
 model completion/failure, stop reason, provider-reported token usage, and requested
 tool IDs/names. Tool arguments, results, and generated text remain in raw capture;

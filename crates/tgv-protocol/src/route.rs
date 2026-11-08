@@ -14,7 +14,8 @@ pub enum Provider {
     Codex,
     #[strum(to_string = "openai")]
     OpenAi,
-    /// DeepSeek's Anthropic-compatible API.
+    /// DeepSeek: its Anthropic-compatible API natively, and its
+    /// OpenAI-compatible Chat Completions API.
     #[strum(to_string = "deepseek")]
     DeepSeek,
 }
@@ -35,15 +36,17 @@ impl Provider {
     /// This provider's API in `wire`, or why it has none: the only way to
     /// pair a provider with a wire format.
     pub fn speak(self, wire: Wire) -> Result<Api, UnsupportedWire> {
+        // Each pair is documented by the provider (checked 2026-11-08).
+        // Anthropic's Chat Completions is its OpenAI SDK compatibility layer,
+        // which takes an API key, never subscription OAuth. The ChatGPT Codex
+        // backend speaks only Responses.
         let supported = match (self, wire) {
-            (Self::Anthropic, Wire::AnthropicMessages)
+            (Self::Anthropic, Wire::AnthropicMessages | Wire::OpenAiChatCompletions)
             | (Self::Codex, Wire::OpenAiResponses)
-            | (Self::OpenAi, Wire::OpenAiResponses)
-            | (Self::DeepSeek, Wire::AnthropicMessages) => true,
-            // DeepSeek's OpenAI-compatible API is Chat Completions, which TGV
-            // does not speak.
+            | (Self::OpenAi, Wire::OpenAiResponses | Wire::OpenAiChatCompletions)
+            | (Self::DeepSeek, Wire::AnthropicMessages | Wire::OpenAiChatCompletions) => true,
             (Self::Anthropic, Wire::OpenAiResponses)
-            | (Self::Codex, Wire::AnthropicMessages)
+            | (Self::Codex, Wire::AnthropicMessages | Wire::OpenAiChatCompletions)
             | (Self::OpenAi, Wire::AnthropicMessages)
             | (Self::DeepSeek, Wire::OpenAiResponses) => false,
         };
@@ -70,6 +73,9 @@ pub enum Wire {
     AnthropicMessages,
     #[strum(to_string = "openai_responses")]
     OpenAiResponses,
+    /// OpenAI Chat Completions, which many other servers also speak.
+    #[strum(to_string = "openai_chat_completions")]
+    OpenAiChatCompletions,
 }
 
 /// A provider's API in one wire format. Built only by [`Provider::speak`],
@@ -108,6 +114,7 @@ pub enum Endpoint {
     Models,
     Responses,
     ResponsesCompact,
+    ChatCompletions,
 }
 
 impl Endpoint {
@@ -115,7 +122,9 @@ impl Endpoint {
     /// to counting tokens or listing models.
     pub fn generates(self) -> bool {
         match self {
-            Self::Messages | Self::Responses | Self::ResponsesCompact => true,
+            Self::Messages | Self::Responses | Self::ResponsesCompact | Self::ChatCompletions => {
+                true
+            }
             Self::CountTokens | Self::Models => false,
         }
     }
@@ -151,7 +160,7 @@ mod tests {
     use crate::label::Labeled;
 
     #[test]
-    fn each_provider_speaks_exactly_its_own_wire() {
+    fn providers_speak_exactly_the_documented_wires() {
         let offered: Vec<(Provider, Wire)> = Provider::ALL
             .iter()
             .flat_map(|&provider| Wire::ALL.iter().map(move |&wire| (provider, wire)))
@@ -161,9 +170,12 @@ mod tests {
             offered,
             [
                 (Provider::Anthropic, Wire::AnthropicMessages),
+                (Provider::Anthropic, Wire::OpenAiChatCompletions),
                 (Provider::Codex, Wire::OpenAiResponses),
                 (Provider::OpenAi, Wire::OpenAiResponses),
+                (Provider::OpenAi, Wire::OpenAiChatCompletions),
                 (Provider::DeepSeek, Wire::AnthropicMessages),
+                (Provider::DeepSeek, Wire::OpenAiChatCompletions),
             ]
         );
     }

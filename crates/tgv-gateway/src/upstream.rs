@@ -354,7 +354,9 @@ impl UpstreamEntry {
                 }
                 headers.insert("x-api-key", key.0.clone());
             }
-            Wire::OpenAiResponses => {
+            // Every Chat Completions provider TGV knows takes a bearer key,
+            // Anthropic's compatibility layer included.
+            Wire::OpenAiResponses | Wire::OpenAiChatCompletions => {
                 if let Some(bearer) = key.bearer() {
                     headers.insert(http::header::AUTHORIZATION, bearer);
                 }
@@ -693,7 +695,7 @@ mod tests {
         UpstreamTable, UpstreamUrl,
     };
     use crate::attempt::SendFailure;
-    use tgv_protocol::route::Provider;
+    use tgv_protocol::route::{Provider, Wire};
     use tgv_recorder::routing::UpstreamId;
 
     /// Send one request to an HTTP/2 server that resets every stream with
@@ -836,6 +838,23 @@ mod tests {
         assert_eq!(openai.authorize(&mut headers), AuthOverride::OperatorKey);
         assert_eq!(headers["authorization"], "Bearer sk-FIXTURE");
         assert!(headers.get("chatgpt-account-id").is_none());
+
+        // Chat Completions takes a bearer key, Anthropic's included.
+        let anthropic_chat = UpstreamEntry {
+            api: Provider::Anthropic
+                .speak(Wire::OpenAiChatCompletions)
+                .unwrap(),
+            ..anthropic.clone()
+        };
+        let mut headers = http::HeaderMap::new();
+        headers.insert("x-api-key", "CLIENT".parse().unwrap());
+        assert_eq!(
+            anthropic_chat.authorize(&mut headers),
+            AuthOverride::OperatorKey
+        );
+        assert_eq!(headers["authorization"], "Bearer sk-FIXTURE");
+        assert!(headers["authorization"].is_sensitive());
+        assert!(headers.get("x-api-key").is_none());
 
         let mut untouched = http::HeaderMap::new();
         untouched.insert("authorization", "Bearer CLIENT".parse().unwrap());

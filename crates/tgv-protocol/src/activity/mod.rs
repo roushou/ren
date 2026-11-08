@@ -9,6 +9,7 @@
 //! Whatever could not be read is a [`ActivityLimitation`], never a guess.
 
 pub mod anthropic;
+pub mod chat;
 pub mod openai;
 
 use crate::encoding::{Decompressor, ResponseEncoding};
@@ -175,6 +176,7 @@ pub struct ResponseReader {
 enum ProtocolResponse {
     Messages(anthropic::Response),
     Responses(openai::Response),
+    ChatCompletions(chat::Response),
 }
 
 impl ResponseReader {
@@ -183,6 +185,9 @@ impl ResponseReader {
             protocol: match protocol {
                 Protocol::Messages => ProtocolResponse::Messages(anthropic::Response::new(limits)),
                 Protocol::Responses => ProtocolResponse::Responses(openai::Response::new(limits)),
+                Protocol::ChatCompletions => {
+                    ProtocolResponse::ChatCompletions(chat::Response::new(limits))
+                }
             },
             limitations: Vec::new(),
         }
@@ -195,6 +200,7 @@ impl ResponseReader {
             match &mut self.protocol {
                 ProtocolResponse::Messages(response) => response.event(&event),
                 ProtocolResponse::Responses(response) => response.event(event),
+                ProtocolResponse::ChatCompletions(response) => response.event(&event),
             }
         }
     }
@@ -205,6 +211,7 @@ impl ResponseReader {
             Ok(Value::Object(document)) => match &mut self.protocol {
                 ProtocolResponse::Messages(response) => response.document(document),
                 ProtocolResponse::Responses(response) => response.document(document),
+                ProtocolResponse::ChatCompletions(response) => response.document(&document),
             },
             Ok(_) => self.limitations.push(ActivityLimitation::UnexpectedShape),
             Err(_) => self.limitations.push(ActivityLimitation::NotJson),
@@ -215,6 +222,7 @@ impl ResponseReader {
         let mut activity = match self.protocol {
             ProtocolResponse::Messages(response) => response.finish(),
             ProtocolResponse::Responses(response) => response.finish(),
+            ProtocolResponse::ChatCompletions(response) => response.finish(),
         };
         let mut limitations = self.limitations;
         limitations.append(&mut activity.limitations);
@@ -307,6 +315,7 @@ impl RequestReader {
             Ok(Value::Object(request)) => match protocol {
                 Protocol::Messages => anthropic::Request::new(&request).activity(),
                 Protocol::Responses => openai::Request::new(&request).activity(),
+                Protocol::ChatCompletions => chat::Request::new(&request).activity(),
             },
             Ok(_) => RequestActivity {
                 limitations: vec![ActivityLimitation::UnexpectedShape],

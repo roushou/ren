@@ -47,8 +47,9 @@ impl Forward {
     /// the routes a configured entry with direct ingress mounts below
     /// [`Route::DIRECT_PREFIX`]. Messages routes read Claude Code's headers;
     /// public Responses headers establish no client identity, and its
-    /// WebSocket mode is refused, as on `/openai`.
-    pub const BY_WIRE: [(Wire, Self); 6] = [
+    /// WebSocket mode is refused, as on `/openai`. Chat Completions
+    /// clients are many and none is a harness TGV attributes.
+    pub const BY_WIRE: [(Wire, Self); 8] = [
         (
             Wire::AnthropicMessages,
             Self {
@@ -96,6 +97,24 @@ impl Forward {
         ),
         (
             Wire::OpenAiResponses,
+            Self {
+                accepts: Accepts::Get,
+                endpoint: Endpoint::Models,
+                upstream_path: "/v1/models",
+                harness: None,
+            },
+        ),
+        (
+            Wire::OpenAiChatCompletions,
+            Self {
+                accepts: Accepts::Post,
+                endpoint: Endpoint::ChatCompletions,
+                upstream_path: "/v1/chat/completions",
+                harness: None,
+            },
+        ),
+        (
+            Wire::OpenAiChatCompletions,
             Self {
                 accepts: Accepts::Get,
                 endpoint: Endpoint::Models,

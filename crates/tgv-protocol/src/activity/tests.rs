@@ -512,3 +512,93 @@ fn a_gathered_request_says_what_it_missed() {
     let message = message.finish(crate::inspect::pipeline::BodyEnd::Complete);
     assert_eq!(message.user_text, ["Run it"]);
 }
+
+#[test]
+fn chat_requests_yield_the_newest_user_input_and_tool_results() {
+    let first = json!({
+        "model": "m",
+        "max_tokens": 512,
+        "messages": [
+            { "role": "system", "content": "Be terse." },
+            { "role": "user", "content": [{ "type": "text", "text": "Fix the build" }, { "type": "image_url", "image_url": { "url": "data:," } }] },
+        ],
+    })
+    .to_string();
+    let activity = request(Protocol::ChatCompletions, first.as_bytes());
+    assert_eq!(activity.user_text, ["Fix the build"]);
+    assert_eq!(activity.max_output_tokens, Some(512));
+    assert!(activity.limitations.is_empty());
+
+    let later = json!({
+        "max_completion_tokens": 1024,
+        "max_tokens": 512,
+        "messages": [
+            { "role": "user", "content": "Fix the build" },
+            { "role": "assistant", "content": null, "tool_calls": [{ "id": "call_1", "type": "function", "function": { "name": "run", "arguments": "{}" } }] },
+            { "role": "tool", "tool_call_id": "call_1", "content": "exit 1" },
+            { "role": "tool", "content": "no id" },
+            { "role": "narrator", "content": "?" },
+        ],
+    })
+    .to_string();
+    let activity = request(Protocol::ChatCompletions, later.as_bytes());
+    assert!(activity.user_text.is_empty());
+    assert_eq!(activity.max_output_tokens, Some(1024));
+    assert_eq!(
+        activity.tool_results,
+        [ToolResult {
+            id: "call_1".into(),
+            status: ResultStatus::Unreported,
+            output: "exit 1".into(),
+        }]
+    );
+    assert_eq!(activity.limitations, [ActivityLimitation::UnexpectedShape]);
+
+    let shapeless = request(Protocol::ChatCompletions, br#"{"prompt":"legacy"}"#);
+    assert_eq!(shapeless.limitations, [ActivityLimitation::UnexpectedShape]);
+}
+
+#[test]
+fn chat_responses_keep_choices_apart_and_bound_tool_calls() {
+    let chunk = |choices: Value| json!({ "object": "chat.completion.chunk", "choices": choices });
+    let mut stream = Vec::new();
+    for event in [
+        chunk(
+            json!([{ "index": 1, "delta": { "content": "second" } }, { "index": 0, "delta": { "content": "first" } }]),
+        ),
+        chunk(
+            json!([{ "index": 0, "delta": { "tool_calls": [{ "index": 0, "id": "a", "function": { "name": "one", "arguments": "{}" } }] } }]),
+        ),
+        chunk(
+            json!([{ "index": 0, "delta": { "tool_calls": [{ "index": 1, "id": "b", "function": { "name": "two" } }] }, "finish_reason": "tool_calls" }]),
+        ),
+        chunk(json!([{ "index": 1, "delta": {}, "finish_reason": "stop" }])),
+    ] {
+        stream.extend_from_slice(format!("data: {event}\n\n").as_bytes());
+    }
+    stream.extend_from_slice(b"data: [DONE]\n\n");
+    let limited = read(
+        Protocol::ChatCompletions,
+        ResponseFormat::EventStream,
+        ResponseEncoding::Identity,
+        ActivityLimits {
+            max_tool_uses: 1,
+            ..ActivityLimits::default()
+        },
+        &[&stream],
+    )
+    .activity;
+    assert_eq!(limited.reply, "first\nsecond");
+    assert_eq!(limited.tool_uses.len(), 1);
+    assert_eq!(limited.tool_uses[0].input, ToolInput::Json(json!({})));
+    assert_eq!(limited.limitations, [ActivityLimitation::TooManyToolCalls]);
+
+    let whole = response(
+        Protocol::ChatCompletions,
+        ResponseFormat::EventStream,
+        &stream,
+    );
+    assert_eq!(whole.tool_uses[1].name, "two");
+    assert_eq!(whole.tool_uses[1].input, ToolInput::Json(Value::Null));
+    assert!(whole.limitations.is_empty());
+}

@@ -563,6 +563,10 @@ mod tests {
             entry("wire = \"openai_responses\"\n").unwrap().wire,
             Some(Wire::OpenAiResponses)
         );
+        assert_eq!(
+            entry("wire = \"openai_chat_completions\"\n").unwrap().wire,
+            Some(Wire::OpenAiChatCompletions)
+        );
         assert!(entry("wire = \"chat\"\n").is_err());
         let omitted = entry("").unwrap();
         assert_eq!(omitted.wire, None);

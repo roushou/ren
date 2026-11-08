@@ -10,6 +10,7 @@
 use super::{EventClass, FormatSource, InspectionReport, Inspector, Limitation, ReportLimits};
 use crate::activity::{ActivityLimits, ResponseActivity, ResponseReader};
 use crate::{
+    chat,
     encoding::{DecodeFailure, Decompressor, ResponseEncoding, ResponseFormat},
     messages, responses,
     route::Endpoint,
@@ -23,6 +24,8 @@ pub enum Protocol {
     Messages,
     /// OpenAI Responses, public or Codex (`/responses`).
     Responses,
+    /// OpenAI Chat Completions (`/v1/chat/completions`).
+    ChatCompletions,
 }
 
 impl Protocol {
@@ -31,6 +34,7 @@ impl Protocol {
         match endpoint {
             Endpoint::Messages => Some(Self::Messages),
             Endpoint::Responses => Some(Self::Responses),
+            Endpoint::ChatCompletions => Some(Self::ChatCompletions),
             Endpoint::CountTokens | Endpoint::Models | Endpoint::ResponsesCompact => None,
         }
     }
@@ -45,6 +49,11 @@ impl Protocol {
                 Ok(event) => event.observe(&mut |observation| inspector.observe(observation)),
                 Err(_) => EventClass::Malformed,
             },
+            // Chunks carry no event names.
+            Self::ChatCompletions => match chat::Event::decode(data) {
+                Ok(event) => event.observe(&mut |observation| inspector.observe(observation)),
+                Err(_) => EventClass::Malformed,
+            },
         };
         inspector.count(class);
     }
@@ -56,6 +65,10 @@ impl Protocol {
                 Err(_) => EventClass::Malformed,
             },
             Self::Responses => match responses::Document::decode(bytes) {
+                Ok(document) => document.observe(&mut |observation| inspector.observe(observation)),
+                Err(_) => EventClass::Malformed,
+            },
+            Self::ChatCompletions => match chat::Document::decode(bytes) {
                 Ok(document) => document.observe(&mut |observation| inspector.observe(observation)),
                 Err(_) => EventClass::Malformed,
             },
@@ -215,12 +228,14 @@ impl CallInspector {
         limits: InspectionLimits,
     ) -> Self {
         let selected = match (format, protocol) {
-            (ResponseFormat::EventStream, Protocol::Messages | Protocol::Responses) => {
-                Some((BodyKind::Stream, FormatSource::Declared))
-            }
-            (ResponseFormat::Json, Protocol::Messages | Protocol::Responses) => {
-                Some((BodyKind::Document, FormatSource::Declared))
-            }
+            (
+                ResponseFormat::EventStream,
+                Protocol::Messages | Protocol::Responses | Protocol::ChatCompletions,
+            ) => Some((BodyKind::Stream, FormatSource::Declared)),
+            (
+                ResponseFormat::Json,
+                Protocol::Messages | Protocol::Responses | Protocol::ChatCompletions,
+            ) => Some((BodyKind::Document, FormatSource::Declared)),
             // Codex can omit Content-Type on /responses; it streams SSE.
             (ResponseFormat::Unspecified, Protocol::Responses) => {
                 Some((BodyKind::Stream, FormatSource::Inferred))
@@ -230,9 +245,12 @@ impl CallInspector {
             }
             (
                 ResponseFormat::Unspecified | ResponseFormat::WebSocketMessages,
-                Protocol::Messages,
+                Protocol::Messages | Protocol::ChatCompletions,
             )
-            | (ResponseFormat::Other, Protocol::Messages | Protocol::Responses) => None,
+            | (
+                ResponseFormat::Other,
+                Protocol::Messages | Protocol::Responses | Protocol::ChatCompletions,
+            ) => None,
         };
         let Some((kind, source)) = selected else {
             return Self::unavailable(FormatSource::Declared, Limitation::UnsupportedFormat);

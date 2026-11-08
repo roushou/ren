@@ -14,3 +14,5 @@
 /upstreams/openai-direct/v1/responses PostOrRefusedHandshake POST upstream=openai-direct provider=openai endpoint=responses /v1/responses harness=none
 /upstreams/openai-direct/v1/responses/compact Post POST upstream=openai-direct provider=openai endpoint=responses_compact /v1/responses/compact harness=none
 /upstreams/openai-direct/v1/models Get GET upstream=openai-direct provider=openai endpoint=models /v1/models harness=none
+/upstreams/deepseek-chat/v1/chat/completions Post POST upstream=deepseek-chat provider=deepseek endpoint=chat_completions /v1/chat/completions harness=none
+/upstreams/deepseek-chat/v1/models Get GET upstream=deepseek-chat provider=deepseek endpoint=models /v1/models harness=none

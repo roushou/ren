@@ -54,7 +54,7 @@ macro_rules! table {
 #[test]
 fn every_label_is_pinned() {
     use tgv_protocol::{
-        activity, direction, encoding, inspect, messages, responses, route, websocket,
+        activity, chat, direction, encoding, inspect, messages, responses, route, websocket,
     };
     let table = table![
         direction::Direction,
@@ -81,6 +81,9 @@ fn every_label_is_pinned() {
         responses::Status,
         responses::IncompleteReason,
         responses::ItemKind,
+        chat::ObjectKind,
+        chat::FinishReason,
+        chat::ToolCallKind,
         websocket::ClientKind,
         activity::ActivityLimitation,
         activity::ResultStatus,
@@ -89,6 +92,7 @@ fn every_label_is_pinned() {
         activity::anthropic::DeltaKind,
         activity::openai::InputRole,
         activity::openai::ToolOutputKind,
+        activity::chat::ChatRole,
     ];
     let pinned = include_str!("fixtures/labels.txt");
     assert!(

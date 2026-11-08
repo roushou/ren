@@ -106,7 +106,9 @@ and implicit environment proxies are disabled.
 An operator-key upstream configured with `ingress = "direct"` also has routes of
 its own below `/upstreams/<id>`: its wire format's paths above, such as
 `POST /upstreams/<id>/v1/messages` (point Claude Code's `ANTHROPIC_BASE_URL` at
-`/upstreams/<id>`). See [Direct routes](policy.md#direct-routes).
+`/upstreams/<id>`), or `POST /upstreams/<id>/v1/chat/completions` for an entry on
+the Chat Completions wire, which has no provider route of its own. See
+[Direct routes](policy.md#direct-routes).
 
 TGV does not sign in, refresh tokens, or substitute an API credential, except an
 operator-key upstream's own key. The client owns authentication. No requests are
@@ -139,6 +141,38 @@ The key passes through to DeepSeek untouched; TGV never holds it. Calls are
 recorded with provider `deepseek`. DeepSeek documents only Messages there, so
 TGV routes only `POST /deepseek/v1/messages`: Claude Code's token counting and
 model listing get `404` from TGV.
+
+## Chat Completions clients
+
+Clients that speak OpenAI Chat Completions (Aider, Goose, Cline, Qwen Code, and
+most OpenAI SDK code) reach TGV through an operator-key upstream with
+`wire = "openai_chat_completions"` and `ingress = "direct"`
+([Direct routes](policy.md#direct-routes)):
+
+```toml
+[[upstreams]]
+id = "deepseek-chat"
+provider = "deepseek"
+wire = "openai_chat_completions"
+base_url = "https://api.deepseek.com"
+operator_key_env = "TGV_DEEPSEEK_API_KEY"
+ingress = "direct"
+```
+
+Point the client's OpenAI base URL at `http://127.0.0.1:8787/upstreams/deepseek-chat/v1`.
+TGV forwards `POST /v1/chat/completions` and `GET /v1/models` below it, with the
+operator key as `Authorization: Bearer`, whatever key the client sends. DeepSeek
+documents its path as `/chat/completions`; it also answers on
+`/v1/chat/completions`. The same works with `provider = "openai"` and
+`https://api.openai.com`, or `provider = "anthropic"` and
+`https://api.anthropic.com` (Anthropic's compatibility layer, meant for testing).
+
+Usage is recorded only when the client asks for it in a stream
+(`stream_options.include_usage`); without it the call has no usage, which says
+nothing about how much was used. A stream that ends before `data: [DONE]` is
+recorded without terminal evidence. No harness is attributed, so these calls have
+no session or turn. Local servers that need no key (Ollama, vLLM, llama.cpp, LM
+Studio) are not supported yet: every Chat Completions entry holds an operator key.
 
 ## Codex
 
