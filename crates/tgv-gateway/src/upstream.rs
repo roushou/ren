@@ -396,6 +396,15 @@ pub struct ConfiguredEntry {
     pub ingress: EntryIngress,
 }
 
+/// The base URL of each provider's native entry.
+#[derive(Debug, Clone)]
+pub struct NativeUrls {
+    pub anthropic: UpstreamUrl,
+    pub codex: UpstreamUrl,
+    pub openai: UpstreamUrl,
+    pub deepseek: UpstreamUrl,
+}
+
 /// Every upstream entry. Each provider has a client-owned native entry named
 /// after it, always present; operator-key entries are added by configuration.
 #[derive(Debug, Clone)]
@@ -403,6 +412,7 @@ pub struct UpstreamTable {
     anthropic: UpstreamEntry,
     codex: UpstreamEntry,
     openai: UpstreamEntry,
+    deepseek: UpstreamEntry,
     configured: Vec<ConfiguredEntry>,
 }
 
@@ -413,13 +423,8 @@ pub enum UpstreamTableError {
 }
 
 impl UpstreamTable {
-    /// The three native entries, then `extra`.
-    pub fn new(
-        anthropic: UpstreamUrl,
-        codex: UpstreamUrl,
-        openai: UpstreamUrl,
-        extra: Vec<ConfiguredEntry>,
-    ) -> Result<Self, UpstreamTableError> {
+    /// The native entries, then `extra`.
+    pub fn new(urls: NativeUrls, extra: Vec<ConfiguredEntry>) -> Result<Self, UpstreamTableError> {
         let native = |provider: Provider, url| UpstreamEntry {
             id: UpstreamId::default_for(provider),
             api: provider.native_api(),
@@ -427,9 +432,10 @@ impl UpstreamTable {
             auth: UpstreamAuth::ClientOwned,
         };
         let mut table = Self {
-            anthropic: native(Provider::Anthropic, anthropic),
-            codex: native(Provider::Codex, codex),
-            openai: native(Provider::OpenAi, openai),
+            anthropic: native(Provider::Anthropic, urls.anthropic),
+            codex: native(Provider::Codex, urls.codex),
+            openai: native(Provider::OpenAi, urls.openai),
+            deepseek: native(Provider::DeepSeek, urls.deepseek),
             configured: Vec::new(),
         };
         for configured in extra {
@@ -449,6 +455,7 @@ impl UpstreamTable {
             Provider::Anthropic => &self.anthropic,
             Provider::Codex => &self.codex,
             Provider::OpenAi => &self.openai,
+            Provider::DeepSeek => &self.deepseek,
         }
     }
 
@@ -505,7 +512,7 @@ impl UpstreamTable {
 
     /// The native entries, then the configured ones.
     fn entries(&self) -> impl Iterator<Item = &UpstreamEntry> {
-        [&self.anthropic, &self.codex, &self.openai]
+        [&self.anthropic, &self.codex, &self.openai, &self.deepseek]
             .into_iter()
             .chain(self.configured.iter().map(|configured| &configured.entry))
     }
@@ -682,8 +689,8 @@ impl Upstream for ReqwestUpstream {
 #[cfg(test)]
 mod tests {
     use super::{
-        AuthOverride, OperatorKey, ReqwestUpstream, UpstreamAuth, UpstreamEntry, UpstreamTable,
-        UpstreamUrl,
+        AuthOverride, NativeUrls, OperatorKey, ReqwestUpstream, UpstreamAuth, UpstreamEntry,
+        UpstreamTable, UpstreamUrl,
     };
     use crate::attempt::SendFailure;
     use tgv_protocol::route::Provider;
@@ -769,10 +776,14 @@ mod tests {
 
     #[test]
     fn each_provider_resolves_to_its_own_base() {
+        let url = |text: &str| UpstreamUrl::parse(text).unwrap();
         let table = UpstreamTable::new(
-            UpstreamUrl::parse("https://a.example").unwrap(),
-            UpstreamUrl::parse("https://c.example").unwrap(),
-            UpstreamUrl::parse("https://o.example").unwrap(),
+            NativeUrls {
+                anthropic: url("https://a.example"),
+                codex: url("https://c.example"),
+                openai: url("https://o.example"),
+                deepseek: url("https://d.example/anthropic"),
+            },
             Vec::new(),
         )
         .unwrap();
@@ -780,6 +791,7 @@ mod tests {
             (Provider::Anthropic, "a.example"),
             (Provider::Codex, "c.example"),
             (Provider::OpenAi, "o.example"),
+            (Provider::DeepSeek, "d.example"),
         ] {
             let entry = table.native(provider);
             assert_eq!(table.get(&entry.id).unwrap().url.0.host_str(), Some(host));

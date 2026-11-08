@@ -8,8 +8,9 @@ use std::{
     time::Duration,
 };
 use tgv_gateway::{
-    BufferOptions, ConfiguredEntry, ControlOptions, EntryIngress, GatewayConfig, OperatorKey,
-    TransportTimeouts, UpstreamAuth, UpstreamEntry, UpstreamTable, UpstreamUrl, WebSocketOptions,
+    BufferOptions, ConfiguredEntry, ControlOptions, EntryIngress, GatewayConfig, NativeUrls,
+    OperatorKey, TransportTimeouts, UpstreamAuth, UpstreamEntry, UpstreamTable, UpstreamUrl,
+    WebSocketOptions,
     policy::{Policy, PolicyConfig},
 };
 use tgv_harness::host::HostEnv;
@@ -89,6 +90,7 @@ pub struct Config {
     pub anthropic_base_url: String,
     pub codex_base_url: String,
     pub openai_base_url: String,
+    pub deepseek_base_url: String,
     pub max_concurrent_requests: usize,
     pub connect_timeout_seconds: u64,
     pub response_header_timeout_seconds: u64,
@@ -148,6 +150,7 @@ impl Default for Config {
             anthropic_base_url: "https://api.anthropic.com".into(),
             codex_base_url: "https://chatgpt.com/backend-api/codex".into(),
             openai_base_url: "https://api.openai.com".into(),
+            deepseek_base_url: "https://api.deepseek.com/anthropic".into(),
             max_concurrent_requests: 32,
             connect_timeout_seconds: 10,
             response_header_timeout_seconds: 120,
@@ -222,9 +225,12 @@ impl Config {
             })
             .collect::<Result<Vec<_>, ConfigError>>()?;
         let upstreams = UpstreamTable::new(
-            UpstreamUrl::parse(&self.anthropic_base_url)?,
-            UpstreamUrl::parse(&self.codex_base_url)?,
-            UpstreamUrl::parse(&self.openai_base_url)?,
+            NativeUrls {
+                anthropic: UpstreamUrl::parse(&self.anthropic_base_url)?,
+                codex: UpstreamUrl::parse(&self.codex_base_url)?,
+                openai: UpstreamUrl::parse(&self.openai_base_url)?,
+                deepseek: UpstreamUrl::parse(&self.deepseek_base_url)?,
+            },
             extra,
         )?;
         let policy = Policy::new(self.policy.clone(), &upstreams.summaries())?;

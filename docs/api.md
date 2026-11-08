@@ -283,7 +283,7 @@ Observations describe what was recorded, not model or tool state.
 `GET /api/calls` filters all retained calls and returns `{calls, next}` newest
 first. Parameters: `q`, `session` (a TGV session ID), `client` (`claude_code`,
 `codex`, `pi`), `kind` (`model`, `other`), `provider` (`anthropic`, `openai`,
-`codex`), `model`, `tool`, `has_tools`, `status` (`active`, `finished`, `errors`,
+`codex`, `deepseek`), `model`, `tool`, `has_tools`, `status` (`active`, `finished`, `errors`,
 `interrupted`), `from_ms`, `until_ms` (inclusive), `limit` (1–1000), and `after`.
 Filters combine with AND; unknown parameters are rejected.
 
