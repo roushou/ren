@@ -677,3 +677,282 @@ proptest! {
         prop_assert_eq!(&whole, &fragmented);
     }
 }
+
+/// A Chat Completions stream with usage requested: text, then two tool
+/// calls whose arguments arrive in fragments, interleaved by `index`.
+fn chat_stream() -> Vec<u8> {
+    let chunk = |choices: Value, usage: Value| json!({"id":"chatcmpl-1","object":"chat.completion.chunk","created":1,"model":"fixture-gpt","choices":choices,"usage":usage});
+    let mut body = sse(&[
+        chunk(
+            json!([{"index":0,"delta":{"role":"assistant","content":"Look"},"finish_reason":null}]),
+            Value::Null,
+        ),
+        chunk(
+            json!([{"index":0,"delta":{"content":"ing."},"finish_reason":null}]),
+            Value::Null,
+        ),
+        chunk(
+            json!([{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_a","type":"function","function":{"name":"read_file","arguments":""}}]},"finish_reason":null}]),
+            Value::Null,
+        ),
+        chunk(
+            json!([{"index":0,"delta":{"tool_calls":[{"index":1,"id":"call_b","type":"function","function":{"name":"list_dir","arguments":"{\"pa"}}]},"finish_reason":null}]),
+            Value::Null,
+        ),
+        chunk(
+            json!([{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"path\":"}}]},"finish_reason":null}]),
+            Value::Null,
+        ),
+        chunk(
+            json!([{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\"a.rs\"}"}},{"index":1,"function":{"arguments":"th\":\".\"}"}}]},"finish_reason":null}]),
+            Value::Null,
+        ),
+        chunk(
+            json!([{"index":0,"delta":{},"finish_reason":"tool_calls"}]),
+            Value::Null,
+        ),
+        chunk(
+            json!([]),
+            json!({"prompt_tokens":120,"completion_tokens":30,"total_tokens":150,"prompt_tokens_details":{"cached_tokens":100},"completion_tokens_details":{"reasoning_tokens":8}}),
+        ),
+    ]);
+    body.extend_from_slice(b"data: [DONE]\n\n");
+    body
+}
+
+fn read_chunks(
+    format: ResponseFormat,
+    encoding: ResponseEncoding,
+    chunks: &[&[u8]],
+    end: BodyEnd,
+) -> super::inspect::pipeline::ResponseReading {
+    let mut inspector = CallInspector::new(
+        Protocol::ChatCompletions,
+        format,
+        encoding,
+        InspectionLimits::default(),
+    );
+    for chunk in chunks {
+        inspector.feed(chunk);
+    }
+    inspector.finish(end)
+}
+
+#[test]
+fn chat_stream_reports_model_usage_tools_and_outcome() {
+    let reading = read_chunks(
+        ResponseFormat::EventStream,
+        ResponseEncoding::Identity,
+        &[&chat_stream()],
+        BodyEnd::Complete,
+    );
+    let report = reading.inspection;
+    assert_eq!(report.coverage(), Coverage::Complete, "{report:?}");
+    assert_eq!(report.terminal_event(), TerminalEvent::Seen);
+    assert_eq!(report.outcome(), Some(ModelOutcome::Completed));
+    assert_eq!(text(report.model()), Some("fixture-gpt"));
+    assert_eq!(text(report.stop_reason()), Some("tool_calls"));
+    let usage = report.usage().unwrap();
+    assert_eq!(usage.accounting, InputAccounting::IncludesCache);
+    assert_eq!(
+        (
+            usage.input_tokens,
+            usage.output_tokens,
+            usage.cache_read_tokens,
+            usage.reasoning_tokens
+        ),
+        (Some(120), Some(30), Some(100), Some(8))
+    );
+    let calls: Vec<_> = report
+        .tool_calls()
+        .iter()
+        .map(|call| {
+            (
+                text(call.call_id.as_ref()),
+                call.kind.as_str(),
+                text(call.name.as_ref()),
+            )
+        })
+        .collect();
+    assert_eq!(
+        calls,
+        [
+            (Some("call_a"), "function", Some("read_file")),
+            (Some("call_b"), "function", Some("list_dir")),
+        ]
+    );
+    assert_eq!(report.events().understood, 9);
+    let activity = reading.activity;
+    assert_eq!(activity.reply, "Looking.");
+    let uses: Vec<_> = activity
+        .tool_uses
+        .iter()
+        .map(|call| (call.id.as_deref(), call.name.as_str(), call.input.clone()))
+        .collect();
+    assert_eq!(
+        uses,
+        [
+            (
+                Some("call_a"),
+                "read_file",
+                crate::activity::ToolInput::Json(json!({"path":"a.rs"}))
+            ),
+            (
+                Some("call_b"),
+                "list_dir",
+                crate::activity::ToolInput::Json(json!({"path":"."}))
+            ),
+        ]
+    );
+    assert!(activity.limitations.is_empty());
+}
+
+#[test]
+fn chat_streams_without_done_or_usage_say_so() {
+    // Usage was not requested and the stream was cut before `[DONE]`: the
+    // finish reason is reported, but no usage and no terminal marker.
+    let body = sse(&[
+        json!({"object":"chat.completion.chunk","model":"local","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"run","arguments":"{\"cmd\""}}]},"finish_reason":null}]}),
+    ]);
+    let reading = read_chunks(
+        ResponseFormat::EventStream,
+        ResponseEncoding::Identity,
+        &[&body],
+        BodyEnd::Unfinished,
+    );
+    let report = reading.inspection;
+    assert_eq!(report.usage(), None);
+    assert_eq!(report.outcome(), None);
+    assert_eq!(report.terminal_event(), TerminalEvent::Missing);
+    assert_eq!(
+        report.limitations(),
+        [Limitation::BodyUnfinished, Limitation::NoTerminalEvent]
+    );
+    assert_eq!(
+        reading.activity.limitations,
+        [crate::activity::ActivityLimitation::UnfinishedToolCall]
+    );
+    assert_eq!(
+        reading.activity.tool_uses[0].input,
+        crate::activity::ToolInput::Text("{\"cmd\"".into())
+    );
+}
+
+#[test]
+fn chat_errors_unknown_objects_and_reasons_are_kept() {
+    let mut body = sse(&[
+        json!({"object":"chat.completion.chunk","model":"m","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_x","type":"future_tool","future_tool":{}}]},"finish_reason":"future_reason"}]}),
+        json!({"object":"chat.completion.future"}),
+        json!({"error":{"message":"overloaded","type":"server_error"}}),
+    ]);
+    body.extend_from_slice(b"data: [DONE]\n\n");
+    let report = read_chunks(
+        ResponseFormat::EventStream,
+        ResponseEncoding::Identity,
+        &[&body],
+        BodyEnd::Complete,
+    )
+    .inspection;
+    assert_eq!(report.outcome(), Some(ModelOutcome::Failed));
+    assert_eq!(text(report.stop_reason()), Some("future_reason"));
+    let unknown: Vec<_> = report
+        .unknown_kinds()
+        .iter()
+        .map(|kind| (kind.family, kind.kind.as_str()))
+        .collect();
+    assert_eq!(
+        unknown,
+        [
+            (KindFamily::OutputItem, "future_tool"),
+            (KindFamily::StopReason, "future_reason"),
+            (KindFamily::Event, "chat.completion.future"),
+        ]
+    );
+    assert_eq!(report.tool_calls()[0].kind.as_str(), "future_tool");
+    assert_eq!(report.events().unknown, 1);
+}
+
+#[test]
+fn chat_documents_are_read_whole() {
+    let document = json!({
+        "id":"chatcmpl-2","object":"chat.completion","model":"deepseek-chat",
+        "choices":[{"index":0,"finish_reason":"length","message":{"role":"assistant","content":"Partial","tool_calls":[
+            {"id":"call_c","type":"custom","custom":{"name":"apply_patch","input":"*** Begin Patch"}}
+        ]}}],
+        "usage":{"prompt_tokens":50,"completion_tokens":5,"prompt_cache_hit_tokens":40,"prompt_cache_miss_tokens":10}
+    })
+    .to_string();
+    let reading = read_chunks(
+        ResponseFormat::Json,
+        ResponseEncoding::Identity,
+        &[document.as_bytes()],
+        BodyEnd::Complete,
+    );
+    let report = reading.inspection;
+    assert_eq!(report.coverage(), Coverage::Complete);
+    assert_eq!(report.outcome(), Some(ModelOutcome::Incomplete));
+    assert_eq!(text(report.model()), Some("deepseek-chat"));
+    let usage = report.usage().unwrap();
+    assert_eq!(
+        (usage.input_tokens, usage.cache_read_tokens),
+        (Some(50), Some(40))
+    );
+    assert_eq!(report.tool_calls()[0].kind.as_str(), "custom");
+    assert_eq!(
+        text(report.tool_calls()[0].name.as_ref()),
+        Some("apply_patch")
+    );
+    assert_eq!(reading.activity.reply, "Partial");
+    assert_eq!(
+        reading.activity.tool_uses[0].input,
+        crate::activity::ToolInput::Text("*** Begin Patch".into())
+    );
+
+    let error = read_chunks(
+        ResponseFormat::Json,
+        ResponseEncoding::Identity,
+        &[br#"{"error":{"message":"bad key","type":"invalid_request_error"}}"#],
+        BodyEnd::Complete,
+    )
+    .inspection;
+    assert_eq!(error.outcome(), Some(ModelOutcome::Failed));
+    assert_eq!(error.terminal_event(), TerminalEvent::Seen);
+    // Chat Completions never streams over WebSocket or without a type.
+    for format in [
+        ResponseFormat::Unspecified,
+        ResponseFormat::WebSocketMessages,
+    ] {
+        let report =
+            read_chunks(format, ResponseEncoding::Identity, &[], BodyEnd::Complete).inspection;
+        assert_eq!(report.limitations(), [Limitation::UnsupportedFormat]);
+    }
+}
+
+proptest! {
+    #[test]
+    fn chat_readings_are_independent_of_chunk_boundaries(
+        encoding in prop_oneof![
+            Just(ResponseEncoding::Identity),
+            Just(ResponseEncoding::Gzip),
+        ],
+        crlf in any::<bool>(),
+        cuts in proptest::collection::vec(any::<usize>(), 0..32),
+    ) {
+        let mut body = chat_stream();
+        if crlf {
+            body = String::from_utf8(body).unwrap().replace('\n', "\r\n").into_bytes();
+        }
+        let encoded = encode(encoding, &body);
+        let whole = read_chunks(ResponseFormat::EventStream, encoding, &[&encoded], BodyEnd::Complete);
+        let fragmented = read_chunks(
+            ResponseFormat::EventStream,
+            encoding,
+            &split(&encoded, &cuts),
+            BodyEnd::Complete,
+        );
+        prop_assert_eq!(&whole, &fragmented);
+        prop_assert_eq!(whole.inspection.outcome(), Some(ModelOutcome::Completed));
+        prop_assert_eq!(whole.inspection.limitations(), &[][..]);
+        prop_assert_eq!(whole.activity.tool_uses.len(), 2);
+    }
+}

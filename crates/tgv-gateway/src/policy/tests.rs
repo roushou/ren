@@ -174,6 +174,14 @@ reason = "r""#,
         (
             r#"[[transform]]
 id = "t"
+match = { endpoint = "chat_completions" }
+steps = [{ op = "json_set", path = "/user", value = "someone-else" }]
+reason = "r""#,
+            "protected body path",
+        ),
+        (
+            r#"[[transform]]
+id = "t"
 match = { provider = "codex" }
 steps = [{ op = "set_header", name = "Authorization", value = "x" }]
 reason = "r""#,

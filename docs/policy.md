@@ -28,7 +28,8 @@ longer than `idle_timeout_seconds` (30) or take longer than
 `remove_header`, `json_set`, or `json_remove` (JSON Pointer) steps. Credentials,
 client identity (`user-agent`, `originator`, `x-app`), beta headers, framing
 headers, and identity or position-sensitive body fields (`/system`, `/metadata`,
-`/betas`, `/previous_response_id`, `/client_metadata`) are protected: a rule that
+`/betas`, `/previous_response_id`, `/client_metadata`, and Chat Completions'
+`/user` and `/safety_identifier`) are protected: a rule that
 touches them is refused when the configuration loads. A changed body is stored as
 the attempt's own request beside the client's original. Body steps do not run on a
 compressed request. [`tgv.example.toml`](../tgv.example.toml) shows each rule type.
@@ -54,8 +55,13 @@ on_status = [429]
 ```
 
 An entry speaks its provider's own wire format. `wire` names it explicitly
-(`anthropic_messages` or `openai_responses`); a format the provider does not offer
-is refused when the configuration loads.
+(`anthropic_messages`, `openai_responses`, or `openai_chat_completions`); a format
+the provider does not offer is refused when the configuration loads. Chat
+Completions is offered by `openai`, `deepseek` (its OpenAI-compatible API), and
+`anthropic` (its OpenAI SDK compatibility layer, which Anthropic documents for
+testing rather than production); `codex` speaks only Responses. A Chat
+Completions entry is reached through its [direct routes](#direct-routes): no
+provider route speaks it.
 
 When the provider's own upstream answers a listed status before anything reached
 the client, TGV records that response and replays the request to the fallback
@@ -84,11 +90,13 @@ ingress = "direct"
 The entry is then mounted at `/upstreams/anthropic-key`, with its wire format's
 native paths below it (`/v1/messages`, `/v1/messages/count_tokens`, and
 `/v1/models` for `anthropic_messages`; `/v1/responses`, `/v1/responses/compact`,
-and `/v1/models` for `openai_responses`, whose WebSocket mode is refused). Every
+and `/v1/models` for `openai_responses`, whose WebSocket mode is refused;
+`/v1/chat/completions` and `/v1/models` for `openai_chat_completions`). Every
 call there uses the operator key in place of the client's credentials, so any
 client that can reach the gateway bills the key: leave `ingress` out unless that
 is intended. Block and transform rules apply as on the provider's own routes;
-fallback rules do not, since the call already uses an operator key. Calls are
+fallback rules do not, since the call already uses an operator key. Chat
+Completions takes the key as `Authorization: Bearer`, for every provider. Calls are
 recorded with the entry's provider and wire format, and the attempt with the
 entry's id.
 

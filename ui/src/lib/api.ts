@@ -47,7 +47,14 @@ export const TurnId = new Uuid<'TurnId'>();
 // Vocabularies (the daemon's label enums). Unrecognised text is kept.
 const providers = ['anthropic', 'codex', 'openai', 'deepseek'] as const;
 export type Provider = (typeof providers)[number];
-const endpoints = ['messages', 'count_tokens', 'models', 'responses', 'responses_compact'] as const;
+const endpoints = [
+  'messages',
+  'count_tokens',
+  'models',
+  'responses',
+  'responses_compact',
+  'chat_completions',
+] as const;
 export type Endpoint = (typeof endpoints)[number];
 // `MESSAGE`: a `response.create` on a WebSocket channel.
 const methods = ['GET', 'POST', 'MESSAGE'] as const;

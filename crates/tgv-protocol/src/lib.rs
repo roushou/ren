@@ -1,9 +1,9 @@
 //! Sans-IO understanding of native provider protocols.
 //!
 //! Everything here is pure computation over bytes the caller already has:
-//! SSE framing, Anthropic Messages and OpenAI Responses wire vocabularies,
-//! WebSocket message classification, incremental decompression, and per-call
-//! inspection, plus the vocabularies that name providers, endpoints, and
+//! SSE framing, Anthropic Messages, OpenAI Responses, and OpenAI Chat
+//! Completions wire vocabularies, WebSocket message classification,
+//! incremental decompression, and per-call inspection, plus the vocabularies that name providers, endpoints, and
 //! directions, and the native identifiers the wire carries. Nothing here
 //! performs I/O, reads time, or depends on the async runtime, HTTP framework,
 //! database, or CLI parser; the manifest lists the only dependencies allowed.
@@ -17,6 +17,7 @@
 //! [`Limitation`]: inspect::Limitation
 
 pub mod activity;
+pub mod chat;
 pub mod direction;
 pub mod encoding;
 pub mod inspect;
