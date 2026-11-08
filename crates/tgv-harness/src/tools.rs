@@ -115,6 +115,23 @@ pub enum PiTool {
     Ls,
 }
 
+/// opencode's built-in tools (opencode 2.x).
+#[derive(Display, EnumString, IntoStaticStr, VariantArray)]
+#[strum(serialize_all = "snake_case")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SerializeDisplay, DeserializeFromStr)]
+pub enum OpenCodeTool {
+    Shell,
+    Read,
+    Write,
+    Edit,
+    Patch,
+    Glob,
+    Grep,
+    Subagent,
+    Webfetch,
+    Websearch,
+}
+
 impl Harness {
     /// Wrappers a client puts around context it adds to user messages.
     const CLAUDE_CODE_CONTEXT: &[(&str, &str)] = &[("<system-reminder>", "</system-reminder>")];
@@ -122,6 +139,16 @@ impl Harness {
         ("<environment_context>", "</environment_context>"),
         ("<user_instructions>", "</user_instructions>"),
         ("# AGENTS.md instructions", ""),
+    ];
+    /// opencode's notices of a finished background command or subagent, and
+    /// of a command the user ran themself.
+    const OPENCODE_CONTEXT: &[(&str, &str)] = &[
+        ("<shell ", "</shell>"),
+        ("<subagent ", "</subagent>"),
+        (
+            "The following shell command was executed by the user:",
+            "</shell>",
+        ),
     ];
 
     /// What `tool` does, from its name and input. Unknown tools, and inputs
@@ -191,6 +218,24 @@ impl Harness {
                 Some(PiTool::Ls) => effect(EffectKind::ReadFile, "path"),
                 None => Vec::new(),
             },
+            Self::OpenCode => match OpenCodeTool::from_label(&tool.name) {
+                Some(OpenCodeTool::Shell) => effect(EffectKind::RunCommand, "command"),
+                Some(OpenCodeTool::Read) => effect(EffectKind::ReadFile, "path"),
+                Some(OpenCodeTool::Write | OpenCodeTool::Edit) => {
+                    effect(EffectKind::WriteFile, "path")
+                }
+                Some(OpenCodeTool::Patch) => field("patchText")
+                    .and_then(Value::as_str)
+                    .map(Self::patch_files)
+                    .unwrap_or_default(),
+                Some(OpenCodeTool::Glob | OpenCodeTool::Grep) => {
+                    effect(EffectKind::Search, "pattern")
+                }
+                Some(OpenCodeTool::Subagent) => effect(EffectKind::Delegate, "description"),
+                Some(OpenCodeTool::Webfetch) => effect(EffectKind::Fetch, "url"),
+                Some(OpenCodeTool::Websearch) => effect(EffectKind::Search, "query"),
+                None => Vec::new(),
+            },
         }
     }
 
@@ -210,7 +255,7 @@ impl Harness {
             {
                 CallPurpose::QuotaProbe
             }
-            Self::ClaudeCode | Self::Codex | Self::Pi => CallPurpose::Work,
+            Self::ClaudeCode | Self::Codex | Self::Pi | Self::OpenCode => CallPurpose::Work,
         }
     }
 
@@ -221,6 +266,7 @@ impl Harness {
             Self::ClaudeCode => Self::CLAUDE_CODE_CONTEXT,
             Self::Codex => Self::CODEX_CONTEXT,
             Self::Pi => &[],
+            Self::OpenCode => Self::OPENCODE_CONTEXT,
         };
         let own: Vec<&str> = user_text
             .iter()
@@ -236,9 +282,18 @@ impl Harness {
     }
 
     /// A tool result's status: the protocol's flag, or, for Codex commands,
-    /// the exit code its output reports.
+    /// the exit code its output reports, or, for opencode commands, the
+    /// failure its output ends with. opencode says nothing when a command
+    /// exits 0, so its silence stays unreported.
     pub fn result_status(self, result: &ToolResult) -> ResultStatus {
         match (self, result.status) {
+            (Self::OpenCode, ResultStatus::Unreported) => {
+                if Self::opencode_failure(&result.output) {
+                    ResultStatus::Failed
+                } else {
+                    ResultStatus::Unreported
+                }
+            }
             (Self::Codex, ResultStatus::Unreported) => {
                 Self::exit_code(&result.output).map_or(ResultStatus::Unreported, |code| {
                     if code == 0 {
@@ -248,8 +303,23 @@ impl Harness {
                     }
                 })
             }
-            (Self::ClaudeCode | Self::Codex | Self::Pi, status) => status,
+            (Self::ClaudeCode | Self::Codex | Self::Pi | Self::OpenCode, status) => status,
         }
+    }
+
+    /// opencode ends a command's output with `Exited with code N` (never 0),
+    /// `Killed by SIGNAL`, or `Timed out before completion`.
+    fn opencode_failure(output: &str) -> bool {
+        let Some(last) = output.lines().map(str::trim).rfind(|line| !line.is_empty()) else {
+            return false;
+        };
+        if let Some(code) = last.strip_prefix("Exited with code ") {
+            return code.parse::<i64>().is_ok_and(|code| code != 0);
+        }
+        last == "Timed out before completion"
+            || last
+                .strip_prefix("Killed by ")
+                .is_some_and(|signal| !signal.is_empty())
     }
 
     /// Codex reports a command's exit code as a first line `Exit code: N`,
@@ -617,6 +687,117 @@ mod tests {
     }
 
     #[test]
+    fn opencode_tools_prompts_and_failures() {
+        let json = |value| ToolInput::Json(value);
+        let patch = "*** Begin Patch\n*** Update File: src/app.py\n*** Move to: src/main.py\n@@\n*** Delete File: old.txt\n*** End Patch";
+        let cases = [
+            (
+                "shell",
+                json!({ "command": "cargo test", "workdir": "/x" }),
+                vec![(EffectKind::RunCommand, "cargo test")],
+            ),
+            (
+                "read",
+                json!({ "path": "README.md" }),
+                vec![(EffectKind::ReadFile, "README.md")],
+            ),
+            (
+                "edit",
+                json!({ "path": "src/a.rs", "oldString": "x", "newString": "y" }),
+                vec![(EffectKind::WriteFile, "src/a.rs")],
+            ),
+            (
+                "patch",
+                json!({ "patchText": patch }),
+                vec![
+                    (EffectKind::WriteFile, "src/app.py"),
+                    (EffectKind::WriteFile, "src/main.py"),
+                    (EffectKind::WriteFile, "old.txt"),
+                ],
+            ),
+            (
+                "grep",
+                json!({ "pattern": "Store", "include": "*.rs" }),
+                vec![(EffectKind::Search, "Store")],
+            ),
+            (
+                "subagent",
+                json!({ "agent": "general", "description": "Find callers", "prompt": "..." }),
+                vec![(EffectKind::Delegate, "Find callers")],
+            ),
+            (
+                "webfetch",
+                json!({ "url": "https://example.com", "format": "markdown" }),
+                vec![(EffectKind::Fetch, "https://example.com")],
+            ),
+            // opencode 1.x's names, and Claude Code's, are not opencode 2.x's.
+            ("bash", json!({ "command": "ls" }), vec![]),
+            ("Read", json!({ "path": "a" }), vec![]),
+            ("todowrite", json!({ "todos": [] }), vec![]),
+        ];
+        for (name, input, expected) in cases {
+            let expected: Vec<(EffectKind, String)> = expected
+                .into_iter()
+                .map(|(kind, target)| (kind, target.to_owned()))
+                .collect();
+            assert_eq!(
+                targets(Harness::OpenCode, &tool(name, "tool_use", json(input))),
+                expected,
+                "{name}"
+            );
+        }
+
+        let text = |values: &[&str]| {
+            values
+                .iter()
+                .map(|value| (*value).to_owned())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            Harness::OpenCode.prompt(&text(&[
+                "<shell id=\"sh_1\" state=\"completed\" command=\"make\">\nok\n</shell>",
+                "<subagent sessionID=\"ses_1\" state=\"completed\">\ndone\n</subagent>",
+                "The following shell command was executed by the user:\n<shell id=\"sh_2\" state=\"completed\" command=\"ls\">\na\n</shell>",
+                "Now ship it",
+            ])),
+            Some("Now ship it".to_owned())
+        );
+
+        let result = |output: &str, status| ToolResult {
+            id: "c".to_owned(),
+            status,
+            output: output.to_owned(),
+        };
+        for (output, expected) in [
+            ("error: x\n\nExited with code 101", ResultStatus::Failed),
+            ("partial\nKilled by SIGTERM\n", ResultStatus::Failed),
+            ("Timed out before completion", ResultStatus::Failed),
+            // Success is silent, so it stays unreported.
+            ("test result: ok", ResultStatus::Unreported),
+            ("Exited with code 0", ResultStatus::Unreported),
+            (
+                "Exited with code 1\nthen more output",
+                ResultStatus::Unreported,
+            ),
+            ("", ResultStatus::Unreported),
+        ] {
+            assert_eq!(
+                Harness::OpenCode.result_status(&result(output, ResultStatus::Unreported)),
+                expected,
+                "{output}"
+            );
+        }
+        assert_eq!(
+            Harness::OpenCode.result_status(&result("Exited with code 1", ResultStatus::Succeeded)),
+            ResultStatus::Succeeded
+        );
+        assert_eq!(
+            Harness::Codex.result_status(&result("Exited with code 1", ResultStatus::Unreported)),
+            ResultStatus::Unreported
+        );
+    }
+
+    #[test]
     fn claude_codes_quota_probe_is_bookkeeping() {
         use tgv_protocol::activity::RequestActivity;
         let probe = RequestActivity {
@@ -648,7 +829,7 @@ mod tests {
             ..probe.clone()
         };
         assert_eq!(Harness::ClaudeCode.purpose(&longer), CallPurpose::Work);
-        for harness in [Harness::Codex, Harness::Pi] {
+        for harness in [Harness::Codex, Harness::Pi, Harness::OpenCode] {
             assert_eq!(harness.purpose(&probe), CallPurpose::Work);
         }
         let unknown = InterpretedCall::new(

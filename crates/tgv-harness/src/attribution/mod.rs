@@ -24,6 +24,10 @@ pub enum HintSource {
     PiExtensionHeaders,
     /// The `client_metadata` of a Codex WebSocket `response.create`.
     CodexMessageMetadata,
+    /// opencode's `x-opencode-session-id`, a `ses_…` identifier rather than a
+    /// UUID; the hint carries a UUID derived from it.
+    #[strum(to_string = "opencode_headers")]
+    OpenCodeHeaders,
 }
 
 impl HintSource {
@@ -33,6 +37,7 @@ impl HintSource {
             Self::ClaudeCodeHeaders => Harness::ClaudeCode,
             Self::CodexHeaders | Self::CodexMessageMetadata => Harness::Codex,
             Self::PiExtensionHeaders => Harness::Pi,
+            Self::OpenCodeHeaders => Harness::OpenCode,
         }
     }
 }

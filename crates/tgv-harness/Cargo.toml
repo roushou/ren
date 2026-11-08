@@ -7,7 +7,7 @@ homepage.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
-description = "Claude Code, Codex, and Pi harness support for the TGV LLM gateway: attribution, launch plans, and the embedded Pi extension."
+description = "Claude Code, Codex, Pi, and opencode harness support for the TGV LLM gateway: attribution, launch plans, and the embedded Pi extension."
 
 # The harnesses and how TGV launches them. Never add an async runtime, HTTP
 # client or server, database driver, or CLI parser (docs/architecture.md).

@@ -103,9 +103,32 @@ impl Harness {
                     .into(),
                 ];
             }
+            Self::OpenCode => {
+                plan.executable = "opencode";
+                // opencode's documented runtime override; it merges over the
+                // global and project files. Only the two providers' base URLs
+                // are set: keys, sign-in, and every other provider stay
+                // opencode's own. Its OpenAI WebSocket is refused with 426, and
+                // opencode keeps the session on HTTP/SSE.
+                let config = serde_json::json!({
+                    "provider": {
+                        "anthropic": {
+                            "options": { "baseURL": gateway.url("/anthropic/v1").as_str() }
+                        },
+                        "openai": {
+                            "options": { "baseURL": gateway.url("/openai/v1").as_str() }
+                        },
+                    }
+                });
+                plan.environment
+                    .insert(Self::OPENCODE_CONFIG.into(), config.to_string());
+            }
         }
         plan
     }
+
+    /// The environment variable opencode reads inline configuration from.
+    const OPENCODE_CONFIG: &'static str = "OPENCODE_CONFIG_CONTENT";
 }
 
 impl LaunchPlan {
@@ -133,6 +156,18 @@ impl LaunchPlan {
                     "TGV routes Pi's anthropic, openai, and openai-codex providers; other providers keep their own endpoints."
                 );
                 Some(PiCache::locate(env)?.materialize()?)
+            }
+            Harness::OpenCode => {
+                if env.is_set(Harness::OPENCODE_CONFIG) {
+                    eprintln!(
+                        "TGV replaces {} for this session; keep other settings in opencode.json.",
+                        Harness::OPENCODE_CONFIG
+                    );
+                }
+                eprintln!(
+                    "TGV routes opencode's anthropic and openai providers; other providers keep their own endpoints."
+                );
+                None
             }
             Harness::ClaudeCode | Harness::Codex => None,
         };
@@ -164,7 +199,12 @@ mod tests {
     #[test]
     fn keeps_arguments_literal_and_auth_out_of_overrides() {
         let gateway = GatewayEndpoint::parse("http://[::1]:8787").unwrap();
-        for harness in [Harness::ClaudeCode, Harness::Codex, Harness::Pi] {
+        for harness in [
+            Harness::ClaudeCode,
+            Harness::Codex,
+            Harness::Pi,
+            Harness::OpenCode,
+        ] {
             let plan = harness.launch(&gateway);
             let argument = OsString::from("$(touch /tmp/never) ' ; \n");
             let command = plan.command(None, std::slice::from_ref(&argument));
@@ -174,7 +214,8 @@ mod tests {
                     .get_envs()
                     .all(|(key, _)| key == "ANTHROPIC_BASE_URL"
                         || key == "CLAUDE_CODE_GATEWAY_HINT_HEADERS"
-                        || key == "TGV_PI_GATEWAY")
+                        || key == "TGV_PI_GATEWAY"
+                        || key == "OPENCODE_CONFIG_CONTENT")
             );
             if harness == Harness::Codex {
                 let Some(LaunchArg::Literal(last)) = plan.arguments.last() else {
@@ -190,6 +231,37 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn opencode_gets_only_base_urls_for_its_native_providers() {
+        let gateway = GatewayEndpoint::parse("https://tgv.example.ts.net").unwrap();
+        let plan = Harness::OpenCode.launch(&gateway);
+        assert_eq!(plan.executable, "opencode");
+        assert!(plan.arguments.is_empty());
+        let json = serde_json::to_value(&plan).unwrap();
+        let config: serde_json::Value = serde_json::from_str(
+            json["environment"]["OPENCODE_CONFIG_CONTENT"]
+                .as_str()
+                .unwrap(),
+        )
+        .unwrap();
+        // No key, header, or other provider: authentication stays opencode's,
+        // and nothing claims to be another client.
+        assert_eq!(
+            config,
+            serde_json::json!({
+                "provider": {
+                    "anthropic": {
+                        "options": { "baseURL": "https://tgv.example.ts.net/anthropic/v1" }
+                    },
+                    "openai": {
+                        "options": { "baseURL": "https://tgv.example.ts.net/openai/v1" }
+                    },
+                }
+            })
+        );
+        assert_eq!(json["environment"].as_object().unwrap().len(), 1);
     }
 
     #[test]

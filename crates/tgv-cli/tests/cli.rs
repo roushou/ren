@@ -70,6 +70,25 @@ fn command_structs_preserve_help_flags_and_dry_run_output() {
     assert!(!String::from_utf8_lossy(&output.stdout).contains("PRIVATE_PROMPT"));
     assert!(output.stderr.is_empty());
     assert!(!data.exists());
+    let output = cli(&[
+        "run",
+        "opencode",
+        "--dry-run",
+        "--data-dir",
+        data.to_str().unwrap(),
+        "--gateway",
+        "http://127.0.0.1:1",
+    ]);
+    success(&output);
+    let plan = json(&output);
+    assert_eq!(plan["executable"], "opencode");
+    assert!(
+        plan["environment"]["OPENCODE_CONFIG_CONTENT"]
+            .as_str()
+            .unwrap()
+            .contains("http://127.0.0.1:1/anthropic/v1")
+    );
+    assert!(!data.exists());
     assert_eq!(cli(&["history", "--limit", "0"]).status.code(), Some(2));
 }
 

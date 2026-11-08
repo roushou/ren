@@ -1,4 +1,5 @@
 import { browser } from '$app/env';
+import { LivePlace } from '#lib/board.ts';
 import { LiveReader } from '#lib/loaders.ts';
 import type { PageLoad } from './$types';
 
@@ -6,6 +7,6 @@ import type { PageLoad } from './$types';
 // every live refresh. The server reads afresh for each request.
 const reader = browser ? new LiveReader() : null;
 
-export const load: PageLoad = async ({ fetch }) => ({
-  live: await (reader ?? new LiveReader()).read(fetch),
+export const load: PageLoad = async ({ fetch, url }) => ({
+  live: await (reader ?? new LiveReader()).read(fetch, LivePlace.parse(url.searchParams).window),
 });

@@ -124,6 +124,7 @@ const hintSources = [
   'codex_headers',
   'pi_extension_headers',
   'codex_message_metadata',
+  'opencode_headers',
 ] as const;
 export type HintSource = (typeof hintSources)[number];
 const hintIssues = [
@@ -812,7 +813,7 @@ export class ApiError extends Error {
 
 // Activity and reports: what a turn or call did, read from recorded bodies,
 // and where a session's context and cache tokens went.
-const harnesses = ['claude_code', 'codex', 'pi'] as const;
+const harnesses = ['claude_code', 'codex', 'pi', 'opencode'] as const;
 export type Harness = (typeof harnesses)[number];
 export const HARNESSES = harnesses;
 const effectKinds = [

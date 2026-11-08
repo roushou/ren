@@ -28,6 +28,7 @@ enum Client {
     Claude,
     Codex,
     Pi,
+    Opencode,
 }
 
 impl From<Client> for Harness {
@@ -36,6 +37,7 @@ impl From<Client> for Harness {
             Client::Claude => Self::ClaudeCode,
             Client::Codex => Self::Codex,
             Client::Pi => Self::Pi,
+            Client::Opencode => Self::OpenCode,
         }
     }
 }
