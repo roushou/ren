@@ -22,7 +22,8 @@ import { callStatus, sessionTone, span, statusBadge, type Tone } from './display
 /**
  * What a session is doing, as far as its recorded calls show. Only the
  * first two are observed on the wire right now; `client` is inferred from
- * the last call asking for tools, and `idle` only means no call is open.
+ * the last call asking for tools, `yours` from the last call finishing its
+ * turn without asking for any, and `idle` only means no call is open.
  */
 export type SessionPhase =
   /** A call was sent and no response head has arrived. */
@@ -31,10 +32,35 @@ export type SessionPhase =
   | { kind: 'responding'; call: CallView; since: number }
   /** The last call completed asking for tools: the client's turn. Inferred. */
   | { kind: 'client'; call: CallView; since: number }
+  /** The last call completed without asking for tools, lately: the user's turn. Inferred. */
+  | { kind: 'yours'; call: CallView; since: number }
   /** The last call did not end as a completed model call. */
-  | { kind: 'stopped'; call: CallView; since: number; label: string; tone: Tone }
-  /** No call open, and the last one completed. */
+  | {
+      kind: 'stopped';
+      call: CallView;
+      since: number;
+      label: string;
+      tone: Tone;
+      ending: 'failed' | 'warning' | 'unknown';
+    }
+  /** No call open, and the last one completed a while ago. */
   | { kind: 'idle'; since: number };
+
+/**
+ * A card's state at a glance: the colour of its edge and the glyph before
+ * its state's words. Each one has its own shape, so colour is never the
+ * only cue.
+ */
+export type StateMark =
+  | 'responding'
+  | 'waiting'
+  | 'slow'
+  | 'client'
+  | 'yours'
+  | 'idle'
+  | 'failed'
+  | 'warning'
+  | 'unknown';
 
 /** A tool call the model asked for: what it touched and what came back. */
 export interface ToolLine {
@@ -350,42 +376,73 @@ export class Board {
     if (status.kind === 'model_completed')
       return last.tool_names.length
         ? { kind: 'client', call: last, since }
-        : { kind: 'idle', since };
+        : now - since < Board.laneMs
+          ? { kind: 'yours', call: last, since }
+          : { kind: 'idle', since };
     if (status.kind === 'http_complete') return { kind: 'idle', since };
     const badge = statusBadge(status);
     const label =
       last.status !== null && last.status >= 400 ? `${badge.label} ${last.status}` : badge.label;
-    return { kind: 'stopped', call: last, since, label, tone: badge.tone };
+    // A restart or an unreadable ending is unknown, never rounded to a failure or a success.
+    const ending =
+      status.kind === 'recovered' || status.kind === 'unknown'
+        ? 'unknown'
+        : badge.tone === 'error'
+          ? 'failed'
+          : 'warning';
+    return { kind: 'stopped', call: last, since, label, tone: badge.tone, ending };
   }
 
-  /** The phase as a short label and tone, for the tile's state chip. */
-  static phaseChip(phase: SessionPhase, now: number): { label: string; tone: Tone; title: string } {
+  /** The phase as a short label, tone, and mark, for the tile's state chip and edge. */
+  static phaseChip(
+    phase: SessionPhase,
+    now: number,
+  ): { label: string; tone: Tone; title: string; mark: StateMark } {
     switch (phase.kind) {
-      case 'awaiting':
+      case 'awaiting': {
+        const slow = now - phase.since >= Board.slowHeadMs;
         return {
           label: `Waiting for response · ${span(now - phase.since)}`,
-          tone: now - phase.since >= Board.slowHeadMs ? 'warning' : 'live',
+          tone: slow ? 'warning' : 'live',
           title: 'Sent upstream; no response head yet',
+          mark: slow ? 'slow' : 'waiting',
         };
+      }
       case 'responding':
         return {
           label: `Responding · ${span(now - phase.since)}`,
           tone: 'live',
           title: 'Response head received; the body is still streaming',
+          mark: 'responding',
         };
       case 'client':
         return {
           label: `Client's turn · ${span(now - phase.since)}`,
           tone: 'neutral',
           title: `The last call asked for ${phase.call.tool_names.join(', ')}; inferred, TGV does not see tools run`,
+          mark: 'client',
+        };
+      case 'yours':
+        return {
+          label: `Your turn · ${span(now - phase.since)}`,
+          tone: 'neutral',
+          title:
+            'The last call finished its turn without asking for tools; inferred, TGV does not see your terminal',
+          mark: 'yours',
         };
       case 'stopped':
-        return { label: phase.label, tone: phase.tone, title: 'How the last call ended' };
+        return {
+          label: phase.label,
+          tone: phase.tone,
+          title: 'How the last call ended',
+          mark: phase.ending,
+        };
       case 'idle':
         return {
           label: `Idle · ${span(now - phase.since)}`,
           tone: 'neutral',
           title: 'No call open; the last one completed',
+          mark: 'idle',
         };
       default:
         return assertNever(phase);

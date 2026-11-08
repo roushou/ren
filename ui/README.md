@@ -16,7 +16,9 @@ Pages: Overview (`/`: a health line, calls in flight and sessions active in the 
 (`/live`: the sessions active in the last 15 minutes as they work (or 5 minutes, an
 hour, or four hours, chosen beside the active count; a window holding more than the page
 reads at once is marked partial), on a four-by-two board
-of cards or as rows: each session's client and provider, its state, and its current
+of cards or as rows: each session's client and provider, its state (shown by a coloured edge down the card and
+a glyph of its own: responding, waiting for a response, the client's turn, your turn when
+a call finished its turn without asking for tools, idle, failed, warning, or unknown), and its current
 turn's prompt, replies, and tool calls (each with what it touched, its result, and the
 first line it returned; like calls in a row merge into one line with a count, and commands
 drop the `cd` into the turn's directory), with what the turn read, wrote, and ran. A

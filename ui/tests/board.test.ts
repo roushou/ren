@@ -108,7 +108,11 @@ test('the phase separates waiting for a head, streaming, the client turn, and en
   const client = Board.phase([done(1, 1, { tool_names: ['Bash'] })], NOW);
   assert.equal(client.kind, 'client');
   assert.match(Board.phaseChip(client, NOW).title, /inferred/);
-  assert.equal(Board.phase([done(1, 1)], NOW).kind, 'idle');
+  // A turn finished without tools hands it to the user, until the lane's span goes quiet.
+  assert.equal(Board.phase([done(1, 1)], NOW).kind, 'yours');
+  assert.match(Board.phaseChip(Board.phase([done(1, 1)], NOW), NOW).title, /inferred/);
+  const long = ms(NOW - Board.laneMs - 1);
+  assert.equal(Board.phase([done(1, 1, { started_at: long, ended_at: long })], NOW).kind, 'idle');
   // An unknown ending is never rounded up to idle or success.
   const unknown = Board.phase([done(1, 1, { outcome: 'unknown', state: 'recovered' })], NOW);
   assert.equal(unknown.kind, 'stopped');
@@ -801,4 +805,20 @@ test('a pinned session keeps its card when busier ones would take it', () => {
   assert.equal(pinned.tiles.filter((candidate) => candidate.pinned).length, 1);
   // A pin on a session that is not active adds nothing.
   assert.equal(board({ sessions, pins: [sid(50)] }).tiles.length, Board.maxTiles);
+});
+
+test('every state has its own mark, and an unknown ending is never a failure', () => {
+  const mark = (calls: CallView[]) => Board.phaseChip(Board.phase(calls, NOW), NOW).mark;
+  const long = ms(NOW - Board.laneMs - 1);
+  assert.equal(mark([open(1, 1)]), 'waiting');
+  assert.equal(mark([open(1, 1, { started_at: ms(NOW - Board.slowHeadMs - 1) })]), 'slow');
+  assert.equal(mark([open(1, 1, { status: 200 })]), 'responding');
+  assert.equal(mark([done(1, 1, { tool_names: ['Bash'] })]), 'client');
+  assert.equal(mark([done(1, 1)]), 'yours');
+  assert.equal(mark([done(1, 1, { started_at: long, ended_at: long })]), 'idle');
+  assert.equal(mark([done(1, 1, { status: 500, outcome: null })]), 'failed');
+  assert.equal(mark([done(1, 1, { status: 429, outcome: null })]), 'failed');
+  assert.equal(mark([done(1, 1, { terminal: 'cancelled', outcome: null })]), 'warning');
+  assert.equal(mark([done(1, 1, { outcome: 'unknown', state: 'recovered' })]), 'unknown');
+  assert.equal(mark([]), 'idle');
 });

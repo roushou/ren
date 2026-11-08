@@ -533,7 +533,8 @@
                 >
                 <td
                   ><span class="mono live-state {rowChip.tone}" title={rowChip.title}
-                    >{rowChip.label}</span
+                    ><span class="state-glyph {rowChip.mark}" aria-hidden="true"
+                    ></span>{rowChip.label}</span
                   ></td
                 >
                 <td class="lane-column">{@render lane(tile)}</td>
@@ -552,7 +553,9 @@
           {@const focused = board.focus === tile.session.id}
           {@const toCall = callHref(tile)}
           <article
-            class="live-tile {harnessClass(tile)} {attention ? `attention-${attention}` : ''}"
+            class="live-tile {harnessClass(tile)} edge-{chip.mark} {attention
+              ? `attention-${attention}`
+              : ''}"
             class:quiet={tile.quiet && !focused}
             class:focused
             class:highlighted={highlighted === tile.session.id || inHoveredSeries(tile)}
@@ -669,7 +672,10 @@
             {/if}
             <footer class="live-tile-foot mono">
               <div class="live-foot-state">
-                <span class="live-state {chip.tone}" title={chip.title}>{chip.label}</span>
+                <span class="live-state {chip.tone} mark-{chip.mark}" title={chip.title}
+                  ><span class="state-glyph {chip.mark}" aria-hidden="true"
+                  ></span>{chip.label}</span
+                >
               </div>
               <div class="live-foot-facts" title="Provider-reported tokens of the newest call">
                 {facts(tile)}
@@ -1050,6 +1056,124 @@
   .live-tile.quiet.highlighted,
   .live-rows tr.quiet:hover {
     opacity: 1;
+  }
+  /*
+   * The state edge: a bar down the card's left side, coloured by what the
+   * session is doing, so the wall reads from across the room. Idle has none.
+   */
+  .live-tile::before {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    width: 3px;
+    background: var(--edge, transparent);
+    content: '';
+    pointer-events: none;
+  }
+  /* State colours, not client colours: a client's colour never stands for a state. */
+  .edge-responding {
+    --edge: var(--live);
+  }
+  .edge-responding::before {
+    animation: live-breathe 1.6s ease-in-out infinite;
+  }
+  .edge-waiting {
+    --edge: var(--ink);
+  }
+  .edge-slow,
+  .edge-warning {
+    --edge: var(--warning);
+  }
+  .edge-client {
+    --edge: var(--role-thinking);
+  }
+  .edge-yours {
+    --edge: var(--success);
+  }
+  .edge-failed {
+    --edge: var(--error);
+  }
+  /* Unknown is dashed grey: it must never read as an ending, good or bad. */
+  .edge-unknown::before {
+    background: repeating-linear-gradient(to bottom, var(--muted) 0 6px, transparent 6px 10px);
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .edge-responding::before {
+      animation: none;
+    }
+  }
+
+  /* The state glyph: a shape per state, so the chip reads without colour. */
+  .state-glyph {
+    display: inline-block;
+    flex: none;
+    box-sizing: border-box;
+    width: 8px;
+    height: 8px;
+    margin-right: 6px;
+    vertical-align: 0;
+  }
+  .state-glyph.responding {
+    border-radius: 50%;
+    background: var(--live);
+    animation: live-breathe 1.6s ease-in-out infinite;
+  }
+  .state-glyph.waiting,
+  .state-glyph.slow {
+    border: 1.5px solid var(--ink);
+    border-radius: 50%;
+    animation: live-breathe 1.6s ease-in-out infinite;
+  }
+  .state-glyph.slow {
+    border-color: var(--warning);
+  }
+  .state-glyph.client {
+    border: 1.5px solid var(--role-thinking);
+    border-radius: 50%;
+    background: linear-gradient(90deg, var(--role-thinking) 50%, transparent 50%);
+  }
+  .state-glyph.yours {
+    background: var(--success);
+    clip-path: polygon(0 0, 100% 50%, 0 100%);
+  }
+  .state-glyph.idle {
+    height: 2px;
+    vertical-align: 3px;
+    background: var(--muted);
+  }
+  .state-glyph.failed {
+    background: var(--error);
+    clip-path: polygon(
+      20% 0,
+      50% 30%,
+      80% 0,
+      100% 20%,
+      70% 50%,
+      100% 80%,
+      80% 100%,
+      50% 70%,
+      20% 100%,
+      0 80%,
+      30% 50%,
+      0 20%
+    );
+  }
+  .state-glyph.warning {
+    background: var(--warning);
+    clip-path: polygon(50% 0, 100% 100%, 0 100%);
+  }
+  .state-glyph.unknown {
+    border: 1.5px dashed var(--muted);
+    border-radius: 50%;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .state-glyph {
+      animation: none !important;
+    }
+  }
+  .live-state.mark-yours {
+    color: var(--success);
   }
   .live-tile.attention-warning {
     box-shadow: inset 0 2px 0 var(--warning);
