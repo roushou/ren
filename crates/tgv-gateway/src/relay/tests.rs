@@ -71,7 +71,7 @@ impl Harness {
         let tap = self.recorder.start(
             CallStart {
                 transport: Transport::Http,
-                provider: Provider::Codex,
+                api: Provider::Codex.native_api(),
                 endpoint: Endpoint::Responses,
                 method: Method::Post,
                 config_revision: ConfigRevision::new("fixture"),
@@ -80,7 +80,7 @@ impl Harness {
                 plan: None,
                 attempts: 1,
             },
-            AttemptStart::unchanged(UpstreamId::default_for(Provider::Codex)),
+            AttemptStart::unchanged(UpstreamId::default_for(Provider::Codex), Provider::Codex),
         );
         let id = tap.call();
         let permit = self.admission.clone().try_acquire_owned().unwrap();

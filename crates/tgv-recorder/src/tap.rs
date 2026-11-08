@@ -21,7 +21,7 @@ use tgv_harness::attribution::Attribution;
 use tgv_protocol::{
     direction::Direction,
     encoding::{ResponseEncoding, ResponseFormat},
-    route::{Endpoint, Method, Provider, Transport},
+    route::{Api, Endpoint, Method, Provider, Transport},
     websocket::Payload,
 };
 use tokio::sync::{OwnedSemaphorePermit, mpsc::OwnedPermit};
@@ -30,7 +30,8 @@ use tokio::sync::{OwnedSemaphorePermit, mpsc::OwnedPermit};
 #[derive(Debug, Clone)]
 pub struct CallStart {
     pub transport: Transport,
-    pub provider: Provider,
+    /// The provider and wire format of the entry the call was routed to.
+    pub api: Api,
     pub endpoint: Endpoint,
     pub method: Method,
     pub config_revision: ConfigRevision,
@@ -47,6 +48,8 @@ pub struct CallStart {
 #[derive(Debug, Clone)]
 pub struct AttemptStart {
     pub upstream: UpstreamId,
+    /// The provider of the upstream entry.
+    pub provider: Provider,
     /// What TGV changed in the request, if anything.
     pub changes: Option<Recorded>,
     pub body: AttemptBody,
@@ -54,9 +57,10 @@ pub struct AttemptStart {
 
 impl AttemptStart {
     /// An attempt that sends the client's request unchanged.
-    pub fn unchanged(upstream: UpstreamId) -> Self {
+    pub fn unchanged(upstream: UpstreamId, provider: Provider) -> Self {
         Self {
             upstream,
+            provider,
             changes: None,
             body: AttemptBody::Original,
         }
@@ -186,7 +190,8 @@ impl CallTap {
                     open: OpenCall {
                         stamp,
                         transport: start.transport,
-                        provider: start.provider,
+                        provider: start.api.provider(),
+                        wire: start.api.wire(),
                         endpoint: start.endpoint,
                         method: start.method,
                         config_revision: start.config_revision,
@@ -466,6 +471,7 @@ impl AttemptStart {
             attempt,
             ordinal,
             upstream: self.upstream,
+            provider: self.provider,
             changes: self.changes,
             body: self.body,
         }

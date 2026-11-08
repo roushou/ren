@@ -404,7 +404,7 @@ impl Relay {
         let plan = self.policy.plan(
             &CallFacts {
                 transport: Transport::WebSocket,
-                provider: self.call.provider,
+                provider: self.call.api.provider(),
                 upstream: &self.upstream_id,
                 endpoint: self.call.endpoint,
                 model: None,
@@ -693,7 +693,7 @@ impl Relay {
                 attempts: 1,
                 ..self.call.clone()
             },
-            AttemptStart::unchanged(self.upstream_id.clone()),
+            AttemptStart::unchanged(self.upstream_id.clone(), self.call.api.provider()),
         );
         let registered = self.controls.register(
             tap.call(),

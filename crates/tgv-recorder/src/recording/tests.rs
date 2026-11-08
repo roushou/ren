@@ -11,7 +11,7 @@ use tgv_harness::attribution::{Attribution, HintSource, SessionHint};
 use tgv_harness::tools::CallPurpose;
 use tgv_protocol::encoding::{ResponseEncoding, ResponseFormat};
 use tgv_protocol::native::{NativeSessionId, NativeTurnId};
-use tgv_protocol::route::{Method, Provider, Transport};
+use tgv_protocol::route::{Method, Provider, Transport, Wire};
 
 /// Builds one call's records with sequential identities and a moving clock.
 struct Script {
@@ -52,6 +52,7 @@ impl Script {
             attempt: AttemptId::generate(&self.ids),
             ordinal,
             upstream: UpstreamId::default_for(Provider::Anthropic),
+            provider: Provider::Anthropic,
             changes: None,
             body: AttemptBody::Original,
         }
@@ -63,6 +64,7 @@ impl Script {
                 stamp: self.stamp(),
                 transport: Transport::Http,
                 provider: Provider::Anthropic,
+                wire: Wire::AnthropicMessages,
                 endpoint: Endpoint::Messages,
                 method: Method::Post,
                 config_revision: ConfigRevision::new("rev"),

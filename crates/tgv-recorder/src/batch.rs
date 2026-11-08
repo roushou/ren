@@ -23,7 +23,7 @@ use tgv_harness::attribution::Attribution;
 use tgv_protocol::{
     direction::Direction,
     encoding::{ResponseEncoding, ResponseFormat},
-    route::{Endpoint, Method, Provider, Transport},
+    route::{Endpoint, Method, Provider, Transport, Wire},
     websocket::Payload,
 };
 
@@ -277,6 +277,7 @@ pub struct OpenCall {
     pub stamp: Stamp,
     pub transport: Transport,
     pub provider: Provider,
+    pub wire: Wire,
     pub endpoint: Endpoint,
     pub method: Method,
     pub config_revision: ConfigRevision,
@@ -294,6 +295,8 @@ pub struct StartAttempt {
     pub attempt: AttemptId,
     pub ordinal: u32,
     pub upstream: UpstreamId,
+    /// The provider of the upstream entry, which a fallback may change.
+    pub provider: Provider,
     /// What TGV changed in this attempt's request, if anything.
     pub changes: Option<Recorded>,
     /// Whether the attempt sent a changed body, stored as its own request.

@@ -13,7 +13,7 @@ use tgv_protocol::{
     encoding::{ResponseEncoding, ResponseFormat},
     inspect::ModelOutcome,
     label::{Labeled, Stored},
-    route::{Endpoint, Method, Provider, Transport},
+    route::{Endpoint, Method, Provider, Transport, Wire},
     websocket::Payload,
 };
 use tgv_recorder::Observation;
@@ -163,6 +163,9 @@ pub struct CallView {
     pub started_at: UnixMillis,
     pub ended_at: Option<UnixMillis>,
     pub provider: Stored<Provider>,
+    /// The wire format; absent when an older version's provider label was
+    /// unknown to the migration that filled it.
+    pub wire: Option<Stored<Wire>>,
     pub endpoint: Stored<Endpoint>,
     pub method: Stored<Method>,
     pub config_revision: String,
@@ -192,7 +195,7 @@ pub struct CallView {
 impl CallView {
     /// Columns every call query selects, joined to the request body (`rq`) and
     /// the final attempt's response body (`rs`).
-    pub(super) const SELECT: &'static str = "SELECT c.id, c.channel, c.started_at, c.ended_at, c.provider, c.endpoint, c.method, c.config_revision, c.session, c.turn, c.attribution, c.state, c.terminal, c.status, c.model, c.outcome, c.stop_reason, c.tool_names, c.usage, c.capture_complete, c.rejection, c.operator_revision, c.plan, rq.observed_bytes AS rq_observed, rq.stored_bytes AS rq_stored, rq.ending AS rq_ending, rs.observed_bytes AS rs_observed, rs.stored_bytes AS rs_stored, rs.ending AS rs_ending FROM calls c LEFT JOIN bodies rq ON rq.owner = c.id AND rq.direction = 'request' LEFT JOIN bodies rs ON rs.owner = c.final_attempt AND rs.direction = 'response'";
+    pub(super) const SELECT: &'static str = "SELECT c.id, c.channel, c.started_at, c.ended_at, c.provider, c.wire, c.endpoint, c.method, c.config_revision, c.session, c.turn, c.attribution, c.state, c.terminal, c.status, c.model, c.outcome, c.stop_reason, c.tool_names, c.usage, c.capture_complete, c.rejection, c.operator_revision, c.plan, rq.observed_bytes AS rq_observed, rq.stored_bytes AS rq_stored, rq.ending AS rq_ending, rs.observed_bytes AS rs_observed, rs.stored_bytes AS rs_stored, rs.ending AS rs_ending FROM calls c LEFT JOIN bodies rq ON rq.owner = c.id AND rq.direction = 'request' LEFT JOIN bodies rs ON rs.owner = c.final_attempt AND rs.direction = 'response'";
 
     pub(super) fn from_row(row: &SqliteRow) -> Result<Self, StoreError> {
         let row = Columns(row);
@@ -202,6 +205,7 @@ impl CallView {
             started_at: row.time("started_at")?,
             ended_at: row.optional_time("ended_at")?,
             provider: row.label("provider")?,
+            wire: row.optional_label("wire")?,
             endpoint: row.label("endpoint")?,
             method: row.label("method")?,
             config_revision: row.text("config_revision")?.unwrap_or_default(),
@@ -242,6 +246,8 @@ pub struct AttemptView {
     pub ended_at: Option<UnixMillis>,
     /// The upstream entry's id.
     pub upstream: String,
+    /// The upstream entry's provider.
+    pub provider: Option<Stored<Provider>>,
     pub status: Option<u16>,
     pub response_format: Option<Stored<ResponseFormat>>,
     pub response_encoding: Option<Stored<ResponseEncoding>>,
@@ -260,7 +266,7 @@ pub struct AttemptView {
 }
 
 impl AttemptView {
-    pub(super) const SELECT: &'static str = "SELECT a.id, a.ordinal, a.started_at, a.ended_at, a.upstream, a.status, a.response_format, a.response_encoding, a.terminal, a.terminal_cause, a.terminal_phase, a.inspection, a.inspection_version, a.changes, rs.observed_bytes AS rs_observed, rs.stored_bytes AS rs_stored, rs.ending AS rs_ending, rq.observed_bytes AS rq_observed, rq.stored_bytes AS rq_stored, rq.ending AS rq_ending FROM attempts a LEFT JOIN bodies rs ON rs.owner = a.id AND rs.direction = 'response' LEFT JOIN bodies rq ON rq.owner = a.id AND rq.direction = 'request'";
+    pub(super) const SELECT: &'static str = "SELECT a.id, a.ordinal, a.started_at, a.ended_at, a.upstream, a.provider, a.status, a.response_format, a.response_encoding, a.terminal, a.terminal_cause, a.terminal_phase, a.inspection, a.inspection_version, a.changes, rs.observed_bytes AS rs_observed, rs.stored_bytes AS rs_stored, rs.ending AS rs_ending, rq.observed_bytes AS rq_observed, rq.stored_bytes AS rq_stored, rq.ending AS rq_ending FROM attempts a LEFT JOIN bodies rs ON rs.owner = a.id AND rs.direction = 'response' LEFT JOIN bodies rq ON rq.owner = a.id AND rq.direction = 'request'";
 
     pub(super) fn from_row(row: &SqliteRow) -> Result<Self, StoreError> {
         let row = Columns(row);
@@ -270,6 +276,7 @@ impl AttemptView {
             started_at: row.time("started_at")?,
             ended_at: row.optional_time("ended_at")?,
             upstream: row.text("upstream")?.unwrap_or_default(),
+            provider: row.optional_label("provider")?,
             status: row.0.try_get("status")?,
             response_format: row.optional_label("response_format")?,
             response_encoding: row.optional_label("response_encoding")?,

@@ -83,6 +83,7 @@ fn view(n: u128, source: HintSource) -> CallView {
             u64::try_from(n).unwrap() * 1000 + 500,
         )),
         provider: Provider::Anthropic.into(),
+        wire: Some(Provider::Anthropic.native_api().wire().into()),
         endpoint: Endpoint::Messages.into(),
         method: Method::Post.into(),
         config_revision: String::new(),
