@@ -5,6 +5,8 @@ import { bytes, num, providerName } from './api.ts';
 import { searchFieldLabel, secretKindLabel } from './activity.ts';
 import { buildLabel, callStatus, compactOrDash, statusBadge, type Chip } from './display.ts';
 import { usagePoints, type UsagePoint } from './usage.ts';
+import { RecorderReport } from './recorder.ts';
+import { assertNever } from './decode.ts';
 
 /** A health chip and where to look when it is not fine. */
 export interface HealthItem extends Chip {
@@ -222,36 +224,40 @@ export class Attention {
   static recording(health: Health | null): AttentionGroup[] {
     if (!health) return [];
     const recorder = health.recorder;
-    const omissions = recorder.omissions;
     const groups: AttentionGroup[] = [];
     const base = { at: null, marks: [], href: '/recorder' };
-    if (recorder.storage_errors || recorder.retention_errors)
-      groups.push({
-        ...base,
-        key: 'recording',
-        severity: 'error',
-        title: 'Recording failing',
-        detail: `${num(recorder.storage_errors)} storage and ${num(recorder.retention_errors)} retention errors since the daemon started`,
-      });
-    const lost =
-      omissions.queue_bytes_bytes + omissions.queue_slots_bytes + omissions.storage_failure_bytes;
-    if (lost || omissions.unrecorded_calls)
-      groups.push({
-        ...base,
-        key: 'capture-loss',
-        severity: 'warning',
-        title: omissions.unrecorded_calls
-          ? `${num(omissions.unrecorded_calls)} calls and ${bytes(lost)} not captured`
-          : `${bytes(lost)} not captured`,
-        detail:
-          'The capture queue was full or storage failed, since the daemon started; forwarding was unaffected',
-      });
-    if (omissions.policy_limit_bytes)
+    const capture = RecorderReport.capture(recorder);
+    switch (capture.kind) {
+      case 'failing':
+        groups.push({
+          ...base,
+          key: 'recording',
+          severity: 'error',
+          title: 'Recording failing',
+          detail: `${num(capture.storageErrors)} storage and ${num(capture.retentionErrors)} retention errors since the daemon started`,
+        });
+        break;
+      case 'lost':
+        groups.push({
+          ...base,
+          key: 'capture-loss',
+          severity: 'warning',
+          title: RecorderReport.lossText(capture),
+          detail:
+            'The capture queue was full or storage failed, since the daemon started; forwarding was unaffected',
+        });
+        break;
+      case 'healthy':
+        break;
+      default:
+        assertNever(capture);
+    }
+    if (recorder.omissions.policy_limit_bytes)
       groups.push({
         ...base,
         key: 'capture-policy',
         severity: 'neutral',
-        title: `${bytes(omissions.policy_limit_bytes)} over the capture limit`,
+        title: `${bytes(recorder.omissions.policy_limit_bytes)} over the capture limit`,
         detail: 'Body bytes past the capture policy, left out by design, since the daemon started',
       });
     return groups;

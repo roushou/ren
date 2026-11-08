@@ -5,12 +5,13 @@
   import { createSnapshot } from '#lib/snapshot.svelte.ts';
   import { Workbench, setWorkbench } from '#lib/workbench.svelte.ts';
   import { LiveConnection } from '#lib/live.svelte.ts';
-  import { num, short, bytes, clock } from '#lib/api.ts';
+  import { num, short, clock } from '#lib/api.ts';
   import { captureState } from '#lib/display.ts';
   import type { SnapshotError } from '#lib/snapshots.ts';
   import Icon from '#lib/Icon.svelte';
   import ThemeControl from '#lib/ThemeControl.svelte';
   import ConnectClient from '#lib/ConnectClient.svelte';
+  import { RecorderReport } from '#lib/recorder.ts';
   import CopyButton from '#lib/CopyButton.svelte';
   import '#lib/style.css';
   import type { LayoutProps } from './$types';
@@ -110,22 +111,10 @@
                         : 'Traffic',
   );
   const gatewayOrigin = $derived(page.data.gatewayUrl);
-  const omissions = $derived(health?.recorder.omissions);
-  const omittedBytes = $derived(
-    omissions
-      ? omissions.policy_limit_bytes +
-          omissions.queue_bytes_bytes +
-          omissions.queue_slots_bytes +
-          omissions.storage_failure_bytes
-      : 0,
-  );
-  const loss = $derived(!!omissions && (omittedBytes > 0 || omissions.unrecorded_calls > 0));
-  const degraded = $derived(
-    !!health &&
-      (health.status !== 'ok' ||
-        health.recorder.storage_errors > 0 ||
-        health.recorder.retention_errors > 0),
-  );
+  // Bytes past the capture policy are left out by design: never loss.
+  const capture = $derived(health ? RecorderReport.capture(health.recorder) : null);
+  const loss = $derived(capture?.kind === 'lost');
+  const degraded = $derived(!!health && (health.status !== 'ok' || capture?.kind === 'failing'));
   const loading = $derived(workbench.manual || !!navigating.to);
   let refreshError = $state('');
   const failure = $derived<SnapshotError | null>(
@@ -341,10 +330,8 @@
         ? 'Recorder unknown'
         : degraded
           ? 'Recorder errors recorded'
-          : loss
-            ? omittedBytes > 0
-              ? `${bytes(omittedBytes)} capture omitted`
-              : `${num(omissions?.unrecorded_calls)} unrecorded calls`
+          : capture?.kind === 'lost'
+            ? RecorderReport.lossText(capture)
             : 'No capture loss recorded'}</button
     >
     <span class="status-context mono"
