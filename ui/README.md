@@ -42,7 +42,9 @@ and rate limits, with calls still waiting for a response head kept first. Sessio
 eight cards; quiet ones dim. Text appears once each call finishes and its activity is
 derived; whether a call is waiting for its response head or streaming is shown as it
 happens),
-Traffic (`/traffic`), Sessions (`/sessions`, `/sessions/:id`, each session's context and
+Traffic (`/traffic`), Sessions (`/sessions`: each session's client, its newest prompt, and its folder, what it
+is doing now, and its size against the rest, grouped by day, with single-call sessions
+that have no turn folded away; `/sessions/:id`, each session's context and
 cache report at `/sessions/:id/report`, and what a turn did at `/turns/:id`: its prompt,
 tool calls with their effects and reported results, files, commands, and findings), Search
 (`/search`: full-text search over prompts, replies, and tool input and output), Usage

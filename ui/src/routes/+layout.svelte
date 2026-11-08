@@ -85,7 +85,7 @@
     if (toolbar) observer.observe(toolbar);
     return () => observer.disconnect();
   });
-  const sessionCount = $derived(page.data.sessions?.value?.length ?? 0);
+  const sessionCount = $derived(page.data.sessions?.value?.sessions.length ?? 0);
   const selected = $derived(workbench.selected);
   const pageTitle = $derived(
     page.error

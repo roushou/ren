@@ -4,7 +4,7 @@ import { readSnapshot, retainSnapshot } from '../src/lib/snapshots.ts';
 import {
   gatewaySnapshot,
   recorderSnapshot,
-  sessionsSnapshot,
+  SessionsReader,
   offPageSelection,
   searchSnapshot,
   trafficSnapshot,
@@ -90,29 +90,25 @@ test('responses are parsed at the boundary: labels keep unknown text, shapes are
   assert.equal(metrics.value?.metrics.storage.disk.blobs.page_size, 4096);
   // The usage read failed to parse (this fake answers every path alike): no oldest call, no failure.
   assert.equal(metrics.value?.oldest, null);
-  const sessions = await sessionsSnapshot(async (input) => {
+  const sessions = await new SessionsReader().read(async (input) => {
+    if (path(input).startsWith('/api/calls')) return versioned({ calls: [], next: null });
+    if (path(input).endsWith('/turns?limit=5')) return versioned({ turns: [] });
     assert.equal(path(input), '/api/sessions?limit=100');
-    return versioned({
-      sessions: [
-        {
-          id: uuid(7),
-          provider: 'future_provider',
-          source: 'codex_headers',
-          native_id: 'native',
-          first_seen: 1,
-          last_seen: 2,
-          call_count: 3,
-          turn_count: 1,
-          error_count: 0,
-          tokens: { input: null, output: null, cache_read: null },
-        },
-      ],
-    });
+    return versioned({ sessions: [sessionRow(7, 2)] });
   });
   // A label this UI does not know is kept as text.
-  assert.equal(sessions.value?.[0].provider, 'future_provider');
+  assert.equal(sessions.value?.sessions[0]?.provider, 'future_provider');
   // Tokens no call reported are null, never zero.
-  assert.deepEqual(sessions.value?.[0].tokens, { input: null, output: null, cache_read: null });
+  assert.deepEqual(sessions.value?.sessions[0]?.tokens, {
+    input: null,
+    output: null,
+    cache_read: null,
+  });
+  // A session with no turn yet is read, and says so: no prompt, no folder.
+  assert.deepEqual(sessions.value?.details.get(uuid(7) as never), {
+    prompt: null,
+    workdir: null,
+  });
   const malformed = await trafficSnapshot(
     async () => versioned({ calls: [{ ...callFixture(), id: 'not-a-uuid' }], next: null }),
     new URL('http://localhost/traffic'),
@@ -217,4 +213,42 @@ test('search reads nothing without a query and keeps only a known field', async 
   // The key encodes the query, so `&` in the text stays part of it.
   assert.equal(known.key, '/search?q=a%26b&field=tool_output');
   assert.equal(unknown.key, '/search?q=a&field=');
+});
+
+function sessionRow(n: number, lastSeen: number, calls = 3, turns = 1) {
+  return {
+    id: uuid(n),
+    provider: 'future_provider',
+    source: 'codex_headers',
+    native_id: 'native',
+    first_seen: 1,
+    last_seen: lastSeen,
+    call_count: calls,
+    turn_count: turns,
+    error_count: 0,
+    tokens: { input: null, output: null, cache_read: null },
+  };
+}
+
+test('sessions are read in detail once per activity, and single-call ones not at all', async () => {
+  const reader = new SessionsReader();
+  const turnReads: string[] = [];
+  let lastSeen = 2;
+  const fetcher = async (input: RequestInfo | URL) => {
+    const where = path(input);
+    if (where.startsWith('/api/calls')) return versioned({ calls: [], next: null });
+    if (where.endsWith('/turns?limit=5')) {
+      turnReads.push(where);
+      return versioned({ turns: [] });
+    }
+    // Session 8 is one call with no turn: a client's own check.
+    return versioned({ sessions: [sessionRow(7, lastSeen), sessionRow(8, 2, 1, 0)] });
+  };
+  await reader.read(fetcher);
+  await reader.read(fetcher);
+  assert.deepEqual(turnReads, [`/api/sessions/${uuid(7)}/turns?limit=5`]);
+  // New activity reads it again.
+  lastSeen = 3;
+  await reader.read(fetcher);
+  assert.equal(turnReads.length, 2);
 });
