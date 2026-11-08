@@ -130,7 +130,7 @@ pub(super) struct ChannelSetup {
     pub channel_permit: OwnedSemaphorePermit,
     /// Keeps the ingress's drain waiting for this channel.
     pub tracked: TaskTrackerToken,
-    /// The provider's own entry: a channel is pinned to it.
+    /// The route's entry: a channel is pinned to it.
     pub upstream: UpstreamId,
     /// Each `response.create` is admitted by policy, like an HTTP call.
     pub policy: Policy,
@@ -405,6 +405,7 @@ impl Relay {
             &CallFacts {
                 transport: Transport::WebSocket,
                 provider: self.call.provider,
+                upstream: &self.upstream_id,
                 endpoint: self.call.endpoint,
                 model: None,
                 session: attribution.hint.as_ref().map(|hint| hint.session),

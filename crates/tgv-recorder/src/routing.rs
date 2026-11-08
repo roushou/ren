@@ -43,7 +43,8 @@ impl UpstreamId {
         }
     }
 
-    /// The entry every provider has unless configuration replaces it.
+    /// The id of a provider's native entry, which the gateway's upstream
+    /// table builds for every provider.
     pub fn default_for(provider: Provider) -> Self {
         Self(provider.label().into())
     }

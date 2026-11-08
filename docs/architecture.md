@@ -230,7 +230,10 @@ xtask        ─► tgv-daemon, tgv-harness   (repository tasks, unpublished)
 ### Routes and headers
 
 A declarative route table (`Route::ALL`) maps each client path to a provider
-endpoint and names the harness whose correlation headers it accepts. Pi's
+endpoint and names the harness whose correlation headers it accepts. When the
+router is built, `Route::bind` binds each route to its provider's native entry
+in the upstream table (`BoundRoute`): a call's provider and first upstream come
+from that binding, and a WebSocket channel is pinned to it. Pi's
 extension headers are recognised on every route. A header policy expressed as
 data (`HeaderPolicy::REQUEST` and `RESPONSE`) removes hop-by-hop, proxy identity,
 and Tailscale identity headers, and strips TGV's own `x-tgv-*` hints before
@@ -285,8 +288,9 @@ pub struct UpstreamEntry { id: UpstreamId, api: Api, url: UpstreamUrl, auth: Ups
 pub enum UpstreamAuth { ClientOwned, OperatorKey(OperatorKey) }   // never a subscription token
 ```
 
-`UpstreamTable` holds one client-credential entry per provider (named after it)
-and operator-key entries from `[[upstreams]]`. Keys are read through `HostEnv`
+`UpstreamTable` holds one client-credential native entry per provider (named
+after it, always present: `UpstreamTable::native`) and operator-key entries from
+`[[upstreams]]`. Keys are read through `HostEnv`
 when the daemon starts and never appear in `Debug`. Dispatching to an operator-key
 entry is a _protected override_: the client's credentials and the OAuth
 `anthropic-beta` value are replaced by the key. It is recorded with the upstream

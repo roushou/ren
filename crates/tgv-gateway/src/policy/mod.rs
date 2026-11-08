@@ -148,6 +148,8 @@ pub enum PolicyError {
 pub struct CallFacts<'a> {
     pub transport: Transport,
     pub provider: Provider,
+    /// The entry the call goes to first: its route's entry.
+    pub upstream: &'a UpstreamId,
     pub endpoint: Endpoint,
     pub model: Option<&'a str>,
     pub session: Option<NativeSessionId>,
@@ -349,7 +351,7 @@ impl Policy {
     /// checked for every call.
     pub fn plan(&self, facts: &CallFacts<'_>, operator: &OperatorState) -> CallPlan {
         let admission = self.admission(facts, operator);
-        let primary = UpstreamId::default_for(facts.provider);
+        let primary = facts.upstream.clone();
         let (candidates, transforms, retry, fallback) = match facts.transport {
             Transport::WebSocket => (
                 Candidates::one(primary),
