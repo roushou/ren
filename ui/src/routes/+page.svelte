@@ -8,6 +8,8 @@
   import { Board, LivePlace, type Tile } from '#lib/board.ts';
   import { ago, Attention, Day, healthLine, type Severity } from '#lib/overview.ts';
   import ConnectClient from '#lib/ConnectClient.svelte';
+  import CopyButton from '#lib/CopyButton.svelte';
+  import { LaunchCommand } from '#lib/launch.ts';
   import StateGlyph from '#lib/StateGlyph.svelte';
   import Icon from '#lib/Icon.svelte';
   import type { PageProps } from './$types';
@@ -106,12 +108,15 @@
   const sessionHref = (id: string) => `/sessions/${encodeURIComponent(id)}`;
   const spark = (values: number[]) => Day.spark(values, 22);
   const CHART = 120;
+  /** Nothing recorded in the last day: the page leads with how to connect a client. */
+  const firstRun = $derived(!!current && current.usage.totals.calls === 0 && !board?.tiles.length);
+  const startCommand = $derived(LaunchCommand.for('claude', page.data.gatewayUrl).text);
   /** Spaces kept in the text itself: markup whitespace between inline items collapses. */
   const SEPARATOR = '\u00a0· ';
 </script>
 
 <div class="overview">
-  <div class="console">
+  <div class="console ov-console">
     {#if !current || !attention || !day}
       <div class="empty-state" role="alert">
         <div class="empty-icon"><Icon name="alert" size={26} /></div>
@@ -137,202 +142,230 @@
         </div>
       </section>
 
-      <div class="ov-top">
-        <section class="ov-panel" aria-labelledby="attention-title">
-          <header class="ov-heading">
-            <h2 id="attention-title">Needs attention</h2>
-            <span class="muted mono">last 24 h · worst first</span>
-          </header>
-          {#each attention.groups as group (group.key)}
-            <a class="ov-attention {group.severity}" href={group.href}>
-              <i></i>
-              <span class="ov-attention-text">
-                <strong>{group.title}</strong>
-                <small>{group.detail}</small>
-              </span>
-              {#if group.marks.length > 1}
-                <svg
-                  class="ov-marks"
-                  viewBox="0 0 100 10"
-                  preserveAspectRatio="none"
-                  aria-label="When they happened over the day"
+      {#if firstRun}
+        <section class="ov-panel ov-first" aria-labelledby="first-title">
+          <h2 id="first-title">Connect a client to start recording</h2>
+          <p class="muted">
+            Nothing passed through TGV in the last 24 hours. Start a session through this gateway;
+            its calls show up here, on Live, and in Traffic as they happen.
+          </p>
+          <ConnectClient layout="box" gatewayOrigin={page.data.gatewayUrl} />
+          <span class="empty-footnote"
+            ><Icon name="shield" size={12} /> Uses your client’s existing sign-in</span
+          >
+        </section>
+      {:else}
+        <div class="ov-top">
+          <section class="ov-panel" aria-labelledby="attention-title">
+            <header class="ov-heading">
+              <h2 id="attention-title">Needs attention</h2>
+              <span class="muted mono">last 24 h · worst first</span>
+            </header>
+            {#each attention.groups as group (group.key)}
+              <a class="ov-attention {group.severity}" href={group.href}>
+                <i></i>
+                <span class="ov-attention-text">
+                  <strong>{group.title}</strong>
+                  <small>{group.detail}</small>
+                </span>
+                {#if group.marks.length > 1}
+                  <svg
+                    class="ov-marks"
+                    viewBox="0 0 100 10"
+                    preserveAspectRatio="none"
+                    aria-label="When they happened over the day"
+                  >
+                    <line x1="0" y1="9.5" x2="100" y2="9.5" />
+                    {#each group.marks as mark, index (index)}<rect
+                        x={mark * 100 - 0.6}
+                        y="2"
+                        width="1.2"
+                        height="7"
+                      />{/each}
+                  </svg>
+                {/if}
+                <span class="mono muted ov-when"
+                  >{group.at === null ? 'since start' : ago(group.at, now)}</span
                 >
-                  <line x1="0" y1="9.5" x2="100" y2="9.5" />
-                  {#each group.marks as mark, index (index)}<rect
-                      x={mark * 100 - 0.6}
-                      y="2"
-                      width="1.2"
-                      height="7"
+              </a>
+            {:else}
+              <p class="ov-clear">
+                <StateGlyph mark="yours" />Nothing needs a look: no failed or cut-off work, no
+                exposed secrets, no capture loss in the last 24 hours.
+              </p>
+            {/each}
+          </section>
+
+          <section class="ov-panel" aria-labelledby="live-title">
+            <header class="ov-heading">
+              <h2 id="live-title">Live now</h2>
+              <a class="text-button" href="/live">Live <Icon name="arrow" size={12} /></a>
+            </header>
+            {#each working as tile (tile.session.id)}
+              {@const chip = Board.phaseChip(tile.phase, board?.now ?? now)}
+              <a
+                class="ov-session state-edge state-{chip.mark}"
+                class:quiet={tile.quiet}
+                href={sessionHref(tile.session.id)}
+              >
+                <span class="ov-session-who">
+                  <strong>{harnessName(tile)}</strong>
+                  <span class="mono muted">{short(tile.session.native_id)}</span>
+                  <span class="mono live-state {chip.tone} state-{chip.mark}" title={chip.title}
+                    ><StateGlyph mark={chip.mark} />{chip.label}</span
+                  >
+                </span>
+                <span class="ov-session-prompt"
+                  >{tile.prompt?.text ??
+                    `${providerName(tile.session.provider)} · ${tile.model ?? 'no model yet'}`}</span
+                >
+                <svg
+                  class="ov-lane"
+                  viewBox="0 0 100 8"
+                  preserveAspectRatio="none"
+                  aria-label="Calls in the last 2 minutes"
+                >
+                  <line x1="0" y1="4" x2="100" y2="4" />
+                  {#each tile.lane as mark (mark.call.id)}<rect
+                      class={mark.open ? 'open' : mark.tone}
+                      x={mark.start * 100}
+                      y="1"
+                      width={Math.max(0.8, (mark.end - mark.start) * 100)}
+                      height="6"
                     />{/each}
                 </svg>
-              {/if}
-              <span class="mono muted ov-when"
-                >{group.at === null ? 'since start' : ago(group.at, now)}</span
-              >
-            </a>
-          {:else}
-            <p class="ov-clear">
-              <StateGlyph mark="yours" />Nothing needs a look: no failed or cut-off work, no exposed
-              secrets, no capture loss in the last 24 hours.
-            </p>
-          {/each}
-        </section>
-
-        <section class="ov-panel" aria-labelledby="live-title">
-          <header class="ov-heading">
-            <h2 id="live-title">Live now</h2>
-            <a class="text-button" href="/live">Live <Icon name="arrow" size={12} /></a>
-          </header>
-          {#each working as tile (tile.session.id)}
-            {@const chip = Board.phaseChip(tile.phase, board?.now ?? now)}
-            <a
-              class="ov-session state-edge state-{chip.mark}"
-              class:quiet={tile.quiet}
-              href={sessionHref(tile.session.id)}
-            >
-              <span class="ov-session-who">
-                <strong>{harnessName(tile)}</strong>
-                <span class="mono muted">{short(tile.session.native_id)}</span>
-                <span class="mono live-state {chip.tone} state-{chip.mark}" title={chip.title}
-                  ><StateGlyph mark={chip.mark} />{chip.label}</span
+              </a>
+            {:else}
+              <div class="ov-clear ov-start">
+                <span class="muted"
+                  >No session active in the last 15 minutes{lastCall
+                    ? `; the last call was ${ago(lastCall, now)}`
+                    : ''}.</span
                 >
-              </span>
-              <span class="ov-session-prompt"
-                >{tile.prompt?.text ??
-                  `${providerName(tile.session.provider)} · ${tile.model ?? 'no model yet'}`}</span
-              >
-              <svg
-                class="ov-lane"
-                viewBox="0 0 100 8"
-                preserveAspectRatio="none"
-                aria-label="Calls in the last 2 minutes"
-              >
-                <line x1="0" y1="4" x2="100" y2="4" />
-                {#each tile.lane as mark (mark.call.id)}<rect
-                    class={mark.open ? 'open' : mark.tone}
-                    x={mark.start * 100}
-                    y="1"
-                    width={Math.max(0.8, (mark.end - mark.start) * 100)}
-                    height="6"
-                  />{/each}
-              </svg>
-            </a>
-          {:else}
-            <p class="ov-clear muted">
-              No session active in the last 15 minutes{lastCall
-                ? `; the last call was ${ago(lastCall, now)}`
-                : ''}.
-            </p>
-          {/each}
-          {#if board && board.tiles.length > working.length}<a class="ov-more" href="/live"
-              >{board.tiles.length - working.length + board.overflow} more on Live</a
-            >{/if}
-        </section>
-      </div>
-
-      <section class="ov-tiles" aria-label="Last 24 hours">
-        {#each day.tiles as tile (tile.label)}
-          <div class="ov-tile">
-            <span class="muted">{tile.label}</span>
-            <strong class="mono" class:error={tile.tone === 'error'}>{tile.value}</strong>
-            <small class="muted">{tile.detail}</small>
-            {#if tile.label === 'Tokens in' && day.input && day.input.cached + day.input.fresh > 0}
-              <span
-                class="ov-cache"
-                title="{percentOrDash(
-                  Math.round((day.input.cached / (day.input.cached + day.input.fresh)) * 100),
-                )} read from cache"
-                ><svg viewBox="0 0 100 6" preserveAspectRatio="none" aria-hidden="true"
-                  ><rect
-                    class="cached"
-                    x="0"
-                    y="0"
-                    height="6"
-                    width={(day.input.cached / (day.input.cached + day.input.fresh)) * 100}
-                  /><rect
-                    class="fresh"
-                    y="0"
-                    height="6"
-                    x={(day.input.cached / (day.input.cached + day.input.fresh)) * 100}
-                    width={(day.input.fresh / (day.input.cached + day.input.fresh)) * 100}
-                  /></svg
-                ></span
-              >
-            {:else if tile.spark.length}
-              <svg
-                class="ov-spark"
-                viewBox="0 0 100 22"
-                preserveAspectRatio="none"
-                aria-hidden="true"><polyline points={spark(tile.spark)} /></svg
-              >
-            {/if}
-          </div>
-        {/each}
-      </section>
-
-      <section class="ov-panel ov-chart" aria-labelledby="day-title">
-        <header class="ov-heading">
-          <h2 id="day-title">Last 24 hours</h2>
-          <span class="ov-legend mono">
-            <span><i class="cached"></i>input from cache</span>
-            <span><i class="fresh"></i>fresh input</span>
-            <span><i class="failed"></i>failed work</span>
-            <span><i class="stopped"></i>cut off</span>
-            <span><i class="bookkeeping"></i>failed bookkeeping</span>
-          </span>
-          <a class="text-button" href="/usage?range=24h">Usage <Icon name="arrow" size={12} /></a>
-        </header>
-        <svg
-          class="ov-day"
-          viewBox="0 0 1000 {CHART + 14}"
-          preserveAspectRatio="none"
-          aria-label="Input tokens per hour, and failed or cut-off calls, over the last 24 hours"
-        >
-          {#each [0.25, 0.5, 0.75] as at (at)}<line
-              class="grid"
-              x1="0"
-              y1={CHART * at}
-              x2="1000"
-              y2={CHART * at}
-            />{/each}
-          {#each day.bars(CHART - 4) as bar (bar.start)}
-            <g
-              ><title
-                >{Day.clock(bar.start)}: {compactOrDash(
-                  day.points.find((point) => point.start === bar.start)?.tokens.input ?? null,
-                )} in</title
-              ><rect
-                class="cached"
-                x={bar.x}
-                width={bar.width}
-                y={CHART - bar.cached}
-                height={bar.cached}
-              /><rect
-                class="fresh"
-                x={bar.x}
-                width={bar.width}
-                y={CHART - bar.cached - bar.fresh}
-                height={bar.fresh}
-              /></g
-            >
-          {/each}
-          <line class="base" x1="0" y1={CHART} x2="1000" y2={CHART} />
-          {#each [['bookkeeping', current.bookkeeping], ['stopped', current.stopped], ['failed', current.failed]] as const as [kind, calls] (kind)}
-            {#each calls as call (call.id)}<rect
-                class="tick {kind}"
-                x={day.x(call.started_at) - 1.5}
-                y={CHART + 3}
-                width="3"
-                height="9"
-              />{/each}
-          {/each}
-        </svg>
-        <div class="ov-axis mono" aria-hidden="true">
-          {#each day.axis() as tick (tick.at)}<span>{tick.label}</span>{/each}
+                <span class="ov-start-command"
+                  ><span class="muted">Start one:</span> <code>{startCommand}</code><CopyButton
+                    text={startCommand}
+                    label="Copy the launch command"
+                  /></span
+                >
+              </div>
+            {/each}
+            {#if board && board.tiles.length > working.length}<a class="ov-more" href="/live"
+                >{board.tiles.length - working.length + board.overflow} more on Live</a
+              >{/if}
+          </section>
         </div>
-      </section>
 
-      <ConnectClient layout="inline" gatewayOrigin={page.data.gatewayUrl} />
+        <section class="ov-tiles" aria-label="Last 24 hours">
+          {#each day.tiles as tile (tile.label)}
+            <div class="ov-tile">
+              <span class="muted">{tile.label}</span>
+              <strong class="mono" class:error={tile.tone === 'error'}>{tile.value}</strong>
+              <small class="muted">{tile.detail}</small>
+              {#if tile.label === 'Tokens in' && day.input && day.input.cached + day.input.fresh > 0}
+                <span
+                  class="ov-cache"
+                  title="{percentOrDash(
+                    Math.round((day.input.cached / (day.input.cached + day.input.fresh)) * 100),
+                  )} read from cache"
+                  ><svg viewBox="0 0 100 6" preserveAspectRatio="none" aria-hidden="true"
+                    ><rect
+                      class="cached"
+                      x="0"
+                      y="0"
+                      height="6"
+                      width={(day.input.cached / (day.input.cached + day.input.fresh)) * 100}
+                    /><rect
+                      class="fresh"
+                      y="0"
+                      height="6"
+                      x={(day.input.cached / (day.input.cached + day.input.fresh)) * 100}
+                      width={(day.input.fresh / (day.input.cached + day.input.fresh)) * 100}
+                    /></svg
+                  ></span
+                >
+              {:else if tile.spark.length}
+                <svg
+                  class="ov-spark"
+                  viewBox="0 0 100 22"
+                  preserveAspectRatio="none"
+                  aria-hidden="true"><polyline points={spark(tile.spark)} /></svg
+                >
+              {/if}
+            </div>
+          {/each}
+        </section>
+
+        <section class="ov-panel ov-chart" aria-labelledby="day-title">
+          <header class="ov-heading">
+            <h2 id="day-title">Last 24 hours</h2>
+            <span class="ov-legend mono">
+              <span><i class="cached"></i>input from cache</span>
+              <span><i class="fresh"></i>fresh input</span>
+              <span><i class="failed"></i>failed work</span>
+              <span><i class="stopped"></i>cut off</span>
+              <span><i class="bookkeeping"></i>failed bookkeeping</span>
+            </span>
+            <a class="text-button" href="/usage?range=24h">Usage <Icon name="arrow" size={12} /></a>
+          </header>
+          <svg
+            class="ov-day"
+            viewBox="0 0 1000 {CHART}"
+            preserveAspectRatio="none"
+            aria-label="Input tokens per hour over the last 24 hours"
+          >
+            {#each [0.25, 0.5, 0.75] as at (at)}<line
+                class="grid"
+                x1="0"
+                y1={CHART * at}
+                x2="1000"
+                y2={CHART * at}
+              />{/each}
+            {#each day.bars(CHART - 4) as bar (bar.start)}
+              <g
+                ><title
+                  >{Day.clock(bar.start)}: {compactOrDash(
+                    day.points.find((point) => point.start === bar.start)?.tokens.input ?? null,
+                  )} in</title
+                ><rect
+                  class="cached"
+                  x={bar.x}
+                  width={bar.width}
+                  y={CHART - bar.cached}
+                  height={bar.cached}
+                /><rect
+                  class="fresh"
+                  x={bar.x}
+                  width={bar.width}
+                  y={CHART - bar.cached - bar.fresh}
+                  height={bar.fresh}
+                /></g
+              >
+            {/each}
+            <line class="base" x1="0" y1={CHART} x2="1000" y2={CHART} />
+          </svg>
+          <!-- Ticks keep their own fixed height while the bars above stretch. -->
+          <svg
+            class="ov-ticks"
+            viewBox="0 0 1000 12"
+            preserveAspectRatio="none"
+            aria-label="Failed or cut-off calls over the same hours"
+          >
+            {#each [['bookkeeping', current.bookkeeping], ['stopped', current.stopped], ['failed', current.failed]] as const as [kind, calls] (kind)}
+              {#each calls as call (call.id)}<rect
+                  class="tick {kind}"
+                  x={day.x(call.started_at) - 1}
+                  y="2"
+                  width="2"
+                  height="9"
+                />{/each}
+            {/each}
+          </svg>
+          <div class="ov-axis mono" aria-hidden="true">
+            {#each day.axis() as tick (tick.at)}<span>{tick.label}</span>{/each}
+          </div>
+        </section>
+      {/if}
     {/if}
   </div>
 </div>
@@ -706,11 +739,49 @@
   .ov-legend i.bookkeeping {
     background: var(--muted);
   }
+  /* The page fills the window: the day's chart takes whatever height is left. */
+  .ov-console {
+    min-height: 100%;
+  }
+  .ov-console > .ov-chart,
+  .ov-console > .ov-first {
+    flex: 1 0 auto;
+  }
   .ov-day {
     display: block;
+    flex: 1;
     width: calc(100% - 32px);
-    height: 160px;
+    min-height: 160px;
     margin: 10px 16px 0;
+  }
+  .ov-start {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+  }
+  .ov-start-command {
+    display: inline-flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+  }
+  .ov-start-command code {
+    font-size: 11.5px;
+  }
+  .ov-first {
+    align-items: flex-start;
+    gap: 10px;
+    padding: 20px 16px;
+  }
+  .ov-first h2 {
+    margin: 0;
+    font-size: 15px;
+    font-weight: 600;
+  }
+  .ov-first p {
+    max-width: 640px;
+    margin: 0;
+    font-size: 12.5px;
   }
   .ov-day .grid {
     stroke: var(--line);
@@ -721,13 +792,19 @@
     stroke: var(--control-border);
     vector-effect: non-scaling-stroke;
   }
-  .ov-day .tick.failed {
+  .ov-ticks {
+    display: block;
+    width: calc(100% - 32px);
+    height: 12px;
+    margin: 0 16px;
+  }
+  .ov-ticks .tick.failed {
     fill: var(--error);
   }
-  .ov-day .tick.stopped {
+  .ov-ticks .tick.stopped {
     fill: var(--warning);
   }
-  .ov-day .tick.bookkeeping {
+  .ov-ticks .tick.bookkeeping {
     fill: var(--muted);
   }
   .ov-axis {

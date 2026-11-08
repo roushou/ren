@@ -10,6 +10,8 @@
   import type { SnapshotError } from '#lib/snapshots.ts';
   import Icon from '#lib/Icon.svelte';
   import ThemeControl from '#lib/ThemeControl.svelte';
+  import ConnectClient from '#lib/ConnectClient.svelte';
+  import CopyButton from '#lib/CopyButton.svelte';
   import '#lib/style.css';
   import type { LayoutProps } from './$types';
   let { data, children }: LayoutProps = $props();
@@ -253,9 +255,23 @@
           >{/if}</a
       >
     </nav>
-    <span class="gateway-address mono" title={gatewayOrigin}
-      >{gatewayOrigin.replace(/^https?:\/\//, '')}</span
+    <button
+      class="gateway-address mono"
+      popovertarget="connect-panel"
+      title="Connect a client to {gatewayOrigin}"
+      >{gatewayOrigin.replace(/^https?:\/\//, '')}<Icon name="chevron" size={11} /></button
     >
+    <div id="connect-panel" class="connect-panel" popover="auto" aria-label="Connect a client">
+      <header>
+        <strong>Connect a client</strong>
+        <span class="mono">{gatewayOrigin}</span><CopyButton
+          text={gatewayOrigin}
+          label="Copy the gateway address"
+        />
+      </header>
+      <ConnectClient layout="list" {gatewayOrigin} />
+      <p><Icon name="shield" size={12} /> Each client keeps its own sign-in; TGV forwards it.</p>
+    </div>
     <ThemeControl />
   </header>
   <div class="workbench-toolbar" class:folded class:scope-open={scopeOpen} bind:this={toolbar}>

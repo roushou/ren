@@ -17,7 +17,8 @@ exposed secrets, recording trouble, failed and cut-off model calls, then failed
 bookkeeping such as quota probes, which is not the agents' work; the sessions active in
 the last 15 minutes in the Live page's state colours; the day's calls (against the day
 before), failed work calls, input tokens cached and fresh, and output tokens; and input
-per hour with failed and cut-off calls ticked along the same hours), Live
+per hour with failed and cut-off calls ticked along the same hours, filling the rest of
+the window; with nothing recorded in the last day it leads with how to connect a client), Live
 (`/live`: the sessions active in the last 15 minutes as they work (or 5 minutes, an
 hour, or four hours, chosen beside the active count; a window holding more than the page
 reads at once is marked partial), on a four-by-two board
@@ -47,7 +48,8 @@ tool calls with their effects and reported results, files, commands, and finding
 (`/search`: full-text search over prompts, replies, and tool input and output), Usage
 (`/usage`: calls, errors, and tokens over the last day by hour, the last week, or all
 retained calls by local day, by model, and the busiest sessions), and Recorder
-(`/recorder`). The bar under the tabs shows each page's scope and the controls that
+(`/recorder`). The gateway address in the header opens each client's `tgv run` command,
+ready to copy. The bar under the tabs shows each page's scope and the controls that
 change it, such as Traffic's client, session, time, and model-calls-only narrowing;
 when they don't fit on one line they fold behind a **Scope** button. Traffic shows
 model calls only by default, hiding token counts, model listings, and WebSocket
