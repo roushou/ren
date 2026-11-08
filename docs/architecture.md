@@ -281,7 +281,7 @@ when the configuration loads.
 ### Upstream entries
 
 ```rust
-pub struct UpstreamEntry { id: UpstreamId, provider: Provider, url: UpstreamUrl, auth: UpstreamAuth }
+pub struct UpstreamEntry { id: UpstreamId, api: Api, url: UpstreamUrl, auth: UpstreamAuth }
 pub enum UpstreamAuth { ClientOwned, OperatorKey(OperatorKey) }   // never a subscription token
 ```
 
