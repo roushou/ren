@@ -3,6 +3,7 @@
   import { slide } from 'svelte/transition';
   import { prefersReducedMotion } from 'svelte/motion';
   import { page } from '$app/state';
+  import { goto } from '$app/navigation';
   import { createSnapshot } from '#lib/snapshot.svelte.ts';
   import { getWorkbench } from '#lib/workbench.svelte.ts';
   import { clock, providerName, short } from '#lib/api.ts';
@@ -16,9 +17,11 @@
     type Density,
     Feed,
     type FeedItem,
+    type LiveWindow,
     type Tile,
   } from '#lib/board.ts';
   import Icon from '#lib/Icon.svelte';
+  import Select from '#lib/Select.svelte';
   import Markdown from '#lib/Markdown.svelte';
   import type { PageProps } from './$types';
 
@@ -42,12 +45,19 @@
           calls: current.calls,
           turns: current.turns,
           now: Math.max(now, current.read),
+          windowMs: LivePlace.windows[current.window].ms,
         })
       : null,
   );
   const band = $derived(
     current && board ? new Band(current.sessions, current.calls, board.now) : null,
   );
+  const windowOptions = (Object.keys(LivePlace.windows) as LiveWindow[]).map((value) => ({
+    value,
+    label: LivePlace.windows[value].label,
+  }));
+  const chooseWindow = (window: LiveWindow) => goto(LivePlace.href({ ...view, window }));
+  const longer = $derived(LivePlace.longer(view.window));
   /** The session whose line in the Now strip is under the pointer. */
   let highlighted = $state<string | null>(null);
   /** How long ago a feed item happened, as short as it gets. */
@@ -88,7 +98,15 @@
 {#snippet scope()}
   {#if board}
     <div class="scope-group live-pulse" aria-label="Right now">
-      <span class="chip">{board.tiles.length + board.overflow} active</span>
+      <span class="live-active">
+        <span class="chip">{board.tiles.length + board.overflow} active</span><Select
+          label="How far back a session counts as active"
+          size="compact"
+          options={windowOptions}
+          value={view.window}
+          onchange={chooseWindow}
+        />
+      </span>
       <span class="chip" class:live={board.inFlight > 0}
         ><span class="status-dot" class:live={board.inFlight > 0}></span>{board.inFlight} in flight</span
       >
@@ -97,6 +115,14 @@
           href="/sessions"
           title="Active sessions without a tile: the board keeps the busiest and most recent {Board.maxTiles}"
           >{board.overflow} not shown</a
+        >{/if}
+      {#if current && (current.truncated.calls || current.truncated.sessions)}<span
+          class="chip warning"
+          title="The window holds more than the page reads at once ({LivePlace.windows[
+            current.window
+          ].calls} calls, {LivePlace.windows[current.window]
+            .sessions} sessions): the oldest are left out. Choose a shorter window to see all of it."
+          >partial: newest only</span
         >{/if}
     </div>
   {/if}
@@ -285,8 +311,11 @@
     {#if !board.tiles.length}
       <div class="empty-state">
         <div class="empty-icon"><Icon name="pulse" size={26} /></div>
-        <h2>No session active in the last {span(Board.windowMs)}</h2>
+        <h2>No session active in the {LivePlace.windows[view.window].label}</h2>
         <p>Sessions appear here as soon as a client sends a call through TGV.</p>
+        {#if longer}<a class="button" href={LivePlace.href({ ...view, window: longer })}
+            >Look back {LivePlace.windows[longer].label.replace('last ', '')}</a
+          >{/if}
       </div>
     {:else if view.density === 'compact'}
       <div class="live-rows-wrap">
@@ -432,6 +461,12 @@
   }
   .live-pulse a.chip {
     cursor: pointer;
+  }
+  /* The count and the window it counts over read as one control. */
+  .live-active {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
   }
   .live-pulse .status-dot {
     margin-right: 2px;

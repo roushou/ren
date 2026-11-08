@@ -103,11 +103,11 @@ export interface BoardInput {
   calls: CallView[];
   turns: Map<TurnId, TurnActivity>;
   now: number;
+  /** How far back a session counts as active. */
+  windowMs: number;
 }
 
 export class Board {
-  /** A session stays on the board this long after its last call. */
-  static readonly windowMs = 15 * 60_000;
   /** The lanes show this much recent time: a few agent loops. */
   static readonly laneMs = 2 * 60_000;
   /** The wall is a fixed 4 × 2; more sessions than this go to an overflow count. */
@@ -128,7 +128,7 @@ export class Board {
   constructor(input: BoardInput) {
     this.now = input.now;
     const bySession = Board.bySession(input.calls);
-    const active = Board.activeSessions(input.sessions, bySession, input.now);
+    const active = Board.activeSessions(input.sessions, bySession, input.now, input.windowMs);
     this.overflow = Math.max(0, active.length - Board.maxTiles);
     this.tiles = Board.shown(active, bySession).map((session) =>
       Board.tile(session, bySession.get(session.id) ?? [], input.turns, input.now),
@@ -191,11 +191,12 @@ export class Board {
     sessions: SessionView[],
     calls: Map<SessionId, CallView[]>,
     now: number,
+    windowMs: number,
   ): SessionView[] {
     return sessions
       .filter(
         (session) =>
-          now - session.last_seen <= Board.windowMs ||
+          now - session.last_seen <= windowMs ||
           (calls.get(session.id) ?? []).some((call) => call.state === 'open'),
       )
       .sort((a, b) => a.first_seen - b.first_seen || a.id.localeCompare(b.id));
@@ -666,25 +667,58 @@ export class Feed {
 export interface LiveView {
   density: Density;
   band: BandStyle;
+  window: LiveWindow;
 }
 export type Density = 'comfortable' | 'compact';
 /** How the band draws its clients: a row each, or stacked into one ribbon. */
 export type BandStyle = 'area' | 'ribbon';
+/** How far back a session counts as active. */
+export type LiveWindow = '5m' | '15m' | '1h' | '4h';
+
+/** What each window means, and how much the page reads for it. */
+export interface WindowSpec {
+  ms: number;
+  label: string;
+  /** Calls read at most: the API's page limit caps it at 1000. */
+  calls: number;
+  sessions: number;
+}
 
 export class LivePlace {
+  static readonly windows: Record<LiveWindow, WindowSpec> = {
+    '5m': { ms: 5 * 60_000, label: 'last 5 min', calls: 500, sessions: 100 },
+    '15m': { ms: 15 * 60_000, label: 'last 15 min', calls: 500, sessions: 100 },
+    '1h': { ms: 60 * 60_000, label: 'last 1 h', calls: 1000, sessions: 200 },
+    '4h': { ms: 4 * 60 * 60_000, label: 'last 4 h', calls: 1000, sessions: 300 },
+  };
+  static readonly defaultWindow: LiveWindow = '15m';
+
   static parse(params: { get(name: string): string | null }): LiveView {
+    const window = params.get('window');
     return {
       density: params.get('density') === 'compact' ? 'compact' : 'comfortable',
       band: params.get('band') === 'ribbon' ? 'ribbon' : 'area',
+      window: LivePlace.isWindow(window) ? window : LivePlace.defaultWindow,
     };
+  }
+
+  static isWindow(text: string | null): text is LiveWindow {
+    return text !== null && Object.hasOwn(LivePlace.windows, text);
   }
 
   static href(view: LiveView): string {
     const params = new URLSearchParams();
+    if (view.window !== LivePlace.defaultWindow) params.set('window', view.window);
     if (view.density === 'compact') params.set('density', 'compact');
     if (view.band === 'ribbon') params.set('band', 'ribbon');
     const query = params.toString();
     return query ? `/live?${query}` : '/live';
+  }
+
+  /** The next longer window, to offer when the board is empty. */
+  static longer(window: LiveWindow): LiveWindow | null {
+    const order = Object.keys(LivePlace.windows) as LiveWindow[];
+    return order[order.indexOf(window) + 1] ?? null;
   }
 }
 
