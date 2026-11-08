@@ -52,6 +52,10 @@ to = "anthropic-key"
 on_status = [429]
 ```
 
+An entry speaks its provider's own wire format. `wire` names it explicitly
+(`anthropic_messages` or `openai_responses`); a format the provider does not offer
+is refused when the configuration loads.
+
 When the provider's own upstream answers a listed status before anything reached
 the client, TGV records that response and replays the request to the fallback
 entry, replacing the client's credentials (and the OAuth beta) with the key. A

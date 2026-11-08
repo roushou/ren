@@ -13,7 +13,7 @@ use tgv_gateway::{
     policy::{Policy, PolicyConfig},
 };
 use tgv_harness::host::HostEnv;
-use tgv_protocol::route::Provider;
+use tgv_protocol::route::{Api, Provider, UnsupportedWire, Wire};
 use tgv_recorder::retention::RetentionPolicy;
 use tgv_recorder::{
     CaptureOptions,
@@ -53,6 +53,8 @@ pub enum ConfigError {
     },
     #[error(transparent)]
     ProviderUrl(#[from] tgv_gateway::UpstreamConfigError),
+    #[error("upstream {id}: {source}")]
+    Wire { id: String, source: UnsupportedWire },
     #[error("upstream {0}: the Codex backend accepts no operator keys")]
     CodexOperatorKey(String),
     #[error(transparent)]
@@ -109,9 +111,29 @@ pub struct Config {
 pub struct UpstreamConfig {
     pub id: UpstreamId,
     pub provider: Provider,
+    /// The wire format the entry speaks; the provider's native one when
+    /// omitted. Refused at load unless the provider offers it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wire: Option<Wire>,
     pub base_url: String,
     /// The environment variable holding the API key.
     pub operator_key_env: String,
+}
+
+impl UpstreamConfig {
+    /// The provider's API in the configured wire format, or its native API.
+    fn api(&self) -> Result<Api, ConfigError> {
+        match self.wire {
+            None => Ok(self.provider.native_api()),
+            Some(wire) => self
+                .provider
+                .speak(wire)
+                .map_err(|source| ConfigError::Wire {
+                    id: self.id.to_string(),
+                    source,
+                }),
+        }
+    }
 }
 
 impl Default for Config {
@@ -181,7 +203,7 @@ impl Config {
                 }
                 Ok(UpstreamEntry {
                     id: upstream.id.clone(),
-                    api: upstream.provider.native_api(),
+                    api: upstream.api()?,
                     url: UpstreamUrl::parse(&upstream.base_url).map_err(|source| {
                         ConfigError::UpstreamUrl {
                             id: upstream.id.to_string(),
@@ -433,6 +455,7 @@ mod tests {
             upstreams: vec![UpstreamConfig {
                 id: UpstreamId::parse("anthropic-key").unwrap(),
                 provider: Provider::Anthropic,
+                wire: None,
                 base_url: "https://api.anthropic.com".into(),
                 operator_key_env: "TGV_FIXTURE_KEY".into(),
             }],
@@ -484,5 +507,52 @@ mod tests {
             with_operator_key(fallback).check().is_err(),
             "must target an operator key"
         );
+    }
+
+    #[test]
+    fn an_upstream_speaks_its_providers_native_wire_unless_one_it_offers_is_named() {
+        let key = UpstreamId::parse("anthropic-key").unwrap();
+        let env = HostEnv::from_pairs([("TGV_FIXTURE_KEY", "sk-FIXTURE")]);
+        let api = |config: &Config| {
+            config
+                .resolve_with(&env)
+                .unwrap()
+                .upstreams()
+                .get(&key)
+                .unwrap()
+                .api
+        };
+        let omitted = with_operator_key("");
+        assert_eq!(api(&omitted), Provider::Anthropic.native_api());
+
+        let mut named = with_operator_key("");
+        named.upstreams[0].wire = Some(Wire::AnthropicMessages);
+        assert_eq!(api(&named), Provider::Anthropic.native_api());
+
+        let mut unsupported = with_operator_key("");
+        unsupported.upstreams[0].wire = Some(Wire::OpenAiResponses);
+        let error = unsupported.check().err().unwrap().to_string();
+        assert_eq!(
+            error,
+            "upstream anthropic-key: provider anthropic does not offer the openai_responses wire format"
+        );
+    }
+
+    #[test]
+    fn the_wire_key_reads_labels_and_an_omitted_one_is_not_written() {
+        let entry = |wire: &str| {
+            toml::from_str::<UpstreamConfig>(&format!(
+                "id = \"k\"\nprovider = \"openai\"\n{wire}base_url = \"https://api.openai.com\"\noperator_key_env = \"K\"\n"
+            ))
+        };
+        assert_eq!(
+            entry("wire = \"openai_responses\"\n").unwrap().wire,
+            Some(Wire::OpenAiResponses)
+        );
+        assert!(entry("wire = \"chat\"\n").is_err());
+        let omitted = entry("").unwrap();
+        assert_eq!(omitted.wire, None);
+        // A configuration without the key keeps the revision it had.
+        assert!(!serde_json::to_string(&omitted).unwrap().contains("wire"));
     }
 }
