@@ -381,7 +381,7 @@ nothing, so trailers still arrive.
 
 - One client socket is pinned to one upstream socket (`Upstream::connect`, an
   HTTP/1.1 client with Reqwest's upgrade). Two pumps, one per direction, and the
-  shutdown watcher run in the channel's one task, which Axum spawns on upgrade.
+  shutdown, operator, and deadline watchers run in the channel's one task, which Axum spawns on upgrade.
   Each pump forwards a message before it reads the next one, so messages are never
   buffered without bound.
 - Each socket's sink sits behind one lock. An operator's `response.interrupt` goes
@@ -390,6 +390,16 @@ nothing, so trailers still arrive.
   cancel requests, not message data.
 - Each side answers its own pings. Extensions are not negotiated on either leg, so
   `Sec-WebSocket-Extensions` is never forwarded.
+- **Liveness.** TGV pings each leg after `websocket.keepalive_seconds` of
+  silence (any message, ping, or pong counts as hearing from a side) and ends
+  the channel when a side stays silent for twice that (`client_unresponsive`,
+  `upstream_unresponsive`). A running call whose upstream sends nothing past
+  the response header timeout (before its first message) or the stream idle
+  timeout (after) ends it as `upstream_stalled`; the deadline starts when the
+  call is admitted, so a wait for call admission does not count. `WsChannel`
+  makes these decisions from the clock reading each event carries and a
+  one-second `Tick`; the relay only sends pings and ticks. Codex answers pings
+  between turns and reconnects after a close, resending its full input.
 - Admission counts channels (`websocket.max_channels`) and in-flight calls
   separately, so idle sockets hold no call permits. Beyond the channel limit, and
   in `websocket.mode = "refuse"`, handshakes get `426` and Codex falls back to
@@ -708,8 +718,6 @@ state; it is logged, not recorded in `operator_actions`.
 - HTTP/2 streams above a GOAWAY's last stream ID are not detected as refused.
 - Upstream connections are not warmed while an upload is received.
 - The request buffer does not keep request trailers.
-- WebSocket sockets have no idle timeout; a quiet call is bounded only by the
-  client.
 - `previous_response_id` continuity is not tracked.
 - The `426` fallback is confirmed in the Codex source, not against a release.
 - A channel whose handshake call is pruned before it closes keeps its row.

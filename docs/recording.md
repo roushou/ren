@@ -96,8 +96,14 @@ response body is the upstream messages. The call detail lists where each message
 starts. An interrupt the upstream accepted makes the terminal's cause `client`.
 Messages that arrive while no call is open are counted on the channel and in the
 `unattributed` omission, not stored. The channel records how it ended
-(`client_closed`, `upstream_closed`, `client_failed`, `upstream_failed`, `drained`,
-`aborted`, `dropped`, or `recovered` after a restart) and the close code.
+(`client_closed`, `upstream_closed`, `client_failed`, `upstream_failed`,
+`client_unresponsive` or `upstream_unresponsive` when a side stayed silent
+through TGV's ping, `upstream_stalled` when a running call's upstream went quiet
+past its deadline, `drained`, `aborted`, `dropped`, or `recovered` after a
+restart) and the close code. A call ended by an unresponsive upstream records
+`stream_failed` with `idle_timeout`; one ended by a stall records
+`acceptance_unknown` with `header_timeout` before its first upstream message, or
+`stream_failed` with `idle_timeout` after.
 
 ## Gateway responses and limits
 

@@ -593,6 +593,115 @@ async fn shutdown_closes_idle_channels_and_aborts_busy_ones_with_service_restart
     assert_eq!(channel_end(call), (Some(ChannelEnd::Aborted), Some(1012)));
 }
 
+/// Read `socket` until it closes, as a live peer does (reading answers pings).
+async fn read_until_closed<S>(mut socket: WebSocketStream<S>) -> Option<CloseCode>
+where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+{
+    loop {
+        match timeout(Duration::from_secs(10), socket.next())
+            .await
+            .unwrap()
+        {
+            Some(Ok(Message::Close(frame))) => return frame.map(|frame| frame.code),
+            Some(Ok(_)) => {}
+            other => panic!("expected messages until a close, got {other:?}"),
+        }
+    }
+}
+
+#[tokio::test]
+async fn a_client_that_stops_answering_pings_is_closed_and_frees_its_channel() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = Config {
+        websocket: tgv_gateway::WebSocketOptions {
+            max_channels: 1,
+            ..Default::default()
+        },
+        ..base_config()
+    };
+    let (upstream, mut servers) = ScriptedWs::new([Script::Accept, Script::Accept]);
+    let gateway = TestGateway::with_upstream(&config, dir.path(), upstream).await;
+    // A client that never reads again, so it never answers a ping.
+    let (silent, _) = connect(&gateway).await.unwrap();
+    let mut server = servers.recv().await.unwrap();
+
+    // Quiet for the keepalive: both legs are pinged; the upstream answers.
+    gateway.clock().advance(Duration::from_secs(30));
+    match timeout(Duration::from_secs(5), server.next())
+        .await
+        .unwrap()
+    {
+        Some(Ok(Message::Ping(_))) => {}
+        other => panic!("expected a ping, got {other:?}"),
+    }
+    let upstream_side = tokio::spawn(read_until_closed(server));
+    // Silent for twice the keepalive: the client is unresponsive.
+    gateway.clock().advance(Duration::from_secs(30));
+    let closed = timeout(Duration::from_secs(5), upstream_side)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(closed, Some(CloseCode::Away));
+
+    // Its channel is free again: the limit admits a new one.
+    let (client, _) = connect(&gateway).await.unwrap();
+    let server = servers.recv().await.unwrap();
+    drop((silent, client, server));
+    gateway.stop().await;
+
+    let calls = calls_in(dir.path()).await;
+    assert_eq!(
+        channel_end(&calls[0].1),
+        (Some(ChannelEnd::ClientUnresponsive), Some(1001))
+    );
+}
+
+#[tokio::test]
+async fn a_call_whose_upstream_goes_quiet_ends_as_stalled() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = Config {
+        stream_idle_timeout_seconds: 5,
+        websocket: tgv_gateway::WebSocketOptions {
+            keepalive_seconds: 3600,
+            ..Default::default()
+        },
+        ..base_config()
+    };
+    let (upstream, mut servers) = ScriptedWs::new([Script::Accept]);
+    let gateway = TestGateway::with_upstream(&config, dir.path(), upstream).await;
+    let (mut client, _) = connect(&gateway).await.unwrap();
+    let mut server = servers.recv().await.unwrap();
+    send_text(&mut client, &create()).await;
+    assert_eq!(next_text(&mut server).await, create());
+    send_text(&mut server, CREATED).await;
+    assert_eq!(next_text(&mut client).await, CREATED);
+
+    gateway.clock().advance(Duration::from_secs(5));
+    let (client_closed, server_closed) =
+        tokio::join!(read_until_closed(client), read_until_closed(server));
+    // The client is closed with 1014, which the client library reads as a
+    // protocol error; either way its socket is closed. The code is recorded.
+    assert!(client_closed.is_some());
+    assert_eq!(server_closed, Some(CloseCode::Away));
+    gateway.stop().await;
+
+    let calls = calls_in(dir.path()).await;
+    let (_, call) = calls.last().unwrap();
+    assert_eq!(
+        ending(call),
+        (
+            AttemptTerminal::StreamFailed,
+            Some(TerminalCause::IdleTimeout),
+            Some(AttemptPhase::Response)
+        )
+    );
+    assert_eq!(
+        channel_end(call),
+        (Some(ChannelEnd::UpstreamStalled), Some(1014))
+    );
+}
+
 #[tokio::test]
 async fn the_reqwest_upstream_upgrades_over_http1_and_relays() {
     let upstream = mock(Router::new().route(

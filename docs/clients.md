@@ -141,7 +141,14 @@ compression extension is negotiated on either leg. To keep Codex on HTTP/SSE,
 set `[websocket] mode = "refuse"`: handshakes then get `426 Upgrade Required`,
 and Codex falls back to HTTP/SSE for the session. Handshakes beyond
 `websocket.max_channels` (default 16) get the same `426`. Each call on a socket
-counts against `max_concurrent_requests`; an idle socket does not. On shutdown,
+counts against `max_concurrent_requests`; an idle socket does not. TGV pings
+each leg after `websocket.keepalive_seconds` (default 30) of silence and closes
+a socket whose client or upstream stays silent for twice that, so a vanished
+client (a laptop asleep behind Tailscale Serve) no longer holds a channel. A
+running call whose upstream sends nothing within the response header timeout
+(before its first message) or the stream idle timeout (after) closes the socket
+too, as an HTTP stream would end; Codex reconnects for its next turn and resends
+its full input. On shutdown,
 idle sockets close with code `1012` (service restart); sockets with a call still
 running close the same way once it ends, or when the drain deadline passes. See
 OpenAI's [gateway authentication guide](https://learn.chatgpt.com/docs/enterprise/connect-to-a-gateway)

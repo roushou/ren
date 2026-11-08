@@ -208,6 +208,15 @@ pub enum ChannelEnd {
     ClientFailed,
     /// The upstream socket failed or ended without a close frame.
     UpstreamFailed,
+    /// The client sent nothing, not even a pong to TGV's ping, past the
+    /// keepalive deadline; TGV closed the channel.
+    ClientUnresponsive,
+    /// The upstream sent nothing, not even a pong to TGV's ping, past the
+    /// keepalive deadline; TGV closed the channel.
+    UpstreamUnresponsive,
+    /// The upstream answered pings but sent nothing for the running call past
+    /// its deadline; TGV closed the channel.
+    UpstreamStalled,
     /// Shutdown closed the channel once no call was open.
     Drained,
     /// Shutdown's deadline passed and the channel was closed with calls open.

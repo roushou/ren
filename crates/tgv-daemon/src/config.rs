@@ -324,6 +324,7 @@ impl RuntimeConfig {
         GatewayConfig {
             max_concurrent_requests: self.max_concurrent_requests,
             response_header_timeout: self.response_header_timeout,
+            stream_idle_timeout: self.stream_idle_timeout,
             config_revision: ConfigRevision::new(self.revision.as_str()),
             websocket: self.websocket,
             buffer: self.buffer,

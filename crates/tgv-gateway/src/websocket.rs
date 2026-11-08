@@ -12,10 +12,14 @@
 //! Close frames the machine asks for are sent after both pumps stop, so a
 //! blocked write never holds a close back, and a pump never waits on a socket
 //! the other pump is writing.
+//!
+//! A watcher ticks the machine every second; the machine decides from the
+//! clock when to ping a quiet side and when a channel has gone dead (see
+//! [`Deadlines`]). Pings are TGV's own on each leg, never forwarded.
 
 use super::{ingress::Shutdown, upstream::UpstreamSocket};
 use crate::{
-    channel::{CallSlot, Owner, Side, WsAction, WsChannel, WsEvent},
+    channel::{CallSlot, Deadlines, Owner, Side, WsAction, WsChannel, WsEvent},
     control::{Cancel, Controls, Registered},
     policy::{Admission, CallFacts, Policy, Rejection},
 };
@@ -70,6 +74,9 @@ pub struct WebSocketOptions {
     /// a socket count against the gateway's call limit, so an idle socket
     /// holds no call admission.
     pub max_channels: usize,
+    /// A side of a channel silent this long is pinged; silent twice this
+    /// long, the channel is closed as unresponsive.
+    pub keepalive_seconds: u64,
 }
 
 impl Default for WebSocketOptions {
@@ -77,21 +84,32 @@ impl Default for WebSocketOptions {
         Self {
             mode: WebSocketMode::Relay,
             max_channels: 16,
+            keepalive_seconds: 30,
         }
     }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-#[error("websocket.max_channels must be between 1 and 1024")]
-pub struct WebSocketOptionsError;
+pub enum WebSocketOptionsError {
+    #[error("websocket.max_channels must be between 1 and 1024")]
+    MaxChannels,
+    #[error("websocket.keepalive_seconds must be between 1 and 3600")]
+    Keepalive,
+}
 
 impl WebSocketOptions {
     pub fn validate(&self) -> Result<(), WebSocketOptionsError> {
-        if (1..=1024).contains(&self.max_channels) {
-            Ok(())
-        } else {
-            Err(WebSocketOptionsError)
+        if !(1..=1024).contains(&self.max_channels) {
+            return Err(WebSocketOptionsError::MaxChannels);
         }
+        if !(1..=3600).contains(&self.keepalive_seconds) {
+            return Err(WebSocketOptionsError::Keepalive);
+        }
+        Ok(())
+    }
+
+    pub fn keepalive(&self) -> Duration {
+        Duration::from_secs(self.keepalive_seconds)
     }
 }
 
@@ -118,6 +136,7 @@ pub(super) struct ChannelSetup {
     pub policy: Policy,
     pub controls: Arc<Controls>,
     pub clock: Arc<dyn Clock>,
+    pub deadlines: Deadlines,
 }
 
 /// One whole message: its framing and bytes.
@@ -263,6 +282,9 @@ struct Closes {
 impl Relay {
     /// How long the close handshake may take after the channel ends.
     const CLOSE_GRACE: Duration = Duration::from_secs(2);
+    /// How often the machine checks its deadlines, and the longest a ping
+    /// may wait for its socket.
+    const TICK: Duration = Duration::from_secs(1);
 
     /// Relay until the channel ends, then send the close frames it decided.
     async fn run(setup: ChannelSetup, client: WebSocket, upstream: UpstreamSocket) {
@@ -278,13 +300,14 @@ impl Relay {
             policy,
             controls,
             clock,
+            deadlines,
         } = setup;
         let (interrupts, interrupted) = mpsc::unbounded_channel();
         let upstream = WebSocketStream::from_raw_socket(upstream, Role::Client, None).await;
         let (client_sink, client_stream) = client.split();
         let (upstream_sink, upstream_stream) = upstream.split();
         let relay = Arc::new(Self {
-            machine: Mutex::new(WsChannel::opened()),
+            machine: Mutex::new(WsChannel::opened(deadlines, clock.now().monotonic)),
             calls: Mutex::new(HashMap::new()),
             client: tokio::sync::Mutex::new(client_sink),
             upstream: tokio::sync::Mutex::new(upstream_sink),
@@ -307,6 +330,7 @@ impl Relay {
             relay.pump(Side::Upstream, PumpStream::Upstream(upstream_stream)),
             relay.watch_shutdown(),
             relay.watch_operator(interrupted),
+            relay.watch_deadlines(),
         );
         relay.close_sockets().await;
         drop((channel_permit, tracked));
@@ -320,7 +344,7 @@ impl Relay {
                 incoming = stream.next() => incoming,
             };
             match incoming {
-                Incoming::Control => {}
+                Incoming::Control => self.step(WsEvent::Control { side }, None).await,
                 Incoming::Frame(frame) => {
                     let mut plan = None;
                     let (event, hints) = match side {
@@ -499,6 +523,48 @@ impl Relay {
         }
     }
 
+    /// Tick the machine, which pings quiet sides and ends a dead channel.
+    async fn watch_deadlines(&self) {
+        let mut ticks = tokio::time::interval(Self::TICK);
+        ticks.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        loop {
+            tokio::select! {
+                biased;
+                () = self.ended.cancelled() => return,
+                _ = ticks.tick() => self.step(WsEvent::Tick, None).await,
+            }
+        }
+    }
+
+    /// Ping a quiet side. A socket busy past a tick is left alone: the
+    /// deadline still passes if the side stays silent. Returns the side whose
+    /// write failed, if it did.
+    async fn ping(&self, side: Side) -> Option<Side> {
+        let send = async {
+            match side {
+                Side::Client => {
+                    let mut sink = self.client.lock().await;
+                    sink.send(ws::Message::Ping(Bytes::new())).await.is_ok()
+                }
+                Side::Upstream => {
+                    let mut sink = self.upstream.lock().await;
+                    sink.send(tungstenite::Message::Ping(Bytes::new()))
+                        .await
+                        .is_ok()
+                }
+            }
+        };
+        let sent = tokio::select! {
+            biased;
+            () = self.ended.cancelled() => return None,
+            sent = tokio::time::timeout(Self::TICK, send) => sent,
+        };
+        match sent {
+            Ok(false) => Some(side),
+            Ok(true) | Err(_) => None,
+        }
+    }
+
     async fn watch_shutdown(&self) {
         tokio::select! {
             biased;
@@ -527,9 +593,10 @@ impl Relay {
     }
 
     fn transition(&self, event: WsEvent<ResponseId>) -> Vec<WsAction> {
+        let at = self.clock.now().monotonic;
         let mut machine = self.machine.lock().unwrap_or_else(PoisonError::into_inner);
         let state = std::mem::replace(&mut *machine, WsChannel::Ended(ChannelEnd::Dropped));
-        match state.step(event) {
+        match state.step(at, event) {
             Ok(transition) => {
                 *machine = transition.state;
                 transition.actions
@@ -555,6 +622,7 @@ impl Relay {
                 None
             }
             WsAction::Interrupt(slot) => (!self.interrupt(slot).await).then_some(Side::Upstream),
+            WsAction::Ping(side) => self.ping(side).await,
             WsAction::Forward(owner) => {
                 let observed = observed?;
                 self.record(owner, observed);
@@ -665,6 +733,9 @@ impl Relay {
         {
             open.admission = Some(permit);
         }
+        // The create is forwarded next: the upstream's deadline starts now.
+        let none: Vec<WsAction> = self.transition(WsEvent::Admitted(slot));
+        debug_assert!(none.is_empty());
     }
 
     fn record(&self, owner: Owner, observed: &Observed) {
@@ -773,6 +844,7 @@ impl Drop for Relay {
                 WsAction::End(end) => self.tap.close(end, None),
                 WsAction::OpenCall(_)
                 | WsAction::Interrupt(_)
+                | WsAction::Ping(_)
                 | WsAction::Forward(_)
                 | WsAction::Withhold(_)
                 | WsAction::Close { .. } => {}
@@ -811,19 +883,26 @@ impl ChannelSetup {
 
 #[cfg(test)]
 mod tests {
-    use super::{WebSocketMode, WebSocketOptions};
+    use super::{WebSocketMode, WebSocketOptions, WebSocketOptionsError};
+    use std::time::Duration;
 
     #[test]
     fn options_parse_and_validate() {
         let options: WebSocketOptions =
-            toml::from_str("mode = \"refuse\"\nmax_channels = 2").unwrap();
+            toml::from_str("mode = \"refuse\"\nmax_channels = 2\nkeepalive_seconds = 45").unwrap();
         assert_eq!(options.mode, WebSocketMode::Refuse);
+        assert_eq!(options.keepalive(), Duration::from_secs(45));
         assert!(options.validate().is_ok());
         assert!(toml::from_str::<WebSocketOptions>("enabled = true").is_err());
         let none = WebSocketOptions {
             max_channels: 0,
             ..WebSocketOptions::default()
         };
-        assert!(none.validate().is_err());
+        assert_eq!(none.validate(), Err(WebSocketOptionsError::MaxChannels));
+        let never = WebSocketOptions {
+            keepalive_seconds: 0,
+            ..WebSocketOptions::default()
+        };
+        assert_eq!(never.validate(), Err(WebSocketOptionsError::Keepalive));
     }
 }

@@ -11,11 +11,30 @@
 //! Responses are matched by their provider-native identifier `R`, so an
 //! interrupt and its acknowledgement are attributed to the call they name and
 //! never to whichever call happens to be open.
+//!
+//! Every event comes with the monotonic time it was observed, and the relay
+//! sends `Tick` periodically. From those the machine decides when a quiet side
+//! is pinged, when a side that stays silent is unresponsive, and when the
+//! running call's upstream has stalled (see [`Deadlines`]).
 
+use std::time::Duration;
 use tgv_protocol::websocket::{ClientMessage, CloseCode, InterruptOutcome, UpstreamMessage};
-use tgv_recorder::capture::{
-    AttemptPhase, AttemptTerminal, ChannelEnd, TerminalCause, TerminalRecord,
+use tgv_recorder::{
+    capture::{AttemptPhase, AttemptTerminal, ChannelEnd, TerminalCause, TerminalRecord},
+    time::Monotonic,
 };
+
+/// How long a channel's sides and its running call may stay quiet.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Deadlines {
+    /// A side silent this long is pinged. Silent twice this long, it is
+    /// unresponsive and the channel ends. Any message, ping, or pong counts.
+    pub keepalive: Duration,
+    /// The oldest call, forwarded upstream, with no upstream message yet.
+    pub first_message: Duration,
+    /// The oldest call, responding, with no upstream message since its last.
+    pub stream_idle: Duration,
+}
 
 /// A call's position among the calls a channel has opened, counting from 0.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -54,6 +73,15 @@ pub enum WsEvent<R> {
     Abort,
     /// The operator asked to stop this call.
     OperatorInterrupt(CallSlot),
+    /// A ping or pong arrived: the side is alive. Never returns actions.
+    Control {
+        side: Side,
+    },
+    /// The gateway admitted the call and its create is being forwarded.
+    /// Never returns actions.
+    Admitted(CallSlot),
+    /// Time passed: check the deadlines.
+    Tick,
     /// The relay was dropped without an end.
     Dropped,
 }
@@ -80,6 +108,8 @@ pub enum WsAction {
     /// Send `response.interrupt` upstream for this call's response, on the
     /// operator's behalf. Its answer is withheld from the client.
     Interrupt(CallSlot),
+    /// Send a ping to this side, which has been quiet.
+    Ping(Side),
     /// Send a close frame to this side, with this code.
     Close { side: Side, code: CloseCode },
     /// The channel ended; record it. Nothing follows.
@@ -101,6 +131,49 @@ pub struct OpenChannel<R> {
     calls: Vec<WsCall<R>>,
     next: CallSlot,
     admission: Admission,
+    deadlines: Deadlines,
+    client: Liveness,
+    upstream: Liveness,
+}
+
+/// When a side was last heard from, and whether it has been pinged since.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Liveness {
+    heard: Monotonic,
+    ping: Ping,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Ping {
+    /// Not pinged since the side was last heard.
+    Due,
+    Sent,
+}
+
+impl Liveness {
+    fn new(at: Monotonic) -> Self {
+        Self {
+            heard: at,
+            ping: Ping::Due,
+        }
+    }
+
+    fn heard(&mut self, at: Monotonic) {
+        *self = Self::new(at);
+    }
+
+    fn unresponsive(self, at: Monotonic, keepalive: Duration) -> bool {
+        at.saturating_since(self.heard) >= keepalive.saturating_mul(2)
+    }
+
+    /// Whether to ping now; marks the ping sent.
+    fn ping(&mut self, at: Monotonic, keepalive: Duration) -> bool {
+        let due = self.ping == Ping::Due && at.saturating_since(self.heard) >= keepalive;
+        if due {
+            self.ping = Ping::Sent;
+        }
+        due
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -117,10 +190,15 @@ struct WsCall<R> {
     response: Option<R>,
     progress: Progress,
     interrupt: Interrupt,
+    /// Since when the upstream has been quiet for this call: its admission,
+    /// then its latest upstream message.
+    quiet_since: Monotonic,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Progress {
+    /// Waiting for the gateway's call admission; the create is not forwarded yet.
+    Admitting,
     /// The create was forwarded; no upstream event for it yet.
     Awaiting,
     Responding,
@@ -154,12 +232,15 @@ pub enum IllegalTransition {
 }
 
 impl<R: PartialEq> WsChannel<R> {
-    /// A channel whose handshake just completed.
-    pub fn opened() -> Self {
+    /// A channel whose handshake just completed, at `at`.
+    pub fn opened(deadlines: Deadlines, at: Monotonic) -> Self {
         Self::Open(OpenChannel {
             calls: Vec::new(),
             next: CallSlot(0),
             admission: Admission::Accepting,
+            deadlines,
+            client: Liveness::new(at),
+            upstream: Liveness::new(at),
         })
     }
 
@@ -175,20 +256,51 @@ impl<R: PartialEq> WsChannel<R> {
         }
     }
 
-    pub fn step(self, event: WsEvent<R>) -> Result<Transition<R>, IllegalTransition> {
+    /// Apply an event observed at `at`.
+    pub fn step(
+        self,
+        at: Monotonic,
+        event: WsEvent<R>,
+    ) -> Result<Transition<R>, IllegalTransition> {
         match self {
             Self::Ended(end) => Err(IllegalTransition::AfterEnd { end }),
-            Self::Open(open) => Ok(open.step(event)),
+            Self::Open(open) => Ok(open.step(at, event)),
         }
     }
 }
 
 impl<R: PartialEq> OpenChannel<R> {
-    fn step(mut self, event: WsEvent<R>) -> Transition<R> {
+    fn step(mut self, at: Monotonic, event: WsEvent<R>) -> Transition<R> {
         let mut actions = Vec::new();
         match event {
-            WsEvent::Client(message) => self.client(message, &mut actions),
-            WsEvent::Upstream(message) => self.upstream(message, &mut actions),
+            WsEvent::Client(message) => {
+                self.client.heard(at);
+                self.client(at, message, &mut actions);
+            }
+            WsEvent::Upstream(message) => {
+                self.upstream.heard(at);
+                self.upstream(at, message, &mut actions);
+            }
+            WsEvent::Control { side } => self.side(side).heard(at),
+            WsEvent::Admitted(slot) => {
+                if let Some(call) = self.calls.iter_mut().find(|call| call.slot == slot)
+                    && call.progress == Progress::Admitting
+                {
+                    call.progress = Progress::Awaiting;
+                    call.quiet_since = at;
+                }
+            }
+            WsEvent::Tick => {
+                if let Some(expiry) = self.expired(at) {
+                    return self.end(expiry.end(), expiry.ending(), expiry.closes(), actions);
+                }
+                let keepalive = self.deadlines.keepalive;
+                for side in [Side::Client, Side::Upstream] {
+                    if self.side(side).ping(at, keepalive) {
+                        actions.push(WsAction::Ping(side));
+                    }
+                }
+            }
             WsEvent::Closed { side, code } => {
                 let (end, cause) = match side {
                     Side::Client => (ChannelEnd::ClientClosed, Ending::Client),
@@ -264,7 +376,33 @@ impl<R: PartialEq> OpenChannel<R> {
         (Side::Upstream, CloseCode::GOING_AWAY),
     ];
 
-    fn client(&mut self, message: ClientMessage<R>, actions: &mut Vec<WsAction>) {
+    fn side(&mut self, side: Side) -> &mut Liveness {
+        match side {
+            Side::Client => &mut self.client,
+            Side::Upstream => &mut self.upstream,
+        }
+    }
+
+    /// The deadline that passed at `at`, if one did: a side that stayed
+    /// silent through its ping, or the running call's upstream going quiet.
+    fn expired(&self, at: Monotonic) -> Option<Expiry> {
+        let keepalive = self.deadlines.keepalive;
+        if self.client.unresponsive(at, keepalive) {
+            return Some(Expiry::ClientUnresponsive);
+        }
+        if self.upstream.unresponsive(at, keepalive) {
+            return Some(Expiry::UpstreamUnresponsive);
+        }
+        let call = self.calls.first()?;
+        let limit = match call.progress {
+            Progress::Admitting => return None,
+            Progress::Awaiting => self.deadlines.first_message,
+            Progress::Responding => self.deadlines.stream_idle,
+        };
+        (at.saturating_since(call.quiet_since) >= limit).then_some(Expiry::UpstreamStalled)
+    }
+
+    fn client(&mut self, at: Monotonic, message: ClientMessage<R>, actions: &mut Vec<WsAction>) {
         match message {
             ClientMessage::Create => match self.admission {
                 Admission::Accepting => {
@@ -273,8 +411,9 @@ impl<R: PartialEq> OpenChannel<R> {
                     self.calls.push(WsCall {
                         slot,
                         response: None,
-                        progress: Progress::Awaiting,
+                        progress: Progress::Admitting,
                         interrupt: Interrupt::None,
+                        quiet_since: at,
                     });
                     actions.push(WsAction::OpenCall(slot));
                     actions.push(WsAction::Forward(Owner::Call(slot)));
@@ -297,12 +436,19 @@ impl<R: PartialEq> OpenChannel<R> {
         }
     }
 
-    fn upstream(&mut self, message: UpstreamMessage<R>, actions: &mut Vec<WsAction>) {
+    fn upstream(
+        &mut self,
+        at: Monotonic,
+        message: UpstreamMessage<R>,
+        actions: &mut Vec<WsAction>,
+    ) {
+        if let Some(call) = self.calls.first_mut() {
+            call.heard(at);
+        }
         match message {
             UpstreamMessage::Created(response) => {
                 let (owner, interrupt) = match self.calls.first_mut() {
                     Some(call) => {
-                        call.progress = Progress::Responding;
                         if call.response.is_none() {
                             call.response = response;
                         }
@@ -319,9 +465,6 @@ impl<R: PartialEq> OpenChannel<R> {
                 actions.extend(interrupt.map(WsAction::Interrupt));
             }
             UpstreamMessage::Other => {
-                if let Some(call) = self.calls.first_mut() {
-                    call.progress = Progress::Responding;
-                }
                 actions.push(WsAction::Forward(self.oldest()));
             }
             UpstreamMessage::InterruptAnswered { response, outcome } => {
@@ -386,20 +529,68 @@ impl<R: PartialEq> OpenChannel<R> {
     }
 }
 
+/// A deadline that passed, ending the channel.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Expiry {
+    ClientUnresponsive,
+    UpstreamUnresponsive,
+    UpstreamStalled,
+}
+
+impl Expiry {
+    fn end(self) -> ChannelEnd {
+        match self {
+            Self::ClientUnresponsive => ChannelEnd::ClientUnresponsive,
+            Self::UpstreamUnresponsive => ChannelEnd::UpstreamUnresponsive,
+            Self::UpstreamStalled => ChannelEnd::UpstreamStalled,
+        }
+    }
+
+    fn ending(self) -> Ending {
+        match self {
+            Self::ClientUnresponsive => Ending::Client,
+            Self::UpstreamUnresponsive => Ending::UpstreamUnresponsive,
+            Self::UpstreamStalled => Ending::Stalled,
+        }
+    }
+
+    /// The close frames to send: the silent side gets none it could not read.
+    fn closes(self) -> &'static [(Side, CloseCode)] {
+        match self {
+            Self::ClientUnresponsive => &[(Side::Upstream, CloseCode::GOING_AWAY)],
+            Self::UpstreamUnresponsive => &[(Side::Client, CloseCode::BAD_GATEWAY)],
+            Self::UpstreamStalled => &[
+                (Side::Client, CloseCode::BAD_GATEWAY),
+                (Side::Upstream, CloseCode::GOING_AWAY),
+            ],
+        }
+    }
+}
+
 /// Why the calls still open at a channel's end stopped.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Ending {
     Client,
     UpstreamClosed,
     UpstreamFailed,
+    /// The upstream did not answer TGV's ping.
+    UpstreamUnresponsive,
+    /// The upstream sent nothing for the running call past its deadline.
+    Stalled,
     Shutdown,
     Dropped,
 }
 
 impl<R> WsCall<R> {
+    /// An upstream message arrived for this call, the oldest.
+    fn heard(&mut self, at: Monotonic) {
+        self.progress = Progress::Responding;
+        self.quiet_since = at;
+    }
+
     fn phase(&self) -> AttemptPhase {
         match self.progress {
-            Progress::Awaiting => AttemptPhase::AwaitingHead,
+            Progress::Admitting | Progress::Awaiting => AttemptPhase::AwaitingHead,
             Progress::Responding => AttemptPhase::Response,
         }
     }
@@ -434,6 +625,23 @@ impl<R> WsCall<R> {
                 AttemptTerminal::StreamFailed,
                 Some(TerminalCause::BodyError),
             ),
+            Ending::UpstreamUnresponsive => (
+                AttemptTerminal::StreamFailed,
+                Some(TerminalCause::IdleTimeout),
+            ),
+            // By how far the call had got: a create never forwarded was not
+            // sent; one with no upstream message may have been accepted.
+            Ending::Stalled => match self.progress {
+                Progress::Admitting => (AttemptTerminal::Cancelled, None),
+                Progress::Awaiting => (
+                    AttemptTerminal::AcceptanceUnknown,
+                    Some(TerminalCause::HeaderTimeout),
+                ),
+                Progress::Responding => (
+                    AttemptTerminal::StreamFailed,
+                    Some(TerminalCause::IdleTimeout),
+                ),
+            },
             Ending::Shutdown => (AttemptTerminal::Cancelled, Some(TerminalCause::Shutdown)),
             Ending::Dropped => (AttemptTerminal::Interrupted, None),
         };
@@ -457,10 +665,14 @@ impl Side {
 #[cfg(test)]
 mod tests {
     use super::{
-        CallSlot, ChannelEnd, ClientMessage, CloseCode, IllegalTransition, InterruptOutcome, Owner,
-        Side, UpstreamMessage, WsAction, WsChannel, WsEvent,
+        CallSlot, ChannelEnd, ClientMessage, CloseCode, Deadlines, IllegalTransition,
+        InterruptOutcome, Owner, Side, UpstreamMessage, WsAction, WsChannel, WsEvent,
     };
-    use tgv_recorder::capture::{AttemptPhase, AttemptTerminal, TerminalCause, TerminalRecord};
+    use std::time::Duration;
+    use tgv_recorder::{
+        capture::{AttemptPhase, AttemptTerminal, TerminalCause, TerminalRecord},
+        time::Monotonic,
+    };
 
     #[test]
     fn an_operator_interrupt_is_sent_once_and_its_answer_withheld() {
@@ -505,12 +717,28 @@ mod tests {
     type Channel = WsChannel<&'static str>;
     type Event = WsEvent<&'static str>;
 
-    /// Run events from a fresh channel, returning the final state and every action.
+    const DEADLINES: Deadlines = Deadlines {
+        keepalive: Duration::from_secs(30),
+        first_message: Duration::from_secs(120),
+        stream_idle: Duration::from_secs(60),
+    };
+
+    fn second(at: u64) -> Monotonic {
+        Monotonic::from_elapsed(Duration::from_secs(at))
+    }
+
+    /// Run events from a fresh channel, all at the moment it opened,
+    /// returning the final state and every action.
     fn run(events: Vec<Event>) -> (Channel, Vec<WsAction>) {
+        run_at(events.into_iter().map(|event| (0, event)).collect())
+    }
+
+    /// Run events, each at its second since the channel opened.
+    fn run_at(events: Vec<(u64, Event)>) -> (Channel, Vec<WsAction>) {
         events.into_iter().fold(
-            (Channel::opened(), Vec::new()),
-            |(state, mut actions), event| {
-                let transition = state.step(event).unwrap();
+            (Channel::opened(DEADLINES, second(0)), Vec::new()),
+            |(state, mut actions), (at, event)| {
+                let transition = state.step(second(at), event).unwrap();
                 actions.extend(transition.actions);
                 (transition.state, actions)
             },
@@ -761,7 +989,7 @@ mod tests {
     fn events_after_the_end_are_illegal() {
         let (state, _) = run(vec![WsEvent::Dropped]);
         assert_eq!(
-            state.step(WsEvent::Upstream(UpstreamMessage::Other)),
+            state.step(second(0), WsEvent::Upstream(UpstreamMessage::Other)),
             Err(IllegalTransition::AfterEnd {
                 end: ChannelEnd::Dropped
             })
@@ -769,5 +997,222 @@ mod tests {
     }
 
     #[test]
-    fn channel_end_labels_are_unique() {}
+    fn a_quiet_side_is_pinged_once_and_answering_keeps_the_channel_open() {
+        let (state, actions) = run_at(vec![
+            (29, WsEvent::Tick),
+            // Both sides quiet for the keepalive: each is pinged, once.
+            (30, WsEvent::Tick),
+            (31, WsEvent::Tick),
+            // Both answer; the client is pinged again only after another
+            // quiet keepalive.
+            (35, WsEvent::Control { side: Side::Client }),
+            (
+                36,
+                WsEvent::Control {
+                    side: Side::Upstream,
+                },
+            ),
+            (64, WsEvent::Tick),
+            (65, WsEvent::Tick),
+            (66, WsEvent::Tick),
+            // Any message counts as hearing from a side; a side already
+            // pinged is not pinged again until it is heard.
+            (
+                70,
+                WsEvent::Control {
+                    side: Side::Upstream,
+                },
+            ),
+            (80, WsEvent::Client(ClientMessage::Other)),
+            (95, WsEvent::Tick),
+            (110, WsEvent::Tick),
+        ]);
+        assert!(matches!(state, WsChannel::Open(_)));
+        assert_eq!(
+            actions,
+            vec![
+                WsAction::Ping(Side::Client),
+                WsAction::Ping(Side::Upstream),
+                WsAction::Ping(Side::Client),
+                WsAction::Ping(Side::Upstream),
+                WsAction::Forward(Owner::Unattributed),
+                WsAction::Ping(Side::Client),
+                WsAction::Ping(Side::Upstream),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_side_silent_through_its_ping_is_unresponsive() {
+        let cases = [
+            (
+                Side::Client,
+                ChannelEnd::ClientUnresponsive,
+                (AttemptTerminal::Cancelled, Some(TerminalCause::Client)),
+                vec![(Side::Upstream, CloseCode::GOING_AWAY)],
+            ),
+            (
+                Side::Upstream,
+                ChannelEnd::UpstreamUnresponsive,
+                (
+                    AttemptTerminal::StreamFailed,
+                    Some(TerminalCause::IdleTimeout),
+                ),
+                vec![(Side::Client, CloseCode::BAD_GATEWAY)],
+            ),
+        ];
+        for (silent, end, (terminal, cause), closes) in cases {
+            let alive = match silent {
+                Side::Client => WsEvent::Upstream(UpstreamMessage::Other),
+                Side::Upstream => WsEvent::Control { side: Side::Client },
+            };
+            let (state, actions) = run_at(vec![
+                (0, WsEvent::Client(ClientMessage::Create)),
+                (0, WsEvent::Admitted(FIRST)),
+                (
+                    0,
+                    WsEvent::Upstream(UpstreamMessage::Created(Some("resp_1"))),
+                ),
+                (30, WsEvent::Tick),
+                (45, alive.clone()),
+                (59, WsEvent::Tick),
+                (59, alive),
+                (60, WsEvent::Tick),
+            ]);
+            assert_eq!(state, WsChannel::Ended(end));
+            let mut expected = vec![WsAction::FinishCall(
+                FIRST,
+                record(terminal, cause, AttemptPhase::Response),
+            )];
+            expected.extend(
+                closes
+                    .into_iter()
+                    .map(|(side, code)| WsAction::Close { side, code }),
+            );
+            expected.push(WsAction::End(end));
+            assert_eq!(
+                actions[actions.len() - expected.len()..],
+                expected[..],
+                "{end}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_running_call_whose_upstream_goes_quiet_stalls_the_channel() {
+        // Both sides answer pings throughout, so only the call's deadline passes.
+        let alive = |at| {
+            [
+                (at, WsEvent::Control { side: Side::Client }),
+                (
+                    at,
+                    WsEvent::Control {
+                        side: Side::Upstream,
+                    },
+                ),
+            ]
+        };
+        let ended = |phase, terminal, cause| {
+            vec![
+                WsAction::FinishCall(FIRST, record(terminal, cause, phase)),
+                WsAction::Close {
+                    side: Side::Client,
+                    code: CloseCode::BAD_GATEWAY,
+                },
+                WsAction::Close {
+                    side: Side::Upstream,
+                    code: CloseCode::GOING_AWAY,
+                },
+                WsAction::End(ChannelEnd::UpstreamStalled),
+            ]
+        };
+
+        // Forwarded, and no upstream message within the first-message deadline.
+        let mut events = vec![
+            (0, WsEvent::Client(ClientMessage::Create)),
+            (10, WsEvent::Admitted(FIRST)),
+        ];
+        for at in [40, 80, 120] {
+            events.extend(alive(at));
+        }
+        events.push((129, WsEvent::Tick));
+        let (state, _) = run_at(events.clone());
+        assert!(matches!(state, WsChannel::Open(_)));
+        events.push((130, WsEvent::Tick));
+        let (state, actions) = run_at(events);
+        assert_eq!(state, WsChannel::Ended(ChannelEnd::UpstreamStalled));
+        assert_eq!(
+            actions[2..],
+            ended(
+                AttemptPhase::AwaitingHead,
+                AttemptTerminal::AcceptanceUnknown,
+                Some(TerminalCause::HeaderTimeout)
+            )[..]
+        );
+
+        // Responding, then quiet past the stream deadline.
+        let mut events = vec![
+            (0, WsEvent::Client(ClientMessage::Create)),
+            (0, WsEvent::Admitted(FIRST)),
+            (
+                5,
+                WsEvent::Upstream(UpstreamMessage::Created(Some("resp_1"))),
+            ),
+            (50, WsEvent::Upstream(UpstreamMessage::Other)),
+        ];
+        events.extend(alive(80));
+        events.push((110, WsEvent::Tick));
+        let (_, actions) = run_at(events);
+        assert_eq!(
+            actions[actions.len() - 4..],
+            ended(
+                AttemptPhase::Response,
+                AttemptTerminal::StreamFailed,
+                Some(TerminalCause::IdleTimeout)
+            )[..]
+        );
+    }
+
+    #[test]
+    fn a_call_waiting_for_admission_has_no_upstream_deadline() {
+        let mut events = vec![(0, WsEvent::Client(ClientMessage::Create))];
+        for at in [30, 60, 90, 120, 150, 180] {
+            events.push((at, WsEvent::Control { side: Side::Client }));
+            events.push((
+                at,
+                WsEvent::Control {
+                    side: Side::Upstream,
+                },
+            ));
+            events.push((at, WsEvent::Tick));
+        }
+        let (state, _) = run_at(events.clone());
+        assert!(matches!(state, WsChannel::Open(_)));
+        // Its deadline starts once it is admitted and forwarded.
+        events.push((181, WsEvent::Admitted(FIRST)));
+        events.push((300, WsEvent::Control { side: Side::Client }));
+        events.push((
+            300,
+            WsEvent::Control {
+                side: Side::Upstream,
+            },
+        ));
+        events.push((300, WsEvent::Tick));
+        let (state, _) = run_at(events.clone());
+        assert!(matches!(state, WsChannel::Open(_)));
+        events.push((301, WsEvent::Tick));
+        let (state, actions) = run_at(events);
+        assert_eq!(state, WsChannel::Ended(ChannelEnd::UpstreamStalled));
+        assert_eq!(
+            actions[actions.len() - 4],
+            WsAction::FinishCall(
+                FIRST,
+                record(
+                    AttemptTerminal::AcceptanceUnknown,
+                    Some(TerminalCause::HeaderTimeout),
+                    AttemptPhase::AwaitingHead
+                )
+            )
+        );
+    }
 }

@@ -39,6 +39,11 @@ mode = "relay"
 # Upgraded sockets open at once; more handshakes are refused with 426. Each
 # call on a socket still counts against max_concurrent_requests.
 max_channels = 16
+# A side of a socket silent this long is pinged; silent twice this long, the
+# socket is closed as unresponsive, which frees its channel. A running call
+# whose upstream sends nothing for response_header_timeout_seconds (before its
+# first message) or stream_idle_timeout_seconds (after) also closes the socket.
+keepalive_seconds = 30
 
 [buffer]
 # Bytes held by all buffered requests; past it, new requests get 503. A

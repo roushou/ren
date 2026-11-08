@@ -75,6 +75,7 @@ use crate::{
     api::{ApiState, ControlApi, ReadSources},
     attempt::{AttemptEnd, Canceller, EndKind, HttpEvent, SendFailure},
     call::{CallRun, CallStep, CallStop, Dispatched, Refused},
+    channel::Deadlines,
     control::{Cancel, Controls},
     policy::{Admission, CallFacts, CallPlan, Policy, Rejection, RequestJson, StepRecord},
 };
@@ -111,8 +112,12 @@ use tokio_util::sync::CancellationToken;
 pub struct GatewayConfig {
     /// Calls forwarded at once; more are rejected with `503`.
     pub max_concurrent_requests: usize,
-    /// Longest wait for a response head after dispatch.
+    /// Longest wait for a response head after dispatch, and on WebSocket for
+    /// a call's first upstream message.
     pub response_header_timeout: Duration,
+    /// Longest quiet gap in a WebSocket call's upstream messages. HTTP bodies
+    /// get theirs from the transport (`TransportTimeouts::idle`).
+    pub stream_idle_timeout: Duration,
     /// Recorded with every call.
     pub config_revision: ConfigRevision,
     pub websocket: WebSocketOptions,
@@ -801,6 +806,11 @@ impl<U: Upstream> Gateway<U> {
                     policy: self.config.policy.clone(),
                     controls: self.controls.clone(),
                     clock: self.clock.clone(),
+                    deadlines: Deadlines {
+                        keepalive: self.config.websocket.keepalive(),
+                        first_message: self.config.response_header_timeout,
+                        stream_idle: self.config.stream_idle_timeout,
+                    },
                 };
                 let mut response = upgrade.on_upgrade(setup.relay(socket));
                 HeaderPolicy::RESPONSE.apply(&mut headers);

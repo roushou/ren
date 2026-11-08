@@ -163,6 +163,7 @@ pub struct TestGateway {
     shutdown: Shutdown,
     server: JoinHandle<Result<Stopped, IngressError>>,
     worker: JoinHandle<Result<(), StoreError>>,
+    clock: Arc<ManualClock>,
 }
 
 impl TestGateway {
@@ -232,7 +233,7 @@ impl TestGateway {
             upstream,
             recorder,
             controls,
-            clock,
+            clock.clone(),
             shutdown.clone(),
         ));
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -253,7 +254,13 @@ impl TestGateway {
             shutdown,
             server,
             worker,
+            clock,
         }
+    }
+
+    /// The gateway's clock, which moves only when advanced.
+    pub fn clock(&self) -> &ManualClock {
+        &self.clock
     }
 
     pub fn address(&self) -> SocketAddr {
