@@ -6,7 +6,7 @@
   import { clock, providerName, short } from '#lib/api.ts';
   import { compactOrDash, span } from '#lib/display.ts';
   import { harnessLabel } from '#lib/activity.ts';
-  import { Band, Board, LivePlace, type Density, type Tile } from '#lib/board.ts';
+  import { Band, Board, LivePlace, type BandStyle, type Density, type Tile } from '#lib/board.ts';
   import Icon from '#lib/Icon.svelte';
   import Markdown from '#lib/Markdown.svelte';
   import type { PageProps } from './$types';
@@ -38,7 +38,8 @@
     current && board ? new Band(current.sessions, current.calls, board.now) : null,
   );
   const emptySlots = $derived(Math.max(0, Board.maxTiles - (board?.tiles.length ?? 0)));
-  const densityHref = (density: Density) => LivePlace.href({ density });
+  const densityHref = (density: Density) => LivePlace.href({ ...view, density });
+  const bandHref = (style: BandStyle) => LivePlace.href({ ...view, band: style });
 
   const sessionHref = (id: string) => `/sessions/${encodeURIComponent(id)}`;
   const harnessName = (tile: Tile) =>
@@ -90,6 +91,20 @@
     </div>
   {/if}
   <div class="scope-group end">
+    <nav class="segmented live-modes" aria-label="Band style">
+      <a
+        href={bandHref('area')}
+        class:chosen={view.band === 'area'}
+        aria-current={view.band === 'area' ? 'page' : undefined}
+        title="One chart per client">Area</a
+      >
+      <a
+        href={bandHref('ribbon')}
+        class:chosen={view.band === 'ribbon'}
+        aria-current={view.band === 'ribbon' ? 'page' : undefined}
+        title="Every client stacked into one chart: its top edge is the total">Ribbon</a
+      >
+    </nav>
     <nav class="segmented live-modes" aria-label="Board density">
       <a
         href={densityHref('comfortable')}
@@ -134,6 +149,18 @@
   </svg>
 {/snippet}
 
+{#snippet ticks(height: number)}
+  {#each [200, 400, 600, 800] as x (x)}
+    <line class="live-band-tick" x1={x} y1="0" x2={x} y2={height} />
+  {/each}
+{/snippet}
+
+{#snippet marks(row: Band['rows'][number])}
+  {#each row.marks as mark (mark.key)}
+    <rect class="live-band-mark {mark.tone}" x={mark.at * 1000 - 1.5} y="2" width="3" height="9" />
+  {/each}
+{/snippet}
+
 {#snippet identity(tile: Tile)}
   <span class="harness-mark {harnessClass(tile)}"></span><strong
     >{harnessName(tile)} → {providerName(tile.session.provider)}</strong
@@ -157,50 +184,67 @@
         aria-label="Output tokens by client"
         title="Output tokens per client over the last {span(Band.spanMs)}"
       >
-        {#each band.rows as row (row.harness)}
-          <div
-            class="live-band-label"
-            title="Output tokens per second over the last {span(
-              Band.rateMs,
-            )}, counted when each call finishes"
-          >
-            <strong
-              ><span class="harness-mark harness-{row.harness}"></span>{harnessLabel(
-                row.harness,
-              )}</strong
+        <div class="live-band-labels">
+          {#each band.rows as row (row.harness)}
+            <div
+              class="live-band-label"
+              title="Output tokens per second over the last {span(
+                Band.rateMs,
+              )}, counted when each call finishes"
             >
-            <span class="mono"
-              >{row.rate < 10 ? row.rate.toFixed(1) : Math.round(row.rate)} tok/s</span
+              <strong
+                ><span class="harness-mark harness-{row.harness}"></span>{harnessLabel(
+                  row.harness,
+                )}</strong
+              >
+              <span class="mono"
+                >{row.rate < 10 ? row.rate.toFixed(1) : Math.round(row.rate)} tok/s</span
+              >
+            </div>
+          {/each}
+        </div>
+        <div class="live-band-charts">
+          {#if view.band === 'ribbon'}
+            <svg
+              class="live-band-row ribbon"
+              viewBox="0 0 1000 137"
+              preserveAspectRatio="none"
+              aria-hidden="true"
+            >
+              {@render ticks(137)}
+              <line class="live-band-tick" x1="0" y1="68.5" x2="1000" y2="68.5" />
+              {#each band.rows as row, index (row.harness)}
+                {#if row.bins.some((value) => value > 0)}
+                  {@const layer = band.layer(index, 137)}
+                  <path class="live-band-area harness-{row.harness}" d={layer.area} />
+                  <path class="live-band-line harness-{row.harness}" d={layer.line} />
+                {/if}
+              {/each}
+              {#each band.rows as row (row.harness)}
+                {@render marks(row)}
+              {/each}
+            </svg>
+            <span class="live-band-scale mono" aria-hidden="true">{band.ribbonMax} tok/s</span>
+          {:else}
+            {#each band.rows as row (row.harness)}
+              <svg
+                class="live-band-row harness-{row.harness}"
+                viewBox="0 0 1000 46"
+                preserveAspectRatio="none"
+                aria-hidden="true"
+              >
+                {@render ticks(46)}
+                <path class="live-band-area" d={band.area(row, 46)} />
+                <path class="live-band-line" d={band.line(row, 46)} />
+                {@render marks(row)}
+              </svg>
+            {/each}
+          {/if}
+          <div class="live-band-axis mono" aria-hidden="true">
+            <span>−10m</span><span>−8m</span><span>−6m</span><span>−4m</span><span>−2m</span><span
+              >now</span
             >
           </div>
-          <svg
-            class="live-band-row harness-{row.harness}"
-            viewBox="0 0 1000 46"
-            preserveAspectRatio="none"
-            aria-hidden="true"
-          >
-            <line class="live-band-tick" x1="200" y1="0" x2="200" y2="46" />
-            <line class="live-band-tick" x1="400" y1="0" x2="400" y2="46" />
-            <line class="live-band-tick" x1="600" y1="0" x2="600" y2="46" />
-            <line class="live-band-tick" x1="800" y1="0" x2="800" y2="46" />
-            <path class="live-band-area" d={band.area(row, 46)} />
-            <path class="live-band-line" d={band.line(row, 46)} />
-            {#each row.marks as mark (mark.key)}
-              <rect
-                class="live-band-mark {mark.tone}"
-                x={mark.at * 1000 - 1.5}
-                y="2"
-                width="3"
-                height="9"
-              />
-            {/each}
-          </svg>
-        {/each}
-
-        <div class="live-band-axis mono" aria-hidden="true">
-          <span>−10m</span><span>−8m</span><span>−6m</span><span>−4m</span><span>−2m</span><span
-            >now</span
-          >
         </div>
       </section>
     {/if}
@@ -445,14 +489,30 @@
     fill: var(--error);
   }
   /* Time labels sit inside the chart, along its bottom edge. */
-  .live-band {
+  .live-band-charts {
     position: relative;
+    min-width: 0;
+  }
+  .live-band-row.ribbon {
+    height: 138px;
+  }
+  .live-band-row.ribbon .live-band-area {
+    opacity: 0.28;
+  }
+  span.live-band-scale.mono {
+    position: absolute;
+    top: 2px;
+    left: 4px;
+    color: var(--muted);
+    font-size: 9.5px;
+    opacity: 0.7;
+    pointer-events: none;
   }
   div.live-band-axis.mono {
     position: absolute;
     right: 0;
     bottom: 2px;
-    left: 150px;
+    left: 0;
     display: flex;
     justify-content: space-between;
     padding: 0 3px;
@@ -830,9 +890,6 @@
     }
     .live-band {
       grid-template-columns: 96px minmax(0, 1fr);
-    }
-    div.live-band-axis.mono {
-      left: 96px;
     }
     .live-rows .lane-column,
     .live-rows .live-latest {

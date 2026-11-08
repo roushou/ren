@@ -15,7 +15,8 @@ Pages: Overview (`/`: a health line, calls in flight and sessions active in the 
 15 minutes, what needs attention in the last day, and the last 24 hours' usage), Live
 (`/live`: the sessions active in the last 15 minutes as they work, on a four-by-two board
 of cards or as rows: each session's client and provider, its state, and its current
-turn's prompt, tool calls, and replies, below a band of output tokens per client. The bar
+turn's prompt, tool calls, and replies, below a band of output tokens per client, drawn as a row each (**Area**) or stacked into
+one chart whose top edge is the total (**Ribbon**). The bar
 above counts what needs a look. Sessions with a call open, then the most recent, get the
 eight cards; quiet ones dim. Text appears once each call finishes and its activity is
 derived; whether a call is waiting for its response head or streaming is shown as it

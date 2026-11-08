@@ -486,16 +486,26 @@ export class Board {
  */
 export interface LiveView {
   density: Density;
+  band: BandStyle;
 }
 export type Density = 'comfortable' | 'compact';
+/** How the band draws its clients: a row each, or stacked into one ribbon. */
+export type BandStyle = 'area' | 'ribbon';
 
 export class LivePlace {
   static parse(params: { get(name: string): string | null }): LiveView {
-    return { density: params.get('density') === 'compact' ? 'compact' : 'comfortable' };
+    return {
+      density: params.get('density') === 'compact' ? 'compact' : 'comfortable',
+      band: params.get('band') === 'ribbon' ? 'ribbon' : 'area',
+    };
   }
 
   static href(view: LiveView): string {
-    return view.density === 'compact' ? '/live?density=compact' : '/live';
+    const params = new URLSearchParams();
+    if (view.density === 'compact') params.set('density', 'compact');
+    if (view.band === 'ribbon') params.set('band', 'ribbon');
+    const query = params.toString();
+    return query ? `/live?${query}` : '/live';
   }
 }
 
@@ -523,6 +533,8 @@ export class Band {
   readonly rows: BandRow[];
   /** The scale shared by every row, in tokens per second. */
   readonly max: number;
+  /** The ribbon's scale: every client stacked, in tokens per second. */
+  readonly ribbonMax: number;
 
   constructor(sessions: SessionView[], calls: CallView[], now: number) {
     const bySession = new Map(sessions.map((session) => [session.id, session]));
@@ -545,9 +557,16 @@ export class Band {
       }
       return { harness, bins, rate: recent / (Band.rateMs / 1000), marks };
     });
-    const peak = Math.max(0, ...this.rows.flatMap((row) => row.bins));
-    // A round scale, never below 50 tok/s, so a trickle does not look like a flood.
-    this.max = Math.max(50, Math.ceil((peak * 1.1) / 50) * 50);
+    this.max = Band.scale(Math.max(0, ...this.rows.flatMap((row) => row.bins)));
+    const totals = Array.from({ length: count }, (_, index) =>
+      this.rows.reduce((sum, row) => sum + (row.bins[index] ?? 0), 0),
+    );
+    this.ribbonMax = Band.scale(Math.max(0, ...totals));
+  }
+
+  /** A round scale above a peak, never below 50 tok/s, so a trickle does not look like a flood. */
+  static scale(peak: number): number {
+    return Math.max(50, Math.ceil((peak * 1.1) / 50) * 50);
   }
 
   /** The harness a call came from: its own hint, else its session's. */
@@ -564,16 +583,36 @@ export class Band {
 
   /** A row's bins as an SVG line in a 1000 × `height` box. */
   line(row: BandRow, height: number): string {
-    const step = 1000 / row.bins.length;
-    const y = (value: number) => (height - (value / this.max) * (height - 3)).toFixed(1);
-    const points = row.bins.map(
-      (value, index) => `${(index * step + step / 2).toFixed(1)},${y(value)}`,
-    );
-    return `M0,${y(row.bins[0] ?? 0)} L${points.join(' L')} L1000,${y(row.bins.at(-1) ?? 0)}`;
+    return `M${Band.points(row.bins, this.max, height).join(' L')}`;
   }
 
   /** The same line closed down to the baseline, for the fill under it. */
   area(row: BandRow, height: number): string {
     return `${this.line(row, height)} L1000,${height} L0,${height} Z`;
+  }
+
+  /**
+   * The ribbon layer of the row at `index`: rows stack in order, the first at
+   * the bottom, so the top edge of the last layer is every client together.
+   */
+  layer(index: number, height: number): { line: string; area: string } {
+    const sum = (upTo: number) =>
+      this.rows[0]?.bins.map((_, bin) =>
+        this.rows.slice(0, upTo).reduce((total, row) => total + (row.bins[bin] ?? 0), 0),
+      ) ?? [];
+    const upper = Band.points(sum(index + 1), this.ribbonMax, height);
+    const lower = Band.points(sum(index), this.ribbonMax, height).reverse();
+    return { line: `M${upper.join(' L')}`, area: `M${upper.join(' L')} L${lower.join(' L')} Z` };
+  }
+
+  /** Bins as points across a 1000-wide box, held flat to both edges. */
+  static points(bins: number[], max: number, height: number): string[] {
+    const step = 1000 / bins.length;
+    const y = (value: number) => (height - (value / max) * (height - 3)).toFixed(1);
+    return [
+      `0,${y(bins[0] ?? 0)}`,
+      ...bins.map((value, index) => `${(index * step + step / 2).toFixed(1)},${y(value)}`),
+      `1000,${y(bins.at(-1) ?? 0)}`,
+    ];
   }
 }

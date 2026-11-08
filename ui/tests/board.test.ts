@@ -282,12 +282,17 @@ test('turns to read: each session newest turn, with a signature that moves with 
   assert.notEqual(Board.turnsToRead([sid(1)], after)[0].signature, first.signature);
 });
 
-test('the URL place parses density once', () => {
-  assert.deepEqual(LivePlace.parse(new URLSearchParams('')), { density: 'comfortable' });
-  const compact = LivePlace.parse(new URLSearchParams('density=compact&focus=x'));
-  assert.deepEqual(compact, { density: 'compact' });
-  assert.equal(LivePlace.href(compact), '/live?density=compact');
-  assert.equal(LivePlace.href({ density: 'comfortable' }), '/live');
+test('the URL place parses density and band style once', () => {
+  assert.deepEqual(LivePlace.parse(new URLSearchParams('')), {
+    density: 'comfortable',
+    band: 'area',
+  });
+  const compact = LivePlace.parse(new URLSearchParams('density=compact&band=ribbon&focus=x'));
+  assert.deepEqual(compact, { density: 'compact', band: 'ribbon' });
+  assert.equal(LivePlace.href(compact), '/live?density=compact&band=ribbon');
+  assert.equal(LivePlace.href({ density: 'comfortable', band: 'ribbon' }), '/live?band=ribbon');
+  assert.equal(LivePlace.href({ density: 'comfortable', band: 'area' }), '/live');
+  assert.equal(LivePlace.parse(new URLSearchParams('band=seismo')).band, 'area');
 });
 
 test('the reader reads a turn again only when its calls change or text is still pending', async () => {
@@ -414,6 +419,14 @@ test('the band counts output tokens per client when each call ends', () => {
   assert.equal(codex?.marks.length, 1);
   assert.equal(pi?.rate, 0);
   assert.ok(band.max >= 50);
+  // The ribbon stacks every client, so its scale covers their sum.
+  assert.ok(band.ribbonMax >= band.max);
+  const top = band.layer(2, 100).line;
+  const bottom = band.layer(0, 100).line;
+  assert.equal(top.split(' L').length, band.rows[0]!.bins.length + 2);
+  assert.notEqual(top, bottom);
+  // The first layer sits on the baseline: its closing edge runs back along y = height.
+  assert.match(band.layer(0, 100).area, /L1000,100\.0 .* L0,100\.0 Z$/);
 });
 
 function usage(output: number): CallView['usage'] {
