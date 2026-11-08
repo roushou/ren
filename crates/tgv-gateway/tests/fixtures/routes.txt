@@ -7,3 +7,9 @@
 /openai/v1/responses PostOrRefusedHandshake POST upstream=openai provider=openai endpoint=responses /v1/responses harness=none
 /openai/v1/responses/compact Post POST upstream=openai provider=openai endpoint=responses_compact /v1/responses/compact harness=none
 /openai/v1/models Get GET upstream=openai provider=openai endpoint=models /v1/models harness=none
+/upstreams/anthropic-direct/v1/messages Post POST upstream=anthropic-direct provider=anthropic endpoint=messages /v1/messages harness=claude_code
+/upstreams/anthropic-direct/v1/messages/count_tokens Post POST upstream=anthropic-direct provider=anthropic endpoint=count_tokens /v1/messages/count_tokens harness=claude_code
+/upstreams/anthropic-direct/v1/models Get GET upstream=anthropic-direct provider=anthropic endpoint=models /v1/models harness=claude_code
+/upstreams/openai-direct/v1/responses PostOrRefusedHandshake POST upstream=openai-direct provider=openai endpoint=responses /v1/responses harness=none
+/upstreams/openai-direct/v1/responses/compact Post POST upstream=openai-direct provider=openai endpoint=responses_compact /v1/responses/compact harness=none
+/upstreams/openai-direct/v1/models Get GET upstream=openai-direct provider=openai endpoint=models /v1/models harness=none

@@ -66,6 +66,31 @@ replayed. Codex accepts no operator keys, and WebSocket calls never fail over. A
 background service must get the key variable from its own environment (a systemd
 `EnvironmentFile`, or launchd `EnvironmentVariables`).
 
+## Direct routes
+
+An operator-key upstream is reached only through a fallback rule unless it opts
+in to routes of its own:
+
+```toml
+[[upstreams]]
+id = "anthropic-key"
+provider = "anthropic"
+base_url = "https://api.anthropic.com"
+operator_key_env = "TGV_ANTHROPIC_API_KEY"
+ingress = "direct"
+```
+
+The entry is then mounted at `/upstreams/anthropic-key`, with its wire format's
+native paths below it (`/v1/messages`, `/v1/messages/count_tokens`, and
+`/v1/models` for `anthropic_messages`; `/v1/responses`, `/v1/responses/compact`,
+and `/v1/models` for `openai_responses`, whose WebSocket mode is refused). Every
+call there uses the operator key in place of the client's credentials, so any
+client that can reach the gateway bills the key: leave `ingress` out unless that
+is intended. Block and transform rules apply as on the provider's own routes;
+fallback rules do not, since the call already uses an operator key. Calls are
+recorded with the entry's provider and wire format, and the attempt with the
+entry's id.
+
 ## Operator controls
 
 With the daemon running:

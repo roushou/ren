@@ -8,8 +8,8 @@ use std::{
     time::Duration,
 };
 use tgv_gateway::{
-    BufferOptions, ControlOptions, GatewayConfig, OperatorKey, TransportTimeouts, UpstreamAuth,
-    UpstreamEntry, UpstreamTable, UpstreamUrl, WebSocketOptions,
+    BufferOptions, ConfiguredEntry, ControlOptions, EntryIngress, GatewayConfig, OperatorKey,
+    TransportTimeouts, UpstreamAuth, UpstreamEntry, UpstreamTable, UpstreamUrl, WebSocketOptions,
     policy::{Policy, PolicyConfig},
 };
 use tgv_harness::host::HostEnv;
@@ -118,6 +118,9 @@ pub struct UpstreamConfig {
     pub base_url: String,
     /// The environment variable holding the API key.
     pub operator_key_env: String,
+    /// Whether the entry has routes of its own; fallback only when omitted.
+    #[serde(default, skip_serializing_if = "EntryIngress::is_fallback_only")]
+    pub ingress: EntryIngress,
 }
 
 impl UpstreamConfig {
@@ -201,7 +204,7 @@ impl Config {
                 if upstream.provider == Provider::Codex {
                     return Err(ConfigError::CodexOperatorKey(upstream.id.to_string()));
                 }
-                Ok(UpstreamEntry {
+                let entry = UpstreamEntry {
                     id: upstream.id.clone(),
                     api: upstream.api()?,
                     url: UpstreamUrl::parse(&upstream.base_url).map_err(|source| {
@@ -211,6 +214,10 @@ impl Config {
                         }
                     })?,
                     auth: UpstreamAuth::OperatorKey(Self::key(upstream, keys)?),
+                };
+                Ok(ConfiguredEntry {
+                    entry,
+                    ingress: upstream.ingress,
                 })
             })
             .collect::<Result<Vec<_>, ConfigError>>()?;
@@ -458,6 +465,7 @@ mod tests {
                 wire: None,
                 base_url: "https://api.anthropic.com".into(),
                 operator_key_env: "TGV_FIXTURE_KEY".into(),
+                ingress: EntryIngress::FallbackOnly,
             }],
             policy: toml::from_str(policy).unwrap(),
             ..Config::default()
@@ -554,5 +562,22 @@ mod tests {
         assert_eq!(omitted.wire, None);
         // A configuration without the key keeps the revision it had.
         assert!(!serde_json::to_string(&omitted).unwrap().contains("wire"));
+    }
+
+    #[test]
+    fn direct_ingress_is_opt_in_and_an_omitted_one_is_not_written() {
+        let entry = |ingress: &str| {
+            toml::from_str::<UpstreamConfig>(&format!(
+                "id = \"k\"\nprovider = \"anthropic\"\nbase_url = \"https://api.anthropic.com\"\noperator_key_env = \"K\"\n{ingress}"
+            ))
+        };
+        let omitted = entry("").unwrap();
+        assert_eq!(omitted.ingress, EntryIngress::FallbackOnly);
+        assert!(!serde_json::to_string(&omitted).unwrap().contains("ingress"));
+        assert_eq!(
+            entry("ingress = \"direct\"\n").unwrap().ingress,
+            EntryIngress::Direct
+        );
+        assert!(entry("ingress = \"public\"\n").is_err());
     }
 }

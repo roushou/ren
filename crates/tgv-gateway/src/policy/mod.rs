@@ -252,6 +252,9 @@ pub struct Policy {
     block: Vec<BlockRule>,
     transform: Vec<Arc<TransformRule>>,
     fallback: Vec<FallbackRule>,
+    /// Upstreams with client-owned credentials: the only ones a fallback
+    /// rule falls over from.
+    client_owned: HashSet<UpstreamId>,
 }
 
 impl Matcher {
@@ -343,6 +346,14 @@ impl Policy {
             block: config.block,
             transform: config.transform.into_iter().map(Arc::new).collect(),
             fallback: config.fallback,
+            client_owned: upstreams
+                .iter()
+                .filter(|upstream| match upstream.auth {
+                    AuthKind::ClientOwned => true,
+                    AuthKind::OperatorKey => false,
+                })
+                .map(|upstream| upstream.id.clone())
+                .collect(),
         })
     }
 
@@ -366,11 +377,14 @@ impl Policy {
                     .filter(|rule| rule.matcher.matches(facts))
                     .cloned()
                     .collect();
-                match self
+                // A call sent first to an operator-key entry (one with direct
+                // routes) already uses the operator's key: it never falls over.
+                let fallback = self
                     .fallback
                     .iter()
-                    .find(|rule| rule.provider == facts.provider)
-                {
+                    .filter(|_| self.client_owned.contains(&primary))
+                    .find(|rule| rule.provider == facts.provider);
+                match fallback {
                     None => (
                         Candidates::one(primary),
                         transforms,
