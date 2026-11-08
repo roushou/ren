@@ -13,8 +13,8 @@ import type {
   TurnActivity,
   TurnId,
 } from './api.ts';
-import { HARNESSES } from './api.ts';
-import { findingLine, resultBadge } from './activity.ts';
+import { HARNESSES, providerName } from './api.ts';
+import { findingLine, harnessLabel, resultBadge } from './activity.ts';
 import { assertNever, unrecognised, type Stored } from './decode.ts';
 import { callStatus, sessionTone, span, statusBadge, type Tone } from './display.ts';
 
@@ -121,6 +121,8 @@ export class Board {
   /** Sessions active in the window that did not fit. */
   readonly overflow: number;
   readonly alerts: Alert[];
+  /** The Now strip: what happened lately, newest first. */
+  readonly feed: FeedItem[];
   readonly now: number;
 
   constructor(input: BoardInput) {
@@ -134,6 +136,7 @@ export class Board {
     this.alerts = this.tiles
       .flatMap((tile) => Board.alerts(tile, bySession.get(tile.session.id) ?? [], input.now))
       .sort((a, b) => b.at - a.at);
+    this.feed = new Feed(input, this.alerts).items;
   }
 
   /** The worst thing to look at in a session, for its tile's top rule. */
@@ -477,6 +480,182 @@ export class Board {
       default:
         return assertNever(finding);
     }
+  }
+}
+
+/** One line in the Now strip. */
+export interface FeedItem {
+  /** Stable while the item lasts, so an update never animates it in again. */
+  key: string;
+  session: SessionView | null;
+  tone: 'neutral' | 'success' | 'warning' | 'error';
+  text: string;
+  detail: string | null;
+  /** When it happened; for a pinned item, when it began. */
+  at: number;
+  /** Still going on (a call waiting for its response head): kept first, its age ticking. */
+  pinned: boolean;
+  href: string | null;
+}
+
+/**
+ * What the gateway saw happen, newest first: sessions starting, prompts,
+ * calls finishing, failed tools, bad endings, and rate limits. Derived again
+ * from each snapshot, so an item is only as fresh as the call it comes from:
+ * never per token. Calm items last `calmMs`; problems last `problemMs`.
+ */
+export class Feed {
+  static readonly calmMs = 2 * 60_000;
+  static readonly problemMs = 5 * 60_000;
+  /** A call waiting longer than this for its response head is pinned. */
+  static readonly waitMs = 5_000;
+  /** Rate limits are counted per provider over this long. */
+  static readonly limitMs = 60_000;
+  static readonly maxItems = 24;
+
+  readonly items: FeedItem[];
+
+  constructor(input: BoardInput, alerts: Alert[]) {
+    const { now } = input;
+    const sessions = new Map(input.sessions.map((session) => [session.id, session]));
+    const of = (id: SessionId | null) => (id ? (sessions.get(id) ?? null) : null);
+    const callHref = (call: CallView) =>
+      call.session
+        ? `/sessions/${encodeURIComponent(call.session)}?call=${encodeURIComponent(call.id)}`
+        : null;
+    const calm = (at: number) => at <= now && now - at <= Feed.calmMs;
+    const items: FeedItem[] = [];
+
+    for (const session of input.sessions) {
+      if (!calm(session.first_seen)) continue;
+      const harness = Board.harness(session.source);
+      items.push({
+        key: `${session.id}:new`,
+        session,
+        tone: 'neutral',
+        text: 'new session',
+        detail: `${harness ? harnessLabel(harness) : 'Unknown client'} → ${providerName(session.provider)}`,
+        at: session.first_seen,
+        pinned: false,
+        href: `/sessions/${encodeURIComponent(session.id)}`,
+      });
+    }
+
+    for (const turn of input.turns.values()) {
+      const href = `/turns/${encodeURIComponent(turn.turn)}`;
+      if (turn.prompt && turn.started_at !== null && calm(turn.started_at)) {
+        items.push({
+          key: `${turn.turn}:prompt`,
+          session: of(turn.session),
+          tone: 'neutral',
+          text: `you: “${Feed.clip(turn.prompt.text, 60)}”`,
+          detail: null,
+          at: turn.started_at,
+          pinned: false,
+          href,
+        });
+      }
+      // A tool's result arrives with the next request, so it fails when that call is sent.
+      for (const [index, call] of turn.calls.entries()) {
+        const at = turn.calls[index + 1]?.started_at ?? call.ended_at;
+        if (at === null || !calm(at)) continue;
+        for (const [position, tool] of call.tool_calls.entries()) {
+          if (Board.result(turn, index, tool).tone !== 'error') continue;
+          const target = tool.effects[0]?.target ?? null;
+          items.push({
+            key: `${call.call}:${tool.id ?? position}:failed`,
+            session: of(turn.session),
+            tone: 'error',
+            text: `${tool.name}${target ? ` ${Feed.clip(target, 40)}` : ''} failed`,
+            detail: null,
+            at,
+            pinned: false,
+            href,
+          });
+        }
+      }
+    }
+
+    for (const call of input.calls) {
+      if (call.state === 'open') {
+        const waited = now - call.started_at;
+        if (call.status !== null || waited < Feed.waitMs) continue;
+        items.push({
+          key: `${call.id}:waiting`,
+          session: of(call.session),
+          tone: waited >= Board.slowHeadMs ? 'warning' : 'neutral',
+          text: `no response head after ${span(waited)}`,
+          detail: call.model,
+          at: call.started_at,
+          pinned: true,
+          href: callHref(call),
+        });
+        continue;
+      }
+      const at = call.ended_at ?? call.started_at;
+      if (!calm(at) || callStatus(call).kind !== 'model_completed') continue;
+      const out = call.usage?.output_tokens;
+      const tools = [...new Set(call.tool_names)];
+      items.push({
+        key: `${call.id}:done`,
+        session: of(call.session),
+        tone: tools.length ? 'neutral' : 'success',
+        text: tools.length
+          ? `asked for ${tools.slice(0, 3).join(', ')}${tools.length > 3 ? ` +${tools.length - 3}` : ''}`
+          : 'turn finished',
+        detail: out === undefined || out === null ? null : `out ${out}`,
+        at,
+        pinned: false,
+        href: callHref(call),
+      });
+    }
+
+    // Bad endings and findings; slow heads and rate limits are told above and below.
+    for (const alert of alerts) {
+      if (alert.key.endsWith(':head') || alert.key.endsWith(':429')) continue;
+      if (alert.at > now || now - alert.at > Feed.problemMs) continue;
+      items.push({
+        key: `alert:${alert.key}`,
+        session: of(alert.session),
+        tone: alert.tone === 'error' ? 'error' : 'warning',
+        text: alert.label,
+        detail: alert.detail,
+        at: alert.at,
+        pinned: false,
+        href: alert.href,
+      });
+    }
+
+    const limited = new Map<string, CallView[]>();
+    for (const call of input.calls) {
+      if (call.status !== 429 || now - call.started_at > Feed.limitMs) continue;
+      limited.set(call.provider, [...(limited.get(call.provider) ?? []), call]);
+    }
+    for (const [provider, calls] of limited) {
+      const newest = calls.reduce((a, b) => (b.started_at > a.started_at ? b : a));
+      items.push({
+        key: `429:${provider}`,
+        session: null,
+        tone: 'warning',
+        text: `${providerName(provider)}: ${calls.length} rate limit${calls.length > 1 ? 's' : ''} (429)`,
+        detail: `in the last ${span(Feed.limitMs)}`,
+        at: newest.started_at,
+        pinned: false,
+        href: callHref(newest),
+      });
+    }
+
+    this.items = items
+      .sort((a, b) =>
+        a.pinned === b.pinned ? (a.pinned ? a.at - b.at : b.at - a.at) : a.pinned ? -1 : 1,
+      )
+      .slice(0, Feed.maxItems);
+  }
+
+  /** Text cut to `length` characters on one line. */
+  static clip(text: string, length: number): string {
+    const line = text.replace(/\s+/g, ' ').trim();
+    return line.length > length ? `${line.slice(0, length - 1)}…` : line;
   }
 }
 

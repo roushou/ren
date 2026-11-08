@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { Band, Board, LivePlace, type BoardInput } from '../src/lib/board.ts';
+import { Band, Board, Feed, LivePlace, type BoardInput } from '../src/lib/board.ts';
 import { LiveReader } from '../src/lib/loaders.ts';
 import {
   type CallActivity,
@@ -427,6 +427,69 @@ test('the band counts output tokens per client when each call ends', () => {
   assert.notEqual(top, bottom);
   // The first layer sits on the baseline: its closing edge runs back along y = height.
   assert.match(band.layer(0, 100).area, /L1000,100\.0 .* L0,100\.0 Z$/);
+});
+
+test('the feed tells what happened lately, ongoing waits first, newest next', () => {
+  const failing = turn(
+    1,
+    1,
+    [
+      activity(1, {
+        tool_calls: [
+          {
+            id: 'tool-1',
+            name: 'Edit',
+            effects: [{ kind: 'write_file' as const, target: 'src/relay.rs' }],
+            input: { text: '{}', omitted_chars: 0 },
+            result: { status: 'failed' as const, output: { text: 'no match', omitted_chars: 0 } },
+          },
+        ],
+      }),
+      activity(2, { started_at: ms(NOW - 8000) }),
+    ],
+    { started_at: ms(NOW - 40_000) },
+  );
+  const feed = board({
+    sessions: [
+      session(1, { first_seen: ms(NOW - 50_000) }),
+      session(2, { first_seen: ms(NOW - 600_000) }),
+    ],
+    calls: [
+      done(1, 1, { turn: tid(1), tool_names: ['Edit', 'Edit'], ended_at: ms(NOW - 9000) }),
+      done(2, 1, { turn: tid(1), started_at: ms(NOW - 8000), ended_at: ms(NOW - 3000) }),
+      // Waiting 6 s for its head: pinned. Waiting 2 s: not yet worth a line.
+      open(3, 2, { started_at: ms(NOW - 6000) }),
+      open(4, 2, { started_at: ms(NOW - 2000) }),
+      done(5, 2, { status: 429, outcome: null, started_at: ms(NOW - 30_000) }),
+      done(6, 2, { status: 429, outcome: null, started_at: ms(NOW - 20_000) }),
+      // Finished long ago: gone from the feed.
+      done(7, 2, { started_at: ms(NOW - 400_000), ended_at: ms(NOW - 300_000) }),
+    ],
+    turns: new Map([[tid(1), failing]]),
+  }).feed;
+  const lines = feed.map((item) => item.text);
+  assert.equal(lines[0], 'no response head after 6 s');
+  assert.equal(feed[0]?.pinned, true);
+  assert.ok(lines.includes('new session'));
+  assert.ok(lines.includes('you: “Fix the flaky test”'));
+  assert.ok(lines.includes('asked for Edit'));
+  assert.ok(lines.includes('turn finished'));
+  assert.ok(lines.includes('Edit src/relay.rs failed'));
+  assert.ok(lines.includes('Anthropic: 2 rate limits (429)'));
+  assert.equal(lines.filter((line) => line === 'new session').length, 1);
+  assert.equal(feed.filter((item) => item.text.startsWith('no response head')).length, 1);
+  // After the pinned wait, newest first.
+  const times = feed.slice(1).map((item) => item.at);
+  assert.deepEqual(
+    times,
+    [...times].sort((a, b) => b - a),
+  );
+  assert.ok(new Set(feed.map((item) => item.key)).size === feed.length);
+});
+
+test('feed text is clipped to one line', () => {
+  assert.equal(Feed.clip('  fix\n the   test  ', 20), 'fix the test');
+  assert.equal(Feed.clip('abcdefghij', 5), 'abcd…');
 });
 
 function usage(output: number): CallView['usage'] {

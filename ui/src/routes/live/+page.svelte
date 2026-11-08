@@ -1,12 +1,23 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { slide } from 'svelte/transition';
+  import { prefersReducedMotion } from 'svelte/motion';
   import { page } from '$app/state';
   import { createSnapshot } from '#lib/snapshot.svelte.ts';
   import { getWorkbench } from '#lib/workbench.svelte.ts';
   import { clock, providerName, short } from '#lib/api.ts';
   import { compactOrDash, span } from '#lib/display.ts';
   import { harnessLabel } from '#lib/activity.ts';
-  import { Band, Board, LivePlace, type BandStyle, type Density, type Tile } from '#lib/board.ts';
+  import {
+    Band,
+    Board,
+    LivePlace,
+    type BandStyle,
+    type Density,
+    Feed,
+    type FeedItem,
+    type Tile,
+  } from '#lib/board.ts';
   import Icon from '#lib/Icon.svelte';
   import Markdown from '#lib/Markdown.svelte';
   import type { PageProps } from './$types';
@@ -37,6 +48,14 @@
   const band = $derived(
     current && board ? new Band(current.sessions, current.calls, board.now) : null,
   );
+  /** The session whose line in the Now strip is under the pointer. */
+  let highlighted = $state<string | null>(null);
+  /** How long ago a feed item happened, as short as it gets. */
+  function ago(item: FeedItem, now: number): string {
+    const seconds = Math.max(0, Math.round((now - item.at) / 1000));
+    if (seconds < 3) return 'now';
+    return seconds < 60 ? `${seconds}s` : `${Math.round(seconds / 60)}m`;
+  }
   const emptySlots = $derived(Math.max(0, Board.maxTiles - (board?.tiles.length ?? 0)));
   const densityHref = (density: Density) => LivePlace.href({ ...view, density });
   const bandHref = (style: BandStyle) => LivePlace.href({ ...view, band: style });
@@ -46,8 +65,6 @@
     tile.harness ? harnessLabel(tile.harness) : 'Unknown client';
   const percent = (share: number | null) => (share === null ? '—' : `${Math.round(share * 100)}%`);
   const harnessClass = (tile: Tile) => `harness-${tile.harness ?? 'unknown'}`;
-  const shortSession = (id: string) =>
-    short(board?.tiles.find((tile) => tile.session.id === id)?.session.native_id ?? id);
   /** The tile's facts line: model, input with its cached share, output. */
   function facts(tile: Tile): string {
     const parts = [tile.model ?? 'model —'];
@@ -80,13 +97,6 @@
           href="/sessions"
           title="Active sessions without a tile: the board keeps the busiest and most recent {Board.maxTiles}"
           >{board.overflow} not shown</a
-        >{/if}
-      {#if board.alerts[0]}<a
-          class="chip {board.alerts.some((alert) => alert.tone === 'error') ? 'error' : 'warning'}"
-          href={board.alerts[0].href}
-          title={board.alerts
-            .map((alert) => `${shortSession(alert.session)} ${alert.label}: ${alert.detail}`)
-            .join('\n')}>{board.alerts.length} to look at</a
         >{/if}
     </div>
   {/if}
@@ -248,6 +258,30 @@
         </div>
       </section>
     {/if}
+    <section class="live-now" aria-label="Now" aria-live="off">
+      <span class="live-now-label"><span class="status-dot live"></span>Now</span>
+      <div class="live-now-feed">
+        {#each board.feed as item (item.key)}
+          <a
+            class="live-now-item {item.tone}"
+            class:pinned={item.pinned}
+            class:fresh={!item.pinned && board.now - item.at < 3000}
+            href={item.href}
+            title={item.detail ?? undefined}
+            in:slide={{ axis: 'x', duration: prefersReducedMotion.current ? 0 : 180 }}
+            onpointerenter={() => (highlighted = item.session?.id ?? null)}
+            onpointerleave={() => (highlighted = null)}
+            ><i></i>{#if item.session}<b>{short(item.session.native_id)}</b>{/if}<span
+              >{item.text}</span
+            >{#if item.detail}<span class="muted">{item.detail}</span>{/if}{#if !item.pinned}<span
+                class="live-now-age">{ago(item, board.now)}</span
+              >{/if}</a
+          >
+        {:else}
+          <span class="live-now-item calm">Quiet: nothing in the last {span(Feed.calmMs)}</span>
+        {/each}
+      </div>
+    </section>
     {#if !board.tiles.length}
       <div class="empty-state">
         <div class="empty-icon"><Icon name="pulse" size={26} /></div>
@@ -296,6 +330,7 @@
           <article
             class="live-tile {harnessClass(tile)} {attention ? `attention-${attention}` : ''}"
             class:quiet={tile.quiet}
+            class:highlighted={highlighted === tile.session.id}
           >
             <header class="live-tile-head">
               <a class="live-open" href={sessionHref(tile.session.id)} title="Open the session"
@@ -523,6 +558,94 @@
   }
 
   /* The wall: fixed slots that fill the workspace; tiles touch, split by 1px rules. */
+  /* Now: what the gateway saw lately, newest first, sliding in at the left. */
+  .live-now {
+    display: flex;
+    flex: none;
+    min-height: 30px;
+    overflow: hidden;
+  }
+  .live-now-label {
+    display: flex;
+    flex: none;
+    align-items: center;
+    gap: 7px;
+    width: 150px;
+    padding: 0 12px 0 16px;
+    border-right: 1px solid var(--line);
+    color: var(--muted);
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+  .live-now-feed {
+    display: flex;
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    mask-image: linear-gradient(to right, #000 85%, transparent);
+  }
+  .live-now-item {
+    display: flex;
+    flex: none;
+    align-items: center;
+    gap: 6px;
+    padding: 0 12px;
+    border-right: 1px solid var(--line);
+    color: var(--muted);
+    font: 11.5px var(--mono);
+    text-decoration: none;
+    white-space: nowrap;
+    transition: background-color 1.2s;
+  }
+  .live-now-item i {
+    flex: none;
+    width: 7px;
+    height: 7px;
+    background: var(--muted);
+  }
+  .live-now-item b {
+    color: var(--ink);
+    font-weight: 500;
+  }
+  .live-now-item .muted {
+    opacity: 0.75;
+  }
+  .live-now-age {
+    color: var(--muted);
+    font-size: 10.5px;
+  }
+  .live-now-item.success i {
+    background: var(--success);
+  }
+  .live-now-item.warning {
+    color: var(--warning);
+  }
+  .live-now-item.warning i {
+    background: var(--warning);
+  }
+  .live-now-item.error {
+    color: var(--error);
+  }
+  .live-now-item.error i {
+    background: var(--error);
+  }
+  .live-now-item.pinned {
+    background: var(--surface-inset);
+  }
+  .live-now-item.fresh {
+    background: var(--row-hover);
+    transition: none;
+  }
+  a.live-now-item:hover {
+    background: var(--row-hover);
+    transition: none;
+  }
+  .live-now-item.calm {
+    color: var(--muted);
+  }
+
   /* A fixed 4 × 2 wall that fills the rest of the page; tiles clip their own text. */
   .live-wall {
     display: grid;
@@ -560,6 +683,7 @@
   }
   .live-tile.quiet:hover,
   .live-tile.quiet:focus-within,
+  .live-tile.quiet.highlighted,
   .live-rows tr.quiet:hover {
     opacity: 1;
   }
@@ -569,8 +693,9 @@
   .live-tile.attention-error {
     box-shadow: inset 0 2px 0 var(--error);
   }
-  /* Hovering a tile outlines it in its client's colour. */
-  .live-tile:hover::after {
+  /* Hovering a tile, or its line in the Now strip, outlines it in its client's colour. */
+  .live-tile:hover::after,
+  .live-tile.highlighted::after {
     position: absolute;
     inset: 0;
     box-shadow: inset 0 0 0 2px var(--harness);
@@ -890,6 +1015,10 @@
     }
     .live-band {
       grid-template-columns: 96px minmax(0, 1fr);
+    }
+    .live-now-label {
+      width: 96px;
+      padding-left: 12px;
     }
     .live-rows .lane-column,
     .live-rows .live-latest {
