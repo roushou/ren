@@ -4,7 +4,6 @@
 //! goes. The router is built by interpreting this table; nothing else decides
 //! which requests reach a provider.
 
-use crate::upstream::UpstreamTable;
 use tgv_harness::Harness;
 use tgv_protocol::route::{Api, Endpoint, Method, Provider};
 use tgv_recorder::routing::UpstreamId;
@@ -32,114 +31,130 @@ impl Accepts {
     }
 }
 
-/// One forwarded endpoint of a provider's native API.
+/// How one native endpoint is forwarded, wherever its route is mounted.
 #[derive(Debug, Clone, Copy)]
-pub struct Route {
-    pub path: &'static str,
+pub struct Forward {
     pub accepts: Accepts,
-    /// The provider whose native entry this route forwards to.
-    pub provider: Provider,
     pub endpoint: Endpoint,
-    /// The native path below the provider's base URL.
+    /// The native path below the entry's base URL.
     pub upstream_path: &'static str,
     /// The harness whose correlation headers this route reads, if any.
     pub harness: Option<Harness>,
 }
 
-impl Route {
-    /// This route bound to its provider's native entry in `upstreams`.
-    pub fn bind(self, upstreams: &UpstreamTable) -> BoundRoute {
-        let entry = upstreams.native(self.provider);
-        BoundRoute {
-            route: self,
-            upstream: entry.id.clone(),
-            api: entry.api,
-        }
-    }
+/// One forwarded endpoint of a provider's native entry.
+#[derive(Debug, Clone, Copy)]
+pub struct Route {
+    pub path: &'static str,
+    /// The provider whose native entry this route forwards to.
+    pub provider: Provider,
+    pub forward: Forward,
+}
 
+impl Route {
     pub const ALL: [Self; 9] = [
         Self {
             path: "/anthropic/v1/messages",
-            accepts: Accepts::Post,
             provider: Provider::Anthropic,
-            endpoint: Endpoint::Messages,
-            upstream_path: "/v1/messages",
-            harness: Some(Harness::ClaudeCode),
+            forward: Forward {
+                accepts: Accepts::Post,
+                endpoint: Endpoint::Messages,
+                upstream_path: "/v1/messages",
+                harness: Some(Harness::ClaudeCode),
+            },
         },
         Self {
             path: "/anthropic/v1/messages/count_tokens",
-            accepts: Accepts::Post,
             provider: Provider::Anthropic,
-            endpoint: Endpoint::CountTokens,
-            upstream_path: "/v1/messages/count_tokens",
-            harness: Some(Harness::ClaudeCode),
+            forward: Forward {
+                accepts: Accepts::Post,
+                endpoint: Endpoint::CountTokens,
+                upstream_path: "/v1/messages/count_tokens",
+                harness: Some(Harness::ClaudeCode),
+            },
         },
         Self {
             path: "/anthropic/v1/models",
-            accepts: Accepts::Get,
             provider: Provider::Anthropic,
-            endpoint: Endpoint::Models,
-            upstream_path: "/v1/models",
-            harness: Some(Harness::ClaudeCode),
+            forward: Forward {
+                accepts: Accepts::Get,
+                endpoint: Endpoint::Models,
+                upstream_path: "/v1/models",
+                harness: Some(Harness::ClaudeCode),
+            },
         },
         Self {
             path: "/codex/responses",
-            accepts: Accepts::PostOrWebSocket,
             provider: Provider::Codex,
-            endpoint: Endpoint::Responses,
-            upstream_path: "/responses",
-            harness: Some(Harness::Codex),
+            forward: Forward {
+                accepts: Accepts::PostOrWebSocket,
+                endpoint: Endpoint::Responses,
+                upstream_path: "/responses",
+                harness: Some(Harness::Codex),
+            },
         },
         Self {
             path: "/codex/responses/compact",
-            accepts: Accepts::Post,
             provider: Provider::Codex,
-            endpoint: Endpoint::ResponsesCompact,
-            upstream_path: "/responses/compact",
-            harness: Some(Harness::Codex),
+            forward: Forward {
+                accepts: Accepts::Post,
+                endpoint: Endpoint::ResponsesCompact,
+                upstream_path: "/responses/compact",
+                harness: Some(Harness::Codex),
+            },
         },
         Self {
             path: "/codex/models",
-            accepts: Accepts::Get,
             provider: Provider::Codex,
-            endpoint: Endpoint::Models,
-            upstream_path: "/models",
-            harness: Some(Harness::Codex),
+            forward: Forward {
+                accepts: Accepts::Get,
+                endpoint: Endpoint::Models,
+                upstream_path: "/models",
+                harness: Some(Harness::Codex),
+            },
         },
         // Public Responses headers do not establish a client identity. Its
         // WebSocket mode is deferred (docs/architecture.md).
         Self {
             path: "/openai/v1/responses",
-            accepts: Accepts::PostOrRefusedHandshake,
             provider: Provider::OpenAi,
-            endpoint: Endpoint::Responses,
-            upstream_path: "/v1/responses",
-            harness: None,
+            forward: Forward {
+                accepts: Accepts::PostOrRefusedHandshake,
+                endpoint: Endpoint::Responses,
+                upstream_path: "/v1/responses",
+                harness: None,
+            },
         },
         Self {
             path: "/openai/v1/responses/compact",
-            accepts: Accepts::Post,
             provider: Provider::OpenAi,
-            endpoint: Endpoint::ResponsesCompact,
-            upstream_path: "/v1/responses/compact",
-            harness: None,
+            forward: Forward {
+                accepts: Accepts::Post,
+                endpoint: Endpoint::ResponsesCompact,
+                upstream_path: "/v1/responses/compact",
+                harness: None,
+            },
         },
         Self {
             path: "/openai/v1/models",
-            accepts: Accepts::Get,
             provider: Provider::OpenAi,
-            endpoint: Endpoint::Models,
-            upstream_path: "/v1/models",
-            harness: None,
+            forward: Forward {
+                accepts: Accepts::Get,
+                endpoint: Endpoint::Models,
+                upstream_path: "/v1/models",
+                harness: None,
+            },
         },
     ];
 }
 
-/// A route bound to the upstream entry its calls go to first, and that
-/// entry's API. Handlers read the call's provider and first upstream here.
+/// A route as the router mounts it: its ingress path, how it forwards, the
+/// upstream entry its calls go to first, and that entry's API. Handlers read
+/// the call's provider and first upstream here.
 #[derive(Debug, Clone)]
 pub struct BoundRoute {
-    pub route: Route,
+    pub path: Box<str>,
+    pub forward: Forward,
     pub upstream: UpstreamId,
     pub api: Api,
 }
@@ -158,7 +173,7 @@ mod tests {
                 "{} is routed twice",
                 route.path
             );
-            assert!(route.path.starts_with('/') && route.upstream_path.starts_with('/'));
+            assert!(route.path.starts_with('/') && route.forward.upstream_path.starts_with('/'));
         }
     }
 }

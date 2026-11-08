@@ -231,7 +231,7 @@ xtask        ─► tgv-daemon, tgv-harness   (repository tasks, unpublished)
 
 A declarative route table (`Route::ALL`) maps each client path to a provider
 endpoint and names the harness whose correlation headers it accepts. When the
-router is built, `Route::bind` binds each route to its provider's native entry
+router is built, `UpstreamTable::routes` binds each route to its provider's native entry
 in the upstream table (`BoundRoute`): a call's provider and first upstream come
 from that binding, and a WebSocket channel is pinned to it. Pi's
 extension headers are recognised on every route. A header policy expressed as

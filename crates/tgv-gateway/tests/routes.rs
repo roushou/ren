@@ -9,20 +9,21 @@
     reason = "integration tests are a shell: helpers outside #[test] fail loudly"
 )]
 
-use tgv_gateway::{Route, UpstreamTable, UpstreamUrl};
+use tgv_gateway::{UpstreamTable, UpstreamUrl};
 use tgv_protocol::label::Labeled;
 
 #[test]
 fn every_route_is_pinned() {
     let url = || UpstreamUrl::parse("https://example.com").unwrap();
     let upstreams = UpstreamTable::new(url(), url(), url(), Vec::new()).unwrap();
-    let table: String = Route::ALL
+    let table: String = upstreams
+        .routes()
         .iter()
-        .map(|route| {
-            let bound = route.bind(&upstreams);
+        .map(|bound| {
+            let route = bound.forward;
             format!(
                 "{} {:?} {} upstream={} provider={} endpoint={} {} harness={}\n",
-                route.path,
+                bound.path,
                 route.accepts,
                 route.accepts.method().label(),
                 bound.upstream,
