@@ -31,7 +31,7 @@
   } from '#lib/board.ts';
   import Icon, { type IconName } from '#lib/Icon.svelte';
   import StateGlyph from '#lib/StateGlyph.svelte';
-  import Select from '#lib/Select.svelte';
+  import Select, { type SelectOption } from '#lib/Select.svelte';
   import Markdown from '#lib/Markdown.svelte';
   import type { PageProps } from './$types';
 
@@ -81,12 +81,19 @@
   let hoveredSeries = $state<string | null>(null);
   const seriesHref = (key: string) =>
     LivePlace.href({ ...view, series: view.series === key ? null : key });
-  const byHref = (by: BandBy) => LivePlace.href({ ...view, by, series: null });
-  const byLabels: Record<BandBy, string> = {
-    client: 'Client',
-    provider: 'Provider',
-    model: 'Model',
-  };
+  const byOptions: SelectOption<BandBy>[] = [
+    { value: 'client', label: 'By client' },
+    { value: 'provider', label: 'By provider' },
+    { value: 'model', label: 'By model' },
+  ];
+  const bandOptions: SelectOption<BandStyle>[] = [
+    { value: 'ribbon', label: 'Ribbon' },
+    { value: 'area', label: 'Area' },
+  ];
+  const densityOptions: SelectOption<Density>[] = [
+    { value: 'comfortable', label: 'Cards' },
+    { value: 'compact', label: 'Rows' },
+  ];
   /** Whether a card belongs to the hovered band series. */
   function inHoveredSeries(tile: Tile): boolean {
     if (!hoveredSeries || !band) return false;
@@ -203,8 +210,6 @@
     excerpt.omitted_chars
       ? `\n… ${excerpt.omitted_chars.toLocaleString('en')} more characters`
       : '';
-  const densityHref = (density: Density) => LivePlace.href({ ...view, density });
-  const bandHref = (style: BandStyle) => LivePlace.href({ ...view, band: style });
 
   const sessionHref = (id: string) => `/sessions/${encodeURIComponent(id)}`;
   const harnessName = (tile: Tile) =>
@@ -284,44 +289,27 @@
     </div>
   {/if}
   <div class="scope-group end">
-    <nav class="segmented live-modes" aria-label="Band grouping">
-      {#each ['client', 'provider', 'model'] as const as by (by)}
-        <a
-          href={byHref(by)}
-          class:chosen={view.by === by}
-          aria-current={view.by === by ? 'page' : undefined}
-          title="Output tokens by {by}">{byLabels[by]}</a
-        >
-      {/each}
-    </nav>
-    <nav class="segmented live-modes" aria-label="Band style">
-      <a
-        href={bandHref('ribbon')}
-        class:chosen={view.band === 'ribbon'}
-        aria-current={view.band === 'ribbon' ? 'page' : undefined}
-        title="Every series stacked into one chart: its top edge is the total">Ribbon</a
-      >
-      <a
-        href={bandHref('area')}
-        class:chosen={view.band === 'area'}
-        aria-current={view.band === 'area' ? 'page' : undefined}
-        title="Each series in its own lane, on one scale">Area</a
-      >
-    </nav>
-    <nav class="segmented live-modes" aria-label="Board density">
-      <a
-        href={densityHref('comfortable')}
-        class:chosen={view.density === 'comfortable'}
-        aria-current={view.density === 'comfortable' ? 'page' : undefined}
-        title="Cards with each session's latest steps"><Icon name="grid" size={13} />Cards</a
-      >
-      <a
-        href={densityHref('compact')}
-        class:chosen={view.density === 'compact'}
-        aria-current={view.density === 'compact' ? 'page' : undefined}
-        title="One row per session"><Icon name="rows" size={13} />Rows</a
-      >
-    </nav>
+    <Select
+      label="What the band groups output by"
+      size="compact"
+      options={byOptions}
+      value={view.by}
+      onchange={(by) => goto(LivePlace.href({ ...view, by, series: null }))}
+    />
+    <Select
+      label="Band style"
+      size="compact"
+      options={bandOptions}
+      value={view.band}
+      onchange={(band) => goto(LivePlace.href({ ...view, band }))}
+    />
+    <Select
+      label="Board density"
+      size="compact"
+      options={densityOptions}
+      value={view.density}
+      onchange={(density) => goto(LivePlace.href({ ...view, density }))}
+    />
   </div>
 {/snippet}
 
@@ -711,15 +699,6 @@
   .live-page > :global(.empty-state) {
     flex: 1;
     justify-content: center;
-  }
-  :global(.live-modes) a {
-    display: inline-flex;
-    align-items: center;
-    gap: 5px;
-    padding: 3px 8px;
-  }
-  :global(.live-modes) .count-pill {
-    margin-left: 2px;
   }
   .live-pulse {
     gap: 6px;
