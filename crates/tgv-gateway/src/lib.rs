@@ -65,10 +65,10 @@ pub use headers::HeaderPolicy;
 pub use ingress::{Ingress, IngressError, Shutdown, Stopped};
 pub use route::{Accepts, BoundRoute, Forward, Route};
 pub use upstream::{
-    AuthOverride, ConfiguredEntry, Connected, EntryIngress, OperatorKey, ReqwestUpstream, Socket,
-    TransportTimeouts, Upstream, UpstreamAuth, UpstreamBody, UpstreamConfigError, UpstreamEntry,
-    UpstreamHandshake, UpstreamRequest, UpstreamSocket, UpstreamTable, UpstreamTableError,
-    UpstreamUrl,
+    AuthOverride, ConfiguredEntry, Connected, EntryIngress, NativeUrls, OperatorKey,
+    ReqwestUpstream, Socket, TransportTimeouts, Upstream, UpstreamAuth, UpstreamBody,
+    UpstreamConfigError, UpstreamEntry, UpstreamHandshake, UpstreamRequest, UpstreamSocket,
+    UpstreamTable, UpstreamTableError, UpstreamUrl,
 };
 pub use websocket::{WebSocketMode, WebSocketOptions, WebSocketOptionsError};
 

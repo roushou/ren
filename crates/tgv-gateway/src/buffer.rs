@@ -22,7 +22,8 @@ use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
 /// The largest request body each provider's routes accept; larger ones get
 /// `413`. Defaults are the providers' documented limits: Anthropic's 32 MB
-/// Messages limit, and OpenAI's 512 MB request payload limit, also used for
+/// Messages limit, also used for DeepSeek's Anthropic-compatible API, which
+/// documents none; and OpenAI's 512 MB request payload limit, also used for
 /// the Codex backend, which documents none.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -30,6 +31,7 @@ pub struct RequestLimits {
     pub anthropic: usize,
     pub codex: usize,
     pub openai: usize,
+    pub deepseek: usize,
 }
 
 impl Default for RequestLimits {
@@ -38,6 +40,7 @@ impl Default for RequestLimits {
             anthropic: 32 * 1024 * 1024,
             codex: 512 * 1024 * 1024,
             openai: 512 * 1024 * 1024,
+            deepseek: 32 * 1024 * 1024,
         }
     }
 }
@@ -49,6 +52,7 @@ impl RequestLimits {
             anthropic: bytes,
             codex: bytes,
             openai: bytes,
+            deepseek: bytes,
         }
     }
 
@@ -57,11 +61,12 @@ impl RequestLimits {
             Provider::Anthropic => self.anthropic,
             Provider::Codex => self.codex,
             Provider::OpenAi => self.openai,
+            Provider::DeepSeek => self.deepseek,
         }
     }
 
-    fn each(&self) -> [usize; 3] {
-        [self.anthropic, self.codex, self.openai]
+    fn each(&self) -> [usize; 4] {
+        [self.anthropic, self.codex, self.openai, self.deepseek]
     }
 }
 
@@ -473,6 +478,7 @@ mod tests {
                 anthropic: 1024,
                 codex: 2048,
                 openai: 4096,
+                deepseek: 1024,
             },
             budget_bytes: 8192,
             ..BufferOptions::default()
@@ -482,6 +488,7 @@ mod tests {
             (Provider::Anthropic, false),
             (Provider::Codex, false),
             (Provider::OpenAi, true),
+            (Provider::DeepSeek, false),
         ] {
             let read = buffer.read(provider, &sized(3000), body()).await;
             assert_eq!(read.is_ok(), accepted, "{provider:?}");

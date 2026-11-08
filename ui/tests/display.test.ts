@@ -23,7 +23,7 @@ import {
   span,
   sessionTone,
 } from '../src/lib/display.ts';
-import { revision, type CallView } from '../src/lib/api.ts';
+import { providerMark, providerName, revision, type CallView } from '../src/lib/api.ts';
 import { callFixture, finishedFixture, callId } from './fixtures.ts';
 
 const finished = (overrides: Partial<CallView>) => finishedFixture(callId(1), overrides);
@@ -273,4 +273,17 @@ test('spans read at a glance, and session colors are stable', () => {
   const id = 'cecf7cbd-be7f-4563-9d85-3d5bea8fd082';
   assert.equal(sessionTone(id), sessionTone(id));
   assert.ok(sessionTone(id) >= 0 && sessionTone(id) < 8);
+});
+
+test('each provider has a name and a mark, and an unknown one is never shown as another', () => {
+  assert.deepEqual(
+    ['anthropic', 'codex', 'openai', 'deepseek'].map((p) => [providerName(p), providerMark(p)]),
+    [
+      ['Anthropic', 'A'],
+      ['Codex', 'C'],
+      ['OpenAI', 'O'],
+      ['DeepSeek', 'D'],
+    ],
+  );
+  assert.deepEqual([providerName('future'), providerMark('future')], ['future', '?']);
 });

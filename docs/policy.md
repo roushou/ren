@@ -11,8 +11,9 @@ changes, and why a call was refused. Header values are never recorded.
 `[buffer]`: a request over its provider's limit in `[buffer.request_limits]` gets
 `413`. The defaults are the providers' documented limits: `anthropic` 32 MiB
 (Anthropic's 32 MB Messages limit), `openai` 512 MiB (OpenAI's 512 MB request
-payload limit), and `codex` 512 MiB (the Codex backend documents none, so OpenAI's
-is used). All buffered requests together hold at most `budget_bytes` (default
+payload limit), `codex` 512 MiB (the Codex backend documents none, so OpenAI's
+is used), and `deepseek` 32 MiB (DeepSeek documents none for its
+Anthropic-compatible API, so Anthropic's Messages limit is used). All buffered requests together hold at most `budget_bytes` (default
 1 GiB); past that, new requests get `503` with `retry-after` at once. Memory is used
 only by requests in progress, but one large OpenAI request can hold up to 512 MiB:
 on a small host, lower `openai`, `codex`, and `budget_bytes`. Uploads that pause

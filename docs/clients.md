@@ -95,6 +95,7 @@ and [OpenAI authentication for custom providers](https://learn.chatgpt.com/docs/
 | `POST /openai/v1/responses`                | `/v1/responses`                        |
 | `POST /openai/v1/responses/compact`        | `/v1/responses/compact`                |
 | `GET /openai/v1/models`                    | `/v1/models`                           |
+| `POST /deepseek/v1/messages`               | `/anthropic/v1/messages`               |
 
 The configured upstream bases determine the upstream path prefix. Query strings
 and end-to-end headers are forwarded, including subscription authentication and
@@ -123,6 +124,21 @@ An active API key, bearer-token override, or credential helper can supersede tha
 login. Keep the subscription login active rather than supplying a replacement
 credential for TGV. This is the subscription-preserving gateway configuration
 [documented by Anthropic](https://code.claude.com/docs/en/llm-gateway-protocol#request-headers).
+
+### DeepSeek
+
+To run Claude Code against DeepSeek's
+[Anthropic-compatible API](https://api-docs.deepseek.com/guides/anthropic_api)
+through TGV, point it at `/deepseek` with your own DeepSeek API key:
+
+```sh
+ANTHROPIC_BASE_URL=http://127.0.0.1:8787/deepseek ANTHROPIC_API_KEY=<deepseek key> CLAUDE_CODE_GATEWAY_HINT_HEADERS=1 claude
+```
+
+The key passes through to DeepSeek untouched; TGV never holds it. Calls are
+recorded with provider `deepseek`. DeepSeek documents only Messages there, so
+TGV routes only `POST /deepseek/v1/messages`: Claude Code's token counting and
+model listing get `404` from TGV.
 
 ## Codex
 

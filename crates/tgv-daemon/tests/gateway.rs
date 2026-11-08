@@ -195,10 +195,23 @@ async fn resolved_destinations_use_distinct_transports_and_preserve_recorded_lab
 
 #[tokio::test]
 async fn native_streams_headers_and_query_survive_and_history_reopens() {
-    for (path, expected_path) in [
-        ("/anthropic/v1/messages", "/v1/messages"),
-        ("/codex/responses", "/backend-api/codex/responses"),
-        ("/openai/v1/responses", "/v1/responses"),
+    for (path, expected_path, provider) in [
+        (
+            "/anthropic/v1/messages",
+            "/v1/messages",
+            Provider::Anthropic,
+        ),
+        (
+            "/codex/responses",
+            "/backend-api/codex/responses",
+            Provider::Codex,
+        ),
+        ("/openai/v1/responses", "/v1/responses", Provider::OpenAi),
+        (
+            "/deepseek/v1/messages",
+            "/anthropic/v1/messages",
+            Provider::DeepSeek,
+        ),
     ] {
         let (received, mut requests) = mpsc::channel(1);
         let release = Arc::new(Notify::new());
@@ -318,6 +331,11 @@ async fn native_streams_headers_and_query_survive_and_history_reopens() {
         let records = recorded(dir.path()).await;
         assert_eq!(records.len(), 1);
         let record = &records[0];
+        assert_eq!(record.provider, Stored::Known(provider));
+        assert_eq!(
+            record.wire,
+            Some(Stored::Known(provider.native_api().wire()))
+        );
         assert!(record.capture_complete);
         assert_eq!(terminal(record), AttemptTerminal::BodyComplete);
         assert_eq!(

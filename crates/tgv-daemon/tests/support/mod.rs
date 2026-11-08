@@ -66,13 +66,15 @@ pub async fn mock(app: Router) -> Mock {
     }
 }
 
-/// Every provider pointed at `mock`; Codex below its native path prefix.
+/// Every provider pointed at `mock`; Codex and DeepSeek below their native
+/// path prefixes.
 pub fn config(mock: &Mock) -> Config {
     Config {
         listen: "127.0.0.1:0".parse().unwrap(),
         anthropic_base_url: format!("http://{}", mock.address),
         codex_base_url: format!("http://{}/backend-api/codex", mock.address),
         openai_base_url: format!("http://{}", mock.address),
+        deepseek_base_url: format!("http://{}/anthropic", mock.address),
         ..Config::default()
     }
 }

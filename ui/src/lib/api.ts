@@ -45,7 +45,7 @@ export const SessionId = new Uuid<'SessionId'>();
 export const TurnId = new Uuid<'TurnId'>();
 
 // Vocabularies (the daemon's label enums). Unrecognised text is kept.
-const providers = ['anthropic', 'codex', 'openai'] as const;
+const providers = ['anthropic', 'codex', 'openai', 'deepseek'] as const;
 export type Provider = (typeof providers)[number];
 const endpoints = ['messages', 'count_tokens', 'models', 'responses', 'responses_compact'] as const;
 export type Endpoint = (typeof endpoints)[number];
@@ -1365,9 +1365,16 @@ const providerNames: Record<Provider, string> = {
   anthropic: 'Anthropic',
   codex: 'Codex',
   openai: 'OpenAI',
+  deepseek: 'DeepSeek',
 };
 export const providerName = (provider: string) =>
   (providerNames as Record<string, string>)[provider] ?? provider;
-/** One-letter mark used beside provider names. */
+const providerMarks: Record<Provider, string> = {
+  anthropic: 'A',
+  codex: 'C',
+  openai: 'O',
+  deepseek: 'D',
+};
+/** One-letter mark used beside provider names; `?` for one this UI does not know. */
 export const providerMark = (provider: string) =>
-  provider === 'anthropic' ? 'A' : provider === 'codex' ? 'C' : 'O';
+  (providerMarks as Record<string, string>)[provider] ?? '?';

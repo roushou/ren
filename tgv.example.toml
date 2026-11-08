@@ -6,6 +6,8 @@ anthropic_base_url = "https://api.anthropic.com"
 codex_base_url = "https://chatgpt.com/backend-api/codex"
 # Public Responses endpoint used by Pi's openai provider (including ChatGPT sign-in).
 openai_base_url = "https://api.openai.com"
+# DeepSeek's Anthropic-compatible API; clients send their own DeepSeek key.
+deepseek_base_url = "https://api.deepseek.com/anthropic"
 max_concurrent_requests = 32
 connect_timeout_seconds = 10
 response_header_timeout_seconds = 120
@@ -58,6 +60,7 @@ total_timeout_seconds = 300
 anthropic = 33554432 # 32 MiB (Anthropic Messages: 32 MB)
 codex = 536870912 # 512 MiB (no documented limit; OpenAI's is used)
 openai = 536870912 # 512 MiB (OpenAI: 512 MB per request)
+deepseek = 33554432 # 32 MiB (no documented limit; Anthropic Messages' is used)
 
 [control]
 # Tailscale logins allowed to use the control API through Tailscale Serve.

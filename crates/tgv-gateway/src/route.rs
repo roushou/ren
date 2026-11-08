@@ -120,7 +120,7 @@ impl Route {
     /// `/upstreams/{id}`, then their wire format's native paths.
     pub const DIRECT_PREFIX: &'static str = "/upstreams";
 
-    pub const ALL: [Self; 9] = [
+    pub const ALL: [Self; 10] = [
         Self {
             path: "/anthropic/v1/messages",
             provider: Provider::Anthropic,
@@ -211,6 +211,18 @@ impl Route {
                 endpoint: Endpoint::Models,
                 upstream_path: "/v1/models",
                 harness: None,
+            },
+        },
+        // DeepSeek documents only Messages on its Anthropic-compatible API
+        // (https://api-docs.deepseek.com/guides/anthropic_api).
+        Self {
+            path: "/deepseek/v1/messages",
+            provider: Provider::DeepSeek,
+            forward: Forward {
+                accepts: Accepts::Post,
+                endpoint: Endpoint::Messages,
+                upstream_path: "/v1/messages",
+                harness: Some(Harness::ClaudeCode),
             },
         },
     ];

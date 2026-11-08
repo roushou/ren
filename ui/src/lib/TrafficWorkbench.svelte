@@ -273,6 +273,7 @@
     { value: 'anthropic', label: 'Anthropic' },
     { value: 'openai', label: 'OpenAI' },
     { value: 'codex', label: 'Codex' },
+    { value: 'deepseek', label: 'DeepSeek' },
   ];
   const statusOptions: SelectOption<string>[] = [
     { value: '', label: 'All statuses' },

@@ -14,13 +14,16 @@ pub enum Provider {
     Codex,
     #[strum(to_string = "openai")]
     OpenAi,
+    /// DeepSeek's Anthropic-compatible API.
+    #[strum(to_string = "deepseek")]
+    DeepSeek,
 }
 
 impl Provider {
     /// The API this provider's own default upstream speaks.
     pub fn native_api(self) -> Api {
         let wire = match self {
-            Self::Anthropic => Wire::AnthropicMessages,
+            Self::Anthropic | Self::DeepSeek => Wire::AnthropicMessages,
             Self::Codex | Self::OpenAi => Wire::OpenAiResponses,
         };
         Api {
@@ -35,10 +38,14 @@ impl Provider {
         let supported = match (self, wire) {
             (Self::Anthropic, Wire::AnthropicMessages)
             | (Self::Codex, Wire::OpenAiResponses)
-            | (Self::OpenAi, Wire::OpenAiResponses) => true,
+            | (Self::OpenAi, Wire::OpenAiResponses)
+            | (Self::DeepSeek, Wire::AnthropicMessages) => true,
+            // DeepSeek's OpenAI-compatible API is Chat Completions, which TGV
+            // does not speak.
             (Self::Anthropic, Wire::OpenAiResponses)
             | (Self::Codex, Wire::AnthropicMessages)
-            | (Self::OpenAi, Wire::AnthropicMessages) => false,
+            | (Self::OpenAi, Wire::AnthropicMessages)
+            | (Self::DeepSeek, Wire::OpenAiResponses) => false,
         };
         if supported {
             Ok(Api {
@@ -156,6 +163,7 @@ mod tests {
                 (Provider::Anthropic, Wire::AnthropicMessages),
                 (Provider::Codex, Wire::OpenAiResponses),
                 (Provider::OpenAi, Wire::OpenAiResponses),
+                (Provider::DeepSeek, Wire::AnthropicMessages),
             ]
         );
     }

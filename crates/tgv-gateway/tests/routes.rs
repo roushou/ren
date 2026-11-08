@@ -11,8 +11,8 @@
 )]
 
 use tgv_gateway::{
-    ConfiguredEntry, EntryIngress, OperatorKey, UpstreamAuth, UpstreamEntry, UpstreamTable,
-    UpstreamUrl,
+    ConfiguredEntry, EntryIngress, NativeUrls, OperatorKey, UpstreamAuth, UpstreamEntry,
+    UpstreamTable, UpstreamUrl,
 };
 use tgv_protocol::label::Labeled;
 use tgv_protocol::route::Provider;
@@ -32,9 +32,12 @@ fn every_route_is_pinned() {
         ingress,
     };
     let upstreams = UpstreamTable::new(
-        url(),
-        url(),
-        url(),
+        NativeUrls {
+            anthropic: url(),
+            codex: url(),
+            openai: url(),
+            deepseek: url(),
+        },
         vec![
             configured(
                 "anthropic-key",
