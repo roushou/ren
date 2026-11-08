@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { activeSessions, ago, healthLine, problems } from '../src/lib/overview.ts';
-import type { Health, SessionView, Storage } from '../src/lib/api.ts';
+import { ago, Attention, Day, healthLine, type OverviewInput } from '../src/lib/overview.ts';
+import type { Health, Storage } from '../src/lib/api.ts';
 import {
   callId,
   finishedFixture,
@@ -71,66 +71,128 @@ test('each problem says what is wrong, and where to look', () => {
   ]);
 });
 
-test('problems are newest first, each call once', () => {
-  const old = finishedFixture(callId(1), { status: 429, started_at: 1_000 as never });
-  const cut = finishedFixture(callId(2), { terminal: 'interrupted', started_at: 3_000 as never });
-  const both = finishedFixture(callId(3), {
-    status: 500,
-    terminal: 'interrupted',
-    started_at: 2_000 as never,
-  });
-  const listed = problems([old, both], [cut, both]);
-  assert.deepEqual(
-    listed.map((p) => [p.call.id, p.reason.label]),
-    [
-      [cut.id, 'Interrupted'],
-      [both.id, 'Error 500'],
-      [old.id, 'Error 429'],
-    ],
-  );
-  assert.equal(problems([old, cut, both], [], 2).length, 2);
-});
-
-test('active sessions and relative times', () => {
+test('relative times', () => {
   const now = 10_000_000;
-  const session = (id: number, last: number) =>
-    ({ id: `s${id}`, last_seen: last }) as unknown as SessionView;
-  assert.deepEqual(
-    activeSessions(
-      [session(1, now - 20 * 60_000), session(2, now - 60_000), session(3, now)],
-      now,
-    ).map((s) => s.id),
-    ['s3', 's2'],
-  );
   assert.deepEqual(
     [now, now - 30_000, now - 12 * 60_000, now - 3 * 3_600_000].map((t) => ago(t, now)),
     ['just now', '30 s ago', '12 min ago', '3 h ago'],
   );
 });
 
-test('exposed secrets turn the health line red and link to their session', () => {
-  const health = healthFixture();
-  const exposure = {
-    call: callId(1),
-    session: uuid(9) as never,
-    turn: null,
-    client: null,
-    started_at: 1 as never,
-    field: 'prompt' as const,
-    kind: 'openai_key' as const,
-    hint: 'sk-…abcd',
-    fingerprint: '0123456789abcdef',
-    count: 1,
-  };
-  const items = healthLine(health, storageFixture(), null, [exposure]);
-  const secrets = items.at(-1);
-  assert.equal(secrets?.label, '1 secret exposed · 24 h');
-  assert.equal(secrets?.tone, 'error');
-  assert.equal(secrets?.href, `/sessions/${uuid(9)}/report`);
-  assert.equal(healthLine(health, storageFixture(), null, []).at(-1)?.tone, 'success');
-  // A daemon without exposures adds no item.
-  assert.equal(
-    healthLine(health, storageFixture(), null, null).length,
-    healthLine(health, storageFixture(), null).length,
+const NOW = 100 * 3_600_000;
+const at = (hoursAgo: number) => (NOW - hoursAgo * 3_600_000) as never;
+const exposure = (n: number, session: number, kind: 'openai_key' | 'github_token') => ({
+  call: callId(n),
+  session: uuid(session) as never,
+  turn: null,
+  client: null,
+  started_at: at(n),
+  field: 'prompt' as const,
+  kind,
+  hint: 'sk-…abcd',
+  fingerprint: '0123456789abcdef',
+  count: 1,
+});
+const input = (overrides: Partial<OverviewInput>): OverviewInput => ({
+  now: NOW,
+  health: healthFixture(),
+  failed: [],
+  stopped: [],
+  bookkeeping: [],
+  exposures: [],
+  ...overrides,
+});
+
+test('attention ranks secrets, then failed work, then cut-off work, then bookkeeping', () => {
+  const probe = (n: number, hoursAgo: number) =>
+    finishedFixture(callId(10 + n), { status: 429, started_at: at(hoursAgo) });
+  const attention = new Attention(
+    input({
+      bookkeeping: [probe(1, 1), probe(2, 3), probe(3, 9)],
+      stopped: [finishedFixture(callId(20), { terminal: 'interrupted', started_at: at(1) })],
+      failed: [finishedFixture(callId(30), { status: 500, started_at: at(2), model: 'm-a' })],
+      exposures: [exposure(1, 9, 'openai_key'), exposure(2, 9, 'openai_key')],
+    }),
   );
+  assert.deepEqual(
+    attention.groups.map((group) => [group.severity, group.title]),
+    [
+      ['error', '2 secrets exposed'],
+      ['error', 'Anthropic Error 500 ×1'],
+      ['warning', 'Anthropic Interrupted ×1'],
+      ['neutral', 'Anthropic Error 429 ×3'],
+    ],
+  );
+  assert.equal(attention.worst, 'error');
+  const [secrets, , , probes] = attention.groups;
+  // One session: the secrets link to its report, and say what and where.
+  assert.equal(secrets?.href, `/sessions/${uuid(9)}/report`);
+  assert.match(secrets?.detail ?? '', /OpenAI API key in prompt · 1 session · rotate them/);
+  // Repeats fold into one line, with when each happened along the day.
+  assert.deepEqual(
+    probes?.marks.map((mark) => Math.round(mark * 24)),
+    [23, 21, 15],
+  );
+  assert.equal(probes?.href, '/traffic?status=errors&kind=other&since=24h');
+  assert.match(probes?.detail ?? '', /not your agents' work/);
+});
+
+test('bytes past the capture limit are noted, never raised; lost capture is', () => {
+  const omissions = recorderFixture().omissions;
+  const policy = new Attention(
+    input({ health: healthFixture({ omissions: { ...omissions, policy_limit_bytes: 2048 } }) }),
+  );
+  assert.deepEqual(
+    policy.groups.map((group) => [group.severity, group.title]),
+    [['neutral', '2.0 KiB over the capture limit']],
+  );
+  const lost = new Attention(
+    input({ health: healthFixture({ omissions: { ...omissions, queue_bytes_bytes: 1024 } }) }),
+  );
+  assert.deepEqual(
+    lost.groups.map((group) => group.severity),
+    ['warning'],
+  );
+  assert.equal(new Attention(input({})).worst, null);
+});
+
+test('the day counts calls against the day before, and splits input into cached and fresh', () => {
+  const hour = 3_600_000;
+  const usage = (calls: number) => ({
+    totals: {
+      calls,
+      errors: 0,
+      tokens: { input: 1000, output: 50, cache_read: 900 },
+    },
+    hours: [
+      {
+        start: (Math.floor(NOW / hour) * hour - 2 * hour) as never,
+        calls,
+        errors: 0,
+        tokens: { input: 1000, output: 50, cache_read: 900 },
+      },
+    ],
+    models: [],
+  });
+  const day = new Day(usage(150), usage(100), NOW, { bookkeeping: 9, stopped: 1 });
+  assert.deepEqual(
+    day.tiles.map((tile) => [tile.label, tile.value, tile.detail]),
+    [
+      ['Calls', '150', '+50% vs the day before'],
+      ['Failed work calls', '0', '9 failed bookkeeping · 1 cut off'],
+      ['Tokens in', '1.0k', '900 cached · 100 fresh'],
+      ['Tokens out', '50', `peak 50 at ${Day.clock(Math.floor(NOW / hour) * hour - 2 * hour)}`],
+    ],
+  );
+  assert.deepEqual(day.input, { cached: 900, fresh: 100 });
+  assert.equal(Day.change(5, null), 'no earlier day read');
+  assert.equal(Day.change(0, 0), 'none the day before either');
+  assert.equal(Day.change(544, 7), '7 the day before');
+  // Bars stack cached under fresh, on the same time scale as the ticks.
+  const bar = day.bars(100).find((candidate) => candidate.cached > 0);
+  assert.equal(bar?.cached, 90);
+  assert.equal(bar?.fresh, 10);
+  assert.equal(day.x(day.span.from), 0);
+  assert.equal(day.x(NOW + 10 * hour), 1000);
+  assert.equal(Day.spark([0, 0], 22), '0.0,21.0 100.0,21.0');
 });

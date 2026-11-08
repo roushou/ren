@@ -11,8 +11,13 @@ Claude Code / Pi / Codex ───────────────> Rust dae
 Browser ──> optional SvelteKit server ──> Rust management API
 ```
 
-Pages: Overview (`/`: a health line, calls in flight and sessions active in the last
-15 minutes, what needs attention in the last day, and the last 24 hours' usage), Live
+Pages: Overview (`/`: one line that says how it stands, edged by the worst thing in it;
+what needs attention in the last day, worst first, with repeats folded into a count:
+exposed secrets, recording trouble, failed and cut-off model calls, then failed
+bookkeeping such as quota probes, which is not the agents' work; the sessions active in
+the last 15 minutes in the Live page's state colours; the day's calls (against the day
+before), failed work calls, input tokens cached and fresh, and output tokens; and input
+per hour with failed and cut-off calls ticked along the same hours), Live
 (`/live`: the sessions active in the last 15 minutes as they work (or 5 minutes, an
 hour, or four hours, chosen beside the active count; a window holding more than the page
 reads at once is marked partial), on a four-by-two board

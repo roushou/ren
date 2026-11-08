@@ -94,36 +94,57 @@ export interface OverviewData {
   now: number;
   /** The last 24 hours. */
   usage: UsageView;
-  /** Calls still open, newest first. */
-  active: CallView[];
-  /** Errors and stopped calls in the last 24 hours. */
-  errors: CallView[];
+  /** The 24 hours before that, for the change in calls; null when it could not be read. */
+  previous: UsageView | null;
+  /** Model calls that failed in the last 24 hours. */
+  failed: CallView[];
+  /** Model calls cut off in the last 24 hours. */
   stopped: CallView[];
+  /** Bookkeeping calls that failed in the last 24 hours: quota probes, token counts. */
+  bookkeeping: CallView[];
   sessions: SessionView[];
   /** Credentials found in the last 24 hours; null from a daemon without them. */
   exposures: ExposureView[] | null;
+  /** The Live board's last 15 minutes, for the sessions at work; null when unread. */
+  live: LiveData | null;
 }
 
-/** The overview: everything read at once; each read is small. */
-export function overviewSnapshot(fetcher: typeof fetch) {
+/**
+ * The overview: everything read at once; each read is small. `live` keeps
+ * the Live board's turn cache between refreshes in the browser.
+ */
+export function overviewSnapshot(fetcher: typeof fetch, live: LiveReader) {
   const api = new ManagementApi(fetcher);
   return readSnapshot('overview', async (): Promise<OverviewData> => {
     const now = Date.now();
-    const since = String(now - 24 * 3_600_000);
-    const listing = (status: string, limit: number, from?: string) => {
-      const query = new URLSearchParams({ status, limit: String(limit) });
-      if (from) query.set('from_ms', from);
-      return api.calls(query).then((page) => page.calls);
+    const day = 24 * 3_600_000;
+    const since = String(now - day);
+    const listing = (status: string, kind: string) =>
+      api
+        .calls(new URLSearchParams({ status, kind, limit: '100', from_ms: since }))
+        .then((page) => page.calls);
+    const [usage, previous, failed, stopped, bookkeeping, sessions, exposures, board] =
+      await Promise.all([
+        api.usage({ from_ms: rangeStart('24h', now, localDayStart) }),
+        api.usage({ from_ms: now - 2 * day, until_ms: now - day }).catch(() => null),
+        listing('errors', 'model'),
+        listing('interrupted', 'model'),
+        listing('errors', 'other'),
+        api.sessions(100),
+        api.exposures(Number(since)).then((page) => page.exposures),
+        live.read(fetcher, '15m'),
+      ]);
+    return {
+      now,
+      usage,
+      previous,
+      failed,
+      stopped,
+      bookkeeping,
+      sessions: sessions.sessions,
+      exposures,
+      live: board.value,
     };
-    const [usage, active, errors, stopped, sessions, exposures] = await Promise.all([
-      api.usage({ from_ms: rangeStart('24h', now, localDayStart) }),
-      listing('active', 50),
-      listing('errors', 10, since),
-      listing('interrupted', 10, since),
-      api.sessions(100),
-      api.exposures(Number(since)).then((page) => page.exposures),
-    ]);
-    return { now, usage, active, errors, stopped, sessions: sessions.sessions, exposures };
   });
 }
 

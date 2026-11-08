@@ -2,26 +2,26 @@
   import { onMount } from 'svelte';
   import { page } from '$app/state';
   import { createSnapshot } from '#lib/snapshot.svelte.ts';
-  import { getWorkbench } from '#lib/workbench.svelte.ts';
-  import { bytes, num, providerMark, providerName, short } from '#lib/api.ts';
-  import { compactOrDash, sessionTone, streamChip } from '#lib/display.ts';
-  import { activeSessions, ago, healthLine, problems } from '#lib/overview.ts';
-  import { cacheShare, usagePoints } from '#lib/usage.ts';
-  import UsageChart from '#lib/UsageChart.svelte';
+  import { providerName, short } from '#lib/api.ts';
+  import { compactOrDash, percentOrDash } from '#lib/display.ts';
+  import { harnessLabel } from '#lib/activity.ts';
+  import { Board, LivePlace, type Tile } from '#lib/board.ts';
+  import { ago, Attention, Day, healthLine, type Severity } from '#lib/overview.ts';
   import ConnectClient from '#lib/ConnectClient.svelte';
+  import StateGlyph from '#lib/StateGlyph.svelte';
   import Icon from '#lib/Icon.svelte';
   import type { PageProps } from './$types';
+
   let { data }: PageProps = $props();
-  getWorkbench().showScope(scope);
   const overview = createSnapshot(() => data.overview);
   const gateway = createSnapshot(() => data.gateway);
   const current = $derived(overview.current.value);
-  const health = $derived(
+  const health = $derived(gateway.current.value?.health ?? null);
+  const items = $derived(
     healthLine(
-      gateway.current.value?.health ?? null,
+      health,
       gateway.current.value?.storage ?? null,
       gateway.current.error?.message ?? null,
-      current?.exposures ?? null,
     ),
   );
   // Elapsed times tick between refreshes.
@@ -30,166 +30,734 @@
     const timer = setInterval(() => (now = Date.now()), 1000);
     return () => clearInterval(timer);
   });
-  const sessions = $derived(current ? activeSessions(current.sessions, now) : []);
-  const lastCall = $derived(Math.max(0, ...(current?.sessions ?? []).map((s) => s.last_seen)));
-  const attention = $derived(current ? problems(current.errors, current.stopped) : []);
-  const totals = $derived(current?.usage.totals);
-  const share = $derived(totals ? cacheShare(totals) : null);
-  const points = $derived(current ? usagePoints(current.usage.hours, '24h', current.now) : []);
-  const hour = (start: number) => {
-    const date = new Date(start);
-    const time = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    return {
-      short: time,
-      long: `${date.toLocaleDateString([], { month: 'short', day: 'numeric' })}, ${time}`,
-    };
-  };
-  const seconds = (ms: number) => {
-    const s = Math.max(0, Math.round(ms / 1000));
-    return s < 60 ? `${s} s` : `${Math.floor(s / 60)} min ${s % 60} s`;
-  };
-</script>
 
-{#snippet scope()}
-  <div class="scope-group overview-health" aria-label="Health">
-    {#each health as item}{#if item.href}<a
-          class="chip {item.tone}"
-          href={item.href}
-          title={item.title}>{item.label}</a
-        >{:else}<span class="chip {item.tone}" title={item.title}>{item.label}</span>{/if}{/each}
-  </div>
-{/snippet}
+  const attention = $derived(
+    current
+      ? new Attention({
+          now: current.now,
+          health,
+          failed: current.failed,
+          stopped: current.stopped,
+          bookkeeping: current.bookkeeping,
+          exposures: current.exposures,
+        })
+      : null,
+  );
+  const day = $derived(
+    current
+      ? new Day(current.usage, current.previous, current.now, {
+          bookkeeping: current.bookkeeping.length,
+          stopped: current.stopped.length,
+        })
+      : null,
+  );
+  const live = $derived(current?.live ?? null);
+  const board = $derived(
+    live
+      ? new Board({
+          sessions: live.sessions,
+          calls: live.calls,
+          turns: live.turns,
+          now: Math.max(now, live.read),
+          windowMs: LivePlace.windows['15m'].ms,
+          focus: null,
+          pins: [],
+          only: null,
+        })
+      : null,
+  );
+  /** The sessions at work, most recently seen first. */
+  const working = $derived(
+    (board?.tiles ?? []).toSorted((a, b) => b.session.last_seen - a.session.last_seen).slice(0, 6),
+  );
+  const lastCall = $derived(Math.max(0, ...(current?.sessions ?? []).map((s) => s.last_seen)));
+
+  /** The verdict: how the day stands, in one line, coloured by the worst thing in it. */
+  const verdict = $derived.by(() => {
+    const tones = [
+      ...items.map((item) => item.tone),
+      ...(attention?.groups ?? []).map((group) => group.severity),
+    ];
+    const tone: Severity | 'success' = tones.includes('error')
+      ? 'error'
+      : tones.includes('warning')
+        ? 'warning'
+        : 'success';
+    const headline = !health
+      ? "Can't reach TGV"
+      : health.status !== 'ok' || health.recorder.storage_errors || health.recorder.retention_errors
+        ? 'Recording failing'
+        : health.operator.pause.state === 'paused'
+          ? 'Paused: new calls get 503'
+          : 'Recording normally';
+    const active = board ? board.tiles.length + board.overflow : 0;
+    const facts = [
+      active ? `${active} session${active === 1 ? '' : 's'} active` : 'no session active',
+      board?.inFlight
+        ? `${board.inFlight} in flight`
+        : `nothing in flight${lastCall ? `, last call ${ago(lastCall, now)}` : ''}`,
+    ];
+    const problems = (attention?.groups ?? []).filter((group) => group.severity !== 'neutral');
+    return { tone, headline, facts, problems };
+  });
+
+  const harnessName = (tile: Tile) =>
+    tile.harness ? harnessLabel(tile.harness) : 'Unknown client';
+  const sessionHref = (id: string) => `/sessions/${encodeURIComponent(id)}`;
+  const spark = (values: number[]) => Day.spark(values, 22);
+  const CHART = 120;
+  /** Spaces kept in the text itself: markup whitespace between inline items collapses. */
+  const SEPARATOR = '\u00a0· ';
+</script>
 
 <div class="overview">
   <div class="console">
-    {#if !current}
+    {#if !current || !attention || !day}
       <div class="empty-state" role="alert">
         <div class="empty-icon"><Icon name="alert" size={26} /></div>
         <h2>The overview could not be read</h2>
         <p>{overview.current.error?.message ?? 'Loading…'}</p>
       </div>
     {:else}
-      <div class="overview-grid">
-        <section class="panel usage-panel" aria-labelledby="live-title">
-          <header class="panel-heading">
-            <h2 id="live-title">
-              <span class="status-dot" class:live={current.active.length > 0}></span> Live now
-            </h2>
-            <a class="text-button" href="/traffic?status=active"
-              >In progress <Icon name="arrow" size={12} /></a
-            >
+      <section class="ov-verdict state-edge {verdict.tone}" aria-label="How it stands">
+        <p>
+          <strong>{verdict.headline}</strong>
+          {#each verdict.facts as fact (fact)}<span class="muted">{SEPARATOR}{fact}</span
+            >{/each}{#each verdict.problems as problem (problem.key)}<span class="muted"
+              >{SEPARATOR}</span
+            ><a class="ov-problem {problem.severity}" href={problem.href}>{problem.title}</a>{/each}
+        </p>
+        <div class="ov-health mono" aria-label="Health">
+          {#each items as item (item.label)}{#if item.href}<a
+                class={item.tone}
+                href={item.href}
+                title={item.title}><i></i>{item.label}</a
+              >{:else}<span class={item.tone} title={item.title}><i></i>{item.label}</span
+              >{/if}{/each}
+        </div>
+      </section>
+
+      <div class="ov-top">
+        <section class="ov-panel" aria-labelledby="attention-title">
+          <header class="ov-heading">
+            <h2 id="attention-title">Needs attention</h2>
+            <span class="muted mono">last 24 h · worst first</span>
           </header>
-          {#if current.active.length}
-            <ul class="overview-list">
-              {#each current.active as call (call.id)}
-                <li>
-                  <a class="overview-row" href={`/traffic?call=${call.id}`}>
-                    {#if call.session}<span class="session-dot tone-{sessionTone(call.session)}"
-                      ></span>{/if}
-                    <span class="provider-mark tiny {call.provider}"
-                      >{providerMark(call.provider)}</span
-                    >
-                    <span class="model-name">{call.model ?? call.endpoint}</span>
-                    <span class="overview-meta mono">
-                      {call.response
-                        ? `${bytes(call.response.stored_bytes)} so far · `
-                        : ''}{seconds(now - call.started_at)}
-                    </span>
-                  </a>
-                </li>
-              {/each}
-            </ul>
+          {#each attention.groups as group (group.key)}
+            <a class="ov-attention {group.severity}" href={group.href}>
+              <i></i>
+              <span class="ov-attention-text">
+                <strong>{group.title}</strong>
+                <small>{group.detail}</small>
+              </span>
+              {#if group.marks.length > 1}
+                <svg
+                  class="ov-marks"
+                  viewBox="0 0 100 10"
+                  preserveAspectRatio="none"
+                  aria-label="When they happened over the day"
+                >
+                  <line x1="0" y1="9.5" x2="100" y2="9.5" />
+                  {#each group.marks as mark, index (index)}<rect
+                      x={mark * 100 - 0.6}
+                      y="2"
+                      width="1.2"
+                      height="7"
+                    />{/each}
+                </svg>
+              {/if}
+              <span class="mono muted ov-when"
+                >{group.at === null ? 'since start' : ago(group.at, now)}</span
+              >
+            </a>
           {:else}
-            <p class="quiet-empty">
-              Nothing in flight.{lastCall ? ` Last call ${ago(lastCall, now)}.` : ''}
+            <p class="ov-clear">
+              <StateGlyph mark="yours" />Nothing needs a look: no failed or cut-off work, no exposed
+              secrets, no capture loss in the last 24 hours.
             </p>
-          {/if}
-          <h3 class="overview-subhead">Sessions active in the last 15 minutes</h3>
-          {#if sessions.length}
-            <ul class="overview-list">
-              {#each sessions as session (session.id)}
-                <li>
-                  <a class="overview-row" href={`/sessions/${encodeURIComponent(session.id)}`}>
-                    <span class="session-dot tone-{sessionTone(session.id)}"></span>
-                    <span class="mono">{short(session.native_id)}</span>
-                    <small>{providerName(session.provider)}</small>
-                    <span class="overview-meta mono"
-                      >{num(session.call_count)} calls · {compactOrDash(session.tokens.input)} in · {ago(
-                        session.last_seen,
-                        now,
-                      )}</span
-                    >
-                  </a>
-                </li>
-              {/each}
-            </ul>
-          {:else}<p class="quiet-empty">None.</p>{/if}
+          {/each}
         </section>
 
-        <section class="panel usage-panel" aria-labelledby="attention-title">
-          <header class="panel-heading">
-            <h2 id="attention-title">Needs attention</h2>
-            <span class="subtle-label">Last 24 hours</span>
+        <section class="ov-panel" aria-labelledby="live-title">
+          <header class="ov-heading">
+            <h2 id="live-title">Live now</h2>
+            <a class="text-button" href="/live">Live <Icon name="arrow" size={12} /></a>
           </header>
-          {#if attention.length}
-            <ul class="overview-list">
-              {#each attention as { call, reason } (call.id)}
-                {@const stream = streamChip(call)}
-                <li>
-                  <a class="overview-row" href={`/traffic?call=${call.id}`}>
-                    <span class="chip {reason.tone}">{reason.label}</span>
-                    {#if stream.tone !== 'success'}<span
-                        class="chip {stream.tone}"
-                        title={stream.title}>{stream.label}</span
-                      >{/if}
-                    <span class="model-name">{call.model ?? call.endpoint}</span>
-                    <span class="overview-meta mono">{ago(call.started_at, now)}</span>
-                  </a>
-                </li>
-              {/each}
-            </ul>
+          {#each working as tile (tile.session.id)}
+            {@const chip = Board.phaseChip(tile.phase, board?.now ?? now)}
+            <a
+              class="ov-session state-edge state-{chip.mark}"
+              class:quiet={tile.quiet}
+              href={sessionHref(tile.session.id)}
+            >
+              <span class="ov-session-who">
+                <strong>{harnessName(tile)}</strong>
+                <span class="mono muted">{short(tile.session.native_id)}</span>
+                <span class="mono live-state {chip.tone} state-{chip.mark}" title={chip.title}
+                  ><StateGlyph mark={chip.mark} />{chip.label}</span
+                >
+              </span>
+              <span class="ov-session-prompt"
+                >{tile.prompt?.text ??
+                  `${providerName(tile.session.provider)} · ${tile.model ?? 'no model yet'}`}</span
+              >
+              <svg
+                class="ov-lane"
+                viewBox="0 0 100 8"
+                preserveAspectRatio="none"
+                aria-label="Calls in the last 2 minutes"
+              >
+                <line x1="0" y1="4" x2="100" y2="4" />
+                {#each tile.lane as mark (mark.call.id)}<rect
+                    class={mark.open ? 'open' : mark.tone}
+                    x={mark.start * 100}
+                    y="1"
+                    width={Math.max(0.8, (mark.end - mark.start) * 100)}
+                    height="6"
+                  />{/each}
+              </svg>
+            </a>
           {:else}
-            <p class="quiet-empty">
-              <span class="chip success">All clear</span> No errors or stopped calls in the last 24 hours.
+            <p class="ov-clear muted">
+              No session active in the last 15 minutes{lastCall
+                ? `; the last call was ${ago(lastCall, now)}`
+                : ''}.
             </p>
-          {/if}
+          {/each}
+          {#if board && board.tiles.length > working.length}<a class="ov-more" href="/live"
+              >{board.tiles.length - working.length + board.overflow} more on Live</a
+            >{/if}
         </section>
       </div>
 
-      <section class="panel usage-panel" aria-labelledby="day-title">
-        <header class="panel-heading">
+      <section class="ov-tiles" aria-label="Last 24 hours">
+        {#each day.tiles as tile (tile.label)}
+          <div class="ov-tile">
+            <span class="muted">{tile.label}</span>
+            <strong class="mono" class:error={tile.tone === 'error'}>{tile.value}</strong>
+            <small class="muted">{tile.detail}</small>
+            {#if tile.label === 'Tokens in' && day.input && day.input.cached + day.input.fresh > 0}
+              <span
+                class="ov-cache"
+                title="{percentOrDash(
+                  Math.round((day.input.cached / (day.input.cached + day.input.fresh)) * 100),
+                )} read from cache"
+                ><svg viewBox="0 0 100 6" preserveAspectRatio="none" aria-hidden="true"
+                  ><rect
+                    class="cached"
+                    x="0"
+                    y="0"
+                    height="6"
+                    width={(day.input.cached / (day.input.cached + day.input.fresh)) * 100}
+                  /><rect
+                    class="fresh"
+                    y="0"
+                    height="6"
+                    x={(day.input.cached / (day.input.cached + day.input.fresh)) * 100}
+                    width={(day.input.fresh / (day.input.cached + day.input.fresh)) * 100}
+                  /></svg
+                ></span
+              >
+            {:else if tile.spark.length}
+              <svg
+                class="ov-spark"
+                viewBox="0 0 100 22"
+                preserveAspectRatio="none"
+                aria-hidden="true"><polyline points={spark(tile.spark)} /></svg
+              >
+            {/if}
+          </div>
+        {/each}
+      </section>
+
+      <section class="ov-panel ov-chart" aria-labelledby="day-title">
+        <header class="ov-heading">
           <h2 id="day-title">Last 24 hours</h2>
+          <span class="ov-legend mono">
+            <span><i class="cached"></i>input from cache</span>
+            <span><i class="fresh"></i>fresh input</span>
+            <span><i class="failed"></i>failed work</span>
+            <span><i class="stopped"></i>cut off</span>
+            <span><i class="bookkeeping"></i>failed bookkeeping</span>
+          </span>
           <a class="text-button" href="/usage?range=24h">Usage <Icon name="arrow" size={12} /></a>
         </header>
-        <div class="usage-tiles overview-tiles">
-          <div class="usage-tile">
-            <span>Calls</span><strong class="mono">{num(totals?.calls)}</strong>
-          </div>
-          <div class="usage-tile">
-            <span>Errors</span><strong class="mono" class:error-count={!!totals?.errors}
-              >{num(totals?.errors)}</strong
+        <svg
+          class="ov-day"
+          viewBox="0 0 1000 {CHART + 14}"
+          preserveAspectRatio="none"
+          aria-label="Input tokens per hour, and failed or cut-off calls, over the last 24 hours"
+        >
+          {#each [0.25, 0.5, 0.75] as at (at)}<line
+              class="grid"
+              x1="0"
+              y1={CHART * at}
+              x2="1000"
+              y2={CHART * at}
+            />{/each}
+          {#each day.bars(CHART - 4) as bar (bar.start)}
+            <g
+              ><title
+                >{Day.clock(bar.start)}: {compactOrDash(
+                  day.points.find((point) => point.start === bar.start)?.tokens.input ?? null,
+                )} in</title
+              ><rect
+                class="cached"
+                x={bar.x}
+                width={bar.width}
+                y={CHART - bar.cached}
+                height={bar.cached}
+              /><rect
+                class="fresh"
+                x={bar.x}
+                width={bar.width}
+                y={CHART - bar.cached - bar.fresh}
+                height={bar.fresh}
+              /></g
             >
-          </div>
-          <div class="usage-tile">
-            <span>Tokens in</span><strong class="mono"
-              >{compactOrDash(totals?.tokens.input ?? null)}</strong
-            ><small>{share === null ? '—' : `${Math.round(share * 100)}% from cache`}</small>
-          </div>
-          <div class="usage-tile">
-            <span>Tokens out</span><strong class="mono"
-              >{compactOrDash(totals?.tokens.output ?? null)}</strong
-            >
-          </div>
+          {/each}
+          <line class="base" x1="0" y1={CHART} x2="1000" y2={CHART} />
+          {#each [['bookkeeping', current.bookkeeping], ['stopped', current.stopped], ['failed', current.failed]] as const as [kind, calls] (kind)}
+            {#each calls as call (call.id)}<rect
+                class="tick {kind}"
+                x={day.x(call.started_at) - 1.5}
+                y={CHART + 3}
+                width="3"
+                height="9"
+              />{/each}
+          {/each}
+        </svg>
+        <div class="ov-axis mono" aria-hidden="true">
+          {#each day.axis() as tick (tick.at)}<span>{tick.label}</span>{/each}
         </div>
-        {#if totals?.calls}<UsageChart
-            {points}
-            measure="input"
-            label="Tokens in"
-            period={hour}
-          />{/if}
       </section>
 
       <ConnectClient layout="inline" gatewayOrigin={page.data.gatewayUrl} />
     {/if}
   </div>
 </div>
+
+<style>
+  .muted {
+    color: var(--muted);
+  }
+  /* The verdict: one line that says how it stands, its edge the worst thing in it. */
+  .ov-verdict {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px 16px;
+    padding: 10px 16px 10px 18px;
+  }
+  .ov-verdict.error {
+    --state: var(--error);
+  }
+  .ov-verdict.warning {
+    --state: var(--warning);
+  }
+  .ov-verdict.success {
+    --state: var(--success);
+  }
+  .ov-verdict p {
+    margin: 0;
+    font-size: 13.5px;
+  }
+  .ov-verdict strong {
+    font-weight: 600;
+  }
+  .ov-problem {
+    font-weight: 500;
+    text-decoration: none;
+  }
+  .ov-problem:hover {
+    text-decoration: underline;
+  }
+  .ov-problem.error {
+    color: var(--error);
+  }
+  .ov-problem.warning {
+    color: var(--warning);
+  }
+  .ov-health {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 12px;
+    margin-left: auto;
+    color: var(--muted);
+    font-size: 11px;
+  }
+  .ov-health a,
+  .ov-health span {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    color: inherit;
+    text-decoration: none;
+  }
+  .ov-health a:hover {
+    color: var(--ink);
+  }
+  .ov-health i {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--muted);
+  }
+  .ov-health .success i {
+    background: var(--success);
+  }
+  .ov-health .warning {
+    color: var(--warning);
+  }
+  .ov-health .warning i {
+    background: var(--warning);
+  }
+  .ov-health .error {
+    color: var(--error);
+  }
+  .ov-health .error i {
+    background: var(--error);
+  }
+
+  .ov-top {
+    display: grid;
+    grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr);
+    gap: 1px;
+    background: var(--control-border) !important;
+  }
+  .ov-panel {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    background: var(--surface);
+  }
+  .ov-heading {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    min-height: 38px;
+    padding: 0 16px;
+    border-bottom: 1px solid var(--line);
+  }
+  .ov-heading h2 {
+    margin: 0;
+    font-size: 13px;
+    font-weight: 600;
+  }
+  .ov-heading > :last-child {
+    margin-left: auto;
+    font-size: 11px;
+  }
+  .ov-clear {
+    display: flex;
+    align-items: center;
+    margin: 0;
+    padding: 14px 16px;
+    font-size: 12.5px;
+  }
+
+  /* Attention: one line per kind of trouble, its repeats folded into a count. */
+  .ov-attention {
+    display: grid;
+    grid-template-columns: 4px minmax(0, 1fr) auto auto;
+    align-items: center;
+    gap: 0 12px;
+    min-height: 46px;
+    padding-right: 16px;
+    border-bottom: 1px solid var(--line);
+    color: var(--ink);
+    text-decoration: none;
+  }
+  .ov-attention:hover {
+    background: var(--row-hover);
+  }
+  .ov-attention > i {
+    align-self: stretch;
+    background: var(--line);
+  }
+  .ov-attention.error > i {
+    background: var(--error);
+  }
+  .ov-attention.warning > i {
+    background: var(--warning);
+  }
+  .ov-attention-text {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    padding: 7px 0;
+  }
+  .ov-attention-text strong {
+    font-size: 12.5px;
+    font-weight: 600;
+  }
+  .ov-attention.error strong {
+    color: var(--error);
+  }
+  .ov-attention.warning strong {
+    color: var(--warning);
+  }
+  .ov-attention-text small {
+    overflow: hidden;
+    color: var(--muted);
+    font-size: 11px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .ov-marks {
+    width: 120px;
+    height: 12px;
+  }
+  .ov-marks line {
+    stroke: var(--line);
+    vector-effect: non-scaling-stroke;
+  }
+  .ov-marks rect {
+    fill: var(--muted);
+  }
+  .ov-attention.error .ov-marks rect {
+    fill: var(--error);
+  }
+  .ov-attention.warning .ov-marks rect {
+    fill: var(--warning);
+  }
+  .ov-when {
+    font-size: 11px;
+    white-space: nowrap;
+  }
+
+  /* Live now: the sessions at work, in the Live page's state colours. */
+  .ov-session {
+    display: grid;
+    grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr) 90px;
+    align-items: center;
+    gap: 0 12px;
+    min-height: 46px;
+    padding: 6px 16px 6px 18px;
+    border-bottom: 1px solid var(--line);
+    color: var(--ink);
+    text-decoration: none;
+  }
+  .ov-session:hover {
+    background: var(--row-hover);
+  }
+  .ov-session.quiet {
+    opacity: 0.55;
+  }
+  .ov-session-who {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 2px 8px;
+    min-width: 0;
+  }
+  .ov-session-who strong {
+    font-size: 12.5px;
+    font-weight: 600;
+  }
+  .ov-session-who .mono {
+    font-size: 11px;
+  }
+  .live-state {
+    flex-basis: 100%;
+    font-size: 11px;
+    white-space: nowrap;
+  }
+  .live-state.live {
+    color: var(--ink);
+  }
+  .live-state.warning {
+    color: var(--warning);
+  }
+  .live-state.error {
+    color: var(--error);
+  }
+  .live-state.neutral {
+    color: var(--muted);
+  }
+  .live-state.state-yours {
+    color: var(--success);
+  }
+  .ov-session-prompt {
+    overflow: hidden;
+    color: var(--muted);
+    font-size: 12px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .ov-lane {
+    width: 100%;
+    height: 8px;
+  }
+  .ov-lane line {
+    stroke: var(--line);
+    vector-effect: non-scaling-stroke;
+  }
+  .ov-lane rect {
+    fill: var(--muted);
+    opacity: 0.55;
+  }
+  .ov-lane rect.success {
+    fill: var(--success);
+  }
+  .ov-lane rect.warning {
+    fill: var(--warning);
+    opacity: 0.9;
+  }
+  .ov-lane rect.error {
+    fill: var(--error);
+    opacity: 0.9;
+  }
+  .ov-lane rect.open {
+    fill: var(--live);
+    opacity: 1;
+  }
+  .ov-more {
+    padding: 8px 16px;
+    color: var(--muted);
+    font-size: 11.5px;
+    text-decoration: none;
+  }
+  .ov-more:hover {
+    color: var(--ink);
+  }
+
+  /* Tiles: the day in four numbers, each with what is behind it. */
+  .ov-tiles {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 1px;
+    background: var(--control-border) !important;
+  }
+  .ov-tile {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+    padding: 10px 16px 12px;
+    background: var(--surface);
+  }
+  .ov-tile > span {
+    font-size: 11.5px;
+  }
+  .ov-tile strong {
+    font-size: 24px;
+    font-weight: 500;
+    line-height: 1.2;
+  }
+  .ov-tile strong.error {
+    color: var(--error);
+  }
+  .ov-tile small {
+    overflow: hidden;
+    font-size: 11px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .ov-spark {
+    width: 100%;
+    height: 22px;
+    margin-top: 6px;
+  }
+  .ov-spark polyline {
+    fill: none;
+    stroke: var(--muted);
+    stroke-width: 1.3;
+    vector-effect: non-scaling-stroke;
+  }
+  .ov-cache svg {
+    display: block;
+    width: 100%;
+    height: 6px;
+    margin-top: 14px;
+  }
+  .cached {
+    fill: color-mix(in srgb, var(--chart) 35%, transparent);
+    background: color-mix(in srgb, var(--chart) 35%, transparent);
+  }
+  .fresh {
+    fill: var(--chart);
+    background: var(--chart);
+  }
+
+  /* The day: input per hour, cached under fresh, with trouble ticked below. */
+  .ov-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 12px;
+    color: var(--muted);
+    font-size: 11px;
+  }
+  .ov-legend span {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+  }
+  .ov-legend i {
+    width: 8px;
+    height: 8px;
+  }
+  .ov-legend i.failed {
+    background: var(--error);
+  }
+  .ov-legend i.stopped {
+    background: var(--warning);
+  }
+  .ov-legend i.bookkeeping {
+    background: var(--muted);
+  }
+  .ov-day {
+    display: block;
+    width: calc(100% - 32px);
+    height: 160px;
+    margin: 10px 16px 0;
+  }
+  .ov-day .grid {
+    stroke: var(--line);
+    stroke-dasharray: 2 3;
+    vector-effect: non-scaling-stroke;
+  }
+  .ov-day .base {
+    stroke: var(--control-border);
+    vector-effect: non-scaling-stroke;
+  }
+  .ov-day .tick.failed {
+    fill: var(--error);
+  }
+  .ov-day .tick.stopped {
+    fill: var(--warning);
+  }
+  .ov-day .tick.bookkeeping {
+    fill: var(--muted);
+  }
+  .ov-axis {
+    display: flex;
+    justify-content: space-between;
+    padding: 2px 16px 10px;
+    color: var(--muted);
+    font-size: 10.5px;
+  }
+
+  @media (max-width: 900px) {
+    .ov-top {
+      grid-template-columns: minmax(0, 1fr);
+    }
+    .ov-tiles {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    .ov-health {
+      margin-left: 0;
+    }
+  }
+  @media (max-width: 560px) {
+    .ov-session {
+      grid-template-columns: minmax(0, 1fr) 70px;
+    }
+    .ov-session-prompt {
+      display: none;
+    }
+    .ov-marks {
+      display: none;
+    }
+  }
+</style>

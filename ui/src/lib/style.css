@@ -1971,23 +1971,6 @@ td.zero {
   flex-shrink: 0;
   background: var(--surface);
 }
-.overview-health {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 10px 12px;
-  background: var(--surface-subtle);
-}
-.overview-health {
-  justify-content: flex-start;
-  gap: 6px;
-}
-.overview-health a.chip {
-  text-decoration: none;
-  cursor: pointer;
-}
 .segmented a {
   padding: 3px 8px;
   border-radius: 2px;
@@ -2053,8 +2036,7 @@ td.zero {
   margin: 0;
   font-size: 13px;
 }
-.usage-columns,
-.overview-grid {
+.usage-columns {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(380px, 100%), 1fr));
   gap: 1px;
@@ -2156,47 +2138,6 @@ td.zero {
   gap: 6px;
 }
 
-/* Overview rows. */
-.overview-list {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-.overview-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-  padding: 7px 14px;
-  border-top: 1px solid var(--line-subtle);
-  color: var(--ink);
-  text-decoration: none;
-}
-.overview-row:hover {
-  background: var(--row-hover);
-}
-.overview-row .model-name {
-  min-width: 0;
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-.overview-meta {
-  margin-left: auto;
-  color: var(--muted);
-  white-space: nowrap;
-}
-.overview-subhead {
-  margin: 0;
-  padding: 10px 14px 4px;
-  border-top: 1px solid var(--line);
-  color: var(--muted);
-  font-size: 11px;
-  font-weight: 500;
-}
-.overview-tiles {
-  border-bottom: 1px solid var(--line);
-}
 .connect-inline {
   display: flex;
   flex-wrap: wrap;
@@ -2321,10 +2262,6 @@ td.zero {
 }
 .workbench-toolbar.folded.scope-open .scope-group:first-child {
   border-top: 0;
-}
-.scope .overview-health {
-  padding: 0;
-  background: none;
 }
 .scope .scope-search {
   width: 260px;
