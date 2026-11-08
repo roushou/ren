@@ -652,7 +652,7 @@ impl<U: Upstream> Gateway<U> {
             }
             None => (original.clone(), AttemptBody::Original),
         };
-        let auth = entry.auth.apply(entry.provider, &mut headers);
+        let auth = entry.authorize(&mut headers);
         let changes = match (auth, steps.is_empty()) {
             (AuthOverride::None, true) => None,
             (AuthOverride::None | AuthOverride::OperatorKey, _) => Recorded::of(&AttemptChanges {

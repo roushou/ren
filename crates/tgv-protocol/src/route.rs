@@ -17,6 +17,18 @@ pub enum Provider {
 }
 
 impl Provider {
+    /// The API this provider's own default upstream speaks.
+    pub fn native_api(self) -> Api {
+        let wire = match self {
+            Self::Anthropic => Wire::AnthropicMessages,
+            Self::Codex | Self::OpenAi => Wire::OpenAiResponses,
+        };
+        Api {
+            provider: self,
+            wire,
+        }
+    }
+
     /// This provider's API in `wire`, or why it has none: the only way to
     /// pair a provider with a wire format.
     pub fn speak(self, wire: Wire) -> Result<Api, UnsupportedWire> {
@@ -146,6 +158,15 @@ mod tests {
                 (Provider::OpenAi, Wire::OpenAiResponses),
             ]
         );
+    }
+
+    #[test]
+    fn a_native_api_is_one_the_provider_speaks() {
+        for &provider in Provider::ALL {
+            let native = provider.native_api();
+            assert_eq!(native.provider(), provider);
+            assert_eq!(provider.speak(native.wire()), Ok(native));
+        }
     }
 
     #[test]

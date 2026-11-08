@@ -181,7 +181,7 @@ impl Config {
                 }
                 Ok(UpstreamEntry {
                     id: upstream.id.clone(),
-                    provider: upstream.provider,
+                    api: upstream.provider.native_api(),
                     url: UpstreamUrl::parse(&upstream.base_url).map_err(|source| {
                         ConfigError::UpstreamUrl {
                             id: upstream.id.to_string(),

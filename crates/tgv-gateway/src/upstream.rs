@@ -20,7 +20,7 @@ use std::{
     time::Duration,
 };
 use sync_wrapper::SyncStream;
-use tgv_protocol::route::Provider;
+use tgv_protocol::route::{Api, Provider, Wire};
 use tgv_recorder::routing::UpstreamId;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio_tungstenite::tungstenite::handshake::derive_accept_key;
@@ -293,45 +293,6 @@ const CLIENT_CREDENTIALS: &[&str] = &["authorization", "x-api-key", "cookie", "c
 const OAUTH_BETA: &str = "oauth-2025-04-20";
 
 impl UpstreamAuth {
-    /// The protected override for this entry: client credentials and the
-    /// OAuth beta are replaced by the operator key. Returns whether anything
-    /// was overridden. Header values are never recorded.
-    pub fn apply(&self, provider: Provider, headers: &mut http::HeaderMap) -> AuthOverride {
-        let key = match self {
-            Self::ClientOwned => return AuthOverride::None,
-            Self::OperatorKey(key) => key,
-        };
-        for name in CLIENT_CREDENTIALS {
-            headers.remove(*name);
-        }
-        match provider {
-            Provider::Anthropic => {
-                let betas: Vec<String> = headers
-                    .get_all("anthropic-beta")
-                    .iter()
-                    .filter_map(|value| value.to_str().ok())
-                    .flat_map(|value| value.split(','))
-                    .map(str::trim)
-                    .filter(|beta| !beta.is_empty() && *beta != OAUTH_BETA)
-                    .map(str::to_owned)
-                    .collect();
-                headers.remove("anthropic-beta");
-                if let Ok(value) = http::HeaderValue::from_str(&betas.join(","))
-                    && !betas.is_empty()
-                {
-                    headers.insert("anthropic-beta", value);
-                }
-                headers.insert("x-api-key", key.0.clone());
-            }
-            Provider::Codex | Provider::OpenAi => {
-                if let Some(bearer) = key.bearer() {
-                    headers.insert(http::header::AUTHORIZATION, bearer);
-                }
-            }
-        }
-        AuthOverride::OperatorKey
-    }
-
     pub fn kind(&self) -> crate::policy::AuthKind {
         match self {
             Self::ClientOwned => crate::policy::AuthKind::ClientOwned,
@@ -353,9 +314,51 @@ pub enum AuthOverride {
 #[derive(Debug, Clone)]
 pub struct UpstreamEntry {
     pub id: UpstreamId,
-    pub provider: Provider,
+    pub api: Api,
     pub url: UpstreamUrl,
     pub auth: UpstreamAuth,
+}
+
+impl UpstreamEntry {
+    /// The protected credential override for this entry: an operator key
+    /// replaces client credentials, in the header scheme of the entry's wire
+    /// format, and the Anthropic subscription OAuth beta is dropped. Returns
+    /// whether anything was overridden. Header values are never recorded.
+    pub fn authorize(&self, headers: &mut http::HeaderMap) -> AuthOverride {
+        let key = match &self.auth {
+            UpstreamAuth::ClientOwned => return AuthOverride::None,
+            UpstreamAuth::OperatorKey(key) => key,
+        };
+        for name in CLIENT_CREDENTIALS {
+            headers.remove(*name);
+        }
+        match self.api.wire() {
+            Wire::AnthropicMessages => {
+                let betas: Vec<String> = headers
+                    .get_all("anthropic-beta")
+                    .iter()
+                    .filter_map(|value| value.to_str().ok())
+                    .flat_map(|value| value.split(','))
+                    .map(str::trim)
+                    .filter(|beta| !beta.is_empty() && *beta != OAUTH_BETA)
+                    .map(str::to_owned)
+                    .collect();
+                headers.remove("anthropic-beta");
+                if let Ok(value) = http::HeaderValue::from_str(&betas.join(","))
+                    && !betas.is_empty()
+                {
+                    headers.insert("anthropic-beta", value);
+                }
+                headers.insert("x-api-key", key.0.clone());
+            }
+            Wire::OpenAiResponses => {
+                if let Some(bearer) = key.bearer() {
+                    headers.insert(http::header::AUTHORIZATION, bearer);
+                }
+            }
+        }
+        AuthOverride::OperatorKey
+    }
 }
 
 /// Every upstream entry. Each provider has a client-owned default named after
@@ -385,7 +388,7 @@ impl UpstreamTable {
         .into_iter()
         .map(|(provider, url)| UpstreamEntry {
             id: UpstreamId::default_for(provider),
-            provider,
+            api: provider.native_api(),
             url,
             auth: UpstreamAuth::ClientOwned,
         });
@@ -408,7 +411,7 @@ impl UpstreamTable {
             .iter()
             .map(|entry| crate::policy::UpstreamSummary {
                 id: entry.id.clone(),
-                provider: entry.provider,
+                provider: entry.api.provider(),
                 auth: entry.auth.kind(),
             })
             .collect()
@@ -586,7 +589,8 @@ impl Upstream for ReqwestUpstream {
 #[cfg(test)]
 mod tests {
     use super::{
-        AuthOverride, OperatorKey, ReqwestUpstream, UpstreamAuth, UpstreamTable, UpstreamUrl,
+        AuthOverride, OperatorKey, ReqwestUpstream, UpstreamAuth, UpstreamEntry, UpstreamTable,
+        UpstreamUrl,
     };
     use crate::attempt::SendFailure;
     use tgv_protocol::route::Provider;
@@ -693,7 +697,14 @@ mod tests {
     fn an_operator_key_replaces_client_credentials_and_the_oauth_beta_only() {
         let key = OperatorKey::new("sk-FIXTURE").unwrap();
         assert!(!format!("{key:?}").contains("FIXTURE"));
-        let auth = UpstreamAuth::OperatorKey(key);
+        let entry = |provider: Provider, auth: UpstreamAuth| UpstreamEntry {
+            id: UpstreamId::parse("fixture").unwrap(),
+            api: provider.native_api(),
+            url: UpstreamUrl::parse("https://example.com").unwrap(),
+            auth,
+        };
+        let anthropic = entry(Provider::Anthropic, UpstreamAuth::OperatorKey(key.clone()));
+        let openai = entry(Provider::OpenAi, UpstreamAuth::OperatorKey(key));
         let mut headers = http::HeaderMap::new();
         headers.insert("authorization", "Bearer CLIENT".parse().unwrap());
         headers.insert("cookie", "CLIENT".parse().unwrap());
@@ -704,10 +715,7 @@ mod tests {
                 .unwrap(),
         );
         headers.insert("x-claude-code-session-id", "kept".parse().unwrap());
-        assert_eq!(
-            auth.apply(Provider::Anthropic, &mut headers),
-            AuthOverride::OperatorKey
-        );
+        assert_eq!(anthropic.authorize(&mut headers), AuthOverride::OperatorKey);
         assert!(headers.get("authorization").is_none() && headers.get("cookie").is_none());
         assert_eq!(headers["x-api-key"], "sk-FIXTURE");
         assert!(headers["x-api-key"].is_sensitive());
@@ -719,17 +727,14 @@ mod tests {
 
         let mut headers = http::HeaderMap::new();
         headers.insert("chatgpt-account-id", "CLIENT".parse().unwrap());
-        assert_eq!(
-            auth.apply(Provider::OpenAi, &mut headers),
-            AuthOverride::OperatorKey
-        );
+        assert_eq!(openai.authorize(&mut headers), AuthOverride::OperatorKey);
         assert_eq!(headers["authorization"], "Bearer sk-FIXTURE");
         assert!(headers.get("chatgpt-account-id").is_none());
 
         let mut untouched = http::HeaderMap::new();
         untouched.insert("authorization", "Bearer CLIENT".parse().unwrap());
         assert_eq!(
-            UpstreamAuth::ClientOwned.apply(Provider::OpenAi, &mut untouched),
+            entry(Provider::OpenAi, UpstreamAuth::ClientOwned).authorize(&mut untouched),
             AuthOverride::None
         );
         assert_eq!(untouched["authorization"], "Bearer CLIENT");
