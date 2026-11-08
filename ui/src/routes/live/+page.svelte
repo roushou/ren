@@ -716,40 +716,8 @@
     margin-right: 2px;
   }
 
-  /* Clients: one colour each, shared by the band and the tiles. */
   .live-page {
-    --harness-claude_code: var(--accent);
-    --harness-codex: var(--provider-codex-ink);
-    --harness-pi: var(--role-tool);
-    --harness-opencode: var(--role-thinking);
-    --harness-unknown: var(--muted);
     --mono: 'SFMono-Regular', Consolas, 'Liberation Mono', monospace;
-  }
-  :global(:root[data-theme='dark']) .live-page {
-    --harness-codex: #81a1c1;
-  }
-  .harness-claude_code {
-    --harness: var(--harness-claude_code);
-  }
-  .harness-codex {
-    --harness: var(--harness-codex);
-  }
-  .harness-pi {
-    --harness: var(--harness-pi);
-  }
-  .harness-opencode {
-    --harness: var(--harness-opencode);
-  }
-  .harness-unknown {
-    --harness: var(--harness-unknown);
-  }
-  .harness-mark {
-    display: inline-block;
-    flex: none;
-    width: 8px;
-    height: 8px;
-    margin-right: 7px;
-    background: var(--harness);
   }
 
   /* Providers and models take a slot's colour; clients keep their own. */

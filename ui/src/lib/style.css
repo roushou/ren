@@ -2785,3 +2785,38 @@ td.zero {
     animation: none;
   }
 }
+
+/* Clients: one colour each, shared by Live and Sessions, carried as `--harness`. */
+:root {
+  --harness-claude_code: var(--accent);
+  --harness-codex: var(--provider-codex-ink);
+  --harness-pi: var(--role-tool);
+  --harness-opencode: var(--role-thinking);
+  --harness-unknown: var(--muted);
+}
+:root[data-theme='dark'] {
+  --harness-codex: #81a1c1;
+}
+.harness-claude_code {
+  --harness: var(--harness-claude_code);
+}
+.harness-codex {
+  --harness: var(--harness-codex);
+}
+.harness-pi {
+  --harness: var(--harness-pi);
+}
+.harness-opencode {
+  --harness: var(--harness-opencode);
+}
+.harness-unknown {
+  --harness: var(--harness-unknown);
+}
+.harness-mark {
+  display: inline-block;
+  flex: none;
+  width: 8px;
+  height: 8px;
+  margin-right: 7px;
+  background: var(--harness);
+}
