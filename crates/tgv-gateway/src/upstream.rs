@@ -361,10 +361,15 @@ impl UpstreamEntry {
     }
 }
 
-/// Every upstream entry. Each provider has a client-owned default named after
-/// it; operator-key entries are added by configuration.
+/// Every upstream entry. Each provider has a client-owned native entry named
+/// after it, always present; operator-key entries are added by configuration.
 #[derive(Debug, Clone)]
-pub struct UpstreamTable(Vec<UpstreamEntry>);
+pub struct UpstreamTable {
+    anthropic: UpstreamEntry,
+    codex: UpstreamEntry,
+    openai: UpstreamEntry,
+    configured: Vec<UpstreamEntry>,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum UpstreamTableError {
@@ -373,48 +378,62 @@ pub enum UpstreamTableError {
 }
 
 impl UpstreamTable {
-    /// The three defaults, then `extra`.
+    /// The three native entries, then `extra`.
     pub fn new(
         anthropic: UpstreamUrl,
         codex: UpstreamUrl,
         openai: UpstreamUrl,
         extra: Vec<UpstreamEntry>,
     ) -> Result<Self, UpstreamTableError> {
-        let defaults = [
-            (Provider::Anthropic, anthropic),
-            (Provider::Codex, codex),
-            (Provider::OpenAi, openai),
-        ]
-        .into_iter()
-        .map(|(provider, url)| UpstreamEntry {
+        let native = |provider: Provider, url| UpstreamEntry {
             id: UpstreamId::default_for(provider),
             api: provider.native_api(),
             url,
             auth: UpstreamAuth::ClientOwned,
-        });
-        let mut entries: Vec<UpstreamEntry> = Vec::new();
-        for entry in defaults.chain(extra) {
-            if entries.iter().any(|known| known.id == entry.id) {
+        };
+        let mut table = Self {
+            anthropic: native(Provider::Anthropic, anthropic),
+            codex: native(Provider::Codex, codex),
+            openai: native(Provider::OpenAi, openai),
+            configured: Vec::new(),
+        };
+        for entry in extra {
+            if table.entries().any(|known| known.id == entry.id) {
                 return Err(UpstreamTableError::Duplicate(entry.id.to_string()));
             }
-            entries.push(entry);
+            table.configured.push(entry);
         }
-        Ok(Self(entries))
+        Ok(table)
+    }
+
+    /// The provider's own client-owned entry.
+    pub fn native(&self, provider: Provider) -> &UpstreamEntry {
+        match provider {
+            Provider::Anthropic => &self.anthropic,
+            Provider::Codex => &self.codex,
+            Provider::OpenAi => &self.openai,
+        }
     }
 
     pub fn get(&self, id: &UpstreamId) -> Option<&UpstreamEntry> {
-        self.0.iter().find(|entry| &entry.id == id)
+        self.entries().find(|entry| &entry.id == id)
     }
 
     pub fn summaries(&self) -> Vec<crate::policy::UpstreamSummary> {
-        self.0
-            .iter()
+        self.entries()
             .map(|entry| crate::policy::UpstreamSummary {
                 id: entry.id.clone(),
                 provider: entry.api.provider(),
                 auth: entry.auth.kind(),
             })
             .collect()
+    }
+
+    /// The native entries, then the configured ones.
+    fn entries(&self) -> impl Iterator<Item = &UpstreamEntry> {
+        [&self.anthropic, &self.codex, &self.openai]
+            .into_iter()
+            .chain(&self.configured)
     }
 }
 
@@ -688,8 +707,9 @@ mod tests {
             (Provider::Codex, "c.example"),
             (Provider::OpenAi, "o.example"),
         ] {
-            let entry = table.get(&UpstreamId::default_for(provider)).unwrap();
-            assert_eq!(entry.url.0.host_str(), Some(host));
+            let entry = table.native(provider);
+            assert_eq!(table.get(&entry.id).unwrap().url.0.host_str(), Some(host));
+            assert_eq!(entry.api, provider.native_api());
         }
     }
 

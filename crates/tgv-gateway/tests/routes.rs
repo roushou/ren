@@ -4,22 +4,29 @@
 //! that entry's provider, the native endpoint and upstream path, and the
 //! harness whose headers it reads.
 
-use tgv_gateway::Route;
+#![allow(
+    clippy::unwrap_used,
+    reason = "integration tests are a shell: helpers outside #[test] fail loudly"
+)]
+
+use tgv_gateway::{Route, UpstreamTable, UpstreamUrl};
 use tgv_protocol::label::Labeled;
-use tgv_recorder::routing::UpstreamId;
 
 #[test]
 fn every_route_is_pinned() {
+    let url = || UpstreamUrl::parse("https://example.com").unwrap();
+    let upstreams = UpstreamTable::new(url(), url(), url(), Vec::new()).unwrap();
     let table: String = Route::ALL
         .iter()
         .map(|route| {
+            let bound = route.bind(&upstreams);
             format!(
                 "{} {:?} {} upstream={} provider={} endpoint={} {} harness={}\n",
                 route.path,
                 route.accepts,
                 route.accepts.method().label(),
-                UpstreamId::default_for(route.provider),
-                route.provider.label(),
+                bound.upstream,
+                bound.api.provider().label(),
                 route.endpoint.label(),
                 route.upstream_path,
                 route.harness.map_or("none", |harness| harness.into()),

@@ -63,7 +63,7 @@ pub use buffer::{BufferOptions, BufferOptionsError, BufferRefusal, RequestBuffer
 pub use build::Build;
 pub use headers::HeaderPolicy;
 pub use ingress::{Ingress, IngressError, Shutdown, Stopped};
-pub use route::{Accepts, Route};
+pub use route::{Accepts, BoundRoute, Route};
 pub use upstream::{
     AuthOverride, Connected, OperatorKey, ReqwestUpstream, Socket, TransportTimeouts, Upstream,
     UpstreamAuth, UpstreamBody, UpstreamConfigError, UpstreamEntry, UpstreamHandshake,
@@ -394,20 +394,24 @@ impl<U: Upstream> Gateway<U> {
             .merge(control.router())
     }
 
-    /// The forwarding routes, built from [`Route::ALL`]. Every other method on
-    /// a route path is refused; other paths fall through to management routes.
+    /// The forwarding routes, built from [`Route::ALL`] bound to the upstream
+    /// table. Every other method on a route path is refused; other paths fall
+    /// through to management routes.
     fn forwarding_router(self: Arc<Self>) -> Router {
         Route::ALL.into_iter().fold(Router::new(), |router, route| {
+            let bound = Arc::new(route.bind(&self.config.upstreams));
             let gateway = self.clone();
+            let target = bound.clone();
             let forward =
-                move |request: Request| async move { gateway.forward(route, request).await };
+                move |request: Request| async move { gateway.forward(&target, request).await };
             let refuse = move |request: Request| async move { Self::refuse(route, &request) };
             let methods: MethodRouter = match route.accepts {
                 Accepts::Post | Accepts::PostOrRefusedHandshake => post(forward),
                 Accepts::PostOrWebSocket => {
                     let gateway = self.clone();
+                    let target = bound.clone();
                     let handshake = move |request: Request| async move {
-                        gateway.handshake(route, request).await
+                        gateway.handshake(&target, request).await
                     };
                     post(forward).get(handshake).head(refuse)
                 }
@@ -444,7 +448,9 @@ impl<U: Upstream> Gateway<U> {
         (StatusCode::UPGRADE_REQUIRED, reason).into_response()
     }
 
-    async fn forward(&self, route: Route, request: Request) -> Response {
+    async fn forward(&self, bound: &BoundRoute, request: Request) -> Response {
+        let route = bound.route;
+        let provider = bound.api.provider();
         let (mut parts, body) = request.into_parts();
         if parts.headers.contains_key(http::header::UPGRADE) {
             return Self::handshake_refused("WebSocket is not available here; use HTTP/SSE\n");
@@ -461,7 +467,7 @@ impl<U: Upstream> Gateway<U> {
         let session = attribution.hint.as_ref().map(|hint| hint.session);
         let mut call = CallStart {
             transport: Transport::Http,
-            provider: route.provider,
+            provider,
             endpoint: route.endpoint,
             method: route.accepts.method(),
             config_revision: self.config.config_revision.clone(),
@@ -477,7 +483,7 @@ impl<U: Upstream> Gateway<U> {
         let read = tokio::select! {
             biased;
             () = abort.cancelled() => Err(UploadRefusal::Shutdown),
-            read = self.buffer.read(route.provider, &parts.headers, body) => read.map_err(UploadRefusal::Buffer),
+            read = self.buffer.read(provider, &parts.headers, body) => read.map_err(UploadRefusal::Buffer),
         };
         upload.disarm();
         let buffered = match read {
@@ -490,14 +496,15 @@ impl<U: Upstream> Gateway<U> {
         let decoded = Decoded::new(
             &parts.headers,
             buffered.bytes(),
-            self.config.buffer.request_limits.get(route.provider),
+            self.config.buffer.request_limits.get(provider),
         );
         let model = decoded.model();
         let operator = self.controls.snapshot();
         let plan = self.config.policy.plan(
             &CallFacts {
                 transport: Transport::Http,
-                provider: route.provider,
+                provider,
+                upstream: &bound.upstream,
                 endpoint: route.endpoint,
                 model: model.as_deref(),
                 session,
@@ -694,7 +701,8 @@ impl<U: Upstream> Gateway<U> {
 
     /// A WebSocket handshake: connect upstream first, so a refusal reaches the
     /// client as the upstream sent it, then upgrade the client and relay.
-    async fn handshake(self: Arc<Self>, route: Route, request: Request) -> Response {
+    async fn handshake(self: Arc<Self>, bound: &BoundRoute, request: Request) -> Response {
+        let route = bound.route;
         if !request.headers().contains_key(http::header::UPGRADE) {
             return Self::refuse(route, &request);
         }
@@ -728,7 +736,7 @@ impl<U: Upstream> Gateway<U> {
         HeaderPolicy::HANDSHAKE_REQUEST.apply(&mut parts.headers);
         let start = CallStart {
             transport: Transport::WebSocket,
-            provider: route.provider,
+            provider: bound.api.provider(),
             endpoint: route.endpoint,
             method: Method::Get,
             config_revision: self.config.config_revision.clone(),
@@ -737,8 +745,8 @@ impl<U: Upstream> Gateway<U> {
             plan: None,
             attempts: 1,
         };
-        // WebSocket channels are pinned to the provider's own entry.
-        let upstream = UpstreamId::default_for(route.provider);
+        // WebSocket channels are pinned to the route's entry.
+        let upstream = bound.upstream.clone();
         let tap = self
             .recorder
             .start(start.clone(), AttemptStart::unchanged(upstream.clone()));

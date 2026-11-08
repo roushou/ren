@@ -40,6 +40,8 @@ fn facts(provider: Provider, model: Option<&str>) -> CallFacts<'_> {
     CallFacts {
         transport: Transport::Http,
         provider,
+        // Each test's calls go first to their provider's native entry.
+        upstream: Box::leak(Box::new(UpstreamId::default_for(provider))),
         endpoint: Endpoint::Messages,
         model,
         session: None,

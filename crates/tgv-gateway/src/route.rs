@@ -4,8 +4,10 @@
 //! goes. The router is built by interpreting this table; nothing else decides
 //! which requests reach a provider.
 
+use crate::upstream::UpstreamTable;
 use tgv_harness::Harness;
-use tgv_protocol::route::{Endpoint, Method, Provider};
+use tgv_protocol::route::{Api, Endpoint, Method, Provider};
+use tgv_recorder::routing::UpstreamId;
 
 /// What a route accepts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -30,11 +32,12 @@ impl Accepts {
     }
 }
 
-/// One forwarded endpoint.
+/// One forwarded endpoint of a provider's native API.
 #[derive(Debug, Clone, Copy)]
 pub struct Route {
     pub path: &'static str,
     pub accepts: Accepts,
+    /// The provider whose native entry this route forwards to.
     pub provider: Provider,
     pub endpoint: Endpoint,
     /// The native path below the provider's base URL.
@@ -44,6 +47,16 @@ pub struct Route {
 }
 
 impl Route {
+    /// This route bound to its provider's native entry in `upstreams`.
+    pub fn bind(self, upstreams: &UpstreamTable) -> BoundRoute {
+        let entry = upstreams.native(self.provider);
+        BoundRoute {
+            route: self,
+            upstream: entry.id.clone(),
+            api: entry.api,
+        }
+    }
+
     pub const ALL: [Self; 9] = [
         Self {
             path: "/anthropic/v1/messages",
@@ -120,6 +133,15 @@ impl Route {
             harness: None,
         },
     ];
+}
+
+/// A route bound to the upstream entry its calls go to first, and that
+/// entry's API. Handlers read the call's provider and first upstream here.
+#[derive(Debug, Clone)]
+pub struct BoundRoute {
+    pub route: Route,
+    pub upstream: UpstreamId,
+    pub api: Api,
 }
 
 #[cfg(test)]
