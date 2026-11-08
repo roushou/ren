@@ -59,6 +59,7 @@ fn every_label_is_pinned() {
     let table = table![
         direction::Direction,
         route::Provider,
+        route::Wire,
         route::Endpoint,
         route::Method,
         route::Transport,
