@@ -755,11 +755,12 @@ impl MetadataTx<'_> {
                 (Some(session), turn)
             }
         };
-        sqlx::query("INSERT INTO calls(id, channel, started_at, provider, endpoint, method, config_revision, session, turn, attribution, state, operator_revision, plan) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+        sqlx::query("INSERT INTO calls(id, channel, started_at, provider, wire, endpoint, method, config_revision, session, turn, attribution, state, operator_revision, plan) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
             .bind(stamp.call.to_string())
             .bind(stamp.channel.to_string())
             .bind(at)
             .bind(open.provider.label())
+            .bind(open.wire.label())
             .bind(open.endpoint.label())
             .bind(open.method.label())
             .bind(open.config_revision.as_str())
@@ -792,13 +793,14 @@ impl MetadataTx<'_> {
     async fn start_attempt(&mut self, start: &StartAttempt) -> Result<Observation, StoreError> {
         let stamp = &start.stamp;
         sqlx::query(
-            "INSERT INTO attempts(id, call, ordinal, started_at, upstream, changes) VALUES (?, ?, ?, ?, ?, ?)",
+            "INSERT INTO attempts(id, call, ordinal, started_at, upstream, provider, changes) VALUES (?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(start.attempt.to_string())
         .bind(stamp.call.to_string())
         .bind(start.ordinal)
         .bind(i64::try_from(stamp.at.wall.as_millis()).unwrap_or(i64::MAX))
         .bind(start.upstream.as_str())
+        .bind(start.provider.label())
         .bind(start.changes.as_ref().map(|changes| changes.as_str()))
         .execute(&mut *self.tx)
         .await?;

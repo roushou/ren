@@ -14,7 +14,7 @@ use tgv_protocol::{
     encoding::{ResponseEncoding, ResponseFormat},
     inspect::{Limitation, ModelOutcome},
     label::Stored,
-    route::{Endpoint, Method, Provider, Transport},
+    route::{Endpoint, Method, Provider, Transport, Wire},
 };
 use tgv_recorder::RecordSink;
 use tgv_recorder::digest::CallDigest;
@@ -80,7 +80,7 @@ impl Harness {
         self.recorder.start(
             CallStart {
                 transport: Transport::Http,
-                provider: Provider::Anthropic,
+                api: Provider::Anthropic.native_api(),
                 endpoint: Endpoint::Messages,
                 method: Method::Post,
                 config_revision: ConfigRevision::new("rev"),
@@ -89,7 +89,10 @@ impl Harness {
                 plan: None,
                 attempts: 1,
             },
-            AttemptStart::unchanged(UpstreamId::default_for(Provider::Anthropic)),
+            AttemptStart::unchanged(
+                UpstreamId::default_for(Provider::Anthropic),
+                Provider::Anthropic,
+            ),
         )
     }
 
@@ -149,6 +152,14 @@ async fn a_streamed_call_is_recorded_inspected_and_stored_completely() {
     );
     assert_eq!(detail.call.model.as_deref(), Some("claude-test"));
     assert_eq!(detail.call.stop_reason.as_deref(), Some("end_turn"));
+    assert_eq!(
+        detail.call.wire,
+        Some(Stored::Known(Wire::AnthropicMessages))
+    );
+    assert_eq!(
+        detail.attempts[0].provider,
+        Some(Stored::Known(Provider::Anthropic))
+    );
     let inspection = detail.attempts[0].inspection.as_ref().unwrap();
     assert!(
         inspection.limitations.is_empty(),
@@ -335,7 +346,7 @@ async fn live_subscribers_see_committed_observations_in_order() {
     let tap = recorder.start(
         CallStart {
             transport: Transport::Http,
-            provider: Provider::Codex,
+            api: Provider::Codex.native_api(),
             endpoint: Endpoint::Responses,
             method: Method::Post,
             config_revision: ConfigRevision::new("rev"),
@@ -344,7 +355,7 @@ async fn live_subscribers_see_committed_observations_in_order() {
             plan: None,
             attempts: 1,
         },
-        AttemptStart::unchanged(UpstreamId::default_for(Provider::Codex)),
+        AttemptStart::unchanged(UpstreamId::default_for(Provider::Codex), Provider::Codex),
     );
     let observe = async move {
         complete(
@@ -580,7 +591,7 @@ async fn a_websocket_calls_digest_is_derived_from_its_messages_alike() {
         channel.channel(),
         CallStart {
             transport: Transport::WebSocket,
-            provider: Provider::OpenAi,
+            api: Provider::OpenAi.native_api(),
             endpoint: Endpoint::Responses,
             method: Method::Message,
             config_revision: ConfigRevision::new("rev"),
@@ -589,7 +600,7 @@ async fn a_websocket_calls_digest_is_derived_from_its_messages_alike() {
             plan: None,
             attempts: 1,
         },
-        AttemptStart::unchanged(UpstreamId::default_for(Provider::OpenAi)),
+        AttemptStart::unchanged(UpstreamId::default_for(Provider::OpenAi), Provider::OpenAi),
     );
     let call = tap.call();
     let create = serde_json::json!({ "type": "response.create", "input": [

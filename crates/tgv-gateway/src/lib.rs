@@ -467,7 +467,7 @@ impl<U: Upstream> Gateway<U> {
         let session = attribution.hint.as_ref().map(|hint| hint.session);
         let mut call = CallStart {
             transport: Transport::Http,
-            provider,
+            api: bound.api,
             endpoint: route.endpoint,
             method: route.accepts.method(),
             config_revision: self.config.config_revision.clone(),
@@ -674,6 +674,7 @@ impl<U: Upstream> Gateway<U> {
             body,
             start: AttemptStart {
                 upstream: upstream.clone(),
+                provider: entry.api.provider(),
                 changes,
                 body: kind,
             },
@@ -736,7 +737,7 @@ impl<U: Upstream> Gateway<U> {
         HeaderPolicy::HANDSHAKE_REQUEST.apply(&mut parts.headers);
         let start = CallStart {
             transport: Transport::WebSocket,
-            provider: bound.api.provider(),
+            api: bound.api,
             endpoint: route.endpoint,
             method: Method::Get,
             config_revision: self.config.config_revision.clone(),
@@ -747,9 +748,10 @@ impl<U: Upstream> Gateway<U> {
         };
         // WebSocket channels are pinned to the route's entry.
         let upstream = bound.upstream.clone();
-        let tap = self
-            .recorder
-            .start(start.clone(), AttemptStart::unchanged(upstream.clone()));
+        let tap = self.recorder.start(
+            start.clone(),
+            AttemptStart::unchanged(upstream.clone(), bound.api.provider()),
+        );
         tap.end(tgv_protocol::direction::Direction::Request);
         let channel = tap.channel();
         let cell = AttemptCell::new(

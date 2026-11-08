@@ -128,6 +128,7 @@ impl Fixture {
             stamp,
             transport: Transport::Http,
             provider: spec.provider,
+            wire: spec.provider.native_api().wire(),
             endpoint: spec.endpoint,
             method: spec.method,
             config_revision: ConfigRevision::new("rev-1"),
@@ -148,6 +149,7 @@ impl Fixture {
             attempt,
             ordinal: 0,
             upstream: UpstreamId::default_for(spec.provider),
+            provider: spec.provider,
             changes: None,
             body: AttemptBody::Original,
         }));
