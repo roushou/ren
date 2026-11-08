@@ -53,7 +53,7 @@ macro_rules! table {
 
 #[test]
 fn every_label_is_pinned() {
-    use tgv_gateway::api;
+    use tgv_gateway::{api, upstream};
     let table = table![
         api::HealthStatus,
         api::ErrorCode,
@@ -62,6 +62,7 @@ fn every_label_is_pinned() {
         api::preview::PreviewExtent,
         api::preview::TextEnd,
         api::preview::DecodeIntegrity,
+        upstream::EntryIngress,
     ];
     let pinned = include_str!("fixtures/labels.txt");
     assert!(

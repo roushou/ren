@@ -102,8 +102,14 @@ provider capability headers. Hop-by-hop headers are removed and Host is set for
 the configured upstream. Redirects, automatic retries, response decompression,
 and implicit environment proxies are disabled.
 
-TGV does not sign in, refresh tokens, or substitute an API credential. The client
-owns authentication. No requests are made to providers merely by starting TGV.
+An operator-key upstream configured with `ingress = "direct"` also has routes of
+its own below `/upstreams/<id>`: its wire format's paths above, such as
+`POST /upstreams/<id>/v1/messages` (point Claude Code's `ANTHROPIC_BASE_URL` at
+`/upstreams/<id>`). See [Direct routes](policy.md#direct-routes).
+
+TGV does not sign in, refresh tokens, or substitute an API credential, except an
+operator-key upstream's own key. The client owns authentication. No requests are
+made to providers merely by starting TGV.
 
 ## Claude Code
 

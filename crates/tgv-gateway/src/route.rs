@@ -5,7 +5,7 @@
 //! which requests reach a provider.
 
 use tgv_harness::Harness;
-use tgv_protocol::route::{Api, Endpoint, Method, Provider};
+use tgv_protocol::route::{Api, Endpoint, Method, Provider, Wire};
 use tgv_recorder::routing::UpstreamId;
 
 /// What a route accepts.
@@ -32,7 +32,7 @@ impl Accepts {
 }
 
 /// How one native endpoint is forwarded, wherever its route is mounted.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Forward {
     pub accepts: Accepts,
     pub endpoint: Endpoint,
@@ -40,6 +40,70 @@ pub struct Forward {
     pub upstream_path: &'static str,
     /// The harness whose correlation headers this route reads, if any.
     pub harness: Option<Harness>,
+}
+
+impl Forward {
+    /// The native endpoints of each wire format, below an entry's base URL:
+    /// the routes a configured entry with direct ingress mounts below
+    /// [`Route::DIRECT_PREFIX`]. Messages routes read Claude Code's headers;
+    /// public Responses headers establish no client identity, and its
+    /// WebSocket mode is refused, as on `/openai`.
+    pub const BY_WIRE: [(Wire, Self); 6] = [
+        (
+            Wire::AnthropicMessages,
+            Self {
+                accepts: Accepts::Post,
+                endpoint: Endpoint::Messages,
+                upstream_path: "/v1/messages",
+                harness: Some(Harness::ClaudeCode),
+            },
+        ),
+        (
+            Wire::AnthropicMessages,
+            Self {
+                accepts: Accepts::Post,
+                endpoint: Endpoint::CountTokens,
+                upstream_path: "/v1/messages/count_tokens",
+                harness: Some(Harness::ClaudeCode),
+            },
+        ),
+        (
+            Wire::AnthropicMessages,
+            Self {
+                accepts: Accepts::Get,
+                endpoint: Endpoint::Models,
+                upstream_path: "/v1/models",
+                harness: Some(Harness::ClaudeCode),
+            },
+        ),
+        (
+            Wire::OpenAiResponses,
+            Self {
+                accepts: Accepts::PostOrRefusedHandshake,
+                endpoint: Endpoint::Responses,
+                upstream_path: "/v1/responses",
+                harness: None,
+            },
+        ),
+        (
+            Wire::OpenAiResponses,
+            Self {
+                accepts: Accepts::Post,
+                endpoint: Endpoint::ResponsesCompact,
+                upstream_path: "/v1/responses/compact",
+                harness: None,
+            },
+        ),
+        (
+            Wire::OpenAiResponses,
+            Self {
+                accepts: Accepts::Get,
+                endpoint: Endpoint::Models,
+                upstream_path: "/v1/models",
+                harness: None,
+            },
+        ),
+    ];
 }
 
 /// One forwarded endpoint of a provider's native entry.
@@ -52,6 +116,10 @@ pub struct Route {
 }
 
 impl Route {
+    /// Where configured entries with direct ingress are mounted:
+    /// `/upstreams/{id}`, then their wire format's native paths.
+    pub const DIRECT_PREFIX: &'static str = "/upstreams";
+
     pub const ALL: [Self; 9] = [
         Self {
             path: "/anthropic/v1/messages",
@@ -161,7 +229,33 @@ pub struct BoundRoute {
 
 #[cfg(test)]
 mod tests {
-    use super::Route;
+    use super::{Forward, Route};
+    use tgv_protocol::{label::Labeled, route::Provider};
+
+    #[test]
+    fn a_wire_mounts_the_routes_its_providers_own_entry_has() {
+        // Codex's native paths are the ChatGPT backend's own layout, not the
+        // public Responses one.
+        for provider in [Provider::Anthropic, Provider::OpenAi] {
+            let wire = provider.native_api().wire();
+            let native: Vec<(String, Forward)> = Route::ALL
+                .iter()
+                .filter(|route| route.provider == provider)
+                .map(|route| (route.path.to_owned(), route.forward))
+                .collect();
+            let by_wire: Vec<(String, Forward)> = Forward::BY_WIRE
+                .iter()
+                .filter(|(of, _)| *of == wire)
+                .map(|(_, forward)| {
+                    (
+                        format!("/{}{}", provider.label(), forward.upstream_path),
+                        *forward,
+                    )
+                })
+                .collect();
+            assert_eq!(native, by_wire, "{provider}");
+        }
+    }
 
     #[test]
     fn every_ingress_path_is_routed_once() {

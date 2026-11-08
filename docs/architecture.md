@@ -231,10 +231,14 @@ xtask        ─► tgv-daemon, tgv-harness   (repository tasks, unpublished)
 
 A declarative route table (`Route::ALL`) maps each client path to a provider
 endpoint and names the harness whose correlation headers it accepts. When the
-router is built, `UpstreamTable::routes` binds each route to its provider's native entry
-in the upstream table (`BoundRoute`): a call's provider and first upstream come
-from that binding, and a WebSocket channel is pinned to it. Pi's
-extension headers are recognised on every route. A header policy expressed as
+router is built, `UpstreamTable::routes` binds each route to its provider's
+native entry, and mounts each configured entry with `ingress = "direct"` below
+`/upstreams/<id>` with its wire format's routes (`Forward::BY_WIRE`, the same
+paths and harness rules as the provider's own routes). Each binding is a
+`BoundRoute`: a call's provider and first upstream come from it, and a WebSocket
+channel is pinned to it. A fallback rule applies only to calls whose first
+upstream holds client-owned credentials. Pi's extension headers are recognised
+on every route. A header policy expressed as
 data (`HeaderPolicy::REQUEST` and `RESPONSE`) removes hop-by-hop, proxy identity,
 and Tailscale identity headers, and strips TGV's own `x-tgv-*` hints before
 forwarding. Redirects, automatic retries, response decompression, and

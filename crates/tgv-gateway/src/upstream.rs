@@ -7,12 +7,13 @@
 //! Tests substitute a scripted upstream; the daemon uses [`ReqwestUpstream`].
 
 use crate::attempt::{SendFailure, StreamFailure};
-use crate::route::{BoundRoute, Route};
+use crate::route::{BoundRoute, Forward, Route};
 use axum::body::Body;
 use bytes::Bytes;
 use http_body::{Frame, SizeHint};
 use http_body_util::{BodyExt, BodyStream, StreamBody, combinators::UnsyncBoxBody};
 use reqwest::{Client, Url};
+use serde_with::{DeserializeFromStr, SerializeDisplay};
 use std::{
     future::Future,
     net::IpAddr,
@@ -20,6 +21,7 @@ use std::{
     task::{Context, Poll},
     time::Duration,
 };
+use strum::{Display, EnumString, IntoStaticStr, VariantArray};
 use sync_wrapper::SyncStream;
 use tgv_protocol::route::{Api, Provider, Wire};
 use tgv_recorder::routing::UpstreamId;
@@ -362,6 +364,38 @@ impl UpstreamEntry {
     }
 }
 
+/// Whether a configured entry has routes of its own. An operator-key entry
+/// with routes lets every gateway client spend its key, so routes are opt-in.
+#[derive(Display, EnumString, IntoStaticStr, VariantArray)]
+#[strum(serialize_all = "snake_case")]
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Hash, SerializeDisplay, DeserializeFromStr,
+)]
+pub enum EntryIngress {
+    /// Reached only as a fallback rule's target.
+    #[default]
+    FallbackOnly,
+    /// Also mounted below [`Route::DIRECT_PREFIX`] at its id, with its wire
+    /// format's native routes ([`Forward::BY_WIRE`]).
+    Direct,
+}
+
+impl EntryIngress {
+    pub fn is_fallback_only(&self) -> bool {
+        match self {
+            Self::FallbackOnly => true,
+            Self::Direct => false,
+        }
+    }
+}
+
+/// An upstream entry from configuration, with its ingress.
+#[derive(Debug, Clone)]
+pub struct ConfiguredEntry {
+    pub entry: UpstreamEntry,
+    pub ingress: EntryIngress,
+}
+
 /// Every upstream entry. Each provider has a client-owned native entry named
 /// after it, always present; operator-key entries are added by configuration.
 #[derive(Debug, Clone)]
@@ -369,7 +403,7 @@ pub struct UpstreamTable {
     anthropic: UpstreamEntry,
     codex: UpstreamEntry,
     openai: UpstreamEntry,
-    configured: Vec<UpstreamEntry>,
+    configured: Vec<ConfiguredEntry>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -384,7 +418,7 @@ impl UpstreamTable {
         anthropic: UpstreamUrl,
         codex: UpstreamUrl,
         openai: UpstreamUrl,
-        extra: Vec<UpstreamEntry>,
+        extra: Vec<ConfiguredEntry>,
     ) -> Result<Self, UpstreamTableError> {
         let native = |provider: Provider, url| UpstreamEntry {
             id: UpstreamId::default_for(provider),
@@ -398,11 +432,13 @@ impl UpstreamTable {
             openai: native(Provider::OpenAi, openai),
             configured: Vec::new(),
         };
-        for entry in extra {
-            if table.entries().any(|known| known.id == entry.id) {
-                return Err(UpstreamTableError::Duplicate(entry.id.to_string()));
+        for configured in extra {
+            if table.entries().any(|known| known.id == configured.entry.id) {
+                return Err(UpstreamTableError::Duplicate(
+                    configured.entry.id.to_string(),
+                ));
             }
-            table.configured.push(entry);
+            table.configured.push(configured);
         }
         Ok(table)
     }
@@ -417,20 +453,40 @@ impl UpstreamTable {
     }
 
     /// The forwarding routes: [`Route::ALL`], each bound to its provider's
-    /// native entry.
+    /// native entry, then each direct entry's wire routes below
+    /// [`Route::DIRECT_PREFIX`].
     pub fn routes(&self) -> Vec<BoundRoute> {
-        Route::ALL
+        let native = Route::ALL.iter().map(|route| {
+            let entry = self.native(route.provider);
+            BoundRoute {
+                path: route.path.into(),
+                forward: route.forward,
+                upstream: entry.id.clone(),
+                api: entry.api,
+            }
+        });
+        let direct = self
+            .configured
             .iter()
-            .map(|route| {
-                let entry = self.native(route.provider);
-                BoundRoute {
-                    path: route.path.into(),
-                    forward: route.forward,
-                    upstream: entry.id.clone(),
-                    api: entry.api,
-                }
-            })
-            .collect()
+            .filter(|configured| !configured.ingress.is_fallback_only())
+            .flat_map(|ConfiguredEntry { entry, .. }| {
+                Forward::BY_WIRE
+                    .iter()
+                    .filter(|(wire, _)| *wire == entry.api.wire())
+                    .map(|(_, forward)| BoundRoute {
+                        path: format!(
+                            "{}/{}{}",
+                            Route::DIRECT_PREFIX,
+                            entry.id,
+                            forward.upstream_path
+                        )
+                        .into(),
+                        forward: *forward,
+                        upstream: entry.id.clone(),
+                        api: entry.api,
+                    })
+            });
+        native.chain(direct).collect()
     }
 
     pub fn get(&self, id: &UpstreamId) -> Option<&UpstreamEntry> {
@@ -451,7 +507,7 @@ impl UpstreamTable {
     fn entries(&self) -> impl Iterator<Item = &UpstreamEntry> {
         [&self.anthropic, &self.codex, &self.openai]
             .into_iter()
-            .chain(&self.configured)
+            .chain(self.configured.iter().map(|configured| &configured.entry))
     }
 }
 

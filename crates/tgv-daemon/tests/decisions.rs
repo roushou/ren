@@ -27,7 +27,12 @@ use std::{
     time::Duration,
 };
 use tgv_daemon::config::{Config, UpstreamConfig};
-use tgv_protocol::{direction::Direction, label::Stored, route::Provider};
+use tgv_gateway::EntryIngress;
+use tgv_protocol::{
+    direction::Direction,
+    label::Stored,
+    route::{Provider, Wire},
+};
 use tgv_recorder::{
     capture::{AttemptPhase, AttemptTerminal, CallRejection, TerminalCause},
     routing::UpstreamId,
@@ -55,6 +60,7 @@ fn config(mock: &Mock, policy: &str) -> Config {
             wire: None,
             base_url: format!("http://{}/fallback", mock.address),
             operator_key_env: TestGateway::OPERATOR_KEY_ENV.into(),
+            ingress: EntryIngress::FallbackOnly,
         }],
         policy: toml::from_str(policy).unwrap(),
         ..Config::default()
@@ -203,6 +209,57 @@ async fn a_plan_limit_falls_over_to_the_operator_key_with_every_decision_recorde
     )
     .unwrap();
     assert!(!everything.contains("FIXTURE") && !everything.contains("CLIENT-OAUTH"));
+}
+
+#[tokio::test]
+async fn a_direct_entry_has_routes_of_its_own_and_a_fallback_only_entry_has_none() {
+    let reached = Arc::new(AtomicUsize::new(0));
+    let mock = mock(upstream(StatusCode::TOO_MANY_REQUESTS, reached.clone())).await;
+    let dir = tempfile::tempdir().unwrap();
+    let send = |gateway: &TestGateway, id: &str| {
+        client()
+            .post(format!("{}/upstreams/{id}/v1/messages", gateway.base()))
+            .header("authorization", "Bearer CLIENT-OAUTH")
+            .header("anthropic-beta", "oauth-2025-04-20,fixture-beta")
+            .header("x-claude-code-session-id", SESSION)
+            .body(r#"{"model":"fixture-sonnet"}"#)
+            .send()
+    };
+
+    // Fallback only, as when `ingress` is omitted: no route.
+    let gateway = TestGateway::start(&config(&mock, POLICY), dir.path()).await;
+    let response = send(&gateway, "anthropic-key").await.unwrap();
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    gateway.stop().await;
+    assert_eq!(reached.load(Ordering::SeqCst), 0);
+
+    let mut direct = config(&mock, POLICY);
+    direct.upstreams[0].ingress = EntryIngress::Direct;
+    let gateway = TestGateway::start(&direct, dir.path()).await;
+    let response = send(&gateway, "anthropic-key").await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.headers()["x-seen-key"], TestGateway::OPERATOR_KEY);
+    assert_eq!(response.headers()["x-seen-auth"], "-");
+    assert_eq!(response.headers()["x-seen-beta"], "fixture-beta");
+    gateway.stop().await;
+    // Sent straight to the entry's base URL, never to the native upstream.
+    assert_eq!(reached.load(Ordering::SeqCst), 1);
+
+    let calls = recorded(dir.path()).await;
+    let call = &calls[0];
+    assert_eq!(call.provider, Stored::Known(Provider::Anthropic));
+    assert_eq!(call.wire, Some(Stored::Known(Wire::AnthropicMessages)));
+    assert!(call.session.is_some(), "Claude Code's headers are read");
+    let plan = call.plan.as_ref().unwrap();
+    assert_eq!(plan["candidates"], serde_json::json!(["anthropic-key"]));
+    assert_eq!(plan["fallback"], serde_json::Value::Null);
+    let detail = detail(dir.path(), call.id).await;
+    let [attempt] = detail.attempts.as_slice() else {
+        panic!("one attempt expected, got {}", detail.attempts.len());
+    };
+    assert_eq!(attempt.upstream, "anthropic-key");
+    assert_eq!(attempt.provider, Some(Stored::Known(Provider::Anthropic)));
+    assert_eq!(attempt.changes.as_ref().unwrap()["auth"], "operator_key");
 }
 
 #[tokio::test]

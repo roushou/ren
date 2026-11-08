@@ -113,6 +113,23 @@ fn plans_admit_block_transform_and_fall_over() {
 }
 
 #[test]
+fn a_call_sent_first_to_an_operator_key_entry_never_falls_over() {
+    let policy = policy(RULES).unwrap();
+    let operator = OperatorState::default();
+    let direct = UpstreamId::parse("anthropic-key").unwrap();
+    let call = CallFacts {
+        upstream: &direct,
+        ..facts(Provider::Anthropic, Some("fixture-sonnet"))
+    };
+    let plan = policy.plan(&call, &operator);
+    assert_eq!(plan.candidates.len(), 1);
+    assert_eq!(plan.candidates.first(), &direct);
+    assert_eq!(plan.fallback, None);
+    // Block and transform rules still apply to it.
+    assert_eq!(plan.transforms.len(), 1);
+}
+
+#[test]
 fn operator_pause_and_session_blocks_come_first() {
     let policy = policy(RULES).unwrap();
     let session = NativeSessionId::new(Uuid::from_u128(9)).unwrap();

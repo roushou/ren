@@ -72,6 +72,7 @@ tailscale_logins = []
 # wire = "anthropic_messages" # optional: the provider's own wire format
 # base_url = "https://api.anthropic.com"
 # operator_key_env = "TGV_ANTHROPIC_API_KEY"
+# ingress = "direct" # optional: also mount it at /upstreams/anthropic-key; any client bills the key
 #
 # [[policy.fallback]]
 # id = "plan-limit"
