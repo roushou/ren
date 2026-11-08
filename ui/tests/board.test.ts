@@ -96,6 +96,7 @@ const board = (input: Partial<BoardInput>) =>
     now: NOW,
     windowMs: WINDOW,
     focus: null,
+    pins: [],
     ...input,
   });
 
@@ -308,19 +309,32 @@ test('the URL place parses density, band style, and window once', () => {
     band: 'area',
     window: '15m',
     focus: null,
+    pins: [],
   });
   const view = LivePlace.parse(
     new URLSearchParams('density=compact&band=ribbon&window=1h&focus=x'),
   );
   // A focus that is not a session ID is dropped.
-  assert.deepEqual(view, { density: 'compact', band: 'ribbon', window: '1h', focus: null });
+  assert.deepEqual(view, {
+    density: 'compact',
+    band: 'ribbon',
+    window: '1h',
+    focus: null,
+    pins: [],
+  });
   assert.equal(LivePlace.href(view), '/live?window=1h&density=compact&band=ribbon');
   assert.equal(
-    LivePlace.href({ density: 'comfortable', band: 'ribbon', window: '15m', focus: null }),
+    LivePlace.href({
+      density: 'comfortable',
+      band: 'ribbon',
+      window: '15m',
+      focus: null,
+      pins: [],
+    }),
     '/live?band=ribbon',
   );
   assert.equal(
-    LivePlace.href({ density: 'comfortable', band: 'area', window: '15m', focus: null }),
+    LivePlace.href({ density: 'comfortable', band: 'area', window: '15m', focus: null, pins: [] }),
     '/live',
   );
   const focused = LivePlace.parse(new URLSearchParams(`focus=${sid(1).toUpperCase()}`));
@@ -461,6 +475,7 @@ test('a session with nothing on its lane is quiet; an open call is not', () => {
     now: NOW,
     windowMs: WINDOW,
     focus: null,
+    pins: [],
   });
   assert.deepEqual(
     board.tiles.map((tile) => tile.quiet),
@@ -480,6 +495,7 @@ test("a tile's attention is its worst alert", () => {
     now: NOW,
     windowMs: WINDOW,
     focus: null,
+    pins: [],
   });
   assert.equal(board.attention(sid(1)), 'warning');
   assert.notEqual(board.attention(sid(2)), null);
@@ -696,4 +712,31 @@ test('an expanded card comes first, with four beside it and the rest counted', (
   assert.equal(gone.focus, null);
   assert.equal(gone.tiles.length, Board.maxTiles);
   assert.equal(gone.capacity, Board.maxTiles);
+});
+
+test('pins parse once, deduplicated, and toggle in the URL', () => {
+  const view = LivePlace.parse(
+    new URLSearchParams(`pin=${sid(2)}&pin=nope&pin=${sid(1).toUpperCase()}&pin=${sid(2)}`),
+  );
+  assert.deepEqual(view.pins, [sid(2), sid(1)]);
+  assert.equal(LivePlace.href(view), `/live?pin=${sid(2)}&pin=${sid(1)}`);
+  assert.deepEqual(LivePlace.togglePin(view, sid(2)).pins, [sid(1)]);
+  assert.deepEqual(LivePlace.togglePin(view, sid(3)).pins, [sid(2), sid(1), sid(3)]);
+});
+
+test('a pinned session keeps its card when busier ones would take it', () => {
+  // Session 0 is the quietest: seen longest ago, nothing open.
+  const sessions = Array.from({ length: Board.maxTiles + 2 }, (_, n) =>
+    session(n, { last_seen: ms(NOW - 60_000 + n * 1000) }),
+  );
+  const calls = Array.from({ length: Board.maxTiles + 1 }, (_, n) => open(n + 1, n + 1));
+  const unpinned = board({ sessions, calls });
+  assert.ok(!unpinned.tiles.some((tile) => tile.session.id === sid(0)));
+  const pinned = board({ sessions, calls, pins: [sid(0)] });
+  const tile = pinned.tiles.find((candidate) => candidate.session.id === sid(0));
+  assert.equal(tile?.pinned, true);
+  assert.equal(pinned.tiles.length, Board.maxTiles);
+  assert.equal(pinned.tiles.filter((candidate) => candidate.pinned).length, 1);
+  // A pin on a session that is not active adds nothing.
+  assert.equal(board({ sessions, pins: [sid(50)] }).tiles.length, Board.maxTiles);
 });

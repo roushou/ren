@@ -54,6 +54,7 @@
           now: Math.max(now, current.read),
           windowMs: LivePlace.windows[current.window].ms,
           focus: view.focus,
+          pins: view.pins,
         })
       : null,
   );
@@ -75,6 +76,13 @@
     return seconds < 60 ? `${seconds}s` : `${Math.round(seconds / 60)}m`;
   }
   const emptySlots = $derived(board ? Math.max(0, board.capacity - board.tiles.length) : 0);
+  const pinHref = (tile: Tile) => LivePlace.href(LivePlace.togglePin(view, tile.session.id));
+  const turnHref = (turn: string) => `/turns/${encodeURIComponent(turn)}`;
+  /** The call a card is about: the open or last one its state names, else the newest. */
+  function callHref(tile: Tile): string | null {
+    const call = tile.phase.kind === 'idle' ? tile.latest : tile.phase.call;
+    return call ? `${sessionHref(tile.session.id)}?call=${encodeURIComponent(call.id)}` : null;
+  }
   const focusHref = (tile: Tile) =>
     LivePlace.href({ ...view, focus: board?.focus === tile.session.id ? null : tile.session.id });
   /** Escape closes the expanded card, unless a control has the key. */
@@ -467,6 +475,7 @@
           {@const attention = board.attention(tile.session.id)}
           {@const chip = Board.phaseChip(tile.phase, board.now)}
           {@const focused = board.focus === tile.session.id}
+          {@const toCall = callHref(tile)}
           <article
             class="live-tile {harnessClass(tile)} {attention ? `attention-${attention}` : ''}"
             class:quiet={tile.quiet && !focused}
@@ -475,27 +484,60 @@
           >
             <header class="live-tile-head">
               <a class="live-open" href={sessionHref(tile.session.id)} title="Open the session"
-                >{@render identity(tile)}</a
+                >{@render identity(tile)}<span class="live-open-hint"
+                  ><Icon name="arrow" size={11} /></span
+                ></a
               >
               {#if tile.turnCalls}<span class="mono muted live-seq">· call {tile.turnCalls}</span
                 >{/if}
               {#if tile.open > 1}<span class="mono live-open-count" title="Model calls open at once"
                   >{tile.open} open</span
                 >{/if}
+              {#if tile.pinned}<span
+                  class="live-pinned"
+                  title="Pinned: stays on the wall while the session is active"
+                  ><Icon name="pin" size={12} /></span
+                >{/if}
               <span
                 class="mono muted end"
                 title="Context the newest call carried; provider-reported"
                 >ctx {compactOrDash(tile.context)}</span
               >
-              <a
-                class="icon-button live-expand"
-                href={focusHref(tile)}
-                aria-label={focused ? 'Collapse this card' : 'Expand this card'}
-                title={focused
-                  ? 'Collapse (Esc)'
-                  : 'Expand: the whole turn, with tool input and output'}
-                ><Icon name={focused ? 'shrink' : 'expand'} size={13} /></a
-              >
+              <div class="live-actions">
+                {#if tile.turnId}<a
+                    class="icon-button"
+                    href={turnHref(tile.turnId)}
+                    aria-label="Open the turn"
+                    title="Open the turn: its prompt, tools, files, and findings"
+                    ><Icon name="logs" size={13} /></a
+                  >{/if}
+                {#if toCall}<a
+                    class="icon-button"
+                    href={toCall}
+                    aria-label="Open the call"
+                    title="Open this call in its session, with the inspector"
+                    ><Icon name="pulse" size={13} /></a
+                  >{/if}
+                <a
+                  class="icon-button live-pin"
+                  class:on={tile.pinned}
+                  href={pinHref(tile)}
+                  aria-label={tile.pinned ? 'Unpin this card' : 'Pin this card'}
+                  title={tile.pinned
+                    ? 'Unpin: busier sessions may take its place'
+                    : 'Pin: keep it on the wall while the session is active'}
+                  ><Icon name="pin" size={13} /></a
+                >
+                <a
+                  class="icon-button live-expand"
+                  href={focusHref(tile)}
+                  aria-label={focused ? 'Collapse this card' : 'Expand this card'}
+                  title={focused
+                    ? 'Collapse (Esc)'
+                    : 'Expand: the whole turn, with tool input and output'}
+                  ><Icon name={focused ? 'shrink' : 'expand'} size={13} /></a
+                >
+              </div>
             </header>
             <div class="live-tile-body" class:full={focused} use:stickToEnd={focused}>
               {#if tile.prompt}
@@ -553,11 +595,6 @@
             <footer class="live-tile-foot mono">
               <div class="live-foot-state">
                 <span class="live-state {chip.tone}" title={chip.title}>{chip.label}</span>
-                <a
-                  class="text-button end"
-                  href={sessionHref(tile.session.id)}
-                  title="Open the session">Session <Icon name="arrow" size={11} /></a
-                >
               </div>
               <div class="live-foot-facts" title="Provider-reported tokens of the newest call">
                 {facts(tile)}
@@ -1124,9 +1161,64 @@
   .live-tally .error {
     color: var(--error);
   }
-  .live-expand {
-    flex: none;
+  /*
+   * A card's actions sit over the right of its header, shown while the card
+   * is hovered or holds focus; always shown when expanded, or without hover.
+   */
+  .live-tile-head {
+    position: relative;
+  }
+  .live-actions {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    padding: 0 6px 0 10px;
+    background: var(--surface);
+    opacity: 0;
+    pointer-events: none;
+  }
+  .live-tile:hover .live-actions,
+  .live-tile:focus-within .live-actions {
+    opacity: 1;
+    pointer-events: auto;
+  }
+  .live-tile.focused .live-actions {
+    position: static;
     margin: -3px -6px -3px 0;
+    padding: 0;
+    opacity: 1;
+    pointer-events: auto;
+  }
+  @media (hover: none) and (pointer: coarse) {
+    .live-actions {
+      position: static;
+      margin: -3px -6px -3px 0;
+      padding: 0;
+      opacity: 1;
+      pointer-events: auto;
+    }
+  }
+  .live-pin.on,
+  .live-pinned {
+    color: var(--accent);
+  }
+  .live-pinned {
+    display: inline-flex;
+    flex: none;
+  }
+  .live-open-hint {
+    display: inline-flex;
+    flex: none;
+    color: var(--muted);
+    opacity: 0;
+  }
+  .live-open:hover .live-open-hint,
+  .live-open:focus-visible .live-open-hint {
+    opacity: 1;
   }
   /* The expanded card covers four slots and reads top down, scrolling. */
   .live-tile.focused {

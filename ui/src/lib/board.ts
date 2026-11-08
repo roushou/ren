@@ -134,6 +134,8 @@ export interface Tile {
   turnCalls: number;
   /** Nothing open and nothing on the lane: drawn dimmed until it leaves the board. */
   quiet: boolean;
+  /** Kept on the wall by the viewer. */
+  pinned: boolean;
 }
 
 export interface Alert {
@@ -158,6 +160,8 @@ export interface BoardInput {
   windowMs: number;
   /** The session expanded on the wall, if any. */
   focus: SessionId | null;
+  /** Sessions kept on the wall while they are active, however quiet. */
+  pins: SessionId[];
 }
 
 export class Board {
@@ -187,11 +191,13 @@ export class Board {
     const bySession = Board.bySession(input.calls);
     const active = Board.activeSessions(input.sessions, bySession, input.now, input.windowMs);
     this.focus = active.some((session) => session.id === input.focus) ? input.focus : null;
-    const shown = Board.shown(active, bySession, this.focus);
+    const pins = new Set(input.pins);
+    const shown = Board.shown(active, bySession, this.focus, pins);
     this.overflow = active.length - shown.length;
-    this.tiles = shown.map((session) =>
-      Board.tile(session, bySession.get(session.id) ?? [], input.turns, input.now),
-    );
+    this.tiles = shown.map((session) => ({
+      ...Board.tile(session, bySession.get(session.id) ?? [], input.turns, input.now),
+      pinned: pins.has(session.id),
+    }));
     this.alerts = this.tiles
       .flatMap((tile) => Board.alerts(tile, bySession.get(tile.session.id) ?? [], input.now))
       .sort((a, b) => b.at - a.at);
@@ -267,18 +273,21 @@ export class Board {
   }
 
   /**
-   * The sessions that get a tile: those with an open call, then the most
-   * recently seen, up to `maxTiles`. They are drawn in the order they first
-   * appeared, so a tile keeps its place while its session stays on the board.
-   * An expanded session comes first, with `besideFocus` others after it.
+   * The sessions that get a tile: pinned ones, then those with an open call,
+   * then the most recently seen, up to `maxTiles`. They are drawn in the
+   * order they first appeared, so a tile keeps its place while its session
+   * stays on the board. An expanded session comes first, with `besideFocus`
+   * others after it.
    */
   static shown(
     active: SessionView[],
     calls: Map<SessionId, CallView[]>,
     focus: SessionId | null = null,
+    pins: ReadonlySet<SessionId> = new Set(),
   ): SessionView[] {
     const busy = (session: SessionView) =>
-      (calls.get(session.id) ?? []).some((call) => call.state === 'open') ? 1 : 0;
+      (pins.has(session.id) ? 2 : 0) +
+      ((calls.get(session.id) ?? []).some((call) => call.state === 'open') ? 1 : 0);
     const focused = active.find((session) => session.id === focus);
     const others = active.filter((session) => session !== focused);
     const chosen = new Set(
@@ -567,6 +576,7 @@ export class Board {
       output: usage?.output_tokens ?? null,
       turnCalls: turnCalls.length,
       quiet: !lane.length,
+      pinned: false,
     };
   }
 
@@ -852,6 +862,8 @@ export interface LiveView {
   window: LiveWindow;
   /** The session whose card is expanded. */
   focus: SessionId | null;
+  /** Sessions kept on the wall, in the order they were pinned. */
+  pins: SessionId[];
 }
 export type Density = 'comfortable' | 'compact';
 /** How the band draws its clients: a row each, or stacked into one ribbon. */
@@ -877,13 +889,20 @@ export class LivePlace {
   };
   static readonly defaultWindow: LiveWindow = '15m';
 
-  static parse(params: { get(name: string): string | null }): LiveView {
+  static parse(params: {
+    get(name: string): string | null;
+    getAll(name: string): string[];
+  }): LiveView {
     const window = params.get('window');
     return {
       density: params.get('density') === 'compact' ? 'compact' : 'comfortable',
       band: params.get('band') === 'ribbon' ? 'ribbon' : 'area',
       window: LivePlace.isWindow(window) ? window : LivePlace.defaultWindow,
       focus: SessionId.parse(params.get('focus')),
+      pins: [...new Set(params.getAll('pin').flatMap((raw) => SessionId.parse(raw) ?? []))].slice(
+        0,
+        Board.maxTiles,
+      ),
     };
   }
 
@@ -897,8 +916,19 @@ export class LivePlace {
     if (view.density === 'compact') params.set('density', 'compact');
     if (view.band === 'ribbon') params.set('band', 'ribbon');
     if (view.focus) params.set('focus', view.focus);
+    for (const pin of view.pins) params.append('pin', pin);
     const query = params.toString();
     return query ? `/live?${query}` : '/live';
+  }
+
+  /** The view with this session pinned, or unpinned if it was. */
+  static togglePin(view: LiveView, session: SessionId): LiveView {
+    return {
+      ...view,
+      pins: view.pins.includes(session)
+        ? view.pins.filter((pin) => pin !== session)
+        : [...view.pins, session],
+    };
   }
 
   /** The next longer window, to offer when the board is empty. */

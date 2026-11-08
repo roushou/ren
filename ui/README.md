@@ -20,8 +20,10 @@ of cards or as rows: each session's client and provider, its state, and its curr
 turn's prompt, replies, and tool calls (each with what it touched, its result, and the
 first line it returned; like calls in a row merge into one line with a count, and commands
 drop the `cd` into the turn's directory), with what the turn read, wrote, and ran. A
-card's expand button (`?focus=`) spreads it over four slots with every call of the turn
-and its tools' input and output; `Escape` closes it. This is below a band of output tokens per client, drawn as a row each (**Area**) or stacked into
+card's header links to its session; hovering it shows the card's actions: open the turn,
+open the current call, pin the card so it stays on the board while its session is active
+(`?pin=`), and expand it (`?focus=`) over four slots with every call of the turn and its
+tools' input and output (`Escape` closes it). This is below a band of output tokens per client, drawn as a row each (**Area**) or stacked into
 one chart whose top edge is the total (**Ribbon**), and a **Now** strip of what happened
 lately, newest first: new sessions, prompts, finished calls, failed tools, bad endings,
 and rate limits, with calls still waiting for a response head kept first. Sessions with a call open, then the most recent, get the
