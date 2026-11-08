@@ -236,8 +236,8 @@ cross-origin browser access enabled.
 
 ### Session totals
 
-Each session in `/api/sessions` carries `error_count`, the calls the `errors` status
-filter would find, and `tokens: {input, output}`, summed from provider-reported
+Each session in `/api/sessions` carries `error_count`, the model calls (`kind=model`)
+the `errors` status filter would find, and `tokens: {input, output}`, summed from provider-reported
 usage. Input includes cached context whichever way each call's provider accounts
 for it; a total is `null` when no call reported usage. Token counts are not
 subscription allowance or charges.
@@ -249,7 +249,7 @@ subscription allowance or charges.
 (only hours with calls, oldest first, keyed by the hour's UTC start; clients group
 them into local days), and `models` (each provider and reported model, most input
 first; `model` is `null` when no response reported one). Each carries `calls`,
-`errors` (as the `errors` status filter counts them), and `tokens: {input, output,
+`errors` (model calls the `errors` status filter finds, as in session totals), and `tokens: {input, output,
 cache_read}`, with input including cached context as in session totals. Unknown
 parameters and a reversed range are rejected.
 
@@ -291,7 +291,10 @@ Filters combine with AND; unknown parameters are rejected.
   a call with no attribution matches no client.
 - `kind=model` keeps calls that ask a model for output (messages and responses,
   over HTTP or as a WebSocket message); `kind=other` keeps the rest: token counts,
-  model listings, and the WebSocket handshakes that open a channel.
+  model listings, the WebSocket handshakes that open a channel, and a client's
+  own checks. Claude Code's quota probe, sent as it starts, is one: a one-token
+  request whose only message is `quota`, which Anthropic may answer with `429`.
+  A call counts as a model call until its digest says otherwise.
 
 - `q` matches call IDs, reported models, and observed tool names,
   case-insensitively; `%` and `_` are literal. Search strings are at most 128 UTF-8

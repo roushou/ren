@@ -137,8 +137,9 @@ pub enum KindFilter {
     /// Calls that ask a model for output: messages and responses, sent over
     /// HTTP or as a WebSocket message.
     Model,
-    /// Everything else: token counts, model listings, and the WebSocket
-    /// handshakes that open a channel.
+    /// Everything else: token counts, model listings, the WebSocket
+    /// handshakes that open a channel, and a client's own checks, such as
+    /// Claude Code's quota probe (`CallPurpose`, from the call's digest).
     Other,
 }
 

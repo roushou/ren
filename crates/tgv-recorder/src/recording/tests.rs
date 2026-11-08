@@ -8,6 +8,7 @@ use crate::routing::{ConfigRevision, UpstreamId};
 use crate::time::{Moment, UnixMillis};
 use std::time::Duration;
 use tgv_harness::attribution::{Attribution, HintSource, SessionHint};
+use tgv_harness::tools::CallPurpose;
 use tgv_protocol::encoding::{ResponseEncoding, ResponseFormat};
 use tgv_protocol::native::{NativeSessionId, NativeTurnId};
 use tgv_protocol::route::{Method, Provider, Transport};
@@ -255,6 +256,33 @@ fn a_call_becomes_its_lifecycle_chunks_inspection_and_digest() {
     assert_eq!(digest.reply.as_ref().unwrap().text, "Fixed.");
     // Nothing is left behind for the next batch.
     assert!(core.take_batch().is_empty());
+}
+
+#[test]
+fn claude_codes_quota_probe_is_digested_as_bookkeeping() {
+    let mut script = Script::new();
+    let mut core = core();
+    let first = script.attempt(0);
+    let attempt = first.attempt;
+    let request = serde_json::json!({
+        "model": "claude-test",
+        "max_tokens": 1,
+        "messages": [{ "role": "user", "content": "quota" }],
+    })
+    .to_string()
+    .into_bytes();
+    let refusal = br#"{"type":"error","error":{"type":"rate_limit_error","message":"Error"}}"#;
+    core.accept(script.open(first));
+    core.accept(script.data(Track::Request, 0, &request));
+    core.accept(script.head(attempt, 429));
+    core.accept(script.data(Track::Response, 0, refusal));
+    core.accept(script.finish_attempt(attempt, len(refusal)));
+    core.accept(script.finish_call(len(&request)));
+    let batch = core.take_batch();
+    let digest = digest(&batch).unwrap();
+    assert_eq!(digest.purpose, CallPurpose::QuotaProbe);
+    // The probe's message is Claude Code's, not the user's.
+    assert_eq!(digest.prompt, None);
 }
 
 #[test]

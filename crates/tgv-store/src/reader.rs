@@ -25,6 +25,7 @@ use std::collections::HashMap;
 use std::{path::Path, sync::Arc, time::Duration};
 use tgv_harness::Harness;
 use tgv_harness::attribution::HintSource;
+use tgv_harness::tools::CallPurpose;
 use tgv_protocol::encoding::{ResponseEncoding, ResponseFormat};
 use tgv_protocol::inspect::{InputAccounting, ModelOutcome};
 use tgv_protocol::{
@@ -529,17 +530,47 @@ impl CallQuery {
         sql.push(")");
     }
 
+    /// Whether `calls c` is a model call: a request for model output, not a
+    /// token count, a model listing, a WebSocket handshake (recorded as a
+    /// GET on a model endpoint), or a client's own check such as Claude
+    /// Code's quota probe. A call whose digest is not yet derived counts as
+    /// a model call.
+    fn push_model_call(sql: &mut QueryBuilder<Sqlite>) {
+        sql.push("(c.method <> ")
+            .push_bind(Method::Get.label())
+            .push(" AND c.endpoint IN (");
+        let mut endpoints = sql.separated(", ");
+        for endpoint in Endpoint::ALL.iter().filter(|endpoint| endpoint.generates()) {
+            endpoints.push_bind(endpoint.label());
+        }
+        sql.push(
+            ") AND NOT EXISTS (SELECT 1 FROM call_digests d WHERE d.call = c.id AND d.purpose IN (",
+        );
+        let mut purposes = sql.separated(", ");
+        for purpose in CallPurpose::ALL
+            .iter()
+            .filter(|purpose| **purpose != CallPurpose::Work)
+        {
+            purposes.push_bind(purpose.label());
+        }
+        sql.push(")))");
+    }
+
     /// `calls`, `errors`, `input_tokens`, `output_tokens`, and
-    /// `cache_read_tokens` aggregated over the rows of `calls c`. Errors use
-    /// the same predicate as the `errors` status filter. Input adds cached
+    /// `cache_read_tokens` aggregated over the rows of `calls c`. Errors are
+    /// the model calls the `errors` status filter finds: a client's own
+    /// check or a failed token count is not a failure of the session's
+    /// work. Input adds cached
     /// context where the provider reported it separately. A token SUM over
     /// calls that reported no usage is NULL: "not reported", not zero.
     fn push_usage_columns(sql: &mut QueryBuilder<Sqlite>) {
-        sql.push("COUNT(c.id) AS calls, COALESCE(SUM(CASE WHEN c.status >= 400 OR c.terminal IN (");
+        sql.push("COUNT(c.id) AS calls, COALESCE(SUM(CASE WHEN ");
+        Self::push_model_call(sql);
+        sql.push(" AND (c.status >= 400 OR c.terminal IN (");
         Self::push_terminals(sql, TerminalClass::Failed);
         sql.push(") OR c.outcome = ")
             .push_bind(ModelOutcome::Failed.label())
-            .push(" THEN 1 ELSE 0 END), 0) AS errors, ")
+            .push(") THEN 1 ELSE 0 END), 0) AS errors, ")
             .push("SUM(CASE WHEN c.usage IS NULL THEN NULL ELSE COALESCE(json_extract(c.usage, '$.input_tokens'), 0) + CASE WHEN json_extract(c.usage, '$.accounting') = ")
             .push_bind(InputAccounting::ExcludesCache.label())
             .push(" THEN COALESCE(json_extract(c.usage, '$.cache_read_tokens'), 0) + COALESCE(json_extract(c.usage, '$.cache_creation_tokens'), 0) ELSE 0 END END) AS input_tokens, ")
@@ -592,21 +623,11 @@ impl CallQuery {
             Self::push_client(sql, client);
         }
         if let Some(kind) = filter.kind {
-            // A WebSocket handshake is recorded as a GET on a model endpoint.
             sql.push(match kind {
-                KindFilter::Model => " AND c.method <> ",
-                KindFilter::Other => " AND NOT (c.method <> ",
-            })
-            .push_bind(Method::Get.label())
-            .push(" AND c.endpoint IN (");
-            let mut endpoints = sql.separated(", ");
-            for endpoint in Endpoint::ALL.iter().filter(|endpoint| endpoint.generates()) {
-                endpoints.push_bind(endpoint.label());
-            }
-            sql.push(match kind {
-                KindFilter::Model => ")",
-                KindFilter::Other => "))",
+                KindFilter::Model => " AND ",
+                KindFilter::Other => " AND NOT ",
             });
+            Self::push_model_call(sql);
         }
         if let Some(tools) = filter.tools {
             sql.push(match tools {

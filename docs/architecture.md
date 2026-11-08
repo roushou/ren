@@ -576,8 +576,8 @@ these as findings.
 
 **Query tables.** `channels`, `calls`, `attempts`, `sessions`, `turns`,
 `operator_actions` (the newest 10,000), the `operator_state` snapshot, and the
-search columns. Derived from each finished call: `call_digests` (version, prompt,
-and the digest as JSON), `call_exposures`, and `search_texts` with its FTS5 index
+search columns. Derived from each finished call: `call_digests` (version, purpose,
+prompt, and the digest as JSON), `call_exposures`, and `search_texts` with its FTS5 index
 `search` (external content, kept in step by triggers). They reference `calls`
 with `ON DELETE CASCADE`, so retention removes them with their call. The writer updates them directly, in the same transaction as the
 log; there is no generic reducer framework.

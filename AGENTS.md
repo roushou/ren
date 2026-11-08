@@ -183,7 +183,8 @@ dependencies under "Crates" below. Read the code for current module ownership.
   (`Harness::launch`), the bundled Pi extension cache (`pi`), the gateway URL a
   harness is pointed at (`endpoint`), `HostEnv` (`host`), the host environment
   that launching and configuration read, and what each harness's tools and
-  messages mean for activity (`tools`: effects, prompt text, exit codes, and
+  messages mean for activity (`tools`: effects, prompt text, exit codes, why a
+  client sent a call (`CallPurpose`: work, or Claude Code's quota probe), and
   `InterpretedCall`, a `Reading` read as its client uses it). It performs filesystem and process I/O
   but has no async runtime, HTTP, database, or CLI dependency.
 - `crates/tgv-recorder`: the bounded capture queue between forwarding and

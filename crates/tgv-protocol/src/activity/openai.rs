@@ -57,7 +57,10 @@ impl<'a> Request<'a> {
     /// WebSocket that continues a previous response, the input holds only
     /// these.
     pub(super) fn activity(self) -> RequestActivity {
-        let mut activity = RequestActivity::default();
+        let mut activity = RequestActivity {
+            max_output_tokens: self.0.get("max_output_tokens").and_then(Value::as_u64),
+            ..RequestActivity::default()
+        };
         let items = match self.0.get("input") {
             Some(Value::String(text)) => {
                 activity.user_text.push(text.clone());

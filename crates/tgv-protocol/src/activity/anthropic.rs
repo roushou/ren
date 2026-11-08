@@ -53,7 +53,10 @@ impl<'a> Request<'a> {
     /// call of a turn, the prompt; later, the results of the tools the
     /// previous response asked for.
     pub(super) fn activity(self) -> RequestActivity {
-        let mut activity = RequestActivity::default();
+        let mut activity = RequestActivity {
+            max_output_tokens: self.0.get("max_tokens").and_then(Value::as_u64),
+            ..RequestActivity::default()
+        };
         let Some(messages) = self.0.get("messages").and_then(Value::as_array) else {
             activity
                 .limitations

@@ -99,6 +99,34 @@ fn messages_requests_yield_the_newest_user_input() {
 }
 
 #[test]
+fn requests_say_how_much_output_they_allow() {
+    let messages = request(
+        Protocol::Messages,
+        json!({ "max_tokens": 1, "messages": [{ "role": "user", "content": "quota" }] })
+            .to_string()
+            .as_bytes(),
+    );
+    assert_eq!(messages.max_output_tokens, Some(1));
+    let responses = request(
+        Protocol::Responses,
+        json!({ "max_output_tokens": 64, "input": "hi" })
+            .to_string()
+            .as_bytes(),
+    );
+    assert_eq!(responses.max_output_tokens, Some(64));
+    // Absent, or not a count: no limit is reported.
+    for body in [
+        json!({ "input": "hi" }),
+        json!({ "max_output_tokens": "64", "input": "hi" }),
+    ] {
+        assert_eq!(
+            request(Protocol::Responses, body.to_string().as_bytes()).max_output_tokens,
+            None
+        );
+    }
+}
+
+#[test]
 fn messages_streams_assemble_tool_input_from_deltas() {
     let stream = sse(&[
         json!({ "type": "message_start", "message": {} }),

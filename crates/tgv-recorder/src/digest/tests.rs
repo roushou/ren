@@ -24,6 +24,7 @@ fn reading(secret: &str) -> Reading {
                 status: ResultStatus::Failed,
                 output: format!("export K={secret}\n{}", "x".repeat(5_000)),
             }],
+            max_output_tokens: None,
             limitations: vec![ActivityLimitation::Truncated],
         },
         response: ResponseActivity {

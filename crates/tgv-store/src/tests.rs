@@ -1293,6 +1293,79 @@ mod digests {
     }
 
     #[tokio::test]
+    async fn a_client_probe_is_bookkeeping_not_a_session_error() {
+        use crate::query::{CallFilter, KindFilter};
+        let mut fixture = Fixture::new().await;
+        let probe = fixture
+            .record(CallSpec {
+                session: Some(1),
+                status: 429,
+                ..CallSpec::default()
+            })
+            .await;
+        let work = fixture
+            .record(CallSpec {
+                session: Some(1),
+                ..CallSpec::default()
+            })
+            .await;
+        let reader = fixture.reader.clone();
+        let kind = |kind| {
+            let reader = reader.clone();
+            async move {
+                reader
+                    .calls(&CallQuery {
+                        filter: CallFilter {
+                            kind: Some(kind),
+                            ..CallFilter::default()
+                        },
+                        ..CallQuery::default()
+                    })
+                    .await
+                    .unwrap()
+                    .calls
+                    .into_iter()
+                    .map(|call| call.id)
+                    .collect::<Vec<_>>()
+            }
+        };
+        let errors = || {
+            let reader = reader.clone();
+            async move { reader.sessions(PageLimit::DEFAULT).await.unwrap()[0].error_count }
+        };
+        // Until its digest is derived, the probe is taken for work.
+        assert_eq!(kind(KindFilter::Other).await, []);
+        assert_eq!(errors().await, 1);
+        fixture
+            .digest(
+                probe,
+                Some(Harness::ClaudeCode),
+                Reading {
+                    request: RequestActivity {
+                        max_output_tokens: Some(1),
+                        ..prompt("quota")
+                    },
+                    response: ResponseActivity::default(),
+                },
+            )
+            .await;
+        fixture
+            .digest(
+                work,
+                Some(Harness::ClaudeCode),
+                Reading {
+                    request: prompt("Fix the parser"),
+                    response: ResponseActivity::default(),
+                },
+            )
+            .await;
+        assert_eq!(kind(KindFilter::Model).await, [work]);
+        assert_eq!(kind(KindFilter::Other).await, [probe]);
+        // Its refusal is still recorded, but is no error of the session's.
+        assert_eq!(errors().await, 0);
+    }
+
+    #[tokio::test]
     async fn stored_digests_are_searched_filtered_and_listed() {
         let mut fixture = Fixture::new().await;
         let claude = fixture

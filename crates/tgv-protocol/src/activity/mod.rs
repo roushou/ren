@@ -91,6 +91,8 @@ pub struct RequestActivity {
     /// [`Harness`]: https://docs.rs/tgv-harness
     pub user_text: Vec<String>,
     pub tool_results: Vec<ToolResult>,
+    /// The most output the request lets the model produce, in tokens.
+    pub max_output_tokens: Option<u64>,
     pub limitations: Vec<ActivityLimitation>,
 }
 

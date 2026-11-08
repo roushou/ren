@@ -144,6 +144,7 @@ fn a_turn_joins_prompt_tool_calls_results_and_effects() {
     let first = ReadCall {
         view: view(1, HintSource::ClaudeCodeHeaders),
         request: RequestActivity {
+            max_output_tokens: None,
             user_text: vec![
                 "<system-reminder>context</system-reminder>".to_owned(),
                 "Make the tests pass".to_owned(),
@@ -164,6 +165,7 @@ fn a_turn_joins_prompt_tool_calls_results_and_effects() {
     let second = ReadCall {
         view: view(2, HintSource::ClaudeCodeHeaders),
         request: RequestActivity {
+            max_output_tokens: None,
             user_text: vec!["<system-reminder>more</system-reminder>".to_owned()],
             tool_results: vec![
                 result("a", ResultStatus::Succeeded, "fn main() {}"),
@@ -183,6 +185,7 @@ fn a_turn_joins_prompt_tool_calls_results_and_effects() {
     let third = ReadCall {
         view: view(3, HintSource::ClaudeCodeHeaders),
         request: RequestActivity {
+            max_output_tokens: None,
             user_text: Vec::new(),
             tool_results: vec![result("c", ResultStatus::Succeeded, "ok")],
             limitations: Vec::new(),
@@ -234,6 +237,7 @@ fn codex_exit_codes_and_unattributed_calls() {
     let codex = ReadCall {
         view: view(1, HintSource::CodexHeaders),
         request: RequestActivity {
+            max_output_tokens: None,
             user_text: vec!["Run it".to_owned()],
             tool_results: Vec::new(),
             limitations: Vec::new(),
@@ -251,6 +255,7 @@ fn codex_exit_codes_and_unattributed_calls() {
     let answer = ReadCall {
         view: view(2, HintSource::CodexHeaders),
         request: RequestActivity {
+            max_output_tokens: None,
             user_text: Vec::new(),
             tool_results: vec![result(
                 "x",
@@ -278,6 +283,7 @@ fn codex_exit_codes_and_unattributed_calls() {
     let call = ReadCall {
         view: bare,
         request: RequestActivity {
+            max_output_tokens: None,
             user_text: vec!["<system-reminder>kept</system-reminder>".to_owned()],
             tool_results: Vec::new(),
             limitations: Vec::new(),
@@ -465,6 +471,7 @@ mod report {
         let second = ReadCall {
             view: view(2, HintSource::ClaudeCodeHeaders),
             request: RequestActivity {
+                max_output_tokens: None,
                 user_text: Vec::new(),
                 tool_results: vec![
                     result("t0", ResultStatus::Failed, "boom"),
@@ -518,6 +525,7 @@ fn secrets_a_turn_carried_are_findings_without_the_secret() {
     let call = ReadCall {
         view: view(1, HintSource::ClaudeCodeHeaders),
         request: RequestActivity {
+            max_output_tokens: None,
             // Client context is sent to the provider too: it is scanned.
             user_text: vec![
                 format!("<system-reminder>ANTHROPIC_API_KEY={key}</system-reminder>"),

@@ -9,7 +9,7 @@ use crate::secrets::{Detection, SecretKind, SecretScanner};
 use serde::{Deserialize, Serialize};
 use serde_with::{DeserializeFromStr, SerializeDisplay};
 use strum::{Display, EnumString, IntoStaticStr, VariantArray};
-use tgv_harness::tools::{InterpretedCall, ToolEffect};
+use tgv_harness::tools::{CallPurpose, InterpretedCall, ToolEffect};
 use tgv_protocol::activity::{ActivityLimitation, ResultStatus, ToolInput};
 
 /// Which part of a call a document holds.
@@ -150,6 +150,8 @@ pub struct SearchText {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CallDigest {
     pub version: u32,
+    /// Why the client sent the call.
+    pub purpose: CallPurpose,
     /// The user's own words, when the request starts with them.
     pub prompt: Option<Excerpt>,
     pub reply: Option<Excerpt>,
@@ -162,7 +164,7 @@ pub struct CallDigest {
 }
 
 impl CallDigest {
-    pub const VERSION: u32 = 1;
+    pub const VERSION: u32 = 2;
 
     /// Redact every text once, keep what each secret leaves (its kind,
     /// hint, and fingerprint), and cut the rest to `budget`. The prompt's
@@ -254,6 +256,7 @@ impl CallDigest {
         .collect();
         Self {
             version: Self::VERSION,
+            purpose: call.purpose,
             prompt: prompt.map(|prompt| Excerpt::cut(&prompt, budget.prompt_chars)),
             reply: (!reply.trim().is_empty()).then(|| Excerpt::cut(&reply, budget.reply_chars)),
             tool_uses,

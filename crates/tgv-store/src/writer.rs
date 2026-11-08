@@ -615,10 +615,11 @@ impl MetadataTx<'_> {
                 .await?;
         }
         sqlx::query(
-            "INSERT INTO call_digests(call, version, prompt, prompt_omitted, digest) VALUES (?1, ?2, ?3, ?4, ?5) ON CONFLICT(call) DO UPDATE SET version = ?2, prompt = ?3, prompt_omitted = ?4, digest = ?5",
+            "INSERT INTO call_digests(call, version, purpose, prompt, prompt_omitted, digest) VALUES (?1, ?2, ?3, ?4, ?5, ?6) ON CONFLICT(call) DO UPDATE SET version = ?2, purpose = ?3, prompt = ?4, prompt_omitted = ?5, digest = ?6",
         )
         .bind(&id)
         .bind(i64::from(digest.version))
+        .bind(digest.purpose.label())
         .bind(digest.prompt.as_ref().map(|prompt| prompt.text.as_str()))
         .bind(
             digest

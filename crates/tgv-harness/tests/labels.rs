@@ -59,6 +59,7 @@ fn every_label_is_pinned() {
         attribution::HintSource,
         attribution::HintIssue,
         tools::EffectKind,
+        tools::CallPurpose,
         tools::ClaudeCodeTool,
         tools::CodexTool,
         tools::PiTool,

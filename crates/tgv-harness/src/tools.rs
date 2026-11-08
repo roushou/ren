@@ -13,7 +13,7 @@ use serde_json::Value;
 use serde_with::{DeserializeFromStr, SerializeDisplay};
 use strum::{Display, EnumString, IntoStaticStr, VariantArray};
 use tgv_protocol::activity::{
-    ActivityLimitation, Reading, ResultStatus, ToolInput, ToolResult, ToolUse,
+    ActivityLimitation, Reading, RequestActivity, ResultStatus, ToolInput, ToolResult, ToolUse,
 };
 use tgv_protocol::label::Labeled;
 
@@ -36,6 +36,20 @@ pub enum EffectKind {
 pub struct ToolEffect {
     pub kind: EffectKind,
     pub target: String,
+}
+
+/// Why a client sent a call: to have the model work, or to check something
+/// for itself. A client's own checks are bookkeeping, like a token count:
+/// their answers never reach the user.
+#[derive(Display, EnumString, IntoStaticStr, VariantArray)]
+#[strum(serialize_all = "snake_case")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SerializeDisplay, DeserializeFromStr)]
+pub enum CallPurpose {
+    /// The model's output is used.
+    Work,
+    /// Claude Code's check of the account's quota as it starts: one token
+    /// asked for, and only the response's status and headers read.
+    QuotaProbe,
 }
 
 /// Claude Code's built-in tools.
@@ -180,6 +194,26 @@ impl Harness {
         }
     }
 
+    /// The message Claude Code's quota probe sends, alone.
+    const CLAUDE_CODE_QUOTA_PROBE: &str = "quota";
+
+    /// Why the client sent a request.
+    pub fn purpose(self, request: &RequestActivity) -> CallPurpose {
+        match self {
+            Self::ClaudeCode
+                if request.max_output_tokens == Some(1)
+                    && request.tool_results.is_empty()
+                    && matches!(
+                        request.user_text.as_slice(),
+                        [text] if text == Self::CLAUDE_CODE_QUOTA_PROBE
+                    ) =>
+            {
+                CallPurpose::QuotaProbe
+            }
+            Self::ClaudeCode | Self::Codex | Self::Pi => CallPurpose::Work,
+        }
+    }
+
     /// The user's own words in a request's newest user text: the client's
     /// added context removed. `None` when nothing else is left.
     pub fn prompt(self, user_text: &[String]) -> Option<String> {
@@ -278,6 +312,7 @@ impl Harness {
 /// is taken as it is and tool calls have no effects.
 #[derive(Debug, Clone, PartialEq)]
 pub struct InterpretedCall {
+    pub purpose: CallPurpose,
     /// All of the newest user input, client context included. It is sent to
     /// the provider too, so it is what secrets are looked for in.
     pub user_text: Vec<String>,
@@ -301,9 +336,12 @@ pub struct InterpretedTool {
 impl InterpretedCall {
     pub fn new(harness: Option<Harness>, reading: Reading) -> Self {
         let Reading { request, response } = reading;
-        let prompt = match harness {
-            Some(harness) => harness.prompt(&request.user_text),
-            None => {
+        let purpose = harness.map_or(CallPurpose::Work, |harness| harness.purpose(&request));
+        let prompt = match (harness, purpose) {
+            // A client's own check holds no words of the user's.
+            (_, CallPurpose::QuotaProbe) => None,
+            (Some(harness), CallPurpose::Work) => harness.prompt(&request.user_text),
+            (None, CallPurpose::Work) => {
                 let text = request.user_text.join("\n\n");
                 (!text.trim().is_empty()).then_some(text)
             }
@@ -333,6 +371,7 @@ impl InterpretedCall {
             }
         }
         Self {
+            purpose,
             user_text: request.user_text,
             prompt,
             tool_uses,
@@ -532,6 +571,7 @@ mod tests {
                     status: ResultStatus::Unreported,
                     output: "Exit code: 2\nfailed".to_owned(),
                 }],
+                max_output_tokens: Some(32_000),
                 limitations: vec![ActivityLimitation::Truncated],
             },
             response: ResponseActivity {
@@ -548,6 +588,7 @@ mod tests {
             },
         };
         let claude = InterpretedCall::new(Some(Harness::ClaudeCode), reading.clone());
+        assert_eq!(claude.purpose, CallPurpose::Work);
         assert_eq!(claude.prompt.as_deref(), Some("Make the tests pass"));
         assert_eq!(claude.user_text.len(), 2);
         assert_eq!(claude.tool_uses[0].effects[0].kind, EffectKind::RunCommand);
@@ -573,5 +614,50 @@ mod tests {
         );
         assert!(unknown.tool_uses[0].effects.is_empty());
         assert_eq!(unknown.tool_results[0].status, ResultStatus::Unreported);
+    }
+
+    #[test]
+    fn claude_codes_quota_probe_is_bookkeeping() {
+        use tgv_protocol::activity::RequestActivity;
+        let probe = RequestActivity {
+            user_text: vec!["quota".to_owned()],
+            max_output_tokens: Some(1),
+            ..RequestActivity::default()
+        };
+        assert_eq!(Harness::ClaudeCode.purpose(&probe), CallPurpose::QuotaProbe);
+        let read = InterpretedCall::new(
+            Some(Harness::ClaudeCode),
+            Reading {
+                request: probe.clone(),
+                response: Default::default(),
+            },
+        );
+        assert_eq!(read.purpose, CallPurpose::QuotaProbe);
+        // Its message is the client's, not the user's.
+        assert_eq!(read.prompt, None);
+        assert_eq!(read.user_text, ["quota"]);
+        // A user who asks about their quota is working, whatever the
+        // output limit; so is any other client, or an unknown one.
+        let asked = RequestActivity {
+            max_output_tokens: Some(32_000),
+            ..probe.clone()
+        };
+        assert_eq!(Harness::ClaudeCode.purpose(&asked), CallPurpose::Work);
+        let longer = RequestActivity {
+            user_text: vec!["quota left?".to_owned()],
+            ..probe.clone()
+        };
+        assert_eq!(Harness::ClaudeCode.purpose(&longer), CallPurpose::Work);
+        for harness in [Harness::Codex, Harness::Pi] {
+            assert_eq!(harness.purpose(&probe), CallPurpose::Work);
+        }
+        let unknown = InterpretedCall::new(
+            None,
+            Reading {
+                request: probe,
+                response: Default::default(),
+            },
+        );
+        assert_eq!(unknown.purpose, CallPurpose::Work);
     }
 }
