@@ -11,13 +11,16 @@ repository.workspace = true
 # loginctl, the built tgv, and tailscale, and reads configuration through
 # tgv-daemon's own parser.
 [dependencies]
+axum.workspace = true
 clap.workspace = true
+futures-util.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true
 tgv-daemon.workspace = true
 tgv-harness.workspace = true
 thiserror.workspace = true
+tokio = { workspace = true, features = ["macros", "net", "rt-multi-thread", "time"] }
 toml.workspace = true
 
 [lints]
