@@ -1974,7 +1974,13 @@ td.zero {
 .session-line {
   display: flex;
   align-items: center;
+  min-width: 0;
   min-height: 16px;
+}
+/* A long session name shrinks to an ellipsis; the caller after it keeps its width. */
+.session-line > .session-filter {
+  min-width: 0;
+  overflow: hidden;
 }
 /* Phones: the list and the selected call are separate screens. */
 @media (max-width: 760px) {
@@ -2241,6 +2247,7 @@ td.zero {
   cursor: pointer;
 }
 .caller-line {
+  flex: none;
   white-space: nowrap;
 }
 .session-filter:hover {
