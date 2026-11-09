@@ -236,6 +236,12 @@ impl TgvReply {
                 message: "this session is blocked by the TGV operator".into(),
                 retry: ClientRetry::Never,
             },
+            Rejection::UserBlocked => Self {
+                status: StatusCode::FORBIDDEN,
+                code: "user_blocked",
+                message: "this user is blocked by the TGV operator".into(),
+                retry: ClientRetry::Never,
+            },
             Rejection::Blocked { rule, reason } => Self {
                 status: StatusCode::FORBIDDEN,
                 code: "blocked",
@@ -408,6 +414,7 @@ impl<U: Upstream> Gateway<U> {
             self.clock.clone(),
             management.token,
             management.control.tailscale_logins,
+            self.config.users.clone(),
             management.backup,
         );
         self.forwarding_router()
@@ -575,6 +582,7 @@ impl<U: Upstream> Gateway<U> {
                         started.call(),
                         Transport::Http,
                         session,
+                        call.caller.user().cloned(),
                         Cancel::Http(operator_cancel.clone()),
                     ));
                     tap = Some(started.clone());

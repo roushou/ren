@@ -270,3 +270,60 @@ async fn an_entry_for_some_users_refuses_everyone_else_before_forwarding() {
         ]
     );
 }
+
+fn control(gateway: &TestGateway, path: &str) -> reqwest::RequestBuilder {
+    client()
+        .post(format!("{}/control/v1/{path}", gateway.base()))
+        .bearer_auth(TestGateway::CONTROL_TOKEN)
+}
+
+#[tokio::test]
+async fn an_operator_blocks_a_user_at_once_and_unblocks_them() {
+    let reached = Arc::new(AtomicUsize::new(0));
+    let mock = mock(upstream(reached.clone())).await;
+    let dir = tempfile::tempdir().unwrap();
+    let tokens = tokens();
+    let gateway = TestGateway::start(&config(&mock, &tokens), dir.path()).await;
+    let bob: &[(&str, &str)] = &[(Users::TOKEN_HEADER, tokens.bob.expose())];
+
+    let blocked = control(&gateway, "users/bob/block").send().await.unwrap();
+    assert_eq!(blocked.status(), StatusCode::OK);
+    let refused = post(&gateway, bob).await;
+    assert_eq!(refused.status(), StatusCode::FORBIDDEN);
+    assert_eq!(refused.headers()["x-should-retry"], "false");
+    // Other callers are unaffected.
+    assert_eq!(post(&gateway, &[]).await.status(), StatusCode::OK);
+    let health: serde_json::Value = serde_json::from_str(
+        &client()
+            .get(format!("{}/health", gateway.base()))
+            .send()
+            .await
+            .unwrap()
+            .text()
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(health["operator"]["blocked_users"], 1);
+    // Only configured users can be blocked.
+    assert_eq!(
+        control(&gateway, "users/carol/block")
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::NOT_FOUND
+    );
+    let unblocked = control(&gateway, "users/bob/unblock").send().await.unwrap();
+    assert_eq!(unblocked.status(), StatusCode::OK);
+    assert_eq!(post(&gateway, bob).await.status(), StatusCode::OK);
+    gateway.stop().await;
+    assert_eq!(reached.load(Ordering::SeqCst), 2);
+
+    let calls = recorded(dir.path()).await;
+    let rejections: Vec<_> = calls
+        .iter()
+        .map(|call| call.rejection.as_ref().and_then(Stored::known))
+        .collect();
+    assert_eq!(rejections, [None, None, Some(CallRejection::UserBlocked)]);
+}

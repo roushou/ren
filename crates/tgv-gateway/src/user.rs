@@ -209,6 +209,11 @@ impl Users {
         &self.configs
     }
 
+    /// Whether `user` is configured.
+    pub fn knows(&self, user: &UserId) -> bool {
+        self.configs.iter().any(|config| &config.id == user)
+    }
+
     /// Who sent a request, from its headers. A presented token must be
     /// valid, and must name the same user as a listed Tailscale login.
     /// Comparing digests reveals nothing usable about a token: finding one

@@ -121,11 +121,12 @@ struct Health<'a> {
 }
 
 /// The operator state as `/health` reports it: the pause, and how many
-/// session blocks are in force now.
+/// session and user blocks are in force now.
 #[derive(Serialize)]
 struct OperatorSummary {
     pause: Pause,
     blocked_sessions: usize,
+    blocked_users: usize,
 }
 
 #[derive(Serialize)]
@@ -280,9 +281,11 @@ impl ApiState {
                 build: &state.build,
                 operator: {
                     let snapshot = state.controls.snapshot();
+                    let now = state.clock.now().wall;
                     OperatorSummary {
                         pause: snapshot.pause(),
-                        blocked_sessions: snapshot.blocked_sessions(state.clock.now().wall),
+                        blocked_sessions: snapshot.blocked_sessions(now),
+                        blocked_users: snapshot.blocked_users(now),
                     }
                 },
                 recorder,

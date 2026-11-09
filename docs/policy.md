@@ -158,21 +158,25 @@ tgv control pause --retry-after 30
 tgv control resume
 tgv control block <session-uuid> --for 600
 tgv control unblock <session-uuid>
+tgv control block-user <user-id> --for 3600
+tgv control unblock-user <user-id>
 tgv control cancel <call-id> --block-session 60
 tgv control backup
 ```
 
 A pause answers every new call with `503` and `retry-after`, so clients wait. A
-blocked session's calls get a non-retryable `403`. Cancelling a call before its
+blocked session's calls get a non-retryable `403`, as do a blocked
+[named user](#named-users)'s, recorded as `user_blocked`; only configured users
+can be blocked, and their running calls continue. Cancelling a call before its
 response starts answers it with a TGV error (`409`, `x-should-retry: false`);
 once output is flowing, an HTTP stream is interrupted, and a Codex WebSocket call
 is sent `response.interrupt`, with the answer kept from the client. Paused and
 blocked Codex WebSocket calls get an `error` event of type `tgv_*`. See
 [Recording](recording.md#backup) for `backup`.
 
-Pauses and session blocks survive a restart: the daemon restores the state the
+Pauses and session and user blocks survive a restart: the daemon restores the state the
 last recorded command made, logs a warning saying so, and keeps counting
-revisions. Run `tgv control resume` or `unblock` to clear them. A command is
+revisions. Run `tgv control resume`, `unblock`, or `unblock-user` to clear them. A command is
 durable once the recorder commits it, shortly after the API answers; a crash in
 between loses the command and its record together. If the stored state cannot be
 read, the daemon refuses to start rather than starting unpaused.

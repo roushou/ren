@@ -208,6 +208,8 @@ pub enum Rejection {
         retry_after: RetryAfter,
     },
     SessionBlocked,
+    /// An operator block on the calling user.
+    UserBlocked,
     Blocked {
         rule: RuleId,
         reason: String,
@@ -264,6 +266,7 @@ impl Rejection {
         match self {
             Self::Paused { .. } => CallRejection::Paused,
             Self::SessionBlocked => CallRejection::SessionBlocked,
+            Self::UserBlocked => CallRejection::UserBlocked,
             Self::Blocked { .. } => CallRejection::Blocked,
             Self::UserNotAllowed { .. } => CallRejection::UserNotAllowed,
         }
@@ -517,6 +520,12 @@ impl Policy {
             .is_some_and(|session| operator.blocks(session, facts.now))
         {
             return Admission::Reject(Rejection::SessionBlocked);
+        }
+        if facts
+            .user
+            .is_some_and(|user| operator.blocks_user(user, facts.now))
+        {
+            return Admission::Reject(Rejection::UserBlocked);
         }
         if !self.admits(facts.upstream, facts.user) {
             return Admission::Reject(Rejection::UserNotAllowed {

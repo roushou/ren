@@ -1,5 +1,5 @@
-//! Operator controls: pause, session blocks, and cancelling a running
-//! call. The daemon's control API exposes them.
+//! Operator controls: pause, session and user blocks, and cancelling a
+//! running call. The daemon's control API exposes them.
 //!
 //! [`Controls`] holds the current [`OperatorState`] snapshot and the calls an
 //! operator can cancel. The gateway plans every call against one snapshot and
@@ -22,7 +22,7 @@ use std::{
     sync::{Arc, Mutex, PoisonError, RwLock},
 };
 use tgv_protocol::{native::NativeSessionId, route::Transport};
-use tgv_recorder::{Recorder, batch::Actor, id::CallId};
+use tgv_recorder::{Recorder, batch::Actor, caller::UserId, id::CallId};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
@@ -66,6 +66,7 @@ impl Cancel {
 struct Running {
     transport: Transport,
     session: Option<NativeSessionId>,
+    user: Option<UserId>,
     cancel: Cancel,
 }
 
@@ -74,6 +75,8 @@ struct Running {
 pub struct RunningCall {
     pub call: CallId,
     pub transport: Transport,
+    /// The named user who made it, if any.
+    pub user: Option<UserId>,
 }
 
 /// The operator state and the running calls.
@@ -111,7 +114,7 @@ impl Controls {
     ) -> Result<Arc<OperatorState>, ControlError> {
         let mut state = self.state.write().unwrap_or_else(PoisonError::into_inner);
         let slot = recorder.operator_slot().ok_or(ControlError::Unrecorded)?;
-        let next = Arc::new(state.apply(command));
+        let next = Arc::new(state.apply(command.clone()));
         slot.record(next.revision(), actor, &command, next.as_ref())
             .map_err(|_| ControlError::Unrecordable)?;
         *state = next.clone();
@@ -124,6 +127,7 @@ impl Controls {
         call: CallId,
         transport: Transport,
         session: Option<NativeSessionId>,
+        user: Option<UserId>,
         cancel: Cancel,
     ) -> Registered {
         self.running_calls().insert(
@@ -131,6 +135,7 @@ impl Controls {
             Running {
                 transport,
                 session,
+                user,
                 cancel,
             },
         );
@@ -165,6 +170,7 @@ impl Controls {
             .map(|(call, running)| RunningCall {
                 call: *call,
                 transport: running.transport,
+                user: running.user.clone(),
             })
             .collect();
         calls.sort_by_key(|running| running.call);
@@ -204,7 +210,13 @@ mod tests {
         let controls = Arc::new(Controls::default());
         let call = CallId::restore(Uuid::from_u128(1));
         let token = CancellationToken::new();
-        let guard = controls.register(call, Transport::Http, None, Cancel::Http(token.clone()));
+        let guard = controls.register(
+            call,
+            Transport::Http,
+            None,
+            None,
+            Cancel::Http(token.clone()),
+        );
         assert_eq!(controls.running().len(), 1);
         assert_eq!(controls.cancel(call), Ok(None));
         assert!(token.is_cancelled());

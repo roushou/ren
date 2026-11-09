@@ -156,6 +156,8 @@ pub enum CallRejection {
     Paused,
     /// An operator session block applied (non-retryable `403`).
     SessionBlocked,
+    /// An operator block on the calling user applied (non-retryable `403`).
+    UserBlocked,
     /// A configured block rule applied (non-retryable `403`).
     Blocked,
     /// TGV shut down while the request body was still arriving (`503`).

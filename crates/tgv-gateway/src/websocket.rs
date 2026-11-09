@@ -495,6 +495,10 @@ impl Relay {
                 "tgv_session_blocked",
                 "this session is blocked by the TGV operator".to_owned(),
             ),
+            Rejection::UserBlocked => (
+                "tgv_user_blocked",
+                "this user is blocked by the TGV operator".to_owned(),
+            ),
             Rejection::Blocked { rule, reason } => (
                 "tgv_blocked",
                 format!("blocked by TGV policy rule {}: {reason}", rule.as_str()),
@@ -704,6 +708,7 @@ impl Relay {
             tap.call(),
             Transport::WebSocket,
             session,
+            self.call.caller.user().cloned(),
             Cancel::WebSocket {
                 slot,
                 relay: self.interrupts.clone(),

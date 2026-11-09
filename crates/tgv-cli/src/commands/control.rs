@@ -11,7 +11,7 @@ use reqwest::Method;
 use std::process::ExitCode;
 use tgv_gateway::ControlToken;
 use tgv_protocol::native::NativeSessionId;
-use tgv_recorder::id::CallId;
+use tgv_recorder::{caller::UserId, id::CallId};
 use uuid::Uuid;
 
 /// Pause, block, and cancel through the running daemon (operator controls).
@@ -34,6 +34,10 @@ enum ControlAction {
     /// Refuse a client session's calls (non-retryable 403).
     Block(BlockArgs),
     Unblock(SessionArg),
+    /// Refuse a named user's new calls (non-retryable 403), effective at
+    /// once; running calls continue.
+    BlockUser(BlockUserArgs),
+    UnblockUser(UserArg),
     /// Stop a running call.
     Cancel(CancelArgs),
     /// Copy the history into <data-dir>/backup while the daemon runs. Only
@@ -59,6 +63,21 @@ struct SessionArg {
 struct BlockArgs {
     #[command(flatten)]
     session: SessionArg,
+    /// Block for this many seconds; without it, until unblocked.
+    #[arg(long = "for")]
+    duration: Option<u64>,
+}
+
+#[derive(Args)]
+struct UserArg {
+    /// A user id from the daemon's [[users]].
+    user: UserId,
+}
+
+#[derive(Args)]
+struct BlockUserArgs {
+    #[command(flatten)]
+    user: UserArg,
     /// Block for this many seconds; without it, until unblocked.
     #[arg(long = "for")]
     duration: Option<u64>,
@@ -156,6 +175,12 @@ impl ControlAction {
                 format!("sessions/{}/unblock", args.session.as_uuid()),
                 None,
             ),
+            Self::BlockUser(args) => (
+                Method::POST,
+                format!("users/{}/block", args.user.user),
+                Some(serde_json::json!({ "duration_seconds": args.duration })),
+            ),
+            Self::UnblockUser(args) => (Method::POST, format!("users/{}/unblock", args.user), None),
             Self::Cancel(args) => (
                 Method::POST,
                 format!("calls/{}/cancel", args.call),

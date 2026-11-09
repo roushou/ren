@@ -531,7 +531,7 @@ async fn pause_and_session_blocks_refuse_calls_and_are_recorded() {
     let reported: serde_json::Value = health(&gateway).await;
     assert_eq!(
         reported["operator"],
-        serde_json::json!({ "pause": { "state": "paused", "retry_after": 30 }, "blocked_sessions": 0 })
+        serde_json::json!({ "pause": { "state": "paused", "retry_after": 30 }, "blocked_sessions": 0, "blocked_users": 0 })
     );
     assert_eq!(
         control(&gateway, "resume").send().await.unwrap().status(),
