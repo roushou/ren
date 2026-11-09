@@ -374,7 +374,8 @@ pub struct Gateway<U> {
     admission: Arc<Semaphore>,
     /// Upgraded WebSocket channels; separate from call admission.
     channels: Arc<Semaphore>,
-    /// Each caller's own limit, checked before call admission.
+    /// Each caller's own limit, checked before call admission (so a caller
+    /// over it gets 429, not 503).
     user_limits: UserLimits,
     shutdown: Shutdown,
 }
@@ -510,9 +511,6 @@ impl<U: Upstream> Gateway<U> {
         if self.shutdown.is_draining() {
             return GatewayError::ShuttingDown.into_response();
         }
-        let Ok(admission) = self.admission.clone().try_acquire_owned() else {
-            return GatewayError::Busy.into_response();
-        };
         // Attribution and identity read TGV's local headers and Serve's
         // identity before the policy removes them.
         let attribution = Harness::attribution(route.harness, &parts.headers);
@@ -536,7 +534,9 @@ impl<U: Upstream> Gateway<U> {
                 .reject(None, call, None, CallRejection::IdentityRefused);
             return TgvReply::unidentified(&refused).into_response();
         }
-        // Held until the response ends, like the call's admission.
+        // A caller's own limit comes first, so a caller over it is told so
+        // (429) rather than seeing the gateway as busy. Held until the
+        // response ends, like the call's admission.
         let mut user_permit = match self.user_limits.admit(&call.caller) {
             Ok(permit) => permit,
             Err(AtLimit) => {
@@ -544,6 +544,9 @@ impl<U: Upstream> Gateway<U> {
                     .reject(None, call, None, CallRejection::UserBusy);
                 return TgvReply::user_busy().into_response();
             }
+        };
+        let Ok(admission) = self.admission.clone().try_acquire_owned() else {
+            return GatewayError::Busy.into_response();
         };
         let abort = self.shutdown.abort_token();
         // Reading is the one await before the call has a tap; a handler
@@ -787,12 +790,6 @@ impl<U: Upstream> Gateway<U> {
         if self.shutdown.is_draining() {
             return GatewayError::ShuttingDown.into_response();
         }
-        let Ok(channel_permit) = self.channels.clone().try_acquire_owned() else {
-            return Self::handshake_refused("WebSocket channel limit reached; use HTTP/SSE\n");
-        };
-        let Ok(admission) = self.admission.clone().try_acquire_owned() else {
-            return GatewayError::Busy.into_response();
-        };
         let (mut parts, _body) = request.into_parts();
         // The client leg's key, reused upstream. Axum answers HTTP/2 extended
         // CONNECT without one; the upstream leg needs HTTP/1.1, so refuse it.
@@ -825,11 +822,18 @@ impl<U: Upstream> Gateway<U> {
                 .reject(None, start, None, CallRejection::IdentityRefused);
             return TgvReply::unidentified(&refused).into_response();
         }
-        // A channel counts as one call of its user's for its whole life.
+        // A channel counts as one call of its user's for its whole life. A
+        // caller's own limit comes before the gateway's, as on HTTP.
         let Ok(user_permit) = self.user_limits.admit(&start.caller) else {
             return Self::handshake_refused(
                 "WebSocket limit for this caller reached; use HTTP/SSE\n",
             );
+        };
+        let Ok(channel_permit) = self.channels.clone().try_acquire_owned() else {
+            return Self::handshake_refused("WebSocket channel limit reached; use HTTP/SSE\n");
+        };
+        let Ok(admission) = self.admission.clone().try_acquire_owned() else {
+            return GatewayError::Busy.into_response();
         };
         // WebSocket channels are pinned to the route's entry.
         let upstream = bound.upstream.clone();

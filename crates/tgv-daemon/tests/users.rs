@@ -385,6 +385,55 @@ async fn a_user_at_its_limit_gets_429_until_a_call_ends() {
     assert_eq!((calls.len(), busy), (4, 1));
 }
 
+/// A caller over its own limit is told so (429) even when the gateway is
+/// full too; only a caller within its limit sees the gateway busy (503).
+#[tokio::test]
+async fn a_callers_own_limit_is_checked_before_the_gateways() {
+    let reached = Arc::new(AtomicUsize::new(0));
+    let gate = Arc::new(tokio::sync::Notify::new());
+    let held = gate.clone();
+    let counter = reached.clone();
+    let app = Router::new().fallback(move || {
+        let gate = held.clone();
+        let reached = counter.clone();
+        async move {
+            reached.fetch_add(1, Ordering::SeqCst);
+            gate.notified().await;
+            "done"
+        }
+    });
+    let mock = mock(app).await;
+    let dir = tempfile::tempdir().unwrap();
+    let tokens = tokens();
+    let mut config = config(&mock, &tokens);
+    config.max_concurrent_requests = 1;
+    config.users[1].max_concurrent = std::num::NonZeroU32::new(1);
+    let gateway = TestGateway::start(&config, dir.path()).await;
+    let bob: &[(&str, &str)] = &[(UserToken::HEADER, tokens.bob.expose())];
+
+    let first = {
+        let request = post(&gateway, bob);
+        async move { request.await.status() }
+    };
+    let second = async {
+        while reached.load(Ordering::SeqCst) == 0 {
+            tokio::task::yield_now().await;
+        }
+        assert_eq!(
+            post(&gateway, bob).await.status(),
+            StatusCode::TOO_MANY_REQUESTS
+        );
+        assert_eq!(
+            post(&gateway, &[]).await.status(),
+            StatusCode::SERVICE_UNAVAILABLE
+        );
+        gate.notify_one();
+    };
+    let (first, ()) = tokio::join!(first, second);
+    assert_eq!(first, StatusCode::OK);
+    gateway.stop().await;
+}
+
 #[tokio::test]
 async fn the_read_api_says_how_it_identifies_a_caller() {
     let mock = mock(upstream(Arc::default())).await;

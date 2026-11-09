@@ -137,9 +137,9 @@ and the top-level `max_concurrent_unnamed` caps those of every caller that is
 not a named user, together. A call over its caller's limit gets `429` with
 `retry-after: 1` (`tgv_user_busy`), recorded as rejection `user_busy`; a
 WebSocket channel counts as one call for its whole life, and a handshake over
-the limit gets `426`, so Codex falls back to HTTP. The gateway's own
-`max_concurrent_requests` applies to everyone and is checked first: a call it
-refuses gets `503` whatever its caller's limit.
+the limit gets `426`, so Codex falls back to HTTP. A caller's limit
+is checked before the gateway's own `max_concurrent_requests`, which still applies
+to everyone: a caller over its limit gets `429` even when the gateway is full.
 
 An operator-key entry can be limited to some users:
 
