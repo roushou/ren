@@ -303,4 +303,27 @@ mod tests {
         };
         assert!(Traffic::call(0, Run(1), &silent, "t").is_none());
     }
+
+    #[test]
+    fn every_harness_gets_the_same_share_of_errors() {
+        // The default mix: 5% of calls are an error or a rate limit, for
+        // every harness alike.
+        let settings = Settings::default();
+        let mut by_harness = std::collections::BTreeMap::<String, (u32, u32)>::new();
+        for n in 0..20_000 {
+            let call = Traffic::call(n, Run(1), &settings, "tgvu_fixture").unwrap();
+            let failing =
+                call.body.contains("\"fake-error\"") || call.body.contains("\"fake-429\"");
+            let entry = by_harness.entry(call.path.clone()).or_default();
+            entry.0 += 1;
+            entry.1 += u32::from(failing);
+        }
+        for (path, (calls, failing)) in by_harness {
+            let share = f64::from(failing) / f64::from(calls);
+            assert!(
+                (0.03..0.07).contains(&share),
+                "{path}: {failing} of {calls}"
+            );
+        }
+    }
 }
