@@ -162,6 +162,7 @@ export function storageViewFixture(): StorageView {
 export const healthFixture = (overrides: Partial<RecorderMetrics> = {}): Health => ({
   status: overrides.storage_errors ? 'degraded' : 'ok',
   build: { version: '0.1.0', revision: { kind: 'unknown' } },
+  instance: { environment: 'production' },
   operator: { pause: { state: 'running' }, blocked_sessions: 0 },
   recorder: recorderFixture(overrides),
 });

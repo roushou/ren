@@ -8,9 +8,9 @@ use std::{
     time::Duration,
 };
 use tgv_gateway::{
-    BufferOptions, ConfiguredEntry, ControlOptions, EntryIngress, GatewayConfig, NativeUrls,
-    OperatorKey, TransportTimeouts, UpstreamAuth, UpstreamEntry, UpstreamTable, UpstreamUrl,
-    WebSocketOptions,
+    BufferOptions, ConfiguredEntry, ControlOptions, EntryIngress, GatewayConfig, InstanceOptions,
+    NativeUrls, OperatorKey, TransportTimeouts, UpstreamAuth, UpstreamEntry, UpstreamTable,
+    UpstreamUrl, WebSocketOptions,
     policy::{EntryUsers, Policy, PolicyConfig},
     user::{UserConfig, Users},
 };
@@ -119,6 +119,8 @@ pub struct Config {
     /// The gateway's named users, each proven by a Tailscale login or a
     /// user token.
     pub users: Vec<UserConfig>,
+    /// Whether this is a production or a development instance.
+    pub instance: InstanceOptions,
 }
 
 /// An operator-key upstream entry. The key is read from the daemon's
@@ -202,6 +204,7 @@ impl Default for Config {
             policy: PolicyConfig::default(),
             control: ControlOptions::default(),
             users: Vec::new(),
+            instance: InstanceOptions::default(),
         }
     }
 }
@@ -281,6 +284,7 @@ impl Config {
             upstreams,
             policy,
             users,
+            instance: self.instance,
             max_concurrent_requests: self.max_concurrent_requests,
             max_concurrent_unnamed: self.max_concurrent_unnamed,
             connect_timeout: Duration::from_secs(self.connect_timeout_seconds),
@@ -381,6 +385,7 @@ pub struct RuntimeConfig {
     upstreams: UpstreamTable,
     policy: Policy,
     users: Users,
+    instance: InstanceOptions,
     max_concurrent_requests: usize,
     max_concurrent_unnamed: Option<u32>,
     connect_timeout: Duration,
@@ -403,6 +408,9 @@ impl RuntimeConfig {
     }
     pub fn control(&self) -> &ControlOptions {
         &self.control
+    }
+    pub fn instance(&self) -> InstanceOptions {
+        self.instance
     }
     /// The gateway's settings from this snapshot.
     pub fn gateway(&self) -> GatewayConfig {

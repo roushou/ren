@@ -28,6 +28,8 @@
   });
   const gateway = createSnapshot(() => data.gateway);
   const health = $derived(gateway.current.value?.health);
+  // The gateway says whether it is a development instance; the UI only shows it.
+  const development = $derived(health?.instance.environment === 'development');
   const storage = $derived(gateway.current.value?.storage);
   const view = $derived(
     page.route.id === '/'
@@ -191,7 +193,10 @@
       ><span class="flaps" aria-hidden="true"
         ><span class="flap">T</span><span class="flap">G</span><span class="flap">V</span></span
       ></a
-    >
+    >{#if development}<span
+        class="dev-mark"
+        title="This gateway is a development instance, not the installed service">Dev</span
+      >{/if}
     <nav class="workbench-tabs" aria-label="Workbench views">
       <a
         href="/"

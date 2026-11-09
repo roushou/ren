@@ -529,6 +529,7 @@ async fn pause_and_session_blocks_refuse_calls_and_are_recorded() {
         async move { read(client().get(url).send().await.unwrap()).await }
     };
     let reported: serde_json::Value = health(&gateway).await;
+    assert_eq!(reported["instance"]["environment"], "production");
     assert_eq!(
         reported["operator"],
         serde_json::json!({ "pause": { "state": "paused", "retry_after": 30 }, "blocked_sessions": 0, "blocked_users": 0 })

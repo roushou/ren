@@ -6,3 +6,4 @@ api::preview::PreviewExtent: complete partial truncated gap
 api::preview::TextEnd: intact split_character
 api::preview::DecodeIntegrity: not_decoded verified prefix failed
 upstream::EntryIngress: fallback_only direct
+instance::Environment: production development

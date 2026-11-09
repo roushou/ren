@@ -21,7 +21,7 @@ use std::{
 };
 use tgv_daemon::config::{Config, UpstreamConfig};
 use tgv_gateway::{
-    EntryIngress,
+    EntryIngress, Environment, InstanceOptions,
     user::{TokenDigest, UserConfig},
 };
 use tgv_harness::{endpoint::UserToken, host::HostEnv};
@@ -216,6 +216,9 @@ impl Slot {
                     users: None,
                 },
             ],
+            instance: InstanceOptions {
+                environment: Environment::Development,
+            },
             ..Config::default()
         })
     }
@@ -493,6 +496,10 @@ mod tests {
                 .all(|upstream| upstream.base_url.starts_with("http://127.0.0.1:18999/"))
         );
         assert!(config.listen.ip().is_loopback());
+        assert_eq!(
+            config.instance.environment,
+            tgv_gateway::Environment::Development
+        );
         assert_eq!(
             slot.data_dir,
             std::path::Path::new("/home/dev/.local/state/tgv-dev")

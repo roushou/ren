@@ -220,7 +220,9 @@ cargo xtask dev down         # stop the slot and remove the preview's routes
 | Files    | `~/.config/tgv-dev`, `~/.local/state/tgv-dev`, `~/.local/share/tgv-dev` | `~/.config/tgv`, `~/.local/state/tgv`     |
 
 The units are transient systemd user units, stopped by name. The dev
-configuration is regenerated on every `up`: every provider is the fake one, which
+configuration is regenerated on every `up`. It sets `[instance] environment =
+"development"`, which the gateway reports in `/health`: the UI shows a Dev chip
+beside its wordmark, and `tgv doctor` and `tgv run` name the instance. every provider is the fake one, which
 accepts any credentials and stores nothing, so no real credential or prompt
 reaches the slot. It names two users, `alice` (by the Tailscale login
 `alice@example.com`) and `ci` (by a fixed fake token), and two direct

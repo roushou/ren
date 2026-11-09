@@ -21,7 +21,7 @@ pub use control::{ControlOptions, ControlOptionsError, ControlToken};
 pub use route::ApiRead;
 
 use crate::build::Build;
-use crate::{control::Controls, operator::Pause, user::Users};
+use crate::{control::Controls, instance::InstanceOptions, operator::Pause, user::Users};
 use axum::{
     Json, Router,
     extract::{Path, Query, State},
@@ -53,6 +53,8 @@ pub struct ManagementSetup {
     pub token: ControlToken,
     /// What `/health` reports as the running build.
     pub build: Build,
+    /// What `/health` reports this instance to be.
+    pub instance: InstanceOptions,
 }
 
 /// What the read API reads and reports, from the management setup.
@@ -60,6 +62,7 @@ pub(crate) struct ReadSources {
     pub reader: Reader,
     pub retention: RetentionPolicy,
     pub build: Build,
+    pub instance: InstanceOptions,
 }
 
 /// What the read API reads from. It never writes.
@@ -70,6 +73,7 @@ pub(crate) struct ApiState {
     clock: Arc<dyn Clock>,
     retention: RetentionPolicy,
     build: Build,
+    instance: InstanceOptions,
     previews: Arc<Semaphore>,
     exports: Arc<Semaphore>,
     shutdown: CancellationToken,
@@ -124,6 +128,8 @@ pub enum ErrorCode {
 struct Health<'a> {
     status: HealthStatus,
     build: &'a Build,
+    /// Production or development, as configured.
+    instance: InstanceOptions,
     /// Whether new calls are admitted, read-only: changing it takes the
     /// control API.
     operator: OperatorSummary,
@@ -233,6 +239,7 @@ impl ApiState {
             reader,
             retention,
             build,
+            instance,
         } = sources;
         Self {
             reader,
@@ -241,6 +248,7 @@ impl ApiState {
             clock,
             retention,
             build,
+            instance,
             previews: Arc::new(Semaphore::new(Self::PREVIEW_PERMITS)),
             exports: Arc::new(Semaphore::new(Self::EXPORT_PERMITS)),
             shutdown,
@@ -295,6 +303,7 @@ impl ApiState {
             Self::versioned(Health {
                 status,
                 build: &state.build,
+                instance: state.instance,
                 operator: {
                     let snapshot = state.controls.snapshot();
                     let now = state.clock.now().wall;
