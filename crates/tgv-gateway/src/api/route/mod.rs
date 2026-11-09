@@ -163,6 +163,7 @@ impl ApiRead {
             .opt("after", query.after.as_ref())
             .opt("session", filter.session.as_ref())
             .opt("client", filter.client.map(|client| client.label()))
+            .opt("user", filter.user.as_ref())
             .opt("kind", filter.kind.map(|kind| kind.label()))
             .opt("provider", filter.provider.map(|provider| provider.label()))
             .opt("model", filter.model.as_ref().map(|value| value.as_str()))

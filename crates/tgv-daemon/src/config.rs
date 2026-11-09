@@ -11,13 +11,15 @@ use tgv_gateway::{
     BufferOptions, ConfiguredEntry, ControlOptions, EntryIngress, GatewayConfig, NativeUrls,
     OperatorKey, TransportTimeouts, UpstreamAuth, UpstreamEntry, UpstreamTable, UpstreamUrl,
     WebSocketOptions,
-    policy::{Policy, PolicyConfig},
+    policy::{EntryUsers, Policy, PolicyConfig},
+    user::{UserConfig, Users},
 };
 use tgv_harness::host::HostEnv;
 use tgv_protocol::route::{Api, Provider, UnsupportedWire, Wire};
 use tgv_recorder::retention::RetentionPolicy;
 use tgv_recorder::{
     CaptureOptions,
+    caller::UserId,
     routing::{ConfigRevision, UpstreamId},
 };
 
@@ -33,7 +35,7 @@ pub enum ConfigError {
     Version,
     #[error("listen must be loopback; use Tailscale Serve for private remote access")]
     PublicListener,
-    #[error("max_concurrent_requests must be between 1 and 1024")]
+    #[error("max_concurrent_requests and max_concurrent_unnamed must be between 1 and 1024")]
     Concurrency,
     #[error("timeouts must be between 1 and 3600 seconds")]
     Timeout,
@@ -56,12 +58,18 @@ pub enum ConfigError {
     ProviderUrl(#[from] tgv_gateway::UpstreamConfigError),
     #[error("upstream {id}: {source}")]
     Wire { id: String, source: UnsupportedWire },
+    #[error("upstream {upstream}: users names {user}, which no [[users]] entry is")]
+    UnknownEntryUser { upstream: String, user: String },
+    #[error("upstream {0}: users is empty, so no caller could use it; omit it to admit anyone")]
+    EmptyEntryUsers(String),
     #[error("upstream {0}: the Codex backend accepts no operator keys")]
     CodexOperatorKey(String),
     #[error(transparent)]
     Upstreams(#[from] tgv_gateway::UpstreamTableError),
     #[error(transparent)]
     Policy(#[from] tgv_gateway::policy::PolicyError),
+    #[error(transparent)]
+    Users(#[from] tgv_gateway::user::UsersError),
     #[error("operator key variable {name} for upstream {upstream} is not set")]
     MissingKey { name: String, upstream: String },
     #[error("operator key variable {0} is not a valid header value")]
@@ -92,6 +100,10 @@ pub struct Config {
     pub openai_base_url: String,
     pub deepseek_base_url: String,
     pub max_concurrent_requests: usize,
+    /// Calls callers that are not named users may have running at once,
+    /// together.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_concurrent_unnamed: Option<u32>,
     pub connect_timeout_seconds: u64,
     pub response_header_timeout_seconds: u64,
     pub stream_idle_timeout_seconds: u64,
@@ -104,6 +116,9 @@ pub struct Config {
     pub buffer: BufferOptions,
     pub policy: PolicyConfig,
     pub control: ControlOptions,
+    /// The gateway's named users, each proven by a Tailscale login or a
+    /// user token.
+    pub users: Vec<UserConfig>,
 }
 
 /// An operator-key upstream entry. The key is read from the daemon's
@@ -123,9 +138,32 @@ pub struct UpstreamConfig {
     /// Whether the entry has routes of its own; fallback only when omitted.
     #[serde(default, skip_serializing_if = "EntryIngress::is_fallback_only")]
     pub ingress: EntryIngress,
+    /// The named users who may use the entry; anyone when omitted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub users: Option<Vec<UserId>>,
 }
 
 impl UpstreamConfig {
+    /// Who may use the entry. Every name must be a configured user.
+    fn users(&self, known: &[UserConfig]) -> Result<EntryUsers, ConfigError> {
+        let Some(users) = &self.users else {
+            return Ok(EntryUsers::Anyone);
+        };
+        if users.is_empty() {
+            return Err(ConfigError::EmptyEntryUsers(self.id.to_string()));
+        }
+        if let Some(unknown) = users
+            .iter()
+            .find(|user| !known.iter().any(|config| &config.id == *user))
+        {
+            return Err(ConfigError::UnknownEntryUser {
+                upstream: self.id.to_string(),
+                user: unknown.to_string(),
+            });
+        }
+        Ok(EntryUsers::Only(users.clone()))
+    }
+
     /// The provider's API in the configured wire format, or its native API.
     fn api(&self) -> Result<Api, ConfigError> {
         match self.wire {
@@ -152,6 +190,7 @@ impl Default for Config {
             openai_base_url: "https://api.openai.com".into(),
             deepseek_base_url: "https://api.deepseek.com/anthropic".into(),
             max_concurrent_requests: 32,
+            max_concurrent_unnamed: None,
             connect_timeout_seconds: 10,
             response_header_timeout_seconds: 120,
             stream_idle_timeout_seconds: 120,
@@ -162,6 +201,7 @@ impl Default for Config {
             buffer: BufferOptions::default(),
             policy: PolicyConfig::default(),
             control: ControlOptions::default(),
+            users: Vec::new(),
         }
     }
 }
@@ -221,6 +261,7 @@ impl Config {
                 Ok(ConfiguredEntry {
                     entry,
                     ingress: upstream.ingress,
+                    users: upstream.users(&self.users)?,
                 })
             })
             .collect::<Result<Vec<_>, ConfigError>>()?;
@@ -234,11 +275,14 @@ impl Config {
             extra,
         )?;
         let policy = Policy::new(self.policy.clone(), &upstreams.summaries())?;
+        let users = Users::new(self.users.clone())?;
         Ok(RuntimeConfig {
             listen: self.listen,
             upstreams,
             policy,
+            users,
             max_concurrent_requests: self.max_concurrent_requests,
+            max_concurrent_unnamed: self.max_concurrent_unnamed,
             connect_timeout: Duration::from_secs(self.connect_timeout_seconds),
             response_header_timeout: Duration::from_secs(self.response_header_timeout_seconds),
             stream_idle_timeout: Duration::from_secs(self.stream_idle_timeout_seconds),
@@ -285,7 +329,11 @@ impl Config {
         if !self.listen.ip().is_loopback() {
             return Err(ConfigError::PublicListener);
         }
-        if !(1..=1024).contains(&self.max_concurrent_requests) {
+        if !(1..=1024).contains(&self.max_concurrent_requests)
+            || self
+                .max_concurrent_unnamed
+                .is_some_and(|limit| !(1..=1024).contains(&limit))
+        {
             return Err(ConfigError::Concurrency);
         }
         if [
@@ -332,7 +380,9 @@ pub struct RuntimeConfig {
     listen: SocketAddr,
     upstreams: UpstreamTable,
     policy: Policy,
+    users: Users,
     max_concurrent_requests: usize,
+    max_concurrent_unnamed: Option<u32>,
     connect_timeout: Duration,
     response_header_timeout: Duration,
     stream_idle_timeout: Duration,
@@ -365,6 +415,8 @@ impl RuntimeConfig {
             buffer: self.buffer,
             policy: self.policy.clone(),
             upstreams: self.upstreams.clone(),
+            users: self.users.clone(),
+            max_concurrent_unnamed: self.max_concurrent_unnamed,
         }
     }
     /// Lifecycle records the recorder reserves at once: every admitted call,
@@ -425,6 +477,49 @@ mod tests {
     }
 
     #[test]
+    fn users_parse_and_a_duplicate_login_is_refused() {
+        let digest = "ab".repeat(32);
+        let config: Config = toml::from_str(&format!(
+            "[[users]]\nid = \"alice\"\ntailscale_logins = [\"alice@example.com\"]\n\
+             [[users]]\nid = \"ci\"\ntoken_blake3 = \"{digest}\"\n"
+        ))
+        .unwrap();
+        config.resolve().unwrap();
+        let config: Config = toml::from_str(
+            "[[users]]\nid = \"a\"\ntailscale_logins = [\"x@y\"]\n\
+             [[users]]\nid = \"b\"\ntailscale_logins = [\"x@y\"]\n",
+        )
+        .unwrap();
+        assert_eq!(
+            config
+                .resolve()
+                .err()
+                .map(|error| error.to_string())
+                .as_deref(),
+            Some("Tailscale login x@y belongs to two users")
+        );
+        assert!(
+            toml::from_str::<Config>("[[users]]\nid = \"Alice\"\ntailscale_logins = [\"a@b\"]\n")
+                .is_err()
+        );
+        let entry = |users: &str| -> Option<String> {
+            let config: Config = toml::from_str(&format!(
+                "[[users]]\nid = \"alice\"\ntailscale_logins = [\"a@b\"]\n\
+                 [[upstreams]]\nid = \"key\"\nprovider = \"anthropic\"\n\
+                 base_url = \"https://api.anthropic.com\"\noperator_key_env = \"K\"\n{users}"
+            ))
+            .unwrap();
+            config.check().err().map(|error| error.to_string())
+        };
+        assert_eq!(entry("users = [\"alice\"]"), None);
+        assert_eq!(
+            entry("users = [\"bob\"]").as_deref(),
+            Some("upstream key: users names bob, which no [[users]] entry is")
+        );
+        assert!(entry("users = []").is_some());
+    }
+
+    #[test]
     fn runtime_snapshot_is_independent_of_later_document_edits() {
         let mut config = Config::default();
         let revision = config.revision().unwrap();
@@ -472,6 +567,7 @@ mod tests {
                 base_url: "https://api.anthropic.com".into(),
                 operator_key_env: "TGV_FIXTURE_KEY".into(),
                 ingress: EntryIngress::FallbackOnly,
+                users: None,
             }],
             policy: toml::from_str(policy).unwrap(),
             ..Config::default()

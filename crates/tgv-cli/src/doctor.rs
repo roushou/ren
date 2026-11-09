@@ -9,7 +9,12 @@ use std::{
 };
 use tgv_daemon::config::Config;
 use tgv_gateway::build::{Build, Comparison, Revision};
-use tgv_harness::{endpoint::GatewayEndpoint, host::HostEnv};
+use tgv_harness::{
+    endpoint::{GatewayEndpoint, UserToken},
+    host::HostEnv,
+};
+use tgv_protocol::label::Stored;
+use tgv_recorder::caller::CallerKind;
 use tgv_recorder::retention::RetentionPolicy;
 use tgv_store::{Reader, query::CallQuery};
 
@@ -209,7 +214,9 @@ impl Report {
             );
         }
         match gateway.endpoint(config.listen) {
-            Ok(gateway) => report.checks.extend(Self::gateway(&gateway).await.checks),
+            Ok(gateway) => report
+                .checks
+                .extend(Self::gateway(&gateway, env).await.checks),
             Err(error) => report.add("gateway URL", Status::Failed, error.to_string()),
         }
         report.add("subscription", Status::Skipped, "sign-in, provider connectivity, and entitlement require a real client request; no inference was sent");
@@ -358,6 +365,42 @@ impl FileUsage {
     }
 }
 
+/// `/api/caller`'s answer.
+#[derive(Deserialize)]
+struct CallerResponse {
+    caller: CallerSeen,
+}
+
+/// A caller as the gateway reported it.
+#[derive(Deserialize)]
+struct CallerSeen {
+    kind: Stored<CallerKind>,
+    user: Option<String>,
+    login: Option<String>,
+}
+
+impl CallerSeen {
+    fn describe(&self) -> String {
+        let user = self.user.as_deref().unwrap_or("?");
+        let login = self.login.as_deref().unwrap_or("?");
+        match self.kind.known() {
+            Some(CallerKind::UserTailscale) => {
+                format!("calls are recorded as user {user}, by Tailscale login {login}")
+            }
+            Some(CallerKind::UserToken) => {
+                format!("calls are recorded as user {user}, by TGV_USER_TOKEN")
+            }
+            Some(CallerKind::Unlisted) => format!(
+                "calls are recorded as Tailscale login {login}, which no [[users]] entry lists"
+            ),
+            Some(CallerKind::Unidentified) => {
+                "calls are recorded as unidentified; set TGV_USER_TOKEN, or reach the gateway through Tailscale Serve, to be a named user".to_owned()
+            }
+            None => format!("the gateway reports an unknown caller kind ({})", self.kind),
+        }
+    }
+}
+
 /// The parts of `/health` doctor reports.
 #[derive(Deserialize)]
 struct HealthResponse {
@@ -427,8 +470,9 @@ impl Report {
         self.add("build", status, message);
     }
 
-    /// Diagnose a gateway through its API: health, capture, and storage.
-    pub async fn gateway(gateway: &GatewayEndpoint) -> Self {
+    /// Diagnose a gateway through its API: health, capture, storage, and
+    /// how it identifies this caller.
+    pub async fn gateway(gateway: &GatewayEndpoint, env: &HostEnv) -> Self {
         let mut report = Self::default();
         let probe = match GatewayProbe::new() {
             Ok(probe) => probe,
@@ -441,7 +485,11 @@ impl Report {
                 return report;
             }
         };
-        match probe.read::<HealthResponse>(gateway.url("/health")).await {
+        report.caller(&probe, gateway, env).await;
+        match probe
+            .read::<HealthResponse>(gateway.url("/health"), None)
+            .await
+        {
             Ok((status, health)) if status == 200 || status == 503 => {
                 report.build(&Cli::build(), health.build);
                 let health = health.recorder;
@@ -465,7 +513,7 @@ impl Report {
             Err(error) => report.add("gateway", Status::Failed, error.to_string()),
         }
         match probe
-            .read::<StorageResponse>(gateway.url("/api/storage"))
+            .read::<StorageResponse>(gateway.url("/api/storage"), None)
             .await
         {
             Ok((200, storage)) if storage.policy.validate().is_ok() => {
@@ -510,6 +558,34 @@ impl Report {
 }
 
 impl Report {
+    /// Who the gateway records this caller's calls as: by the user token in
+    /// `TGV_USER_TOKEN`, or by the Tailscale login Serve adds.
+    async fn caller(&mut self, probe: &GatewayProbe, gateway: &GatewayEndpoint, env: &HostEnv) {
+        let token = match UserToken::from_env(env) {
+            Ok(token) => token,
+            Err(error) => {
+                self.add("caller", Status::Failed, error.to_string());
+                return;
+            }
+        };
+        let answer = probe
+            .read::<CallerResponse>(gateway.url("/api/caller"), token.as_ref())
+            .await;
+        let (status, message) = match answer {
+            Ok((_, CallerResponse { caller })) => (Status::Ok, caller.describe()),
+            Err(ProbeError::Status(401)) => (
+                Status::Failed,
+                "the gateway refused this caller's identity: an unknown TGV_USER_TOKEN, or one naming another user than the Tailscale login".to_owned(),
+            ),
+            Err(ProbeError::Status(404)) => (
+                Status::Skipped,
+                "the gateway does not report callers; it predates named users".to_owned(),
+            ),
+            Err(error) => (Status::Warning, error.to_string()),
+        };
+        self.add("caller", status, message);
+    }
+
     /// How much of the finished history has its activity derived: what
     /// turns, reports, and search read.
     fn add_digests(&mut self, digested: u64, finished: u64) {
@@ -568,14 +644,16 @@ impl GatewayProbe {
 
     /// Suppress both remote response text and reqwest diagnostics: either can
     /// contain arbitrary values. The timeout covers headers and the body.
-    async fn read<T: DeserializeOwned>(&self, url: reqwest::Url) -> Result<(u16, T), ProbeError> {
-        let mut response = self
-            .client
-            .get(url)
-            .header("accept", "application/json")
-            .send()
-            .await
-            .map_err(|_| ProbeError::Unreachable)?;
+    async fn read<T: DeserializeOwned>(
+        &self,
+        url: reqwest::Url,
+        token: Option<&UserToken>,
+    ) -> Result<(u16, T), ProbeError> {
+        let mut request = self.client.get(url).header("accept", "application/json");
+        if let Some(token) = token {
+            request = request.header(UserToken::HEADER, token.expose());
+        }
+        let mut response = request.send().await.map_err(|_| ProbeError::Unreachable)?;
         let status = response.status().as_u16();
         if status != 200 && status != 503 {
             return Err(ProbeError::Status(status));

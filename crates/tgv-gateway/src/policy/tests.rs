@@ -1,6 +1,6 @@
 use super::{
-    Admission, AuthKind, CallFacts, Policy, PolicyConfig, PolicyError, Rejection, RequestJson,
-    StepOutcome, UpstreamSummary,
+    Admission, AuthKind, CallFacts, EntryUsers, Policy, PolicyConfig, PolicyError, Rejection,
+    RequestJson, StepOutcome, UpstreamSummary,
 };
 use crate::{
     operator::{OperatorCommand, OperatorState, RetryAfter},
@@ -11,7 +11,7 @@ use tgv_protocol::{
     native::NativeSessionId,
     route::{Endpoint, Provider, Transport},
 };
-use tgv_recorder::{routing::UpstreamId, time::UnixMillis};
+use tgv_recorder::{caller::UserId, routing::UpstreamId, time::UnixMillis};
 use uuid::Uuid;
 
 fn upstreams() -> Vec<UpstreamSummary> {
@@ -22,12 +22,14 @@ fn upstreams() -> Vec<UpstreamSummary> {
                 id: UpstreamId::default_for(provider),
                 provider,
                 auth: AuthKind::ClientOwned,
+                users: EntryUsers::Anyone,
             })
             .collect();
     entries.push(UpstreamSummary {
         id: UpstreamId::parse("anthropic-key").unwrap(),
         provider: Provider::Anthropic,
         auth: AuthKind::OperatorKey,
+        users: EntryUsers::Anyone,
     });
     entries
 }
@@ -45,6 +47,7 @@ fn facts(provider: Provider, model: Option<&str>) -> CallFacts<'_> {
         endpoint: Endpoint::Messages,
         model,
         session: None,
+        user: None,
         now: UnixMillis::from_millis(1_000),
     }
 }
@@ -127,6 +130,108 @@ fn a_call_sent_first_to_an_operator_key_entry_never_falls_over() {
     assert_eq!(plan.fallback, None);
     // Block and transform rules still apply to it.
     assert_eq!(plan.transforms.len(), 1);
+}
+
+#[test]
+fn an_entry_for_some_users_refuses_others_and_never_takes_their_fallback() {
+    let alice = UserId::parse("alice").unwrap();
+    let bob = UserId::parse("bob").unwrap();
+    let mut entries = upstreams();
+    for entry in &mut entries {
+        if entry.auth == AuthKind::OperatorKey {
+            entry.users = EntryUsers::Only(vec![alice.clone()]);
+        }
+    }
+    let policy = Policy::new(toml::from_str(RULES).unwrap(), &entries).unwrap();
+    let operator = OperatorState::default();
+    let key = UpstreamId::parse("anthropic-key").unwrap();
+    for (user, admitted) in [(Some(&alice), true), (Some(&bob), false), (None, false)] {
+        let direct = CallFacts {
+            upstream: &key,
+            user,
+            ..facts(Provider::Anthropic, Some("fixture-sonnet"))
+        };
+        let plan = policy.plan(&direct, &operator);
+        if admitted {
+            assert_eq!(plan.admission, Admission::Admit, "{user:?}");
+        } else {
+            assert_eq!(
+                plan.admission,
+                Admission::Reject(Rejection::UserNotAllowed {
+                    upstream: key.clone()
+                }),
+                "{user:?}"
+            );
+        }
+        // A fallback to the entry is offered only to its users.
+        let native = CallFacts {
+            user,
+            ..facts(Provider::Anthropic, Some("fixture-sonnet"))
+        };
+        let plan = policy.plan(&native, &operator);
+        assert_eq!(plan.admission, Admission::Admit);
+        assert_eq!(
+            plan.candidates.len(),
+            if admitted { 2 } else { 1 },
+            "{user:?}"
+        );
+        assert_eq!(plan.fallback.is_some(), admitted, "{user:?}");
+    }
+}
+
+#[test]
+fn rules_match_the_calling_user_and_the_first_upstream() {
+    let rules = policy(
+        r#"
+[[block]]
+id = "not-bob"
+match = { user = "bob" }
+reason = "fixture"
+
+[[block]]
+id = "no-direct-opus"
+match = { upstream = "anthropic-key", model = "fixture-opus" }
+reason = "fixture"
+"#,
+    )
+    .unwrap();
+    let operator = OperatorState::default();
+    let bob = UserId::parse("bob").unwrap();
+    let key = UpstreamId::parse("anthropic-key").unwrap();
+    let blocked = |facts: CallFacts<'_>| match rules.plan(&facts, &operator).admission {
+        Admission::Reject(Rejection::Blocked { rule, .. }) => Some(rule.as_str().to_owned()),
+        Admission::Admit | Admission::Reject(_) => None,
+    };
+    assert_eq!(
+        blocked(CallFacts {
+            user: Some(&bob),
+            ..facts(Provider::OpenAi, None)
+        }),
+        Some("not-bob".to_owned())
+    );
+    assert_eq!(blocked(facts(Provider::OpenAi, None)), None);
+    assert_eq!(
+        blocked(CallFacts {
+            upstream: &key,
+            ..facts(Provider::Anthropic, Some("fixture-opus"))
+        }),
+        Some("no-direct-opus".to_owned())
+    );
+    assert_eq!(
+        blocked(facts(Provider::Anthropic, Some("fixture-opus"))),
+        None
+    );
+    assert_eq!(
+        policy(
+            r#"[[block]]
+id = "b"
+match = { upstream = "nowhere" }
+reason = "r""#
+        )
+        .unwrap_err()
+        .to_string(),
+        "policy rule b matches an unknown upstream"
+    );
 }
 
 #[test]

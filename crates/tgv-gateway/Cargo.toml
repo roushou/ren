@@ -14,6 +14,7 @@ description = "HTTP forwarding, management, and control interface of the TGV LLM
 # (docs/architecture.md).
 [dependencies]
 axum.workspace = true
+blake3.workspace = true
 brotli-decompressor.workspace = true
 bytes.workspace = true
 flate2.workspace = true

@@ -17,12 +17,16 @@ use crate::{
     operator::{OperatorState, Pause, RetryAfter},
     retry::RetryPolicy,
 };
-use std::{collections::HashSet, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 use tgv_protocol::{
     native::NativeSessionId,
     route::{Endpoint, Provider, Transport},
 };
 use tgv_recorder::{
+    caller::UserId,
     capture::CallRejection,
     routing::{OperatorRevision, UpstreamId},
     time::UnixMillis,
@@ -56,6 +60,10 @@ pub struct Matcher {
     pub endpoint: Option<Endpoint>,
     /// The request body's top-level `model`, exactly.
     pub model: Option<String>,
+    /// The named user who made the call.
+    pub user: Option<UserId>,
+    /// The upstream entry the call goes to first: its route's entry.
+    pub upstream: Option<UpstreamId>,
 }
 
 /// Reject matching calls with a non-retryable `403`.
@@ -109,12 +117,35 @@ pub enum AuthKind {
     OperatorKey,
 }
 
+/// Who may send calls to an upstream entry.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum EntryUsers {
+    /// Every caller, named or not.
+    #[default]
+    Anyone,
+    /// Only these named users, never empty. Other callers are refused on
+    /// the entry's direct routes, and a fallback rule never falls over to it
+    /// for them.
+    Only(Vec<UserId>),
+}
+
+impl EntryUsers {
+    /// Whether a caller who is `user` (or no named user) may use the entry.
+    pub fn admits(&self, user: Option<&UserId>) -> bool {
+        match self {
+            Self::Anyone => true,
+            Self::Only(users) => user.is_some_and(|user| users.contains(user)),
+        }
+    }
+}
+
 /// An upstream entry, as policy sees it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UpstreamSummary {
     pub id: UpstreamId,
     pub provider: Provider,
     pub auth: AuthKind,
+    pub users: EntryUsers,
 }
 
 /// Why a policy configuration was refused. Values are named, never echoed.
@@ -122,7 +153,9 @@ pub struct UpstreamSummary {
 pub enum PolicyError {
     #[error("policy rule id {0} is used twice")]
     DuplicateRule(String),
-    #[error("policy rule {0} matches every call; give a provider, endpoint, or model")]
+    #[error(
+        "policy rule {0} matches every call; give a provider, endpoint, model, user, or upstream"
+    )]
     UnscopedRule(String),
     #[error("transform rule {0} has no steps")]
     EmptyTransform(String),
@@ -133,6 +166,8 @@ pub enum PolicyError {
     },
     #[error("fallback rule {0} names an unknown upstream")]
     UnknownUpstream(String),
+    #[error("policy rule {0} matches an unknown upstream")]
+    MatchedUpstream(String),
     #[error("fallback rule {0} must go to an operator-key upstream of the same provider")]
     FallbackTarget(String),
     #[error("fallback rule {0}: the Codex backend accepts no operator keys")]
@@ -153,6 +188,8 @@ pub struct CallFacts<'a> {
     pub endpoint: Endpoint,
     pub model: Option<&'a str>,
     pub session: Option<NativeSessionId>,
+    /// The named user who made the call, if any.
+    pub user: Option<&'a UserId>,
     pub now: UnixMillis,
 }
 
@@ -167,9 +204,21 @@ pub enum Admission {
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "snake_case", tag = "rejection")]
 pub enum Rejection {
-    Paused { retry_after: RetryAfter },
+    Paused {
+        retry_after: RetryAfter,
+    },
     SessionBlocked,
-    Blocked { rule: RuleId, reason: String },
+    /// An operator block on the calling user.
+    UserBlocked,
+    Blocked {
+        rule: RuleId,
+        reason: String,
+    },
+    /// The call's entry admits only some named users, and the caller is not
+    /// one of them.
+    UserNotAllowed {
+        upstream: UpstreamId,
+    },
 }
 
 /// Upstreams to try, in order; never empty.
@@ -217,7 +266,9 @@ impl Rejection {
         match self {
             Self::Paused { .. } => CallRejection::Paused,
             Self::SessionBlocked => CallRejection::SessionBlocked,
+            Self::UserBlocked => CallRejection::UserBlocked,
             Self::Blocked { .. } => CallRejection::Blocked,
+            Self::UserNotAllowed { .. } => CallRejection::UserNotAllowed,
         }
     }
 }
@@ -255,11 +306,17 @@ pub struct Policy {
     /// Upstreams with client-owned credentials: the only ones a fallback
     /// rule falls over from.
     client_owned: HashSet<UpstreamId>,
+    /// Entries only some named users may use.
+    restricted: HashMap<UpstreamId, EntryUsers>,
 }
 
 impl Matcher {
     fn is_empty(&self) -> bool {
-        self.provider.is_none() && self.endpoint.is_none() && self.model.is_none()
+        self.provider.is_none()
+            && self.endpoint.is_none()
+            && self.model.is_none()
+            && self.user.is_none()
+            && self.upstream.is_none()
     }
 
     fn matches(&self, facts: &CallFacts<'_>) -> bool {
@@ -272,6 +329,14 @@ impl Matcher {
                 .model
                 .as_deref()
                 .is_none_or(|model| facts.model == Some(model))
+            && self
+                .user
+                .as_ref()
+                .is_none_or(|user| facts.user == Some(user))
+            && self
+                .upstream
+                .as_ref()
+                .is_none_or(|upstream| upstream == facts.upstream)
     }
 
     /// Endpoints this matcher can apply to, for protected-path checks.
@@ -295,6 +360,25 @@ impl Policy {
         for id in ids_in_use {
             if !ids.insert(id.clone()) {
                 return Err(PolicyError::DuplicateRule(id.as_str().to_owned()));
+            }
+        }
+        let matchers = config
+            .block
+            .iter()
+            .map(|rule| (&rule.id, &rule.matcher))
+            .chain(
+                config
+                    .transform
+                    .iter()
+                    .map(|rule| (&rule.id, &rule.matcher)),
+            );
+        for (id, matcher) in matchers {
+            if matcher
+                .upstream
+                .as_ref()
+                .is_some_and(|upstream| !upstreams.iter().any(|known| &known.id == upstream))
+            {
+                return Err(PolicyError::MatchedUpstream(id.as_str().to_owned()));
             }
         }
         for rule in &config.block {
@@ -354,6 +438,14 @@ impl Policy {
                 })
                 .map(|upstream| upstream.id.clone())
                 .collect(),
+            restricted: upstreams
+                .iter()
+                .filter(|upstream| match upstream.users {
+                    EntryUsers::Anyone => false,
+                    EntryUsers::Only(_) => true,
+                })
+                .map(|upstream| (upstream.id.clone(), upstream.users.clone()))
+                .collect(),
         })
     }
 
@@ -379,11 +471,13 @@ impl Policy {
                     .collect();
                 // A call sent first to an operator-key entry (one with direct
                 // routes) already uses the operator's key: it never falls over.
+                // Nor does a caller the fallback entry does not admit.
                 let fallback = self
                     .fallback
                     .iter()
                     .filter(|_| self.client_owned.contains(&primary))
-                    .find(|rule| rule.provider == facts.provider);
+                    .find(|rule| rule.provider == facts.provider)
+                    .filter(|rule| self.admits(&rule.to, facts.user));
                 match fallback {
                     None => (
                         Candidates::one(primary),
@@ -410,6 +504,13 @@ impl Policy {
         }
     }
 
+    /// Whether `user` (or no named user) may use `upstream`.
+    fn admits(&self, upstream: &UpstreamId, user: Option<&UserId>) -> bool {
+        self.restricted
+            .get(upstream)
+            .is_none_or(|users| users.admits(user))
+    }
+
     fn admission(&self, facts: &CallFacts<'_>, operator: &OperatorState) -> Admission {
         if let Pause::Paused { retry_after } = operator.pause() {
             return Admission::Reject(Rejection::Paused { retry_after });
@@ -419,6 +520,17 @@ impl Policy {
             .is_some_and(|session| operator.blocks(session, facts.now))
         {
             return Admission::Reject(Rejection::SessionBlocked);
+        }
+        if facts
+            .user
+            .is_some_and(|user| operator.blocks_user(user, facts.now))
+        {
+            return Admission::Reject(Rejection::UserBlocked);
+        }
+        if !self.admits(facts.upstream, facts.user) {
+            return Admission::Reject(Rejection::UserNotAllowed {
+                upstream: facts.upstream.clone(),
+            });
         }
         match self.block.iter().find(|rule| rule.matcher.matches(facts)) {
             Some(rule) => Admission::Reject(Rejection::Blocked {

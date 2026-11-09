@@ -181,6 +181,7 @@ test('the day counts calls against the day before, and splits input into cached 
       },
     ],
     models: [],
+    users: [],
   });
   const day = new Day(usage(150), usage(100), NOW, { bookkeeping: 9, stopped: 1 });
   assert.deepEqual(

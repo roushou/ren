@@ -156,10 +156,21 @@ pub enum CallRejection {
     Paused,
     /// An operator session block applied (non-retryable `403`).
     SessionBlocked,
+    /// An operator block on the calling user applied (non-retryable `403`).
+    UserBlocked,
     /// A configured block rule applied (non-retryable `403`).
     Blocked,
     /// TGV shut down while the request body was still arriving (`503`).
     Shutdown,
+    /// The request's user token or Tailscale identity was refused:
+    /// unknown, repeated, malformed, or naming two users (`401`).
+    IdentityRefused,
+    /// The call's upstream entry admits only some named users, and the
+    /// caller is not one of them (non-retryable `403`).
+    UserNotAllowed,
+    /// The caller already had as many calls running as its limit allows
+    /// (`429` with `retry-after`).
+    UserBusy,
 }
 
 /// How a captured body's byte stream ended.

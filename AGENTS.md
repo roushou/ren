@@ -185,7 +185,8 @@ dependencies under "Crates" below. Read the code for current module ownership.
   as its primary type: attribution (`attribution`, with its private `headers`
   parser implementing `Harness::attribution`), session launch plans
   (`Harness::launch`), the bundled Pi extension cache (`pi`), the gateway URL a
-  harness is pointed at (`endpoint`), `HostEnv` (`host`), the host environment
+  harness is pointed at and the `UserToken` it presents there (`endpoint`),
+  `HostEnv` (`host`), the host environment
   that launching and configuration read, and what each harness's tools and
   messages mean for activity (`tools`: effects, prompt text, exit codes, why a
   client sent a call (`CallPurpose`: work, or Claude Code's quota probe), and
@@ -203,7 +204,8 @@ dependencies under "Crates" below. Read the code for current module ownership.
   `RecorderMetrics`, readable after shutdown through `RecorderMeter`. It also
   owns what is recorded: TGV's identities and `IdSource` (`id`), `Clock`
   (`time`), terminals and other recorded facts (`capture`), routing facts and
-  `OperatorRevision` (`routing`), batches (`batch`), the content-defined
+  `OperatorRevision` (`routing`), who called (`caller`: `UserId`,
+  `TailscaleLogin`, and `Caller`), batches (`batch`), the content-defined
   `Chunker` (`chunk`), the stored inspection format (`inspection`), and
   `RetentionPolicy` (`retention`), and credential detection and redaction
   (`secrets`: `SecretScanner`, well-known formats only, never storing a secret),
@@ -240,14 +242,16 @@ dependencies under "Crates" below. Read the code for current module ownership.
   implementation, and the ingress with the shutdown drain, which also waits for
   upgraded channels. Use Axum's request, response, body, and WebSocket types
   directly; no framework-independent HTTP adapter layer. It also owns retry
-  eligibility (`retry`), operator state (`operator`), the `Controls` that hold
+  eligibility (`retry`), operator state (`operator`), the named users and
+  how a request is matched to one (`user`: `Users::identify`, with
+  `TokenDigest`, a user token's digest), the `Controls` that hold
   it with the running-call registry (`control`), the `Build` that `/health`
   reports (`build`), and pure call planning
   (`policy`: block, transform, and fallback rules validated at load, with
   protected headers and body paths), and the call's way through its
   candidates (`call`: `CallRun`, which `Gateway::forward` carries out).
-  `src/purity.rs` keeps `attempt`, `call`, `channel`, `retry`, and `operator`
-  free of runtime, I/O, storage, and shell-module
+  `src/purity.rs` keeps `attempt`, `call`, `channel`, `retry`, `operator`,
+  and `user` free of runtime, I/O, storage, and shell-module
   dependencies. Management receives `Reader`, `Backup`, retention settings, and
   control credentials through `ManagementSetup`; SQL stays in `tgv-store`, and
   forwarding records only through the recorder.

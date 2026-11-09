@@ -32,7 +32,7 @@ impl InitCmd {
             None => Self::ask(&config, ctx.terminal.stderr)?,
         };
         let gateway = GatewayEndpoint::parse(&value)?;
-        let report = Report::gateway(&gateway).await;
+        let report = Report::gateway(&gateway, &ctx.env).await;
         report.print(false, ctx.terminal.stdout)?;
         if !report.success() {
             bail!("{} failed its check; nothing was saved", gateway.root());

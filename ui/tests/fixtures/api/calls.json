@@ -22,6 +22,11 @@
         },
         "issues": []
       },
+      "caller": {
+        "kind": "unidentified",
+        "user": null,
+        "login": null
+      },
       "state": "finished",
       "terminal": "body_complete",
       "status": 200,
@@ -81,6 +86,11 @@
           "thread": null
         },
         "issues": []
+      },
+      "caller": {
+        "kind": "unidentified",
+        "user": null,
+        "login": null
       },
       "state": "finished",
       "terminal": "body_complete",

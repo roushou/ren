@@ -32,7 +32,11 @@ headers, and identity or position-sensitive body fields (`/system`, `/metadata`,
 `/user` and `/safety_identifier`) are protected: a rule that
 touches them is refused when the configuration loads. A changed body is stored as
 the attempt's own request beside the client's original. Body steps do not run on a
-compressed request. [`tgv.example.toml`](../tgv.example.toml) shows each rule type.
+compressed request. A rule's `match` takes `provider`, `endpoint`, `model` (the
+request's top-level `model`, exactly), `user` (a [named user](#named-users)),
+and `upstream` (the entry the call goes to first: its route's entry, never a
+fallback). Every field given must match, and at least one is required.
+[`tgv.example.toml`](../tgv.example.toml) shows each rule type.
 
 ## Failover
 
@@ -93,12 +97,66 @@ native paths below it (`/v1/messages`, `/v1/messages/count_tokens`, and
 and `/v1/models` for `openai_responses`, whose WebSocket mode is refused;
 `/v1/chat/completions` and `/v1/models` for `openai_chat_completions`). Every
 call there uses the operator key in place of the client's credentials, so any
-client that can reach the gateway bills the key: leave `ingress` out unless that
-is intended. Block and transform rules apply as on the provider's own routes;
+caller that can reach the gateway bills the key: leave `ingress` out unless that
+is intended, or name the [users](#named-users) who may use the entry. Block and transform rules apply as on the provider's own routes;
 fallback rules do not, since the call already uses an operator key. Chat
 Completions takes the key as `Authorization: Bearer`, for every provider. Calls are
 recorded with the entry's provider and wire format, and the attempt with the
 entry's id.
+
+## Named users
+
+`[[users]]` names the people and machines that use the gateway (see
+[`tgv.example.toml`](../tgv.example.toml)); a user is not a harness, which
+TGV attributes separately. Each forwarded call, and each WebSocket channel
+with its calls, records its caller:
+
+- `user_tailscale`: a user, by a Tailscale login it lists. Tailscale Serve
+  adds `Tailscale-User-Login` and removes any copy the caller sent.
+- `user_token`: a user, by its token in `X-TGV-User-Token`.
+  `tgv users token <id>` prints a new token once, with the `token_blake3`
+  line that holds its digest; the configuration never holds the token.
+  `tgv run` sends it from `TGV_USER_TOKEN` (see
+  [Clients](clients.md#named-users)).
+- `unlisted`: a Tailscale login no user lists, kept as it came.
+- `unidentified`: no identity. Tailscale Serve sends tagged devices and Funnel
+  traffic without one, and a process on this host can reach the loopback
+  listener directly, so this is not evidence that the call came from this
+  host.
+
+Both headers are removed before forwarding, so neither reaches a provider. A
+token no user has, more than one token, a malformed login, or a login and
+token that name different users is refused with a non-retryable `401`
+(`tgv_identity_refused`), recorded as rejection `identity_refused`; it is
+never ignored, so a caller cannot believe it is identified when it is not.
+Identity protects against other machines, not this one: a local process can
+set any header, including `Tailscale-User-Login`.
+
+A user's `max_concurrent` (1–1024) caps the calls it may have running at once,
+and the top-level `max_concurrent_unnamed` caps those of every caller that is
+not a named user, together. A call over its caller's limit gets `429` with
+`retry-after: 1` (`tgv_user_busy`), recorded as rejection `user_busy`; a
+WebSocket channel counts as one call for its whole life, and a handshake over
+the limit gets `426`, so Codex falls back to HTTP. These limits come before the
+gateway's own `max_concurrent_requests`, which still applies to everyone.
+
+An operator-key entry can be limited to some users:
+
+```toml
+[[upstreams]]
+id = "team-key"
+provider = "anthropic"
+base_url = "https://api.anthropic.com"
+operator_key_env = "TGV_ANTHROPIC_API_KEY"
+ingress = "direct"
+users = ["alice", "ci"]
+```
+
+Any other caller, named or not, is refused on the entry's direct routes with a
+non-retryable `403` (`tgv_user_not_allowed`), recorded as rejection
+`user_not_allowed`, and a fallback rule to the entry is not offered to them:
+their calls stay on the provider's own entry. Every name must be a configured
+user, and the list cannot be empty; leave it out to admit anyone.
 
 ## Operator controls
 
@@ -110,21 +168,25 @@ tgv control pause --retry-after 30
 tgv control resume
 tgv control block <session-uuid> --for 600
 tgv control unblock <session-uuid>
+tgv control block-user <user-id> --for 3600
+tgv control unblock-user <user-id>
 tgv control cancel <call-id> --block-session 60
 tgv control backup
 ```
 
 A pause answers every new call with `503` and `retry-after`, so clients wait. A
-blocked session's calls get a non-retryable `403`. Cancelling a call before its
+blocked session's calls get a non-retryable `403`, as do a blocked
+[named user](#named-users)'s, recorded as `user_blocked`; only configured users
+can be blocked, and their running calls continue. Cancelling a call before its
 response starts answers it with a TGV error (`409`, `x-should-retry: false`);
 once output is flowing, an HTTP stream is interrupted, and a Codex WebSocket call
 is sent `response.interrupt`, with the answer kept from the client. Paused and
 blocked Codex WebSocket calls get an `error` event of type `tgv_*`. See
 [Recording](recording.md#backup) for `backup`.
 
-Pauses and session blocks survive a restart: the daemon restores the state the
+Pauses and session and user blocks survive a restart: the daemon restores the state the
 last recorded command made, logs a warning saying so, and keeps counting
-revisions. Run `tgv control resume` or `unblock` to clear them. A command is
+revisions. Run `tgv control resume`, `unblock`, or `unblock-user` to clear them. A command is
 durable once the recorder commits it, shortly after the API answers; a crash in
 between loses the command and its record together. If the stored state cannot be
 read, the daemon refuses to start rather than starting unpaused.

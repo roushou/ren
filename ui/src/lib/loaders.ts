@@ -48,6 +48,7 @@ const callFilters = [
   'q',
   'session',
   'client',
+  'user',
   'provider',
   'model',
   'tool',

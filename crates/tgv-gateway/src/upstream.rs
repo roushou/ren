@@ -7,6 +7,7 @@
 //! Tests substitute a scripted upstream; the daemon uses [`ReqwestUpstream`].
 
 use crate::attempt::{SendFailure, StreamFailure};
+use crate::policy::EntryUsers;
 use crate::route::{BoundRoute, Forward, Route};
 use axum::body::Body;
 use bytes::Bytes;
@@ -391,11 +392,12 @@ impl EntryIngress {
     }
 }
 
-/// An upstream entry from configuration, with its ingress.
+/// An upstream entry from configuration, with its ingress and who may use it.
 #[derive(Debug, Clone)]
 pub struct ConfiguredEntry {
     pub entry: UpstreamEntry,
     pub ingress: EntryIngress,
+    pub users: EntryUsers,
 }
 
 /// The base URL of each provider's native entry.
@@ -503,12 +505,21 @@ impl UpstreamTable {
     }
 
     pub fn summaries(&self) -> Vec<crate::policy::UpstreamSummary> {
-        self.entries()
-            .map(|entry| crate::policy::UpstreamSummary {
-                id: entry.id.clone(),
-                provider: entry.api.provider(),
-                auth: entry.auth.kind(),
-            })
+        let summary = |entry: &UpstreamEntry, users: &EntryUsers| crate::policy::UpstreamSummary {
+            id: entry.id.clone(),
+            provider: entry.api.provider(),
+            auth: entry.auth.kind(),
+            users: users.clone(),
+        };
+        // Native entries carry each caller's own credentials: anyone.
+        [&self.anthropic, &self.codex, &self.openai, &self.deepseek]
+            .into_iter()
+            .map(|entry| summary(entry, &EntryUsers::Anyone))
+            .chain(
+                self.configured
+                    .iter()
+                    .map(|configured| summary(&configured.entry, &configured.users)),
+            )
             .collect()
     }
 

@@ -25,7 +25,7 @@ use tokio::sync::{
 
 pub(super) enum Item {
     Open {
-        open: OpenCall,
+        open: Box<OpenCall>,
         /// The first attempt; absent for a call refused before dispatch.
         attempt: Option<StartAttempt>,
         endpoint: Endpoint,

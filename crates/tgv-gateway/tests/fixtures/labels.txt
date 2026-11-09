@@ -1,5 +1,5 @@
 api::HealthStatus: ok degraded
-api::ErrorCode: not_found invalid_query busy unavailable
+api::ErrorCode: not_found invalid_query busy unavailable identity_refused
 api::preview::RawFormat: utf8 hex
 api::preview::PreviewDecoding: none gzip_magic zstd_magic brotli
 api::preview::PreviewExtent: complete partial truncated gap

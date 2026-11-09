@@ -33,5 +33,17 @@
         "cache_read": 6000
       }
     }
+  ],
+  "users": [
+    {
+      "user": null,
+      "calls": 2,
+      "errors": 0,
+      "tokens": {
+        "input": 6104,
+        "output": 60,
+        "cache_read": 6000
+      }
+    }
   ]
 }

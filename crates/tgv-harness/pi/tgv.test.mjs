@@ -165,3 +165,25 @@ test("OpenAI retains ChatGPT serialization identity while redirecting only nativ
   }
   assert.equal(calls.length, 2);
 });
+
+test("sends the user token only when one is given", () => {
+  const providers = new Map();
+  const requests = [];
+  const implementation = { streamSimple: (...args) => requests.push(args) };
+  const apis = {
+    anthropicMessagesApi: () => implementation,
+    openAICodexResponsesApi: () => implementation,
+    openAIResponsesApi: () => implementation,
+  };
+  const pi = {
+    on: () => {},
+    registerProvider: (name, value) => providers.set(name, value),
+  };
+  const model = { provider: "anthropic", baseUrl: "https://api.anthropic.com" };
+  configure(pi, new URL("http://127.0.0.1:8787"), apis, "tgvu_fixture");
+  providers.get("anthropic").streamSimple(model, { messages: [] }, {});
+  assert.equal(requests[0][2].headers["x-tgv-user-token"], "tgvu_fixture");
+  configure(pi, new URL("http://127.0.0.1:8787"), apis, undefined);
+  providers.get("anthropic").streamSimple(model, { messages: [] }, {});
+  assert.equal("x-tgv-user-token" in requests[1][2].headers, false);
+});

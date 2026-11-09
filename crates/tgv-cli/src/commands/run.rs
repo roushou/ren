@@ -4,7 +4,7 @@ use crate::{client::GatewayChoice, style::Tone};
 use anyhow::Result;
 use clap::{Args, ValueEnum};
 use std::{ffi::OsString, process::ExitCode};
-use tgv_harness::Harness;
+use tgv_harness::{Harness, endpoint::UserToken};
 
 /// Launch a client through TGV for this session without editing its files.
 #[derive(Args)]
@@ -47,12 +47,17 @@ impl RunCmd {
         let config = ctx.config()?;
         let choice = GatewayChoice::select(self.gateway.as_deref(), &ctx.env)?;
         let gateway = choice.endpoint(config.listen)?;
-        let plan = Harness::from(self.client).launch(&gateway);
+        let harness = Harness::from(self.client);
+        let token = UserToken::from_env(&ctx.env)?;
+        let plan = match &token {
+            Some(token) => harness.launch(&gateway).presenting(token, &ctx.env),
+            None => harness.launch(&gateway),
+        };
         if self.dry_run {
             println!("{}", serde_json::to_string_pretty(&plan)?);
             return Ok(ExitCode::SUCCESS);
         }
-        let report = doctor::Report::gateway(&gateway).await;
+        let report = doctor::Report::gateway(&gateway, &ctx.env).await;
         let stderr = ctx.terminal.stderr;
         for check in &report.checks {
             if check.status != doctor::Status::Ok {
@@ -84,6 +89,12 @@ impl RunCmd {
                 "{} authentication overrides are set ({}); verify the client is using your intended subscription login.",
                 stderr.paint(Tone::Warn, "warning:"),
                 overrides.join(", ")
+            );
+        }
+        if token.is_some() && !harness.sends_user_token() {
+            eprintln!(
+                "{} {harness} cannot send TGV_USER_TOKEN yet; its calls are recorded by Tailscale login, or as unidentified.",
+                stderr.paint(Tone::Warn, "note:"),
             );
         }
         Ok(plan.execute(&self.args, &ctx.env)?)

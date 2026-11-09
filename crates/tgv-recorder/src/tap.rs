@@ -3,6 +3,7 @@
 //! and anything that does not fit is counted as omitted.
 
 use super::item::{AttemptSlots, Item, Piece, Shared, Track};
+use crate::caller::Caller;
 use crate::{
     batch::{
         AttemptBody, BodyEnd, CloseChannel, MessageMark, OpenCall, OperatorAction, Recorded,
@@ -36,6 +37,8 @@ pub struct CallStart {
     pub method: Method,
     pub config_revision: ConfigRevision,
     pub attribution: Attribution,
+    /// Who made the call.
+    pub caller: Caller,
     /// The operator state the call was planned against, once planned.
     pub operator_revision: Option<OperatorRevision>,
     /// The routing plan, once planned.
@@ -187,7 +190,7 @@ impl CallTap {
                     .pop_front()
                     .map(|slots| (Some(slots.head), slots.finish));
                 reservation.open.send(Item::Open {
-                    open: OpenCall {
+                    open: Box::new(OpenCall {
                         stamp,
                         transport: start.transport,
                         provider: start.api.provider(),
@@ -196,9 +199,10 @@ impl CallTap {
                         method: start.method,
                         config_revision: start.config_revision,
                         attribution: start.attribution,
+                        caller: start.caller,
                         operator_revision: start.operator_revision,
                         plan: start.plan,
-                    },
+                    }),
                     attempt: first.map(|(id, attempt)| attempt.record(stamp, id, 0)),
                     endpoint,
                 });

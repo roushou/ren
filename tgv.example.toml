@@ -9,6 +9,7 @@ openai_base_url = "https://api.openai.com"
 # DeepSeek's Anthropic-compatible API; clients send their own DeepSeek key.
 deepseek_base_url = "https://api.deepseek.com/anthropic"
 max_concurrent_requests = 32
+# max_concurrent_unnamed = 8 # optional: calls callers that are not [[users]] may run at once, together
 connect_timeout_seconds = 10
 response_header_timeout_seconds = 120
 stream_idle_timeout_seconds = 120
@@ -67,6 +68,16 @@ deepseek = 33554432 # 32 MiB (no documented limit; Anthropic Messages' is used)
 # Local use (the tgv control CLI) needs the daemon's control.token instead.
 tailscale_logins = []
 
+# Optional: named users of the gateway, people or machines, recorded on each
+# call they make. A user is proven by a Tailscale login (through Tailscale
+# Serve) or by a token sent in X-TGV-User-Token; `tgv users token <id>` makes
+# one and prints its digest.
+# [[users]]
+# id = "alice"
+# tailscale_logins = ["alice@example.com"]
+# token_blake3 = "<64 hex digits from tgv users token alice>"
+# max_concurrent = 4 # optional: calls alice may have running at once
+
 # Optional: an operator-key upstream and a fallback to it (opt-in, bills per
 # token). The key is read from the daemon's environment, never this file.
 # [[upstreams]]
@@ -75,7 +86,8 @@ tailscale_logins = []
 # wire = "anthropic_messages" # optional: the provider's own wire format
 # base_url = "https://api.anthropic.com"
 # operator_key_env = "TGV_ANTHROPIC_API_KEY"
-# ingress = "direct" # optional: also mount it at /upstreams/anthropic-key; any client bills the key
+# ingress = "direct" # optional: also mount it at /upstreams/anthropic-key; any caller bills the key
+# users = ["alice"] # optional: only these [[users]] may use it, directly or by fallback
 #
 # [[policy.fallback]]
 # id = "plan-limit"

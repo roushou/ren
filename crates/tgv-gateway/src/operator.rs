@@ -1,4 +1,4 @@
-//! Operator state: a global pause and blocked sessions, changed only
+//! Operator state: a global pause, blocked sessions, and blocked users, changed only
 //! by operator commands. Each change makes a new revision, recorded with every
 //! call planned against it. Applying a command is pure; the shell swaps whole
 //! snapshots, so a call keeps the state it was planned with.
@@ -6,7 +6,7 @@
 use std::{collections::BTreeMap, time::Duration};
 use tgv_protocol::native::NativeSessionId;
 use tgv_recorder::routing::OperatorRevision;
-use tgv_recorder::{id::CallId, time::UnixMillis};
+use tgv_recorder::{caller::UserId, id::CallId, time::UnixMillis};
 
 /// Why a stored operator state could not be restored. Either stops startup:
 /// starting unpaused and unblocked must not happen silently.
@@ -69,7 +69,7 @@ pub enum Pause {
     },
 }
 
-/// How long a session block lasts.
+/// How long a session or user block lasts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case", tag = "kind", content = "at")]
 pub enum BlockedUntil {
@@ -77,8 +77,28 @@ pub enum BlockedUntil {
     Time(UnixMillis),
 }
 
+impl BlockedUntil {
+    /// A block lasting `duration` from `now`, or until unblocked.
+    pub fn after(duration: Option<Duration>, now: UnixMillis) -> Self {
+        match duration {
+            None => Self::Unblocked,
+            Some(duration) => Self::Time(UnixMillis::from_millis(
+                now.as_millis()
+                    .saturating_add(u64::try_from(duration.as_millis()).unwrap_or(u64::MAX)),
+            )),
+        }
+    }
+
+    fn applies(self, now: UnixMillis) -> bool {
+        match self {
+            Self::Unblocked => true,
+            Self::Time(until) => now < until,
+        }
+    }
+}
+
 /// The operator's commands.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "snake_case", tag = "command")]
 pub enum OperatorCommand {
     Pause {
@@ -92,6 +112,14 @@ pub enum OperatorCommand {
     },
     UnblockSession {
         session: NativeSessionId,
+    },
+    /// Refuse a named user's new calls until a time, or until unblocked.
+    BlockUser {
+        user: UserId,
+        until: BlockedUntil,
+    },
+    UnblockUser {
+        user: UserId,
     },
     /// Stop a running call. It changes no state; it is recorded like every
     /// command, with its own revision.
@@ -107,14 +135,18 @@ impl OperatorCommand {
         duration: Option<Duration>,
         now: UnixMillis,
     ) -> Self {
-        let until = match duration {
-            None => BlockedUntil::Unblocked,
-            Some(duration) => BlockedUntil::Time(UnixMillis::from_millis(
-                now.as_millis()
-                    .saturating_add(u64::try_from(duration.as_millis()).unwrap_or(u64::MAX)),
-            )),
-        };
-        Self::BlockSession { session, until }
+        Self::BlockSession {
+            session,
+            until: BlockedUntil::after(duration, now),
+        }
+    }
+
+    /// A user block, lasting `duration` from `now` if given.
+    pub fn block_user(user: UserId, duration: Option<Duration>, now: UnixMillis) -> Self {
+        Self::BlockUser {
+            user,
+            until: BlockedUntil::after(duration, now),
+        }
     }
 }
 
@@ -126,6 +158,9 @@ pub struct OperatorState {
     revision: OperatorRevision,
     pause: Pause,
     blocked_sessions: BTreeMap<NativeSessionId, BlockedUntil>,
+    /// Absent from snapshots stored before users could be blocked.
+    #[serde(default)]
+    blocked_users: BTreeMap<UserId, BlockedUntil>,
 }
 
 impl Default for OperatorState {
@@ -134,6 +169,7 @@ impl Default for OperatorState {
             revision: OperatorRevision::default(),
             pause: Pause::Running,
             blocked_sessions: BTreeMap::new(),
+            blocked_users: BTreeMap::new(),
         }
     }
 }
@@ -165,13 +201,26 @@ impl OperatorState {
             .count()
     }
 
+    /// How many users are blocked at `now`.
+    pub fn blocked_users(&self, now: UnixMillis) -> usize {
+        self.blocked_users
+            .values()
+            .filter(|until| until.applies(now))
+            .count()
+    }
+
     /// Whether `session` is blocked at `now`. An expired block no longer applies.
     pub fn blocks(&self, session: NativeSessionId, now: UnixMillis) -> bool {
-        match self.blocked_sessions.get(&session) {
-            None => false,
-            Some(BlockedUntil::Unblocked) => true,
-            Some(BlockedUntil::Time(until)) => now < *until,
-        }
+        self.blocked_sessions
+            .get(&session)
+            .is_some_and(|until| until.applies(now))
+    }
+
+    /// Whether `user` is blocked at `now`. An expired block no longer applies.
+    pub fn blocks_user(&self, user: &UserId, now: UnixMillis) -> bool {
+        self.blocked_users
+            .get(user)
+            .is_some_and(|until| until.applies(now))
     }
 
     /// The state after `command`, with the next revision. Every command makes
@@ -189,6 +238,12 @@ impl OperatorState {
             OperatorCommand::UnblockSession { session } => {
                 next.blocked_sessions.remove(&session);
             }
+            OperatorCommand::BlockUser { user, until } => {
+                next.blocked_users.insert(user, until);
+            }
+            OperatorCommand::UnblockUser { user } => {
+                next.blocked_users.remove(&user);
+            }
             OperatorCommand::CancelCall { .. } => {}
         }
         next
@@ -202,7 +257,7 @@ mod tests {
     };
     use std::time::Duration;
     use tgv_protocol::native::NativeSessionId;
-    use tgv_recorder::time::UnixMillis;
+    use tgv_recorder::{caller::UserId, time::UnixMillis};
     use uuid::Uuid;
 
     #[test]
@@ -272,6 +327,32 @@ mod tests {
             OperatorState::restore(OperatorRevision::restore(5), &json),
             Err(RestoreError::RevisionMismatch)
         ));
+    }
+
+    #[test]
+    fn user_blocks_expire_and_older_snapshots_have_none() {
+        let user = UserId::parse("alice").unwrap();
+        let now = UnixMillis::from_millis(1_000);
+        let blocked = OperatorState::default().apply(OperatorCommand::block_user(
+            user.clone(),
+            Some(Duration::from_secs(60)),
+            now,
+        ));
+        assert!(blocked.blocks_user(&user, now));
+        assert!(!blocked.blocks_user(&user, UnixMillis::from_millis(61_000)));
+        assert!(!blocked.blocks_user(&UserId::parse("bob").unwrap(), now));
+        let unblocked = blocked.apply(OperatorCommand::UnblockUser { user: user.clone() });
+        assert!(!unblocked.blocks_user(&user, now));
+        let json = serde_json::to_string(&blocked).unwrap();
+        assert_eq!(
+            OperatorState::restore(blocked.revision(), &json).unwrap(),
+            blocked
+        );
+        let older = r#"{"revision":0,"pause":{"state":"running"},"blocked_sessions":{}}"#;
+        assert_eq!(
+            OperatorState::restore(OperatorRevision::default(), older).unwrap(),
+            OperatorState::default()
+        );
     }
 
     #[test]

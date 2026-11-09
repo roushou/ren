@@ -20,7 +20,10 @@ use tgv_cli::{
 };
 use tgv_daemon::{Daemon, config::Config};
 use tgv_gateway::build::{Revision, Tree};
-use tgv_harness::{endpoint::GatewayEndpoint, host::HostEnv};
+use tgv_harness::{
+    endpoint::{GatewayEndpoint, UserToken},
+    host::HostEnv,
+};
 
 const HEALTH: &str = r#"{"api_version":1,"status":"ok","build":{"version":"0.0.1","revision":"unknown"},"recorder":{"storage_errors":0,"retention_errors":0,"omissions":{"policy_limit_bytes":0,"queue_bytes_bytes":0,"queue_slots_bytes":0,"storage_failure_bytes":0,"unrecorded_calls":0}}}"#;
 const STORAGE: &str = r#"{"api_version":1,"policy":{"enabled":true,"max_age_seconds":600,"max_calls":10,"max_storage_bytes":1048576},"usage":{"calls":0,"open_calls":0,"digested_calls":0,"disk":{"metadata":{"page_size":4096,"page_count":10,"freelist_count":0},"blobs":{"page_size":16384,"page_count":2,"freelist_count":0}}}}"#;
@@ -126,7 +129,7 @@ async fn diagnostic_errors_are_bounded_redacted_and_never_follow_redirects() {
             }),
         );
     let (endpoint, task) = mock(app).await;
-    let report = Report::gateway(&endpoint).await;
+    let report = Report::gateway(&endpoint, &HostEnv::default()).await;
     assert!(!report.success());
     assert_eq!(followed.load(Ordering::SeqCst), 0);
     assert!(!serde_json::to_string(&report).unwrap().contains("SECRET"));
@@ -138,8 +141,66 @@ async fn diagnostic_errors_are_bounded_redacted_and_never_follow_redirects() {
             .route("/api/storage", get(|| async { STORAGE })),
     )
     .await;
-    let report = Report::gateway(&endpoint).await;
+    let report = Report::gateway(&endpoint, &HostEnv::default()).await;
     assert!(report.checks.iter().any(|c| c.message.contains("64 KiB")));
+    task.abort();
+}
+
+#[tokio::test]
+async fn doctor_reports_how_the_gateway_records_this_caller() {
+    let token = UserToken::from_random(1, 2);
+    let expected = token.expose().to_owned();
+    let app = Router::new()
+        .route("/health", get(|| async { HEALTH }))
+        .route("/api/storage", get(|| async { STORAGE }))
+        .route(
+            "/api/caller",
+            get(move |headers: axum::http::HeaderMap| {
+                let expected = expected.clone();
+                async move {
+                    let sent = headers.get(UserToken::HEADER).and_then(|v| v.to_str().ok());
+                    if sent == Some(expected.as_str()) {
+                        Response::builder()
+                            .body(Body::from(
+                                r#"{"api_version":1,"caller":{"kind":"user_token","user":"alice","login":null}}"#,
+                            ))
+                            .unwrap()
+                    } else {
+                        Response::builder()
+                            .status(401)
+                            .body(Body::from(r#"{"api_version":1,"error":"identity_refused"}"#))
+                            .unwrap()
+                    }
+                }
+            }),
+        );
+    let (endpoint, task) = mock(app).await;
+    let caller = |report: &Report| {
+        report
+            .checks
+            .iter()
+            .find(|check| check.name == "caller")
+            .map(|check| (check.status, check.message.clone()))
+            .unwrap()
+    };
+    let env = HostEnv::from_pairs([("TGV_USER_TOKEN", token.expose())]);
+    let report = Report::gateway(&endpoint, &env).await;
+    assert_eq!(
+        caller(&report),
+        (
+            Status::Ok,
+            "calls are recorded as user alice, by TGV_USER_TOKEN".to_owned()
+        )
+    );
+    let other = UserToken::from_random(3, 4);
+    let env = HostEnv::from_pairs([("TGV_USER_TOKEN", other.expose())]);
+    let report = Report::gateway(&endpoint, &env).await;
+    assert_eq!(caller(&report).0, Status::Failed);
+    assert!(!report.success());
+    let env = HostEnv::from_pairs([("TGV_USER_TOKEN", "not-a-token")]);
+    let report = Report::gateway(&endpoint, &env).await;
+    assert_eq!(caller(&report).0, Status::Failed);
+    assert!(!serde_json::to_string(&report).unwrap().contains("tgvu_"));
     task.abort();
 }
 
@@ -159,7 +220,7 @@ async fn distinguishes_capture_loss_from_storage_failure() {
             )
             .route("/api/storage", get(|| async { STORAGE }));
         let (endpoint, task) = mock(app).await;
-        let report = Report::gateway(&endpoint).await;
+        let report = Report::gateway(&endpoint, &HostEnv::default()).await;
         assert_eq!(report.success(), storage_errors == 0);
         assert!(
             report
@@ -219,7 +280,7 @@ async fn reports_whether_the_daemon_runs_this_build() {
             )
             .route("/api/storage", get(|| async { STORAGE }));
         let (endpoint, task) = mock(app).await;
-        let report = Report::gateway(&endpoint).await;
+        let report = Report::gateway(&endpoint, &HostEnv::default()).await;
         let check = report.checks.iter().find(|c| c.name == "build").unwrap();
         assert_eq!(check.status, status, "{}", check.message);
         assert!(check.message.contains(message), "{}", check.message);
@@ -407,9 +468,12 @@ async fn stalled_health_body_has_a_total_deadline() {
             .route("/api/storage", get(|| async { STORAGE })),
     )
     .await;
-    let report = tokio::time::timeout(Duration::from_secs(7), Report::gateway(&endpoint))
-        .await
-        .unwrap();
+    let report = tokio::time::timeout(
+        Duration::from_secs(7),
+        Report::gateway(&endpoint, &HostEnv::default()),
+    )
+    .await
+    .unwrap();
     assert!(!report.success());
     task.abort();
 }

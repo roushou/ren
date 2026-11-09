@@ -13,6 +13,7 @@
 
 use crate::control::{ControlError, Controls, RunningCall};
 use crate::operator::{OperatorCommand, OperatorState, RetryAfter};
+use crate::user::Users;
 use axum::{
     Json, Router,
     extract::{Path, State, rejection::JsonRejection},
@@ -25,6 +26,7 @@ use tgv_protocol::native::NativeSessionId;
 use tgv_recorder::{
     Recorder,
     batch::Actor,
+    caller::UserId,
     id::{CallId, IdSource},
     time::Clock,
 };
@@ -106,6 +108,8 @@ pub(crate) struct ControlApi {
     clock: Arc<dyn Clock>,
     token: ControlToken,
     logins: Vec<String>,
+    /// The named users an operator can block.
+    users: Users,
     backup: Backup,
 }
 
@@ -189,6 +193,7 @@ impl ControlApi {
         clock: Arc<dyn Clock>,
         token: ControlToken,
         logins: Vec<String>,
+        users: Users,
         backup: Backup,
     ) -> Self {
         Self {
@@ -197,6 +202,7 @@ impl ControlApi {
             clock,
             token,
             logins,
+            users,
             backup,
         }
     }
@@ -211,6 +217,8 @@ impl ControlApi {
                 "/control/v1/sessions/{session}/unblock",
                 post(Self::unblock),
             )
+            .route("/control/v1/users/{user}/block", post(Self::block_user))
+            .route("/control/v1/users/{user}/unblock", post(Self::unblock_user))
             .route("/control/v1/calls/{call}/cancel", post(Self::cancel))
             .route("/control/v1/backup", post(Self::backup))
             .layer(axum::middleware::map_response(Self::private))
@@ -270,6 +278,14 @@ impl ControlApi {
         Uuid::try_parse(text)
             .ok()
             .and_then(NativeSessionId::new)
+            .ok_or(Refusal::NotFound)
+    }
+
+    /// A configured user; any other name is not found.
+    fn user(&self, text: &str) -> Result<UserId, Refusal> {
+        UserId::parse(text)
+            .ok()
+            .filter(|user| self.users.knows(user))
             .ok_or(Refusal::NotFound)
     }
 
@@ -348,6 +364,40 @@ impl ControlApi {
             .and_then(|actor| Ok((actor, Self::session(&session)?)));
         match unblocked {
             Ok((actor, session)) => api.command(actor, OperatorCommand::UnblockSession { session }),
+            Err(refusal) => refusal.into_response(),
+        }
+    }
+
+    async fn block_user(
+        State(api): State<Arc<Self>>,
+        Path(user): Path<String>,
+        headers: HeaderMap,
+        body: Option<Json<BlockRequest>>,
+    ) -> Response {
+        let blocked = api.authorize(&headers).and_then(|actor| {
+            let user = api.user(&user)?;
+            let duration = Self::duration(body.unwrap_or_default().0.duration_seconds)?;
+            Ok((actor, user, duration))
+        });
+        match blocked {
+            Ok((actor, user, duration)) => api.command(
+                actor,
+                OperatorCommand::block_user(user, duration, api.clock.now().wall),
+            ),
+            Err(refusal) => refusal.into_response(),
+        }
+    }
+
+    async fn unblock_user(
+        State(api): State<Arc<Self>>,
+        Path(user): Path<String>,
+        headers: HeaderMap,
+    ) -> Response {
+        let unblocked = api
+            .authorize(&headers)
+            .and_then(|actor| Ok((actor, api.user(&user)?)));
+        match unblocked {
+            Ok((actor, user)) => api.command(actor, OperatorCommand::UnblockUser { user }),
             Err(refusal) => refusal.into_response(),
         }
     }

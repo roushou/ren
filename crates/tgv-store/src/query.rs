@@ -7,6 +7,7 @@ use strum::{Display, EnumString, IntoStaticStr, VariantArray};
 use tgv_harness::Harness;
 use tgv_protocol::route::Provider;
 use tgv_recorder::{
+    caller::UserId,
     id::{CallId, SessionId},
     time::UnixMillis,
 };
@@ -185,6 +186,8 @@ pub struct CallFilter {
     pub session: Option<SessionId>,
     /// Calls attributed to this harness by its own headers or metadata.
     pub client: Option<Harness>,
+    /// Calls a named user made.
+    pub user: Option<UserId>,
     pub kind: Option<KindFilter>,
     pub provider: Option<Provider>,
     pub model: Option<SearchText>,

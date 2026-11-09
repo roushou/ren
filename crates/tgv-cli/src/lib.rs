@@ -56,6 +56,7 @@ enum Command {
     Inspect(commands::history::InspectCmd),
     Tail(commands::tail::TailCmd),
     Control(commands::control::ControlCmd),
+    Users(commands::users::UsersCmd),
     Mcp(commands::mcp::McpCmd),
 }
 
@@ -104,6 +105,7 @@ impl Cli {
             Command::Inspect(cmd) => cmd.run(&ctx).await,
             Command::Tail(cmd) => cmd.run(&ctx).await,
             Command::Control(cmd) => cmd.run(&ctx).await,
+            Command::Users(cmd) => cmd.run(&ctx),
             Command::Mcp(cmd) => cmd.run(&ctx).await,
         }
     }

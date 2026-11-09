@@ -141,6 +141,7 @@ impl Fixture {
                 }),
                 issues: Vec::new(),
             },
+            caller: tgv_recorder::caller::Caller::Unidentified,
             operator_revision: None,
             plan: None,
         }));

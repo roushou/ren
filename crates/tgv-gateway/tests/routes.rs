@@ -30,6 +30,7 @@ fn every_route_is_pinned() {
             auth: UpstreamAuth::OperatorKey(OperatorKey::new("fixture").unwrap()),
         },
         ingress,
+        users: tgv_gateway::policy::EntryUsers::Anyone,
     };
     let upstreams = UpstreamTable::new(
         NativeUrls {

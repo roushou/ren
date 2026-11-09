@@ -128,6 +128,8 @@ pub(super) struct ChannelSetup {
     pub shutdown: Shutdown,
     /// The channel limit, held for the channel's lifetime.
     pub channel_permit: OwnedSemaphorePermit,
+    /// The caller's own limit, if it has one, held likewise.
+    pub user_permit: Option<OwnedSemaphorePermit>,
     /// Keeps the ingress's drain waiting for this channel.
     pub tracked: TaskTrackerToken,
     /// The route's entry: a channel is pinned to it.
@@ -295,6 +297,7 @@ impl Relay {
             call,
             shutdown,
             channel_permit,
+            user_permit,
             tracked,
             upstream: upstream_id,
             policy,
@@ -333,7 +336,7 @@ impl Relay {
             relay.watch_deadlines(),
         );
         relay.close_sockets().await;
-        drop((channel_permit, tracked));
+        drop((channel_permit, user_permit, tracked));
     }
 
     async fn pump(&self, side: Side, mut stream: PumpStream) {
@@ -409,6 +412,7 @@ impl Relay {
                 endpoint: self.call.endpoint,
                 model: None,
                 session: attribution.hint.as_ref().map(|hint| hint.session),
+                user: self.call.caller.user(),
                 now: self.clock.now().wall,
             },
             &operator,
@@ -494,9 +498,17 @@ impl Relay {
                 "tgv_session_blocked",
                 "this session is blocked by the TGV operator".to_owned(),
             ),
+            Rejection::UserBlocked => (
+                "tgv_user_blocked",
+                "this user is blocked by the TGV operator".to_owned(),
+            ),
             Rejection::Blocked { rule, reason } => (
                 "tgv_blocked",
                 format!("blocked by TGV policy rule {}: {reason}", rule.as_str()),
+            ),
+            Rejection::UserNotAllowed { upstream } => (
+                "tgv_user_not_allowed",
+                format!("upstream {upstream} is not open to this caller"),
             ),
         };
         let event = serde_json::json!({
@@ -699,6 +711,7 @@ impl Relay {
             tap.call(),
             Transport::WebSocket,
             session,
+            self.call.caller.user().cloned(),
             Cancel::WebSocket {
                 slot,
                 relay: self.interrupts.clone(),

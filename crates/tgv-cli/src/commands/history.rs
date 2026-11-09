@@ -14,8 +14,9 @@ use std::{
 use tgv_harness::Harness;
 use tgv_harness::endpoint::GatewayEndpoint;
 use tgv_protocol::direction::Direction;
+use tgv_recorder::caller::UserId;
 use tgv_recorder::id::{CallId, SessionId, TurnId};
-use tgv_store::query::{CallQuery, Cursor, PageLimit, TimeRange};
+use tgv_store::query::{CallFilter, CallQuery, Cursor, PageLimit, TimeRange};
 use tgv_store::read::ReadRequest;
 use tgv_store::search::{ExposureQuery, SearchField, SearchQuery, SearchTerms};
 
@@ -72,6 +73,9 @@ impl TargetArgs {
 pub struct HistoryCmd {
     #[arg(long, default_value = "20")]
     limit: PageLimit,
+    /// Only calls this named user made.
+    #[arg(long)]
+    user: Option<UserId>,
     #[command(flatten)]
     target: TargetArgs,
 }
@@ -79,6 +83,10 @@ impl HistoryCmd {
     pub async fn run(self, ctx: &Context) -> Result<ExitCode> {
         let request = ReadRequest::Calls(CallQuery {
             limit: self.limit,
+            filter: CallFilter {
+                user: self.user,
+                ..CallFilter::default()
+            },
             ..CallQuery::default()
         });
         self.target.print(ctx, request).await

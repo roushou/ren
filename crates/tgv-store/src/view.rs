@@ -19,6 +19,7 @@ use tgv_protocol::{
 };
 use tgv_recorder::Observation;
 use tgv_recorder::batch::Recorded;
+use tgv_recorder::caller::CallerKind;
 use tgv_recorder::inspection::{InspectionRecord, UsageRecord};
 use tgv_recorder::routing::OperatorRevision;
 use tgv_recorder::{
@@ -156,6 +157,29 @@ pub struct SessionHintView {
     pub thread: Option<String>,
 }
 
+/// Who made a call, as recorded.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct CallerView {
+    pub kind: Stored<CallerKind>,
+    /// The named user it proved to be.
+    pub user: Option<String>,
+    /// The Tailscale login the request carried.
+    pub login: Option<String>,
+}
+
+impl CallerView {
+    fn from_columns(row: &Columns<'_>) -> Result<Option<Self>, StoreError> {
+        let Some(kind) = row.optional_label("caller")? else {
+            return Ok(None);
+        };
+        Ok(Some(Self {
+            kind,
+            user: row.text("user")?,
+            login: row.text("tailscale_login")?,
+        }))
+    }
+}
+
 /// One call, as listed.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct CallView {
@@ -173,6 +197,8 @@ pub struct CallView {
     pub session: Option<SessionId>,
     pub turn: Option<TurnId>,
     pub attribution: AttributionView,
+    /// Who made the call; absent for calls recorded before callers were.
+    pub caller: Option<CallerView>,
     pub state: Stored<CallState>,
     pub terminal: Option<Stored<AttemptTerminal>>,
     pub status: Option<u16>,
@@ -199,7 +225,7 @@ pub struct CallView {
 impl CallView {
     /// Columns every call query selects, joined to the request body (`rq`) and
     /// the final attempt's response body (`rs`).
-    pub(super) const SELECT: &'static str = "SELECT c.id, c.channel, c.started_at, c.ended_at, c.provider, c.wire, c.endpoint, c.method, c.config_revision, c.session, c.turn, c.attribution, c.state, c.terminal, c.status, c.model, c.outcome, c.stop_reason, c.tool_names, c.usage, c.capture_complete, c.rejection, c.operator_revision, c.plan, rq.observed_bytes AS rq_observed, rq.stored_bytes AS rq_stored, rq.ending AS rq_ending, rs.observed_bytes AS rs_observed, rs.stored_bytes AS rs_stored, rs.ending AS rs_ending, dp.purpose AS purpose FROM calls c LEFT JOIN bodies rq ON rq.owner = c.id AND rq.direction = 'request' LEFT JOIN bodies rs ON rs.owner = c.final_attempt AND rs.direction = 'response' LEFT JOIN call_digests dp ON dp.call = c.id";
+    pub(super) const SELECT: &'static str = "SELECT c.id, c.channel, c.started_at, c.ended_at, c.provider, c.wire, c.endpoint, c.method, c.config_revision, c.session, c.turn, c.attribution, c.caller, c.user, c.tailscale_login, c.state, c.terminal, c.status, c.model, c.outcome, c.stop_reason, c.tool_names, c.usage, c.capture_complete, c.rejection, c.operator_revision, c.plan, rq.observed_bytes AS rq_observed, rq.stored_bytes AS rq_stored, rq.ending AS rq_ending, rs.observed_bytes AS rs_observed, rs.stored_bytes AS rs_stored, rs.ending AS rs_ending, dp.purpose AS purpose FROM calls c LEFT JOIN bodies rq ON rq.owner = c.id AND rq.direction = 'request' LEFT JOIN bodies rs ON rs.owner = c.final_attempt AND rs.direction = 'response' LEFT JOIN call_digests dp ON dp.call = c.id";
 
     pub(super) fn from_row(row: &SqliteRow) -> Result<Self, StoreError> {
         let row = Columns(row);
@@ -216,6 +242,7 @@ impl CallView {
             session: row.optional_id("session")?,
             turn: row.optional_id("turn")?,
             attribution: row.json("attribution")?.unwrap_or_default(),
+            caller: CallerView::from_columns(&row)?,
             state: row.label("state")?,
             terminal: row.optional_label("terminal")?,
             status: row.0.try_get("status")?,
@@ -441,7 +468,7 @@ impl UsageCounts {
     }
 }
 
-/// Usage over a time range, by the hour and by model.
+/// Usage over a time range, by the hour, by model, and by user.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct UsageView {
     pub totals: UsageCounts,
@@ -451,6 +478,10 @@ pub struct UsageView {
     /// Each reported model's usage, most input first. Calls without a
     /// reported model are grouped under `null`.
     pub models: Vec<ModelUsage>,
+    /// Each named user's usage, most input first. Calls no named user made
+    /// (unlisted or unidentified callers, and calls recorded before callers
+    /// were) are grouped under `null`.
+    pub users: Vec<UserUsage>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -464,6 +495,13 @@ pub struct UsageBucket {
 pub struct ModelUsage {
     pub provider: Stored<Provider>,
     pub model: Option<String>,
+    #[serde(flatten)]
+    pub usage: UsageCounts,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct UserUsage {
+    pub user: Option<String>,
     #[serde(flatten)]
     pub usage: UsageCounts,
 }

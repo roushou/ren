@@ -15,7 +15,7 @@
 //! The crate also owns what forwarding decides with: the pure attempt and
 //! channel lifecycles (`attempt`, `channel`), retry eligibility (`retry`),
 //! operator state (`operator`) and the [`Controls`] that hold it (`control`),
-//! and call planning (`policy`).
+//! who is calling (`user`), and call planning (`policy`).
 //!
 //! Management handlers read history through the store's `Reader`, stream live
 //! observations from the recorder, and run authenticated controls and backups.
@@ -48,6 +48,7 @@ pub mod channel;
 pub mod control;
 mod headers;
 mod ingress;
+mod limits;
 pub mod operator;
 pub mod policy;
 #[cfg(test)]
@@ -56,6 +57,7 @@ mod relay;
 pub mod retry;
 mod route;
 pub mod upstream;
+pub mod user;
 mod websocket;
 
 pub use api::{ApiRead, ControlOptions, ControlOptionsError, ControlToken, ManagementSetup};
@@ -78,7 +80,9 @@ use crate::{
     call::{CallRun, CallStep, CallStop, Dispatched, Refused},
     channel::Deadlines,
     control::{Cancel, Controls},
+    limits::{AtLimit, UserLimits},
     policy::{Admission, CallFacts, CallPlan, Policy, Rejection, RequestJson, StepRecord},
+    user::IdentifyError,
 };
 use axum::{
     Router,
@@ -101,6 +105,7 @@ use tgv_protocol::{
 use tgv_recorder::{
     AttemptStart, CallStart, CallTap, Recorder,
     batch::{AttemptBody, Recorded},
+    caller::Caller,
     capture::CallRejection,
     routing::{ConfigRevision, UpstreamId},
     time::Clock,
@@ -125,6 +130,11 @@ pub struct GatewayConfig {
     pub buffer: BufferOptions,
     pub policy: Policy,
     pub upstreams: UpstreamTable,
+    /// The named users forwarded requests are matched to.
+    pub users: user::Users,
+    /// Calls every caller that is not a named user may have running at
+    /// once, together; unlimited beyond the global limit when absent.
+    pub max_concurrent_unnamed: Option<u32>,
 }
 
 /// Why the gateway answered instead of the provider.
@@ -231,12 +241,42 @@ impl TgvReply {
                 message: "this session is blocked by the TGV operator".into(),
                 retry: ClientRetry::Never,
             },
+            Rejection::UserBlocked => Self {
+                status: StatusCode::FORBIDDEN,
+                code: "user_blocked",
+                message: "this user is blocked by the TGV operator".into(),
+                retry: ClientRetry::Never,
+            },
             Rejection::Blocked { rule, reason } => Self {
                 status: StatusCode::FORBIDDEN,
                 code: "blocked",
                 message: format!("blocked by TGV policy rule {}: {reason}", rule.as_str()),
                 retry: ClientRetry::Never,
             },
+            Rejection::UserNotAllowed { upstream } => Self {
+                status: StatusCode::FORBIDDEN,
+                code: "user_not_allowed",
+                message: format!("upstream {upstream} is not open to this caller"),
+                retry: ClientRetry::Never,
+            },
+        }
+    }
+
+    fn user_busy() -> Self {
+        Self {
+            status: StatusCode::TOO_MANY_REQUESTS,
+            code: "user_busy",
+            message: "this caller already has as many calls running as TGV allows it".into(),
+            retry: ClientRetry::After(1),
+        }
+    }
+
+    fn unidentified(refused: &IdentifyError) -> Self {
+        Self {
+            status: StatusCode::UNAUTHORIZED,
+            code: "identity_refused",
+            message: refused.to_string(),
+            retry: ClientRetry::Never,
         }
     }
 
@@ -332,6 +372,8 @@ pub struct Gateway<U> {
     admission: Arc<Semaphore>,
     /// Upgraded WebSocket channels; separate from call admission.
     channels: Arc<Semaphore>,
+    /// Each caller's own limit, checked before call admission.
+    user_limits: UserLimits,
     shutdown: Shutdown,
 }
 
@@ -347,6 +389,7 @@ impl<U: Upstream> Gateway<U> {
         Self {
             admission: Arc::new(Semaphore::new(config.max_concurrent_requests)),
             channels: Arc::new(Semaphore::new(config.websocket.max_channels)),
+            user_limits: UserLimits::new(&config.users, config.max_concurrent_unnamed),
             buffer: RequestBuffer::new(config.buffer),
             config,
             upstream,
@@ -381,6 +424,7 @@ impl<U: Upstream> Gateway<U> {
             self.controls.clone(),
             self.clock.clone(),
             self.shutdown.drain_token(),
+            self.config.users.clone(),
         );
         let control = ControlApi::new(
             self.controls.clone(),
@@ -388,6 +432,7 @@ impl<U: Upstream> Gateway<U> {
             self.clock.clone(),
             management.token,
             management.control.tailscale_logins,
+            self.config.users.clone(),
             management.backup,
         );
         self.forwarding_router()
@@ -465,8 +510,10 @@ impl<U: Upstream> Gateway<U> {
         let Ok(admission) = self.admission.clone().try_acquire_owned() else {
             return GatewayError::Busy.into_response();
         };
-        // Attribution reads TGV's local hints before the policy removes them.
+        // Attribution and identity read TGV's local headers and Serve's
+        // identity before the policy removes them.
         let attribution = Harness::attribution(route.harness, &parts.headers);
+        let identified = self.config.users.identify(&parts.headers);
         HeaderPolicy::REQUEST.apply(&mut parts.headers);
         let session = attribution.hint.as_ref().map(|hint| hint.session);
         let mut call = CallStart {
@@ -476,9 +523,24 @@ impl<U: Upstream> Gateway<U> {
             method: route.accepts.method(),
             config_revision: self.config.config_revision.clone(),
             attribution,
+            caller: identified.clone().unwrap_or(Caller::Unidentified),
             operator_revision: None,
             plan: None,
             attempts: 1,
+        };
+        if let Err(refused) = identified {
+            self.recorder
+                .reject(None, call, None, CallRejection::IdentityRefused);
+            return TgvReply::unidentified(&refused).into_response();
+        }
+        // Held until the response ends, like the call's admission.
+        let mut user_permit = match self.user_limits.admit(&call.caller) {
+            Ok(permit) => permit,
+            Err(AtLimit) => {
+                self.recorder
+                    .reject(None, call, None, CallRejection::UserBusy);
+                return TgvReply::user_busy().into_response();
+            }
         };
         let abort = self.shutdown.abort_token();
         // Reading is the one await before the call has a tap; a handler
@@ -512,6 +574,7 @@ impl<U: Upstream> Gateway<U> {
                 endpoint: route.endpoint,
                 model: model.as_deref(),
                 session,
+                user: call.caller.user(),
                 now: self.clock.now().wall,
             },
             &operator,
@@ -546,6 +609,7 @@ impl<U: Upstream> Gateway<U> {
                         started.call(),
                         Transport::Http,
                         session,
+                        call.caller.user().cloned(),
                         Cancel::Http(operator_cancel.clone()),
                     ));
                     tap = Some(started.clone());
@@ -609,7 +673,7 @@ impl<U: Upstream> Gateway<U> {
                 }
                 CallStep::Relay(response) => {
                     // The call stays cancellable while its response streams.
-                    cell.hold(Box::new(registered.take()));
+                    cell.hold(Box::new((registered.take(), user_permit.take())));
                     match dispatch.responded(response) {
                         Ok(response) => return Self::relayed(response),
                         Err(end) => end,
@@ -738,7 +802,9 @@ impl<U: Upstream> Gateway<U> {
             return Self::handshake_refused("WebSocket requires an HTTP/1.1 handshake\n");
         };
         let attribution = Harness::attribution(route.harness, &parts.headers);
+        let identified = self.config.users.identify(&parts.headers);
         HeaderPolicy::HANDSHAKE_REQUEST.apply(&mut parts.headers);
+        // The channel's calls inherit the handshake's caller.
         let start = CallStart {
             transport: Transport::WebSocket,
             api: bound.api,
@@ -746,9 +812,21 @@ impl<U: Upstream> Gateway<U> {
             method: Method::Get,
             config_revision: self.config.config_revision.clone(),
             attribution: attribution.clone(),
+            caller: identified.clone().unwrap_or(Caller::Unidentified),
             operator_revision: None,
             plan: None,
             attempts: 1,
+        };
+        if let Err(refused) = identified {
+            self.recorder
+                .reject(None, start, None, CallRejection::IdentityRefused);
+            return TgvReply::unidentified(&refused).into_response();
+        }
+        // A channel counts as one call of its user's for its whole life.
+        let Ok(user_permit) = self.user_limits.admit(&start.caller) else {
+            return Self::handshake_refused(
+                "WebSocket limit for this caller reached; use HTTP/SSE\n",
+            );
         };
         // WebSocket channels are pinned to the route's entry.
         let upstream = bound.upstream.clone();
@@ -815,6 +893,7 @@ impl<U: Upstream> Gateway<U> {
                     },
                     shutdown: self.shutdown.clone(),
                     channel_permit,
+                    user_permit,
                     tracked: self.shutdown.track_channel(),
                     upstream,
                     policy: self.config.policy.clone(),

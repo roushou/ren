@@ -2240,6 +2240,9 @@ td.zero {
   font: inherit;
   cursor: pointer;
 }
+.caller-line {
+  white-space: nowrap;
+}
 .session-filter:hover {
   color: var(--ink);
   text-decoration: underline;

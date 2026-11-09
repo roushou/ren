@@ -58,8 +58,11 @@ A **call** is one client request; each try against the upstream is an
 **attempt**. A call has one attempt unless a fallback rule replays it (see
 [Policy](policy.md)). A call records its provider and wire format
 (`anthropic_messages` or `openai_responses`); each attempt records the upstream
-entry it went to and that entry's provider. Each attempt records how it ended,
-kept apart from the HTTP status and the model outcome:
+entry it went to and that entry's provider. A call also records its caller
+(`caller`: `kind`, `user`, `login`): the [named user](policy.md#named-users)
+it proved to be, if any; calls recorded before callers were have none. Each
+attempt records how it ended, kept apart from the HTTP status and the model
+outcome:
 
 - `body_complete`: the response body reached its end by EOF or framing. Not
   successful inference, receipt by the client, or completion of agent tools. With
@@ -110,7 +113,8 @@ restart) and the close code. A call ended by an unresponsive upstream records
 ## Gateway responses and limits
 
 When the gateway answers instead of the provider, the status says why: `503` when
-the concurrency limit is reached or the daemon is shutting down, `502` when the
+the concurrency limit is reached or the daemon is shutting down, `429` when the
+caller's own limit is (see [named users](policy.md#named-users)), `502` when the
 connection or send failed, and `504` when no response head arrived in time.
 Provider responses, including errors and redirects, pass through unchanged and are
 never retried, except where an opt-in fallback rule names the status. Default

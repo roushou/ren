@@ -2,6 +2,8 @@
 import { randomUUID } from "node:crypto";
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+// A TGV user token, as `tgv users token` makes one.
+const userToken = /^tgvu_[A-Za-z0-9]{1,128}$/;
 
 export default async function tgv(pi) {
   try {
@@ -15,21 +17,30 @@ export default async function tgv(pi) {
       !["http:", "https:"].includes(root.protocol)
     )
       throw new Error("invalid root");
+    // Optional: the gateway's user token, sent so calls record who made them.
+    const token = process.env.TGV_USER_TOKEN || undefined;
+    if (token !== undefined && !userToken.test(token))
+      throw new Error("invalid user token");
     const {
       anthropicMessagesApi,
       openAICodexResponsesApi,
       openAIResponsesApi,
     } = await import("@earendil-works/pi-ai");
-    configure(pi, root, {
-      anthropicMessagesApi,
-      openAICodexResponsesApi,
-      openAIResponsesApi,
-    });
+    configure(
+      pi,
+      root,
+      {
+        anthropicMessagesApi,
+        openAICodexResponsesApi,
+        openAIResponsesApi,
+      },
+      token,
+    );
   } catch {
     // Pi normally reports extension-load errors and continues. This launcher
     // must not silently fall back to a direct provider when setup fails.
     process.stderr.write(
-      "TGV: Pi integration could not load; Pi 1.0.0-compatible provider APIs are required.\n",
+      "TGV: Pi integration could not load; Pi 1.0.0-compatible provider APIs and a valid TGV_USER_TOKEN, if set, are required.\n",
     );
     process.exit(1);
   }
@@ -39,6 +50,7 @@ export function configure(
   pi,
   root,
   { anthropicMessagesApi, openAICodexResponsesApi, openAIResponsesApi },
+  token,
 ) {
   const providers = [
     ["anthropic", "anthropic-messages", "/anthropic", anthropicMessagesApi()],
@@ -84,6 +96,7 @@ export function configure(
           : null;
         headers["x-tgv-pi-turn-id"] =
           requestSession === session && run ? run : null;
+        if (token !== undefined) headers["x-tgv-user-token"] = token;
         // Pi detects ChatGPT sign-in using this exact native URL, and omits
         // unsupported request fields accordingly. Redirect only the HTTP fetch
         // for OpenAI so its native serialization and error handling still apply.

@@ -21,7 +21,7 @@ pub use control::{ControlOptions, ControlOptionsError, ControlToken};
 pub use route::ApiRead;
 
 use crate::build::Build;
-use crate::{control::Controls, operator::Pause};
+use crate::{control::Controls, operator::Pause, user::Users};
 use axum::{
     Json, Router,
     extract::{Path, Query, State},
@@ -73,6 +73,8 @@ pub(crate) struct ApiState {
     previews: Arc<Semaphore>,
     exports: Arc<Semaphore>,
     shutdown: CancellationToken,
+    /// The named users `/api/caller` identifies callers among.
+    users: Users,
 }
 
 impl ApiState {
@@ -80,6 +82,12 @@ impl ApiState {
     fn permit(pool: &Arc<Semaphore>) -> Result<OwnedSemaphorePermit, ApiError> {
         pool.clone().try_acquire_owned().map_err(|_| ApiError::Busy)
     }
+}
+
+/// `/api/caller`'s answer.
+#[derive(Serialize)]
+struct CallerBody {
+    caller: tgv_recorder::caller::Caller,
 }
 
 /// A response body tagged with the API version.
@@ -108,6 +116,8 @@ pub enum ErrorCode {
     InvalidQuery,
     Busy,
     Unavailable,
+    /// The request's user token or Tailscale identity was refused.
+    IdentityRefused,
 }
 
 #[derive(Serialize)]
@@ -121,11 +131,12 @@ struct Health<'a> {
 }
 
 /// The operator state as `/health` reports it: the pause, and how many
-/// session blocks are in force now.
+/// session and user blocks are in force now.
 #[derive(Serialize)]
 struct OperatorSummary {
     pause: Pause,
     blocked_sessions: usize,
+    blocked_users: usize,
 }
 
 #[derive(Serialize)]
@@ -164,6 +175,8 @@ enum ApiError {
     Search(#[from] SearchError),
     #[error("too many concurrent reads")]
     Busy,
+    #[error("identity refused")]
+    IdentityRefused,
     #[error("store unavailable: {0}")]
     Store(StoreError),
 }
@@ -190,6 +203,7 @@ impl IntoResponse for ApiError {
             Self::NotFound => (StatusCode::NOT_FOUND, ErrorCode::NotFound),
             Self::Query(_) | Self::Search(_) => (StatusCode::BAD_REQUEST, ErrorCode::InvalidQuery),
             Self::Busy => (StatusCode::SERVICE_UNAVAILABLE, ErrorCode::Busy),
+            Self::IdentityRefused => (StatusCode::UNAUTHORIZED, ErrorCode::IdentityRefused),
             Self::Store(error) => {
                 tracing::warn!(%error, "management query failed");
                 (StatusCode::SERVICE_UNAVAILABLE, ErrorCode::Unavailable)
@@ -213,6 +227,7 @@ impl ApiState {
         controls: Arc<Controls>,
         clock: Arc<dyn Clock>,
         shutdown: CancellationToken,
+        users: Users,
     ) -> Self {
         let ReadSources {
             reader,
@@ -229,6 +244,7 @@ impl ApiState {
             previews: Arc::new(Semaphore::new(Self::PREVIEW_PERMITS)),
             exports: Arc::new(Semaphore::new(Self::EXPORT_PERMITS)),
             shutdown,
+            users,
         }
     }
 
@@ -241,6 +257,7 @@ impl ApiState {
         router
             .route("/api/metrics", get(Self::metrics))
             .route("/api/storage", get(Self::storage))
+            .route("/api/caller", get(Self::caller))
             .route("/api/calls/{id}/body/{direction}", get(Self::body))
             .route("/api/calls/{id}/body/{direction}/export", get(Self::export))
             .route("/api/live", get(Self::live))
@@ -280,9 +297,11 @@ impl ApiState {
                 build: &state.build,
                 operator: {
                     let snapshot = state.controls.snapshot();
+                    let now = state.clock.now().wall;
                     OperatorSummary {
                         pause: snapshot.pause(),
-                        blocked_sessions: snapshot.blocked_sessions(state.clock.now().wall),
+                        blocked_sessions: snapshot.blocked_sessions(now),
+                        blocked_users: snapshot.blocked_users(now),
                     }
                 },
                 recorder,
@@ -298,6 +317,19 @@ impl ApiState {
             storage,
         })
         .into_response())
+    }
+
+    /// How the gateway identifies the request's caller, as it would a
+    /// forwarded call: for a client checking its token or login.
+    async fn caller(
+        State(state): State<Arc<Self>>,
+        headers: http::HeaderMap,
+    ) -> Result<Response, ApiError> {
+        let caller = state
+            .users
+            .identify(&headers)
+            .map_err(|_| ApiError::IdentityRefused)?;
+        Ok(Self::versioned(CallerBody { caller }).into_response())
     }
 
     async fn storage(State(state): State<Arc<Self>>) -> Result<Response, ApiError> {

@@ -21,6 +21,11 @@
       },
       "issues": []
     },
+    "caller": {
+      "kind": "unidentified",
+      "user": null,
+      "login": null
+    },
     "state": "finished",
     "terminal": "body_complete",
     "status": 200,

@@ -61,6 +61,7 @@ fn config(mock: &Mock, policy: &str) -> Config {
             base_url: format!("http://{}/fallback", mock.address),
             operator_key_env: TestGateway::OPERATOR_KEY_ENV.into(),
             ingress: EntryIngress::FallbackOnly,
+            users: None,
         }],
         policy: toml::from_str(policy).unwrap(),
         ..Config::default()
@@ -298,6 +299,7 @@ async fn a_chat_completions_entry_streams_and_records_model_usage_and_tool_calls
         base_url: format!("http://{}/chat", mock.address),
         operator_key_env: TestGateway::OPERATOR_KEY_ENV.into(),
         ingress: EntryIngress::Direct,
+        users: None,
     };
     let gateway = TestGateway::start(&config, dir.path()).await;
     let request = r#"{"model":"fixture-chat","stream":true,"stream_options":{"include_usage":true},"messages":[{"role":"user","content":"Read a.rs"}]}"#;
@@ -529,7 +531,7 @@ async fn pause_and_session_blocks_refuse_calls_and_are_recorded() {
     let reported: serde_json::Value = health(&gateway).await;
     assert_eq!(
         reported["operator"],
-        serde_json::json!({ "pause": { "state": "paused", "retry_after": 30 }, "blocked_sessions": 0 })
+        serde_json::json!({ "pause": { "state": "paused", "retry_after": 30 }, "blocked_sessions": 0, "blocked_users": 0 })
     );
     assert_eq!(
         control(&gateway, "resume").send().await.unwrap().status(),

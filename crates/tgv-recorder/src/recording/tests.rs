@@ -60,7 +60,7 @@ impl Script {
 
     fn open(&mut self, first: StartAttempt) -> Record {
         Record::Open {
-            open: OpenCall {
+            open: Box::new(OpenCall {
                 stamp: self.stamp(),
                 transport: Transport::Http,
                 provider: Provider::Anthropic,
@@ -77,9 +77,10 @@ impl Script {
                     }),
                     issues: Vec::new(),
                 },
+                caller: crate::caller::Caller::Unidentified,
                 operator_revision: None,
                 plan: None,
-            },
+            }),
             attempt: Some(first),
             endpoint: Endpoint::Messages,
         }
