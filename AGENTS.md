@@ -185,7 +185,8 @@ dependencies under "Crates" below. Read the code for current module ownership.
   as its primary type: attribution (`attribution`, with its private `headers`
   parser implementing `Harness::attribution`), session launch plans
   (`Harness::launch`), the bundled Pi extension cache (`pi`), the gateway URL a
-  harness is pointed at (`endpoint`), `HostEnv` (`host`), the host environment
+  harness is pointed at and the `UserToken` it presents there (`endpoint`),
+  `HostEnv` (`host`), the host environment
   that launching and configuration read, and what each harness's tools and
   messages mean for activity (`tools`: effects, prompt text, exit codes, why a
   client sent a call (`CallPurpose`: work, or Claude Code's quota probe), and
@@ -243,7 +244,7 @@ dependencies under "Crates" below. Read the code for current module ownership.
   directly; no framework-independent HTTP adapter layer. It also owns retry
   eligibility (`retry`), operator state (`operator`), the named users and
   how a request is matched to one (`user`: `Users::identify`, with
-  `UserToken` and its digest), the `Controls` that hold
+  `TokenDigest`, a user token's digest), the `Controls` that hold
   it with the running-call registry (`control`), the `Build` that `/health`
   reports (`build`), and pure call planning
   (`policy`: block, transform, and fallback rules validated at load, with

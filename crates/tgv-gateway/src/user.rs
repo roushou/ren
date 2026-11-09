@@ -3,7 +3,7 @@
 //!
 //! A request names its user by a Tailscale login, which Tailscale Serve
 //! adds after removing any copy the caller sent, or by a user token in
-//! [`Users::TOKEN_HEADER`]. The token header is in TGV's `x-tgv-`
+//! [`UserToken::HEADER`]. The token header is in TGV's `x-tgv-`
 //! namespace, which the header policy removes before forwarding, so it never
 //! reaches a provider. Configuration holds only each token's BLAKE3 digest.
 //!
@@ -13,54 +13,11 @@
 
 use http::HeaderMap;
 use std::{collections::HashMap, num::NonZeroU32};
+use tgv_harness::endpoint::UserToken;
 use tgv_recorder::{
     caller::{Caller, Proof, TailscaleLogin, UserId},
     id::IdSource,
 };
-
-/// A user's secret token. Never shown in `Debug`.
-#[derive(Clone)]
-pub struct UserToken(Box<str>);
-
-impl UserToken {
-    /// Marks the token's kind, so it reads as a TGV credential wherever it
-    /// turns up.
-    const PREFIX: &'static str = "tgvu_";
-
-    pub fn generate<S: IdSource + ?Sized>(ids: &S) -> Self {
-        Self(
-            format!(
-                "{}{}{}",
-                Self::PREFIX,
-                ids.next_uuid().simple(),
-                ids.next_uuid().simple()
-            )
-            .into(),
-        )
-    }
-
-    /// A token as a user presents it: the prefix, then ASCII letters and
-    /// digits.
-    pub fn parse(text: &str) -> Option<Self> {
-        let rest = text.strip_prefix(Self::PREFIX)?;
-        (!rest.is_empty() && rest.len() <= 128 && rest.bytes().all(|b| b.is_ascii_alphanumeric()))
-            .then(|| Self(text.into()))
-    }
-
-    pub fn expose(&self) -> &str {
-        &self.0
-    }
-
-    pub fn digest(&self) -> TokenDigest {
-        TokenDigest(*blake3::hash(self.0.as_bytes()).as_bytes())
-    }
-}
-
-impl std::fmt::Debug for UserToken {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("UserToken(<redacted>)")
-    }
-}
 
 /// The BLAKE3 digest of a user token, as configuration holds it: 64
 /// lowercase hexadecimal digits.
@@ -72,6 +29,11 @@ pub struct TokenDigest([u8; 32]);
 pub struct InvalidTokenDigest;
 
 impl TokenDigest {
+    /// The digest configuration keeps for `token`.
+    pub fn of(token: &UserToken) -> Self {
+        Self(*blake3::hash(token.expose().as_bytes()).as_bytes())
+    }
+
     pub fn parse(text: &str) -> Result<Self, InvalidTokenDigest> {
         let digits = text.as_bytes();
         if digits.len() != 64 {
@@ -176,8 +138,6 @@ pub struct Users {
 }
 
 impl Users {
-    /// The request header that carries a user token.
-    pub const TOKEN_HEADER: &'static str = "x-tgv-user-token";
     const LOGIN_HEADER: &'static str = "tailscale-user-login";
 
     pub fn new(configs: Vec<UserConfig>) -> Result<Self, UsersError> {
@@ -217,6 +177,11 @@ impl Users {
         })
     }
 
+    /// A new user token, from `ids`' randomness.
+    pub fn new_token<S: IdSource + ?Sized>(ids: &S) -> UserToken {
+        UserToken::from_random(ids.next_uuid().as_u128(), ids.next_uuid().as_u128())
+    }
+
     pub fn configs(&self) -> &[UserConfig] {
         &self.configs
     }
@@ -241,7 +206,7 @@ impl Users {
                     .ok_or(IdentifyError::MalformedLogin)
             })
             .transpose()?;
-        let mut tokens = headers.get_all(Self::TOKEN_HEADER).iter();
+        let mut tokens = headers.get_all(UserToken::HEADER).iter();
         let token = tokens.next();
         if tokens.next().is_some() {
             return Err(IdentifyError::SeveralTokens);
@@ -252,7 +217,7 @@ impl Users {
                     .to_str()
                     .ok()
                     .and_then(UserToken::parse)
-                    .and_then(|token| self.by_token.get(&token.digest()))
+                    .and_then(|token| self.by_token.get(&TokenDigest::of(&token)))
                     .cloned()
                     .ok_or(IdentifyError::UnknownToken)
             })
@@ -284,8 +249,9 @@ impl Users {
 
 #[cfg(test)]
 mod tests {
-    use super::{IdentifyError, TokenDigest, UserConfig, UserToken, Users, UsersError};
+    use super::{IdentifyError, TokenDigest, UserConfig, Users, UsersError};
     use http::HeaderMap;
+    use tgv_harness::endpoint::UserToken;
     use tgv_recorder::{
         caller::{Caller, Proof, TailscaleLogin, UserId},
         id::SequentialIds,
@@ -315,19 +281,19 @@ mod tests {
 
     fn fixture() -> Fixture {
         let ids = SequentialIds::default();
-        let alice = UserToken::generate(&ids);
-        let bob = UserToken::generate(&ids);
+        let alice = Users::new_token(&ids);
+        let bob = Users::new_token(&ids);
         let users = Users::new(vec![
             UserConfig {
                 id: id("alice"),
                 tailscale_logins: vec![login("alice@example.com")],
-                token_blake3: Some(alice.digest()),
+                token_blake3: Some(TokenDigest::of(&alice)),
                 max_concurrent: None,
             },
             UserConfig {
                 id: id("bob"),
                 tailscale_logins: vec![],
-                token_blake3: Some(bob.digest()),
+                token_blake3: Some(TokenDigest::of(&bob)),
                 max_concurrent: None,
             },
         ])
@@ -336,20 +302,8 @@ mod tests {
     }
 
     #[test]
-    fn tokens_parse_their_format_and_never_show_in_debug() {
-        let token = UserToken::generate(&SequentialIds::default());
-        assert!(token.expose().starts_with("tgvu_"));
-        assert_eq!(token.expose().len(), 5 + 64);
-        assert_eq!(format!("{token:?}"), "UserToken(<redacted>)");
-        assert!(UserToken::parse(token.expose()).is_some());
-        for bad in ["", "tgvu_", "abc", "tgvu_a b", "Bearer tgvu_abc"] {
-            assert!(UserToken::parse(bad).is_none(), "{bad:?}");
-        }
-    }
-
-    #[test]
     fn digests_round_trip_through_their_text() {
-        let digest = UserToken::generate(&SequentialIds::default()).digest();
+        let digest = TokenDigest::of(&Users::new_token(&SequentialIds::default()));
         let text = digest.to_string();
         assert_eq!(text.len(), 64);
         assert_eq!(TokenDigest::parse(&text), Ok(digest));
@@ -375,7 +329,7 @@ mod tests {
                 },
             ),
             (
-                headers(&[(Users::TOKEN_HEADER, bob.expose())]),
+                headers(&[(UserToken::HEADER, bob.expose())]),
                 Caller::User {
                     user: id("bob"),
                     proof: Proof::Token { login: None },
@@ -384,7 +338,7 @@ mod tests {
             (
                 headers(&[
                     ("tailscale-user-login", "carol@example.com"),
-                    (Users::TOKEN_HEADER, bob.expose()),
+                    (UserToken::HEADER, bob.expose()),
                 ]),
                 Caller::User {
                     user: id("bob"),
@@ -396,7 +350,7 @@ mod tests {
             (
                 headers(&[
                     ("tailscale-user-login", "alice@example.com"),
-                    (Users::TOKEN_HEADER, alice.expose()),
+                    (UserToken::HEADER, alice.expose()),
                 ]),
                 Caller::User {
                     user: id("alice"),
@@ -420,24 +374,24 @@ mod tests {
         let unknown = UserToken::parse(&format!("tgvu_{}", "f".repeat(64))).unwrap();
         let cases = [
             (
-                headers(&[(Users::TOKEN_HEADER, "not-a-token")]),
+                headers(&[(UserToken::HEADER, "not-a-token")]),
                 IdentifyError::UnknownToken,
             ),
             (
                 headers(&[
                     ("tailscale-user-login", "alice@example.com"),
-                    (Users::TOKEN_HEADER, "tgvu_unknown"),
+                    (UserToken::HEADER, "tgvu_unknown"),
                 ]),
                 IdentifyError::UnknownToken,
             ),
             (
-                headers(&[(Users::TOKEN_HEADER, unknown.expose())]),
+                headers(&[(UserToken::HEADER, unknown.expose())]),
                 IdentifyError::UnknownToken,
             ),
             (
                 headers(&[
-                    (Users::TOKEN_HEADER, alice.expose()),
-                    (Users::TOKEN_HEADER, bob.expose()),
+                    (UserToken::HEADER, alice.expose()),
+                    (UserToken::HEADER, bob.expose()),
                 ]),
                 IdentifyError::SeveralTokens,
             ),
@@ -448,7 +402,7 @@ mod tests {
             (
                 headers(&[
                     ("tailscale-user-login", "alice@example.com"),
-                    (Users::TOKEN_HEADER, bob.expose()),
+                    (UserToken::HEADER, bob.expose()),
                 ]),
                 IdentifyError::Conflicting {
                     login: id("alice"),
@@ -463,7 +417,7 @@ mod tests {
 
     #[test]
     fn the_client_set_refuses_duplicates_and_unprovable_clients() {
-        let token = UserToken::generate(&SequentialIds::default()).digest();
+        let token = TokenDigest::of(&Users::new_token(&SequentialIds::default()));
         let user = |name: &str, logins: &[&str], token: Option<TokenDigest>| UserConfig {
             id: id(name),
             tailscale_logins: logins.iter().map(|text| login(text)).collect(),

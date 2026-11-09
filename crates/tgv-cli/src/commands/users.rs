@@ -4,7 +4,8 @@ use anyhow::Result;
 use clap::{Args, Subcommand};
 use std::process::ExitCode;
 use tgv_daemon::host::RandomIds;
-use tgv_gateway::user::{UserToken, Users};
+use tgv_gateway::user::{TokenDigest, Users};
+use tgv_harness::endpoint::UserToken;
 use tgv_recorder::caller::UserId;
 
 /// Named users of the gateway, configured in `[[users]]`.
@@ -31,7 +32,7 @@ impl UsersCmd {
     pub fn run(self, _ctx: &Context) -> Result<ExitCode> {
         match self.action {
             UsersAction::Token(args) => {
-                let token = UserToken::generate(&RandomIds);
+                let token = Users::new_token(&RandomIds);
                 print!("{}", TokenArgs::instructions(&args.id, &token));
                 Ok(ExitCode::SUCCESS)
             }
@@ -51,9 +52,9 @@ impl TokenArgs {
              [[users]]\n\
              id = \"{id}\"\n\
              token_blake3 = \"{digest}\"\n",
-            header = Users::TOKEN_HEADER,
+            header = UserToken::HEADER,
             secret = token.expose(),
-            digest = token.digest(),
+            digest = TokenDigest::of(token),
         )
     }
 }
@@ -61,17 +62,17 @@ impl TokenArgs {
 #[cfg(test)]
 mod tests {
     use super::TokenArgs;
-    use tgv_gateway::user::{UserConfig, UserToken};
+    use tgv_gateway::user::{TokenDigest, UserConfig, Users};
     use tgv_recorder::{caller::UserId, id::SequentialIds};
 
     #[test]
     fn the_printed_configuration_names_the_tokens_digest() {
-        let token = UserToken::generate(&SequentialIds::default());
+        let token = Users::new_token(&SequentialIds::default());
         let text = TokenArgs::instructions(&UserId::parse("alice").unwrap(), &token);
         let (_, toml_part) = text.split_once("[[users]]\n").unwrap();
         let config: UserConfig = toml::from_str(toml_part).unwrap();
         assert_eq!(config.id.as_str(), "alice");
-        assert_eq!(config.token_blake3, Some(token.digest()));
+        assert_eq!(config.token_blake3, Some(TokenDigest::of(&token)));
         assert!(text.contains(token.expose()));
     }
 }

@@ -18,7 +18,8 @@ use std::sync::{
 };
 use tgv_daemon::config::{Config, UpstreamConfig};
 use tgv_gateway::EntryIngress;
-use tgv_gateway::user::{UserConfig, UserToken, Users};
+use tgv_gateway::user::{TokenDigest, UserConfig, Users};
+use tgv_harness::endpoint::UserToken;
 use tgv_protocol::{label::Stored, route::Provider};
 use tgv_recorder::{
     caller::{CallerKind, TailscaleLogin, UserId},
@@ -44,8 +45,8 @@ struct Tokens {
 fn tokens() -> Tokens {
     let ids = SequentialIds::default();
     Tokens {
-        bob: UserToken::generate(&ids),
-        unknown: UserToken::generate(&ids),
+        bob: Users::new_token(&ids),
+        unknown: Users::new_token(&ids),
     }
 }
 
@@ -61,7 +62,7 @@ fn config(mock: &Mock, tokens: &Tokens) -> Config {
             UserConfig {
                 id: UserId::parse("bob").unwrap(),
                 tailscale_logins: vec![],
-                token_blake3: Some(tokens.bob.digest()),
+                token_blake3: Some(TokenDigest::of(&tokens.bob)),
                 max_concurrent: None,
             },
         ],
@@ -112,7 +113,7 @@ async fn every_call_records_its_caller_and_identity_never_reaches_the_provider()
     let gateway = TestGateway::start(&config(&mock, &tokens), dir.path()).await;
     let requests: [&[(&str, &str)]; 4] = [
         &[("tailscale-user-login", "alice@example.com")],
-        &[(Users::TOKEN_HEADER, tokens.bob.expose())],
+        &[(UserToken::HEADER, tokens.bob.expose())],
         &[("tailscale-user-login", "carol@example.com")],
         &[],
     ];
@@ -181,10 +182,10 @@ async fn a_refused_identity_is_answered_and_recorded_without_forwarding() {
     let tokens = tokens();
     let gateway = TestGateway::start(&config(&mock, &tokens), dir.path()).await;
     let refused: [&[(&str, &str)]; 2] = [
-        &[(Users::TOKEN_HEADER, tokens.unknown.expose())],
+        &[(UserToken::HEADER, tokens.unknown.expose())],
         &[
             ("tailscale-user-login", "alice@example.com"),
-            (Users::TOKEN_HEADER, tokens.bob.expose()),
+            (UserToken::HEADER, tokens.bob.expose()),
         ],
     ];
     for headers in refused {
@@ -238,7 +239,7 @@ async fn an_entry_for_some_users_refuses_everyone_else_before_forwarding() {
             request = request.header(*name, *value);
         }
         if let Some(token) = token {
-            request = request.header(Users::TOKEN_HEADER, token);
+            request = request.header(UserToken::HEADER, token);
         }
         request.send()
     };
@@ -286,7 +287,7 @@ async fn an_operator_blocks_a_user_at_once_and_unblocks_them() {
     let dir = tempfile::tempdir().unwrap();
     let tokens = tokens();
     let gateway = TestGateway::start(&config(&mock, &tokens), dir.path()).await;
-    let bob: &[(&str, &str)] = &[(Users::TOKEN_HEADER, tokens.bob.expose())];
+    let bob: &[(&str, &str)] = &[(UserToken::HEADER, tokens.bob.expose())];
 
     let blocked = control(&gateway, "users/bob/block").send().await.unwrap();
     assert_eq!(blocked.status(), StatusCode::OK);
@@ -352,7 +353,7 @@ async fn a_user_at_its_limit_gets_429_until_a_call_ends() {
     let mut config = config(&mock, &tokens);
     config.users[1].max_concurrent = std::num::NonZeroU32::new(1);
     let gateway = TestGateway::start(&config, dir.path()).await;
-    let bob: &[(&str, &str)] = &[(Users::TOKEN_HEADER, tokens.bob.expose())];
+    let bob: &[(&str, &str)] = &[(UserToken::HEADER, tokens.bob.expose())];
 
     let first = {
         let request = post(&gateway, bob);
