@@ -183,6 +183,8 @@ async fn headless_daemon_exposes_only_gateway_and_management_routes() {
     assert_eq!(value["usage"]["calls"], 0);
     assert_eq!(value["policy"]["enabled"], true);
     assert_eq!(value["policy"]["max_storage_bytes"], 2147483648u64);
+    // The per-body capture limit, so readers can tell a trimmed body from lost bytes.
+    assert!(value["capture"]["body_limit_bytes"].as_u64().unwrap() > 0);
     // The daemon reports the build it was given.
     let health = client()
         .get(format!("{base}/health"))

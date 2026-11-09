@@ -198,6 +198,11 @@ impl Recorder {
         }
     }
 
+    /// Bytes captured per body: past this, the rest is omitted by policy.
+    pub fn body_limit_bytes(&self) -> usize {
+        self.shared.options.body_limit_bytes
+    }
+
     pub fn metrics(&self) -> RecorderMetrics {
         let sender = &self.shared.sender;
         let byte_capacity = self.shared.options.queue_bytes;

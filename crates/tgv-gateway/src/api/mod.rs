@@ -138,6 +138,14 @@ struct Metrics {
 struct Storage<'a> {
     policy: &'a RetentionPolicy,
     usage: StorageView,
+    capture: CaptureLimits,
+}
+
+/// What capture keeps of each call, so a reader can tell a body trimmed at
+/// the limit (by design) from one that lost bytes.
+#[derive(Serialize)]
+struct CaptureLimits {
+    body_limit_bytes: usize,
 }
 
 #[derive(Serialize)]
@@ -297,6 +305,9 @@ impl ApiState {
         Ok(Self::versioned(Storage {
             policy: &state.retention,
             usage,
+            capture: CaptureLimits {
+                body_limit_bytes: state.recorder.body_limit_bytes(),
+            },
         })
         .into_response())
     }
