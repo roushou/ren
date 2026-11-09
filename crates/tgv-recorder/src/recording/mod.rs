@@ -421,10 +421,16 @@ impl RecorderCore {
                     // Read the reply so far only when an update may go out.
                     if call.throttle.due(piece.enqueued)
                         && let Some(activity) = inspector.so_far()
-                        && call.throttle.changed(piece.enqueued, &activity)
+                        && call
+                            .throttle
+                            .changed(piece.enqueued, &activity, inspector.thinking())
                     {
-                        self.progress
-                            .push(Progress::of(piece.call, &activity, &self.scanner));
+                        self.progress.push(Progress::of(
+                            piece.call,
+                            &activity,
+                            inspector.thinking(),
+                            &self.scanner,
+                        ));
                     }
                 }
             }

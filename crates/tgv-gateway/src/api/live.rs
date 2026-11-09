@@ -7,8 +7,8 @@
 //! reload. Feeds end when the daemon shuts down.
 //!
 //! With `progress=true`, a following feed also sends `progress` events:
-//! updates on streaming calls (the reply so far, redacted, and the tools
-//! begun). They carry no id, are never replayed, and a feed that falls
+//! updates on streaming calls (the reply so far, redacted, the tools
+//! begun, and whether the model is thinking). They carry no id, are never replayed, and a feed that falls
 //! behind skips some; the finished call is the record.
 
 use axum::response::sse::Event;

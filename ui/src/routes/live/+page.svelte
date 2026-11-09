@@ -164,10 +164,11 @@
     return [`read ${tally.read}`, `wrote ${tally.wrote}`, `ran ${tally.ran}`];
   }
   /** A call not read yet: open (waiting for its head, or responding), or just finished. */
-  function unreadLabel(unread: UnreadCall, now: number): string {
+  function unreadLabel(unread: UnreadCall, now: number, thinking: boolean): string {
     const { call } = unread;
     if (call.state !== 'open') return 'finished · reading';
-    const state = call.status === null ? 'waiting for response' : 'responding';
+    const state =
+      call.status === null ? 'waiting for response' : thinking ? 'thinking' : 'responding';
     return `${state} · ${span(now - call.started_at)}`;
   }
   function callLabel(call: TurnCall): string {
@@ -644,8 +645,9 @@
                 <!-- Once text streams, it holds the call's place: no status line
                      comes and goes around it, and the read reply replaces it in place. -->
                 {#if !streamed?.reply}
-                  <p class="live-sep live" class:open={unread.call.state === 'open'}>
-                    call {unread.index} · {unreadLabel(unread, board.now)}
+                  {@const thinking = unread.call.state === 'open' && !!streamed?.thinking}
+                  <p class="live-sep live" class:open={unread.call.state === 'open'} class:thinking>
+                    call {unread.index} · {unreadLabel(unread, board.now, thinking)}
                   </p>
                 {/if}
                 {#if streamed}
@@ -1402,13 +1404,24 @@
     color: var(--accent);
     animation: live-caret 1s steps(1) infinite;
   }
+  /* The model is thinking: its text is not shown, so the status line pulses. */
+  .live-sep.thinking {
+    color: var(--accent);
+    animation: live-thinking 1.6s ease-in-out infinite;
+  }
+  @keyframes live-thinking {
+    50% {
+      opacity: 0.45;
+    }
+  }
   @keyframes live-caret {
     50% {
       opacity: 0;
     }
   }
   @media (prefers-reduced-motion: reduce) {
-    .live-streaming.writing :global(.markdown > :last-child)::after {
+    .live-streaming.writing :global(.markdown > :last-child)::after,
+    .live-sep.thinking {
       animation: none;
     }
   }

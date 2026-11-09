@@ -134,6 +134,8 @@ pub(super) struct Response {
     limits: ActivityLimits,
     done: Vec<Map<String, Value>>,
     terminal: Option<Map<String, Value>>,
+    /// Whether the newest item begun is reasoning, not yet done.
+    reasoning: bool,
 }
 
 impl Response {
@@ -142,6 +144,7 @@ impl Response {
             limits,
             done: Vec::new(),
             terminal: None,
+            reasoning: false,
         }
     }
 
@@ -153,7 +156,15 @@ impl Response {
 
     pub(super) fn event(&mut self, mut event: Map<String, Value>) {
         let kind = Fields(&event).str("type").and_then(EventKind::from_label);
-        if kind == Some(EventKind::OutputItemDone) {
+        if kind == Some(EventKind::OutputItemAdded) {
+            self.reasoning = event
+                .get("item")
+                .and_then(Value::as_object)
+                .and_then(|item| Fields(item).str("type"))
+                .and_then(ItemKind::from_label)
+                == Some(ItemKind::Reasoning);
+        } else if kind == Some(EventKind::OutputItemDone) {
+            self.reasoning = false;
             if let Some(Value::Object(item)) = event.remove("item") {
                 self.done.push(item);
             }
@@ -162,8 +173,14 @@ impl Response {
             Some(EventKind::Completed | EventKind::Incomplete | EventKind::Failed)
         ) && let Some(Value::Object(response)) = event.remove("response")
         {
+            self.reasoning = false;
             self.terminal = Some(response);
         }
+    }
+
+    /// Whether the model is reasoning: the newest item begun is reasoning.
+    pub(super) fn thinking(&self) -> bool {
+        self.reasoning
     }
 
     /// Items arrive done one by one; the terminal event repeats them all

@@ -1,6 +1,7 @@
 /**
  * Calls' replies while they stream, from the live feed's `progress` events:
- * the redacted end of the reply so far and the tools begun. They are never
+ * the redacted end of the reply so far, the tools begun, and whether the
+ * model is thinking. They are never
  * stored, so they only fill the gap until the finished call is read.
  */
 import { CallId } from './api.ts';
@@ -13,13 +14,20 @@ export interface CallProgress {
   /** Whether the reply so far is longer than `reply`. */
   cut: boolean;
   tools: string[];
+  /** Whether the model is thinking (its thinking text is not sent). */
+  thinking: boolean;
 }
+
+/** `thinking`, which a daemon before it was added leaves out. */
+const thinking = (value: unknown, path: string): boolean =>
+  value === undefined ? false : boolean(value, path);
 
 const callProgress = object<CallProgress>({
   call: CallId.decode,
   reply: string,
   cut: boolean,
   tools: array(string),
+  thinking,
 });
 
 export class Streaming {

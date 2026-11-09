@@ -365,6 +365,15 @@ impl CallInspector {
     /// The response's activity so far, while it streams: the reply and the
     /// tool calls read to now. `None` when the body cannot be interpreted.
     /// A whole JSON document is read only at its end.
+    /// Whether the response so far ends inside the model's thinking
+    /// ([`ResponseReader::thinking`]).
+    pub fn thinking(&self) -> bool {
+        self.readers
+            .activity
+            .as_ref()
+            .is_some_and(ResponseReader::thinking)
+    }
+
     pub fn so_far(&self) -> Option<ResponseActivity> {
         self.readers.activity.as_ref().map(ResponseReader::so_far)
     }

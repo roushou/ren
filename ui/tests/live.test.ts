@@ -185,11 +185,27 @@ test('progress events parse at the boundary and keep a bounded, newest-last set'
     JSON.stringify({ call, reply: 'Hi', cut: false, tools: ['Bash'] }),
   );
   assert.equal(update?.reply, 'Hi');
+  // A daemon that predates `thinking` leaves it out: not thinking.
+  assert.equal(update?.thinking, false);
+  const thinking = Streaming.parse(
+    JSON.stringify({ call, reply: '', cut: false, tools: [], thinking: true }),
+  );
+  assert.equal(thinking?.thinking, true);
+  assert.equal(
+    Streaming.parse(JSON.stringify({ call, reply: '', cut: false, tools: [], thinking: 'yes' })),
+    null,
+  );
   assert.equal(Streaming.parse('{"call":"nope","reply":"x","cut":false,"tools":[]}'), null);
   assert.equal(Streaming.parse('not json'), null);
   const calls = new Map();
   for (let n = 0; n < Streaming.MAX_CALLS + 5; n++) {
-    Streaming.keep(calls, { call: callId(n), reply: String(n), cut: false, tools: [] });
+    Streaming.keep(calls, {
+      call: callId(n),
+      reply: String(n),
+      cut: false,
+      tools: [],
+      thinking: false,
+    });
   }
   assert.equal(calls.size, Streaming.MAX_CALLS);
   // The oldest went first; a call updated again moves to the end.

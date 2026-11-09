@@ -264,6 +264,22 @@ impl Response {
         }
     }
 
+    /// Whether the newest block is the model's thinking, still open.
+    pub(super) fn thinking(&self) -> bool {
+        self.blocks.iter().flatten().last().is_some_and(|block| {
+            !block.closed
+                && match block.kind {
+                    BlockKind::Thinking | BlockKind::RedactedThinking => true,
+                    BlockKind::Text
+                    | BlockKind::ToolUse
+                    | BlockKind::ServerToolUse
+                    | BlockKind::McpToolUse
+                    | BlockKind::WebSearchToolResult
+                    | BlockKind::McpToolResult => false,
+                }
+        })
+    }
+
     pub(super) fn finish(self) -> ResponseActivity {
         let mut activity = ResponseActivity {
             limitations: self.limitations,

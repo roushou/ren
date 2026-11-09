@@ -20,6 +20,9 @@ pub struct Progress {
     pub cut: bool,
     /// The tools the response has begun to call, in order.
     pub tools: Vec<String>,
+    /// Whether the model is thinking: the response so far ends inside a
+    /// thinking block or reasoning item, whose text is not shown.
+    pub thinking: bool,
 }
 
 impl Progress {
@@ -31,7 +34,12 @@ impl Progress {
     /// tail is cut from it, so a credential across the cut is still found.
     const SCAN_CHARS: usize = 2 * Self::TAIL_CHARS;
 
-    pub(crate) fn of(call: CallId, activity: &ResponseActivity, scanner: &SecretScanner) -> Self {
+    pub(crate) fn of(
+        call: CallId,
+        activity: &ResponseActivity,
+        thinking: bool,
+        scanner: &SecretScanner,
+    ) -> Self {
         let scanned = Self::tail(&activity.reply, Self::SCAN_CHARS);
         let (redacted, _) = scanner.redact(scanned);
         let reply = Self::tail(&redacted, Self::TAIL_CHARS).to_owned();
@@ -44,6 +52,7 @@ impl Progress {
                 .iter()
                 .map(|tool| tool.name.clone())
                 .collect(),
+            thinking,
         }
     }
 
@@ -65,8 +74,8 @@ impl Progress {
 #[derive(Debug, Default)]
 pub(crate) struct Throttle {
     last: Option<Monotonic>,
-    /// The reply length and tool count last sent.
-    sent: (usize, usize),
+    /// The reply length, tool count, and thinking last sent.
+    sent: (usize, usize, bool),
 }
 
 impl Throttle {
@@ -76,10 +85,15 @@ impl Throttle {
             .is_none_or(|last| now.saturating_since(last) >= Progress::EVERY)
     }
 
-    /// Whether `activity` says more than the last update, recording it as
-    /// sent at `now` when it does.
-    pub(crate) fn changed(&mut self, now: Monotonic, activity: &ResponseActivity) -> bool {
-        let next = (activity.reply.len(), activity.tool_uses.len());
+    /// Whether `activity` says more than the last update, or the model
+    /// started or stopped thinking, recording it as sent at `now` when so.
+    pub(crate) fn changed(
+        &mut self,
+        now: Monotonic,
+        activity: &ResponseActivity,
+        thinking: bool,
+    ) -> bool {
+        let next = (activity.reply.len(), activity.tool_uses.len(), thinking);
         if next == self.sent {
             return false;
         }
@@ -110,13 +124,13 @@ mod tests {
         let call = CallId::restore(Uuid::from_u128(1));
         let key = format!("sk-ant-api03-{}", "A".repeat(93));
         let long = format!("{}{key} done", "x".repeat(Progress::TAIL_CHARS));
-        let update = Progress::of(call, &activity(&long), &scanner);
+        let update = Progress::of(call, &activity(&long), false, &scanner);
         assert!(update.cut);
         assert!(update.reply.ends_with(" done"));
         assert!(!update.reply.contains("sk-ant-api03"), "{}", update.reply);
         assert!(update.reply.contains("«redacted"));
         assert!(update.reply.chars().count() <= Progress::TAIL_CHARS);
-        let short = Progress::of(call, &activity("hello"), &scanner);
+        let short = Progress::of(call, &activity("hello"), false, &scanner);
         assert_eq!((short.reply.as_str(), short.cut), ("hello", false));
     }
 
@@ -125,11 +139,14 @@ mod tests {
         let at = |ms| Monotonic::from_elapsed(Duration::from_millis(ms));
         let mut throttle = Throttle::default();
         assert!(throttle.due(at(0)));
-        assert!(throttle.changed(at(0), &activity("a")));
-        assert!(!throttle.due(at(100)));
-        assert!(throttle.due(at(250)));
-        assert!(!throttle.changed(at(250), &activity("a")));
-        assert!(throttle.changed(at(260), &activity("ab")));
-        assert!(!throttle.due(at(400)));
+        assert!(!throttle.changed(at(0), &activity(""), false));
+        assert!(throttle.changed(at(0), &activity(""), true));
+        assert!(!throttle.changed(at(300), &activity(""), true));
+        assert!(throttle.changed(at(600), &activity("a"), false));
+        assert!(!throttle.due(at(700)));
+        assert!(throttle.due(at(850)));
+        assert!(!throttle.changed(at(850), &activity("a"), false));
+        assert!(throttle.changed(at(860), &activity("ab"), false));
+        assert!(!throttle.due(at(1000)));
     }
 }

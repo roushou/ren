@@ -222,6 +222,17 @@ impl ResponseReader {
     /// reply received to now, and the tool calls begun (an input still
     /// arriving may be partial). For showing a call while it streams; the
     /// finished reading is the record.
+    /// Whether the response, as far as it has arrived, ends inside the
+    /// model's thinking: a thinking block or reasoning item has begun and
+    /// not finished. Chat Completions reports no thinking.
+    pub fn thinking(&self) -> bool {
+        match &self.protocol {
+            ProtocolResponse::Messages(response) => response.thinking(),
+            ProtocolResponse::Responses(response) => response.thinking(),
+            ProtocolResponse::ChatCompletions(_) => false,
+        }
+    }
+
     pub fn so_far(&self) -> ResponseActivity {
         self.clone().finish()
     }

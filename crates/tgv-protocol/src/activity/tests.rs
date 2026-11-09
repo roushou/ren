@@ -634,3 +634,44 @@ fn chat_responses_keep_choices_apart_and_bound_tool_calls() {
     assert_eq!(whole.tool_uses[1].input, ToolInput::Json(Value::Null));
     assert!(whole.limitations.is_empty());
 }
+
+#[test]
+fn a_response_is_thinking_while_its_newest_thinking_block_or_reasoning_item_is_open() {
+    let watch = |protocol: Protocol, events: &[Value]| -> Vec<bool> {
+        let mut inspector = CallInspector::new(
+            protocol,
+            ResponseFormat::EventStream,
+            ResponseEncoding::Identity,
+            InspectionLimits::default(),
+        );
+        events
+            .iter()
+            .map(|event| {
+                inspector.feed(&sse(std::slice::from_ref(event)));
+                inspector.thinking()
+            })
+            .collect()
+    };
+    let messages = watch(
+        Protocol::Messages,
+        &[
+            json!({ "type": "message_start", "message": { "content": [] } }),
+            json!({ "type": "content_block_start", "index": 0, "content_block": { "type": "thinking", "thinking": "" } }),
+            json!({ "type": "content_block_delta", "index": 0, "delta": { "type": "thinking_delta", "thinking": "Let me look." } }),
+            json!({ "type": "content_block_stop", "index": 0 }),
+            json!({ "type": "content_block_start", "index": 1, "content_block": { "type": "text", "text": "" } }),
+        ],
+    );
+    assert_eq!(messages, [false, true, true, false, false]);
+    let responses = watch(
+        Protocol::Responses,
+        &[
+            json!({ "type": "response.created", "response": {} }),
+            json!({ "type": "response.output_item.added", "output_index": 0, "item": { "type": "reasoning" } }),
+            json!({ "type": "response.reasoning_summary_text.delta", "output_index": 0, "delta": "Checking." }),
+            json!({ "type": "response.output_item.done", "output_index": 0, "item": { "type": "reasoning" } }),
+            json!({ "type": "response.output_item.added", "output_index": 1, "item": { "type": "message" } }),
+        ],
+    );
+    assert_eq!(responses, [false, true, true, false, false]);
+}
