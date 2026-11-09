@@ -12,7 +12,7 @@ description = "SQLite persistence and read views for the TGV LLM gateway."
 # and serves reads; never add an HTTP framework or CLI parser
 # (docs/architecture.md).
 [dependencies]
-blake3 = "1.8.7"
+blake3.workspace = true
 bytes.workspace = true
 serde.workspace = true
 serde_json.workspace = true

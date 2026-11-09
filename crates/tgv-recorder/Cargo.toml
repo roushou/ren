@@ -12,7 +12,7 @@ description = "Bounded, non-blocking capture queue and recorded-fact model for t
 # RecordSink port: never add a database driver, HTTP framework, or CLI parser
 # (docs/architecture.md).
 [dependencies]
-blake3 = "1.8.7"
+blake3.workspace = true
 bytes.workspace = true
 fastcdc = "5.0.0"
 regex = { version = "1.13", default-features = false, features = ["std", "perf", "unicode-perl"] }

@@ -15,7 +15,7 @@
 //! The crate also owns what forwarding decides with: the pure attempt and
 //! channel lifecycles (`attempt`, `channel`), retry eligibility (`retry`),
 //! operator state (`operator`) and the [`Controls`] that hold it (`control`),
-//! and call planning (`policy`).
+//! who is calling (`client`), and call planning (`policy`).
 //!
 //! Management handlers read history through the store's `Reader`, stream live
 //! observations from the recorder, and run authenticated controls and backups.
@@ -45,6 +45,7 @@ mod buffer;
 pub mod build;
 pub mod call;
 pub mod channel;
+pub mod client;
 pub mod control;
 mod headers;
 mod ingress;
