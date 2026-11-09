@@ -201,9 +201,8 @@ stderr.
 Every JSON body carries `"api_version": 1`; errors are `{api_version, error}` with
 `error` one of `not_found`, `invalid_query`, `busy`, `unavailable`, or
 `identity_refused` (`401`, from `/api/caller` only). An identifier that is not one
-is `not_found`, and an unknown query parameter is `invalid_query`, except on the
-body routes (a malformed call ID or direction) and `/api/live` (an unknown
-parameter), which answer a plain-text `400`. The [control API](#control-api)
+(a call ID, or a body direction other than `request` or `response`) is
+`not_found`, and an unknown or unreadable query parameter is `invalid_query`. The [control API](#control-api)
 (`/control/v1`) is versioned separately.
 A body export answers with the raw bytes (`application/octet-stream`) only when
 the body was stored whole; otherwise `not_found`. At most two run at once

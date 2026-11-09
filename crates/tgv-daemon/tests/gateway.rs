@@ -1025,15 +1025,45 @@ async fn body_previews_are_read_only_private_and_distinguish_capture_limits() {
                 );
             }
         }
-        assert_eq!(
-            client()
-                .get(format!("{base}/api/calls/{id}/body/invalid"))
-                .send()
-                .await
-                .unwrap()
-                .status(),
-            StatusCode::BAD_REQUEST
-        );
+        // A path or parameter the API cannot read answers its JSON error,
+        // like every other refusal.
+        for (path, status, error) in [
+            (
+                format!("/api/calls/{id}/body/invalid"),
+                StatusCode::NOT_FOUND,
+                "not_found",
+            ),
+            (
+                "/api/calls/not-an-id/body/request".to_owned(),
+                StatusCode::NOT_FOUND,
+                "not_found",
+            ),
+            (
+                "/api/calls/not-an-id/body/response/export".to_owned(),
+                StatusCode::NOT_FOUND,
+                "not_found",
+            ),
+            (
+                "/api/live?sideways=1".to_owned(),
+                StatusCode::BAD_REQUEST,
+                "invalid_query",
+            ),
+            (
+                "/api/live?progress=maybe".to_owned(),
+                StatusCode::BAD_REQUEST,
+                "invalid_query",
+            ),
+        ] {
+            let response = client().get(format!("{base}{path}")).send().await.unwrap();
+            assert_eq!(response.status(), status, "{path}");
+            let value: serde_json::Value =
+                serde_json::from_slice(&response.bytes().await.unwrap()).unwrap();
+            assert_eq!(
+                value,
+                serde_json::json!({ "api_version": 1, "error": error }),
+                "{path}"
+            );
+        }
         assert_eq!(
             client()
                 .get(format!(
