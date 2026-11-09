@@ -198,7 +198,8 @@ dependencies under "Crates" below. Read the code for current module ownership.
   its observation thread) is the shell around the pure `RecorderCore`
   (`recording`: records in queue order in, a batch of operations out, with
   chunking, inspection, and digests), and runs group commits, retention,
-  rederive passes, and the live broadcast, writing through the `RecordSink`
+  rederive passes, and the live broadcast (with `progress`: unstored, redacted
+  updates on streaming calls, `Recorder::subscribe_progress`), writing through the `RecordSink`
   port. `CaptureOptions::split` is the tap's pure capture arithmetic, and
   `src/purity.rs` keeps the pure modules free of runtime and I/O. Omissions are counted by reason in
   `RecorderMetrics`, readable after shutdown through `RecorderMeter`. It also

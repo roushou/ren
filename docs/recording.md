@@ -40,6 +40,10 @@ backed up, and pruned.
   identified by BLAKE3 hash, stored once, and compressed with Zstandard when that
   makes them smaller. Repeated conversation prefixes across turns are therefore
   stored once. Storage is host-local; a process lock prevents two daemon writers.
+- While a response streams, the recorder also sends progress updates to live
+  viewers who ask for them (see [live feed](api.md#live-feed)): the redacted end of
+  the reply so far and the tools begun. They are never stored; only the finished
+  call's derived activity below is.
 - `tgv.sqlite3` also holds each finished call's derived activity and its
   full-text index (prompts, replies, tool input and output; see
   [search](api.md#search)): excerpts of the same private content, with
