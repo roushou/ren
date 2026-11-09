@@ -258,3 +258,25 @@ test('sessions are read in detail once per activity, and single-call ones not at
   await reader.read(fetcher);
   assert.equal(turnReads.length, 2);
 });
+
+test('sessions are read a few at a time', async () => {
+  let inFlight = 0;
+  let most = 0;
+  const fetcher = async (input: RequestInfo | URL) => {
+    const where = path(input);
+    if (where.startsWith('/api/calls')) return versioned({ calls: [], next: null });
+    if (where.includes('/turns?')) {
+      inFlight += 1;
+      most = Math.max(most, inFlight);
+      await new Promise((resolve) => setTimeout(resolve, 1));
+      inFlight -= 1;
+      return versioned({ turns: [] });
+    }
+    return versioned({
+      sessions: Array.from({ length: 20 }, (_, n) => sessionRow(20 + n, 2)),
+    });
+  };
+  const result = await new SessionsReader().read(fetcher);
+  assert.equal(result.value?.details.size, 20);
+  assert.equal(most, SessionsReader.parallel);
+});

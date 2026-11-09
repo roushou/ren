@@ -180,6 +180,8 @@ export interface SessionsData {
 export class SessionsReader {
   /** The newest sessions read in detail; the rest show without a prompt. */
   static readonly detailed = 40;
+  /** Sessions read at once. */
+  static readonly parallel = 8;
   /** Turns read per session, newest first, to find one with a prompt. */
   static readonly recentTurns = 5;
   readonly #details = new Map<SessionId, { lastSeen: number; detail: SessionDetail }>();
@@ -197,31 +199,32 @@ export class SessionsReader {
         .filter((session) => !SessionList.trivial(session))
         .slice(0, SessionsReader.detailed);
       const details = new Map<SessionId, SessionDetail>();
-      await Promise.all(
-        wanted.map(async (session) => {
-          const cached = this.#details.get(session.id);
-          if (cached?.lastSeen === session.last_seen) {
-            details.set(session.id, cached.detail);
-            return;
-          }
-          try {
-            // A turn can carry no prompt of its own (it continues the one before), so
-            // the newest few are read and the newest with a prompt names the session.
-            const turns = (await api.turns(session.id, SessionsReader.recentTurns)).turns;
-            const newest = turns[0];
-            const activity = newest ? await api.turn(newest.turn) : null;
-            const detail = {
-              prompt: turns.find((turn) => turn.prompt?.text.trim())?.prompt ?? null,
-              workdir: activity ? Board.workdir(activity) : null,
-            };
-            this.#details.set(session.id, { lastSeen: session.last_seen, detail });
-            details.set(session.id, detail);
-          } catch {
-            // A session whose turn cannot be read shows without its prompt, not the page empty.
-            if (cached) details.set(session.id, cached.detail);
-          }
-        }),
-      );
+      const readOne = async (session: SessionView) => {
+        const cached = this.#details.get(session.id);
+        if (cached?.lastSeen === session.last_seen) {
+          details.set(session.id, cached.detail);
+          return;
+        }
+        try {
+          // A turn can carry no prompt of its own (it continues the one before), so
+          // the newest few are read and the newest with a prompt names the session.
+          const turns = (await api.turns(session.id, SessionsReader.recentTurns)).turns;
+          const newest = turns[0];
+          const activity = newest ? await api.turn(newest.turn) : null;
+          const detail = {
+            prompt: turns.find((turn) => turn.prompt?.text.trim())?.prompt ?? null,
+            workdir: activity ? Board.workdir(activity) : null,
+          };
+          this.#details.set(session.id, { lastSeen: session.last_seen, detail });
+          details.set(session.id, detail);
+        } catch {
+          // A session whose turn cannot be read shows without its prompt, not the page empty.
+          if (cached) details.set(session.id, cached.detail);
+        }
+      };
+      // A few at a time, so a first load does not send every session's reads at once.
+      for (let index = 0; index < wanted.length; index += SessionsReader.parallel)
+        await Promise.all(wanted.slice(index, index + SessionsReader.parallel).map(readOne));
       return { sessions: listing.sessions, open, details };
     });
   }
