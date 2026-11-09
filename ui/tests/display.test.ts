@@ -22,6 +22,8 @@ import {
   previewChips,
   span,
   sessionTone,
+  captureChip,
+  trimmedAtLimit,
 } from '../src/lib/display.ts';
 import { providerMark, providerName, revision, type CallView } from '../src/lib/api.ts';
 import { callFixture, finishedFixture, callId } from './fixtures.ts';
@@ -286,4 +288,54 @@ test('each provider has a name and a mark, and an unknown one is never shown as 
     ],
   );
   assert.deepEqual([providerName('future'), providerMark('future')], ['future', '?']);
+});
+
+test('a body cut at the capture limit is trimmed by design; any other cut is partial', () => {
+  const limit = 4096;
+  const trimmed = finishedFixture(callId(1), {
+    capture_complete: false,
+    request: { observed_bytes: 9000, stored_bytes: limit, ending: 'ended' },
+  });
+  assert.equal(trimmedAtLimit(trimmed, limit), true);
+  assert.deepEqual(
+    [captureChip(trimmed, limit).label, captureChip(trimmed, limit).tone],
+    ['Trimmed at limit', 'neutral'],
+  );
+  assert.equal(captureState(trimmed, limit), 'Trimmed at the capture limit');
+  // Without the limit (an older daemon) it cannot be told apart, so it stays partial.
+  assert.equal(captureChip(trimmed, null).tone, 'warning');
+  // Bytes missing short of the limit are loss.
+  const lost = finishedFixture(callId(2), {
+    capture_complete: false,
+    request: { observed_bytes: 9000, stored_bytes: 2000, ending: 'ended' },
+  });
+  assert.equal(captureChip(lost, limit).label, 'Partial capture');
+  // A body that did not end is not trimmed, even at the limit.
+  const cut = finishedFixture(callId(3), {
+    capture_complete: false,
+    request: { observed_bytes: 9000, stored_bytes: limit, ending: 'unfinished' },
+  });
+  assert.equal(trimmedAtLimit(cut, limit), false);
+  assert.equal(trimmedAtLimit(finishedFixture(callId(4)), limit), false);
+});
+
+test('a body preview cut at the capture limit says so, without a warning', () => {
+  const preview = {
+    observed_bytes: 9000,
+    stored_bytes: 4096,
+    captured_bytes: 4096,
+    extent: 'gap',
+    ending: 'ended',
+    raw: { text: '', format: 'utf8', truncated: false },
+    text: '',
+    text_end: 'intact',
+    decoding: { applied: 'identity', integrity: 'verified', truncated: false },
+  };
+  const labels = (limit: number | null) =>
+    previewChips(preview as Parameters<typeof previewChips>[0], limit).map((chip) => [
+      chip.label,
+      chip.tone,
+    ]);
+  assert.deepEqual(labels(4096)[1], ['Trimmed at 4.0 KiB', 'neutral']);
+  assert.deepEqual(labels(null)[1], ['Stops at a gap', 'warning']);
 });

@@ -3,14 +3,8 @@
   import { getWorkbench } from '#lib/workbench.svelte.ts';
   import { num, short, clock, title } from '#lib/api.ts';
   import { compactOrDash, date, span, sessionTone } from '#lib/display.ts';
-  import {
-    callHref,
-    effectLabel,
-    findingLine,
-    harnessLabel,
-    omitted,
-    resultBadge,
-  } from '#lib/activity.ts';
+  import { callHref, effectLabel, findingLine, harnessLabel, omitted } from '#lib/activity.ts';
+  import { Board } from '#lib/board.ts';
   import FindingList from '#lib/FindingList.svelte';
   import Icon from '#lib/Icon.svelte';
   import type { PageProps } from './$types';
@@ -122,7 +116,7 @@
             >Tool calls are what the model requested; results are what the client reported</span
           >
         </header>
-        {#each turn.calls as call (call.call)}
+        {#each turn.calls as call, callIndex (call.call)}
           <article class="activity-call">
             <header class="activity-call-head">
               <span class="mono">{clock(call.started_at)}</span>
@@ -135,7 +129,9 @@
                   ? ''
                   : ` · ${span(call.metrics.duration_ms)}`}</span
               >
-              {#each call.limitations as limitation (limitation)}<span class="chip warning"
+              {#each call.limitations as limitation (limitation)}<span
+                  class="chip neutral"
+                  title="What TGV could not read of this call's stored text; forwarding was not affected"
                   >{title(limitation)}</span
                 >{/each}
               <a class="text-button end" href={callHref(turn.session, call.call)}
@@ -149,7 +145,7 @@
               <table class="usage-list tool-table">
                 <tbody>
                   {#each call.tool_calls as tool, index (tool.id ?? index)}
-                    {@const badge = resultBadge(tool.result)}
+                    {@const badge = Board.result(turn, callIndex, tool)}
                     <tr>
                       <td class="tool-name"
                         ><span><Icon name="tool" size={12} />{tool.name}</span></td

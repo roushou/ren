@@ -822,3 +822,28 @@ test('every state has its own mark, and an unknown ending is never a failure', (
   assert.equal(mark([done(1, 1, { outcome: 'unknown', state: 'recovered' })]), 'unknown');
   assert.equal(mark([]), 'idle');
 });
+
+test("a tool's result is unknown, not missing, when the request carrying it was unreadable", () => {
+  const tool = {
+    id: 'tool',
+    name: 'Bash',
+    effects: [],
+    input: { text: '{}', omitted_chars: 0 },
+    result: null,
+  };
+  const labels = (calls: CallActivity[]) =>
+    Board.turnCalls(turn(1, 1, calls), new Map(), null)
+      .flatMap((call) => call.tools)
+      .map((line) => [line.result.label, line.result.tone]);
+  assert.deepEqual(
+    labels([
+      activity(1, { tool_calls: [tool] }),
+      activity(2, { limitations: ['capture_gap', 'not_json'] }),
+    ]),
+    [['Result not readable', 'neutral']],
+  );
+  // A readable next request with no result for it: missing.
+  assert.deepEqual(labels([activity(1, { tool_calls: [tool] }), activity(2)]), [
+    ['No result', 'warning'],
+  ]);
+});

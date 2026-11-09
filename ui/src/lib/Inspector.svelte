@@ -26,6 +26,7 @@
   } from './display.ts';
   import { snapshotError } from './snapshots.ts';
   import { getWorkbench } from './workbench.svelte.ts';
+  import { page } from '$app/state';
   let {
     call,
     close,
@@ -37,6 +38,8 @@
     onsession: (id: SessionId) => void;
     onupdate: (record: CallView) => void;
   } = $props();
+  /** The daemon's per-body capture limit, to tell a trimmed body from lost bytes. */
+  const bodyLimit = $derived(page.data.gateway?.value?.storage.capture?.body_limit_bytes ?? null);
   const api = new ManagementApi();
   let detail = $state<CallDetail | null>(null);
   let detailError = $state('');
@@ -144,7 +147,7 @@
       /></button
     >{:else}<p class="inspector-session muted">No reported session</p>{/if}
   <div class="chip-row drawer-chips" aria-label="Call state">
-    {#each [modelChip(current), streamChip(current), captureChip(current)] as chip}<span
+    {#each [modelChip(current), streamChip(current), captureChip(current, bodyLimit)] as chip}<span
         class="chip {chip.tone}"
         title={chip.title}>{chip.label}</span
       >{/each}{#if current.status !== null}{@const http = httpChip(current.status)}<span

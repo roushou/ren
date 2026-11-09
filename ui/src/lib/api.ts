@@ -479,6 +479,12 @@ export interface Metrics {
 export interface Storage {
   policy: RetentionPolicy;
   usage: StorageView;
+  /** What capture keeps of each body; null from a daemon that does not say. */
+  capture: CaptureLimits | null;
+}
+export interface CaptureLimits {
+  /** Bytes stored per body; past this, the rest is left out by design. */
+  body_limit_bytes: number;
 }
 export interface Sessions {
   sessions: SessionView[];
@@ -754,6 +760,11 @@ const storage = object<Storage>({
     max_storage_bytes: count,
   }),
   usage: storageView,
+  // Absent from daemons older than the field: read as not reported.
+  capture: (value, path) =>
+    value === undefined || value === null
+      ? null
+      : object<CaptureLimits>({ body_limit_bytes: count })(value, path),
 });
 const bodyPreview = object<BodyPreview>({
   observed_bytes: nullable(count),

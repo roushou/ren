@@ -55,6 +55,8 @@
     LiveFollow.summary(workbench.live, updated ? `Updated ${clock(updated)}` : null),
   );
   const loading = $derived(workbench.manual || !!navigating.to);
+  /** The daemon's per-body capture limit, to tell a trimmed body from lost bytes. */
+  const bodyLimit = $derived(page.data.gateway?.value?.storage.capture?.body_limit_bytes ?? null);
   const after = $derived(page.url.searchParams.get('after'));
   const appliedQuery = $derived(
     new URLSearchParams(
@@ -617,9 +619,8 @@
                 {#each group.rows as c, index (c.id)}{@const badge = statusBadge(
                     callStatus(c),
                   )}{@const http = httpChip(c.status)}{@const stream =
-                    streamChip(c)}{@const capture = captureChip(c)}{@const tokens = tokenSummary(
-                    c.usage,
-                  )}
+                    streamChip(c)}{@const capture = captureChip(c, bodyLimit)}{@const tokens =
+                    tokenSummary(c.usage)}
                   <tr
                     class="call-row"
                     class:selected={selectedId === c.id}

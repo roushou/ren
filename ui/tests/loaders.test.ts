@@ -81,6 +81,12 @@ test('every response is version-checked and a mismatch is reported distinctly', 
     new ManagementApi(async () => versioned(storageFixture(), undefined, 7)).storage(),
     ApiVersionError,
   );
+  // A daemon older than the capture limit reports none, and that is not an error.
+  const { capture: _capture, ...older } = storageFixture();
+  const storage = await new ManagementApi(async () => versioned(older)).storage();
+  assert.equal(storage.capture, null);
+  const current = await new ManagementApi(async () => versioned(storageFixture())).storage();
+  assert.equal(current.capture?.body_limit_bytes, 4096);
 });
 
 test('responses are parsed at the boundary: labels keep unknown text, shapes are enforced', async () => {

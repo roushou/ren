@@ -336,7 +336,7 @@
     >
     <span class="status-context mono"
       >{selected && view === 'traffic'
-        ? `${short(selected.id)} · ${captureState(selected).toLowerCase()}`
+        ? `${short(selected.id)} · ${captureState(selected, gateway.current.value?.storage.capture?.body_limit_bytes ?? null).toLowerCase()}`
         : view === 'recorder'
           ? `${num(storage?.usage.calls)} calls retained`
           : view === 'sessions'

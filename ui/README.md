@@ -123,7 +123,8 @@ as `<system-reminder>` is folded under its name. Message cards are colored by ro
 every call (system prompt, tool list) starts folded. Payloads stay in browser memory
 and are never written to
 browser storage; only the theme preference is stored. Partial, active, corrupt, and
-expired captures are marked explicitly. A parsed message doesn't prove model
+expired captures are marked explicitly; a body cut at the daemon's per-body capture limit
+reads as trimmed, in grey, not as loss. A parsed message doesn't prove model
 completion or tool execution.
 
 Preview limits (these limit display only, not forwarding or recording):

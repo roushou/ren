@@ -280,8 +280,26 @@ export function transportState(call: {
   return `${call.status ?? '—'} · ${streamChip(call).label.toLowerCase()}`;
 }
 
+/**
+ * Whether a call's bodies were cut only where the per-body capture limit
+ * cuts them: each body ended, and every short one stored exactly the limit.
+ * That is capture by design, not loss; forwarding carried every byte.
+ */
+export function trimmedAtLimit(call: CallView, bodyLimit: number | null): boolean {
+  if (bodyLimit === null || call.capture_complete) return false;
+  const bodies = [call.request, call.response].filter((body) => body !== null);
+  const short = bodies.filter(
+    (body) => body.observed_bytes !== null && body.observed_bytes > body.stored_bytes,
+  );
+  return (
+    short.length > 0 &&
+    bodies.every((body) => body.ending === 'ended') &&
+    short.every((body) => body.stored_bytes === bodyLimit)
+  );
+}
+
 /** Whether the stored bodies hold everything that was observed. */
-export function captureChip(call: CallView): Chip {
+export function captureChip(call: CallView, bodyLimit: number | null = null): Chip {
   const life = lifecycle(call.state);
   switch (life) {
     case 'open':
@@ -289,6 +307,12 @@ export function captureChip(call: CallView): Chip {
     case 'recovered':
       return { label: 'Capture cut off', tone: 'warning', title: 'TGV restarted while recording' };
     case 'finished':
+      if (trimmedAtLimit(call, bodyLimit))
+        return {
+          label: 'Trimmed at limit',
+          tone: 'neutral',
+          title: `A body passed the ${bytes(bodyLimit ?? 0)} capture limit, so only that much was stored, by design. Forwarding carried every byte.`,
+        };
       return call.capture_complete
         ? { label: 'Captured', tone: 'success', title: 'Both bodies ended and were stored whole' }
         : {
@@ -377,9 +401,21 @@ export function tokenSummary(
 }
 
 /** How much of a body the preview holds, as chips: complete in one, gaps spelled out. */
-export function previewChips(preview: BodyPreview): Chip[] {
+export function previewChips(preview: BodyPreview, bodyLimit: number | null = null): Chip[] {
   const chips: Chip[] = [];
   const observed = preview.observed_bytes;
+  // Stored exactly up to the capture limit of a longer body: trimmed by design, not lost.
+  const trimmed =
+    bodyLimit !== null &&
+    preview.ending === 'ended' &&
+    observed !== null &&
+    observed > preview.stored_bytes &&
+    preview.stored_bytes === bodyLimit;
+  const trimmedChip: Chip = {
+    label: `Trimmed at ${bytes(bodyLimit ?? 0)}`,
+    tone: 'neutral',
+    title: `Only the first ${bytes(bodyLimit ?? 0)} of ${bytes(observed ?? 0)} were stored: the capture limit, by design. Forwarding carried every byte.`,
+  };
   const whole =
     preview.extent === 'complete' && observed !== null && preview.stored_bytes === observed;
   chips.push({
@@ -400,6 +436,10 @@ export function previewChips(preview: BodyPreview): Chip[] {
       );
       break;
     case 'partial':
+      if (trimmed) {
+        chips.push(trimmedChip);
+        break;
+      }
       chips.push({
         label: `${bytes(preview.stored_bytes)} of ${observed === null ? '?' : bytes(observed)} stored`,
         tone: 'warning',
@@ -414,6 +454,10 @@ export function previewChips(preview: BodyPreview): Chip[] {
       });
       break;
     case 'gap':
+      if (trimmed) {
+        chips.push(trimmedChip);
+        break;
+      }
       chips.push({
         label: 'Stops at a gap',
         tone: 'warning',
@@ -503,7 +547,7 @@ export function elapsed(ms: number | null) {
 export const date = (ms: number) =>
   new Date(ms).toLocaleDateString([], { month: 'short', day: 'numeric' });
 
-export function captureState(call: CallView): string {
+export function captureState(call: CallView, bodyLimit: number | null = null): string {
   // Open calls are still recording; completeness is final only once they end.
   const life = lifecycle(call.state);
   switch (life) {
@@ -512,6 +556,7 @@ export function captureState(call: CallView): string {
     case 'recovered':
       return 'Interrupted capture';
     case 'finished':
+      if (trimmedAtLimit(call, bodyLimit)) return 'Trimmed at the capture limit';
       return call.capture_complete ? 'Complete capture' : 'Partial capture';
     case 'unknown':
       return 'Capture unknown';

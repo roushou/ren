@@ -173,6 +173,7 @@ export const healthBody = (overrides: Partial<RecorderMetrics> = {}) => ({
 export const storageFixture = (): Storage => ({
   policy: { enabled: true, max_age_seconds: 86400, max_calls: 100, max_storage_bytes: 1024 },
   usage: storageViewFixture(),
+  capture: { body_limit_bytes: 4096 },
 });
 
 /** A JSON response in the daemon's versioned envelope. */

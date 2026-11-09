@@ -16,6 +16,7 @@ const labels = (items: { label: string; tone: string }[]) =>
 const storage = (used: number, budget: number, enabled = true): Storage => {
   const fixture = storageFixture();
   return {
+    ...fixture,
     policy: { ...fixture.policy, enabled, max_storage_bytes: budget },
     usage: {
       ...fixture.usage,

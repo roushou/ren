@@ -15,6 +15,7 @@
   import Segmented, { type SegmentedOption } from './Segmented.svelte';
   import { bodyView, toolFields, type Card, type CardKind } from './body-view.ts';
   import { previewChips } from './display.ts';
+  import { page } from '$app/state';
   import Markdown from './Markdown.svelte';
   import { snapshotError } from './snapshots.ts';
   let {
@@ -56,7 +57,9 @@
       : null,
   );
   const open = $derived(preview?.ending === 'open');
-  const chips = $derived(preview ? previewChips(preview) : []);
+  /** The daemon's per-body capture limit, to tell a trimmed body from lost bytes. */
+  const bodyLimit = $derived(page.data.gateway?.value?.storage.capture?.body_limit_bytes ?? null);
+  const chips = $derived(preview ? previewChips(preview, bodyLimit) : []);
   /** Thinking the provider withheld is a fact about the response, not a
    * message: it becomes a chip instead of an empty card. */
   const hiddenThinking = $derived(

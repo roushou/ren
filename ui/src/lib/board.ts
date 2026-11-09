@@ -2,6 +2,7 @@
 // doing now, the recent calls drawn on its lane, and what needs a look.
 // No browser, no fetching; tested in tests/board.test.ts.
 import type {
+  CallActivity,
   CallView,
   Provider,
   EffectKind,
@@ -575,8 +576,37 @@ export class Board {
     const later = turn.calls.slice(callIndex + 1);
     if (tool.result === null && later.every((call) => call.limitations.includes('not_yet_derived')))
       return { label: 'No result yet', tone: 'neutral' };
+    // The result rides in the next request: when TGV could not read that one, the
+    // result is unknown, not missing.
+    const next = later[0];
+    if (tool.result === null && next && Board.unreadable(next))
+      return { label: 'Result not readable', tone: 'neutral' };
     const badge = resultBadge(tool.result);
     return { label: badge.label, tone: badge.tone };
+  }
+
+  /** Whether TGV could not read a call's text whole: trimmed, cut off, or not parseable. */
+  static unreadable(call: CallActivity): boolean {
+    return call.limitations.some((limitation) => {
+      switch (limitation) {
+        case 'capture_gap':
+        case 'truncated':
+        case 'not_json':
+        case 'decoded_too_large':
+        case 'unsupported_encoding':
+        case 'decoding_error':
+        case 'unexpected_shape':
+          return true;
+        case 'unsupported_endpoint':
+        case 'unfinished_tool_call':
+        case 'too_many_tool_calls':
+        case 'not_yet_derived':
+          return false;
+        default:
+          unrecognised(limitation);
+          return false;
+      }
+    });
   }
 
   static lane(calls: CallView[], now: number): LaneMark[] {
