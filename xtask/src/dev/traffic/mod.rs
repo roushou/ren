@@ -94,7 +94,7 @@ impl Traffic {
             Harness::Codex => (Client::Codex, "gpt-5.5-codex"),
             Harness::Pi => (Client::Pi, "claude-sonnet-5-5"),
             Harness::Opencode => (Client::OpenCode, "gpt-5.5"),
-            Harness::Deepseek => (Client::Plain, "deepseek-chat"),
+            Harness::Deepseek => (Client::DeepSeek, "deepseek-chat"),
         };
         let model = match reply {
             Reply::Text => model,

@@ -76,8 +76,9 @@ pub(in crate::dev) enum Client {
     Codex,
     Pi,
     OpenCode,
-    /// A plain API client: no harness headers.
-    Plain,
+    /// Claude Code pointed at DeepSeek's Anthropic-compatible API: its own
+    /// headers, on the DeepSeek route.
+    DeepSeek,
 }
 
 /// Who sends a call.
@@ -152,7 +153,7 @@ impl Scenario {
         let (session_id, turn_id) = (run.uuid(session), run.uuid(turn));
         let mut headers = caller.headers();
         let (path, body, name) = match client {
-            Client::ClaudeCode => {
+            Client::ClaudeCode | Client::DeepSeek => {
                 headers.extend([
                     ("x-claude-code-session-id".into(), session_id),
                     ("x-claude-code-prompt-id".into(), turn_id),
@@ -163,11 +164,18 @@ impl Scenario {
                     ),
                     ("anthropic-version".into(), "2023-06-01".into()),
                 ]);
-                (
-                    "/anthropic/v1/messages",
-                    Self::messages(model, prompt),
-                    "claude code",
-                )
+                match client {
+                    Client::DeepSeek => (
+                        "/deepseek/v1/messages",
+                        Self::messages(model, prompt),
+                        "claude code via deepseek",
+                    ),
+                    Client::ClaudeCode | Client::Codex | Client::Pi | Client::OpenCode => (
+                        "/anthropic/v1/messages",
+                        Self::messages(model, prompt),
+                        "claude code",
+                    ),
+                }
             }
             Client::Codex => {
                 headers.extend([
@@ -203,11 +211,6 @@ impl Scenario {
                     "opencode",
                 )
             }
-            Client::Plain => (
-                "/deepseek/v1/messages",
-                Self::messages(model, prompt),
-                "deepseek",
-            ),
         };
         headers.push(("content-type".into(), "application/json".into()));
         Call {
@@ -293,7 +296,7 @@ impl Scenario {
             PROMPTS[7],
         ));
         calls.push(Self::call(
-            Client::Plain,
+            Client::DeepSeek,
             &anyone,
             run,
             (5, 501),
@@ -360,7 +363,7 @@ impl Scenario {
         // The ci-only operator-key entry: ci gets in, alice is refused.
         for caller in [&ci, &alice] {
             let mut direct = Self::call(
-                Client::Plain,
+                Client::ClaudeCode,
                 caller,
                 run,
                 (16, 1601),
