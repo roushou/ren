@@ -100,15 +100,18 @@ impl Caller {
     }
 }
 
+/// Invented prompts about an invented project ("acme"), so the slot's
+/// history never holds anyone's real work. One is long, for layouts that must
+/// cut text.
 pub(in crate::dev) const PROMPTS: [&str; 8] = [
-    "Why does the release build fail on the CI runner but not locally?",
-    "Add a retry with backoff to the upload client, and test it.",
-    "Rename the config field `listen_addr` to `listen` everywhere.",
-    "Explain what the recorder does when its queue is full.",
-    "Write a migration that adds an index on calls(started_at).",
-    "Summarize the open review comments on the gateway PR.",
-    "Why should `godmod-document` depend on `godmod-voxel`? Aren't these two separate stuff? Why should a document crate know anything about voxels at all, and what breaks if we cut that edge?",
-    "Find where the session list is sorted and make it newest first.",
+    "Why does the release build of acme-web fail on the CI runner but not locally?",
+    "Add a retry with backoff to the acme upload client, and test it.",
+    "Rename the config field `listen_addr` to `listen` across the acme services.",
+    "Explain what the acme job queue does when a worker stops responding.",
+    "Write a migration that adds an index on orders(created_at).",
+    "Summarize the open review comments on the checkout PR.",
+    "Why should `acme-billing` depend on `acme-inventory`? Aren't these two separate concerns? Why should a billing crate know anything about stock levels at all, and what breaks if we cut that dependency?",
+    "Find where the order list is sorted and make it newest first.",
 ];
 
 impl Scenario {
@@ -377,7 +380,7 @@ impl Scenario {
     fn long(run: Run) -> Plan {
         let anyone = Caller::Unidentified;
         let long_prompt = (0..60)
-            .map(|n| format!("Step {n}: read crates/tgv-gateway/src/lib.rs and explain how the candidate loop hands admission from one attempt to the next, quoting the code."))
+            .map(|n| format!("Step {n}: read src/checkout/cart.rs in acme-web and explain how a discount is applied to each line item, quoting the code."))
             .collect::<Vec<_>>()
             .join(" ");
         Plan {
