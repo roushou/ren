@@ -3,11 +3,11 @@
 An optional SvelteKit 3, Svelte 5, and TypeScript dashboard for browsing traffic,
 sessions, request/response payloads, and recorder health. It reads only the
 daemon's read-only management API. It never reads SQLite or provider credentials,
-and it never proxies inference: Claude Code, Codex, and Pi connect directly to the
-Rust daemon. The daemon stays fully functional with the UI stopped.
+and it never proxies inference: Claude Code, Codex, Pi, and OpenCode connect
+directly to the Rust daemon. The daemon stays fully functional with the UI stopped.
 
 ```text
-Claude Code / Pi / Codex ───────────────> Rust daemon ──> Providers
+Claude Code / Codex / Pi / OpenCode ───> Rust daemon ──> Providers
 Browser ──> optional SvelteKit server ──> Rust management API
 ```
 
@@ -39,9 +39,10 @@ each in its own lane (**Area**). Its legend sits inside the chart; hovering a se
 outlines its cards, and selecting it shows only its sessions (`?series=`). Then comes a **Now** strip of what happened
 lately, newest first: new sessions, prompts, finished calls, failed tools, bad endings,
 and rate limits, with calls still waiting for a response head kept first. Pinned sessions, then those with a call open, then the most recent, get
-the eight cards; quiet ones dim. Text appears once each call finishes and its activity is
-derived; whether a call is waiting for its response head or streaming is shown as it
-happens),
+the eight cards; quiet ones dim. While a call streams, its card shows the end of its
+reply so far, the tools it has begun, and whether the model is thinking (never stored); a
+client that reports no turns shows only that. The full text appears once the call finishes
+and its activity is derived),
 Traffic (`/traffic`; wherever a session appears, there and on a session's page, in Search,
 and in Usage, it is named by its client, its newest prompt, and its folder), Sessions (`/sessions`: each session's client, its newest prompt, and its folder, what it
 is doing now, and its size against the rest, grouped by day, with single-call sessions

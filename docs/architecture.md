@@ -195,24 +195,26 @@ xtask        ─► tgv-daemon, tgv-gateway, tgv-recorder, tgv-harness, tgv-prot
 | Crate                                      | Primary type                                                                  | Owns                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | ------------------------------------------ | ----------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `tgv-protocol`                             | `CallInspector`                                                               | `Provider`, `Wire`, `Api` (a provider in one wire format, built by `Provider::speak`), `Endpoint`, `Method`, `Transport`, `Direction`; `Stored<T>` and the label trait; SSE framing; encodings; Anthropic Messages, OpenAI Responses, and OpenAI Chat Completions (`chat`) wire types; WebSocket message classification (`Payload`, `CloseCode`, `ClientMessage`, `UpstreamMessage`, `InterruptOutcome`); the native identifiers and `MessageHints` the wire carries; inspection; the activity reader (`activity`) |
-| `tgv-harness`                              | `Harness` enum: `ClaudeCode`, `Codex`, `Pi`, `OpenCode`                       | attribution (`Attribution`, `SessionHint`, hint sources and issues); launch plans; the Pi extension cache; `GatewayEndpoint`, the URL a harness is pointed at; `HostEnv`; what each harness's tools and messages mean (`tools`)                                                                                                                                                                                                                                                                                    |
-| `tgv-recorder`                             | `Recorder`; `RecorderTask` runs it; `RecordSink` is its port                  | `ChannelId`, `CallId`, `AttemptId`, `SessionId`, `TurnId`; `Clock`, `IdSource`, and their test implementations; recorded facts (terminals, causes, phases, rejections, body endings, omissions, `ChannelEnd`, `ConfigRevision`, `UpstreamId`, `OperatorRevision`); who called (`UserId`, `TailscaleLogin`, `Caller`); the stored inspection format; the `Chunker`; batches; `RetentionPolicy`; taps, queue, metrics, live broadcast                                                                                |
+| `tgv-harness`                              | `Harness` enum: `ClaudeCode`, `Codex`, `Pi`, `OpenCode`                       | attribution (`Attribution`, `SessionHint`, hint sources and issues); launch plans; the Pi extension cache; `GatewayEndpoint`, the URL a harness is pointed at, and the `UserToken` it presents there; `HostEnv`; what each harness's tools and messages mean (`tools`)                                                                                                                                                                                                                                             |
+| `tgv-recorder`                             | `Recorder`; `RecorderTask` runs it; `RecordSink` is its port                  | `ChannelId`, `CallId`, `AttemptId`, `SessionId`, `TurnId`; `Clock`, `IdSource`, and their test implementations; recorded facts (terminals, causes, phases, rejections, body endings, omissions, `ChannelEnd`, `ConfigRevision`, `UpstreamId`, `OperatorRevision`); who called (`UserId`, `TailscaleLogin`, `Caller`); the stored inspection format; the `Chunker`; batches; `RetentionPolicy`; taps, queue, metrics, live broadcast, and live progress on streaming calls (`progress`)                             |
 | `tgv-store`                                | `Store`, which implements `RecordSink`; `Reader` and `Backup` are its handles | SQLite and migrations, the stored chunk format, queries, views, turn and call activity assembled from stored digests (`activity`), full-text search and exposures over the digests (`search`), retention, `Recovery`, the sweep gate, backup                                                                                                                                                                                                                                                                       |
-| `tgv-gateway`                              | `Gateway`                                                                     | all HTTP routes: forwarding, the read API and `/api/live`, and authenticated controls and backup; route table, header policy, request buffering, upstream entries, the `Upstream` seam and Reqwest implementation, `HttpAttempt`, `WsChannel`, retry facts, policy, named users and `Users::identify`, `Controls`, `OperatorState`, the running-call registry, ingress and the shutdown drain, the `Build` `/health` reports                                                                                       |
+| `tgv-gateway`                              | `Gateway`                                                                     | all HTTP routes: forwarding, the read API and `/api/live`, and authenticated controls and backup; route table, header policy, request buffering, upstream entries, the `Upstream` seam and Reqwest implementation, `HttpAttempt`, `WsChannel`, retry facts, policy, named users and `Users::identify` with their concurrency limits (`limits`), the instance's environment (`instance`), `Controls`, `OperatorState`, the running-call registry, ingress and the shutdown drain, the `Build` `/health` reports     |
 | `tgv-daemon`                               | `Daemon`                                                                      | `Config` → `RuntimeConfig`; resource wiring, listener binding, control-token file, and lifecycle; the system clock and random IDs; the server task, and the observation thread (`ObservationThread`), whose own current-thread runtime runs the recorder                                                                                                                                                                                                                                                           |
 | `tgv-cli` (package `tgv-rs`, binary `tgv`) | `Cli`                                                                         | capturing `HostEnv` in `main`, recording the source revision (`build.rs`), commands, gateway choice and `client.toml`, history and controls on this host or through a gateway's APIs (`management`), `tgv tail` (`tail`), the pure MCP core of `tgv mcp` (`mcp`), doctor and its build comparison, service definitions                                                                                                                                                                                             |
-| `xtask` (unpublished, `cargo xtask`)       | `Xtask`                                                                       | `install-vps`: installing or upgrading TGV from a checkout as a systemd user service between calls, published with Tailscale Serve, and with `--ui-https-port` the UI as `tgv-ui.service`; its publishing flags are saved for later runs; `dev`: the dev slot, a fake provider, seed traffic, and screenshots                                                                                                                                                                                                      |
+| `xtask` (unpublished, `cargo xtask`)       | `Xtask`                                                                       | `install-vps`: installing or upgrading TGV from a checkout as a systemd user service between calls, published with Tailscale Serve, and with `--ui-https-port` the UI as `tgv-ui.service`; its publishing flags are saved for later runs; `dev`: the dev slot, a fake provider, seed traffic, live traffic with its loopback control API, and screenshots                                                                                                                                                          |
 
-- **Purity.** `tgv-protocol`'s manifest names only pure dependencies (`bytes`,
-  `serde`, `serde_json`, `http` types, and the decompressors), and a source test
-  (`sources_stay_free_of_runtime_and_io`) rejects runtime and I/O paths. Inside
-  `tgv-gateway`, `src/purity.rs` keeps `attempt`, `call`, `channel`, `retry`,
-  `operator`, and `user` free of runtime, I/O, storage, and shell-module
-  dependencies.
+- **Purity.** `tgv-protocol`'s manifest names only pure dependencies (`serde`,
+  `serde_json`, `serde_with`, `strum`, `thiserror`, `uuid`, `http` types, and the
+  decompressors), and a source test (`sources_stay_free_of_runtime_and_io`)
+  rejects runtime and I/O paths. Inside `tgv-gateway`, `src/purity.rs` keeps
+  `attempt`, `call`, `channel`, `retry`, `operator`, and `user` free of runtime,
+  I/O, storage, and shell-module dependencies; `tgv-recorder`'s `src/purity.rs`
+  does the same for `recording`, `digest`, `options`, and `progress`, and
+  `tgv-cli`'s `mcp/purity.rs` for the MCP core.
 - **Ports point down.** The recorder declares `RecordSink`, `Clock`, and
   `IdSource`; the store implements `RecordSink`; the daemon implements the system
-  clock and random IDs, which carry the only `disallowed_methods` exemptions
-  besides `HostEnv::capture`.
+  clock and random IDs, which with the daemon's server task spawn carry the only
+  `disallowed_methods` exemptions besides `HostEnv::capture`.
 - **Operator documents are opaque below the gateway.** The recorder and store carry
   an operator action as a revision, a command label, and serialized JSON documents.
   `tgv-gateway` owns `OperatorState` and parses the stored snapshot on restore.
@@ -465,8 +467,10 @@ WebSocket's end).
   finish, and per planned attempt a start, response head, and finish) before
   forwarding starts, so terminals are never lost for queue pressure. A reservation
   is released when its record is dequeued, and a call permit is held until its
-  finish is dequeued. The recorder admits `4 × max_concurrent_requests` calls, and
-  the queue holds `queue_capacity + 3 × max_calls` items. If even the reservation
+  finish is dequeued. The recorder admits `4 × max_concurrent_requests + 2 ×
+  websocket.max_channels` calls, and the queue holds `queue_capacity + 8 ×
+  max_calls` items (each call's open and finish, and three per attempt for up to
+  two attempts). If even the reservation
   is unavailable, the call is unrecorded and counted.
 - **Ordering.** Data items carry a sequence number per call. The recorder
   finalizes a call only after its data has been drained or accounted as omitted.
@@ -488,8 +492,8 @@ go in, and a batch of operations comes out, with chunking, inspection, request
 gathering, and digest sealing done along the way; the task holds the byte
 budgets until commit, commits, prunes, and keeps the metrics. The tap's
 arithmetic (which bytes fit the body limit, and how they split into pieces) is
-`CaptureOptions::split`. A source test keeps both, and the digest, free of
-runtime and I/O. It runs on the observation
+`CaptureOptions::split`. A source test keeps both, the digest, and live
+progress free of runtime and I/O. It runs on the observation
 thread: a thread of its own with a current-thread runtime
 (`tgv_daemon::host::ObservationThread`), so its CPU work (chunking, hashing,
 inspection, deriving and sealing digests) and its storage writes never occupy a
@@ -507,6 +511,12 @@ forwarding worker. Taps reach it only through the bounded queue.
   about 3.4× (asserted above 3×).
 - **Live broadcast** is a bounded ring of committed observations. A slow
   subscriber gets `lagged` and catches up from the database.
+- **Live progress.** While a response streams, the recorder reads its activity so
+  far (`CallInspector::so_far`) and whether the model is thinking
+  (`CallInspector::thinking`), and broadcasts a `Progress` update: the redacted
+  end of the reply, the tools begun, and the thinking flag, at most every 250 ms
+  per call and only when it changed (`Recorder::subscribe_progress`). Updates are
+  never stored or resumed; the finished call's digest is the record.
 - **Digests.** As a call's bytes flow, the recorder gathers its request
   (`RequestReader`) and reads each attempt's response activity alongside
   inspection. When the call finishes it interprets the final attempt's reading
@@ -686,7 +696,8 @@ state; it is logged, not recorded in `operator_actions`.
   (`TGV_UPDATE_FIXTURES=1` regenerates them).
 - **Live feed.** `/api/live?after=<seq>` (or `Last-Event-ID`) replays retained
   observations, then streams new ones; it emits `gone` when the position was
-  pruned. The SvelteKit server streams it without buffering, through an explicit
+  pruned. With `progress=true` it also sends the recorder's live progress updates
+  on streaming calls, without ids. The SvelteKit server streams it without buffering, through an explicit
   allowlist entry.
 - **Health and metrics.** `/health` and `/api/metrics`: queue depth and bytes,
   omissions by reason, commit latency and lag, page counts for both files, and

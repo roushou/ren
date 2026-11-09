@@ -24,7 +24,10 @@ use crate::build::Build;
 use crate::{control::Controls, instance::InstanceOptions, operator::Pause, user::Users};
 use axum::{
     Json, Router,
-    extract::{Path, Query, State},
+    extract::{
+        Path, Query, State,
+        rejection::{PathRejection, QueryRejection},
+    },
     response::{IntoResponse, Response, Sse, sse::KeepAlive},
     routing::get,
 };
@@ -179,6 +182,9 @@ enum ApiError {
     Query(#[from] QueryError),
     #[error(transparent)]
     Search(#[from] SearchError),
+    /// Query parameters the route does not take, or values it cannot read.
+    #[error("invalid parameters")]
+    Parameters,
     #[error("too many concurrent reads")]
     Busy,
     #[error("identity refused")]
@@ -207,7 +213,9 @@ impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         let (status, error) = match &self {
             Self::NotFound => (StatusCode::NOT_FOUND, ErrorCode::NotFound),
-            Self::Query(_) | Self::Search(_) => (StatusCode::BAD_REQUEST, ErrorCode::InvalidQuery),
+            Self::Query(_) | Self::Search(_) | Self::Parameters => {
+                (StatusCode::BAD_REQUEST, ErrorCode::InvalidQuery)
+            }
             Self::Busy => (StatusCode::SERVICE_UNAVAILABLE, ErrorCode::Busy),
             Self::IdentityRefused => (StatusCode::UNAUTHORIZED, ErrorCode::IdentityRefused),
             Self::Store(error) => {
@@ -361,8 +369,9 @@ impl ApiState {
 
     async fn body(
         State(state): State<Arc<Self>>,
-        Path((id, direction)): Path<(CallId, Direction)>,
+        path: Result<Path<(CallId, Direction)>, PathRejection>,
     ) -> Result<Response, ApiError> {
+        let Path((id, direction)) = path.map_err(|_| ApiError::NotFound)?;
         let permit = ApiState::permit(&state.previews)?;
         let previewer = Previewer::default();
         let key = state.reader.body_key(id, direction).await?;
@@ -386,8 +395,9 @@ impl ApiState {
     /// exceeds the capture body limit; it is buffered to send its length.
     async fn export(
         State(state): State<Arc<Self>>,
-        Path((id, direction)): Path<(CallId, Direction)>,
+        path: Result<Path<(CallId, Direction)>, PathRejection>,
     ) -> Result<Response, ApiError> {
+        let Path((id, direction)) = path.map_err(|_| ApiError::NotFound)?;
         let _permit = ApiState::permit(&state.exports)?;
         let key = state.reader.body_key(id, direction).await?;
         let mut body = Vec::new();
@@ -413,8 +423,9 @@ impl ApiState {
     async fn live(
         State(state): State<Arc<Self>>,
         headers: http::HeaderMap,
-        Query(raw): Query<RawLiveQuery>,
-    ) -> Response {
+        query: Result<Query<RawLiveQuery>, QueryRejection>,
+    ) -> Result<Response, ApiError> {
+        let Query(raw) = query.map_err(|_| ApiError::Parameters)?;
         let resume = headers
             .get("last-event-id")
             .and_then(|value| value.to_str().ok())
@@ -428,8 +439,8 @@ impl ApiState {
             state.shutdown.clone(),
             raw.after.or(resume),
         );
-        Sse::new(feed.stream())
+        Ok(Sse::new(feed.stream())
             .keep_alive(KeepAlive::default())
-            .into_response()
+            .into_response())
     }
 }

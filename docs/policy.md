@@ -137,8 +137,9 @@ and the top-level `max_concurrent_unnamed` caps those of every caller that is
 not a named user, together. A call over its caller's limit gets `429` with
 `retry-after: 1` (`tgv_user_busy`), recorded as rejection `user_busy`; a
 WebSocket channel counts as one call for its whole life, and a handshake over
-the limit gets `426`, so Codex falls back to HTTP. These limits come before the
-gateway's own `max_concurrent_requests`, which still applies to everyone.
+the limit gets `426`, so Codex falls back to HTTP. A caller's limit
+is checked before the gateway's own `max_concurrent_requests`, which still applies
+to everyone: a caller over its limit gets `429` even when the gateway is full.
 
 An operator-key entry can be limited to some users:
 
@@ -196,7 +197,8 @@ The control API (`/control/v1`) accepts a request carrying the per-run token fro
 Serve whose `Tailscale-User-Login` is listed in `control.tailscale_logins`.
 Loopback alone is not enough, because Serve forwards tagged devices and Funnel
 traffic to loopback without an identity. Requests with `Origin` or
-`Sec-Fetch-Site` (browsers) are refused. The UI has no control actions.
+`Sec-Fetch-Site` (browsers) are refused. The UI has no control actions. The
+endpoints are listed in the [API reference](api.md#control-api).
 
 `tgv control` targets the daemon the history commands target. On the daemon's
 host it sends the token. Through a gateway (`--gateway`, `TGV_GATEWAY`, or
