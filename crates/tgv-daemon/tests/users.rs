@@ -24,7 +24,11 @@ use tgv_recorder::{
     capture::CallRejection,
     id::SequentialIds,
 };
-use tgv_store::view::CallView;
+use tgv_store::{
+    Reader,
+    query::{CallFilter, CallQuery, TimeRange},
+    view::CallView,
+};
 
 mod support;
 
@@ -132,6 +136,37 @@ async fn every_call_records_its_caller_and_identity_never_reaches_the_provider()
             (CallerKind::Unidentified, None, None),
         ]
     );
+
+    // History filters by user, and usage counts each user's calls.
+    let reader = Reader::open(dir.path(), 1).await.unwrap();
+    let query = CallQuery {
+        filter: CallFilter {
+            user: Some(UserId::parse("bob").unwrap()),
+            ..CallFilter::default()
+        },
+        ..CallQuery::default()
+    };
+    let bobs = reader.calls(&query).await.unwrap().calls;
+    assert_eq!(bobs.len(), 1);
+    assert_eq!(bobs[0].id, calls[1].id);
+    let mut usage: Vec<(Option<String>, u64)> = reader
+        .usage(TimeRange::default())
+        .await
+        .unwrap()
+        .users
+        .into_iter()
+        .map(|user| (user.user, user.usage.calls))
+        .collect();
+    usage.sort();
+    assert_eq!(
+        usage,
+        [
+            (None, 2),
+            (Some("alice".to_owned()), 1),
+            (Some("bob".to_owned()), 1)
+        ]
+    );
+    reader.close().await;
 }
 
 #[tokio::test]

@@ -14,7 +14,7 @@ use tgv_protocol::{
     label::{Labeled, Stored},
     route::Provider,
 };
-use tgv_recorder::{id::CallId, time::UnixMillis};
+use tgv_recorder::{caller::UserId, id::CallId, time::UnixMillis};
 use tgv_store::query::{
     CallFilter, CallQuery, Cursor, KindFilter, PageLimit, SearchText, StatusFilter, TimeRange,
     ToolFilter,
@@ -128,6 +128,19 @@ impl Field {
             .map_err(|_| ArgumentError(format!("{} is not a TGV ID", self.0)))
     }
 
+    fn user(self, value: Option<String>) -> Result<Option<UserId>, ArgumentError> {
+        Self::present(value)
+            .map(|value| {
+                UserId::parse(value.trim()).map_err(|_| {
+                    ArgumentError(format!(
+                        "{} must be a user id: lowercase letters, digits, '-' or '_'",
+                        self.0
+                    ))
+                })
+            })
+            .transpose()
+    }
+
     fn optional_id<T: FromStr>(self, value: Option<String>) -> Result<Option<T>, ArgumentError> {
         Self::present(value).map(|id| self.id(&id)).transpose()
     }
@@ -174,6 +187,7 @@ struct SearchArgs {
     q: Option<String>,
     session_id: Option<String>,
     client: Option<String>,
+    user: Option<String>,
     kind: Option<String>,
     provider: Option<String>,
     model: Option<String>,
@@ -295,6 +309,7 @@ impl ToolCall {
                     filter: CallFilter {
                         session: Field("session_id").optional_id(args.session_id)?,
                         client: Field("client").label::<Harness>(args.client)?,
+                        user: Field("user").user(args.user)?,
                         kind: Field("kind").label::<KindFilter>(args.kind)?,
                         provider: Field("provider").label::<Provider>(args.provider)?,
                         model: Field("model").text(args.model)?,
@@ -409,6 +424,7 @@ impl ToolName {
                     "q": Self::text("Text in a call ID, model, or tool name."),
                     "session_id": Self::string("A TGV session ID, as list_sessions returns it."),
                     "client": Self::labels_property::<Harness>("The coding agent the call came from."),
+                    "user": Self::string("A named user of the gateway, as its configuration names it: who made the call, not the coding agent."),
                     "kind": Self::labels_property::<KindFilter>("`model` for calls that ask a model for output; `other` for token counts, model listings, and WebSocket handshakes."),
                     "provider": Self::labels_property::<Provider>("The upstream provider."),
                     "model": Self::text("Text in the reported model name."),

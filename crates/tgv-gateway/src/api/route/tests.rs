@@ -1,6 +1,7 @@
 use super::*;
 use tgv_harness::Harness;
 use tgv_protocol::route::Provider;
+use tgv_recorder::caller::UserId;
 use tgv_recorder::id::{CallId, SessionId, TurnId};
 use tgv_recorder::time::UnixMillis;
 use tgv_store::query::{CallFilter, KindFilter, PageLimit, SearchText, StatusFilter, ToolFilter};
@@ -24,6 +25,7 @@ fn every_read() -> Vec<ReadRequest> {
     filtered.filter = CallFilter {
         session: Some(session),
         client: Some(Harness::Codex),
+        user: Some(UserId::parse("alice").unwrap()),
         kind: Some(KindFilter::Model),
         provider: Some(Provider::OpenAi),
         model: Some(SearchText::new("gpt & co").unwrap()),

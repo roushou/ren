@@ -13,7 +13,7 @@ use crate::{
     view::{
         AttemptView, BodyPrefix, BodyView, CallDetail, CallPage, CallView, ChannelView, Columns,
         DiskUsage, MessageView, ModelUsage, OperatorActionView, SessionView, StorageView,
-        TokenTotals, UsageBucket, UsageCounts, UsageView,
+        TokenTotals, UsageBucket, UsageCounts, UsageView, UserUsage,
     },
     writer::BlobAccess,
 };
@@ -208,7 +208,7 @@ impl Reader {
     }
 
     /// Calls, errors, and tokens of the calls started in `range`: in total,
-    /// by the hour, and by model.
+    /// by the hour, by model, and by user.
     pub async fn usage(&self, range: TimeRange) -> Result<UsageView, StoreError> {
         let select = |prefix: &str| {
             let mut sql = QueryBuilder::<Sqlite>::new(prefix);
@@ -251,10 +251,25 @@ impl Reader {
                 })
             })
             .collect::<Result<_, StoreError>>()?;
+        let mut users = select("SELECT c.user, ");
+        users.push(" GROUP BY c.user ORDER BY input_tokens DESC NULLS LAST, calls DESC");
+        let users = users
+            .build()
+            .fetch_all(&self.pool)
+            .await?
+            .iter()
+            .map(|row| {
+                Ok(UserUsage {
+                    user: Columns(row).text("user")?,
+                    usage: UsageCounts::from_row(row)?,
+                })
+            })
+            .collect::<Result<_, StoreError>>()?;
         Ok(UsageView {
             totals: UsageCounts::from_row(&totals)?,
             hours,
             models,
+            users,
         })
     }
 
@@ -621,6 +636,10 @@ impl CallQuery {
         }
         if let Some(client) = filter.client {
             Self::push_client(sql, client);
+        }
+        if let Some(user) = &filter.user {
+            sql.push(" AND c.user = ")
+                .push_bind(user.as_str().to_owned());
         }
         if let Some(kind) = filter.kind {
             sql.push(match kind {

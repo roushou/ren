@@ -468,7 +468,7 @@ impl UsageCounts {
     }
 }
 
-/// Usage over a time range, by the hour and by model.
+/// Usage over a time range, by the hour, by model, and by user.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct UsageView {
     pub totals: UsageCounts,
@@ -478,6 +478,10 @@ pub struct UsageView {
     /// Each reported model's usage, most input first. Calls without a
     /// reported model are grouped under `null`.
     pub models: Vec<ModelUsage>,
+    /// Each named user's usage, most input first. Calls no named user made
+    /// (unlisted or unidentified callers, and calls recorded before callers
+    /// were) are grouped under `null`.
+    pub users: Vec<UserUsage>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -491,6 +495,13 @@ pub struct UsageBucket {
 pub struct ModelUsage {
     pub provider: Stored<Provider>,
     pub model: Option<String>,
+    #[serde(flatten)]
+    pub usage: UsageCounts,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct UserUsage {
+    pub user: Option<String>,
     #[serde(flatten)]
     pub usage: UsageCounts,
 }

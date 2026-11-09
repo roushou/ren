@@ -31,6 +31,7 @@ pub(super) struct RawCallQuery {
     after: Option<String>,
     session: RawLabel,
     client: RawLabel,
+    user: RawLabel,
     kind: RawLabel,
     provider: RawLabel,
     model: Option<String>,
@@ -149,6 +150,7 @@ impl TryFrom<RawCallQuery> for CallQuery {
             filter: CallFilter {
                 session: raw.session.parse()?,
                 client: raw.client.parse()?,
+                user: raw.user.parse()?,
                 kind: raw.kind.parse()?,
                 provider: raw.provider.parse()?,
                 model: text(raw.model)?,
@@ -190,8 +192,17 @@ mod tests {
         assert_eq!(query.filter.tools, Some(ToolFilter::WithTools));
         assert_eq!(query.limit.get(), 5);
         assert_eq!(parse("provider=").unwrap().filter.provider, None);
+        assert_eq!(
+            parse("user=alice")
+                .unwrap()
+                .filter
+                .user
+                .map(|user| user.to_string()),
+            Some("alice".to_owned())
+        );
         for invalid in [
             "provider=nope",
+            "user=Alice",
             "status=done",
             "has_tools=yes",
             "limit=0",
