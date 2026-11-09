@@ -58,8 +58,11 @@ and the busiest sessions), and Recorder
 (`/recorder`: whether recording is healthy, how close storage, calls, and history are to
 their retention limits with the nearest marked as the one pruned for first, and only the
 loss and error counters that are not zero; bytes past the capture policy are noted as
-left out by design, never as loss, here, in the Recorder tab, and in the footer). The gateway address in the header opens each client's `tgv run` command,
-ready to copy. The bar under the tabs shows each page's scope and the controls that
+left out by design, never as loss, here, in the Recorder tab, and in the footer). The header names where the gateway runs
+(its node and network, such as `tgv · tailnet`, with the API's status dot) rather
+than its address, and opens each client's `tgv run` command, ready to copy. Addresses
+there show with their identifying part masked (a tailnet's name, a public domain)
+until the eye button reveals them for the page; copying always copies the real one. The bar under the tabs shows each page's scope and the controls that
 change it, such as Traffic's client, session, time, and model-calls-only narrowing;
 when they don't fit on one line they fold behind a **Scope** button. Traffic shows
 model calls only by default, hiding token counts, model listings, and WebSocket
