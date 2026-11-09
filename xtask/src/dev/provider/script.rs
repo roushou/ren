@@ -276,12 +276,14 @@ impl Output {
                     .collect(),
                 tool: None,
             },
+            // A few sentences, word by word: at the normal pace that streams
+            // for about a second, as a real model's short answer does.
             Behaviour::Text
             | Behaviour::Slow
             | Behaviour::Cut
             | Behaviour::Error
             | Behaviour::RateLimited => Self {
-                text: quoted
+                text: format!("{quoted} {}", Self::BODY)
                     .split_inclusive(' ')
                     .map(str::to_owned)
                     .collect(),
@@ -289,6 +291,10 @@ impl Output {
             },
         }
     }
+
+    /// What follows the quoted prompt in a text reply: invented, and long
+    /// enough to be seen streaming.
+    const BODY: &'static str = "I read through the relevant files first, then traced where the value is set and where it is used. The change is small: one function moves, two call sites follow it, and the tests that cover it still pass. I left a short note in the code where the behaviour is easy to miss, and nothing else needed to change.";
 
     fn joined(&self) -> String {
         self.text.concat()
@@ -720,7 +726,8 @@ mod tests {
             .iter()
             .filter_map(|e| e["delta"]["text"].as_str())
             .collect();
-        assert_eq!(text, "Fake reply to: hello there");
+        assert!(text.starts_with("Fake reply to: hello there "), "{text}");
+        assert!(text.split(' ').count() > 40, "{text}");
         assert_eq!(events[0]["message"]["model"], "claude-fixture");
     }
 
@@ -769,7 +776,12 @@ mod tests {
             &json!({ "model": "m", "messages": [{ "role": "user", "content": "hi" }] }),
         );
         let message: Value = serde_json::from_str(&message.pieces[0].bytes).unwrap();
-        assert_eq!(message["content"][0]["text"], "Fake reply to: hi");
+        assert!(
+            message["content"][0]["text"]
+                .as_str()
+                .unwrap()
+                .starts_with("Fake reply to: hi ")
+        );
         let models = reply(Wire::Models, &Value::Null);
         assert!(models.pieces[0].bytes.contains("fake-tools"));
     }
