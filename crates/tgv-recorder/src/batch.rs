@@ -8,6 +8,7 @@
 //! call's data.
 
 use super::inspection::InspectionRecord;
+use crate::client::Caller;
 use crate::digest::CallDigest;
 use crate::{
     capture::{BodyEnding, CallRejection, ChannelEnd, TerminalRecord},
@@ -282,6 +283,7 @@ pub struct OpenCall {
     pub method: Method,
     pub config_revision: ConfigRevision,
     pub attribution: Attribution,
+    pub caller: Caller,
     /// The operator state the call was planned against.
     pub operator_revision: Option<OperatorRevision>,
     /// The routing plan; absent when the call was refused before planning.

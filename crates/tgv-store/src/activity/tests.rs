@@ -98,6 +98,7 @@ fn view(n: u128, source: HintSource) -> CallView {
             }),
             issues: Vec::new(),
         },
+        caller: None,
         state: CallState::Finished.into(),
         terminal: None,
         status: Some(200),

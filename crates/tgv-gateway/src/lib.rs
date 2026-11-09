@@ -78,6 +78,7 @@ use crate::{
     attempt::{AttemptEnd, Canceller, EndKind, HttpEvent, SendFailure},
     call::{CallRun, CallStep, CallStop, Dispatched, Refused},
     channel::Deadlines,
+    client::IdentifyError,
     control::{Cancel, Controls},
     policy::{Admission, CallFacts, CallPlan, Policy, Rejection, RequestJson, StepRecord},
 };
@@ -103,6 +104,7 @@ use tgv_recorder::{
     AttemptStart, CallStart, CallTap, Recorder,
     batch::{AttemptBody, Recorded},
     capture::CallRejection,
+    client::Caller,
     routing::{ConfigRevision, UpstreamId},
     time::Clock,
 };
@@ -240,6 +242,15 @@ impl TgvReply {
                 message: format!("blocked by TGV policy rule {}: {reason}", rule.as_str()),
                 retry: ClientRetry::Never,
             },
+        }
+    }
+
+    fn unidentified(refused: &IdentifyError) -> Self {
+        Self {
+            status: StatusCode::UNAUTHORIZED,
+            code: "identity_refused",
+            message: refused.to_string(),
+            retry: ClientRetry::Never,
         }
     }
 
@@ -468,8 +479,10 @@ impl<U: Upstream> Gateway<U> {
         let Ok(admission) = self.admission.clone().try_acquire_owned() else {
             return GatewayError::Busy.into_response();
         };
-        // Attribution reads TGV's local hints before the policy removes them.
+        // Attribution and identity read TGV's local headers and Serve's
+        // identity before the policy removes them.
         let attribution = Harness::attribution(route.harness, &parts.headers);
+        let identified = self.config.clients.identify(&parts.headers);
         HeaderPolicy::REQUEST.apply(&mut parts.headers);
         let session = attribution.hint.as_ref().map(|hint| hint.session);
         let mut call = CallStart {
@@ -479,10 +492,16 @@ impl<U: Upstream> Gateway<U> {
             method: route.accepts.method(),
             config_revision: self.config.config_revision.clone(),
             attribution,
+            caller: identified.clone().unwrap_or(Caller::Unidentified),
             operator_revision: None,
             plan: None,
             attempts: 1,
         };
+        if let Err(refused) = identified {
+            self.recorder
+                .reject(None, call, None, CallRejection::IdentityRefused);
+            return TgvReply::unidentified(&refused).into_response();
+        }
         let abort = self.shutdown.abort_token();
         // Reading is the one await before the call has a tap; a handler
         // dropped here would otherwise leave no record.
@@ -741,7 +760,9 @@ impl<U: Upstream> Gateway<U> {
             return Self::handshake_refused("WebSocket requires an HTTP/1.1 handshake\n");
         };
         let attribution = Harness::attribution(route.harness, &parts.headers);
+        let identified = self.config.clients.identify(&parts.headers);
         HeaderPolicy::HANDSHAKE_REQUEST.apply(&mut parts.headers);
+        // The channel's calls inherit the handshake's caller.
         let start = CallStart {
             transport: Transport::WebSocket,
             api: bound.api,
@@ -749,10 +770,16 @@ impl<U: Upstream> Gateway<U> {
             method: Method::Get,
             config_revision: self.config.config_revision.clone(),
             attribution: attribution.clone(),
+            caller: identified.clone().unwrap_or(Caller::Unidentified),
             operator_revision: None,
             plan: None,
             attempts: 1,
         };
+        if let Err(refused) = identified {
+            self.recorder
+                .reject(None, start, None, CallRejection::IdentityRefused);
+            return TgvReply::unidentified(&refused).into_response();
+        }
         // WebSocket channels are pinned to the route's entry.
         let upstream = bound.upstream.clone();
         let tap = self.recorder.start(

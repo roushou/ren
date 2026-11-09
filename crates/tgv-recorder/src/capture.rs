@@ -160,6 +160,9 @@ pub enum CallRejection {
     Blocked,
     /// TGV shut down while the request body was still arriving (`503`).
     Shutdown,
+    /// The request's client token or Tailscale identity was refused:
+    /// unknown, repeated, malformed, or naming two clients (`401`).
+    IdentityRefused,
 }
 
 /// How a captured body's byte stream ended.

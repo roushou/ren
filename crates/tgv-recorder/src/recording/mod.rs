@@ -32,7 +32,7 @@ use tgv_protocol::{
 #[derive(Debug)]
 pub(crate) enum Record {
     Open {
-        open: OpenCall,
+        open: Box<OpenCall>,
         /// The first attempt; absent for a call refused before dispatch.
         attempt: Option<StartAttempt>,
         endpoint: Endpoint,
@@ -253,7 +253,7 @@ impl RecorderCore {
                         inspector: None,
                     },
                 );
-                self.batch.push(Op::OpenCall(open));
+                self.batch.push(Op::OpenCall(*open));
                 if let Some(attempt) = attempt {
                     self.attempt(attempt);
                 }

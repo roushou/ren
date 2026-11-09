@@ -166,6 +166,24 @@ impl Caller {
     }
 }
 
+impl serde::Serialize for Caller {
+    /// As recorded: its kind, client, and login, flat.
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        #[derive(serde::Serialize)]
+        struct Fields<'a> {
+            kind: CallerKind,
+            client: Option<&'a ClientId>,
+            login: Option<&'a TailscaleLogin>,
+        }
+        Fields {
+            kind: self.kind(),
+            client: self.client(),
+            login: self.login(),
+        }
+        .serialize(serializer)
+    }
+}
+
 /// A caller's kind, as stored.
 #[derive(Display, EnumString, IntoStaticStr, VariantArray)]
 #[strum(serialize_all = "snake_case")]

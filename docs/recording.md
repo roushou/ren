@@ -58,8 +58,11 @@ A **call** is one client request; each try against the upstream is an
 **attempt**. A call has one attempt unless a fallback rule replays it (see
 [Policy](policy.md)). A call records its provider and wire format
 (`anthropic_messages` or `openai_responses`); each attempt records the upstream
-entry it went to and that entry's provider. Each attempt records how it ended,
-kept apart from the HTTP status and the model outcome:
+entry it went to and that entry's provider. A call also records its caller
+(`caller`: `kind`, `client`, `login`), the [named client](policy.md#named-clients)
+it proved to be, if any; calls recorded before callers were have none. Each
+attempt records how it ended, kept apart from the HTTP status and the model
+outcome:
 
 - `body_complete`: the response body reached its end by EOF or framing. Not
   successful inference, receipt by the client, or completion of agent tools. With
