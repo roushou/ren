@@ -644,7 +644,7 @@
                 {@const streamed = workbench.streamed.get(unread.call.id)}
                 <!-- Once text streams, it holds the call's place: no status line
                      comes and goes around it, and the read reply replaces it in place. -->
-                {#if !streamed?.reply}
+                {#if !streamed?.reply && (tile.turnId || unread.call.state === 'open')}
                   {@const thinking = unread.call.state === 'open' && !!streamed?.thinking}
                   <p class="live-sep live" class:open={unread.call.state === 'open'} class:thinking>
                     call {unread.index} · {unreadLabel(unread, board.now, thinking)}
@@ -671,11 +671,11 @@
                   {/if}
                 {/if}
               {/each}
-              {#if !tile.prompt && !tile.lines.length && !tile.unread.length}
+              {#if !tile.prompt && !tile.lines.length && !tile.unread.some((unread) => unread.call.state === 'open' || workbench.streamed.get(unread.call.id)?.reply)}
                 <p class="live-wait">
                   {tile.turnId
                     ? 'Text appears once a call finishes and is read.'
-                    : 'This client reports no turns, so there is no transcript.'}
+                    : 'This client reports no turns, so only a reply as it streams shows here.'}
                 </p>
               {/if}
             </div>

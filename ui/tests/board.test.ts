@@ -693,6 +693,22 @@ function usage(output: number): CallView['usage'] {
   };
 }
 
+test('a session that reports no turns keeps its newest call, so its reply can stream', () => {
+  const sessions = [session(1, { source: 'opencode_headers', turn_count: 0 })];
+  const calls = [done(1, 1, { started_at: ms(NOW - 30_000) }), open(2, 1)];
+  const [tile] = board({ sessions, calls, turns: new Map() }).tiles;
+  assert.equal(tile.turnId, null);
+  assert.deepEqual(
+    tile.unread.map((unread) => [unread.call.id, unread.index]),
+    [[callId(2), 2]],
+  );
+  const [quiet] = board({ sessions, calls: calls.slice(0, 1), turns: new Map() }).tiles;
+  assert.deepEqual(
+    quiet.unread.map((unread) => unread.call.id),
+    [callId(1)],
+  );
+});
+
 test('each hint source names its harness, opencode included', () => {
   assert.deepEqual(
     (

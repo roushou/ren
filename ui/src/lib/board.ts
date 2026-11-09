@@ -106,7 +106,9 @@ export interface TurnTally {
   failed: number;
 }
 
-/** A call of the turn not read yet: still open, or just finished. */
+/** A call of the turn not read yet: still open, or just finished. A
+ * session whose client reports no turns has its newest call here, so its
+ * reply can show while it streams. */
 export interface UnreadCall {
   call: CallView;
   index: number;
@@ -674,9 +676,13 @@ export class Board {
       prompt: turn?.prompt ?? null,
       calls: readCalls,
       lines: Board.lines(readCalls),
-      unread: turnCalls.flatMap((call, index) =>
-        derived.has(call.id) ? [] : [{ call, index: index + 1 }],
-      ),
+      unread: turnId
+        ? turnCalls.flatMap((call, index) =>
+            derived.has(call.id) ? [] : [{ call, index: index + 1 }],
+          )
+        : latest
+          ? [{ call: latest, index: calls.length }]
+          : [],
       workdir,
       tally: turn
         ? {
