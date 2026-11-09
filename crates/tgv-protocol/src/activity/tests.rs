@@ -388,7 +388,10 @@ fn responses() -> Vec<(Protocol, ResponseFormat, Vec<u8>)> {
             ResponseFormat::EventStream,
             sse(&[
                 json!({ "type": "response.created", "response": {} }),
-                json!({ "type": "response.output_item.done", "item": message }),
+                json!({ "type": "response.output_item.added", "output_index": 0, "item": { "type": "message", "id": "msg_1", "role": "assistant", "content": [] } }),
+                json!({ "type": "response.output_text.delta", "item_id": "msg_1", "output_index": 0, "content_index": 0, "delta": "Running " }),
+                json!({ "type": "response.output_text.delta", "item_id": "msg_1", "output_index": 0, "content_index": 0, "delta": "tests." }),
+                json!({ "type": "response.output_item.done", "output_index": 0, "item": message }),
                 json!({ "type": "response.output_item.done", "item": function }),
                 json!({ "type": "response.completed", "response": { "output": [] } }),
             ]),
@@ -674,4 +677,38 @@ fn a_response_is_thinking_while_its_newest_thinking_block_or_reasoning_item_is_o
         ],
     );
     assert_eq!(responses, [false, true, true, false, false]);
+}
+
+#[test]
+fn a_responses_reply_streams_from_its_text_deltas() {
+    let mut inspector = CallInspector::new(
+        Protocol::Responses,
+        ResponseFormat::EventStream,
+        ResponseEncoding::Identity,
+        InspectionLimits::default(),
+    );
+    let mut seen = Vec::new();
+    for event in [
+        json!({ "type": "response.output_item.added", "output_index": 0, "item": { "type": "reasoning", "id": "rs_1" } }),
+        json!({ "type": "response.output_item.done", "output_index": 0, "item": { "type": "reasoning", "id": "rs_1", "summary": [] } }),
+        json!({ "type": "response.output_item.added", "output_index": 1, "item": { "type": "message", "id": "msg_1" } }),
+        json!({ "type": "response.output_text.delta", "item_id": "msg_1", "output_index": 1, "delta": "Sorted " }),
+        json!({ "type": "response.output_text.delta", "item_id": "msg_1", "output_index": 1, "delta": "newest first." }),
+        json!({ "type": "response.output_item.done", "output_index": 1, "item": { "type": "message", "id": "msg_1",
+            "content": [{ "type": "output_text", "text": "Sorted newest first." }] } }),
+    ] {
+        inspector.feed(&sse(&[event]));
+        seen.push(inspector.so_far().unwrap().reply);
+    }
+    assert_eq!(
+        seen,
+        [
+            "",
+            "",
+            "",
+            "Sorted ",
+            "Sorted newest first.",
+            "Sorted newest first."
+        ]
+    );
 }

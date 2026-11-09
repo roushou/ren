@@ -127,8 +127,9 @@ impl<'a> Request<'a> {
 }
 
 /// A Responses response: its output items, from a document, from
-/// `response.output_item.done` events, or from the terminal response event.
-/// Fed one event at a time.
+/// `response.output_item.done` events, or from the terminal response event,
+/// and the text of messages still streaming, from their deltas. Fed one event
+/// at a time.
 #[derive(Debug, Clone)]
 pub(super) struct Response {
     limits: ActivityLimits,
@@ -136,6 +137,26 @@ pub(super) struct Response {
     terminal: Option<Map<String, Value>>,
     /// Whether the newest item begun is reasoning, not yet done.
     reasoning: bool,
+    /// Messages begun and not yet done, in the order they began.
+    open: Vec<OpenMessage>,
+}
+
+/// A message item that is still streaming: its text so far.
+#[derive(Debug, Clone)]
+struct OpenMessage {
+    id: Option<String>,
+    index: Option<u64>,
+    text: String,
+}
+
+impl OpenMessage {
+    /// Whether `event` (an item or text event) is about this message.
+    fn is(&self, id: Option<&str>, index: Option<u64>) -> bool {
+        match (self.id.as_deref(), id) {
+            (Some(mine), Some(theirs)) => mine == theirs,
+            (None, _) | (_, None) => index.is_some() && self.index == index,
+        }
+    }
 }
 
 impl Response {
@@ -145,6 +166,7 @@ impl Response {
             done: Vec::new(),
             terminal: None,
             reasoning: false,
+            open: Vec::new(),
         }
     }
 
@@ -156,15 +178,41 @@ impl Response {
 
     pub(super) fn event(&mut self, mut event: Map<String, Value>) {
         let kind = Fields(&event).str("type").and_then(EventKind::from_label);
+        let index = event.get("output_index").and_then(Value::as_u64);
+        let item = event.get("item").and_then(Value::as_object);
+        let item_kind = item
+            .and_then(|item| Fields(item).str("type"))
+            .and_then(ItemKind::from_label);
         if kind == Some(EventKind::OutputItemAdded) {
-            self.reasoning = event
-                .get("item")
-                .and_then(Value::as_object)
-                .and_then(|item| Fields(item).str("type"))
-                .and_then(ItemKind::from_label)
-                == Some(ItemKind::Reasoning);
+            self.reasoning = item_kind == Some(ItemKind::Reasoning);
+            if item_kind == Some(ItemKind::Message) {
+                self.open.push(OpenMessage {
+                    id: item
+                        .and_then(|item| Fields(item).str("id"))
+                        .map(str::to_owned),
+                    index,
+                    text: String::new(),
+                });
+            }
+        } else if kind == Some(EventKind::OutputTextDelta) {
+            let id = Fields(&event).str("item_id");
+            if let Some(message) = self.open.iter_mut().find(|open| open.is(id, index)) {
+                message
+                    .text
+                    .push_str(Fields(&event).str("delta").unwrap_or_default());
+            }
         } else if kind == Some(EventKind::OutputItemDone) {
             self.reasoning = false;
+            let id = item.and_then(|item| Fields(item).str("id"));
+            // A done message without an id or index ends the oldest open one.
+            let done = self
+                .open
+                .iter()
+                .position(|open| open.is(id, index))
+                .or((item_kind == Some(ItemKind::Message) && !self.open.is_empty()).then_some(0));
+            if let Some(done) = done {
+                self.open.remove(done);
+            }
             if let Some(Value::Object(item)) = event.remove("item") {
                 self.done.push(item);
             }
@@ -174,6 +222,7 @@ impl Response {
         ) && let Some(Value::Object(response)) = event.remove("response")
         {
             self.reasoning = false;
+            self.open.clear();
             self.terminal = Some(response);
         }
     }
@@ -247,6 +296,8 @@ impl Response {
                 input,
             });
         }
+        // Messages still streaming follow the finished items.
+        replies.extend(self.open.iter().map(|open| open.text.clone()));
         activity.set_reply(replies);
         activity
     }
