@@ -5,6 +5,7 @@ mod provider;
 mod seed;
 mod shot;
 mod slot;
+mod traffic;
 
 use crate::{
     install::{InstallError, TailscaleCli},
@@ -14,10 +15,11 @@ use clap::{Args, Subcommand};
 use provider::{FakeProvider, ProviderError};
 use seed::{Scenario, SeedError, Seeder};
 use shot::{Camera, Page};
-use slot::{Preview, Slot, Unit};
+use slot::{Preview, Slot};
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use tgv_harness::host::HostEnv;
+use traffic::{Pace, SettingsError, Traffic, TrafficError};
 
 /// A development slot with fake providers and fake data.
 #[derive(Args)]
@@ -47,9 +49,9 @@ enum DevAction {
     /// Send fake traffic through the dev gateway: harness sessions, named
     /// users, long prompts, errors, and a Codex WebSocket channel.
     Seed(SeedArgs),
-    /// Start or stop a steady trickle of fake calls (one every few
-    /// seconds), for pages that follow live traffic.
-    Trickle(TrickleArgs),
+    /// Show or change the live fake traffic: rate, pace, pause, mix, and
+    /// bursts. Changes apply at once, with no restart.
+    Traffic(TrafficArgs),
     /// Screenshot the dev UI's pages with a headless Chromium.
     Shot(ShotArgs),
 }
@@ -107,16 +109,53 @@ impl TailnetArgs {
 struct SeedArgs {
     #[arg(value_enum, default_value = "all")]
     scenario: Scenario,
-    /// Repeat with new sessions, a call every few seconds, until stopped.
-    #[arg(long)]
-    forever: bool,
 }
 
 #[derive(Args)]
-struct TrickleArgs {
-    /// Stop the trickle instead of starting it.
+struct TrafficArgs {
+    #[command(subcommand)]
+    action: Option<TrafficAction>,
+}
+
+#[derive(Subcommand)]
+enum TrafficAction {
+    /// Show the current settings (the default).
+    Show,
+    /// Change some settings; the others keep their values.
+    Set(SetArgs),
+    /// Stop sending calls.
+    Pause,
+    /// Send calls again.
+    Resume,
+    /// Send this many calls now, with the current mix.
+    Burst {
+        #[arg(default_value_t = 20, value_parser = clap::value_parser!(u16).range(1..=500))]
+        count: u16,
+    },
+    /// Run the generator in the foreground (what the tgv-dev-traffic unit
+    /// runs).
+    #[command(hide = true)]
+    Run,
+}
+
+#[derive(Args)]
+struct SetArgs {
+    /// Calls a minute (0 to 600; 0 sends none).
     #[arg(long)]
-    stop: bool,
+    rate: Option<u16>,
+    /// How fast the fake provider streams replies.
+    #[arg(long, value_enum)]
+    pace: Option<Pace>,
+    /// Reply weights: text, tools, long, slow, cut, error, rate_limited
+    /// (for example `tools=50,error=5`).
+    #[arg(long)]
+    replies: Option<String>,
+    /// Harness weights: claude_code, codex, pi, opencode, deepseek.
+    #[arg(long)]
+    harnesses: Option<String>,
+    /// Caller weights: alice, ci, unlisted, unidentified.
+    #[arg(long)]
+    senders: Option<String>,
 }
 
 #[derive(Args)]
@@ -124,6 +163,9 @@ struct ProviderArgs {
     /// The loopback address to listen on.
     #[arg(long, default_value = "127.0.0.1:18999")]
     listen: SocketAddr,
+    /// A traffic settings file whose pace the replies follow.
+    #[arg(long)]
+    settings: Option<PathBuf>,
 }
 
 /// Why a dev task failed.
@@ -141,12 +183,16 @@ pub enum DevError {
     Seed(#[from] SeedError),
     #[error("no headless Chromium found: set TGV_CHROME, or install chrome-headless-shell")]
     NoChrome,
+    #[error(transparent)]
+    Traffic(#[from] TrafficError),
+    #[error(transparent)]
+    Settings(#[from] SettingsError),
 }
 
 impl Dev {
     pub fn run(self, env: &HostEnv) -> Result<(), DevError> {
         match self.action {
-            DevAction::Provider(args) => Ok(FakeProvider::serve(args.listen)?),
+            DevAction::Provider(args) => Ok(FakeProvider::serve(args.listen, args.settings)?),
             DevAction::Up(args) => {
                 let slot = Slot::new(env)?;
                 if args.ui {
@@ -174,11 +220,8 @@ impl Dev {
             DevAction::Status => Slot::new(env)?.status(),
             DevAction::Seed(args) => {
                 let slot = Slot::new(env)?;
-                Seeder::new(Slot::DAEMON, Slot::ci_token().expose().to_owned()).play(
-                    args.scenario,
-                    &slot.data_dir,
-                    args.forever,
-                )?;
+                Seeder::new(Slot::DAEMON, Slot::ci_token().expose().to_owned())
+                    .play(args.scenario, &slot.data_dir)?;
                 Ok(())
             }
             DevAction::Shot(args) => {
@@ -195,14 +238,50 @@ impl Dev {
                     .shoot(&pages, (args.width, args.height))?;
                 Ok(())
             }
-            DevAction::Trickle(args) => {
+            DevAction::Traffic(args) => {
                 let slot = Slot::new(env)?;
-                Unit::Trickle.stop()?;
-                if !args.stop {
-                    slot.trickle()?;
-                }
-                Ok(())
+                let traffic = Traffic::new(
+                    Slot::DAEMON,
+                    Slot::ci_token().expose().to_owned(),
+                    slot.traffic_settings(),
+                    slot.data_dir.clone(),
+                );
+                Self::traffic(&traffic, args.action.unwrap_or(TrafficAction::Show))
             }
         }
+    }
+}
+
+impl Dev {
+    fn traffic(traffic: &Traffic, action: TrafficAction) -> Result<(), DevError> {
+        let mut settings = traffic.settings()?;
+        match action {
+            TrafficAction::Run => return Ok(traffic.run()?),
+            TrafficAction::Burst { count } => return Ok(traffic.burst(count)?),
+            TrafficAction::Show => {}
+            TrafficAction::Pause => settings.flow = traffic::Flow::Paused,
+            TrafficAction::Resume => settings.flow = traffic::Flow::Running,
+            TrafficAction::Set(set) => {
+                if let Some(rate) = set.rate {
+                    settings.rate = rate;
+                }
+                if let Some(pace) = set.pace {
+                    settings.pace = pace;
+                }
+                if let Some(text) = set.replies {
+                    settings.replies = settings.replies.with(&text)?;
+                }
+                if let Some(text) = set.harnesses {
+                    settings.harnesses = settings.harnesses.with(&text)?;
+                }
+                if let Some(text) = set.senders {
+                    settings.senders = settings.senders.with(&text)?;
+                }
+                settings.check()?;
+            }
+        }
+        traffic.save(&settings)?;
+        print!("# {}\n{}", traffic.path().display(), settings.to_toml());
+        Ok(())
     }
 }

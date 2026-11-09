@@ -103,6 +103,8 @@ pub struct Request<'a> {
     pub body: &'a [u8],
     /// A number unique to this request, for response identifiers.
     pub serial: u64,
+    /// The wait before each streamed piece (the dev slot's pace).
+    pub gap: Duration,
 }
 
 impl Reply {
@@ -117,6 +119,7 @@ impl Reply {
         let input_tokens = u64::try_from(request.body.len() / 4).unwrap_or(u64::MAX);
         let turn = Turn {
             model,
+            gap: request.gap,
             serial: request.serial,
             input_tokens,
             prompt: Prompt::newest(request.wire, &body),
@@ -299,6 +302,8 @@ impl Output {
 /// One fake model turn.
 struct Turn {
     model: String,
+    /// The wait before each streamed piece, but for `fake-slow`.
+    gap: Duration,
     serial: u64,
     input_tokens: u64,
     prompt: String,
@@ -309,7 +314,7 @@ impl Turn {
         format!("{prefix}_fake{:06}", self.serial)
     }
 
-    fn pace(behaviour: Behaviour) -> Duration {
+    fn pace(&self, behaviour: Behaviour) -> Duration {
         match behaviour {
             Behaviour::Slow => Duration::from_millis(500),
             Behaviour::Text
@@ -317,7 +322,7 @@ impl Turn {
             | Behaviour::Long
             | Behaviour::Error
             | Behaviour::RateLimited
-            | Behaviour::Cut => Duration::from_millis(15),
+            | Behaviour::Cut => self.gap,
         }
     }
 
@@ -363,7 +368,7 @@ impl Turn {
     }
 
     fn messages_stream(&self, output: &Output, behaviour: Behaviour) -> Reply {
-        let pace = Self::pace(behaviour);
+        let pace = self.pace(behaviour);
         let mut events = vec![(
             Duration::ZERO,
             Self::event(
@@ -471,7 +476,7 @@ impl Turn {
     /// The Responses events of one turn, as Codex reads them over SSE or a
     /// WebSocket.
     fn responses_events(&self, output: &Output, behaviour: Behaviour) -> Vec<(Duration, Value)> {
-        let pace = Self::pace(behaviour);
+        let pace = self.pace(behaviour);
         let mut events = vec![
             (
                 Duration::ZERO,
@@ -547,7 +552,7 @@ impl Turn {
     }
 
     fn chat_stream(&self, output: &Output, behaviour: Behaviour) -> Reply {
-        let pace = Self::pace(behaviour);
+        let pace = self.pace(behaviour);
         let chunk = |delta: Value, finish: Value| {
             Self::event(
                 None,
@@ -608,7 +613,7 @@ pub struct SocketTurn;
 impl SocketTurn {
     /// The events answering one `response.create` message, or `None` for any
     /// other message (an interrupt, or something the fake ignores).
-    pub fn answer(message: &str, serial: u64) -> Option<Vec<(Duration, String)>> {
+    pub fn answer(message: &str, serial: u64, gap: Duration) -> Option<Vec<(Duration, String)>> {
         let body: Value = serde_json::from_str(message).ok()?;
         if body["type"] != "response.create" {
             return None;
@@ -616,6 +621,7 @@ impl SocketTurn {
         let request = body.get("response").unwrap_or(&body);
         let model = request["model"].as_str().unwrap_or("fake-model").to_owned();
         let turn = Turn {
+            gap,
             input_tokens: u64::try_from(message.len() / 4).unwrap_or(u64::MAX),
             prompt: Prompt::newest(Wire::Responses, request),
             serial,
@@ -650,12 +656,14 @@ impl SocketTurn {
 mod tests {
     use super::{Behaviour, Reply, Request, SocketTurn, Wire};
     use serde_json::{Value, json};
+    use std::time::Duration;
 
     fn reply(wire: Wire, body: &Value) -> Reply {
         Reply::to(&Request {
             wire,
             body: body.to_string().as_bytes(),
             serial: 7,
+            gap: Duration::from_millis(15),
         })
     }
 
@@ -769,13 +777,13 @@ mod tests {
     #[test]
     fn a_socket_answers_response_create_and_nothing_else() {
         let create = json!({ "type": "response.create", "model": "gpt-fixture", "input": "hi" });
-        let events = SocketTurn::answer(&create.to_string(), 1).unwrap();
+        let events = SocketTurn::answer(&create.to_string(), 1, Duration::ZERO).unwrap();
         let last: Value = serde_json::from_str(&events.last().unwrap().1).unwrap();
         assert_eq!(last["type"], "response.completed");
         assert_eq!(last["response"]["model"], "gpt-fixture");
-        assert!(SocketTurn::answer(r#"{"type":"response.cancel"}"#, 2).is_none());
+        assert!(SocketTurn::answer(r#"{"type":"response.cancel"}"#, 2, Duration::ZERO).is_none());
         let failed = json!({ "type": "response.create", "model": "fake-error" });
-        let events = SocketTurn::answer(&failed.to_string(), 3).unwrap();
+        let events = SocketTurn::answer(&failed.to_string(), 3, Duration::ZERO).unwrap();
         assert!(events[0].1.contains("\"error\""));
     }
 }

@@ -6,6 +6,7 @@
 
 mod script;
 
+use super::traffic::Settings;
 use axum::{
     Router,
     body::{Body, Bytes},
@@ -21,16 +22,20 @@ use script::{Reply, Request as Scripted, SocketTurn, Wire};
 use std::{
     convert::Infallible,
     net::SocketAddr,
+    path::PathBuf,
     sync::{
         Arc,
         atomic::{AtomicU64, Ordering},
     },
+    time::Duration,
 };
 
 /// The fake provider, listening on one loopback address.
 pub struct FakeProvider {
     /// Numbers each answered request, for response identifiers.
     serial: AtomicU64,
+    /// The dev slot's traffic settings, read again for each request's pace.
+    settings: Option<PathBuf>,
 }
 
 /// Why the fake provider stopped.
@@ -54,7 +59,7 @@ impl FakeProvider {
     const MAX_BODY: usize = 64 * 1024 * 1024;
 
     /// Serve on `address` until the process is stopped.
-    pub fn serve(address: SocketAddr) -> Result<(), ProviderError> {
+    pub fn serve(address: SocketAddr, settings: Option<PathBuf>) -> Result<(), ProviderError> {
         if !address.ip().is_loopback() {
             return Err(ProviderError::NotLoopback(address));
         }
@@ -67,20 +72,31 @@ impl FakeProvider {
                 .await
                 .map_err(|source| ProviderError::Bind { address, source })?;
             println!("fake provider listening on http://{address}");
-            axum::serve(listener, Self::router())
+            axum::serve(listener, Self::router(settings))
                 .await
                 .map_err(ProviderError::Serve)
         })
     }
 
-    fn router() -> Router {
+    fn router(settings: Option<PathBuf>) -> Router {
         let provider = Arc::new(Self {
             serial: AtomicU64::new(1),
+            settings,
         });
         Router::new().fallback(move |request: Request| {
             let provider = provider.clone();
             async move { provider.answer(request).await }
         })
+    }
+
+    /// The pace the settings ask for, read now; the default without them.
+    fn gap(&self) -> Duration {
+        self.settings
+            .as_deref()
+            .map(Settings::read)
+            .unwrap_or_default()
+            .pace
+            .gap()
     }
 
     async fn answer(self: Arc<Self>, request: Request) -> Response {
@@ -110,6 +126,7 @@ impl FakeProvider {
             wire,
             body: &body,
             serial,
+            gap: self.gap(),
         }))
     }
 
@@ -144,7 +161,7 @@ impl FakeProvider {
                 Message::Binary(_) | Message::Ping(_) | Message::Pong(_) => continue,
             };
             let serial = self.serial.fetch_add(1, Ordering::Relaxed);
-            let Some(events) = SocketTurn::answer(text.as_str(), serial) else {
+            let Some(events) = SocketTurn::answer(text.as_str(), serial, self.gap()) else {
                 continue;
             };
             for (after, event) in events {

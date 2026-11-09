@@ -4,10 +4,11 @@
 
 mod scenario;
 
-pub use scenario::Scenario;
+pub use scenario::{Call, Run, Scenario};
+pub(in crate::dev) use scenario::{Caller, Client, PROMPTS};
 
 use futures_util::{SinkExt as _, StreamExt as _};
-use scenario::{Channel, Plan, Run};
+use scenario::{Channel, Plan};
 use std::{fs, net::SocketAddr, path::Path, time::Duration};
 use tokio_tungstenite::tungstenite::{Message, client::IntoClientRequest as _, http::HeaderValue};
 
@@ -34,9 +35,6 @@ pub struct Seeder {
 }
 
 impl Seeder {
-    /// Pause between calls when seeding forever.
-    const TRICKLE: Duration = Duration::from_secs(4);
-
     pub fn new(gateway: SocketAddr, token: String) -> Self {
         Self { gateway, token }
     }
@@ -58,14 +56,8 @@ impl Seeder {
         Ok(next)
     }
 
-    /// Play `scenario` once, or (with `forever`) again and again, a call
-    /// every few seconds, each round with new sessions.
-    pub fn play(
-        &self,
-        scenario: Scenario,
-        data_dir: &Path,
-        forever: bool,
-    ) -> Result<(), SeedError> {
+    /// Play `scenario` once, with new sessions.
+    pub fn play(&self, scenario: Scenario, data_dir: &Path) -> Result<(), SeedError> {
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
             .build()
@@ -75,24 +67,12 @@ impl Seeder {
             .timeout(Duration::from_secs(60))
             .build()
             .map_err(SeedError::Client)?;
-        runtime.block_on(async {
-            loop {
-                let run = Run(Self::next_run(data_dir)?);
-                let plan = scenario.plan(run, &self.token);
-                self.send(&client, &plan, forever).await?;
-                if !forever {
-                    return Ok(());
-                }
-            }
-        })
+        let run = Run(Self::next_run(data_dir)?);
+        let plan = scenario.plan(run, &self.token);
+        runtime.block_on(self.send(&client, &plan))
     }
 
-    async fn send(
-        &self,
-        client: &reqwest::Client,
-        plan: &Plan,
-        paced: bool,
-    ) -> Result<(), SeedError> {
+    async fn send(&self, client: &reqwest::Client, plan: &Plan) -> Result<(), SeedError> {
         for call in &plan.calls {
             let mut request = client
                 .post(format!("http://{}{}", self.gateway, call.path))
@@ -108,9 +88,6 @@ impl Seeder {
             // Read the whole answer, so the call ends as a client's would.
             drop(response.bytes().await);
             println!("{status} {}", call.label);
-            if paced {
-                tokio::time::sleep(Self::TRICKLE).await;
-            }
         }
         for channel in &plan.channels {
             let outcome = match self.channel(channel).await {

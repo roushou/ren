@@ -37,12 +37,12 @@ pub enum Unit {
     Provider,
     Daemon,
     Ui,
-    Trickle,
+    Traffic,
 }
 
 impl Unit {
     /// Every unit, in the order they stop.
-    pub const ALL: [Self; 4] = [Self::Trickle, Self::Ui, Self::Daemon, Self::Provider];
+    pub const ALL: [Self; 4] = [Self::Traffic, Self::Ui, Self::Daemon, Self::Provider];
 
     /// The transient unit's name; every one starts with `tgv-dev-`.
     pub fn name(self) -> &'static str {
@@ -50,7 +50,7 @@ impl Unit {
             Self::Provider => "tgv-dev-provider",
             Self::Daemon => "tgv-dev-daemon",
             Self::Ui => "tgv-dev-ui",
-            Self::Trickle => "tgv-dev-trickle",
+            Self::Traffic => "tgv-dev-traffic",
         }
     }
 
@@ -361,6 +361,8 @@ impl Slot {
                 "provider".into(),
                 "--listen".into(),
                 Self::PROVIDER.to_string(),
+                "--settings".into(),
+                self.traffic_settings().display().to_string(),
             ],
             &[],
         )?;
@@ -376,25 +378,27 @@ impl Slot {
             ],
             &[(Self::OPERATOR_KEY_ENV, Self::OPERATOR_KEY.into())],
         )?;
-        Self::wait_for(Self::DAEMON, "/health")
+        Self::wait_for(Self::DAEMON, "/health")?;
+        self.start_traffic()
     }
 
-    /// Run `dev seed sessions --forever` as the trickle unit.
-    pub fn trickle(&self) -> Result<(), DevError> {
-        Self::step("Starting a trickle of fake calls");
-        Unit::Trickle.start(
+    /// (Re)start the traffic generator, which follows the settings file.
+    pub fn start_traffic(&self) -> Result<(), DevError> {
+        Unit::Traffic.stop()?;
+        Self::step("Starting the traffic generator");
+        Unit::Traffic.start(
             None,
             &[&self.bin_dir.join("xtask")],
-            &[
-                "dev".into(),
-                "seed".into(),
-                "sessions".into(),
-                "--forever".into(),
-            ],
-            // The user manager gives its units HOME, which the seeder reads.
+            &["dev".into(), "traffic".into(), "run".into()],
+            // The user manager gives its units HOME, which the slot reads.
             &[],
         )?;
         Ok(())
+    }
+
+    /// The live traffic settings' file.
+    pub fn traffic_settings(&self) -> PathBuf {
+        self.config.with_file_name("traffic.toml")
     }
 
     pub fn down() -> Result<(), DevError> {

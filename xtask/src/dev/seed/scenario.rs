@@ -71,7 +71,7 @@ impl Run {
 
 /// The headers of one harness's session.
 #[derive(Debug, Clone, Copy)]
-enum Client {
+pub(in crate::dev) enum Client {
     ClaudeCode,
     Codex,
     Pi,
@@ -82,7 +82,7 @@ enum Client {
 
 /// Who sends a call.
 #[derive(Debug, Clone)]
-enum Caller {
+pub(in crate::dev) enum Caller {
     Unidentified,
     Login(&'static str),
     Token(String),
@@ -100,7 +100,7 @@ impl Caller {
     }
 }
 
-const PROMPTS: [&str; 8] = [
+pub(in crate::dev) const PROMPTS: [&str; 8] = [
     "Why does the release build fail on the CI runner but not locally?",
     "Add a retry with backoff to the upload client, and test it.",
     "Rename the config field `listen_addr` to `listen` everywhere.",
@@ -138,7 +138,7 @@ impl Scenario {
     }
 
     /// One call of `client`'s session `session`, turn `turn`.
-    fn call(
+    pub(in crate::dev) fn call(
         client: Client,
         caller: &Caller,
         run: Run,
