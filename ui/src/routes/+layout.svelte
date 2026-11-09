@@ -193,10 +193,16 @@
       ><span class="flaps" aria-hidden="true"
         ><span class="flap">T</span><span class="flap">G</span><span class="flap">V</span></span
       ></a
-    >{#if development}<span
-        class="dev-mark"
-        title="This gateway is a development instance, not the installed service">Dev</span
-      >{/if}
+    >{#if development}{#if page.data.devConsoleUrl}<a
+          class="dev-mark"
+          href={page.data.devConsoleUrl}
+          target="_blank"
+          rel="noopener"
+          title="A development gateway. Open the dev console to change its traffic">Dev</a
+        >{:else}<span
+          class="dev-mark"
+          title="This gateway is a development instance, not the installed service">Dev</span
+        >{/if}{/if}
     <nav class="workbench-tabs" aria-label="Workbench views">
       <a
         href="/"

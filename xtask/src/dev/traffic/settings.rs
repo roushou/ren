@@ -85,6 +85,17 @@ pub enum Sender {
     Unidentified,
 }
 
+impl Reply {
+    /// Weights that give every call the reply labelled `label`.
+    pub fn only(label: &str) -> Option<Weights<Self>> {
+        let reply = Self::ALL
+            .iter()
+            .copied()
+            .find(|reply| reply.label() == label)?;
+        Some(Weights::of(&[(reply, 1)]))
+    }
+}
+
 impl Choice for Reply {
     const ALL: &'static [Self] = &[
         Self::Text,

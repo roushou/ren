@@ -135,7 +135,11 @@ enum TrafficAction {
     /// Run the generator in the foreground (what the tgv-dev-traffic unit
     /// runs).
     #[command(hide = true)]
-    Run,
+    Run {
+        /// Also serve the dev console on this loopback address.
+        #[arg(long)]
+        console: Option<SocketAddr>,
+    },
 }
 
 #[derive(Args)]
@@ -256,7 +260,7 @@ impl Dev {
     fn traffic(traffic: &Traffic, action: TrafficAction) -> Result<(), DevError> {
         let mut settings = traffic.settings()?;
         match action {
-            TrafficAction::Run => return Ok(traffic.run()?),
+            TrafficAction::Run { console } => return Ok(traffic.run(console)?),
             TrafficAction::Burst { count } => return Ok(traffic.burst(count)?),
             TrafficAction::Show => {}
             TrafficAction::Pause => settings.flow = traffic::Flow::Paused,

@@ -10,4 +10,9 @@ export const variables = defineEnvVars({
     description: 'Optional daemon origin shown in client launch commands, e.g. its Tailscale URL.',
     schema: (value) => (value === undefined ? undefined : gatewayOrigin(value)),
   },
+  TGV_DEV_CONSOLE_URL: {
+    description:
+      'Optional origin of the dev slot console (`cargo xtask dev`), linked from the Dev chip.',
+    schema: (value) => (value === undefined ? undefined : gatewayOrigin(value)),
+  },
 });

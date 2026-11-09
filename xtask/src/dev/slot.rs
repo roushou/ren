@@ -134,6 +134,10 @@ impl Slot {
     /// service's.
     pub const GATEWAY_PORT: u16 = 9443;
     pub const UI_PORT: u16 = 9444;
+    pub const CONSOLE_PORT: u16 = 9445;
+    /// The dev console, served by the traffic generator.
+    pub const CONSOLE: SocketAddr =
+        SocketAddr::new(std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST), 13001);
     /// The operator key the dev config's operator-key entries read: fake.
     const OPERATOR_KEY_ENV: &'static str = "TGV_DEV_OPERATOR_KEY";
     const OPERATOR_KEY: &'static str = "fake-dev-operator-key";
@@ -304,10 +308,11 @@ impl Slot {
             fs::remove_dir_all(&self.ui_dir).map_err(InstallError::file(&self.ui_dir))?;
         }
         fs::rename(&self.ui_next, &self.ui_dir).map_err(InstallError::file(&self.ui_dir))?;
-        let (public_gateway, origin) = match preview {
+        let (public_gateway, origin, console) = match preview {
             Preview::Local => (
                 format!("http://{}", Self::DAEMON),
                 format!("http://{}", Self::UI),
+                format!("http://{}", Self::CONSOLE),
             ),
             Preview::Tailnet(tailscale) => {
                 let dns = InstallVps::publish(
@@ -316,9 +321,15 @@ impl Slot {
                     &format!("http://{}", Self::DAEMON),
                 )?
                 .ok_or(InstallError::NoDnsName)?;
+                InstallVps::publish(
+                    tailscale,
+                    Self::CONSOLE_PORT,
+                    &format!("http://{}", Self::CONSOLE),
+                )?;
                 (
                     format!("https://{dns}:{}", Self::GATEWAY_PORT),
                     format!("https://{dns}:{}", Self::UI_PORT),
+                    format!("https://{dns}:{}", Self::CONSOLE_PORT),
                 )
             }
         };
@@ -333,6 +344,7 @@ impl Slot {
                 ("TGV_GATEWAY_URL", format!("http://{}", Self::DAEMON)),
                 ("TGV_PUBLIC_GATEWAY_URL", public_gateway),
                 ("ORIGIN", origin.clone()),
+                ("TGV_DEV_CONSOLE_URL", console.clone()),
             ],
         )?;
         // The UI's /health relays the dev daemon's.
@@ -340,7 +352,7 @@ impl Slot {
         if let Preview::Tailnet(tailscale) = preview {
             InstallVps::publish(tailscale, Self::UI_PORT, &format!("http://{}", Self::UI))?;
         }
-        println!("\nDev preview: {origin}\n");
+        println!("\nDev preview: {origin}\nDev console: {console}\n");
         Ok(())
     }
 
@@ -389,7 +401,13 @@ impl Slot {
         Unit::Traffic.start(
             None,
             &[&self.bin_dir.join("xtask")],
-            &["dev".into(), "traffic".into(), "run".into()],
+            &[
+                "dev".into(),
+                "traffic".into(),
+                "run".into(),
+                "--console".into(),
+                Self::CONSOLE.to_string(),
+            ],
             // The user manager gives its units HOME, which the slot reads.
             &[],
         )?;
@@ -419,6 +437,7 @@ impl Slot {
         for (port, target) in [
             (Self::GATEWAY_PORT, format!("http://{}", Self::DAEMON)),
             (Self::UI_PORT, format!("http://{}", Self::UI)),
+            (Self::CONSOLE_PORT, format!("http://{}", Self::CONSOLE)),
         ] {
             match serve.route(port, &target) {
                 Route::Target => {
@@ -453,6 +472,7 @@ impl Slot {
         println!("fake provider      http://{}", Self::PROVIDER);
         println!("dev gateway        http://{}", Self::DAEMON);
         println!("dev UI             http://{}", Self::UI);
+        println!("dev console        http://{}", Self::CONSOLE);
         println!("config             {}", self.config.display());
         println!("data               {}", self.data_dir.display());
         println!(

@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dev console · TGV</title>
+<style>
+:root{--bg:#f7f8fa;--panel:#fff;--ink:#1d2129;--muted:#6b7280;--line:#e9ebf0;--accent:#a0522d;--warn:#946a22;--warn-soft:#faf5e9;--ok:#2f7d4f;font:13px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif;color-scheme:light dark}
+@media (prefers-color-scheme:dark){:root{--bg:#1e222a;--panel:#252a33;--ink:#e5e9f0;--muted:#9aa3b2;--line:#3b4252;--accent:#d08770;--warn:#ebcb8b;--warn-soft:#403c33;--ok:#a3be8c}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink)}
+header{display:flex;align-items:stretch;border-bottom:1px solid var(--line);background:var(--panel)}
+header>*{display:flex;align-items:center;padding:10px 14px;border-right:1px solid var(--line)}
+.dev{background:var(--warn-soft);color:var(--warn);font-weight:600}
+h1{font-size:14px;margin:0;font-weight:600}.grow{flex:1;border-right:0;color:var(--muted)}
+.mono{font-family:ui-monospace,SFMono-Regular,Consolas,monospace}
+main{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:1px;background:var(--line);border-bottom:1px solid var(--line)}
+section{background:var(--panel);padding:14px 16px}
+h2{font-size:12px;font-weight:600;margin:0 0 10px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+.row{display:grid;grid-template-columns:110px 1fr 44px;align-items:center;gap:10px;margin:6px 0}
+.row output{text-align:right}input[type=range]{width:100%;accent-color:var(--accent)}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:3px;overflow:hidden}
+.seg button{border:0;border-right:1px solid var(--line);border-radius:0;background:transparent;color:var(--ink);padding:5px 12px;cursor:pointer;font:inherit}
+.seg button:last-child{border-right:0}.seg button[aria-pressed=true]{background:var(--accent);color:#fff}
+.send{grid-column:1/-1}.actions{display:flex;flex-wrap:wrap;gap:8px}
+.actions button{border:1px solid var(--line);border-radius:3px;background:var(--panel);color:var(--ink);padding:6px 12px;cursor:pointer;font:inherit}
+.actions button:hover{border-color:var(--accent)}
+footer{display:flex;gap:16px;padding:8px 16px;color:var(--muted)}#saved{color:var(--ok)}#error{color:#bf616a}
+.big{font-size:22px;font-weight:600}
+</style>
+</head>
+<body>
+<header><span class="dev">Dev</span><h1>Console</h1><span class="grow">Fake traffic into the dev slot. Changes apply at once.</span><span class="mono" id="counts">…</span></header>
+<main>
+<section>
+<h2>Flow</h2>
+<div class="seg" id="flow"><button data-v="running">Running</button><button data-v="paused">Paused</button></div>
+<div class="row"><label for="rate">Rate</label><input id="rate" type="range" min="0" max="600" step="1"><output class="mono" id="rate-out"></output></div>
+<p class="mono" style="margin:0;color:var(--muted)">calls a minute</p>
+<h2 style="margin-top:16px">Reply pace</h2>
+<div class="seg" id="pace"><button data-v="instant">Instant</button><button data-v="normal">Normal</button><button data-v="slow">Slow</button></div>
+</section>
+<section><h2>Replies</h2><div id="replies"></div></section>
+<section><h2>Harnesses</h2><div id="harnesses"></div></section>
+<section><h2>Callers</h2><div id="senders"></div></section>
+<section class="send">
+<h2>Send now</h2>
+<div class="actions">
+<button data-burst="20">Burst 20</button>
+<button data-burst="1" data-reply="slow">One slow call</button>
+<button data-burst="1" data-reply="tools">One tool call</button>
+<button data-burst="1" data-reply="error">One error</button>
+<button data-burst="1" data-reply="rate_limited">One rate limit</button>
+</div>
+</section>
+</main>
+<footer><span id="saved"></span><span id="error"></span><span class="mono" id="path"></span></footer>
+<script>
+const groups=["replies","harnesses","senders"];let settings=null,timer=null;
+const $=id=>document.getElementById(id);
+function setPressed(id,value){for(const b of $(id).querySelectorAll("button"))b.setAttribute("aria-pressed",b.dataset.v===value)}
+function render(){
+  setPressed("flow",settings.flow);setPressed("pace",settings.pace);
+  $("rate").value=settings.rate;$("rate-out").textContent=settings.rate;
+  for(const g of groups){const box=$(g);box.textContent="";
+    for(const [name,weight] of Object.entries(settings[g])){
+      const row=document.createElement("div");row.className="row";
+      const label=document.createElement("label");label.textContent=name.replace("_"," ");
+      const input=document.createElement("input");input.type="range";input.min=0;input.max=100;input.step=1;input.value=weight;
+      const out=document.createElement("output");out.className="mono";out.textContent=weight;
+      input.addEventListener("input",()=>{out.textContent=input.value;settings[g][name]=Number(input.value);save()});
+      row.append(label,input,out);box.append(row)}}}
+function save(){clearTimeout(timer);timer=setTimeout(async()=>{
+  const r=await fetch("api/settings",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(settings)});
+  $("saved").textContent=r.ok?"Saved":"";$("error").textContent=r.ok?"":await r.text()},250)}
+async function refresh(first){
+  const r=await fetch("api/status");if(!r.ok){$("error").textContent="The generator is not answering.";return}
+  const s=await r.json();$("counts").textContent=`${s.sent} sent · ${s.in_flight} in flight`;
+  if(first){settings=s.settings;render()}}
+for(const id of ["flow","pace"])$(id).addEventListener("click",e=>{const v=e.target.dataset.v;if(!v)return;settings[id]=v;setPressed(id,v);save()});
+$("rate").addEventListener("input",e=>{settings.rate=Number(e.target.value);$("rate-out").textContent=settings.rate;save()});
+for(const b of document.querySelectorAll("[data-burst]"))b.addEventListener("click",async()=>{
+  const body={count:Number(b.dataset.burst)};if(b.dataset.reply)body.reply=b.dataset.reply;
+  const r=await fetch("api/burst",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(body)});
+  $("error").textContent=r.ok?"":await r.text()});
+refresh(true);setInterval(()=>refresh(false),1000);
+</script>
+</body>
+</html>

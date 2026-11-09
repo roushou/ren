@@ -3,11 +3,13 @@
 //! reading it again before every call. The calls themselves come from the
 //! seed scenarios' builders, so they carry each harness's real headers.
 
+mod console;
 mod settings;
 
 pub use settings::{Flow, Pace, Settings, SettingsError};
 
 use super::seed::{Call, Caller, Client, PROMPTS, Run, Seeder};
+use console::{Console, Stats};
 use futures_util::{StreamExt as _, stream::FuturesUnordered};
 use settings::{Harness, Reply, Sender};
 use std::{
@@ -15,6 +17,7 @@ use std::{
     net::SocketAddr,
     path::{Path, PathBuf},
     pin::Pin,
+    sync::{Arc, atomic::Ordering},
     time::Duration,
 };
 
@@ -27,6 +30,11 @@ pub enum TrafficError {
     Client(#[source] reqwest::Error),
     #[error(transparent)]
     Seed(#[from] super::seed::SeedError),
+    #[error("the dev console cannot serve on {address}: {source}")]
+    Console {
+        address: SocketAddr,
+        source: std::io::Error,
+    },
     #[error("cannot write {path}: {source}")]
     Write {
         path: String,
@@ -35,9 +43,10 @@ pub enum TrafficError {
 }
 
 /// The generator, for one gateway and one settings file.
+#[derive(Clone)]
 pub struct Traffic {
     gateway: SocketAddr,
-    token: String,
+    pub(super) token: String,
     settings: PathBuf,
     data_dir: PathBuf,
 }
@@ -155,33 +164,78 @@ impl Traffic {
 
     /// Send calls as the settings say, until stopped, keeping several in
     /// flight so a slow call never holds up the next.
-    pub fn run(&self) -> Result<(), TrafficError> {
+    pub fn run(&self, console: Option<SocketAddr>) -> Result<(), TrafficError> {
         let client = Self::client()?;
         let run = Run(Seeder::next_run(&self.data_dir)?);
+        let stats = Arc::new(Stats::default());
         Self::runtime()?.block_on(async {
-            let mut in_flight: FuturesUnordered<Sending> = FuturesUnordered::new();
-            let mut n: u64 = 0;
-            loop {
-                let settings = self.settings()?;
-                let wait = match settings.interval() {
-                    Some(interval) if in_flight.len() < Self::MAX_IN_FLIGHT => {
-                        if let Some(call) = Self::call(n, run, &settings, &self.token) {
-                            in_flight.push(Self::send(&client, self.gateway, call));
-                        }
-                        n = n.wrapping_add(1);
-                        interval
-                    }
-                    Some(_) | None => Self::IDLE,
+            let page = async {
+                let Some(address) = console else {
+                    return std::future::pending().await;
                 };
-                let pause = tokio::time::sleep(wait);
-                tokio::pin!(pause);
-                loop {
-                    tokio::select! {
-                        () = &mut pause => break,
-                        Some(()) = in_flight.next() => {}
+                let listener = tokio::net::TcpListener::bind(address)
+                    .await
+                    .map_err(|source| TrafficError::Console { address, source })?;
+                let router = Console {
+                    traffic: self.clone(),
+                    stats: stats.clone(),
+                    client: client.clone(),
+                    run,
+                }
+                .router();
+                axum::serve(listener, router)
+                    .await
+                    .map_err(|source| TrafficError::Console { address, source })
+            };
+            tokio::select! {
+                stopped = page => stopped,
+                stopped = self.generate(&client, run, &stats) => stopped,
+            }
+        })
+    }
+
+    /// Send calls as the settings say, until stopped, keeping several in
+    /// flight so a slow call never holds up the next.
+    async fn generate(
+        &self,
+        client: &reqwest::Client,
+        run: Run,
+        stats: &Arc<Stats>,
+    ) -> Result<(), TrafficError> {
+        let mut in_flight: FuturesUnordered<Sending> = FuturesUnordered::new();
+        let mut n: u64 = 0;
+        loop {
+            let settings = self.settings()?;
+            let wait = match settings.interval() {
+                Some(interval) if in_flight.len() < Self::MAX_IN_FLIGHT => {
+                    if let Some(call) = Self::call(n, run, &settings, &self.token) {
+                        in_flight.push(self.counted(client, call, stats));
                     }
+                    n = n.wrapping_add(1);
+                    interval
+                }
+                Some(_) | None => Self::IDLE,
+            };
+            let pause = tokio::time::sleep(wait);
+            tokio::pin!(pause);
+            loop {
+                tokio::select! {
+                    () = &mut pause => break,
+                    Some(()) = in_flight.next() => {}
                 }
             }
+        }
+    }
+
+    /// One call, counted in `stats` while it runs and once it is sent.
+    fn counted(&self, client: &reqwest::Client, call: Call, stats: &Arc<Stats>) -> Sending {
+        let stats = stats.clone();
+        stats.in_flight.fetch_add(1, Ordering::Relaxed);
+        let sending = Self::send(client, self.gateway, call);
+        Box::pin(async move {
+            sending.await;
+            stats.in_flight.fetch_sub(1, Ordering::Relaxed);
+            stats.sent.fetch_add(1, Ordering::Relaxed);
         })
     }
 
