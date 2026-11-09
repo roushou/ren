@@ -77,6 +77,12 @@ impl UiDeploy {
     /// Builds the UI and stages a complete deployable copy beside the
     /// running one. Nothing running is touched.
     pub fn build(&self) -> Result<(), InstallError> {
+        self.build_into(&self.staged)
+    }
+
+    /// Builds the UI and stages a complete deployable copy in `staged`:
+    /// the build, `package.json`, `bun.lock`, and production dependencies.
+    pub fn build_into(&self, staged: &Path) -> Result<(), InstallError> {
         InstallVps::step("Building the UI");
         Invocation::new(&self.bun)
             .args(["install", "--frozen-lockfile"])
@@ -86,22 +92,22 @@ impl UiDeploy {
             .args(["run", "build"])
             .current_dir(&self.source)
             .run()?;
-        InstallVps::step(&format!("Staging the UI in {}", self.staged.display()));
-        if self.staged.exists() {
-            fs::remove_dir_all(&self.staged).map_err(InstallError::file(&self.staged))?;
+        InstallVps::step(&format!("Staging the UI in {}", staged.display()));
+        if staged.exists() {
+            fs::remove_dir_all(staged).map_err(InstallError::file(staged))?;
         }
         fs::DirBuilder::new()
             .recursive(true)
             .mode(0o700)
-            .create(&self.staged)
-            .map_err(InstallError::file(&self.staged))?;
+            .create(staged)
+            .map_err(InstallError::file(staged))?;
         Invocation::new("cp")
             .arg("-R")
             .arg(self.source.join("build"))
-            .arg(self.staged.join("build"))
+            .arg(staged.join("build"))
             .run()?;
         for file in ["package.json", "bun.lock"] {
-            let target = self.staged.join(file);
+            let target = staged.join(file);
             fs::copy(self.source.join(file), &target).map_err(InstallError::file(&target))?;
         }
         Invocation::new(&self.bun)
@@ -111,8 +117,13 @@ impl UiDeploy {
                 "--frozen-lockfile",
                 "--ignore-scripts",
             ])
-            .current_dir(&self.staged)
+            .current_dir(staged)
             .run()
+    }
+
+    /// The Node that runs the UI.
+    pub fn node(&self) -> &Path {
+        &self.node
     }
 
     /// Swaps in the staged copy, writes `ui.env` if missing, starts the

@@ -225,6 +225,9 @@ const messagePayloads = ['text', 'binary'] as const;
 export type MessagePayload = (typeof messagePayloads)[number];
 export type ObservationKind = (typeof observationKinds)[number];
 const healthStatuses = ['ok', 'degraded'] as const;
+/** What the gateway says it is: the installed service, or a development one. */
+const environments = ['production', 'development'] as const;
+export type Environment = (typeof environments)[number];
 export type HealthStatus = (typeof healthStatuses)[number];
 const errorCodes = ['not_found', 'invalid_query', 'busy', 'unavailable'] as const;
 export type ErrorCode = (typeof errorCodes)[number];
@@ -497,6 +500,8 @@ export interface OperatorSummary {
 export interface Health {
   status: Stored<HealthStatus>;
   build: Build;
+  /** Production for daemons that predate the field. */
+  instance: { environment: Stored<Environment> };
   operator: OperatorSummary;
   recorder: RecorderMetrics;
 }
@@ -792,6 +797,10 @@ const operatorSummary = object<OperatorSummary>({ pause, blocked_sessions: count
 const health = object<Health>({
   status: label(healthStatuses),
   build,
+  instance: (value, path) =>
+    value === undefined
+      ? { environment: 'production' }
+      : object<Health['instance']>({ environment: label(environments) })(value, path),
   operator: operatorSummary,
   recorder: recorderMetrics,
 });

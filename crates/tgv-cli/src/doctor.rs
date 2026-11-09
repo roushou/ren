@@ -8,7 +8,10 @@ use std::{
     time::Duration,
 };
 use tgv_daemon::config::Config;
-use tgv_gateway::build::{Build, Comparison, Revision};
+use tgv_gateway::{
+    Environment,
+    build::{Build, Comparison, Revision},
+};
 use tgv_harness::{
     endpoint::{GatewayEndpoint, UserToken},
     host::HostEnv,
@@ -405,7 +408,17 @@ impl CallerSeen {
 #[derive(Deserialize)]
 struct HealthResponse {
     build: ReportedBuild,
+    /// Absent from daemons that predate it: a production instance.
+    #[serde(default)]
+    instance: ReportedInstance,
     recorder: RecorderHealth,
+}
+
+/// What the daemon says it is.
+#[derive(Deserialize, Default)]
+struct ReportedInstance {
+    #[serde(default)]
+    environment: Option<Stored<Environment>>,
 }
 
 /// The daemon's build, with its revision kept as text until parsed, so an
@@ -492,6 +505,7 @@ impl Report {
         {
             Ok((status, health)) if status == 200 || status == 503 => {
                 report.build(&Cli::build(), health.build);
+                report.instance(&health.instance);
                 let health = health.recorder;
                 let errors = health.storage_errors > 0 || health.retention_errors > 0;
                 report.add("gateway", if status == 200 && !errors {Status::Ok} else {Status::Failed},
@@ -558,6 +572,24 @@ impl Report {
 }
 
 impl Report {
+    /// Says so when the gateway is not a production instance, so a dev
+    /// slot is never mistaken for the installed service.
+    fn instance(&mut self, instance: &ReportedInstance) {
+        match instance.environment.as_ref().map(Stored::known) {
+            None | Some(Some(Environment::Production)) => {}
+            Some(Some(Environment::Development)) => self.add(
+                "instance",
+                Status::Ok,
+                "a development instance (such as the dev slot), not a production gateway",
+            ),
+            Some(None) => self.add(
+                "instance",
+                Status::Warning,
+                "the gateway reports an environment this CLI does not know",
+            ),
+        }
+    }
+
     /// Who the gateway records this caller's calls as: by the user token in
     /// `TGV_USER_TOKEN`, or by the Tailscale login Serve adds.
     async fn caller(&mut self, probe: &GatewayProbe, gateway: &GatewayEndpoint, env: &HostEnv) {

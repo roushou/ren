@@ -247,6 +247,7 @@ impl TestGateway {
             control: runtime.control().clone(),
             token: ControlToken::parse(Self::CONTROL_TOKEN).unwrap(),
             build: build(),
+            instance: runtime.instance(),
         });
         let ingress = Ingress::new(listener, router.clone());
         let server = tokio::spawn(ingress.serve(shutdown.clone(), Self::DRAIN_DEADLINE));

@@ -1,5 +1,6 @@
 //! `cargo xtask`: repository tasks, run from a checkout.
 mod daemon;
+mod dev;
 mod install;
 mod invocation;
 mod publish;
@@ -15,12 +16,23 @@ use tgv_harness::host::HostEnv;
 #[command(name = "cargo xtask", bin_name = "cargo xtask")]
 enum Xtask {
     InstallVps(install::InstallVps),
+    Dev(dev::Dev),
+}
+
+/// Why a task failed.
+#[derive(Debug, thiserror::Error)]
+enum TaskError {
+    #[error(transparent)]
+    Install(#[from] install::InstallError),
+    #[error(transparent)]
+    Dev(#[from] dev::DevError),
 }
 
 impl Xtask {
-    fn run(self, env: &HostEnv) -> Result<(), install::InstallError> {
+    fn run(self, env: &HostEnv) -> Result<(), TaskError> {
         match self {
-            Self::InstallVps(task) => task.run(env),
+            Self::InstallVps(task) => Ok(task.run(env)?),
+            Self::Dev(task) => Ok(task.run(env)?),
         }
     }
 }

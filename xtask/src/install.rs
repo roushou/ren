@@ -168,14 +168,14 @@ enum Quiet {
 }
 
 /// How to run `tailscale` for the Serve step.
-#[derive(Clone, Copy)]
-enum TailscaleCli {
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum TailscaleCli {
     Direct,
     Sudo,
 }
 
 impl TailscaleCli {
-    fn invocation(self) -> Invocation {
+    pub(crate) fn invocation(self) -> Invocation {
         match self {
             Self::Direct => Invocation::new("tailscale"),
             Self::Sudo => Invocation::new("sudo").args(["-n", "tailscale"]),
@@ -749,7 +749,7 @@ impl InstallVps {
 
     /// Publishes `target` privately on `port`, and returns the node's
     /// MagicDNS name.
-    fn publish(
+    pub(crate) fn publish(
         tailscale: TailscaleCli,
         port: u16,
         target: &str,
@@ -797,7 +797,7 @@ impl InstallVps {
     }
 
     /// `https://<node>:<port>`, or a description when the node has no name.
-    fn url(dns: Option<&str>, port: u16) -> String {
+    pub(crate) fn url(dns: Option<&str>, port: u16) -> String {
         dns.map_or_else(
             || format!("(port {port} on this node)"),
             |name| format!("https://{name}:{port}"),

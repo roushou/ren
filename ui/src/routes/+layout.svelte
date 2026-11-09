@@ -13,6 +13,7 @@
   import ConnectClient from '#lib/ConnectClient.svelte';
   import { RecorderReport } from '#lib/recorder.ts';
   import CopyButton from '#lib/CopyButton.svelte';
+  import DevToolbar from '#lib/DevToolbar.svelte';
   import '#lib/style.css';
   import type { LayoutProps } from './$types';
   let { data, children }: LayoutProps = $props();
@@ -28,6 +29,8 @@
   });
   const gateway = createSnapshot(() => data.gateway);
   const health = $derived(gateway.current.value?.health);
+  // The gateway says whether it is a development instance; the UI only shows it.
+  const development = $derived(health?.instance.environment === 'development');
   const storage = $derived(gateway.current.value?.storage);
   const view = $derived(
     page.route.id === '/'
@@ -187,9 +190,15 @@
 <svelte:head><title>TGV - {pageTitle}</title></svelte:head>
 <div class="app-shell">
   <header class="workbench-header">
-    <a class="brand" href="/" aria-label="TGV overview"
+    <a
+      class="brand"
+      class:development
+      href="/"
+      aria-label={development ? 'TGV overview, development gateway' : 'TGV overview'}
+      title={development ? 'A development gateway, not the installed service' : undefined}
       ><span class="flaps" aria-hidden="true"
-        ><span class="flap">T</span><span class="flap">G</span><span class="flap">V</span></span
+        ><span class="flap">T</span><span class="flap">G</span><span class="flap">V</span
+        >{#if development}<span class="dev-badge">dev</span>{/if}</span
       ></a
     >
     <nav class="workbench-tabs" aria-label="Workbench views">
@@ -351,4 +360,5 @@
       >{loading ? 'Refreshing…' : updated ? `Snapshot ${clock(updated)}` : 'No snapshot'}</span
     >
   </footer>
+  {#if development && page.data.devTraffic}<DevToolbar />{/if}
 </div>

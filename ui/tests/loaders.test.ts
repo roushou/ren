@@ -60,6 +60,18 @@ test('gateway reads health and storage together and accept degraded recorder hea
   assert.equal(result.value.storage.policy.max_calls, 100);
 });
 
+test('the gateway names its environment, and an older one reads as production', async () => {
+  const read = (body: object) =>
+    gatewaySnapshot(async (input) =>
+      path(input) === '/health' ? versioned(body) : versioned(storageFixture()),
+    );
+  const development = await read({ ...healthBody(), instance: { environment: 'development' } });
+  assert.equal(development.value?.health.instance.environment, 'development');
+  const { instance: _, ...older } = healthBody();
+  const production = await read(older);
+  assert.equal(production.value?.health.instance.environment, 'production');
+});
+
 test('every response is version-checked and a mismatch is reported distinctly', async () => {
   const unversioned = async () => Response.json(healthBody());
   for (const fetcher of [2, null, '1']

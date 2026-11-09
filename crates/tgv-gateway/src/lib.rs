@@ -48,6 +48,7 @@ pub mod channel;
 pub mod control;
 mod headers;
 mod ingress;
+pub mod instance;
 mod limits;
 pub mod operator;
 pub mod policy;
@@ -65,6 +66,7 @@ pub use buffer::{BufferOptions, BufferOptionsError, BufferRefusal, RequestBuffer
 pub use build::Build;
 pub use headers::HeaderPolicy;
 pub use ingress::{Ingress, IngressError, Shutdown, Stopped};
+pub use instance::{Environment, InstanceOptions};
 pub use route::{Accepts, BoundRoute, Forward, Route};
 pub use upstream::{
     AuthOverride, ConfiguredEntry, Connected, EntryIngress, NativeUrls, OperatorKey,
@@ -419,6 +421,7 @@ impl<U: Upstream> Gateway<U> {
                 reader: management.reader,
                 retention: management.retention,
                 build: management.build,
+                instance: management.instance,
             },
             self.recorder.clone(),
             self.controls.clone(),

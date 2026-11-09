@@ -97,6 +97,7 @@ produces `build/`. Cargo never builds or embeds the UI.
 | ------------------------ | -------------------------------- | ------------------------------------------------------------------------------- |
 | `TGV_GATEWAY_URL`        | `http://127.0.0.1:8787`          | Daemon origin reached by the UI server                                          |
 | `TGV_PUBLIC_GATEWAY_URL` | Same as `TGV_GATEWAY_URL`        | Daemon origin displayed in the header and copied client commands                |
+| `TGV_DEV_TRAFFIC_URL`    | Unset                            | Dev slot only: loopback origin of its traffic controls, for the dev toolbar     |
 | `HOST`                   | `127.0.0.1` with `bun run start` | UI listener address                                                             |
 | `PORT`                   | `3000` with `bun run start`      | UI listener port                                                                |
 | `ORIGIN`                 | Inferred from incoming request   | Set to the UI's external origin behind Tailscale Serve or another reverse proxy |
@@ -191,5 +192,6 @@ bun run build
 ```
 
 `tests/*.test.ts` holds focused unit tests that Node runs directly. There is no
-browser integration suite: verify UI changes manually with synthetic traffic through
-a separately running daemon.
+browser integration suite: verify UI changes with synthetic traffic in the dev slot
+(`cargo xtask dev up --ui`, `dev seed`, `dev shot`; see
+[Deployment](../docs/deployment.md#dev-slot)).

@@ -63,6 +63,12 @@ codex = 536870912 # 512 MiB (no documented limit; OpenAI's is used)
 openai = 536870912 # 512 MiB (OpenAI: 512 MB per request)
 deepseek = 33554432 # 32 MiB (no documented limit; Anthropic Messages' is used)
 
+[instance]
+# "production" (the default) or "development". /health reports it; the UI
+# marks a development gateway with a dev badge on its logo, and `tgv doctor` and `tgv run`
+# name it. `cargo xtask dev` sets "development" for the dev slot.
+environment = "production"
+
 [control]
 # Tailscale logins allowed to use the control API through Tailscale Serve.
 # Local use (the tgv control CLI) needs the daemon's control.token instead.

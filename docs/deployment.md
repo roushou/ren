@@ -196,6 +196,66 @@ UI's `/health`, which relays the daemon's. It then publishes the UI on that port
 under the same rules as the daemon's port. Without `--ui-https-port`, the UI is
 left untouched.
 
+### Dev slot
+
+`cargo xtask dev` runs this checkout's build beside the installed service, with
+fake providers and fake data, for development and for previewing a change before
+it is installed:
+
+```sh
+cargo xtask dev up --ui      # build, then start the slot and its UI, and publish them
+cargo xtask dev seed         # play a scenario once (sessions, users, long, errors, websocket, all)
+cargo xtask dev traffic      # show the live traffic settings
+cargo xtask dev traffic set --rate 60 --pace slow --replies tools=50,error=5
+cargo xtask dev traffic pause    # or resume; burst 20 sends 20 calls now
+cargo xtask dev shot         # screenshots of the UI's pages, in target/dev-shots
+cargo xtask dev status
+cargo xtask dev reset        # remove the slot's data and start again
+cargo xtask dev down         # stop the slot and remove the preview's routes
+```
+
+|          | Dev slot                                                                | Installed service                         |
+| -------- | ----------------------------------------------------------------------- | ----------------------------------------- |
+| Units    | `tgv-dev-provider`, `tgv-dev-daemon`, `tgv-dev-traffic`, `tgv-dev-ui`   | `tgv`, `tgv-ui`                           |
+| Loopback | fake provider `18999`, daemon `18787`, UI `13000`, traffic API `13001`  | daemon `8787`, UI `3000`                  |
+| Tailnet  | `9443` (gateway), `9444` (UI)                                           | your `--https-port` and `--ui-https-port` |
+| Files    | `~/.config/tgv-dev`, `~/.local/state/tgv-dev`, `~/.local/share/tgv-dev` | `~/.config/tgv`, `~/.local/state/tgv`     |
+
+The units are transient systemd user units, stopped by name. The dev
+configuration is regenerated on every `up`. It sets `[instance] environment =
+"development"`, which the gateway reports in `/health`: the UI's logo gets a dev
+badge, and `tgv doctor` and `tgv run` name the instance. Every
+provider in it is the fake one, which
+accepts any credentials and stores nothing, so no real credential or prompt
+reaches the slot. It names two users, `alice` (by the Tailscale login
+`alice@example.com`) and `ci` (by a fixed fake token), and two direct
+operator-key entries with a fake key: `team-key` (only `ci`) and `chat-key`
+(Chat Completions). The requested model scripts the fake's reply: `fake-tools`,
+`fake-long`, `fake-slow`, `fake-cut`, `fake-error`, `fake-429`; any other model
+gets text quoting the prompt. So a real client can run against the slot:
+
+```sh
+tgv run claude --gateway https://<node>:9443
+```
+
+The slot always has live traffic: the `tgv-dev-traffic` unit sends calls
+through the dev gateway as `~/.config/tgv-dev/traffic.toml` says (running or
+paused, calls a minute, the fake provider's pace, and weights over replies,
+harnesses, and callers). The generator and the fake provider read the file again
+for every call, so `dev traffic set`, `pause`, and `resume` apply at once; an
+invalid file falls back to the defaults. The dev UI also has them in a floating
+toolbar (bottom right; it folds into a small tab): pause, rate, pace, a burst, the
+mix, and single slow, tool, error, or rate-limited calls. The generator serves them
+on `127.0.0.1:13001`, never published; the UI server forwards the toolbar's
+requests there only when `TGV_DEV_TRAFFIC_URL` is set, as the slot sets it, and
+only a development gateway's UI shows the toolbar.
+
+`--ui` publishes the preview with the same Serve step as `install-vps` (with
+`sudo -n` if it last did, or `--sudo-tailscale`); `--local` keeps it on
+loopback. `down` removes each preview route only while it still points at the
+slot. `shot` needs a headless Chromium: `TGV_CHROME`, `chrome-headless-shell` or
+`chromium` on `PATH`, or Playwright's downloaded headless shell.
+
 ### Manual steps
 
 Build on the VPS with Rust and `cargo build --release --locked`, or copy an

@@ -205,6 +205,7 @@ impl Daemon {
                 control: config.control().clone(),
                 token,
                 build: self.build.clone(),
+                instance: config.instance(),
             },
         );
         let stop = shutdown.clone();
