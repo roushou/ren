@@ -11,8 +11,8 @@ use tgv_gateway::{
     BufferOptions, ConfiguredEntry, ControlOptions, EntryIngress, GatewayConfig, NativeUrls,
     OperatorKey, TransportTimeouts, UpstreamAuth, UpstreamEntry, UpstreamTable, UpstreamUrl,
     WebSocketOptions,
-    client::{ClientConfig, Clients},
     policy::{Policy, PolicyConfig},
+    user::{UserConfig, Users},
 };
 use tgv_harness::host::HostEnv;
 use tgv_protocol::route::{Api, Provider, UnsupportedWire, Wire};
@@ -64,7 +64,7 @@ pub enum ConfigError {
     #[error(transparent)]
     Policy(#[from] tgv_gateway::policy::PolicyError),
     #[error(transparent)]
-    Clients(#[from] tgv_gateway::client::ClientsError),
+    Users(#[from] tgv_gateway::user::UsersError),
     #[error("operator key variable {name} for upstream {upstream} is not set")]
     MissingKey { name: String, upstream: String },
     #[error("operator key variable {0} is not a valid header value")]
@@ -107,9 +107,9 @@ pub struct Config {
     pub buffer: BufferOptions,
     pub policy: PolicyConfig,
     pub control: ControlOptions,
-    /// The gateway's named clients, each proven by a Tailscale login or a
-    /// client token.
-    pub clients: Vec<ClientConfig>,
+    /// The gateway's named users, each proven by a Tailscale login or a
+    /// user token.
+    pub users: Vec<UserConfig>,
 }
 
 /// An operator-key upstream entry. The key is read from the daemon's
@@ -168,7 +168,7 @@ impl Default for Config {
             buffer: BufferOptions::default(),
             policy: PolicyConfig::default(),
             control: ControlOptions::default(),
-            clients: Vec::new(),
+            users: Vec::new(),
         }
     }
 }
@@ -241,12 +241,12 @@ impl Config {
             extra,
         )?;
         let policy = Policy::new(self.policy.clone(), &upstreams.summaries())?;
-        let clients = Clients::new(self.clients.clone())?;
+        let users = Users::new(self.users.clone())?;
         Ok(RuntimeConfig {
             listen: self.listen,
             upstreams,
             policy,
-            clients,
+            users,
             max_concurrent_requests: self.max_concurrent_requests,
             connect_timeout: Duration::from_secs(self.connect_timeout_seconds),
             response_header_timeout: Duration::from_secs(self.response_header_timeout_seconds),
@@ -341,7 +341,7 @@ pub struct RuntimeConfig {
     listen: SocketAddr,
     upstreams: UpstreamTable,
     policy: Policy,
-    clients: Clients,
+    users: Users,
     max_concurrent_requests: usize,
     connect_timeout: Duration,
     response_header_timeout: Duration,
@@ -375,7 +375,7 @@ impl RuntimeConfig {
             buffer: self.buffer,
             policy: self.policy.clone(),
             upstreams: self.upstreams.clone(),
-            clients: self.clients.clone(),
+            users: self.users.clone(),
         }
     }
     /// Lifecycle records the recorder reserves at once: every admitted call,
@@ -436,17 +436,17 @@ mod tests {
     }
 
     #[test]
-    fn clients_parse_and_a_duplicate_login_is_refused() {
+    fn users_parse_and_a_duplicate_login_is_refused() {
         let digest = "ab".repeat(32);
         let config: Config = toml::from_str(&format!(
-            "[[clients]]\nid = \"alice\"\ntailscale_logins = [\"alice@example.com\"]\n\
-             [[clients]]\nid = \"ci\"\ntoken_blake3 = \"{digest}\"\n"
+            "[[users]]\nid = \"alice\"\ntailscale_logins = [\"alice@example.com\"]\n\
+             [[users]]\nid = \"ci\"\ntoken_blake3 = \"{digest}\"\n"
         ))
         .unwrap();
         config.resolve().unwrap();
         let config: Config = toml::from_str(
-            "[[clients]]\nid = \"a\"\ntailscale_logins = [\"x@y\"]\n\
-             [[clients]]\nid = \"b\"\ntailscale_logins = [\"x@y\"]\n",
+            "[[users]]\nid = \"a\"\ntailscale_logins = [\"x@y\"]\n\
+             [[users]]\nid = \"b\"\ntailscale_logins = [\"x@y\"]\n",
         )
         .unwrap();
         assert_eq!(
@@ -455,10 +455,10 @@ mod tests {
                 .err()
                 .map(|error| error.to_string())
                 .as_deref(),
-            Some("Tailscale login x@y belongs to two clients")
+            Some("Tailscale login x@y belongs to two users")
         );
         assert!(
-            toml::from_str::<Config>("[[clients]]\nid = \"Alice\"\ntailscale_logins = [\"a@b\"]\n")
+            toml::from_str::<Config>("[[users]]\nid = \"Alice\"\ntailscale_logins = [\"a@b\"]\n")
                 .is_err()
         );
     }

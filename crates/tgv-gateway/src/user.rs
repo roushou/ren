@@ -1,9 +1,9 @@
-//! Who is calling: the configured clients, and how a forwarded request is
+//! Who is calling: the configured users, and how a forwarded request is
 //! matched to one.
 //!
-//! A request names its client by a Tailscale login, which Tailscale Serve
-//! adds after removing any copy the client sent, or by a client token in
-//! [`Clients::TOKEN_HEADER`]. The token header is in TGV's `x-tgv-`
+//! A request names its user by a Tailscale login, which Tailscale Serve
+//! adds after removing any copy the caller sent, or by a user token in
+//! [`Users::TOKEN_HEADER`]. The token header is in TGV's `x-tgv-`
 //! namespace, which the header policy removes before forwarding, so it never
 //! reaches a provider. Configuration holds only each token's BLAKE3 digest.
 //!
@@ -14,18 +14,18 @@
 use http::HeaderMap;
 use std::collections::HashMap;
 use tgv_recorder::{
-    client::{Caller, ClientId, Proof, TailscaleLogin},
+    caller::{Caller, Proof, TailscaleLogin, UserId},
     id::IdSource,
 };
 
-/// A client's secret token. Never shown in `Debug`.
+/// A user's secret token. Never shown in `Debug`.
 #[derive(Clone)]
-pub struct ClientToken(Box<str>);
+pub struct UserToken(Box<str>);
 
-impl ClientToken {
+impl UserToken {
     /// Marks the token's kind, so it reads as a TGV credential wherever it
     /// turns up.
-    const PREFIX: &'static str = "tgvc_";
+    const PREFIX: &'static str = "tgvu_";
 
     pub fn generate<S: IdSource + ?Sized>(ids: &S) -> Self {
         Self(
@@ -39,7 +39,7 @@ impl ClientToken {
         )
     }
 
-    /// A token as a client presents it: the prefix, then ASCII letters and
+    /// A token as a user presents it: the prefix, then ASCII letters and
     /// digits.
     pub fn parse(text: &str) -> Option<Self> {
         let rest = text.strip_prefix(Self::PREFIX)?;
@@ -56,13 +56,13 @@ impl ClientToken {
     }
 }
 
-impl std::fmt::Debug for ClientToken {
+impl std::fmt::Debug for UserToken {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("ClientToken(<redacted>)")
+        f.write_str("UserToken(<redacted>)")
     }
 }
 
-/// The BLAKE3 digest of a client token, as configuration holds it: 64
+/// The BLAKE3 digest of a user token, as configuration holds it: 64
 /// lowercase hexadecimal digits.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct TokenDigest([u8; 32]);
@@ -119,83 +119,83 @@ impl<'de> serde::Deserialize<'de> for TokenDigest {
     }
 }
 
-/// One `[[clients]]` entry: a client's name and how it proves it.
+/// One `[[users]]` entry: a user's name and how it proves it.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct ClientConfig {
-    pub id: ClientId,
-    /// Tailscale logins that are this client.
+pub struct UserConfig {
+    pub id: UserId,
+    /// Tailscale logins that are this user.
     #[serde(default)]
     pub tailscale_logins: Vec<TailscaleLogin>,
-    /// The BLAKE3 digest of the client's token (`tgv client token`).
+    /// The BLAKE3 digest of the user's token (`tgv users token`).
     #[serde(default)]
     pub token_blake3: Option<TokenDigest>,
 }
 
-/// Why the configured clients are not a valid set.
+/// Why the configured users are not a valid set.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum ClientsError {
-    #[error("client {0} is configured twice")]
-    DuplicateId(ClientId),
-    #[error("Tailscale login {0} belongs to two clients")]
+pub enum UsersError {
+    #[error("user {0} is configured twice")]
+    DuplicateId(UserId),
+    #[error("Tailscale login {0} belongs to two users")]
     DuplicateLogin(TailscaleLogin),
-    #[error("clients {0} and {1} have the same token")]
-    DuplicateToken(ClientId, ClientId),
-    #[error("client {0} has neither a Tailscale login nor a token, so no request can be it")]
-    NoProof(ClientId),
+    #[error("users {0} and {1} have the same token")]
+    DuplicateToken(UserId, UserId),
+    #[error("user {0} has neither a Tailscale login nor a token, so no request can be it")]
+    NoProof(UserId),
 }
 
 /// Why a request's identity was refused.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum IdentifyError {
-    /// A token was presented that no client has. It is refused rather than
-    /// ignored, so a client never believes it is identified when it is not.
-    #[error("the client token is not one this gateway knows")]
+    /// A token was presented that no user has. It is refused rather than
+    /// ignored, so a caller never believes it is identified when it is not.
+    #[error("the user token is not one this gateway knows")]
     UnknownToken,
-    #[error("the request carries more than one client token")]
+    #[error("the request carries more than one user token")]
     SeveralTokens,
     #[error("the Tailscale login is malformed")]
     MalformedLogin,
-    /// The Tailscale login and the token name different clients.
-    #[error("the Tailscale login is client {login}, but the token is client {token}")]
-    Conflicting { login: ClientId, token: ClientId },
+    /// The Tailscale login and the token name different users.
+    #[error("the Tailscale login is user {login}, but the token is user {token}")]
+    Conflicting { login: UserId, token: UserId },
 }
 
-/// The configured clients, indexed by what proves each one.
+/// The configured users, indexed by what proves each one.
 #[derive(Debug, Clone, Default)]
-pub struct Clients {
-    configs: Vec<ClientConfig>,
-    by_login: HashMap<TailscaleLogin, ClientId>,
-    by_token: HashMap<TokenDigest, ClientId>,
+pub struct Users {
+    configs: Vec<UserConfig>,
+    by_login: HashMap<TailscaleLogin, UserId>,
+    by_token: HashMap<TokenDigest, UserId>,
 }
 
-impl Clients {
-    /// The request header that carries a client token.
-    pub const TOKEN_HEADER: &'static str = "x-tgv-client-token";
+impl Users {
+    /// The request header that carries a user token.
+    pub const TOKEN_HEADER: &'static str = "x-tgv-user-token";
     const LOGIN_HEADER: &'static str = "tailscale-user-login";
 
-    pub fn new(configs: Vec<ClientConfig>) -> Result<Self, ClientsError> {
+    pub fn new(configs: Vec<UserConfig>) -> Result<Self, UsersError> {
         let mut by_login = HashMap::new();
-        let mut by_token: HashMap<TokenDigest, ClientId> = HashMap::new();
+        let mut by_token: HashMap<TokenDigest, UserId> = HashMap::new();
         for (index, config) in configs.iter().enumerate() {
             if configs[..index]
                 .iter()
                 .any(|earlier| earlier.id == config.id)
             {
-                return Err(ClientsError::DuplicateId(config.id.clone()));
+                return Err(UsersError::DuplicateId(config.id.clone()));
             }
             if config.tailscale_logins.is_empty() && config.token_blake3.is_none() {
-                return Err(ClientsError::NoProof(config.id.clone()));
+                return Err(UsersError::NoProof(config.id.clone()));
             }
             for login in &config.tailscale_logins {
                 if by_login.insert(login.clone(), config.id.clone()).is_some() {
-                    return Err(ClientsError::DuplicateLogin(login.clone()));
+                    return Err(UsersError::DuplicateLogin(login.clone()));
                 }
             }
             if let Some(digest) = config.token_blake3
                 && let Some(other) = by_token.insert(digest, config.id.clone())
             {
-                return Err(ClientsError::DuplicateToken(other, config.id.clone()));
+                return Err(UsersError::DuplicateToken(other, config.id.clone()));
             }
         }
         Ok(Self {
@@ -205,12 +205,12 @@ impl Clients {
         })
     }
 
-    pub fn configs(&self) -> &[ClientConfig] {
+    pub fn configs(&self) -> &[UserConfig] {
         &self.configs
     }
 
     /// Who sent a request, from its headers. A presented token must be
-    /// valid, and must name the same client as a listed Tailscale login.
+    /// valid, and must name the same user as a listed Tailscale login.
     /// Comparing digests reveals nothing usable about a token: finding one
     /// that matches means inverting BLAKE3.
     pub fn identify(&self, headers: &HeaderMap) -> Result<Caller, IdentifyError> {
@@ -234,35 +234,30 @@ impl Clients {
                 value
                     .to_str()
                     .ok()
-                    .and_then(ClientToken::parse)
+                    .and_then(UserToken::parse)
                     .and_then(|token| self.by_token.get(&token.digest()))
                     .cloned()
                     .ok_or(IdentifyError::UnknownToken)
             })
             .transpose()?;
         let Some(login) = login else {
-            return Ok(
-                by_token.map_or(Caller::Unidentified, |client| Caller::Client {
-                    client,
-                    proof: Proof::Token { login: None },
-                }),
-            );
+            return Ok(by_token.map_or(Caller::Unidentified, |user| Caller::User {
+                user,
+                proof: Proof::Token { login: None },
+            }));
         };
         match (self.by_login.get(&login).cloned(), by_token) {
-            (Some(client), None) => Ok(Caller::Client {
-                client,
+            (Some(user), None) => Ok(Caller::User {
+                user,
                 proof: Proof::Tailscale(login),
             }),
-            (Some(client), Some(token)) if client == token => Ok(Caller::Client {
-                client,
+            (Some(user), Some(token)) if user == token => Ok(Caller::User {
+                user,
                 proof: Proof::Tailscale(login),
             }),
-            (Some(client), Some(token)) => Err(IdentifyError::Conflicting {
-                login: client,
-                token,
-            }),
-            (None, Some(client)) => Ok(Caller::Client {
-                client,
+            (Some(user), Some(token)) => Err(IdentifyError::Conflicting { login: user, token }),
+            (None, Some(user)) => Ok(Caller::User {
+                user,
                 proof: Proof::Token { login: Some(login) },
             }),
             (None, None) => Ok(Caller::Unlisted(login)),
@@ -272,15 +267,15 @@ impl Clients {
 
 #[cfg(test)]
 mod tests {
-    use super::{ClientConfig, ClientToken, Clients, ClientsError, IdentifyError, TokenDigest};
+    use super::{IdentifyError, TokenDigest, UserConfig, UserToken, Users, UsersError};
     use http::HeaderMap;
     use tgv_recorder::{
-        client::{Caller, ClientId, Proof, TailscaleLogin},
+        caller::{Caller, Proof, TailscaleLogin, UserId},
         id::SequentialIds,
     };
 
-    fn id(text: &str) -> ClientId {
-        ClientId::parse(text).unwrap()
+    fn id(text: &str) -> UserId {
+        UserId::parse(text).unwrap()
     }
 
     fn login(text: &str) -> TailscaleLogin {
@@ -296,50 +291,46 @@ mod tests {
     }
 
     struct Fixture {
-        clients: Clients,
-        alice: ClientToken,
-        bob: ClientToken,
+        users: Users,
+        alice: UserToken,
+        bob: UserToken,
     }
 
     fn fixture() -> Fixture {
         let ids = SequentialIds::default();
-        let alice = ClientToken::generate(&ids);
-        let bob = ClientToken::generate(&ids);
-        let clients = Clients::new(vec![
-            ClientConfig {
+        let alice = UserToken::generate(&ids);
+        let bob = UserToken::generate(&ids);
+        let users = Users::new(vec![
+            UserConfig {
                 id: id("alice"),
                 tailscale_logins: vec![login("alice@example.com")],
                 token_blake3: Some(alice.digest()),
             },
-            ClientConfig {
+            UserConfig {
                 id: id("bob"),
                 tailscale_logins: vec![],
                 token_blake3: Some(bob.digest()),
             },
         ])
         .unwrap();
-        Fixture {
-            clients,
-            alice,
-            bob,
-        }
+        Fixture { users, alice, bob }
     }
 
     #[test]
     fn tokens_parse_their_format_and_never_show_in_debug() {
-        let token = ClientToken::generate(&SequentialIds::default());
-        assert!(token.expose().starts_with("tgvc_"));
+        let token = UserToken::generate(&SequentialIds::default());
+        assert!(token.expose().starts_with("tgvu_"));
         assert_eq!(token.expose().len(), 5 + 64);
-        assert_eq!(format!("{token:?}"), "ClientToken(<redacted>)");
-        assert!(ClientToken::parse(token.expose()).is_some());
-        for bad in ["", "tgvc_", "abc", "tgvc_a b", "Bearer tgvc_abc"] {
-            assert!(ClientToken::parse(bad).is_none(), "{bad:?}");
+        assert_eq!(format!("{token:?}"), "UserToken(<redacted>)");
+        assert!(UserToken::parse(token.expose()).is_some());
+        for bad in ["", "tgvu_", "abc", "tgvu_a b", "Bearer tgvu_abc"] {
+            assert!(UserToken::parse(bad).is_none(), "{bad:?}");
         }
     }
 
     #[test]
     fn digests_round_trip_through_their_text() {
-        let digest = ClientToken::generate(&SequentialIds::default()).digest();
+        let digest = UserToken::generate(&SequentialIds::default()).digest();
         let text = digest.to_string();
         assert_eq!(text.len(), 64);
         assert_eq!(TokenDigest::parse(&text), Ok(digest));
@@ -355,33 +346,29 @@ mod tests {
 
     #[test]
     fn a_request_is_its_listed_login_or_its_token() {
-        let Fixture {
-            clients,
-            alice,
-            bob,
-        } = fixture();
+        let Fixture { users, alice, bob } = fixture();
         let cases = [
             (
                 headers(&[("tailscale-user-login", "alice@example.com")]),
-                Caller::Client {
-                    client: id("alice"),
+                Caller::User {
+                    user: id("alice"),
                     proof: Proof::Tailscale(login("alice@example.com")),
                 },
             ),
             (
-                headers(&[(Clients::TOKEN_HEADER, bob.expose())]),
-                Caller::Client {
-                    client: id("bob"),
+                headers(&[(Users::TOKEN_HEADER, bob.expose())]),
+                Caller::User {
+                    user: id("bob"),
                     proof: Proof::Token { login: None },
                 },
             ),
             (
                 headers(&[
                     ("tailscale-user-login", "carol@example.com"),
-                    (Clients::TOKEN_HEADER, bob.expose()),
+                    (Users::TOKEN_HEADER, bob.expose()),
                 ]),
-                Caller::Client {
-                    client: id("bob"),
+                Caller::User {
+                    user: id("bob"),
                     proof: Proof::Token {
                         login: Some(login("carol@example.com")),
                     },
@@ -390,10 +377,10 @@ mod tests {
             (
                 headers(&[
                     ("tailscale-user-login", "alice@example.com"),
-                    (Clients::TOKEN_HEADER, alice.expose()),
+                    (Users::TOKEN_HEADER, alice.expose()),
                 ]),
-                Caller::Client {
-                    client: id("alice"),
+                Caller::User {
+                    user: id("alice"),
                     proof: Proof::Tailscale(login("alice@example.com")),
                 },
             ),
@@ -404,38 +391,34 @@ mod tests {
             (headers(&[]), Caller::Unidentified),
         ];
         for (request, caller) in cases {
-            assert_eq!(clients.identify(&request), Ok(caller), "{request:?}");
+            assert_eq!(users.identify(&request), Ok(caller), "{request:?}");
         }
     }
 
     #[test]
     fn bad_or_conflicting_identity_is_refused_not_ignored() {
-        let Fixture {
-            clients,
-            alice,
-            bob,
-        } = fixture();
-        let unknown = ClientToken::parse(&format!("tgvc_{}", "f".repeat(64))).unwrap();
+        let Fixture { users, alice, bob } = fixture();
+        let unknown = UserToken::parse(&format!("tgvu_{}", "f".repeat(64))).unwrap();
         let cases = [
             (
-                headers(&[(Clients::TOKEN_HEADER, "not-a-token")]),
+                headers(&[(Users::TOKEN_HEADER, "not-a-token")]),
                 IdentifyError::UnknownToken,
             ),
             (
                 headers(&[
                     ("tailscale-user-login", "alice@example.com"),
-                    (Clients::TOKEN_HEADER, "tgvc_unknown"),
+                    (Users::TOKEN_HEADER, "tgvu_unknown"),
                 ]),
                 IdentifyError::UnknownToken,
             ),
             (
-                headers(&[(Clients::TOKEN_HEADER, unknown.expose())]),
+                headers(&[(Users::TOKEN_HEADER, unknown.expose())]),
                 IdentifyError::UnknownToken,
             ),
             (
                 headers(&[
-                    (Clients::TOKEN_HEADER, alice.expose()),
-                    (Clients::TOKEN_HEADER, bob.expose()),
+                    (Users::TOKEN_HEADER, alice.expose()),
+                    (Users::TOKEN_HEADER, bob.expose()),
                 ]),
                 IdentifyError::SeveralTokens,
             ),
@@ -446,7 +429,7 @@ mod tests {
             (
                 headers(&[
                     ("tailscale-user-login", "alice@example.com"),
-                    (Clients::TOKEN_HEADER, bob.expose()),
+                    (Users::TOKEN_HEADER, bob.expose()),
                 ]),
                 IdentifyError::Conflicting {
                     login: id("alice"),
@@ -455,35 +438,35 @@ mod tests {
             ),
         ];
         for (request, error) in cases {
-            assert_eq!(clients.identify(&request), Err(error), "{request:?}");
+            assert_eq!(users.identify(&request), Err(error), "{request:?}");
         }
     }
 
     #[test]
     fn the_client_set_refuses_duplicates_and_unprovable_clients() {
-        let token = ClientToken::generate(&SequentialIds::default()).digest();
-        let client = |name: &str, logins: &[&str], token: Option<TokenDigest>| ClientConfig {
+        let token = UserToken::generate(&SequentialIds::default()).digest();
+        let user = |name: &str, logins: &[&str], token: Option<TokenDigest>| UserConfig {
             id: id(name),
             tailscale_logins: logins.iter().map(|text| login(text)).collect(),
             token_blake3: token,
         };
         let cases = [
             (
-                vec![client("a", &["x@y"], None), client("a", &["z@y"], None)],
-                ClientsError::DuplicateId(id("a")),
+                vec![user("a", &["x@y"], None), user("a", &["z@y"], None)],
+                UsersError::DuplicateId(id("a")),
             ),
             (
-                vec![client("a", &["x@y"], None), client("b", &["x@y"], None)],
-                ClientsError::DuplicateLogin(login("x@y")),
+                vec![user("a", &["x@y"], None), user("b", &["x@y"], None)],
+                UsersError::DuplicateLogin(login("x@y")),
             ),
             (
-                vec![client("a", &[], Some(token)), client("b", &[], Some(token))],
-                ClientsError::DuplicateToken(id("a"), id("b")),
+                vec![user("a", &[], Some(token)), user("b", &[], Some(token))],
+                UsersError::DuplicateToken(id("a"), id("b")),
             ),
-            (vec![client("a", &[], None)], ClientsError::NoProof(id("a"))),
+            (vec![user("a", &[], None)], UsersError::NoProof(id("a"))),
         ];
         for (configs, error) in cases {
-            assert_eq!(Clients::new(configs).unwrap_err(), error);
+            assert_eq!(Users::new(configs).unwrap_err(), error);
         }
     }
 }

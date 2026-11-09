@@ -8,7 +8,7 @@
 //! call's data.
 
 use super::inspection::InspectionRecord;
-use crate::client::Caller;
+use crate::caller::Caller;
 use crate::digest::CallDigest;
 use crate::{
     capture::{BodyEnding, CallRejection, ChannelEnd, TerminalRecord},

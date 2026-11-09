@@ -5,7 +5,7 @@
 //!
 //! The crate also owns what is recorded: TGV's identities (`id`) and the
 //! `Clock` and `IdSource` capabilities (`time`, `id`), attempt and call
-//! terminals (`capture`), routing facts (`routing`), who called (`client`), batches and their chunks
+//! terminals (`capture`), routing facts (`routing`), who called (`caller`), batches and their chunks
 //! (`batch`, `chunk`), the stored inspection format (`inspection`), and the
 //! retention policy the sink applies (`retention`).
 //!
@@ -17,9 +17,9 @@
 //! The task is returned to the caller to run, because components do not spawn.
 
 pub mod batch;
+pub mod caller;
 pub mod capture;
 pub mod chunk;
-pub mod client;
 pub mod digest;
 pub mod id;
 pub mod inspection;

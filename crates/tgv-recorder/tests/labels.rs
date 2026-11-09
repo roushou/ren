@@ -53,7 +53,7 @@ macro_rules! table {
 
 #[test]
 fn every_label_is_pinned() {
-    use tgv_recorder::{batch, capture, client, digest, secrets};
+    use tgv_recorder::{batch, caller, capture, digest, secrets};
     let table = table![
         capture::AttemptTerminal,
         capture::TerminalCause,
@@ -66,7 +66,7 @@ fn every_label_is_pinned() {
         batch::ObservationKind,
         secrets::SecretKind,
         digest::SearchField,
-        client::CallerKind,
+        caller::CallerKind,
     ];
     let pinned = include_str!("fixtures/labels.txt");
     assert!(

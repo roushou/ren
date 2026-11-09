@@ -3,7 +3,7 @@
 //! and anything that does not fit is counted as omitted.
 
 use super::item::{AttemptSlots, Item, Piece, Shared, Track};
-use crate::client::Caller;
+use crate::caller::Caller;
 use crate::{
     batch::{
         AttemptBody, BodyEnd, CloseChannel, MessageMark, OpenCall, OperatorAction, Recorded,

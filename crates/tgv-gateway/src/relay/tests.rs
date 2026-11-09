@@ -76,7 +76,7 @@ impl Harness {
                 method: Method::Post,
                 config_revision: ConfigRevision::new("fixture"),
                 attribution: Attribution::default(),
-                caller: tgv_recorder::client::Caller::Unidentified,
+                caller: tgv_recorder::caller::Caller::Unidentified,
                 operator_revision: None,
                 plan: None,
                 attempts: 1,

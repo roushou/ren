@@ -24,7 +24,7 @@ use tgv_protocol::{
     label::{Labeled, Stored},
     route::Transport,
 };
-use tgv_recorder::client::{ClientId, TailscaleLogin};
+use tgv_recorder::caller::{TailscaleLogin, UserId};
 use tgv_recorder::digest::{CallDigest, StoredExchange};
 use tgv_recorder::{Committed, Observation, Pruned, RecordSink};
 use tgv_recorder::{
@@ -756,7 +756,7 @@ impl MetadataTx<'_> {
                 (Some(session), turn)
             }
         };
-        sqlx::query("INSERT INTO calls(id, channel, started_at, provider, wire, endpoint, method, config_revision, session, turn, attribution, state, operator_revision, plan, caller, client, tailscale_login) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+        sqlx::query("INSERT INTO calls(id, channel, started_at, provider, wire, endpoint, method, config_revision, session, turn, attribution, state, operator_revision, plan, caller, user, tailscale_login) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
             .bind(stamp.call.to_string())
             .bind(stamp.channel.to_string())
             .bind(at)
@@ -775,7 +775,7 @@ impl MetadataTx<'_> {
             )
             .bind(open.plan.as_ref().map(|plan| plan.as_str()))
             .bind(open.caller.kind().label())
-            .bind(open.caller.client().map(ClientId::as_str))
+            .bind(open.caller.user().map(UserId::as_str))
             .bind(open.caller.login().map(TailscaleLogin::as_str))
             .execute(&mut *self.tx)
             .await?;

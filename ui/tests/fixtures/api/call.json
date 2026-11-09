@@ -23,7 +23,7 @@
     },
     "caller": {
       "kind": "unidentified",
-      "client": null,
+      "user": null,
       "login": null
     },
     "state": "finished",

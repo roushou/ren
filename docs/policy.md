@@ -100,28 +100,29 @@ Completions takes the key as `Authorization: Bearer`, for every provider. Calls 
 recorded with the entry's provider and wire format, and the attempt with the
 entry's id.
 
-## Named clients
+## Named users
 
-`[[clients]]` names the people and machines that use the gateway (see
-[`tgv.example.toml`](../tgv.example.toml)). Each forwarded call, and each
-WebSocket channel with its calls, records its caller:
+`[[users]]` names the people and machines that use the gateway (see
+[`tgv.example.toml`](../tgv.example.toml)); a user is not a harness, which
+TGV attributes separately. Each forwarded call, and each WebSocket channel
+with its calls, records its caller:
 
-- `client_tailscale`: a client, by a Tailscale login it lists. Tailscale Serve
-  adds `Tailscale-User-Login` and removes any copy the client sent.
-- `client_token`: a client, by its token in `X-TGV-Client-Token`.
-  `tgv clients token <id>` prints a new token once, with the `token_blake3`
+- `user_tailscale`: a user, by a Tailscale login it lists. Tailscale Serve
+  adds `Tailscale-User-Login` and removes any copy the caller sent.
+- `user_token`: a user, by its token in `X-TGV-User-Token`.
+  `tgv users token <id>` prints a new token once, with the `token_blake3`
   line that holds its digest; the configuration never holds the token.
-- `unlisted`: a Tailscale login no client lists, kept as it came.
+- `unlisted`: a Tailscale login no user lists, kept as it came.
 - `unidentified`: no identity. Tailscale Serve sends tagged devices and Funnel
   traffic without one, and a process on this host can reach the loopback
   listener directly, so this is not evidence that the call came from this
   host.
 
 Both headers are removed before forwarding, so neither reaches a provider. A
-token no client has, more than one token, a malformed login, or a login and
-token that name different clients is refused with a non-retryable `401`
+token no user has, more than one token, a malformed login, or a login and
+token that name different users is refused with a non-retryable `401`
 (`tgv_identity_refused`), recorded as rejection `identity_refused`; it is
-never ignored, so a client cannot believe it is identified when it is not.
+never ignored, so a caller cannot believe it is identified when it is not.
 Identity protects against other machines, not this one: a local process can
 set any header, including `Tailscale-User-Login`.
 

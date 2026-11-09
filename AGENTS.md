@@ -203,7 +203,7 @@ dependencies under "Crates" below. Read the code for current module ownership.
   `RecorderMetrics`, readable after shutdown through `RecorderMeter`. It also
   owns what is recorded: TGV's identities and `IdSource` (`id`), `Clock`
   (`time`), terminals and other recorded facts (`capture`), routing facts and
-  `OperatorRevision` (`routing`), who called (`client`: `ClientId`,
+  `OperatorRevision` (`routing`), who called (`caller`: `UserId`,
   `TailscaleLogin`, and `Caller`), batches (`batch`), the content-defined
   `Chunker` (`chunk`), the stored inspection format (`inspection`), and
   `RetentionPolicy` (`retention`), and credential detection and redaction
@@ -241,16 +241,16 @@ dependencies under "Crates" below. Read the code for current module ownership.
   implementation, and the ingress with the shutdown drain, which also waits for
   upgraded channels. Use Axum's request, response, body, and WebSocket types
   directly; no framework-independent HTTP adapter layer. It also owns retry
-  eligibility (`retry`), operator state (`operator`), the configured clients
-  and how a request is matched to one (`client`: `Clients::identify`, with
-  `ClientToken` and its digest), the `Controls` that hold
+  eligibility (`retry`), operator state (`operator`), the named users and
+  how a request is matched to one (`user`: `Users::identify`, with
+  `UserToken` and its digest), the `Controls` that hold
   it with the running-call registry (`control`), the `Build` that `/health`
   reports (`build`), and pure call planning
   (`policy`: block, transform, and fallback rules validated at load, with
   protected headers and body paths), and the call's way through its
   candidates (`call`: `CallRun`, which `Gateway::forward` carries out).
-  `src/purity.rs` keeps `attempt`, `call`, `channel`, `client`, `retry`, and
-  `operator` free of runtime, I/O, storage, and shell-module
+  `src/purity.rs` keeps `attempt`, `call`, `channel`, `retry`, `operator`,
+  and `user` free of runtime, I/O, storage, and shell-module
   dependencies. Management receives `Reader`, `Backup`, retention settings, and
   control credentials through `ManagementSetup`; SQL stays in `tgv-store`, and
   forwarding records only through the recorder.

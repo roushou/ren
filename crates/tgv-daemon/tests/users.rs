@@ -17,11 +17,11 @@ use std::sync::{
     atomic::{AtomicUsize, Ordering},
 };
 use tgv_daemon::config::Config;
-use tgv_gateway::client::{ClientConfig, ClientToken, Clients};
+use tgv_gateway::user::{UserConfig, UserToken, Users};
 use tgv_protocol::label::Stored;
 use tgv_recorder::{
+    caller::{CallerKind, TailscaleLogin, UserId},
     capture::CallRejection,
-    client::{CallerKind, ClientId, TailscaleLogin},
     id::SequentialIds,
 };
 use tgv_store::view::CallView;
@@ -31,28 +31,28 @@ mod support;
 use support::{Mock, TestGateway, client, mock, recorded};
 
 struct Tokens {
-    bob: ClientToken,
-    unknown: ClientToken,
+    bob: UserToken,
+    unknown: UserToken,
 }
 
 fn tokens() -> Tokens {
     let ids = SequentialIds::default();
     Tokens {
-        bob: ClientToken::generate(&ids),
-        unknown: ClientToken::generate(&ids),
+        bob: UserToken::generate(&ids),
+        unknown: UserToken::generate(&ids),
     }
 }
 
 fn config(mock: &Mock, tokens: &Tokens) -> Config {
     Config {
-        clients: vec![
-            ClientConfig {
-                id: ClientId::parse("alice").unwrap(),
+        users: vec![
+            UserConfig {
+                id: UserId::parse("alice").unwrap(),
                 tailscale_logins: vec![TailscaleLogin::parse("alice@example.com").unwrap()],
                 token_blake3: None,
             },
-            ClientConfig {
-                id: ClientId::parse("bob").unwrap(),
+            UserConfig {
+                id: UserId::parse("bob").unwrap(),
                 tailscale_logins: vec![],
                 token_blake3: Some(tokens.bob.digest()),
             },
@@ -90,7 +90,7 @@ fn caller(call: &CallView) -> (CallerKind, Option<&str>, Option<&str>) {
     let caller = call.caller.as_ref().unwrap();
     (
         caller.kind.known().unwrap(),
-        caller.client.as_deref(),
+        caller.user.as_deref(),
         caller.login.as_deref(),
     )
 }
@@ -104,7 +104,7 @@ async fn every_call_records_its_caller_and_identity_never_reaches_the_provider()
     let gateway = TestGateway::start(&config(&mock, &tokens), dir.path()).await;
     let requests: [&[(&str, &str)]; 4] = [
         &[("tailscale-user-login", "alice@example.com")],
-        &[(Clients::TOKEN_HEADER, tokens.bob.expose())],
+        &[(Users::TOKEN_HEADER, tokens.bob.expose())],
         &[("tailscale-user-login", "carol@example.com")],
         &[],
     ];
@@ -123,11 +123,11 @@ async fn every_call_records_its_caller_and_identity_never_reaches_the_provider()
         callers,
         [
             (
-                CallerKind::ClientTailscale,
+                CallerKind::UserTailscale,
                 Some("alice"),
                 Some("alice@example.com")
             ),
-            (CallerKind::ClientToken, Some("bob"), None),
+            (CallerKind::UserToken, Some("bob"), None),
             (CallerKind::Unlisted, None, Some("carol@example.com")),
             (CallerKind::Unidentified, None, None),
         ]
@@ -142,10 +142,10 @@ async fn a_refused_identity_is_answered_and_recorded_without_forwarding() {
     let tokens = tokens();
     let gateway = TestGateway::start(&config(&mock, &tokens), dir.path()).await;
     let refused: [&[(&str, &str)]; 2] = [
-        &[(Clients::TOKEN_HEADER, tokens.unknown.expose())],
+        &[(Users::TOKEN_HEADER, tokens.unknown.expose())],
         &[
             ("tailscale-user-login", "alice@example.com"),
-            (Clients::TOKEN_HEADER, tokens.bob.expose()),
+            (Users::TOKEN_HEADER, tokens.bob.expose()),
         ],
     ];
     for headers in refused {
@@ -156,7 +156,7 @@ async fn a_refused_identity_is_answered_and_recorded_without_forwarding() {
             serde_json::from_str(&response.text().await.unwrap()).unwrap();
         assert_eq!(body["error"]["type"], "tgv_identity_refused");
         let message = body["error"]["message"].as_str().unwrap();
-        assert!(!message.contains("tgvc_"), "{message}");
+        assert!(!message.contains("tgvu_"), "{message}");
     }
     gateway.stop().await;
     assert_eq!(reached.load(Ordering::SeqCst), 0);

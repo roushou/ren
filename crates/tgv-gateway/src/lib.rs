@@ -15,7 +15,7 @@
 //! The crate also owns what forwarding decides with: the pure attempt and
 //! channel lifecycles (`attempt`, `channel`), retry eligibility (`retry`),
 //! operator state (`operator`) and the [`Controls`] that hold it (`control`),
-//! who is calling (`client`), and call planning (`policy`).
+//! who is calling (`user`), and call planning (`policy`).
 //!
 //! Management handlers read history through the store's `Reader`, stream live
 //! observations from the recorder, and run authenticated controls and backups.
@@ -45,7 +45,6 @@ mod buffer;
 pub mod build;
 pub mod call;
 pub mod channel;
-pub mod client;
 pub mod control;
 mod headers;
 mod ingress;
@@ -57,6 +56,7 @@ mod relay;
 pub mod retry;
 mod route;
 pub mod upstream;
+pub mod user;
 mod websocket;
 
 pub use api::{ApiRead, ControlOptions, ControlOptionsError, ControlToken, ManagementSetup};
@@ -78,9 +78,9 @@ use crate::{
     attempt::{AttemptEnd, Canceller, EndKind, HttpEvent, SendFailure},
     call::{CallRun, CallStep, CallStop, Dispatched, Refused},
     channel::Deadlines,
-    client::IdentifyError,
     control::{Cancel, Controls},
     policy::{Admission, CallFacts, CallPlan, Policy, Rejection, RequestJson, StepRecord},
+    user::IdentifyError,
 };
 use axum::{
     Router,
@@ -103,8 +103,8 @@ use tgv_protocol::{
 use tgv_recorder::{
     AttemptStart, CallStart, CallTap, Recorder,
     batch::{AttemptBody, Recorded},
+    caller::Caller,
     capture::CallRejection,
-    client::Caller,
     routing::{ConfigRevision, UpstreamId},
     time::Clock,
 };
@@ -128,8 +128,8 @@ pub struct GatewayConfig {
     pub buffer: BufferOptions,
     pub policy: Policy,
     pub upstreams: UpstreamTable,
-    /// The named clients forwarded requests are matched to.
-    pub clients: client::Clients,
+    /// The named users forwarded requests are matched to.
+    pub users: user::Users,
 }
 
 /// Why the gateway answered instead of the provider.
@@ -482,7 +482,7 @@ impl<U: Upstream> Gateway<U> {
         // Attribution and identity read TGV's local headers and Serve's
         // identity before the policy removes them.
         let attribution = Harness::attribution(route.harness, &parts.headers);
-        let identified = self.config.clients.identify(&parts.headers);
+        let identified = self.config.users.identify(&parts.headers);
         HeaderPolicy::REQUEST.apply(&mut parts.headers);
         let session = attribution.hint.as_ref().map(|hint| hint.session);
         let mut call = CallStart {
@@ -760,7 +760,7 @@ impl<U: Upstream> Gateway<U> {
             return Self::handshake_refused("WebSocket requires an HTTP/1.1 handshake\n");
         };
         let attribution = Harness::attribution(route.harness, &parts.headers);
-        let identified = self.config.clients.identify(&parts.headers);
+        let identified = self.config.users.identify(&parts.headers);
         HeaderPolicy::HANDSHAKE_REQUEST.apply(&mut parts.headers);
         // The channel's calls inherit the handshake's caller.
         let start = CallStart {

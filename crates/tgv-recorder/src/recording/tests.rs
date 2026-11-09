@@ -77,7 +77,7 @@ impl Script {
                     }),
                     issues: Vec::new(),
                 },
-                caller: crate::client::Caller::Unidentified,
+                caller: crate::caller::Caller::Unidentified,
                 operator_revision: None,
                 plan: None,
             }),
