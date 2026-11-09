@@ -1,8 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Band, Board, Feed, LivePlace, type BoardInput, type LiveView } from '../src/lib/board.ts';
-import { LiveReader } from '../src/lib/loaders.ts';
+import { LiveReader, RecentCalls } from '../src/lib/loaders.ts';
 import {
+  ManagementApi,
   type CallActivity,
   type CallView,
   type SessionView,
@@ -366,7 +367,9 @@ test('the window decides which sessions count as active', () => {
 
 test('the reader reads a turn again only when its calls change or text is still pending', async () => {
   const reads: string[] = [];
-  let calls = [done(1, 1, { turn: tid(1) })];
+  // The reader keeps the window's calls by when they started.
+  const fresh = { started_at: ms(Date.now()) };
+  let calls = [done(1, 1, { ...fresh, turn: tid(1) })];
   let pending = true;
   const fetcher = (async (input: Parameters<typeof fetch>[0]) => {
     const path = String(input);
@@ -391,42 +394,121 @@ test('the reader reads a turn again only when its calls change or text is still 
   assert.equal(turnReads(), 2);
   assert.equal(cached.value?.turns.get(tid(1))?.prompt?.text, 'Fix the flaky test');
   // A new call in the turn changes it.
-  calls = [...calls, open(2, 1, { turn: tid(1) })];
+  calls = [...calls, open(2, 1, { ...fresh, turn: tid(1) })];
   await reader.read(fetcher, '15m');
   assert.equal(turnReads(), 3);
 });
 
-test('the reader reads as far back as the window and says when a listing came back full', async () => {
+test('the reader reads as far back as the window or the band, and pages through full listings', async () => {
   const paths: string[] = [];
-  let full = false;
+  let pages = 1;
   const fetcher = (async (input: Parameters<typeof fetch>[0]) => {
     const path = String(input);
     paths.push(path);
     if (path.startsWith('/api/sessions'))
       return versioned({ sessions: [session(1, { last_seen: ms(Date.now()) })] });
     if (path.startsWith('/api/calls')) {
-      const limit = Number(new URL(path, 'http://ui').searchParams.get('limit'));
-      const count = full && path.includes('from_ms') ? limit : 1;
+      const params = new URL(path, 'http://ui').searchParams;
+      if (!params.has('from_ms')) return versioned({ calls: [], next: null });
+      const page = Number(params.get('after') ?? 0);
       return versioned({
-        calls: Array.from({ length: count }, (_, n) => done(n + 1, 1)),
-        next: null,
+        calls: [done(page + 1, 1, { started_at: ms(Date.now() - 1000 * (page + 1)) })],
+        next: page + 1 < pages ? String(page + 1) : null,
       });
     }
     return versioned(turn(1, 1, []));
   }) as typeof fetch;
+  const froms = () =>
+    paths
+      .map((path) => new URL(path, 'http://ui').searchParams)
+      .filter((params) => params.has('from_ms'));
 
   const hour = await new LiveReader().read(fetcher, '1h');
   assert.equal(hour.key, 'live:1h');
-  const from = paths
-    .map((path) => new URL(path, 'http://ui').searchParams)
-    .find((params) => params.has('from_ms'));
-  assert.equal(from?.get('limit'), String(LivePlace.windows['1h'].calls));
-  assert.ok(Date.now() - Number(from?.get('from_ms')) >= LivePlace.windows['1h'].ms);
+  assert.ok(Date.now() - Number(froms()[0]?.get('from_ms')) >= LivePlace.windows['1h'].ms);
   assert.deepEqual(hour.value?.truncated, { calls: false, sessions: false });
 
-  full = true;
-  const partial = await new LiveReader().read(fetcher, '1h');
+  // A window shorter than the band still reads the band's whole span.
+  paths.length = 0;
+  await new LiveReader().read(fetcher, '5m');
+  assert.ok(Date.now() - Number(froms()[0]?.get('from_ms')) >= Band.spanMs);
+
+  // Full pages are followed, up to a cap; past it the window is partial.
+  paths.length = 0;
+  pages = 3;
+  const paged = await new LiveReader().read(fetcher, '15m');
+  assert.equal(froms().length, 3);
+  assert.equal(paged.value?.recent.length, 3);
+  assert.equal(paged.value?.truncated.calls, false);
+  pages = 100;
+  const partial = await new LiveReader().read(fetcher, '15m');
   assert.equal(partial.value?.truncated.calls, true);
+  assert.ok((partial.value?.complete ?? 0) > Date.now() - LivePlace.windows['15m'].ms);
+});
+
+test('held calls are read again only while unsettled or newer than the previous read', async () => {
+  const now = Date.now();
+  const work = { purpose: 'work' } as Partial<CallView>;
+  const old = done(1, 1, {
+    ...work,
+    started_at: ms(now - 5 * 60_000),
+    ended_at: ms(now - 4 * 60_000),
+  });
+  const running = open(2, 1, { started_at: ms(now - 3 * 60_000) });
+  let listed: CallView[] = [old, running];
+  let active: CallView[] = [running];
+  const froms: number[] = [];
+  const fetcher = (async (input: Parameters<typeof fetch>[0]) => {
+    const params = new URL(String(input), 'http://ui').searchParams;
+    if (params.get('status') === 'active') return versioned({ calls: active, next: null });
+    const from = Number(params.get('from_ms'));
+    froms.push(from);
+    return versioned({ calls: listed.filter((call) => call.started_at >= from), next: null });
+  }) as typeof fetch;
+  const held = new RecentCalls();
+  const api = new ManagementApi(fetcher);
+  const span = Band.spanMs;
+
+  const first = await held.read(api, now, span);
+  assert.equal(froms.at(-1), now - span);
+  assert.equal(first.complete, now - span);
+  assert.equal(first.calls.length, 2);
+
+  // The next read starts at the open call, the oldest that can still change.
+  const finished = done(2, 1, {
+    ...work,
+    started_at: running.started_at,
+    ended_at: ms(now + 1_000),
+  });
+  listed = [old, finished];
+  active = [];
+  const second = await held.read(api, now + 2_000, span);
+  assert.equal(froms.at(-1), running.started_at);
+  assert.deepEqual(
+    second.calls.map((call) => [call.id, call.ended_at]).sort(),
+    [
+      [old.id, old.ended_at],
+      [finished.id, finished.ended_at],
+    ].sort(),
+  );
+
+  // Everything settled: only the overlap behind the previous read.
+  await held.read(api, now + 4_000, span);
+  assert.equal(froms.at(-1), now + 2_000 - RecentCalls.overlapMs);
+  // Calls that started before the span are let go.
+  const later = await held.read(api, now + span - 4 * 60_000, span);
+  assert.deepEqual(
+    later.calls.map((call) => call.id),
+    [finished.id],
+  );
+});
+
+test('the band shades what was not read', () => {
+  const now = NOW;
+  const band = new Band([session(1)], [], now, 'client', now - Band.spanMs / 4);
+  assert.equal(band.unread, 0.75);
+  assert.equal(new Band([session(1)], [], now).unread, 0);
+  assert.equal(new Band([session(1)], [], now, 'client', now - 2 * Band.spanMs).unread, 0);
 });
 
 test('a turn that cannot be read leaves the board readable', async () => {
@@ -435,7 +517,10 @@ test('a turn that cannot be read leaves the board readable', async () => {
     if (path.startsWith('/api/sessions'))
       return versioned({ sessions: [session(1, { last_seen: ms(Date.now()) })] });
     if (path.startsWith('/api/calls'))
-      return versioned({ calls: [done(1, 1, { turn: tid(1) })], next: null });
+      return versioned({
+        calls: [done(1, 1, { started_at: ms(Date.now()), turn: tid(1) })],
+        next: null,
+      });
     return versioned({ error: { code: 'unavailable', message: 'busy' } }, { status: 503 });
   }) as typeof fetch;
   const snapshot = await new LiveReader().read(fetcher, '15m');

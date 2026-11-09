@@ -21,7 +21,7 @@ import {
 import { localDayStart, parseRange, rangeStart, type UsageRange } from './usage.ts';
 import { listingQuery } from './traffic.ts';
 import { readSnapshot, snapshotError, type Snapshot } from './snapshots.ts';
-import { Board, LivePlace, type LiveWindow } from './board.ts';
+import { Band, Board, LivePlace, type LiveWindow } from './board.ts';
 import { SessionList, type SessionDetail } from './sessions.ts';
 
 export interface GatewayData {
@@ -454,6 +454,10 @@ export interface LiveData {
   sessions: SessionView[];
   /** Model calls started in the board's window, and every call still open. */
   calls: CallView[];
+  /** Model calls started in the band's span or the window, whichever is longer, and every call still open. */
+  recent: CallView[];
+  /** Every call started from this time on was read; before it, the reads came back full. */
+  complete: number;
   /** The newest turn of each session shown, where it was read. */
   turns: Map<TurnId, TurnActivity>;
   window: LiveWindow;
@@ -462,11 +466,88 @@ export interface LiveData {
 }
 
 /**
+ * Model calls started within a span back from now, kept between reads so a
+ * read fetches only what can have changed: calls started since the previous
+ * read, and every call that had not settled. A settled call (finished, with
+ * its digest derived) does not change again.
+ */
+export class RecentCalls {
+  static readonly pageLimit = 1000;
+  static readonly maxPages = 5;
+  /** Recording is asynchronous: each read looks this far behind the previous one. */
+  static readonly overlapMs = 60_000;
+
+  readonly #calls = new Map<CallId, CallView>();
+  #last: number | null = null;
+  #complete: number | null = null;
+  /** The previous read came back full: what it could not hold is not read again. */
+  #capped = false;
+
+  static settled(call: CallView): boolean {
+    return call.ended_at !== null && call.purpose !== null;
+  }
+
+  /** Where this read starts: the whole span when nothing usable is held. */
+  cutoff(now: number, spanMs: number): number {
+    const from = now - spanMs;
+    if (this.#last === null || this.#complete === null) return from;
+    // The span grew past what is held (a longer window): read it whole.
+    if (this.#complete > from && !this.#capped) return from;
+    let cutoff = this.#last - RecentCalls.overlapMs;
+    for (const call of this.#calls.values())
+      if (!RecentCalls.settled(call)) cutoff = Math.min(cutoff, call.started_at);
+    return Math.max(from, cutoff);
+  }
+
+  async read(
+    api: ManagementApi,
+    now: number,
+    spanMs: number,
+  ): Promise<{ calls: CallView[]; complete: number }> {
+    const from = now - spanMs;
+    const cutoff = this.cutoff(now, spanMs);
+    const open = api.calls(new URLSearchParams({ kind: 'model', status: 'active', limit: '100' }));
+    const fresh: CallView[] = [];
+    let after: PageCursor | null = null;
+    let full = false;
+    for (let page = 0; page < RecentCalls.maxPages; page++) {
+      const query = new URLSearchParams({
+        kind: 'model',
+        from_ms: String(cutoff),
+        limit: String(RecentCalls.pageLimit),
+      });
+      if (after) query.set('after', after);
+      const listing = await api.calls(query);
+      fresh.push(...listing.calls);
+      after = listing.next;
+      if (!after) break;
+      full = page === RecentCalls.maxPages - 1;
+    }
+    const openCalls = (await open).calls;
+
+    // Pages run newest first: a capped read holds nothing older than its last call.
+    const oldest = fresh.at(-1)?.started_at ?? now;
+    if (cutoff === from || full) this.#calls.clear();
+    this.#complete = full ? oldest : cutoff === from ? from : (this.#complete ?? from);
+    for (const [id, call] of this.#calls) {
+      // Re-read now, or open earlier and since gone from the open listing.
+      if (call.started_at >= cutoff || !RecentCalls.settled(call)) this.#calls.delete(id);
+      else if (call.started_at < from) this.#calls.delete(id);
+    }
+    for (const call of [...fresh, ...openCalls]) this.#calls.set(call.id, call);
+    this.#last = now;
+    this.#capped = full;
+    return { calls: [...this.#calls.values()], complete: Math.max(from, this.#complete) };
+  }
+}
+
+/**
  * Reads the Live page. Turn activity is the costly read, and it changes
  * only when one of the turn's calls does, so a turn is read again only
  * then, or while some of its text is still being derived.
  */
 export class LiveReader {
+  readonly #calls = new RecentCalls();
   readonly #turns = new Map<TurnId, { signature: string; turn: TurnActivity }>();
 
   read(fetcher: typeof fetch, window: LiveWindow): Promise<Snapshot<LiveData>> {
@@ -474,22 +555,14 @@ export class LiveReader {
     const spec = LivePlace.windows[window];
     return readSnapshot(`live:${window}`, async (): Promise<LiveData> => {
       const read = Date.now();
-      const recent = new URLSearchParams({
-        kind: 'model',
-        from_ms: String(read - spec.ms),
-        limit: String(spec.calls),
-      });
-      const open = new URLSearchParams({ kind: 'model', status: 'active', limit: '100' });
-      const [sessions, recentPage, openPage] = await Promise.all([
+      const [sessions, held] = await Promise.all([
         api.sessions(spec.sessions),
-        api.calls(recent),
-        api.calls(open),
+        this.#calls.read(api, read, Math.max(spec.ms, Band.spanMs)),
       ]);
-      const calls = [
-        ...new Map(
-          [...recentPage.calls, ...openPage.calls].map((call) => [call.id, call]),
-        ).values(),
-      ];
+      const recent = held.calls;
+      const calls = recent.filter(
+        (call) => call.ended_at === null || call.started_at >= read - spec.ms,
+      );
       const bySession = Board.bySession(calls);
       const shown = Board.shown(
         Board.activeSessions(sessions.sessions, bySession, read, spec.ms),
@@ -523,10 +596,12 @@ export class LiveReader {
         read,
         sessions: sessions.sessions,
         calls,
+        recent,
+        complete: held.complete,
         turns,
         window,
         truncated: {
-          calls: recentPage.calls.length >= spec.calls,
+          calls: held.complete > read - spec.ms,
           sessions:
             sessions.sessions.length >= spec.sessions &&
             oldest !== undefined &&

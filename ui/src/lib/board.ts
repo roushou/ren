@@ -1002,17 +1002,15 @@ export type LiveWindow = '5m' | '15m' | '1h' | '4h';
 export interface WindowSpec {
   ms: number;
   label: string;
-  /** Calls read at most: the API's page limit caps it at 1000. */
-  calls: number;
   sessions: number;
 }
 
 export class LivePlace {
   static readonly windows: Record<LiveWindow, WindowSpec> = {
-    '5m': { ms: 5 * 60_000, label: 'last 5 min', calls: 500, sessions: 100 },
-    '15m': { ms: 15 * 60_000, label: 'last 15 min', calls: 500, sessions: 100 },
-    '1h': { ms: 60 * 60_000, label: 'last 1 h', calls: 1000, sessions: 200 },
-    '4h': { ms: 4 * 60 * 60_000, label: 'last 4 h', calls: 1000, sessions: 300 },
+    '5m': { ms: 5 * 60_000, label: 'last 5 min', sessions: 100 },
+    '15m': { ms: 15 * 60_000, label: 'last 15 min', sessions: 100 },
+    '1h': { ms: 60 * 60_000, label: 'last 1 h', sessions: 200 },
+    '4h': { ms: 4 * 60 * 60_000, label: 'last 4 h', sessions: 300 },
   };
   static readonly defaultWindow: LiveWindow = '15m';
 
@@ -1131,10 +1129,23 @@ export class Band {
    * its bin as time passes and the band only slides left.
    */
   readonly offset: number;
+  /**
+   * How much of the span, from its left edge (0–1), was not read because
+   * the listings came back full: unknown, not quiet.
+   */
+  readonly unread: number;
 
-  constructor(sessions: SessionView[], calls: CallView[], now: number, by: BandBy = 'client') {
+  /** `complete`: every call started from then on was read. */
+  constructor(
+    sessions: SessionView[],
+    calls: CallView[],
+    now: number,
+    by: BandBy = 'client',
+    complete = -Infinity,
+  ) {
     const bySession = new Map(sessions.map((session) => [session.id, session]));
     const from = now - Band.spanMs;
+    this.unread = Math.min(1, Math.max(0, (complete - from) / Band.spanMs));
     // Slots of the clock, the first one cut by the left edge: one more bin
     // than the span holds.
     const first = Math.floor(from / Band.binMs);

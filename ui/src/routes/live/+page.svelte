@@ -3,6 +3,7 @@
   import { slide } from 'svelte/transition';
   import { prefersReducedMotion } from 'svelte/motion';
   import { page } from '$app/state';
+  import { RecentCalls } from '#lib/loaders.ts';
   import { goto } from '$app/navigation';
   import { createSnapshot } from '#lib/snapshot.svelte.ts';
   import { getWorkbench } from '#lib/workbench.svelte.ts';
@@ -51,7 +52,13 @@
   const view = $derived(LivePlace.parse(page.url.searchParams));
   const band = $derived(
     current
-      ? new Band(current.sessions, current.calls, Math.max(now, current.read), view.by)
+      ? new Band(
+          current.sessions,
+          current.recent,
+          Math.max(now, current.read),
+          view.by,
+          current.complete,
+        )
       : null,
   );
   /** The series the wall is narrowed to: the band's, or the bare key while it draws nothing. */
@@ -278,9 +285,8 @@
         >{/if}
       {#if current && (current.truncated.calls || current.truncated.sessions)}<span
           class="chip warning"
-          title="The window holds more than the page reads at once ({LivePlace.windows[
-            current.window
-          ].calls} calls, {LivePlace.windows[current.window]
+          title="The window holds more than the page reads at once ({RecentCalls.pageLimit *
+            RecentCalls.maxPages} calls, {LivePlace.windows[current.window]
             .sessions} sessions): the oldest are left out. Choose a shorter window to see all of it."
           >partial: newest only</span
         >{/if}
@@ -391,6 +397,15 @@
           aria-hidden="true"
         >
           {@render ticks(BAND_HEIGHT)}
+          {#if band.unread > 0}
+            <rect
+              class="live-band-unread"
+              x="0"
+              y="0"
+              width={band.unread * 1000}
+              height={BAND_HEIGHT}
+            />
+          {/if}
           {#if view.band === 'ribbon'}
             <line
               class="live-band-tick"
@@ -453,6 +468,13 @@
             <span class="live-legend-key" aria-hidden="true"
               ><span class="live-key-mark error"></span>failed<span class="live-key-mark warning"
               ></span>cut off</span
+            >
+          {/if}
+          {#if band.unread > 0}
+            <span
+              class="live-legend-key"
+              title="More calls than the page reads at once: the shaded start of the band was not read, so it is unknown, not quiet."
+              ><span class="live-key-mark unread"></span>not read</span
             >
           {/if}
         </div>
@@ -789,6 +811,10 @@
     width: 100%;
     height: 100%;
   }
+  .live-band-unread {
+    fill: var(--surface-inset);
+    opacity: 0.7;
+  }
   .live-band-tick {
     stroke: var(--line);
     stroke-dasharray: 2 3;
@@ -835,6 +861,11 @@
   }
   .live-key-mark.warning {
     background: var(--warning);
+  }
+  .live-key-mark.unread {
+    width: 9px;
+    border: 1px solid var(--line);
+    background: var(--surface-inset);
   }
   .live-band-mark.error {
     fill: var(--error);
