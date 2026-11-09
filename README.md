@@ -1,5 +1,5 @@
 <div align="center">
-
+  
 <img src="docs/wordmark.svg" alt="TGV" height="60">
 
 <h3>Self-hosted gateway and flight recorder for coding agents</h3>
@@ -15,7 +15,7 @@ as it happens, without changing a byte of the traffic.
 
 </div>
 
-<img alt="TGV's Traffic view in the dark theme: a session's calls, with a response rendered in the inspector" src="https://github.com/user-attachments/assets/799b9c5b-6cc3-479b-afcf-d00db5263211" />
+<img alt="TGV's Live view" src="https://github.com/user-attachments/assets/603ebbf5-966e-40c4-9b9e-d4438c557cb4" />
 
 ## Overview
 
@@ -119,19 +119,25 @@ listener.
 <details>
 <summary>Light theme</summary>
 
-<img alt="TGV's Traffic view in the light theme" src="https://github.com/user-attachments/assets/58a6a4aa-265a-49ef-ac98-c8f7ee76b3be" />
+<img alt="TGV's Live view in light theme" src="https://github.com/user-attachments/assets/9d8d15c3-4430-4078-8ede-a76822fe2d44" />
+</details>
+
+<details>
+<summary>Traffic</summary>
+
+<img alt="TGV's Traffic view" src="https://github.com/user-attachments/assets/de8e4ea0-3957-4e3f-9afe-b486fd44fe08" />
 </details>
 
 <details>
 <summary>Overview</summary>
 
-<img width="2880" height="1800" alt="TGV's Overview: health, live calls, problems, and the last 24 hours" src="https://github.com/user-attachments/assets/9762a3c8-ae96-4de4-be7e-6cc0039c8703" />
+<img width="1470" height="838" alt="TGV's Overview" src="https://github.com/user-attachments/assets/cbc962cf-c849-4814-b94f-c4022e1f6d35" />
 </details>
 
 <details>
 <summary>Sessions</summary>
 
-<img width="2880" height="1800" alt="TGV's Sessions: calls, turns, errors, and tokens per session" src="https://github.com/user-attachments/assets/3888ef16-6e8b-476a-b5a0-3f08105d1b64" />
+<img width="1470" height="835" alt="TGV's Sessions view" src="https://github.com/user-attachments/assets/265b6759-caf7-4a7c-a919-3b5bd66254bf" />
 </details>
 
 ## Documentation
