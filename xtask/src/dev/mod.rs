@@ -31,9 +31,9 @@ pub struct Dev {
 #[derive(Subcommand)]
 enum DevAction {
     /// Run the fake provider in the foreground: every wire format TGV
-    /// forwards, answered with scripted replies. The model name picks the
-    /// reply: fake-tools, fake-long, fake-slow, fake-cut, fake-error,
-    /// fake-429; anything else gets text quoting the prompt.
+    /// forwards, answered with realistic scripted replies. The `x-dev-reply`
+    /// request header picks the kind: tools, long, slow, cut, error,
+    /// rate_limited; without it, an ordinary text answer.
     Provider(ProviderArgs),
     /// Build this checkout and (re)start the slot: the fake provider and a
     /// dev daemon, as `tgv-dev-*` systemd user units; with --ui, also the UI,

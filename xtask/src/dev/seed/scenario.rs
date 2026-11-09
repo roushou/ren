@@ -34,6 +34,17 @@ pub struct Call {
     pub body: String,
 }
 
+impl Call {
+    /// The call, asking the dev provider for a reply other than plain text
+    /// (`tools`, `long`, `slow`, `cut`, `error`, `rate_limited`). The header
+    /// is forwarded but never recorded, so nothing shown names it.
+    pub fn asking(mut self, reply: &str) -> Self {
+        self.headers.push(("x-dev-reply".into(), reply.into()));
+        self.label = format!("{reply}: {}", self.label);
+        self
+    }
+}
+
 /// One WebSocket channel: its handshake headers and the messages it sends,
 /// each answered before the next.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -203,7 +214,11 @@ impl Scenario {
             Client::OpenCode => {
                 headers.push((
                     "x-opencode-session-id".into(),
-                    format!("ses_dev{:04x}{session:08x}Fake", run.0 & 0xffff),
+                    // opencode's own shape: `ses_`, then 26 letters and digits.
+                    format!(
+                        "ses_{:012x}{session:08x}OpnCde",
+                        u64::from(run.0) * 0x9E37 + 0x7A1F
+                    ),
                 ));
                 (
                     "/openai/v1/responses",
@@ -249,7 +264,7 @@ impl Scenario {
         prompt: &str,
     ) -> [Call; 2] {
         [
-            Self::call(client, caller, run, ids, "fake-tools", prompt),
+            Self::call(client, caller, run, ids, model, prompt).asking("tools"),
             Self::call(client, caller, run, ids, model, prompt),
         ]
     }
@@ -382,10 +397,32 @@ impl Scenario {
 
     fn long(run: Run) -> Plan {
         let anyone = Caller::Unidentified;
-        let long_prompt = (0..60)
-            .map(|n| format!("Step {n}: read src/checkout/cart.rs in acme-web and explain how a discount is applied to each line item, quoting the code."))
-            .collect::<Vec<_>>()
-            .join(" ");
+        // A pasted test failure and a question: long, as real prompts with a
+        // log in them are.
+        let frames: String = [
+            "acme_billing::invoice::Invoice::issue (src/invoice.rs:212)",
+            "acme_billing::invoice::Invoice::lines (src/invoice.rs:148)",
+            "acme_inventory::stock::StockLevel::require (src/stock.rs:61)",
+            "acme_inventory::stock::Warehouse::level (src/stock.rs:33)",
+            "acme_orders::checkout::Checkout::confirm (src/checkout.rs:97)",
+        ]
+        .iter()
+        .cycle()
+        .take(40)
+        .enumerate()
+        .map(|(n, frame)| format!("  {n:>2}: {frame}\n"))
+        .collect();
+        let long_prompt = format!(
+            "This test started failing after the inventory refactor and I can't see why. \
+             Here is the full output:\n\n\
+             ---- invoice::tests::an_invoice_for_a_paid_order stdout ----\n\
+             thread 'invoice::tests::an_invoice_for_a_paid_order' panicked at src/invoice.rs:214:9:\n\
+             called `Result::unwrap()` on an `Err` value: OutOfStock {{ sku: \"SKU-4471\", requested: 3, available: 0 }}\n\
+             stack backtrace:\n{frames}\n\
+             The order was already paid, so stock shouldn't matter at this point. Why does issuing \
+             the invoice check stock at all, and what's the cleanest way to fix it without \
+             breaking the checkout flow?"
+        );
         Plan {
             calls: vec![
                 Self::call(
@@ -401,17 +438,19 @@ impl Scenario {
                     &anyone,
                     run,
                     (22, 2201),
-                    "fake-long",
+                    "claude-opus-5-5",
                     &long_prompt,
-                ),
+                )
+                .asking("long"),
                 Self::call(
                     Client::Codex,
                     &anyone,
                     run,
                     (23, 2301),
-                    "fake-long",
+                    "gpt-5.5-codex",
                     &long_prompt,
-                ),
+                )
+                .asking("long"),
             ],
             channels: vec![],
         }
@@ -420,21 +459,20 @@ impl Scenario {
     fn errors(run: Run) -> Plan {
         let anyone = Caller::Unidentified;
         Plan {
-            calls: ["fake-error", "fake-429", "fake-cut", "fake-slow"]
+            calls: ["error", "rate_limited", "cut", "slow"]
                 .iter()
                 .enumerate()
-                .map(|(n, model)| {
+                .map(|(n, reply)| {
                     let n = u32::try_from(n).unwrap_or(0);
-                    let mut call = Self::call(
+                    Self::call(
                         Client::ClaudeCode,
                         &anyone,
                         run,
                         (31, 3101 + n),
-                        model,
+                        "claude-opus-5-5",
                         PROMPTS[0],
-                    );
-                    call.label = format!("{model}: {}", call.label);
-                    call
+                    )
+                    .asking(reply)
                 })
                 .collect(),
             channels: vec![],
