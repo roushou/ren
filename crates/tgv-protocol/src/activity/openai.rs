@@ -129,7 +129,7 @@ impl<'a> Request<'a> {
 /// A Responses response: its output items, from a document, from
 /// `response.output_item.done` events, or from the terminal response event.
 /// Fed one event at a time.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(super) struct Response {
     limits: ActivityLimits,
     done: Vec<Map<String, Value>>,

@@ -362,6 +362,13 @@ impl CallInspector {
         }
     }
 
+    /// The response's activity so far, while it streams: the reply and the
+    /// tool calls read to now. `None` when the body cannot be interpreted.
+    /// A whole JSON document is read only at its end.
+    pub fn so_far(&self) -> Option<ResponseActivity> {
+        self.readers.activity.as_ref().map(ResponseReader::so_far)
+    }
+
     pub fn finish(self, end: BodyEnd) -> ResponseReading {
         let Self { mut readers, state } = self;
         match state {

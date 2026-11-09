@@ -127,7 +127,7 @@ impl<'a> Request<'a> {
 }
 
 /// A content block being read.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct Block {
     kind: BlockKind,
     id: Option<String>,
@@ -142,7 +142,7 @@ struct Block {
 
 /// A Messages response: a document's content, or the blocks its events
 /// build.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(super) struct Response {
     limits: ActivityLimits,
     /// By stream index.

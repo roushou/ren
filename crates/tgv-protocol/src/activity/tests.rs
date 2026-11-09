@@ -441,6 +441,38 @@ proptest::proptest! {
 }
 
 proptest::proptest! {
+    /// While a response streams, in any pieces, the reply so far is always a
+    /// prefix of the final reply, and reading it mid-stream leaves the final
+    /// reading unchanged.
+    #[test]
+    fn the_reply_so_far_grows_into_the_final_reply(
+        which in 0..4_usize,
+        cuts in proptest::collection::vec(proptest::num::usize::ANY, 0..24),
+    ) {
+        let (protocol, format, bytes) = responses().swap_remove(which);
+        let stored = read(protocol, format, ResponseEncoding::Identity, ActivityLimits::default(), &[&bytes]).activity;
+        let mut inspector = crate::CallInspector::new(
+            protocol,
+            format,
+            ResponseEncoding::Identity,
+            crate::inspect::pipeline::InspectionLimits::default(),
+        );
+        let mut points: Vec<usize> = cuts.iter().map(|cut| cut % (bytes.len() + 1)).collect();
+        points.sort_unstable();
+        let mut from = 0;
+        for point in points.into_iter().chain([bytes.len()]) {
+            inspector.feed(&bytes[from..point.max(from)]);
+            from = point.max(from);
+            let so_far = inspector.so_far().unwrap();
+            proptest::prop_assert!(stored.reply.starts_with(&so_far.reply), "{:?} is not a prefix of {:?}", so_far.reply, stored.reply);
+            proptest::prop_assert!(so_far.tool_uses.len() <= stored.tool_uses.len());
+        }
+        let streamed = inspector.finish(crate::inspect::pipeline::BodyEnd::Complete).activity;
+        proptest::prop_assert_eq!(streamed, stored);
+    }
+}
+
+proptest::proptest! {
     /// A request gathered in any pieces reads as it does in one piece.
     #[test]
     fn a_gathered_request_reads_as_the_stored_one(

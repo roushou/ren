@@ -108,7 +108,7 @@ impl<'a> Request<'a> {
 
 /// A tool call being read: whole from a document, or assembled from the
 /// deltas that share its `index`.
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, Default)]
 struct Call {
     id: Option<String>,
     kind: Option<ToolCallKind>,
@@ -154,7 +154,7 @@ impl Call {
 }
 
 /// One choice being read.
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, Default)]
 struct Choice {
     text: String,
     /// By the call's `index` within the choice.
@@ -197,7 +197,7 @@ impl Choice {
 
 /// A Chat Completions response: a document's choices, or the choices its
 /// chunks build, each by its `index`.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(super) struct Response {
     limits: ActivityLimits,
     choices: Vec<Option<Choice>>,
