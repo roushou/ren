@@ -166,13 +166,13 @@ impl Default for ActivityLimits {
 
 /// A response's activity, built from one document or from its events in
 /// order, as they arrive.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ResponseReader {
     protocol: ProtocolResponse,
     limitations: Vec<ActivityLimitation>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 enum ProtocolResponse {
     Messages(anthropic::Response),
     Responses(openai::Response),
@@ -216,6 +216,25 @@ impl ResponseReader {
             Ok(_) => self.limitations.push(ActivityLimitation::UnexpectedShape),
             Err(_) => self.limitations.push(ActivityLimitation::NotJson),
         }
+    }
+
+    /// What the response holds so far, without ending the reading: the
+    /// reply received to now, and the tool calls begun (an input still
+    /// arriving may be partial). For showing a call while it streams; the
+    /// finished reading is the record.
+    /// Whether the response, as far as it has arrived, ends inside the
+    /// model's thinking: a thinking block or reasoning item has begun and
+    /// not finished. Chat Completions reports no thinking.
+    pub fn thinking(&self) -> bool {
+        match &self.protocol {
+            ProtocolResponse::Messages(response) => response.thinking(),
+            ProtocolResponse::Responses(response) => response.thinking(),
+            ProtocolResponse::ChatCompletions(_) => false,
+        }
+    }
+
+    pub fn so_far(&self) -> ResponseActivity {
+        self.clone().finish()
     }
 
     pub fn finish(self) -> ResponseActivity {

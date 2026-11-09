@@ -15,6 +15,7 @@ use crate::{
     digest::{CallDigest, DigestBudget, StoredExchange},
     id::{AttemptId, CallId},
     inspection::InspectionRecord,
+    progress::{Progress, Throttle},
     secrets::SecretScanner,
     time::Monotonic,
 };
@@ -102,6 +103,8 @@ pub(crate) struct Piece {
 pub(crate) struct RecorderCore {
     calls: HashMap<CallId, CallInProgress>,
     batch: Batch,
+    /// Updates on streaming calls since the last commit.
+    progress: Vec<Progress>,
     /// Redacts every digest's text before it is stored.
     scanner: Arc<SecretScanner>,
 }
@@ -121,6 +124,8 @@ struct CallInProgress {
     attempt_request: Option<BodyCapture>,
     response: BodyCapture,
     inspector: Option<CallInspector>,
+    /// When the call's next progress update is due.
+    throttle: Throttle,
 }
 
 /// One body being cut into chunks.
@@ -192,6 +197,7 @@ impl RecorderCore {
         Self {
             calls: HashMap::new(),
             batch: Batch::default(),
+            progress: Vec::new(),
             scanner,
         }
     }
@@ -209,6 +215,11 @@ impl RecorderCore {
             call.response.flush(&mut self.batch);
         }
         std::mem::take(&mut self.batch)
+    }
+
+    /// The progress updates since the last commit.
+    pub(crate) fn take_progress(&mut self) -> Vec<Progress> {
+        std::mem::take(&mut self.progress)
     }
 
     /// Digests derived again from stored bodies.
@@ -251,6 +262,7 @@ impl RecorderCore {
                         // Replaced when the first attempt starts.
                         response: BodyCapture::new(BodyKey::Request(call)),
                         inspector: None,
+                        throttle: Throttle::default(),
                     },
                 );
                 self.batch.push(Op::OpenCall(*open));
@@ -406,6 +418,20 @@ impl RecorderCore {
                         inspector.message(mark.len);
                     }
                     inspector.feed(&piece.bytes);
+                    // Read the reply so far only when an update may go out.
+                    if call.throttle.due(piece.enqueued)
+                        && let Some(activity) = inspector.so_far()
+                        && call
+                            .throttle
+                            .changed(piece.enqueued, &activity, inspector.thinking())
+                    {
+                        self.progress.push(Progress::of(
+                            piece.call,
+                            &activity,
+                            inspector.thinking(),
+                            &self.scanner,
+                        ));
+                    }
                 }
             }
         }

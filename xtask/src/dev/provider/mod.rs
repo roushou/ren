@@ -5,6 +5,7 @@
 //! the pure [`script`]; this module only writes it.
 
 mod script;
+mod writing;
 
 use super::traffic::Settings;
 use axum::{
@@ -18,6 +19,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use futures_util::{SinkExt as _, StreamExt as _, stream};
+pub use script::Behaviour;
 use script::{Reply, Request as Scripted, SocketTurn, Wire};
 use std::{
     convert::Infallible,
@@ -102,31 +104,30 @@ impl FakeProvider {
     async fn answer(self: Arc<Self>, request: Request) -> Response {
         let serial = self.serial.fetch_add(1, Ordering::Relaxed);
         let Some(wire) = Wire::for_path(request.uri().path()) else {
-            return (
-                StatusCode::NOT_FOUND,
-                "the fake provider has no such endpoint\n",
-            )
-                .into_response();
+            return (StatusCode::NOT_FOUND, "No such endpoint\n").into_response();
         };
         let (mut parts, body) = request.into_parts();
+        let behaviour = Behaviour::for_label(
+            parts
+                .headers
+                .get(Behaviour::HEADER)
+                .and_then(|value| value.to_str().ok()),
+        );
         if parts.method == Method::GET && parts.headers.contains_key(header::UPGRADE) {
             return match WebSocketUpgrade::from_request_parts(&mut parts, &()).await {
-                Ok(upgrade) => upgrade.on_upgrade(move |socket| self.socket(socket)),
+                Ok(upgrade) => upgrade.on_upgrade(move |socket| self.socket(socket, behaviour)),
                 Err(rejection) => rejection.into_response(),
             };
         }
         let Ok(body) = axum::body::to_bytes(body, Self::MAX_BODY).await else {
-            return (
-                StatusCode::PAYLOAD_TOO_LARGE,
-                "request too large for the fake\n",
-            )
-                .into_response();
+            return (StatusCode::PAYLOAD_TOO_LARGE, "Request too large\n").into_response();
         };
         Self::write(Reply::to(&Scripted {
             wire,
             body: &body,
             serial,
             gap: self.gap(),
+            behaviour,
         }))
     }
 
@@ -152,7 +153,7 @@ impl FakeProvider {
     }
 
     /// A Codex WebSocket: each `response.create` gets its scripted events.
-    async fn socket(self: Arc<Self>, socket: WebSocket) {
+    async fn socket(self: Arc<Self>, socket: WebSocket, behaviour: Behaviour) {
         let (mut sink, mut messages) = socket.split();
         while let Some(Ok(message)) = messages.next().await {
             let text = match message {
@@ -161,7 +162,8 @@ impl FakeProvider {
                 Message::Binary(_) | Message::Ping(_) | Message::Pong(_) => continue,
             };
             let serial = self.serial.fetch_add(1, Ordering::Relaxed);
-            let Some(events) = SocketTurn::answer(text.as_str(), serial, self.gap()) else {
+            let Some(events) = SocketTurn::answer(text.as_str(), serial, self.gap(), behaviour)
+            else {
                 continue;
             };
             for (after, event) in events {

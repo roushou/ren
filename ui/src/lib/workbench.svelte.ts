@@ -1,6 +1,9 @@
 import { createContext, type Snippet } from 'svelte';
 import type { CallView } from './api.ts';
+import { SvelteMap } from 'svelte/reactivity';
+import type { CallId } from './api.ts';
 import { LiveFollow, type LiveState } from './live.ts';
+import { Streaming, type CallProgress } from './streaming.ts';
 
 export class Workbench {
   /** Follow `/api/live` and refresh when calls change. */
@@ -10,12 +13,19 @@ export class Workbench {
   refreshed = $state(0);
   manual = $state(false);
   live = $state<LiveState>(LiveFollow.initial);
+  /** Streaming calls' replies so far, from the live feed; never stored. */
+  readonly streamed = new SvelteMap<CallId, CallProgress>();
   selected = $state<CallView | undefined>();
   callCount = $state(0);
   activeCount = $state(0);
   /** What the current view puts in the scope bar: what you are looking at,
    * and the controls that change it. Unset, the bar names the view. */
   scope = $state.raw<Snippet | undefined>();
+
+  /** Keep a streaming call's newest reply so far. */
+  stream(update: CallProgress) {
+    Streaming.keep(this.streamed, update);
+  }
 
   /** Show `snippet` in the scope bar while the calling component lives.
    * Call it from a component's script, where effects can be created. */

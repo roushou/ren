@@ -5,11 +5,16 @@
 //! broadcast gets a `lagged` event and catches up from the store again. If
 //! `after` was already pruned, the feed sends `gone` and ends: the client must
 //! reload. Feeds end when the daemon shuts down.
+//!
+//! With `progress=true`, a following feed also sends `progress` events:
+//! updates on streaming calls (the reply so far, redacted, the tools
+//! begun, and whether the model is thinking). They carry no id, are never replayed, and a feed that falls
+//! behind skips some; the finished call is the record.
 
 use axum::response::sse::Event;
 use serde::Serialize;
 use std::{collections::VecDeque, convert::Infallible};
-use tgv_recorder::Observation;
+use tgv_recorder::{Observation, progress::Progress};
 use tgv_store::{Reader, query::PageLimit};
 use tokio::sync::broadcast::{self, error::RecvError};
 use tokio_util::sync::CancellationToken;
@@ -17,6 +22,8 @@ use tokio_util::sync::CancellationToken;
 pub(super) struct LiveFeed {
     reader: Reader,
     receiver: broadcast::Receiver<Observation>,
+    /// Updates on streaming calls, when the client asked for them.
+    progress: Option<broadcast::Receiver<Progress>>,
     shutdown: CancellationToken,
     last: u64,
     pending: VecDeque<Observation>,
@@ -48,12 +55,14 @@ impl LiveFeed {
     pub fn new(
         reader: Reader,
         receiver: broadcast::Receiver<Observation>,
+        progress: Option<broadcast::Receiver<Progress>>,
         shutdown: CancellationToken,
         after: Option<u64>,
     ) -> Self {
         Self {
             reader,
             receiver,
+            progress,
             shutdown,
             last: after.unwrap_or(0),
             pending: VecDeque::new(),
@@ -114,9 +123,21 @@ impl LiveFeed {
                     }
                 }
                 Phase::Follow => {
+                    let Self {
+                        receiver,
+                        progress,
+                        shutdown,
+                        ..
+                    } = self;
+                    let update = async {
+                        match progress.as_mut() {
+                            Some(progress) => progress.recv().await,
+                            None => std::future::pending().await,
+                        }
+                    };
                     tokio::select! {
-                        () = self.shutdown.cancelled() => self.phase = Phase::Done,
-                        received = self.receiver.recv() => match received {
+                        () = shutdown.cancelled() => self.phase = Phase::Done,
+                        received = receiver.recv() => match received {
                             Ok(observation) => self.pending.push_back(observation),
                             Err(RecvError::Lagged(_)) => {
                                 self.phase = Phase::CatchUp;
@@ -126,6 +147,16 @@ impl LiveFeed {
                                     .ok();
                             }
                             Err(RecvError::Closed) => self.phase = Phase::Done,
+                        },
+                        received = update => match received {
+                            Ok(update) => {
+                                if let Ok(event) = Event::default().event("progress").json_data(&update) {
+                                    return Some(event);
+                                }
+                            }
+                            // Stale updates are worth skipping, not catching up.
+                            Err(RecvError::Lagged(_)) => {}
+                            Err(RecvError::Closed) => self.progress = None,
                         },
                     }
                 }

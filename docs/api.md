@@ -283,6 +283,19 @@ and the feed is catching up from storage. An `error` event means the daemon coul
 The stream also ends when the daemon shuts down.
 Observations describe what was recorded, not model or tool state.
 
+With `progress=true`, the feed also sends `progress` events while it follows:
+`{call, reply, cut, tools, thinking}` for a call whose response is streaming, at
+most one every 250 ms per call and only when it grew or the model started or
+stopped thinking. `reply` is the last 2,000 characters
+of the reply so far, with credentials in well-known formats redacted (the last
+4,000 are scanned first, so one across the cut is still found); `cut` says the
+reply is longer; `tools` names the tool calls begun, without their inputs; `thinking` says the
+response so far ends inside a thinking block or reasoning item, whose text is
+not sent. They
+have no `id`: they are never stored, never replayed on resume, and a feed that
+falls behind skips some. The finished call's activity is the record. The UI asks
+for them, to show replies on Live cards as they stream; `tgv tail` does not.
+
 ## Call search
 
 `GET /api/calls` filters all retained calls and returns `{calls, next}` newest

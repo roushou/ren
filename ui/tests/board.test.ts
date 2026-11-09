@@ -549,10 +549,28 @@ test('the band counts output tokens per client when each call ends', () => {
   assert.equal(top.split(' L').length, (claude?.bins.length ?? 0) + 2);
   assert.notEqual(top, bottom);
   // The first layer sits on the baseline: its closing edge runs back along y = height.
-  assert.match(band.layer(0, 100).area, /L1000,100\.0 .* L0,100\.0 Z$/);
+  // (It starts with the first slot, at or just left of the box's edge.)
+  assert.match(band.layer(0, 100).area, /L1000,100\.0 .* L-?\d+\.\d,100\.0 Z$/);
   // In Area each series gets an even slice of the height, first at the top.
   assert.equal(band.row(1, 100).top, 50);
   assert.match(band.row(0, 100).area, /L1000,50\.0 L0,50\.0 Z$/);
+});
+
+test('the band keeps past bins as time passes, and only slides', () => {
+  const calls = [
+    done(1, 1, { usage: usage(600), ended_at: ms(NOW - 200_000) }),
+    done(2, 1, { usage: usage(300), ended_at: ms(NOW - 61_000) }),
+  ];
+  const bins = (now: number) => new Band([session(1)], calls, now).series[0]?.bins ?? [];
+  // Within one slot, a redraw changes nothing about past calls.
+  assert.deepEqual(bins(NOW + 1_000), bins(NOW));
+  // A slot later, the same bins have moved one to the left.
+  const later = bins(NOW + Band.binMs);
+  assert.deepEqual(later.slice(0, -1), bins(NOW).slice(1));
+  // And the band slides smoothly in between.
+  const offset = (now: number) => new Band([session(1)], calls, now).offset;
+  assert.ok(offset(NOW + 1_000) < offset(NOW));
+  assert.ok(offset(NOW) <= 0 && offset(NOW) > -Band.binMs / Band.spanMs);
 });
 
 test('the band groups by provider or model, and merges past the biggest four', () => {
@@ -674,6 +692,22 @@ function usage(output: number): CallView['usage'] {
     reasoning_tokens: null,
   };
 }
+
+test('a session that reports no turns keeps its newest call, so its reply can stream', () => {
+  const sessions = [session(1, { source: 'opencode_headers', turn_count: 0 })];
+  const calls = [done(1, 1, { started_at: ms(NOW - 30_000) }), open(2, 1)];
+  const [tile] = board({ sessions, calls, turns: new Map() }).tiles;
+  assert.equal(tile.turnId, null);
+  assert.deepEqual(
+    tile.unread.map((unread) => [unread.call.id, unread.index]),
+    [[callId(2), 2]],
+  );
+  const [quiet] = board({ sessions, calls: calls.slice(0, 1), turns: new Map() }).tiles;
+  assert.deepEqual(
+    quiet.unread.map((unread) => unread.call.id),
+    [callId(1)],
+  );
+});
 
 test('each hint source names its harness, opencode included', () => {
   assert.deepEqual(

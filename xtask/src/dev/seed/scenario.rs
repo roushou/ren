@@ -34,6 +34,17 @@ pub struct Call {
     pub body: String,
 }
 
+impl Call {
+    /// The call, asking the dev provider for a reply other than plain text
+    /// (`tools`, `long`, `slow`, `cut`, `error`, `rate_limited`). The header
+    /// is forwarded but never recorded, so nothing shown names it.
+    pub fn asking(mut self, reply: &str) -> Self {
+        self.headers.push(("x-dev-reply".into(), reply.into()));
+        self.label = format!("{reply}: {}", self.label);
+        self
+    }
+}
+
 /// One WebSocket channel: its handshake headers and the messages it sends,
 /// each answered before the next.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -76,8 +87,18 @@ pub(in crate::dev) enum Client {
     Codex,
     Pi,
     OpenCode,
-    /// A plain API client: no harness headers.
-    Plain,
+    /// Claude Code pointed at DeepSeek's Anthropic-compatible API: its own
+    /// headers, on the DeepSeek route.
+    DeepSeek,
+}
+
+/// A call Claude Code makes beside a turn's work, with no turn of its own.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(in crate::dev) enum Side {
+    /// A short title for the conversation, from a small model.
+    Title,
+    /// A one-token request that reads the subscription's remaining quota.
+    QuotaProbe,
 }
 
 /// Who sends a call.
@@ -100,15 +121,18 @@ impl Caller {
     }
 }
 
+/// Invented prompts about an invented project ("acme"), so the slot's
+/// history never holds anyone's real work. One is long, for layouts that must
+/// cut text.
 pub(in crate::dev) const PROMPTS: [&str; 8] = [
-    "Why does the release build fail on the CI runner but not locally?",
-    "Add a retry with backoff to the upload client, and test it.",
-    "Rename the config field `listen_addr` to `listen` everywhere.",
-    "Explain what the recorder does when its queue is full.",
-    "Write a migration that adds an index on calls(started_at).",
-    "Summarize the open review comments on the gateway PR.",
-    "Why should `godmod-document` depend on `godmod-voxel`? Aren't these two separate stuff? Why should a document crate know anything about voxels at all, and what breaks if we cut that edge?",
-    "Find where the session list is sorted and make it newest first.",
+    "Why does the release build of acme-web fail on the CI runner but not locally?",
+    "Add a retry with backoff to the acme upload client, and test it.",
+    "Rename the config field `listen_addr` to `listen` across the acme services.",
+    "Explain what the acme job queue does when a worker stops responding.",
+    "Write a migration that adds an index on orders(created_at).",
+    "Summarize the open review comments on the checkout PR.",
+    "Why should `acme-billing` depend on `acme-inventory`? Aren't these two separate concerns? Why should a billing crate know anything about stock levels at all, and what breaks if we cut that dependency?",
+    "Find where the order list is sorted and make it newest first.",
 ];
 
 impl Scenario {
@@ -149,22 +173,20 @@ impl Scenario {
         let (session_id, turn_id) = (run.uuid(session), run.uuid(turn));
         let mut headers = caller.headers();
         let (path, body, name) = match client {
-            Client::ClaudeCode => {
-                headers.extend([
-                    ("x-claude-code-session-id".into(), session_id),
-                    ("x-claude-code-prompt-id".into(), turn_id),
-                    ("x-app".into(), "cli".into()),
-                    (
-                        "user-agent".into(),
-                        "claude-cli/2.1.316 (external, cli)".into(),
+            Client::ClaudeCode | Client::DeepSeek => {
+                headers.extend(Self::claude_code_headers(session_id, Some(turn_id)));
+                match client {
+                    Client::DeepSeek => (
+                        "/deepseek/v1/messages",
+                        Self::messages(model, prompt),
+                        "claude code via deepseek",
                     ),
-                    ("anthropic-version".into(), "2023-06-01".into()),
-                ]);
-                (
-                    "/anthropic/v1/messages",
-                    Self::messages(model, prompt),
-                    "claude code",
-                )
+                    Client::ClaudeCode | Client::Codex | Client::Pi | Client::OpenCode => (
+                        "/anthropic/v1/messages",
+                        Self::messages(model, prompt),
+                        "claude code",
+                    ),
+                }
             }
             Client::Codex => {
                 headers.extend([
@@ -176,7 +198,11 @@ impl Scenario {
                     ),
                     ("originator".into(), "codex_cli_rs".into()),
                 ]);
-                ("/codex/responses", Self::responses(model, prompt), "codex")
+                (
+                    "/codex/responses",
+                    Self::responses(model, prompt, &session_id),
+                    "codex",
+                )
             }
             Client::Pi => {
                 headers.extend([
@@ -190,21 +216,18 @@ impl Scenario {
                 )
             }
             Client::OpenCode => {
-                headers.push((
-                    "x-opencode-session-id".into(),
-                    format!("ses_dev{:04x}{session:08x}Fake", run.0 & 0xffff),
-                ));
+                // opencode's own shape: `ses_`, then 26 letters and digits.
+                let id = format!(
+                    "ses_{:012x}{session:08x}OpnCde",
+                    u64::from(run.0) * 0x9E37 + 0x7A1F
+                );
+                headers.push(("x-opencode-session-id".into(), id.clone()));
                 (
                     "/openai/v1/responses",
-                    Self::responses(model, prompt),
+                    Self::responses(model, prompt, &id),
                     "opencode",
                 )
             }
-            Client::Plain => (
-                "/deepseek/v1/messages",
-                Self::messages(model, prompt),
-                "deepseek",
-            ),
         };
         headers.push(("content-type".into(), "application/json".into()));
         Call {
@@ -215,6 +238,59 @@ impl Scenario {
         }
     }
 
+    /// Claude Code's side call `side` in session `session`: its session's
+    /// headers, but no turn.
+    pub(in crate::dev) fn side_call(
+        side: Side,
+        caller: &Caller,
+        run: Run,
+        session: u32,
+        prompt: &str,
+    ) -> Call {
+        let mut headers = caller.headers();
+        headers.extend(Self::claude_code_headers(run.uuid(session), None));
+        headers.push(("content-type".into(), "application/json".into()));
+        let model = "claude-haiku-5-5";
+        let call = |label: String, body: Value| Call {
+            label,
+            path: "/anthropic/v1/messages".into(),
+            headers: headers.clone(),
+            body: body.to_string(),
+        };
+        match side {
+            Side::Title => call(
+                format!("claude code title: {}", Self::short(prompt)),
+                json!({ "model": model, "max_tokens": 512, "stream": true,
+                        "system": [{ "type": "text", "text": "Write a title of at most six words for this coding conversation. Reply with the title only." }],
+                        "messages": [{ "role": "user", "content": [{ "type": "text", "text": prompt }] }] }),
+            )
+            .asking("title"),
+            Side::QuotaProbe => call(
+                "claude code quota probe".into(),
+                json!({ "model": model, "max_tokens": 1,
+                        "messages": [{ "role": "user", "content": "quota" }] }),
+            ),
+        }
+    }
+
+    /// The headers Claude Code sends: its session, and its turn (a prompt
+    /// id) on calls made for one.
+    fn claude_code_headers(session: String, turn: Option<String>) -> Vec<(String, String)> {
+        let mut headers = vec![("x-claude-code-session-id".into(), session)];
+        if let Some(turn) = turn {
+            headers.push(("x-claude-code-prompt-id".into(), turn));
+        }
+        headers.extend([
+            ("x-app".into(), "cli".into()),
+            (
+                "user-agent".into(),
+                "claude-cli/2.1.316 (external, cli)".into(),
+            ),
+            ("anthropic-version".into(), "2023-06-01".into()),
+        ]);
+        headers
+    }
+
     fn short(text: &str) -> String {
         match text.char_indices().nth(48) {
             Some((cut, _)) => format!("{}…", &text[..cut]),
@@ -222,13 +298,25 @@ impl Scenario {
         }
     }
 
+    /// A Messages request as coding agents send one: a cached system prompt,
+    /// and thinking on the models that offer it.
     fn messages(model: &str, prompt: &str) -> Value {
-        json!({ "model": model, "max_tokens": 1024, "stream": true,
-                "messages": [{ "role": "user", "content": [{ "type": "text", "text": prompt }] }] })
+        let mut body = json!({ "model": model, "max_tokens": 32000, "stream": true,
+            "system": [{ "type": "text", "text": "You are a coding agent working in the user's repository.",
+                         "cache_control": { "type": "ephemeral" } }],
+            "messages": [{ "role": "user", "content": [{ "type": "text", "text": prompt }] }] });
+        if model.starts_with("claude-opus") || model.starts_with("claude-sonnet") {
+            body["thinking"] = json!({ "type": "enabled", "budget_tokens": 31999 });
+        }
+        body
     }
 
-    fn responses(model: &str, prompt: &str) -> Value {
-        json!({ "model": model, "stream": true,
+    /// A Responses request as Codex sends one: reasoning with a summary, and
+    /// a prompt cache key for its session.
+    fn responses(model: &str, prompt: &str, cache_key: &str) -> Value {
+        json!({ "model": model, "stream": true, "prompt_cache_key": cache_key,
+                "reasoning": { "effort": "medium", "summary": "auto" },
+                "include": ["reasoning.encrypted_content"],
                 "input": [{ "type": "message", "role": "user",
                             "content": [{ "type": "input_text", "text": prompt }] }] })
     }
@@ -243,7 +331,7 @@ impl Scenario {
         prompt: &str,
     ) -> [Call; 2] {
         [
-            Self::call(client, caller, run, ids, "fake-tools", prompt),
+            Self::call(client, caller, run, ids, model, prompt).asking("tools"),
             Self::call(client, caller, run, ids, model, prompt),
         ]
     }
@@ -251,7 +339,11 @@ impl Scenario {
     fn sessions(run: Run) -> Plan {
         let anyone = Caller::Unidentified;
         let mut calls = Vec::new();
+        calls.push(Self::side_call(Side::QuotaProbe, &anyone, run, 1, ""));
         for (n, prompt) in PROMPTS[..3].iter().enumerate() {
+            if n == 0 {
+                calls.push(Self::side_call(Side::Title, &anyone, run, 1, prompt));
+            }
             let turn = u32::try_from(n).unwrap_or(0) + 101;
             calls.extend(Self::turn(
                 Client::ClaudeCode,
@@ -290,7 +382,7 @@ impl Scenario {
             PROMPTS[7],
         ));
         calls.push(Self::call(
-            Client::Plain,
+            Client::DeepSeek,
             &anyone,
             run,
             (5, 501),
@@ -357,7 +449,7 @@ impl Scenario {
         // The ci-only operator-key entry: ci gets in, alice is refused.
         for caller in [&ci, &alice] {
             let mut direct = Self::call(
-                Client::Plain,
+                Client::ClaudeCode,
                 caller,
                 run,
                 (16, 1601),
@@ -376,10 +468,32 @@ impl Scenario {
 
     fn long(run: Run) -> Plan {
         let anyone = Caller::Unidentified;
-        let long_prompt = (0..60)
-            .map(|n| format!("Step {n}: read crates/tgv-gateway/src/lib.rs and explain how the candidate loop hands admission from one attempt to the next, quoting the code."))
-            .collect::<Vec<_>>()
-            .join(" ");
+        // A pasted test failure and a question: long, as real prompts with a
+        // log in them are.
+        let frames: String = [
+            "acme_billing::invoice::Invoice::issue (src/invoice.rs:212)",
+            "acme_billing::invoice::Invoice::lines (src/invoice.rs:148)",
+            "acme_inventory::stock::StockLevel::require (src/stock.rs:61)",
+            "acme_inventory::stock::Warehouse::level (src/stock.rs:33)",
+            "acme_orders::checkout::Checkout::confirm (src/checkout.rs:97)",
+        ]
+        .iter()
+        .cycle()
+        .take(40)
+        .enumerate()
+        .map(|(n, frame)| format!("  {n:>2}: {frame}\n"))
+        .collect();
+        let long_prompt = format!(
+            "This test started failing after the inventory refactor and I can't see why. \
+             Here is the full output:\n\n\
+             ---- invoice::tests::an_invoice_for_a_paid_order stdout ----\n\
+             thread 'invoice::tests::an_invoice_for_a_paid_order' panicked at src/invoice.rs:214:9:\n\
+             called `Result::unwrap()` on an `Err` value: OutOfStock {{ sku: \"SKU-4471\", requested: 3, available: 0 }}\n\
+             stack backtrace:\n{frames}\n\
+             The order was already paid, so stock shouldn't matter at this point. Why does issuing \
+             the invoice check stock at all, and what's the cleanest way to fix it without \
+             breaking the checkout flow?"
+        );
         Plan {
             calls: vec![
                 Self::call(
@@ -395,17 +509,19 @@ impl Scenario {
                     &anyone,
                     run,
                     (22, 2201),
-                    "fake-long",
+                    "claude-opus-5-5",
                     &long_prompt,
-                ),
+                )
+                .asking("long"),
                 Self::call(
                     Client::Codex,
                     &anyone,
                     run,
                     (23, 2301),
-                    "fake-long",
+                    "gpt-5.5-codex",
                     &long_prompt,
-                ),
+                )
+                .asking("long"),
             ],
             channels: vec![],
         }
@@ -414,21 +530,20 @@ impl Scenario {
     fn errors(run: Run) -> Plan {
         let anyone = Caller::Unidentified;
         Plan {
-            calls: ["fake-error", "fake-429", "fake-cut", "fake-slow"]
+            calls: ["error", "rate_limited", "cut", "slow"]
                 .iter()
                 .enumerate()
-                .map(|(n, model)| {
+                .map(|(n, reply)| {
                     let n = u32::try_from(n).unwrap_or(0);
-                    let mut call = Self::call(
+                    Self::call(
                         Client::ClaudeCode,
                         &anyone,
                         run,
                         (31, 3101 + n),
-                        model,
+                        "claude-opus-5-5",
                         PROMPTS[0],
-                    );
-                    call.label = format!("{model}: {}", call.label);
-                    call
+                    )
+                    .asking(reply)
                 })
                 .collect(),
             channels: vec![],
@@ -439,6 +554,7 @@ impl Scenario {
         let session = run.uuid(41);
         let message = |turn: u32, prompt: &str| {
             json!({ "type": "response.create", "model": "gpt-5.5-codex",
+                    "prompt_cache_key": session, "reasoning": { "effort": "medium", "summary": "auto" },
                     "client_metadata": { "x-codex-turn-metadata": json!({ "session_id": session, "turn_id": run.uuid(turn) }).to_string() },
                     "input": [{ "type": "message", "role": "user",
                                 "content": [{ "type": "input_text", "text": prompt }] }] })

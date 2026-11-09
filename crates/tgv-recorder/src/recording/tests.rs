@@ -108,6 +108,18 @@ impl Script {
         })
     }
 
+    /// A response piece enqueued `ms` after the clock's origin.
+    fn data_at(&mut self, offset: u64, bytes: &[u8], ms: u64) -> Record {
+        Record::Data(Piece {
+            call: self.call,
+            track: Track::Response,
+            offset,
+            bytes: Bytes::copy_from_slice(bytes),
+            enqueued: Monotonic::from_elapsed(Duration::from_millis(ms)),
+            message: None,
+        })
+    }
+
     fn finish_attempt(&mut self, attempt: AttemptId, observed: u64) -> Record {
         Record::FinishAttempt {
             stamp: self.stamp(),
@@ -378,4 +390,50 @@ fn a_commit_cuts_streaming_responses_but_keeps_the_call_open() {
         ]
     );
     assert!(digest(&end).is_some());
+}
+
+#[test]
+fn a_streaming_reply_sends_spaced_updates_that_grow_into_it() {
+    let mut script = Script::new();
+    let mut core = core();
+    let first = script.attempt(0);
+    let attempt = first.attempt;
+    let reply = "One. Two. Three. Four. Five.";
+    // The reply arrives in three text deltas, 100 ms and then 300 ms apart.
+    let event = |name: &str, data: serde_json::Value| format!("event: {name}\ndata: {data}\n\n");
+    let delta = |text: &str| {
+        event(
+            "content_block_delta",
+            serde_json::json!({ "type": "content_block_delta", "index": 0, "delta": { "type": "text_delta", "text": text } }),
+        )
+    };
+    let pieces = [
+        event(
+            "message_start",
+            serde_json::json!({ "type": "message_start", "message": { "model": "claude-test" } }),
+        ) + &event(
+            "content_block_start",
+            serde_json::json!({ "type": "content_block_start", "index": 0, "content_block": { "type": "text", "text": "" } }),
+        ) + &delta("One. Two. "),
+        delta("Three. "),
+        delta("Four. Five."),
+    ];
+    core.accept(script.open(first));
+    core.accept(script.head(attempt, 200));
+    let mut offset = 0;
+    for (piece, ms) in pieces.iter().zip([0, 100, 400]) {
+        core.accept(script.data_at(offset, piece.as_bytes(), ms));
+        offset += len(piece.as_bytes());
+    }
+    let updates = core.take_progress();
+    // The second piece came too soon after the first; the third did not.
+    let replies: Vec<&str> = updates.iter().map(|update| update.reply.as_str()).collect();
+    assert_eq!(replies, ["One. Two. ", reply]);
+    assert!(
+        updates
+            .iter()
+            .all(|update| update.call == script.call && !update.cut)
+    );
+    // Taken once; a commit sends them.
+    assert!(core.take_progress().is_empty());
 }

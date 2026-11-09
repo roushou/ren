@@ -3,12 +3,15 @@
 import { LiveFollow, type LiveAction, type LiveEvent, type LiveState } from './live.ts';
 import { assertNever } from './decode.ts';
 import type { ObservationSeq } from './api.ts';
+import { Streaming, type CallProgress } from './streaming.ts';
 
 export interface LiveHooks {
   /** Refresh page data. */
   refresh: () => Promise<void>;
   /** Reload all page data after the resume position was pruned. */
   reload: () => Promise<void>;
+  /** A streaming call's reply so far; with it, the feed asks for progress. */
+  progress?: (update: CallProgress) => void;
 }
 
 const refreshDelayMs = 250;
@@ -92,13 +95,22 @@ export class LiveConnection {
       this.dispatch({ kind: 'unsupported' });
       return;
     }
-    const source = new EventSource(after === null ? '/api/live' : `/api/live?after=${after}`);
+    const query = new URLSearchParams();
+    if (after !== null) query.set('after', String(after));
+    if (this.#hooks.progress) query.set('progress', 'true');
+    const search = query.toString();
+    const source = new EventSource(search ? `/api/live?${search}` : '/api/live');
     this.#source = source;
     // Events from a source we already replaced or closed are dropped here.
     const from = (event: LiveEvent | null) => {
       if (event && source === this.#source) this.dispatch(event);
     };
     source.addEventListener('open', () => from({ kind: 'opened' }));
+    // Progress is not part of the follow state: it is passed on as it comes.
+    source.addEventListener('progress', (event) => {
+      const update = source === this.#source ? Streaming.parse(event.data) : null;
+      if (update && !this.#destroyed) this.#hooks.progress?.(update);
+    });
     for (const type of messageTypes) {
       source.addEventListener(type, (event) =>
         from(LiveFollow.message(type, event.data, event.lastEventId)),

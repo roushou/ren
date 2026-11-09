@@ -194,8 +194,7 @@ impl<K: Choice> Weights<K> {
         if total == 0 {
             return None;
         }
-        // A Fibonacci hash scatters n over [0, total).
-        let mut point = n.wrapping_mul(0x9E37_79B9_7F4A_7C15).rotate_left(29) % total;
+        let mut point = Self::mix(n) % total;
         for (key, weight) in &self.0 {
             let weight = u64::from(*weight);
             if point < weight {
@@ -204,6 +203,16 @@ impl<K: Choice> Weights<K> {
             point -= weight;
         }
         None
+    }
+
+    /// SplitMix64's finalizer: nearby or offset inputs give independent
+    /// outputs, so picks over different mixes for one call do not track
+    /// each other (a multiplicative hash made them correlate).
+    fn mix(n: u64) -> u64 {
+        let mut z = n.wrapping_add(0x9E37_79B9_7F4A_7C15);
+        z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+        z ^ (z >> 31)
     }
 
     /// Parse `name=weight,…` over these choices; unnamed choices keep

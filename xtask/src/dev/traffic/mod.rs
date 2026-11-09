@@ -8,7 +8,7 @@ mod settings;
 
 pub use settings::{Flow, Pace, Settings, SettingsError};
 
-use super::seed::{Call, Caller, Client, PROMPTS, Run, Seeder};
+use super::seed::{Call, Caller, Client, PROMPTS, Run, Scenario, Seeder, Side};
 use control::{Control, Stats};
 use futures_util::{StreamExt as _, stream::FuturesUnordered};
 use settings::{Harness, Reply, Sender};
@@ -94,16 +94,16 @@ impl Traffic {
             Harness::Codex => (Client::Codex, "gpt-5.5-codex"),
             Harness::Pi => (Client::Pi, "claude-sonnet-5-5"),
             Harness::Opencode => (Client::OpenCode, "gpt-5.5"),
-            Harness::Deepseek => (Client::Plain, "deepseek-chat"),
+            Harness::Deepseek => (Client::DeepSeek, "deepseek-chat"),
         };
-        let model = match reply {
-            Reply::Text => model,
-            Reply::Tools => "fake-tools",
-            Reply::Long => "fake-long",
-            Reply::Slow => "fake-slow",
-            Reply::Cut => "fake-cut",
-            Reply::Error => "fake-error",
-            Reply::RateLimited => "fake-429",
+        let ask = match reply {
+            Reply::Text => None,
+            Reply::Tools => Some("tools"),
+            Reply::Long => Some("long"),
+            Reply::Slow => Some("slow"),
+            Reply::Cut => Some("cut"),
+            Reply::Error => Some("error"),
+            Reply::RateLimited => Some("rate_limited"),
         };
         let caller = match sender {
             Sender::Alice => Caller::Login("alice@example.com"),
@@ -116,14 +116,28 @@ impl Traffic {
         let session = 5000 + u32::try_from(n / 40).unwrap_or(0) * 8 + index;
         let turn = 100_000 + u32::try_from(n % 100_000).unwrap_or(0);
         let prompt = PROMPTS[usize::try_from(n).unwrap_or(0) % PROMPTS.len()];
-        Some(super::seed::Scenario::call(
-            client,
-            &caller,
-            run,
-            (session, turn),
-            model,
-            prompt,
-        ))
+        // About one Claude Code call in ten is a side call with no turn, as
+        // in real use: a title, or a quota probe.
+        let side = match (harness, n % 20) {
+            (Harness::ClaudeCode, 7) => Some(Side::Title),
+            (Harness::ClaudeCode, 15) => Some(Side::QuotaProbe),
+            (
+                Harness::ClaudeCode
+                | Harness::Codex
+                | Harness::Pi
+                | Harness::Opencode
+                | Harness::Deepseek,
+                _,
+            ) => None,
+        };
+        if let Some(side) = side {
+            return Some(Scenario::side_call(side, &caller, run, session, prompt));
+        }
+        let call = Scenario::call(client, &caller, run, (session, turn), model, prompt);
+        Some(match ask {
+            Some(reply) => call.asking(reply),
+            None => call,
+        })
     }
 
     fn runtime() -> Result<tokio::runtime::Runtime, TrafficError> {
@@ -292,7 +306,12 @@ mod tests {
         for n in 0..20 {
             let call = Traffic::call(n, Run(1), &settings, "tgvu_fixture").unwrap();
             assert_eq!(call.path, "/codex/responses");
-            assert!(call.body.contains("\"fake-error\""), "{}", call.body);
+            assert!(
+                call.headers
+                    .contains(&("x-dev-reply".into(), "error".into())),
+                "{}",
+                call.label
+            );
         }
         let silent = Settings {
             senders: Settings::default()
@@ -302,5 +321,55 @@ mod tests {
             ..Settings::default()
         };
         assert!(Traffic::call(0, Run(1), &silent, "t").is_none());
+    }
+
+    #[test]
+    fn some_claude_code_calls_are_side_calls_with_no_turn() {
+        let settings = Settings {
+            harnesses: Settings::default()
+                .harnesses
+                .with("claude_code=1,pi=0,opencode=0,deepseek=0,codex=1")
+                .unwrap(),
+            ..Settings::default()
+        };
+        let named = |call: &super::Call, name: &str| call.headers.iter().any(|(n, _)| n == name);
+        let (mut side, mut claude) = (0, 0);
+        for n in 0..2_000 {
+            let call = Traffic::call(n, Run(1), &settings, "tgvu_fixture").unwrap();
+            if named(&call, "x-claude-code-session-id") {
+                claude += 1;
+                if !named(&call, "x-claude-code-prompt-id") {
+                    side += 1;
+                }
+            } else {
+                assert!(named(&call, "x-codex-turn-metadata"), "{}", call.label);
+            }
+        }
+        let share = f64::from(side) / f64::from(claude);
+        assert!((0.05..0.15).contains(&share), "{side} of {claude}");
+    }
+
+    #[test]
+    fn every_harness_gets_the_same_share_of_errors() {
+        // The default mix: 5% of calls are an error or a rate limit, for
+        // every harness alike.
+        let settings = Settings::default();
+        let mut by_harness = std::collections::BTreeMap::<String, (u32, u32)>::new();
+        for n in 0..20_000 {
+            let call = Traffic::call(n, Run(1), &settings, "tgvu_fixture").unwrap();
+            let failing = call.headers.iter().any(|(name, value)| {
+                name == "x-dev-reply" && (value == "error" || value == "rate_limited")
+            });
+            let entry = by_harness.entry(call.path.clone()).or_default();
+            entry.0 += 1;
+            entry.1 += u32::from(failing);
+        }
+        for (path, (calls, failing)) in by_harness {
+            let share = f64::from(failing) / f64::from(calls);
+            assert!(
+                (0.03..0.07).contains(&share),
+                "{path}: {failing} of {calls}"
+            );
+        }
     }
 }

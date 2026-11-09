@@ -26,6 +26,7 @@ pub mod inspection;
 mod item;
 pub mod metrics;
 pub mod options;
+pub mod progress;
 #[cfg(test)]
 mod purity;
 mod recording;
@@ -88,6 +89,8 @@ pub struct RecorderSetup {
 pub struct Recorder {
     shared: Arc<Shared>,
     live: broadcast::Sender<Observation>,
+    /// Updates on streaming calls, for live viewers; never stored.
+    progress: broadcast::Sender<progress::Progress>,
 }
 
 impl Recorder {
@@ -113,10 +116,13 @@ impl Recorder {
             ids,
         );
         let (live, _) = broadcast::channel(setup.live_buffer.max(16));
+        // Updates are worth having only while fresh: a slow viewer skips some.
+        let (progress, _) = broadcast::channel(256);
         let task = RecorderTask {
             receiver,
             sink,
             live: live.clone(),
+            progress: progress.clone(),
             counters,
             clock,
             options: setup.options,
@@ -129,6 +135,7 @@ impl Recorder {
             Self {
                 shared: Arc::new(shared),
                 live,
+                progress,
             },
             task,
         ))
@@ -220,5 +227,11 @@ impl Recorder {
     /// store.
     pub fn subscribe(&self) -> broadcast::Receiver<Observation> {
         self.live.subscribe()
+    }
+
+    /// Updates on streaming calls, sent after each commit. They are never
+    /// stored or resumed: a subscriber that falls behind skips some.
+    pub fn subscribe_progress(&self) -> broadcast::Receiver<progress::Progress> {
+        self.progress.subscribe()
     }
 }

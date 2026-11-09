@@ -388,7 +388,10 @@ fn responses() -> Vec<(Protocol, ResponseFormat, Vec<u8>)> {
             ResponseFormat::EventStream,
             sse(&[
                 json!({ "type": "response.created", "response": {} }),
-                json!({ "type": "response.output_item.done", "item": message }),
+                json!({ "type": "response.output_item.added", "output_index": 0, "item": { "type": "message", "id": "msg_1", "role": "assistant", "content": [] } }),
+                json!({ "type": "response.output_text.delta", "item_id": "msg_1", "output_index": 0, "content_index": 0, "delta": "Running " }),
+                json!({ "type": "response.output_text.delta", "item_id": "msg_1", "output_index": 0, "content_index": 0, "delta": "tests." }),
+                json!({ "type": "response.output_item.done", "output_index": 0, "item": message }),
                 json!({ "type": "response.output_item.done", "item": function }),
                 json!({ "type": "response.completed", "response": { "output": [] } }),
             ]),
@@ -436,6 +439,38 @@ proptest::proptest! {
         }
         let streamed = inspector.finish(crate::inspect::pipeline::BodyEnd::Complete).activity;
         proptest::prop_assert!(!stored.reply.is_empty());
+        proptest::prop_assert_eq!(streamed, stored);
+    }
+}
+
+proptest::proptest! {
+    /// While a response streams, in any pieces, the reply so far is always a
+    /// prefix of the final reply, and reading it mid-stream leaves the final
+    /// reading unchanged.
+    #[test]
+    fn the_reply_so_far_grows_into_the_final_reply(
+        which in 0..4_usize,
+        cuts in proptest::collection::vec(proptest::num::usize::ANY, 0..24),
+    ) {
+        let (protocol, format, bytes) = responses().swap_remove(which);
+        let stored = read(protocol, format, ResponseEncoding::Identity, ActivityLimits::default(), &[&bytes]).activity;
+        let mut inspector = crate::CallInspector::new(
+            protocol,
+            format,
+            ResponseEncoding::Identity,
+            crate::inspect::pipeline::InspectionLimits::default(),
+        );
+        let mut points: Vec<usize> = cuts.iter().map(|cut| cut % (bytes.len() + 1)).collect();
+        points.sort_unstable();
+        let mut from = 0;
+        for point in points.into_iter().chain([bytes.len()]) {
+            inspector.feed(&bytes[from..point.max(from)]);
+            from = point.max(from);
+            let so_far = inspector.so_far().unwrap();
+            proptest::prop_assert!(stored.reply.starts_with(&so_far.reply), "{:?} is not a prefix of {:?}", so_far.reply, stored.reply);
+            proptest::prop_assert!(so_far.tool_uses.len() <= stored.tool_uses.len());
+        }
+        let streamed = inspector.finish(crate::inspect::pipeline::BodyEnd::Complete).activity;
         proptest::prop_assert_eq!(streamed, stored);
     }
 }
@@ -601,4 +636,79 @@ fn chat_responses_keep_choices_apart_and_bound_tool_calls() {
     assert_eq!(whole.tool_uses[1].name, "two");
     assert_eq!(whole.tool_uses[1].input, ToolInput::Json(Value::Null));
     assert!(whole.limitations.is_empty());
+}
+
+#[test]
+fn a_response_is_thinking_while_its_newest_thinking_block_or_reasoning_item_is_open() {
+    let watch = |protocol: Protocol, events: &[Value]| -> Vec<bool> {
+        let mut inspector = CallInspector::new(
+            protocol,
+            ResponseFormat::EventStream,
+            ResponseEncoding::Identity,
+            InspectionLimits::default(),
+        );
+        events
+            .iter()
+            .map(|event| {
+                inspector.feed(&sse(std::slice::from_ref(event)));
+                inspector.thinking()
+            })
+            .collect()
+    };
+    let messages = watch(
+        Protocol::Messages,
+        &[
+            json!({ "type": "message_start", "message": { "content": [] } }),
+            json!({ "type": "content_block_start", "index": 0, "content_block": { "type": "thinking", "thinking": "" } }),
+            json!({ "type": "content_block_delta", "index": 0, "delta": { "type": "thinking_delta", "thinking": "Let me look." } }),
+            json!({ "type": "content_block_stop", "index": 0 }),
+            json!({ "type": "content_block_start", "index": 1, "content_block": { "type": "text", "text": "" } }),
+        ],
+    );
+    assert_eq!(messages, [false, true, true, false, false]);
+    let responses = watch(
+        Protocol::Responses,
+        &[
+            json!({ "type": "response.created", "response": {} }),
+            json!({ "type": "response.output_item.added", "output_index": 0, "item": { "type": "reasoning" } }),
+            json!({ "type": "response.reasoning_summary_text.delta", "output_index": 0, "delta": "Checking." }),
+            json!({ "type": "response.output_item.done", "output_index": 0, "item": { "type": "reasoning" } }),
+            json!({ "type": "response.output_item.added", "output_index": 1, "item": { "type": "message" } }),
+        ],
+    );
+    assert_eq!(responses, [false, true, true, false, false]);
+}
+
+#[test]
+fn a_responses_reply_streams_from_its_text_deltas() {
+    let mut inspector = CallInspector::new(
+        Protocol::Responses,
+        ResponseFormat::EventStream,
+        ResponseEncoding::Identity,
+        InspectionLimits::default(),
+    );
+    let mut seen = Vec::new();
+    for event in [
+        json!({ "type": "response.output_item.added", "output_index": 0, "item": { "type": "reasoning", "id": "rs_1" } }),
+        json!({ "type": "response.output_item.done", "output_index": 0, "item": { "type": "reasoning", "id": "rs_1", "summary": [] } }),
+        json!({ "type": "response.output_item.added", "output_index": 1, "item": { "type": "message", "id": "msg_1" } }),
+        json!({ "type": "response.output_text.delta", "item_id": "msg_1", "output_index": 1, "delta": "Sorted " }),
+        json!({ "type": "response.output_text.delta", "item_id": "msg_1", "output_index": 1, "delta": "newest first." }),
+        json!({ "type": "response.output_item.done", "output_index": 1, "item": { "type": "message", "id": "msg_1",
+            "content": [{ "type": "output_text", "text": "Sorted newest first." }] } }),
+    ] {
+        inspector.feed(&sse(&[event]));
+        seen.push(inspector.so_far().unwrap().reply);
+    }
+    assert_eq!(
+        seen,
+        [
+            "",
+            "",
+            "",
+            "Sorted ",
+            "Sorted newest first.",
+            "Sorted newest first."
+        ]
+    );
 }

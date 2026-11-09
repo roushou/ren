@@ -32,10 +32,12 @@
   import StateGlyph from '#lib/StateGlyph.svelte';
   import Select, { type SelectOption } from '#lib/Select.svelte';
   import Markdown from '#lib/Markdown.svelte';
+  import StreamingReply from '#lib/StreamingReply.svelte';
   import type { PageProps } from './$types';
 
   let { data }: PageProps = $props();
-  getWorkbench().showScope(scope);
+  const workbench = getWorkbench();
+  workbench.showScope(scope);
   const snapshot = createSnapshot(() => data.live);
   const current = $derived(snapshot.current.value);
 
@@ -162,10 +164,11 @@
     return [`read ${tally.read}`, `wrote ${tally.wrote}`, `ran ${tally.ran}`];
   }
   /** A call not read yet: open (waiting for its head, or responding), or just finished. */
-  function unreadLabel(unread: UnreadCall, now: number): string {
+  function unreadLabel(unread: UnreadCall, now: number, thinking: boolean): string {
     const { call } = unread;
     if (call.state !== 'open') return 'finished · reading';
-    const state = call.status === null ? 'waiting for response' : 'responding';
+    const state =
+      call.status === null ? 'waiting for response' : thinking ? 'thinking' : 'responding';
     return `${state} · ${span(now - call.started_at)}`;
   }
   function callLabel(call: TurnCall): string {
@@ -348,8 +351,8 @@
       x={mark.at * 1000 - 1.5}
       y={top + 2}
       width="3"
-      height="9"
-    />
+      height="9"><title>{series.label}: {mark.label}</title></rect
+    >
   {/each}
 {/snippet}
 
@@ -378,7 +381,7 @@
         aria-label="Output tokens by {view.by}"
         title="Output tokens per {view.by} over the last {span(
           Band.spanMs,
-        )}, counted when each call finishes"
+        )}, counted when each call finishes. Marks along the top: calls that failed (red) or were cut off (yellow), when they ended."
       >
         <svg
           class="live-band-chart"
@@ -446,6 +449,12 @@
               ></a
             >
           {/each}
+          {#if band.series.some((series) => series.marks.length)}
+            <span class="live-legend-key" aria-hidden="true"
+              ><span class="live-key-mark error"></span>failed<span class="live-key-mark warning"
+              ></span>cut off</span
+            >
+          {/if}
         </div>
         <span class="live-band-scale mono" aria-hidden="true"
           >{view.band === 'ribbon' ? band.ribbonMax : band.max} tok/s</span
@@ -632,15 +641,41 @@
                 {/each}
               {/if}
               {#each tile.unread as unread (unread.call.id)}
-                <p class="live-sep live" class:open={unread.call.state === 'open'}>
-                  call {unread.index} · {unreadLabel(unread, board.now)}
-                </p>
+                {@const streamed = workbench.streamed.get(unread.call.id)}
+                <!-- Once text streams, it holds the call's place: no status line
+                     comes and goes around it, and the read reply replaces it in place. -->
+                {#if !streamed?.reply && (tile.turnId || unread.call.state === 'open')}
+                  {@const thinking = unread.call.state === 'open' && !!streamed?.thinking}
+                  <p class="live-sep live" class:open={unread.call.state === 'open'} class:thinking>
+                    call {unread.index} · {unreadLabel(unread, board.now, thinking)}
+                  </p>
+                {/if}
+                {#if streamed}
+                  {#each streamed.tools as tool, index (index)}
+                    <div class="live-tool live-streaming-tool">
+                      <span class="live-tool-icon"><Icon name="tool" size={12} /></span><b>{tool}</b
+                      >
+                    </div>
+                  {/each}
+                  {#if streamed.reply}
+                    <div
+                      class="live-step-reply live-streaming"
+                      class:writing={unread.call.state === 'open'}
+                    >
+                      <StreamingReply
+                        text={streamed.reply}
+                        writing={unread.call.state === 'open'}
+                        cut={streamed.cut}
+                      />
+                    </div>
+                  {/if}
+                {/if}
               {/each}
-              {#if !tile.prompt && !tile.lines.length && !tile.unread.length}
+              {#if !tile.prompt && !tile.lines.length && !tile.unread.some((unread) => unread.call.state === 'open' || workbench.streamed.get(unread.call.id)?.reply)}
                 <p class="live-wait">
                   {tile.turnId
                     ? 'Text appears once a call finishes and is read.'
-                    : 'This client reports no turns, so there is no transcript.'}
+                    : 'This client reports no turns, so only a reply as it streams shows here.'}
                 </p>
               {/if}
             </div>
@@ -781,6 +816,25 @@
   }
   .live-band-mark.warning {
     fill: var(--warning);
+  }
+  .live-legend-key {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    color: var(--muted);
+    font-size: 11px;
+  }
+  .live-key-mark {
+    display: inline-block;
+    width: 3px;
+    height: 9px;
+    margin-left: 6px;
+  }
+  .live-key-mark.error {
+    background: var(--error);
+  }
+  .live-key-mark.warning {
+    background: var(--warning);
   }
   .live-band-mark.error {
     fill: var(--error);
@@ -1338,6 +1392,38 @@
   .live-tile-body > .live-step-reply {
     flex: none;
     margin: 0 0 6px;
+  }
+  /* A reply while its call streams, from the live feed: a caret while it is
+     still being written; the read reply replaces it once the call is done. */
+  .live-streaming {
+    color: var(--muted);
+  }
+  .live-streaming.writing :global(.markdown > :last-child)::after {
+    content: '▍';
+    margin-left: 1px;
+    color: var(--accent);
+    animation: live-caret 1s steps(1) infinite;
+  }
+  /* The model is thinking: its text is not shown, so the status line pulses. */
+  .live-sep.thinking {
+    color: var(--accent);
+    animation: live-thinking 1.6s ease-in-out infinite;
+  }
+  @keyframes live-thinking {
+    50% {
+      opacity: 0.45;
+    }
+  }
+  @keyframes live-caret {
+    50% {
+      opacity: 0;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .live-streaming.writing :global(.markdown > :last-child)::after,
+    .live-sep.thinking {
+      animation: none;
+    }
   }
   .live-step-reply :global(.markdown) {
     font-size: 12.5px;

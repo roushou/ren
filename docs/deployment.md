@@ -230,9 +230,17 @@ accepts any credentials and stores nothing, so no real credential or prompt
 reaches the slot. It names two users, `alice` (by the Tailscale login
 `alice@example.com`) and `ci` (by a fixed fake token), and two direct
 operator-key entries with a fake key: `team-key` (only `ci`) and `chat-key`
-(Chat Completions). The requested model scripts the fake's reply: `fake-tools`,
-`fake-long`, `fake-slow`, `fake-cut`, `fake-error`, `fake-429`; any other model
-gets text quoting the prompt. So a real client can run against the slot:
+(Chat Completions). Its replies read like real use: invented engineering answers
+about an invented project, with realistic model names, IDs, and error messages.
+The generated traffic picks a reply kind (a tool call, a long or slow reply, a cut
+stream, an error, a rate limit) with an `x-dev-reply` request header, which the
+gateway forwards but never records; a request without it, as from a real client,
+gets an ordinary text answer. Like the real providers, it reports prompt-cache
+usage when a request asks for caching, thinks (Messages) or reasons
+(Responses) before answering when asked to, and stops at a request's
+`max_tokens`. The generated requests ask as coding agents do, and about one
+Claude Code call in ten is a side call with no turn (a title or a quota probe).
+So a real client can run against the slot:
 
 ```sh
 tgv run claude --gateway https://<node>:9443

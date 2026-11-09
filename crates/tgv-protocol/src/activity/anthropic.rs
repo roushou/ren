@@ -127,7 +127,7 @@ impl<'a> Request<'a> {
 }
 
 /// A content block being read.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct Block {
     kind: BlockKind,
     id: Option<String>,
@@ -142,7 +142,7 @@ struct Block {
 
 /// A Messages response: a document's content, or the blocks its events
 /// build.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(super) struct Response {
     limits: ActivityLimits,
     /// By stream index.
@@ -262,6 +262,22 @@ impl Response {
         if let Some(slot) = self.blocks.get_mut(index) {
             *slot = Some(block);
         }
+    }
+
+    /// Whether the newest block is the model's thinking, still open.
+    pub(super) fn thinking(&self) -> bool {
+        self.blocks.iter().flatten().last().is_some_and(|block| {
+            !block.closed
+                && match block.kind {
+                    BlockKind::Thinking | BlockKind::RedactedThinking => true,
+                    BlockKind::Text
+                    | BlockKind::ToolUse
+                    | BlockKind::ServerToolUse
+                    | BlockKind::McpToolUse
+                    | BlockKind::WebSearchToolResult
+                    | BlockKind::McpToolResult => false,
+                }
+        })
     }
 
     pub(super) fn finish(self) -> ResponseActivity {
