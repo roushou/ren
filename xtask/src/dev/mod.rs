@@ -2,10 +2,14 @@
 //! and fake data, separate from the installed service.
 
 mod provider;
+mod slot;
 
+use crate::install::InstallError;
 use clap::{Args, Subcommand};
 use provider::{FakeProvider, ProviderError};
+use slot::Slot;
 use std::net::SocketAddr;
+use tgv_harness::host::HostEnv;
 
 /// A development slot with fake providers and fake data.
 #[derive(Args)]
@@ -21,6 +25,15 @@ enum DevAction {
     /// reply: fake-tools, fake-long, fake-slow, fake-cut, fake-error,
     /// fake-429; anything else gets text quoting the prompt.
     Provider(ProviderArgs),
+    /// Build this checkout and (re)start the slot: the fake provider and a
+    /// dev daemon, as `tgv-dev-*` systemd user units.
+    Up,
+    /// Stop every `tgv-dev-*` unit. The slot's data is kept.
+    Down,
+    /// Stop the slot, remove its data, and start it again.
+    Reset,
+    /// Show the slot's units, addresses, and files.
+    Status,
 }
 
 #[derive(Args)]
@@ -35,12 +48,31 @@ struct ProviderArgs {
 pub enum DevError {
     #[error(transparent)]
     Provider(#[from] ProviderError),
+    #[error(transparent)]
+    Command(#[from] InstallError),
+    #[error("the dev configuration is invalid; this is a bug in `xtask dev`")]
+    Config,
+    #[error("nothing answered on {0} in time; see `journalctl --user -u 'tgv-dev-*'`")]
+    NotReady(SocketAddr),
 }
 
 impl Dev {
-    pub fn run(self) -> Result<(), DevError> {
+    pub fn run(self, env: &HostEnv) -> Result<(), DevError> {
         match self.action {
             DevAction::Provider(args) => Ok(FakeProvider::serve(args.listen)?),
+            DevAction::Up => {
+                let slot = Slot::new(env)?;
+                slot.up()?;
+                slot.status()
+            }
+            DevAction::Down => Slot::down(),
+            DevAction::Reset => {
+                let slot = Slot::new(env)?;
+                slot.wipe()?;
+                slot.up()?;
+                slot.status()
+            }
+            DevAction::Status => Slot::new(env)?.status(),
         }
     }
 }

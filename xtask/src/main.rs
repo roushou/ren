@@ -32,7 +32,7 @@ impl Xtask {
     fn run(self, env: &HostEnv) -> Result<(), TaskError> {
         match self {
             Self::InstallVps(task) => Ok(task.run(env)?),
-            Self::Dev(task) => Ok(task.run()?),
+            Self::Dev(task) => Ok(task.run(env)?),
         }
     }
 }

@@ -18,7 +18,10 @@ serde.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true
 tgv-daemon.workspace = true
+tgv-gateway.workspace = true
 tgv-harness.workspace = true
+tgv-protocol.workspace = true
+tgv-recorder.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["macros", "net", "rt-multi-thread", "time"] }
 toml.workspace = true
