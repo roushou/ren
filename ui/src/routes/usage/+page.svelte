@@ -1,8 +1,8 @@
 <script lang="ts">
   import { createSnapshot } from '#lib/snapshot.svelte.ts';
   import { getWorkbench } from '#lib/workbench.svelte.ts';
-  import { num, providerMark, providerName, short } from '#lib/api.ts';
-  import { compactOrDash, sessionTone } from '#lib/display.ts';
+  import { num, providerMark } from '#lib/api.ts';
+  import { compactOrDash } from '#lib/display.ts';
   import {
     cacheShare,
     usageMeasures,
@@ -12,12 +12,14 @@
   } from '#lib/usage.ts';
   import UsageChart from '#lib/UsageChart.svelte';
   import Icon from '#lib/Icon.svelte';
+  import SessionName from '#lib/SessionName.svelte';
   import Segmented, { type SegmentedOption } from '#lib/Segmented.svelte';
   import type { PageProps } from './$types';
   let { data }: PageProps = $props();
   getWorkbench().showScope(scope);
   const snapshot = createSnapshot(() => data.usage);
   const current = $derived(snapshot.current.value);
+  const details = $derived(current?.details ?? new Map());
   const range = $derived(current?.range ?? '7d');
   const totals = $derived(current?.usage.totals);
   const points = $derived(current ? usagePoints(current.usage.hours, range, current.now) : []);
@@ -182,9 +184,7 @@
                   <tr>
                     <td
                       ><a class="row-link" href={`/sessions/${encodeURIComponent(session.id)}`}
-                        ><span class="session-dot tone-{sessionTone(session.id)}"></span><span
-                          class="mono">{short(session.native_id)}</span
-                        ><small>{providerName(session.provider)}</small></a
+                        ><SessionName {session} detail={details.get(session.id)} /></a
                       ></td
                     >
                     <td class="mono numeric">{num(session.call_count)}</td>

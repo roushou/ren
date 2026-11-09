@@ -35,6 +35,8 @@ export interface TrafficData {
   calls: CallView[];
   next: PageCursor | null;
   session: SessionView | undefined;
+  /** What the listed sessions are about: their newest prompt and folder. */
+  details: Map<SessionId, SessionDetail>;
   /** Sessions for the picker; empty on a session page. */
   sessions: SessionView[];
   /** How many calls the default "model calls only" hides (at most 100), or null when not hiding. */
@@ -89,6 +91,8 @@ export interface UsageData {
   usage: UsageView;
   /** The most-used sessions in the window's listing (sessions are not range-filtered). */
   sessions: SessionView[];
+  /** What the busiest sessions are about. */
+  details: Map<SessionId, SessionDetail>;
 }
 
 /** The Usage page: totals for the range, and the sessions list for its top sessions. */
@@ -101,7 +105,15 @@ export function usageSnapshot(fetcher: typeof fetch, rawRange: string | null) {
       api.usage({ from_ms: rangeStart(range, now, localDayStart) }),
       api.sessions(100),
     ]);
-    return { range, now, usage, sessions: sessions.sessions };
+    const busiest = sessions.sessions
+      .toSorted((a, b) => (b.tokens.input ?? 0) - (a.tokens.input ?? 0))
+      .map((session) => session.id);
+    const details = await SessionDetails.shared.read(
+      api,
+      // The page shows five, after filtering by range: read a few more.
+      SessionDetails.pick(sessions.sessions, busiest, 10),
+    );
+    return { range, now, usage, sessions: sessions.sessions, details };
   });
 }
 
@@ -180,11 +192,11 @@ export interface SessionsData {
 export class SessionsReader {
   /** The newest sessions read in detail; the rest show without a prompt. */
   static readonly detailed = 40;
-  /** Sessions read at once. */
-  static readonly parallel = 8;
-  /** Turns read per session, newest first, to find one with a prompt. */
-  static readonly recentTurns = 5;
-  readonly #details = new Map<SessionId, { lastSeen: number; detail: SessionDetail }>();
+  readonly #details: SessionDetails;
+
+  constructor(details: SessionDetails = SessionDetails.shared) {
+    this.#details = details;
+  }
 
   read(fetcher: typeof fetch): Promise<Snapshot<SessionsData>> {
     const api = new ManagementApi(fetcher);
@@ -198,37 +210,76 @@ export class SessionsReader {
       const wanted = listing.sessions
         .filter((session) => !SessionList.trivial(session))
         .slice(0, SessionsReader.detailed);
-      const details = new Map<SessionId, SessionDetail>();
-      const readOne = async (session: SessionView) => {
-        const cached = this.#details.get(session.id);
-        if (cached?.lastSeen === session.last_seen) {
-          details.set(session.id, cached.detail);
-          return;
-        }
-        try {
-          // A turn can carry no prompt of its own (it continues the one before), so
-          // the newest few are read and the newest with a prompt names the session.
-          const turns = (await api.turns(session.id, SessionsReader.recentTurns)).turns;
-          const newest = turns[0];
-          const activity = newest ? await api.turn(newest.turn) : null;
-          const detail = {
-            prompt: turns.find((turn) => turn.prompt?.text.trim())?.prompt ?? null,
-            workdir: activity ? Board.workdir(activity) : null,
-          };
-          this.#details.set(session.id, { lastSeen: session.last_seen, detail });
-          details.set(session.id, detail);
-        } catch {
-          // A session whose turn cannot be read shows without its prompt, not the page empty.
-          if (cached) details.set(session.id, cached.detail);
-        }
-      };
-      // A few at a time, so a first load does not send every session's reads at once.
-      for (let index = 0; index < wanted.length; index += SessionsReader.parallel)
-        await Promise.all(wanted.slice(index, index + SessionsReader.parallel).map(readOne));
+      const details = await this.#details.read(api, wanted);
       return { sessions: listing.sessions, open, details };
     });
   }
 }
+
+/**
+ * What each session is about, read from its newest turns: the newest
+ * prompt, and the folder its newest turn's commands work in. A session is
+ * read again only once it has been seen since, so one instance kept in the
+ * browser serves every page that names sessions.
+ */
+export class SessionDetails {
+  /** Sessions read at once. */
+  static readonly parallel = 8;
+  /** Turns read per session, newest first, to find one with a prompt. */
+  static readonly recentTurns = 5;
+  /**
+   * One cache for every page. It is keyed by when each session was last seen,
+   * so sharing it never shows a stale prompt, and the API it reads is the same
+   * for every viewer.
+   */
+  static readonly shared = new SessionDetails();
+  readonly #cache = new Map<SessionId, { lastSeen: number; detail: SessionDetail }>();
+
+  /** Details for these sessions; one whose turns cannot be read is left out. */
+  async read(api: ManagementApi, sessions: SessionView[]): Promise<Map<SessionId, SessionDetail>> {
+    const details = new Map<SessionId, SessionDetail>();
+    const readOne = async (session: SessionView) => {
+      const cached = this.#cache.get(session.id);
+      if (cached?.lastSeen === session.last_seen) {
+        details.set(session.id, cached.detail);
+        return;
+      }
+      try {
+        // A turn can carry no prompt of its own (it continues the one before), so
+        // the newest few are read and the newest with a prompt names the session.
+        const turns = (await api.turns(session.id, SessionDetails.recentTurns)).turns;
+        const newest = turns[0];
+        const activity = newest ? await api.turn(newest.turn) : null;
+        const detail = {
+          prompt: turns.find((turn) => turn.prompt?.text.trim())?.prompt ?? null,
+          workdir: activity ? Board.workdir(activity) : null,
+        };
+        this.#cache.set(session.id, { lastSeen: session.last_seen, detail });
+        details.set(session.id, detail);
+      } catch {
+        // A session whose turn cannot be read shows without its prompt, not the page empty.
+        if (cached) details.set(session.id, cached.detail);
+      }
+    };
+    // A few at a time, so a first load does not send every session's reads at once.
+    for (let index = 0; index < sessions.length; index += SessionDetails.parallel)
+      await Promise.all(sessions.slice(index, index + SessionDetails.parallel).map(readOne));
+    return details;
+  }
+
+  /** The sessions among `listing` that these IDs name, at most `limit`, first named first. */
+  static pick(listing: SessionView[], ids: (SessionId | null)[], limit = 40): SessionView[] {
+    const byId = new Map(listing.map((session) => [session.id, session]));
+    const picked = new Map<SessionId, SessionView>();
+    for (const id of ids) {
+      const session = id ? byId.get(id) : undefined;
+      if (session && !SessionList.trivial(session)) picked.set(session.id, session);
+      if (picked.size >= limit) break;
+    }
+    return [...picked.values()];
+  }
+}
+
 export async function trafficSnapshot(
   fetcher: typeof fetch,
   url: URL,
@@ -253,7 +304,11 @@ export async function trafficSnapshot(
         api.sessionCalls(sessionId, named.get('after')),
       ]);
       const session = sessions.sessions.find((item) => item.id === sessionId);
-      return { calls: page.calls, next: page.next, session, sessions: [], hidden: null };
+      const details = await SessionDetails.shared.read(
+        api,
+        SessionDetails.pick(sessions.sessions, [sessionId]),
+      );
+      return { calls: page.calls, next: page.next, session, sessions: [], hidden: null, details };
     }
     const params = listingQuery(named, callFilters, Date.now());
     const hiding = params.get('kind') === 'model';
@@ -266,12 +321,20 @@ export async function trafficSnapshot(
       api.sessions(100),
       hiding ? api.calls(hiddenQuery).then((other) => other.calls.length) : Promise.resolve(null),
     ]);
+    const details = await SessionDetails.shared.read(
+      api,
+      SessionDetails.pick(
+        sessions.sessions,
+        page.calls.map((call) => call.session),
+      ),
+    );
     return {
       calls: page.calls,
       next: page.next,
       session: undefined,
       sessions: sessions.sessions,
       hidden,
+      details,
     };
   });
 }
@@ -334,6 +397,9 @@ export interface SearchData {
   field: SearchField | null;
   /** Null before a search. */
   page: SearchPage | null;
+  /** What the hits' sessions are about, and the sessions themselves. */
+  details: Map<SessionId, SessionDetail>;
+  sessions: SessionView[];
 }
 
 /** A search from the page's URL: `?q=` and optionally `?field=`. */
@@ -343,10 +409,22 @@ export function searchSnapshot(fetcher: typeof fetch, url: URL) {
   const field = parseSearchField(url.searchParams.get('field'));
   const key = new URLSearchParams({ q, field: field ?? '' });
   return readSnapshot(`/search?${key}`, async (): Promise<SearchData> => {
-    if (!q) return { q, field, page: null };
+    if (!q) return { q, field, page: null, details: new Map(), sessions: [] };
     const query = new URLSearchParams({ q, limit: '50' });
     if (field) query.set('field', field);
-    return { q, field, page: await api.search(query) };
+    // The sessions only name the hits: without them, the hits still show.
+    const [page, listing] = await Promise.all([
+      api.search(query),
+      api.sessions(100).catch(() => ({ sessions: [] })),
+    ]);
+    const details = await SessionDetails.shared.read(
+      api,
+      SessionDetails.pick(
+        listing.sessions,
+        page.hits.map((hit) => hit.session),
+      ),
+    );
+    return { q, field, page, details, sessions: listing.sessions };
   });
 }
 

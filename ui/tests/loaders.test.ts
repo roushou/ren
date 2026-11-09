@@ -4,6 +4,7 @@ import { readSnapshot, retainSnapshot } from '../src/lib/snapshots.ts';
 import {
   gatewaySnapshot,
   recorderSnapshot,
+  SessionDetails,
   SessionsReader,
   offPageSelection,
   searchSnapshot,
@@ -96,7 +97,7 @@ test('responses are parsed at the boundary: labels keep unknown text, shapes are
   assert.equal(metrics.value?.metrics.storage.disk.blobs.page_size, 4096);
   // The usage read failed to parse (this fake answers every path alike): no oldest call, no failure.
   assert.equal(metrics.value?.oldest, null);
-  const sessions = await new SessionsReader().read(async (input) => {
+  const sessions = await new SessionsReader(new SessionDetails()).read(async (input) => {
     if (path(input).startsWith('/api/calls')) return versioned({ calls: [], next: null });
     if (path(input).endsWith('/turns?limit=5')) return versioned({ turns: [] });
     assert.equal(path(input), '/api/sessions?limit=100');
@@ -191,7 +192,7 @@ test('search reads nothing without a query and keeps only a known field', async 
   const empty = await searchSnapshot(async () => {
     throw new Error('Must not search without a query');
   }, new URL('http://ui.test/search?q=%20%20&field=prompt'));
-  assert.deepEqual(empty.value, { q: '', field: 'prompt', page: null });
+  assert.deepEqual([empty.value?.q, empty.value?.field, empty.value?.page], ['', 'prompt', null]);
 
   const calls: string[] = [];
   const fetcher: typeof fetch = async (input) => {
@@ -202,19 +203,21 @@ test('search reads nothing without a query and keeps only a known field', async 
     fetcher,
     new URL('http://ui.test/search?q=a%26b&field=tool_output'),
   );
-  assert.deepEqual(known.value, {
-    q: 'a&b',
-    field: 'tool_output',
-    page: { hits: [], indexed_calls: 3 },
-  });
+  assert.deepEqual(
+    [known.value?.q, known.value?.field, known.value?.page],
+    ['a&b', 'tool_output', { hits: [], indexed_calls: 3 }],
+  );
   const unknown = await searchSnapshot(
     fetcher,
     new URL('http://ui.test/search?q=a&field=everything'),
   );
   assert.equal(unknown.value?.field, null);
+  // Each search also reads the session listing, to name its hits' sessions.
   assert.deepEqual(calls, [
     '/api/search?q=a%26b&limit=50&field=tool_output',
+    '/api/sessions?limit=100',
     '/api/search?q=a&limit=50',
+    '/api/sessions?limit=100',
   ]);
   // The key encodes the query, so `&` in the text stays part of it.
   assert.equal(known.key, '/search?q=a%26b&field=tool_output');
@@ -237,7 +240,7 @@ function sessionRow(n: number, lastSeen: number, calls = 3, turns = 1) {
 }
 
 test('sessions are read in detail once per activity, and single-call ones not at all', async () => {
-  const reader = new SessionsReader();
+  const reader = new SessionsReader(new SessionDetails());
   const turnReads: string[] = [];
   let lastSeen = 2;
   const fetcher = async (input: RequestInfo | URL) => {
@@ -276,7 +279,7 @@ test('sessions are read a few at a time', async () => {
       sessions: Array.from({ length: 20 }, (_, n) => sessionRow(20 + n, 2)),
     });
   };
-  const result = await new SessionsReader().read(fetcher);
+  const result = await new SessionsReader(new SessionDetails()).read(fetcher);
   assert.equal(result.value?.details.size, 20);
-  assert.equal(most, SessionsReader.parallel);
+  assert.equal(most, SessionDetails.parallel);
 });

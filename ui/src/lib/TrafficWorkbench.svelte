@@ -40,6 +40,7 @@
   import Select, { type SelectOption } from './Select.svelte';
   import Segmented, { type SegmentedOption } from './Segmented.svelte';
   import ConnectClient from './ConnectClient.svelte';
+  import SessionName from './SessionName.svelte';
   let { snapshot, sessionId }: { snapshot: Snapshot<TrafficData>; sessionId: SessionId | null } =
     $props();
   const workbench = getWorkbench();
@@ -49,6 +50,11 @@
   const calls = $derived(retained.current.value?.calls ?? []);
   const nextAfter = $derived(retained.current.value?.next ?? null);
   const session = $derived(retained.current.value?.session);
+  const details = $derived(retained.current.value?.details ?? new Map());
+  /** The listed sessions by ID, to name them in rows. */
+  const sessionsById = $derived(
+    new Map((retained.current.value?.sessions ?? []).map((item) => [item.id, item])),
+  );
   const updated = $derived(retained.current.updated);
   const today = date(Date.now());
   const liveStatus = $derived(
@@ -345,12 +351,10 @@
 {#snippet scope()}
   {#if sessionId}
     <div class="scope-group scope-identity">
-      {#if session}<span class="session-dot tone-{sessionTone(session.id)}"></span><span
-          class="provider-mark tiny {session.provider}">{providerMark(session.provider)}</span
-        ><strong class="mono" title="The session ID your client reported"
-          >{short(session.native_id)}</strong
+      {#if session}<span class="scope-session"
+          ><SessionName {session} detail={details.get(session.id)} /></span
         ><small class="mono muted" title={`TGV's own ID for this session: ${session.id}`}
-          >TGV {short(session.id)}</small
+          >{short(session.native_id)}</small
         >{:else}<strong class="mono">{short(sessionId)}</strong>{/if}
     </div>
     {#if session}<div class="scope-group scope-figures">
@@ -649,11 +653,15 @@
                               title="Show only this session's calls"
                               aria-label={`Show only session ${short(c.attribution.hint?.session ?? session)}`}
                               onclick={() => pick((f) => (f.session = session))}
-                              ><span class="session-dot tone-{sessionTone(session)}"
-                              ></span>{#if !previous || previous.session !== c.session}{c
-                                  .attribution.hint
-                                  ? short(c.attribution.hint.session)
-                                  : 'Session'}{/if}</button
+                              >{#if sessionsById.get(session) && (!previous || previous.session !== c.session)}<SessionName
+                                  session={sessionsById.get(session)!}
+                                  detail={details.get(session)}
+                                  client={false}
+                                />{:else}<span class="session-dot tone-{sessionTone(session)}"
+                                ></span>{#if !previous || previous.session !== c.session}{c
+                                    .attribution.hint
+                                    ? short(c.attribution.hint.session)
+                                    : 'Session'}{/if}{/if}</button
                             >{:else if !previous || previous.session !== c.session}No session{/if}</small
                         >{/if}</td
                     >
