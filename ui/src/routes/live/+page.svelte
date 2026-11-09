@@ -221,14 +221,10 @@
   const sessionHref = (id: string) => `/sessions/${encodeURIComponent(id)}`;
   const percent = (share: number | null) => (share === null ? '—' : `${Math.round(share * 100)}%`);
   const harnessClass = (tile: Tile) => `harness-${tile.harness ?? 'unknown'}`;
-  /** The tile's facts line: model, input with its cached share, output. */
+  /** The tile's facts line: model, cached share, output. The context is in the header. */
   function facts(tile: Tile): string {
     const parts = [tile.model ?? 'model —'];
-    parts.push(
-      tile.context === null
-        ? 'in —'
-        : `in ${compactOrDash(tile.context)} (${percent(tile.cached)} cached)`,
-    );
+    if (tile.cached !== null) parts.push(`${percent(tile.cached)} cached`);
     if (tile.output !== null) parts.push(`out ${compactOrDash(tile.output)}`);
     return parts.join(' · ');
   }
@@ -567,7 +563,7 @@
           {@const focused = board.focus === tile.session.id}
           {@const toCall = callHref(tile)}
           <article
-            class="live-tile state-edge state-{chip.mark} {harnessClass(tile)} {attention
+            class="live-tile state-{chip.mark} {harnessClass(tile)} {attention
               ? `attention-${attention}`
               : ''}"
             class:quiet={tile.quiet && !focused}
@@ -580,10 +576,15 @@
                   ><Icon name="arrow" size={11} /></span
                 ></a
               >
-              {#if tile.turnCalls}<span class="mono muted live-seq">· call {tile.turnCalls}</span
+              {#if tile.turnCalls}<span
+                  class="mono muted live-seq"
+                  title="Model calls the current turn has made since its prompt"
+                  >· call {tile.turnCalls}</span
                 >{/if}
-              {#if tile.open > 1}<span class="mono live-open-count" title="Model calls open at once"
-                  >{tile.open} open</span
+              {#if tile.open > 1}<span
+                  class="mono live-open-count"
+                  title="Model calls in flight at once: a subagent or a side request beside the main one"
+                  ><span class="muted">·</span> {tile.open} in flight</span
                 >{/if}
               {#if tile.pinned}<span
                   class="live-pinned"
@@ -1115,8 +1116,42 @@
     min-width: 0;
     font-size: 12.5px;
   }
+  /*
+   * The card's state is a tab beside its title and a faint wash behind it,
+   * not an edge down the whole card: stacked cards in one state would join
+   * into a single bar and read as a column.
+   */
   .live-tile-head {
     border-bottom: 1px solid var(--line);
+    background: color-mix(in srgb, var(--state, transparent) 9%, var(--surface));
+  }
+  .live-tile-head::before {
+    position: absolute;
+    top: 0;
+    bottom: -1px;
+    left: 0;
+    width: 3px;
+    background: var(--state, transparent);
+    content: '';
+    pointer-events: none;
+  }
+  .live-tile.state-idle .live-tile-head {
+    background: var(--surface);
+  }
+  .live-tile.state-idle .live-tile-head::before {
+    background: transparent;
+  }
+  .live-tile.state-responding .live-tile-head::before {
+    animation: state-breathe 1.6s ease-in-out infinite;
+  }
+  /* Unknown is dashed grey, as everywhere: never an ending, good or bad. */
+  .live-tile.state-unknown .live-tile-head::before {
+    background: repeating-linear-gradient(to bottom, var(--muted) 0 6px, transparent 6px 10px);
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .live-tile.state-responding .live-tile-head::before {
+      animation: none;
+    }
   }
   .live-tile-head > .mono {
     flex: none;
@@ -1352,7 +1387,7 @@
     align-items: center;
     gap: 2px;
     padding: 0 6px 0 10px;
-    background: var(--surface);
+    background: inherit;
     opacity: 0;
     pointer-events: none;
   }
