@@ -55,8 +55,9 @@ interrupt, or if the first connection fails.
 bodies when asked:
 
 - `prompt`: the user's own words, without the context a client adds to user
-  messages (Claude Code's `<system-reminder>` blocks, Codex's environment and
-  `AGENTS.md` instructions);
+  messages (Claude Code's `<system-reminder>` blocks and the `Tool loaded.` it
+  adds after loading a deferred tool, Codex's environment and `AGENTS.md`
+  instructions);
 - `calls`: each call's tool calls, with their input, their `effects` (`read_file`,
   `write_file`, `run_command`, `search`, `delegate`, or `fetch`, and the path,
   command, pattern, task, or URL the input names), and the `result` a later

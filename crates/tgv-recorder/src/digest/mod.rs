@@ -164,7 +164,10 @@ pub struct CallDigest {
 }
 
 impl CallDigest {
-    pub const VERSION: u32 = 2;
+    /// Bumped when what a digest holds changes, so stored calls are derived
+    /// again: 2 added the call's purpose, 3 dropped Claude Code's own notices
+    /// from prompts.
+    pub const VERSION: u32 = 3;
 
     /// Redact every text once, keep what each secret leaves (its kind,
     /// hint, and fingerprint), and cut the rest to `budget`. The prompt's

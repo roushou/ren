@@ -135,6 +135,9 @@ pub enum OpenCodeTool {
 impl Harness {
     /// Wrappers a client puts around context it adds to user messages.
     const CLAUDE_CODE_CONTEXT: &[(&str, &str)] = &[("<system-reminder>", "</system-reminder>")];
+    /// Text Claude Code adds to a user message on its own, whole: "Tool
+    /// loaded." follows the result of a deferred tool it loaded.
+    const CLAUDE_CODE_NOTICES: &[&str] = &["Tool loaded."];
     const CODEX_CONTEXT: &[(&str, &str)] = &[
         ("<environment_context>", "</environment_context>"),
         ("<user_instructions>", "</user_instructions>"),
@@ -262,17 +265,18 @@ impl Harness {
     /// The user's own words in a request's newest user text: the client's
     /// added context removed. `None` when nothing else is left.
     pub fn prompt(self, user_text: &[String]) -> Option<String> {
-        let context = match self {
-            Self::ClaudeCode => Self::CLAUDE_CODE_CONTEXT,
-            Self::Codex => Self::CODEX_CONTEXT,
-            Self::Pi => &[],
-            Self::OpenCode => Self::OPENCODE_CONTEXT,
+        let (context, notices) = match self {
+            Self::ClaudeCode => (Self::CLAUDE_CODE_CONTEXT, Self::CLAUDE_CODE_NOTICES),
+            Self::Codex => (Self::CODEX_CONTEXT, &[][..]),
+            Self::Pi => (&[][..], &[][..]),
+            Self::OpenCode => (Self::OPENCODE_CONTEXT, &[][..]),
         };
         let own: Vec<&str> = user_text
             .iter()
             .map(|text| text.trim())
             .filter(|text| {
                 !text.is_empty()
+                    && !notices.contains(text)
                     && !context
                         .iter()
                         .any(|(open, close)| text.starts_with(open) && text.ends_with(close))
@@ -581,6 +585,17 @@ mod tests {
         assert_eq!(
             Harness::ClaudeCode.prompt(&text(&["<system-reminder>only</system-reminder>"])),
             None
+        );
+        // Claude Code's own notice after a deferred tool loads is not the user's words.
+        assert_eq!(Harness::ClaudeCode.prompt(&text(&["Tool loaded."])), None);
+        assert_eq!(
+            Harness::ClaudeCode.prompt(&text(&["Tool loaded.", "Now run the tests"])),
+            Some("Now run the tests".to_owned())
+        );
+        // Another client's user may type it.
+        assert_eq!(
+            Harness::Pi.prompt(&text(&["Tool loaded."])),
+            Some("Tool loaded.".to_owned())
         );
         assert_eq!(
             Harness::Codex.prompt(&text(&[
