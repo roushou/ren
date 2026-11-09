@@ -2,12 +2,14 @@
 //! and fake data, separate from the installed service.
 
 mod provider;
+mod seed;
 mod slot;
 
 use crate::install::InstallError;
 use clap::{Args, Subcommand};
 use provider::{FakeProvider, ProviderError};
-use slot::Slot;
+use seed::{Scenario, SeedError, Seeder};
+use slot::{Slot, Unit};
 use std::net::SocketAddr;
 use tgv_harness::host::HostEnv;
 
@@ -34,6 +36,28 @@ enum DevAction {
     Reset,
     /// Show the slot's units, addresses, and files.
     Status,
+    /// Send fake traffic through the dev gateway: harness sessions, named
+    /// users, long prompts, errors, and a Codex WebSocket channel.
+    Seed(SeedArgs),
+    /// Start or stop a steady trickle of fake calls (one every few
+    /// seconds), for pages that follow live traffic.
+    Trickle(TrickleArgs),
+}
+
+#[derive(Args)]
+struct SeedArgs {
+    #[arg(value_enum, default_value = "all")]
+    scenario: Scenario,
+    /// Repeat with new sessions, a call every few seconds, until stopped.
+    #[arg(long)]
+    forever: bool,
+}
+
+#[derive(Args)]
+struct TrickleArgs {
+    /// Stop the trickle instead of starting it.
+    #[arg(long)]
+    stop: bool,
 }
 
 #[derive(Args)]
@@ -54,6 +78,8 @@ pub enum DevError {
     Config,
     #[error("nothing answered on {0} in time; see `journalctl --user -u 'tgv-dev-*'`")]
     NotReady(SocketAddr),
+    #[error(transparent)]
+    Seed(#[from] SeedError),
 }
 
 impl Dev {
@@ -73,6 +99,23 @@ impl Dev {
                 slot.status()
             }
             DevAction::Status => Slot::new(env)?.status(),
+            DevAction::Seed(args) => {
+                let slot = Slot::new(env)?;
+                Seeder::new(Slot::DAEMON, Slot::ci_token().expose().to_owned()).play(
+                    args.scenario,
+                    &slot.data_dir,
+                    args.forever,
+                )?;
+                Ok(())
+            }
+            DevAction::Trickle(args) => {
+                let slot = Slot::new(env)?;
+                Unit::Trickle.stop()?;
+                if !args.stop {
+                    slot.trickle()?;
+                }
+                Ok(())
+            }
         }
     }
 }

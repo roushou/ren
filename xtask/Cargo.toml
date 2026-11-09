@@ -14,6 +14,7 @@ repository.workspace = true
 axum.workspace = true
 clap.workspace = true
 futures-util.workspace = true
+reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true
@@ -24,6 +25,7 @@ tgv-protocol.workspace = true
 tgv-recorder.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["macros", "net", "rt-multi-thread", "time"] }
+tokio-tungstenite.workspace = true
 toml.workspace = true
 
 [lints]

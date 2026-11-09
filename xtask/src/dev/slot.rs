@@ -294,6 +294,23 @@ impl Slot {
         Self::wait_for(Self::DAEMON, "/health")
     }
 
+    /// Run `dev seed sessions --forever` as the trickle unit.
+    pub fn trickle(&self) -> Result<(), DevError> {
+        Self::step("Starting a trickle of fake calls");
+        Unit::Trickle.start(
+            &[&self.bin_dir.join("xtask")],
+            &[
+                "dev".into(),
+                "seed".into(),
+                "sessions".into(),
+                "--forever".into(),
+            ],
+            // The user manager gives its units HOME, which the seeder reads.
+            &[],
+        )?;
+        Ok(())
+    }
+
     pub fn down() -> Result<(), DevError> {
         for unit in Unit::ALL {
             Self::step(&format!("Stopping {}", unit.name()));
