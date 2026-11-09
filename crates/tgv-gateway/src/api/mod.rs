@@ -422,6 +422,9 @@ impl ApiState {
         let feed = LiveFeed::new(
             state.reader.clone(),
             state.recorder.subscribe(),
+            raw.progress
+                .unwrap_or(false)
+                .then(|| state.recorder.subscribe_progress()),
             state.shutdown.clone(),
             raw.after.or(resume),
         );

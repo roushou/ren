@@ -127,6 +127,8 @@ impl RawExposureQuery {
 #[serde(deny_unknown_fields)]
 pub(super) struct RawLiveQuery {
     pub after: Option<u64>,
+    /// Also send progress events on streaming calls.
+    pub progress: Option<bool>,
 }
 
 impl RawPageQuery {

@@ -1861,3 +1861,87 @@ async fn usage_reports_totals_by_hour_and_model_and_refuses_a_reversed_range() {
     assert_eq!(read("?bucket=day").await.0, StatusCode::BAD_REQUEST);
     gateway.stop().await;
 }
+
+#[tokio::test]
+async fn a_feed_that_asks_gets_a_streaming_calls_reply_so_far() {
+    let gate = Arc::new(Notify::new());
+    let held = gate.clone();
+    let upstream = mock(Router::new().fallback(move || {
+        let gate = held.clone();
+        async move {
+            let event = |data: serde_json::Value| Bytes::from(format!("data: {data}\n\n"));
+            let first = futures_util::stream::iter([
+                Ok::<_, Infallible>(event(serde_json::json!({ "type": "message_start", "message": { "model": "fixture" } }))),
+                Ok(event(serde_json::json!({ "type": "content_block_start", "index": 0, "content_block": { "type": "text", "text": "" } }))),
+                Ok(event(serde_json::json!({ "type": "content_block_delta", "index": 0, "delta": { "type": "text_delta", "text": "Hello so far" } }))),
+            ]);
+            let rest = futures_util::stream::once(async move {
+                gate.notified().await;
+                Ok::<_, Infallible>(event(serde_json::json!({ "type": "message_stop" })))
+            });
+            Response::builder()
+                .header("content-type", "text/event-stream")
+                .body(Body::from_stream(first.chain(rest)))
+                .unwrap()
+        }
+    }))
+    .await;
+    let dir = tempfile::tempdir().unwrap();
+    let gateway = TestGateway::start(&config(&upstream), dir.path()).await;
+    let base = format!("http://{}", gateway.address());
+    let mut with = client()
+        .get(format!("{base}/api/live?progress=true"))
+        .send()
+        .await
+        .unwrap()
+        .bytes_stream();
+    let mut without = client()
+        .get(format!("{base}/api/live"))
+        .send()
+        .await
+        .unwrap()
+        .bytes_stream();
+    let call = tokio::spawn(
+        client()
+            .post(format!("{base}/anthropic/v1/messages"))
+            .body("{}")
+            .send(),
+    );
+    // While the call is still streaming, its reply so far arrives.
+    let mut text = String::new();
+    timeout(Duration::from_secs(5), async {
+        while !text.contains("event: progress") {
+            text.push_str(std::str::from_utf8(&with.next().await.unwrap().unwrap()).unwrap());
+        }
+    })
+    .await
+    .unwrap();
+    let update: serde_json::Value = text
+        .split("event: progress\n")
+        .nth(1)
+        .and_then(|rest| rest.lines().find_map(|line| line.strip_prefix("data: ")))
+        .map(|data| serde_json::from_str(data).unwrap())
+        .unwrap();
+    assert_eq!(update["reply"], "Hello so far");
+    assert_eq!(update["cut"], false);
+    assert!(
+        !text
+            .split("event: progress\n")
+            .nth(1)
+            .unwrap()
+            .starts_with("id:")
+    );
+    gate.notify_one();
+    call.await.unwrap().unwrap().bytes().await.unwrap();
+    // A feed that did not ask gets observations only.
+    let mut plain = String::new();
+    timeout(Duration::from_secs(5), async {
+        while !plain.contains("call_finished") {
+            plain.push_str(std::str::from_utf8(&without.next().await.unwrap().unwrap()).unwrap());
+        }
+    })
+    .await
+    .unwrap();
+    assert!(!plain.contains("event: progress"));
+    gateway.stop().await;
+}
