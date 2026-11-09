@@ -2,7 +2,7 @@ capture::AttemptTerminal: body_complete terminal_event not_sent refused acceptan
 capture::TerminalCause: connect_failed stream_refused header_timeout send_failed idle_timeout body_error upstream_closed client shutdown operator declared_length
 capture::AttemptPhase: upload awaiting_head response
 capture::CallState: open finished recovered
-capture::CallRejection: too_large buffer_full upload_timeout upload_failed abandoned paused session_blocked blocked shutdown identity_refused
+capture::CallRejection: too_large buffer_full upload_timeout upload_failed abandoned paused session_blocked blocked shutdown identity_refused user_not_allowed
 capture::BodyEnding: open ended unfinished
 capture::Omission: policy_limit queue_bytes queue_slots unrecorded storage_failure unattributed
 capture::ChannelEnd: client_closed upstream_closed client_failed upstream_failed client_unresponsive upstream_unresponsive upstream_stalled drained aborted dropped recovered

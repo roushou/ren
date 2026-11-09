@@ -163,6 +163,9 @@ pub enum CallRejection {
     /// The request's user token or Tailscale identity was refused:
     /// unknown, repeated, malformed, or naming two users (`401`).
     IdentityRefused,
+    /// The call's upstream entry admits only some named users, and the
+    /// caller is not one of them (non-retryable `403`).
+    UserNotAllowed,
 }
 
 /// How a captured body's byte stream ended.

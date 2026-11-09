@@ -11,7 +11,7 @@ use tgv_gateway::{
     BufferOptions, ConfiguredEntry, ControlOptions, EntryIngress, GatewayConfig, NativeUrls,
     OperatorKey, TransportTimeouts, UpstreamAuth, UpstreamEntry, UpstreamTable, UpstreamUrl,
     WebSocketOptions,
-    policy::{Policy, PolicyConfig},
+    policy::{EntryUsers, Policy, PolicyConfig},
     user::{UserConfig, Users},
 };
 use tgv_harness::host::HostEnv;
@@ -19,6 +19,7 @@ use tgv_protocol::route::{Api, Provider, UnsupportedWire, Wire};
 use tgv_recorder::retention::RetentionPolicy;
 use tgv_recorder::{
     CaptureOptions,
+    caller::UserId,
     routing::{ConfigRevision, UpstreamId},
 };
 
@@ -57,6 +58,10 @@ pub enum ConfigError {
     ProviderUrl(#[from] tgv_gateway::UpstreamConfigError),
     #[error("upstream {id}: {source}")]
     Wire { id: String, source: UnsupportedWire },
+    #[error("upstream {upstream}: users names {user}, which no [[users]] entry is")]
+    UnknownEntryUser { upstream: String, user: String },
+    #[error("upstream {0}: users is empty, so no caller could use it; omit it to admit anyone")]
+    EmptyEntryUsers(String),
     #[error("upstream {0}: the Codex backend accepts no operator keys")]
     CodexOperatorKey(String),
     #[error(transparent)]
@@ -129,9 +134,32 @@ pub struct UpstreamConfig {
     /// Whether the entry has routes of its own; fallback only when omitted.
     #[serde(default, skip_serializing_if = "EntryIngress::is_fallback_only")]
     pub ingress: EntryIngress,
+    /// The named users who may use the entry; anyone when omitted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub users: Option<Vec<UserId>>,
 }
 
 impl UpstreamConfig {
+    /// Who may use the entry. Every name must be a configured user.
+    fn users(&self, known: &[UserConfig]) -> Result<EntryUsers, ConfigError> {
+        let Some(users) = &self.users else {
+            return Ok(EntryUsers::Anyone);
+        };
+        if users.is_empty() {
+            return Err(ConfigError::EmptyEntryUsers(self.id.to_string()));
+        }
+        if let Some(unknown) = users
+            .iter()
+            .find(|user| !known.iter().any(|config| &config.id == *user))
+        {
+            return Err(ConfigError::UnknownEntryUser {
+                upstream: self.id.to_string(),
+                user: unknown.to_string(),
+            });
+        }
+        Ok(EntryUsers::Only(users.clone()))
+    }
+
     /// The provider's API in the configured wire format, or its native API.
     fn api(&self) -> Result<Api, ConfigError> {
         match self.wire {
@@ -228,6 +256,7 @@ impl Config {
                 Ok(ConfiguredEntry {
                     entry,
                     ingress: upstream.ingress,
+                    users: upstream.users(&self.users)?,
                 })
             })
             .collect::<Result<Vec<_>, ConfigError>>()?;
@@ -461,6 +490,21 @@ mod tests {
             toml::from_str::<Config>("[[users]]\nid = \"Alice\"\ntailscale_logins = [\"a@b\"]\n")
                 .is_err()
         );
+        let entry = |users: &str| -> Option<String> {
+            let config: Config = toml::from_str(&format!(
+                "[[users]]\nid = \"alice\"\ntailscale_logins = [\"a@b\"]\n\
+                 [[upstreams]]\nid = \"key\"\nprovider = \"anthropic\"\n\
+                 base_url = \"https://api.anthropic.com\"\noperator_key_env = \"K\"\n{users}"
+            ))
+            .unwrap();
+            config.check().err().map(|error| error.to_string())
+        };
+        assert_eq!(entry("users = [\"alice\"]"), None);
+        assert_eq!(
+            entry("users = [\"bob\"]").as_deref(),
+            Some("upstream key: users names bob, which no [[users]] entry is")
+        );
+        assert!(entry("users = []").is_some());
     }
 
     #[test]
@@ -511,6 +555,7 @@ mod tests {
                 base_url: "https://api.anthropic.com".into(),
                 operator_key_env: "TGV_FIXTURE_KEY".into(),
                 ingress: EntryIngress::FallbackOnly,
+                users: None,
             }],
             policy: toml::from_str(policy).unwrap(),
             ..Config::default()

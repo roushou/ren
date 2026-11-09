@@ -32,7 +32,11 @@ headers, and identity or position-sensitive body fields (`/system`, `/metadata`,
 `/user` and `/safety_identifier`) are protected: a rule that
 touches them is refused when the configuration loads. A changed body is stored as
 the attempt's own request beside the client's original. Body steps do not run on a
-compressed request. [`tgv.example.toml`](../tgv.example.toml) shows each rule type.
+compressed request. A rule's `match` takes `provider`, `endpoint`, `model` (the
+request's top-level `model`, exactly), `user` (a [named user](#named-users)),
+and `upstream` (the entry the call goes to first: its route's entry, never a
+fallback). Every field given must match, and at least one is required.
+[`tgv.example.toml`](../tgv.example.toml) shows each rule type.
 
 ## Failover
 
@@ -93,8 +97,8 @@ native paths below it (`/v1/messages`, `/v1/messages/count_tokens`, and
 and `/v1/models` for `openai_responses`, whose WebSocket mode is refused;
 `/v1/chat/completions` and `/v1/models` for `openai_chat_completions`). Every
 call there uses the operator key in place of the client's credentials, so any
-client that can reach the gateway bills the key: leave `ingress` out unless that
-is intended. Block and transform rules apply as on the provider's own routes;
+caller that can reach the gateway bills the key: leave `ingress` out unless that
+is intended, or name the [users](#named-users) who may use the entry. Block and transform rules apply as on the provider's own routes;
 fallback rules do not, since the call already uses an operator key. Chat
 Completions takes the key as `Authorization: Bearer`, for every provider. Calls are
 recorded with the entry's provider and wire format, and the attempt with the
@@ -125,6 +129,24 @@ token that name different users is refused with a non-retryable `401`
 never ignored, so a caller cannot believe it is identified when it is not.
 Identity protects against other machines, not this one: a local process can
 set any header, including `Tailscale-User-Login`.
+
+An operator-key entry can be limited to some users:
+
+```toml
+[[upstreams]]
+id = "team-key"
+provider = "anthropic"
+base_url = "https://api.anthropic.com"
+operator_key_env = "TGV_ANTHROPIC_API_KEY"
+ingress = "direct"
+users = ["alice", "ci"]
+```
+
+Any other caller, named or not, is refused on the entry's direct routes with a
+non-retryable `403` (`tgv_user_not_allowed`), recorded as rejection
+`user_not_allowed`, and a fallback rule to the entry is not offered to them:
+their calls stay on the provider's own entry. Every name must be a configured
+user, and the list cannot be empty; leave it out to admit anyone.
 
 ## Operator controls
 

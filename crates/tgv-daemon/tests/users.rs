@@ -16,13 +16,15 @@ use std::sync::{
     Arc,
     atomic::{AtomicUsize, Ordering},
 };
-use tgv_daemon::config::Config;
+use tgv_daemon::config::{Config, UpstreamConfig};
+use tgv_gateway::EntryIngress;
 use tgv_gateway::user::{UserConfig, UserToken, Users};
-use tgv_protocol::label::Stored;
+use tgv_protocol::{label::Stored, route::Provider};
 use tgv_recorder::{
     caller::{CallerKind, TailscaleLogin, UserId},
     capture::CallRejection,
     id::SequentialIds,
+    routing::UpstreamId,
 };
 use tgv_store::{
     Reader,
@@ -205,4 +207,66 @@ async fn a_refused_identity_is_answered_and_recorded_without_forwarding() {
         );
         assert_eq!(caller(call), (CallerKind::Unidentified, None, None));
     }
+}
+
+#[tokio::test]
+async fn an_entry_for_some_users_refuses_everyone_else_before_forwarding() {
+    let reached = Arc::new(AtomicUsize::new(0));
+    let mock = mock(upstream(reached.clone())).await;
+    let dir = tempfile::tempdir().unwrap();
+    let tokens = tokens();
+    let config = Config {
+        upstreams: vec![UpstreamConfig {
+            id: UpstreamId::parse("team-key").unwrap(),
+            provider: Provider::Anthropic,
+            wire: None,
+            base_url: format!("http://{}", mock.address),
+            operator_key_env: TestGateway::OPERATOR_KEY_ENV.into(),
+            ingress: EntryIngress::Direct,
+            users: Some(vec![UserId::parse("bob").unwrap()]),
+        }],
+        ..config(&mock, &tokens)
+    };
+    let gateway = TestGateway::start(&config, dir.path()).await;
+    let send = |headers: &'static [(&'static str, &'static str)], token: Option<&str>| {
+        let mut request = client()
+            .post(format!("{}/upstreams/team-key/v1/messages", gateway.base()))
+            .body(r#"{"model":"fixture","messages":[]}"#);
+        for (name, value) in headers {
+            request = request.header(*name, *value);
+        }
+        if let Some(token) = token {
+            request = request.header(Users::TOKEN_HEADER, token);
+        }
+        request.send()
+    };
+    let bob = send(&[], Some(tokens.bob.expose())).await.unwrap();
+    assert_eq!(bob.status(), StatusCode::OK);
+    for refused in [
+        send(&[("tailscale-user-login", "alice@example.com")], None),
+        send(&[], None),
+    ] {
+        let response = refused.await.unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        assert_eq!(response.headers()["x-should-retry"], "false");
+        let body: serde_json::Value =
+            serde_json::from_str(&response.text().await.unwrap()).unwrap();
+        assert_eq!(body["error"]["type"], "tgv_user_not_allowed");
+    }
+    gateway.stop().await;
+    assert_eq!(reached.load(Ordering::SeqCst), 1);
+
+    let calls = recorded(dir.path()).await;
+    let rejections: Vec<_> = calls
+        .iter()
+        .map(|call| call.rejection.as_ref().and_then(Stored::known))
+        .collect();
+    assert_eq!(
+        rejections,
+        [
+            Some(CallRejection::UserNotAllowed),
+            Some(CallRejection::UserNotAllowed),
+            None
+        ]
+    );
 }

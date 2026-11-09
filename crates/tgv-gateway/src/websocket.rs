@@ -409,6 +409,7 @@ impl Relay {
                 endpoint: self.call.endpoint,
                 model: None,
                 session: attribution.hint.as_ref().map(|hint| hint.session),
+                user: self.call.caller.user(),
                 now: self.clock.now().wall,
             },
             &operator,
@@ -497,6 +498,10 @@ impl Relay {
             Rejection::Blocked { rule, reason } => (
                 "tgv_blocked",
                 format!("blocked by TGV policy rule {}: {reason}", rule.as_str()),
+            ),
+            Rejection::UserNotAllowed { upstream } => (
+                "tgv_user_not_allowed",
+                format!("upstream {upstream} is not open to this caller"),
             ),
         };
         let event = serde_json::json!({

@@ -242,6 +242,12 @@ impl TgvReply {
                 message: format!("blocked by TGV policy rule {}: {reason}", rule.as_str()),
                 retry: ClientRetry::Never,
             },
+            Rejection::UserNotAllowed { upstream } => Self {
+                status: StatusCode::FORBIDDEN,
+                code: "user_not_allowed",
+                message: format!("upstream {upstream} is not open to this caller"),
+                retry: ClientRetry::Never,
+            },
         }
     }
 
@@ -534,6 +540,7 @@ impl<U: Upstream> Gateway<U> {
                 endpoint: route.endpoint,
                 model: model.as_deref(),
                 session,
+                user: call.caller.user(),
                 now: self.clock.now().wall,
             },
             &operator,
