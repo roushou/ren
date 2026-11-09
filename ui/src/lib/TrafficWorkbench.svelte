@@ -11,9 +11,8 @@
   import { num, short, title, clock, providerName, providerMark } from './api.ts';
   import {
     isActive,
-    callStatus,
+    callBadge,
     captureChip,
-    statusBadge,
     duration,
     elapsed,
     date,
@@ -620,11 +619,11 @@
                 ></thead
               >
               <tbody>
-                {#each group.rows as c, index (c.id)}{@const badge = statusBadge(
-                    callStatus(c),
-                  )}{@const http = httpChip(c.status)}{@const stream =
-                    streamChip(c)}{@const capture = captureChip(c, bodyLimit)}{@const tokens =
-                    tokenSummary(c.usage)}
+                {#each group.rows as c, index (c.id)}{@const badge = callBadge(c)}{@const http =
+                    httpChip(c.status)}{@const stream = streamChip(c)}{@const capture = captureChip(
+                    c,
+                    bodyLimit,
+                  )}{@const tokens = tokenSummary(c.usage)}
                   <tr
                     class="call-row"
                     class:selected={selectedId === c.id}

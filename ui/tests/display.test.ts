@@ -24,6 +24,8 @@ import {
   sessionTone,
   captureChip,
   trimmedAtLimit,
+  bookkeeping,
+  callBadge,
 } from '../src/lib/display.ts';
 import { providerMark, providerName, revision, type CallView } from '../src/lib/api.ts';
 import { callFixture, finishedFixture, callId } from './fixtures.ts';
@@ -338,4 +340,16 @@ test('a body preview cut at the capture limit says so, without a warning', () =>
     ]);
   assert.deepEqual(labels(4096)[1], ['Trimmed at 4.0 KiB', 'neutral']);
   assert.deepEqual(labels(null)[1], ['Stops at a gap', 'warning']);
+});
+
+test("a client's quota probe is bookkeeping: grey, whatever its status", () => {
+  const probe = finishedFixture(callId(1), { status: 429, outcome: null, purpose: 'quota_probe' });
+  assert.equal(bookkeeping(probe), true);
+  assert.deepEqual(callBadge(probe), { label: 'Quota probe · 429', tone: 'neutral' });
+  assert.deepEqual([modelChip(probe).label, modelChip(probe).tone], ['Quota probe', 'neutral']);
+  // Work, and a call not derived yet, read as before.
+  const work = finishedFixture(callId(2), { status: 429, outcome: null, purpose: 'work' });
+  assert.equal(bookkeeping(work), false);
+  assert.equal(callBadge(work).tone, 'error');
+  assert.equal(bookkeeping(finishedFixture(callId(3))), false);
 });

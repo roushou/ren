@@ -283,3 +283,11 @@ test('sessions are read a few at a time', async () => {
   assert.equal(result.value?.details.size, 20);
   assert.equal(most, SessionDetails.parallel);
 });
+
+test('a call from a daemon older than purpose reads as not derived', async () => {
+  const { purpose: _purpose, ...older } = callFixture();
+  const page = await new ManagementApi(async () => versioned({ calls: [older], next: null })).calls(
+    new URLSearchParams(),
+  );
+  assert.equal(page.calls[0]?.purpose, null);
+});

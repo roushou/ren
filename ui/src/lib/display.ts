@@ -329,6 +329,12 @@ export function captureChip(call: CallView, bodyLimit: number | null = null): Ch
 
 /** The model's outcome as a chip, separate from the transport. */
 export function modelChip(call: CallView): Chip {
+  if (bookkeeping(call))
+    return {
+      label: 'Quota probe',
+      tone: 'neutral',
+      title: "The client's own check of its quota, not its session's work; its 429 is expected",
+    };
   const label = call.outcome
     ? `Model ${title(call.outcome)}`
     : lifecycle(call.state) === 'finished'
@@ -606,3 +612,31 @@ export function sessionTone(id: string): number {
  * whitespace between inline items collapses.
  */
 export const SEPARATOR = '\u00a0· ';
+
+/**
+ * Whether a client sent the call for itself rather than for its session's
+ * work, such as Claude Code's quota probe: its failures are not the work's.
+ */
+export function bookkeeping(call: CallView): boolean {
+  const purpose = call.purpose;
+  switch (purpose) {
+    case null:
+    case 'work':
+      return false;
+    case 'quota_probe':
+      return true;
+    default:
+      unrecognised(purpose);
+      return false;
+  }
+}
+
+/** A call's row badge: how it ended, or, for bookkeeping, what it was, in grey. */
+export function callBadge(call: CallView): { label: string; tone: Tone } {
+  if (bookkeeping(call))
+    return {
+      label: `Quota probe${call.status === null ? '' : ` · ${call.status}`}`,
+      tone: 'neutral',
+    };
+  return statusBadge(callStatus(call));
+}

@@ -95,6 +95,9 @@ const terminalCauses = [
 export type TerminalCause = (typeof terminalCauses)[number];
 const attemptPhases = ['upload', 'awaiting_head', 'response'] as const;
 /** Why TGV answered a call without forwarding it. */
+const callPurposes = ['work', 'quota_probe'] as const;
+/** Why a client sent a call: its session's work, or a check of its own. */
+export type CallPurpose = (typeof callPurposes)[number];
 const callRejections = [
   'too_large',
   'buffer_full',
@@ -277,6 +280,8 @@ export interface CallView {
   rejection: Stored<CallRejection> | null;
   /** The operator state revision the call was planned against. */
   operator_revision: number | null;
+  /** Why the client sent it, once derived; null before then, or from an older daemon. */
+  purpose: Stored<CallPurpose> | null;
 }
 export interface ToolCallRecord {
   call_id: string | null;
@@ -556,6 +561,9 @@ const callView = object<CallView>({
   response: nullable(bodyView),
   rejection: nullable(label(callRejections)),
   operator_revision: nullable(count),
+  // Absent from daemons older than the field: read as not derived.
+  purpose: (value, path) =>
+    value === undefined || value === null ? null : label(callPurposes)(value, path),
 });
 const inspection = object<InspectionRecord>({
   coverage: label(coverages),

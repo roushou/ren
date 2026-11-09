@@ -43,6 +43,7 @@ export function callFixture(id: CallId = callId(1), overrides: Partial<CallView>
     request: { observed_bytes: null, stored_bytes: 0, ending: 'open' },
     response: null,
     rejection: null,
+    purpose: null,
     operator_revision: null,
     ...overrides,
   };
