@@ -42,7 +42,8 @@ backed up, and pruned.
   stored once. Storage is host-local; a process lock prevents two daemon writers.
 - While a response streams, the recorder also sends progress updates to live
   viewers who ask for them (see [live feed](api.md#live-feed)): the redacted end of
-  the reply so far and the tools begun. They are never stored; only the finished
+  the reply so far, the tools begun, and whether the model is thinking. They are
+  never stored; only the finished
   call's derived activity below is.
 - `tgv.sqlite3` also holds each finished call's derived activity and its
   full-text index (prompts, replies, tool input and output; see
@@ -61,10 +62,10 @@ backed up, and pruned.
 A **call** is one client request; each try against the upstream is an
 **attempt**. A call has one attempt unless a fallback rule replays it (see
 [Policy](policy.md)). A call records its provider and wire format
-(`anthropic_messages` or `openai_responses`); each attempt records the upstream
+(`anthropic_messages`, `openai_responses`, or `openai_chat_completions`); each attempt records the upstream
 entry it went to and that entry's provider. A call also records its caller
 (`caller`: `kind`, `user`, `login`): the [named user](policy.md#named-users)
-it proved to be, if any; calls recorded before callers were have none. Each
+it proved to be, if any; `caller` is `null` on calls stored without one. Each
 attempt records how it ended, kept apart from the HTTP status and the model
 outcome:
 
@@ -119,7 +120,10 @@ restart) and the close code. A call ended by an unresponsive upstream records
 When the gateway answers instead of the provider, the status says why: `503` when
 the concurrency limit is reached or the daemon is shutting down, `429` when the
 caller's own limit is (see [named users](policy.md#named-users)), `502` when the
-connection or send failed, and `504` when no response head arrived in time.
+connection or send failed, `504` when no response head arrived in time, `409`
+when an operator cancelled the call (`tgv_operator_cancelled`), and `400` when the
+client cancelled the call before a response head (its upload failed or stopped).
+Pauses and blocks are in [Policy](policy.md#operator-controls).
 Provider responses, including errors and redirects, pass through unchanged and are
 never retried, except where an opt-in fallback rule names the status. Default
 limits are 32 concurrent requests, 10 seconds to connect, 120 seconds to response
@@ -153,13 +157,14 @@ Inspection reads only captured bytes. It is bounded to 1 MiB per SSE event, 16 M
 per JSON body, 64 MiB of decoded output, and 128 distinct tool calls. Gzip,
 Zstandard, and Brotli are decoded only for inspection; capture and forwarding keep
 the compressed bytes. Other encodings, and several stacked encodings, are reported
-as unavailable. Responses recorded before Brotli support keep the label
-`unsupported`, so their previews stay raw bytes. Codex can omit
+as unavailable. An attempt whose stored encoding is `unsupported` previews as raw
+bytes. Codex can omit
 `Content-Type` on `/responses`; TGV then assumes SSE and records the format as
 inferred. Metadata-only capture cannot provide usage or model completion.
 
 Client tool-execution telemetry, quota parsing, configuration reload, protocol
-translation, and re-inspection of stored bodies are not implemented.
+translation, and re-inspection of stored responses are not implemented (activity
+is derived again from stored bodies; inspection is not).
 
 Protocol references: [Anthropic streaming](https://platform.claude.com/docs/en/build-with-claude/streaming)
 and [OpenAI Responses events](https://developers.openai.com/api/reference/resources/responses/streaming-events).
@@ -211,7 +216,7 @@ the filesystem, so files keep their allocated size; `/api/storage` reports both
 allocated and in-use bytes. There is no automatic `VACUUM`, secure-erasure
 guarantee, or backup cleanup. Monitor actual filesystem space too.
 
-Retention changes history: old links can return `404`, expired cursors return
-`400`, and the live feed reports `gone`. Refresh from the start. Session counts
+Retention changes history: old links can return `404`, and the live feed reports
+`gone`; a pagination cursor stays valid and continues after the pruned calls. Refresh from the start. Session counts
 describe retained calls, and a resumed client whose entire session expired receives
 a new TGV session ID. Raw captures cannot be recovered through TGV after pruning.

@@ -52,8 +52,8 @@ interrupt, or if the first connection fails.
 
 ## Activity
 
-`tgv turn` shows what an agent did for one user prompt, read from the recorded
-bodies when asked:
+`tgv turn` shows what an agent did for one user prompt, assembled from each of
+its calls' activity, derived when the call finished:
 
 - `prompt`: the user's own words, without the context a client adds to user
   messages (Claude Code's `<system-reminder>` blocks and the `Tool loaded.` it
@@ -199,33 +199,36 @@ stderr.
 ## Endpoints
 
 Every JSON body carries `"api_version": 1`; errors are `{api_version, error}` with
-`error` one of `not_found`, `invalid_query`, `busy`, or `unavailable`. An
-identifier that is not one is `not_found`; an unknown query parameter is
-`invalid_query`. The control API (`/control/v1`) is versioned separately.
+`error` one of `not_found`, `invalid_query`, `busy`, `unavailable`, or
+`identity_refused` (`401`, from `/api/caller` only). An identifier that is not one
+is `not_found`, and an unknown query parameter is `invalid_query`, except on the
+body routes (a malformed call ID or direction) and `/api/live` (an unknown
+parameter), which answer a plain-text `400`. The [control API](#control-api)
+(`/control/v1`) is versioned separately.
 A body export answers with the raw bytes (`application/octet-stream`) only when
 the body was stored whole; otherwise `not_found`. At most two run at once
 (`busy`), and the UI does not forward it.
 
-| Endpoint                                                               | Result                                                                                                                                                          |
-| ---------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `GET /health`                                                          | `ok` or `degraded` (HTTP 503), the build, the operator state (read-only), recorder counters                                                                     |
-| `GET /api/metrics`                                                     | Recorder counters and storage usage                                                                                                                             |
-| `GET /api/caller`                                                      | How the gateway identifies this request's caller (`kind`, `user`, `login`), as it would a forwarded call; `401` `identity_refused` for a refused token or login |
-| `GET /api/storage`                                                     | Active retention policy, disk usage of the database files, calls with derived activity, and the per-body capture limit (`capture.body_limit_bytes`)             |
-| `GET /api/calls?limit=100`                                             | Filtered, paginated calls, newest first (see [search](#call-search))                                                                                            |
-| `GET /api/calls/{call-id}`                                             | One call with its attempts, inspection, and observation log                                                                                                     |
-| `GET /api/calls/{call-id}/body/{request\|response}`                    | Bounded body preview                                                                                                                                            |
-| `GET /api/calls/{call-id}/body/{request\|response}/export`             | The complete captured body as raw bytes, as `tgv inspect --body` exports it                                                                                     |
-| `GET /api/sessions?limit=100`                                          | Recent sessions with call, turn, and error counts and token totals                                                                                              |
-| `GET /api/usage?from_ms=&until_ms=`                                    | Calls, errors, and tokens in total, by UTC hour, by model, and by user (see [usage](#usage))                                                                    |
-| `GET /api/sessions/{session-id}/calls?limit=100`                       | One session's calls, oldest first                                                                                                                               |
-| `GET /api/sessions/{session-id}/turns?limit=100`                       | A session's turns, newest first, with prompt excerpts (see [activity](#activity))                                                                               |
-| `GET /api/search?q=&field=&session=&client=&from_ms=&until_ms=&limit=` | [Full-text search](#search), newest call first                                                                                                                  |
-| `GET /api/exposures?session=&from_ms=&until_ms=&limit=`                | [Exposed secrets](#exposed-secrets), newest call first                                                                                                          |
-| `GET /api/sessions/{session-id}/report`                                | A session's [context and cost report](#session-report)                                                                                                          |
-| `GET /api/turns/{turn-id}`                                             | One turn's [activity](#activity)                                                                                                                                |
-| `GET /api/calls/{call-id}/activity`                                    | One call's [activity](#activity)                                                                                                                                |
-| `GET /api/live?after={seq}`                                            | Server-sent events as observations commit                                                                                                                       |
+| Endpoint                                                               | Result                                                                                                                                                                                                         |
+| ---------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /health`                                                          | `ok` or `degraded` (HTTP 503), the build, the instance (`environment`: `production` or `development`), a summary of the operator state (pause, and how many sessions and users are blocked), recorder counters |
+| `GET /api/metrics`                                                     | Recorder counters and storage usage                                                                                                                                                                            |
+| `GET /api/caller`                                                      | How the gateway identifies this request's caller (`kind`, `user`, `login`), as it would a forwarded call; `401` `identity_refused` for a refused token or login                                                |
+| `GET /api/storage`                                                     | Active retention policy, disk usage of the database files, calls with derived activity, and the per-body capture limit (`capture.body_limit_bytes`)                                                            |
+| `GET /api/calls?limit=100`                                             | Filtered, paginated calls, newest first (see [search](#call-search))                                                                                                                                           |
+| `GET /api/calls/{call-id}`                                             | One call with its attempts, inspection, and observation log                                                                                                                                                    |
+| `GET /api/calls/{call-id}/body/{request\|response}`                    | Bounded body preview                                                                                                                                                                                           |
+| `GET /api/calls/{call-id}/body/{request\|response}/export`             | The complete captured body as raw bytes, as `tgv inspect --body` exports it                                                                                                                                    |
+| `GET /api/sessions?limit=100`                                          | Recent sessions with call, turn, and error counts and token totals                                                                                                                                             |
+| `GET /api/usage?from_ms=&until_ms=`                                    | Calls, errors, and tokens in total, by UTC hour, by model, and by user (see [usage](#usage))                                                                                                                   |
+| `GET /api/sessions/{session-id}/calls?limit=100`                       | One session's calls, oldest first                                                                                                                                                                              |
+| `GET /api/sessions/{session-id}/turns?limit=100`                       | A session's turns, newest first, with prompt excerpts (see [activity](#activity))                                                                                                                              |
+| `GET /api/search?q=&field=&session=&client=&from_ms=&until_ms=&limit=` | [Full-text search](#search), newest call first                                                                                                                                                                 |
+| `GET /api/exposures?session=&from_ms=&until_ms=&limit=`                | [Exposed secrets](#exposed-secrets), newest call first                                                                                                                                                         |
+| `GET /api/sessions/{session-id}/report`                                | A session's [context and cost report](#session-report)                                                                                                                                                         |
+| `GET /api/turns/{turn-id}`                                             | One turn's [activity](#activity)                                                                                                                                                                               |
+| `GET /api/calls/{call-id}/activity`                                    | One call's [activity](#activity)                                                                                                                                                                               |
+| `GET /api/live?after={seq}`                                            | Server-sent events as observations commit                                                                                                                                                                      |
 
 Omit `after` for the first page; pass the returned `next` cursor unchanged for the
 next one. The CLI accepts the same cursor with `timeline --after`. Pages order by
@@ -240,7 +243,7 @@ cross-origin browser access enabled.
 ### Session totals
 
 Each session in `/api/sessions` carries `error_count`, the model calls (`kind=model`)
-the `errors` status filter would find, and `tokens: {input, output}`, summed from provider-reported
+the `errors` status filter would find, and `tokens: {input, output, cache_read}`, summed from provider-reported
 usage. Input includes cached context whichever way each call's provider accounts
 for it; a total is `null` when no call reported usage. Token counts are not
 subscription allowance or charges.
@@ -253,7 +256,7 @@ subscription allowance or charges.
 them into local days), and `models` (each provider and reported model, most input
 first; `model` is `null` when no response reported one), and `users` (each named
 user, most input first; `user` is `null` for calls no named user made: unlisted
-and unidentified callers, and calls recorded before callers were). Each carries `calls`,
+and unidentified callers, and calls stored without a caller). Each carries `calls`,
 `errors` (model calls the `errors` status filter finds, as in session totals), and `tokens: {input, output,
 cache_read}`, with input including cached context as in session totals. Unknown
 parameters and a reversed range are rejected.
@@ -270,6 +273,38 @@ counted as modifications. The revision is read when the `tgv-rs` package is
 compiled, so after editing a tracked file without staging it, `-dirty` can
 appear only after that package is rebuilt.
 
+### Control API
+
+`/control/v1` changes the operator state; see [operator controls](policy.md#operator-controls)
+for who may call it. A request with `Origin` or `Sec-Fetch-Site` is refused (`403`
+`cross_site`); one with a `Tailscale-User-Login` must name a login in
+`control.tailscale_logins` (`403` `forbidden`); any other needs
+`Authorization: Bearer <control.token>` (`401` `unauthorized`). Responses are
+never cached, and errors are `{api_version, error}`.
+
+`GET /control/v1/state`, and every command that succeeds, answer
+`{api_version, state, running}`: `state` is `{revision, pause, blocked_sessions,
+blocked_users}` (`pause` is `{"state": "running"}` or `paused` with its
+`retry_after`; each block ends at a time (`{"kind": "time", "at": <ms>}`) or when
+unblocked (`{"kind": "unblocked"}`)), and `running` lists the running calls
+(`call`, `transport`, `user`).
+
+| Endpoint                                      | Body                                           | Notes                                                                                                                    |
+| --------------------------------------------- | ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| `POST /control/v1/pause`                      | `{"retry_after_seconds": 1–3600}`, required    | `tgv control pause --retry-after` (default 30)                                                                           |
+| `POST /control/v1/resume`                     | none                                           |                                                                                                                          |
+| `POST /control/v1/sessions/{session}/block`   | optional `{"duration_seconds": 1–604800}`      | `{session}` is the client's session UUID; without a duration, until unblocked                                            |
+| `POST /control/v1/sessions/{session}/unblock` | none                                           |                                                                                                                          |
+| `POST /control/v1/users/{user}/block`         | optional `{"duration_seconds": 1–604800}`      | only a configured user; any other name is `404` `not_found`                                                              |
+| `POST /control/v1/users/{user}/unblock`       | none                                           |                                                                                                                          |
+| `POST /control/v1/calls/{call}/cancel`        | optional `{"block_session_seconds": 1–604800}` | `202` with the state, or `200` when the session is blocked too; `404` `not_running`                                      |
+| `POST /control/v1/backup`                     | none                                           | `{api_version, backup}` with the copy's counts; `409` `backup_running`, `503` `backup_incomplete`, `500` `backup_failed` |
+
+A malformed body or a value out of range is `400` `invalid_request`, and a
+malformed session ID is `404` `not_found`. A command the recorder cannot record
+is not made: `503` `unrecorded` when the recorder has no room now (try again),
+`500` `unrecordable` when its record cannot be written.
+
 ## Live feed
 
 `GET /api/live` streams `observation` events, one per committed observation
@@ -277,8 +312,8 @@ appear only after that package is rebuilt.
 `call_finished`, `call_recovered`, `channel_closed`, `operator_action`). Each event's `id` is its sequence number. Without
 `after`, only new observations are sent; with `after` (or a `Last-Event-ID` header,
 which browsers send on reconnect) the feed first replays retained observations after
-that position. A `gone` event means the position was removed by retention: reload
-and reconnect without `after`. A `lagged` event means the subscriber fell behind
+that position. A `gone` event (`{"oldest_retained": <seq>}`) means the position was
+removed by retention: reload and reconnect without `after`. A `lagged` event means the subscriber fell behind
 and the feed is catching up from storage. An `error` event means the daemon could not read its store; the feed then ends.
 The stream also ends when the daemon shuts down.
 Observations describe what was recorded, not model or tool state.

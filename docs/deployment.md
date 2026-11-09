@@ -180,8 +180,8 @@ operator had already paused stays paused. With `--https-port`, it adds a Serve
 route only when that port is free, accepts one that already proxies to the
 configured listener, and refuses a port used by anything else or exposed through
 Funnel. `--sudo-tailscale` uses `sudo -n` for that step; `--skip-backup` skips the
-backup. On a failed `doctor` it stops with the rollback instructions. Without
-`--https-port` it leaves Tailscale untouched. Review the configuration after the
+backup. On a failed `doctor` it stops with the rollback instructions. With no
+`--https-port` given or saved, it leaves Tailscale untouched. Review the configuration after the
 first run.
 
 With `--ui-https-port` (which needs `--https-port`), it also deploys the
@@ -193,8 +193,8 @@ Tailscale URLs), stops `tgv-ui.service`, keeps the deployed copy as
 `tgv-ui.previous`, swaps in the new one, installs the unit from
 `deploy/tgv-ui.service` with the Node found on `PATH`, starts it, and checks the
 UI's `/health`, which relays the daemon's. It then publishes the UI on that port
-under the same rules as the daemon's port. Without `--ui-https-port`, the UI is
-left untouched.
+under the same rules as the daemon's port. With no `--ui-https-port` given or saved,
+the UI is left untouched.
 
 ### Dev slot
 
@@ -218,7 +218,7 @@ cargo xtask dev down         # stop the slot and remove the preview's routes
 | -------- | ----------------------------------------------------------------------- | ----------------------------------------- |
 | Units    | `tgv-dev-provider`, `tgv-dev-daemon`, `tgv-dev-traffic`, `tgv-dev-ui`   | `tgv`, `tgv-ui`                           |
 | Loopback | fake provider `18999`, daemon `18787`, UI `13000`, traffic API `13001`  | daemon `8787`, UI `3000`                  |
-| Tailnet  | `9443` (gateway), `9444` (UI)                                           | your `--https-port` and `--ui-https-port` |
+| Tailnet  | `9443` (gateway), `9444` (UI), with `dev up --ui`                       | your `--https-port` and `--ui-https-port` |
 | Files    | `~/.config/tgv-dev`, `~/.local/state/tgv-dev`, `~/.local/share/tgv-dev` | `~/.config/tgv`, `~/.local/state/tgv`     |
 
 The units are transient systemd user units, stopped by name. The dev
@@ -240,9 +240,11 @@ usage when a request asks for caching, thinks (Messages) or reasons
 (Responses) before answering when asked to, and stops at a request's
 `max_tokens`. The generated requests ask as coding agents do, and about one
 Claude Code call in ten is a side call with no turn (a title or a quota probe).
-So a real client can run against the slot:
+So a real client can run against the slot, on the host or, after `dev up --ui`,
+from the tailnet:
 
 ```sh
+tgv run claude --gateway http://127.0.0.1:18787
 tgv run claude --gateway https://<node>:9443
 ```
 
@@ -326,7 +328,9 @@ The UI may instead run on your laptop with `TGV_GATEWAY_URL` set to the daemon's
 Tailscale URL; no UI process is required on the VPS.
 
 Tailnet access rules govern both forwarding and inspection; allow only intended
-users/devices to reach this port. TGV has no separate gateway login. Keep it private
+users/devices to reach this port. TGV has no separate gateway login; [named
+users](policy.md#named-users) identify callers and can be limited or blocked, but
+do not replace tailnet access rules. Keep it private
 with Serve, not Funnel or a public reverse proxy. The gateway removes Tailscale
 identity/capability and standard forwarding headers before contacting providers;
 provider authentication remains unchanged. Inspect `tailscale serve status --json`

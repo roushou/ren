@@ -86,7 +86,7 @@ TGV-specific applications:
 
 - **Identities:** channels, calls, attempts, sessions, turns, and tool calls each get
   their own type (`tgv_recorder::id`). Provider-native identifiers keep separate types
-  (`ClaudeSessionId` is not `SessionId`).
+  (`NativeSessionId` is not `SessionId`).
 - **Vocabularies:** a closed set of labels is an enum deriving `strum`'s
   `Display`, `EnumString`, `IntoStaticStr`, and `VariantArray` with
   `serialize_all = "snake_case"`, plus `serde_with`'s `SerializeDisplay` and
@@ -245,9 +245,11 @@ dependencies under "Crates" below. Read the code for current module ownership.
   directly; no framework-independent HTTP adapter layer. It also owns retry
   eligibility (`retry`), operator state (`operator`), the named users and
   how a request is matched to one (`user`: `Users::identify`, with
-  `TokenDigest`, a user token's digest), the `Controls` that hold
-  it with the running-call registry (`control`), the `Build` that `/health`
-  reports (`build`), and pure call planning
+  `TokenDigest`, a user token's digest), each user's and the unnamed
+  callers' concurrency limits (`limits`), the `Controls` that hold
+  it with the running-call registry (`control`), the `Build` and the
+  instance's environment (`instance`) that `/health` reports (`build`), and
+  pure call planning
   (`policy`: block, transform, and fallback rules validated at load, with
   protected headers and body paths), and the call's way through its
   candidates (`call`: `CallRun`, which `Gateway::forward` carries out).

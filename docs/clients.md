@@ -7,7 +7,7 @@ Live subscription traffic has been exercised with Claude Code and Codex. Pi has
 been validated against local mock providers; live Pi subscription access is
 unvalidated. OpenCode support follows OpenCode 2.2.6's documentation and source
 and is covered by unit tests with synthetic headers; it has not been run against
-TGV yet.
+TGV.
 
 ## Diagnose and launch
 
@@ -68,7 +68,7 @@ Claude Code receives it in `ANTHROPIC_CUSTOM_HEADERS`, after any headers you
 set there (Claude Code 2.1.227 or later). Codex's provider override always names
 it in `env_http_headers`, so Codex sends it whenever `TGV_USER_TOKEN` is set. The
 Pi extension reads `TGV_USER_TOKEN` and refuses to load if it is set but is not a
-TGV user token. OpenCode does not send it yet: where its configuration takes
+TGV user token. OpenCode does not send it: where its configuration takes
 extra headers is not confirmed, so its calls are recorded by Tailscale login or
 as unidentified, and `run` says so. `--dry-run` shows the token as
 `<redacted>`. The gateway removes the header before forwarding.
@@ -97,8 +97,9 @@ nothing names a gateway and the local daemon fails its preflight, `run` says so
 and points to `tgv init`; no command prompts on its own.
 
 A selected gateway skips local history/upstream checks; remote storage is
-queried through the API. History commands (`history`, `sessions`, `timeline`,
-`inspect`), `tgv tail`, and `tgv control` use the same gateway; `--config` or `--data-dir`
+queried through the API. Every history command (`history`, `sessions`, `timeline`,
+`turns`, `turn`, `activity`, `search`, `exposures`, `report`, `inspect`),
+`tgv tail`, `tgv mcp`, and `tgv control` use the same gateway; `--config` or `--data-dir`
 without `--gateway` keeps them on this host (see [History](api.md#cli) and
 [operator controls](policy.md#operator-controls)).
 Root URLs cannot contain credentials, queries, fragments, or provider suffixes;
@@ -201,7 +202,7 @@ Usage is recorded only when the client asks for it in a stream
 nothing about how much was used. A stream that ends before `data: [DONE]` is
 recorded without terminal evidence. No harness is attributed, so these calls have
 no session or turn. Local servers that need no key (Ollama, vLLM, llama.cpp, LM
-Studio) are not supported yet: every Chat Completions entry holds an operator key.
+Studio) are not supported: every Chat Completions entry holds an operator key.
 
 ## Codex
 
@@ -229,7 +230,7 @@ and Codex falls back to HTTP/SSE for the session. Handshakes beyond
 counts against `max_concurrent_requests`; an idle socket does not. TGV pings
 each leg after `websocket.keepalive_seconds` (default 30) of silence and closes
 a socket whose client or upstream stays silent for twice that, so a vanished
-client (a laptop asleep behind Tailscale Serve) no longer holds a channel. A
+client (a laptop asleep behind Tailscale Serve) does not hold a channel. A
 running call whose upstream sends nothing within the response header timeout
 (before its first message) or the stream idle timeout (after) closes the socket
 too, as an HTTP stream would end; Codex reconnects for its next turn and resends
@@ -267,7 +268,7 @@ destinations separate:
 | -------------- | ---------------- | --------------------------------------- |
 | `anthropic`    | `/anthropic`     | `https://api.anthropic.com`             |
 | `openai-codex` | `/codex`         | `https://chatgpt.com/backend-api/codex` |
-| `openai`       | `/openai/v1`     | `https://api.openai.com/v1`             |
+| `openai`       | `/openai/v1`     | `https://api.openai.com`                |
 
 Set `openai_base_url` to the public OpenAI upstream **root** (default
 `https://api.openai.com`). Route availability does not guarantee that a

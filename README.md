@@ -20,7 +20,7 @@ as it happens, without changing a byte of the traffic.
 ## Overview
 
 TGV sits between your coding agents and their providers. `tgv run claude` (or
-`codex`, or `pi`) points a client at TGV for one session without editing its
+`codex`, `pi`, or `opencode`) points a client at TGV for one session without editing its
 configuration. TGV forwards each request unchanged with the client's own
 sign-in, records the request and response on the side, and serves that history
 to the CLI, a read-only API, and the optional web UI, on the same machine or
@@ -33,11 +33,13 @@ from another one on your tailnet.
   export.
 - **Usage:** calls, errors, and tokens by hour, day, model, and session.
 - **Truthful outcomes:** interrupted and unknown endings never count as success.
-- **Faithful forwarding:** payloads pass through unchanged; capture loss is
-  counted.
+- **Faithful forwarding:** payloads pass through unchanged unless you configure a
+  transform, which is recorded; capture loss is counted.
+- **Named users:** who made each call, by Tailscale login or user token, with
+  per-user limits and blocks.
 - **Operator controls:** pause, block, or cancel from the CLI or another machine.
-- **Opt-in failover:** retry a rate-limited call with an Anthropic API key, only
-  when that is safe.
+- **Opt-in failover:** retry a rate-limited call with your own API key for that
+  provider (not Codex), only when that is safe.
 - **Your machine, your data:** your clients' own sign-in; history stays on your
   host.
 
@@ -66,6 +68,7 @@ tgv doctor
 tgv run claude
 tgv run codex
 tgv run pi -- --model anthropic/<model-id>
+tgv run opencode
 ```
 
 When the daemon runs on another machine, such as a VPS on your tailnet, save its
@@ -137,7 +140,8 @@ listener.
 - [Recording](docs/recording.md): capture, inspection, backup, and retention
 - [History and API](docs/api.md): CLI history commands, the MCP server for
   agents, and the management API
-- [Policy](docs/policy.md): buffering, rules, failover, and operator controls
+- [Policy](docs/policy.md): buffering, rules, failover, named users, and operator
+  controls
 - [Deployment](docs/deployment.md): launchd, systemd, containers (Docker and
   Podman), and Tailscale
 - [Architecture](docs/architecture.md): how TGV is built
