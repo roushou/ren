@@ -177,3 +177,22 @@ test('the status text shows connection state beside the last update', () => {
   );
   assert.match(LiveFollow.summary({ kind: 'reloading' }, null), /reloading/);
 });
+
+test('progress events parse at the boundary and keep a bounded, newest-last set', async () => {
+  const { Streaming } = await import('../src/lib/streaming.ts');
+  const call = '00000000-0000-4000-8000-000000000001';
+  const update = Streaming.parse(
+    JSON.stringify({ call, reply: 'Hi', cut: false, tools: ['Bash'] }),
+  );
+  assert.equal(update?.reply, 'Hi');
+  assert.equal(Streaming.parse('{"call":"nope","reply":"x","cut":false,"tools":[]}'), null);
+  assert.equal(Streaming.parse('not json'), null);
+  const calls = new Map();
+  for (let n = 0; n < Streaming.MAX_CALLS + 5; n++) {
+    Streaming.keep(calls, { call: callId(n), reply: String(n), cut: false, tools: [] });
+  }
+  assert.equal(calls.size, Streaming.MAX_CALLS);
+  // The oldest went first; a call updated again moves to the end.
+  assert.equal(calls.has(callId(0)), false);
+  assert.equal([...calls.keys()].at(-1), callId(Streaming.MAX_CALLS + 4));
+});

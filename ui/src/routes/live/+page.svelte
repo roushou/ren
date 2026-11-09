@@ -35,7 +35,8 @@
   import type { PageProps } from './$types';
 
   let { data }: PageProps = $props();
-  getWorkbench().showScope(scope);
+  const workbench = getWorkbench();
+  workbench.showScope(scope);
   const snapshot = createSnapshot(() => data.live);
   const current = $derived(snapshot.current.value);
 
@@ -635,6 +636,25 @@
                 <p class="live-sep live" class:open={unread.call.state === 'open'}>
                   call {unread.index} · {unreadLabel(unread, board.now)}
                 </p>
+                {@const streamed = workbench.streamed.get(unread.call.id)}
+                {#if streamed}
+                  {#each streamed.tools as tool, index (index)}
+                    <div class="live-tool live-streaming-tool">
+                      <span class="live-tool-icon"><Icon name="tool" size={12} /></span><b>{tool}</b
+                      >
+                    </div>
+                  {/each}
+                  {#if streamed.reply}
+                    <div
+                      class="live-step-reply live-streaming"
+                      class:writing={unread.call.state === 'open'}
+                    >
+                      {#if streamed.cut}<span class="live-streaming-cut">…</span>{/if}<Markdown
+                        text={streamed.reply}
+                      />
+                    </div>
+                  {/if}
+                {/if}
               {/each}
               {#if !tile.prompt && !tile.lines.length && !tile.unread.length}
                 <p class="live-wait">
@@ -1338,6 +1358,27 @@
   .live-tile-body > .live-step-reply {
     flex: none;
     margin: 0 0 6px;
+  }
+  /* A reply while its call streams, from the live feed: a caret while it is
+     still being written; the read reply replaces it once the call is done. */
+  .live-streaming {
+    color: var(--muted);
+  }
+  .live-streaming.writing :global(.markdown > :last-child)::after {
+    content: '▍';
+    margin-left: 1px;
+    color: var(--accent);
+    animation: live-caret 1s steps(1) infinite;
+  }
+  @keyframes live-caret {
+    50% {
+      opacity: 0;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .live-streaming.writing :global(.markdown > :last-child)::after {
+      animation: none;
+    }
   }
   .live-step-reply :global(.markdown) {
     font-size: 12.5px;

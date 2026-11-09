@@ -175,7 +175,11 @@
       void preloadCode(route);
   });
   onMount(() => {
-    live = new LiveConnection({ refresh: reload, reload });
+    live = new LiveConnection({
+      refresh: reload,
+      reload,
+      progress: (update) => workbench.stream(update),
+    });
     return () => live?.destroy();
   });
   $effect(() => {
