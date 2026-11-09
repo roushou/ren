@@ -3,6 +3,7 @@
 
 mod provider;
 mod seed;
+mod shot;
 mod slot;
 
 use crate::{
@@ -12,8 +13,10 @@ use crate::{
 use clap::{Args, Subcommand};
 use provider::{FakeProvider, ProviderError};
 use seed::{Scenario, SeedError, Seeder};
+use shot::{Camera, Page};
 use slot::{Preview, Slot, Unit};
 use std::net::SocketAddr;
+use std::path::PathBuf;
 use tgv_harness::host::HostEnv;
 
 /// A development slot with fake providers and fake data.
@@ -47,6 +50,22 @@ enum DevAction {
     /// Start or stop a steady trickle of fake calls (one every few
     /// seconds), for pages that follow live traffic.
     Trickle(TrickleArgs),
+    /// Screenshot the dev UI's pages with a headless Chromium.
+    Shot(ShotArgs),
+}
+
+#[derive(Args)]
+struct ShotArgs {
+    /// The pages to capture; every page when none is named.
+    #[arg(value_enum)]
+    pages: Vec<Page>,
+    #[arg(long, default_value_t = 1600)]
+    width: u16,
+    #[arg(long, default_value_t = 900)]
+    height: u16,
+    /// Where to write the PNGs (default: target/dev-shots in the checkout).
+    #[arg(long)]
+    out: Option<PathBuf>,
 }
 
 #[derive(Args)]
@@ -120,6 +139,8 @@ pub enum DevError {
     NotReady(SocketAddr),
     #[error(transparent)]
     Seed(#[from] SeedError),
+    #[error("no headless Chromium found: set TGV_CHROME, or install chrome-headless-shell")]
+    NoChrome,
 }
 
 impl Dev {
@@ -158,6 +179,20 @@ impl Dev {
                     &slot.data_dir,
                     args.forever,
                 )?;
+                Ok(())
+            }
+            DevAction::Shot(args) => {
+                let slot = Slot::new(env)?;
+                let out = args
+                    .out
+                    .unwrap_or_else(|| slot.repo.join("target/dev-shots"));
+                let pages = if args.pages.is_empty() {
+                    Page::ALL.to_vec()
+                } else {
+                    args.pages
+                };
+                Camera::new(env, Slot::UI, Slot::DAEMON, out)?
+                    .shoot(&pages, (args.width, args.height))?;
                 Ok(())
             }
             DevAction::Trickle(args) => {
