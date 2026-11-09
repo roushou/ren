@@ -123,7 +123,7 @@ The secret itself is never stored or shown: an exposure keeps its `kind`, the
 repeats of one secret), and how often it appeared. Activity and search keep
 text with each secret replaced by `«redacted: kind»`; captured bodies are kept as
 recorded. Session reports and `tgv turn` list exposures as `secret_exposure`
-findings, and the Overview's health line counts the last day's. A secret sent to
+findings, and the Overview lists the last day's first under Needs attention. A secret sent to
 a provider should be rotated: TGV cannot recall it. The scan covers the newest
 input of each call, not the system prompt or older history a client resends.
 

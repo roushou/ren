@@ -38,8 +38,8 @@ and the rest merged, stacked so its top edge is the total (**Ribbon**, the defau
 each in its own lane (**Area**). Its legend sits inside the chart; hovering a series
 outlines its cards, and selecting it shows only its sessions (`?series=`). Then comes a **Now** strip of what happened
 lately, newest first: new sessions, prompts, finished calls, failed tools, bad endings,
-and rate limits, with calls still waiting for a response head kept first. Sessions with a call open, then the most recent, get the
-eight cards; quiet ones dim. Text appears once each call finishes and its activity is
+and rate limits, with calls still waiting for a response head kept first. Pinned sessions, then those with a call open, then the most recent, get
+the eight cards; quiet ones dim. Text appears once each call finishes and its activity is
 derived; whether a call is waiting for its response head or streaming is shown as it
 happens),
 Traffic (`/traffic`), Sessions (`/sessions`: each session's client, its newest prompt, and its folder, what it
