@@ -116,6 +116,8 @@ with its calls, records its caller:
 - `user_token`: a user, by its token in `X-TGV-User-Token`.
   `tgv users token <id>` prints a new token once, with the `token_blake3`
   line that holds its digest; the configuration never holds the token.
+  `tgv run` sends it from `TGV_USER_TOKEN` (see
+  [Clients](clients.md#named-users)).
 - `unlisted`: a Tailscale login no user lists, kept as it came.
 - `unidentified`: no identity. Tailscale Serve sends tagged devices and Funnel
   traffic without one, and a process on this host can reach the loopback

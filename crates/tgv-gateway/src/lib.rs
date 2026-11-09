@@ -424,6 +424,7 @@ impl<U: Upstream> Gateway<U> {
             self.controls.clone(),
             self.clock.clone(),
             self.shutdown.drain_token(),
+            self.config.users.clone(),
         );
         let control = ControlApi::new(
             self.controls.clone(),

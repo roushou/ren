@@ -384,3 +384,43 @@ async fn a_user_at_its_limit_gets_429_until_a_call_ends() {
         .count();
     assert_eq!((calls.len(), busy), (4, 1));
 }
+
+#[tokio::test]
+async fn the_read_api_says_how_it_identifies_a_caller() {
+    let mock = mock(upstream(Arc::default())).await;
+    let dir = tempfile::tempdir().unwrap();
+    let tokens = tokens();
+    let gateway = TestGateway::start(&config(&mock, &tokens), dir.path()).await;
+    let ask = |headers: &'static [(&'static str, &'static str)], token: Option<&str>| {
+        let mut request = client().get(format!("{}/api/caller", gateway.base()));
+        for (name, value) in headers {
+            request = request.header(*name, *value);
+        }
+        if let Some(token) = token {
+            request = request.header(UserToken::HEADER, token);
+        }
+        async move {
+            let response = request.send().await.unwrap();
+            let status = response.status();
+            let body: serde_json::Value =
+                serde_json::from_str(&response.text().await.unwrap()).unwrap();
+            (status, body)
+        }
+    };
+    let (status, body) = ask(&[], Some(tokens.bob.expose())).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        body["caller"],
+        serde_json::json!({ "kind": "user_token", "user": "bob", "login": null })
+    );
+    let (_, body) = ask(&[("tailscale-user-login", "alice@example.com")], None).await;
+    assert_eq!(body["caller"]["kind"], "user_tailscale");
+    let (_, body) = ask(&[], None).await;
+    assert_eq!(body["caller"]["kind"], "unidentified");
+    let (status, body) = ask(&[], Some(tokens.unknown.expose())).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    assert_eq!(body["error"], "identity_refused");
+    gateway.stop().await;
+    // Asking records nothing.
+    assert!(recorded(dir.path()).await.is_empty());
+}

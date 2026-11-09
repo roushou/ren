@@ -1,7 +1,7 @@
 //! Session-only client overrides. Authentication remains owned by the client.
 use crate::{
     Harness,
-    endpoint::GatewayEndpoint,
+    endpoint::{GatewayEndpoint, UserToken},
     host::HostEnv,
     pi::{PiCache, PiCacheError},
 };
@@ -51,13 +51,50 @@ impl From<String> for LaunchArg {
     }
 }
 
+/// One environment variable's value for the client. A secret is passed to
+/// the client but shown as `<redacted>` in a dry run.
+#[derive(Clone)]
+pub enum EnvValue {
+    Plain(String),
+    Secret(String),
+}
+
+impl EnvValue {
+    fn expose(&self) -> &str {
+        match self {
+            Self::Plain(value) | Self::Secret(value) => value,
+        }
+    }
+}
+
+impl Serialize for EnvValue {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self {
+            Self::Plain(value) => serializer.serialize_str(value),
+            Self::Secret(_) => serializer.serialize_str("<redacted>"),
+        }
+    }
+}
+
+impl From<String> for EnvValue {
+    fn from(value: String) -> Self {
+        Self::Plain(value)
+    }
+}
+
+impl From<&str> for EnvValue {
+    fn from(value: &str) -> Self {
+        Self::Plain(value.into())
+    }
+}
+
 #[derive(Serialize)]
 pub struct LaunchPlan {
     #[serde(skip)]
     harness: Harness,
     pub executable: &'static str,
     pub arguments: Vec<LaunchArg>,
-    pub environment: BTreeMap<String, String>,
+    pub environment: BTreeMap<String, EnvValue>,
 }
 
 impl Harness {
@@ -75,12 +112,12 @@ impl Harness {
                 plan.executable = "pi";
                 plan.arguments = vec!["--extension".into(), LaunchArg::PiExtension];
                 plan.environment
-                    .insert("TGV_PI_GATEWAY".into(), gateway.url("/").to_string());
+                    .insert("TGV_PI_GATEWAY".into(), gateway.url("/").to_string().into());
             }
             Self::ClaudeCode => {
                 plan.environment.insert(
                     "ANTHROPIC_BASE_URL".into(),
-                    gateway.url("/anthropic").to_string(),
+                    gateway.url("/anthropic").to_string().into(),
                 );
                 plan.environment
                     .insert("CLAUDE_CODE_GATEWAY_HINT_HEADERS".into(), "1".into());
@@ -90,7 +127,8 @@ impl Harness {
                 // Replace the entire provider table so an existing entry cannot
                 // accidentally add a bearer token or credential helper.
                 // WebSockets are offered: a daemon that refuses them answers
-                // 426, and Codex falls back to HTTP/SSE for the session.
+                // 426, and Codex falls back to HTTP/SSE for the session. A
+                // user token is sent from the environment, when it is set.
                 let base = toml::Value::String(gateway.url("/codex").to_string());
                 plan.arguments = vec![
                     "--no-daemon".into(),
@@ -98,7 +136,9 @@ impl Harness {
                     "model_provider=\"tgv_session\"".into(),
                     "--config".into(),
                     format!(
-                        "model_providers.tgv_session={{name=\"TGV\",base_url={base},wire_api=\"responses\",requires_openai_auth=true,supports_websockets=true}}"
+                        "model_providers.tgv_session={{name=\"TGV\",base_url={base},wire_api=\"responses\",requires_openai_auth=true,supports_websockets=true,env_http_headers={{\"{header}\"=\"{variable}\"}}}}",
+                        header = UserToken::HEADER,
+                        variable = UserToken::ENV,
                     )
                     .into(),
                 ];
@@ -121,7 +161,7 @@ impl Harness {
                     }
                 });
                 plan.environment
-                    .insert(Self::OPENCODE_CONFIG.into(), config.to_string());
+                    .insert(Self::OPENCODE_CONFIG.into(), config.to_string().into());
             }
         }
         plan
@@ -129,9 +169,49 @@ impl Harness {
 
     /// The environment variable opencode reads inline configuration from.
     const OPENCODE_CONFIG: &'static str = "OPENCODE_CONFIG_CONTENT";
+
+    /// Whether a launched session can send a user token. opencode's header
+    /// configuration is not yet confirmed, so it sends none.
+    pub fn sends_user_token(self) -> bool {
+        match self {
+            Self::ClaudeCode | Self::Codex | Self::Pi => true,
+            Self::OpenCode => false,
+        }
+    }
 }
 
 impl LaunchPlan {
+    /// The plan with `token` sent to the gateway on every request. Claude
+    /// Code takes it as a custom header, after any the user set; Codex and
+    /// the Pi extension read it from the environment.
+    #[must_use]
+    pub fn presenting(mut self, token: &UserToken, env: &HostEnv) -> Self {
+        let header = format!("{}: {}", UserToken::HEADER, token.expose());
+        match self.harness {
+            Harness::ClaudeCode => {
+                let headers = match env.get(Self::CUSTOM_HEADERS) {
+                    Some(existing) if !existing.trim().is_empty() => {
+                        format!("{existing}\n{header}")
+                    }
+                    Some(_) | None => header,
+                };
+                self.environment
+                    .insert(Self::CUSTOM_HEADERS.into(), EnvValue::Secret(headers));
+            }
+            Harness::Codex | Harness::Pi => {
+                self.environment.insert(
+                    UserToken::ENV.into(),
+                    EnvValue::Secret(token.expose().into()),
+                );
+            }
+            Harness::OpenCode => {}
+        }
+        self
+    }
+
+    /// Claude Code's extra request headers, one `Name: Value` per line.
+    const CUSTOM_HEADERS: &'static str = "ANTHROPIC_CUSTOM_HEADERS";
+
     /// Build the client command. `extension` replaces the Pi extension
     /// placeholder; without it the placeholder text is passed literally.
     pub fn command(&self, extension: Option<&Path>, args: &[OsString]) -> Command {
@@ -143,7 +223,11 @@ impl LaunchPlan {
                 (LaunchArg::PiExtension, None) => command.arg(PiCache::PLACEHOLDER),
             };
         }
-        command.args(args).envs(&self.environment);
+        command.args(args).envs(
+            self.environment
+                .iter()
+                .map(|(name, value)| (name, value.expose())),
+        );
         command
     }
 
@@ -195,7 +279,8 @@ impl LaunchPlan {
 
 #[cfg(test)]
 mod tests {
-    use super::{GatewayEndpoint, Harness, LaunchArg, OsString, Path, PiCache};
+    use super::{GatewayEndpoint, Harness, HostEnv, LaunchArg, OsString, Path, PiCache};
+    use crate::endpoint::UserToken;
     #[test]
     fn keeps_arguments_literal_and_auth_out_of_overrides() {
         let gateway = GatewayEndpoint::parse("http://[::1]:8787").unwrap();
@@ -228,6 +313,10 @@ mod tests {
                 assert_eq!(
                     provider["base_url"].as_str(),
                     Some("http://[::1]:8787/codex")
+                );
+                assert_eq!(
+                    provider["env_http_headers"]["x-tgv-user-token"].as_str(),
+                    Some("TGV_USER_TOKEN")
                 );
             }
         }
@@ -278,5 +367,41 @@ mod tests {
         let command = plan.command(Some(path), &[OsString::from("--model")]);
         let args: Vec<_> = command.get_args().collect();
         assert_eq!(args, ["--extension", "/cache/tgv/pi/tgv-x.ts", "--model"]);
+    }
+
+    #[test]
+    fn a_user_token_reaches_each_client_and_never_a_dry_run() {
+        let gateway = GatewayEndpoint::parse("http://[::1]:8787").unwrap();
+        let token = UserToken::from_random(7, 9);
+        let env = HostEnv::from_pairs([("ANTHROPIC_CUSTOM_HEADERS", "X-Team: a")]);
+        let sent = |harness: Harness| {
+            let plan = harness.launch(&gateway).presenting(&token, &env);
+            let dry_run = serde_json::to_string(&plan).unwrap();
+            assert!(!dry_run.contains(token.expose()), "{harness:?}");
+            plan.command(None, &[])
+                .get_envs()
+                .filter_map(|(name, value)| {
+                    Some((name.to_str()?.to_owned(), value?.to_str()?.to_owned()))
+                })
+                .collect::<std::collections::BTreeMap<_, _>>()
+        };
+        let claude = sent(Harness::ClaudeCode);
+        assert_eq!(
+            claude["ANTHROPIC_CUSTOM_HEADERS"],
+            format!("X-Team: a\nx-tgv-user-token: {}", token.expose())
+        );
+        for harness in [Harness::Codex, Harness::Pi] {
+            assert_eq!(
+                sent(harness)["TGV_USER_TOKEN"],
+                token.expose(),
+                "{harness:?}"
+            );
+        }
+        assert!(!Harness::OpenCode.sends_user_token());
+        assert!(
+            sent(Harness::OpenCode)
+                .values()
+                .all(|value| !value.contains(token.expose()))
+        );
     }
 }

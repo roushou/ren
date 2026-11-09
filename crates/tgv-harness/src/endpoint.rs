@@ -1,5 +1,6 @@
 //! Gateway roots shared by diagnostics and session launchers, and the user
 //! token a harness presents to the gateway.
+use crate::host::HostEnv;
 use std::net::{IpAddr, SocketAddr};
 use url::Url;
 
@@ -76,6 +77,11 @@ impl GatewayEndpoint {
     }
 }
 
+/// [`UserToken::ENV`] is set but holds no user token.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[error("TGV_USER_TOKEN is not a TGV user token; make one with `tgv users token`")]
+pub struct InvalidUserToken;
+
 /// A user's secret token for the gateway, presented in [`Self::HEADER`].
 /// Never shown in `Debug`. The gateway keeps only its digest.
 #[derive(Clone)]
@@ -85,9 +91,20 @@ impl UserToken {
     /// The request header that carries a user token. It is in TGV's
     /// `x-tgv-` namespace, which the gateway removes before forwarding.
     pub const HEADER: &'static str = "x-tgv-user-token";
+    /// The environment variable that holds a user token: for `tgv run` and
+    /// `tgv doctor`, and for Codex and the Pi extension to send.
+    pub const ENV: &'static str = "TGV_USER_TOKEN";
     /// Marks the token's kind, so it reads as a TGV credential wherever it
     /// turns up.
     const PREFIX: &'static str = "tgvu_";
+
+    /// The token in [`Self::ENV`], if it is set. Its value is never echoed.
+    pub fn from_env(env: &HostEnv) -> Result<Option<Self>, InvalidUserToken> {
+        env.get(Self::ENV)
+            .filter(|value| !value.is_empty())
+            .map(|value| Self::parse(value).ok_or(InvalidUserToken))
+            .transpose()
+    }
 
     /// A token from 256 bits the caller drew from its source of randomness.
     pub fn from_random(first: u128, second: u128) -> Self {

@@ -53,6 +53,31 @@ environment overrides, excluding inherited credentials and your client arguments
 it performs no network or client operations. Launch options target Claude Code
 2.1.316, Codex CLI 0.164.0, Pi 1.0.0, and OpenCode 2.2.6.
 
+### Named users
+
+On a gateway with [named users](policy.md#named-users), a user who is not
+identified by a Tailscale login sets the token `tgv users token` printed for
+them, and `run` sends it:
+
+```sh
+export TGV_USER_TOKEN=tgvu_…
+tgv run claude
+```
+
+Claude Code receives it in `ANTHROPIC_CUSTOM_HEADERS`, after any headers you
+set there (Claude Code 2.1.227 or later). Codex's provider override always names
+it in `env_http_headers`, so Codex sends it whenever `TGV_USER_TOKEN` is set. The
+Pi extension reads `TGV_USER_TOKEN` and refuses to load if it is set but is not a
+TGV user token. OpenCode does not send it yet: where its configuration takes
+extra headers is not confirmed, so its calls are recorded by Tailscale login or
+as unidentified, and `run` says so. `--dry-run` shows the token as
+`<redacted>`. The gateway removes the header before forwarding.
+
+`doctor` (and the preflight of `run` and `init`) reports how the gateway records
+your calls, from [`/api/caller`](api.md#endpoints): as a user by token or by
+Tailscale login, as an unlisted login, or as unidentified. A token the gateway
+does not know fails the check.
+
 For a remote daemon, save its trusted Tailscale HTTPS **root** URL once:
 
 ```sh
