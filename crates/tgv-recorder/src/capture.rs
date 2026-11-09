@@ -168,6 +168,9 @@ pub enum CallRejection {
     /// The call's upstream entry admits only some named users, and the
     /// caller is not one of them (non-retryable `403`).
     UserNotAllowed,
+    /// The caller already had as many calls running as its limit allows
+    /// (`429` with `retry-after`).
+    UserBusy,
 }
 
 /// How a captured body's byte stream ended.

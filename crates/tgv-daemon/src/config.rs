@@ -35,7 +35,7 @@ pub enum ConfigError {
     Version,
     #[error("listen must be loopback; use Tailscale Serve for private remote access")]
     PublicListener,
-    #[error("max_concurrent_requests must be between 1 and 1024")]
+    #[error("max_concurrent_requests and max_concurrent_unnamed must be between 1 and 1024")]
     Concurrency,
     #[error("timeouts must be between 1 and 3600 seconds")]
     Timeout,
@@ -100,6 +100,10 @@ pub struct Config {
     pub openai_base_url: String,
     pub deepseek_base_url: String,
     pub max_concurrent_requests: usize,
+    /// Calls callers that are not named users may have running at once,
+    /// together.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_concurrent_unnamed: Option<u32>,
     pub connect_timeout_seconds: u64,
     pub response_header_timeout_seconds: u64,
     pub stream_idle_timeout_seconds: u64,
@@ -186,6 +190,7 @@ impl Default for Config {
             openai_base_url: "https://api.openai.com".into(),
             deepseek_base_url: "https://api.deepseek.com/anthropic".into(),
             max_concurrent_requests: 32,
+            max_concurrent_unnamed: None,
             connect_timeout_seconds: 10,
             response_header_timeout_seconds: 120,
             stream_idle_timeout_seconds: 120,
@@ -277,6 +282,7 @@ impl Config {
             policy,
             users,
             max_concurrent_requests: self.max_concurrent_requests,
+            max_concurrent_unnamed: self.max_concurrent_unnamed,
             connect_timeout: Duration::from_secs(self.connect_timeout_seconds),
             response_header_timeout: Duration::from_secs(self.response_header_timeout_seconds),
             stream_idle_timeout: Duration::from_secs(self.stream_idle_timeout_seconds),
@@ -323,7 +329,11 @@ impl Config {
         if !self.listen.ip().is_loopback() {
             return Err(ConfigError::PublicListener);
         }
-        if !(1..=1024).contains(&self.max_concurrent_requests) {
+        if !(1..=1024).contains(&self.max_concurrent_requests)
+            || self
+                .max_concurrent_unnamed
+                .is_some_and(|limit| !(1..=1024).contains(&limit))
+        {
             return Err(ConfigError::Concurrency);
         }
         if [
@@ -372,6 +382,7 @@ pub struct RuntimeConfig {
     policy: Policy,
     users: Users,
     max_concurrent_requests: usize,
+    max_concurrent_unnamed: Option<u32>,
     connect_timeout: Duration,
     response_header_timeout: Duration,
     stream_idle_timeout: Duration,
@@ -405,6 +416,7 @@ impl RuntimeConfig {
             policy: self.policy.clone(),
             upstreams: self.upstreams.clone(),
             users: self.users.clone(),
+            max_concurrent_unnamed: self.max_concurrent_unnamed,
         }
     }
     /// Lifecycle records the recorder reserves at once: every admitted call,

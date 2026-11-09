@@ -130,6 +130,14 @@ never ignored, so a caller cannot believe it is identified when it is not.
 Identity protects against other machines, not this one: a local process can
 set any header, including `Tailscale-User-Login`.
 
+A user's `max_concurrent` (1–1024) caps the calls it may have running at once,
+and the top-level `max_concurrent_unnamed` caps those of every caller that is
+not a named user, together. A call over its caller's limit gets `429` with
+`retry-after: 1` (`tgv_user_busy`), recorded as rejection `user_busy`; a
+WebSocket channel counts as one call for its whole life, and a handshake over
+the limit gets `426`, so Codex falls back to HTTP. These limits come before the
+gateway's own `max_concurrent_requests`, which still applies to everyone.
+
 An operator-key entry can be limited to some users:
 
 ```toml

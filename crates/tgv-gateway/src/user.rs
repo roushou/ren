@@ -12,7 +12,7 @@
 //! other machines, not against this one.
 
 use http::HeaderMap;
-use std::collections::HashMap;
+use std::{collections::HashMap, num::NonZeroU32};
 use tgv_recorder::{
     caller::{Caller, Proof, TailscaleLogin, UserId},
     id::IdSource,
@@ -130,6 +130,10 @@ pub struct UserConfig {
     /// The BLAKE3 digest of the user's token (`tgv users token`).
     #[serde(default)]
     pub token_blake3: Option<TokenDigest>,
+    /// Calls the user may have running at once, at most 1024; unlimited
+    /// beyond the gateway's own limit when omitted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_concurrent: Option<NonZeroU32>,
 }
 
 /// Why the configured users are not a valid set.
@@ -143,6 +147,8 @@ pub enum UsersError {
     DuplicateToken(UserId, UserId),
     #[error("user {0} has neither a Tailscale login nor a token, so no request can be it")]
     NoProof(UserId),
+    #[error("user {0}: max_concurrent must be between 1 and 1024")]
+    Concurrency(UserId),
 }
 
 /// Why a request's identity was refused.
@@ -186,6 +192,12 @@ impl Users {
             }
             if config.tailscale_logins.is_empty() && config.token_blake3.is_none() {
                 return Err(UsersError::NoProof(config.id.clone()));
+            }
+            if config
+                .max_concurrent
+                .is_some_and(|limit| limit.get() > 1024)
+            {
+                return Err(UsersError::Concurrency(config.id.clone()));
             }
             for login in &config.tailscale_logins {
                 if by_login.insert(login.clone(), config.id.clone()).is_some() {
@@ -310,11 +322,13 @@ mod tests {
                 id: id("alice"),
                 tailscale_logins: vec![login("alice@example.com")],
                 token_blake3: Some(alice.digest()),
+                max_concurrent: None,
             },
             UserConfig {
                 id: id("bob"),
                 tailscale_logins: vec![],
                 token_blake3: Some(bob.digest()),
+                max_concurrent: None,
             },
         ])
         .unwrap();
@@ -454,6 +468,7 @@ mod tests {
             id: id(name),
             tailscale_logins: logins.iter().map(|text| login(text)).collect(),
             token_blake3: token,
+            max_concurrent: None,
         };
         let cases = [
             (

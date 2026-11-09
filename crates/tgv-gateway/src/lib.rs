@@ -48,6 +48,7 @@ pub mod channel;
 pub mod control;
 mod headers;
 mod ingress;
+mod limits;
 pub mod operator;
 pub mod policy;
 #[cfg(test)]
@@ -79,6 +80,7 @@ use crate::{
     call::{CallRun, CallStep, CallStop, Dispatched, Refused},
     channel::Deadlines,
     control::{Cancel, Controls},
+    limits::{AtLimit, UserLimits},
     policy::{Admission, CallFacts, CallPlan, Policy, Rejection, RequestJson, StepRecord},
     user::IdentifyError,
 };
@@ -130,6 +132,9 @@ pub struct GatewayConfig {
     pub upstreams: UpstreamTable,
     /// The named users forwarded requests are matched to.
     pub users: user::Users,
+    /// Calls every caller that is not a named user may have running at
+    /// once, together; unlimited beyond the global limit when absent.
+    pub max_concurrent_unnamed: Option<u32>,
 }
 
 /// Why the gateway answered instead of the provider.
@@ -257,6 +262,15 @@ impl TgvReply {
         }
     }
 
+    fn user_busy() -> Self {
+        Self {
+            status: StatusCode::TOO_MANY_REQUESTS,
+            code: "user_busy",
+            message: "this caller already has as many calls running as TGV allows it".into(),
+            retry: ClientRetry::After(1),
+        }
+    }
+
     fn unidentified(refused: &IdentifyError) -> Self {
         Self {
             status: StatusCode::UNAUTHORIZED,
@@ -358,6 +372,8 @@ pub struct Gateway<U> {
     admission: Arc<Semaphore>,
     /// Upgraded WebSocket channels; separate from call admission.
     channels: Arc<Semaphore>,
+    /// Each caller's own limit, checked before call admission.
+    user_limits: UserLimits,
     shutdown: Shutdown,
 }
 
@@ -373,6 +389,7 @@ impl<U: Upstream> Gateway<U> {
         Self {
             admission: Arc::new(Semaphore::new(config.max_concurrent_requests)),
             channels: Arc::new(Semaphore::new(config.websocket.max_channels)),
+            user_limits: UserLimits::new(&config.users, config.max_concurrent_unnamed),
             buffer: RequestBuffer::new(config.buffer),
             config,
             upstream,
@@ -515,6 +532,15 @@ impl<U: Upstream> Gateway<U> {
                 .reject(None, call, None, CallRejection::IdentityRefused);
             return TgvReply::unidentified(&refused).into_response();
         }
+        // Held until the response ends, like the call's admission.
+        let mut user_permit = match self.user_limits.admit(&call.caller) {
+            Ok(permit) => permit,
+            Err(AtLimit) => {
+                self.recorder
+                    .reject(None, call, None, CallRejection::UserBusy);
+                return TgvReply::user_busy().into_response();
+            }
+        };
         let abort = self.shutdown.abort_token();
         // Reading is the one await before the call has a tap; a handler
         // dropped here would otherwise leave no record.
@@ -646,7 +672,7 @@ impl<U: Upstream> Gateway<U> {
                 }
                 CallStep::Relay(response) => {
                     // The call stays cancellable while its response streams.
-                    cell.hold(Box::new(registered.take()));
+                    cell.hold(Box::new((registered.take(), user_permit.take())));
                     match dispatch.responded(response) {
                         Ok(response) => return Self::relayed(response),
                         Err(end) => end,
@@ -795,6 +821,12 @@ impl<U: Upstream> Gateway<U> {
                 .reject(None, start, None, CallRejection::IdentityRefused);
             return TgvReply::unidentified(&refused).into_response();
         }
+        // A channel counts as one call of its user's for its whole life.
+        let Ok(user_permit) = self.user_limits.admit(&start.caller) else {
+            return Self::handshake_refused(
+                "WebSocket limit for this caller reached; use HTTP/SSE\n",
+            );
+        };
         // WebSocket channels are pinned to the route's entry.
         let upstream = bound.upstream.clone();
         let tap = self.recorder.start(
@@ -860,6 +892,7 @@ impl<U: Upstream> Gateway<U> {
                     },
                     shutdown: self.shutdown.clone(),
                     channel_permit,
+                    user_permit,
                     tracked: self.shutdown.track_channel(),
                     upstream,
                     policy: self.config.policy.clone(),

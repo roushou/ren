@@ -128,6 +128,8 @@ pub(super) struct ChannelSetup {
     pub shutdown: Shutdown,
     /// The channel limit, held for the channel's lifetime.
     pub channel_permit: OwnedSemaphorePermit,
+    /// The caller's own limit, if it has one, held likewise.
+    pub user_permit: Option<OwnedSemaphorePermit>,
     /// Keeps the ingress's drain waiting for this channel.
     pub tracked: TaskTrackerToken,
     /// The route's entry: a channel is pinned to it.
@@ -295,6 +297,7 @@ impl Relay {
             call,
             shutdown,
             channel_permit,
+            user_permit,
             tracked,
             upstream: upstream_id,
             policy,
@@ -333,7 +336,7 @@ impl Relay {
             relay.watch_deadlines(),
         );
         relay.close_sockets().await;
-        drop((channel_permit, tracked));
+        drop((channel_permit, user_permit, tracked));
     }
 
     async fn pump(&self, side: Side, mut stream: PumpStream) {

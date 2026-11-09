@@ -56,11 +56,13 @@ fn config(mock: &Mock, tokens: &Tokens) -> Config {
                 id: UserId::parse("alice").unwrap(),
                 tailscale_logins: vec![TailscaleLogin::parse("alice@example.com").unwrap()],
                 token_blake3: None,
+                max_concurrent: None,
             },
             UserConfig {
                 id: UserId::parse("bob").unwrap(),
                 tailscale_logins: vec![],
                 token_blake3: Some(tokens.bob.digest()),
+                max_concurrent: None,
             },
         ],
         ..support::config(mock)
@@ -326,4 +328,58 @@ async fn an_operator_blocks_a_user_at_once_and_unblocks_them() {
         .map(|call| call.rejection.as_ref().and_then(Stored::known))
         .collect();
     assert_eq!(rejections, [None, None, Some(CallRejection::UserBlocked)]);
+}
+
+#[tokio::test]
+async fn a_user_at_its_limit_gets_429_until_a_call_ends() {
+    let reached = Arc::new(AtomicUsize::new(0));
+    let gate = Arc::new(tokio::sync::Notify::new());
+    let held = gate.clone();
+    let counter = reached.clone();
+    let app = Router::new().fallback(move || {
+        let gate = held.clone();
+        let reached = counter.clone();
+        async move {
+            if reached.fetch_add(1, Ordering::SeqCst) == 0 {
+                gate.notified().await;
+            }
+            "done"
+        }
+    });
+    let mock = mock(app).await;
+    let dir = tempfile::tempdir().unwrap();
+    let tokens = tokens();
+    let mut config = config(&mock, &tokens);
+    config.users[1].max_concurrent = std::num::NonZeroU32::new(1);
+    let gateway = TestGateway::start(&config, dir.path()).await;
+    let bob: &[(&str, &str)] = &[(Users::TOKEN_HEADER, tokens.bob.expose())];
+
+    let first = {
+        let request = post(&gateway, bob);
+        async move { request.await.text().await.unwrap() }
+    };
+    let second = async {
+        while reached.load(Ordering::SeqCst) == 0 {
+            tokio::task::yield_now().await;
+        }
+        let busy = post(&gateway, bob).await;
+        assert_eq!(busy.status(), StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(busy.headers()["retry-after"], "1");
+        // Another caller is not limited by bob's calls.
+        assert_eq!(post(&gateway, &[]).await.status(), StatusCode::OK);
+        gate.notify_one();
+    };
+    let (first, ()) = tokio::join!(first, second);
+    assert_eq!(first, "done");
+    assert_eq!(post(&gateway, bob).await.status(), StatusCode::OK);
+    gateway.stop().await;
+
+    let calls = recorded(dir.path()).await;
+    let busy = calls
+        .iter()
+        .filter(|call| {
+            call.rejection.as_ref().and_then(Stored::known) == Some(CallRejection::UserBusy)
+        })
+        .count();
+    assert_eq!((calls.len(), busy), (4, 1));
 }
