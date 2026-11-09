@@ -196,6 +196,49 @@ UI's `/health`, which relays the daemon's. It then publishes the UI on that port
 under the same rules as the daemon's port. Without `--ui-https-port`, the UI is
 left untouched.
 
+### Dev slot
+
+`cargo xtask dev` runs this checkout's build beside the installed service, with
+fake providers and fake data, for development and for previewing a change before
+it is installed:
+
+```sh
+cargo xtask dev up --ui      # build, then start the slot and its UI, and publish the preview
+cargo xtask dev seed         # send fake traffic (or a scenario: sessions, users, long, errors, websocket)
+cargo xtask dev trickle      # a fake call every few seconds; --stop ends it
+cargo xtask dev shot         # screenshots of the UI's pages, in target/dev-shots
+cargo xtask dev status
+cargo xtask dev reset        # remove the slot's data and start again
+cargo xtask dev down         # stop the slot and remove the preview's routes
+```
+
+|          | Dev slot                                                                | Installed service                         |
+| -------- | ----------------------------------------------------------------------- | ----------------------------------------- |
+| Units    | `tgv-dev-provider`, `tgv-dev-daemon`, `tgv-dev-ui`, `tgv-dev-trickle`   | `tgv`, `tgv-ui`                           |
+| Loopback | fake provider `18999`, daemon `18787`, UI `13000`                       | daemon `8787`, UI `3000`                  |
+| Tailnet  | `9443` (gateway), `9444` (UI)                                           | your `--https-port` and `--ui-https-port` |
+| Files    | `~/.config/tgv-dev`, `~/.local/state/tgv-dev`, `~/.local/share/tgv-dev` | `~/.config/tgv`, `~/.local/state/tgv`     |
+
+The units are transient systemd user units, stopped by name. The dev
+configuration is regenerated on every `up`: every provider is the fake one, which
+accepts any credentials and stores nothing, so no real credential or prompt
+reaches the slot. It names two users, `alice` (by the Tailscale login
+`alice@example.com`) and `ci` (by a fixed fake token), and two direct
+operator-key entries with a fake key: `team-key` (only `ci`) and `chat-key`
+(Chat Completions). The requested model scripts the fake's reply: `fake-tools`,
+`fake-long`, `fake-slow`, `fake-cut`, `fake-error`, `fake-429`; any other model
+gets text quoting the prompt. So a real client can run against the slot:
+
+```sh
+tgv run claude --gateway https://<node>:9443
+```
+
+`--ui` publishes the preview with the same Serve step as `install-vps` (with
+`sudo -n` if it last did, or `--sudo-tailscale`); `--local` keeps it on
+loopback. `down` removes each preview route only while it still points at the
+slot. `shot` needs a headless Chromium: `TGV_CHROME`, `chrome-headless-shell` or
+`chromium` on `PATH`, or Playwright's downloaded headless shell.
+
 ### Manual steps
 
 Build on the VPS with Rust and `cargo build --release --locked`, or copy an

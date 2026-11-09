@@ -313,6 +313,12 @@ dependencies under "Crates" below. Read the code for current module ownership.
   installed `tgv`'s output (`daemon`), its UI unit rendering (`ui`), its saved flags
   (`publish`), and the upgrade's wait, pause, and build-check decisions are
   unit-tested; the commands it runs are exercised only by running it.
+  `cargo xtask dev` runs the dev slot (`dev`, `docs/deployment.md#dev-slot`):
+  this checkout's build beside the installed service, with its own config,
+  data, and ports, against a fake provider (`dev::provider`, whose replies are
+  the pure, tested `script`), seeded with fake traffic (`dev::seed`, scenarios
+  as pure data), as `tgv-dev-*` transient units, with an optional private
+  preview on the tailnet and headless screenshots (`dev::shot`).
 - `deploy`: systemd units, and in `deploy/container` the compose file, Podman
   Quadlet files, and Tailscale Serve route for the root `Dockerfile`
   (`docs/deployment.md#containers`). `scripts`: manual smoke tests for Pi, systemd, and launchd.
@@ -391,9 +397,9 @@ allowance is SvelteKit's route announcer style, by hash, pinned by `tests/csp.te
 Use the toolchain pinned in `rust-toolchain.toml` and don't update it incidentally.
 New crates inherit workspace settings and lints. Cargo builds only Rust: never run
 frontend tooling from Cargo or embed UI assets. The daemon is headless and works
-with no UI checkout, build, or server. The one exception is a deployment step, not
-a build: `cargo xtask install-vps --ui-https-port` runs Bun to build and deploy the
-UI on the host.
+with no UI checkout, build, or server. The exceptions are deployment and dev steps, not
+a build: `cargo xtask install-vps --ui-https-port` and `cargo xtask dev up --ui`
+run Bun to build and run the UI on the host.
 
 Markdown, JSON, and TOML formatting, from the repository root (dprint 0.56.0,
 matching CI):
@@ -420,9 +426,14 @@ bun install --frozen-lockfile
 bun run format:check && bun run check && bun run test && bun run build
 ```
 
-Verify changed UI interactions manually in a browser with synthetic traffic. Keep
-focused unit tests and don't add a browser integration suite yet. UI changes don't
-require rebuilding Rust.
+Verify changed UI interactions with synthetic traffic in the dev slot before
+they reach the installed service: `cargo xtask dev up --ui`, `cargo xtask dev seed`,
+then `cargo xtask dev shot` for screenshots and the private preview
+(`https://<node>:9444`) for a browser. Keep focused unit tests and don't add a
+browser integration suite yet. UI changes don't require rebuilding Rust.
+Never stop processes by a name pattern: the slot's units are stopped by name
+(`cargo xtask dev down`), and the installed `tgv` and `tgv-ui` services must keep
+running.
 
 Pi integration changes: `node --test crates/tgv-harness/pi/tgv.test.mjs`. When Pi is
 installed, build TGV and run `python3 scripts/smoke-pi.py`; it uses isolated config
