@@ -57,8 +57,15 @@ pub struct Plan {
 pub struct Run(pub u32);
 
 impl Run {
+    /// A UUID whose short form (its first eight digits) differs per
+    /// session, as real ones do.
     fn uuid(self, n: u32) -> String {
-        format!("00000000-0000-4000-8000-{:04x}{n:08x}", self.0 & 0xffff)
+        format!(
+            "{:04x}{:04x}-0000-4000-8000-{:012x}",
+            n & 0xffff,
+            self.0 & 0xffff,
+            u64::from(self.0) * 0x1_0000 + u64::from(n)
+        )
     }
 }
 
