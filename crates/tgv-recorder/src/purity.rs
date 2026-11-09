@@ -1,5 +1,5 @@
-//! The recorder's pure parts (its core, the digest and its replay, and
-//! capture options) stay free of the runtime, I/O, and the shell modules
+//! The recorder's pure parts (its core, the digest and its replay, capture
+//! options, and progress updates) stay free of the runtime, I/O, and the shell modules
 //! around them. The crate itself depends on Tokio for its queue and task, so
 //! this is checked on the sources rather than by the manifest.
 
@@ -10,6 +10,7 @@ fn pure_modules_stay_free_of_runtime_and_io_dependencies() {
         ("digest/mod.rs", include_str!("digest/mod.rs")),
         ("digest/replay.rs", include_str!("digest/replay.rs")),
         ("options.rs", include_str!("options.rs")),
+        ("progress.rs", include_str!("progress.rs")),
     ];
     let forbidden = [
         "tokio",

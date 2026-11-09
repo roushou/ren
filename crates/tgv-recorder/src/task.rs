@@ -32,6 +32,7 @@ pub struct RecorderTask<S> {
     pub(super) receiver: mpsc::Receiver<Item>,
     pub(super) sink: S,
     pub(super) live: broadcast::Sender<Observation>,
+    pub(super) progress: broadcast::Sender<crate::progress::Progress>,
     pub(super) counters: Arc<Counters>,
     pub(super) clock: Arc<dyn Clock>,
     pub(super) options: CaptureOptions,
@@ -146,6 +147,7 @@ impl<S: RecordSink> RecorderTask<S> {
     /// byte counts show the loss.
     async fn commit(&mut self) {
         let batch = self.core.take_batch();
+        let progress = self.core.take_progress();
         if batch.is_empty() {
             return;
         }
@@ -191,6 +193,11 @@ impl<S: RecordSink> RecorderTask<S> {
                 for observation in committed.observations {
                     // No subscribers is not an error.
                     let _ = self.live.send(observation);
+                }
+                // After the commit, so a viewer knows the call's open record
+                // first; no subscribers is not an error.
+                for update in progress {
+                    let _ = self.progress.send(update);
                 }
             }
             Err(error) => {
