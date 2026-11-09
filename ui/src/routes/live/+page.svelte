@@ -32,6 +32,7 @@
   import StateGlyph from '#lib/StateGlyph.svelte';
   import Select, { type SelectOption } from '#lib/Select.svelte';
   import Markdown from '#lib/Markdown.svelte';
+  import StreamingReply from '#lib/StreamingReply.svelte';
   import type { PageProps } from './$types';
 
   let { data }: PageProps = $props();
@@ -639,10 +640,14 @@
                 {/each}
               {/if}
               {#each tile.unread as unread (unread.call.id)}
-                <p class="live-sep live" class:open={unread.call.state === 'open'}>
-                  call {unread.index} · {unreadLabel(unread, board.now)}
-                </p>
                 {@const streamed = workbench.streamed.get(unread.call.id)}
+                <!-- Once text streams, it holds the call's place: no status line
+                     comes and goes around it, and the read reply replaces it in place. -->
+                {#if !streamed?.reply}
+                  <p class="live-sep live" class:open={unread.call.state === 'open'}>
+                    call {unread.index} · {unreadLabel(unread, board.now)}
+                  </p>
+                {/if}
                 {#if streamed}
                   {#each streamed.tools as tool, index (index)}
                     <div class="live-tool live-streaming-tool">
@@ -655,8 +660,10 @@
                       class="live-step-reply live-streaming"
                       class:writing={unread.call.state === 'open'}
                     >
-                      {#if streamed.cut}<span class="live-streaming-cut">…</span>{/if}<Markdown
+                      <StreamingReply
                         text={streamed.reply}
+                        writing={unread.call.state === 'open'}
+                        cut={streamed.cut}
                       />
                     </div>
                   {/if}
