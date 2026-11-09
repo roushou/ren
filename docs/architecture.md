@@ -746,6 +746,10 @@ state; it is logged, not recorded in `operator_actions`.
   routes: no provider route speaks it, and an upstream that needs no key (a local
   model server) cannot be configured.
 - The UI has no control actions.
+- Named users are limited by concurrency only: no token or spend budgets, and
+  history is not scoped per user (anyone who can read the API reads every
+  user's calls). Users and their tokens change only with a restart; an operator
+  user block applies at once. `tgv run opencode` sends no user token.
 - Backups go only to `<data-dir>/backup`, and only through a running daemon.
 - Activity keeps excerpts, not full text (`DigestBudget::STORED`); a turn reads
   at most 100 calls, and turn listings have no paging. Reports do not detect
