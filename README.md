@@ -4,7 +4,7 @@
 
 <h3>Self-hosted gateway and flight recorder for coding agents</h3>
 
-See every request, response, tool call, and token from Claude Code, Codex, Pi, and opencode
+See every request, response, tool call, and token from Claude Code, Codex, Pi, and OpenCode
 as it happens, without changing a byte of the traffic.
 
 [![CI](https://github.com/roushou/tgv/actions/workflows/ci.yml/badge.svg)](https://github.com/roushou/tgv/actions/workflows/ci.yml)
@@ -133,7 +133,7 @@ listener.
 
 ## Documentation
 
-- [Clients](docs/clients.md): launching and configuring Claude Code, Codex, Pi, and opencode
+- [Clients](docs/clients.md): launching and configuring Claude Code, Codex, Pi, and OpenCode
 - [Recording](docs/recording.md): capture, inspection, backup, and retention
 - [History and API](docs/api.md): CLI history commands, the MCP server for
   agents, and the management API

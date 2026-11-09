@@ -240,7 +240,7 @@ headers). Each binding is a
 `BoundRoute`: a call's provider and first upstream come from it, and a WebSocket
 channel is pinned to it. A fallback rule applies only to calls whose first
 upstream holds client-owned credentials. Pi's extension headers, then
-opencode's session header, are recognised on every route. A header policy expressed as
+OpenCode's session header, are recognised on every route. A header policy expressed as
 data (`HeaderPolicy::REQUEST` and `RESPONSE`) removes hop-by-hop, proxy identity,
 and Tailscale identity headers, and strips TGV's own `x-tgv-*` hints before
 forwarding. Redirects, automatic retries, response decompression, and

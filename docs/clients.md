@@ -1,11 +1,11 @@
 # Clients
 
-How to point Claude Code, Codex, Pi, and opencode at TGV, and how TGV
+How to point Claude Code, Codex, Pi, and OpenCode at TGV, and how TGV
 attributes their traffic to sessions and turns.
 
 Live subscription traffic has been exercised with Claude Code and Codex. Pi has
 been validated against local mock providers; live Pi subscription access is
-unvalidated. opencode support follows opencode 2.2.6's documentation and source
+unvalidated. OpenCode support follows OpenCode 2.2.6's documentation and source
 and is covered by unit tests with synthetic headers; it has not been run against
 TGV yet.
 
@@ -38,7 +38,7 @@ These are readiness checks, not a full database-integrity or disk-space check.
 overrides. Claude receives its base URL and correlation-header flag. Codex gets
 a complete `tgv_session` provider override with OpenAI authentication, and
 `--no-daemon` keeps the session out of an already-running shared Codex server.
-opencode gets inline configuration naming two base URLs (see [opencode](#opencode)).
+OpenCode gets inline configuration naming two base URLs (see [OpenCode](#opencode)).
 Existing model, approval, sandbox, sign-in, and credential-refresh behavior stays
 owned by the client. TGV does not modify client configuration files or credentials.
 On macOS/Linux the client replaces the launcher, preserving terminal interaction,
@@ -51,7 +51,7 @@ environment are retained, with a name-only warning: verify the client uses your
 intended subscription login. `--dry-run` prints only TGV's generated arguments and
 environment overrides, excluding inherited credentials and your client arguments;
 it performs no network or client operations. Launch options target Claude Code
-2.1.316, Codex CLI 0.164.0, Pi 1.0.0, and opencode 2.2.6.
+2.1.316, Codex CLI 0.164.0, Pi 1.0.0, and OpenCode 2.2.6.
 
 For a remote daemon, save its trusted Tailscale HTTPS **root** URL once:
 
@@ -294,9 +294,9 @@ Pi omits ChatGPT-incompatible request fields. Everything uses temporary state an
 mock providers. It does not validate live entitlement or token-refresh network
 calls. The adapter follows Pi's [provider extension contract](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/custom-provider.md).
 
-## opencode
+## OpenCode
 
-opencode speaks Anthropic Messages and OpenAI Responses natively, so it uses the
+OpenCode speaks Anthropic Messages and OpenAI Responses natively, so it uses the
 same routes as Claude Code and Pi:
 
 ```sh
@@ -306,12 +306,12 @@ tgv run opencode --gateway https://tgv.your-tailnet.ts.net
 tgv run opencode --dry-run
 ```
 
-The launcher sets `OPENCODE_CONFIG_CONTENT`, opencode's
+The launcher sets `OPENCODE_CONFIG_CONTENT`, OpenCode's
 [inline runtime configuration](https://opencode.ai/docs/config/#precedence-order),
 to a provider override with only a [base URL](https://opencode.ai/docs/providers/#base-url)
 for each of two providers:
 
-| opencode provider | Gateway base URL | Default upstream            |
+| OpenCode provider | Gateway base URL | Default upstream            |
 | ----------------- | ---------------- | --------------------------- |
 | `anthropic`       | `/anthropic/v1`  | `https://api.anthropic.com` |
 | `openai`          | `/openai/v1`     | `https://api.openai.com`    |
@@ -320,35 +320,35 @@ It merges over the global and project `opencode.json`, so your models, agents,
 and other providers stay as configured; those other providers keep their own
 endpoints. A value of `OPENCODE_CONFIG_CONTENT` already in your environment is
 replaced for the session, with a notice; keep such settings in `opencode.json`.
-Managed (administrator) opencode configuration still wins over the launcher.
+Managed (administrator) OpenCode configuration still wins over the launcher.
 
-opencode keeps its own sign-in and keys (`/connect`, `ANTHROPIC_API_KEY`,
+OpenCode keeps its own sign-in and keys (`/connect`, `ANTHROPIC_API_KEY`,
 `OPENAI_API_KEY`), and TGV adds no header that names another client. Anthropic
 does not permit Claude subscription sign-in from third-party clients, so use an
-Anthropic API key with opencode. opencode's ChatGPT sign-in sends requests to
+Anthropic API key with OpenCode. OpenCode's ChatGPT sign-in sends requests to
 ChatGPT's Codex backend with headers of its own; under `tgv run opencode` its
 `openai` requests go to the public Responses endpoint instead, which is
-unvalidated for that sign-in. Use an OpenAI API key, or run opencode outside TGV
+unvalidated for that sign-in. Use an OpenAI API key, or run OpenCode outside TGV
 for ChatGPT sign-in.
 
-opencode's `openai` provider opens a Responses WebSocket by default. TGV answers
-the handshake on `/openai` with `426 Upgrade Required`, and opencode keeps that
+OpenCode's `openai` provider opens a Responses WebSocket by default. TGV answers
+the handshake on `/openai` with `426 Upgrade Required`, and OpenCode keeps that
 session on HTTP/SSE after any failed connect.
 
-Every model request opencode 2.x sends carries `x-opencode-session-id`, a
+Every model request OpenCode 2.x sends carries `x-opencode-session-id`, a
 `ses_…` identifier rather than a UUID, on every provider. TGV recognises it on
 every route, after Pi's extension headers, and records the hint under
 `opencode_headers`. Native session hints are UUIDs, so the hint holds a version 8
-UUID derived from the identifier (a namespaced SHA-256): one opencode session is
+UUID derived from the identifier (a namespaced SHA-256): one OpenCode session is
 always the same TGV session, and the `ses_…` text itself is never stored.
-opencode sends no turn identifier, so its calls have sessions but no turns. A
-subagent runs in a child session of its own, as opencode shows it. Its other
+OpenCode sends no turn identifier, so its calls have sessions but no turns. A
+subagent runs in a child session of its own, as OpenCode shows it. Its other
 headers (`x-opencode-project`, `x-opencode-client`, `x-session-affinity`, and the
 parent session) are forwarded unchanged and not recorded.
 
-Tool calls are read by opencode 2.x's names: `shell`, `read`, `write`, `edit`,
+Tool calls are read by OpenCode 2.x's names: `shell`, `read`, `write`, `edit`,
 `patch` (the same envelope as Codex's `apply_patch`), `glob`, `grep`,
-`subagent`, `webfetch`, and `websearch`. opencode reports a failed command by
+`subagent`, `webfetch`, and `websearch`. OpenCode reports a failed command by
 ending its output with `Exited with code N`, `Killed by SIGNAL`, or
 `Timed out before completion`; a successful command says nothing, so its status
 stays unreported. Its notices of finished background commands, subagents, and
@@ -363,7 +363,7 @@ and their source in each call's `attribution`. Claude Code uses
 enables prompt hints for custom gateways. These headers are
 [documented by Anthropic](https://code.claude.com/docs/en/llm-gateway-protocol#request-headers).
 Codex CLI 0.164.0 sends `session-id`, `thread-id`, and a `turn_id` inside
-`x-codex-turn-metadata`; this integration is version-sensitive. opencode's
+`x-codex-turn-metadata`; this integration is version-sensitive. OpenCode's
 session header is described [above](#opencode).
 
 Sessions are scoped by provider, metadata source, and native session ID. Turns
@@ -376,6 +376,6 @@ proof of tool execution, or a signal that a session is idle or complete.
 
 Correlation headers are parsed once, on arrival, into bounded typed hints (Codex
 turn metadata is read only up to 8 KiB). Only allowlisted UUIDs are stored; the full
-Codex metadata object and arbitrary headers are discarded; opencode's session
+Codex metadata object and arbitrary headers are discarded; OpenCode's session
 is stored only as its derived UUID. Correlation works with
 metadata-only body capture.

@@ -1,7 +1,7 @@
 # TGV contributor guidance
 
 TGV is a self-hosted gateway and flight recorder for coding agents (Claude Code,
-Codex, Pi, and opencode). It forwards native provider traffic while recording, inspecting,
+Codex, Pi, and OpenCode). It forwards native provider traffic while recording, inspecting,
 and exposing it, using the operator's own Anthropic and OpenAI subscriptions. One executable and one storage format serve both
 a laptop and a VPS reached through Tailscale.
 
@@ -343,7 +343,7 @@ crate:
 - **Ports point down.** A capability trait is declared by the lowest crate that
   consumes it and implemented by a higher one. A crate never depends on a crate
   above it in the table.
-- **Harnesses.** Claude Code, Codex, Pi, and opencode (the clients of section 1) are one
+- **Harnesses.** Claude Code, Codex, Pi, and OpenCode (the clients of section 1) are one
   closed enum, `Harness`. Don't add a per-harness trait.
 - Don't add a crate without first adding it to this table and to
   `docs/architecture.md`.
