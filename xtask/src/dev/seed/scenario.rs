@@ -92,6 +92,15 @@ pub(in crate::dev) enum Client {
     DeepSeek,
 }
 
+/// A call Claude Code makes beside a turn's work, with no turn of its own.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(in crate::dev) enum Side {
+    /// A short title for the conversation, from a small model.
+    Title,
+    /// A one-token request that reads the subscription's remaining quota.
+    QuotaProbe,
+}
+
 /// Who sends a call.
 #[derive(Debug, Clone)]
 pub(in crate::dev) enum Caller {
@@ -165,16 +174,7 @@ impl Scenario {
         let mut headers = caller.headers();
         let (path, body, name) = match client {
             Client::ClaudeCode | Client::DeepSeek => {
-                headers.extend([
-                    ("x-claude-code-session-id".into(), session_id),
-                    ("x-claude-code-prompt-id".into(), turn_id),
-                    ("x-app".into(), "cli".into()),
-                    (
-                        "user-agent".into(),
-                        "claude-cli/2.1.316 (external, cli)".into(),
-                    ),
-                    ("anthropic-version".into(), "2023-06-01".into()),
-                ]);
+                headers.extend(Self::claude_code_headers(session_id, Some(turn_id)));
                 match client {
                     Client::DeepSeek => (
                         "/deepseek/v1/messages",
@@ -198,7 +198,11 @@ impl Scenario {
                     ),
                     ("originator".into(), "codex_cli_rs".into()),
                 ]);
-                ("/codex/responses", Self::responses(model, prompt), "codex")
+                (
+                    "/codex/responses",
+                    Self::responses(model, prompt, &session_id),
+                    "codex",
+                )
             }
             Client::Pi => {
                 headers.extend([
@@ -212,17 +216,15 @@ impl Scenario {
                 )
             }
             Client::OpenCode => {
-                headers.push((
-                    "x-opencode-session-id".into(),
-                    // opencode's own shape: `ses_`, then 26 letters and digits.
-                    format!(
-                        "ses_{:012x}{session:08x}OpnCde",
-                        u64::from(run.0) * 0x9E37 + 0x7A1F
-                    ),
-                ));
+                // opencode's own shape: `ses_`, then 26 letters and digits.
+                let id = format!(
+                    "ses_{:012x}{session:08x}OpnCde",
+                    u64::from(run.0) * 0x9E37 + 0x7A1F
+                );
+                headers.push(("x-opencode-session-id".into(), id.clone()));
                 (
                     "/openai/v1/responses",
-                    Self::responses(model, prompt),
+                    Self::responses(model, prompt, &id),
                     "opencode",
                 )
             }
@@ -236,6 +238,59 @@ impl Scenario {
         }
     }
 
+    /// Claude Code's side call `side` in session `session`: its session's
+    /// headers, but no turn.
+    pub(in crate::dev) fn side_call(
+        side: Side,
+        caller: &Caller,
+        run: Run,
+        session: u32,
+        prompt: &str,
+    ) -> Call {
+        let mut headers = caller.headers();
+        headers.extend(Self::claude_code_headers(run.uuid(session), None));
+        headers.push(("content-type".into(), "application/json".into()));
+        let model = "claude-haiku-5-5";
+        let call = |label: String, body: Value| Call {
+            label,
+            path: "/anthropic/v1/messages".into(),
+            headers: headers.clone(),
+            body: body.to_string(),
+        };
+        match side {
+            Side::Title => call(
+                format!("claude code title: {}", Self::short(prompt)),
+                json!({ "model": model, "max_tokens": 512, "stream": true,
+                        "system": [{ "type": "text", "text": "Write a title of at most six words for this coding conversation. Reply with the title only." }],
+                        "messages": [{ "role": "user", "content": [{ "type": "text", "text": prompt }] }] }),
+            )
+            .asking("title"),
+            Side::QuotaProbe => call(
+                "claude code quota probe".into(),
+                json!({ "model": model, "max_tokens": 1,
+                        "messages": [{ "role": "user", "content": "quota" }] }),
+            ),
+        }
+    }
+
+    /// The headers Claude Code sends: its session, and its turn (a prompt
+    /// id) on calls made for one.
+    fn claude_code_headers(session: String, turn: Option<String>) -> Vec<(String, String)> {
+        let mut headers = vec![("x-claude-code-session-id".into(), session)];
+        if let Some(turn) = turn {
+            headers.push(("x-claude-code-prompt-id".into(), turn));
+        }
+        headers.extend([
+            ("x-app".into(), "cli".into()),
+            (
+                "user-agent".into(),
+                "claude-cli/2.1.316 (external, cli)".into(),
+            ),
+            ("anthropic-version".into(), "2023-06-01".into()),
+        ]);
+        headers
+    }
+
     fn short(text: &str) -> String {
         match text.char_indices().nth(48) {
             Some((cut, _)) => format!("{}…", &text[..cut]),
@@ -243,13 +298,25 @@ impl Scenario {
         }
     }
 
+    /// A Messages request as coding agents send one: a cached system prompt,
+    /// and thinking on the models that offer it.
     fn messages(model: &str, prompt: &str) -> Value {
-        json!({ "model": model, "max_tokens": 1024, "stream": true,
-                "messages": [{ "role": "user", "content": [{ "type": "text", "text": prompt }] }] })
+        let mut body = json!({ "model": model, "max_tokens": 32000, "stream": true,
+            "system": [{ "type": "text", "text": "You are a coding agent working in the user's repository.",
+                         "cache_control": { "type": "ephemeral" } }],
+            "messages": [{ "role": "user", "content": [{ "type": "text", "text": prompt }] }] });
+        if model.starts_with("claude-opus") || model.starts_with("claude-sonnet") {
+            body["thinking"] = json!({ "type": "enabled", "budget_tokens": 31999 });
+        }
+        body
     }
 
-    fn responses(model: &str, prompt: &str) -> Value {
-        json!({ "model": model, "stream": true,
+    /// A Responses request as Codex sends one: reasoning with a summary, and
+    /// a prompt cache key for its session.
+    fn responses(model: &str, prompt: &str, cache_key: &str) -> Value {
+        json!({ "model": model, "stream": true, "prompt_cache_key": cache_key,
+                "reasoning": { "effort": "medium", "summary": "auto" },
+                "include": ["reasoning.encrypted_content"],
                 "input": [{ "type": "message", "role": "user",
                             "content": [{ "type": "input_text", "text": prompt }] }] })
     }
@@ -272,7 +339,11 @@ impl Scenario {
     fn sessions(run: Run) -> Plan {
         let anyone = Caller::Unidentified;
         let mut calls = Vec::new();
+        calls.push(Self::side_call(Side::QuotaProbe, &anyone, run, 1, ""));
         for (n, prompt) in PROMPTS[..3].iter().enumerate() {
+            if n == 0 {
+                calls.push(Self::side_call(Side::Title, &anyone, run, 1, prompt));
+            }
             let turn = u32::try_from(n).unwrap_or(0) + 101;
             calls.extend(Self::turn(
                 Client::ClaudeCode,
@@ -483,6 +554,7 @@ impl Scenario {
         let session = run.uuid(41);
         let message = |turn: u32, prompt: &str| {
             json!({ "type": "response.create", "model": "gpt-5.5-codex",
+                    "prompt_cache_key": session, "reasoning": { "effort": "medium", "summary": "auto" },
                     "client_metadata": { "x-codex-turn-metadata": json!({ "session_id": session, "turn_id": run.uuid(turn) }).to_string() },
                     "input": [{ "type": "message", "role": "user",
                                 "content": [{ "type": "input_text", "text": prompt }] }] })

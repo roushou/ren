@@ -7,38 +7,47 @@ use serde_json::{Value, json};
 /// The text and tool calls of replies.
 pub struct Writing;
 
-/// A reply's opening, matched by a word in the prompt.
-const ANSWERS: [(&str, &str); 8] = [
+/// A reply's opening, matched by a word in the prompt, with the title a
+/// client's side call would give the conversation.
+const ANSWERS: [(&str, &str, &str); 8] = [
     (
         "CI runner",
+        "Release build fails on CI runner",
         "The CI image pins an older OpenSSL than your machine, and the release profile enables the `native-tls` feature, so the build links against headers that are not there. Locally the dev profile uses `rustls` and never touches it. I switched the release profile to `rustls` as well and removed the unused feature from `acme-web/Cargo.toml`; the release build now passes in the same container the runner uses.",
     ),
     (
         "retry",
+        "Add retry with backoff to upload client",
         "I added a `Backoff` type next to the upload client: three attempts, starting at 200 ms and doubling, with jitter, and only for connection errors and 502/503/504. A 4xx is returned at once, since retrying it cannot help. The tests use a test transport that fails twice and then succeeds, and another that always returns 400 to check that it is not retried.",
     ),
     (
         "listen_addr",
+        "Rename listen_addr config field",
         "There were eleven uses across four services and the shared config crate. I renamed the field to `listen`, kept `listen_addr` as a deprecated alias in the deserializer so existing config files still load with a warning, and updated the two example configs and the deployment docs. `cargo check --workspace` and the config tests pass.",
     ),
     (
         "job queue",
+        "Job queue worker timeouts",
         "When a worker stops responding, its lease on the job runs out after 30 seconds and the job goes back on the queue with its attempt count increased. After five attempts it moves to the dead-letter table instead, so one bad job cannot block the others. Nothing is lost if the worker comes back late: its result is ignored because the lease token no longer matches.",
     ),
     (
         "migration",
+        "Add index on orders.created_at",
         "The migration adds `CREATE INDEX CONCURRENTLY idx_orders_created_at ON orders (created_at)` so it does not lock the table while it builds, and the down migration drops it. I checked the two slow queries from the dashboard: both now use the index, and the order list endpoint goes from about 900 ms to 40 ms on the staging data.",
     ),
     (
         "review comments",
+        "Checkout PR review comments",
         "There are six open threads on the checkout PR. Two are about naming and are easy to take. Three ask for tests around the discount rounding, which is fair, since that path had none. The last one questions whether the cart should be validated on the server again before payment; I agree it should, and it is a small change.",
     ),
     (
         "depend on",
+        "Billing and inventory dependency",
         "It only needs one thing from the inventory crate: the `StockLevel` type, to refuse an invoice for items that are out of stock. That check belongs in the order service, which already knows both. Moving it there removes the dependency entirely, and billing stops rebuilding every time inventory changes.",
     ),
     (
         "sorted",
+        "Sort order list newest first",
         "The list was sorted in the handler with `sort_by_key(|order| order.created_at)`, which is oldest first. I moved the ordering into the query as `ORDER BY created_at DESC, id DESC`, so pagination stays stable, and removed the in-memory sort. The list test now checks the order explicitly.",
     ),
 ];
@@ -49,6 +58,16 @@ const FALLBACK: [&str; 3] = [
     "The behaviour comes from the default in the config loader, not from the service itself: when the field is missing it falls back to the old value. I made the default explicit, added a test for the missing-field case, and the existing tests still pass.",
     "Short answer: yes, but only on the write path. Reads go through the cache and never reach it. I added a test that covers the write path and documented the reason next to the call, since it is not obvious from the code.",
 ];
+
+/// What a model thinks before it answers, when the request asks it to.
+const THOUGHTS: [&str; 3] = [
+    "The question is about behaviour, so I should find where it is decided before changing anything. The config loader and the service both touch this value; I'll check which one sets the default, then look at the tests that cover it.",
+    "This needs a small change, but it crosses two modules. I'll read the call sites first so the change stays in one place, then run the tests for both crates to make sure nothing else depends on the old behaviour.",
+    "There may be more than one cause here. The quickest way to tell is to compare what runs locally with what runs in CI: the profile, the features, and the toolchain. I'll start with the build output.",
+];
+
+/// A title for a prompt that matches none of the answers.
+const FALLBACK_TITLE: &str = "Trace config default behaviour";
 
 /// Paragraphs a long answer is made of.
 const DETAIL: [&str; 6] = [
@@ -100,9 +119,22 @@ impl Writing {
     pub fn answer(prompt: &str, seed: u64) -> &'static str {
         ANSWERS
             .iter()
-            .find(|(word, _)| prompt.contains(word))
-            .map(|(_, text)| *text)
+            .find(|(word, _, _)| prompt.contains(word))
+            .map(|(_, _, text)| *text)
             .unwrap_or_else(|| FALLBACK[Self::index(seed, FALLBACK.len())])
+    }
+
+    /// The short title a client's side call asks for.
+    pub fn title(prompt: &str) -> &'static str {
+        ANSWERS
+            .iter()
+            .find(|(word, _, _)| prompt.contains(word))
+            .map_or(FALLBACK_TITLE, |(_, title, _)| *title)
+    }
+
+    /// What the model thinks before answering, picked by `seed`.
+    pub fn thinking(seed: u64) -> &'static str {
+        THOUGHTS[Self::index(seed, THOUGHTS.len())]
     }
 
     /// A long, structured answer: every paragraph, after a fitting opening.
@@ -148,8 +180,9 @@ mod tests {
         assert!(long.len() > 2_000, "{}", long.len());
         let every = super::ANSWERS
             .iter()
-            .map(|(_, text)| *text)
-            .chain(super::FALLBACK);
+            .flat_map(|(_, title, text)| [*title, *text])
+            .chain(super::FALLBACK)
+            .chain(super::THOUGHTS);
         for text in every.chain([long.as_str(), Writing::tool(2).0]) {
             assert!(!text.to_lowercase().contains("fake"), "{text}");
         }

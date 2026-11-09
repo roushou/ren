@@ -5,7 +5,7 @@
 mod scenario;
 
 pub use scenario::{Call, Run, Scenario};
-pub(in crate::dev) use scenario::{Caller, Client, PROMPTS};
+pub(in crate::dev) use scenario::{Caller, Client, PROMPTS, Side};
 
 use futures_util::{SinkExt as _, StreamExt as _};
 use scenario::{Channel, Plan};

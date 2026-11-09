@@ -64,6 +64,8 @@ pub enum Behaviour {
     Slow,
     /// A stream that stops before its terminal event.
     Cut,
+    /// A short conversation title, as a client's side call asks for.
+    Title,
 }
 
 impl Behaviour {
@@ -71,7 +73,8 @@ impl Behaviour {
     pub const HEADER: &'static str = "x-dev-reply";
 
     /// The behaviour a header value names (`text`, `tools`, `long`, `slow`,
-    /// `cut`, `error`, `rate_limited`); anything else, or none, is text.
+    /// `cut`, `title`, `error`, `rate_limited`); anything else, or none, is
+    /// text.
     pub fn for_label(label: Option<&str>) -> Self {
         match label {
             Some("tools") => Self::Tools,
@@ -80,6 +83,7 @@ impl Behaviour {
             Some("rate_limited") => Self::RateLimited,
             Some("slow") => Self::Slow,
             Some("cut") => Self::Cut,
+            Some("title") => Self::Title,
             Some(_) | None => Self::Text,
         }
     }
@@ -131,6 +135,7 @@ impl Reply {
             serial: request.serial,
             input_tokens,
             prompt: Prompt::newest(request.wire, &body),
+            asks: Asks::read(request.wire, &body),
         };
         match request.wire {
             Wire::Models => Self::json(200, &turn.models()),
@@ -147,7 +152,8 @@ impl Reply {
                     | Behaviour::Tools
                     | Behaviour::Long
                     | Behaviour::Slow
-                    | Behaviour::Cut) => {
+                    | Behaviour::Cut
+                    | Behaviour::Title) => {
                         let output = Output::of(behaviour, &turn);
                         match (request.wire, stream) {
                             (Wire::Messages, true) => turn.messages_stream(&output, behaviour),
@@ -266,42 +272,136 @@ impl Prompt {
     }
 }
 
-/// What the reply says: text, a tool call, or both.
+/// What a request asks of the model beyond its prompt, read the way the
+/// provider reads it.
+#[derive(Debug, Clone, Copy, Default)]
+struct Asks {
+    /// Prompt caching: `cache_control` marks (Messages) or a
+    /// `prompt_cache_key` (Responses).
+    cache: bool,
+    /// Thinking (Messages) or reasoning (Responses) before the answer.
+    reasoning: bool,
+    /// The most output tokens the reply may have (Messages' `max_tokens`).
+    max_tokens: Option<u64>,
+}
+
+impl Asks {
+    fn read(wire: Wire, body: &Value) -> Self {
+        match wire {
+            Wire::Messages => Self {
+                cache: Self::marks_cache(body),
+                reasoning: matches!(
+                    body["thinking"]["type"].as_str(),
+                    Some("enabled" | "adaptive")
+                ),
+                max_tokens: body["max_tokens"].as_u64(),
+            },
+            Wire::Responses => Self {
+                cache: body["prompt_cache_key"].is_string(),
+                reasoning: body["reasoning"].is_object(),
+                max_tokens: None,
+            },
+            Wire::ChatCompletions | Wire::CountTokens | Wire::Models => Self::default(),
+        }
+    }
+
+    /// Whether any block in the request carries a `cache_control` mark.
+    fn marks_cache(value: &Value) -> bool {
+        match value {
+            Value::Object(fields) => {
+                fields.contains_key("cache_control") || fields.values().any(Self::marks_cache)
+            }
+            Value::Array(items) => items.iter().any(Self::marks_cache),
+            Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => false,
+        }
+    }
+}
+
+/// Why a reply ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Stop {
+    /// The model finished its answer.
+    End,
+    /// The model called a tool.
+    Tool,
+    /// The reply reached the request's `max_tokens`, this many.
+    MaxTokens(u64),
+}
+
+/// What the reply says: thinking, text, a tool call, or some of these.
 struct Output {
+    thinking: Vec<String>,
     text: Vec<String>,
     tool: Option<(&'static str, Value)>,
+    stop: Stop,
 }
 
 impl Output {
     fn of(behaviour: Behaviour, turn: &Turn) -> Self {
         let words =
             |text: &str| -> Vec<String> { text.split_inclusive(' ').map(str::to_owned).collect() };
-        match behaviour {
+        let (text, tool) = match behaviour {
             Behaviour::Tools => {
                 let (lead, name, input) = Writing::tool(turn.serial);
-                Self {
-                    text: words(lead),
-                    tool: Some((name, input)),
-                }
+                (words(lead), Some((name, input)))
             }
             // A long answer streams a sentence at a time.
-            Behaviour::Long => Self {
-                text: Writing::long_answer(&turn.prompt, turn.serial)
+            Behaviour::Long => (
+                Writing::long_answer(&turn.prompt, turn.serial)
                     .split_inclusive(". ")
                     .map(str::to_owned)
                     .collect(),
-                tool: None,
-            },
+                None,
+            ),
+            Behaviour::Title => (words(Writing::title(&turn.prompt)), None),
             // Word by word: at the normal pace a short answer streams for
             // about a second, as a real model's does.
             Behaviour::Text
             | Behaviour::Slow
             | Behaviour::Cut
             | Behaviour::Error
-            | Behaviour::RateLimited => Self {
-                text: words(Writing::answer(&turn.prompt, turn.serial)),
-                tool: None,
-            },
+            | Behaviour::RateLimited => (words(Writing::answer(&turn.prompt, turn.serial)), None),
+        };
+        let thinking = if turn.asks.reasoning && behaviour != Behaviour::Title {
+            words(Writing::thinking(turn.serial))
+        } else {
+            Vec::new()
+        };
+        let stop = if tool.is_some() {
+            Stop::Tool
+        } else {
+            Stop::End
+        };
+        let output = Self {
+            thinking,
+            text,
+            tool,
+            stop,
+        };
+        match turn.asks.max_tokens {
+            Some(max) if output.output_tokens() > max => output.cut_to(max),
+            Some(_) | None => output,
+        }
+    }
+
+    /// The reply cut where it reaches `max` tokens (at least one word), as a
+    /// model stops at `max_tokens`.
+    fn cut_to(self, max: u64) -> Self {
+        let budget = usize::try_from(max.saturating_mul(4)).unwrap_or(usize::MAX);
+        let mut used = 0;
+        let mut text = Vec::new();
+        for word in self.text {
+            used += word.len();
+            if !text.is_empty() && used > budget {
+                break;
+            }
+            text.push(word);
+        }
+        Self {
+            thinking: Vec::new(),
+            text,
+            tool: None,
+            stop: Stop::MaxTokens(max),
         }
     }
 
@@ -309,9 +409,44 @@ impl Output {
         self.text.concat()
     }
 
-    fn output_tokens(&self) -> u64 {
-        u64::try_from(self.joined().len() / 4 + 1).unwrap_or(u64::MAX)
+    fn thought(&self) -> String {
+        self.thinking.concat()
     }
+
+    fn tokens(text: &str) -> u64 {
+        u64::try_from(text.len() / 4 + 1).unwrap_or(u64::MAX)
+    }
+
+    /// Output tokens, thinking included, as providers count them.
+    fn output_tokens(&self) -> u64 {
+        match self.stop {
+            // A reply cut at `max_tokens` used exactly that many.
+            Stop::MaxTokens(max) => Self::tokens(&self.joined()).min(max),
+            Stop::End | Stop::Tool => {
+                let thinking = if self.thinking.is_empty() {
+                    0
+                } else {
+                    Self::tokens(&self.thought())
+                };
+                Self::tokens(&self.joined()) + thinking
+            }
+        }
+    }
+
+    fn reasoning_tokens(&self) -> u64 {
+        if self.thinking.is_empty() {
+            0
+        } else {
+            Self::tokens(&self.thought())
+        }
+    }
+}
+
+/// Prompt-cache usage: tokens read from the cache and written to it.
+#[derive(Debug, Clone, Copy, Default)]
+struct Cache {
+    read: u64,
+    written: u64,
 }
 
 /// One fake model turn.
@@ -322,6 +457,7 @@ struct Turn {
     serial: u64,
     input_tokens: u64,
     prompt: String,
+    asks: Asks,
 }
 
 impl Turn {
@@ -344,10 +480,49 @@ impl Turn {
         id
     }
 
+    /// Prompt-cache usage: when the request asks for caching, most of its
+    /// context comes from the cache and a little is written to it, in amounts
+    /// that differ per request as a session's context does.
+    fn cache(&self) -> Cache {
+        if !self.asks.cache {
+            return Cache::default();
+        }
+        let mut mixed = self.serial.wrapping_add(0x9E37_79B9_7F4A_7C15);
+        mixed = (mixed ^ (mixed >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        mixed = (mixed ^ (mixed >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+        mixed ^= mixed >> 31;
+        Cache {
+            read: 18_000 + mixed % 42_000,
+            written: 200 + (mixed >> 32) % 2_800,
+        }
+    }
+
+    /// A thinking block's signature, in the provider's style.
+    fn signature(&self) -> String {
+        format!("{}{}", self.id("EqQBCkgIBhABGAIiQ"), self.id("Ewz"))
+    }
+
+    fn stop_reason(output: &Output) -> &'static str {
+        match output.stop {
+            Stop::End => "end_turn",
+            Stop::Tool => "tool_use",
+            Stop::MaxTokens(_) => "max_tokens",
+        }
+    }
+
+    fn messages_usage(&self, output_tokens: u64) -> Value {
+        let cache = self.cache();
+        json!({ "input_tokens": self.input_tokens,
+                "cache_creation_input_tokens": cache.written,
+                "cache_read_input_tokens": cache.read,
+                "output_tokens": output_tokens })
+    }
+
     fn pace(&self, behaviour: Behaviour) -> Duration {
         match behaviour {
             Behaviour::Slow => Duration::from_millis(500),
             Behaviour::Text
+            | Behaviour::Title
             | Behaviour::Tools
             | Behaviour::Long
             | Behaviour::Error
@@ -379,7 +554,11 @@ impl Turn {
     }
 
     fn message(&self, output: &Output) -> Value {
-        let mut content = vec![json!({ "type": "text", "text": output.joined() })];
+        let mut content = Vec::new();
+        if !output.thinking.is_empty() {
+            content.push(json!({ "type": "thinking", "thinking": output.thought(), "signature": self.signature() }));
+        }
+        content.push(json!({ "type": "text", "text": output.joined() }));
         if let Some((name, input)) = &output.tool {
             content.push(
                 json!({ "type": "tool_use", "id": self.id("toolu_01"), "name": name, "input": input }),
@@ -391,98 +570,150 @@ impl Turn {
             "role": "assistant",
             "model": self.model,
             "content": content,
-            "stop_reason": if output.tool.is_some() { "tool_use" } else { "end_turn" },
-            "usage": { "input_tokens": self.input_tokens, "output_tokens": output.output_tokens() },
+            "stop_reason": Self::stop_reason(output),
+            "usage": self.messages_usage(output.output_tokens()),
         })
     }
 
     fn messages_stream(&self, output: &Output, behaviour: Behaviour) -> Reply {
         let pace = self.pace(behaviour);
-        let mut events = vec![(
-            Duration::ZERO,
-            Self::event(
-                Some("message_start"),
-                &json!({ "type": "message_start", "message": {
-                    "id": self.id("msg_01"), "type": "message", "role": "assistant", "model": self.model,
-                    "content": [], "stop_reason": null,
-                    "usage": { "input_tokens": self.input_tokens, "output_tokens": 1 },
-                }}),
+        let event = |name: &str, data: Value| Self::event(Some(name), &data);
+        let mut events = vec![
+            (
+                Duration::ZERO,
+                event(
+                    "message_start",
+                    json!({ "type": "message_start", "message": {
+                        "id": self.id("msg_01"), "type": "message", "role": "assistant", "model": self.model,
+                        "content": [], "stop_reason": null, "stop_sequence": null,
+                        "usage": self.messages_usage(1),
+                    }}),
+                ),
             ),
-        )];
+            (Duration::ZERO, event("ping", json!({ "type": "ping" }))),
+        ];
+        let mut index = 0;
+        if !output.thinking.is_empty() {
+            events.push((
+                Duration::ZERO,
+                event(
+                    "content_block_start",
+                    json!({ "type": "content_block_start", "index": index,
+                            "content_block": { "type": "thinking", "thinking": "", "signature": "" } }),
+                ),
+            ));
+            for text in &output.thinking {
+                events.push((
+                    pace,
+                    event(
+                        "content_block_delta",
+                        json!({ "type": "content_block_delta", "index": index,
+                                "delta": { "type": "thinking_delta", "thinking": text } }),
+                    ),
+                ));
+            }
+            events.push((
+                Duration::ZERO,
+                event(
+                    "content_block_delta",
+                    json!({ "type": "content_block_delta", "index": index,
+                            "delta": { "type": "signature_delta", "signature": self.signature() } }),
+                ),
+            ));
+            events.push((
+                Duration::ZERO,
+                event(
+                    "content_block_stop",
+                    json!({ "type": "content_block_stop", "index": index }),
+                ),
+            ));
+            index += 1;
+        }
         events.push((
             Duration::ZERO,
-            Self::event(
-                Some("content_block_start"),
-                &json!({ "type": "content_block_start", "index": 0, "content_block": { "type": "text", "text": "" } }),
+            event(
+                "content_block_start",
+                json!({ "type": "content_block_start", "index": index, "content_block": { "type": "text", "text": "" } }),
             ),
         ));
         for text in &output.text {
             events.push((
                 pace,
-                Self::event(
-                    Some("content_block_delta"),
-                    &json!({ "type": "content_block_delta", "index": 0, "delta": { "type": "text_delta", "text": text } }),
+                event(
+                    "content_block_delta",
+                    json!({ "type": "content_block_delta", "index": index, "delta": { "type": "text_delta", "text": text } }),
                 ),
             ));
         }
         events.push((
             Duration::ZERO,
-            Self::event(
-                Some("content_block_stop"),
-                &json!({ "type": "content_block_stop", "index": 0 }),
+            event(
+                "content_block_stop",
+                json!({ "type": "content_block_stop", "index": index }),
             ),
         ));
         if behaviour == Behaviour::Cut {
             return Reply::sse(events);
         }
         if let Some((name, input)) = &output.tool {
+            index += 1;
             events.push((
                 pace,
-                Self::event(
-                    Some("content_block_start"),
-                    &json!({ "type": "content_block_start", "index": 1, "content_block": {
+                event(
+                    "content_block_start",
+                    json!({ "type": "content_block_start", "index": index, "content_block": {
                         "type": "tool_use", "id": self.id("toolu_01"), "name": name, "input": {},
                     }}),
                 ),
             ));
             events.push((
                 pace,
-                Self::event(
-                    Some("content_block_delta"),
-                    &json!({ "type": "content_block_delta", "index": 1, "delta": {
+                event(
+                    "content_block_delta",
+                    json!({ "type": "content_block_delta", "index": index, "delta": {
                         "type": "input_json_delta", "partial_json": input.to_string(),
                     }}),
                 ),
             ));
             events.push((
                 Duration::ZERO,
-                Self::event(
-                    Some("content_block_stop"),
-                    &json!({ "type": "content_block_stop", "index": 1 }),
+                event(
+                    "content_block_stop",
+                    json!({ "type": "content_block_stop", "index": index }),
                 ),
             ));
         }
         events.push((
             Duration::ZERO,
-            Self::event(
-                Some("message_delta"),
-                &json!({ "type": "message_delta",
-                    "delta": { "stop_reason": if output.tool.is_some() { "tool_use" } else { "end_turn" } },
+            event(
+                "message_delta",
+                json!({ "type": "message_delta",
+                    "delta": { "stop_reason": Self::stop_reason(output), "stop_sequence": null },
                     "usage": { "output_tokens": output.output_tokens() } }),
             ),
         ));
         events.push((
             Duration::ZERO,
-            Self::event(Some("message_stop"), &json!({ "type": "message_stop" })),
+            event("message_stop", json!({ "type": "message_stop" })),
         ));
         Reply::sse(events)
     }
 
+    fn reasoning_item(&self, output: &Output) -> Value {
+        json!({ "type": "reasoning", "id": self.id("rs_"),
+                "summary": [{ "type": "summary_text", "text": output.thought() }],
+                "encrypted_content": format!("gAAAAAB{}", self.id("p")) })
+    }
+
     fn response_object(&self, output: &Output, status: &str) -> Value {
-        let mut items = vec![json!({
+        let mut items = Vec::new();
+        if !output.thinking.is_empty() {
+            items.push(self.reasoning_item(output));
+        }
+        items.push(json!({
             "type": "message", "id": self.id("msg_01"), "role": "assistant", "status": "completed",
             "content": [{ "type": "output_text", "text": output.joined(), "annotations": [] }],
-        })];
+        }));
         if let Some((name, input)) = &output.tool {
             items.push(json!({
                 "type": "function_call", "id": self.id("fc_"), "call_id": self.id("call_"),
@@ -496,8 +727,13 @@ impl Turn {
             "status": status,
             "output": if status == "completed" { Value::Array(items) } else { json!([]) },
             "usage": if status == "completed" {
-                json!({ "input_tokens": self.input_tokens, "input_tokens_details": { "cached_tokens": 0 },
-                        "output_tokens": output.output_tokens(), "total_tokens": self.input_tokens + output.output_tokens() })
+                // Responses counts cached tokens inside `input_tokens`.
+                let cached = self.cache().read;
+                let input = self.input_tokens + cached;
+                json!({ "input_tokens": input, "input_tokens_details": { "cached_tokens": cached },
+                        "output_tokens": output.output_tokens(),
+                        "output_tokens_details": { "reasoning_tokens": output.reasoning_tokens() },
+                        "total_tokens": input + output.output_tokens() })
             } else { Value::Null },
         })
     }
@@ -506,23 +742,48 @@ impl Turn {
     /// WebSocket.
     fn responses_events(&self, output: &Output, behaviour: Behaviour) -> Vec<(Duration, Value)> {
         let pace = self.pace(behaviour);
-        let mut events = vec![
-            (
+        let mut events = vec![(
+            Duration::ZERO,
+            json!({ "type": "response.created", "response": self.response_object(output, "in_progress") }),
+        )];
+        let mut index = 0;
+        if !output.thinking.is_empty() {
+            let id = self.id("rs_");
+            events.push((
                 Duration::ZERO,
-                json!({ "type": "response.created", "response": self.response_object(output, "in_progress") }),
-            ),
-            (
+                json!({ "type": "response.output_item.added", "output_index": index,
+                        "item": { "type": "reasoning", "id": id, "summary": [] } }),
+            ));
+            events.push((
                 Duration::ZERO,
-                json!({ "type": "response.output_item.added", "output_index": 0, "item": {
-                    "type": "message", "id": self.id("msg_01"), "role": "assistant", "status": "in_progress", "content": [],
-                }}),
-            ),
-        ];
+                json!({ "type": "response.reasoning_summary_part.added", "item_id": id, "output_index": index,
+                        "summary_index": 0, "part": { "type": "summary_text", "text": "" } }),
+            ));
+            for text in &output.thinking {
+                events.push((
+                    pace,
+                    json!({ "type": "response.reasoning_summary_text.delta", "item_id": id,
+                            "output_index": index, "summary_index": 0, "delta": text }),
+                ));
+            }
+            events.push((
+                Duration::ZERO,
+                json!({ "type": "response.output_item.done", "output_index": index,
+                        "item": self.reasoning_item(output) }),
+            ));
+            index += 1;
+        }
+        events.push((
+            Duration::ZERO,
+            json!({ "type": "response.output_item.added", "output_index": index, "item": {
+                "type": "message", "id": self.id("msg_01"), "role": "assistant", "status": "in_progress", "content": [],
+            }}),
+        ));
         for text in &output.text {
             events.push((
                 pace,
                 json!({ "type": "response.output_text.delta", "item_id": self.id("msg_01"),
-                        "output_index": 0, "content_index": 0, "delta": text }),
+                        "output_index": index, "content_index": 0, "delta": text }),
             ));
         }
         if behaviour == Behaviour::Cut {
@@ -530,7 +791,7 @@ impl Turn {
         }
         events.push((
             Duration::ZERO,
-            json!({ "type": "response.output_item.done", "output_index": 0, "item": {
+            json!({ "type": "response.output_item.done", "output_index": index, "item": {
                 "type": "message", "id": self.id("msg_01"), "role": "assistant", "status": "completed",
                 "content": [{ "type": "output_text", "text": output.joined(), "annotations": [] }],
             }}),
@@ -538,7 +799,7 @@ impl Turn {
         if let Some((name, input)) = &output.tool {
             events.push((
                 pace,
-                json!({ "type": "response.output_item.done", "output_index": 1, "item": {
+                json!({ "type": "response.output_item.done", "output_index": index + 1, "item": {
                     "type": "function_call", "id": self.id("fc_"), "call_id": self.id("call_"),
                     "name": name, "arguments": input.to_string(), "status": "completed",
                 }}),
@@ -563,6 +824,14 @@ impl Turn {
         )
     }
 
+    fn finish_reason(output: &Output) -> &'static str {
+        match output.stop {
+            Stop::End => "stop",
+            Stop::Tool => "tool_calls",
+            Stop::MaxTokens(_) => "length",
+        }
+    }
+
     fn chat_completion(&self, output: &Output) -> Value {
         let mut message = json!({ "role": "assistant", "content": output.joined() });
         if let Some((name, input)) = &output.tool {
@@ -574,7 +843,7 @@ impl Turn {
             "object": "chat.completion",
             "model": self.model,
             "choices": [{ "index": 0, "message": message,
-                          "finish_reason": if output.tool.is_some() { "tool_calls" } else { "stop" } }],
+                          "finish_reason": Self::finish_reason(output) }],
             "usage": { "prompt_tokens": self.input_tokens, "completion_tokens": output.output_tokens(),
                        "total_tokens": self.input_tokens + output.output_tokens() },
         })
@@ -611,14 +880,7 @@ impl Turn {
         }
         events.push((
             Duration::ZERO,
-            chunk(
-                json!({}),
-                json!(if output.tool.is_some() {
-                    "tool_calls"
-                } else {
-                    "stop"
-                }),
-            ),
+            chunk(json!({}), json!(Self::finish_reason(output))),
         ));
         events.push((
             Duration::ZERO,
@@ -662,6 +924,7 @@ impl SocketTurn {
             gap,
             input_tokens: u64::try_from(message.len() / 4).unwrap_or(u64::MAX),
             prompt: Prompt::newest(Wire::Responses, request),
+            asks: Asks::read(Wire::Responses, request),
             serial,
             model,
         };
@@ -670,7 +933,8 @@ impl SocketTurn {
             | Behaviour::Tools
             | Behaviour::Long
             | Behaviour::Slow
-            | Behaviour::Cut) => behaviour,
+            | Behaviour::Cut
+            | Behaviour::Title) => behaviour,
             // A socket has no status: an error is an `error` event.
             Behaviour::Error | Behaviour::RateLimited => {
                 return Some(vec![(
@@ -719,6 +983,10 @@ mod tests {
             .filter(|data| *data != "[DONE]")
             .map(|data| serde_json::from_str(data).unwrap())
             .collect()
+    }
+
+    fn events_of(reply: &Reply) -> Vec<Value> {
+        events(reply)
     }
 
     fn all_text(reply: &Reply) -> String {
@@ -782,6 +1050,91 @@ mod tests {
     }
 
     #[test]
+    fn caching_and_thinking_are_answered_when_the_request_asks() {
+        let body = json!({ "model": "claude-opus-5-5", "stream": true, "max_tokens": 32000,
+            "thinking": { "type": "enabled", "budget_tokens": 31999 },
+            "system": [{ "type": "text", "text": "You are a coding agent.", "cache_control": { "type": "ephemeral" } }],
+            "messages": [{ "role": "user", "content": "Where is the order list sorted?" }] });
+        let events = events(&reply(Wire::Messages, &body));
+        let usage = &events[0]["message"]["usage"];
+        assert!(usage["cache_read_input_tokens"].as_u64().unwrap() >= 18_000);
+        assert!(usage["cache_creation_input_tokens"].as_u64().unwrap() >= 200);
+        assert_eq!(events[1]["type"], "ping");
+        assert_eq!(events[2]["content_block"]["type"], "thinking");
+        assert!(
+            events
+                .iter()
+                .any(|e| e["delta"]["type"] == "thinking_delta")
+        );
+        assert!(
+            events
+                .iter()
+                .any(|e| e["delta"]["type"] == "signature_delta")
+        );
+        let text_start = events
+            .iter()
+            .find(|e| e["content_block"]["type"] == "text")
+            .unwrap();
+        assert_eq!(text_start["index"], 1);
+
+        let plain = json!({ "model": "claude-haiku-5-5", "stream": true,
+            "messages": [{ "role": "user", "content": "hi" }] });
+        let events = events_of(&reply(Wire::Messages, &plain));
+        assert_eq!(events[0]["message"]["usage"]["cache_read_input_tokens"], 0);
+        assert!(
+            events
+                .iter()
+                .all(|e| e["content_block"]["type"] != "thinking")
+        );
+
+        let body = json!({ "model": "gpt-5.5-codex", "stream": true, "prompt_cache_key": "k",
+            "reasoning": { "effort": "medium", "summary": "auto" }, "input": "Where is it sorted?" });
+        let events = events_of(&reply(Wire::Responses, &body));
+        assert_eq!(events[1]["item"]["type"], "reasoning");
+        let done = events.last().unwrap();
+        let usage = &done["response"]["usage"];
+        assert!(
+            usage["input_tokens_details"]["cached_tokens"]
+                .as_u64()
+                .unwrap()
+                >= 18_000
+        );
+        assert!(
+            usage["output_tokens_details"]["reasoning_tokens"]
+                .as_u64()
+                .unwrap()
+                > 0
+        );
+        assert_eq!(done["response"]["output"][0]["type"], "reasoning");
+        assert_eq!(done["response"]["output"][1]["type"], "message");
+    }
+
+    #[test]
+    fn side_calls_get_a_title_or_stop_at_max_tokens() {
+        let probe = json!({ "model": "claude-haiku-5-5", "max_tokens": 1,
+            "messages": [{ "role": "user", "content": "quota" }] });
+        let message: Value =
+            serde_json::from_str(&reply(Wire::Messages, &probe).pieces[0].bytes).unwrap();
+        assert_eq!(message["stop_reason"], "max_tokens");
+        assert_eq!(message["usage"]["output_tokens"], 1);
+        assert!(
+            !message["content"][0]["text"]
+                .as_str()
+                .unwrap()
+                .trim()
+                .contains(" ")
+        );
+
+        let title = json!({ "model": "claude-haiku-5-5", "max_tokens": 512, "stream": true,
+            "messages": [{ "role": "user", "content": "Find where the order list is sorted and make it newest first." }] });
+        let text: String = events_of(&reply_as(Wire::Messages, &title, Behaviour::Title))
+            .iter()
+            .filter_map(|e| e["delta"]["text"].as_str())
+            .collect();
+        assert_eq!(text, "Sort order list newest first");
+    }
+
+    #[test]
     fn tools_errors_limits_and_cuts_are_chosen_by_the_header() {
         let ask = |behaviour, wire| {
             reply_as(
@@ -818,6 +1171,7 @@ mod tests {
             Behaviour::Long,
             Behaviour::Slow,
             Behaviour::Cut,
+            Behaviour::Title,
             Behaviour::Error,
             Behaviour::RateLimited,
         ] {
