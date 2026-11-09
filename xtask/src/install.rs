@@ -168,7 +168,7 @@ enum Quiet {
 }
 
 /// How to run `tailscale` for the Serve step.
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
 pub(crate) enum TailscaleCli {
     Direct,
     Sudo,

@@ -5,11 +5,14 @@ mod provider;
 mod seed;
 mod slot;
 
-use crate::install::InstallError;
+use crate::{
+    install::{InstallError, TailscaleCli},
+    publish::Publish,
+};
 use clap::{Args, Subcommand};
 use provider::{FakeProvider, ProviderError};
 use seed::{Scenario, SeedError, Seeder};
-use slot::{Slot, Unit};
+use slot::{Preview, Slot, Unit};
 use std::net::SocketAddr;
 use tgv_harness::host::HostEnv;
 
@@ -28,10 +31,12 @@ enum DevAction {
     /// fake-429; anything else gets text quoting the prompt.
     Provider(ProviderArgs),
     /// Build this checkout and (re)start the slot: the fake provider and a
-    /// dev daemon, as `tgv-dev-*` systemd user units.
-    Up,
-    /// Stop every `tgv-dev-*` unit. The slot's data is kept.
-    Down,
+    /// dev daemon, as `tgv-dev-*` systemd user units; with --ui, also the UI,
+    /// published privately on the tailnet (ports 9443 and 9444).
+    Up(UpArgs),
+    /// Stop every `tgv-dev-*` unit and remove the dev preview's tailnet
+    /// routes. The slot's data is kept.
+    Down(TailnetArgs),
     /// Stop the slot, remove its data, and start it again.
     Reset,
     /// Show the slot's units, addresses, and files.
@@ -42,6 +47,41 @@ enum DevAction {
     /// Start or stop a steady trickle of fake calls (one every few
     /// seconds), for pages that follow live traffic.
     Trickle(TrickleArgs),
+}
+
+#[derive(Args)]
+struct UpArgs {
+    /// Also build and run the UI, and publish the preview.
+    #[arg(long)]
+    ui: bool,
+    /// Keep the preview on this host's loopback; do not touch Tailscale.
+    #[arg(long, requires = "ui")]
+    local: bool,
+    #[command(flatten)]
+    tailnet: TailnetArgs,
+}
+
+#[derive(Args)]
+struct TailnetArgs {
+    /// Use `sudo -n` for Tailscale Serve; the default is install-vps's saved
+    /// choice.
+    #[arg(long)]
+    sudo_tailscale: bool,
+}
+
+impl TailnetArgs {
+    /// How to run `tailscale`: as asked, else as install-vps last did.
+    fn cli(&self, env: &HostEnv) -> Result<TailscaleCli, DevError> {
+        let home = env
+            .absolute_path("HOME")
+            .ok_or(InstallError::MissingEnv("HOME"))?;
+        let saved = Publish::default().resolve(&Publish::path(&home))?;
+        Ok(if self.sudo_tailscale || saved.sudo_tailscale {
+            TailscaleCli::Sudo
+        } else {
+            TailscaleCli::Direct
+        })
+    }
 }
 
 #[derive(Args)]
@@ -86,12 +126,24 @@ impl Dev {
     pub fn run(self, env: &HostEnv) -> Result<(), DevError> {
         match self.action {
             DevAction::Provider(args) => Ok(FakeProvider::serve(args.listen)?),
-            DevAction::Up => {
+            DevAction::Up(args) => {
                 let slot = Slot::new(env)?;
-                slot.up()?;
+                if args.ui {
+                    let preview = if args.local {
+                        Preview::Local
+                    } else {
+                        Preview::Tailnet(args.tailnet.cli(env)?)
+                    };
+                    slot.up_with_ui(env, preview)?;
+                } else {
+                    slot.up()?;
+                }
                 slot.status()
             }
-            DevAction::Down => Slot::down(),
+            DevAction::Down(args) => {
+                Slot::down()?;
+                Slot::unpublish(args.cli(env)?)
+            }
             DevAction::Reset => {
                 let slot = Slot::new(env)?;
                 slot.wipe()?;

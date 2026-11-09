@@ -121,6 +121,11 @@ impl UiDeploy {
             .run()
     }
 
+    /// The Node that runs the UI.
+    pub fn node(&self) -> &Path {
+        &self.node
+    }
+
     /// Swaps in the staged copy, writes `ui.env` if missing, starts the
     /// service, and checks that the UI answers through to the daemon.
     pub fn install(&self, urls: &UiUrls) -> Result<(), InstallError> {

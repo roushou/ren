@@ -6,8 +6,10 @@
 
 use super::DevError;
 use crate::{
-    install::{InstallError, InstallVps},
+    install::{InstallError, InstallVps, TailscaleCli},
     invocation::{Echo, Invocation},
+    tailscale::{Route, ServeStatus},
+    ui::UiDeploy,
 };
 use std::{
     fs,
@@ -81,6 +83,7 @@ impl Unit {
     /// Run `command` as this unit, with `environment`, until stopped.
     pub fn start(
         self,
+        dir: Option<&Path>,
         command: &[&Path],
         args: &[String],
         environment: &[(&str, String)],
@@ -89,11 +92,23 @@ impl Unit {
             .args(["--user", "--collect", "--quiet"])
             .arg(format!("--unit={}", self.name()))
             .arg(format!("--description=TGV dev slot: {}", self.name()));
+        if let Some(dir) = dir {
+            run = run.arg(format!("--working-directory={}", dir.display()));
+        }
         for (name, value) in environment {
             run = run.arg(format!("--setenv={name}={value}"));
         }
         run.arg("--").args(command).args(args).run()
     }
+}
+
+/// Where the dev preview is reached.
+#[derive(Debug, Clone, Copy)]
+pub enum Preview {
+    /// Published on the tailnet with Tailscale Serve.
+    Tailnet(TailscaleCli),
+    /// Only on this host's loopback.
+    Local,
 }
 
 /// Where the slot lives and listens.
@@ -103,6 +118,9 @@ pub struct Slot {
     pub config: PathBuf,
     pub data_dir: PathBuf,
     pub bin_dir: PathBuf,
+    home: PathBuf,
+    ui_dir: PathBuf,
+    ui_next: PathBuf,
 }
 
 impl Slot {
@@ -112,6 +130,10 @@ impl Slot {
         SocketAddr::new(std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST), 18787);
     pub const UI: SocketAddr =
         SocketAddr::new(std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST), 13000);
+    /// The tailnet HTTPS ports of the dev preview, beside the installed
+    /// service's.
+    pub const GATEWAY_PORT: u16 = 9443;
+    pub const UI_PORT: u16 = 9444;
     /// The operator key the dev config's operator-key entries read: fake.
     const OPERATOR_KEY_ENV: &'static str = "TGV_DEV_OPERATOR_KEY";
     const OPERATOR_KEY: &'static str = "fake-dev-operator-key";
@@ -131,6 +153,9 @@ impl Slot {
             config: home.join(".config/tgv-dev/tgv.toml"),
             data_dir: home.join(".local/state/tgv-dev"),
             bin_dir: share.join("bin"),
+            ui_dir: share.join("ui"),
+            ui_next: share.join("ui.next"),
+            home: home.clone(),
         })
     }
 
@@ -262,6 +287,61 @@ impl Slot {
 
     /// Build, configure, and (re)start the provider and daemon.
     pub fn up(&self) -> Result<(), DevError> {
+        self.start_core()
+    }
+
+    /// Start the core, then build and run the UI and, unless `Preview::Local`,
+    /// publish the dev gateway and UI on the tailnet.
+    pub fn up_with_ui(&self, env: &HostEnv, preview: Preview) -> Result<(), DevError> {
+        let ui = UiDeploy::new(env, &self.home, &self.repo)?;
+        self.start_core()?;
+        ui.build_into(&self.ui_next)?;
+        Unit::Ui.stop()?;
+        if self.ui_dir.exists() {
+            fs::remove_dir_all(&self.ui_dir).map_err(InstallError::file(&self.ui_dir))?;
+        }
+        fs::rename(&self.ui_next, &self.ui_dir).map_err(InstallError::file(&self.ui_dir))?;
+        let (public_gateway, origin) = match preview {
+            Preview::Local => (
+                format!("http://{}", Self::DAEMON),
+                format!("http://{}", Self::UI),
+            ),
+            Preview::Tailnet(tailscale) => {
+                let dns = InstallVps::publish(
+                    tailscale,
+                    Self::GATEWAY_PORT,
+                    &format!("http://{}", Self::DAEMON),
+                )?
+                .ok_or(InstallError::NoDnsName)?;
+                (
+                    format!("https://{dns}:{}", Self::GATEWAY_PORT),
+                    format!("https://{dns}:{}", Self::UI_PORT),
+                )
+            }
+        };
+        Self::step(&format!("Starting the dev UI on {}", Self::UI));
+        Unit::Ui.start(
+            Some(&self.ui_dir),
+            &[ui.node()],
+            &["build".into()],
+            &[
+                ("HOST", Self::UI.ip().to_string()),
+                ("PORT", Self::UI.port().to_string()),
+                ("TGV_GATEWAY_URL", format!("http://{}", Self::DAEMON)),
+                ("TGV_PUBLIC_GATEWAY_URL", public_gateway),
+                ("ORIGIN", origin.clone()),
+            ],
+        )?;
+        // The UI's /health relays the dev daemon's.
+        Self::wait_for(Self::UI, "/health")?;
+        if let Preview::Tailnet(tailscale) = preview {
+            InstallVps::publish(tailscale, Self::UI_PORT, &format!("http://{}", Self::UI))?;
+        }
+        println!("\nDev preview: {origin}\n");
+        Ok(())
+    }
+
+    fn start_core(&self) -> Result<(), DevError> {
         self.build()?;
         self.write_config()?;
         for unit in [Unit::Daemon, Unit::Provider] {
@@ -271,6 +351,7 @@ impl Slot {
         let tgv = self.bin_dir.join("tgv");
         Self::step(&format!("Starting the fake provider on {}", Self::PROVIDER));
         Unit::Provider.start(
+            None,
             &[&xtask],
             &[
                 "dev".into(),
@@ -283,6 +364,7 @@ impl Slot {
         Self::wait_for(Self::PROVIDER, "/anthropic/v1/models")?;
         Self::step(&format!("Starting the dev daemon on {}", Self::DAEMON));
         Unit::Daemon.start(
+            None,
             &[&tgv],
             &[
                 "--config".into(),
@@ -298,6 +380,7 @@ impl Slot {
     pub fn trickle(&self) -> Result<(), DevError> {
         Self::step("Starting a trickle of fake calls");
         Unit::Trickle.start(
+            None,
             &[&self.bin_dir.join("xtask")],
             &[
                 "dev".into(),
@@ -315,6 +398,31 @@ impl Slot {
         for unit in Unit::ALL {
             Self::step(&format!("Stopping {}", unit.name()));
             unit.stop()?;
+        }
+        Ok(())
+    }
+
+    /// Remove the dev preview's Serve routes, each only if it still proxies
+    /// to the slot; the installed service's routes are never touched.
+    pub fn unpublish(tailscale: TailscaleCli) -> Result<(), DevError> {
+        let status = Invocation::new("tailscale")
+            .args(["serve", "status", "--json"])
+            .capture()?;
+        let serve = ServeStatus::parse(&status).map_err(|_| DevError::Config)?;
+        for (port, target) in [
+            (Self::GATEWAY_PORT, format!("http://{}", Self::DAEMON)),
+            (Self::UI_PORT, format!("http://{}", Self::UI)),
+        ] {
+            match serve.route(port, &target) {
+                Route::Target => {
+                    Self::step(&format!("Unpublishing port {port}"));
+                    tailscale
+                        .invocation()
+                        .args(["serve", &format!("--https={port}"), "off"])
+                        .run()?;
+                }
+                Route::Free | Route::Funnel { .. } | Route::Other { .. } | Route::TcpForward => {}
+            }
         }
         Ok(())
     }
