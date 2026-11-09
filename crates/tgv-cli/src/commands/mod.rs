@@ -1,3 +1,4 @@
+pub mod clients;
 pub mod control;
 pub mod doctor;
 pub mod history;

@@ -67,6 +67,14 @@ deepseek = 33554432 # 32 MiB (no documented limit; Anthropic Messages' is used)
 # Local use (the tgv control CLI) needs the daemon's control.token instead.
 tailscale_logins = []
 
+# Optional: named clients of the gateway. A client is proven by a Tailscale
+# login (through Tailscale Serve) or by a token it sends in
+# X-TGV-Client-Token; `tgv clients token <id>` makes one and prints its digest.
+# [[clients]]
+# id = "alice"
+# tailscale_logins = ["alice@example.com"]
+# token_blake3 = "<64 hex digits from tgv clients token alice>"
+
 # Optional: an operator-key upstream and a fallback to it (opt-in, bills per
 # token). The key is read from the daemon's environment, never this file.
 # [[upstreams]]

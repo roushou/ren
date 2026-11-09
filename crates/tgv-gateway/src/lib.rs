@@ -126,6 +126,8 @@ pub struct GatewayConfig {
     pub buffer: BufferOptions,
     pub policy: Policy,
     pub upstreams: UpstreamTable,
+    /// The named clients forwarded requests are matched to.
+    pub clients: client::Clients,
 }
 
 /// Why the gateway answered instead of the provider.
