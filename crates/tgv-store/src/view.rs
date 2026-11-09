@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::{Row, sqlite::SqliteRow};
 use std::str::FromStr;
 use tgv_harness::attribution::{HintIssue, HintSource};
+use tgv_harness::tools::CallPurpose;
 use tgv_protocol::{
     direction::Direction,
     encoding::{ResponseEncoding, ResponseFormat},
@@ -190,12 +191,15 @@ pub struct CallView {
     pub operator_revision: Option<u64>,
     /// The recorded routing plan, as written.
     pub plan: Option<serde_json::Value>,
+    /// Why the client sent it (work, or a check of its own such as Claude
+    /// Code's quota probe), from the call's digest; absent until derived.
+    pub purpose: Option<Stored<CallPurpose>>,
 }
 
 impl CallView {
     /// Columns every call query selects, joined to the request body (`rq`) and
     /// the final attempt's response body (`rs`).
-    pub(super) const SELECT: &'static str = "SELECT c.id, c.channel, c.started_at, c.ended_at, c.provider, c.wire, c.endpoint, c.method, c.config_revision, c.session, c.turn, c.attribution, c.state, c.terminal, c.status, c.model, c.outcome, c.stop_reason, c.tool_names, c.usage, c.capture_complete, c.rejection, c.operator_revision, c.plan, rq.observed_bytes AS rq_observed, rq.stored_bytes AS rq_stored, rq.ending AS rq_ending, rs.observed_bytes AS rs_observed, rs.stored_bytes AS rs_stored, rs.ending AS rs_ending FROM calls c LEFT JOIN bodies rq ON rq.owner = c.id AND rq.direction = 'request' LEFT JOIN bodies rs ON rs.owner = c.final_attempt AND rs.direction = 'response'";
+    pub(super) const SELECT: &'static str = "SELECT c.id, c.channel, c.started_at, c.ended_at, c.provider, c.wire, c.endpoint, c.method, c.config_revision, c.session, c.turn, c.attribution, c.state, c.terminal, c.status, c.model, c.outcome, c.stop_reason, c.tool_names, c.usage, c.capture_complete, c.rejection, c.operator_revision, c.plan, rq.observed_bytes AS rq_observed, rq.stored_bytes AS rq_stored, rq.ending AS rq_ending, rs.observed_bytes AS rs_observed, rs.stored_bytes AS rs_stored, rs.ending AS rs_ending, dp.purpose AS purpose FROM calls c LEFT JOIN bodies rq ON rq.owner = c.id AND rq.direction = 'request' LEFT JOIN bodies rs ON rs.owner = c.final_attempt AND rs.direction = 'response' LEFT JOIN call_digests dp ON dp.call = c.id";
 
     pub(super) fn from_row(row: &SqliteRow) -> Result<Self, StoreError> {
         let row = Columns(row);
@@ -226,6 +230,7 @@ impl CallView {
             rejection: row.optional_label("rejection")?,
             operator_revision: row.0.try_get("operator_revision")?,
             plan: row.json("plan")?,
+            purpose: row.optional_label("purpose")?,
         })
     }
 

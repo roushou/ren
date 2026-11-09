@@ -57,7 +57,8 @@
       "retry": {
         "fall_over_on": []
       }
-    }
+    },
+    "purpose": "work"
   },
   "transport": "http",
   "channel": {

@@ -58,7 +58,8 @@
         "retry": {
           "fall_over_on": []
         }
-      }
+      },
+      "purpose": "work"
     },
     {
       "id": "00000000-0000-0000-0000-000000000002",
@@ -117,7 +118,8 @@
         "retry": {
           "fall_over_on": []
         }
-      }
+      },
+      "purpose": "work"
     }
   ],
   "next": null

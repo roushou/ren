@@ -112,6 +112,7 @@ fn view(n: u128, source: HintSource) -> CallView {
         rejection: None,
         operator_revision: None,
         plan: None,
+        purpose: None,
     }
 }
 

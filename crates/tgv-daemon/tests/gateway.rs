@@ -1126,6 +1126,14 @@ async fn live_previews_advance_without_claiming_completion_and_traffic_filters_v
     )
     .await;
     assert_eq!(page["calls"][0]["id"], id);
+    // Once its digest is derived, a call says why its client sent it.
+    let derived = wait_json(
+        &client,
+        &format!("{base}/api/calls?model=live-fixture&status=finished"),
+        |v| v["calls"][0]["purpose"] == "work",
+    )
+    .await;
+    assert_eq!(derived["calls"][0]["purpose"], "work");
     for query in [
         "provider=invalid",
         "status=invalid",

@@ -295,7 +295,9 @@ Filters combine with AND; unknown parameters are rejected.
   model listings, the WebSocket handshakes that open a channel, and a client's
   own checks. Claude Code's quota probe, sent as it starts, is one: a one-token
   request whose only message is `quota`, which Anthropic may answer with `429`.
-  A call counts as a model call until its digest says otherwise.
+  A call counts as a model call until its digest says otherwise. Each listed
+  call carries that reading as `purpose` (`work` or `quota_probe`), `null` until
+  its digest is derived.
 
 - `q` matches call IDs, reported models, and observed tool names,
   case-insensitively; `%` and `_` are literal. Search strings are at most 128 UTF-8
