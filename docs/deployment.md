@@ -203,9 +203,11 @@ fake providers and fake data, for development and for previewing a change before
 it is installed:
 
 ```sh
-cargo xtask dev up --ui      # build, then start the slot and its UI, and publish the preview
-cargo xtask dev seed         # send fake traffic (or a scenario: sessions, users, long, errors, websocket)
-cargo xtask dev trickle      # a fake call every few seconds; --stop ends it
+cargo xtask dev up --ui      # build, then start the slot, its UI, and console, and publish them
+cargo xtask dev seed         # play a scenario once (sessions, users, long, errors, websocket, all)
+cargo xtask dev traffic      # show the live traffic settings
+cargo xtask dev traffic set --rate 60 --pace slow --replies tools=50,error=5
+cargo xtask dev traffic pause    # or resume; burst 20 sends 20 calls now
 cargo xtask dev shot         # screenshots of the UI's pages, in target/dev-shots
 cargo xtask dev status
 cargo xtask dev reset        # remove the slot's data and start again
@@ -214,15 +216,16 @@ cargo xtask dev down         # stop the slot and remove the preview's routes
 
 |          | Dev slot                                                                | Installed service                         |
 | -------- | ----------------------------------------------------------------------- | ----------------------------------------- |
-| Units    | `tgv-dev-provider`, `tgv-dev-daemon`, `tgv-dev-ui`, `tgv-dev-trickle`   | `tgv`, `tgv-ui`                           |
-| Loopback | fake provider `18999`, daemon `18787`, UI `13000`                       | daemon `8787`, UI `3000`                  |
-| Tailnet  | `9443` (gateway), `9444` (UI)                                           | your `--https-port` and `--ui-https-port` |
+| Units    | `tgv-dev-provider`, `tgv-dev-daemon`, `tgv-dev-traffic`, `tgv-dev-ui`   | `tgv`, `tgv-ui`                           |
+| Loopback | fake provider `18999`, daemon `18787`, UI `13000`, console `13001`      | daemon `8787`, UI `3000`                  |
+| Tailnet  | `9443` (gateway), `9444` (UI), `9445` (console)                         | your `--https-port` and `--ui-https-port` |
 | Files    | `~/.config/tgv-dev`, `~/.local/state/tgv-dev`, `~/.local/share/tgv-dev` | `~/.config/tgv`, `~/.local/state/tgv`     |
 
 The units are transient systemd user units, stopped by name. The dev
 configuration is regenerated on every `up`. It sets `[instance] environment =
 "development"`, which the gateway reports in `/health`: the UI shows a Dev chip
-beside its wordmark, and `tgv doctor` and `tgv run` name the instance. every provider is the fake one, which
+beside its wordmark, and `tgv doctor` and `tgv run` name the instance. Every
+provider in it is the fake one, which
 accepts any credentials and stores nothing, so no real credential or prompt
 reaches the slot. It names two users, `alice` (by the Tailscale login
 `alice@example.com`) and `ci` (by a fixed fake token), and two direct
@@ -234,6 +237,17 @@ gets text quoting the prompt. So a real client can run against the slot:
 ```sh
 tgv run claude --gateway https://<node>:9443
 ```
+
+The slot always has live traffic: the `tgv-dev-traffic` unit sends calls
+through the dev gateway as `~/.config/tgv-dev/traffic.toml` says (running or
+paused, calls a minute, the fake provider's pace, and weights over replies,
+harnesses, and callers). The generator and the fake provider read the file again
+for every call, so `dev traffic set`, `pause`, and `resume` apply at once; an
+invalid file falls back to the defaults. The same settings are in the dev console,
+a page the generator serves (`127.0.0.1:13001`, published at `9445`), which also
+sends bursts and single slow, tool, error, or rate-limited calls. The console is
+the slot's own page: TGV's UI stays read-only, and its Dev chip links to the
+console when `TGV_DEV_CONSOLE_URL` is set, as the slot sets it.
 
 `--ui` publishes the preview with the same Serve step as `install-vps` (with
 `sudo -n` if it last did, or `--sudo-tailscale`); `--local` keeps it on

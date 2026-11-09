@@ -317,8 +317,10 @@ dependencies under "Crates" below. Read the code for current module ownership.
   this checkout's build beside the installed service, with its own config,
   data, and ports, against a fake provider (`dev::provider`, whose replies are
   the pure, tested `script`), seeded with fake traffic (`dev::seed`, scenarios
-  as pure data), as `tgv-dev-*` transient units, with an optional private
-  preview on the tailnet and headless screenshots (`dev::shot`).
+  as pure data), as `tgv-dev-*` transient units, with live traffic whose
+  settings both the generator and the fake provider reread (`dev::traffic`,
+  with its console page), an optional private preview on the tailnet, and
+  headless screenshots (`dev::shot`).
 - `deploy`: systemd units, and in `deploy/container` the compose file, Podman
   Quadlet files, and Tailscale Serve route for the root `Dockerfile`
   (`docs/deployment.md#containers`). `scripts`: manual smoke tests for Pi, systemd, and launchd.

@@ -97,6 +97,7 @@ produces `build/`. Cargo never builds or embeds the UI.
 | ------------------------ | -------------------------------- | ------------------------------------------------------------------------------- |
 | `TGV_GATEWAY_URL`        | `http://127.0.0.1:8787`          | Daemon origin reached by the UI server                                          |
 | `TGV_PUBLIC_GATEWAY_URL` | Same as `TGV_GATEWAY_URL`        | Daemon origin displayed in the header and copied client commands                |
+| `TGV_DEV_CONSOLE_URL`    | Unset                            | Dev slot console the Dev chip links to (set by `cargo xtask dev up --ui`)       |
 | `HOST`                   | `127.0.0.1` with `bun run start` | UI listener address                                                             |
 | `PORT`                   | `3000` with `bun run start`      | UI listener port                                                                |
 | `ORIGIN`                 | Inferred from incoming request   | Set to the UI's external origin behind Tailscale Serve or another reverse proxy |
