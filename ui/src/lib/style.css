@@ -419,7 +419,8 @@ pre {
   border-top-color: var(--accent);
   background: var(--canvas);
 }
-.gateway-address {
+/* Where the gateway runs: its node and network, never its address. */
+.gateway-place {
   display: inline-flex;
   align-items: center;
   gap: 4px;
@@ -436,14 +437,33 @@ pre {
   white-space: nowrap;
   cursor: pointer;
 }
-.gateway-address:hover,
-.gateway-address:focus-visible {
+.gateway-place:hover,
+.gateway-place:focus-visible {
   color: var(--ink);
   background: var(--surface-hover);
 }
-.gateway-address svg {
+.gateway-place svg {
   flex: none;
+}
+.gateway-place > svg:last-child {
   transform: rotate(90deg);
+}
+.gateway-place .status-dot {
+  margin-right: 3px;
+}
+.gateway-place b {
+  color: var(--ink);
+  font-weight: 500;
+}
+.gateway-sep {
+  margin: 0 2px;
+}
+/* A public gateway is reachable from the internet: worth a second look. */
+.gateway-place.public svg:not(:last-child) {
+  color: var(--warning);
+}
+.address-toggle {
+  flex: none;
 }
 /* The connect panel: opened from the header's gateway address, over the page. */
 .connect-panel {
@@ -1771,7 +1791,7 @@ tr.call-row {
   .inspector-footer {
     padding: 5px 10px;
   }
-  .gateway-address {
+  .gateway-place {
     display: none;
   }
   .theme-control {

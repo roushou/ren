@@ -8,9 +8,12 @@
   import { num, short, clock } from '#lib/api.ts';
   import { captureState } from '#lib/display.ts';
   import type { SnapshotError } from '#lib/snapshots.ts';
-  import Icon from '#lib/Icon.svelte';
+  import Icon, { type IconName } from '#lib/Icon.svelte';
   import ThemeControl from '#lib/ThemeControl.svelte';
   import ConnectClient from '#lib/ConnectClient.svelte';
+  import AddressToggle from '#lib/AddressToggle.svelte';
+  import { addressView } from '#lib/address.svelte.ts';
+  import { GatewayPlace, type Network } from '#lib/place.ts';
   import { RecorderReport } from '#lib/recorder.ts';
   import CopyButton from '#lib/CopyButton.svelte';
   import DevToolbar from '#lib/DevToolbar.svelte';
@@ -114,6 +117,15 @@
                         : 'Traffic',
   );
   const gatewayOrigin = $derived(page.data.gatewayUrl);
+  // The header names where the gateway runs, not its address.
+  const place = $derived(GatewayPlace.parse(gatewayOrigin));
+  const shownOrigin = $derived(addressView.revealed ? place.origin : place.masked);
+  const networkIcons = {
+    loopback: 'monitor',
+    tailnet: 'lock',
+    private: 'lan',
+    public: 'globe',
+  } as const satisfies Record<Network, IconName>;
   // Bytes past the capture policy are left out by design: never loss.
   const capture = $derived(health ? RecorderReport.capture(health.recorder) : null);
   const loss = $derived(capture?.kind === 'lost');
@@ -258,15 +270,26 @@
       >
     </nav>
     <button
-      class="gateway-address mono"
+      class="gateway-place mono"
+      class:public={place.network === 'public'}
       popovertarget="connect-panel"
-      title="Connect a client to {gatewayOrigin}"
-      >{gatewayOrigin.replace(/^https?:\/\//, '')}<Icon name="chevron" size={11} /></button
+      title="Gateway on {place.node ??
+        GatewayPlace.networkLabel(place.network)}, reached over {GatewayPlace.networkLabel(
+        place.network,
+      )}. {error ? 'The management API is not answering. ' : ''}Connect a client"
+      ><span class="status-dot" class:error={!!error} class:neutral={!updated && !error}
+      ></span>{#if place.node && place.network !== 'loopback'}<b>{place.node}</b><span
+          class="gateway-sep">·</span
+        >{/if}<Icon name={networkIcons[place.network]} size={12} /><span
+        >{place.network === 'loopback'
+          ? 'this machine'
+          : GatewayPlace.networkLabel(place.network)}</span
+      ><Icon name="chevron" size={11} /></button
     >
     <div id="connect-panel" class="connect-panel" popover="auto" aria-label="Connect a client">
       <header>
         <strong>Connect a client</strong>
-        <span class="mono">{gatewayOrigin}</span><CopyButton
+        <span class="mono">{shownOrigin}</span>{#if place.maskable}<AddressToggle />{/if}<CopyButton
           text={gatewayOrigin}
           label="Copy the gateway address"
         />
