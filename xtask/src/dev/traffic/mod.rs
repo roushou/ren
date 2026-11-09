@@ -58,6 +58,8 @@ impl Traffic {
     const IDLE: Duration = Duration::from_secs(1);
     /// Calls the generator keeps in flight at most; past it, it waits.
     const MAX_IN_FLIGHT: usize = 32;
+    /// How long a tool runs between a turn's calls.
+    const TOOL_TIME: Duration = Duration::from_millis(1_500);
 
     pub fn new(gateway: SocketAddr, token: String, settings: PathBuf, data_dir: PathBuf) -> Self {
         Self {
@@ -83,9 +85,11 @@ impl Traffic {
         })
     }
 
-    /// The `n`th generated call of `run`, or `None` when a mix has every
-    /// weight at 0.
-    pub fn call(n: u64, run: Run, settings: &Settings, token: &str) -> Option<Call> {
+    /// The `n`th generated turn of `run`, its calls in the order they are
+    /// sent, each after the one before has finished; `None` when a mix has
+    /// every weight at 0. A turn that asks for tools calls one to three of
+    /// them, each answered in the next call, then ends with a reply.
+    pub fn turn(n: u64, run: Run, settings: &Settings, token: &str) -> Option<Vec<Call>> {
         let harness = settings.harnesses.pick(n)?;
         let sender = settings.senders.pick(n.wrapping_add(0x5bd1))?;
         let reply = settings.replies.pick(n.wrapping_add(0x2f71))?;
@@ -131,12 +135,22 @@ impl Traffic {
             ) => None,
         };
         if let Some(side) = side {
-            return Some(Scenario::side_call(side, &caller, run, session, prompt));
+            return Some(vec![Scenario::side_call(
+                side, &caller, run, session, prompt,
+            )]);
         }
-        let call = Scenario::call(client, &caller, run, (session, turn), model, prompt);
+        let ids = (session, turn);
+        let step = |done| Scenario::step_call(client, &caller, run, ids, model, prompt, done);
         Some(match ask {
-            Some(reply) => call.asking(reply),
-            None => call,
+            Some("tools") => {
+                let tools = usize::try_from(1 + (n / 7) % 3).unwrap_or(1);
+                (0..tools)
+                    .map(|done| step(done).asking("tools"))
+                    .chain([step(tools)])
+                    .collect()
+            }
+            Some(reply) => vec![step(0).asking(reply)],
+            None => vec![step(0)],
         })
     }
 
@@ -222,11 +236,15 @@ impl Traffic {
             let settings = self.settings()?;
             let wait = match settings.interval() {
                 Some(interval) if in_flight.len() < Self::MAX_IN_FLIGHT => {
-                    if let Some(call) = Self::call(n, run, &settings, &self.token) {
-                        in_flight.push(self.counted(client, call, stats));
+                    // The rate counts calls: a turn of several waits as long as they would.
+                    let calls = Self::turn(n, run, &settings, &self.token).unwrap_or_default();
+                    let wait = interval
+                        .saturating_mul(u32::try_from(calls.len().max(1)).unwrap_or(u32::MAX));
+                    if !calls.is_empty() {
+                        in_flight.push(self.counted(client, calls, stats));
                     }
                     n = n.wrapping_add(1);
-                    interval
+                    wait
                 }
                 Some(_) | None => Self::IDLE,
             };
@@ -241,27 +259,44 @@ impl Traffic {
         }
     }
 
-    /// One call, counted in `stats` while it runs and once it is sent.
-    fn counted(&self, client: &reqwest::Client, call: Call, stats: &Arc<Stats>) -> Sending {
-        let stats = stats.clone();
-        stats.in_flight.fetch_add(1, Ordering::Relaxed);
-        let sending = Self::send(client, self.gateway, call);
+    /// A turn's calls, one after another, each counted in `stats` while it
+    /// runs and once it is sent.
+    fn counted(&self, client: &reqwest::Client, calls: Vec<Call>, stats: &Arc<Stats>) -> Sending {
+        Self::sequence(client, self.gateway, calls, stats.clone())
+    }
+
+    fn sequence(
+        client: &reqwest::Client,
+        gateway: SocketAddr,
+        calls: Vec<Call>,
+        stats: Arc<Stats>,
+    ) -> Sending {
+        let client = client.clone();
         Box::pin(async move {
-            sending.await;
-            stats.in_flight.fetch_sub(1, Ordering::Relaxed);
-            stats.sent.fetch_add(1, Ordering::Relaxed);
+            for (index, call) in calls.into_iter().enumerate() {
+                if index > 0 {
+                    // The client runs the tool before it asks again.
+                    tokio::time::sleep(Self::TOOL_TIME).await;
+                }
+                stats.in_flight.fetch_add(1, Ordering::Relaxed);
+                Self::send(&client, gateway, call).await;
+                stats.in_flight.fetch_sub(1, Ordering::Relaxed);
+                stats.sent.fetch_add(1, Ordering::Relaxed);
+            }
         })
     }
 
-    /// Send `count` calls now, all at once, then return.
+    /// Send `count` turns now, all at once, then return.
     pub fn burst(&self, count: u16) -> Result<(), TrafficError> {
         let client = Self::client()?;
         let settings = self.settings()?;
         let run = Run(Seeder::next_run(&self.data_dir)?);
         Self::runtime()?.block_on(async {
             let calls: FuturesUnordered<Sending> = (0..u64::from(count))
-                .filter_map(|n| Self::call(n, run, &settings, &self.token))
-                .map(|call| Self::send(&client, self.gateway, call))
+                .filter_map(|n| Self::turn(n, run, &settings, &self.token))
+                .map(|calls| {
+                    Self::sequence(&client, self.gateway, calls, Arc::new(Stats::default()))
+                })
                 .collect();
             calls.collect::<Vec<()>>().await;
         });
@@ -304,7 +339,10 @@ mod tests {
             ..Settings::default()
         };
         for n in 0..20 {
-            let call = Traffic::call(n, Run(1), &settings, "tgvu_fixture").unwrap();
+            let calls = Traffic::turn(n, Run(1), &settings, "tgvu_fixture").unwrap();
+            let [call] = calls.as_slice() else {
+                panic!("an error ends its turn at once: {}", calls.len())
+            };
             assert_eq!(call.path, "/codex/responses");
             assert!(
                 call.headers
@@ -320,7 +358,7 @@ mod tests {
                 .unwrap(),
             ..Settings::default()
         };
-        assert!(Traffic::call(0, Run(1), &silent, "t").is_none());
+        assert!(Traffic::turn(0, Run(1), &silent, "t").is_none());
     }
 
     #[test]
@@ -335,7 +373,7 @@ mod tests {
         let named = |call: &super::Call, name: &str| call.headers.iter().any(|(n, _)| n == name);
         let (mut side, mut claude) = (0, 0);
         for n in 0..2_000 {
-            let call = Traffic::call(n, Run(1), &settings, "tgvu_fixture").unwrap();
+            let call = Traffic::turn(n, Run(1), &settings, "tgvu_fixture").unwrap()[0].clone();
             if named(&call, "x-claude-code-session-id") {
                 claude += 1;
                 if !named(&call, "x-claude-code-prompt-id") {
@@ -356,7 +394,7 @@ mod tests {
         let settings = Settings::default();
         let mut by_harness = std::collections::BTreeMap::<String, (u32, u32)>::new();
         for n in 0..20_000 {
-            let call = Traffic::call(n, Run(1), &settings, "tgvu_fixture").unwrap();
+            let call = Traffic::turn(n, Run(1), &settings, "tgvu_fixture").unwrap()[0].clone();
             let failing = call.headers.iter().any(|(name, value)| {
                 name == "x-dev-reply" && (value == "error" || value == "rate_limited")
             });

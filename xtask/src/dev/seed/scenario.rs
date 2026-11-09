@@ -2,6 +2,7 @@
 //! gateway, with the headers each harness really sends, so the dev slot's
 //! history looks like real use. Nothing here performs I/O.
 
+use crate::dev::work::{ToolRun, Toolset};
 use clap::ValueEnum;
 use serde_json::{Value, json};
 
@@ -92,6 +93,18 @@ pub(in crate::dev) enum Client {
     DeepSeek,
 }
 
+impl Client {
+    /// The tools this client declares and calls.
+    pub(in crate::dev) fn toolset(self) -> Toolset {
+        match self {
+            Self::ClaudeCode | Self::DeepSeek => Toolset::ClaudeCode,
+            Self::Codex => Toolset::Codex,
+            Self::Pi => Toolset::Pi,
+            Self::OpenCode => Toolset::OpenCode,
+        }
+    }
+}
+
 /// A call Claude Code makes beside a turn's work, with no turn of its own.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(in crate::dev) enum Side {
@@ -161,34 +174,46 @@ impl Scenario {
         }
     }
 
-    /// One call of `client`'s session `session`, turn `turn`.
+    /// The first call of `client`'s session `session`, turn `turn`.
     pub(in crate::dev) fn call(
+        client: Client,
+        caller: &Caller,
+        run: Run,
+        ids: (u32, u32),
+        model: &str,
+        prompt: &str,
+    ) -> Call {
+        Self::step_call(client, caller, run, ids, model, prompt, 0)
+    }
+
+    /// A call of `client`'s session `session`, turn `turn`, after `done` of
+    /// the turn's tool calls: its history carries each of them and its
+    /// result, as the client sends them back.
+    pub(in crate::dev) fn step_call(
         client: Client,
         caller: &Caller,
         run: Run,
         (session, turn): (u32, u32),
         model: &str,
         prompt: &str,
+        done: usize,
     ) -> Call {
         let (session_id, turn_id) = (run.uuid(session), run.uuid(turn));
+        let toolset = client.toolset();
         let mut headers = caller.headers();
         let (path, body, name) = match client {
             Client::ClaudeCode | Client::DeepSeek => {
+                let body = Self::messages(model, prompt, toolset, &session_id, done);
                 headers.extend(Self::claude_code_headers(session_id, Some(turn_id)));
                 match client {
-                    Client::DeepSeek => (
-                        "/deepseek/v1/messages",
-                        Self::messages(model, prompt),
-                        "claude code via deepseek",
-                    ),
-                    Client::ClaudeCode | Client::Codex | Client::Pi | Client::OpenCode => (
-                        "/anthropic/v1/messages",
-                        Self::messages(model, prompt),
-                        "claude code",
-                    ),
+                    Client::DeepSeek => ("/deepseek/v1/messages", body, "claude code via deepseek"),
+                    Client::ClaudeCode | Client::Codex | Client::Pi | Client::OpenCode => {
+                        ("/anthropic/v1/messages", body, "claude code")
+                    }
                 }
             }
             Client::Codex => {
+                let body = Self::responses(model, prompt, toolset, &session_id, done);
                 headers.extend([
                     ("session-id".into(), session_id.clone()),
                     ("thread-id".into(), session_id.clone()),
@@ -198,22 +223,15 @@ impl Scenario {
                     ),
                     ("originator".into(), "codex_cli_rs".into()),
                 ]);
-                (
-                    "/codex/responses",
-                    Self::responses(model, prompt, &session_id),
-                    "codex",
-                )
+                ("/codex/responses", body, "codex")
             }
             Client::Pi => {
+                let body = Self::messages(model, prompt, toolset, &session_id, done);
                 headers.extend([
                     ("x-tgv-pi-session-id".into(), session_id),
                     ("x-tgv-pi-turn-id".into(), turn_id),
                 ]);
-                (
-                    "/anthropic/v1/messages",
-                    Self::messages(model, prompt),
-                    "pi",
-                )
+                ("/anthropic/v1/messages", body, "pi")
             }
             Client::OpenCode => {
                 // opencode's own shape: `ses_`, then 26 letters and digits.
@@ -224,14 +242,19 @@ impl Scenario {
                 headers.push(("x-opencode-session-id".into(), id.clone()));
                 (
                     "/openai/v1/responses",
-                    Self::responses(model, prompt, &id),
+                    Self::responses(model, prompt, toolset, &id, done),
                     "opencode",
                 )
             }
         };
         headers.push(("content-type".into(), "application/json".into()));
+        let step = if done > 0 {
+            format!(" (after {done} tools)")
+        } else {
+            String::new()
+        };
         Call {
-            label: format!("{name}: {}", Self::short(prompt)),
+            label: format!("{name}: {}{step}", Self::short(prompt)),
             path: path.into(),
             headers,
             body: body.to_string(),
@@ -299,26 +322,62 @@ impl Scenario {
     }
 
     /// A Messages request as coding agents send one: a cached system prompt,
-    /// and thinking on the models that offer it.
-    fn messages(model: &str, prompt: &str) -> Value {
+    /// the client's tools, thinking on the models that offer it, and the
+    /// turn's first `done` tool calls with their results.
+    fn messages(model: &str, prompt: &str, toolset: Toolset, session: &str, done: usize) -> Value {
+        let mut messages =
+            vec![json!({ "role": "user", "content": [{ "type": "text", "text": prompt }] })];
+        let work = ToolRun::new(toolset, prompt, session);
+        for index in 0..done {
+            let step = work.step(index);
+            messages.push(json!({ "role": "assistant", "content": [
+                { "type": "text", "text": step.lead },
+                { "type": "tool_use", "id": step.id, "name": step.name, "input": step.input },
+            ] }));
+            messages.push(json!({ "role": "user", "content": [
+                { "type": "tool_result", "tool_use_id": step.id, "content": step.output,
+                  "is_error": step.failed },
+            ] }));
+        }
         let mut body = json!({ "model": model, "max_tokens": 32000, "stream": true,
+            "metadata": { "user_id": session },
             "system": [{ "type": "text", "text": "You are a coding agent working in the user's repository.",
                          "cache_control": { "type": "ephemeral" } }],
-            "messages": [{ "role": "user", "content": [{ "type": "text", "text": prompt }] }] });
+            "tools": toolset.messages_tools(),
+            "messages": messages });
         if model.starts_with("claude-opus") || model.starts_with("claude-sonnet") {
             body["thinking"] = json!({ "type": "enabled", "budget_tokens": 31999 });
         }
         body
     }
 
-    /// A Responses request as Codex sends one: reasoning with a summary, and
-    /// a prompt cache key for its session.
-    fn responses(model: &str, prompt: &str, cache_key: &str) -> Value {
+    /// A Responses request as Codex sends one: reasoning with a summary, a
+    /// prompt cache key for its session, its tools, and the turn's first
+    /// `done` tool calls with their outputs.
+    fn responses(
+        model: &str,
+        prompt: &str,
+        toolset: Toolset,
+        cache_key: &str,
+        done: usize,
+    ) -> Value {
+        let mut input = vec![json!({ "type": "message", "role": "user",
+                                     "content": [{ "type": "input_text", "text": prompt }] })];
+        let work = ToolRun::new(toolset, prompt, cache_key);
+        for index in 0..done {
+            let step = work.step(index);
+            input.push(
+                json!({ "type": "function_call", "call_id": step.id, "name": step.name,
+                               "arguments": step.input.to_string() }),
+            );
+            input.push(json!({ "type": "function_call_output", "call_id": step.id,
+                               "output": step.output }));
+        }
         json!({ "model": model, "stream": true, "prompt_cache_key": cache_key,
                 "reasoning": { "effort": "medium", "summary": "auto" },
                 "include": ["reasoning.encrypted_content"],
-                "input": [{ "type": "message", "role": "user",
-                            "content": [{ "type": "input_text", "text": prompt }] }] })
+                "tools": toolset.responses_tools(),
+                "input": input })
     }
 
     /// A turn: a tool call, then its follow-up in the same turn.
@@ -332,7 +391,7 @@ impl Scenario {
     ) -> [Call; 2] {
         [
             Self::call(client, caller, run, ids, model, prompt).asking("tools"),
-            Self::call(client, caller, run, ids, model, prompt),
+            Self::step_call(client, caller, run, ids, model, prompt, 1),
         ]
     }
 

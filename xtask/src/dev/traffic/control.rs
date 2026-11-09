@@ -110,13 +110,13 @@ impl Control {
         }
         // Numbered past the generator's own calls, so turns stay distinct.
         let base = 1_000_000 + control.stats.sent.load(Ordering::Relaxed);
-        let calls: Vec<_> = (0..u64::from(request.count))
-            .filter_map(|n| Traffic::call(base + n, control.run, &settings, &control.traffic.token))
+        let turns: Vec<_> = (0..u64::from(request.count))
+            .filter_map(|n| Traffic::turn(base + n, control.run, &settings, &control.traffic.token))
             .collect();
-        let sends = calls.into_iter().map(|call| {
+        let sends = turns.into_iter().map(|calls| {
             control
                 .traffic
-                .counted(&control.client, call, &control.stats)
+                .counted(&control.client, calls, &control.stats)
         });
         futures_util::future::join_all(sends).await;
         StatusCode::NO_CONTENT.into_response()

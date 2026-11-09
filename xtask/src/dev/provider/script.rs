@@ -8,6 +8,7 @@
 //! invented, realistic engineering replies.
 
 use super::writing::Writing;
+use crate::dev::work::{ToolRun, Toolset};
 use serde_json::{Value, json};
 use std::time::Duration;
 
@@ -136,6 +137,7 @@ impl Reply {
             input_tokens,
             prompt: Prompt::newest(request.wire, &body),
             asks: Asks::read(request.wire, &body),
+            work: Work::read(request.wire, &body),
         };
         match request.wire {
             Wire::Models => Self::json(200, &turn.models()),
@@ -230,15 +232,17 @@ impl Prompt {
 
     fn newest(wire: Wire, body: &Value) -> String {
         let text = match wire {
-            Wire::Messages | Wire::CountTokens | Wire::ChatCompletions => body["messages"]
-                .as_array()
-                .and_then(|messages| {
+            // A user message holding only tool results is not a prompt.
+            Wire::Messages | Wire::CountTokens | Wire::ChatCompletions => {
+                body["messages"].as_array().and_then(|messages| {
                     messages
                         .iter()
                         .rev()
-                        .find(|message| message["role"] == "user")
+                        .filter(|message| message["role"] == "user")
+                        .map(|message| Self::text(&message["content"]))
+                        .find(|text| !text.trim().is_empty())
                 })
-                .map(|message| Self::text(&message["content"])),
+            }
             Wire::Responses => match &body["input"] {
                 Value::String(text) => Some(text.clone()),
                 Value::Array(items) => items
@@ -317,6 +321,69 @@ impl Asks {
     }
 }
 
+/// A tool call a reply makes.
+struct ToolCall {
+    name: &'static str,
+    input: Value,
+    id: String,
+}
+
+/// Where a request stands in its turn's tool work: the client's tools, and
+/// how many tool calls its history already answered.
+struct Work {
+    run: ToolRun,
+    done: usize,
+}
+
+impl Work {
+    fn read(wire: Wire, body: &Value) -> Self {
+        let toolset = Toolset::declared(body).unwrap_or(match wire {
+            Wire::Messages | Wire::CountTokens | Wire::Models => Toolset::ClaudeCode,
+            Wire::Responses | Wire::ChatCompletions => Toolset::Codex,
+        });
+        let items = |field: &str| {
+            body[field]
+                .as_array()
+                .map(Vec::as_slice)
+                .unwrap_or_default()
+        };
+        let (salt, done) = match wire {
+            Wire::Messages | Wire::CountTokens => (
+                body["metadata"]["user_id"].as_str(),
+                items("messages")
+                    .iter()
+                    .filter_map(|message| message["content"].as_array())
+                    .flatten()
+                    .filter(|block| block["type"] == "tool_result")
+                    .count(),
+            ),
+            Wire::Responses => (
+                body["prompt_cache_key"].as_str(),
+                items("input")
+                    .iter()
+                    .filter(|item| item["type"] == "function_call_output")
+                    .count(),
+            ),
+            Wire::ChatCompletions => (
+                None,
+                items("messages")
+                    .iter()
+                    .filter(|message| message["role"] == "tool")
+                    .count(),
+            ),
+            Wire::Models => (None, 0),
+        };
+        Self {
+            run: ToolRun::new(
+                toolset,
+                &Prompt::newest(wire, body),
+                salt.unwrap_or_default(),
+            ),
+            done,
+        }
+    }
+}
+
 /// Why a reply ended.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Stop {
@@ -332,7 +399,7 @@ enum Stop {
 struct Output {
     thinking: Vec<String>,
     text: Vec<String>,
-    tool: Option<(&'static str, Value)>,
+    tool: Option<ToolCall>,
     stop: Stop,
 }
 
@@ -342,8 +409,15 @@ impl Output {
             |text: &str| -> Vec<String> { text.split_inclusive(' ').map(str::to_owned).collect() };
         let (text, tool) = match behaviour {
             Behaviour::Tools => {
-                let (lead, name, input) = Writing::tool(turn.serial);
-                (words(lead), Some((name, input)))
+                let step = turn.work.run.step(turn.work.done);
+                (
+                    words(step.lead),
+                    Some(ToolCall {
+                        name: step.name,
+                        input: step.input,
+                        id: step.id,
+                    }),
+                )
             }
             // A long answer streams a sentence at a time.
             Behaviour::Long => (
@@ -458,6 +532,7 @@ struct Turn {
     input_tokens: u64,
     prompt: String,
     asks: Asks,
+    work: Work,
 }
 
 impl Turn {
@@ -559,10 +634,8 @@ impl Turn {
             content.push(json!({ "type": "thinking", "thinking": output.thought(), "signature": self.signature() }));
         }
         content.push(json!({ "type": "text", "text": output.joined() }));
-        if let Some((name, input)) = &output.tool {
-            content.push(
-                json!({ "type": "tool_use", "id": self.id("toolu_01"), "name": name, "input": input }),
-            );
+        if let Some(ToolCall { name, input, id }) = &output.tool {
+            content.push(json!({ "type": "tool_use", "id": id, "name": name, "input": input }));
         }
         json!({
             "id": self.id("msg_01"),
@@ -655,14 +728,14 @@ impl Turn {
         if behaviour == Behaviour::Cut {
             return Reply::sse(events);
         }
-        if let Some((name, input)) = &output.tool {
+        if let Some(ToolCall { name, input, id }) = &output.tool {
             index += 1;
             events.push((
                 pace,
                 event(
                     "content_block_start",
                     json!({ "type": "content_block_start", "index": index, "content_block": {
-                        "type": "tool_use", "id": self.id("toolu_01"), "name": name, "input": {},
+                        "type": "tool_use", "id": id, "name": name, "input": {},
                     }}),
                 ),
             ));
@@ -714,9 +787,9 @@ impl Turn {
             "type": "message", "id": self.id("msg_01"), "role": "assistant", "status": "completed",
             "content": [{ "type": "output_text", "text": output.joined(), "annotations": [] }],
         }));
-        if let Some((name, input)) = &output.tool {
+        if let Some(ToolCall { name, input, id }) = &output.tool {
             items.push(json!({
-                "type": "function_call", "id": self.id("fc_"), "call_id": self.id("call_"),
+                "type": "function_call", "id": self.id("fc_"), "call_id": id,
                 "name": name, "arguments": input.to_string(), "status": "completed",
             }));
         }
@@ -796,11 +869,11 @@ impl Turn {
                 "content": [{ "type": "output_text", "text": output.joined(), "annotations": [] }],
             }}),
         ));
-        if let Some((name, input)) = &output.tool {
+        if let Some(ToolCall { name, input, id }) = &output.tool {
             events.push((
                 pace,
                 json!({ "type": "response.output_item.done", "output_index": index + 1, "item": {
-                    "type": "function_call", "id": self.id("fc_"), "call_id": self.id("call_"),
+                    "type": "function_call", "id": self.id("fc_"), "call_id": id,
                     "name": name, "arguments": input.to_string(), "status": "completed",
                 }}),
             ));
@@ -834,8 +907,8 @@ impl Turn {
 
     fn chat_completion(&self, output: &Output) -> Value {
         let mut message = json!({ "role": "assistant", "content": output.joined() });
-        if let Some((name, input)) = &output.tool {
-            message["tool_calls"] = json!([{ "id": self.id("call_"), "type": "function",
+        if let Some(ToolCall { name, input, id }) = &output.tool {
+            message["tool_calls"] = json!([{ "id": id, "type": "function",
                 "function": { "name": name, "arguments": input.to_string() } }]);
         }
         json!({
@@ -868,11 +941,11 @@ impl Turn {
         if behaviour == Behaviour::Cut {
             return Reply::sse(events);
         }
-        if let Some((name, input)) = &output.tool {
+        if let Some(ToolCall { name, input, id }) = &output.tool {
             events.push((
                 pace,
                 chunk(
-                    json!({ "tool_calls": [{ "index": 0, "id": self.id("call_"), "type": "function",
+                    json!({ "tool_calls": [{ "index": 0, "id": id, "type": "function",
                         "function": { "name": name, "arguments": input.to_string() } }] }),
                     Value::Null,
                 ),
@@ -925,6 +998,7 @@ impl SocketTurn {
             input_tokens: u64::try_from(message.len() / 4).unwrap_or(u64::MAX),
             prompt: Prompt::newest(Wire::Responses, request),
             asks: Asks::read(Wire::Responses, request),
+            work: Work::read(Wire::Responses, request),
             serial,
             model,
         };
@@ -987,6 +1061,96 @@ mod tests {
 
     fn events_of(reply: &Reply) -> Vec<Value> {
         events(reply)
+    }
+
+    /// The tool call a streamed reply makes: its call ID and tool name.
+    fn tool_call(reply: &Reply) -> (String, String) {
+        events(reply)
+            .into_iter()
+            .find_map(|event| {
+                let block = &event["content_block"];
+                let item = &event["item"];
+                if block["type"] == "tool_use" {
+                    Some((
+                        block["id"].as_str()?.to_owned(),
+                        block["name"].as_str()?.to_owned(),
+                    ))
+                } else if item["type"] == "function_call" {
+                    Some((
+                        item["call_id"].as_str()?.to_owned(),
+                        item["name"].as_str()?.to_owned(),
+                    ))
+                } else {
+                    None
+                }
+            })
+            .unwrap()
+    }
+
+    #[test]
+    fn a_follow_up_carries_the_results_of_the_tool_calls_the_provider_made() {
+        use crate::dev::seed::{Caller, Client, Run, Scenario};
+        for (client, wire, model) in [
+            (Client::ClaudeCode, Wire::Messages, "claude-opus-5-5"),
+            (Client::Codex, Wire::Responses, "gpt-5.5-codex"),
+            (Client::Pi, Wire::Messages, "claude-sonnet-5-5"),
+            (Client::OpenCode, Wire::Responses, "gpt-5.5"),
+        ] {
+            let step = |done| {
+                let call = Scenario::step_call(
+                    client,
+                    &Caller::Unidentified,
+                    Run(1),
+                    (1, 2),
+                    model,
+                    "Find where the order list is sorted",
+                    done,
+                );
+                serde_json::from_str::<Value>(&call.body).unwrap()
+            };
+            let mut names = Vec::new();
+            for done in 0..3 {
+                let (id, name) = tool_call(&reply_as(wire, &step(done), Behaviour::Tools));
+                names.push(name.clone());
+                // The next call sends that very call back, with its result.
+                let next = step(done + 1);
+                let history = next["messages"]
+                    .as_array()
+                    .or_else(|| next["input"].as_array())
+                    .unwrap();
+                let echoed: Vec<String> = history
+                    .iter()
+                    .flat_map(|entry| {
+                        entry["content"]
+                            .as_array()
+                            .cloned()
+                            .unwrap_or_else(|| vec![entry.clone()])
+                    })
+                    .filter_map(|part| {
+                        let id = if part["type"] == "function_call_output" {
+                            &part["call_id"]
+                        } else {
+                            &part["tool_use_id"]
+                        };
+                        id.as_str().map(str::to_owned)
+                    })
+                    .collect();
+                assert_eq!(echoed.len(), done + 1, "{client:?}");
+                assert_eq!(echoed[done], id, "{client:?} step {done}");
+            }
+            let own = match client {
+                Client::ClaudeCode | Client::DeepSeek => {
+                    ["Read", "Edit", "Write", "Bash"].as_slice()
+                }
+                Client::Codex => &["read_file", "apply_patch", "shell"],
+                Client::Pi => &["read", "edit", "write", "bash"],
+                Client::OpenCode => &["read", "edit", "write", "shell"],
+            };
+            assert!(
+                names.iter().all(|name| own.contains(&name.as_str())),
+                "{client:?} {names:?}"
+            );
+        }
     }
 
     fn all_text(reply: &Reply) -> String {

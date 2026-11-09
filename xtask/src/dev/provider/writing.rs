@@ -1,10 +1,9 @@
 //! What the dev provider's replies say: invented but ordinary engineering
 //! answers, chosen to fit the prompt where one fits, so the slot's history
-//! reads like real use. Nothing here is anyone's real work.
+//! reads like real use. Nothing here is anyone's real work. What tools a
+//! turn calls is `work`'s.
 
-use serde_json::{Value, json};
-
-/// The text and tool calls of replies.
+/// The text of replies.
 pub struct Writing;
 
 /// A reply's opening, matched by a word in the prompt, with the title a
@@ -79,40 +78,6 @@ const DETAIL: [&str; 6] = [
     "Finally, a note on risk. The only behaviour change is when an out-of-stock order is refused: before the invoice instead of during it. The customer sees the same message, a little earlier. I checked the support logs for the last month and found no flow that depends on the later refusal.",
 ];
 
-/// Tool calls a reply can make, with what it says before them.
-const TOOLS: [(&str, &str, &str, &str); 5] = [
-    (
-        "Let me look at how it is built first.",
-        "Bash",
-        "command",
-        "cargo build --release -p acme-web 2>&1 | tail -20",
-    ),
-    (
-        "I'll check where it is used.",
-        "Bash",
-        "command",
-        "rg -n \"listen_addr\" --type rust",
-    ),
-    (
-        "Let me read the client before changing it.",
-        "Read",
-        "file_path",
-        "src/upload/client.rs",
-    ),
-    (
-        "I'll run the tests to see what fails.",
-        "Bash",
-        "command",
-        "cargo test -p acme-billing",
-    ),
-    (
-        "Let me check the recent history of this file.",
-        "Bash",
-        "command",
-        "git log --oneline -10 -- src/orders/list.rs",
-    ),
-];
-
 impl Writing {
     /// The answer to `prompt`: a fitting one when a word matches, else one of
     /// a few general ones, picked by `seed`.
@@ -147,16 +112,6 @@ impl Writing {
         text
     }
 
-    /// What a reply says before a tool call, the tool, and its input.
-    pub fn tool(seed: u64) -> (&'static str, &'static str, Value) {
-        let (lead, name, field, value) = TOOLS[Self::index(seed, TOOLS.len())];
-        let mut input = json!({ field: value });
-        if name == "Bash" {
-            input["description"] = json!("Run in the project root");
-        }
-        (lead, name, input)
-    }
-
     fn index(seed: u64, len: usize) -> usize {
         usize::try_from(seed % u64::try_from(len).unwrap_or(1)).unwrap_or(0)
     }
@@ -183,7 +138,7 @@ mod tests {
             .flat_map(|(_, title, text)| [*title, *text])
             .chain(super::FALLBACK)
             .chain(super::THOUGHTS);
-        for text in every.chain([long.as_str(), Writing::tool(2).0]) {
+        for text in every.chain([long.as_str()]) {
             assert!(!text.to_lowercase().contains("fake"), "{text}");
         }
     }

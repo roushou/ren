@@ -6,6 +6,7 @@ mod seed;
 mod shot;
 mod slot;
 mod traffic;
+mod work;
 
 use crate::{
     install::{InstallError, TailscaleCli},
