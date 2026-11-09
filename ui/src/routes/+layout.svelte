@@ -13,6 +13,7 @@
   import ConnectClient from '#lib/ConnectClient.svelte';
   import { RecorderReport } from '#lib/recorder.ts';
   import CopyButton from '#lib/CopyButton.svelte';
+  import DevToolbar from '#lib/DevToolbar.svelte';
   import '#lib/style.css';
   import type { LayoutProps } from './$types';
   let { data, children }: LayoutProps = $props();
@@ -189,20 +190,17 @@
 <svelte:head><title>TGV - {pageTitle}</title></svelte:head>
 <div class="app-shell">
   <header class="workbench-header">
-    <a class="brand" href="/" aria-label="TGV overview"
+    <a
+      class="brand"
+      class:development
+      href="/"
+      aria-label={development ? 'TGV overview, development gateway' : 'TGV overview'}
+      title={development ? 'A development gateway, not the installed service' : undefined}
       ><span class="flaps" aria-hidden="true"
-        ><span class="flap">T</span><span class="flap">G</span><span class="flap">V</span></span
+        ><span class="flap">T</span><span class="flap">G</span><span class="flap">V</span
+        >{#if development}<span class="dev-badge">dev</span>{/if}</span
       ></a
-    >{#if development}{#if page.data.devConsoleUrl}<a
-          class="dev-mark"
-          href={page.data.devConsoleUrl}
-          target="_blank"
-          rel="noopener"
-          title="A development gateway. Open the dev console to change its traffic">Dev</a
-        >{:else}<span
-          class="dev-mark"
-          title="This gateway is a development instance, not the installed service">Dev</span
-        >{/if}{/if}
+    >
     <nav class="workbench-tabs" aria-label="Workbench views">
       <a
         href="/"
@@ -362,4 +360,5 @@
       >{loading ? 'Refreshing…' : updated ? `Snapshot ${clock(updated)}` : 'No snapshot'}</span
     >
   </footer>
+  {#if development && page.data.devTraffic}<DevToolbar />{/if}
 </div>

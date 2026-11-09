@@ -136,9 +136,10 @@ enum TrafficAction {
     /// runs).
     #[command(hide = true)]
     Run {
-        /// Also serve the dev console on this loopback address.
+        /// Also serve the control API (for the dev UI's toolbar) on this
+        /// loopback address.
         #[arg(long)]
-        console: Option<SocketAddr>,
+        control: Option<SocketAddr>,
     },
 }
 
@@ -260,7 +261,7 @@ impl Dev {
     fn traffic(traffic: &Traffic, action: TrafficAction) -> Result<(), DevError> {
         let mut settings = traffic.settings()?;
         match action {
-            TrafficAction::Run { console } => return Ok(traffic.run(console)?),
+            TrafficAction::Run { control } => return Ok(traffic.run(control)?),
             TrafficAction::Burst { count } => return Ok(traffic.burst(count)?),
             TrafficAction::Show => {}
             TrafficAction::Pause => settings.flow = traffic::Flow::Paused,

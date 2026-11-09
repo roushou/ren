@@ -299,7 +299,10 @@ dependencies under "Crates" below. Read the code for current module ownership.
 - `ui`: an independent SvelteKit, Svelte 5, and TypeScript server (Node adapter). It
   reads the daemon only through the management API and forwards only allowlisted
   read-only endpoints. It never forwards browser cookies or credentials, never reads
-  storage directly, and never proxies inference.
+  storage directly, and never proxies inference. The one exception is the dev
+  slot's: with `TGV_DEV_TRAFFIC_URL` set (loopback only), `/dev/traffic` forwards
+  the dev toolbar's three JSON requests to the slot's fake traffic generator,
+  never to the daemon.
 - `crates/tgv-harness/pi`: the embedded Pi extension and its dependency-free contract tests.
   Pi owns provider authentication, refresh, payload conversion, and retries.
 - `xtask`: repository tasks run with `cargo xtask` (alias in `.cargo/config.toml`),
@@ -319,7 +322,8 @@ dependencies under "Crates" below. Read the code for current module ownership.
   the pure, tested `script`), seeded with fake traffic (`dev::seed`, scenarios
   as pure data), as `tgv-dev-*` transient units, with live traffic whose
   settings both the generator and the fake provider reread (`dev::traffic`,
-  with its console page), an optional private preview on the tailnet, and
+  with its loopback control API for the dev UI's toolbar), an optional private
+  preview on the tailnet, and
   headless screenshots (`dev::shot`).
 - `deploy`: systemd units, and in `deploy/container` the compose file, Podman
   Quadlet files, and Tailscale Serve route for the root `Dockerfile`

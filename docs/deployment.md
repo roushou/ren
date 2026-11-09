@@ -203,7 +203,7 @@ fake providers and fake data, for development and for previewing a change before
 it is installed:
 
 ```sh
-cargo xtask dev up --ui      # build, then start the slot, its UI, and console, and publish them
+cargo xtask dev up --ui      # build, then start the slot and its UI, and publish them
 cargo xtask dev seed         # play a scenario once (sessions, users, long, errors, websocket, all)
 cargo xtask dev traffic      # show the live traffic settings
 cargo xtask dev traffic set --rate 60 --pace slow --replies tools=50,error=5
@@ -217,14 +217,14 @@ cargo xtask dev down         # stop the slot and remove the preview's routes
 |          | Dev slot                                                                | Installed service                         |
 | -------- | ----------------------------------------------------------------------- | ----------------------------------------- |
 | Units    | `tgv-dev-provider`, `tgv-dev-daemon`, `tgv-dev-traffic`, `tgv-dev-ui`   | `tgv`, `tgv-ui`                           |
-| Loopback | fake provider `18999`, daemon `18787`, UI `13000`, console `13001`      | daemon `8787`, UI `3000`                  |
-| Tailnet  | `9443` (gateway), `9444` (UI), `9445` (console)                         | your `--https-port` and `--ui-https-port` |
+| Loopback | fake provider `18999`, daemon `18787`, UI `13000`, traffic API `13001`  | daemon `8787`, UI `3000`                  |
+| Tailnet  | `9443` (gateway), `9444` (UI)                                           | your `--https-port` and `--ui-https-port` |
 | Files    | `~/.config/tgv-dev`, `~/.local/state/tgv-dev`, `~/.local/share/tgv-dev` | `~/.config/tgv`, `~/.local/state/tgv`     |
 
 The units are transient systemd user units, stopped by name. The dev
 configuration is regenerated on every `up`. It sets `[instance] environment =
-"development"`, which the gateway reports in `/health`: the UI shows a Dev chip
-beside its wordmark, and `tgv doctor` and `tgv run` name the instance. Every
+"development"`, which the gateway reports in `/health`: the UI's logo gets a dev
+badge, and `tgv doctor` and `tgv run` name the instance. Every
 provider in it is the fake one, which
 accepts any credentials and stores nothing, so no real credential or prompt
 reaches the slot. It names two users, `alice` (by the Tailscale login
@@ -243,11 +243,12 @@ through the dev gateway as `~/.config/tgv-dev/traffic.toml` says (running or
 paused, calls a minute, the fake provider's pace, and weights over replies,
 harnesses, and callers). The generator and the fake provider read the file again
 for every call, so `dev traffic set`, `pause`, and `resume` apply at once; an
-invalid file falls back to the defaults. The same settings are in the dev console,
-a page the generator serves (`127.0.0.1:13001`, published at `9445`), which also
-sends bursts and single slow, tool, error, or rate-limited calls. The console is
-the slot's own page: TGV's UI stays read-only, and its Dev chip links to the
-console when `TGV_DEV_CONSOLE_URL` is set, as the slot sets it.
+invalid file falls back to the defaults. The dev UI also has them in a floating
+toolbar (bottom right; it folds into a small tab): pause, rate, pace, a burst, the
+mix, and single slow, tool, error, or rate-limited calls. The generator serves them
+on `127.0.0.1:13001`, never published; the UI server forwards the toolbar's
+requests there only when `TGV_DEV_TRAFFIC_URL` is set, as the slot sets it, and
+only a development gateway's UI shows the toolbar.
 
 `--ui` publishes the preview with the same Serve step as `install-vps` (with
 `sudo -n` if it last did, or `--sudo-tailscale`); `--local` keeps it on

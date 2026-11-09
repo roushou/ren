@@ -215,15 +215,154 @@ pre {
   border-bottom: 1px solid var(--line);
   flex-shrink: 0;
 }
-.dev-mark {
+/* A development gateway's wordmark: framed, with a dev tag on the frame. */
+.brand.development .flaps {
+  position: relative;
+  outline: 2px solid var(--warning);
+  outline-offset: 2px;
+}
+.dev-badge {
+  position: absolute;
+  right: -9px;
+  bottom: -11px;
+  padding: 0 3px;
+  background: var(--warning);
+  color: var(--surface);
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 12px;
+  letter-spacing: 0.04em;
+}
+/* The dev slot's traffic controls, floating above the status bar. */
+.dev-toolbar,
+.dev-toolbar-tab {
+  position: fixed;
+  right: 16px;
+  bottom: 40px;
+  z-index: 40;
+  border: 1px solid var(--warning-border);
+  background: var(--surface);
+  box-shadow: 0 6px 24px rgb(0 0 0 / 12%);
+}
+.dev-toolbar-tab {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 6px 10px;
+  color: var(--warning);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.dev-toolbar-tab .mono {
+  color: var(--muted);
+  font-weight: 400;
+}
+.dev-toolbar {
+  max-width: calc(100vw - 32px);
+}
+.dev-toolbar-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 6px 6px 10px;
+  border-top: 2px solid var(--warning);
+}
+.dev-toolbar-title {
+  color: var(--warning);
+  font-weight: 600;
+}
+.dev-toolbar-rate {
   display: flex;
   align-items: center;
-  padding: 0 12px;
-  border-right: 1px solid var(--warning-border);
+  gap: 6px;
+}
+.dev-toolbar-rate input {
+  width: 110px;
+  accent-color: var(--warning);
+}
+.dev-toolbar-rate output {
+  min-width: 56px;
+  color: var(--muted);
+}
+.dev-toolbar-pace {
+  display: inline-flex;
+  border: 1px solid var(--control-border);
+  border-radius: 3px;
+  overflow: hidden;
+}
+.dev-toolbar-pace button {
+  padding: 3px 8px;
+  border: 0;
+  border-right: 1px solid var(--control-border);
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  cursor: pointer;
+}
+.dev-toolbar-pace button:last-child {
+  border-right: 0;
+}
+.dev-toolbar-pace button[aria-pressed='true'] {
   background: var(--warning-soft);
   color: var(--warning);
   font-weight: 600;
-  letter-spacing: 0.02em;
+}
+.dev-toolbar-counts {
+  color: var(--muted);
+}
+.dev-toolbar-error {
+  color: var(--error);
+}
+.dev-toolbar-close {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+.dev-toolbar-mix {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 1px;
+  background: var(--line);
+}
+.dev-toolbar-group {
+  padding: 8px 10px;
+  background: var(--surface);
+}
+.dev-toolbar-send {
+  grid-column: 1 / -1;
+}
+.dev-toolbar-group h3 {
+  margin: 0 0 4px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+.dev-toolbar-mix label {
+  display: grid;
+  grid-template-columns: 78px 1fr 26px;
+  align-items: center;
+  gap: 6px;
+}
+.dev-toolbar-mix input {
+  width: 100%;
+  accent-color: var(--warning);
+}
+.dev-toolbar-mix output {
+  text-align: right;
+  color: var(--muted);
+}
+.dev-toolbar-singles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
 }
 .brand {
   padding: 0 13px;

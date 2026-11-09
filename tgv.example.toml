@@ -65,7 +65,7 @@ deepseek = 33554432 # 32 MiB (no documented limit; Anthropic Messages' is used)
 
 [instance]
 # "production" (the default) or "development". /health reports it; the UI
-# marks a development gateway with a Dev chip, and `tgv doctor` and `tgv run`
+# marks a development gateway with a dev badge on its logo, and `tgv doctor` and `tgv run`
 # name it. `cargo xtask dev` sets "development" for the dev slot.
 environment = "production"
 

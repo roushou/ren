@@ -1,8 +1,8 @@
-//! The dev console: a small page, served by the traffic generator on
-//! loopback, that shows and changes the live traffic settings and sends
-//! bursts. It is the dev slot's own page, not part of TGV's UI, which stays
-//! read-only; the UI only links to it. Changes are JSON requests, which a
-//! cross-site form cannot send.
+//! The traffic generator's control API, on loopback: read and change the
+//! live settings, and send bursts. The dev UI's toolbar reaches it through
+//! the UI server, which forwards only to this address and only when the dev
+//! slot configures it. Changes are JSON requests, which a cross-site form
+//! cannot send.
 
 use super::{Reply, Settings, Traffic};
 use crate::dev::seed::Run;
@@ -10,7 +10,7 @@ use axum::{
     Json, Router,
     extract::State,
     http::{StatusCode, header},
-    response::{Html, IntoResponse, Response},
+    response::{IntoResponse, Response},
     routing::{get, post},
 };
 use std::sync::{
@@ -18,15 +18,15 @@ use std::sync::{
     atomic::{AtomicU64, Ordering},
 };
 
-/// Counts the console reports.
+/// Counts the control API reports.
 #[derive(Debug, Default)]
 pub struct Stats {
     pub sent: AtomicU64,
     pub in_flight: AtomicU64,
 }
 
-/// What the console serves from.
-pub struct Console {
+/// What the control API serves from.
+pub struct Control {
     pub traffic: Traffic,
     pub stats: Arc<Stats>,
     pub client: reqwest::Client,
@@ -49,12 +49,9 @@ struct BurstRequest {
     reply: Option<String>,
 }
 
-impl Console {
-    const PAGE: &'static str = include_str!("console.html");
-
+impl Control {
     pub fn router(self) -> Router {
         Router::new()
-            .route("/", get(|| async { Html(Self::PAGE) }))
             .route("/api/status", get(Self::status))
             .route("/api/settings", post(Self::save))
             .route("/api/burst", post(Self::burst))
@@ -70,36 +67,36 @@ impl Console {
             .with_state(Arc::new(self))
     }
 
-    async fn status(State(console): State<Arc<Self>>) -> Response {
-        match console.traffic.settings() {
+    async fn status(State(control): State<Arc<Self>>) -> Response {
+        match control.traffic.settings() {
             Ok(settings) => Json(Status {
                 settings: &settings,
-                sent: console.stats.sent.load(Ordering::Relaxed),
-                in_flight: console.stats.in_flight.load(Ordering::Relaxed),
+                sent: control.stats.sent.load(Ordering::Relaxed),
+                in_flight: control.stats.in_flight.load(Ordering::Relaxed),
             })
             .into_response(),
             Err(error) => (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()).into_response(),
         }
     }
 
-    async fn save(State(console): State<Arc<Self>>, Json(settings): Json<Settings>) -> Response {
+    async fn save(State(control): State<Arc<Self>>, Json(settings): Json<Settings>) -> Response {
         if let Err(error) = settings.check() {
             return (StatusCode::BAD_REQUEST, error.to_string()).into_response();
         }
-        match console.traffic.save(&settings) {
+        match control.traffic.save(&settings) {
             Ok(()) => StatusCode::NO_CONTENT.into_response(),
             Err(error) => (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()).into_response(),
         }
     }
 
     async fn burst(
-        State(console): State<Arc<Self>>,
+        State(control): State<Arc<Self>>,
         Json(request): Json<BurstRequest>,
     ) -> Response {
         if !(1..=200).contains(&request.count) {
             return (StatusCode::BAD_REQUEST, "count is 1 to 200").into_response();
         }
-        let mut settings = match console.traffic.settings() {
+        let mut settings = match control.traffic.settings() {
             Ok(settings) => settings,
             Err(error) => {
                 return (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()).into_response();
@@ -112,14 +109,14 @@ impl Console {
             }
         }
         // Numbered past the generator's own calls, so turns stay distinct.
-        let base = 1_000_000 + console.stats.sent.load(Ordering::Relaxed);
+        let base = 1_000_000 + control.stats.sent.load(Ordering::Relaxed);
         let calls: Vec<_> = (0..u64::from(request.count))
-            .filter_map(|n| Traffic::call(base + n, console.run, &settings, &console.traffic.token))
+            .filter_map(|n| Traffic::call(base + n, control.run, &settings, &control.traffic.token))
             .collect();
         let sends = calls.into_iter().map(|call| {
-            console
+            control
                 .traffic
-                .counted(&console.client, call, &console.stats)
+                .counted(&control.client, call, &control.stats)
         });
         futures_util::future::join_all(sends).await;
         StatusCode::NO_CONTENT.into_response()

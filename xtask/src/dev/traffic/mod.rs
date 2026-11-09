@@ -3,13 +3,13 @@
 //! reading it again before every call. The calls themselves come from the
 //! seed scenarios' builders, so they carry each harness's real headers.
 
-mod console;
+mod control;
 mod settings;
 
 pub use settings::{Flow, Pace, Settings, SettingsError};
 
 use super::seed::{Call, Caller, Client, PROMPTS, Run, Seeder};
-use console::{Console, Stats};
+use control::{Control, Stats};
 use futures_util::{StreamExt as _, stream::FuturesUnordered};
 use settings::{Harness, Reply, Sender};
 use std::{
@@ -30,8 +30,8 @@ pub enum TrafficError {
     Client(#[source] reqwest::Error),
     #[error(transparent)]
     Seed(#[from] super::seed::SeedError),
-    #[error("the dev console cannot serve on {address}: {source}")]
-    Console {
+    #[error("the traffic control API cannot serve on {address}: {source}")]
+    Control {
         address: SocketAddr,
         source: std::io::Error,
     },
@@ -164,19 +164,19 @@ impl Traffic {
 
     /// Send calls as the settings say, until stopped, keeping several in
     /// flight so a slow call never holds up the next.
-    pub fn run(&self, console: Option<SocketAddr>) -> Result<(), TrafficError> {
+    pub fn run(&self, control: Option<SocketAddr>) -> Result<(), TrafficError> {
         let client = Self::client()?;
         let run = Run(Seeder::next_run(&self.data_dir)?);
         let stats = Arc::new(Stats::default());
         Self::runtime()?.block_on(async {
             let page = async {
-                let Some(address) = console else {
+                let Some(address) = control else {
                     return std::future::pending().await;
                 };
                 let listener = tokio::net::TcpListener::bind(address)
                     .await
-                    .map_err(|source| TrafficError::Console { address, source })?;
-                let router = Console {
+                    .map_err(|source| TrafficError::Control { address, source })?;
+                let router = Control {
                     traffic: self.clone(),
                     stats: stats.clone(),
                     client: client.clone(),
@@ -185,7 +185,7 @@ impl Traffic {
                 .router();
                 axum::serve(listener, router)
                     .await
-                    .map_err(|source| TrafficError::Console { address, source })
+                    .map_err(|source| TrafficError::Control { address, source })
             };
             tokio::select! {
                 stopped = page => stopped,
