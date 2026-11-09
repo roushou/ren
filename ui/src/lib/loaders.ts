@@ -93,6 +93,12 @@ export interface UsageData {
   sessions: SessionView[];
   /** What the busiest sessions are about. */
   details: Map<SessionId, SessionDetail>;
+  /**
+   * Bookkeeping calls that failed in the range (a client's own checks, such
+   * as Claude Code's quota probe), which the errors total leaves out; one
+   * page is read, so 100 means that many or more. Null when not read.
+   */
+  bookkeepingErrors: number | null;
 }
 
 /** The Usage page: totals for the range, and the sessions list for its top sessions. */
@@ -101,9 +107,16 @@ export function usageSnapshot(fetcher: typeof fetch, rawRange: string | null) {
   const range = parseRange(rawRange);
   return readSnapshot(`usage?${range}`, async (): Promise<UsageData> => {
     const now = Date.now();
-    const [usage, sessions] = await Promise.all([
-      api.usage({ from_ms: rangeStart(range, now, localDayStart) }),
+    const from = rangeStart(range, now, localDayStart);
+    const bookkeeping = new URLSearchParams({ status: 'errors', kind: 'other', limit: '100' });
+    if (from !== undefined) bookkeeping.set('from_ms', String(from));
+    const [usage, sessions, bookkeepingErrors] = await Promise.all([
+      api.usage({ from_ms: from }),
       api.sessions(100),
+      api
+        .calls(bookkeeping)
+        .then((page) => page.calls.length)
+        .catch(() => null),
     ]);
     const busiest = sessions.sessions
       .toSorted((a, b) => (b.tokens.input ?? 0) - (a.tokens.input ?? 0))
@@ -113,7 +126,7 @@ export function usageSnapshot(fetcher: typeof fetch, rawRange: string | null) {
       // The page shows five, after filtering by range: read a few more.
       SessionDetails.pick(sessions.sessions, busiest, 10),
     );
-    return { range, now, usage, sessions: sessions.sessions, details };
+    return { range, now, usage, sessions: sessions.sessions, details, bookkeepingErrors };
   });
 }
 
@@ -369,6 +382,8 @@ export interface ReportData {
   /** The turn listing, for prompts and error counts. */
   turns: TurnSummary[];
   session: SessionView | undefined;
+  /** What the session is about, for its header. */
+  detail: SessionDetail | null;
 }
 
 /** A session's report, with its turns' prompts and its listing row. */
@@ -381,7 +396,11 @@ export function reportSnapshot(fetcher: typeof fetch, sessionId: SessionId) {
       api.sessions(100),
     ]);
     const session = sessions.sessions.find((item) => item.id === sessionId);
-    return { report, turns: turns.turns, session };
+    const details = await SessionDetails.shared.read(
+      api,
+      SessionDetails.pick(sessions.sessions, [sessionId]),
+    );
+    return { report, turns: turns.turns, session, detail: details.get(sessionId) ?? null };
   });
 }
 

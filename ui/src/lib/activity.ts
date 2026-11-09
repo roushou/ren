@@ -163,7 +163,64 @@ export function turnRows(report: SessionReport, summaries: TurnSummary[]): TurnR
  */
 export function rowPrompt(row: TurnRow): string {
   if (row.summary === null) return 'Prompt not loaded';
-  return row.summary.prompt?.text ?? 'No prompt read';
+  // A turn without a prompt of its own continues an earlier one.
+  return row.summary.prompt?.text ?? 'No new prompt';
+}
+
+/** One turn's bar in the report's context chart, in a 1000-wide box, heights 0–1. */
+export interface ContextBar {
+  turn: TurnId;
+  x: number;
+  width: number;
+  /** Context the turn started and ended with, against the session's peak. */
+  start: number;
+  end: number;
+  /** A finding points into the turn. */
+  flagged: boolean;
+  title: string;
+}
+
+/**
+ * The report's context per turn, oldest first: a bar to the context each
+ * turn ended with, marked where it started, against the session's peak, so
+ * growth and compaction read at a glance. The model's context limit is not
+ * on the wire, so none is drawn.
+ */
+export class ContextChart {
+  readonly bars: ContextBar[];
+  /** The scale's top: the largest context any turn reached, in tokens. */
+  readonly max: number;
+
+  constructor(rows: TurnRow[]) {
+    const turns = [...rows]
+      .reverse()
+      .filter(
+        (row) =>
+          row.metrics.context_start_tokens !== null || row.metrics.context_end_tokens !== null,
+      );
+    this.max = Math.max(
+      1,
+      ...turns.flatMap((row) => [
+        row.metrics.context_start_tokens ?? 0,
+        row.metrics.context_end_tokens ?? 0,
+      ]),
+    );
+    const step = 1000 / Math.max(1, turns.length);
+    const gap = Math.min(2, step / 6);
+    this.bars = turns.map((row, index) => {
+      const start = row.metrics.context_start_tokens ?? row.metrics.context_end_tokens ?? 0;
+      const end = row.metrics.context_end_tokens ?? start;
+      return {
+        turn: row.metrics.turn,
+        x: index * step + gap,
+        width: Math.max(1, step - 2 * gap),
+        start: start / this.max,
+        end: end / this.max,
+        flagged: row.findings.length > 0,
+        title: `${rowPrompt(row)} · ${compact(start)} → ${compact(end)}`,
+      };
+    });
+  }
 }
 
 /** Text with how much was left out, for an excerpt. */

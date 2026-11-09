@@ -13,6 +13,15 @@
   const snapshot = createSnapshot(() => data.turn);
   const turn = $derived(snapshot.current.value);
   const findings = $derived(turn ? turn.findings.map(findingLine) : []);
+  /** The folder the turn's commands work in: paths under it are shown relative to it. */
+  const workdir = $derived(turn ? Board.workdir(turn) : null);
+  const shorten = (target: string) => Board.shorten(target, workdir);
+  /** A command's first line, and whether there is more to open. */
+  function commandLine(command: string): { first: string; more: boolean } {
+    const text = shorten(command);
+    const first = text.split('\n')[0] ?? text;
+    return { first, more: first !== text.trimEnd() };
+  }
 </script>
 
 {#snippet scope()}
@@ -48,6 +57,9 @@
       <section class="panel usage-panel" aria-labelledby="turn-prompt-title">
         <header class="panel-heading">
           <h2 id="turn-prompt-title">Prompt</h2>
+          {#if workdir}<span class="muted mono turn-folder" title={workdir}
+              >in {Board.folder(workdir)}</span
+            >{/if}
           <span class="muted"
             >{turn.started_at && turn.ended_at
               ? `Took ${span(turn.ended_at - turn.started_at)}`
@@ -96,16 +108,35 @@
 
       {#if turn.files_written.length || turn.files_read.length || turn.commands.length}
         <div class="usage-columns">
-          {#each [{ heading: 'Files written', items: turn.files_written }, { heading: 'Files read', items: turn.files_read }, { heading: 'Commands run', items: turn.commands }] as group (group.heading)}
+          {#each [{ heading: 'Files written', items: turn.files_written }, { heading: 'Files read', items: turn.files_read }] as group (group.heading)}
             <section class="panel usage-panel">
               <header class="panel-heading"><h2>{group.heading}</h2></header>
               {#if group.items.length}
                 <ul class="effect-list mono">
-                  {#each group.items as item, index (index)}<li>{item}</li>{/each}
+                  {#each group.items as item, index (index)}<li title={item}>
+                      {shorten(item)}
+                    </li>{/each}
                 </ul>
               {:else}<p class="quiet-empty">None.</p>{/if}
             </section>
           {/each}
+          <section class="panel usage-panel">
+            <header class="panel-heading"><h2>Commands run</h2></header>
+            {#if turn.commands.length}
+              <ul class="effect-list mono command-list">
+                {#each turn.commands as command, index (index)}
+                  {@const line = commandLine(command)}
+                  <li>
+                    {#if line.more}<details>
+                        <summary title="Show the whole command">{line.first}</summary>
+                        <pre class="activity-pre">{shorten(command)}</pre>
+                      </details>{:else}<span class="command-text" title={command}>{line.first}</span
+                      >{/if}
+                  </li>
+                {/each}
+              </ul>
+            {:else}<p class="quiet-empty">None.</p>{/if}
+          </section>
         </div>
       {/if}
 
@@ -155,7 +186,9 @@
                           {#each tool.effects as effect, effectIndex (effectIndex)}<span
                               class="effect"
                               ><span class="muted">{effectLabel(effect.kind)}</span>
-                              <span class="mono">{effect.target}</span></span
+                              <span class="mono" title={effect.target}
+                                >{shorten(effect.target)}</span
+                              ></span
                             >{/each}
                         {:else}<details>
                             <summary class="muted">Input</summary>
@@ -189,3 +222,31 @@
     {/if}
   </div>
 </div>
+
+<style>
+  .turn-folder {
+    margin-right: auto;
+    font-size: 11px;
+  }
+  /* One row per command: its first line, opening to the whole of it. */
+  .command-list :global(li) {
+    overflow: hidden;
+  }
+  .command-list summary,
+  .command-text {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    cursor: pointer;
+  }
+  .command-text {
+    cursor: text;
+  }
+  .command-list summary::marker {
+    color: var(--muted);
+  }
+  .command-list details[open] summary {
+    white-space: normal;
+  }
+</style>

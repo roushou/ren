@@ -46,11 +46,15 @@ Traffic (`/traffic`; wherever a session appears, there and on a session's page, 
 and in Usage, it is named by its client, its newest prompt, and its folder), Sessions (`/sessions`: each session's client, its newest prompt, and its folder, what it
 is doing now, and its size against the rest, grouped by day, with single-call sessions
 that have no turn folded away; `/sessions/:id`, each session's context and
-cache report at `/sessions/:id/report`, and what a turn did at `/turns/:id`: its prompt,
-tool calls with their effects and reported results, files, commands, and findings), Search
+cache report at `/sessions/:id/report` (with each turn's context drawn oldest to newest,
+from where it started to where it ended), and what a turn did at `/turns/:id`: its prompt,
+tool calls with their effects and reported results, files, commands (one row each,
+opening to the whole command), and findings, with paths shown relative to the folder the
+turn works in), Search
 (`/search`: full-text search over prompts, replies, and tool input and output), Usage
-(`/usage`: calls, errors, and tokens over the last day by hour, the last week, or all
-retained calls by local day, by model, and the busiest sessions), and Recorder
+(`/usage`: calls, failed work calls (with failed bookkeeping counted apart), and tokens
+over the last day by hour, the last week, or all retained calls by local day, by model,
+and the busiest sessions), and Recorder
 (`/recorder`: whether recording is healthy, how close storage, calls, and history are to
 their retention limits with the nearest marked as the one pruned for first, and only the
 loss and error counters that are not zero; bytes past the capture policy are noted as

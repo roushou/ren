@@ -21,6 +21,8 @@ import {
   rowPrompt,
   snippetParts,
   turnRows,
+  ContextChart,
+  type TurnRow,
   type FindingLine,
 } from '../src/lib/activity.ts';
 import { uuid, versioned } from './fixtures.ts';
@@ -125,7 +127,7 @@ test('a session report decodes, keeps unknown findings, and reads as measurement
   assert.equal(rowPrompt({ ...rows[0], summary: null }), 'Prompt not loaded');
   assert.equal(
     rowPrompt({ ...rows[0], summary: { ...rows[0].summary!, prompt: null } }),
-    'No prompt read',
+    'No new prompt',
   );
   // Only findings that point into the turn are attached to it.
   assert.deepEqual(
@@ -309,4 +311,42 @@ test('links to calls, turns, hits, and findings encode their IDs', () => {
   });
   assert.equal(findingLink(line({ call: null, turn: null }), sessionId, 'session'), null);
   assert.equal(findingLink(line({ call: null }), sessionId, 'turn'), null);
+});
+
+test('the context chart reads oldest first, against the peak, and marks flagged turns', () => {
+  const row = (n: number, start: number | null, end: number | null, flagged = false): TurnRow => ({
+    metrics: {
+      turn: uuid(500 + n) as never,
+      started_at: (n * 1000) as never,
+      ended_at: null,
+      call_count: 1,
+      idle_before_ms: null,
+      context_start_tokens: start,
+      context_end_tokens: end,
+      cache_hit_percent: null,
+      cache_written_tokens: 0,
+      output_tokens: 0,
+    },
+    summary: null,
+    findings: flagged ? [{ title: 'Context grew' } as never] : [],
+  });
+  // Report rows come newest first.
+  const chart = new ContextChart([
+    row(3, 200_000, 100_000),
+    row(2, 100_000, 200_000, true),
+    row(1, 50_000, 100_000),
+    row(0, null, null),
+  ]);
+  assert.equal(chart.max, 200_000);
+  assert.deepEqual(
+    chart.bars.map((bar) => [bar.turn, bar.start, bar.end, bar.flagged]),
+    [
+      [uuid(501), 0.25, 0.5, false],
+      [uuid(502), 0.5, 1, true],
+      // A compaction: it ended below where it started.
+      [uuid(503), 1, 0.5, false],
+    ],
+  );
+  assert.ok(chart.bars.every((bar, index) => index === 0 || bar.x > chart.bars[index - 1]!.x));
+  assert.match(chart.bars[1]!.title, /100k → 200k/);
 });

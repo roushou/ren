@@ -1,9 +1,10 @@
 <script lang="ts">
   import { createSnapshot } from '#lib/snapshot.svelte.ts';
   import { getWorkbench } from '#lib/workbench.svelte.ts';
-  import { num, short, clock, providerMark } from '#lib/api.ts';
+  import { num, short, clock } from '#lib/api.ts';
   import { compact, compactOrDash, date, percentOrDash, span, sessionTone } from '#lib/display.ts';
-  import { findingLine, rowPrompt, turnHref, turnRows } from '#lib/activity.ts';
+  import { ContextChart, findingLine, rowPrompt, turnHref, turnRows } from '#lib/activity.ts';
+  import SessionName from '#lib/SessionName.svelte';
   import FindingList from '#lib/FindingList.svelte';
   import Icon from '#lib/Icon.svelte';
   import type { PageProps } from './$types';
@@ -15,15 +16,16 @@
   const session = $derived(current?.session);
   const rows = $derived(current ? turnRows(current.report, current.turns) : []);
   const findings = $derived(report ? report.findings.map(findingLine) : []);
+  const chart = $derived(new ContextChart(rows));
+  /** The chart's height in SVG units, drawn at the same height in pixels. */
+  const CHART = 120;
 </script>
 
 {#snippet scope()}
   <div class="scope-group scope-identity">
-    <span class="session-dot tone-{sessionTone(data.sessionId)}"></span>{#if session}<span
-        class="provider-mark tiny {session.provider}">{providerMark(session.provider)}</span
-      ><strong class="mono" title="The session ID your client reported"
-        >{short(session.native_id)}</strong
-      >{:else}<strong class="mono">{short(data.sessionId)}</strong>{/if}
+    {#if session}<SessionName {session} detail={current?.detail} />{:else}<span
+        class="session-dot tone-{sessionTone(data.sessionId)}"
+      ></span><strong class="mono">{short(data.sessionId)}</strong>{/if}
     <span class="muted">Context and cache report</span>
   </div>
   <span
@@ -75,6 +77,51 @@
           >
         </div>
       </section>
+
+      {#if chart.bars.length > 1}
+        <section class="panel usage-panel" aria-labelledby="report-context-title">
+          <header class="panel-heading">
+            <h2 id="report-context-title">Context per turn</h2>
+            <span class="muted"
+              >Oldest to newest · each bar is the context a turn ended with, its tick where it
+              started · the model's limit is not reported, so none is drawn</span
+            >
+          </header>
+          <div class="context-chart">
+            <span class="context-scale mono">{compact(chart.max)}</span>
+            <svg
+              viewBox="0 0 1000 {CHART}"
+              preserveAspectRatio="none"
+              aria-label="Context per turn"
+            >
+              {#each [0.25, 0.5, 0.75] as at (at)}<line
+                  class="grid"
+                  x1="0"
+                  y1={CHART * at}
+                  x2="1000"
+                  y2={CHART * at}
+                />{/each}
+              {#each chart.bars as bar (bar.turn)}
+                <a href={turnHref(bar.turn)} class:flagged={bar.flagged}
+                  ><title>{bar.title}</title><rect
+                    class="bar"
+                    x={bar.x}
+                    width={bar.width}
+                    y={CHART * (1 - bar.end)}
+                    height={CHART * bar.end}
+                  /><rect
+                    class="start"
+                    x={bar.x}
+                    width={bar.width}
+                    y={CHART * (1 - bar.start) - 1}
+                    height="2"
+                  /></a
+                >
+              {/each}
+            </svg>
+          </div>
+        </section>
+      {/if}
 
       <section class="panel usage-panel" aria-labelledby="report-findings-title">
         <header class="panel-heading">
@@ -155,3 +202,39 @@
     {/if}
   </div>
 </div>
+
+<style>
+  .context-chart {
+    position: relative;
+    padding: 18px 16px 12px;
+  }
+  .context-chart svg {
+    display: block;
+    width: 100%;
+    height: 120px;
+  }
+  .context-scale {
+    position: absolute;
+    top: 3px;
+    left: 16px;
+    color: var(--muted);
+    font-size: 10.5px;
+  }
+  .grid {
+    stroke: var(--line);
+    stroke-dasharray: 2 3;
+    vector-effect: non-scaling-stroke;
+  }
+  .bar {
+    fill: color-mix(in srgb, var(--chart) 45%, transparent);
+  }
+  a:hover .bar {
+    fill: var(--chart);
+  }
+  .flagged .bar {
+    fill: color-mix(in srgb, var(--warning) 60%, transparent);
+  }
+  .start {
+    fill: var(--ink);
+  }
+</style>

@@ -2,7 +2,7 @@
   import { createSnapshot } from '#lib/snapshot.svelte.ts';
   import { getWorkbench } from '#lib/workbench.svelte.ts';
   import { num, providerMark } from '#lib/api.ts';
-  import { compactOrDash } from '#lib/display.ts';
+  import { compactOrDash, SEPARATOR } from '#lib/display.ts';
   import {
     cacheShare,
     usageMeasures,
@@ -89,9 +89,15 @@
           <span>Calls</span><strong class="mono">{num(totals?.calls)}</strong>
         </div>
         <div class="usage-tile">
-          <span>Errors</span><strong class="mono" class:error-count={!!totals?.errors}
+          <span>Failed work calls</span><strong class="mono" class:error-count={!!totals?.errors}
             >{num(totals?.errors)}</strong
-          ><small>{errorRate === null ? '—' : `${(errorRate * 100).toFixed(1)}% of calls`}</small>
+          ><small
+            >{errorRate === null
+              ? '—'
+              : `${(errorRate * 100).toFixed(1)}% of calls`}{#if current.bookkeepingErrors}{SEPARATOR}{num(
+                current.bookkeepingErrors,
+              )}{current.bookkeepingErrors >= 100 ? '+' : ''} failed bookkeeping{/if}</small
+          >
         </div>
         <div class="usage-tile">
           <span>Tokens in</span><strong class="mono"
@@ -117,7 +123,7 @@
         {/if}
       </section>
 
-      <div class="usage-columns">
+      <div class="usage-columns usage-fill">
         <section class="panel usage-panel" aria-labelledby="usage-models-title">
           <header class="panel-heading"><h2 id="usage-models-title">By model</h2></header>
           {#if models.length}
@@ -205,3 +211,13 @@
     {/if}
   </div>
 </div>
+
+<style>
+  /* The page fills the window: the bottom panels take whatever height is left. */
+  .console {
+    min-height: 100%;
+  }
+  .usage-fill {
+    flex: 1 0 auto;
+  }
+</style>
