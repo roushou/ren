@@ -349,8 +349,8 @@
       x={mark.at * 1000 - 1.5}
       y={top + 2}
       width="3"
-      height="9"
-    />
+      height="9"><title>{series.label}: {mark.label}</title></rect
+    >
   {/each}
 {/snippet}
 
@@ -379,7 +379,7 @@
         aria-label="Output tokens by {view.by}"
         title="Output tokens per {view.by} over the last {span(
           Band.spanMs,
-        )}, counted when each call finishes"
+        )}, counted when each call finishes. Marks along the top: calls that failed (red) or were cut off (yellow), when they ended."
       >
         <svg
           class="live-band-chart"
@@ -447,6 +447,12 @@
               ></a
             >
           {/each}
+          {#if band.series.some((series) => series.marks.length)}
+            <span class="live-legend-key" aria-hidden="true"
+              ><span class="live-key-mark error"></span>failed<span class="live-key-mark warning"
+              ></span>cut off</span
+            >
+          {/if}
         </div>
         <span class="live-band-scale mono" aria-hidden="true"
           >{view.band === 'ribbon' ? band.ribbonMax : band.max} tok/s</span
@@ -801,6 +807,25 @@
   }
   .live-band-mark.warning {
     fill: var(--warning);
+  }
+  .live-legend-key {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    color: var(--muted);
+    font-size: 11px;
+  }
+  .live-key-mark {
+    display: inline-block;
+    width: 3px;
+    height: 9px;
+    margin-left: 6px;
+  }
+  .live-key-mark.error {
+    background: var(--error);
+  }
+  .live-key-mark.warning {
+    background: var(--warning);
   }
   .live-band-mark.error {
     fill: var(--error);

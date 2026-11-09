@@ -15,7 +15,7 @@ import type {
   TurnActivity,
   TurnId,
 } from './api.ts';
-import { HARNESSES, providerName, SessionId } from './api.ts';
+import { clock, HARNESSES, providerName, SessionId } from './api.ts';
 import { findingLine, harnessLabel, resultBadge } from './activity.ts';
 import { assertNever, unrecognised, type Stored } from './decode.ts';
 import { callStatus, sessionTone, span, statusBadge, type Tone } from './display.ts';
@@ -1093,8 +1093,8 @@ export interface BandSeries {
   bins: number[];
   /** Output tokens per second over the last `Band.rateMs`. */
   rate: number;
-  /** Calls that ended badly, as fractions of the span. */
-  marks: { key: string; at: number; tone: 'warning' | 'error' }[];
+  /** Calls that ended badly, as fractions of the span, with what happened. */
+  marks: { key: string; at: number; tone: 'warning' | 'error'; label: string }[];
 }
 
 /**
@@ -1119,11 +1119,21 @@ export class Band {
   readonly max: number;
   /** The ribbon's scale: every series stacked, in tokens per second. */
   readonly ribbonMax: number;
+  /**
+   * Where the first bin starts, as a fraction of the span before its left
+   * edge (0 or less). Bins are fixed slots of the clock, so a call stays in
+   * its bin as time passes and the band only slides left.
+   */
+  readonly offset: number;
 
   constructor(sessions: SessionView[], calls: CallView[], now: number, by: BandBy = 'client') {
     const bySession = new Map(sessions.map((session) => [session.id, session]));
-    const count = Band.spanMs / Band.binMs;
     const from = now - Band.spanMs;
+    // Slots of the clock, the first one cut by the left edge: one more bin
+    // than the span holds.
+    const first = Math.floor(from / Band.binMs);
+    const count = Band.spanMs / Band.binMs + 1;
+    this.offset = (first * Band.binMs - from) / Band.spanMs;
     const groups = new Map<
       string,
       { bins: number[]; recent: number; total: number; marks: BandSeries['marks'] }
@@ -1139,13 +1149,19 @@ export class Band {
       };
       groups.set(key, group);
       const out = call.usage?.output_tokens ?? 0;
-      const index = Math.min(count - 1, Math.floor((call.ended_at - from) / Band.binMs));
+      const index = Math.min(count - 1, Math.floor(call.ended_at / Band.binMs) - first);
       group.bins[index] = (group.bins[index] ?? 0) + out / (Band.binMs / 1000);
       group.total += out;
       if (now - call.ended_at <= Band.rateMs) group.recent += out;
-      const tone = statusBadge(callStatus(call)).tone;
+      const badge = statusBadge(callStatus(call));
+      const tone = badge.tone;
       if (tone === 'warning' || tone === 'error')
-        group.marks.push({ key: call.id, at: (call.ended_at - from) / Band.spanMs, tone });
+        group.marks.push({
+          key: call.id,
+          at: (call.ended_at - from) / Band.spanMs,
+          tone,
+          label: `${badge.label} at ${clock(call.ended_at)}`,
+        });
     }
     const ranked = [...groups]
       .filter(([, group]) => group.total > 0 || group.marks.length > 0)
@@ -1260,7 +1276,7 @@ export class Band {
     const slice = height / Math.max(1, this.series.length);
     const top = index * slice;
     const bins = this.series[index]?.bins ?? [];
-    const points = Band.points(bins, this.max, slice, top);
+    const points = Band.points(bins, this.max, slice, top, this.offset);
     const base = (top + slice).toFixed(1);
     return {
       line: `M${points.join(' L')}`,
@@ -1278,18 +1294,23 @@ export class Band {
       this.series[0]?.bins.map((_, bin) =>
         this.series.slice(0, upTo).reduce((total, series) => total + (series.bins[bin] ?? 0), 0),
       ) ?? [];
-    const upper = Band.points(sum(index + 1), this.ribbonMax, height);
-    const lower = Band.points(sum(index), this.ribbonMax, height).reverse();
+    const upper = Band.points(sum(index + 1), this.ribbonMax, height, 0, this.offset);
+    const lower = Band.points(sum(index), this.ribbonMax, height, 0, this.offset).reverse();
     return { line: `M${upper.join(' L')}`, area: `M${upper.join(' L')} L${lower.join(' L')} Z` };
   }
 
-  /** Bins as points across a 1000-wide box, held flat to both edges. */
-  static points(bins: number[], max: number, height: number, top = 0): string[] {
-    const step = 1000 / Math.max(1, bins.length);
+  /**
+   * Bins as points across a 1000-wide box, each at its slot's middle, the
+   * first slot starting `offset` of the span before the left edge (the box
+   * clips it), held flat to both edges.
+   */
+  static points(bins: number[], max: number, height: number, top = 0, offset = 0): string[] {
+    const step = (Band.binMs / Band.spanMs) * 1000;
+    const start = offset * 1000;
     const y = (value: number) => (top + height - (value / max) * (height - 3)).toFixed(1);
     return [
-      `0,${y(bins[0] ?? 0)}`,
-      ...bins.map((value, index) => `${(index * step + step / 2).toFixed(1)},${y(value)}`),
+      `${start.toFixed(1)},${y(bins[0] ?? 0)}`,
+      ...bins.map((value, index) => `${(start + index * step + step / 2).toFixed(1)},${y(value)}`),
       `1000,${y(bins.at(-1) ?? 0)}`,
     ];
   }
