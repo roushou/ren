@@ -21,6 +21,8 @@
     tokenSummary,
     sessionTone,
     compactOrDash,
+    callerShown,
+    SEPARATOR,
   } from './display.ts';
   import {
     type Filters,
@@ -296,6 +298,7 @@
   }
   function chipLabel(key: string, value: string) {
     if (key === 'session') return `Session: ${sessionName(value)}`;
+    if (key === 'user') return `User: ${value}`;
     if (key === 'client')
       return `Client: ${clientChoices.find((item) => item.client === value)?.label ?? value}`;
     if (key === 'since')
@@ -498,6 +501,12 @@
         </div>
         {#if moreFilters}<div class="advanced-filters" id="advanced-filters">
             <label
+              >User<input
+                placeholder="Named user id…"
+                maxlength="64"
+                bind:value={filters.user}
+              /></label
+            ><label
               >Model<input
                 placeholder="Model contains…"
                 maxlength="128"
@@ -661,7 +670,17 @@
                                     .attribution.hint
                                     ? short(c.attribution.hint.session)
                                     : 'Session'}{/if}{/if}</button
-                            >{:else if !previous || previous.session !== c.session}No session{/if}</small
+                            >{:else if !previous || previous.session !== c.session}No session{/if}{#if c.caller?.user || c.caller?.login}{@const caller =
+                              callerShown(c.caller)}<span class="caller-line"
+                              >{SEPARATOR}{#if caller.user}{@const user = caller.user}<button
+                                  type="button"
+                                  class="session-filter"
+                                  title={`${caller.title}. Show only this user's calls`}
+                                  aria-label={`Show only user ${user}'s calls`}
+                                  onclick={() => pick((f) => (f.user = user))}
+                                  >{caller.label}</button
+                                >{:else}<span title={caller.title}>{caller.label}</span>{/if}</span
+                            >{/if}</small
                         >{/if}</td
                     >
                     <td

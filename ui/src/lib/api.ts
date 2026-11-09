@@ -106,10 +106,25 @@ const callRejections = [
   'abandoned',
   'paused',
   'session_blocked',
+  'user_blocked',
   'blocked',
   'shutdown',
+  'identity_refused',
+  'user_not_allowed',
+  'user_busy',
 ] as const;
 export type CallRejection = (typeof callRejections)[number];
+/** How a call's caller was identified (see the daemon's named users). */
+const callerKinds = ['user_tailscale', 'user_token', 'unlisted', 'unidentified'] as const;
+export type CallerKind = (typeof callerKinds)[number];
+/** Who made a call: a named user, a Tailscale login no user lists, or nobody TGV can identify. */
+export interface CallerView {
+  kind: Stored<CallerKind>;
+  /** The named user it proved to be. */
+  user: string | null;
+  /** The Tailscale login the request carried. */
+  login: string | null;
+}
 export type AttemptPhase = (typeof attemptPhases)[number];
 const bodyEndings = ['open', 'ended', 'unfinished'] as const;
 export type BodyEnding = (typeof bodyEndings)[number];
@@ -282,6 +297,8 @@ export interface CallView {
   operator_revision: number | null;
   /** Why the client sent it, once derived; null before then, or from an older daemon. */
   purpose: Stored<CallPurpose> | null;
+  /** Null for calls recorded before callers were, or from an older daemon. */
+  caller: CallerView | null;
 }
 export interface ToolCallRecord {
   call_id: string | null;
@@ -398,11 +415,17 @@ export interface ModelUsage extends UsageCounts {
   /** Null for calls whose response reported no model. */
   model: string | null;
 }
+export interface UserUsage extends UsageCounts {
+  /** Null for calls no named user made. */
+  user: string | null;
+}
 export interface UsageView {
   totals: UsageCounts;
   /** Hours with calls, oldest first. */
   hours: UsageBucket[];
   models: ModelUsage[];
+  /** Empty from daemons older than named users. */
+  users: UserUsage[];
 }
 export interface FileUsage {
   page_size: number;
@@ -564,6 +587,15 @@ const callView = object<CallView>({
   // Absent from daemons older than the field: read as not derived.
   purpose: (value, path) =>
     value === undefined || value === null ? null : label(callPurposes)(value, path),
+  // Absent from daemons older than the field: an unknown caller.
+  caller: (value, path) =>
+    value === undefined || value === null
+      ? null
+      : object<CallerView>({
+          kind: label(callerKinds),
+          user: nullable(string),
+          login: nullable(string),
+        })(value, path),
 });
 const inspection = object<InspectionRecord>({
   coverage: label(coverages),
@@ -687,6 +719,10 @@ const usageView = object<UsageView>({
       ...usageCounts,
     }),
   ),
+  users: (value, path) =>
+    value === undefined
+      ? []
+      : array(object<UserUsage>({ user: nullable(string), ...usageCounts }))(value, path),
 });
 const fileUsage = object<FileUsage>({ page_size: count, page_count: count, freelist_count: count });
 const storageView = object<StorageView>({

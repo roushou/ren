@@ -74,6 +74,8 @@ export interface Filters {
   q: string;
   session: string;
   client: string;
+  /** A named user of the gateway, not a harness. */
+  user: string;
   kind: KindChoice;
   since: string;
   provider: string;
@@ -88,6 +90,7 @@ export const emptyFilters = (): Filters => ({
   q: '',
   session: '',
   client: '',
+  user: '',
   kind: 'model',
   since: '',
   provider: '',
@@ -104,6 +107,7 @@ export function trafficParams(filters: Filters): string {
     'q',
     'session',
     'client',
+    'user',
     'since',
     'provider',
     'model',
@@ -131,7 +135,16 @@ export function trafficParams(filters: Filters): string {
 
 export function filtersFromParams(params: URLSearchParams): Filters {
   const filters = emptyFilters();
-  for (const key of ['q', 'session', 'client', 'provider', 'model', 'tool', 'status'] as const) {
+  for (const key of [
+    'q',
+    'session',
+    'client',
+    'user',
+    'provider',
+    'model',
+    'tool',
+    'status',
+  ] as const) {
     filters[key] = params.get(key) ?? '';
   }
   filters.kind = parseKind(params.get('kind'));

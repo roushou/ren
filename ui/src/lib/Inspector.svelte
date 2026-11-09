@@ -23,6 +23,7 @@
     streamChip,
     tokenSummary,
     type Chip,
+    callerShown,
   } from './display.ts';
   import { snapshotError } from './snapshots.ts';
   import { getWorkbench } from './workbench.svelte.ts';
@@ -378,6 +379,8 @@
           <dd>{current.id}</dd>
           <dt>Channel</dt>
           <dd>{current.channel}</dd>
+          <dt>Caller</dt>
+          <dd>{callerShown(current.caller).title}</dd>
           <dt>TGV session</dt>
           <dd>{current.session ?? 'Unassigned'}</dd>
           <dt>TGV turn</dt>

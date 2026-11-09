@@ -4,6 +4,7 @@ import type {
   Build,
   CallState,
   CallView,
+  CallerView,
   ChannelView,
   MessageView,
   ModelOutcome,
@@ -31,6 +32,54 @@ export type CallStatus =
   /** The response body ended, but no model terminal evidence was understood. */
   | { kind: 'http_complete' }
   | { kind: 'unknown' };
+
+/** How a call's caller reads in a row and in the inspector. */
+export interface CallerShown {
+  label: string;
+  title: string;
+  /** The named user, for filtering by it. */
+  user: string | null;
+}
+
+/**
+ * Who made a call. A call recorded before callers were has no caller: that is
+ * unknown, not unidentified.
+ */
+export function callerShown(caller: CallerView | null): CallerShown {
+  if (caller === null)
+    return { label: 'Unknown', title: 'Recorded before TGV recorded callers', user: null };
+  const user = caller.user ?? '?';
+  const login = caller.login ?? '?';
+  switch (caller.kind) {
+    case 'user_tailscale':
+      return { label: user, title: `User ${user}, by Tailscale login ${login}`, user: caller.user };
+    case 'user_token':
+      return {
+        label: user,
+        title: `User ${user}, by user token${caller.login ? ` (Tailscale login ${login})` : ''}`,
+        user: caller.user,
+      };
+    case 'unlisted':
+      return {
+        label: login,
+        title: `Tailscale login ${login}, which no named user lists`,
+        user: null,
+      };
+    case 'unidentified':
+      return {
+        label: 'Unidentified',
+        title:
+          'No user token or Tailscale identity: a local process, a tagged device, or Funnel traffic',
+        user: null,
+      };
+    default:
+      return {
+        label: title(unrecognised(caller.kind)),
+        title: 'A caller kind this UI does not know',
+        user: null,
+      };
+  }
+}
 
 type Lifecycle = 'open' | 'finished' | 'recovered' | 'unknown';
 type TransportEnd = 'complete' | 'failed' | 'stopped' | 'none' | 'unknown';

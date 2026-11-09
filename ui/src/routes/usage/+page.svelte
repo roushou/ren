@@ -48,6 +48,9 @@
   const errorRate = $derived(totals && totals.calls ? totals.errors / totals.calls : null);
   const models = $derived(current?.usage.models ?? []);
   const topModelInput = $derived(Math.max(1, ...models.map((m) => m.tokens.input ?? 0)));
+  // Shown once a named user made calls in the range; all callers are listed then.
+  const users = $derived(current?.usage.users ?? []);
+  const named = $derived(users.some((u) => u.user !== null));
   // Sessions active in the range, most input first.
   const sessions = $derived(
     (current?.sessions ?? [])
@@ -207,6 +210,46 @@
             </table>
           {:else}<p class="quiet-empty">No sessions were active in this range.</p>{/if}
         </section>
+
+        {#if named}<section class="panel usage-panel" aria-labelledby="usage-users-title">
+            <header class="panel-heading">
+              <h2 id="usage-users-title">By user</h2>
+              <span class="subtle-label">Who made the calls, as the gateway identified them</span>
+            </header>
+            <table class="usage-list">
+              <thead
+                ><tr
+                  ><th>User</th><th class="numeric">Calls</th><th class="numeric">Errors</th><th
+                    class="numeric">Tokens in</th
+                  ><th class="numeric">Out</th></tr
+                ></thead
+              >
+              <tbody>
+                {#each users as user (user.user)}
+                  <tr>
+                    <td
+                      >{#if user.user}<a
+                          class="row-link"
+                          href={`/traffic?user=${encodeURIComponent(user.user)}`}>{user.user}</a
+                        >{:else}<span
+                          class="subtle-label"
+                          title="Unlisted Tailscale logins, unidentified callers, and calls recorded before callers were"
+                          >Not a named user</span
+                        >{/if}</td
+                    >
+                    <td class="mono numeric">{num(user.calls)}</td>
+                    <td
+                      class="mono numeric"
+                      class:error-count={!!user.errors}
+                      class:zero={!user.errors}>{num(user.errors)}</td
+                    >
+                    <td class="mono numeric">{compactOrDash(user.tokens.input)}</td>
+                    <td class="mono numeric">{compactOrDash(user.tokens.output)}</td>
+                  </tr>
+                {/each}
+              </tbody>
+            </table>
+          </section>{/if}
       </div>
     {/if}
   </div>

@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   attemptEnding,
+  callerShown,
   buildLabel,
   callStatus,
   channelState,
@@ -352,4 +353,24 @@ test("a client's quota probe is bookkeeping: grey, whatever its status", () => {
   assert.equal(bookkeeping(work), false);
   assert.equal(callBadge(work).tone, 'error');
   assert.equal(bookkeeping(finishedFixture(callId(3))), false);
+});
+
+test('a caller reads as its user, its login, or unidentified, and an old call as unknown', () => {
+  assert.deepEqual(callerShown(null), {
+    label: 'Unknown',
+    title: 'Recorded before TGV recorded callers',
+    user: null,
+  });
+  const shown = (kind: string, user: string | null, login: string | null) =>
+    callerShown({ kind: kind as never, user, login });
+  assert.deepEqual(shown('user_tailscale', 'alice', 'alice@example.com'), {
+    label: 'alice',
+    title: 'User alice, by Tailscale login alice@example.com',
+    user: 'alice',
+  });
+  assert.equal(shown('user_token', 'ci', null).title, 'User ci, by user token');
+  assert.equal(shown('unlisted', null, 'carol@example.com').label, 'carol@example.com');
+  assert.equal(shown('unlisted', null, 'carol@example.com').user, null);
+  assert.equal(shown('unidentified', null, null).label, 'Unidentified');
+  assert.equal(shown('from_the_future', null, null).user, null);
 });
