@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { SessionList, type SessionListInput } from '../src/lib/sessions.ts';
+import { Board } from '../src/lib/board.ts';
 import type { SessionId, SessionView, UnixMillis } from '../src/lib/api.ts';
 import { callFixture, callId, uuid } from './fixtures.ts';
 
@@ -87,7 +88,7 @@ test('a row says who it is, what it is about, and what it does now', () => {
   const first = rows.get(sid(1));
   assert.equal(first?.client, 'Claude Code');
   assert.equal(first?.detail?.prompt?.text, 'Fix the flaky test');
-  assert.equal(SessionList.folder(first?.detail?.workdir ?? ''), 'doppel');
+  assert.equal(Board.folder(first?.detail?.workdir ?? ''), 'doppel');
   assert.deepEqual(first?.now, { kind: 'recent', at: NOW - 60_000 });
   assert.deepEqual(rows.get(sid(2))?.now, { kind: 'quiet', at: NOW - 3_600_000 });
   const busy = rows.get(sid(3))?.now;

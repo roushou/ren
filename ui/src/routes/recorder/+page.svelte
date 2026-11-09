@@ -3,7 +3,7 @@
   import { getWorkbench } from '#lib/workbench.svelte.ts';
   import { num, bytes, type FileUsage } from '#lib/api.ts';
   import { assertNever } from '#lib/decode.ts';
-  import { buildLabel } from '#lib/display.ts';
+  import { buildLabel, SEPARATOR } from '#lib/display.ts';
   import { RecorderReport } from '#lib/recorder.ts';
   import Icon from '#lib/Icon.svelte';
   import StateGlyph from '#lib/StateGlyph.svelte';
@@ -35,13 +35,9 @@
   /** The share of a queue limit in use, for its meter. */
   const share = (used: number, capacity: number) =>
     capacity > 0 ? Math.min(1, used / capacity) : 0;
-  const live = (file: FileUsage) =>
-    Math.max(0, file.page_count - file.freelist_count) * file.page_size;
   const free = (file: FileUsage) => file.freelist_count * file.page_size;
   const ratio = (numerator: number, denominator: number) =>
     denominator > 0 ? `${(numerator / denominator).toFixed(2)}×` : '—';
-  /** Spaces kept in the text itself: markup whitespace between inline items collapses. */
-  const SEPARATOR = '\u00a0· ';
   type Unit = 'count' | 'bytes' | 'ms' | 'text';
   type Counter = { label: string; value: number | string | undefined; unit: Unit };
   function format(counter: Counter) {
@@ -87,9 +83,13 @@
     },
   ]);
   const diskCounters = $derived<Counter[]>([
-    { label: 'Metadata · live', value: usage && live(usage.disk.metadata), unit: 'bytes' },
+    {
+      label: 'Metadata · live',
+      value: usage && RecorderReport.live(usage.disk.metadata),
+      unit: 'bytes',
+    },
     { label: 'Metadata · free pages', value: usage && free(usage.disk.metadata), unit: 'bytes' },
-    { label: 'Blobs · live', value: usage && live(usage.disk.blobs), unit: 'bytes' },
+    { label: 'Blobs · live', value: usage && RecorderReport.live(usage.disk.blobs), unit: 'bytes' },
     { label: 'Blobs · free pages', value: usage && free(usage.disk.blobs), unit: 'bytes' },
     {
       label: 'Calls with derived activity',

@@ -3,10 +3,9 @@
   import { page } from '$app/state';
   import { createSnapshot } from '#lib/snapshot.svelte.ts';
   import { providerName, short } from '#lib/api.ts';
-  import { compactOrDash, percentOrDash } from '#lib/display.ts';
-  import { harnessLabel } from '#lib/activity.ts';
-  import { Board, LivePlace, type Tile } from '#lib/board.ts';
-  import { ago, Attention, Day, healthLine, type Severity } from '#lib/overview.ts';
+  import { compactOrDash, percentOrDash, SEPARATOR } from '#lib/display.ts';
+  import { Board, LivePlace } from '#lib/board.ts';
+  import { ago, Attention, Day, healthLine, Verdict } from '#lib/overview.ts';
   import ConnectClient from '#lib/ConnectClient.svelte';
   import CopyButton from '#lib/CopyButton.svelte';
   import { LaunchCommand } from '#lib/launch.ts';
@@ -75,44 +74,24 @@
   const lastCall = $derived(Math.max(0, ...(current?.sessions ?? []).map((s) => s.last_seen)));
 
   /** The verdict: how the day stands, in one line, coloured by the worst thing in it. */
-  const verdict = $derived.by(() => {
-    const tones = [
-      ...items.map((item) => item.tone),
-      ...(attention?.groups ?? []).map((group) => group.severity),
-    ];
-    const tone: Severity | 'success' = tones.includes('error')
-      ? 'error'
-      : tones.includes('warning')
-        ? 'warning'
-        : 'success';
-    const headline = !health
-      ? "Can't reach TGV"
-      : health.status !== 'ok' || health.recorder.storage_errors || health.recorder.retention_errors
-        ? 'Recording failing'
-        : health.operator.pause.state === 'paused'
-          ? 'Paused: new calls get 503'
-          : 'Recording normally';
-    const active = board ? board.tiles.length + board.overflow : 0;
-    const facts = [
-      active ? `${active} session${active === 1 ? '' : 's'} active` : 'no session active',
-      board?.inFlight
-        ? `${board.inFlight} in flight`
-        : `nothing in flight${lastCall ? `, last call ${ago(lastCall, now)}` : ''}`,
-    ];
-    const problems = (attention?.groups ?? []).filter((group) => group.severity !== 'neutral');
-    return { tone, headline, facts, problems };
-  });
+  const verdict = $derived(
+    new Verdict({
+      health,
+      items,
+      attention,
+      active: board ? board.tiles.length + board.overflow : 0,
+      inFlight: board?.inFlight ?? 0,
+      lastCall,
+      now,
+    }),
+  );
 
-  const harnessName = (tile: Tile) =>
-    tile.harness ? harnessLabel(tile.harness) : 'Unknown client';
   const sessionHref = (id: string) => `/sessions/${encodeURIComponent(id)}`;
   const spark = (values: number[]) => Day.spark(values, 22);
   const CHART = 120;
   /** Nothing recorded in the last day: the page leads with how to connect a client. */
   const firstRun = $derived(!!current && current.usage.totals.calls === 0 && !board?.tiles.length);
   const startCommand = $derived(LaunchCommand.for('claude', page.data.gatewayUrl).text);
-  /** Spaces kept in the text itself: markup whitespace between inline items collapses. */
-  const SEPARATOR = '\u00a0· ';
 </script>
 
 <div class="overview">
@@ -209,7 +188,7 @@
                 href={sessionHref(tile.session.id)}
               >
                 <span class="ov-session-who">
-                  <strong>{harnessName(tile)}</strong>
+                  <strong>{Board.clientName(tile.harness)}</strong>
                   <span class="mono muted">{short(tile.session.native_id)}</span>
                   <span class="mono live-state {chip.tone} state-{chip.mark}" title={chip.title}
                     ><StateGlyph mark={chip.mark} />{chip.label}</span
@@ -262,7 +241,7 @@
               <span class="muted">{tile.label}</span>
               <strong class="mono" class:error={tile.tone === 'error'}>{tile.value}</strong>
               <small class="muted">{tile.detail}</small>
-              {#if tile.label === 'Tokens in' && day.input && day.input.cached + day.input.fresh > 0}
+              {#if tile.kind === 'input' && day.input && day.input.cached + day.input.fresh > 0}
                 <span
                   class="ov-cache"
                   title="{percentOrDash(

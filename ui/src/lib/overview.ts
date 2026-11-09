@@ -1,6 +1,6 @@
 // The overview page's pure logic: the health line, what needs attention,
 // and which sessions are active. No browser needed.
-import type { CallView, ExposureView, FileUsage, Health, Storage, UsageView } from './api.ts';
+import type { CallView, ExposureView, Health, Storage, UsageView } from './api.ts';
 import { bytes, num, providerName } from './api.ts';
 import { searchFieldLabel, secretKindLabel } from './activity.ts';
 import { buildLabel, callStatus, compactOrDash, statusBadge, type Chip } from './display.ts';
@@ -12,9 +12,6 @@ import { assertNever } from './decode.ts';
 export interface HealthItem extends Chip {
   href?: string;
 }
-
-const live = (file: FileUsage) =>
-  Math.max(0, file.page_count - file.freelist_count) * file.page_size;
 
 /**
  * One line that says whether everything is fine: the daemon is reachable,
@@ -92,7 +89,9 @@ export function healthLine(
       title: 'Calls from blocked sessions get 403; `tgv control unblock` lifts a block',
     });
   if (storage) {
-    const used = live(storage.usage.disk.metadata) + live(storage.usage.disk.blobs);
+    const used =
+      RecorderReport.live(storage.usage.disk.metadata) +
+      RecorderReport.live(storage.usage.disk.blobs);
     const budget = storage.policy.max_storage_bytes;
     const share = storage.policy.enabled && budget ? used / budget : null;
     items.push(
@@ -314,7 +313,11 @@ export class Attention {
 }
 
 /** A number tile: its value, a line under it, and the hours behind it. */
+/** Which of the day's numbers a tile shows: input gets a cached and fresh bar. */
+export type DayTileKind = 'calls' | 'failed' | 'input' | 'output';
+
 export interface DayTile {
+  kind: DayTileKind;
   label: string;
   value: string;
   detail: string;
@@ -357,6 +360,7 @@ export class Day {
     );
     this.tiles = [
       {
+        kind: 'calls',
         label: 'Calls',
         value: num(totals.calls),
         detail: Day.change(totals.calls, before),
@@ -364,6 +368,7 @@ export class Day {
         tone: null,
       },
       {
+        kind: 'failed',
         label: 'Failed work calls',
         value: num(totals.errors),
         detail: [
@@ -374,6 +379,7 @@ export class Day {
         tone: totals.errors ? 'error' : null,
       },
       {
+        kind: 'input',
         label: 'Tokens in',
         value: compactOrDash(input),
         detail: this.input
@@ -383,6 +389,7 @@ export class Day {
         tone: null,
       },
       {
+        kind: 'output',
         label: 'Tokens out',
         value: compactOrDash(totals.tokens.output),
         detail: peak?.tokens.output
@@ -462,5 +469,63 @@ export class Day {
         fresh: ((input - cached) / max) * height,
       };
     });
+  }
+}
+
+/** What the verdict line reads: health, what needs attention, and the sessions at work. */
+export interface VerdictInput {
+  health: Health | null;
+  items: HealthItem[];
+  attention: Attention | null;
+  /** Sessions active in the last 15 minutes. */
+  active: number;
+  /** Model calls in flight. */
+  inFlight: number;
+  /** When the newest session was last seen; 0 for never. */
+  lastCall: number;
+  now: number;
+}
+
+/**
+ * How it stands, in one line: a headline, the facts behind it, the problems
+ * worth naming, and a tone from the worst thing among them. Bookkeeping and
+ * by-design notes never colour it.
+ */
+export class Verdict {
+  readonly tone: 'error' | 'warning' | 'success';
+  readonly headline: string;
+  readonly facts: string[];
+  readonly problems: AttentionGroup[];
+
+  constructor(input: VerdictInput) {
+    const groups = input.attention?.groups ?? [];
+    const tones = [
+      ...input.items.map((item) => item.tone),
+      ...groups.map((group) => group.severity),
+    ];
+    this.tone = tones.includes('error')
+      ? 'error'
+      : tones.includes('warning')
+        ? 'warning'
+        : 'success';
+    this.headline = Verdict.headline(input.health);
+    this.facts = [
+      input.active
+        ? `${input.active} session${input.active === 1 ? '' : 's'} active`
+        : 'no session active',
+      input.inFlight
+        ? `${input.inFlight} in flight`
+        : `nothing in flight${input.lastCall ? `, last call ${ago(input.lastCall, input.now)}` : ''}`,
+    ];
+    this.problems = groups.filter((group) => group.severity !== 'neutral');
+  }
+
+  static headline(health: Health | null): string {
+    if (!health) return "Can't reach TGV";
+    if (health.status !== 'ok' || RecorderReport.capture(health.recorder).kind === 'failing')
+      return 'Recording failing';
+    return health.operator.pause.state === 'paused'
+      ? 'Paused: new calls get 503'
+      : 'Recording normally';
   }
 }

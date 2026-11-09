@@ -600,3 +600,9 @@ export function sessionTone(id: string): number {
   for (const char of id) hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
   return hash % SESSION_TONES;
 }
+
+/**
+ * Between inline facts in a line of text, its space kept in the text: markup
+ * whitespace between inline items collapses.
+ */
+export const SEPARATOR = '\u00a0· ';

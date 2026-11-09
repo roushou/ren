@@ -1,6 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { ago, Attention, Day, healthLine, type OverviewInput } from '../src/lib/overview.ts';
+import {
+  ago,
+  Attention,
+  Day,
+  healthLine,
+  Verdict,
+  type OverviewInput,
+} from '../src/lib/overview.ts';
 import type { Health, Storage } from '../src/lib/api.ts';
 import {
   callId,
@@ -196,4 +203,42 @@ test('the day counts calls against the day before, and splits input into cached 
   assert.equal(day.x(day.span.from), 0);
   assert.equal(day.x(NOW + 10 * hour), 1000);
   assert.equal(Day.spark([0, 0], 22), '0.0,21.0 100.0,21.0');
+});
+
+test('the verdict takes its tone from the worst real problem, never from bookkeeping', () => {
+  const healthy = healthFixture();
+  const items = healthLine(healthy, null, null);
+  const probes = new Attention(
+    input({ bookkeeping: [finishedFixture(callId(40), { status: 429, started_at: at(1) })] }),
+  );
+  const calm = new Verdict({
+    health: healthy,
+    items,
+    attention: probes,
+    active: 2,
+    inFlight: 0,
+    lastCall: NOW - 30_000,
+    now: NOW,
+  });
+  assert.equal(calm.tone, 'success');
+  assert.equal(calm.headline, 'Recording normally');
+  assert.deepEqual(calm.facts, ['2 sessions active', 'nothing in flight, last call 30 s ago']);
+  assert.deepEqual(calm.problems, []);
+  const secrets = new Verdict({
+    health: healthy,
+    items,
+    attention: new Attention(input({ exposures: [exposure(1, 9, 'openai_key')] })),
+    active: 0,
+    inFlight: 3,
+    lastCall: 0,
+    now: NOW,
+  });
+  assert.equal(secrets.tone, 'error');
+  assert.deepEqual(secrets.facts, ['no session active', '3 in flight']);
+  assert.deepEqual(
+    secrets.problems.map((problem) => problem.title),
+    ['1 secret exposed'],
+  );
+  assert.equal(Verdict.headline(null), "Can't reach TGV");
+  assert.equal(Verdict.headline(healthFixture({ storage_errors: 1 })), 'Recording failing');
 });

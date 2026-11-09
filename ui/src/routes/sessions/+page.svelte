@@ -8,6 +8,7 @@
   import { localDayStart } from '#lib/usage.ts';
   import { ago } from '#lib/overview.ts';
   import { SessionList, type SessionRow } from '#lib/sessions.ts';
+  import { Board } from '#lib/board.ts';
   import Icon from '#lib/Icon.svelte';
   import StateGlyph from '#lib/StateGlyph.svelte';
   import type { PageProps } from './$types';
@@ -85,7 +86,7 @@
         </span>
         <span class="session-meta mono">
           {#if row.detail?.workdir}<span class="session-folder" title={row.detail.workdir}
-              >{SessionList.folder(row.detail.workdir)}</span
+              >{Board.folder(row.detail.workdir)}</span
             >{/if}
           <span title="The session ID your client reported">{short(session.native_id)}</span>
           <span class="provider-mark tiny {session.provider}" title={providerName(session.provider)}

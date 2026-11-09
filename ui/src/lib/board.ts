@@ -345,6 +345,16 @@ export class Board {
     return [...(focused ? [focused] : []), ...others.filter((session) => chosen.has(session))];
   }
 
+  /** A client's name as the UI writes it, or `Unknown client`. */
+  static clientName(harness: Stored<Harness> | null): string {
+    return harness ? harnessLabel(harness) : 'Unknown client';
+  }
+
+  /** The last part of a directory, as cards and rows name it. */
+  static folder(dir: string): string {
+    return dir.replace(/\/+$/, '').split('/').at(-1) || dir;
+  }
+
   static harness(source: Stored<HintSource>): Stored<Harness> | null {
     switch (source) {
       case 'claude_code_headers':
@@ -834,7 +844,7 @@ export class Feed {
         session,
         tone: 'neutral',
         text: 'new session',
-        detail: `${harness ? harnessLabel(harness) : 'Unknown client'} → ${providerName(session.provider)}`,
+        detail: `${Board.clientName(harness)} → ${providerName(session.provider)}`,
         at: session.first_seen,
         pinned: false,
         href: `/sessions/${encodeURIComponent(session.id)}`,

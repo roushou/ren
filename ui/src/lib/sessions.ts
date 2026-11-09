@@ -3,7 +3,6 @@
 // fetching; tested in tests/sessions.test.ts.
 import type { CallView, Excerpt, Harness, SessionId, SessionView } from './api.ts';
 import { providerName } from './api.ts';
-import { harnessLabel } from './activity.ts';
 import { Board, type StateMark } from './board.ts';
 import type { Stored } from './decode.ts';
 import { date } from './display.ts';
@@ -108,7 +107,7 @@ export class SessionList {
     return {
       session,
       harness,
-      client: harness ? harnessLabel(harness) : 'Unknown client',
+      client: Board.clientName(harness),
       detail: input.details.get(session.id) ?? null,
       now: chip
         ? { kind: 'open', label: chip.label, mark: chip.mark }
@@ -140,10 +139,5 @@ export class SessionList {
     if (day === today) return 'Today';
     if (day === dayStart(today - 1)) return 'Yesterday';
     return date(day);
-  }
-
-  /** The last part of a directory, as a row names it. */
-  static folder(dir: string): string {
-    return dir.replace(/\/+$/, '').split('/').at(-1) || dir;
   }
 }

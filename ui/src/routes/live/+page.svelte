@@ -8,7 +8,6 @@
   import { getWorkbench } from '#lib/workbench.svelte.ts';
   import { clock, providerName, short } from '#lib/api.ts';
   import { compactOrDash, span } from '#lib/display.ts';
-  import { harnessLabel } from '#lib/activity.ts';
   import { unrecognised, type Stored } from '#lib/decode.ts';
   import type { EffectKind, Excerpt } from '#lib/api.ts';
   import {
@@ -159,8 +158,6 @@
         return 'tool';
     }
   }
-  /** The last part of the turn's directory, as the card names it. */
-  const folder = (dir: string) => dir.replace(/\/+$/, '').split('/').at(-1) || dir;
   function tallyParts(tally: TurnTally): string[] {
     return [`read ${tally.read}`, `wrote ${tally.wrote}`, `ran ${tally.ran}`];
   }
@@ -212,8 +209,6 @@
       : '';
 
   const sessionHref = (id: string) => `/sessions/${encodeURIComponent(id)}`;
-  const harnessName = (tile: Tile) =>
-    tile.harness ? harnessLabel(tile.harness) : 'Unknown client';
   const percent = (share: number | null) => (share === null ? '—' : `${Math.round(share * 100)}%`);
   const harnessClass = (tile: Tile) => `harness-${tile.harness ?? 'unknown'}`;
   /** The tile's facts line: model, input with its cached share, output. */
@@ -360,7 +355,7 @@
 
 {#snippet identity(tile: Tile)}
   <span class="harness-mark {harnessClass(tile)}"></span><strong
-    >{harnessName(tile)} → {providerName(tile.session.provider)}</strong
+    >{Board.clientName(tile.harness)} → {providerName(tile.session.provider)}</strong
   >
   <span class="mono muted" title="The session ID your client reported"
     >{short(tile.session.native_id)}</span
@@ -652,7 +647,7 @@
             {#if tile.tally}
               <div class="live-tally mono" title="What the turn did, as the client reported it">
                 {#if tile.workdir}<span class="live-workdir" title={tile.workdir}
-                    >{folder(tile.workdir)}</span
+                    >{Board.folder(tile.workdir)}</span
                   >{/if}
                 {#each tallyParts(tile.tally) as part (part)}<span>{part}</span>{/each}
                 {#if tile.tally.failed}<span class="error">{tile.tally.failed} failed</span>{/if}
@@ -660,7 +655,7 @@
             {/if}
             <footer class="live-tile-foot mono">
               <div class="live-foot-state">
-                <span class="live-state {chip.tone} mark-{chip.mark}" title={chip.title}
+                <span class="live-state {chip.tone} state-{chip.mark}" title={chip.title}
                   ><StateGlyph mark={chip.mark} />{chip.label}</span
                 >
               </div>
@@ -1003,7 +998,7 @@
   .live-rows tr.quiet:hover {
     opacity: 1;
   }
-  .live-state.mark-yours {
+  .live-state.state-yours {
     color: var(--success);
   }
   .live-tile.attention-warning {
