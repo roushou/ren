@@ -9,6 +9,7 @@ fn the_core_stays_free_of_runtime_and_io_dependencies() {
         ("lib.rs", include_str!("lib.rs")),
         ("call.rs", include_str!("call.rs")),
         ("grid.rs", include_str!("grid.rs")),
+        ("keys.rs", include_str!("keys.rs")),
         ("session.rs", include_str!("session.rs")),
     ];
     let forbidden = [

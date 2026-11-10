@@ -9,15 +9,20 @@
 //! host's storage.
 
 mod call;
+mod draw;
 mod grid;
+mod keys;
 #[cfg(test)]
 mod purity;
+mod screen;
 mod session;
 #[cfg(test)]
 mod tests;
 
 pub use call::{CallEnd, ErrorCause, Shortfall, Stop, Tone};
 pub use grid::{Grid, Size};
+pub use keys::{Command, Key};
+pub use screen::{Screen, ScreenError, ScreenEvent, ScreenEvents};
 pub use session::{Alert, Line, Phase, ResultMark, SessionPane, Span, Streaming, Tally, ToolLine};
 
 use grid::Placement;
@@ -48,6 +53,38 @@ pub struct Tui {
     snapshot: Option<Held>,
     turns: HashMap<TurnId, HeldTurn>,
     progress: HashMap<CallId, Progress>,
+    /// The focused pane's place, always within the grid.
+    focus: usize,
+    /// The session filling the screen, if any.
+    zoom: Option<SessionId>,
+    /// Sessions kept on the wall, first, even when they go quiet.
+    pins: Vec<SessionId>,
+    help: Help,
+}
+
+/// Whether the help is over the wall.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Help {
+    Hidden,
+    Shown,
+}
+
+/// What a key press left to do.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[must_use]
+pub enum Pressed {
+    /// Go on, with these reads.
+    Continue(Vec<Read>),
+    Quit,
+}
+
+/// How the wall is laid out.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum View {
+    /// Every pane, one focused.
+    Panes { focus: usize },
+    /// One session fills the screen.
+    Zoomed,
 }
 
 /// One read of the gateway's sessions and calls.
@@ -93,9 +130,12 @@ pub enum Read {
 /// Everything to draw at one time.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Wall {
+    /// One pane across and down when zoomed.
     pub grid: Grid,
     /// In pane order: across, then down.
     pub panes: Vec<Pane>,
+    pub view: View,
+    pub help: Help,
     pub status: Status,
 }
 
@@ -174,7 +214,89 @@ impl Tui {
             snapshot: None,
             turns: HashMap::new(),
             progress: HashMap::new(),
+            focus: 0,
+            zoom: None,
+            pins: Vec::new(),
+            help: Help::Hidden,
         }
+    }
+
+    /// Takes one key press.
+    pub fn press(&mut self, key: Key) -> Pressed {
+        let Some(command) = Command::of(key) else {
+            return Pressed::Continue(Vec::new());
+        };
+        // The help takes no command but closing it, or quitting.
+        if self.help == Help::Shown {
+            match command {
+                Command::Quit => return Pressed::Quit,
+                Command::Help | Command::Back => self.help = Help::Hidden,
+                Command::Next
+                | Command::Previous
+                | Command::Left
+                | Command::Right
+                | Command::Up
+                | Command::Down
+                | Command::Zoom
+                | Command::Pin => {}
+            }
+            return Pressed::Continue(Vec::new());
+        }
+        let panes = self.grid.panes();
+        let columns = usize::from(self.grid.columns);
+        match command {
+            Command::Quit => return Pressed::Quit,
+            Command::Help => self.help = Help::Shown,
+            Command::Next | Command::Previous if self.zoom.is_some() => {
+                self.zoom = self.neighbour(command == Command::Next);
+            }
+            Command::Next => self.focus = (self.focus + 1) % panes,
+            Command::Previous => self.focus = (self.focus + panes - 1) % panes,
+            Command::Left if !self.focus.is_multiple_of(columns) => self.focus -= 1,
+            Command::Right if self.focus % columns + 1 < columns => self.focus += 1,
+            Command::Up if self.focus >= columns => self.focus -= columns,
+            Command::Down if self.focus + columns < panes => self.focus += columns,
+            Command::Left | Command::Right | Command::Up | Command::Down => {}
+            Command::Zoom => {
+                self.zoom = match self.zoom {
+                    Some(_) => None,
+                    None => self.focused(),
+                };
+            }
+            Command::Back => self.zoom = None,
+            Command::Pin => {
+                if let Some(session) = self.zoom.or_else(|| self.focused()) {
+                    match self.pins.iter().position(|pinned| *pinned == session) {
+                        Some(at) => {
+                            self.pins.remove(at);
+                        }
+                        None => self.pins.push(session),
+                    }
+                    self.rank();
+                    return Pressed::Continue(self.arrange());
+                }
+            }
+        }
+        Pressed::Continue(Vec::new())
+    }
+
+    fn focused(&self) -> Option<SessionId> {
+        self.placement.panes().get(self.focus).copied().flatten()
+    }
+
+    /// The placed session after (or before) the zoomed one, in pane order.
+    fn neighbour(&self, forward: bool) -> Option<SessionId> {
+        let placed: Vec<SessionId> = self.placement.panes().iter().flatten().copied().collect();
+        let at = placed
+            .iter()
+            .position(|session| Some(*session) == self.zoom)?;
+        let count = placed.len();
+        let next = if forward {
+            (at + 1) % count
+        } else {
+            (at + count - 1) % count
+        };
+        placed.get(next).copied()
     }
 
     /// The reads for a snapshot at `now`: open model calls, and those
@@ -278,26 +400,45 @@ impl Tui {
                 .find(|call| call.id == *id)
                 .is_none_or(|call| call.state.known() == Some(CallState::Open))
         });
-        let now = snapshot.read_at;
-        self.wanted = Self::wanted(&snapshot.sessions, &calls, now);
         self.snapshot = Some(Held { snapshot, calls });
+        self.rank();
         self.arrange()
     }
 
-    /// Active sessions, most wanted first: those with an open call, then
-    /// the most recently seen.
-    fn wanted(sessions: &[SessionView], calls: &[CallView], now: UnixMillis) -> Vec<SessionId> {
+    /// Ranks the active sessions from the held snapshot.
+    fn rank(&mut self) {
+        self.wanted = self.snapshot.as_ref().map_or_else(Vec::new, |held| {
+            Self::wanted(
+                &held.snapshot.sessions,
+                &held.calls,
+                &self.pins,
+                held.snapshot.read_at,
+            )
+        });
+    }
+
+    /// Sessions that want a pane, most wanted first: pinned ones, however
+    /// quiet, then active ones with an open call, then the most recently
+    /// seen.
+    fn wanted(
+        sessions: &[SessionView],
+        calls: &[CallView],
+        pins: &[SessionId],
+        now: UnixMillis,
+    ) -> Vec<SessionId> {
         let open = |session: &SessionView| {
             calls.iter().any(|call| {
                 call.session == Some(session.id) && call.state.known() == Some(CallState::Open)
             })
         };
         let window = Self::millis(Self::WINDOW);
+        let pinned = |session: &SessionView| pins.contains(&session.id);
         let mut active: Vec<(&SessionView, bool)> = sessions
             .iter()
             .map(|session| (session, open(session)))
             .filter(|(session, open)| {
                 *open
+                    || pinned(session)
                     || now
                         .as_millis()
                         .saturating_sub(session.last_seen.as_millis())
@@ -305,8 +446,9 @@ impl Tui {
             })
             .collect();
         active.sort_by(|(a, a_open), (b, b_open)| {
-            b_open
-                .cmp(a_open)
+            pinned(b)
+                .cmp(&pinned(a))
+                .then(b_open.cmp(a_open))
                 .then(b.last_seen.cmp(&a.last_seen))
                 .then(a.id.cmp(&b.id))
         });
@@ -317,6 +459,14 @@ impl Tui {
     /// changed since they were read, or are still being derived.
     fn arrange(&mut self) -> Vec<Read> {
         self.hidden = self.placement.arrange(self.grid, &self.wanted);
+        self.focus = self.focus.min(self.grid.panes().saturating_sub(1));
+        // A zoomed session that left the wall leaves the zoom.
+        if self
+            .zoom
+            .is_some_and(|session| !self.placement.panes().contains(&Some(session)))
+        {
+            self.zoom = None;
+        }
         let shown: Vec<SessionId> = self.placement.panes().iter().flatten().copied().collect();
         let mut reads = Vec::new();
         for session in shown.iter().copied() {
@@ -375,9 +525,11 @@ impl Tui {
             .snapshot
             .as_ref()
             .map_or(&[], |held| held.snapshot.sessions.as_slice());
-        let panes: Vec<Pane> = self
-            .placement
-            .panes()
+        let placed: Vec<Option<SessionId>> = match self.zoom {
+            Some(session) => vec![Some(session)],
+            None => self.placement.panes().to_vec(),
+        };
+        let panes: Vec<Pane> = placed
             .iter()
             .map(|pane| {
                 let Some(session) =
@@ -389,13 +541,15 @@ impl Tui {
                 let turn = session::SessionPane::newest_turn(&calls)
                     .and_then(|turn| self.turns.get(&turn))
                     .map(|held| &held.activity);
-                Pane::Session(Box::new(session::SessionPane::read(&SessionRead {
+                let mut pane = session::SessionPane::read(&SessionRead {
                     session,
                     calls: &calls,
                     turn,
                     progress: &self.progress,
                     now,
-                })))
+                });
+                pane.pinned = self.pins.contains(&session.id);
+                Pane::Session(Box::new(pane))
             })
             .collect();
         let calls: &[CallView] = self.snapshot.as_ref().map_or(&[], |held| &held.calls);
@@ -423,9 +577,21 @@ impl Tui {
                 .count(),
             output: Self::output(calls, now),
         };
+        let (grid, view) = match self.zoom {
+            Some(_) => (
+                Grid {
+                    columns: 1,
+                    rows: 1,
+                },
+                View::Zoomed,
+            ),
+            None => (self.grid, View::Panes { focus: self.focus }),
+        };
         Wall {
-            grid: self.grid,
+            grid,
             panes,
+            view,
+            help: self.help,
             status,
         }
     }

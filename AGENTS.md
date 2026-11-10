@@ -235,14 +235,20 @@ dependencies under "Crates" below. Read the code for current module ownership.
   as its primary type. `Tui` is sans-IO: it takes what was read (`Input`:
   snapshots of sessions and model calls, as `tgv_store::view` types, turn
   activity, progress updates, live observations, and the terminal's size)
-  and answers with the reads it needs (`Read`); `Tui::snapshot_query` builds
-  the snapshot's queries, and `Tui::wall` is what to draw at a given time:
-  panes (`grid`: a session keeps its pane while it stays active) and a
-  status line. Each pane reads its session as the UI's Live wall does
-  (`session`: the phase, the newest turn's replies and merged tool runs,
-  progress on a streaming call, the tally, and alerts), and `call` reads how
-  a call ended (`CallEnd`). `src/purity.rs` keeps its sources free of
-  runtime, I/O, and terminal dependencies.
+  and key presses (`Tui::press`, with `Key` and the `Command`s keys give in
+  `keys`), and answers with the reads it needs (`Read`);
+  `Tui::snapshot_query` builds the snapshot's queries, and `Tui::wall` is
+  what to draw at a given time: panes (`grid`: a session keeps its pane
+  while it stays active; a pinned one stays even when quiet), a focused
+  pane or one zoomed session, the help, and a status line. Each pane reads
+  its session as the UI's Live wall does (`session`: the phase, the newest
+  turn's replies and merged tool runs, progress on a streaming call, the
+  tally, and alerts), and `call` reads how a call ended (`CallEnd`).
+  `draw` renders a `Wall` into a ratatui buffer, pinned as text in
+  `tests/fixtures/wall-*.txt`; `Screen` (`screen`) is the only part that
+  touches the terminal: raw mode and the alternate screen until dropped,
+  and its events as keys and sizes. `src/purity.rs` keeps the core's
+  sources free of runtime, I/O, and terminal dependencies.
 - `crates/tgv-gateway`: TGV's HTTP interface, with `Gateway` as its primary type.
   It owns forwarding, management, and control routes on one listener, assembled
   by `Gateway::router` or `Gateway::into_ingress`. Forwarding uses a declarative

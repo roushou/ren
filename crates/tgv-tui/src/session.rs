@@ -135,6 +135,8 @@ pub struct SessionPane {
     pub streaming: Option<Streaming>,
     pub tally: Option<Tally>,
     pub alerts: Vec<Alert>,
+    /// Kept ahead of other sessions by the viewer.
+    pub pinned: bool,
 }
 
 /// A session's calls and its newest turn, as read.
@@ -198,6 +200,7 @@ impl SessionPane {
                 failed: turn.failed_tool_calls,
             }),
             alerts: Vec::new(),
+            pinned: false,
             lines,
             phase,
         };
