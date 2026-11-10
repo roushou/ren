@@ -2001,6 +2001,7 @@ dependencies = [
  "ren-protocol",
  "ren-recorder",
  "ren-store",
+ "ren-supervisor",
  "reqwest",
  "serde",
  "serde_json",

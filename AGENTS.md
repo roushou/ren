@@ -130,15 +130,16 @@ Ren-specific applications:
 The strict lints are workspace-wide, in root `Cargo.toml` `[workspace.lints.clippy]`.
 They deny, among others, wildcard enum arms and imports, `unwrap`/`expect`/`panic!`
 outside tests, `as` conversions, excessive bools, and the ambient calls listed in
-`clippy.toml` (host clocks, random UUIDs, environment variables, task spawning).
+`clippy.toml` (host clocks, random UUIDs, environment variables, task spawning,
+starting processes).
 Modules carry no lint headers of their own. A module with submodules lives in
 `name/mod.rs`, never `name.rs` beside a `name/` directory
 (`self_named_module_files`).
 
 - The only exemptions are the capability implementations themselves, marked with
   `#[expect(clippy::disallowed_methods, reason = "…")]`: `HostEnv::capture`, the
-  daemon's `SystemClock` and `RandomIds` (`ren_daemon::host`), and the daemon's server
-  task spawn. The recorder runs on `ObservationThread` (`ren_daemon::host`), a
+  daemon's `SystemClock`, `RandomIds`, and `ProcessHost` (`ren_daemon::host`), and
+  the daemon's server task spawn. The recorder runs on `ObservationThread` (`ren_daemon::host`), a
   thread with its own runtime.
 - Integration-test crates (`crates/*/tests/*.rs`) act as a shell: each has one
   crate-level `#![allow(...)]` with a reason, covering helpers outside `#[test]`
@@ -316,8 +317,8 @@ dependencies under "Crates" below. Read the code for current module ownership.
   server task and the observation thread the recorder runs on, and
   coordinates HTTP shutdown before capture drain. It defines no
   HTTP routes or handlers and has no production Axum dependency. `config` turns
-  `Config` into a `RuntimeConfig`. `host` holds `SystemClock`, `RandomIds`, and
-  `ObservationThread`.
+  `Config` into a `RuntimeConfig`. `host` holds `SystemClock`, `RandomIds`,
+  `ObservationThread`, and `ProcessHost`, the supervisor's `AgentHost`.
   Its integration tests hold `TestGateway` (`tests/support`) and the gateway,
   WebSocket, decision, and full-daemon tests; they use the gateway's complete
   router with test capabilities.

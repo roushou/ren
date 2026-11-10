@@ -6,12 +6,16 @@
 //! random identities. Components receive them as values; nothing else calls
 //! `SystemTime::now`, `Instant::now`, or `Uuid::new_v4`.
 
+use ren_harness::launch::LaunchPlan;
 use ren_recorder::{
     id::IdSource,
     time::{Clock, Moment, Monotonic, UnixMillis},
 };
+use ren_supervisor::{AgentHost, AgentProcess, KillSwitch, ProcessExit, Workdir};
 use std::future::Future;
 use std::io;
+use std::path::{Path, PathBuf};
+use std::process::Stdio;
 use std::time::{Instant, SystemTime};
 use tokio::sync::oneshot;
 use uuid::Uuid;
@@ -119,6 +123,75 @@ impl<T: Send + 'static> ObservationThread<T> {
     }
 }
 
+/// Starts agent processes on this host: the production [`AgentHost`]. Each
+/// process works in its run's directory with piped stdin and stdout; stderr
+/// is discarded, and a process whose exit future is dropped is killed.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct ProcessHost;
+
+impl ProcessHost {
+    fn start(mut command: std::process::Command, workdir: &Path) -> io::Result<AgentProcess> {
+        command
+            .current_dir(workdir)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null());
+        let mut command = tokio::process::Command::from(command);
+        command.kill_on_drop(true);
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "the one sanctioned place that starts agent processes"
+        )]
+        let mut child = command.spawn()?;
+        let (Some(stdin), Some(stdout)) = (child.stdin.take(), child.stdout.take()) else {
+            return Err(io::Error::other("the agent's pipes were not opened"));
+        };
+        let (kill, signal) = KillSwitch::pair();
+        let exit = async move {
+            let status = tokio::select! {
+                status = child.wait() => status,
+                () = signal.fired() => match child.kill().await {
+                    Ok(()) => child.wait().await,
+                    Err(error) => Err(error),
+                },
+            };
+            match status {
+                Ok(status) => Self::exit(status),
+                Err(_) => ProcessExit::Unknown,
+            }
+        };
+        Ok(AgentProcess {
+            stdin: Box::new(stdin),
+            stdout: Box::new(stdout),
+            exit: Box::pin(exit),
+            kill,
+        })
+    }
+
+    fn exit(status: std::process::ExitStatus) -> ProcessExit {
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::ExitStatusExt;
+            if let Some(signal) = status.signal() {
+                return ProcessExit::Signal(signal);
+            }
+        }
+        status
+            .code()
+            .map_or(ProcessExit::Unknown, ProcessExit::Code)
+    }
+}
+
+impl AgentHost for ProcessHost {
+    fn resolve(&self, path: &Path) -> io::Result<PathBuf> {
+        std::fs::canonicalize(path)
+    }
+
+    fn spawn(&self, plan: &LaunchPlan, workdir: &Workdir) -> io::Result<AgentProcess> {
+        Self::start(plan.command(None, &[]), workdir.as_path())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{RandomIds, SystemClock};
@@ -163,6 +236,28 @@ mod tests {
         };
         assert_eq!(output, Some(Some("ren-observation".to_owned())));
         assert!(ticks >= 10, "the caller's runtime stalled: {ticks} ticks");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn starts_a_process_in_its_directory_and_kills_it_on_request() {
+        use super::{ProcessExit, ProcessHost};
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let dir = tempfile::tempdir().unwrap();
+        let mut echo = std::process::Command::new("sh");
+        echo.args(["-c", "pwd; read line; echo \"$line\"; exit 3"]);
+        let mut process = ProcessHost::start(echo, dir.path()).unwrap();
+        process.stdin.write_all(b"hello\n").await.unwrap();
+        let mut output = String::new();
+        process.stdout.read_to_string(&mut output).await.unwrap();
+        let resolved = std::fs::canonicalize(dir.path()).unwrap();
+        assert_eq!(output, format!("{}\nhello\n", resolved.display()));
+        assert_eq!(process.exit.await, ProcessExit::Code(3));
+
+        let mut sleeper = std::process::Command::new("sleep");
+        sleeper.arg("30");
+        let sleeping = ProcessHost::start(sleeper, dir.path()).unwrap();
+        sleeping.kill.fire();
+        assert_eq!(sleeping.exit.await, ProcessExit::Signal(9));
     }
 
     #[tokio::test(flavor = "current_thread")]

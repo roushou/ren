@@ -222,8 +222,9 @@ xtask        ─► ren-daemon, ren-gateway, ren-recorder, ren-harness, ren-prot
   `screen`), and `ren-cli`'s
   `mcp/purity.rs` for the MCP core.
 - **Ports point down.** The recorder declares `RecordSink`, `Clock`, and
-  `IdSource`; the store implements `RecordSink`; the daemon implements the system
-  clock and random IDs, which with the daemon's server task spawn carry the only
+  `IdSource`, and the supervisor declares `AgentHost`; the store implements
+  `RecordSink`; the daemon implements the system clock, random IDs, and
+  `ProcessHost`, which with the daemon's server task spawn carry the only
   `disallowed_methods` exemptions besides `HostEnv::capture`.
 - **Operator documents are opaque below the gateway.** The recorder and store carry
   an operator action as a revision, a command label, and serialized JSON documents.

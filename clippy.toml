@@ -13,6 +13,8 @@ disallowed-methods = [
   { path = "std::env::vars_os", reason = "read the environment once into HostEnv in main" },
   { path = "tokio::spawn", reason = "spawn tasks in the shell (daemon wiring), not in components" },
   { path = "tokio::task::spawn", reason = "spawn tasks in the shell (daemon wiring), not in components" },
+  { path = "std::process::Command::spawn", reason = "start agent processes through ren_supervisor::AgentHost" },
+  { path = "tokio::process::Command::spawn", reason = "start agent processes through ren_supervisor::AgentHost" },
 ]
 
 allow-unwrap-in-tests = true
