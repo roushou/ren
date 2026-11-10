@@ -19,6 +19,7 @@ tgv inspect <call-id>
 tgv inspect <call-id> --body response --output response.bin
 tgv tail
 tgv tail --json
+tgv tui
 ```
 
 Commands emit the same JSON the read API answers (without `api_version`),
@@ -49,6 +50,26 @@ observation instead, one JSON object per line. It starts from now. When the feed
 ends, for example on a daemon restart, it reconnects every two seconds from the
 last observation it printed, so nothing in between is skipped. It stops on
 interrupt, or if the first connection fails.
+
+`tgv tui`, in a CLI built with `--features tui`, shows the same daemon's live
+sessions in the terminal: one pane per active session (seen in the last five
+minutes, or with a call open), as many as the terminal has room for. Each
+pane shows the session's client and provider, the newest turn's replies and
+tool calls with their results, a streaming call's reply and tools so far,
+what the session is doing (waiting for a response, responding, the client's
+turn or yours, inferred from how the last call ended, or how it stopped), the
+turn's files read and written and commands run, context and output tokens
+from the newest call that reported usage, and alerts (slow response heads,
+429s, failed or interrupted calls, unknown endings, secrets sent, repeated
+tool failures). The status line counts sessions and open calls, and shows
+each client's output tokens over the last four minutes, counted when calls
+end: not a live rate. It reads a snapshot of sessions and calls every two
+seconds and whenever the feed says a call opened or ended, and asks for
+[progress events](#live-feed). A read that fails is shown as `stale` until
+one succeeds. Keys: tab and the arrows move between panes, enter zooms into a
+session, `p` keeps a session on the wall even when quiet, `?` lists the
+keys, and `q` quits. It needs a running daemon; a gateway that cannot be
+reached is reported before the screen is taken over.
 
 ## Activity
 
@@ -328,7 +349,8 @@ response so far ends inside a thinking block or reasoning item, whose text is
 not sent. They
 have no `id`: they are never stored, never replayed on resume, and a feed that
 falls behind skips some. The finished call's activity is the record. The UI asks
-for them, to show replies on Live cards as they stream; `tgv tail` does not.
+for them, to show replies on Live cards as they stream, and so does `tgv tui`;
+`tgv tail` does not.
 
 ## Call search
 

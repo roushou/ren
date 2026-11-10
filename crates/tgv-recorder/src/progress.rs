@@ -5,12 +5,12 @@
 //! costs a few updates a second however many pieces it arrives in.
 
 use crate::{id::CallId, secrets::SecretScanner, time::Monotonic};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use tgv_protocol::activity::ResponseActivity;
 
 /// One update on a streaming call.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Progress {
     pub call: CallId,
     /// The end of the reply so far, with credentials in well-known formats

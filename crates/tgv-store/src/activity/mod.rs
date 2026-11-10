@@ -12,7 +12,7 @@ pub mod report;
 
 use crate::view::{CallView, TokenTotals};
 use report::{CallMetrics, Finding, FindingKind, LargeToolOutput, RepeatedFailure, SecretExposure};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use tgv_harness::{
     Harness,
@@ -49,26 +49,43 @@ impl ActivityBudget {
 }
 
 /// A tool result, as the client reported it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ResultView {
-    pub status: ResultStatus,
+    pub status: Stored<ResultStatus>,
     pub output: Excerpt,
+}
+
+/// What a tool's input names, as a view: a known kind of effect, or the
+/// label of one this binary does not know.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EffectView {
+    pub kind: Stored<EffectKind>,
+    pub target: String,
+}
+
+impl From<ToolEffect> for EffectView {
+    fn from(effect: ToolEffect) -> Self {
+        Self {
+            kind: effect.kind.into(),
+            target: effect.target,
+        }
+    }
 }
 
 /// A tool call a response requested, and its result when a later request in
 /// the turn carried one.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ToolCallView {
     pub id: Option<String>,
     pub name: String,
-    pub effects: Vec<ToolEffect>,
+    pub effects: Vec<EffectView>,
     pub input: Excerpt,
     /// `None` when no request in the turn answered it.
     pub result: Option<ResultView>,
 }
 
 /// What one call shows.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CallActivity {
     pub call: CallId,
     pub started_at: UnixMillis,
@@ -83,17 +100,17 @@ pub struct CallActivity {
     /// Results this request carried for tool calls outside the turn.
     pub earlier_results: u64,
     pub reply: Option<Excerpt>,
-    pub limitations: Vec<ActivityLimitation>,
+    pub limitations: Vec<Stored<ActivityLimitation>>,
 }
 
 /// One turn's activity.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TurnActivity {
     pub turn: TurnId,
     pub session: SessionId,
     /// The client's turn identifier.
     pub native_id: String,
-    pub client: Option<Harness>,
+    pub client: Option<Stored<Harness>>,
     pub started_at: Option<UnixMillis>,
     pub ended_at: Option<UnixMillis>,
     pub prompt: Option<Excerpt>,
@@ -173,7 +190,7 @@ impl ReadCall {
                 (
                     result.id.clone(),
                     ResultView {
-                        status: result.status,
+                        status: result.status.into(),
                         output: result.output.narrow(output_chars),
                     },
                 )
@@ -212,7 +229,7 @@ impl ReadCall {
                             input: tool.input.narrow(budget.input_chars),
                             id: tool.id,
                             name: tool.name,
-                            effects: tool.effects,
+                            effects: tool.effects.into_iter().map(EffectView::from).collect(),
                         }
                     })
                     .collect();
@@ -223,7 +240,7 @@ impl ReadCall {
                     tool_calls,
                     digest.reply.map(|reply| reply.narrow(budget.reply_chars)),
                     earlier_results,
-                    digest.limitations,
+                    digest.limitations.into_iter().map(Stored::from).collect(),
                 )
             }
             None => (
@@ -231,7 +248,7 @@ impl ReadCall {
                 Vec::new(),
                 None,
                 0,
-                vec![ActivityLimitation::NotYetDerived],
+                vec![ActivityLimitation::NotYetDerived.into()],
             ),
         };
         CallActivity {
@@ -260,7 +277,7 @@ impl TurnActivity {
         omitted_calls: u64,
         budget: ActivityBudget,
     ) -> Self {
-        let client = calls.iter().find_map(ReadCall::harness);
+        let client = calls.iter().find_map(ReadCall::harness).map(Stored::from);
         let exposures: Vec<Finding> = calls
             .iter()
             .flat_map(|call| {
@@ -321,20 +338,25 @@ impl TurnActivity {
         let mut seen: HashSet<(EffectKind, String)> = HashSet::new();
         for tool in calls.iter().flat_map(|call| &call.tool_calls) {
             turn.tool_calls = turn.tool_calls.saturating_add(1);
-            match tool.result.as_ref().map(|result| result.status) {
-                Some(ResultStatus::Failed) => {
+            // Assembled here, every label is known: an unknown one counts
+            // as neither failed nor unanswered, and touches no list.
+            match tool.result.as_ref().map(|result| result.status.known()) {
+                Some(Some(ResultStatus::Failed)) => {
                     turn.failed_tool_calls = turn.failed_tool_calls.saturating_add(1);
                 }
                 None => {
                     turn.unanswered_tool_calls = turn.unanswered_tool_calls.saturating_add(1);
                 }
-                Some(ResultStatus::Succeeded | ResultStatus::Unreported) => {}
+                Some(Some(ResultStatus::Succeeded | ResultStatus::Unreported) | None) => {}
             }
             for effect in &tool.effects {
-                if !seen.insert((effect.kind, effect.target.clone())) {
+                let Some(kind) = effect.kind.known() else {
+                    continue;
+                };
+                if !seen.insert((kind, effect.target.clone())) {
                     continue;
                 }
-                let list = match effect.kind {
+                let list = match kind {
                     EffectKind::ReadFile => &mut turn.files_read,
                     EffectKind::WriteFile => &mut turn.files_written,
                     EffectKind::RunCommand => &mut turn.commands,
@@ -369,7 +391,7 @@ impl TurnActivity {
                         output_chars: chars,
                     }));
                 }
-                if result.status == ResultStatus::Failed {
+                if result.status.known() == Some(ResultStatus::Failed) {
                     match failures
                         .iter_mut()
                         .find(|(name, known, _)| *name == tool.name && *known == target)

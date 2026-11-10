@@ -1,0 +1,24 @@
+▶0:00000001 claude-code → anthropic  call 2        model-a · ctx 61k · out 1.2k
+
+
+ ── call 1 ────────────────────────────────────────────────────────────────────
+ I'll run the tests first, then look at the failure in the parser.
+ ⏺ Read src/lib.rs  ok
+ ⏺ Bash cargo test  failed
+ ── call 2 · streaming ────────────────────────────────────────────────────────
+ ⏺ Edit …
+ The parser drops the last field when
+ responding · 10 s · read 1 · wrote 0 · ran 1 · 1 failed
+ 1:00000003 opencode → anthropic                                        model-a
+
+
+
+
+
+
+
+
+ ── streaming ─────────────────────────────────────────────────────────────────
+ thinking…
+ responding · 20 s
+ tgv  cc         █     3 sessions · 1 without a pane       ? help  08:05:00 UTC

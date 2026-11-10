@@ -1,0 +1,32 @@
+▶0:00000001 claude-code → anthropic  call 2                │ 1:00000003 opencode → anthropic                    model-a
+ ── call 1 ─────────────────────────────────────────────── │
+ I'll run the tests first, then look at the failure in the │
+ parser.                                                   │
+ ⏺ Read src/lib.rs  ok                                     │
+ ⏺ Bash cargo test  failed                                 │
+ ── call 2 · streaming ─────────────────────────────────── │
+ ⏺ Edit …                                                  │ ── streaming ─────────────────────────────────────────────
+ The parser drops the last field when                      │ thinking…
+ responding · 10 s · read 1 · wrote 0 · ran 1 · 1 failed   │ responding · 20 s
+ 2:00000002 codex → openai  call 1                 model-b │ 3: free
+                                                           │
+                                                           │
+                                                           │
+                                                           │
+                                                           │ the next session to start appears here
+                                                           │
+                                                           │
+                                                           │
+ ! 529 model-b · error 529                                 │
+ 4: free                                                   │ 5: free
+                                                           │
+                                                           │
+                                                           │
+                                                           │
+ the next session to start appears here                    │ the next session to start appears here
+                                                           │
+                                                           │
+                                                           │
+                                                           │
+                                                           │
+ tgv  ! 1 needs a look  cc                  █        3 sessions · 2 responding · 0 waiting         ? help  08:05:00 UTC

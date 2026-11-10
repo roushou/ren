@@ -97,6 +97,13 @@ impl serde::Serialize for Cursor {
     }
 }
 
+impl<'de> serde::Deserialize<'de> for Cursor {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let text = <std::borrow::Cow<'de, str>>::deserialize(deserializer)?;
+        text.parse().map_err(serde::de::Error::custom)
+    }
+}
+
 /// Case-insensitive substring search over metadata, never over payloads.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SearchText(Box<str>);

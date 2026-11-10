@@ -142,8 +142,9 @@ fn head() -> TurnHead {
     }
 }
 
-#[test]
-fn a_turn_joins_prompt_tool_calls_results_and_effects() {
+/// A Claude Code turn: a prompt, reads, a failed command, an edit, and a
+/// tool call left unanswered.
+fn worked_calls() -> Vec<ReadCall> {
     let first = ReadCall {
         view: view(1, HintSource::ClaudeCodeHeaders),
         request: RequestActivity {
@@ -195,14 +196,19 @@ fn a_turn_joins_prompt_tool_calls_results_and_effects() {
         },
         response: ResponseActivity::default(),
     };
+    vec![first, second, third]
+}
+
+#[test]
+fn a_turn_joins_prompt_tool_calls_results_and_effects() {
     let turn = assemble(
         head(),
-        vec![first, second, third],
+        worked_calls(),
         0,
         ActivityBudget::DEFAULT,
         &tgv_recorder::secrets::SecretScanner::new().unwrap(),
     );
-    assert_eq!(turn.client, Some(Harness::ClaudeCode));
+    assert_eq!(turn.client, Some(Harness::ClaudeCode.into()));
     assert_eq!(
         turn.prompt.as_ref().map(|prompt| prompt.text.as_str()),
         Some("Make the tests pass")
@@ -221,15 +227,15 @@ fn a_turn_joins_prompt_tool_calls_results_and_effects() {
     assert_eq!(calls[1].earlier_results, 0);
     assert!(calls[1].prompt.is_none());
     let bash = &calls[0].tool_calls[1];
-    assert_eq!(bash.effects[0].kind, EffectKind::RunCommand);
+    assert_eq!(bash.effects[0].kind, EffectKind::RunCommand.into());
     let failed = bash.result.as_ref().unwrap();
-    assert_eq!(failed.status, ResultStatus::Failed);
+    assert_eq!(failed.status, ResultStatus::Failed.into());
     assert_eq!(failed.output.text.chars().count(), 400);
     assert_eq!(failed.output.omitted_chars, 800);
     assert!(calls[1].tool_calls[1].result.is_none());
     assert_eq!(
         calls[1].limitations,
-        [ActivityLimitation::UnfinishedToolCall]
+        [ActivityLimitation::UnfinishedToolCall.into()]
     );
     assert_eq!(calls[0].reply.as_ref().unwrap().text, "Looking.");
     assert!(calls[1].reply.is_none());
@@ -385,12 +391,16 @@ mod report {
         assert_eq!(report.totals.calls, 8);
         assert_eq!(report.totals.calls_with_usage, 7);
         assert_eq!(report.totals.peak_context_tokens, 83_002);
-        let kinds: Vec<_> = report.findings.iter().map(Finding::kind).collect();
+        let kinds: Vec<_> = report
+            .findings
+            .iter()
+            .map(|finding| finding.kind().known())
+            .collect();
         assert_eq!(
             kinds,
             [
-                report::FindingKind::ContextGrowth,
-                report::FindingKind::CacheRebuild
+                Some(report::FindingKind::ContextGrowth),
+                Some(report::FindingKind::CacheRebuild)
             ]
         );
         let Finding::ContextGrowth(growth) = &report.findings[0] else {
@@ -458,37 +468,9 @@ mod report {
 
     #[test]
     fn turns_report_large_outputs_and_repeated_failures() {
-        let tools: Vec<_> = (0..3)
-            .map(|n| tool(&format!("t{n}"), "Bash", json!({ "command": "cargo test" })))
-            .chain([tool("big", "Read", json!({ "file_path": "big.log" }))])
-            .collect();
-        let first = ReadCall {
-            view: view(1, HintSource::ClaudeCodeHeaders),
-            request: RequestActivity::default(),
-            response: ResponseActivity {
-                tool_uses: tools,
-                reply: String::new(),
-                limitations: Vec::new(),
-            },
-        };
-        let second = ReadCall {
-            view: view(2, HintSource::ClaudeCodeHeaders),
-            request: RequestActivity {
-                max_output_tokens: None,
-                user_text: Vec::new(),
-                tool_results: vec![
-                    result("t0", ResultStatus::Failed, "boom"),
-                    result("t1", ResultStatus::Failed, "boom"),
-                    result("t2", ResultStatus::Failed, "boom"),
-                    result("big", ResultStatus::Succeeded, &"x".repeat(25_000)),
-                ],
-                limitations: Vec::new(),
-            },
-            response: ResponseActivity::default(),
-        };
         let turn = assemble(
             head(),
-            vec![first, second],
+            super::failing_calls(),
             0,
             ActivityBudget::DEFAULT,
             &tgv_recorder::secrets::SecretScanner::new().unwrap(),
@@ -555,8 +537,97 @@ fn secrets_a_turn_carried_are_findings_without_the_secret() {
             other @ (Finding::CacheRebuild(_)
             | Finding::ContextGrowth(_)
             | Finding::LargeToolOutput(_)
-            | Finding::RepeatedFailure(_)) => panic!("{other:?}"),
+            | Finding::RepeatedFailure(_)
+            | Finding::Unknown(_)) => panic!("{other:?}"),
         })
         .collect();
     assert_eq!(fields, ["prompt", "tool_output"]);
+}
+
+/// A turn whose command fails three times and whose read returns a large
+/// output.
+fn failing_calls() -> Vec<ReadCall> {
+    let tools: Vec<_> = (0..3)
+        .map(|n| tool(&format!("t{n}"), "Bash", json!({ "command": "cargo test" })))
+        .chain([tool("big", "Read", json!({ "file_path": "big.log" }))])
+        .collect();
+    let first = ReadCall {
+        view: view(1, HintSource::ClaudeCodeHeaders),
+        request: RequestActivity::default(),
+        response: ResponseActivity {
+            tool_uses: tools,
+            reply: String::new(),
+            limitations: Vec::new(),
+        },
+    };
+    let second = ReadCall {
+        view: view(2, HintSource::ClaudeCodeHeaders),
+        request: RequestActivity {
+            max_output_tokens: None,
+            user_text: Vec::new(),
+            tool_results: vec![
+                result("t0", ResultStatus::Failed, "boom"),
+                result("t1", ResultStatus::Failed, "boom"),
+                result("t2", ResultStatus::Failed, "boom"),
+                result("big", ResultStatus::Succeeded, &"x".repeat(25_000)),
+            ],
+            limitations: Vec::new(),
+        },
+        response: ResponseActivity::default(),
+    };
+    vec![first, second]
+}
+
+/// The turn view's JSON is what the read API returns: pinned, so a change
+/// to the view's types cannot change it unnoticed.
+#[test]
+fn turn_views_keep_their_json() {
+    let scanner = SecretScanner::new().unwrap();
+    let turns = [worked_calls(), failing_calls()]
+        .map(|calls| assemble(head(), calls, 0, ActivityBudget::DEFAULT, &scanner));
+    let json = serde_json::to_string_pretty(&turns).unwrap();
+    assert_eq!(
+        json.trim_end(),
+        include_str!("../../tests/fixtures/turn-activity.json").trim_end()
+    );
+}
+
+/// What the read API sends for a turn reads back into the same view.
+#[test]
+fn turn_views_read_back_as_sent() {
+    let sent = include_str!("../../tests/fixtures/turn-activity.json");
+    let turns: Vec<TurnActivity> = serde_json::from_str(sent).unwrap();
+    let scanner = SecretScanner::new().unwrap();
+    let assembled = [worked_calls(), failing_calls()]
+        .map(|calls| assemble(head(), calls, 0, ActivityBudget::DEFAULT, &scanner));
+    assert_eq!(turns, assembled);
+}
+
+/// Labels a newer daemon sends, and findings of a kind this binary does
+/// not know, are kept as sent rather than failing the read.
+#[test]
+fn turn_views_keep_labels_they_do_not_know() {
+    let mut sent: Vec<serde_json::Value> =
+        serde_json::from_str(include_str!("../../tests/fixtures/turn-activity.json")).unwrap();
+    let turn = &mut sent[0];
+    turn["client"] = json!("a_newer_client");
+    turn["findings"] = json!([{ "kind": "a_newer_finding", "call": "c", "size": 3 }]);
+    let call = &mut turn["calls"][0];
+    call["limitations"] = json!(["a_newer_limitation"]);
+    call["tool_calls"][0]["effects"][0]["kind"] = json!("a_newer_effect");
+    call["tool_calls"][0]["result"]["status"] = json!("a_newer_status");
+
+    let turns: Vec<TurnActivity> = serde_json::from_value(serde_json::json!(sent)).unwrap();
+    let turn = &turns[0];
+    assert_eq!(turn.client.as_ref().unwrap().label(), "a_newer_client");
+    let Finding::Unknown(finding) = &turn.findings[0] else {
+        panic!("{:?}", turn.findings[0]);
+    };
+    assert_eq!(finding.kind().label(), "a_newer_finding");
+    assert_eq!(finding.detail()["size"], json!(3));
+    let tool = &turn.calls[0].tool_calls[0];
+    assert_eq!(tool.effects[0].kind.known(), None);
+    assert_eq!(tool.result.as_ref().unwrap().status.known(), None);
+    assert_eq!(turn.calls[0].limitations[0].known(), None);
+    assert_eq!(serde_json::to_value(&turns).unwrap(), json!(sent));
 }

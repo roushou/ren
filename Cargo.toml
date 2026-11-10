@@ -7,6 +7,7 @@ members = [
   "crates/tgv-protocol",
   "crates/tgv-recorder",
   "crates/tgv-store",
+  "crates/tgv-tui",
   "xtask",
 ]
 # xtask (repository tasks) builds only when asked for.
@@ -18,6 +19,7 @@ default-members = [
   "crates/tgv-protocol",
   "crates/tgv-recorder",
   "crates/tgv-store",
+  "crates/tgv-tui",
 ]
 resolver = "3"
 
@@ -59,6 +61,7 @@ tgv-harness = { path = "crates/tgv-harness", version = "0.1.0" }
 tgv-protocol = { path = "crates/tgv-protocol", version = "0.1.0" }
 tgv-recorder = { path = "crates/tgv-recorder", version = "0.1.0" }
 tgv-store = { path = "crates/tgv-store", version = "0.1.0" }
+tgv-tui = { path = "crates/tgv-tui", version = "0.1.0" }
 thiserror = "2.0"
 tokio = "1.54"
 tokio-tungstenite = { version = "0.29", default-features = false, features = ["handshake"] }
