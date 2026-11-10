@@ -75,7 +75,7 @@ export async function managementResponse(
     });
   } catch {
     return Response.json(
-      { error: 'Cannot reach the TGV daemon.' },
+      { error: 'Cannot reach the Ren daemon.' },
       { status: !live && timeout.aborted ? 504 : 502, headers },
     );
   }

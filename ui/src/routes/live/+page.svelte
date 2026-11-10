@@ -516,7 +516,7 @@
       <div class="empty-state">
         <div class="empty-icon"><Icon name="pulse" size={26} /></div>
         <h2>No session active in the {LivePlace.windows[view.window].label}</h2>
-        <p>Sessions appear here as soon as a client sends a call through TGV.</p>
+        <p>Sessions appear here as soon as a client sends a call through Ren.</p>
         {#if longer}<a class="button" href={LivePlace.href({ ...view, window: longer })}
             >Look back {LivePlace.windows[longer].label.replace('last ', '')}</a
           >{/if}

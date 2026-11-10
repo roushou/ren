@@ -125,7 +125,7 @@
         <section class="ov-panel ov-first" aria-labelledby="first-title">
           <h2 id="first-title">Connect a client to start recording</h2>
           <p class="muted">
-            Nothing passed through TGV in the last 24 hours. Start a session through this gateway;
+            Nothing passed through Ren in the last 24 hours. Start a session through this gateway;
             its calls show up here, on Live, and in Traffic as they happen.
           </p>
           <ConnectClient layout="box" gatewayOrigin={page.data.gatewayUrl} />

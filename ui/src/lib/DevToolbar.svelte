@@ -9,7 +9,7 @@
   import Icon from './Icon.svelte';
 
   const traffic = new DevTraffic();
-  const storageKey = 'tgv.devToolbar';
+  const storageKey = 'ren.devToolbar';
   let settings = $state<TrafficSettings | null>(null);
   let sent = $state(0);
   let inFlight = $state(0);

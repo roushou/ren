@@ -432,7 +432,7 @@ export class Board {
         return {
           label: `Client's turn · ${span(now - phase.since)}`,
           tone: 'neutral',
-          title: `The last call asked for ${phase.call.tool_names.join(', ')}; inferred, TGV does not see tools run`,
+          title: `The last call asked for ${phase.call.tool_names.join(', ')}; inferred, Ren does not see tools run`,
           mark: 'client',
         };
       case 'yours':
@@ -440,7 +440,7 @@ export class Board {
           label: `Your turn · ${span(now - phase.since)}`,
           tone: 'neutral',
           title:
-            'The last call finished its turn without asking for tools; inferred, TGV does not see your terminal',
+            'The last call finished its turn without asking for tools; inferred, Ren does not see your terminal',
           mark: 'yours',
         };
       case 'stopped':
@@ -588,7 +588,7 @@ export class Board {
     const later = turn.calls.slice(callIndex + 1);
     if (tool.result === null && later.every((call) => call.limitations.includes('not_yet_derived')))
       return { label: 'No result yet', tone: 'neutral' };
-    // The result rides in the next request: when TGV could not read that one, the
+    // The result rides in the next request: when Ren could not read that one, the
     // result is unknown, not missing.
     const next = later[0];
     if (tool.result === null && next && Board.unreadable(next))
@@ -597,7 +597,7 @@ export class Board {
     return { label: badge.label, tone: badge.tone };
   }
 
-  /** Whether TGV could not read a call's text whole: trimmed, cut off, or not parseable. */
+  /** Whether Ren could not read a call's text whole: trimmed, cut off, or not parseable. */
   static unreadable(call: CallActivity): boolean {
     return call.limitations.some((limitation) => {
       switch (limitation) {
@@ -1105,7 +1105,7 @@ export interface BandSeries {
  * Output tokens over recent minutes, by client, provider, or model. Only
  * series with output or a bad ending in the span are drawn, the biggest
  * `maxSeries` on their own and the rest as one `other`, so the band never
- * grows with the number of clients TGV knows. Usage arrives when a call
+ * grows with the number of clients Ren knows. Usage arrives when a call
  * finishes, so each call's tokens are drawn at its end: the band trails the
  * stream, and tokens still streaming are not in it.
  */

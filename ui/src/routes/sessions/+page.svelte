@@ -166,7 +166,7 @@
         <p>
           {query
             ? 'Try a different prompt, folder, client, or session ID.'
-            : 'Sessions appear when clients send session identifiers through TGV.'}
+            : 'Sessions appear when clients send session identifiers through Ren.'}
         </p>
         {#if query}<button class="button" onclick={() => (query = '')}>Clear search</button
           >{:else}<button class="button" onclick={() => goto('/traffic')}

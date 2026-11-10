@@ -19,7 +19,7 @@ export function snapshotError(
 ): SnapshotError {
   if (error instanceof ApiVersionError) return { kind: 'incompatible', message: error.message };
   if (error instanceof TypeError)
-    return { kind: 'unreachable', message: 'Cannot reach TGV. Check that the daemon is running.' };
+    return { kind: 'unreachable', message: 'Cannot reach Ren. Check that the daemon is running.' };
   return { kind: 'failed', message: error instanceof Error ? error.message : fallback };
 }
 

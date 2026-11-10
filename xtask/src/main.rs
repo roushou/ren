@@ -8,10 +8,10 @@ mod tailscale;
 mod ui;
 
 use clap::Parser;
+use ren_harness::host::HostEnv;
 use std::process::ExitCode;
-use tgv_harness::host::HostEnv;
 
-/// Repository tasks for TGV.
+/// Repository tasks for Ren.
 #[derive(Parser)]
 #[command(name = "cargo xtask", bin_name = "cargo xtask")]
 enum Xtask {

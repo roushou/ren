@@ -8,12 +8,12 @@ use crate::{
     invocation::{Echo, Invocation},
 };
 use clap::ValueEnum;
+use ren_harness::host::HostEnv;
 use std::{
     fs,
     net::SocketAddr,
     path::{Path, PathBuf},
 };
-use tgv_harness::host::HostEnv;
 
 /// A page of the UI.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -77,7 +77,7 @@ impl Camera {
     /// How long a page loads before it is captured, in milliseconds.
     const LOAD_MS: &'static str = "4000";
 
-    /// A headless Chromium: `TGV_CHROME`, else `chrome-headless-shell` or
+    /// A headless Chromium: `REN_CHROME`, else `chrome-headless-shell` or
     /// `chromium` on PATH, else Playwright's downloaded headless shell.
     pub fn new(
         env: &HostEnv,
@@ -86,7 +86,7 @@ impl Camera {
         out: PathBuf,
     ) -> Result<Self, DevError> {
         let chrome = env
-            .absolute_path("TGV_CHROME")
+            .absolute_path("REN_CHROME")
             .or_else(|| Self::on_path(env))
             .or_else(|| Self::playwright(env))
             .ok_or(DevError::NoChrome)?;

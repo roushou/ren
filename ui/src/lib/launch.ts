@@ -1,7 +1,7 @@
-// The `tgv run` command that starts a client's session through this gateway.
+// The `ren run` command that starts a client's session through this gateway.
 import type { Harness } from './api.ts';
 
-/** The harnesses `tgv run` launches, by the name it takes for each. */
+/** The harnesses `ren run` launches, by the name it takes for each. */
 export const launchClients = [
   { run: 'claude', harness: 'claude_code' },
   { run: 'codex', harness: 'codex' },
@@ -12,7 +12,7 @@ export const launchClients = [
 export type LaunchClient = (typeof launchClients)[number]['run'];
 
 export class LaunchCommand {
-  /** The daemon's default listener, which `tgv run` reaches without `--gateway`. */
+  /** The daemon's default listener, which `ren run` reaches without `--gateway`. */
   static readonly defaultOrigins: readonly string[] = [
     'http://127.0.0.1:8787',
     'http://localhost:8787',
@@ -36,6 +36,6 @@ export class LaunchCommand {
   }
 
   get text(): string {
-    return `tgv run ${this.client}${this.gateway === null ? '' : ` --gateway ${this.gateway}`}`;
+    return `ren run ${this.client}${this.gateway === null ? '' : ` --gateway ${this.gateway}`}`;
   }
 }

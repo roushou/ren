@@ -1,6 +1,6 @@
-//! What the installed `tgv` reports about its daemon, read only as far as an
-//! upgrade needs: `tgv control state` (running calls and admission) and
-//! `tgv doctor --json` (its checks).
+//! What the installed `ren` reports about its daemon, read only as far as an
+//! upgrade needs: `ren control state` (running calls and admission) and
+//! `ren doctor --json` (its checks).
 use serde::Deserialize;
 use serde_json::Value;
 
@@ -95,7 +95,7 @@ impl ControlState {
     }
 }
 
-/// `tgv doctor --json`.
+/// `ren doctor --json`.
 #[derive(Deserialize)]
 pub struct DoctorReport {
     checks: Vec<DoctorCheck>,

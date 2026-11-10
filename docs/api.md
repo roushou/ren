@@ -5,21 +5,21 @@ Read history from the CLI or the daemon's read-only management API.
 ## CLI
 
 ```sh
-tgv history --limit 10
-tgv history --user alice
-tgv sessions
-tgv timeline <session-id> --limit 100
-tgv turns <session-id>
-tgv report <session-id>
-tgv turn <turn-id>
-tgv activity <call-id>
-tgv search "cargo test" --field tool_input
-tgv exposures
-tgv inspect <call-id>
-tgv inspect <call-id> --body response --output response.bin
-tgv tail
-tgv tail --json
-tgv tui
+ren history --limit 10
+ren history --user alice
+ren sessions
+ren timeline <session-id> --limit 100
+ren turns <session-id>
+ren report <session-id>
+ren turn <turn-id>
+ren activity <call-id>
+ren search "cargo test" --field tool_input
+ren exposures
+ren inspect <call-id>
+ren inspect <call-id> --body response --output response.bin
+ren tail
+ren tail --json
+ren tui
 ```
 
 Commands emit the same JSON the read API answers (without `api_version`),
@@ -35,13 +35,13 @@ runs and after it stops. Use the same data directory (`--data-dir`) for all
 commands.
 
 The commands read the daemon they target. With `--gateway`, or else a gateway
-named by `TGV_GATEWAY` or saved by `tgv init`, they read through that gateway's
+named by `REN_GATEWAY` or saved by `ren init`, they read through that gateway's
 API below and print the same JSON as from its storage; exports use the body
 export endpoint. `--config` or `--data-dir` without `--gateway` reads this host's
 storage, as does having no gateway at all. A remote read needs the daemon
 running.
 
-`tgv tail` follows the [live feed](#live-feed) of the daemon the CLI targets
+`ren tail` follows the [live feed](#live-feed) of the daemon the CLI targets
 (its local listener, or the gateway) and prints a line as each call starts (provider, endpoint, and session) and
 finishes (model, outcome, status, tokens, and duration), and when an operator
 changes the operator state. Each line starts with the time (UTC) and the call.
@@ -51,7 +51,7 @@ ends, for example on a daemon restart, it reconnects every two seconds from the
 last observation it printed, so nothing in between is skipped. It stops on
 interrupt, or if the first connection fails.
 
-`tgv tui`, in a CLI built with `--features tui`, shows the same daemon's live
+`ren tui`, in a CLI built with `--features tui`, shows the same daemon's live
 sessions in the terminal: one pane per active session (seen in the last five
 minutes, or with a call open), in a grid sized to them, as many as the
 terminal has room for; one session fills the screen. Each pane reads as a
@@ -83,13 +83,13 @@ ANSI palette. `dark` and `light` use fixed RGB palettes and need a true-color
 terminal. Choose a theme for one run, or save this machine's preference:
 
 ```sh
-tgv tui --theme dark
-tgv tui --save-theme light
-tgv tui --save-theme terminal
+ren tui --theme dark
+ren tui --save-theme light
+ren tui --save-theme terminal
 ```
 
 `--save-theme` saves and exits without connecting to a daemon. The preference
-lives in `$XDG_CONFIG_HOME/tgv/tui.toml` (or `~/.config/tgv/tui.toml`), separate
+lives in `$XDG_CONFIG_HOME/ren/tui.toml` (or `~/.config/ren/tui.toml`), separate
 from gateway and daemon settings:
 
 ```toml
@@ -105,7 +105,7 @@ theme. Labels and focus emphasis remain available without color.
 
 ## Activity
 
-`tgv turn` shows what an agent did for one user prompt, assembled from each of
+`ren turn` shows what an agent did for one user prompt, assembled from each of
 its calls' activity, derived when the call finished:
 
 - `prompt`: the user's own words, without the context a client adds to user
@@ -128,9 +128,9 @@ its calls' activity, derived when the call finished:
 A tool call is what the model requested, not proof that it ran. A result's
 status is what the client reported: Anthropic's `is_error`, or for Codex the
 exit code its output states; other Responses results are `unreported`. Effects
-come from each client's own tool names and input fields; a tool TGV does not
+come from each client's own tool names and input fields; a tool Ren does not
 know has none. Turns are the client's grouping (Claude Code's prompt ID, Codex's
-turn ID); Pi sends none, so use `tgv activity <call-id>` for its calls. The daemon derives
+turn ID); Pi sends none, so use `ren activity <call-id>` for its calls. The daemon derives
 each call's activity once, when the call finishes, from up to 16 MiB of each
 body, and stores it with secrets redacted; a turn reads at most 100 calls
 (`omitted_calls` counts the rest). `limitations` on each call say what could not
@@ -140,14 +140,14 @@ daemon is deriving again from its stored bodies. Text is
 excerpted; `omitted_chars` says how much was left out, and the full text stays in
 the body. Retention removes activity with its call.
 
-`tgv turns <session-id>` lists a session's turns newest first (`--limit`, up to
+`ren turns <session-id>` lists a session's turns newest first (`--limit`, up to
 1000; no paging), each with its call and error counts, tokens, and the start of
 its prompt, with secrets redacted. A
 turn's `ended_at` is `null` while any of its calls is still running.
 
 ## Search
 
-`tgv search <text>` finds what calls contain: the user's prompt (without the
+`ren search <text>` finds what calls contain: the user's prompt (without the
 context clients add), the model's reply, tool input (the tool's name, the files
 and commands it names, and its input), and tool output. All words must match;
 `"quoted text"` matches as a phrase. Punctuation separates words, so search
@@ -162,7 +162,7 @@ much history is searchable: every finished call, once its activity is derived
 
 ## Exposed secrets
 
-`tgv exposures` lists credentials that calls carried, newest first. The daemon
+`ren exposures` lists credentials that calls carried, newest first. The daemon
 scans every finished call's newest user input (including context the
 client adds, such as Claude Code's reminders, since that is sent to the provider
 too), tool input and output, and the model's reply, for well-known formats only:
@@ -177,14 +177,14 @@ The secret itself is never stored or shown: an exposure keeps its `kind`, the
 `sk-ant-…a1b2`), a `fingerprint` (16 hex characters of its BLAKE3 hash, equal for
 repeats of one secret), and how often it appeared. Activity and search keep
 text with each secret replaced by `«redacted: kind»`; captured bodies are kept as
-recorded. Session reports and `tgv turn` list exposures as `secret_exposure`
+recorded. Session reports and `ren turn` list exposures as `secret_exposure`
 findings, and the Overview lists the last day's first under Needs attention. A secret sent to
-a provider should be rotated: TGV cannot recall it. The scan covers the newest
+a provider should be rotated: Ren cannot recall it. The scan covers the newest
 input of each call, not the system prompt or older history a client resends.
 
 ## Session report
 
-`tgv report <session-id>` shows where a session's context and prompt-cache
+`ren report <session-id>` shows where a session's context and prompt-cache
 tokens went, from its call records alone (no body is read, so it is fast):
 
 - `turns`: for each turn, its calls, the idle time before it (since the
@@ -196,7 +196,7 @@ tokens went, from its call records alone (no body is read, so it is fast):
 - `findings`, in call order:
   - `cache_rebuild`: a call read less than half of the earlier peak context from
     the cache and wrote at least half of it again (at least 10,000 tokens). It
-    reports `idle_before_ms`; a provider's cache entries expire, but TGV cannot
+    reports `idle_before_ms`; a provider's cache entries expire, but Ren cannot
     see its cache, so the cause is not stated.
   - `context_growth`: the 5 largest steps of at least 10,000 tokens past the
     session's earlier peak.
@@ -210,13 +210,13 @@ reads at most 5,000 calls (`omitted_calls` counts the rest).
 
 ## MCP server
 
-`tgv mcp` serves this history to coding agents as a
+`ren mcp` serves this history to coding agents as a
 [Model Context Protocol](https://modelcontextprotocol.io) server over stdio, so an
 agent can look up what it, or another agent, did:
 
 ```sh
-claude mcp add --scope user tgv -- tgv mcp
-codex mcp add tgv -- tgv mcp
+claude mcp add --scope user ren -- ren mcp
+codex mcp add ren -- ren mcp
 ```
 
 Its tools are read-only:
@@ -226,13 +226,13 @@ Its tools are read-only:
 | `search_calls`      | Calls, newest first, filtered as in [call search](#call-search) (`session_id` names the session); `{calls, next}` |
 | `list_sessions`     | Recent sessions with their counts and token totals                                                                |
 | `session_calls`     | One session's calls, oldest first; `{calls, next}`                                                                |
-| `search_history`    | [Full-text search](#search), as `tgv search` returns it                                                           |
-| `list_exposures`    | [Exposed secrets](#exposed-secrets), as `tgv exposures` lists them                                                |
-| `session_report`    | A session's context and cost report, as `tgv report` shows it                                                     |
-| `list_turns`        | A session's turns, newest first, as `tgv turns` lists them                                                        |
-| `get_turn`          | What one turn did, as `tgv turn` shows it: prompt, tool calls with effects and results, files, commands           |
-| `get_call_activity` | One call's activity, as `tgv activity` shows it                                                                   |
-| `get_call`          | One call with its attempts, inspection, and observation log, as `tgv inspect` prints it                           |
+| `search_history`    | [Full-text search](#search), as `ren search` returns it                                                           |
+| `list_exposures`    | [Exposed secrets](#exposed-secrets), as `ren exposures` lists them                                                |
+| `session_report`    | A session's context and cost report, as `ren report` shows it                                                     |
+| `list_turns`        | A session's turns, newest first, as `ren turns` lists them                                                        |
+| `get_turn`          | What one turn did, as `ren turn` shows it: prompt, tool calls with effects and results, files, commands           |
+| `get_call_activity` | One call's activity, as `ren activity` shows it                                                                   |
+| `get_call`          | One call with its attempts, inspection, and observation log, as `ren inspect` prints it                           |
 | `get_body`          | An excerpt of a [body preview](#body-previews): decoded text (or raw bytes), at most `max_chars` (default 20,000) |
 | `usage`             | Calls, errors, and tokens, as [`/api/usage`](#usage)                                                              |
 
@@ -240,8 +240,8 @@ Listings return at most 100 rows. Invalid arguments, unknown IDs, and an
 unreachable daemon are tool errors that the agent reads and can correct.
 
 It reads through the management API of the daemon the CLI targets, like
-`tgv tail`: the local listener, or the gateway from `--gateway`, `TGV_GATEWAY`,
-or `tgv init`. The daemon must be running. Bodies may contain private prompts
+`ren tail`: the local listener, or the gateway from `--gateway`, `REN_GATEWAY`,
+or `ren init`. The daemon must be running. Bodies may contain private prompts
 and tool output, and an agent reading them sends them to its provider like any
 other context. It serves protocol revision `2026-07-28`, where every request
 carries its version, and, after an `initialize` handshake, the earlier revisions
@@ -270,7 +270,7 @@ the body was stored whole; otherwise `not_found`. At most two run at once
 | `GET /api/calls?limit=100`                                             | Filtered, paginated calls, newest first (see [search](#call-search))                                                                                                                                           |
 | `GET /api/calls/{call-id}`                                             | One call with its attempts, inspection, and observation log                                                                                                                                                    |
 | `GET /api/calls/{call-id}/body/{request\|response}`                    | Bounded body preview                                                                                                                                                                                           |
-| `GET /api/calls/{call-id}/body/{request\|response}/export`             | The complete captured body as raw bytes, as `tgv inspect --body` exports it                                                                                                                                    |
+| `GET /api/calls/{call-id}/body/{request\|response}/export`             | The complete captured body as raw bytes, as `ren inspect --body` exports it                                                                                                                                    |
 | `GET /api/sessions?limit=100`                                          | Recent sessions with call, turn, and error counts and token totals                                                                                                                                             |
 | `GET /api/usage?from_ms=&until_ms=`                                    | Calls, errors, and tokens in total, by UTC hour, by model, and by user (see [usage](#usage))                                                                                                                   |
 | `GET /api/sessions/{session-id}/calls?limit=100`                       | One session's calls, oldest first                                                                                                                                                                              |
@@ -288,7 +288,7 @@ start time and call ID; refresh from the beginning to see late arrivals that sor
 before a cursor. Limits are 1–1000. Recording is asynchronous, so new data appears
 shortly after forwarding, typically within the 50 ms commit interval. Busy readers
 return `503` without blocking forwarding. Management responses carry
-`Cache-Control: no-store`. The UI does not relay full body exports; use `tgv inspect` or the export endpoint. The API shares the
+`Cache-Control: no-store`. The UI does not relay full body exports; use `ren inspect` or the export endpoint. The API shares the
 listener's loopback/Tailscale access boundary and has no separate login or
 cross-origin browser access enabled.
 
@@ -318,10 +318,10 @@ parameters and a reversed range are rejected.
 `/health` reports the build the daemon runs as `build`: `{"version": "0.1.0",
 "revision": "<commit>"}`. The revision is the full git commit the binary was
 compiled from, with `-dirty` when tracked files differed from it, or `unknown`
-when the build had neither git nor packaging metadata. `tgv --version` prints the
-same, and `tgv doctor` compares the two: it is OK only for the same version from
+when the build had neither git nor packaging metadata. `ren --version` prints the
+same, and `ren doctor` compares the two: it is OK only for the same version from
 the same unmodified commit, and a warning otherwise. Untracked files are not
-counted as modifications. The revision is read when the `tgv-rs` package is
+counted as modifications. The revision is read when the `ren-rs` package is
 compiled, so after editing a tracked file without staging it, `-dirty` can
 appear only after that package is rebuilt.
 
@@ -343,7 +343,7 @@ unblocked (`{"kind": "unblocked"}`)), and `running` lists the running calls
 
 | Endpoint                                      | Body                                           | Notes                                                                                                                    |
 | --------------------------------------------- | ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
-| `POST /control/v1/pause`                      | `{"retry_after_seconds": 1–3600}`, required    | `tgv control pause --retry-after` (default 30)                                                                           |
+| `POST /control/v1/pause`                      | `{"retry_after_seconds": 1–3600}`, required    | `ren control pause --retry-after` (default 30)                                                                           |
 | `POST /control/v1/resume`                     | none                                           |                                                                                                                          |
 | `POST /control/v1/sessions/{session}/block`   | optional `{"duration_seconds": 1–604800}`      | `{session}` is the client's session UUID; without a duration, until unblocked                                            |
 | `POST /control/v1/sessions/{session}/unblock` | none                                           |                                                                                                                          |
@@ -381,13 +381,13 @@ response so far ends inside a thinking block or reasoning item, whose text is
 not sent. They
 have no `id`: they are never stored, never replayed on resume, and a feed that
 falls behind skips some. The finished call's activity is the record. The UI asks
-for them, to show replies on Live cards as they stream, and so does `tgv tui`;
-`tgv tail` does not.
+for them, to show replies on Live cards as they stream, and so does `ren tui`;
+`ren tail` does not.
 
 ## Call search
 
 `GET /api/calls` filters all retained calls and returns `{calls, next}` newest
-first. Parameters: `q`, `session` (a TGV session ID), `client` (`claude_code`,
+first. Parameters: `q`, `session` (a Ren session ID), `client` (`claude_code`,
 `codex`, `pi`, `opencode`), `user` (a [named user](policy.md#named-users)), `kind` (`model`, `other`), `provider` (`anthropic`, `openai`,
 `codex`, `deepseek`), `model`, `tool`, `has_tools`, `status` (`active`, `finished`, `errors`,
 `interrupted`), `from_ms`, `until_ms` (inclusive), `limit` (1–1000), and `after`.
@@ -420,7 +420,7 @@ Filters combine with AND; unknown parameters are rejected.
 ## Body previews
 
 `GET /api/calls/{id}/body/{request|response}` returns a bounded preview of the
-first 256 KiB, not a full export; use `tgv inspect --body … --output …` for
+first 256 KiB, not a full export; use `ren inspect --body … --output …` for
 complete captured bytes. The response body is the final attempt's. Previews decode
 gzip and Zstandard (recognised by their magic bytes) and Brotli (when the attempt
 recorded `Content-Encoding: br`, since Brotli has no magic bytes; `decoding.applied`

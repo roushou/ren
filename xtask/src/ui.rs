@@ -1,11 +1,12 @@
 //! The UI part of `install-vps`: build `ui/` while everything keeps serving,
-//! then swap the deployed copy, run it as `tgv-ui.service`, and check it.
+//! then swap the deployed copy, run it as `ren-ui.service`, and check it.
 //!
-//! The deployed copy is `~/.local/share/tgv-ui` (ui/README.md): the build,
+//! The deployed copy is `~/.local/share/ren-ui` (ui/README.md): the build,
 //! `package.json`, `bun.lock`, and production dependencies. The one before it
-//! is kept as `tgv-ui.previous`.
+//! is kept as `ren-ui.previous`.
 use crate::install::{InstallError, InstallVps};
 use crate::invocation::{Echo, Invocation};
+use ren_harness::host::HostEnv;
 use std::{
     fs,
     os::unix::fs::{DirBuilderExt, PermissionsExt},
@@ -13,7 +14,6 @@ use std::{
     thread,
     time::Duration,
 };
-use tgv_harness::host::HostEnv;
 
 /// Where the UI is built and deployed, and the programs it needs.
 pub struct UiDeploy {
@@ -39,8 +39,8 @@ pub struct UiUrls {
 }
 
 impl UiDeploy {
-    const SERVICE: &str = "tgv-ui.service";
-    /// The listener `deploy/tgv-ui.service` sets (`HOST`, `PORT`).
+    const SERVICE: &str = "ren-ui.service";
+    /// The listener `deploy/ren-ui.service` sets (`HOST`, `PORT`).
     pub const TARGET: &str = "http://127.0.0.1:3000";
     /// The template's Node path, replaced with the one found on PATH.
     const EXEC: &str = "ExecStart=/usr/bin/node build";
@@ -49,12 +49,12 @@ impl UiDeploy {
         let share = home.join(".local/share");
         Ok(Self {
             source: repo.join("ui"),
-            template: repo.join("deploy/tgv-ui.service"),
-            staged: share.join("tgv-ui.next"),
-            dir: share.join("tgv-ui"),
-            previous: share.join("tgv-ui.previous"),
+            template: repo.join("deploy/ren-ui.service"),
+            staged: share.join("ren-ui.next"),
+            dir: share.join("ren-ui"),
+            previous: share.join("ren-ui.previous"),
             unit: home.join(".config/systemd/user").join(Self::SERVICE),
-            env_file: home.join(".config/tgv/ui.env"),
+            env_file: home.join(".config/ren/ui.env"),
             node: Self::program(env, "node")?,
             bun: Self::program(env, "bun")?,
         })
@@ -160,13 +160,13 @@ impl UiDeploy {
         }
         InstallVps::step(&format!("Writing {}", self.env_file.display()));
         let contents = format!(
-            "TGV_GATEWAY_URL={}\nTGV_PUBLIC_GATEWAY_URL={}\nORIGIN={}\n",
+            "REN_GATEWAY_URL={}\nREN_PUBLIC_GATEWAY_URL={}\nORIGIN={}\n",
             urls.gateway, urls.public_gateway, urls.origin
         );
         InstallVps::write_private(&self.env_file, contents.as_bytes(), 0o600)
     }
 
-    /// `deploy/tgv-ui.service` with this host's Node.
+    /// `deploy/ren-ui.service` with this host's Node.
     fn render(&self) -> Result<String, InstallError> {
         let template =
             fs::read_to_string(&self.template).map_err(InstallError::file(&self.template))?;
@@ -228,7 +228,7 @@ mod tests {
     #[test]
     fn renders_the_unit_with_this_hosts_node() {
         let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
-        let rendered = deploy(&repo.join("deploy/tgv-ui.service"))
+        let rendered = deploy(&repo.join("deploy/ren-ui.service"))
             .render()
             .unwrap();
         assert!(
@@ -243,7 +243,7 @@ mod tests {
     #[test]
     fn refuses_a_template_without_the_node_line() {
         let dir = tempfile::tempdir().unwrap();
-        let template = dir.path().join("tgv-ui.service");
+        let template = dir.path().join("ren-ui.service");
         fs::write(&template, "[Service]\nExecStart=/opt/node build\n").unwrap();
         assert!(matches!(
             deploy(&template).render(),

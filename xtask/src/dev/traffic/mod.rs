@@ -339,7 +339,7 @@ mod tests {
             ..Settings::default()
         };
         for n in 0..20 {
-            let calls = Traffic::turn(n, Run(1), &settings, "tgvu_fixture").unwrap();
+            let calls = Traffic::turn(n, Run(1), &settings, "renu_fixture").unwrap();
             let [call] = calls.as_slice() else {
                 panic!("an error ends its turn at once: {}", calls.len())
             };
@@ -373,7 +373,7 @@ mod tests {
         let named = |call: &super::Call, name: &str| call.headers.iter().any(|(n, _)| n == name);
         let (mut side, mut claude) = (0, 0);
         for n in 0..2_000 {
-            let call = Traffic::turn(n, Run(1), &settings, "tgvu_fixture").unwrap()[0].clone();
+            let call = Traffic::turn(n, Run(1), &settings, "renu_fixture").unwrap()[0].clone();
             if named(&call, "x-claude-code-session-id") {
                 claude += 1;
                 if !named(&call, "x-claude-code-prompt-id") {
@@ -394,7 +394,7 @@ mod tests {
         let settings = Settings::default();
         let mut by_harness = std::collections::BTreeMap::<String, (u32, u32)>::new();
         for n in 0..20_000 {
-            let call = Traffic::turn(n, Run(1), &settings, "tgvu_fixture").unwrap()[0].clone();
+            let call = Traffic::turn(n, Run(1), &settings, "renu_fixture").unwrap()[0].clone();
             let failing = call.headers.iter().any(|(name, value)| {
                 name == "x-dev-reply" && (value == "error" || value == "rate_limited")
             });

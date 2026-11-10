@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """macOS-only native service lifecycle check with disposable data and mock traffic.
 
-Build TGV, then run this manually. Loads one uniquely named temporary GUI agent,
+Build Ren, then run this manually. Loads one uniquely named temporary GUI agent,
 checks failure restart and graceful shutdown, then removes the job and fixtures.
 Does not install a login item or use provider credentials.
 """
@@ -24,8 +24,8 @@ import uuid
 def main():
     if platform.system() != 'Darwin':
         raise SystemExit('This check requires macOS and a logged-in GUI user.')
-    binary = pathlib.Path(__file__).resolve().parents[1] / 'target/debug/tgv'
-    label = 'dev.tgv.smoke.' + uuid.uuid4().hex
+    binary = pathlib.Path(__file__).resolve().parents[1] / 'target/debug/ren'
+    label = 'dev.ren.smoke.' + uuid.uuid4().hex
     domain = f'gui/{os.getuid()}'
     target = f'{domain}/{label}'
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
@@ -47,7 +47,7 @@ def main():
     thread = threading.Thread(target=upstream.serve_forever, daemon=True)
     thread.start()
     try:
-        with tempfile.TemporaryDirectory(prefix='tgv-launchd-') as directory:
+        with tempfile.TemporaryDirectory(prefix='ren-launchd-') as directory:
             root = pathlib.Path(directory)
             # Exercise XML escaping and independence from the service manager's cwd.
             state = root / 'state & $dollar %percent'
@@ -99,7 +99,7 @@ def main():
                     if time.monotonic() >= deadline:
                         raise RuntimeError('Temporary daemon did not exit after bootout')
                     time.sleep(0.1)
-                records = json.loads(subprocess.check_output([str(binary), '--data-dir', str(state), 'history'], text=True))
+                records = json.loads(subprocess.check_output([str(binary), '--data-dir', str(state), 'history'], text=True))['calls']
                 assert len(records) == 1
                 assert records[0]['outcome'] == 'completed'
                 assert records[0]['state'] == 'finished'

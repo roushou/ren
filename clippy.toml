@@ -3,10 +3,10 @@
 # the capability implementations themselves are exempt, with
 # `#[expect(clippy::disallowed_methods, reason = "...")]`.
 disallowed-methods = [
-  { path = "std::time::SystemTime::now", reason = "read time through tgv_recorder::time::Clock" },
-  { path = "std::time::Instant::now", reason = "read time through tgv_recorder::time::Clock" },
-  { path = "tokio::time::Instant::now", reason = "read time through tgv_recorder::time::Clock" },
-  { path = "uuid::Uuid::new_v4", reason = "generate identities through tgv_recorder::id::IdSource" },
+  { path = "std::time::SystemTime::now", reason = "read time through ren_recorder::time::Clock" },
+  { path = "std::time::Instant::now", reason = "read time through ren_recorder::time::Clock" },
+  { path = "tokio::time::Instant::now", reason = "read time through ren_recorder::time::Clock" },
+  { path = "uuid::Uuid::new_v4", reason = "generate identities through ren_recorder::id::IdSource" },
   { path = "std::env::var", reason = "read the environment once into HostEnv in main" },
   { path = "std::env::var_os", reason = "read the environment once into HostEnv in main" },
   { path = "std::env::vars", reason = "read the environment once into HostEnv in main" },

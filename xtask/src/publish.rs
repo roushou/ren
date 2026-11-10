@@ -1,7 +1,7 @@
-//! How `install-vps` publishes TGV, remembered between runs.
+//! How `install-vps` publishes Ren, remembered between runs.
 //!
 //! The choices are saved as the flags that made them, in
-//! `~/.config/tgv/install-vps.toml`, and read back through the same clap
+//! `~/.config/ren/install-vps.toml`, and read back through the same clap
 //! parser, so there is one vocabulary. A run given any of these flags uses
 //! exactly those and saves them after it succeeds; a run given none uses the
 //! saved ones.
@@ -20,7 +20,7 @@ pub struct Publish {
     /// Use `sudo -n` for the Serve steps only.
     #[arg(long, requires = "https_port")]
     pub sudo_tailscale: bool,
-    /// Also build and run the UI as `tgv-ui.service`, published privately
+    /// Also build and run the UI as `ren-ui.service`, published privately
     /// on this HTTPS port (for example 8444). Without it, the UI is left
     /// untouched.
     #[arg(long, requires = "https_port", value_parser = clap::value_parser!(u16).range(1..))]
@@ -105,9 +105,9 @@ impl Publish {
         InstallVps::write_private(path, text.as_bytes(), 0o600)
     }
 
-    /// `~/.config/tgv/install-vps.toml`.
+    /// `~/.config/ren/install-vps.toml`.
     pub fn path(home: &Path) -> PathBuf {
-        home.join(".config/tgv/install-vps.toml")
+        home.join(".config/ren/install-vps.toml")
     }
 }
 

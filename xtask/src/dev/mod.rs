@@ -14,12 +14,12 @@ use crate::{
 };
 use clap::{Args, Subcommand};
 use provider::{FakeProvider, ProviderError};
+use ren_harness::host::HostEnv;
 use seed::{Scenario, SeedError, Seeder};
 use shot::{Camera, Page};
 use slot::{Preview, Slot};
 use std::net::SocketAddr;
 use std::path::PathBuf;
-use tgv_harness::host::HostEnv;
 use traffic::{Pace, SettingsError, Traffic, TrafficError};
 
 /// A development slot with fake providers and fake data.
@@ -31,16 +31,16 @@ pub struct Dev {
 
 #[derive(Subcommand)]
 enum DevAction {
-    /// Run the fake provider in the foreground: every wire format TGV
+    /// Run the fake provider in the foreground: every wire format Ren
     /// forwards, answered with realistic scripted replies. The `x-dev-reply`
     /// request header picks the kind: tools, long, slow, cut, error,
     /// rate_limited; without it, an ordinary text answer.
     Provider(ProviderArgs),
     /// Build this checkout and (re)start the slot: the fake provider and a
-    /// dev daemon, as `tgv-dev-*` systemd user units; with --ui, also the UI,
+    /// dev daemon, as `ren-dev-*` systemd user units; with --ui, also the UI,
     /// published privately on the tailnet (ports 9443 and 9444).
     Up(UpArgs),
-    /// Stop every `tgv-dev-*` unit and remove the dev preview's tailnet
+    /// Stop every `ren-dev-*` unit and remove the dev preview's tailnet
     /// routes. The slot's data is kept.
     Down(TailnetArgs),
     /// Stop the slot, remove its data, and start it again.
@@ -133,7 +133,7 @@ enum TrafficAction {
         #[arg(default_value_t = 20, value_parser = clap::value_parser!(u16).range(1..=500))]
         count: u16,
     },
-    /// Run the generator in the foreground (what the tgv-dev-traffic unit
+    /// Run the generator in the foreground (what the ren-dev-traffic unit
     /// runs).
     #[command(hide = true)]
     Run {
@@ -183,11 +183,11 @@ pub enum DevError {
     Command(#[from] InstallError),
     #[error("the dev configuration is invalid; this is a bug in `xtask dev`")]
     Config,
-    #[error("nothing answered on {0} in time; see `journalctl --user -u 'tgv-dev-*'`")]
+    #[error("nothing answered on {0} in time; see `journalctl --user -u 'ren-dev-*'`")]
     NotReady(SocketAddr),
     #[error(transparent)]
     Seed(#[from] SeedError),
-    #[error("no headless Chromium found: set TGV_CHROME, or install chrome-headless-shell")]
+    #[error("no headless Chromium found: set REN_CHROME, or install chrome-headless-shell")]
     NoChrome,
     #[error(transparent)]
     Traffic(#[from] TrafficError),

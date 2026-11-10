@@ -3,7 +3,7 @@
 Status: phases 1 to 7 are built and deployed (November 2026); phase 8,
 deterministic simulation, is not started. This is the design record: the
 plan as approved, and under "Deviations recorded" how each phase was actually
-built. For how TGV works now, read `docs/architecture.md`, which describes the
+built. For how Ren works now, read `docs/architecture.md`, which describes the
 current state.
 
 The plan's premise: backward compatibility is not a goal, so storage, the
@@ -14,7 +14,7 @@ before it.
 
 ## 1. Why change
 
-TGV's original architecture is sound: a data plane that forwards, an
+Ren's original architecture is sound: a data plane that forwards, an
 observation plane that records, a management plane that reads, around an
 append-only observation log. Its own rule was that **inspection is
 incremental, while bytes flow, never a re-read**. The features added since
@@ -45,7 +45,7 @@ clients ───────► │ ingress → CallRun (pure) → HttpAttempt 
                  ┌──────────── observation runtime (own thread) ────────▼───────────┐
                  │ RecorderCore (pure): chunk · inspect · read request · digest     │
                  │   · interpret (harness) · redact (scanner) · roll up turns       │
-                 │ shell: group commit → tgv.sqlite3 (+ blobs) · live broadcast     │
+                 │ shell: group commit → ren.sqlite3 (+ blobs) · live broadcast     │
                  │ Rederive: replays stored bodies through the same core            │
                  └────────────────────────────────┬─────────────────────────────────┘
                                                   │ rows only
@@ -81,12 +81,12 @@ One pipeline turns a call's bytes into its stored digest. Every stage is pure
 and lives in the lowest crate that owns its meaning:
 
 ```text
-tgv-protocol   CallReader       request bytes + response bytes/events → Reading
+ren-protocol   CallReader       request bytes + response bytes/events → Reading
                                 (merges today's `inspect` and `activity`)
-tgv-harness    Harness::interpret(Reading) → Interpretation
+ren-harness    Harness::interpret(Reading) → Interpretation
                                 (prompt without client context, tool effects,
                                  exit codes, result status)
-tgv-recorder   Digest::seal(Reading, Interpretation, &SecretScanner, DigestBudget)
+ren-recorder   Digest::seal(Reading, Interpretation, &SecretScanner, DigestBudget)
                                 → CallDigest   (redacted, cut, versioned)
 ```
 
@@ -100,7 +100,7 @@ tgv-recorder   Digest::seal(Reading, Interpretation, &SecretScanner, DigestBudge
   tool uses with inputs, reply text, and the inspection facts. It never leaves
   the recorder.
 - **`CallDigest`** is what is stored. Its text is redacted (the scanner moves
-  from `tgv-store` to `tgv-recorder`: sanitize before anything is persisted)
+  from `ren-store` to `ren-recorder`: sanitize before anything is persisted)
   and cut to a stored budget large enough for every view (the full text stays
   available through body preview). It carries `DIGEST_VERSION`.
 - Tool uses (call N's response) and their results (call N+1's request) are
@@ -109,7 +109,7 @@ tgv-recorder   Digest::seal(Reading, Interpretation, &SecretScanner, DigestBudge
 
 ### 3.2 Storage (one file again)
 
-A new migration adds, in `tgv.sqlite3`:
+A new migration adds, in `ren.sqlite3`:
 
 | Table              | Row                                                                                                                                     | Written                                |
 | ------------------ | --------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------- |
@@ -124,7 +124,7 @@ Consequences:
   and search rows (`ON DELETE CASCADE`, which works since the store enables
   foreign keys, plus FTS triggers). No sweep, no stale rows, no
   `IndexUsage` proportional budget: the FTS pages are simply part of
-  `tgv.sqlite3`'s measured size.
+  `ren.sqlite3`'s measured size.
 - **Deleted:** `search.sqlite3`, `SearchIndex::open/open_read/usage`,
   `Indexer`, `IndexCursor`, `Backlog`, `PassReport`, the daemon's third task,
   the corruption rebuild, `turn_prompts`, and the read-time prompt fallback.
@@ -187,7 +187,7 @@ runtimes and the only `disallowed_methods` exemptions.
 ### 5.1 `ReadRequest` and `Reader`
 
 ```rust
-// tgv-store
+// ren-store
 pub enum ReadRequest {
     Calls(CallQuery), Call(CallId), SessionCalls(SessionId, PageQuery),
     Sessions(PageLimit), Turns(SessionId, PageQuery), Turn(TurnId),
@@ -207,7 +207,7 @@ typed value as a local one. Report-plus-exposures, budgets, and paging live in
 
 ### 5.2 One route table
 
-`tgv-gateway` owns a declarative table: each `ReadRequest` variant ↔ method,
+`ren-gateway` owns a declarative table: each `ReadRequest` variant ↔ method,
 path pattern, and query codec. It is used in both directions:
 
 - the server parses HTTP into a `ReadRequest` (replacing `params.rs`'s `Raw*`
@@ -302,13 +302,13 @@ Still seven crates and one `xtask`; no new crate is needed.
 
 | Crate          | Changes                                                                                                                                               |
 | -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `tgv-protocol` | `inspect` and `activity` merge into `CallReader` → `Reading`; magic-byte sniffing already shared                                                      |
-| `tgv-harness`  | `tools` becomes `Harness::interpret(Reading) -> Interpretation`                                                                                       |
-| `tgv-recorder` | gains `secrets` (from store), `Digest`, `RecorderCore`, `CaptureBudget`; `RecorderTask` becomes a shell; `Rederive` core                              |
-| `tgv-store`    | digests, rollups, exposures, FTS in `tgv.sqlite3`; `Reader::serve(ReadRequest)`; loses `search.sqlite3`, `Indexer`, read-time body parsing, `secrets` |
-| `tgv-gateway`  | `CallRun`; route table and codec; handlers shrink to the table                                                                                        |
-| `tgv-daemon`   | two runtimes and the `Spawner`; loses the indexer task                                                                                                |
-| `tgv-cli`      | `History = Local                                                                                                                                      | Remote(ApiClient)``; ``management.rs``, ``QueryParams``, and per-command dual paths go; MCP tools map to ``ReadRequest` |
+| `ren-protocol` | `inspect` and `activity` merge into `CallReader` → `Reading`; magic-byte sniffing already shared                                                      |
+| `ren-harness`  | `tools` becomes `Harness::interpret(Reading) -> Interpretation`                                                                                       |
+| `ren-recorder` | gains `secrets` (from store), `Digest`, `RecorderCore`, `CaptureBudget`; `RecorderTask` becomes a shell; `Rederive` core                              |
+| `ren-store`    | digests, rollups, exposures, FTS in `ren.sqlite3`; `Reader::serve(ReadRequest)`; loses `search.sqlite3`, `Indexer`, read-time body parsing, `secrets` |
+| `ren-gateway`  | `CallRun`; route table and codec; handlers shrink to the table                                                                                        |
+| `ren-daemon`   | two runtimes and the `Spawner`; loses the indexer task                                                                                                |
+| `ren-cli`      | `History = Local                                                                                                                                      | Remote(ApiClient)``; ``management.rs``, ``QueryParams``, and per-command dual paths go; MCP tools map to ``ReadRequest` |
 | `ui`           | API decoders, contract fixtures; pages unchanged in behavior                                                                                          |
 
 ## 10. Phases
@@ -388,14 +388,14 @@ stay in separate commits.
   `uri` and `parse`, kept one table by a round-trip test over every read
   (including values with `&`, `?`, and `#`), and the router registers every
   read path on one handler. `ReadRequest::Calls` and friends answer with the
-  API's envelopes, so `tgv history`, `sessions`, `turns`, and `exposures` now
+  API's envelopes, so `ren history`, `sessions`, `turns`, and `exposures` now
   print `{calls, next}`, `{sessions}`, `{turns}`, and `{exposures}` like the
   API. Malformed identifiers and unknown parameters now answer JSON errors
   (`not_found`, `invalid_query`) instead of the framework's plain text. On a
   copy of the operator's data, all 18 read bodies equal the previous build's
   apart from `api_version`.
 
-- **Phase 6, built as:** `CallRun` (`tgv-gateway::call`) with `step(dispatch,
+- **Phase 6, built as:** `CallRun` (`ren-gateway::call`) with `step(dispatch,
   retry) -> CallStep<R>`, generic over the response the shell holds, so each
   step carries what it acts on (`FallOver { refused, next }`, `Relay(R)`,
   `Stop(CallStop)`) and the shell has no impossible combinations to match.
@@ -426,7 +426,7 @@ stay in separate commits.
   (proposed: 2,000 characters per tool output, 32 KiB per searchable field).
   Changing them means a version bump and a `Rederive` pass; full text remains
   a body preview away.
-- **FTS in `tgv.sqlite3`** makes retention and budgets exact and removes a
+- **FTS in `ren.sqlite3`** makes retention and budgets exact and removes a
   file, at the cost of larger backups and FTS writes in the group commit
   (off the forwarding path). Alternative: keep a separate file, fed by the
   recorder instead of an indexer. Recommended: one file.

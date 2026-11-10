@@ -1,9 +1,9 @@
-# TGV daemon image, for Docker and Podman alike.
+# Ren daemon image, for Docker and Podman alike.
 #
-#   docker build -t tgv .        podman build -t tgv .
+#   docker build -t ren .        podman build -t ren .
 #
-# The image runs `tgv serve` as a non-root user with its data in the /data
-# volume, under /data/tgv, which TGV creates owner-only. The
+# The image runs `ren serve` as a non-root user with its data in the /data
+# volume, under /data/ren, which Ren creates owner-only. The
 # listener stays on loopback, as everywhere else: reach it from a Tailscale
 # container that shares its network namespace (deploy/container), never from a
 # published port. The UI is not included.
@@ -22,21 +22,21 @@ WORKDIR /src
 # reads `unknown`.
 COPY . .
 # No BuildKit cache mounts: Docker's legacy builder must build this too.
-RUN cargo build --release --locked --package tgv-rs --bin tgv \
-  && install -D target/release/tgv /out/usr/local/bin/tgv \
+RUN cargo build --release --locked --package ren-rs --bin ren \
+  && install -D target/release/ren /out/usr/local/bin/ren \
   && install -d /out/data
 
 # glibc, libgcc, and CA certificates; no shell or package manager.
 FROM gcr.io/distroless/cc-debian13:nonroot
-COPY --from=build /out/usr/local/bin/tgv /usr/local/bin/tgv
+COPY --from=build /out/usr/local/bin/ren /usr/local/bin/ren
 COPY --from=build --chown=65532:65532 /out/data /data
 VOLUME ["/data"]
 USER 65532:65532
-# The default data directory becomes /data/tgv, for `serve` and for commands
-# run with `exec` alike. TGV creates it owner-only, whatever mode the
+# The default data directory becomes /data/ren, for `serve` and for commands
+# run with `exec` alike. Ren creates it owner-only, whatever mode the
 # container engine gives the volume's root.
 ENV XDG_STATE_HOME=/data
-ENTRYPOINT ["/usr/local/bin/tgv"]
+ENTRYPOINT ["/usr/local/bin/ren"]
 CMD ["serve"]
 # Shutdown gives active requests 10 seconds, then drains capture: allow 30.
 STOPSIGNAL SIGTERM

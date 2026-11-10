@@ -1,6 +1,6 @@
 # Recording
 
-What TGV captures, how it stores it, what it infers, and how history is kept,
+What Ren captures, how it stores it, what it infers, and how history is kept,
 backed up, and pruned.
 
 ## Capture
@@ -34,7 +34,7 @@ backed up, and pruned.
   Captured bodies are private content and may themselves contain secrets from
   prompts or tool results. Set `capture.body_limit_bytes = 0` for metadata-only
   recording.
-- Storage is two SQLite WAL databases in the data directory. `tgv.sqlite3` holds
+- Storage is two SQLite WAL databases in the data directory. `ren.sqlite3` holds
   the observation log and the query tables, written in one transaction.
   `blobs.sqlite3` holds body content split into content-defined chunks (8–64 KiB),
   identified by BLAKE3 hash, stored once, and compressed with Zstandard when that
@@ -45,7 +45,7 @@ backed up, and pruned.
   the reply so far, the tools begun, and whether the model is thinking. They are
   never stored; only the finished
   call's derived activity below is.
-- `tgv.sqlite3` also holds each finished call's derived activity and its
+- `ren.sqlite3` also holds each finished call's derived activity and its
   full-text index (prompts, replies, tool input and output; see
   [search](api.md#search)): excerpts of the same private content, with
   credentials in well-known formats replaced by `«redacted: kind»`; their kinds,
@@ -108,7 +108,7 @@ Messages that arrive while no call is open are counted on the channel and in the
 `unattributed` omission, not stored. The channel records how it ended
 (`client_closed`, `upstream_closed`, `client_failed`, `upstream_failed`,
 `client_unresponsive` or `upstream_unresponsive` when a side stayed silent
-through TGV's ping, `upstream_stalled` when a running call's upstream went quiet
+through Ren's ping, `upstream_stalled` when a running call's upstream went quiet
 past its deadline, `drained`, `aborted`, `dropped`, or `recovered` after a
 restart) and the close code. A call ended by an unresponsive upstream records
 `stream_failed` with `idle_timeout`; one ended by a stall records
@@ -121,7 +121,7 @@ When the gateway answers instead of the provider, the status says why: `503` whe
 the concurrency limit is reached or the daemon is shutting down, `429` when the
 caller's own limit is (see [named users](policy.md#named-users)), `502` when the
 connection or send failed, `504` when no response head arrived in time, `409`
-when an operator cancelled the call (`tgv_operator_cancelled`), and `400` when the
+when an operator cancelled the call (`ren_operator_cancelled`), and `400` when the
 client cancelled the call before a response head (its upload failed or stopped).
 Pauses and blocks are in [Policy](policy.md#operator-controls).
 Provider responses, including errors and redirects, pass through unchanged and are
@@ -159,7 +159,7 @@ Zstandard, and Brotli are decoded only for inspection; capture and forwarding ke
 the compressed bytes. Other encodings, and several stacked encodings, are reported
 as unavailable. An attempt whose stored encoding is `unsupported` previews as raw
 bytes. Codex can omit
-`Content-Type` on `/responses`; TGV then assumes SSE and records the format as
+`Content-Type` on `/responses`; Ren then assumes SSE and records the format as
 inferred. Metadata-only capture cannot provide usage or model completion.
 
 Client tool-execution telemetry, quota parsing, configuration reload, protocol
@@ -171,8 +171,8 @@ and [OpenAI Responses events](https://developers.openai.com/api/reference/resour
 
 ## Backup
 
-With the daemon running, `tgv control backup` writes a consistent copy of the
-history to `<data-dir>/backup/` (`tgv.sqlite3` and `blobs.sqlite3`, owner-only).
+With the daemon running, `ren control backup` writes a consistent copy of the
+history to `<data-dir>/backup/` (`ren.sqlite3` and `blobs.sqlite3`, owner-only).
 The location is fixed; neither the CLI nor the control API can choose it. The
 metadata is snapshotted in one read transaction, then only chunks the backup
 lacks are copied, and chunks no longer referenced are removed, so later backups
@@ -186,7 +186,7 @@ chunk fails (`503 backup_incomplete`) and leaves the previous one in place.
 
 The backup is a data directory: copy `<data-dir>/backup` elsewhere (another disk
 or host) with any file tool, since it is not written while no backup runs. To
-restore, stop TGV and replace `tgv.sqlite3` and `blobs.sqlite3` in the data
+restore, stop Ren and replace `ren.sqlite3` and `blobs.sqlite3` in the data
 directory with the backup's two files, removing any `-wal` and `-shm` files
 beside them. It needs as much free space as the history uses. The backup includes
 the search index.
@@ -194,7 +194,7 @@ the search index.
 ## Retention
 
 Retention is enabled by default: **7 days, 10,000 calls, and 2 GiB of database
-pages in use**. Configure `[retention]` in `tgv.example.toml`; set `enabled = false`
+pages in use**. Configure `[retention]` in `ren.example.toml`; set `enabled = false`
 to keep everything. All numeric limits must remain positive. Age is measured from
 call start, and either count or storage pressure can remove younger calls.
 
@@ -205,7 +205,7 @@ and observations are deleted together; session counts and orphan turns/sessions 
 updated in the same transaction. Open calls are protected; recovered calls are
 eligible. Recording never waits for pruning.
 
-The storage limit counts live pages of `tgv.sqlite3` (search index included) and
+The storage limit counts live pages of `ren.sqlite3` (search index included) and
 `blobs.sqlite3`. A call's derived activity, exposures, and index rows are deleted
 with it.
 
@@ -219,4 +219,4 @@ guarantee, or backup cleanup. Monitor actual filesystem space too.
 Retention changes history: old links can return `404`, and the live feed reports
 `gone`; a pagination cursor stays valid and continues after the pruned calls. Refresh from the start. Session counts
 describe retained calls, and a resumed client whose entire session expired receives
-a new TGV session ID. Raw captures cannot be recovered through TGV after pruning.
+a new Ren session ID. Raw captures cannot be recovered through Ren after pruning.

@@ -1,6 +1,6 @@
 <!--
   How to start a session through this gateway: a choice of client and the
-  `tgv run` command for it, ready to copy.
+  `ren run` command for it, ready to copy.
 
   `list` is every client's command, one per row, for the header's connect
   panel; `box` is a bordered box with the clients as tabs over the command.

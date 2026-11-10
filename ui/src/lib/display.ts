@@ -21,7 +21,7 @@ import { assertNever, unrecognised } from './decode.ts';
  */
 export type CallStatus =
   | { kind: 'in_progress' }
-  /** TGV answered without forwarding: a limit, a pause, a block. */
+  /** Ren answered without forwarding: a limit, a pause, a block. */
   | { kind: 'rejected'; rejection: string }
   | { kind: 'error'; cause: 'http_status' | 'transport' | 'model' }
   | { kind: 'interrupted'; terminal: 'cancelled' | 'interrupted' }
@@ -47,7 +47,7 @@ export interface CallerShown {
  */
 export function callerShown(caller: CallerView | null): CallerShown {
   if (caller === null)
-    return { label: 'Unknown', title: 'Recorded before TGV recorded callers', user: null };
+    return { label: 'Unknown', title: 'Recorded before Ren recorded callers', user: null };
   const user = caller.user ?? '?';
   const login = caller.login ?? '?';
   switch (caller.kind) {
@@ -179,7 +179,7 @@ export function statusBadge(status: CallStatus): { label: string; tone: Tone } {
     case 'in_progress':
       return { label: 'In progress', tone: 'live' };
     case 'rejected':
-      return { label: `TGV · ${title(status.rejection)}`, tone: 'warning' };
+      return { label: `Ren · ${title(status.rejection)}`, tone: 'warning' };
     case 'error':
       return { label: 'Error', tone: 'error' };
     case 'interrupted':
@@ -261,7 +261,7 @@ export function streamChip(call: {
   switch (call.terminal) {
     case null:
       return call.state === 'recovered'
-        ? { label: 'Unknown', tone: 'warning', title: 'TGV restarted before the stream ended' }
+        ? { label: 'Unknown', tone: 'warning', title: 'Ren restarted before the stream ended' }
         : { label: 'Streaming', tone: 'live', title: 'The response is still arriving' };
     case 'body_complete':
       return {
@@ -354,7 +354,7 @@ export function captureChip(call: CallView, bodyLimit: number | null = null): Ch
     case 'open':
       return { label: 'Recording', tone: 'live', title: 'Capture is still being written' };
     case 'recovered':
-      return { label: 'Capture cut off', tone: 'warning', title: 'TGV restarted while recording' };
+      return { label: 'Capture cut off', tone: 'warning', title: 'Ren restarted while recording' };
     case 'finished':
       if (trimmedAtLimit(call, bodyLimit))
         return {
@@ -620,7 +620,7 @@ export function captureState(call: CallView, bodyLimit: number | null = null): s
   }
 }
 
-/** `0.1.0 (00a590295015)`, as `tgv --version` and `tgv doctor` show it. */
+/** `0.1.0 (00a590295015)`, as `ren --version` and `ren doctor` show it. */
 /** A build as text; `—` before health has loaded. */
 export function buildLabel(build: Build | null): string {
   if (!build) return '—';

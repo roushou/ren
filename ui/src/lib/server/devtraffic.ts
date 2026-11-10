@@ -1,7 +1,7 @@
 /**
  * The dev slot's traffic controls, reached by the dev toolbar through the UI
  * server. This is the one place the UI forwards a change, and it exists only
- * when the dev slot sets `TGV_DEV_TRAFFIC_URL`: the target is the slot's fake
+ * when the dev slot sets `REN_DEV_TRAFFIC_URL`: the target is the slot's fake
  * traffic generator on loopback, never the daemon, and nothing here touches
  * recorded history or inference.
  */

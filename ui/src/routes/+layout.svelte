@@ -203,17 +203,17 @@
   });
 </script>
 
-<svelte:head><title>TGV - {pageTitle}</title></svelte:head>
+<svelte:head><title>Ren - {pageTitle}</title></svelte:head>
 <div class="app-shell">
   <header class="workbench-header">
     <a
       class="brand"
       class:development
       href="/"
-      aria-label={development ? 'TGV overview, development gateway' : 'TGV overview'}
+      aria-label={development ? 'Ren overview, development gateway' : 'Ren overview'}
       title={development ? 'A development gateway, not the installed service' : undefined}
       ><span class="flaps" aria-hidden="true"
-        ><span class="flap">T</span><span class="flap">G</span><span class="flap">V</span
+        ><span class="flap">R</span><span class="flap">E</span><span class="flap">N</span
         >{#if development}<span class="dev-badge">dev</span>{/if}</span
       ></a
     >
@@ -295,7 +295,7 @@
         />
       </header>
       <ConnectClient layout="list" {gatewayOrigin} />
-      <p><Icon name="shield" size={12} /> Each client keeps its own sign-in; TGV forwards it.</p>
+      <p><Icon name="shield" size={12} /> Each client keeps its own sign-in; Ren forwards it.</p>
     </div>
     <ThemeControl />
   </header>

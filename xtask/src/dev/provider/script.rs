@@ -29,7 +29,7 @@ pub enum Wire {
 
 impl Wire {
     /// The wire format for a request path, or `None` for a path no provider
-    /// TGV forwards to has.
+    /// Ren forwards to has.
     pub fn for_path(path: &str) -> Option<Self> {
         let path = path.trim_end_matches('/');
         if path.ends_with("/messages/count_tokens") {

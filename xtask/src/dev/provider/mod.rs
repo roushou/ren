@@ -1,5 +1,5 @@
 //! The dev slot's fake provider: one loopback server that answers every wire
-//! format TGV forwards (Anthropic Messages, OpenAI Responses and Chat
+//! format Ren forwards (Anthropic Messages, OpenAI Responses and Chat
 //! Completions, Codex over HTTP and WebSocket) with scripted replies. It
 //! accepts any credentials and stores nothing. What it says is decided by
 //! the pure [`script`]; this module only writes it.

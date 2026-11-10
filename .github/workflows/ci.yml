@@ -65,15 +65,15 @@ jobs:
       - name: Lint all targets
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
-      # The default build leaves `tgv tui` out; check the CLI with it too.
+      # The default build leaves `ren tui` out; check the CLI with it too.
       - name: Lint the CLI with the tui feature
-        run: cargo clippy -p tgv-rs --all-targets --locked --features tui -- -D warnings
+        run: cargo clippy -p ren-rs --all-targets --locked --features tui -- -D warnings
 
       - name: Test workspace
         run: cargo test --workspace --locked
 
       - name: Test the CLI with the tui feature
-        run: cargo test -p tgv-rs --locked --features tui
+        run: cargo test -p ren-rs --locked --features tui
 
       - name: Build headless daemon
         run: cargo build --workspace --locked
@@ -119,4 +119,4 @@ jobs:
 
       - name: Test Pi extension contracts
         working-directory: .
-        run: node --test crates/tgv-harness/pi/tgv.test.mjs
+        run: node --test crates/ren-harness/pi/ren.test.mjs

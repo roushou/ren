@@ -1,0 +1,24 @@
+# Example systemd user service: ~/.config/systemd/user/ren.service
+[Unit]
+Description=Ren gateway for coding agents
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=exec
+ExecStart=:"%h/.local/bin/ren" --config "%h/.config/ren/ren.toml" --data-dir "%h/.local/state/ren" serve
+WorkingDirectory=/
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+KillSignal=SIGTERM
+KillMode=control-group
+UMask=0077
+NoNewPrivileges=true
+LimitCORE=0
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=ren
+
+[Install]
+WantedBy=default.target

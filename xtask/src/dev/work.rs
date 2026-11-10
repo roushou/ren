@@ -7,7 +7,7 @@
 
 use serde_json::{Value, json};
 
-/// A client's built-in tools, as TGV's harness reads them.
+/// A client's built-in tools, as Ren's harness reads them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Toolset {
     /// `Read`, `Edit`, `Write`, `Bash` (also Claude Code on DeepSeek).

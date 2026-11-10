@@ -1,8 +1,0 @@
-# Podman Quadlet: the pod that TGV and its Tailscale sidecar share, so Serve
-# reaches TGV's loopback listener. Install all files in this directory to
-# ~/.config/containers/systemd/ (see docs/deployment.md#containers).
-[Pod]
-PodName=tgv
-# The host user is uid 65532 inside the pod, the image's user: the data
-# volume and the bind-mounted configuration stay owned by you on the host.
-UserNS=keep-id:uid=65532,gid=65532

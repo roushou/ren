@@ -1,7 +1,7 @@
 //! The dev slot: this checkout's build running beside the installed service,
 //! with its own configuration, data, and loopback ports, pointed only at the
 //! fake provider. Each process runs as a transient systemd user unit named
-//! `tgv-dev-*`, so it is stopped by name and never by a pattern that could
+//! `ren-dev-*`, so it is stopped by name and never by a pattern that could
 //! match the installed service.
 
 use super::DevError;
@@ -11,6 +11,17 @@ use crate::{
     tailscale::{Route, ServeStatus},
     ui::UiDeploy,
 };
+use ren_daemon::config::{Config, UpstreamConfig};
+use ren_gateway::{
+    EntryIngress, Environment, InstanceOptions,
+    user::{TokenDigest, UserConfig},
+};
+use ren_harness::{endpoint::UserToken, host::HostEnv};
+use ren_protocol::route::{Provider, Wire};
+use ren_recorder::{
+    caller::{TailscaleLogin, UserId},
+    routing::UpstreamId,
+};
 use std::{
     fs,
     io::{Read as _, Write as _},
@@ -18,17 +29,6 @@ use std::{
     path::{Path, PathBuf},
     thread,
     time::Duration,
-};
-use tgv_daemon::config::{Config, UpstreamConfig};
-use tgv_gateway::{
-    EntryIngress, Environment, InstanceOptions,
-    user::{TokenDigest, UserConfig},
-};
-use tgv_harness::{endpoint::UserToken, host::HostEnv};
-use tgv_protocol::route::{Provider, Wire};
-use tgv_recorder::{
-    caller::{TailscaleLogin, UserId},
-    routing::UpstreamId,
 };
 
 /// One process of the slot.
@@ -44,13 +44,13 @@ impl Unit {
     /// Every unit, in the order they stop.
     pub const ALL: [Self; 4] = [Self::Traffic, Self::Ui, Self::Daemon, Self::Provider];
 
-    /// The transient unit's name; every one starts with `tgv-dev-`.
+    /// The transient unit's name; every one starts with `ren-dev-`.
     pub fn name(self) -> &'static str {
         match self {
-            Self::Provider => "tgv-dev-provider",
-            Self::Daemon => "tgv-dev-daemon",
-            Self::Ui => "tgv-dev-ui",
-            Self::Traffic => "tgv-dev-traffic",
+            Self::Provider => "ren-dev-provider",
+            Self::Daemon => "ren-dev-daemon",
+            Self::Ui => "ren-dev-ui",
+            Self::Traffic => "ren-dev-traffic",
         }
     }
 
@@ -91,7 +91,7 @@ impl Unit {
         let mut run = Invocation::new("systemd-run")
             .args(["--user", "--collect", "--quiet"])
             .arg(format!("--unit={}", self.name()))
-            .arg(format!("--description=TGV dev slot: {}", self.name()));
+            .arg(format!("--description=Ren dev slot: {}", self.name()));
         if let Some(dir) = dir {
             run = run.arg(format!("--working-directory={}", dir.display()));
         }
@@ -139,14 +139,14 @@ impl Slot {
     pub const CONTROL: SocketAddr =
         SocketAddr::new(std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST), 13001);
     /// The operator key the dev config's operator-key entries read: fake.
-    const OPERATOR_KEY_ENV: &'static str = "TGV_DEV_OPERATOR_KEY";
+    const OPERATOR_KEY_ENV: &'static str = "REN_DEV_OPERATOR_KEY";
     const OPERATOR_KEY: &'static str = "fake-dev-operator-key";
 
     pub fn new(env: &HostEnv) -> Result<Self, DevError> {
         let home = env
             .absolute_path("HOME")
             .ok_or(DevError::Command(InstallError::MissingEnv("HOME")))?;
-        let share = home.join(".local/share/tgv-dev");
+        let share = home.join(".local/share/ren-dev");
         Ok(Self {
             repo: Path::new(env!("CARGO_MANIFEST_DIR"))
                 .parent()
@@ -154,8 +154,8 @@ impl Slot {
             cargo: env
                 .absolute_path("CARGO")
                 .unwrap_or_else(|| PathBuf::from("cargo")),
-            config: home.join(".config/tgv-dev/tgv.toml"),
-            data_dir: home.join(".local/state/tgv-dev"),
+            config: home.join(".config/ren-dev/ren.toml"),
+            data_dir: home.join(".local/state/ren-dev"),
             bin_dir: share.join("bin"),
             ui_dir: share.join("ui"),
             ui_next: share.join("ui.next"),
@@ -234,13 +234,13 @@ impl Slot {
     /// Build this checkout and copy the binaries the units run, so a later
     /// build never replaces one under a running unit.
     fn build(&self) -> Result<(), DevError> {
-        Self::step("Building tgv and xtask from this checkout");
+        Self::step("Building ren and xtask from this checkout");
         Invocation::new(&self.cargo)
             .current_dir(&self.repo)
-            .args(["build", "--locked", "-p", "tgv-rs", "-p", "xtask"])
+            .args(["build", "--locked", "-p", "ren-rs", "-p", "xtask"])
             .run()?;
         fs::create_dir_all(&self.bin_dir).map_err(InstallError::file(&self.bin_dir))?;
-        for name in ["tgv", "xtask"] {
+        for name in ["ren", "xtask"] {
             let built = self.repo.join("target/debug").join(name);
             let contents = fs::read(&built).map_err(InstallError::file(&built))?;
             InstallVps::write_private(&self.bin_dir.join(name), &contents, 0o755)?;
@@ -334,10 +334,10 @@ impl Slot {
             &[
                 ("HOST", Self::UI.ip().to_string()),
                 ("PORT", Self::UI.port().to_string()),
-                ("TGV_GATEWAY_URL", format!("http://{}", Self::DAEMON)),
-                ("TGV_PUBLIC_GATEWAY_URL", public_gateway),
+                ("REN_GATEWAY_URL", format!("http://{}", Self::DAEMON)),
+                ("REN_PUBLIC_GATEWAY_URL", public_gateway),
                 ("ORIGIN", origin.clone()),
-                ("TGV_DEV_TRAFFIC_URL", format!("http://{}", Self::CONTROL)),
+                ("REN_DEV_TRAFFIC_URL", format!("http://{}", Self::CONTROL)),
             ],
         )?;
         // The UI's /health relays the dev daemon's.
@@ -356,7 +356,7 @@ impl Slot {
             unit.stop()?;
         }
         let xtask = self.bin_dir.join("xtask");
-        let tgv = self.bin_dir.join("tgv");
+        let ren = self.bin_dir.join("ren");
         Self::step(&format!("Starting the fake provider on {}", Self::PROVIDER));
         Unit::Provider.start(
             None,
@@ -375,7 +375,7 @@ impl Slot {
         Self::step(&format!("Starting the dev daemon on {}", Self::DAEMON));
         Unit::Daemon.start(
             None,
-            &[&tgv],
+            &[&ren],
             &[
                 "--config".into(),
                 self.config.display().to_string(),
@@ -449,7 +449,7 @@ impl Slot {
     /// removed, and only if it is the one this slot names.
     pub fn wipe(&self) -> Result<(), DevError> {
         Self::down()?;
-        if self.data_dir.ends_with(".local/state/tgv-dev") && self.data_dir.exists() {
+        if self.data_dir.ends_with(".local/state/ren-dev") && self.data_dir.exists() {
             Self::step(&format!("Removing {}", self.data_dir.display()));
             fs::remove_dir_all(&self.data_dir).map_err(InstallError::file(&self.data_dir))?;
         }
@@ -469,10 +469,10 @@ impl Slot {
         println!("data               {}", self.data_dir.display());
         println!(
             "history            {} --config {} history",
-            self.bin_dir.join("tgv").display(),
+            self.bin_dir.join("ren").display(),
             self.config.display()
         );
-        println!("logs               journalctl --user -u 'tgv-dev-*'");
+        println!("logs               journalctl --user -u 'ren-dev-*'");
         Ok(())
     }
 }
@@ -480,14 +480,14 @@ impl Slot {
 #[cfg(test)]
 mod tests {
     use super::{Slot, Unit};
-    use tgv_harness::host::HostEnv;
+    use ren_harness::host::HostEnv;
 
     #[test]
     fn every_unit_is_named_for_the_dev_slot() {
         for unit in Unit::ALL {
-            assert!(unit.name().starts_with("tgv-dev-"), "{unit:?}");
-            assert_ne!(unit.name(), "tgv");
-            assert_ne!(unit.name(), "tgv-ui");
+            assert!(unit.name().starts_with("ren-dev-"), "{unit:?}");
+            assert_ne!(unit.name(), "ren");
+            assert_ne!(unit.name(), "ren-ui");
         }
     }
 
@@ -514,11 +514,11 @@ mod tests {
         assert!(config.listen.ip().is_loopback());
         assert_eq!(
             config.instance.environment,
-            tgv_gateway::Environment::Development
+            ren_gateway::Environment::Development
         );
         assert_eq!(
             slot.data_dir,
-            std::path::Path::new("/home/dev/.local/state/tgv-dev")
+            std::path::Path::new("/home/dev/.local/state/ren-dev")
         );
         // The token itself is never written, only its digest.
         assert!(!text.contains(Slot::ci_token().expose()));

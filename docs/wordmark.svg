@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="153" height="60" viewBox="0 0 51 20" shape-rendering="crispEdges">
-  <title>TGV</title>
+  <title>Ren</title>
   <!-- The UI's split-flap wordmark: three tiles, each cut by a transparent split line. -->
   <defs>
     <clipPath id="split">
@@ -14,12 +14,12 @@
       <rect x="35" y="0" width="16" height="20" />
     </g>
     <g fill="#ffffff">
-      <!-- T -->
-      <path d="M3 4H13V6H9V16H7V6H3Z" />
-      <!-- G -->
-      <path transform="translate(17.5 0)" d="M3 4H13V6H5V14H11V12H8V10H13V16H3Z" />
-      <!-- V -->
-      <path transform="translate(35 0)" d="M3 4H5V11H3Z M11 4H13V11H11Z M5 11H7V14H5Z M9 11H11V14H9Z M7 14H9V16H7Z" />
+      <!-- R -->
+      <path fill-rule="evenodd" d="M3 4H13V11H9L13 16H10L6 11H5V16H3Z M5 6V9H11V6Z" />
+      <!-- E -->
+      <path transform="translate(17.5 0)" d="M3 4H13V6H5V9H11V11H5V14H13V16H3Z" />
+      <!-- N -->
+      <path transform="translate(35 0)" d="M3 4H5L11 12V4H13V16H11L5 8V16H3Z" />
     </g>
   </g>
 </svg>

@@ -63,11 +63,11 @@ test('nested lists and lazy continuation lines', () => {
 });
 
 test('pipe tables', () => {
-  const [table] = parseMarkdown('| Crate | Role |\n|---|:--|\n| `tgv` | CLI |\n| x \\| y |');
+  const [table] = parseMarkdown('| Crate | Role |\n|---|:--|\n| `ren` | CLI |\n| x \\| y |');
   assert.equal(table.kind, 'table');
   if (table.kind !== 'table') return;
   assert.deepEqual(table.header, [[text('Crate')], [text('Role')]]);
-  assert.deepEqual(table.rows[0], [[{ kind: 'code', text: 'tgv' }], [text('CLI')]]);
+  assert.deepEqual(table.rows[0], [[{ kind: 'code', text: 'ren' }], [text('CLI')]]);
   assert.deepEqual(table.rows[1], [[text('x | y')], []]);
 });
 

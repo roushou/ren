@@ -1,34 +1,34 @@
 [workspace]
 members = [
-  "crates/tgv-cli",
-  "crates/tgv-daemon",
-  "crates/tgv-gateway",
-  "crates/tgv-harness",
-  "crates/tgv-protocol",
-  "crates/tgv-recorder",
-  "crates/tgv-store",
-  "crates/tgv-tui",
+  "crates/ren-cli",
+  "crates/ren-daemon",
+  "crates/ren-gateway",
+  "crates/ren-harness",
+  "crates/ren-protocol",
+  "crates/ren-recorder",
+  "crates/ren-store",
+  "crates/ren-tui",
   "xtask",
 ]
 # xtask (repository tasks) builds only when asked for.
 default-members = [
-  "crates/tgv-cli",
-  "crates/tgv-daemon",
-  "crates/tgv-gateway",
-  "crates/tgv-harness",
-  "crates/tgv-protocol",
-  "crates/tgv-recorder",
-  "crates/tgv-store",
-  "crates/tgv-tui",
+  "crates/ren-cli",
+  "crates/ren-daemon",
+  "crates/ren-gateway",
+  "crates/ren-harness",
+  "crates/ren-protocol",
+  "crates/ren-recorder",
+  "crates/ren-store",
+  "crates/ren-tui",
 ]
 resolver = "3"
 
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
-homepage = "https://github.com/roushou/tgv"
+homepage = "https://github.com/roushou/ren"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/roushou/tgv"
+repository = "https://github.com/roushou/ren"
 rust-version = "1.99"
 
 # Dependencies used by more than one crate, and our own crates. Each crate
@@ -48,6 +48,13 @@ http = "1.5"
 http-body = "1.1"
 http-body-util = "0.1.5"
 proptest = { version = "1", default-features = false, features = ["std"] }
+ren-daemon = { path = "crates/ren-daemon", version = "0.1.0" }
+ren-gateway = { path = "crates/ren-gateway", version = "0.1.0" }
+ren-harness = { path = "crates/ren-harness", version = "0.1.0" }
+ren-protocol = { path = "crates/ren-protocol", version = "0.1.0" }
+ren-recorder = { path = "crates/ren-recorder", version = "0.1.0" }
+ren-store = { path = "crates/ren-store", version = "0.1.0" }
+ren-tui = { path = "crates/ren-tui", version = "0.1.0" }
 reqwest = { version = "0.13", default-features = false, features = ["rustls", "stream", "http2"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1.0", features = ["preserve_order", "raw_value"] }
@@ -55,13 +62,6 @@ serde_with = { version = "3.24", default-features = false, features = ["macros"]
 sha2 = "0.11"
 strum = { version = "0.28", features = ["derive"] }
 tempfile = "3.27"
-tgv-daemon = { path = "crates/tgv-daemon", version = "0.1.0" }
-tgv-gateway = { path = "crates/tgv-gateway", version = "0.1.0" }
-tgv-harness = { path = "crates/tgv-harness", version = "0.1.0" }
-tgv-protocol = { path = "crates/tgv-protocol", version = "0.1.0" }
-tgv-recorder = { path = "crates/tgv-recorder", version = "0.1.0" }
-tgv-store = { path = "crates/tgv-store", version = "0.1.0" }
-tgv-tui = { path = "crates/tgv-tui", version = "0.1.0" }
 thiserror = "2.0"
 tokio = "1.54"
 tokio-tungstenite = { version = "0.29", default-features = false, features = ["handshake"] }

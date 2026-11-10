@@ -26,7 +26,7 @@ export function healthLine(
   if (!health)
     return [
       {
-        label: "Can't reach TGV",
+        label: "Can't reach Ren",
         tone: 'error',
         title: error ?? 'The daemon did not answer.',
       },
@@ -71,7 +71,7 @@ export function healthLine(
       items.push({
         label: `Paused · retry in ${pause.retry_after} s`,
         tone: 'warning',
-        title: 'Every new call gets 503; `tgv control resume` admits them again',
+        title: 'Every new call gets 503; `ren control resume` admits them again',
       });
       break;
     case 'unknown':
@@ -86,7 +86,7 @@ export function healthLine(
     items.push({
       label: `${operator.blocked_sessions} session${operator.blocked_sessions === 1 ? '' : 's'} blocked`,
       tone: 'warning',
-      title: 'Calls from blocked sessions get 403; `tgv control unblock` lifts a block',
+      title: 'Calls from blocked sessions get 403; `ren control unblock` lifts a block',
     });
   if (storage) {
     const used =
@@ -521,7 +521,7 @@ export class Verdict {
   }
 
   static headline(health: Health | null): string {
-    if (!health) return "Can't reach TGV";
+    if (!health) return "Can't reach Ren";
     if (health.status !== 'ok' || RecorderReport.capture(health.recorder).kind === 'failing')
       return 'Recording failing';
     return health.operator.pause.state === 'paused'

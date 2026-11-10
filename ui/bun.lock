@@ -3,7 +3,7 @@
   "configVersion": 0,
   "workspaces": {
     "": {
-      "name": "tgv-ui",
+      "name": "ren-ui",
       "devDependencies": {
         "@sveltejs/adapter-node": "6.0.1",
         "@sveltejs/kit": "3.1.1",

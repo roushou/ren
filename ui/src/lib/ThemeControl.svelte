@@ -31,7 +31,7 @@
     preference = value;
     apply();
     try {
-      localStorage.setItem('tgv.theme', value);
+      localStorage.setItem('ren.theme', value);
     } catch {
       // The choice still works for this page when persistence is unavailable.
     }
@@ -41,7 +41,7 @@
     preference = parse(document.documentElement.dataset.themePreference);
     const media = matchMedia('(prefers-color-scheme: dark)');
     const sync = (event: StorageEvent) => {
-      if (event.key === 'tgv.theme' || event.key === null) {
+      if (event.key === 'ren.theme' || event.key === null) {
         preference = parse(event.newValue);
         apply();
       }

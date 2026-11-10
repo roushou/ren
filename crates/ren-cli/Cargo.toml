@@ -1,0 +1,69 @@
+[package]
+name = "ren-rs"
+version.workspace = true
+categories = ["command-line-utilities", "development-tools"]
+edition.workspace = true
+homepage.workspace = true
+keywords = ["llm", "gateway", "proxy", "claude", "codex"]
+license.workspace = true
+readme = "../../README.md"
+repository.workspace = true
+rust-version.workspace = true
+description = "Ren: a self-hosted gateway and flight recorder for coding agents (Claude Code, Codex, Pi, and opencode) that forwards native provider traffic unchanged and records it."
+
+# The `ren` binary: command-line parsing and dispatch, doctor, and service
+# definitions. `anyhow` is used only here (docs/architecture.md).
+# Published as `ren-rs` (the `ren` name is taken on crates.io); the library
+# keeps its role name and the binary stays `ren`.
+[lib]
+name = "ren_cli"
+path = "src/lib.rs"
+
+[[bin]]
+name = "ren"
+path = "src/main.rs"
+
+[dependencies]
+anstyle = "1.0"
+anyhow = "1.0"
+clap.workspace = true
+futures-util = { workspace = true, optional = true }
+ren-daemon.workspace = true
+ren-gateway.workspace = true
+ren-harness.workspace = true
+ren-protocol.workspace = true
+ren-recorder.workspace = true
+ren-store.workspace = true
+ren-tui = { workspace = true, optional = true }
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serde_with.workspace = true
+strum.workspace = true
+tempfile.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["io-std", "io-util", "macros", "rt-multi-thread", "signal", "sync", "time"] }
+toml.workspace = true
+tracing.workspace = true
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+uuid.workspace = true
+
+# `ren tui`, the terminal view of live sessions: off by default, so the
+# default build has no terminal UI dependencies.
+[features]
+tui = ["dep:ren-tui", "dep:futures-util"]
+
+# build.rs records the source revision (REN_REVISION) from git or from
+# cargo's packaging metadata.
+[build-dependencies]
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+axum.workspace = true
+bytes.workspace = true
+futures-util.workspace = true
+tokio = { workspace = true, features = ["io-util", "macros", "net", "rt-multi-thread", "sync", "time"] }
+
+[lints]
+workspace = true

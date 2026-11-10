@@ -242,7 +242,7 @@
             after completion.
           </p>{/if}
         {#if current.state === 'recovered'}<p class="callout">
-            TGV restarted before this call finished. Its outcome is unknown.
+            Ren restarted before this call finished. Its outcome is unknown.
           </p>{/if}
         {#if inspection?.limitations.length}<div class="limitation-list">
             {#each inspection.limitations as reason}<span>{title(reason)}</span>{/each}
@@ -381,9 +381,9 @@
           <dd>{current.channel}</dd>
           <dt>Caller</dt>
           <dd>{callerShown(current.caller).title}</dd>
-          <dt>TGV session</dt>
+          <dt>Ren session</dt>
           <dd>{current.session ?? 'Unassigned'}</dd>
-          <dt>TGV turn</dt>
+          <dt>Ren turn</dt>
           <dd>{current.turn ?? 'Unassigned'}</dd>
           <dt>Attribution source</dt>
           <dd>{title(current.attribution.hint?.source)}</dd>

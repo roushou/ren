@@ -15,7 +15,7 @@ export type Stored<T extends string> = T | UnknownLabel;
 export class ShapeError extends Error {
   readonly path: string;
   constructor(path: string, expected: string) {
-    super(`TGV sent an unexpected response (${path || 'body'}: expected ${expected}).`);
+    super(`Ren sent an unexpected response (${path || 'body'}: expected ${expected}).`);
     this.path = path;
   }
 }
@@ -89,7 +89,7 @@ export const brandedCount =
 
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-/** A TGV identity: a hyphenated UUID. */
+/** A Ren identity: a hyphenated UUID. */
 export class Uuid<B extends string> {
   /** Parse untrusted text, such as a URL parameter. */
   parse(raw: string | null | undefined): Brand<string, B> | null {

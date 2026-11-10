@@ -1,4 +1,4 @@
-//! `cargo xtask install-vps`: install or upgrade TGV from this checkout as a
+//! `cargo xtask install-vps`: install or upgrade Ren from this checkout as a
 //! Linux systemd user service, optionally published with Tailscale Serve.
 //!
 //! An upgrade restarts the daemon only between calls: it waits until none is
@@ -13,6 +13,8 @@ use crate::{
     ui::{UiDeploy, UiUrls},
 };
 use clap::Args;
+use ren_daemon::config::{Config, ConfigError};
+use ren_harness::host::HostEnv;
 use std::{
     fs,
     io::Write as _,
@@ -22,10 +24,8 @@ use std::{
     thread,
     time::Duration,
 };
-use tgv_daemon::config::{Config, ConfigError};
-use tgv_harness::host::HostEnv;
 
-/// Install or upgrade TGV from this checkout as a systemd user service.
+/// Install or upgrade Ren from this checkout as a systemd user service.
 ///
 /// Run on the host, as the user that owns the service, from the commit to
 /// deploy. Each step checks the current state and changes only what differs.
@@ -36,7 +36,7 @@ pub struct InstallVps {
     /// successful run.
     #[command(flatten)]
     publish: Publish,
-    /// Skip `tgv control backup` before replacing a running daemon.
+    /// Skip `ren control backup` before replacing a running daemon.
     #[arg(long)]
     skip_backup: bool,
     /// Install even though tracked files differ from the commit; the daemon
@@ -89,7 +89,7 @@ pub enum InstallError {
     )]
     Backup { data_dir: PathBuf },
     #[error(
-        "doctor reported a failed check; see `journalctl --user -u tgv`. To roll back, stop the service, move {} to {}, and start it",
+        "doctor reported a failed check; see `journalctl --user -u ren`. To roll back, stop the service, move {} to {}, and start it",
         previous.display(),
         binary.display()
     )]
@@ -108,10 +108,10 @@ pub enum InstallError {
     SavedOptions(PathBuf),
     #[error("{0} is not on PATH")]
     MissingProgram(&'static str),
-    #[error("deploy/tgv-ui.service no longer has the line {0:?} to render")]
+    #[error("deploy/ren-ui.service no longer has the line {0:?} to render")]
     UiTemplate(&'static str),
     #[error(
-        "the UI does not answer {url}; see `journalctl --user -u tgv-ui`. To roll back, stop tgv-ui, move {} to {}, and start it",
+        "the UI does not answer {url}; see `journalctl --user -u ren-ui`. To roll back, stop ren-ui, move {} to {}, and start it",
         previous.display(),
         dir.display()
     )]
@@ -213,7 +213,7 @@ struct Layout {
     unit: PathBuf,
 }
 
-const SERVICE: &str = "tgv.service";
+const SERVICE: &str = "ren.service";
 
 impl Layout {
     fn new(env: &HostEnv) -> Result<Self, InstallError> {
@@ -236,17 +236,17 @@ impl Layout {
                 .absolute_path("CARGO")
                 .unwrap_or_else(|| PathBuf::from("cargo")),
             user,
-            binary: bin_dir.join("tgv"),
-            previous: bin_dir.join("tgv.previous"),
+            binary: bin_dir.join("ren"),
+            previous: bin_dir.join("ren.previous"),
             bin_dir,
-            config: home.join(".config/tgv/tgv.toml"),
-            data_dir: home.join(".local/state/tgv"),
+            config: home.join(".config/ren/ren.toml"),
+            data_dir: home.join(".local/state/ren"),
             unit: home.join(".config/systemd/user").join(SERVICE),
         })
     }
 
-    /// `tgv` with this layout's configuration and data directory.
-    fn tgv(&self, binary: &Path) -> Invocation {
+    /// `ren` with this layout's configuration and data directory.
+    fn ren(&self, binary: &Path) -> Invocation {
         Invocation::new(binary)
             .arg("--config")
             .arg(&self.config)
@@ -301,7 +301,7 @@ impl InstallVps {
                 let dns = Self::publish(tailscale, port, &format!("http://{}", config.listen))?;
                 let url = Self::url(dns.as_deref(), port);
                 println!(
-                    "\nGateway root URL for clients: {url}\n  tgv init --gateway {url}\n  tgv run claude\n"
+                    "\nGateway root URL for clients: {url}\n  ren init --gateway {url}\n  ren run claude\n"
                 );
                 dns
             }
@@ -380,11 +380,11 @@ impl InstallVps {
     fn build(layout: &Layout) -> Result<PathBuf, InstallError> {
         Self::step("Building the release binary");
         Invocation::new(&layout.cargo)
-            .args(["build", "--release", "--locked", "--package", "tgv-rs"])
-            .args(["--bin", "tgv", "--manifest-path"])
+            .args(["build", "--release", "--locked", "--package", "ren-rs"])
+            .args(["--bin", "ren", "--manifest-path"])
             .arg(layout.repo.join("Cargo.toml"))
             .run()?;
-        let built = layout.repo.join("target/release/tgv");
+        let built = layout.repo.join("target/release/ren");
         fs::canonicalize(&built).map_err(InstallError::file(&built))
     }
 
@@ -406,10 +406,10 @@ impl InstallVps {
             return Ok(());
         }
         Self::step(&format!(
-            "Creating {} from tgv.example.toml (review it)",
+            "Creating {} from ren.example.toml (review it)",
             layout.config.display()
         ));
-        let example = layout.repo.join("tgv.example.toml");
+        let example = layout.repo.join("ren.example.toml");
         let contents = fs::read(&example).map_err(InstallError::file(&example))?;
         Self::write_private(&layout.config, &contents, 0o600)
     }
@@ -444,8 +444,8 @@ impl InstallVps {
 
     fn control_state(layout: &Layout) -> Result<ControlState, InstallError> {
         Self::json(
-            layout.tgv(&layout.binary).args(["control", "state"]),
-            "tgv control state",
+            layout.ren(&layout.binary).args(["control", "state"]),
+            "ren control state",
             ControlState::parse,
         )
     }
@@ -498,7 +498,7 @@ impl InstallVps {
 
     fn control(layout: &Layout, args: &[&str]) -> Result<(), InstallError> {
         layout
-            .tgv(&layout.binary)
+            .ren(&layout.binary)
             .arg("control")
             .args(args)
             .capture()
@@ -537,8 +537,8 @@ impl InstallVps {
     /// The installed CLI and the daemon must report the same build.
     fn verify_build(layout: &Layout, tree: Tree) -> Result<(), InstallError> {
         let report = Self::json(
-            layout.tgv(&layout.binary).args(["doctor", "--json"]),
-            "tgv doctor --json",
+            layout.ren(&layout.binary).args(["doctor", "--json"]),
+            "ren doctor --json",
             DoctorReport::parse,
         )?;
         let Some(check) = report.build() else {
@@ -588,7 +588,7 @@ impl InstallVps {
                 Backup::Run => {
                     Self::step("Backing up history with the running daemon");
                     if !layout
-                        .tgv(&layout.binary)
+                        .ren(&layout.binary)
                         .args(["control", "backup"])
                         .succeeds(Echo::Show)?
                     {
@@ -623,7 +623,7 @@ impl InstallVps {
     ) -> Result<(), InstallError> {
         let dir = path.parent().unwrap_or(Path::new("/"));
         let mut file = tempfile::Builder::new()
-            .prefix(".tgv.")
+            .prefix(".ren.")
             .tempfile_in(dir)
             .map_err(InstallError::file(dir))?;
         file.write_all(contents).map_err(InstallError::file(path))?;
@@ -640,7 +640,7 @@ impl InstallVps {
 
     fn install_unit(layout: &Layout) -> Result<(), InstallError> {
         let rendered = layout
-            .tgv(&layout.binary)
+            .ren(&layout.binary)
             .args(["service", "render", "--manager", "systemd", "--binary"])
             .arg(&layout.binary)
             .capture()?;
@@ -661,7 +661,7 @@ impl InstallVps {
             Self::step(&format!("Writing {}", unit.display()));
             let dir = unit.parent().unwrap_or(Path::new("/"));
             let mut staged = tempfile::Builder::new()
-                .prefix(".tgv.")
+                .prefix(".ren.")
                 .suffix(".service")
                 .tempfile_in(dir)
                 .map_err(InstallError::file(dir))?;
@@ -716,8 +716,8 @@ impl InstallVps {
     }
 
     fn doctor(layout: &Layout) -> Result<(), InstallError> {
-        Self::step("Checking the daemon with tgv doctor");
-        let doctor = layout.tgv(&layout.binary).arg("doctor");
+        Self::step("Checking the daemon with ren doctor");
+        let doctor = layout.ren(&layout.binary).arg("doctor");
         // The unit is Type=exec: started is not yet listening.
         for _ in 0..10 {
             if doctor.succeeds(Echo::Hide)? {

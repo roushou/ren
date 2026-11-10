@@ -8,4 +8,4 @@ ui/build
 ui/.env
 ui/.env.*
 deploy/container/*.env
-deploy/container/tgv.toml
+deploy/container/ren.toml

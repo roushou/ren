@@ -1,0 +1,26 @@
+# Podman Quadlet: the Ren daemon in the Ren pod. Build the image first:
+#   podman build -t localhost/ren:latest <checkout>
+# No AutoUpdate: upgrades restart Ren between calls, not whenever an image changes.
+[Unit]
+Description=Ren gateway for coding agents
+# Stop before Tailscale, so open streams can finish.
+After=ren-tailscale.service
+
+[Container]
+ContainerName=ren-gateway
+Image=localhost/ren:latest
+Pod=ren.pod
+Exec=--config /etc/ren/ren.toml serve
+Volume=ren-data.volume:/data
+Volume=%h/.config/ren/ren.toml:/etc/ren/ren.toml:ro,Z
+# Operator API keys named by `operator_key_env` in ren.toml, if any:
+# EnvironmentFile=%h/.config/ren/ren.env
+# Active requests get 10 seconds, then capture drains.
+StopTimeout=30
+
+[Service]
+Restart=on-failure
+TimeoutStopSec=45
+
+[Install]
+WantedBy=default.target

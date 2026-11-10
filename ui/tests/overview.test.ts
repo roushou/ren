@@ -70,8 +70,8 @@ test('each problem says what is wrong, and where to look', () => {
     title: 'Storage or retention errors since the daemon started',
     href: '/recorder',
   });
-  assert.deepEqual(labels(healthLine(null, null, 'Cannot reach TGV.')), [
-    ["Can't reach TGV", 'error'],
+  assert.deepEqual(labels(healthLine(null, null, 'Cannot reach Ren.')), [
+    ["Can't reach Ren", 'error'],
   ]);
   assert.deepEqual(labels(healthLine(healthFixture(), storage(5, 0, false), null)).at(-1), [
     '5 B stored',
@@ -240,6 +240,6 @@ test('the verdict takes its tone from the worst real problem, never from bookkee
     secrets.problems.map((problem) => problem.title),
     ['1 secret exposed'],
   );
-  assert.equal(Verdict.headline(null), "Can't reach TGV");
+  assert.equal(Verdict.headline(null), "Can't reach Ren");
   assert.equal(Verdict.headline(healthFixture({ storage_errors: 1 })), 'Recording failing');
 });

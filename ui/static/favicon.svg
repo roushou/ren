@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16" shape-rendering="crispEdges">
-  <title>TGV</title>
+  <title>Ren</title>
   <!-- A split-flap tile; the hinge notches stand in for the split line at 16px. -->
   <path fill="#b56948" d="M0 0H16V7H15V9H16V16H0V9H1V7H0Z" />
-  <path fill="#ffffff" d="M3 3H13V5H9V13H7V5H3Z" />
+  <path fill="#ffffff" fill-rule="evenodd" d="M3 3H12V9H9L13 13H10L6 9H5V13H3Z M5 5V7H10V5Z" />
 </svg>

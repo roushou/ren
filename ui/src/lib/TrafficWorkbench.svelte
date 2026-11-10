@@ -355,7 +355,7 @@
     <div class="scope-group scope-identity">
       {#if session}<span class="scope-session"
           ><SessionName {session} detail={details.get(session.id)} /></span
-        ><small class="mono muted" title={`TGV's own ID for this session: ${session.id}`}
+        ><small class="mono muted" title={`Ren's own ID for this session: ${session.id}`}
           >{short(session.native_id)}</small
         >{:else}<strong class="mono">{short(sessionId)}</strong>{/if}
     </div>
@@ -563,7 +563,7 @@
           <h2>
             {retained.current.error.kind === 'incompatible'
               ? 'This UI and the daemon disagree'
-              : "Can't reach TGV"}
+              : "Can't reach Ren"}
           </h2>
           <p>{retained.current.error.message}</p>
           <p class="muted">
@@ -594,7 +594,7 @@
                 ? 'Try a broader search or adjust your filters.'
                 : sessionId
                   ? 'Refresh to check for new activity in this session.'
-                  : 'Point a client at TGV or use a launch command below.'}
+                  : 'Point a client at Ren or use a launch command below.'}
           </p>
           {#if !loading && (filterCount || !!after)}<button class="button" onclick={resetFilters}
               >Clear filters & return to first page</button

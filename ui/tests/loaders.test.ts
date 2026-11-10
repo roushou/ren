@@ -38,7 +38,7 @@ test('background failure retains only the matching snapshot and recovery clears 
   assert.deepEqual(retained.value, ['retained']);
   assert.equal(retained.updated, previous.updated);
   assert.equal(retained.error?.kind, 'unreachable');
-  assert.match(retained.error?.message ?? '', /Cannot reach TGV/);
+  assert.match(retained.error?.message ?? '', /Cannot reach Ren/);
   assert.equal(retainSnapshot(previous, { ...failed, key: '/sessions/other' }).value, null);
   const recovered = await readSnapshot('/traffic', async () => ['new']);
   assert.equal(retainSnapshot(previous, recovered).error, null);

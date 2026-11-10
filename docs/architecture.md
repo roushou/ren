@@ -1,6 +1,6 @@
-# TGV architecture
+# Ren architecture
 
-How TGV is built: its requirements, the units of work it records, the crates
+How Ren is built: its requirements, the units of work it records, the crates
 that implement it, and the behaviour of each plane. [`AGENTS.md`](../AGENTS.md)
 holds the contributor rules; [`README.md`](../README.md) is for operators.
 
@@ -8,7 +8,7 @@ holds the contributor rules; [`README.md`](../README.md) is for operators.
 
 ## 1. Overview
 
-TGV is three planes around a typed, append-only observation log:
+Ren is three planes around a typed, append-only observation log:
 
 ```text
             ┌──────────────────────── data plane ────────────────────────┐
@@ -52,7 +52,7 @@ The central ideas:
 
 ## 2. Requirements
 
-TGV targets heavy use by one operator: several concurrent agents all day, MB-sized tool
+Ren targets heavy use by one operator: several concurrent agents all day, MB-sized tool
 outputs, weeks of retention, and tens of GB of history.
 
 | #  | Requirement                                                                                                                                                     |
@@ -138,7 +138,7 @@ Sources:
   behalf of their users" or to "collect, store, or intermediate Claude.ai
   credentials".
 - OpenAI says not to share `auth.json`.
-- So TGV never stores subscription credentials and never pools accounts. API keys
+- So Ren never stores subscription credentials and never pools accounts. API keys
   owned by the operator are a separate, allowed case.
 
 **SQLite**
@@ -183,37 +183,37 @@ The workspace has one crate per component. Each exposes one primary type at its
 root, and dependencies run one way; Cargo rejects cycles.
 
 ```text
-tgv-cli      ─► tgv-daemon, tgv-gateway, tgv-tui (with the `tui` feature)
-tgv-daemon   ─► tgv-gateway, tgv-store
-tgv-gateway  ─► tgv-harness, tgv-recorder, tgv-store
-tgv-tui      ─► tgv-store, tgv-recorder, tgv-harness, tgv-protocol
-tgv-store    ─► tgv-recorder
-tgv-recorder ─► tgv-harness, tgv-protocol
-tgv-harness  ─► tgv-protocol
-xtask        ─► tgv-daemon, tgv-gateway, tgv-recorder, tgv-harness, tgv-protocol   (repository tasks, unpublished)
+ren-cli      ─► ren-daemon, ren-gateway, ren-tui (with the `tui` feature)
+ren-daemon   ─► ren-gateway, ren-store
+ren-gateway  ─► ren-harness, ren-recorder, ren-store
+ren-tui      ─► ren-store, ren-recorder, ren-harness, ren-protocol
+ren-store    ─► ren-recorder
+ren-recorder ─► ren-harness, ren-protocol
+ren-harness  ─► ren-protocol
+xtask        ─► ren-daemon, ren-gateway, ren-recorder, ren-harness, ren-protocol   (repository tasks, unpublished)
 ```
 
 | Crate                                      | Primary type                                                                  | Owns                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | ------------------------------------------ | ----------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `tgv-protocol`                             | `CallInspector`                                                               | `Provider`, `Wire`, `Api` (a provider in one wire format, built by `Provider::speak`), `Endpoint`, `Method`, `Transport`, `Direction`; `Stored<T>` and the label trait; SSE framing; encodings; Anthropic Messages, OpenAI Responses, and OpenAI Chat Completions (`chat`) wire types; WebSocket message classification (`Payload`, `CloseCode`, `ClientMessage`, `UpstreamMessage`, `InterruptOutcome`); the native identifiers and `MessageHints` the wire carries; inspection; the activity reader (`activity`)                                                                                        |
-| `tgv-harness`                              | `Harness` enum: `ClaudeCode`, `Codex`, `Pi`, `OpenCode`                       | attribution (`Attribution`, `SessionHint`, hint sources and issues); launch plans; the Pi extension cache; `GatewayEndpoint`, the URL a harness is pointed at, and the `UserToken` it presents there; `HostEnv`; what each harness's tools and messages mean (`tools`)                                                                                                                                                                                                                                                                                                                                    |
-| `tgv-recorder`                             | `Recorder`; `RecorderTask` runs it; `RecordSink` is its port                  | `ChannelId`, `CallId`, `AttemptId`, `SessionId`, `TurnId`; `Clock`, `IdSource`, and their test implementations; recorded facts (terminals, causes, phases, rejections, body endings, omissions, `ChannelEnd`, `ConfigRevision`, `UpstreamId`, `OperatorRevision`); who called (`UserId`, `TailscaleLogin`, `Caller`); the stored inspection format; the `Chunker`; batches; `RetentionPolicy`; taps, queue, metrics, live broadcast, and live progress on streaming calls (`progress`)                                                                                                                    |
-| `tgv-store`                                | `Store`, which implements `RecordSink`; `Reader` and `Backup` are its handles | SQLite and migrations, the stored chunk format, queries, views, turn and call activity assembled from stored digests (`activity`), full-text search and exposures over the digests (`search`), retention, `Recovery`, the sweep gate, backup                                                                                                                                                                                                                                                                                                                                                              |
-| `tgv-tui`                                  | `Tui`, sans-IO; `Wall` is what it draws; `Screen` is the terminal             | the terminal view of live sessions: which reads a view needs (`Read`, `SnapshotQuery`) and what it makes of them (`Input`); keys and the commands they give (`Key`, `Command`); panes, their placement, focus, zoom, and pins (`Grid`, `View`); each session as its pane reads it, the same readings as the UI's Live wall (`SessionPane`, `Phase`, `Line`, `Alert`); how a call ended (`CallEnd`); the status line (`Status`); drawing a wall into a ratatui buffer (`draw`, with a resolved `Theme` and the `ThemeName` presets); the terminal itself, restored when dropped (`Screen`, `ScreenEvents`) |
-| `tgv-gateway`                              | `Gateway`                                                                     | all HTTP routes: forwarding, the read API and `/api/live`, and authenticated controls and backup; route table, header policy, request buffering, upstream entries, the `Upstream` seam and Reqwest implementation, `HttpAttempt`, `WsChannel`, retry facts, policy, named users and `Users::identify` with their concurrency limits (`limits`), the instance's environment (`instance`), `Controls`, `OperatorState`, the running-call registry, ingress and the shutdown drain, the `Build` `/health` reports                                                                                            |
-| `tgv-daemon`                               | `Daemon`                                                                      | `Config` → `RuntimeConfig`; resource wiring, listener binding, control-token file, and lifecycle; the system clock and random IDs; the server task, and the observation thread (`ObservationThread`), whose own current-thread runtime runs the recorder                                                                                                                                                                                                                                                                                                                                                  |
-| `tgv-cli` (package `tgv-rs`, binary `tgv`) | `Cli`                                                                         | capturing `HostEnv` in `main`, recording the source revision (`build.rs`), commands, gateway choice and `client.toml`, history and controls on this host or through a gateway's APIs (`management`), `tgv tail` (`tail`), `tgv tui` with the `tui` feature (`commands::tui`) and its local theme preference (`tui_settings`, `tui.toml`), the pure MCP core of `tgv mcp` (`mcp`), doctor and its build comparison, service definitions                                                                                                                                                                    |
-| `xtask` (unpublished, `cargo xtask`)       | `Xtask`                                                                       | `install-vps`: installing or upgrading TGV from a checkout as a systemd user service between calls, published with Tailscale Serve, and with `--ui-https-port` the UI as `tgv-ui.service`; its publishing flags are saved for later runs; `dev`: the dev slot, a fake provider, seed traffic, live traffic with its loopback control API, and screenshots                                                                                                                                                                                                                                                 |
+| `ren-protocol`                             | `CallInspector`                                                               | `Provider`, `Wire`, `Api` (a provider in one wire format, built by `Provider::speak`), `Endpoint`, `Method`, `Transport`, `Direction`; `Stored<T>` and the label trait; SSE framing; encodings; Anthropic Messages, OpenAI Responses, and OpenAI Chat Completions (`chat`) wire types; WebSocket message classification (`Payload`, `CloseCode`, `ClientMessage`, `UpstreamMessage`, `InterruptOutcome`); the native identifiers and `MessageHints` the wire carries; inspection; the activity reader (`activity`)                                                                                        |
+| `ren-harness`                              | `Harness` enum: `ClaudeCode`, `Codex`, `Pi`, `OpenCode`                       | attribution (`Attribution`, `SessionHint`, hint sources and issues); launch plans; the Pi extension cache; `GatewayEndpoint`, the URL a harness is pointed at, and the `UserToken` it presents there; `HostEnv`; what each harness's tools and messages mean (`tools`)                                                                                                                                                                                                                                                                                                                                    |
+| `ren-recorder`                             | `Recorder`; `RecorderTask` runs it; `RecordSink` is its port                  | `ChannelId`, `CallId`, `AttemptId`, `SessionId`, `TurnId`; `Clock`, `IdSource`, and their test implementations; recorded facts (terminals, causes, phases, rejections, body endings, omissions, `ChannelEnd`, `ConfigRevision`, `UpstreamId`, `OperatorRevision`); who called (`UserId`, `TailscaleLogin`, `Caller`); the stored inspection format; the `Chunker`; batches; `RetentionPolicy`; taps, queue, metrics, live broadcast, and live progress on streaming calls (`progress`)                                                                                                                    |
+| `ren-store`                                | `Store`, which implements `RecordSink`; `Reader` and `Backup` are its handles | SQLite and migrations, the stored chunk format, queries, views, turn and call activity assembled from stored digests (`activity`), full-text search and exposures over the digests (`search`), retention, `Recovery`, the sweep gate, backup                                                                                                                                                                                                                                                                                                                                                              |
+| `ren-tui`                                  | `Tui`, sans-IO; `Wall` is what it draws; `Screen` is the terminal             | the terminal view of live sessions: which reads a view needs (`Read`, `SnapshotQuery`) and what it makes of them (`Input`); keys and the commands they give (`Key`, `Command`); panes, their placement, focus, zoom, and pins (`Grid`, `View`); each session as its pane reads it, the same readings as the UI's Live wall (`SessionPane`, `Phase`, `Line`, `Alert`); how a call ended (`CallEnd`); the status line (`Status`); drawing a wall into a ratatui buffer (`draw`, with a resolved `Theme` and the `ThemeName` presets); the terminal itself, restored when dropped (`Screen`, `ScreenEvents`) |
+| `ren-gateway`                              | `Gateway`                                                                     | all HTTP routes: forwarding, the read API and `/api/live`, and authenticated controls and backup; route table, header policy, request buffering, upstream entries, the `Upstream` seam and Reqwest implementation, `HttpAttempt`, `WsChannel`, retry facts, policy, named users and `Users::identify` with their concurrency limits (`limits`), the instance's environment (`instance`), `Controls`, `OperatorState`, the running-call registry, ingress and the shutdown drain, the `Build` `/health` reports                                                                                            |
+| `ren-daemon`                               | `Daemon`                                                                      | `Config` → `RuntimeConfig`; resource wiring, listener binding, control-token file, and lifecycle; the system clock and random IDs; the server task, and the observation thread (`ObservationThread`), whose own current-thread runtime runs the recorder                                                                                                                                                                                                                                                                                                                                                  |
+| `ren-cli` (package `ren-rs`, binary `ren`) | `Cli`                                                                         | capturing `HostEnv` in `main`, recording the source revision (`build.rs`), commands, gateway choice and `client.toml`, history and controls on this host or through a gateway's APIs (`management`), `ren tail` (`tail`), `ren tui` with the `tui` feature (`commands::tui`) and its local theme preference (`tui_settings`, `tui.toml`), the pure MCP core of `ren mcp` (`mcp`), doctor and its build comparison, service definitions                                                                                                                                                                    |
+| `xtask` (unpublished, `cargo xtask`)       | `Xtask`                                                                       | `install-vps`: installing or upgrading Ren from a checkout as a systemd user service between calls, published with Tailscale Serve, and with `--ui-https-port` the UI as `ren-ui.service`; its publishing flags are saved for later runs; `dev`: the dev slot, a fake provider, seed traffic, live traffic with its loopback control API, and screenshots                                                                                                                                                                                                                                                 |
 
-- **Purity.** `tgv-protocol`'s manifest names only pure dependencies (`serde`,
+- **Purity.** `ren-protocol`'s manifest names only pure dependencies (`serde`,
   `serde_json`, `serde_with`, `strum`, `thiserror`, `uuid`, `http` types, and the
   decompressors), and a source test (`sources_stay_free_of_runtime_and_io`)
-  rejects runtime and I/O paths. Inside `tgv-gateway`, `src/purity.rs` keeps
+  rejects runtime and I/O paths. Inside `ren-gateway`, `src/purity.rs` keeps
   `attempt`, `call`, `channel`, `retry`, `operator`, and `user` free of runtime,
-  I/O, storage, and shell-module dependencies; `tgv-recorder`'s `src/purity.rs`
+  I/O, storage, and shell-module dependencies; `ren-recorder`'s `src/purity.rs`
   does the same for `recording`, `digest`, `options`, and `progress`,
-  `tgv-tui`'s `src/purity.rs` for the view's core (all but `draw`, `theme`, and
-  `screen`), and `tgv-cli`'s
+  `ren-tui`'s `src/purity.rs` for the view's core (all but `draw`, `theme`, and
+  `screen`), and `ren-cli`'s
   `mcp/purity.rs` for the MCP core.
 - **Ports point down.** The recorder declares `RecordSink`, `Clock`, and
   `IdSource`; the store implements `RecordSink`; the daemon implements the system
@@ -221,7 +221,7 @@ xtask        ─► tgv-daemon, tgv-gateway, tgv-recorder, tgv-harness, tgv-prot
   `disallowed_methods` exemptions besides `HostEnv::capture`.
 - **Operator documents are opaque below the gateway.** The recorder and store carry
   an operator action as a revision, a command label, and serialized JSON documents.
-  `tgv-gateway` owns `OperatorState` and parses the stored snapshot on restore.
+  `ren-gateway` owns `OperatorState` and parses the stored snapshot on restore.
 - **One HTTP service.** The gateway assembles inference, management, and control
   routes into one router (`Gateway::router`) and serves one listener
   (`Gateway::into_ingress`). The daemon opens resources, binds the socket, writes
@@ -249,7 +249,7 @@ channel is pinned to it. A fallback rule applies only to calls whose first
 upstream holds client-owned credentials. Pi's extension headers, then
 OpenCode's session header, are recognised on every route. A header policy expressed as
 data (`HeaderPolicy::REQUEST` and `RESPONSE`) removes hop-by-hop, proxy identity,
-and Tailscale identity headers, and strips TGV's own `x-tgv-*` hints before
+and Tailscale identity headers, and strips Ren's own `x-ren-*` hints before
 forwarding. Redirects, automatic retries, response decompression, and
 environment proxies are disabled on the upstream client.
 
@@ -292,7 +292,7 @@ when the configuration loads.
 - **On WebSocket**, routing happens once, at upgrade, and the channel is pinned to
   the provider's own entry. Every `response.create` still goes through admission,
   block, and pause checks against the current snapshot; a refusal is an `error`
-  event of type `tgv_*`.
+  event of type `ren_*`.
 
 ### Upstream entries
 
@@ -410,7 +410,7 @@ nothing, so trailers still arrive.
   cancel requests, not message data.
 - Each side answers its own pings. Extensions are not negotiated on either leg, so
   `Sec-WebSocket-Extensions` is never forwarded.
-- **Liveness.** TGV pings each leg after `websocket.keepalive_seconds` of
+- **Liveness.** Ren pings each leg after `websocket.keepalive_seconds` of
   silence (any message, ping, or pong counts as hearing from a side) and ends
   the channel when a side stays silent for twice that (`client_unresponsive`,
   `upstream_unresponsive`). A running call whose upstream sends nothing past
@@ -432,7 +432,7 @@ nothing, so trailers still arrive.
 
 | Control                          | Effect                                                                                                                                                                                                                  |
 | -------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Cancel (no output delivered yet) | A TGV-labelled, non-retryable error (`409`, `x-should-retry: false`, a body distinguishable from upstream errors). Optionally blocks the session briefly, so the client doesn't simply retry.                           |
+| Cancel (no output delivered yet) | A Ren-labelled, non-retryable error (`409`, `x-should-retry: false`, a body distinguishable from upstream errors). Optionally blocks the session briefly, so the client doesn't simply retry.                           |
 | Cancel (output already flowing)  | HTTP: close the upstream; the client sees an interrupted stream. WebSocket: inject `response.interrupt`, keep the matching `interrupt.accepted/failed` reply away from the client, and pass the terminal event through. |
 | Pause                            | An immediate `503` with `retry-after`. No hold in the gateway, so no buffers or admission permits are tied up. The clients wait.                                                                                        |
 | Block                            | A session block that returns a non-retryable `403`.                                                                                                                                                                     |
@@ -499,7 +499,7 @@ arithmetic (which bytes fit the body limit, and how they split into pieces) is
 `CaptureOptions::split`. A source test keeps both, the digest, and live
 progress free of runtime and I/O. It runs on the observation
 thread: a thread of its own with a current-thread runtime
-(`tgv_daemon::host::ObservationThread`), so its CPU work (chunking, hashing,
+(`ren_daemon::host::ObservationThread`), so its CPU work (chunking, hashing,
 inspection, deriving and sealing digests) and its storage writes never occupy a
 forwarding worker. Taps reach it only through the bounded queue.
 
@@ -563,7 +563,7 @@ or input items after the model's last output: user text, and tool results with
 their error flag); the inspection pipeline hands every response frame to a
 `ResponseReader` for its text and tool calls with their inputs, from a document,
 SSE events, or WebSocket messages, after the same decompression inspection uses.
-`InterpretedCall` (`tgv-harness`) applies what each client's tools touch, which
+`InterpretedCall` (`ren-harness`) applies what each client's tools touch, which
 user text is the client's own context, and how Codex reports exit codes.
 `CallDigest::seal` redacts every text and cuts it to `DigestBudget::STORED`:
 prompt and reply 4,000 characters, each tool input and output 2,000, each
@@ -583,14 +583,14 @@ tool results.
 ### Search
 
 Search reads the full-text index `search` (SQLite FTS5, `unicode61` tokenizer,
-external content over `search_texts`) in `tgv.sqlite3`: each finished call's
+external content over `search_texts`) in `ren.sqlite3`: each finished call's
 prompt, reply, tool input (name, targets, input), and tool output, redacted, at
 most 32 KiB per field, written with the call's digest. Retention removes a call's
 rows with it, and the index's pages count toward the storage budget as part of
 the metadata file. Search terms become quoted FTS5 strings joined by `AND`, so
 input never reaches the query grammar.
 
-`SecretScanner` (`tgv-recorder::secrets`) finds credentials in fixed, documented
+`SecretScanner` (`ren-recorder::secrets`) finds credentials in fixed, documented
 formats with linear-time regular expressions, never by entropy. Sealing a
 digest scans the call's raw newest user input (client context included), reply,
 and each tool input and output, redacts what it finds, and keeps each exposure's
@@ -618,7 +618,7 @@ log; there is no generic reducer framework.
 
 **Bodies.**
 
-- `tgv.sqlite3` holds metadata, the log, and segment rows. It is small, hot, and
+- `ren.sqlite3` holds metadata, the log, and segment rows. It is small, hot, and
   served by a read pool.
 - `blobs.sqlite3` holds chunks: `chunks(hash, codec, raw_len, data)`. FastCDC cuts
   them (8/16/64 KiB minimum, average, maximum), BLAKE3 identifies them, and each
@@ -657,7 +657,7 @@ no routine vacuum.
 
 ### Backup
 
-`Backup` (run by `POST /control/v1/backup` and `tgv control backup`) writes
+`Backup` (run by `POST /control/v1/backup` and `ren control backup`) writes
 `<data-dir>/backup/`:
 
 1. A `VACUUM INTO` metadata snapshot in a private staging directory, on its own
@@ -684,20 +684,20 @@ state; it is logged, not recorded in `operator_actions`.
   `journal_size_limit` is set on both. Busy readers return `503` without blocking
   forwarding.
 - **Pagination.** Keyset pagination through one `Cursor` type.
-- **One read path.** Every history read is a `ReadRequest` (`tgv-store::read`)
+- **One read path.** Every history read is a `ReadRequest` (`ren-store::read`)
   that `Reader::serve` answers with a `ReadResponse`, whose JSON is the API's
-  body. `ApiRead` (`tgv-gateway`) is where each read lives in HTTP: the server
+  body. `ApiRead` (`ren-gateway`) is where each read lives in HTTP: the server
   parses a URI into a `ReadRequest` and serves it from one handler, and the
   CLI's client builds the URI from the same `ReadRequest`; a round-trip test
   keeps the two directions one table. The CLI's `History` reads this host's
   storage or a gateway through it, and MCP tools are `ReadRequest`s too, so
   every surface answers the same JSON.
 - **Responses.** Each carries `api_version` (1); the UI checks compatibility at
-  load and shows an explicit mismatch error. `crates/tgv-daemon/tests/contract.rs`
+  load and shows an explicit mismatch error. `crates/ren-daemon/tests/contract.rs`
   pins each read's answer to a fixed synthetic history in
   `ui/tests/fixtures/api/`, and the UI's decoder tests parse those files, so a
   contract change fails a test on whichever side it breaks
-  (`TGV_UPDATE_FIXTURES=1` regenerates them).
+  (`REN_UPDATE_FIXTURES=1` regenerates them).
 - **Live feed.** `/api/live?after=<seq>` (or `Last-Event-ID`) replays retained
   observations, then streams new ones; it emits `gone` when the position was
   pruned. With `progress=true` it also sends the recorder's live progress updates
@@ -728,17 +728,17 @@ state; it is logged, not recorded in `operator_actions`.
   connect), and `RecordSink`. Everything else is concrete. The gateway is generic
   over `U: Upstream`, since the seam is a test substitution rather than runtime
   variation.
-- `tgv-protocol`: property tests over arbitrary chunk splits, and synthetic event
+- `ren-protocol`: property tests over arbitrary chunk splits, and synthetic event
   sequences written in the tests.
-- `TestGateway` (`crates/tgv-daemon/tests/support`): the complete router with the
+- `TestGateway` (`crates/ren-daemon/tests/support`): the complete router with the
   real recorder and store in a temporary directory, a fixed clock, and sequential
   IDs, forwarding to a loopback mock upstream (for Reqwest's behaviour) or a
   scripted `Upstream` (for the seam itself).
 - The recorder's core is tested alone (`recording/tests.rs`: records in,
   operations out, with no runtime, queue, or store), and the tap's capture
   split with a property test. Store tests use SQLite in temporary directories;
-  `tgv-store/tests/recorder.rs` runs the recorder against the real store, and
-  `tgv-daemon/tests/contract.rs` pins the read API's JSON for the UI.
+  `ren-store/tests/recorder.rs` runs the recorder against the real store, and
+  `ren-daemon/tests/contract.rs` pins the read API's JSON for the UI.
 - Full-daemon tests (`tests/daemon.rs`) only cover wiring, lifecycle, and shutdown.
 - Every label is pinned in its crate's `tests/fixtures/labels.txt`.
 
@@ -764,7 +764,7 @@ state; it is logged, not recorded in `operator_actions`.
 - Named users are limited by concurrency only: no token or spend budgets, and
   history is not scoped per user (anyone who can read the API reads every
   user's calls). Users and their tokens change only with a restart; an operator
-  user block applies at once. `tgv run opencode` sends no user token.
+  user block applies at once. `ren run opencode` sends no user token.
 - Backups go only to `<data-dir>/backup`, and only through a running daemon.
 - Activity keeps excerpts, not full text (`DigestBudget::STORED`); a turn reads
   at most 100 calls, and turn listings have no paging. Reports do not detect

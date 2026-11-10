@@ -1,7 +1,7 @@
 // The read API's JSON, as the daemon answers a fixed synthetic history
-// (pinned by crates/tgv-daemon/tests/contract.rs): every read the UI makes
+// (pinned by crates/ren-daemon/tests/contract.rs): every read the UI makes
 // must decode it. When the daemon's answers change on purpose, regenerate
-// with `TGV_UPDATE_FIXTURES=1 cargo test -p tgv-daemon --test contract`.
+// with `REN_UPDATE_FIXTURES=1 cargo test -p ren-daemon --test contract`.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';

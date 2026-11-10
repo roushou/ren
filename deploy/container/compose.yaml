@@ -1,19 +1,19 @@
-# TGV and a Tailscale sidecar, for `docker compose` or `podman compose`.
+# Ren and a Tailscale sidecar, for `docker compose` or `podman compose`.
 # See docs/deployment.md#containers. From this directory:
 #
-#   cp ../../tgv.example.toml tgv.toml && chmod 0644 tgv.toml
+#   cp ../../ren.example.toml ren.toml && chmod 0644 ren.toml
 #   docker compose up -d --build
 #
 # The two containers share one network namespace, so Tailscale Serve reaches
-# TGV's loopback listener and adds the identity headers the control API
+# Ren's loopback listener and adds the identity headers the control API
 # checks. Nothing is published on the host.
-name: tgv
+name: ren
 
 services:
   tailscale:
     image: docker.io/tailscale/tailscale:stable
     environment:
-      TS_HOSTNAME: ${TS_HOSTNAME:-tgv}
+      TS_HOSTNAME: ${TS_HOSTNAME:-ren}
       # Needed for the first start only; the node key is kept in the volume.
       # Without it, the log prints a login URL.
       TS_AUTHKEY: ${TS_AUTHKEY:-}
@@ -25,23 +25,23 @@ services:
       - ./tailscale-serve.json:/config/serve.json:ro,z
     restart: unless-stopped
 
-  tgv:
-    image: localhost/tgv:latest
+  ren:
+    image: localhost/ren:latest
     build:
       context: ../..
     network_mode: service:tailscale
     depends_on:
       - tailscale
-    command: ["--config", "/etc/tgv/tgv.toml", "serve"]
-    # Operator API keys named by `operator_key_env` in tgv.toml, if any:
-    # env_file: tgv.env
+    command: ["--config", "/etc/ren/ren.toml", "serve"]
+    # Operator API keys named by `operator_key_env` in ren.toml, if any:
+    # env_file: ren.env
     volumes:
-      - tgv-data:/data
-      - ./tgv.toml:/etc/tgv/tgv.toml:ro,z
+      - ren-data:/data
+      - ./ren.toml:/etc/ren/ren.toml:ro,z
     # Active requests get 10 seconds, then capture drains.
     stop_grace_period: 30s
     restart: unless-stopped
 
 volumes:
   tailscale-state:
-  tgv-data:
+  ren-data:

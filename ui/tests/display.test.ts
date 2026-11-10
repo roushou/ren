@@ -159,7 +159,7 @@ test('websocket channels say how they ended and what was not stored', () => {
   });
 });
 
-test('a call TGV refused says so, whatever else was recorded', () => {
+test('a call Ren refused says so, whatever else was recorded', () => {
   const paused = finishedFixture(callId(7), {
     rejection: 'paused',
     terminal: null,
@@ -167,13 +167,13 @@ test('a call TGV refused says so, whatever else was recorded', () => {
     response: null,
   });
   assert.deepEqual(callStatus(paused), { kind: 'rejected', rejection: 'paused' });
-  assert.deepEqual(statusBadge(callStatus(paused)), { label: 'TGV · paused', tone: 'warning' });
+  assert.deepEqual(statusBadge(callStatus(paused)), { label: 'Ren · paused', tone: 'warning' });
   // A label from a newer daemon is shown verbatim.
   const newer = finishedFixture(callId(8), { rejection: unknownLabel('over_quota') });
-  assert.equal(statusBadge(callStatus(newer)).label, 'TGV · over quota');
+  assert.equal(statusBadge(callStatus(newer)).label, 'Ren · over quota');
 });
 
-test('builds read like tgv --version, and unknown revisions are kept', () => {
+test('builds read like ren --version, and unknown revisions are kept', () => {
   const commit = '00a59029501566fad56007fa6efe866f97e99193';
   assert.equal(
     buildLabel({ version: '0.1.0', revision: revision(commit, '') }),
@@ -358,7 +358,7 @@ test("a client's quota probe is bookkeeping: grey, whatever its status", () => {
 test('a caller reads as its user, its login, or unidentified, and an old call as unknown', () => {
   assert.deepEqual(callerShown(null), {
     label: 'Unknown',
-    title: 'Recorded before TGV recorded callers',
+    title: 'Recorded before Ren recorded callers',
     user: null,
   });
   const shown = (kind: string, user: string | null, login: string | null) =>

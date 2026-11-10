@@ -97,12 +97,12 @@ test('a row says who it is, what it is about, and what it does now', () => {
 
 test('search reads the prompt and folder as well as the IDs', () => {
   const sessions = [session(1, NOW - 60_000), session(2, NOW - 60_000)];
-  const details = new Map([[sid(2), { prompt: null, workdir: '/srv/tgv' }]]);
+  const details = new Map([[sid(2), { prompt: null, workdir: '/srv/ren' }]]);
   const ids = (query: string) =>
     new SessionList(input({ sessions, details, query })).groups
       .flatMap((group) => group.rows)
       .map((row) => row.session.id);
-  assert.deepEqual(ids('tgv'), [sid(2)]);
+  assert.deepEqual(ids('ren'), [sid(2)]);
   assert.deepEqual(ids('NATIVE-1'), [sid(1)]);
   assert.deepEqual(ids('claude code'), [sid(1), sid(2)]);
   assert.deepEqual(ids('nothing'), []);

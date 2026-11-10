@@ -84,7 +84,7 @@ export function findingLine(finding: Finding): FindingLine {
             ? "in the model's reply"
             : `in the ${searchFieldLabel(finding.field).toLowerCase()}, sent to the provider`) +
           (finding.count > 1 ? ` (${finding.count} times)` : '') +
-          '. Rotate it: TGV cannot recall it.',
+          '. Rotate it: Ren cannot recall it.',
         call: finding.call,
         turn: finding.turn,
       };

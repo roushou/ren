@@ -1,11 +1,11 @@
-# TGV contributor guidance
+# Ren contributor guidance
 
-TGV is a self-hosted gateway and flight recorder for coding agents (Claude Code,
+Ren is a self-hosted gateway and flight recorder for coding agents (Claude Code,
 Codex, Pi, and OpenCode). It forwards native provider traffic while recording, inspecting,
 and exposing it, using the operator's own Anthropic and OpenAI subscriptions. One executable and one storage format serve both
 a laptop and a VPS reached through Tailscale.
 
-[`docs/architecture.md`](docs/architecture.md) describes how TGV is built and
+[`docs/architecture.md`](docs/architecture.md) describes how Ren is built and
 lists its known limitations. Section 4 below maps the eight crates and the `xtask` package.
 
 - All code follows the principles (section 2) and the workspace lints.
@@ -16,7 +16,7 @@ lists its known limitations. Section 4 below maps the eight crates and the `xtas
 
 ## 1. Product invariants
 
-These describe what TGV must do. They hold through every refactor.
+These describe what Ren must do. They hold through every refactor.
 
 ### Forwarding
 
@@ -64,7 +64,7 @@ These describe what TGV must do. They hold through every refactor.
 
 - Keep four concepts separate: client, wire protocol, upstream provider, and
   authentication. Gateway credentials and provider credentials are separate.
-- Clients own subscription sign-in and token refresh. If TGV ever owns refresh,
+- Clients own subscription sign-in and token refresh. If Ren ever owns refresh,
   serialize refreshes and define ownership explicitly.
 - Never record credential headers or token-bearing URLs. Never expose secrets through
   `Debug`, errors, fixtures, logs, or exports. Sanitize before anything is persisted.
@@ -78,20 +78,20 @@ These describe what TGV must do. They hold through every refactor.
 
 ## 2. Design principles
 
-TGV follows the shared design principles in `~/dev/principles/design.md` (type-driven
+Ren follows the shared design principles in `~/dev/principles/design.md` (type-driven
 design with a sans-IO core). Read that file before making design decisions. Where
-it's unavailable, the TGV-specific rules below still apply.
+it's unavailable, the Ren-specific rules below still apply.
 
-TGV-specific applications:
+Ren-specific applications:
 
 - **Identities:** channels, calls, attempts, sessions, turns, and tool calls each get
-  their own type (`tgv_recorder::id`). Provider-native identifiers keep separate types
+  their own type (`ren_recorder::id`). Provider-native identifiers keep separate types
   (`NativeSessionId` is not `SessionId`).
 - **Vocabularies:** a closed set of labels is an enum deriving `strum`'s
   `Display`, `EnumString`, `IntoStaticStr`, and `VariantArray` with
   `serialize_all = "snake_case"`, plus `serde_with`'s `SerializeDisplay` and
   `DeserializeFromStr`, so every representation reads the labels from the strum
-  attributes (`tgv_protocol::label` lists the derives). An irregular label is a
+  attributes (`ren_protocol::label` lists the derives). An irregular label is a
   `#[strum(to_string = "…")]` on its variant. Never add `#[serde(rename…)]`, which
   would be a second table. Every label is pinned in its crate's `tests/fixtures/labels.txt`
   (`tests/labels.rs`); add a new vocabulary there, and treat a changed line as a
@@ -102,23 +102,23 @@ TGV-specific applications:
   events keep an `Unknown(Raw…)` variant. `#[serde(other)]` loses the value, so don't
   use it on wire data.
 - **Sans-IO core:** SSE framing, native protocol parsing, inspection, attempt
-  lifecycle transitions, retry eligibility (`tgv_gateway::retry`), operator
-  state (`tgv_gateway::operator`), call planning and transforms (`policy`), retention decisions,
+  lifecycle transitions, retry eligibility (`ren_gateway::retry`), operator
+  state (`ren_gateway::operator`), call planning and transforms (`policy`), retention decisions,
   and history query building. Framing
   stays independent of JSON and of providers.
 - **Shell:** Axum handlers, the Reqwest transport, SQLx persistence, the clap CLI, and
   daemon wiring. Recording, inspection, and storage stay independent of CLI argument
   parsing and Axum handlers.
-- **Capabilities:** components receive `Clock` (`tgv_recorder::time`) and
-  `IdSource` (`tgv_recorder::id`) instead of reading the host clock or generating random IDs. The
-  gateway receives an `Upstream` (`tgv_gateway::upstream`) and the shared
-  `Controls` (`tgv_gateway::control`). Environment variables (operator API keys) are read once into
-  `HostEnv` (`tgv_harness::host`), captured once in `main` and carried by the CLI
+- **Capabilities:** components receive `Clock` (`ren_recorder::time`) and
+  `IdSource` (`ren_recorder::id`) instead of reading the host clock or generating random IDs. The
+  gateway receives an `Upstream` (`ren_gateway::upstream`) and the shared
+  `Controls` (`ren_gateway::control`). Environment variables (operator API keys) are read once into
+  `HostEnv` (`ren_harness::host`), captured once in `main` and carried by the CLI
   `Context`;
   configuration, the Pi cache, launch, and doctor receive it. The recorder writes
-  through its `RecordSink` port (`tgv_recorder::RecordSink`), which `Store` implements.
+  through its `RecordSink` port (`ren_recorder::RecordSink`), which `Store` implements.
 - **Lifecycles** are pure state machines, one per transport (`HttpAttempt` in
-  `tgv_gateway::attempt`, and `WsChannel` in `tgv_gateway::channel`, which owns
+  `ren_gateway::attempt`, and `WsChannel` in `ren_gateway::channel`, which owns
   its calls' states), with explicit terminals that include interrupted and unknown outcomes.
 
 ### Lints
@@ -133,24 +133,24 @@ Modules carry no lint headers of their own. A module with submodules lives in
 
 - The only exemptions are the capability implementations themselves, marked with
   `#[expect(clippy::disallowed_methods, reason = "…")]`: `HostEnv::capture`, the
-  daemon's `SystemClock` and `RandomIds` (`tgv_daemon::host`), and the daemon's server
-  task spawn. The recorder runs on `ObservationThread` (`tgv_daemon::host`), a
+  daemon's `SystemClock` and `RandomIds` (`ren_daemon::host`), and the daemon's server
+  task spawn. The recorder runs on `ObservationThread` (`ren_daemon::host`), a
   thread with its own runtime.
 - Integration-test crates (`crates/*/tests/*.rs`) act as a shell: each has one
   crate-level `#![allow(...)]` with a reason, covering helpers outside `#[test]`
   functions and spawned mock servers. Unit-test modules use `clippy.toml`'s
   `allow-*-in-tests` instead.
-- `anyhow` is used only in `tgv-cli`, the command shell (`context.rs`,
+- `anyhow` is used only in `ren-cli`, the command shell (`context.rs`,
   `commands`, and `Cli::run`). Every other module returns its own
-  `thiserror` enum, including `doctor` and `service` in `tgv-cli`.
+  `thiserror` enum, including `doctor` and `service` in `ren-cli`.
 
 ## 3. Testing
 
-Follow the testing section of the shared principles. Priority scenarios for TGV:
+Follow the testing section of the shared principles. Priority scenarios for Ren:
 fragmented streams, partial failures, retry decisions, cancellation, capture
 saturation, and persistence recovery.
 
-- End-to-end gateway tests use `TestGateway` (`crates/tgv-daemon/tests/support`): the
+- End-to-end gateway tests use `TestGateway` (`crates/ren-daemon/tests/support`): the
   gateway, recorder, store, and read and control APIs with a fixed clock and sequential IDs,
   forwarding to a loopback mock upstream or a scripted `Upstream`. Full-daemon
   tests (`tests/daemon.rs`) are only for wiring, lifecycle, and shutdown.
@@ -163,9 +163,9 @@ saturation, and persistence recovery.
 This map describes the code as it is: the eight crates, listed with their
 dependencies under "Crates" below. Read the code for current module ownership.
 
-- `docs/architecture.md`: how TGV is built, and its known limitations. The other
+- `docs/architecture.md`: how Ren is built, and its known limitations. The other
   `docs/*.md` files are operator guides linked from `README.md`.
-- `crates/tgv-protocol`: sans-IO native protocol understanding, with
+- `crates/ren-protocol`: sans-IO native protocol understanding, with
   `CallInspector` as its primary type: SSE framing, Anthropic Messages, OpenAI
   Responses, and OpenAI Chat Completions (`chat`) wire vocabularies,
   incremental decompression, per-call inspection
@@ -181,7 +181,7 @@ dependencies under "Crates" below. Read the code for current module ownership.
   the native identifiers and message hints the wire carries (`native`). Its
   manifest allows only pure dependencies, and a test keeps its sources free of
   I/O.
-- `crates/tgv-harness`: the harnesses, with `Harness` (`ClaudeCode`, `Codex`, `Pi`, `OpenCode`)
+- `crates/ren-harness`: the harnesses, with `Harness` (`ClaudeCode`, `Codex`, `Pi`, `OpenCode`)
   as its primary type: attribution (`attribution`, with its private `headers`
   parser implementing `Harness::attribution`), session launch plans
   (`Harness::launch`), the bundled Pi extension cache (`pi`), the gateway URL a
@@ -192,7 +192,7 @@ dependencies under "Crates" below. Read the code for current module ownership.
   client sent a call (`CallPurpose`: work, or Claude Code's quota probe), and
   `InterpretedCall`, a `Reading` read as its client uses it). It performs filesystem and process I/O
   but has no async runtime, HTTP, database, or CLI dependency.
-- `crates/tgv-recorder`: the bounded capture queue between forwarding and
+- `crates/ren-recorder`: the bounded capture queue between forwarding and
   storage, with `Recorder` as its primary type. `CallTap` (and `ChannelTap` for a
   WebSocket's end) is the forwarding side; `RecorderTask` (run by the daemon on
   its observation thread) is the shell around the pure `RecorderCore`
@@ -203,7 +203,7 @@ dependencies under "Crates" below. Read the code for current module ownership.
   port. `CaptureOptions::split` is the tap's pure capture arithmetic, and
   `src/purity.rs` keeps the pure modules free of runtime and I/O. Omissions are counted by reason in
   `RecorderMetrics`, readable after shutdown through `RecorderMeter`. It also
-  owns what is recorded: TGV's identities and `IdSource` (`id`), `Clock`
+  owns what is recorded: Ren's identities and `IdSource` (`id`), `Clock`
   (`time`), terminals and other recorded facts (`capture`), routing facts and
   `OperatorRevision` (`routing`), who called (`caller`: `UserId`,
   `TailscaleLogin`, and `Caller`), batches (`batch`), the content-defined
@@ -215,9 +215,9 @@ dependencies under "Crates" below. Read the code for current module ownership.
   `InterpretedCall` to a `DigestBudget`, keeping only what each secret leaves;
   `StoredExchange` replays a call's stored bodies to derive it again). It has no database, HTTP,
   or CLI dependency.
-- `crates/tgv-store`: persistence (SQLx, SQLite WAL), with `Store`, the single
+- `crates/ren-store`: persistence (SQLx, SQLite WAL), with `Store`, the single
   writer, as its primary type; `Reader` is its read-only pool and `Backup` the
-  online backup, which holds the `SweepGate`. `tgv.sqlite3` holds the
+  online backup, which holds the `SweepGate`. `ren.sqlite3` holds the
   observation log and query tables; `blobs.sqlite3` holds deduplicated,
   content-defined body chunks, in the format `chunk` defines (hash, codec,
   encoding). It contains typed query parameters and read views, turn and call
@@ -225,15 +225,15 @@ dependencies under "Crates" below. Read the code for current module ownership.
   session context and cost report in `activity::report`), the full-text search
   and exposure listings (`search`, `Reader::search` and `Reader::exposures`) over
   the digests the recorder derives for each finished call (`call_digests`,
-  `call_exposures`, and `search_texts` with its FTS5 index, in `tgv.sqlite3`;
+  `call_exposures`, and `search_texts` with its FTS5 index, in `ren.sqlite3`;
   `RecordSink::undigested` lists calls to derive again), and implements the recorder's `RecordSink`. It owns the versioned migrations for
-  `tgv.sqlite3` (`crates/tgv-store/migrations`); never edit one that has
+  `ren.sqlite3` (`crates/ren-store/migrations`); never edit one that has
   shipped. Every history read is a `ReadRequest` that `Reader::serve` answers
   (`read`); the API, the CLI, and MCP all ask through it. Its tests include
   `tests/recorder.rs`, the recorder against the real store.
-- `crates/tgv-tui`: the terminal view of a gateway's live sessions, with `Tui`
+- `crates/ren-tui`: the terminal view of a gateway's live sessions, with `Tui`
   as its primary type. `Tui` is sans-IO: it takes what was read (`Input`:
-  snapshots of sessions and model calls, as `tgv_store::view` types, turn
+  snapshots of sessions and model calls, as `ren_store::view` types, turn
   activity, progress updates, live observations, the terminal's size, and
   failed reads, shown until a snapshot succeeds) and key presses (`Tui::press`, with `Key` and the `Command`s keys give in
   `keys`), and answers with the reads it needs (`Read`);
@@ -253,7 +253,7 @@ dependencies under "Crates" below. Read the code for current module ownership.
   touches the terminal: raw mode and the alternate screen until dropped,
   and its events as keys and sizes. `src/purity.rs` keeps the core's
   sources free of runtime, I/O, and terminal dependencies.
-- `crates/tgv-gateway`: TGV's HTTP interface, with `Gateway` as its primary type.
+- `crates/ren-gateway`: Ren's HTTP interface, with `Gateway` as its primary type.
   It owns forwarding, management, and control routes on one listener, assembled
   by `Gateway::router` or `Gateway::into_ingress`. Forwarding uses a declarative
   route table, the header policy, request buffering with a global
@@ -278,7 +278,7 @@ dependencies under "Crates" below. Read the code for current module ownership.
   `src/purity.rs` keeps `attempt`, `call`, `channel`, `retry`, `operator`,
   and `user` free of runtime, I/O, storage, and shell-module
   dependencies. Management receives `Reader`, `Backup`, retention settings, and
-  control credentials through `ManagementSetup`; SQL stays in `tgv-store`, and
+  control credentials through `ManagementSetup`; SQL stays in `ren-store`, and
   forwarding records only through the recorder.
   - `src/api`: the versioned read-only management API (`ApiState`), body previews,
     and the `/api/live` SSE feed. Reads only through `Reader`. `ApiRead`
@@ -289,7 +289,7 @@ dependencies under "Crates" below. Read the code for current module ownership.
     `Controls` (token or Tailscale identity; browsers refused), and its
     `[control]` configuration (`ControlOptions`) and `ControlToken`. Handler state
     stays crate-private; configuration and token types are exported at the root.
-- `crates/tgv-daemon`: configuration, resource wiring, and lifecycle, with
+- `crates/ren-daemon`: configuration, resource wiring, and lifecycle, with
   `Daemon` as its primary type (`lib.rs`). It opens storage, binds the listener,
   writes the control token, constructs the gateway and recorder, owns the
   server task and the observation thread the recorder runs on, and
@@ -300,58 +300,58 @@ dependencies under "Crates" below. Read the code for current module ownership.
   Its integration tests hold `TestGateway` (`tests/support`) and the gateway,
   WebSocket, decision, and full-daemon tests; they use the gateway's complete
   router with test capabilities.
-- `crates/tgv-cli`: the `tgv` binary, with `Cli` as its primary type
+- `crates/ren-cli`: the `ren` binary, with `Cli` as its primary type
   (`lib.rs`) and a thin `main.rs` that sets up logging and captures `HostEnv`.
   `commands` holds clap parsing and dispatch: each command is a
   `#[derive(Args)]` struct with its own execution method, and command groups
   are `#[derive(Subcommand)]` enums. `client` chooses the gateway (`--gateway`,
-  `TGV_GATEWAY`, `client.toml`, then the local listener) and owns
-  `client.toml`, which `tgv init` writes. `management` is where history and
+  `REN_GATEWAY`, `client.toml`, then the local listener) and owns
+  `client.toml`, which `ren init` writes. `management` is where history and
   control commands act: this host's storage and token, or a gateway's read and
   control APIs, printing the same JSON either way (`History` serves a
   `ReadRequest` from either). `tail` is the pure core of
-  `tgv tail`: the live feed decoded through the protocol crate's SSE framer, and
-  its lines (and progress events, which `tgv tui` asks for). With the `tui`
-  feature (off by default), `commands::tui` is `tgv tui`: the shell around
-  `tgv-tui`'s `Tui`, reading snapshots, turns, and the live feed through
+  `ren tail`: the live feed decoded through the protocol crate's SSE framer, and
+  its lines (and progress events, which `ren tui` asks for). With the `tui`
+  feature (off by default), `commands::tui` is `ren tui`: the shell around
+  `ren-tui`'s `Tui`, reading snapshots, turns, and the live feed through
   the gateway's API alongside one another, and drawing to its `Screen`.
   `tui_settings` owns its local theme preference in `tui.toml`; the CLI resolves
   flags, saved preferences, and `NO_COLOR`, and passes styles to `Screen`.
-  `mcp` is the pure core of `tgv mcp` (a source test keeps it free
+  `mcp` is the pure core of `ren mcp` (a source test keeps it free
   of runtime and I/O): JSON-RPC over stdio in both MCP eras, and the read-only
-  tools, whose arguments parse into `tgv_store::query` types. `style` decides once, per stream,
+  tools, whose arguments parse into `ren_store::query` types. `style` decides once, per stream,
   whether stdout and stderr are colored (a terminal, `NO_COLOR`,
   `CLICOLOR_FORCE`, `TERM=dumb`); JSON and piped output stay plain. `build.rs` records the
-  source revision (`TGV_REVISION`) for `--version`, `/health`, and `doctor`. `Cli::run`
+  source revision (`REN_REVISION`) for `--version`, `/health`, and `doctor`. `Cli::run`
   prints errors itself, so they are styled too. `doctor` and `service` are the doctor report and the
   service definitions. Refactors preserve existing flags, output
   formats, exports, and client passthrough. Its integration tests run the built
-  binary (`CARGO_BIN_EXE_tgv`).
+  binary (`CARGO_BIN_EXE_ren`).
 - `ui`: an independent SvelteKit, Svelte 5, and TypeScript server (Node adapter). It
   reads the daemon only through the management API and forwards only allowlisted
   read-only endpoints. It never forwards browser cookies or credentials, never reads
   storage directly, and never proxies inference. The one exception is the dev
-  slot's: with `TGV_DEV_TRAFFIC_URL` set (loopback only), `/dev/traffic` forwards
+  slot's: with `REN_DEV_TRAFFIC_URL` set (loopback only), `/dev/traffic` forwards
   the dev toolbar's three JSON requests to the slot's fake traffic generator,
   never to the daemon.
-- `crates/tgv-harness/pi`: the embedded Pi extension and its dependency-free contract tests.
+- `crates/ren-harness/pi`: the embedded Pi extension and its dependency-free contract tests.
   Pi owns provider authentication, refresh, payload conversion, and retries.
 - `xtask`: repository tasks run with `cargo xtask` (alias in `.cargo/config.toml`),
   with `Xtask` as its primary type; unpublished and outside `default-members`.
-  `cargo xtask install-vps` installs or upgrades TGV from a checkout as a
+  `cargo xtask install-vps` installs or upgrades Ren from a checkout as a
   systemd user service and can publish it with Tailscale Serve; it restarts a
   running daemon only between calls, paused, and checks the new build, and with
-  `--ui-https-port` it builds and deploys the UI as `tgv-ui.service`. It is a
+  `--ui-https-port` it builds and deploys the UI as `ren-ui.service`. It is a
   shell: it runs external commands and reads configuration through
-  `tgv-daemon`'s `Config`. Its parsing of Tailscale status (`tailscale`) and of the
-  installed `tgv`'s output (`daemon`), its UI unit rendering (`ui`), its saved flags
+  `ren-daemon`'s `Config`. Its parsing of Tailscale status (`tailscale`) and of the
+  installed `ren`'s output (`daemon`), its UI unit rendering (`ui`), its saved flags
   (`publish`), and the upgrade's wait, pause, and build-check decisions are
   unit-tested; the commands it runs are exercised only by running it.
   `cargo xtask dev` runs the dev slot (`dev`, `docs/deployment.md#dev-slot`):
   this checkout's build beside the installed service, with its own config,
   data, and ports, against a fake provider (`dev::provider`, whose replies are
   the pure, tested `script`), seeded with fake traffic (`dev::seed`, scenarios
-  as pure data), as `tgv-dev-*` transient units, with live traffic whose
+  as pure data), as `ren-dev-*` transient units, with live traffic whose
   settings both the generator and the fake provider reread (`dev::traffic`,
   with its loopback control API for the dev UI's toolbar), an optional private
   preview on the tailnet, and
@@ -367,14 +367,14 @@ directly.
 
 | Crate                                      | Primary type                                        | Depends on               |
 | ------------------------------------------ | --------------------------------------------------- | ------------------------ |
-| `tgv-protocol`                             | `CallInspector`                                     | none of ours             |
-| `tgv-harness`                              | `Harness` (`ClaudeCode`, `Codex`, `Pi`, `OpenCode`) | protocol                 |
-| `tgv-recorder`                             | `Recorder`, with its `RecordSink` port              | protocol, harness        |
-| `tgv-store`                                | `Store`, which implements `RecordSink`              | recorder                 |
-| `tgv-tui`                                  | `Tui`                                               | store                    |
-| `tgv-gateway`                              | `Gateway`                                           | harness, recorder, store |
-| `tgv-daemon`                               | `Daemon`                                            | gateway, store           |
-| `tgv-cli` (package `tgv-rs`, binary `tgv`) | `Cli`                                               | daemon; tui (feature)    |
+| `ren-protocol`                             | `CallInspector`                                     | none of ours             |
+| `ren-harness`                              | `Harness` (`ClaudeCode`, `Codex`, `Pi`, `OpenCode`) | protocol                 |
+| `ren-recorder`                             | `Recorder`, with its `RecordSink` port              | protocol, harness        |
+| `ren-store`                                | `Store`, which implements `RecordSink`              | recorder                 |
+| `ren-tui`                                  | `Tui`                                               | store                    |
+| `ren-gateway`                              | `Gateway`                                           | harness, recorder, store |
+| `ren-daemon`                               | `Daemon`                                            | gateway, store           |
+| `ren-cli` (package `ren-rs`, binary `ren`) | `Cli`                                               | daemon; tui (feature)    |
 | `xtask` (unpublished)                      | `Xtask`                                             | daemon                   |
 
 `docs/architecture.md` lists what each crate owns. These rules apply to every
@@ -470,21 +470,21 @@ then `cargo xtask dev shot` for screenshots and the private preview
 (`https://<node>:9444`) for a browser. Keep focused unit tests and don't add a
 browser integration suite yet. UI changes don't require rebuilding Rust.
 Never stop processes by a name pattern: the slot's units are stopped by name
-(`cargo xtask dev down`), and the installed `tgv` and `tgv-ui` services must keep
+(`cargo xtask dev down`), and the installed `ren` and `ren-ui` services must keep
 running.
 
-Pi integration changes: `node --test crates/tgv-harness/pi/tgv.test.mjs`. When Pi is
-installed, build TGV and run `python3 scripts/smoke-pi.py`; it uses isolated config
+Pi integration changes: `node --test crates/ren-harness/pi/ren.test.mjs`. When Pi is
+installed, build Ren and run `python3 scripts/smoke-pi.py`; it uses isolated config
 and OAuth-shaped fixture credentials against local mocks. Passing mock tests does
 not establish live subscription access.
 
-Service changes: `python3 scripts/smoke-systemd.py --binary <built-tgv>` as a
+Service changes: `python3 scripts/smoke-systemd.py --binary <built-ren>` as a
 non-root user with a systemd user manager (its `--https-port` option needs an unused
 Tailscale Serve port; preserve existing Serve routes and policy), or
-`python3 scripts/smoke-launchd.py` on macOS (tests `target/debug/tgv`).
+`python3 scripts/smoke-launchd.py` on macOS (tests `target/debug/ren`).
 
 Publishing: every crate is published to crates.io, and the CLI package is
-`tgv-rs` (crates.io already has a `tgv`). Our own crates' versions in root
+`ren-rs` (crates.io already has a `ren`). Our own crates' versions in root
 `[workspace.dependencies]` must equal `workspace.package.version`. Check with
 `cargo package --workspace --locked`, which builds each crate from its packaged
 sources, then publish with `cargo publish --workspace --locked` (dependency order).

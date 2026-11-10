@@ -3,13 +3,13 @@ import assert from 'node:assert/strict';
 import { GatewayPlace } from '../src/lib/place.ts';
 
 test('a tailnet address shows its node and masks the tailnet name', () => {
-  const place = GatewayPlace.parse('https://tgv.tail1234ab.ts.net:8443');
+  const place = GatewayPlace.parse('https://ren.tail1234ab.ts.net:8443');
   assert.equal(place.network, 'tailnet');
-  assert.equal(place.label, 'tgv · tailnet');
-  assert.equal(place.masked, 'https://tgv.•••.ts.net:8443');
+  assert.equal(place.label, 'ren · tailnet');
+  assert.equal(place.masked, 'https://ren.•••.ts.net:8443');
   assert.equal(
-    place.mask('tgv run claude --gateway https://tgv.tail1234ab.ts.net:8443'),
-    'tgv run claude --gateway https://tgv.•••.ts.net:8443',
+    place.mask('ren run claude --gateway https://ren.tail1234ab.ts.net:8443'),
+    'ren run claude --gateway https://ren.•••.ts.net:8443',
   );
   const ip = GatewayPlace.parse('http://100.101.102.103:8787');
   assert.equal(ip.label, 'tailnet');

@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Linux user-systemd lifecycle check with temporary state and mock providers.
 
-Build TGV, then run this as a regular user with a running systemd user manager.
+Build Ren, then run this as a regular user with a running systemd user manager.
 Creates only a uniquely named runtime unit; never enables it or changes lingering,
-an existing TGV service or provider credentials. Optional --https-port briefly
+an existing Ren service or provider credentials. Optional --https-port briefly
 adds a Tailscale Serve route on an unused port and removes only that route.
 """
 import argparse
@@ -27,7 +27,7 @@ def run(*args, **kwargs):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--binary', type=pathlib.Path, default=pathlib.Path(__file__).resolve().parents[1] / 'target/debug/tgv')
+    parser.add_argument('--binary', type=pathlib.Path, default=pathlib.Path(__file__).resolve().parents[1] / 'target/debug/ren')
     parser.add_argument('--https-port', type=int, help='also test through Tailscale Serve on an unused HTTPS port')
     parser.add_argument('--sudo-tailscale', action='store_true', help='use sudo -n only for Serve configuration')
     args = parser.parse_args()
@@ -40,7 +40,7 @@ def main():
         parser.error('requires Linux and a non-root systemd user manager')
     binary = args.binary.resolve(strict=True)
     run('systemctl', '--user', 'show-environment', stdout=subprocess.DEVNULL)
-    unit = 'tgv-smoke-' + uuid.uuid4().hex + '.service'
+    unit = 'ren-smoke-' + uuid.uuid4().hex + '.service'
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
     observed = []
     if args.https_port:
@@ -75,7 +75,7 @@ def main():
     thread = threading.Thread(target=upstream.serve_forever, daemon=True)
     thread.start()
     try:
-        with tempfile.TemporaryDirectory(prefix='tgv-systemd-') as directory:
+        with tempfile.TemporaryDirectory(prefix='ren-systemd-') as directory:
             root = pathlib.Path(directory)
             # Check literal dollars/specifiers and cwd-independent configuration.
             state = root / 'state $USER %n'
@@ -132,15 +132,15 @@ def main():
                         assert b'fixture' in response.read()
                 run('systemctl', '--user', 'stop', unit)
                 assert pid() == 0
-                records = json.loads(subprocess.check_output([str(binary), '--data-dir', str(state), 'history'], text=True, timeout=10))
+                records = json.loads(subprocess.check_output([str(binary), '--data-dir', str(state), 'history'], text=True, timeout=10))['calls']
                 assert len(records) == 3
                 assert {r['provider'] for r in records} == {'anthropic', 'codex', 'openai'}
                 assert all(r['outcome'] == 'completed' and r['state'] == 'finished' and r['capture_complete'] for r in records)
                 assert [path for path, _, _, _ in observed] == ['/v1/messages', '/responses', '/v1/responses']
                 assert all(body == original and auth == 'Bearer LOCAL_FIXTURE_ONLY' and not proxy_headers for _, body, auth, proxy_headers in observed), [(path, body == original, auth == 'Bearer LOCAL_FIXTURE_ONLY', names) for path, body, auth, names in observed]
                 assert state.stat().st_mode & 0o077 == 0
-                assert (state / 'tgv.sqlite3').stat().st_mode & 0o077 == 0
-                for name in ('tgv.sqlite3', 'blobs.sqlite3'):
+                assert (state / 'ren.sqlite3').stat().st_mode & 0o077 == 0
+                for name in ('ren.sqlite3', 'blobs.sqlite3'):
                     assert (state / name).stat().st_mode & 0o077 == 0
                     assert b'LOCAL_FIXTURE_ONLY' not in (state / name).read_bytes()
                 run('systemctl', '--user', 'start', unit)

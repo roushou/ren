@@ -1,13 +1,13 @@
 # Deployment
 
-Run TGV as a background service on macOS or Linux, and reach a VPS deployment
+Run Ren as a background service on macOS or Linux, and reach a VPS deployment
 through Tailscale.
 
 ## Configuration
 
-[`tgv.example.toml`](../tgv.example.toml) documents every key; unknown keys are
-rejected. Data defaults to `$XDG_STATE_HOME/tgv` when that variable is an absolute
-path, otherwise `$HOME/.local/state/tgv`. CLI `--data-dir` takes priority over the
+[`ren.example.toml`](../ren.example.toml) documents every key; unknown keys are
+rejected. Data defaults to `$XDG_STATE_HOME/ren` when that variable is an absolute
+path, otherwise `$HOME/.local/state/ren`. CLI `--data-dir` takes priority over the
 configured path; relative configured paths resolve beside the config file, while
 relative CLI paths resolve against the current directory. Configuration is
 immutable until restart; every call records its configuration revision.
@@ -19,38 +19,38 @@ interrupt forwarding.
 
 ## Background services
 
-`tgv service render` generates a user-service definition for **launchd on macOS**
+`ren service render` generates a user-service definition for **launchd on macOS**
 or **systemd on Linux**. It does not install, register, or start a service. Use a
-stable installed binary, not a checkout's `target/debug/tgv`. For example:
+stable installed binary, not a checkout's `target/debug/ren`. For example:
 
 ```sh
-cargo install --locked --path crates/tgv-cli --root "$HOME/.local"
-(umask 077; mkdir -p "$HOME/.config/tgv")
-cp -n tgv.example.toml "$HOME/.config/tgv/tgv.toml"
+cargo install --locked --path crates/ren-cli --root "$HOME/.local"
+(umask 077; mkdir -p "$HOME/.config/ren")
+cp -n ren.example.toml "$HOME/.config/ren/ren.toml"
 ```
 
 Review the configuration before starting. The commands below explicitly select
-`~/.local/state/tgv`; change `--data-dir` to use an existing capture directory.
+`~/.local/state/ren`; change `--data-dir` to use an existing capture directory.
 Stop any foreground daemon using that listener or directory first.
 
 ### macOS: launchd
 
 Create the log directory before loading the agent: launchd opens its log file
-before TGV can create storage directories.
+before Ren can create storage directories.
 
 ```sh
-(umask 077; mkdir -p "$HOME/Library/LaunchAgents" "$HOME/.local/state/tgv/logs")
-"$HOME/.local/bin/tgv" --config "$HOME/.config/tgv/tgv.toml" \
-  --data-dir "$HOME/.local/state/tgv" service render --manager launchd \
-  --binary "$HOME/.local/bin/tgv" \
-  --output "$HOME/Library/LaunchAgents/dev.tgv.gateway.plist"
-plutil -lint "$HOME/Library/LaunchAgents/dev.tgv.gateway.plist"
-launchctl bootstrap "gui/$(id -u)" "$HOME/Library/LaunchAgents/dev.tgv.gateway.plist"
-"$HOME/.local/bin/tgv" --config "$HOME/.config/tgv/tgv.toml" doctor
+(umask 077; mkdir -p "$HOME/Library/LaunchAgents" "$HOME/.local/state/ren/logs")
+"$HOME/.local/bin/ren" --config "$HOME/.config/ren/ren.toml" \
+  --data-dir "$HOME/.local/state/ren" service render --manager launchd \
+  --binary "$HOME/.local/bin/ren" \
+  --output "$HOME/Library/LaunchAgents/dev.ren.gateway.plist"
+plutil -lint "$HOME/Library/LaunchAgents/dev.ren.gateway.plist"
+launchctl bootstrap "gui/$(id -u)" "$HOME/Library/LaunchAgents/dev.ren.gateway.plist"
+"$HOME/.local/bin/ren" --config "$HOME/.config/ren/ren.toml" doctor
 ```
 
-Status: `launchctl print "gui/$(id -u)/dev.tgv.gateway"`.
-Stop: `launchctl bootout "gui/$(id -u)/dev.tgv.gateway"`.
+Status: `launchctl print "gui/$(id -u)/dev.ren.gateway"`.
+Stop: `launchctl bootout "gui/$(id -u)/dev.ren.gateway"`.
 Start again with `bootstrap` above. For a graceful restart, stop and then start;
 avoid `kickstart -k`, which can interrupt capture. The agent starts at GUI login
 and ends at logout; it is not an unattended boot-time system daemon.
@@ -67,25 +67,25 @@ Use systemd 240 or later with a user manager:
 
 ```sh
 (umask 077; mkdir -p "$HOME/.config/systemd/user")
-"$HOME/.local/bin/tgv" --config "$HOME/.config/tgv/tgv.toml" \
-  --data-dir "$HOME/.local/state/tgv" service render --manager systemd \
-  --binary "$HOME/.local/bin/tgv" \
-  --output "$HOME/.config/systemd/user/tgv.service"
-systemd-analyze --user verify "$HOME/.config/systemd/user/tgv.service"
+"$HOME/.local/bin/ren" --config "$HOME/.config/ren/ren.toml" \
+  --data-dir "$HOME/.local/state/ren" service render --manager systemd \
+  --binary "$HOME/.local/bin/ren" \
+  --output "$HOME/.config/systemd/user/ren.service"
+systemd-analyze --user verify "$HOME/.config/systemd/user/ren.service"
 systemctl --user daemon-reload
-systemctl --user enable --now tgv.service
-"$HOME/.local/bin/tgv" --config "$HOME/.config/tgv/tgv.toml" doctor
+systemctl --user enable --now ren.service
+"$HOME/.local/bin/ren" --config "$HOME/.config/ren/ren.toml" doctor
 ```
 
-Use `systemctl --user status tgv`, `stop tgv`, or `restart tgv` for lifecycle
-management. Read logs with `journalctl --user -u tgv`; journal policy controls
-their retention. To disable startup, use `systemctl --user disable --now tgv`.
+Use `systemctl --user status ren`, `stop ren`, or `restart ren` for lifecycle
+management. Read logs with `journalctl --user -u ren`; journal policy controls
+their retention. To disable startup, use `systemctl --user disable --now ren`.
 For unattended VPS operation after logout, enable user lingering with
 `loginctl enable-linger "$USER"` (host policy may require an administrator).
 Startup at boot relies on the user unit plus lingering; a host reboot has not been
-exercised. The static [`deploy/tgv.service`](../deploy/tgv.service) is an
+exercised. The static [`deploy/ren.service`](../deploy/ren.service) is an
 alternative for the standard paths above. Check lingering with
-`loginctl show-user "$USER" -p Linger`. The VPS needs only TGV and Tailscale;
+`loginctl show-user "$USER" -p Linger`. The VPS needs only Ren and Tailscale;
 install and sign in to coding clients on the machine where you use them. Provider
 credentials are not installed on the VPS.
 
@@ -93,14 +93,14 @@ Run the isolated Linux service check before installing or upgrading:
 
 ```sh
 cargo build --release --locked
-python3 scripts/smoke-systemd.py --binary target/release/tgv
+python3 scripts/smoke-systemd.py --binary target/release/ren
 ```
 
 It requires a non-root user with a working systemd user manager. It renders and
 verifies a uniquely named runtime unit, tests crash restart and all three provider
 routes against local mocks, stops gracefully, then checks private storage and
 history persistence across restart. It removes its unit and temporary state without
-changing `tgv.service`, lingering, Tailscale, or provider credentials by default.
+changing `ren.service`, lingering, Tailscale, or provider credentials by default.
 To also exercise the HTTPS proxy with fixture credentials, pass `--https-port 8443`
 before that port is used by the persistent deployment. This optional check adds a
 Serve route only on an unused port, routes mock requests through HTTPS, checks that
@@ -116,9 +116,9 @@ creation permissions, disable core dumps, and allow 30 seconds for SIGTERM shutd
 The daemon lets running calls continue for 10 seconds, cancels what remains,
 then has a separate 10-second budget to drain the recorder.
 Systemd limits repeated startup failures to five in a minute; fix the cause and
-run `systemctl --user reset-failed tgv` before restarting if it hits that limit.
+run `systemctl --user reset-failed ren` before restarting if it hits that limit.
 Launchd throttles respawns to at most once every 10 seconds. Neither manager's
-"running" status proves recording health: use `tgv doctor` after starting.
+"running" status proves recording health: use `ren doctor` after starting.
 
 The renderer validates configuration and the executable, resolves paths to absolute
 paths, and fixes the data directory through a CLI override. It rejects an ephemeral
@@ -127,7 +127,7 @@ restart; a changed data-directory setting requires regenerating the definition.
 No shell environment, provider credentials, or configuration contents are embedded.
 It does not alter Tailscale, firewall rules, or listener exposure.
 
-Omit `--output` to review the definition on stdout. With `--output`, TGV publishes
+Omit `--output` to review the definition on stdout. With `--output`, Ren publishes
 a complete synced file with mode 0600 on Unix and refuses existing files or symlinks.
 Parent directories must already exist. For updates, render to a new file, stop the
 service, replace the old definition, and reload/start it. Stop before replacing
@@ -161,19 +161,19 @@ cargo xtask install-vps --https-port 8443 --ui-https-port 8444
 It runs the steps below and is safe to repeat: run it again from the commit to
 deploy to upgrade. After a successful run it saves its publishing flags
 (`--https-port`, `--ui-https-port`, `--sudo-tailscale`) to
-`~/.config/tgv/install-vps.toml`, so later runs need no flags:
+`~/.config/ren/install-vps.toml`, so later runs need no flags:
 `cargo xtask install-vps`. Giving any publishing flag replaces the saved set. It refuses a checkout whose tracked files differ from the
 commit (`--allow-dirty` installs a `-dirty` build) and warns when the commit is on
 no remote branch. It builds the release binary while the old daemon keeps
-serving, creates `~/.config/tgv/tgv.toml` only if missing, and checks the
-configuration with TGV's own parser before stopping anything.
+serving, creates `~/.config/ren/ren.toml` only if missing, and checks the
+configuration with Ren's own parser before stopping anything.
 
 It then replaces a running daemon only between calls. It waits until no call is
 running (up to `--idle-timeout`, 900 seconds by default, then stops without
 changing anything), pauses admission so new calls get `503` with `retry-after: 10`
-and clients wait, runs `tgv control backup`, stops the service, keeps the old
-binary as `~/.local/bin/tgv.previous`, installs the new one, rewrites the unit
-only if it changed, starts the service, enables lingering, and runs `tgv doctor`.
+and clients wait, runs `ren control backup`, stops the service, keeps the old
+binary as `~/.local/bin/ren.previous`, installs the new one, rewrites the unit
+only if it changed, starts the service, enables lingering, and runs `ren doctor`.
 It requires doctor's build check to confirm the daemon runs the build just
 installed, then resumes admission, also when a later step failed. A daemon an
 operator had already paused stays paused. With `--https-port`, it adds a Serve
@@ -187,11 +187,11 @@ first run.
 With `--ui-https-port` (which needs `--https-port`), it also deploys the
 [UI](../ui/README.md#vps-service). It needs Bun and Node on `PATH`. Before
 stopping anything, it builds `ui/` and stages the build with its production
-dependencies in `~/.local/share/tgv-ui.next`. After the daemon is upgraded, it
-writes `~/.config/tgv/ui.env` only if missing (the daemon on loopback, and both
-Tailscale URLs), stops `tgv-ui.service`, keeps the deployed copy as
-`tgv-ui.previous`, swaps in the new one, installs the unit from
-`deploy/tgv-ui.service` with the Node found on `PATH`, starts it, and checks the
+dependencies in `~/.local/share/ren-ui.next`. After the daemon is upgraded, it
+writes `~/.config/ren/ui.env` only if missing (the daemon on loopback, and both
+Tailscale URLs), stops `ren-ui.service`, keeps the deployed copy as
+`ren-ui.previous`, swaps in the new one, installs the unit from
+`deploy/ren-ui.service` with the Node found on `PATH`, starts it, and checks the
 UI's `/health`, which relays the daemon's. It then publishes the UI on that port
 under the same rules as the daemon's port. With no `--ui-https-port` given or saved,
 the UI is left untouched.
@@ -216,15 +216,15 @@ cargo xtask dev down         # stop the slot and remove the preview's routes
 
 |          | Dev slot                                                                | Installed service                         |
 | -------- | ----------------------------------------------------------------------- | ----------------------------------------- |
-| Units    | `tgv-dev-provider`, `tgv-dev-daemon`, `tgv-dev-traffic`, `tgv-dev-ui`   | `tgv`, `tgv-ui`                           |
+| Units    | `ren-dev-provider`, `ren-dev-daemon`, `ren-dev-traffic`, `ren-dev-ui`   | `ren`, `ren-ui`                           |
 | Loopback | fake provider `18999`, daemon `18787`, UI `13000`, traffic API `13001`  | daemon `8787`, UI `3000`                  |
 | Tailnet  | `9443` (gateway), `9444` (UI), with `dev up --ui`                       | your `--https-port` and `--ui-https-port` |
-| Files    | `~/.config/tgv-dev`, `~/.local/state/tgv-dev`, `~/.local/share/tgv-dev` | `~/.config/tgv`, `~/.local/state/tgv`     |
+| Files    | `~/.config/ren-dev`, `~/.local/state/ren-dev`, `~/.local/share/ren-dev` | `~/.config/ren`, `~/.local/state/ren`     |
 
 The units are transient systemd user units, stopped by name. The dev
 configuration is regenerated on every `up`. It sets `[instance] environment =
 "development"`, which the gateway reports in `/health`: the UI's logo gets a dev
-badge, and `tgv doctor` and `tgv run` name the instance. Every
+badge, and `ren doctor` and `ren run` name the instance. Every
 provider in it is the fake one, which
 accepts any credentials and stores nothing, so no real credential or prompt
 reaches the slot. It names two users, `alice` (by the Tailscale login
@@ -249,12 +249,12 @@ So a real client can run against the slot, on the host or, after `dev up --ui`,
 from the tailnet:
 
 ```sh
-tgv run claude --gateway http://127.0.0.1:18787
-tgv run claude --gateway https://<node>:9443
+ren run claude --gateway http://127.0.0.1:18787
+ren run claude --gateway https://<node>:9443
 ```
 
-The slot always has live traffic: the `tgv-dev-traffic` unit sends calls
-through the dev gateway as `~/.config/tgv-dev/traffic.toml` says (running or
+The slot always has live traffic: the `ren-dev-traffic` unit sends calls
+through the dev gateway as `~/.config/ren-dev/traffic.toml` says (running or
 paused, calls a minute, the fake provider's pace, and weights over replies,
 harnesses, and callers). The generator and the fake provider read the file again
 for every call, so `dev traffic set`, `pause`, and `resume` apply at once; an
@@ -262,13 +262,13 @@ invalid file falls back to the defaults. The dev UI also has them in a floating
 toolbar (bottom right; it folds into a small tab): pause, rate, pace, a burst, the
 mix, and single slow, tool, error, or rate-limited calls. The generator serves them
 on `127.0.0.1:13001`, never published; the UI server forwards the toolbar's
-requests there only when `TGV_DEV_TRAFFIC_URL` is set, as the slot sets it, and
+requests there only when `REN_DEV_TRAFFIC_URL` is set, as the slot sets it, and
 only a development gateway's UI shows the toolbar.
 
 `--ui` publishes the preview with the same Serve step as `install-vps` (with
 `sudo -n` if it last did, or `--sudo-tailscale`); `--local` keeps it on
 loopback. `down` removes each preview route only while it still points at the
-slot. `shot` needs a headless Chromium: `TGV_CHROME`, `chrome-headless-shell` or
+slot. `shot` needs a headless Chromium: `REN_CHROME`, `chrome-headless-shell` or
 `chromium` on `PATH`, or Playwright's downloaded headless shell.
 
 ### Manual steps
@@ -276,14 +276,14 @@ slot. `shot` needs a headless Chromium: `TGV_CHROME`, `chrome-headless-shell` or
 Build on the VPS with Rust and `cargo build --release --locked`, or copy an
 executable built for the VPS's Linux architecture; macOS binaries do not run on
 Linux. A host running a prebuilt executable needs no Bun or Node. Install the
-release binary and use the systemd workflow above, keeping TGV bound to
+release binary and use the systemd workflow above, keeping Ren bound to
 `127.0.0.1:8787`. Confirm local health before adding HTTPS:
 
 ```sh
-systemctl --user is-enabled tgv.service
-systemctl --user is-active tgv.service
+systemctl --user is-enabled ren.service
+systemctl --user is-active ren.service
 loginctl show-user "$USER" -p Linger
-"$HOME/.local/bin/tgv" --config "$HOME/.config/tgv/tgv.toml" doctor
+"$HOME/.local/bin/ren" --config "$HOME/.config/ren/ren.toml" doctor
 ss -ltn 'sport = :8787'
 tailscale serve status
 ```
@@ -307,14 +307,14 @@ On the client machine, save the private HTTPS **root URL** printed by Serve once
 (see [Clients](clients.md#diagnose-and-launch)), then launch as usual:
 
 ```sh
-tgv init --gateway https://your-vps.your-tailnet.ts.net:8443
-tgv doctor
-tgv run claude
-tgv run codex
-tgv run pi -- --model openai/<model-id>
+ren init --gateway https://your-vps.your-tailnet.ts.net:8443
+ren doctor
+ren run claude
+ren run codex
+ren run pi -- --model openai/<model-id>
 ```
 
-`--gateway` or `TGV_GATEWAY` still override the saved URL for one command.
+`--gateway` or `REN_GATEWAY` still override the saved URL for one command.
 
 This URL is the headless daemon, not the UI. Launchers append the native route
 prefixes; manual client configurations use `/anthropic`, `/codex`, or `/openai/v1`
@@ -324,16 +324,16 @@ with mocks or an explicitly chosen client request separately.
 
 For the optional UI, run its independent Node server on loopback port 3000 and
 publish it on a second **unused** Serve port (for example 8444). Set
-`TGV_GATEWAY_URL=http://127.0.0.1:8787`,
-`TGV_PUBLIC_GATEWAY_URL=https://your-vps.your-tailnet.ts.net:8443`, and
+`REN_GATEWAY_URL=http://127.0.0.1:8787`,
+`REN_PUBLIC_GATEWAY_URL=https://your-vps.your-tailnet.ts.net:8443`, and
 `ORIGIN=https://your-vps.your-tailnet.ts.net:8444` in the UI service environment.
 The public gateway setting keeps copied client commands pointed at the daemon.
 See the [UI service instructions](../ui/README.md#vps-service) for installation.
-The UI may instead run on your laptop with `TGV_GATEWAY_URL` set to the daemon's
+The UI may instead run on your laptop with `REN_GATEWAY_URL` set to the daemon's
 Tailscale URL; no UI process is required on the VPS.
 
 Tailnet access rules govern both forwarding and inspection; allow only intended
-users/devices to reach this port. TGV has no separate gateway login; [named
+users/devices to reach this port. Ren has no separate gateway login; [named
 users](policy.md#named-users) identify callers and can be limited or blocked, but
 do not replace tailnet access rules. Keep it private
 with Serve, not Funnel or a public reverse proxy. The gateway removes Tailscale
@@ -341,18 +341,18 @@ identity/capability and standard forwarding headers before contacting providers;
 provider authentication remains unchanged. Inspect `tailscale serve status --json`
 to confirm this port has no `AllowFunnel` entry set to true.
 
-To withdraw only TGV's endpoint, preserving other Serve applications:
+To withdraw only Ren's endpoint, preserving other Serve applications:
 
 ```sh
 tailscale serve --https=8443 off
-systemctl --user disable --now tgv.service
+systemctl --user disable --now ren.service
 ```
 
-For upgrades, keep a copy of the previous executable, stop TGV, replace the binary,
+For upgrades, keep a copy of the previous executable, stop Ren, replace the binary,
 and start it again. Run local and remote `doctor` checks afterward. A restart
 gives active requests 10 seconds to finish and then cancels them, so upgrade
 between sessions. Before upgrades that change the database schema, run
-`tgv control backup` or stop the service and copy the complete state directory; do
+`ren control backup` or stop the service and copy the complete state directory; do
 not downgrade a migrated database without restoring a matching backup.
 
 References: [Tailscale Serve CLI](https://tailscale.com/docs/reference/tailscale-cli/serve),
@@ -362,26 +362,26 @@ References: [Tailscale Serve CLI](https://tailscale.com/docs/reference/tailscale
 ## Containers
 
 The [`Dockerfile`](../Dockerfile) builds the daemon image for Docker and Podman
-alike. It runs `tgv serve` as a non-root user (uid 65532) with its data in
-`/data/tgv`, on the `/data` volume, and contains only the binary, the C runtime, and CA certificates.
+alike. It runs `ren serve` as a non-root user (uid 65532) with its data in
+`/data/ren`, on the `/data` volume, and contains only the binary, the C runtime, and CA certificates.
 The UI is not included. Build it from the checkout:
 
 ```sh
-docker build -t localhost/tgv:latest .
-podman build -t localhost/tgv:latest .
+docker build -t localhost/ren:latest .
+podman build -t localhost/ren:latest .
 ```
 
-The listener stays on loopback inside the container; TGV refuses any other
+The listener stays on loopback inside the container; Ren refuses any other
 address. Don't publish a port or use host networking. Instead, a Tailscale
-container shares TGV's network namespace and serves it over HTTPS on the
+container shares Ren's network namespace and serves it over HTTPS on the
 tailnet with Tailscale Serve. That sidecar is a separate
-tailnet device (named `tgv` by default) and serves on its own port 443. Serve
+tailnet device (named `ren` by default) and serves on its own port 443. Serve
 adds the identity headers that `control.tailscale_logins` checks, and nothing
 else can reach the listener. Its route is
 [`deploy/container/tailscale-serve.json`](../deploy/container/tailscale-serve.json),
 with Funnel off.
 
-Both setups below need a configuration file. Copy `tgv.example.toml` and review
+Both setups below need a configuration file. Copy `ren.example.toml` and review
 it; keep `listen` on loopback and leave `data_dir` unset, so the data lands in
 the volume. Operator API keys go in the container environment, never in the
 file. The sidecar needs a Tailscale [auth key](https://tailscale.com/kb/1085/auth-keys)
@@ -389,8 +389,8 @@ for its first start only; without one, its log prints a login URL.
 
 Containers keep the daemon's shutdown budget (10 seconds for running calls,
 then capture drain), so both setups allow 30 seconds before killing it. Upgrade
-by rebuilding the image and restarting TGV between sessions, after
-`tgv control backup` when the schema changes. Don't use `podman auto-update` or
+by rebuilding the image and restarting Ren between sessions, after
+`ren control backup` when the schema changes. Don't use `podman auto-update` or
 an image watcher: they restart whenever the image changes, mid-stream.
 
 ### Compose
@@ -399,44 +399,44 @@ an image watcher: they restart whenever the image changes, mid-stream.
 `docker compose` or `podman compose`. From `deploy/container`:
 
 ```sh
-cp ../../tgv.example.toml tgv.toml
-chmod 0644 tgv.toml
+cp ../../ren.example.toml ren.toml
+chmod 0644 ren.toml
 echo 'TS_AUTHKEY=tskey-auth-...' > .env
 docker compose up -d --build
-docker compose exec tgv tgv --config /etc/tgv/tgv.toml doctor
+docker compose exec ren ren --config /etc/ren/ren.toml doctor
 ```
 
-`tgv.toml` must be readable by the container's user, hence `0644`; it holds no
-secrets. `.env`, `tgv.toml`, and `*.env` there are ignored by git and by image
-builds. For operator keys, uncomment `env_file: tgv.env`. Run other commands the
-same way, for example `docker compose exec tgv tgv control backup`.
-Logs: `docker compose logs tgv`.
+`ren.toml` must be readable by the container's user, hence `0644`; it holds no
+secrets. `.env`, `ren.toml`, and `*.env` there are ignored by git and by image
+builds. For operator keys, uncomment `env_file: ren.env`. Run other commands the
+same way, for example `docker compose exec ren ren control backup`.
+Logs: `docker compose logs ren`.
 
 ### Podman Quadlet
 
 On Linux, the [Quadlet files](../deploy/container/quadlet) are the recommended
 Podman setup: rootless, supervised by your systemd user manager like
-`tgv.service`, with logs in the journal. They define a `tgv` pod, its
-`tgv-tailscale` and `tgv-gateway` containers (units `tgv-tailscale.service` and
-`tgv-gateway.service`, which leaves the name `tgv.service` to the host unit),
-and the `tgv-data` and `tgv-tailscale` volumes. The pod maps your user to the
-image's user, so `tgv.toml` may stay `0600` and TGV's files belong to you; read
+`ren.service`, with logs in the journal. They define a `ren` pod, its
+`ren-tailscale` and `ren-gateway` containers (units `ren-tailscale.service` and
+`ren-gateway.service`, which leaves the name `ren.service` to the host unit),
+and the `ren-data` and `ren-tailscale` volumes. The pod maps your user to the
+image's user, so `ren.toml` may stay `0600` and Ren's files belong to you; read
 the volume through `podman exec` or `podman unshare`, since Podman keeps its top
 directory private. Requires Podman 5.0 or later.
 
 ```sh
-podman build -t localhost/tgv:latest .
-(umask 077; mkdir -p "$HOME/.config/tgv" "$HOME/.config/containers/systemd")
-cp -n tgv.example.toml "$HOME/.config/tgv/tgv.toml"
-cp deploy/container/tailscale-serve.json "$HOME/.config/tgv/"
-(umask 077; echo 'TS_AUTHKEY=tskey-auth-...' > "$HOME/.config/tgv/tailscale.env")
+podman build -t localhost/ren:latest .
+(umask 077; mkdir -p "$HOME/.config/ren" "$HOME/.config/containers/systemd")
+cp -n ren.example.toml "$HOME/.config/ren/ren.toml"
+cp deploy/container/tailscale-serve.json "$HOME/.config/ren/"
+(umask 077; echo 'TS_AUTHKEY=tskey-auth-...' > "$HOME/.config/ren/tailscale.env")
 cp deploy/container/quadlet/* "$HOME/.config/containers/systemd/"
 systemctl --user daemon-reload
-systemctl --user start tgv-pod.service
-podman exec tgv-gateway tgv --config /etc/tgv/tgv.toml doctor
+systemctl --user start ren-pod.service
+podman exec ren-gateway ren --config /etc/ren/ren.toml doctor
 ```
 
 Quadlet units are generated, so they are started rather than enabled; their
 `[Install]` section starts them at login, and at boot with lingering
-(`loginctl enable-linger "$USER"`). Logs: `journalctl --user -u tgv-gateway`.
-Stop with `systemctl --user stop tgv-pod.service`; TGV stops before Tailscale.
+(`loginctl enable-linger "$USER"`). Logs: `journalctl --user -u ren-gateway`.
+Stop with `systemctl --user stop ren-pod.service`; Ren stops before Tailscale.

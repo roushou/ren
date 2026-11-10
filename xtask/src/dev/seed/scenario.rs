@@ -129,7 +129,7 @@ impl Caller {
             // The dev daemon listens on loopback, where a request can carry
             // the header Tailscale Serve would add.
             Self::Login(login) => vec![("tailscale-user-login".into(), (*login).into())],
-            Self::Token(token) => vec![("x-tgv-user-token".into(), token.clone())],
+            Self::Token(token) => vec![("x-ren-user-token".into(), token.clone())],
         }
     }
 }
@@ -228,8 +228,8 @@ impl Scenario {
             Client::Pi => {
                 let body = Self::messages(model, prompt, toolset, &session_id, done);
                 headers.extend([
-                    ("x-tgv-pi-session-id".into(), session_id),
-                    ("x-tgv-pi-turn-id".into(), turn_id),
+                    ("x-ren-pi-session-id".into(), session_id),
+                    ("x-ren-pi-turn-id".into(), turn_id),
                 ]);
                 ("/anthropic/v1/messages", body, "pi")
             }
@@ -496,7 +496,7 @@ impl Scenario {
         let mut refused = Self::call(
             Client::ClaudeCode,
             &Caller::Token(
-                "tgvu_000000000000000000000000000000000000000000000000000000000000dead".into(),
+                "renu_000000000000000000000000000000000000000000000000000000000000dead".into(),
             ),
             run,
             (15, 1501),
@@ -643,7 +643,7 @@ mod tests {
     #[test]
     fn all_is_every_scenario_and_bodies_are_json() {
         let run = Run(3);
-        let all = Scenario::All.plan(run, "tgvu_fixture");
+        let all = Scenario::All.plan(run, "renu_fixture");
         let parts: usize = [
             Scenario::Sessions,
             Scenario::Users,
@@ -653,7 +653,7 @@ mod tests {
         ]
         .iter()
         .map(|scenario| {
-            let plan = scenario.plan(run, "tgvu_fixture");
+            let plan = scenario.plan(run, "renu_fixture");
             plan.calls.len() + plan.channels.len()
         })
         .sum();
@@ -682,7 +682,7 @@ mod tests {
 
     #[test]
     fn the_users_scenario_sends_the_token_and_logins() {
-        let plan = Scenario::Users.plan(Run(1), "tgvu_fixture");
+        let plan = Scenario::Users.plan(Run(1), "renu_fixture");
         let sent = |name: &str| {
             plan.calls
                 .iter()
@@ -690,7 +690,7 @@ mod tests {
                 .filter(|(header, _)| header == name)
                 .count()
         };
-        assert_eq!(sent("x-tgv-user-token"), 3);
+        assert_eq!(sent("x-ren-user-token"), 3);
         assert_eq!(sent("tailscale-user-login"), 3);
         assert!(
             plan.calls

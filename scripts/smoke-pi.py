@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Installed Pi + TGV launcher: Anthropic, Codex, and public OpenAI OAuth-shaped mock round trips.
+"""Installed Pi + Ren launcher: Anthropic, Codex, and public OpenAI OAuth-shaped mock round trips.
 
-Build TGV first, then run: python3 scripts/smoke-pi.py
+Build Ren first, then run: python3 scripts/smoke-pi.py
 Uses the installed Pi CLI, temporary configuration/storage, and loopback servers.
 """
 import base64
@@ -23,7 +23,7 @@ import uuid
 def events(index, result, model, tool_id, tool_name):
     message = {"type": "message", "id": f"msg_fixture_{index}", "role": "assistant", "model": model, "content": [], "stop_reason": None, "stop_sequence": None, "usage": {"input_tokens": 1, "output_tokens": 0}}
     block = {"type": "text", "text": ""} if result else {"type": "tool_use", "id": tool_id, "name": tool_name, "input": {}}
-    delta = {"type": "text_delta", "text": "TGV_OK"} if result else {"type": "input_json_delta", "partial_json": json.dumps({"path": "probe.txt"})}
+    delta = {"type": "text_delta", "text": "REN_OK"} if result else {"type": "input_json_delta", "partial_json": json.dumps({"path": "probe.txt"})}
     payloads = [
         {"type": "message_start", "message": message},
         {"type": "content_block_start", "index": 0, "content_block": block},
@@ -37,7 +37,7 @@ def events(index, result, model, tool_id, tool_name):
 
 def codex_events(index, result, model, tool_id, tool_name):
     response_id = f"resp_fixture_{index}"
-    item = ({"type": "message", "id": f"msg_{index}", "role": "assistant", "status": "completed", "content": [{"type": "output_text", "text": "TGV_OK", "annotations": []}]}
+    item = ({"type": "message", "id": f"msg_{index}", "role": "assistant", "status": "completed", "content": [{"type": "output_text", "text": "REN_OK", "annotations": []}]}
             if result else {"type": "function_call", "id": f"fc_{index}", "call_id": tool_id, "name": tool_name, "arguments": json.dumps({"path": "probe.txt"}), "status": "completed"})
     response = {"id": response_id, "status": "completed", "model": model, "output": [item], "usage": {"input_tokens": 12, "output_tokens": 5, "input_tokens_details": {"cached_tokens": 0}}}
     payloads = [
@@ -51,8 +51,8 @@ def codex_events(index, result, model, tool_id, tool_name):
 
 
 def scenario(provider, model):
-    binary = pathlib.Path(__file__).resolve().parents[1] / "target/debug/tgv"
-    expected = "TGV_" + uuid.uuid4().hex
+    binary = pathlib.Path(__file__).resolve().parents[1] / "target/debug/ren"
+    expected = "REN_" + uuid.uuid4().hex
     session_id = str(uuid.uuid4())
     observed = []
     failures = []
@@ -72,7 +72,7 @@ def scenario(provider, model):
                     raw = subprocess.check_output(["node", "-e", "let b=[];process.stdin.on('data',x=>b.push(x));process.stdin.on('end',()=>process.stdout.write(require('node:zlib').zstdDecompressSync(Buffer.concat(b))))"], input=raw)
                 body = json.loads(raw)
                 assert self.headers.get("authorization") == "Bearer " + credential, "bearer auth mismatch"
-                assert not any(name.lower().startswith("x-tgv-pi-") for name in self.headers), "internal headers leaked"
+                assert not any(name.lower().startswith("x-ren-pi-") for name in self.headers), "internal headers leaked"
                 index = len(observed)
                 tool_id = f"tool_fixture_{index // 2}"
                 result = index % 2 == 1
@@ -111,7 +111,7 @@ def scenario(provider, model):
     thread = threading.Thread(target=upstream.serve_forever, daemon=True)
     thread.start()
     try:
-        with tempfile.TemporaryDirectory(prefix="tgv-pi-") as directory:
+        with tempfile.TemporaryDirectory(prefix="ren-pi-") as directory:
             root = pathlib.Path(directory)
             (root / "probe.txt").write_text(expected)
             agent = root / "agent"
@@ -122,7 +122,7 @@ def scenario(provider, model):
             with socket.socket() as sock:
                 sock.bind(("127.0.0.1", 0))
                 port = sock.getsockname()[1]
-            config = root / "tgv.toml"
+            config = root / "ren.toml"
             config.write_text(f'listen = "127.0.0.1:{port}"\nanthropic_base_url = "http://127.0.0.1:{upstream.server_port}"\ncodex_base_url = "http://127.0.0.1:{upstream.server_port}"\nopenai_base_url = "http://127.0.0.1:{upstream.server_port}"\n')
             state = root / "state"
             daemon = subprocess.Popen([str(binary), "--config", str(config), "--data-dir", str(state), "serve"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -133,10 +133,10 @@ def scenario(provider, model):
                             break
                     except OSError:
                         if daemon.poll() is not None:
-                            raise RuntimeError("TGV failed to start")
+                            raise RuntimeError("Ren failed to start")
                         time.sleep(0.05)
                 else:
-                    raise RuntimeError("TGV did not become healthy")
+                    raise RuntimeError("Ren did not become healthy")
                 env = os.environ.copy()
                 # All credentials and configuration are disposable. Startup
                 # networking, discovered extensions, and provider proxies are off.
@@ -145,8 +145,8 @@ def scenario(provider, model):
                         env.pop(key)
                 env.update(PI_CODING_AGENT_DIR=str(agent), XDG_CACHE_HOME=str(root / "cache"), PI_OFFLINE="1", PI_TELEMETRY="0", PI_CACHE_RETENTION="long")
                 for _ in range(2):
-                    result = subprocess.run([str(binary), "run", "pi", "--gateway", f"http://127.0.0.1:{port}", "--", "--offline", "--print", "--session-id", session_id, "--no-extensions", "--no-skills", "--no-prompt-templates", "--no-themes", "--no-context-files", "--no-approve", "--tools", "read", "--model", f"{provider}/{model}", "--thinking", "off", "--mode", "json", "Read probe.txt using a tool, then reply TGV_OK."], cwd=root, env=env, capture_output=True, text=True, timeout=60)
-                    if result.returncode != 0 or 'TGV_OK' not in result.stdout:
+                    result = subprocess.run([str(binary), "run", "pi", "--gateway", f"http://127.0.0.1:{port}", "--", "--offline", "--print", "--session-id", session_id, "--no-extensions", "--no-skills", "--no-prompt-templates", "--no-themes", "--no-context-files", "--no-approve", "--tools", "read", "--model", f"{provider}/{model}", "--thinking", "off", "--mode", "json", "Read probe.txt using a tool, then reply REN_OK."], cwd=root, env=env, capture_output=True, text=True, timeout=60)
+                    if result.returncode != 0 or 'REN_OK' not in result.stdout:
                         print(result.stderr.replace(credential, "[fixture credential]"))
                         print(result.stdout[-4000:].replace(credential, "[fixture credential]"))
                         raise RuntimeError(f"Pi failed for {provider}: {failures}")
@@ -159,7 +159,7 @@ def scenario(provider, model):
                 except subprocess.TimeoutExpired:
                     daemon.kill()
                     daemon.wait()
-            records = json.loads(subprocess.check_output([str(binary), "--data-dir", str(state), "history"], text=True))
+            records = json.loads(subprocess.check_output([str(binary), "--data-dir", str(state), "history"], text=True))["calls"]
             assert len(records) == 4
             assert all(r["state"] == "finished" and r["outcome"] == "completed" for r in records)
             assert all(r["attribution"]["hint"]["source"] == "pi_extension_headers" for r in records)
@@ -167,7 +167,7 @@ def scenario(provider, model):
             assert len({r["session"] for r in records}) == 1
             assert len({r["turn"] for r in records}) == 2 and all(r["turn"] for r in records)
             assert sum(len(r["tool_names"]) for r in records) == 2
-            for database in ("tgv.sqlite3", "blobs.sqlite3"):
+            for database in ("ren.sqlite3", "blobs.sqlite3"):
                 assert credential.encode() not in (state / database).read_bytes()
             print(f"PASS: {provider}: stored OAuth-shaped auth, SSE tool round trips, resumed session, 2 turns / 4 calls, local hints stripped.")
     finally:

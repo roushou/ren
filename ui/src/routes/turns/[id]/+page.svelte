@@ -162,7 +162,7 @@
               >
               {#each call.limitations as limitation (limitation)}<span
                   class="chip neutral"
-                  title="What TGV could not read of this call's stored text; forwarding was not affected"
+                  title="What Ren could not read of this call's stored text; forwarding was not affected"
                   >{title(limitation)}</span
                 >{/each}
               <a class="text-button end" href={callHref(turn.session, call.call)}

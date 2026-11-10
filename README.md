@@ -1,13 +1,13 @@
 <div align="center">
 
-<img src="docs/wordmark.svg" alt="TGV" height="60">
+<img src="docs/wordmark.svg" alt="Ren" height="60">
 
 <h3>Self-hosted gateway and flight recorder for coding agents</h3>
 
 See every request, response, tool call, and token from Claude Code, Codex, Pi, and OpenCode
 as it happens, without changing a byte of the traffic.
 
-[![CI](https://github.com/roushou/tgv/actions/workflows/ci.yml/badge.svg)](https://github.com/roushou/tgv/actions/workflows/ci.yml)
+[![CI](https://github.com/roushou/ren/actions/workflows/ci.yml/badge.svg)](https://github.com/roushou/ren/actions/workflows/ci.yml)
 [![License: MIT or Apache-2.0](https://img.shields.io/badge/license-MIT%20%2F%20Apache--2.0-blue)](#license)
 
 [Install](#install) · [Clients](docs/clients.md) · [Deploy](#deploy) ·
@@ -15,13 +15,13 @@ as it happens, without changing a byte of the traffic.
 
 </div>
 
-<img alt="TGV's Live view" src="https://github.com/user-attachments/assets/603ebbf5-966e-40c4-9b9e-d4438c557cb4" />
+<img alt="Ren's Live view" src="docs/screenshots/live.png" />
 
 ## Overview
 
-TGV sits between your coding agents and their providers. `tgv run claude` (or
-`codex`, `pi`, or `opencode`) points a client at TGV for one session without editing its
-configuration. TGV forwards each request unchanged with the client's own
+Ren sits between your coding agents and their providers. `ren run claude` (or
+`codex`, `pi`, or `opencode`) points a client at Ren for one session without editing its
+configuration. Ren forwards each request unchanged with the client's own
 sign-in, records the request and response on the side, and serves that history
 to the CLI, a read-only API, and the optional web UI, on the same machine or
 from another one on your tailnet.
@@ -45,49 +45,51 @@ from another one on your tailnet.
 
 ## Install
 
+The executable is `ren`; the crates.io package is named `ren-rs`.
+
 With the Rust toolchain pinned in `rust-toolchain.toml`:
 
 ```sh
-cargo install --path crates/tgv-cli --locked
+cargo install --path crates/ren-cli --locked
 ```
 
-Add `--features tui` for `tgv tui`, a terminal view of live sessions.
+Add `--features tui` for `ren tui`, a terminal view of live sessions.
 
 ## Run
 
 ```sh
-tgv serve
+ren serve
 ```
 
-TGV listens on `127.0.0.1:8787` and stores data in `$XDG_STATE_HOME/tgv` (or
-`~/.local/state/tgv`). [`tgv.example.toml`](tgv.example.toml) documents the
-configuration (`tgv --config <file> serve`).
+Ren listens on `127.0.0.1:8787` and stores data in `$XDG_STATE_HOME/ren` (or
+`~/.local/state/ren`). [`ren.example.toml`](ren.example.toml) documents the
+configuration (`ren --config <file> serve`).
 
 Launch a client through it, keeping the client's own sign-in:
 
 ```sh
-tgv doctor
-tgv run claude
-tgv run codex
-tgv run pi -- --model anthropic/<model-id>
-tgv run opencode
+ren doctor
+ren run claude
+ren run codex
+ren run pi -- --model anthropic/<model-id>
+ren run opencode
 ```
 
 When the daemon runs on another machine, such as a VPS on your tailnet, save its
 URL once on the machine you code from, and the same commands use it:
 
 ```sh
-tgv init --gateway https://your-vps.your-tailnet.ts.net:8443
+ren init --gateway https://your-vps.your-tailnet.ts.net:8443
 ```
 
 Browse what was recorded:
 
 ```sh
-tgv sessions
-tgv history --limit 10
-tgv inspect <call-id>
-tgv tail
-tgv tui          # built with --features tui
+ren sessions
+ren history --limit 10
+ren inspect <call-id>
+ren tail
+ren tui          # built with --features tui
 ```
 
 With a saved gateway, these read the remote daemon.
@@ -96,25 +98,25 @@ Let your agents look it up themselves through the
 [MCP server](docs/api.md#mcp-server):
 
 ```sh
-claude mcp add --scope user tgv -- tgv mcp
+claude mcp add --scope user ren -- ren mcp
 ```
 
 The optional UI lives in [`ui`](ui/README.md).
 
 ## Deploy
 
-`tgv serve` runs in the foreground; for a background service, pick one:
+`ren serve` runs in the foreground; for a background service, pick one:
 
 | Where                          | How                                                               | Guide                                                       |
 | ------------------------------ | ----------------------------------------------------------------- | ----------------------------------------------------------- |
-| macOS                          | launchd agent, from `tgv service render --manager launchd`        | [launchd](docs/deployment.md#macos-launchd)                 |
-| Linux                          | systemd user service, from `tgv service render --manager systemd` | [systemd](docs/deployment.md#linux-systemd)                 |
+| macOS                          | launchd agent, from `ren service render --manager launchd`        | [launchd](docs/deployment.md#macos-launchd)                 |
+| Linux                          | systemd user service, from `ren service render --manager systemd` | [systemd](docs/deployment.md#linux-systemd)                 |
 | VPS on your tailnet            | `cargo xtask install-vps --https-port 8443`                       | [VPS with Tailscale](docs/deployment.md#vps-with-tailscale) |
 | Docker or Podman               | `docker compose up -d --build` in `deploy/container`              | [Compose](docs/deployment.md#compose)                       |
 | Podman, rootless under systemd | Quadlet files in `deploy/container/quadlet`                       | [Podman Quadlet](docs/deployment.md#podman-quadlet)         |
 
 The daemon always listens on loopback. Remote clients reach it through
-Tailscale Serve, from the host or from a sidecar container; TGV has no public
+Tailscale Serve, from the host or from a sidecar container; Ren has no public
 listener.
 
 ## Screenshots
@@ -122,25 +124,25 @@ listener.
 <details>
 <summary>Light theme</summary>
 
-<img alt="TGV's Live view in light theme" src="https://github.com/user-attachments/assets/9d8d15c3-4430-4078-8ede-a76822fe2d44" />
+<img alt="Ren's Live view in light theme" src="docs/screenshots/live-light.png" />
 </details>
 
 <details>
 <summary>Traffic</summary>
 
-<img alt="TGV's Traffic view" src="https://github.com/user-attachments/assets/de8e4ea0-3957-4e3f-9afe-b486fd44fe08" />
+<img alt="Ren's Traffic view" src="docs/screenshots/traffic.png" />
 </details>
 
 <details>
 <summary>Overview</summary>
 
-<img width="1470" height="838" alt="TGV's Overview" src="https://github.com/user-attachments/assets/cbc962cf-c849-4814-b94f-c4022e1f6d35" />
+<img width="1470" height="838" alt="Ren's Overview" src="docs/screenshots/overview.png" />
 </details>
 
 <details>
 <summary>Sessions</summary>
 
-<img width="1470" height="835" alt="TGV's Sessions view" src="https://github.com/user-attachments/assets/265b6759-caf7-4a7c-a919-3b5bd66254bf" />
+<img width="1470" height="838" alt="Ren's Sessions view" src="docs/screenshots/sessions.png" />
 </details>
 
 ## Documentation
@@ -153,7 +155,7 @@ listener.
   controls
 - [Deployment](docs/deployment.md): launchd, systemd, containers (Docker and
   Podman), and Tailscale
-- [Architecture](docs/architecture.md): how TGV is built
+- [Architecture](docs/architecture.md): how Ren is built
 - [AGENTS.md](AGENTS.md): contributor guidance
 
 ## License

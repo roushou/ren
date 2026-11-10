@@ -1,5 +1,5 @@
 // Types and boundary parsing for the daemon's read-only management API
-// (`crates/tgv-daemon/src/api/mod.rs`). Field names match the daemon's JSON.
+// (`crates/ren-daemon/src/api/mod.rs`). Field names match the daemon's JSON.
 import {
   Uuid,
   array,
@@ -22,7 +22,7 @@ import {
 /** The management API version this UI understands. */
 export const API_VERSION = 1;
 
-// Identities. TGV's own ids are UUIDs; native client ids keep separate types.
+// Identities. Ren's own ids are UUIDs; native client ids keep separate types.
 export type CallId = Brand<string, 'CallId'>;
 export type AttemptId = Brand<string, 'AttemptId'>;
 export type ChannelId = Brand<string, 'ChannelId'>;
@@ -86,7 +86,7 @@ const terminalCauses = [
   'upstream_closed',
   'client',
   'shutdown',
-  // The TGV operator cancelled the call.
+  // The Ren operator cancelled the call.
   'operator',
   // With body_complete: the declared content-length was relayed whole before
   // the stream's own end was observed.
@@ -94,7 +94,7 @@ const terminalCauses = [
 ] as const;
 export type TerminalCause = (typeof terminalCauses)[number];
 const attemptPhases = ['upload', 'awaiting_head', 'response'] as const;
-/** Why TGV answered a call without forwarding it. */
+/** Why Ren answered a call without forwarding it. */
 const callPurposes = ['work', 'quota_probe'] as const;
 /** Why a client sent a call: its session's work, or a check of its own. */
 export type CallPurpose = (typeof callPurposes)[number];
@@ -117,7 +117,7 @@ export type CallRejection = (typeof callRejections)[number];
 /** How a call's caller was identified (see the daemon's named users). */
 const callerKinds = ['user_tailscale', 'user_token', 'unlisted', 'unidentified'] as const;
 export type CallerKind = (typeof callerKinds)[number];
-/** Who made a call: a named user, a Tailscale login no user lists, or nobody TGV can identify. */
+/** Who made a call: a named user, a Tailscale login no user lists, or nobody Ren can identify. */
 export interface CallerView {
   kind: Stored<CallerKind>;
   /** The named user it proved to be. */
@@ -244,7 +244,7 @@ export type DecodeIntegrity = (typeof decodeIntegrities)[number];
 
 export type Direction = 'request' | 'response';
 
-// Views (`crates/tgv-store/src/view.rs`).
+// Views (`crates/ren-store/src/view.rs`).
 export interface BodyView {
   /** Unknown while the body is open, or after a restart. */
   observed_bytes: number | null;
@@ -294,7 +294,7 @@ export interface CallView {
   capture_complete: boolean;
   request: BodyView | null;
   response: BodyView | null;
-  /** Set when TGV answered without forwarding the call. */
+  /** Set when Ren answered without forwarding the call. */
   rejection: Stored<CallRejection> | null;
   /** The operator state revision the call was planned against. */
   operator_revision: number | null;
@@ -522,7 +522,7 @@ export interface CaptureLimits {
 export interface Sessions {
   sessions: SessionView[];
 }
-/** A bounded preview of a stored body (`crates/tgv-daemon/src/api/preview.rs`). */
+/** A bounded preview of a stored body (`crates/ren-daemon/src/api/preview.rs`). */
 export interface BodyPreview {
   observed_bytes: number | null;
   stored_bytes: number;
@@ -845,7 +845,7 @@ export class ApiVersionError extends Error {
   readonly found: unknown;
   constructor(found: unknown) {
     super(
-      `Incompatible TGV daemon: it reported management API version ${
+      `Incompatible Ren daemon: it reported management API version ${
         typeof found === 'number' || typeof found === 'string' ? found : 'none'
       }, but this UI requires version ${API_VERSION}. Update the UI or the daemon so they match.`,
     );
@@ -859,10 +859,10 @@ export class ApiError extends Error {
   constructor(status: number, code: Stored<ErrorCode> | null = null) {
     super(
       status === 502 || status === 504
-        ? 'Cannot reach TGV. Check that the daemon is running and the UI gateway URL is correct.'
+        ? 'Cannot reach Ren. Check that the daemon is running and the UI gateway URL is correct.'
         : status === 503
           ? code === 'unavailable'
-            ? 'TGV storage is unavailable. Check the daemon logs.'
+            ? 'Ren storage is unavailable. Check the daemon logs.'
             : 'The history reader is busy. Try again in a moment.'
           : status === 404
             ? 'This record is no longer available. It may have expired.'

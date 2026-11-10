@@ -233,7 +233,7 @@ test('an exposed secret reads as what happened, never the secret', () => {
   assert.equal(line.title, 'Secret exposed');
   assert.equal(
     line.detail,
-    'GitHub token ghp_…wxyz in the tool output, sent to the provider (2 times). Rotate it: TGV cannot recall it.',
+    'GitHub token ghp_…wxyz in the tool output, sent to the provider (2 times). Rotate it: Ren cannot recall it.',
   );
   const reply = findingLine({
     kind: 'secret_exposure',

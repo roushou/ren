@@ -21,7 +21,7 @@ export type Network =
 export class GatewayPlace {
   static readonly MASK = '•••';
 
-  /** The address as given, an origin such as `https://tgv.tail1.ts.net:8443`. */
+  /** The address as given, an origin such as `https://ren.tail1.ts.net:8443`. */
   readonly origin: string;
   readonly network: Network;
   /** The node's name (an address's first label); null for an IP address. */

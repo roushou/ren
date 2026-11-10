@@ -1,26 +1,26 @@
 # Clients
 
-How to point Claude Code, Codex, Pi, and OpenCode at TGV, and how TGV
+How to point Claude Code, Codex, Pi, and OpenCode at Ren, and how Ren
 attributes their traffic to sessions and turns.
 
 Live subscription traffic has been exercised with Claude Code and Codex. Pi has
 been validated against local mock providers; live Pi subscription access is
 unvalidated. OpenCode support follows OpenCode 2.2.6's documentation and source
 and is covered by unit tests with synthetic headers; it has not been run against
-TGV.
+Ren.
 
 ## Diagnose and launch
 
 With the daemon running, use session-only launch commands:
 
 ```sh
-tgv doctor
-tgv doctor --json
-tgv run claude
-tgv run codex -- --model <model-id>
-tgv run pi -- --model anthropic/<model-id>
-tgv run opencode -- --model anthropic/<model-id>
-tgv run codex --dry-run
+ren doctor
+ren doctor --json
+ren run claude
+ren run codex -- --model <model-id>
+ren run pi -- --model anthropic/<model-id>
+ren run opencode -- --model anthropic/<model-id>
+ren run codex --dry-run
 ```
 
 `doctor` checks local configuration, upstream URL validity, read-only history,
@@ -36,19 +36,19 @@ These are readiness checks, not a full database-integrity or disk-space check.
 
 `run` checks the gateway before launching, then applies only process-scoped
 overrides. Claude receives its base URL and correlation-header flag. Codex gets
-a complete `tgv_session` provider override with OpenAI authentication, and
+a complete `ren_session` provider override with OpenAI authentication, and
 `--no-daemon` keeps the session out of an already-running shared Codex server.
 OpenCode gets inline configuration naming two base URLs (see [OpenCode](#opencode)).
 Existing model, approval, sandbox, sign-in, and credential-refresh behavior stays
-owned by the client. TGV does not modify client configuration files or credentials.
+owned by the client. Ren does not modify client configuration files or credentials.
 On macOS/Linux the client replaces the launcher, preserving terminal interaction,
-signals, and exit status. A normal client launch outside TGV restores normal routing.
+signals, and exit status. A normal client launch outside Ren restores normal routing.
 
-Pass client arguments after `--`; TGV passes them literally without a shell.
+Pass client arguments after `--`; Ren passes them literally without a shell.
 Explicit client routing/auth options or managed client settings can supersede
 the launcher's settings. API keys and token overrides already present in your
 environment are retained, with a name-only warning: verify the client uses your
-intended subscription login. `--dry-run` prints only TGV's generated arguments and
+intended subscription login. `--dry-run` prints only Ren's generated arguments and
 environment overrides, excluding inherited credentials and your client arguments;
 it performs no network or client operations. Launch options target Claude Code
 2.1.316, Codex CLI 0.164.0, Pi 1.0.0, and OpenCode 2.2.6.
@@ -56,19 +56,19 @@ it performs no network or client operations. Launch options target Claude Code
 ### Named users
 
 On a gateway with [named users](policy.md#named-users), a user who is not
-identified by a Tailscale login sets the token `tgv users token` printed for
+identified by a Tailscale login sets the token `ren users token` printed for
 them, and `run` sends it:
 
 ```sh
-export TGV_USER_TOKEN=tgvu_…
-tgv run claude
+export REN_USER_TOKEN=renu_…
+ren run claude
 ```
 
 Claude Code receives it in `ANTHROPIC_CUSTOM_HEADERS`, after any headers you
 set there (Claude Code 2.1.227 or later). Codex's provider override always names
-it in `env_http_headers`, so Codex sends it whenever `TGV_USER_TOKEN` is set. The
-Pi extension reads `TGV_USER_TOKEN` and refuses to load if it is set but is not a
-TGV user token. OpenCode does not send it: where its configuration takes
+it in `env_http_headers`, so Codex sends it whenever `REN_USER_TOKEN` is set. The
+Pi extension reads `REN_USER_TOKEN` and refuses to load if it is set but is not a
+Ren user token. OpenCode does not send it: where its configuration takes
 extra headers is not confirmed, so its calls are recorded by Tailscale login or
 as unidentified, and `run` says so. `--dry-run` shows the token as
 `<redacted>`. The gateway removes the header before forwarding.
@@ -81,25 +81,25 @@ does not know fails the check.
 For a remote daemon, save its trusted Tailscale HTTPS **root** URL once:
 
 ```sh
-tgv init --gateway https://tgv.your-tailnet.ts.net
-tgv run claude
-tgv run codex -- --model <model-id>
+ren init --gateway https://ren.your-tailnet.ts.net
+ren run claude
+ren run codex -- --model <model-id>
 ```
 
-`tgv init` checks the gateway's health and saves the URL only if the check
-passes, to `$XDG_CONFIG_HOME/tgv/client.toml` (or `~/.config/tgv/client.toml`),
+`ren init` checks the gateway's health and saves the URL only if the check
+passes, to `$XDG_CONFIG_HOME/ren/client.toml` (or `~/.config/ren/client.toml`),
 owner-only. Without `--gateway`, it asks on a terminal, offering the saved URL
 as the default; with no terminal it fails instead of waiting. This file is
-separate from the daemon's `tgv.toml`. `run` and `doctor` choose the gateway in
-this order: `--gateway`, the `TGV_GATEWAY` environment variable, `client.toml`,
+separate from the daemon's `ren.toml`. `run` and `doctor` choose the gateway in
+this order: `--gateway`, the `REN_GATEWAY` environment variable, `client.toml`,
 then the configured local listener. `doctor` reports which one it used. When
 nothing names a gateway and the local daemon fails its preflight, `run` says so
-and points to `tgv init`; no command prompts on its own.
+and points to `ren init`; no command prompts on its own.
 
 A selected gateway skips local history/upstream checks; remote storage is
 queried through the API. Every history command (`history`, `sessions`, `timeline`,
 `turns`, `turn`, `activity`, `search`, `exposures`, `report`, `inspect`),
-`tgv tail`, `tgv mcp`, and `tgv control` use the same gateway; `--config` or `--data-dir`
+`ren tail`, `ren mcp`, and `ren control` use the same gateway; `--config` or `--data-dir`
 without `--gateway` keeps them on this host (see [History](api.md#cli) and
 [operator controls](policy.md#operator-controls)).
 Root URLs cannot contain credentials, queries, fragments, or provider suffixes;
@@ -140,13 +140,13 @@ its own below `/upstreams/<id>`: its wire format's paths above, such as
 the Chat Completions wire, which has no provider route of its own. See
 [Direct routes](policy.md#direct-routes).
 
-TGV does not sign in, refresh tokens, or substitute an API credential, except an
+Ren does not sign in, refresh tokens, or substitute an API credential, except an
 operator-key upstream's own key. The client owns authentication. No requests are
-made to providers merely by starting TGV.
+made to providers merely by starting Ren.
 
 ## Claude Code
 
-With an existing subscription login, launch a session through TGV:
+With an existing subscription login, launch a session through Ren:
 
 ```sh
 ANTHROPIC_BASE_URL=http://127.0.0.1:8787/anthropic CLAUDE_CODE_GATEWAY_HINT_HEADERS=1 claude
@@ -154,28 +154,28 @@ ANTHROPIC_BASE_URL=http://127.0.0.1:8787/anthropic CLAUDE_CODE_GATEWAY_HINT_HEAD
 
 An active API key, bearer-token override, or credential helper can supersede that
 login. Keep the subscription login active rather than supplying a replacement
-credential for TGV. This is the subscription-preserving gateway configuration
+credential for Ren. This is the subscription-preserving gateway configuration
 [documented by Anthropic](https://code.claude.com/docs/en/llm-gateway-protocol#request-headers).
 
 ### DeepSeek
 
 To run Claude Code against DeepSeek's
 [Anthropic-compatible API](https://api-docs.deepseek.com/guides/anthropic_api)
-through TGV, point it at `/deepseek` with your own DeepSeek API key:
+through Ren, point it at `/deepseek` with your own DeepSeek API key:
 
 ```sh
 ANTHROPIC_BASE_URL=http://127.0.0.1:8787/deepseek ANTHROPIC_API_KEY=<deepseek key> CLAUDE_CODE_GATEWAY_HINT_HEADERS=1 claude
 ```
 
-The key passes through to DeepSeek untouched; TGV never holds it. Calls are
+The key passes through to DeepSeek untouched; Ren never holds it. Calls are
 recorded with provider `deepseek`. DeepSeek documents only Messages there, so
-TGV routes only `POST /deepseek/v1/messages`: Claude Code's token counting and
-model listing get `404` from TGV.
+Ren routes only `POST /deepseek/v1/messages`: Claude Code's token counting and
+model listing get `404` from Ren.
 
 ## Chat Completions clients
 
 Clients that speak OpenAI Chat Completions (Aider, Goose, Cline, Qwen Code, and
-most OpenAI SDK code) reach TGV through an operator-key upstream with
+most OpenAI SDK code) reach Ren through an operator-key upstream with
 `wire = "openai_chat_completions"` and `ingress = "direct"`
 ([Direct routes](policy.md#direct-routes)):
 
@@ -185,12 +185,12 @@ id = "deepseek-chat"
 provider = "deepseek"
 wire = "openai_chat_completions"
 base_url = "https://api.deepseek.com"
-operator_key_env = "TGV_DEEPSEEK_API_KEY"
+operator_key_env = "REN_DEEPSEEK_API_KEY"
 ingress = "direct"
 ```
 
 Point the client's OpenAI base URL at `http://127.0.0.1:8787/upstreams/deepseek-chat/v1`.
-TGV forwards `POST /v1/chat/completions` and `GET /v1/models` below it, with the
+Ren forwards `POST /v1/chat/completions` and `GET /v1/models` below it, with the
 operator key as `Authorization: Bearer`, whatever key the client sends. DeepSeek
 documents its path as `/chat/completions`; it also answers on
 `/v1/chat/completions`. The same works with `provider = "openai"` and
@@ -209,25 +209,25 @@ Studio) are not supported: every Chat Completions entry holds an operator key.
 Merge a provider entry into your Codex configuration:
 
 ```toml
-model_provider = "tgv"
+model_provider = "ren"
 
-[model_providers.tgv]
-name = "TGV"
+[model_providers.ren]
+name = "Ren"
 base_url = "http://127.0.0.1:8787/codex"
 wire_api = "responses"
 requires_openai_auth = true
 supports_websockets = true
 ```
 
-Keep your existing ChatGPT sign-in and model selection. TGV relays Codex's
-Responses WebSocket and HTTP/SSE alike; `tgv run codex` offers both. The
+Keep your existing ChatGPT sign-in and model selection. Ren relays Codex's
+Responses WebSocket and HTTP/SSE alike; `ren run codex` offers both. The
 WebSocket is relayed message for message: each client and upstream message
 passes unchanged and in order, each side answers its own pings, and no
 compression extension is negotiated on either leg. To keep Codex on HTTP/SSE,
 set `[websocket] mode = "refuse"`: handshakes then get `426 Upgrade Required`,
 and Codex falls back to HTTP/SSE for the session. Handshakes beyond
 `websocket.max_channels` (default 16) get the same `426`. Each call on a socket
-counts against `max_concurrent_requests`; an idle socket does not. TGV pings
+counts against `max_concurrent_requests`; an idle socket does not. Ren pings
 each leg after `websocket.keepalive_seconds` (default 30) of silence and closes
 a socket whose client or upstream stays silent for twice that, so a vanished
 client (a laptop asleep behind Tailscale Serve) does not hold a channel. A
@@ -245,23 +245,23 @@ and [configuration reference](https://learn.chatgpt.com/docs/config-file/config-
 Start Pi with its existing sign-in and model catalog:
 
 ```sh
-tgv run pi -- --model anthropic/<model-id>
-tgv run pi -- --model openai/<model-id>
-tgv run pi -- --model openai-codex/<model-id>
-tgv run pi --gateway https://tgv.your-tailnet.ts.net -- --model anthropic/<model-id>
-tgv run pi --dry-run
+ren run pi -- --model anthropic/<model-id>
+ren run pi -- --model openai/<model-id>
+ren run pi -- --model openai-codex/<model-id>
+ren run pi --gateway https://ren.your-tailnet.ts.net -- --model anthropic/<model-id>
+ren run pi --dry-run
 ```
 
 The embedded extension redirects **`anthropic`**, **`openai`**, and
-**`openai-codex`** to TGV, forces SSE for these providers, and delegates request
+**`openai-codex`** to Ren, forces SSE for these providers, and delegates request
 conversion, authentication, token refresh, tool replay, and retries to Pi. Sign in
-through Pi's own `/login` for the provider you select. TGV does not import Claude
+through Pi's own `/login` for the provider you select. Ren does not import Claude
 Code/Codex credentials, create a login, inspect tokens, or supply an API key.
 Existing Pi API-key overrides still apply; the launcher itself does not guarantee
 subscription billing.
 
 Pi 1.0.0 calls `openai-codex` its ChatGPT provider; its **`openai`** provider uses
-Sign in with ChatGPT and the public Responses endpoint. TGV keeps these
+Sign in with ChatGPT and the public Responses endpoint. Ren keeps these
 destinations separate:
 
 | Pi provider    | Gateway base URL | Default upstream                        |
@@ -272,44 +272,44 @@ destinations separate:
 
 Set `openai_base_url` to the public OpenAI upstream **root** (default
 `https://api.openai.com`). Route availability does not guarantee that a
-subscription permits every endpoint. TGV records this destination as `openai`,
+subscription permits every endpoint. Ren records this destination as `openai`,
 separately from `codex`.
 
 For `openai`, the extension redirects Pi's HTTP fetch while retaining the native
 model URL during serialization. Pi checks that URL when omitting fields unsupported
-by ChatGPT sign-in; changing it directly would disable that handling. TGV delegates
+by ChatGPT sign-in; changing it directly would disable that handling. Ren delegates
 serialization to Pi and does not rewrite the generated payload. Sign-in and refresh
 requests still go directly from Pi to OpenAI. The endpoint and bearer-token flow
 follow [OpenAI's ChatGPT plan inference documentation](https://developers.openai.com/siwc/token-sharing-open-source/models-and-inference).
 
 Other providers keep their normal endpoints. Select a supported provider explicitly;
-an existing default for another provider will bypass TGV. Later extensions or custom
+an existing default for another provider will bypass Ren. Later extensions or custom
 provider registrations can supersede this adapter. Explicit `--extension` loading
 still works with Pi's `--no-extensions`, which disables discovery.
 
-The launcher extracts a hash-named extension into `$XDG_CACHE_HOME/tgv/pi` (or
-`$HOME/.cache/tgv/pi`) and loads it for that Pi process. This leaves Pi's
+The launcher extracts a hash-named extension into `$XDG_CACHE_HOME/ren/pi` (or
+`$HOME/.cache/ren/pi`) and loads it for that Pi process. This leaves Pi's
 configuration and credentials untouched and lets `/reload` reuse the same code.
 Cache files are published atomically and checked against the bundled source on each
 launch; symlinks and group/other-writable cache paths are rejected. `--dry-run`
 shows an extension-path placeholder and performs no cache writes. Unused versions
 can be removed once their Pi sessions stop. No Node/Bun installation is needed to
-build TGV; the installed Pi runtime supplies the extension's provider APIs.
+build Ren; the installed Pi runtime supplies the extension's provider APIs.
 
 Pi sessions use the client's UUID. Each agent run gets a fresh extension-generated
 turn UUID shared by tool follow-ups and retries. It is not a native Pi turn ID or
 proof of tool execution. Session switches reset the run; requests outside a run
 have no turn, and requests for another session do not inherit the active run.
-TGV records these hints under `pi_extension_headers`, distinct from Claude Code
-and Codex. The `x-tgv-pi-session-id` and `x-tgv-pi-turn-id` headers are consumed by
-TGV and stripped before forwarding. Correlation remains scoped by upstream provider,
-so switching providers creates separate TGV session groups for the same Pi UUID.
+Ren records these hints under `pi_extension_headers`, distinct from Claude Code
+and Codex. The `x-ren-pi-session-id` and `x-ren-pi-turn-id` headers are consumed by
+Ren and stripped before forwarding. Correlation remains scoped by upstream provider,
+so switching providers creates separate Ren session groups for the same Pi UUID.
 
 Verify with the installed Pi CLI without real credentials or inference charges:
 
 ```sh
 cargo build --locked
-node --test crates/tgv-harness/pi/tgv.test.mjs
+node --test crates/ren-harness/pi/ren.test.mjs
 python3 scripts/smoke-pi.py
 ```
 
@@ -326,10 +326,10 @@ OpenCode speaks Anthropic Messages and OpenAI Responses natively, so it uses the
 same routes as Claude Code and Pi:
 
 ```sh
-tgv run opencode -- --model anthropic/<model-id>
-tgv run opencode -- --model openai/<model-id>
-tgv run opencode --gateway https://tgv.your-tailnet.ts.net
-tgv run opencode --dry-run
+ren run opencode -- --model anthropic/<model-id>
+ren run opencode -- --model openai/<model-id>
+ren run opencode --gateway https://ren.your-tailnet.ts.net
+ren run opencode --dry-run
 ```
 
 The launcher sets `OPENCODE_CONFIG_CONTENT`, OpenCode's
@@ -349,24 +349,24 @@ replaced for the session, with a notice; keep such settings in `opencode.json`.
 Managed (administrator) OpenCode configuration still wins over the launcher.
 
 OpenCode keeps its own sign-in and keys (`/connect`, `ANTHROPIC_API_KEY`,
-`OPENAI_API_KEY`), and TGV adds no header that names another client. Anthropic
+`OPENAI_API_KEY`), and Ren adds no header that names another client. Anthropic
 does not permit Claude subscription sign-in from third-party clients, so use an
 Anthropic API key with OpenCode. OpenCode's ChatGPT sign-in sends requests to
-ChatGPT's Codex backend with headers of its own; under `tgv run opencode` its
+ChatGPT's Codex backend with headers of its own; under `ren run opencode` its
 `openai` requests go to the public Responses endpoint instead, which is
-unvalidated for that sign-in. Use an OpenAI API key, or run OpenCode outside TGV
+unvalidated for that sign-in. Use an OpenAI API key, or run OpenCode outside Ren
 for ChatGPT sign-in.
 
-OpenCode's `openai` provider opens a Responses WebSocket by default. TGV answers
+OpenCode's `openai` provider opens a Responses WebSocket by default. Ren answers
 the handshake on `/openai` with `426 Upgrade Required`, and OpenCode keeps that
 session on HTTP/SSE after any failed connect.
 
 Every model request OpenCode 2.x sends carries `x-opencode-session-id`, a
-`ses_…` identifier rather than a UUID, on every provider. TGV recognises it on
+`ses_…` identifier rather than a UUID, on every provider. Ren recognises it on
 every route, after Pi's extension headers, and records the hint under
 `opencode_headers`. Native session hints are UUIDs, so the hint holds a version 8
 UUID derived from the identifier (a namespaced SHA-256): one OpenCode session is
-always the same TGV session, and the `ses_…` text itself is never stored.
+always the same Ren session, and the `ses_…` text itself is never stored.
 OpenCode sends no turn identifier, so its calls have sessions but no turns. A
 subagent runs in a child session of its own, as OpenCode shows it. Its other
 headers (`x-opencode-project`, `x-opencode-client`, `x-session-affinity`, and the
@@ -383,7 +383,7 @@ user's prompt.
 
 ## Sessions and turns
 
-TGV assigns its own typed session and turn IDs while retaining native identifiers
+Ren assigns its own typed session and turn IDs while retaining native identifiers
 and their source in each call's `attribution`. Claude Code uses
 `x-claude-code-session-id` and `x-claude-code-prompt-id`; the environment flag above
 enables prompt hints for custom gateways. These headers are
@@ -396,7 +396,7 @@ Sessions are scoped by provider, metadata source, and native session ID. Turns
 are scoped to their session. Tool follow-up requests carrying the same IDs stay
 in one turn. Native thread IDs are retained separately for Codex session trees.
 Missing identifiers remain `null`; malformed, duplicate, or conflicting metadata
-is flagged. TGV does not group by prompt text, cache keys, time, account, or request
+is flagged. Ren does not group by prompt text, cache keys, time, account, or request
 IDs. These client-supplied hints are attribution evidence, never authentication,
 proof of tool execution, or a signal that a session is idle or complete.
 

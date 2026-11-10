@@ -1,4 +1,4 @@
-# TGV UI
+# Ren UI
 
 An optional SvelteKit 3, Svelte 5, and TypeScript dashboard for browsing traffic,
 sessions, request/response payloads, and recorder health. It reads only the
@@ -60,8 +60,8 @@ and the busiest sessions), and Recorder
 their retention limits with the nearest marked as the one pruned for first, and only the
 loss and error counters that are not zero; bytes past the capture policy are noted as
 left out by design, never as loss, here, in the Recorder tab, and in the footer). The header names where the gateway runs
-(its node and network, such as `tgv · tailnet`, with the API's status dot) rather
-than its address, and opens each client's `tgv run` command, ready to copy. Addresses
+(its node and network, such as `ren · tailnet`, with the API's status dot) rather
+than its address, and opens each client's `ren run` command, ready to copy. Addresses
 there show with their identifying part masked (a tailnet's name, a public domain)
 until the eye button reveals them for the page; copying always copies the real one. The bar under the tabs shows each page's scope and the controls that
 change it, such as Traffic's client, session, time, and model-calls-only narrowing;
@@ -99,9 +99,9 @@ produces `build/`. Cargo never builds or embeds the UI.
 
 | Variable                 | Default                          | Purpose                                                                         |
 | ------------------------ | -------------------------------- | ------------------------------------------------------------------------------- |
-| `TGV_GATEWAY_URL`        | `http://127.0.0.1:8787`          | Daemon origin reached by the UI server                                          |
-| `TGV_PUBLIC_GATEWAY_URL` | Same as `TGV_GATEWAY_URL`        | Daemon origin displayed in the header and copied client commands                |
-| `TGV_DEV_TRAFFIC_URL`    | Unset                            | Dev slot only: loopback origin of its traffic controls, for the dev toolbar     |
+| `REN_GATEWAY_URL`        | `http://127.0.0.1:8787`          | Daemon origin reached by the UI server                                          |
+| `REN_PUBLIC_GATEWAY_URL` | Same as `REN_GATEWAY_URL`        | Daemon origin displayed in the header and copied client commands                |
+| `REN_DEV_TRAFFIC_URL`    | Unset                            | Dev slot only: loopback origin of its traffic controls, for the dev toolbar     |
 | `HOST`                   | `127.0.0.1` with `bun run start` | UI listener address                                                             |
 | `PORT`                   | `3000` with `bun run start`      | UI listener port                                                                |
 | `ORIGIN`                 | Inferred from incoming request   | Set to the UI's external origin behind Tailscale Serve or another reverse proxy |
@@ -114,7 +114,7 @@ the variables or use a service environment file.
 To inspect a VPS daemon from a UI running on your laptop:
 
 ```sh
-TGV_GATEWAY_URL=https://your-vps.your-tailnet.ts.net:8443 bun run start
+REN_GATEWAY_URL=https://your-vps.your-tailnet.ts.net:8443 bun run start
 ```
 
 The browser talks only to the UI origin. The UI server relays allowlisted GET/HEAD
@@ -144,7 +144,7 @@ Preview limits (these limit display only, not forwarding or recording):
   window), with at most two concurrent preview tasks.
 - Hex view up to 16 KiB. Readable view up to 400 cards, 512 KiB, and 2,000 SSE events.
 
-Use `tgv inspect --body … --output …` for complete captured bytes.
+Use `ren inspect --body … --output …` for complete captured bytes.
 
 ## VPS service
 
@@ -154,17 +154,17 @@ performs the steps below and upgrades the UI along with the daemon (see
 
 The UI service is independent of the daemon service. The VPS needs Node only if the
 UI runs there. Build in a checkout with Bun and Node, then deploy `build/`,
-`package.json`, and `bun.lock` together to `~/.local/share/tgv-ui`. Install
+`package.json`, and `bun.lock` together to `~/.local/share/ren-ui`. Install
 dependencies there with `bun install --production --frozen-lockfile --ignore-scripts`.
 Don't deploy `.env` files, or `node_modules` built on another platform. Node must be
 at the absolute path used in the unit, typically `/usr/bin/node`.
 
-Install [`deploy/tgv-ui.service`](../deploy/tgv-ui.service) as
-`~/.config/systemd/user/tgv-ui.service` and create `~/.config/tgv/ui.env`:
+Install [`deploy/ren-ui.service`](../deploy/ren-ui.service) as
+`~/.config/systemd/user/ren-ui.service` and create `~/.config/ren/ui.env`:
 
 ```ini
-TGV_GATEWAY_URL=http://127.0.0.1:8787
-TGV_PUBLIC_GATEWAY_URL=https://your-vps.your-tailnet.ts.net:8443
+REN_GATEWAY_URL=http://127.0.0.1:8787
+REN_PUBLIC_GATEWAY_URL=https://your-vps.your-tailnet.ts.net:8443
 ORIGIN=https://your-vps.your-tailnet.ts.net:8444
 ```
 
@@ -172,7 +172,7 @@ Start it and publish it on a separate **unused** Tailscale Serve port:
 
 ```sh
 systemctl --user daemon-reload
-systemctl --user enable --now tgv-ui.service
+systemctl --user enable --now ren-ui.service
 curl --fail http://127.0.0.1:3000/health
 tailscale serve status
 tailscale serve --bg --https=8444 http://127.0.0.1:3000
@@ -181,7 +181,7 @@ tailscale serve --bg --https=8444 http://127.0.0.1:3000
 Clients keep using the daemon's port (8443). Preserve existing Serve routes, and
 keep both ports private (never Funnel). For lingering, follow the
 [daemon service instructions](../docs/deployment.md#vps-with-tailscale). Logs:
-`journalctl --user -u tgv-ui.service`. To upgrade, stop only `tgv-ui.service`,
+`journalctl --user -u ren-ui.service`. To upgrade, stop only `ren-ui.service`,
 replace the build and dependencies, and start it again. To remove it, disable the
 service and run `tailscale serve --https=8444 off`. Forwarding and recording are
 unaffected either way.

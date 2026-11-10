@@ -1,0 +1,45 @@
+[package]
+name = "ren-daemon"
+version.workspace = true
+edition.workspace = true
+homepage.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Configuration, resource wiring, and lifecycle of the Ren LLM gateway daemon."
+
+# Configuration, resource wiring, and service lifecycle. It holds the host's
+# clock and random IDs and the daemon's task spawns; HTTP handling belongs to
+# ren-gateway (docs/architecture.md).
+[dependencies]
+ren-gateway.workspace = true
+ren-harness.workspace = true
+ren-protocol.workspace = true
+ren-recorder.workspace = true
+ren-store.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["macros", "net", "rt", "sync", "time"] }
+toml.workspace = true
+tracing.workspace = true
+uuid = { workspace = true, features = ["v4"] }
+
+[dev-dependencies]
+axum.workspace = true
+brotli.workspace = true
+bytes.workspace = true
+futures-util.workspace = true
+http.workspace = true
+http-body.workspace = true
+http-body-util.workspace = true
+reqwest.workspace = true
+tempfile.workspace = true
+tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "sync", "time"] }
+tokio-tungstenite.workspace = true
+tokio-util.workspace = true
+tower = { version = "0.5.3", default-features = false, features = ["util"] }
+
+[lints]
+workspace = true

@@ -7,14 +7,14 @@
     <link rel="icon" type="image/svg+xml" href="%sveltekit.assets%/favicon.svg" />
     <meta
       name="description"
-      content="TGV — inspect your LLM gateway traffic, sessions, and capture health."
+      content="Ren — inspect your LLM gateway traffic, sessions, and capture health."
     />
     <script id="theme-init" nonce="%sveltekit.nonce%">
       // Run before styles paint, without relaxing the server's script policy.
       (() => {
         let preference = 'system';
         try {
-          const saved = localStorage.getItem('tgv.theme');
+          const saved = localStorage.getItem('ren.theme');
           if (saved === 'light' || saved === 'dark') preference = saved;
         } catch {
           // Storage can be unavailable in restricted browser contexts.

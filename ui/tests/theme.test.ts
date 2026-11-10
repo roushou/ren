@@ -20,7 +20,7 @@ test('early theme initialization respects saved preference, system appearance, a
           document: { documentElement: { dataset } },
           localStorage: {
             getItem(key: string) {
-              assert.equal(key, 'tgv.theme');
+              assert.equal(key, 'ren.theme');
               if (storageBlocked) throw new Error('Storage unavailable');
               return saved;
             },
