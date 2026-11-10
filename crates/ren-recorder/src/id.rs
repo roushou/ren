@@ -122,6 +122,12 @@ identity!(
     /// Ren's grouping of calls that a client attributed to one turn of a session.
     TurnId as "turn"
 );
+identity!(
+    /// One agent process Ren started and drove through its client's
+    /// structured mode, from start to end. A run's calls may belong to a
+    /// session; the run is not the session.
+    RunId as "run"
+);
 
 #[cfg(test)]
 mod tests {

@@ -63,6 +63,7 @@ fn every_label_is_pinned() {
         capture::BodyEnding,
         capture::Omission,
         capture::ChannelEnd,
+        capture::RunEnd,
         batch::ObservationKind,
         secrets::SecretKind,
         digest::SearchField,
