@@ -307,7 +307,7 @@ dependencies under "Crates" below. Read the code for current module ownership.
     (`route`) is where each `ReadRequest` lives in HTTP, in both directions:
     the server parses URIs with it (one handler serves every read) and the
     CLI's client builds them with it.
-  - `src/api/control.rs`: the mutating `/control/v1` API over the gateway's
+  - `src/api/control`: the mutating `/control/v1` API over the gateway's
     `Controls` (token or Tailscale identity; browsers refused), and its
     `[control]` configuration (`ControlOptions`) and `ControlToken`. Handler state
     stays crate-private; configuration and token types are exported at the root.
