@@ -39,7 +39,7 @@ use tgv_recorder::capture::CallState;
 use tgv_recorder::id::{CallId, SessionId, TurnId};
 use tgv_recorder::progress::Progress;
 use tgv_recorder::time::UnixMillis;
-use tgv_store::activity::TurnActivity;
+use tgv_store::activity::{CallActivity, TurnActivity};
 use tgv_store::query::{CallFilter, CallQuery, KindFilter, PageLimit, StatusFilter, TimeRange};
 use tgv_store::view::{CallPage, CallView, SessionView};
 
@@ -56,6 +56,8 @@ pub struct Tui {
     hidden: usize,
     snapshot: Option<Held>,
     turns: HashMap<TurnId, HeldTurn>,
+    /// Call activity for sessions whose client sends no turns.
+    activities: HashMap<CallId, CallActivity>,
     progress: HashMap<CallId, Progress>,
     /// The focused pane's place, always within the grid.
     focus: usize,
@@ -119,6 +121,8 @@ pub enum Input {
     Snapshot(Snapshot),
     /// A turn's activity, as asked for with [`Read::Turn`].
     Turn(Box<TurnActivity>),
+    /// A call's activity, as asked for with [`Read::Call`].
+    Call(Box<CallActivity>),
     /// An update on a streaming call.
     Progress(Progress),
     Observation(Observation),
@@ -134,6 +138,8 @@ pub enum Read {
     /// A new [`Snapshot`], from [`Tui::snapshot_query`].
     Snapshot,
     Turn(TurnId),
+    /// One call's activity, for a session whose client sends no turns.
+    Call(CallId),
 }
 
 /// Everything to draw at one time.
@@ -215,6 +221,8 @@ impl Tui {
     /// How far back the status line's output reaches, and in how many bins.
     pub const OUTPUT_SPAN: Duration = Duration::from_secs(4 * 60);
     pub const OUTPUT_BINS: usize = 24;
+    /// How many of a turnless session's newest calls a pane reads.
+    pub const TURNLESS_CALLS: usize = 4;
 
     pub fn new(size: Size) -> Self {
         Self {
@@ -225,6 +233,7 @@ impl Tui {
             hidden: 0,
             snapshot: None,
             turns: HashMap::new(),
+            activities: HashMap::new(),
             progress: HashMap::new(),
             focus: 0,
             zoom: None,
@@ -359,6 +368,10 @@ impl Tui {
                 );
                 Vec::new()
             }
+            Input::Call(activity) => {
+                self.activities.insert(activity.call, *activity);
+                Vec::new()
+            }
             Input::Progress(progress) => {
                 // A late update on a call already read as ended is dropped.
                 let ended = self
@@ -490,6 +503,26 @@ impl Tui {
         let mut reads = Vec::new();
         for session in shown.iter().copied() {
             let calls = self.session_calls(session);
+            if session::SessionPane::recent_turns(&calls).is_empty() {
+                // No turns: the newest finished calls, each read once its
+                // text is derived.
+                for call in calls
+                    .iter()
+                    .rev()
+                    .filter(|call| call.state.known() != Some(CallState::Open))
+                    .take(Self::TURNLESS_CALLS)
+                {
+                    let settled = self.activities.get(&call.id).is_some_and(|activity| {
+                        !activity.limitations.iter().any(|limitation| {
+                            limitation.known()
+                                == Some(tgv_protocol::activity::ActivityLimitation::NotYetDerived)
+                        })
+                    });
+                    if !settled {
+                        reads.push(Read::Call(call.id));
+                    }
+                }
+            }
             for turn in session::SessionPane::recent_turns(&calls) {
                 let signature = self.signature(turn);
                 let settled =
@@ -507,7 +540,13 @@ impl Tui {
                 }
             }
         }
-        // Turns no pane shows any more are let go.
+        // Calls and turns no pane shows any more are let go.
+        let held: Vec<CallId> = shown
+            .iter()
+            .flat_map(|session| self.session_calls(*session))
+            .map(|call| call.id)
+            .collect();
+        self.activities.retain(|call, _| held.contains(call));
         self.turns
             .retain(|_, held| shown.contains(&held.activity.session));
         reads
@@ -567,7 +606,12 @@ impl Tui {
                     [newest] => (None, held(Some(newest))),
                     _ => (None, None),
                 };
+                let activities: Vec<&CallActivity> = calls
+                    .iter()
+                    .filter_map(|call| self.activities.get(&call.id))
+                    .collect();
                 let mut pane = session::SessionPane::read(&SessionRead {
+                    activities: &activities,
                     session,
                     calls: &calls,
                     earlier,

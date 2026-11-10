@@ -1174,3 +1174,68 @@ fn a_pane_shows_the_turn_before_the_newest_one() {
         ]
     );
 }
+
+#[test]
+fn a_session_without_turns_reads_its_newest_calls() {
+    let mut tui = tui();
+    let sessions = vec![session(1, "opencode_headers", 100)];
+    let calls: Vec<CallView> = (0..6)
+        .map(|n| {
+            call(
+                11 + n,
+                1,
+                None,
+                10 + 10 * u64::try_from(n).unwrap(),
+                15 + 10 * u64::try_from(n).unwrap(),
+                json!({}),
+            )
+        })
+        .chain([open(20, 1, None, 90, true)])
+        .collect();
+    // The newest four finished calls, newest first; the open one streams.
+    assert_eq!(
+        tui.apply(snapshot(100, sessions.clone(), calls.clone())),
+        [
+            Read::Call(call_id(16)),
+            Read::Call(call_id(15)),
+            Read::Call(call_id(14)),
+            Read::Call(call_id(13))
+        ]
+    );
+    let activity = |call: Value| Input::Call(Box::new(serde_json::from_value(call).unwrap()));
+    let _ = tui.apply(activity(prompted(
+        "Fix the login form.",
+        activity_call(
+            15,
+            Some("Looking."),
+            vec![tool(
+                "a",
+                "read",
+                Some(("read_file", "src/form.ts")),
+                Some("succeeded"),
+            )],
+            &[],
+        ),
+    )));
+    let _ = tui.apply(activity(activity_call(16, Some("Fixed."), vec![], &[])));
+    let wall = tui.wall(at(100));
+    let pane = pane(&wall, 0);
+    assert_eq!(
+        pane.lines[..6],
+        [
+            Line::Call { index: Some(5) },
+            Line::Prompt("Fix the login form.".to_owned()),
+            Line::Reply("Looking.".to_owned()),
+            pane.lines[3].clone(),
+            Line::Call { index: Some(6) },
+            pane.lines[5].clone(),
+        ]
+    );
+    assert!(matches!(pane.lines[3], Line::Tools(_)));
+    assert!(matches!(pane.lines[5], Line::Result(_)));
+    // Read, those two are not asked for again.
+    assert_eq!(
+        tui.apply(snapshot(101, sessions, calls)),
+        [Read::Call(call_id(14)), Read::Call(call_id(13))]
+    );
+}

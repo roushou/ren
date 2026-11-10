@@ -242,7 +242,8 @@ dependencies under "Crates" below. Read the code for current module ownership.
   sessions; a session keeps its pane while it stays active, and a pinned
   one stays even when quiet), a focused pane or one zoomed session, the
   help, and a status line. Each pane reads its session as a conversation
-  (`session`: the newest two turns call by call, with prompts, the results
+  (`session`: the newest two turns call by call, or a turnless client's
+  newest calls (`Read::Call`), with prompts, the results
   each request carried back, replies, and merged tool runs; progress on a
   streaming call; the phase, the newest call's measurements, and alerts on
   the newest call), and `call` reads how a call ended (`CallEnd`).

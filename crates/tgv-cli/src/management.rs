@@ -19,7 +19,7 @@ use tgv_harness::{endpoint::GatewayEndpoint, host::HostEnv};
 use tgv_protocol::direction::Direction;
 use tgv_recorder::id::{CallId, TurnId};
 use tgv_store::Reader;
-use tgv_store::activity::{ActivityBudget, TurnActivity};
+use tgv_store::activity::{ActivityBudget, CallActivity, TurnActivity};
 use tgv_store::query::{CallQuery, PageLimit};
 use tgv_store::read::ReadRequest;
 use tgv_store::view::{CallPage, SessionView};
@@ -371,6 +371,11 @@ impl Management {
     /// One turn's activity, as much of it as the read API shows.
     pub async fn turn(&self, turn: TurnId) -> Result<TurnActivity, ManagementError> {
         self.read_as(&ReadRequest::Turn(turn)).await
+    }
+
+    /// One call's activity, as much of it as the read API shows.
+    pub async fn call_activity(&self, call: CallId) -> Result<CallActivity, ManagementError> {
+        self.read_as(&ReadRequest::CallActivity(call)).await
     }
 
     /// One history read, through the read API, parsed into its view.

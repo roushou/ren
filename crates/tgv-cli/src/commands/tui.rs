@@ -22,9 +22,9 @@ use std::pin::Pin;
 use std::process::ExitCode;
 use std::time::Duration;
 use tgv_daemon::host::SystemClock;
-use tgv_recorder::id::TurnId;
+use tgv_recorder::id::{CallId, TurnId};
 use tgv_recorder::time::{Clock, Monotonic};
-use tgv_store::activity::TurnActivity;
+use tgv_store::activity::{CallActivity, TurnActivity};
 use tgv_tui::{Input, Pressed, Read, Screen, ScreenEvent, Snapshot, Tui};
 
 /// Watch live sessions in the terminal, one pane per session.
@@ -38,6 +38,7 @@ pub struct TuiCmd {
 enum Done {
     Snapshot(Result<Snapshot, ManagementError>),
     Turn(TurnId, Result<TurnActivity, ManagementError>),
+    Call(CallId, Result<CallActivity, ManagementError>),
 }
 
 type Pending<'a> = FuturesUnordered<Pin<Box<dyn Future<Output = Done> + 'a>>>;
@@ -57,6 +58,7 @@ enum Feed {
 struct InFlight {
     snapshot: bool,
     turns: Vec<TurnId>,
+    calls: Vec<CallId>,
     /// When the last snapshot was asked for.
     asked: Monotonic,
 }
@@ -83,6 +85,7 @@ impl TuiCmd {
         let mut in_flight = InFlight {
             snapshot: false,
             turns: Vec::new(),
+            calls: Vec::new(),
             asked: clock.now().monotonic,
         };
         let reads = tui.apply(Input::Snapshot(first));
@@ -253,7 +256,14 @@ impl<'a> Shell<'a> {
                         Done::Turn(turn, gateway.turn(turn).await)
                     }));
                 }
-                Read::Snapshot | Read::Turn(_) => {}
+                Read::Call(call) if !in_flight.calls.contains(&call) => {
+                    in_flight.calls.push(call);
+                    let gateway = self.gateway;
+                    self.pending.push(Box::pin(async move {
+                        Done::Call(call, gateway.call_activity(call).await)
+                    }));
+                }
+                Read::Snapshot | Read::Turn(_) | Read::Call(_) => {}
             }
         }
     }
@@ -268,6 +278,10 @@ impl<'a> Shell<'a> {
             Done::Turn(turn, result) => {
                 in_flight.turns.retain(|running| *running != turn);
                 result.map(|activity| Input::Turn(Box::new(activity)))
+            }
+            Done::Call(call, result) => {
+                in_flight.calls.retain(|running| *running != call);
+                result.map(|activity| Input::Call(Box::new(activity)))
             }
         };
         match input {

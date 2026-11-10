@@ -56,7 +56,8 @@ sessions in the terminal: one pane per active session (seen in the last five
 minutes, or with a call open), in a grid sized to them, as many as the
 terminal has room for; one session fills the screen. Each pane reads as a
 conversation, kept to the bottom as it streams: the newest turn and the one
-before it, call by call, with the user's prompt (`>`), the tool results the
+before it (for a client that sends no turns, such as OpenCode, its newest
+four calls), call by call, with the user's prompt (`>`), the tool results the
 request carried back (`⎿`), the reply (code blocks drawn behind a rule), and
 the tool calls the model asked for (`●`), then a streaming call's reply and
 tools so far. Its title bar turns green while a response streams, and amber

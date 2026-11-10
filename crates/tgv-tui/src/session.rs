@@ -173,6 +173,9 @@ pub(crate) struct SessionRead<'a> {
     /// The turn before it, when read: the pane shows how the session got
     /// here.
     pub earlier: Option<&'a TurnActivity>,
+    /// For a session whose client sends no turns: its newest calls' activity,
+    /// as read, oldest first.
+    pub activities: &'a [&'a CallActivity],
     pub progress: &'a HashMap<CallId, Progress>,
     pub now: UnixMillis,
 }
@@ -217,6 +220,14 @@ impl SessionPane {
             Self::lines(earlier, &order)
         });
         lines.extend(turn.map_or_else(Vec::new, |turn| Self::lines(turn, &order)));
+        if turn_id.is_none() {
+            let order: HashMap<CallId, usize> = calls
+                .iter()
+                .enumerate()
+                .map(|(index, call)| (call.id, index + 1))
+                .collect();
+            lines.extend(Self::conversation(read.activities, None, &order));
+        }
         let skip = lines.len().saturating_sub(Self::MAX_LINES);
         lines.drain(..skip);
         // The newest open call, when its text is not read yet: its rule,
@@ -224,11 +235,12 @@ impl SessionPane {
         let open = calls.iter().rev().find(|call| Self::is_open(call));
         let streaming = Self::streaming(calls, &order, read.progress);
         if let Some(open) = open {
-            let read_already = turn.is_some_and(|turn| {
-                turn.calls
-                    .iter()
-                    .any(|call| call.call == open.id && !Self::underived(call))
-            });
+            let read_already = turn
+                .map_or(read.activities, |_| &[])
+                .iter()
+                .copied()
+                .chain(turn.iter().flat_map(|turn| &turn.calls))
+                .any(|call| call.call == open.id && !Self::underived(call));
             if !read_already {
                 lines.push(Line::Call {
                     index: order.get(&open.id).copied(),
@@ -364,12 +376,23 @@ impl SessionPane {
     /// tool calls, like ones in a row merged. Calls whose text is not
     /// derived yet are left to `streaming`.
     fn lines(turn: &TurnActivity, order: &HashMap<CallId, usize>) -> Vec<Line> {
-        let workdir = Workdir::of(turn);
+        let calls: Vec<&CallActivity> = turn.calls.iter().collect();
+        Self::conversation(&calls, Workdir::of(turn).as_ref(), order)
+    }
+
+    /// Calls as a conversation, oldest first: each read call's rule, the
+    /// prompt or the results its request carried back, its reply, and its
+    /// tool calls. Calls whose text is not derived yet are left out.
+    fn conversation(
+        calls: &[&CallActivity],
+        workdir: Option<&Workdir>,
+        order: &HashMap<CallId, usize>,
+    ) -> Vec<Line> {
         let mut lines = Vec::new();
         // The previous read call's tool lines: this call's request carries
         // their results back.
         let mut asked: Vec<ToolLine> = Vec::new();
-        for (index, call) in turn.calls.iter().enumerate() {
+        for (index, call) in calls.iter().copied().enumerate() {
             if Self::underived(call) {
                 continue;
             }
@@ -402,11 +425,11 @@ impl SessionPane {
             {
                 lines.push(Line::Reply(reply.to_owned()));
             }
-            let later = turn.calls.get(index + 1..).unwrap_or_default();
+            let later = calls.get(index + 1..).unwrap_or_default();
             asked = call
                 .tool_calls
                 .iter()
-                .map(|tool| Self::tool_line(tool, later, workdir.as_ref()))
+                .map(|tool| Self::tool_line(tool, later, workdir))
                 .collect();
             lines.extend(
                 Self::runs(asked.iter().cloned())
@@ -475,7 +498,7 @@ impl SessionPane {
 
     fn tool_line(
         tool: &ToolCallView,
-        later: &[CallActivity],
+        later: &[&CallActivity],
         workdir: Option<&Workdir>,
     ) -> ToolLine {
         let effect = tool.effects.first();
@@ -483,8 +506,10 @@ impl SessionPane {
         // is read, a missing one is still to come.
         let result = match &tool.result {
             Some(result) => ResultMark::Reported(result.status.clone()),
-            None if later.iter().all(Self::underived) => ResultMark::Pending,
-            None if later.first().is_some_and(Self::unreadable) => ResultMark::Unreadable,
+            None if later.iter().all(|call| Self::underived(call)) => ResultMark::Pending,
+            None if later.first().is_some_and(|call| Self::unreadable(call)) => {
+                ResultMark::Unreadable
+            }
             None => ResultMark::Missing,
         };
         ToolLine {
