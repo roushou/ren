@@ -115,7 +115,12 @@ impl Wall {
             match pane {
                 Pane::Free => Self::draw_free(rect, index, focused, buf),
                 Pane::Session(session) => {
-                    Self::draw_session(rect, index, session, focused, self.status.now, buf);
+                    // A zoomed session has no place among panes to number.
+                    let place = match self.view {
+                        View::Panes { .. } => Some(index),
+                        View::Zoomed => None,
+                    };
+                    Self::draw_session(rect, place, session, focused, self.status.now, buf);
                 }
             }
         }
@@ -155,7 +160,7 @@ impl Wall {
 
     fn draw_session(
         rect: Rect,
-        index: usize,
+        index: Option<usize>,
         pane: &SessionPane,
         focused: bool,
         now: UnixMillis,
@@ -226,7 +231,7 @@ impl Wall {
     }
 
     /// `▶0:dadfe1c5 claude-code → anthropic  call 3  pinned`
-    fn title(index: usize, pane: &SessionPane, focused: bool) -> Line<'static> {
+    fn title(index: Option<usize>, pane: &SessionPane, focused: bool) -> Line<'static> {
         let harness = pane.harness.as_ref().and_then(|harness| harness.known());
         let name = pane.harness.as_ref().map_or_else(
             || "unknown client".to_owned(),
@@ -235,7 +240,11 @@ impl Wall {
         let session = pane.session.to_string();
         let mut spans = vec![
             Span::raw(if focused { "▶" } else { " " }).add_modifier(Modifier::BOLD),
-            Span::raw(format!("{index}:{} ", session.get(..8).unwrap_or(&session))),
+            Span::raw(format!(
+                "{}{} ",
+                index.map_or_else(String::new, |index| format!("{index}:")),
+                session.get(..8).unwrap_or(&session)
+            )),
             Span::raw(name)
                 .fg(Palette::harness(harness))
                 .add_modifier(Modifier::BOLD),
@@ -488,27 +497,37 @@ impl Wall {
                     .fg(Palette::INK),
             );
         }
-        // Sparks share one scale; narrow terminals get half as many glyphs.
-        let peak = status
+        // Sparks take at most a third of the line, so the counts keep
+        // their room: each gets as many glyphs as fit, merging bins, and all
+        // share one scale.
+        let sparks = status.output.len().max(1);
+        let room = usize::from(area.width) / 3 / sparks;
+        let glyphs = [24, 12, 8, 6, 4]
+            .into_iter()
+            .find(|glyphs| glyphs + 4 <= room)
+            .unwrap_or(4);
+        let merged: Vec<(Harness, Vec<u64>)> = status
             .output
             .iter()
-            .flat_map(|spark| spark.bins.iter().copied())
+            .map(|spark| {
+                let per = spark.bins.len().div_ceil(glyphs).max(1);
+                let bins = spark
+                    .bins
+                    .chunks(per)
+                    .map(|chunk| chunk.iter().sum::<u64>())
+                    .collect();
+                (spark.harness, bins)
+            })
+            .collect();
+        let peak = merged
+            .iter()
+            .flat_map(|(_, bins)| bins.iter().copied())
             .max()
             .unwrap_or(0);
-        let pair = area.width < 120;
-        for spark in &status.output {
-            let bins: Vec<u64> = if pair {
-                spark
-                    .bins
-                    .chunks(2)
-                    .map(|chunk| chunk.iter().sum::<u64>() / 2)
-                    .collect()
-            } else {
-                spark.bins.clone()
-            };
-            let color = Palette::harness(Some(spark.harness));
-            spans.push(Span::raw(format!(" {} ", Self::short(spark.harness))).fg(color));
-            spans.push(Span::raw(Self::spark(&bins, peak)).fg(color));
+        for (harness, bins) in &merged {
+            let color = Palette::harness(Some(*harness));
+            spans.push(Span::raw(format!(" {} ", Self::short(*harness))).fg(color));
+            spans.push(Span::raw(Self::spark(bins, peak)).fg(color));
         }
         // The clock and the help hint keep their place at the right; the
         // facts give way to them, whole, most telling first.
