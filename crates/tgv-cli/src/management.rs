@@ -9,6 +9,7 @@
 //! in `control.tailscale_logins`.
 
 use crate::client::{ClientError, GatewayChoice};
+use crate::tail::LiveUpdates;
 use reqwest::{Method, StatusCode};
 use serde::{Deserialize, de::DeserializeOwned};
 use serde_json::{Map, Value};
@@ -266,11 +267,21 @@ impl Management {
 
     /// `GET /api/live`: the response that streams the live feed, from after
     /// `after` when given, else from now. Read it with [`Self::chunk`].
-    pub async fn live(&self, after: Option<u64>) -> Result<reqwest::Response, ManagementError> {
+    pub async fn live(
+        &self,
+        after: Option<u64>,
+        updates: LiveUpdates,
+    ) -> Result<reqwest::Response, ManagementError> {
         let mut url = self.endpoint.url("/api/live");
         if let Some(after) = after {
             url.query_pairs_mut()
                 .append_pair("after", &after.to_string());
+        }
+        match updates {
+            LiveUpdates::Observations => {}
+            LiveUpdates::WithProgress => {
+                url.query_pairs_mut().append_pair("progress", "true");
+            }
         }
         let response = self
             .send(self.http.get(url).header("accept", "text/event-stream"))
@@ -487,6 +498,10 @@ mod tests {
                 }),
             )
             .route(
+                "/api/live",
+                get(|uri: axum::http::Uri| async move { uri.query().unwrap_or("").to_owned() }),
+            )
+            .route(
                 "/api/calls",
                 get(|| async { Json(json!({ "api_version": 1, "calls": [], "next": null })) }),
             )
@@ -537,6 +552,24 @@ mod tests {
         assert_eq!(sessions[0].source.label(), "a_newer_source");
         assert!(calls.calls.is_empty() && calls.next.is_none());
         assert_eq!(turn.client.unwrap().label(), "a_newer_client");
+    }
+
+    #[tokio::test]
+    async fn a_live_feed_asks_for_progress_only_when_told() {
+        let queries = against_gateway(|gateway| async move {
+            let mut queries = Vec::new();
+            for (after, updates) in [
+                (None, LiveUpdates::Observations),
+                (Some(7), LiveUpdates::Observations),
+                (Some(7), LiveUpdates::WithProgress),
+            ] {
+                let response = gateway.live(after, updates).await.unwrap();
+                queries.push(response.text().await.unwrap());
+            }
+            queries
+        })
+        .await;
+        assert_eq!(queries, ["", "after=7", "after=7&progress=true"]);
     }
 
     #[tokio::test]

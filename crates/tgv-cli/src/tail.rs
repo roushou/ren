@@ -8,13 +8,29 @@ use tgv_protocol::{
     label::Stored,
     sse::{EventName, SseFramer, SseLimits, SseOutput},
 };
-use tgv_recorder::{Observation, batch::ObservationKind, id::CallId, time::UnixMillis};
+use tgv_recorder::{
+    Observation, batch::ObservationKind, id::CallId, progress::Progress, time::UnixMillis,
+};
+
+/// What a live feed sends: committed observations, or those and progress
+/// updates on streaming calls.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LiveUpdates {
+    Observations,
+    /// Also the reply so far on each streaming call, its tools, and whether
+    /// it is thinking: never stored, never replayed, and skipped when the
+    /// feed falls behind.
+    WithProgress,
+}
 
 /// One live feed event.
 #[derive(Debug, PartialEq, Eq)]
 pub enum LiveEvent {
     /// A committed observation.
     Observation(Observation),
+    /// An update on a streaming call, sent only with
+    /// [`LiveUpdates::WithProgress`].
+    Progress(Progress),
     /// The requested position was removed by retention; resume without it.
     Gone { oldest_retained: u64 },
     /// The feed fell behind and is catching up from storage.
@@ -73,6 +89,9 @@ impl LiveDecoder {
             EventName::Present("observation") => serde_json::from_slice(data)
                 .map(LiveEvent::Observation)
                 .unwrap_or_else(|_| unrecognized("observation")),
+            EventName::Present("progress") => serde_json::from_slice(data)
+                .map(LiveEvent::Progress)
+                .unwrap_or_else(|_| unrecognized("progress")),
             EventName::Present("gone") => serde_json::from_slice::<Gone>(data)
                 .map(|gone| LiveEvent::Gone {
                     oldest_retained: gone.oldest_retained,
@@ -250,6 +269,8 @@ mod tests {
         ": keep-alive\n\n",
         "event: observation\nid: 7\ndata: {\"seq\":7,\"at\":1793974238191,\"kind\":\"call_opened\",\"channel\":\"4cebe924-e644-4e00-9d22-b6bc6e62a420\",\"call\":\"2903a122-cd5b-4e63-b54f-2d95732c609e\",\"attempt\":null}\n\n",
         "event: observation\r\nid: 8\r\ndata: {\"seq\":8,\"at\":1793974238193,\"kind\":\"call_teleported\",\"channel\":\"4cebe924-e644-4e00-9d22-b6bc6e62a420\",\"call\":null,\"attempt\":null}\r\n\r\n",
+        "event: progress\ndata: {\"call\":\"2903a122-cd5b-4e63-b54f-2d95732c609e\",\"reply\":\"Looking at \\u00e9tat\",\"cut\":true,\"tools\":[\"Read\"],\"thinking\":false}\n\n",
+        "event: progress\ndata: {\"call\":\"not-a-call\"}\n\n",
         "event: lagged\ndata: {\"resume_from\":8}\n\n",
         "event: gone\ndata: {\"oldest_retained\":40}\n\n",
         "event: error\ndata: store unavailable\n\n",
@@ -268,7 +289,7 @@ mod tests {
     #[test]
     fn decodes_every_event_kind_and_keeps_unknown_ones() {
         let events = decode(&[STREAM.as_bytes()]);
-        assert_eq!(events.len(), 6);
+        assert_eq!(events.len(), 8);
         let LiveEvent::Observation(opened) = &events[0] else {
             panic!("{:?}", events[0]);
         };
@@ -283,16 +304,33 @@ mod tests {
             panic!("{:?}", events[1]);
         };
         assert_eq!(Shown::of(unknown), Err("call_teleported"));
-        assert_eq!(events[2], LiveEvent::Lagged { resume_from: 8 });
+        assert_eq!(
+            events[2],
+            LiveEvent::Progress(Progress {
+                call: "2903a122-cd5b-4e63-b54f-2d95732c609e".parse().unwrap(),
+                reply: "Looking at état".to_owned(),
+                cut: true,
+                tools: vec!["Read".to_owned()],
+                thinking: false,
+            })
+        );
         assert_eq!(
             events[3],
+            LiveEvent::Unrecognized {
+                name: "progress".to_owned(),
+                detail: "{\"call\":\"not-a-call\"}".to_owned()
+            }
+        );
+        assert_eq!(events[4], LiveEvent::Lagged { resume_from: 8 });
+        assert_eq!(
+            events[5],
             LiveEvent::Gone {
                 oldest_retained: 40
             }
         );
-        assert_eq!(events[4], LiveEvent::Failed("store unavailable".to_owned()));
+        assert_eq!(events[6], LiveEvent::Failed("store unavailable".to_owned()));
         assert_eq!(
-            events[5],
+            events[7],
             LiveEvent::Unrecognized {
                 name: "surprise".to_owned(),
                 detail: "{}".to_owned()

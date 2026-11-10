@@ -8,7 +8,7 @@ use crate::commands::history::TargetArgs;
 use crate::context::Context;
 use crate::management::Management;
 use crate::style::{Styling, Tone};
-use crate::tail::{CallSummary, ClockTime, LiveDecoder, LiveEvent, Shown};
+use crate::tail::{CallSummary, ClockTime, LiveDecoder, LiveEvent, LiveUpdates, Shown};
 use anyhow::Result;
 use clap::Args;
 use std::{process::ExitCode, time::Duration};
@@ -40,7 +40,7 @@ impl TailCmd {
         let gateway = self.target.gateway(ctx)?;
         let stderr = ctx.terminal.stderr;
         let mut after = None;
-        let mut response = gateway.live(after).await?;
+        let mut response = gateway.live(after, LiveUpdates::Observations).await?;
         eprintln!(
             "{}",
             stderr.paint(
@@ -62,7 +62,7 @@ impl TailCmd {
             eprintln!("{}", stderr.paint(Tone::Warn, reason));
             response = loop {
                 tokio::time::sleep(Self::RECONNECT).await;
-                match gateway.live(after).await {
+                match gateway.live(after, LiveUpdates::Observations).await {
                     Ok(response) => break response,
                     Err(error) => {
                         eprintln!(
@@ -108,6 +108,8 @@ impl TailCmd {
                             &format!("fell behind; catching up from {resume_from}")
                         )
                     ),
+                    // Not asked for: tail prints only what is recorded.
+                    LiveEvent::Progress(_) => {}
                     LiveEvent::Gone { .. } => return Ok(Ended::Gone),
                     LiveEvent::Failed(reason) => {
                         eprintln!(
