@@ -26,8 +26,9 @@ use ren_recorder::{
 };
 use ren_store::{Reader, Store, query::PageLimit, view::RunView};
 use ren_supervisor::{
-    AgentHost, AgentProcess, CommandError, KillSignal, KillSwitch, ProcessExit, RunCommand,
-    RunRefused, RunState, RunUpdate, StartError, Supervisor, SupervisorOptions, Workdir,
+    AgentHost, AgentProcess, CommandError, Conversation, KillSignal, KillSwitch, ProcessExit,
+    RunCommand, RunRefused, RunState, RunUpdate, StartError, Supervisor, SupervisorOptions,
+    Workdir,
 };
 use serde_json::{Value, json};
 use std::{
@@ -138,6 +139,14 @@ async fn agent(
                     send(
                         &mut out,
                         json!({ "id": id, "error": { "code": -1, "message": "no" } }),
+                    )
+                    .await;
+                }
+                (Some("thread/resume"), _) => {
+                    let thread = message["params"]["threadId"].clone();
+                    send(
+                        &mut out,
+                        json!({ "id": id, "result": { "thread": { "id": thread } } }),
                     )
                     .await;
                 }
@@ -288,7 +297,7 @@ async fn runs_a_turn_through_an_approval_and_stops() {
     let mut updates = supervisor.subscribe();
 
     let run = supervisor
-        .start(Harness::Codex, "/work/acme")
+        .start(Harness::Codex, "/work/acme", Conversation::New)
         .await
         .unwrap();
     let (arguments, workdir) = spawned.lock().unwrap()[0].clone();
@@ -364,14 +373,19 @@ async fn refuses_directories_outside_the_roots_and_undrivable_clients() {
         ("/missing", "Resolve"),
     ];
     for (dir, expected) in refused {
-        let error = supervisor.start(Harness::Codex, dir).await.unwrap_err();
+        let error = supervisor
+            .start(Harness::Codex, dir, Conversation::New)
+            .await
+            .unwrap_err();
         assert!(
             format!("{error:?}").starts_with(expected),
             "{dir}: {error:?}"
         );
     }
     assert!(matches!(
-        supervisor.start(Harness::ClaudeCode, "/work/acme").await,
+        supervisor
+            .start(Harness::ClaudeCode, "/work/acme", Conversation::New)
+            .await,
         Err(StartError::NotDrivable(_))
     ));
     assert!(supervisor.runs().await.unwrap().is_empty());
@@ -383,7 +397,9 @@ async fn a_failed_spawn_is_reported_and_kept() {
     host.spawn_fails = true;
     let supervised = supervise(host).await;
     let supervisor = &supervised.supervisor;
-    let Err(StartError::Spawn { run, .. }) = supervisor.start(Harness::Codex, "/work/acme").await
+    let Err(StartError::Spawn { run, .. }) = supervisor
+        .start(Harness::Codex, "/work/acme", Conversation::New)
+        .await
     else {
         panic!("expected a spawn failure");
     };
@@ -407,7 +423,7 @@ async fn a_refused_opening_stops_the_run() {
     let supervisor = &supervised.supervisor;
     let mut updates = supervisor.subscribe();
     supervisor
-        .start(Harness::Codex, "/work/acme")
+        .start(Harness::Codex, "/work/acme", Conversation::New)
         .await
         .unwrap();
     assert_eq!(
@@ -425,7 +441,7 @@ async fn an_agent_that_exits_on_its_own_ends_the_run() {
     let supervisor = &supervised.supervisor;
     let mut updates = supervisor.subscribe();
     supervisor
-        .start(Harness::Codex, "/work/acme")
+        .start(Harness::Codex, "/work/acme", Conversation::New)
         .await
         .unwrap();
     assert_eq!(
@@ -442,8 +458,14 @@ async fn dropping_every_handle_drains_the_runs_and_ends_the_task() {
     let supervised = supervise(FakeHost::new(Script::Codex)).await;
     let supervisor = &supervised.supervisor;
     let mut updates = supervisor.subscribe();
-    supervisor.start(Harness::Codex, "/work/a").await.unwrap();
-    supervisor.start(Harness::Codex, "/work/b").await.unwrap();
+    supervisor
+        .start(Harness::Codex, "/work/a", Conversation::New)
+        .await
+        .unwrap();
+    supervisor
+        .start(Harness::Codex, "/work/b", Conversation::New)
+        .await
+        .unwrap();
     state(&mut updates, |s| matches!(s, RunState::Idle { .. })).await;
     let (stored, _dir) = supervised.stored().await;
     assert_eq!(stored.len(), 2);
@@ -462,4 +484,24 @@ async fn dropping_every_handle_drains_the_runs_and_ends_the_task() {
         }
     }
     assert_eq!(drained, 2);
+}
+
+#[tokio::test]
+async fn a_run_can_resume_the_clients_thread() {
+    let supervised = supervise(FakeHost::new(Script::Codex)).await;
+    let supervisor = &supervised.supervisor;
+    let mut updates = supervisor.subscribe();
+    let earlier = "0190f3a0-0000-7000-8000-0000000000ee";
+    let thread =
+        ren_protocol::native::NativeThreadId::new(uuid::Uuid::parse_str(earlier).unwrap()).unwrap();
+    supervisor
+        .start(Harness::Codex, "/work/acme", Conversation::Resume(thread))
+        .await
+        .unwrap();
+    assert_eq!(
+        state(&mut updates, |s| matches!(s, RunState::Idle { .. })).await,
+        RunState::Idle { thread }
+    );
+    let (stored, _dir) = supervised.stored().await;
+    assert_eq!(stored[0].thread.as_deref(), Some(earlier));
 }

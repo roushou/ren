@@ -9,7 +9,7 @@
 //! [`Supervisor`]: crate::Supervisor
 
 use crate::{
-    CommandError, Request, RunSnapshot, RunUpdate, StartError,
+    CommandError, Conversation, Request, RunSnapshot, RunUpdate, StartError,
     host::{AgentHost, AgentProcess, KillSwitch},
     run::{ProcessExit, RunAction, RunCommand, RunEvent, RunState},
     workdir::{RequestedDir, Roots, Workdir},
@@ -117,9 +117,12 @@ impl<H: AgentHost> SupervisorTask<H> {
             Request::Start {
                 harness,
                 dir,
+                conversation,
                 reply,
             } => {
-                let started = self.start(harness, &dir, runs, outputs, exits).await;
+                let started = self
+                    .start(harness, &dir, conversation, runs, outputs, exits)
+                    .await;
                 let _ = reply.send(started);
             }
             Request::Command {
@@ -152,6 +155,7 @@ impl<H: AgentHost> SupervisorTask<H> {
         &self,
         harness: Harness,
         dir: &str,
+        conversation: Conversation,
         runs: &mut BTreeMap<RunId, Live>,
         outputs: &mut Outputs,
         exits: &mut Exits,
@@ -204,12 +208,12 @@ impl<H: AgentHost> SupervisorTask<H> {
             exit,
             kill,
         } = process;
-        let (codec, first) = CodexAppServer::open(
-            Opening::New {
-                cwd: workdir.as_str().to_owned(),
-            },
-            &self.version,
-        );
+        let cwd = workdir.as_str().to_owned();
+        let opening = match conversation {
+            Conversation::New => Opening::New { cwd },
+            Conversation::Resume(thread) => Opening::Resume { thread, cwd },
+        };
+        let (codec, first) = CodexAppServer::open(opening, &self.version);
         let mut live = Live {
             harness,
             workdir,

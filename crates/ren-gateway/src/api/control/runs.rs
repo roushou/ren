@@ -22,9 +22,11 @@ use ren_harness::{
     Harness,
     drive::{ApprovalId, Decision, Prompt},
 };
+use ren_protocol::native::NativeThreadId;
 use ren_recorder::id::RunId;
 use ren_supervisor::{
-    CommandError, RunCommand, RunRefused, RunSnapshot, StartError, Supervisor, WorkdirError,
+    CommandError, Conversation, RunCommand, RunRefused, RunSnapshot, StartError, Supervisor,
+    WorkdirError,
 };
 use std::{convert::Infallible, sync::Arc, time::Duration};
 use tokio::sync::broadcast::error::RecvError;
@@ -35,6 +37,9 @@ use tokio_util::sync::CancellationToken;
 struct StartRequest {
     harness: Harness,
     dir: String,
+    /// The client's thread to continue, instead of a new conversation.
+    #[serde(default)]
+    resume: Option<uuid::Uuid>,
 }
 
 #[derive(serde::Deserialize)]
@@ -224,8 +229,14 @@ impl RunsApi {
     ) -> Result<Response, Denied> {
         let supervisor = api.admit(&headers)?;
         let request = Self::body(body)?;
+        let conversation = match request.resume {
+            None => Conversation::New,
+            Some(thread) => Conversation::Resume(
+                NativeThreadId::new(thread).ok_or(Denied::Control(Refusal::Invalid))?,
+            ),
+        };
         let run = supervisor
-            .start(request.harness, &request.dir)
+            .start(request.harness, &request.dir, conversation)
             .await
             .map_err(|error| Denied::Run(error.into()))?;
         Ok((

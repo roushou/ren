@@ -26,6 +26,7 @@ use ren_harness::{
     endpoint::GatewayEndpoint,
     launch::NotDrivable,
 };
+use ren_protocol::native::NativeThreadId;
 use ren_recorder::{
     Recorder, RunUnrecorded,
     id::{IdSource, RunId},
@@ -58,6 +59,15 @@ pub struct Supervisor {
 pub enum RunUpdate {
     State { run: RunId, state: RunState },
     Event { run: RunId, event: DriveEvent },
+}
+
+/// Which conversation a new run opens.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Conversation {
+    New,
+    /// Continue the client's own conversation, by its thread id: a run that
+    /// ended, or was recovered after a restart, picks up where it left off.
+    Resume(NativeThreadId),
 }
 
 /// One run as the supervisor holds it now.
@@ -121,6 +131,7 @@ pub(crate) enum Request {
     Start {
         harness: Harness,
         dir: String,
+        conversation: Conversation,
         reply: oneshot::Sender<Result<RunId, StartError>>,
     },
     Command {
@@ -171,13 +182,20 @@ impl Supervisor {
         Ok((Self { requests, updates }, task))
     }
 
-    /// Start `harness` in `dir`, which must lie inside a root.
-    pub async fn start(&self, harness: Harness, dir: &str) -> Result<RunId, StartError> {
+    /// Start `harness` in `dir`, which must lie inside a root, opening
+    /// `conversation`.
+    pub async fn start(
+        &self,
+        harness: Harness,
+        dir: &str,
+        conversation: Conversation,
+    ) -> Result<RunId, StartError> {
         let (reply, answer) = oneshot::channel();
         self.requests
             .send(Request::Start {
                 harness,
                 dir: dir.to_owned(),
+                conversation,
                 reply,
             })
             .await
