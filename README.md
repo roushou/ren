@@ -15,7 +15,7 @@ as it happens, without changing a byte of the traffic.
 
 </div>
 
-<img alt="Ren's Live view" src="docs/screenshots/live.png" />
+<img alt="Live" src="https://github.com/user-attachments/assets/964c0b9d-a14d-4cb0-a73e-6767e806c271" />
 
 ## Overview
 
@@ -124,25 +124,19 @@ listener.
 <details>
 <summary>Light theme</summary>
 
-<img alt="Ren's Live view in light theme" src="docs/screenshots/live-light.png" />
+<img alt="Light" src="https://github.com/user-attachments/assets/34745d90-2de2-44d4-9862-6c0f7c799a1a" />
 </details>
 
 <details>
 <summary>Traffic</summary>
 
-<img alt="Ren's Traffic view" src="docs/screenshots/traffic.png" />
-</details>
-
-<details>
-<summary>Overview</summary>
-
-<img width="1470" height="838" alt="Ren's Overview" src="docs/screenshots/overview.png" />
+<img alt="Traffic" src="https://github.com/user-attachments/assets/353fcb72-b273-41c4-866a-157d05e0771f" />
 </details>
 
 <details>
 <summary>Sessions</summary>
 
-<img width="1470" height="838" alt="Ren's Sessions view" src="docs/screenshots/sessions.png" />
+<img width="1470" height="838" alt="Sessions" src="https://github.com/user-attachments/assets/ca3eede3-7045-415a-bd64-61d3fe778b32" />
 </details>
 
 ## Documentation
