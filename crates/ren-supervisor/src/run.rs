@@ -2,14 +2,15 @@
 //! the operator asked, and how the process ended, in; the next state and what
 //! to do about it, out. No I/O.
 
-use ren_harness::drive::{ApprovalId, Decision, DriveCommand, DriveEvent, Prompt, RequestKind};
+use ren_harness::drive::{
+    ApprovalAsk, ApprovalId, Decision, DriveCommand, DriveEvent, Prompt, RequestKind,
+};
 use ren_protocol::native::{NativeThreadId, NativeTurnId};
 pub use ren_recorder::capture::ProcessExit;
 use ren_recorder::capture::RunEnd;
-use std::collections::BTreeSet;
 
 /// Where a run is in its life.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "phase", rename_all = "snake_case")]
 pub enum RunState {
     /// The process started; the conversation is not open yet.
@@ -21,7 +22,7 @@ pub enum RunState {
     Working {
         thread: NativeThreadId,
         turn: Option<NativeTurnId>,
-        approvals: BTreeSet<ApprovalId>,
+        approvals: Approvals,
     },
     /// Ren asked the process to end and waits for it to exit.
     Stopping { cause: StopCause },
@@ -32,8 +33,60 @@ pub enum RunState {
     },
 }
 
+/// Approvals waiting for the operator, in the order the agent asked, each
+/// with what it asks for.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(transparent)]
+pub struct Approvals(Vec<Waiting>);
+
+/// One approval waiting for an answer.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct Waiting {
+    pub approval: ApprovalId,
+    pub ask: ApprovalAsk,
+}
+
+impl Approvals {
+    /// Add one; an approval asked again keeps its place and takes the newer
+    /// ask.
+    pub fn insert(&mut self, approval: ApprovalId, ask: ApprovalAsk) {
+        match self
+            .0
+            .iter_mut()
+            .find(|waiting| waiting.approval == approval)
+        {
+            Some(waiting) => waiting.ask = ask,
+            None => self.0.push(Waiting { approval, ask }),
+        }
+    }
+
+    /// Whether `approval` was waiting; it no longer is.
+    pub fn remove(&mut self, approval: &ApprovalId) -> bool {
+        let before = self.0.len();
+        self.0.retain(|waiting| waiting.approval != *approval);
+        self.0.len() != before
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    /// The oldest waiting approval.
+    pub fn first(&self) -> Option<&Waiting> {
+        self.0.first()
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = &Waiting> {
+        self.0.iter()
+    }
+}
+
 /// Why Ren is stopping a run.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum StopCause {
     Operator,
@@ -181,7 +234,7 @@ impl RunState {
             (Self::Idle { thread }, DriveEvent::TurnStarted { turn }) => Self::to(Self::Working {
                 thread: *thread,
                 turn: Some(turn),
-                approvals: BTreeSet::new(),
+                approvals: Approvals::default(),
             }),
             (
                 Self::Working {
@@ -193,11 +246,13 @@ impl RunState {
                 turn: Some(turn),
                 approvals: approvals.clone(),
             }),
-            (Self::Idle { thread }, DriveEvent::Approval { approval, .. }) => {
+            (Self::Idle { thread }, DriveEvent::Approval { approval, ask }) => {
+                let mut approvals = Approvals::default();
+                approvals.insert(approval, ask);
                 Self::to(Self::Working {
                     thread: *thread,
                     turn: None,
-                    approvals: BTreeSet::from([approval]),
+                    approvals,
                 })
             }
             (
@@ -206,10 +261,10 @@ impl RunState {
                     turn,
                     approvals,
                 },
-                DriveEvent::Approval { approval, .. },
+                DriveEvent::Approval { approval, ask },
             ) => {
                 let mut approvals = approvals.clone();
-                approvals.insert(approval);
+                approvals.insert(approval, ask);
                 Self::to(Self::Working {
                     thread: *thread,
                     turn: *turn,
@@ -306,7 +361,7 @@ impl RunState {
                 Self::Working {
                     thread: *thread,
                     turn: None,
-                    approvals: BTreeSet::new(),
+                    approvals: Approvals::default(),
                 },
                 DriveCommand::Prompt(prompt),
             )),
@@ -362,13 +417,14 @@ impl RunState {
 
 #[cfg(test)]
 mod tests {
-    use super::{ProcessExit, RunAction, RunCommand, RunEvent, RunRefused, RunState, StopCause};
+    use super::{
+        Approvals, ProcessExit, RunAction, RunCommand, RunEvent, RunRefused, RunState, StopCause,
+    };
     use ren_harness::drive::{
         ApprovalAsk, ApprovalId, Decision, DriveCommand, DriveEvent, Prompt, RequestKind, TurnEnd,
     };
     use ren_protocol::native::{NativeThreadId, NativeTurnId};
     use ren_recorder::capture::RunEnd;
-    use std::collections::BTreeSet;
     use uuid::Uuid;
 
     fn thread() -> NativeThreadId {
@@ -395,6 +451,14 @@ mod tests {
         state.apply(RunEvent::Operator(command))
     }
 
+    fn waiting_for(ids: &[&str]) -> Approvals {
+        let mut approvals = Approvals::default();
+        for id in ids {
+            approvals.insert(approval(id), ApprovalAsk::FileChange { reason: None });
+        }
+        approvals
+    }
+
     fn ask(id: &str) -> DriveEvent {
         DriveEvent::Approval {
             approval: approval(id),
@@ -419,7 +483,7 @@ mod tests {
             RunState::Working {
                 thread: thread(),
                 turn: Some(turn()),
-                approvals: BTreeSet::from([approval("a1")]),
+                approvals: waiting_for(&["a1"]),
             }
         );
 
@@ -528,7 +592,7 @@ mod tests {
                 RunState::Working {
                     thread: thread(),
                     turn: Some(turn()),
-                    approvals: BTreeSet::new(),
+                    approvals: Approvals::default(),
                 },
                 RunEnd::Exited,
             ),
@@ -584,6 +648,30 @@ mod tests {
         assert_eq!(drained.actions, vec![RunAction::Kill]);
         let again = drained.state.apply(RunEvent::Shutdown).unwrap();
         assert!(again.actions.is_empty(), "a stopping run is killed once");
+    }
+
+    #[test]
+    fn states_read_back_from_their_json() {
+        let states = [
+            RunState::Starting,
+            RunState::Idle { thread: thread() },
+            RunState::Working {
+                thread: thread(),
+                turn: Some(turn()),
+                approvals: waiting_for(&["ap-1"]),
+            },
+            RunState::Stopping {
+                cause: StopCause::Shutdown,
+            },
+            RunState::Ended {
+                end: RunEnd::Exited,
+                exit: Some(ProcessExit::Code(1)),
+            },
+        ];
+        for state in states {
+            let json = serde_json::to_value(&state).unwrap();
+            assert_eq!(serde_json::from_value::<RunState>(json).unwrap(), state);
+        }
     }
 
     #[test]

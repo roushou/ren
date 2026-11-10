@@ -16,7 +16,7 @@ mod task;
 pub mod workdir;
 
 pub use host::{AgentHost, AgentProcess, KillSignal, KillSwitch};
-pub use run::{ProcessExit, RunCommand, RunRefused, RunState};
+pub use run::{Approvals, ProcessExit, RunCommand, RunRefused, RunState, Waiting};
 pub use task::SupervisorTask;
 pub use workdir::{Roots, Workdir, WorkdirError};
 
@@ -71,7 +71,7 @@ pub enum Conversation {
 }
 
 /// One run as the supervisor holds it now.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct RunSnapshot {
     pub run: RunId,
     pub harness: Harness,

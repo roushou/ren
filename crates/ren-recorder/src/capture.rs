@@ -240,7 +240,7 @@ pub enum ChannelEnd {
 }
 
 /// How an agent process exited, as the host reported it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case", tag = "kind", content = "value")]
 pub enum ProcessExit {
     Code(i32),

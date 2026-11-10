@@ -133,7 +133,10 @@ async fn a_run_is_started_prompted_approved_and_stopped_through_the_control_api(
         .until(|state| state["approvals"].as_array().is_some_and(|a| !a.is_empty()))
         .await;
     assert_eq!(waiting["phase"], "working");
-    assert_eq!(waiting["approvals"], json!(["ap-1"]));
+    assert_eq!(
+        waiting["approvals"],
+        json!([{ "approval": "ap-1", "ask": { "kind": "file_change", "reason": "edit src" } }])
+    );
 
     let (status, _) = control
         .post(

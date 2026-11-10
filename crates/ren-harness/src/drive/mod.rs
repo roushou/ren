@@ -53,7 +53,9 @@ impl Prompt {
 }
 
 /// An approval request, named as the client named it within one process.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, SerializeDisplay)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, SerializeDisplay, DeserializeFromStr,
+)]
 pub struct ApprovalId(String);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
@@ -271,7 +273,7 @@ impl serde::Serialize for ItemKind {
 }
 
 /// What an approval asks for.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ApprovalAsk {
     /// Run a command.

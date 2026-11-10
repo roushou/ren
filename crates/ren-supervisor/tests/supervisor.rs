@@ -318,7 +318,14 @@ async fn runs_a_turn_through_an_approval_and_stops() {
     let RunState::Working { approvals, .. } = waiting else {
         unreachable!()
     };
-    let approval: ApprovalId = approvals.into_iter().next().unwrap();
+    let waiting = approvals.first().unwrap();
+    assert_eq!(
+        waiting.ask,
+        ren_harness::drive::ApprovalAsk::FileChange {
+            reason: Some("edit src".into())
+        }
+    );
+    let approval: ApprovalId = waiting.approval.clone();
     assert_eq!(approval.to_string(), "ap-1");
     supervisor
         .command(

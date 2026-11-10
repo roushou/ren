@@ -398,8 +398,10 @@ Runs are off while `runs.roots` is empty: every route then answers `404`
 
 Commands answer `202` `{api_version}` once sent to the agent; what it does
 next arrives as run events. A run's `state` has a `phase`: `starting`, `idle` (with `thread`, the client's
-conversation ID), `working` (with `turn` once known and `approvals`, the
-approval IDs waiting for an answer), `stopping` (with its `cause`), or `ended`
+conversation ID), `working` (with `turn` once known and `approvals`, each
+`{approval, ask}` waiting for an answer, oldest first: `ask` is a `command`
+with its `command`, `cwd`, and `reason`, or a `file_change` with its
+`reason`), `stopping` (with its `cause`), or `ended`
 (with `end`, one of `spawn_failed`, `open_refused`, `exited`, `stopped`,
 `drained`, `recovered`, and `exit`, `{"kind": "code"|"signal", "value": n}` or
 `{"kind": "unknown"}`). Run events are `{"kind": "state", run, state}` or
