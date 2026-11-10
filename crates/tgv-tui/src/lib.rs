@@ -60,6 +60,8 @@ pub struct Tui {
     /// Sessions kept on the wall, first, even when they go quiet.
     pins: Vec<SessionId>,
     help: Help,
+    /// Why the last read failed, until a snapshot succeeds.
+    failure: Option<String>,
 }
 
 /// Whether the help is over the wall.
@@ -117,6 +119,9 @@ pub enum Input {
     Progress(Progress),
     Observation(Observation),
     Resize(Size),
+    /// A read failed: why, as the reader words it. The view keeps what it
+    /// last read and says it is stale until a snapshot succeeds.
+    ReadFailed(String),
 }
 
 /// A read the view needs.
@@ -151,6 +156,8 @@ pub enum Pane {
 pub struct Status {
     pub now: UnixMillis,
     pub reading: Reading,
+    /// Why the last read failed: what is shown is from an earlier one.
+    pub failure: Option<String>,
     /// Sessions active in the window.
     pub sessions: usize,
     /// Calls with a response streaming, and calls waiting for its head.
@@ -218,6 +225,7 @@ impl Tui {
             zoom: None,
             pins: Vec::new(),
             help: Help::Hidden,
+            failure: None,
         }
     }
 
@@ -361,6 +369,10 @@ impl Tui {
                 self.grid = Grid::fit(size);
                 self.arrange()
             }
+            Input::ReadFailed(reason) => {
+                self.failure = Some(reason);
+                Vec::new()
+            }
         }
     }
 
@@ -401,6 +413,7 @@ impl Tui {
                 .is_none_or(|call| call.state.known() == Some(CallState::Open))
         });
         self.snapshot = Some(Held { snapshot, calls });
+        self.failure = None;
         self.rank();
         self.arrange()
     }
@@ -559,6 +572,7 @@ impl Tui {
         let responding = open.clone().filter(|call| call.status.is_some()).count();
         let status = Status {
             now,
+            failure: self.failure.clone(),
             reading: match &self.snapshot {
                 None => Reading::Pending,
                 Some(held) if held.snapshot.recent.next.is_some() => Reading::Capped,

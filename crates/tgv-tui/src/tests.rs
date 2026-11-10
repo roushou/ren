@@ -993,3 +993,34 @@ fn title_bars_carry_the_state_in_color() {
     assert_eq!(buffer[(125, 0)].bg, Color::Indexed(52));
     assert_eq!(buffer[(5, 10)].bg, Color::Indexed(236));
 }
+
+#[test]
+fn a_failed_read_is_shown_until_a_snapshot_succeeds() {
+    let size = Size {
+        width: 120,
+        height: 24,
+    };
+    let mut tui = busy(size);
+    assert_eq!(
+        tui.apply(Input::ReadFailed("cannot reach the gateway".to_owned())),
+        []
+    );
+    let wall = tui.wall(at(300));
+    assert_eq!(
+        wall.status.failure.as_deref(),
+        Some("cannot reach the gateway")
+    );
+    // What was read before stays on the wall.
+    assert!(matches!(wall.panes[0], Pane::Session(_)));
+    let status = drawn(&wall, size).lines().last().unwrap().to_owned();
+    assert!(
+        status.starts_with(" tgv  ! stale: cannot reach the gateway "),
+        "{status}"
+    );
+    let _ = tui.apply(snapshot(
+        302,
+        vec![session(1, "claude_code_headers", 302)],
+        vec![],
+    ));
+    assert_eq!(tui.wall(at(302)).status.failure, None);
+}

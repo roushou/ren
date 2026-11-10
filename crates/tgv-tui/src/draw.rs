@@ -468,6 +468,14 @@ impl Wall {
                 .fg(Palette::INK)
                 .add_modifier(Modifier::BOLD),
         ];
+        // A failed read comes first: everything else on the wall is stale.
+        if let Some(failure) = &status.failure {
+            spans.push(
+                Span::raw(format!(" ! stale: {failure} "))
+                    .bg(Palette::ERROR)
+                    .fg(Palette::INK),
+            );
+        }
         if status.attention > 0 {
             let needs = if status.attention == 1 {
                 "needs"

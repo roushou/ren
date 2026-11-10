@@ -234,8 +234,8 @@ dependencies under "Crates" below. Read the code for current module ownership.
 - `crates/tgv-tui`: the terminal view of a gateway's live sessions, with `Tui`
   as its primary type. `Tui` is sans-IO: it takes what was read (`Input`:
   snapshots of sessions and model calls, as `tgv_store::view` types, turn
-  activity, progress updates, live observations, and the terminal's size)
-  and key presses (`Tui::press`, with `Key` and the `Command`s keys give in
+  activity, progress updates, live observations, the terminal's size, and
+  failed reads, shown until a snapshot succeeds) and key presses (`Tui::press`, with `Key` and the `Command`s keys give in
   `keys`), and answers with the reads it needs (`Read`);
   `Tui::snapshot_query` builds the snapshot's queries, and `Tui::wall` is
   what to draw at a given time: panes (`grid`: a session keeps its pane
