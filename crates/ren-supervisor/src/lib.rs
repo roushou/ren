@@ -26,7 +26,10 @@ use ren_harness::{
     endpoint::GatewayEndpoint,
     launch::NotDrivable,
 };
-use ren_recorder::id::{IdSource, RunId};
+use ren_recorder::{
+    Recorder, RunUnrecorded,
+    id::{IdSource, RunId},
+};
 use std::{io, path::PathBuf, sync::Arc};
 use tokio::sync::{broadcast, mpsc, oneshot};
 
@@ -83,6 +86,8 @@ pub enum StartError {
     Resolve(#[source] io::Error),
     #[error(transparent)]
     NotDrivable(NotDrivable),
+    #[error("the recorder has no room to record the run")]
+    Unrecorded(RunUnrecorded),
     #[error("cannot start the client; check it is installed on PATH")]
     Spawn {
         run: RunId,
@@ -134,11 +139,13 @@ impl Supervisor {
     const UPDATES: usize = 1024;
 
     /// A supervisor and the task that runs it. Roots are resolved by `host`
-    /// now, so a link cannot change what they cover later.
+    /// now, so a link cannot change what they cover later. Every run is
+    /// recorded through `recorder`.
     pub fn new<H: AgentHost>(
         options: SupervisorOptions,
         host: H,
         ids: Arc<dyn IdSource>,
+        recorder: Recorder,
     ) -> Result<(Self, SupervisorTask<H>), SupervisorError> {
         let resolved = options
             .roots
@@ -154,6 +161,7 @@ impl Supervisor {
             updates: updates.clone(),
             host,
             ids,
+            recorder,
             roots,
             gateway: options.gateway,
             version: options.version,

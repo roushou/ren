@@ -15,7 +15,16 @@ use ren_harness::{
     endpoint::GatewayEndpoint,
     launch::LaunchPlan,
 };
-use ren_recorder::{capture::RunEnd, id::SequentialIds};
+use ren_protocol::label::Stored;
+use ren_recorder::{
+    CaptureOptions, Recorder, RecorderSetup,
+    capture::RunEnd,
+    id::SequentialIds,
+    retention::RetentionPolicy,
+    secrets::SecretScanner,
+    time::{ManualClock, UnixMillis},
+};
+use ren_store::{Reader, Store, query::PageLimit, view::RunView};
 use ren_supervisor::{
     AgentHost, AgentProcess, CommandError, KillSignal, KillSwitch, ProcessExit, RunCommand,
     RunRefused, RunState, RunUpdate, StartError, Supervisor, SupervisorOptions, Workdir,
@@ -195,10 +204,57 @@ fn options() -> SupervisorOptions {
     }
 }
 
-fn supervise(host: FakeHost) -> (Supervisor, tokio::task::JoinHandle<()>) {
-    let (supervisor, task) =
-        Supervisor::new(options(), host, Arc::new(SequentialIds::default())).unwrap();
-    (supervisor, tokio::spawn(task.run()))
+/// A supervisor recording into a real store, with its recorder running.
+struct Supervised {
+    supervisor: Supervisor,
+    task: tokio::task::JoinHandle<()>,
+    recorder: tokio::task::JoinHandle<()>,
+    dir: tempfile::TempDir,
+}
+
+async fn supervise(host: FakeHost) -> Supervised {
+    let dir = tempfile::tempdir().unwrap();
+    let clock = Arc::new(ManualClock::at(UnixMillis::from_millis(1_000)));
+    let ids = Arc::new(SequentialIds::default());
+    let (store, recovery) = Store::open(dir.path(), clock.as_ref(), ids.clone())
+        .await
+        .unwrap();
+    let setup = RecorderSetup {
+        options: CaptureOptions::default(),
+        retention: RetentionPolicy::default(),
+        max_calls: 16,
+        live_buffer: 64,
+        scanner: Arc::new(SecretScanner::new().unwrap()),
+    };
+    let (recorder, recording) =
+        Recorder::new(store, recovery.calls, setup, clock, ids.clone()).unwrap();
+    let (supervisor, task) = Supervisor::new(options(), host, ids, recorder).unwrap();
+    Supervised {
+        supervisor,
+        task: tokio::spawn(task.run()),
+        recorder: tokio::spawn(async move { recording.run().await.unwrap() }),
+        dir,
+    }
+}
+
+impl Supervised {
+    /// Drop the supervisor, let its runs drain and the recorder commit, and
+    /// read what was stored.
+    async fn stored(self) -> (Vec<RunView>, tempfile::TempDir) {
+        drop(self.supervisor);
+        tokio::time::timeout(Duration::from_secs(5), self.task)
+            .await
+            .expect("the supervisor drains")
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(5), self.recorder)
+            .await
+            .expect("the recorder drains")
+            .unwrap();
+        let reader = Reader::open(self.dir.path(), 1).await.unwrap();
+        let runs = reader.runs(PageLimit::DEFAULT).await.unwrap();
+        reader.close().await;
+        (runs, self.dir)
+    }
 }
 
 /// The next state update matching `wanted`, skipping others.
@@ -227,7 +283,8 @@ fn prompt() -> RunCommand {
 async fn runs_a_turn_through_an_approval_and_stops() {
     let host = FakeHost::new(Script::Codex);
     let spawned = host.spawned.clone();
-    let (supervisor, _task) = supervise(host);
+    let supervised = supervise(host).await;
+    let supervisor = &supervised.supervisor;
     let mut updates = supervisor.subscribe();
 
     let run = supervisor
@@ -282,11 +339,23 @@ async fn runs_a_turn_through_an_approval_and_stops() {
     let runs = supervisor.runs().await.unwrap();
     assert_eq!(runs.len(), 1);
     assert_eq!(runs[0].state, ended);
+
+    let (stored, _dir) = supervised.stored().await;
+    let [stored] = stored.as_slice() else {
+        panic!("one run is stored: {stored:?}");
+    };
+    assert_eq!(stored.id, run);
+    assert_eq!(stored.harness, Stored::Known(Harness::Codex));
+    assert_eq!(stored.workdir, "/work/acme");
+    assert_eq!(stored.thread.as_deref(), Some(THREAD));
+    assert_eq!(stored.end, Some(Stored::Known(RunEnd::Stopped)));
+    assert_eq!(stored.exit, Some(ProcessExit::Signal(9)));
 }
 
 #[tokio::test]
 async fn refuses_directories_outside_the_roots_and_undrivable_clients() {
-    let (supervisor, _task) = supervise(FakeHost::new(Script::Codex));
+    let supervised = supervise(FakeHost::new(Script::Codex)).await;
+    let supervisor = &supervised.supervisor;
     let refused = [
         ("relative/path", "Workdir(Relative)"),
         ("/work/../etc", "Workdir(Unnormalized)"),
@@ -312,7 +381,8 @@ async fn refuses_directories_outside_the_roots_and_undrivable_clients() {
 async fn a_failed_spawn_is_reported_and_kept() {
     let mut host = FakeHost::new(Script::Codex);
     host.spawn_fails = true;
-    let (supervisor, _task) = supervise(host);
+    let supervised = supervise(host).await;
+    let supervisor = &supervised.supervisor;
     let Err(StartError::Spawn { run, .. }) = supervisor.start(Harness::Codex, "/work/acme").await
     else {
         panic!("expected a spawn failure");
@@ -326,11 +396,15 @@ async fn a_failed_spawn_is_reported_and_kept() {
             exit: None
         }
     );
+    let (stored, _dir) = supervised.stored().await;
+    assert_eq!(stored[0].end, Some(Stored::Known(RunEnd::SpawnFailed)));
+    assert_eq!(stored[0].exit, None);
 }
 
 #[tokio::test]
 async fn a_refused_opening_stops_the_run() {
-    let (supervisor, _task) = supervise(FakeHost::new(Script::RefusesOpening));
+    let supervised = supervise(FakeHost::new(Script::RefusesOpening)).await;
+    let supervisor = &supervised.supervisor;
     let mut updates = supervisor.subscribe();
     supervisor
         .start(Harness::Codex, "/work/acme")
@@ -347,7 +421,8 @@ async fn a_refused_opening_stops_the_run() {
 
 #[tokio::test]
 async fn an_agent_that_exits_on_its_own_ends_the_run() {
-    let (supervisor, _task) = supervise(FakeHost::new(Script::ExitsEarly));
+    let supervised = supervise(FakeHost::new(Script::ExitsEarly)).await;
+    let supervisor = &supervised.supervisor;
     let mut updates = supervisor.subscribe();
     supervisor
         .start(Harness::Codex, "/work/acme")
@@ -364,16 +439,17 @@ async fn an_agent_that_exits_on_its_own_ends_the_run() {
 
 #[tokio::test]
 async fn dropping_every_handle_drains_the_runs_and_ends_the_task() {
-    let (supervisor, task) = supervise(FakeHost::new(Script::Codex));
+    let supervised = supervise(FakeHost::new(Script::Codex)).await;
+    let supervisor = &supervised.supervisor;
     let mut updates = supervisor.subscribe();
     supervisor.start(Harness::Codex, "/work/a").await.unwrap();
     supervisor.start(Harness::Codex, "/work/b").await.unwrap();
     state(&mut updates, |s| matches!(s, RunState::Idle { .. })).await;
-    drop(supervisor);
-    tokio::time::timeout(Duration::from_secs(5), task)
-        .await
-        .expect("the task ends")
-        .unwrap();
+    let (stored, _dir) = supervised.stored().await;
+    assert_eq!(stored.len(), 2);
+    for run in &stored {
+        assert_eq!(run.end, Some(Stored::Known(RunEnd::Drained)));
+    }
     let mut drained = 0;
     while let Ok(update) = updates.try_recv() {
         if let RunUpdate::State {

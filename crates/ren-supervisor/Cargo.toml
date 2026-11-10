@@ -20,7 +20,9 @@ tokio = { workspace = true, features = ["io-util", "macros", "sync"] }
 tracing.workspace = true
 
 [dev-dependencies]
+ren-store.workspace = true
 serde_json.workspace = true
+tempfile.workspace = true
 tokio = { workspace = true, features = ["io-util", "macros", "rt", "sync", "time"] }
 uuid.workspace = true
 

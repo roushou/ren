@@ -22,12 +22,13 @@ use futures_util::{
 use ren_harness::{
     Harness,
     drive::{
-        Framed, Line, LineLimit, Lines,
+        DriveEvent, Framed, Line, LineLimit, Lines,
         codex::{CodexAppServer, Opening},
     },
     endpoint::GatewayEndpoint,
 };
 use ren_recorder::{
+    Recorder, RunTap,
     capture::RunEnd,
     id::{IdSource, RunId},
 };
@@ -44,6 +45,7 @@ pub struct SupervisorTask<H> {
     pub(crate) updates: broadcast::Sender<RunUpdate>,
     pub(crate) host: H,
     pub(crate) ids: Arc<dyn IdSource>,
+    pub(crate) recorder: Recorder,
     pub(crate) roots: Roots,
     pub(crate) gateway: GatewayEndpoint,
     pub(crate) version: String,
@@ -58,6 +60,8 @@ struct Live {
     codec: Option<CodexAppServer>,
     stdin: Option<Box<dyn AsyncWrite + Send + Unpin>>,
     kill: Option<KillSwitch>,
+    /// Records the run's opening and end; taken when the end is recorded.
+    tap: Option<RunTap>,
 }
 
 type Outputs = SelectAll<BoxStream<'static, (RunId, Vec<Framed>)>>;
@@ -162,9 +166,15 @@ impl<H: AgentHost> SupervisorTask<H> {
             .drive(&self.gateway)
             .map_err(StartError::NotDrivable)?;
         let run = RunId::generate(self.ids.as_ref());
+        // Every run is recorded: without room, it does not start.
+        let tap = self
+            .recorder
+            .run(run, harness, workdir.as_str().to_owned())
+            .map_err(StartError::Unrecorded)?;
         let process = match self.host.spawn(&plan, &workdir) {
             Ok(process) => process,
             Err(source) => {
+                tap.end(RunEnd::SpawnFailed, None);
                 let state = RunState::Ended {
                     end: RunEnd::SpawnFailed,
                     exit: None,
@@ -182,6 +192,7 @@ impl<H: AgentHost> SupervisorTask<H> {
                         codec: None,
                         stdin: None,
                         kill: None,
+                        tap: None,
                     },
                 );
                 return Err(StartError::Spawn { run, source });
@@ -206,6 +217,7 @@ impl<H: AgentHost> SupervisorTask<H> {
             codec: Some(codec),
             stdin: Some(stdin),
             kill: Some(kill),
+            tap: Some(tap),
         };
         self.publish(RunUpdate::State {
             run,
@@ -260,6 +272,9 @@ impl<H: AgentHost> SupervisorTask<H> {
             Self::write(run, live, reply).await;
         }
         for event in received.events {
+            if let (DriveEvent::Ready { thread }, Some(tap)) = (&event, live.tap.as_ref()) {
+                tap.opened(*thread);
+            }
             self.publish(RunUpdate::Event {
                 run,
                 event: event.clone(),
@@ -300,6 +315,11 @@ impl<H: AgentHost> SupervisorTask<H> {
     }
 
     fn settle(&self, run: RunId, live: &mut Live, state: RunState) {
+        if let RunState::Ended { end, exit } = &state
+            && let Some(tap) = live.tap.take()
+        {
+            tap.end(*end, *exit);
+        }
         if state != live.state {
             live.state = state.clone();
             self.publish(RunUpdate::State { run, state });

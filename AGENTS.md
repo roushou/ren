@@ -247,8 +247,9 @@ dependencies under "Crates" below. Read the code for current module ownership.
   `Roots`, resolved by the host so links cannot escape; `AgentHost` (`host`) is
   the port for resolving paths and starting processes, which tests fill with
   scripted in-memory agents. `SupervisorTask` is the shell: one task reads every
-  agent's stdout, writes its stdin, and waits for its exit, and drains every
-  run when the last handle is dropped. `src/purity.rs` keeps `run` and
+  agent's stdout, writes its stdin, and waits for its exit, records each run
+  through the recorder's `RunTap` (a run without room to be recorded does not
+  start), and drains every run when the last handle is dropped. `src/purity.rs` keeps `run` and
   `workdir` free of runtime and I/O. Nothing constructs a supervisor yet: no
   production `AgentHost`, configuration, or routes.
 - `crates/ren-tui`: the terminal view of a gateway's live sessions, with `Tui`
