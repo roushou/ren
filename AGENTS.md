@@ -201,7 +201,8 @@ dependencies under "Crates" below. Read the code for current module ownership.
   but has no async runtime, HTTP, database, or CLI dependency.
 - `crates/ren-recorder`: the bounded capture queue between forwarding and
   storage, with `Recorder` as its primary type. `CallTap` (and `ChannelTap` for a
-  WebSocket's end) is the forwarding side; `RecorderTask` (run by the daemon on
+  WebSocket's end) is the forwarding side, and `RunTap` records an agent run's
+  start, opening, and end; `RecorderTask` (run by the daemon on
   its observation thread) is the shell around the pure `RecorderCore`
   (`recording`: records in queue order in, a batch of operations out, with
   chunking, inspection, and digests), and runs group commits, retention,

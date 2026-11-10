@@ -18,14 +18,15 @@ use ren_recorder::{Committed, Observation, Pruned, RecordSink};
 use ren_recorder::{
     batch::{
         AttemptBody, Batch, BodyEnd, BodyKey, CloseChannel, FinishAttempt, FinishCall, MessageMark,
-        ObservationKind, Op, OpenCall, OperatorAction, ResponseHead, Segment, Stamp, StartAttempt,
+        ObservationKind, Op, OpenCall, OperatorAction, ResponseHead, RunFact, RunRecord, Segment,
+        Stamp, StartAttempt,
     },
     inspection::InspectionRecord,
     retention::RetentionPolicy,
 };
 use ren_recorder::{
-    capture::{BodyEnding, CallState, ChannelEnd},
-    id::{CallId, ChannelId, IdSource, SessionId, TurnId},
+    capture::{BodyEnding, CallState, ChannelEnd, ProcessExit, RunEnd},
+    id::{CallId, ChannelId, IdSource, RunId, SessionId, TurnId},
     routing::OperatorRevision,
     time::{Clock, Moment, UnixMillis},
 };
@@ -73,8 +74,10 @@ impl SweepGate {
 /// What startup found from the previous run.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Recovery {
-    /// Calls left open by a run that stopped; now marked recovered.
+    /// Calls left open by a daemon that stopped; now marked recovered.
     pub calls: u64,
+    /// Agent runs a stopped daemon never saw end; now marked recovered.
+    pub runs: u64,
     /// The operator state the last recorded command made, as stored; `None`
     /// in a new data directory.
     pub operator: Option<StoredOperatorState>,
@@ -86,6 +89,12 @@ pub struct Recovery {
 pub struct StoredOperatorState {
     pub revision: OperatorRevision,
     pub document: Box<str>,
+}
+
+/// The payload of a run's recovery observation.
+#[derive(serde::Serialize)]
+struct RecoveredRun {
+    run: RunId,
 }
 
 const PRUNE_BATCH: i64 = 16;
@@ -139,6 +148,7 @@ impl Store {
             _lock: lock,
         };
         recovery.calls = store.recover(clock.now()).await?;
+        recovery.runs = store.recover_runs(clock.now()).await?;
         recovery.operator = store.operator_state().await?;
         Ok((store, recovery))
     }
@@ -257,6 +267,38 @@ impl Store {
                 .await?;
             tx.append(&stamp, None, ObservationKind::CallRecovered, &())
                 .await?;
+        }
+        tx.commit().await?;
+        Ok(u64::try_from(open.len()).unwrap_or(u64::MAX))
+    }
+
+    /// Runs the previous daemon never saw end keep an unknown outcome: they
+    /// are marked recovered, and get an observation.
+    async fn recover_runs(&mut self, now: Moment) -> Result<u64, StoreError> {
+        let mut tx = MetadataTx {
+            tx: self.connection.begin().await?,
+            ids: self.ids.as_ref(),
+        };
+        let open: Vec<String> = sqlx::query_scalar("SELECT id FROM runs WHERE run_end IS NULL")
+            .fetch_all(&mut *tx.tx)
+            .await?;
+        for run in &open {
+            sqlx::query("UPDATE runs SET run_end = ?, ended_at = ? WHERE id = ?")
+                .bind(RunEnd::Recovered.label())
+                .bind(i64::try_from(now.wall.as_millis()).unwrap_or(i64::MAX))
+                .bind(run)
+                .execute(&mut *tx.tx)
+                .await?;
+            let run: RunId = run.parse().map_err(|_| StoreError::Corrupt("identifier"))?;
+            tx.log(
+                now,
+                ChannelId::restore(uuid::Uuid::nil()),
+                None,
+                None,
+                ObservationKind::RunRecovered,
+                &RecoveredRun { run },
+            )
+            .await?;
         }
         tx.commit().await?;
         Ok(u64::try_from(open.len()).unwrap_or(u64::MAX))
@@ -590,6 +632,7 @@ impl MetadataTx<'_> {
             Op::FinishCall(finish) => self.finish_call(finish).await.map(Some),
             Op::CloseChannel(close) => self.close_channel(close).await.map(Some),
             Op::Operator(action) => self.operator(action).await.map(Some),
+            Op::Run(record) => self.run(record).await.map(Some),
             Op::Digest { call, digest } => self.digest(*call, digest).await.map(|()| None),
         }
     }
@@ -682,6 +725,59 @@ impl MetadataTx<'_> {
             None,
             ObservationKind::OperatorAction,
             action,
+        )
+        .await
+    }
+
+    async fn run(&mut self, record: &RunRecord) -> Result<Observation, StoreError> {
+        let id = record.run.to_string();
+        let at = i64::try_from(record.at.wall.as_millis()).unwrap_or(i64::MAX);
+        match &record.fact {
+            RunFact::Started { harness, workdir } => {
+                sqlx::query(
+                    "INSERT INTO runs(id, harness, workdir, started_at) VALUES (?, ?, ?, ?)",
+                )
+                .bind(&id)
+                .bind(harness.label())
+                .bind(workdir)
+                .bind(at)
+                .execute(&mut *self.tx)
+                .await?;
+            }
+            RunFact::Opened { thread } => {
+                sqlx::query("UPDATE runs SET thread = ? WHERE id = ?")
+                    .bind(thread.to_string())
+                    .bind(&id)
+                    .execute(&mut *self.tx)
+                    .await?;
+            }
+            RunFact::Ended { end, exit } => {
+                let (kind, value) = match exit {
+                    Some(ProcessExit::Code(code)) => (Some("code"), Some(*code)),
+                    Some(ProcessExit::Signal(signal)) => (Some("signal"), Some(*signal)),
+                    Some(ProcessExit::Unknown) => (Some("unknown"), None),
+                    None => (None, None),
+                };
+                sqlx::query(
+                    "UPDATE runs SET ended_at = ?, run_end = ?, exit_kind = ?, exit_value = ? WHERE id = ?",
+                )
+                .bind(at)
+                .bind(end.label())
+                .bind(kind)
+                .bind(value)
+                .bind(&id)
+                .execute(&mut *self.tx)
+                .await?;
+            }
+        }
+        // Runs share the nil channel, which has no row, as operator actions do.
+        self.log(
+            record.at,
+            ChannelId::restore(uuid::Uuid::nil()),
+            None,
+            None,
+            record.fact.kind(),
+            record,
         )
         .await
     }

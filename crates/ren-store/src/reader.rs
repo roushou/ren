@@ -12,7 +12,7 @@ use crate::{
     query::{CallQuery, Cursor, KindFilter, PageLimit, StatusFilter, TimeRange, ToolFilter},
     view::{
         AttemptView, BodyPrefix, BodyView, CallDetail, CallPage, CallView, ChannelView, Columns,
-        DiskUsage, MessageView, ModelUsage, OperatorActionView, SessionView, StorageView,
+        DiskUsage, MessageView, ModelUsage, OperatorActionView, RunView, SessionView, StorageView,
         TokenTotals, UsageBucket, UsageCounts, UsageView, UserUsage,
     },
     writer::BlobAccess,
@@ -33,7 +33,7 @@ use ren_recorder::digest::CallDigest;
 use ren_recorder::{
     capture::{AttemptTerminal, BodyEnding, CallState, TerminalClass},
     digest::{Captured, StoredBody, StoredExchange, StoredResponse},
-    id::{CallId, SessionId, TurnId},
+    id::{CallId, RunId, SessionId, TurnId},
 };
 use sqlx::{
     AssertSqlSafe, QueryBuilder, Row, Sqlite, SqlitePool,
@@ -285,6 +285,31 @@ impl Reader {
             .iter()
             .map(OperatorActionView::from_row)
             .collect()
+    }
+
+    /// The newest `limit` runs, newest first.
+    pub async fn runs(&self, limit: PageLimit) -> Result<Vec<RunView>, StoreError> {
+        sqlx::query(AssertSqlSafe(format!(
+            "{} ORDER BY started_at DESC, id DESC LIMIT ?",
+            RunView::SELECT
+        )))
+        .bind(i64::from(limit.get()))
+        .fetch_all(&self.pool)
+        .await?
+        .iter()
+        .map(RunView::from_row)
+        .collect()
+    }
+
+    /// One run, if it was recorded.
+    pub async fn run(&self, id: RunId) -> Result<Option<RunView>, StoreError> {
+        sqlx::query(AssertSqlSafe(format!("{} WHERE id = ?", RunView::SELECT)))
+            .bind(id.to_string())
+            .fetch_optional(&self.pool)
+            .await?
+            .as_ref()
+            .map(RunView::from_row)
+            .transpose()
     }
 
     /// The body of `call` in `direction`: the request, or the final attempt's response.

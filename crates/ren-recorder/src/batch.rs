@@ -11,16 +11,17 @@ use super::inspection::InspectionRecord;
 use crate::caller::Caller;
 use crate::digest::CallDigest;
 use crate::{
-    capture::{BodyEnding, CallRejection, ChannelEnd, TerminalRecord},
-    id::{AttemptId, CallId, ChannelId},
+    capture::{BodyEnding, CallRejection, ChannelEnd, ProcessExit, RunEnd, TerminalRecord},
+    id::{AttemptId, CallId, ChannelId, RunId},
     routing::{ConfigRevision, OperatorRevision, UpstreamId},
     time::{Moment, UnixMillis},
 };
 use bytes::Bytes;
-use ren_harness::attribution::Attribution;
+use ren_harness::{Harness, attribution::Attribution};
 use ren_protocol::{
     direction::Direction,
     encoding::{ResponseEncoding, ResponseFormat},
+    native::NativeThreadId,
     route::{Endpoint, Method, Provider, Transport, Wire},
     websocket::Payload,
 };
@@ -93,7 +94,8 @@ impl Batch {
                     | Op::FinishAttempt(_)
                     | Op::FinishCall(_)
                     | Op::CloseChannel(_)
-                    | Op::Operator(_) => true,
+                    | Op::Operator(_)
+                    | Op::Run(_) => true,
                 })
                 .collect(),
         }
@@ -184,6 +186,7 @@ pub enum Op {
     FinishCall(FinishCall),
     CloseChannel(CloseChannel),
     Operator(OperatorAction),
+    Run(RunRecord),
     /// What a finished call's bodies showed, derived as they were recorded
     /// or again from storage. It replaces any earlier digest of the call.
     Digest {
@@ -215,6 +218,44 @@ pub struct OperatorAction {
     /// The state the command made, stored as the current snapshot.
     #[serde(skip)]
     pub state: Recorded,
+}
+
+/// A fact about a run, when it happened. Not tied to a channel or call.
+#[derive(Debug, Clone, Serialize)]
+pub struct RunRecord {
+    #[serde(skip)]
+    pub at: Moment,
+    pub run: RunId,
+    #[serde(flatten)]
+    pub fact: RunFact,
+}
+
+/// What happened to a run.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "snake_case", tag = "fact")]
+pub enum RunFact {
+    Started {
+        harness: Harness,
+        workdir: String,
+    },
+    /// The client opened its conversation, under its own thread id.
+    Opened {
+        thread: NativeThreadId,
+    },
+    Ended {
+        end: RunEnd,
+        exit: Option<ProcessExit>,
+    },
+}
+
+impl RunFact {
+    pub fn kind(&self) -> ObservationKind {
+        match self {
+            Self::Started { .. } => ObservationKind::RunStarted,
+            Self::Opened { .. } => ObservationKind::RunOpened,
+            Self::Ended { .. } => ObservationKind::RunEnded,
+        }
+    }
 }
 
 /// One WebSocket message inside a body: its bytes are `len` bytes from
@@ -262,6 +303,14 @@ pub enum ObservationKind {
     ChannelClosed,
     /// The operator changed the operator state. Not tied to a call.
     OperatorAction,
+    /// Ren started an agent run. Not tied to a call.
+    RunStarted,
+    /// A run's client opened its conversation.
+    RunOpened,
+    /// A run's process ended.
+    RunEnded,
+    /// Recorded at startup for a run the previous daemon never saw end.
+    RunRecovered,
 }
 
 /// Where an operation belongs and when it happened. Every observation has it.

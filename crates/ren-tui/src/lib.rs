@@ -416,7 +416,12 @@ impl Tui {
                 ObservationKind::AttemptStarted
                 | ObservationKind::AttemptFinished
                 | ObservationKind::ChannelClosed
-                | ObservationKind::OperatorAction,
+                | ObservationKind::OperatorAction
+                // Runs are not shown on the wall yet.
+                | ObservationKind::RunStarted
+                | ObservationKind::RunOpened
+                | ObservationKind::RunEnded
+                | ObservationKind::RunRecovered,
             )
             | None => Vec::new(),
         }

@@ -11,7 +11,10 @@
 use super::{metrics::Counters, options::CaptureOptions};
 pub(super) use crate::recording::{Piece, Record, Track};
 use crate::{
-    batch::{BodyEnd, CloseChannel, OpenCall, OperatorAction, ResponseHead, Stamp, StartAttempt},
+    batch::{
+        BodyEnd, CloseChannel, OpenCall, OperatorAction, ResponseHead, RunRecord, Stamp,
+        StartAttempt,
+    },
     capture::{CallRejection, Omission, TerminalRecord},
     id::{AttemptId, IdSource},
     time::Clock,
@@ -63,6 +66,11 @@ pub(super) enum Item {
     },
     Operator {
         action: OperatorAction,
+        /// Released when dequeued.
+        _slot: OwnedSemaphorePermit,
+    },
+    Run {
+        record: RunRecord,
         /// Released when dequeued.
         _slot: OwnedSemaphorePermit,
     },
@@ -127,6 +135,7 @@ impl Item {
                 None,
             ),
             Self::Operator { action, _slot } => (Record::Operator(action), None),
+            Self::Run { record, _slot } => (Record::Run(record), None),
         }
     }
 }

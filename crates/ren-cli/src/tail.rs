@@ -119,7 +119,7 @@ pub enum Shown {
     Ended(CallId, Ending),
     /// An operator changed the operator state.
     Operator,
-    /// Attempt-level and channel records: only `--json` prints them.
+    /// Attempt-level, channel, and run records: only `--json` prints them.
     Hidden,
 }
 
@@ -150,7 +150,11 @@ impl Shown {
                 ObservationKind::AttemptStarted
                 | ObservationKind::ResponseHead
                 | ObservationKind::AttemptFinished
-                | ObservationKind::ChannelClosed,
+                | ObservationKind::ChannelClosed
+                | ObservationKind::RunStarted
+                | ObservationKind::RunOpened
+                | ObservationKind::RunEnded
+                | ObservationKind::RunRecovered,
                 _,
             ) => Self::Hidden,
         })

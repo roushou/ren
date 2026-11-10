@@ -4,6 +4,7 @@
 //! verbatim instead of failing the query.
 
 use crate::{StoreError, query::Cursor};
+use ren_harness::Harness;
 use ren_harness::attribution::{HintIssue, HintSource};
 use ren_harness::tools::CallPurpose;
 use ren_protocol::{
@@ -22,9 +23,9 @@ use ren_recorder::routing::OperatorRevision;
 use ren_recorder::{
     capture::{
         AttemptPhase, AttemptTerminal, BodyEnding, CallRejection, CallState, ChannelEnd,
-        TerminalCause,
+        ProcessExit, RunEnd, TerminalCause,
     },
-    id::{AttemptId, CallId, ChannelId, SessionId, TurnId},
+    id::{AttemptId, CallId, ChannelId, RunId, SessionId, TurnId},
     time::UnixMillis,
 };
 use serde::{Deserialize, Serialize};
@@ -553,6 +554,48 @@ impl OperatorActionView {
             revision: OperatorRevision::restore(row.count("revision")?),
             actor: document("actor")?,
             command: document("command")?,
+        })
+    }
+}
+
+/// One agent run, as recorded.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct RunView {
+    pub id: RunId,
+    pub harness: Stored<Harness>,
+    pub workdir: String,
+    pub started_at: UnixMillis,
+    /// The client's own conversation id, once it opened one.
+    pub thread: Option<String>,
+    pub ended_at: Option<UnixMillis>,
+    /// How the run ended; `None` while it runs.
+    pub end: Option<Stored<RunEnd>>,
+    /// How its process exited, when one did.
+    pub exit: Option<ProcessExit>,
+}
+
+impl RunView {
+    pub(super) const SELECT: &'static str = "SELECT id, harness, workdir, started_at, thread, ended_at, run_end, exit_kind, exit_value FROM runs";
+
+    pub(super) fn from_row(row: &SqliteRow) -> Result<Self, StoreError> {
+        let row = Columns(row);
+        let value: Option<i32> = row.0.try_get("exit_value")?;
+        let exit = match (row.text("exit_kind")?.as_deref(), value) {
+            (Some("code"), Some(code)) => Some(ProcessExit::Code(code)),
+            (Some("signal"), Some(signal)) => Some(ProcessExit::Signal(signal)),
+            (Some("unknown"), None) => Some(ProcessExit::Unknown),
+            (None, None) => None,
+            (Some(_), _) | (None, Some(_)) => return Err(StoreError::Corrupt("run exit")),
+        };
+        Ok(Self {
+            id: row.id("id")?,
+            harness: row.label("harness")?,
+            workdir: row.text("workdir")?.ok_or(StoreError::Corrupt("run"))?,
+            started_at: row.time("started_at")?,
+            thread: row.text("thread")?,
+            ended_at: row.optional_time("ended_at")?,
+            end: row.optional_label("run_end")?,
+            exit,
         })
     }
 }

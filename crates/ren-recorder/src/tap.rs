@@ -7,17 +7,20 @@ use crate::caller::Caller;
 use crate::{
     batch::{
         AttemptBody, BodyEnd, CloseChannel, MessageMark, OpenCall, OperatorAction, Recorded,
-        ResponseHead, Stamp, StartAttempt, Unattributed,
+        ResponseHead, RunFact, RunRecord, Stamp, StartAttempt, Unattributed,
     },
-    capture::{BodyEnding, CallRejection, ChannelEnd, Omission, TerminalRecord},
-    id::{AttemptId, CallId, ChannelId},
+    capture::{
+        BodyEnding, CallRejection, ChannelEnd, Omission, ProcessExit, RunEnd, TerminalRecord,
+    },
+    id::{AttemptId, CallId, ChannelId, RunId},
     routing::{ConfigRevision, OperatorRevision, UpstreamId},
 };
 use bytes::Bytes;
-use ren_harness::attribution::Attribution;
+use ren_harness::{Harness, attribution::Attribution};
 use ren_protocol::{
     direction::Direction,
     encoding::{ResponseEncoding, ResponseFormat},
+    native::NativeThreadId,
     route::{Api, Endpoint, Method, Provider, Transport},
     websocket::Payload,
 };
@@ -608,5 +611,69 @@ impl ChannelTap {
 impl Drop for ChannelTap {
     fn drop(&mut self) {
         self.close(ChannelEnd::Dropped, None);
+    }
+}
+
+/// The recorder had no room for a run's records, so the run was not started.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[error("the recorder has no room to record a run")]
+pub struct RunUnrecorded;
+
+/// Capture of one run's lifecycle. Its start is recorded when it is made, and
+/// its end's slot is reserved until [`RunTap::end`]. Dropping it without an
+/// end records nothing more: the next startup marks the run recovered.
+pub struct RunTap {
+    shared: Arc<Shared>,
+    run: RunId,
+    end: Option<(OwnedPermit<Item>, OwnedSemaphorePermit)>,
+}
+
+impl RunTap {
+    pub(super) fn start(
+        shared: Arc<Shared>,
+        run: RunId,
+        harness: Harness,
+        workdir: String,
+    ) -> Result<Self, RunUnrecorded> {
+        let start = shared.reserve_close().ok_or(RunUnrecorded)?;
+        let end = shared.reserve_close().ok_or(RunUnrecorded)?;
+        let tap = Self {
+            shared,
+            run,
+            end: Some(end),
+        };
+        tap.send(start, RunFact::Started { harness, workdir });
+        Ok(tap)
+    }
+
+    pub fn run(&self) -> RunId {
+        self.run
+    }
+
+    /// The client opened its conversation as `thread`. Without room this is
+    /// counted as unrecorded.
+    pub fn opened(&self, thread: NativeThreadId) {
+        match self.shared.reserve_close() {
+            Some(slot) => self.send(slot, RunFact::Opened { thread }),
+            None => self.shared.counters.omit(Omission::Unrecorded, 1),
+        }
+    }
+
+    /// Record how the run ended.
+    pub fn end(mut self, end: RunEnd, exit: Option<ProcessExit>) {
+        if let Some(slot) = self.end.take() {
+            self.send(slot, RunFact::Ended { end, exit });
+        }
+    }
+
+    fn send(&self, (slot, permit): (OwnedPermit<Item>, OwnedSemaphorePermit), fact: RunFact) {
+        slot.send(Item::Run {
+            record: RunRecord {
+                at: self.shared.clock.now(),
+                run: self.run,
+                fact,
+            },
+            _slot: permit,
+        });
     }
 }
