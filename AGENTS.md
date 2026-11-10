@@ -194,7 +194,10 @@ dependencies under "Crates" below. Read the code for current module ownership.
   that launching and configuration read, and what each harness's tools and
   messages mean for activity (`tools`: effects, prompt text, exit codes, why a
   client sent a call (`CallPurpose`: work, or Claude Code's quota probe), and
-  `InterpretedCall`, a `Reading` read as its client uses it). It performs filesystem and process I/O
+  `InterpretedCall`, a `Reading` read as its client uses it), and driving a
+  client through its structured mode (`drive`: pure line framing, the
+  `DriveCommand` and `DriveEvent` vocabulary, and `CodexAppServer`, the codec
+  for `codex app-server`; nothing starts a driven client yet). It performs filesystem and process I/O
   but has no async runtime, HTTP, database, or CLI dependency.
 - `crates/ren-recorder`: the bounded capture queue between forwarding and
   storage, with `Recorder` as its primary type. `CallTap` (and `ChannelTap` for a
