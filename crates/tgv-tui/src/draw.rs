@@ -1,11 +1,17 @@
-//! A [`Wall`] drawn into a ratatui buffer: panes in a grid, split by
-//! one-cell rules, each with a title bar, its lines kept to the bottom as
-//! they stream, and a footer; then the status line. Drawing reads only the
-//! wall, so it is tested on a buffer without a terminal.
+//! A [`Wall`] drawn into a ratatui buffer, in the Flow mockup's terminal
+//! style: panes on a dark ground split by one-cell rules, each with a title
+//! bar that takes the session's state as its color (green while a response
+//! streams, amber or red when something needs a look), the newest turn as
+//! a conversation kept to the bottom as it streams, a state line, and a
+//! line of the newest call's measurements; then a status line of segments.
+//! Drawing reads only the wall, so it is tested on a buffer without a
+//! terminal.
 
 use crate::call::Tone;
 use crate::keys::Command;
-use crate::session::{Line as PaneLine, Phase, ResultMark, SessionPane, Span as Elapsed, ToolLine};
+use crate::session::{
+    CallFacts, Line as PaneLine, Phase, ResultMark, SessionPane, Span as Elapsed, ToolLine,
+};
 use crate::{Help, Pane, Reading, Status, View, Wall};
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
@@ -17,35 +23,39 @@ use tgv_protocol::activity::ResultStatus;
 use tgv_recorder::time::UnixMillis;
 use unicode_width::UnicodeWidthChar;
 
-/// Colors the wall uses, in the terminal's 256-color palette so they read
-/// the same on dark and light themes' backgrounds.
+/// The mockup's terminal palette, the same in light and dark themes.
 struct Palette;
 
 impl Palette {
-    const RULE: Color = Color::Indexed(238);
-    const DIM: Color = Color::Indexed(244);
-    const TITLE: Color = Color::Indexed(236);
-    const LIVE: Color = Color::Indexed(71);
-    const ERROR: Color = Color::Indexed(167);
-    const WARNING: Color = Color::Indexed(179);
-    const TOOL: Color = Color::Indexed(110);
-    const INK: Color = Color::Indexed(16);
+    const GROUND: Color = Color::Rgb(0x0b, 0x0e, 0x12);
+    const PANE: Color = Color::Rgb(0x0e, 0x12, 0x17);
+    const RULE: Color = Color::Rgb(0x2a, 0x30, 0x38);
+    const BAR: Color = Color::Rgb(0x16, 0x1b, 0x22);
+    const FG: Color = Color::Rgb(0xc9, 0xd1, 0xd9);
+    const DIM: Color = Color::Rgb(0x6e, 0x76, 0x81);
+    const CODE: Color = Color::Rgb(0xe6, 0xed, 0xf3);
+    const GREEN: Color = Color::Rgb(0x7e, 0xe7, 0x87);
+    const BLUE: Color = Color::Rgb(0x79, 0xc0, 0xff);
+    const RED: Color = Color::Rgb(0xff, 0x7b, 0x72);
+    const YELLOW: Color = Color::Rgb(0xe3, 0xb3, 0x41);
+    const YOU: Color = Color::Rgb(0xd2, 0xa8, 0xff);
 
     fn tone(tone: Tone) -> Color {
         match tone {
-            Tone::Live | Tone::Success => Self::LIVE,
-            Tone::Error => Self::ERROR,
-            Tone::Warning => Self::WARNING,
+            Tone::Live => Self::FG,
+            Tone::Success => Self::GREEN,
+            Tone::Error => Self::RED,
+            Tone::Warning => Self::YELLOW,
             Tone::Neutral => Self::DIM,
         }
     }
 
     fn harness(harness: Option<Harness>) -> Color {
         match harness {
-            Some(Harness::ClaudeCode) => Color::Indexed(173),
-            Some(Harness::Codex) => Color::Indexed(110),
-            Some(Harness::Pi) => Color::Indexed(73),
-            Some(Harness::OpenCode) => Color::Indexed(141),
+            Some(Harness::ClaudeCode) => Color::Rgb(0xf0, 0xa5, 0x81),
+            Some(Harness::Codex) => Color::Rgb(0x9a, 0xb8, 0xe8),
+            Some(Harness::Pi) => Color::Rgb(0x7f, 0xd4, 0xd9),
+            Some(Harness::OpenCode) => Color::Rgb(0xf7, 0x9c, 0xc7),
             None => Self::DIM,
         }
     }
@@ -56,6 +66,7 @@ impl Widget for &Wall {
         if area.height == 0 || area.width == 0 {
             return;
         }
+        buf.set_style(area, Style::new().bg(Palette::GROUND).fg(Palette::FG));
         let panes = Rect {
             height: area.height - 1,
             ..area
@@ -77,8 +88,24 @@ impl Wall {
     fn draw_panes(&self, area: Rect, buf: &mut Buffer) {
         let columns = self.grid.columns.max(1);
         let rows = self.grid.rows.max(1);
-        let rules = columns - 1;
-        let width = area.width.saturating_sub(rules);
+        // One-cell rules between columns and between rows.
+        let width = area.width.saturating_sub(columns - 1);
+        let height = area.height.saturating_sub(rows - 1);
+        let rule = Style::new().fg(Palette::RULE).bg(Palette::GROUND);
+        let rule_row = |row: u16| area.y + Self::start(height, rows, row) + row - 1;
+        for row in 1..rows {
+            for x in area.x..area.x + area.width {
+                buf.set_string(x, rule_row(row), "─", rule);
+            }
+        }
+        for column in 1..columns {
+            let x = area.x + Self::start(width, columns, column) + column - 1;
+            for y in area.y..area.y + area.height {
+                let crossing = (1..rows).any(|row| y == rule_row(row));
+                buf.set_string(x, y, if crossing { "┼" } else { "│" }, rule);
+            }
+        }
+        let all_free = self.panes.iter().all(|pane| *pane == Pane::Free);
         for (index, pane) in self.panes.iter().enumerate() {
             let Ok(index16) = u16::try_from(index) else {
                 continue;
@@ -87,39 +114,21 @@ impl Wall {
             if row >= rows {
                 continue;
             }
-            // Columns and rows share the leftover cells from the left and top.
-            let x = area.x + Self::start(width, columns, column) + column;
-            let y = area.y + Self::start(area.height, rows, row);
             let rect = Rect {
-                x,
-                y,
+                x: area.x + Self::start(width, columns, column) + column,
+                y: area.y + Self::start(height, rows, row) + row,
                 width: Self::start(width, columns, column + 1)
                     - Self::start(width, columns, column),
-                height: Self::start(area.height, rows, row + 1)
-                    - Self::start(area.height, rows, row),
+                height: Self::start(height, rows, row + 1) - Self::start(height, rows, row),
             };
-            if column + 1 < columns {
-                for line in rect.y..rect.y + rect.height {
-                    buf.set_string(
-                        rect.x + rect.width,
-                        line,
-                        "│",
-                        Style::new().fg(Palette::RULE),
-                    );
-                }
-            }
-            let focused = match self.view {
-                View::Panes { focus } => focus == index,
-                View::Zoomed => false,
+            let (focused, place) = match self.view {
+                View::Panes { focus } => (focus == index, Some(index)),
+                View::Zoomed => (false, None),
             };
             match pane {
-                Pane::Free => Self::draw_free(rect, index, focused, buf),
+                Pane::Free if all_free => Self::draw_empty(rect, buf),
+                Pane::Free => {}
                 Pane::Session(session) => {
-                    // A zoomed session has no place among panes to number.
-                    let place = match self.view {
-                        View::Panes { .. } => Some(index),
-                        View::Zoomed => None,
-                    };
                     Self::draw_session(rect, place, session, focused, self.status.now, buf);
                 }
             }
@@ -132,124 +141,124 @@ impl Wall {
         u16::try_from(total * u32::from(part) / u32::from(parts.max(1))).unwrap_or(u16::MAX)
     }
 
-    fn draw_free(rect: Rect, index: usize, focused: bool, buf: &mut Buffer) {
-        if rect.height == 0 {
-            return;
-        }
-        let dim = Style::new().fg(Palette::DIM);
-        let title = Style::new().bg(Palette::TITLE).fg(Palette::DIM);
-        buf.set_style(Rect { height: 1, ..rect }, title);
-        let marker = if focused { "▶" } else { " " };
+    /// No session in the window at all.
+    fn draw_empty(rect: Rect, buf: &mut Buffer) {
+        let text = "no live sessions · a session appears here when its client calls";
+        let width = u16::try_from(Self::width(text)).unwrap_or(u16::MAX);
+        let x = rect.x + rect.width.saturating_sub(width) / 2;
         buf.set_stringn(
-            rect.x,
-            rect.y,
-            format!("{marker}{index}: free"),
+            x,
+            rect.y + rect.height / 2,
+            text,
             usize::from(rect.width),
-            title,
+            Style::new().fg(Palette::DIM),
         );
-        if rect.height > 2 {
-            buf.set_stringn(
-                rect.x + 1,
-                rect.y + rect.height / 2,
-                "the next session to start appears here",
-                usize::from(rect.width.saturating_sub(1)),
-                dim,
-            );
-        }
     }
 
     fn draw_session(
         rect: Rect,
-        index: Option<usize>,
+        place: Option<usize>,
         pane: &SessionPane,
         focused: bool,
         now: UnixMillis,
         buf: &mut Buffer,
     ) {
-        if rect.height == 0 {
+        if rect.height == 0 || rect.width == 0 {
             return;
         }
-        let width = usize::from(rect.width);
-        let title_style = Style::new().bg(Self::title_color(pane)).fg(Color::White);
-        let title_area = Rect { height: 1, ..rect };
-        buf.set_style(title_area, title_style);
-        buf.set_line(
-            rect.x,
-            rect.y,
-            &Self::title(index, pane, focused),
-            rect.width,
-        );
-        let facts = Self::facts(pane);
-        let facts_width = u16::try_from(Self::width(&facts)).unwrap_or(u16::MAX);
-        let title_width =
-            u16::try_from(Self::width(&Self::title(index, pane, focused).to_string()))
-                .unwrap_or(u16::MAX);
-        // Facts sit at the right when they fit beside the title.
-        if title_width + 2 + facts_width <= rect.width {
+        buf.set_style(rect, Style::new().bg(Palette::PANE).fg(Palette::FG));
+        Self::draw_title(rect, place, pane, focused, buf);
+        let inner = rect.width.saturating_sub(2);
+        // A state line and a facts line at the foot, when there is room.
+        let foot = match rect.height {
+            0..=3 => 0,
+            4..=5 => 1,
+            _ => 2,
+        };
+        if foot >= 1 {
+            let y = rect.y + rect.height - foot;
+            buf.set_line(rect.x + 1, y, &Self::state_line(pane, now), inner);
+        }
+        if foot >= 2
+            && let Some(facts) = &pane.facts
+        {
+            let text = Self::fit(&Self::facts(facts), usize::from(inner));
             buf.set_string(
-                rect.x + rect.width - facts_width - 1,
-                rect.y,
-                &facts,
-                title_style,
+                rect.x + 1,
+                rect.y + rect.height - 1,
+                text,
+                Style::new().fg(Palette::DIM),
             );
         }
-        if rect.height < 2 {
-            return;
-        }
-        let footer_y = rect.y + rect.height - 1;
-        buf.set_line(
-            rect.x + 1,
-            footer_y,
-            &Self::footer(pane, now),
-            rect.width.saturating_sub(1),
-        );
-        let body_height = usize::from(rect.height.saturating_sub(2));
-        let lines = Self::body(pane, width.saturating_sub(2));
+        let body_top = rect.y + 1;
+        let body_height = usize::from(rect.height.saturating_sub(1 + foot));
+        let lines = Self::body(pane, usize::from(inner));
         let skip = lines.len().saturating_sub(body_height);
-        let top = rect.y + 1 + u16::try_from(body_height - (lines.len() - skip)).unwrap_or(0);
+        let top = body_top + u16::try_from(body_height - (lines.len() - skip)).unwrap_or(0);
         for (row, line) in lines.iter().skip(skip).enumerate() {
             let Ok(row) = u16::try_from(row) else {
                 break;
             };
-            buf.set_line(rect.x + 1, top + row, line, rect.width.saturating_sub(2));
+            buf.set_line(rect.x + 1, top + row, line, inner);
         }
     }
 
-    fn title_color(pane: &SessionPane) -> Color {
-        match pane.alerts.first().map(|alert| alert.tone) {
-            Some(Tone::Error) => Color::Indexed(52),
-            Some(Tone::Warning) => Color::Indexed(58),
+    /// The title bar: green while a response streams, amber or red with
+    /// an alert; the place, session, client and provider, the turn's call
+    /// count, and at the right the context and the session's output.
+    fn draw_title(
+        rect: Rect,
+        place: Option<usize>,
+        pane: &SessionPane,
+        focused: bool,
+        buf: &mut Buffer,
+    ) {
+        let lit = match pane.alerts.first().map(|alert| alert.tone) {
+            Some(Tone::Error) => Some(Palette::RED),
+            Some(Tone::Warning) => Some(Palette::YELLOW),
             Some(Tone::Live | Tone::Success | Tone::Neutral) | None => match pane.phase {
-                Phase::Responding { .. } => Color::Indexed(22),
+                Phase::Responding { .. } => Some(Palette::GREEN),
                 Phase::Awaiting { .. }
                 | Phase::ClientsTurn { .. }
                 | Phase::YourTurn { .. }
                 | Phase::Stopped { .. }
-                | Phase::Idle { .. } => Palette::TITLE,
+                | Phase::Idle { .. } => None,
             },
-        }
-    }
-
-    /// `▶0:dadfe1c5 claude-code → anthropic  call 3  pinned`
-    fn title(index: Option<usize>, pane: &SessionPane, focused: bool) -> Line<'static> {
+        };
+        let (bg, fg) = match lit {
+            Some(color) => (color, Palette::GROUND),
+            None => (Palette::PANE, Palette::DIM),
+        };
+        let base = Style::new().bg(bg).fg(fg);
+        buf.set_style(Rect { height: 1, ..rect }, base);
         let harness = pane.harness.as_ref().and_then(|harness| harness.known());
         let name = pane.harness.as_ref().map_or_else(
-            || "unknown client".to_owned(),
+            || "unknown".to_owned(),
             |harness| harness.label().replace('_', "-"),
         );
         let session = pane.session.to_string();
-        let mut spans = vec![
-            Span::raw(if focused { "▶" } else { " " }).add_modifier(Modifier::BOLD),
-            Span::raw(format!(
-                "{}{} ",
-                index.map_or_else(String::new, |index| format!("{index}:")),
-                session.get(..8).unwrap_or(&session)
-            )),
-            Span::raw(name)
-                .fg(Palette::harness(harness))
-                .add_modifier(Modifier::BOLD),
-            Span::raw(format!(" → {}", pane.provider.label())),
-        ];
+        let short = session.get(..8).unwrap_or(&session);
+        let mut spans = vec![Span::raw(" ")];
+        match place {
+            Some(place) if focused => spans.push(
+                Span::raw(format!("{place}"))
+                    .bg(Palette::FG)
+                    .fg(Palette::GROUND)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Some(place) => spans.push(Span::raw(format!("{place}"))),
+            None => {}
+        }
+        spans.push(Span::raw(match place {
+            Some(_) => format!(":{short}  "),
+            None => format!("{short}  "),
+        }));
+        let route_color = match lit {
+            Some(_) => Palette::GROUND,
+            None => Palette::harness(harness),
+        };
+        spans.push(Span::raw(name).fg(route_color));
+        spans.push(Span::raw(format!(" → {}", pane.provider.label())).fg(route_color));
         if pane.turn_calls > 0 {
             spans.push(Span::raw(format!("  call {}", pane.turn_calls)));
         }
@@ -257,176 +266,306 @@ impl Wall {
             spans.push(Span::raw(format!(" · {} open", pane.open)));
         }
         if pane.pinned {
-            spans.push(Span::raw("  pinned").add_modifier(Modifier::ITALIC));
+            spans.push(Span::raw("  pinned"));
         }
-        Line::from(spans)
-    }
-
-    /// `model-a · ctx 61k · out 1.2k`
-    fn facts(pane: &SessionPane) -> String {
+        let title = Line::from(spans);
+        buf.set_line(rect.x, rect.y, &title, rect.width);
+        // Only what is known: context, then the session's output.
         let mut facts = Vec::new();
-        if let Some(model) = &pane.model {
-            facts.push(model.clone());
-        }
         if let Some(context) = pane.context {
-            facts.push(format!("ctx {}", Tokens(context)));
+            facts.push(format!("ctx {}", Kilo(context)));
         }
-        if let Some(output) = pane.output {
-            facts.push(format!("out {}", Tokens(output)));
+        if let Some(output) = pane.session_output {
+            facts.push(format!("{} tok", Grouped(output)));
         }
-        facts.join(" · ")
+        let right = if facts.is_empty() {
+            String::new()
+        } else {
+            format!("{} ", facts.join(" · "))
+        };
+        let right_width = u16::try_from(Self::width(&right)).unwrap_or(u16::MAX);
+        let title_width = u16::try_from(title.width()).unwrap_or(u16::MAX);
+        if title_width + 2 + right_width <= rect.width {
+            buf.set_string(rect.x + rect.width - right_width, rect.y, right, base);
+        }
     }
 
-    /// Alerts first, then the phase, then the turn's tally.
-    fn footer(pane: &SessionPane, now: UnixMillis) -> Line<'static> {
+    /// `! alert · state · detail`, as the mockup words it.
+    fn state_line(pane: &SessionPane, now: UnixMillis) -> Line<'static> {
         let mut spans = Vec::new();
         if let Some(alert) = pane.alerts.first() {
             let more = match pane.alerts.len() {
                 1 => String::new(),
                 count => format!(" (+{})", count - 1),
             };
-            spans.push(
-                Span::raw(
-                    format!("! {} {}{more}", alert.label, alert.detail)
-                        .trim_end()
-                        .to_owned(),
-                )
-                .fg(Palette::tone(alert.tone)),
-            );
+            let text = match alert.detail.as_str() {
+                "" => format!("! {}{more}", alert.label),
+                detail => format!("! {} · {detail}{more}", alert.label),
+            };
+            spans.push(Span::raw(text).fg(Palette::tone(alert.tone)));
             spans.push(Span::raw(" · ").fg(Palette::DIM));
         }
-        let (phase, tone) = Self::phase(&pane.phase, now);
-        spans.push(Span::raw(phase).fg(Palette::tone(tone)));
-        if let Some(tally) = pane.tally {
-            let mut parts = vec![
-                format!("read {}", tally.read),
-                format!("wrote {}", tally.wrote),
-                format!("ran {}", tally.ran),
-            ];
-            if tally.failed > 0 {
-                parts.push(format!("{} failed", tally.failed));
-            }
-            spans.push(Span::raw(format!(" · {}", parts.join(" · "))).fg(Palette::DIM));
-        }
-        Line::from(spans)
-    }
-
-    fn phase(phase: &Phase, now: UnixMillis) -> (String, Tone) {
         let since = |at: UnixMillis| Elapsed(now.as_millis().saturating_sub(at.as_millis()));
-        match phase {
+        let (label, tone, detail) = match &pane.phase {
             Phase::Awaiting { since: at } => {
                 let waited = now.as_millis().saturating_sub(at.as_millis());
                 let slow =
                     waited >= u64::try_from(SessionPane::SLOW_HEAD.as_millis()).unwrap_or(u64::MAX);
                 (
-                    format!("waiting for response · {}", since(*at)),
+                    "waiting for first byte".to_owned(),
                     if slow { Tone::Warning } else { Tone::Live },
+                    since(*at).to_string(),
                 )
             }
-            Phase::Responding { since: at } => (format!("responding · {}", since(*at)), Tone::Live),
-            Phase::ClientsTurn { since: at } => {
-                (format!("client's turn · {}", since(*at)), Tone::Neutral)
+            Phase::Responding { since: at } => {
+                ("streaming".to_owned(), Tone::Live, since(*at).to_string())
             }
-            Phase::YourTurn { since: at } => (format!("your turn · {}", since(*at)), Tone::Neutral),
-            Phase::Stopped { end, status, .. } => (end.label(*status), end.tone()),
-            Phase::Idle { since: Some(at) } => (format!("idle · {}", since(*at)), Tone::Neutral),
-            Phase::Idle { since: None } => ("idle".to_owned(), Tone::Neutral),
+            Phase::ClientsTurn { since: at } => (
+                "complete".to_owned(),
+                Tone::Success,
+                format!("client running tools · {}", since(*at)),
+            ),
+            Phase::YourTurn { since: at } => (
+                "complete".to_owned(),
+                Tone::Success,
+                format!("waiting for you · {}", since(*at)),
+            ),
+            Phase::Stopped { end, status, .. } => (end.label(*status), end.tone(), String::new()),
+            Phase::Idle { since: Some(at) } => {
+                ("idle".to_owned(), Tone::Neutral, since(*at).to_string())
+            }
+            Phase::Idle { since: None } => ("idle".to_owned(), Tone::Neutral, String::new()),
+        };
+        // A stopped call's alert already says how it ended.
+        if matches!(pane.phase, Phase::Stopped { .. }) && !pane.alerts.is_empty() {
+            spans.pop();
+            return Line::from(spans);
         }
+        spans.push(Span::raw(label).fg(Palette::tone(tone)));
+        if !detail.is_empty() {
+            spans.push(Span::raw(format!(" · {detail}")).fg(Palette::DIM));
+        }
+        Line::from(spans)
     }
 
-    /// The pane's lines, wrapped to `width`, oldest first.
+    /// `model · in 36.0k (93% cached) · out 122 · reasoning 63 · end_turn`
+    fn facts(facts: &CallFacts) -> String {
+        let mut parts = Vec::new();
+        if let Some(model) = &facts.model {
+            parts.push(model.clone());
+        }
+        parts.push(match (facts.input, facts.cached) {
+            (Some(input), Some(cached)) => format!("in {} ({cached}% cached)", Kilo(input)),
+            (Some(input), None) => format!("in {}", Kilo(input)),
+            (None, Some(_) | None) => "in —".to_owned(),
+        });
+        if let Some(output) = facts.output {
+            parts.push(format!("out {}", Grouped(output)));
+        }
+        if let Some(reasoning) = facts.reasoning.filter(|tokens| *tokens > 0) {
+            parts.push(format!("reasoning {}", Grouped(reasoning)));
+        }
+        if let Some(stop) = &facts.stop_reason {
+            parts.push(stop.clone());
+        }
+        parts.join(" · ")
+    }
+
+    /// `text`, cut to `width` cells with an ellipsis.
+    fn fit(text: &str, width: usize) -> String {
+        if Self::width(text) <= width {
+            return text.to_owned();
+        }
+        let mut out = String::new();
+        let mut used = 0;
+        for ch in text.chars() {
+            let ch_width = ch.width().unwrap_or(0);
+            if used + ch_width + 1 > width {
+                break;
+            }
+            out.push(ch);
+            used += ch_width;
+        }
+        out.push('…');
+        out
+    }
+
+    /// The pane's turn as a conversation, wrapped to `width`, oldest first.
     fn body(pane: &SessionPane, width: usize) -> Vec<Line<'static>> {
         let dim = Style::new().fg(Palette::DIM);
         let mut lines = Vec::new();
         for line in &pane.lines {
             match line {
-                PaneLine::Call { index } => {
-                    lines.push(Line::styled(Self::rule(*index, None, width), dim))
+                PaneLine::Call { index } => lines.push(Line::styled(
+                    match index {
+                        Some(index) => format!("── call {index} ──"),
+                        None => "── call ──".to_owned(),
+                    },
+                    dim,
+                )),
+                PaneLine::Prompt(text) => {
+                    lines.extend(Self::hanging(
+                        "> ",
+                        text,
+                        width,
+                        Style::new().fg(Palette::YOU),
+                    ));
                 }
-                PaneLine::Reply(text) => {
-                    lines.extend(Self::wrap(text, width).into_iter().map(Line::raw));
-                }
+                PaneLine::Result(tool) => lines.push(Self::result(tool)),
+                PaneLine::Reply(text) => lines.extend(Self::markdown(text, width)),
                 PaneLine::Tools(tool) => lines.push(Self::tool(tool)),
+                PaneLine::Waiting => {
+                    lines.push(Line::styled("request sent · waiting for the provider", dim));
+                }
             }
         }
         if let Some(streaming) = &pane.streaming {
-            lines.push(Line::styled(
-                Self::rule(streaming.index, Some("streaming"), width),
-                dim,
-            ));
             for tool in &streaming.tools {
                 lines.push(Line::from(vec![
-                    Span::raw("⏺ ").fg(Palette::TOOL),
+                    Span::raw("● ").fg(Palette::BLUE),
                     Span::raw(tool.clone())
-                        .fg(Palette::TOOL)
+                        .fg(Palette::BLUE)
                         .add_modifier(Modifier::BOLD),
-                    Span::raw(" …").fg(Palette::DIM),
                 ]));
-            }
-            if !streaming.reply.is_empty() {
-                let text = if streaming.cut {
-                    format!("…{}", streaming.reply)
-                } else {
-                    streaming.reply.clone()
-                };
-                lines.extend(Self::wrap(&text, width).into_iter().map(Line::raw));
             }
             if streaming.thinking {
                 lines.push(Line::styled(
                     "thinking…",
                     dim.add_modifier(Modifier::ITALIC),
                 ));
+            } else {
+                let text = if streaming.cut {
+                    format!("…{}", streaming.reply)
+                } else {
+                    streaming.reply.clone()
+                };
+                let mut reply = Self::markdown(&text, width);
+                // The cursor sits where the stream has got to.
+                match reply.last_mut() {
+                    Some(last) if last.width() < width => {
+                        last.push_span(Span::raw("▌").fg(Palette::FG));
+                    }
+                    Some(_) | None => reply.push(Line::raw("▌").fg(Palette::FG)),
+                }
+                lines.extend(reply);
             }
         }
         lines
     }
 
-    /// `── call 3 ──`, filled with rule to `width`.
-    fn rule(index: Option<usize>, note: Option<&str>, width: usize) -> String {
-        let mut label = match (index, note) {
-            (Some(index), Some(note)) => format!("── call {index} · {note}"),
-            (Some(index), None) => format!("── call {index}"),
-            (None, Some(note)) => format!("── {note}"),
-            (None, None) => "── call".to_owned(),
-        };
-        label.push(' ');
-        let fill = width.saturating_sub(Self::width(&label));
-        label + &"─".repeat(fill.min(width))
+    /// `prefix` then `text`, wrapped, later rows indented under the text.
+    fn hanging(prefix: &str, text: &str, width: usize, style: Style) -> Vec<Line<'static>> {
+        let indent = Self::width(prefix);
+        Self::wrap(text, width.saturating_sub(indent))
+            .into_iter()
+            .enumerate()
+            .map(|(row, part)| {
+                let lead = if row == 0 {
+                    prefix.to_owned()
+                } else {
+                    " ".repeat(indent)
+                };
+                Line::styled(format!("{lead}{part}"), style)
+            })
+            .collect()
     }
 
-    /// `⏺ Bash ×2 cargo test  1 failed`
+    /// A reply's text with its markdown read lightly: fenced code drawn as
+    /// a block behind a rule, headings and whole `**bold**` lines in bold,
+    /// and emphasis markers left out.
+    fn markdown(text: &str, width: usize) -> Vec<Line<'static>> {
+        let code = Style::new().fg(Palette::CODE);
+        let rule = Style::new().fg(Palette::RULE);
+        let mut lines = Vec::new();
+        let mut in_code = false;
+        for source in text.lines() {
+            if source.trim_start().starts_with("```") {
+                in_code = !in_code;
+                continue;
+            }
+            if in_code {
+                for part in Self::wrap(source, width.saturating_sub(2)) {
+                    lines.push(Line::from(vec![
+                        Span::styled("│ ", rule),
+                        Span::styled(part, code),
+                    ]));
+                }
+                continue;
+            }
+            let trimmed = source.trim_start();
+            let heading = trimmed.starts_with('#');
+            let shown = if heading {
+                trimmed.trim_start_matches('#').trim_start()
+            } else {
+                source
+            };
+            let bold = heading || (trimmed.starts_with("**") && trimmed.contains(":**"));
+            let plain = shown.replace("**", "").replace("__", "");
+            let style = if bold {
+                Style::new().fg(Palette::FG).add_modifier(Modifier::BOLD)
+            } else {
+                Style::new().fg(Palette::FG)
+            };
+            for part in Self::wrap(&plain, width) {
+                lines.push(Line::styled(part, style));
+            }
+        }
+        lines
+    }
+
+    /// `● Bash cargo test ×2`
     fn tool(tool: &ToolLine) -> Line<'static> {
         let mut spans = vec![
-            Span::raw("⏺ ").fg(Palette::TOOL),
+            Span::raw("● ").fg(Palette::BLUE),
             Span::raw(tool.name.clone())
-                .fg(Palette::TOOL)
+                .fg(Palette::BLUE)
                 .add_modifier(Modifier::BOLD),
         ];
-        if tool.count > 1 {
-            spans.push(Span::raw(format!(" ×{}", tool.count)).fg(Palette::TOOL));
-        }
         if let Some(target) = &tool.target {
-            spans.push(Span::raw(format!(" {target}")));
+            spans.push(Span::raw(format!(" {target}")).fg(Palette::BLUE));
         }
-        let (result, tone) = Self::result(&tool.result);
-        spans.push(Span::raw(format!("  {result}")).fg(Palette::tone(tone)));
+        if tool.count > 1 {
+            spans.push(Span::raw(format!(" ×{}", tool.count)).fg(Palette::BLUE));
+        }
         Line::from(spans)
     }
 
-    fn result(result: &ResultMark) -> (String, Tone) {
-        match result {
-            ResultMark::Pending => ("…".to_owned(), Tone::Neutral),
-            ResultMark::Unreadable => ("result not readable".to_owned(), Tone::Neutral),
-            ResultMark::Missing => ("no result".to_owned(), Tone::Warning),
-            ResultMark::Reported(status) => match status.known() {
-                Some(ResultStatus::Succeeded) => ("ok".to_owned(), Tone::Success),
-                Some(ResultStatus::Failed) => ("failed".to_owned(), Tone::Error),
-                Some(ResultStatus::Unreported) => ("not reported".to_owned(), Tone::Neutral),
-                None => (status.label().replace('_', " "), Tone::Neutral),
-            },
-            ResultMark::Failures(count) => (format!("{count} failed"), Tone::Error),
-            ResultMark::AllSucceeded(count) => (format!("{count} ok"), Tone::Success),
+    /// `⎿ Read src/lib.rs → fn main() {}`: what the client sent back.
+    fn result(tool: &ToolLine) -> Line<'static> {
+        let dim = Style::new().fg(Palette::DIM);
+        let mut head = format!("⎿ {}", tool.name);
+        if let Some(target) = &tool.target {
+            head.push(' ');
+            head.push_str(target);
         }
+        if tool.count > 1 {
+            head.push_str(&format!(" ×{}", tool.count));
+        }
+        let (outcome, color) = match &tool.result {
+            ResultMark::Pending => ("…".to_owned(), Palette::DIM),
+            ResultMark::Unreadable => ("result not readable".to_owned(), Palette::DIM),
+            ResultMark::Missing => ("no result".to_owned(), Palette::YELLOW),
+            ResultMark::Reported(status) => match status.known() {
+                Some(ResultStatus::Succeeded | ResultStatus::Unreported) => (
+                    tool.output.clone().unwrap_or_else(|| "ok".to_owned()),
+                    Palette::DIM,
+                ),
+                Some(ResultStatus::Failed) => (
+                    tool.output
+                        .as_ref()
+                        .map_or_else(|| "failed".to_owned(), |output| format!("failed: {output}")),
+                    Palette::RED,
+                ),
+                None => (status.label().replace('_', " "), Palette::DIM),
+            },
+            ResultMark::Failures(count) => (format!("{count} failed"), Palette::RED),
+            ResultMark::AllSucceeded(count) => (format!("{count} ok"), Palette::DIM),
+        };
+        Line::from(vec![
+            Span::styled(head, dim),
+            Span::styled(" → ", dim),
+            Span::styled(outcome, Style::new().fg(color)),
+        ])
     }
 
     /// `text` broken into rows of at most `width` cells, at spaces where it
@@ -468,21 +607,28 @@ impl Wall {
         text.chars().map(|ch| ch.width().unwrap_or(0)).sum()
     }
 
+    fn spans_width(spans: &[Span<'static>]) -> usize {
+        spans.iter().map(|span| Self::width(&span.content)).sum()
+    }
+
+    /// Segments split by rules: the tag, what is stale or needs a look,
+    /// each client's recent output, the counts; the help hint and the clock
+    /// keep their place at the right.
     fn draw_status(status: &Status, area: Rect, buf: &mut Buffer) {
-        let base = Style::new().bg(Color::Indexed(234)).fg(Color::Indexed(252));
+        let base = Style::new().bg(Palette::BAR).fg(Palette::FG);
         buf.set_style(area, base);
+        let rule = Span::styled("│", Style::new().fg(Palette::RULE).bg(Palette::BAR));
         let mut spans = vec![
             Span::raw(" tgv ")
-                .bg(Palette::LIVE)
-                .fg(Palette::INK)
+                .bg(Palette::GREEN)
+                .fg(Palette::GROUND)
                 .add_modifier(Modifier::BOLD),
         ];
-        // A failed read comes first: everything else on the wall is stale.
         if let Some(failure) = &status.failure {
             spans.push(
                 Span::raw(format!(" ! stale: {failure} "))
-                    .bg(Palette::ERROR)
-                    .fg(Palette::INK),
+                    .bg(Palette::RED)
+                    .fg(Palette::GROUND),
             );
         }
         if status.attention > 0 {
@@ -493,45 +639,11 @@ impl Wall {
             };
             spans.push(
                 Span::raw(format!(" ! {} {needs} a look ", status.attention))
-                    .bg(Palette::WARNING)
-                    .fg(Palette::INK),
+                    .bg(Palette::YELLOW)
+                    .fg(Palette::GROUND),
             );
         }
-        // Sparks take at most a third of the line, so the counts keep
-        // their room: each gets as many glyphs as fit, merging bins, and all
-        // share one scale.
-        let sparks = status.output.len().max(1);
-        let room = usize::from(area.width) / 3 / sparks;
-        let glyphs = [24, 12, 8, 6, 4]
-            .into_iter()
-            .find(|glyphs| glyphs + 4 <= room)
-            .unwrap_or(4);
-        let merged: Vec<(Harness, Vec<u64>)> = status
-            .output
-            .iter()
-            .map(|spark| {
-                let per = spark.bins.len().div_ceil(glyphs).max(1);
-                let bins = spark
-                    .bins
-                    .chunks(per)
-                    .map(|chunk| chunk.iter().sum::<u64>())
-                    .collect();
-                (spark.harness, bins)
-            })
-            .collect();
-        let peak = merged
-            .iter()
-            .flat_map(|(_, bins)| bins.iter().copied())
-            .max()
-            .unwrap_or(0);
-        for (harness, bins) in &merged {
-            let color = Palette::harness(Some(*harness));
-            spans.push(Span::raw(format!(" {} ", Self::short(*harness))).fg(color));
-            spans.push(Span::raw(Self::spark(bins, peak)).fg(color));
-        }
-        // The clock and the help hint keep their place at the right; the
-        // facts give way to them, whole, most telling first.
-        let right = format!(" ? help  {} UTC ", Clock(status.now));
+        let right = format!(" ? help │ {} ", Clock(status.now));
         let right_width = u16::try_from(Self::width(&right)).unwrap_or(u16::MAX);
         let left_width = match area.width.checked_sub(right_width) {
             Some(left) => {
@@ -540,37 +652,69 @@ impl Wall {
             }
             None => area.width,
         };
-        let mut facts = vec![format!(
+        let mut counts = vec![format!(
             "{} session{}",
             status.sessions,
             if status.sessions == 1 { "" } else { "s" }
         )];
-        match status.reading {
-            Reading::Pending => facts.push("reading…".to_owned()),
-            Reading::Complete => {}
-            Reading::Capped => facts.push("older calls not read".to_owned()),
-        }
+        counts.push(format!("{} streaming", status.responding));
+        counts.push(format!("{} waiting", status.awaiting));
         if status.hidden > 0 {
-            facts.push(format!("{} without a pane", status.hidden));
+            counts.push(format!("{} hidden", status.hidden));
         }
-        facts.push(format!("{} responding", status.responding));
-        facts.push(format!("{} waiting", status.awaiting));
-        let mut used: usize = spans.iter().map(|span| Self::width(&span.content)).sum();
-        let room = usize::from(left_width).saturating_sub(1);
-        let mut text = String::new();
-        for fact in facts {
-            let piece = if text.is_empty() {
-                format!("  {fact}")
-            } else {
-                format!(" · {fact}")
-            };
-            if used + Self::width(&piece) > room {
+        match status.reading {
+            Reading::Pending => counts.push("reading…".to_owned()),
+            Reading::Complete => {}
+            Reading::Capped => counts.push("older calls not read".to_owned()),
+        }
+        let counts = vec![Span::raw(format!(" {} ", counts.join(" · ")))];
+        // Sparks share what the counts leave: each gets as many glyphs as
+        // fit (merging bins, on one shared scale), or none at all.
+        let room = usize::from(left_width)
+            .saturating_sub(Self::spans_width(&spans) + 1 + Self::spans_width(&counts));
+        let sparks = status.output.len().max(1);
+        // Each spark also takes its rule, name, and total: about 14 cells.
+        let each = (room / sparks).saturating_sub(14);
+        let glyphs = [24, 12, 8, 6, 4]
+            .into_iter()
+            .find(|glyphs| *glyphs <= each)
+            .unwrap_or(0);
+        let merged: Vec<(Harness, Vec<u64>, u64)> = status
+            .output
+            .iter()
+            .map(|spark| {
+                let per = spark.bins.len().div_ceil(glyphs.max(1)).max(1);
+                let bins = spark
+                    .bins
+                    .chunks(per)
+                    .map(|chunk| chunk.iter().sum::<u64>())
+                    .collect();
+                (spark.harness, bins, spark.bins.iter().sum())
+            })
+            .collect();
+        let peak = merged
+            .iter()
+            .flat_map(|(_, bins, _)| bins.iter().copied())
+            .max()
+            .unwrap_or(0);
+        let mut used = 0;
+        for (harness, bins, total) in &merged {
+            let color = Palette::harness(Some(*harness));
+            let mut spark = vec![Span::raw(format!(" {} ", Self::short(*harness))).fg(color)];
+            if glyphs > 0 {
+                spark.push(Span::raw(Self::spark(bins, peak)).fg(color));
+            }
+            spark.push(Span::raw(format!(" {} tok ", Kilo(*total))));
+            let width = 1 + Self::spans_width(&spark);
+            if used + width > room {
                 break;
             }
-            used += Self::width(&piece);
-            text.push_str(&piece);
+            used += width;
+            spans.push(rule.clone());
+            spans.extend(spark);
         }
-        spans.push(Span::raw(text));
+        spans.push(rule);
+        spans.extend(counts);
         buf.set_line(area.x, area.y, &Line::from(spans), left_width);
     }
 
@@ -625,7 +769,8 @@ impl Wall {
         Clear.render(rect, buf);
         Block::bordered()
             .title(" keys ")
-            .border_style(Style::new().fg(Palette::DIM))
+            .border_style(Style::new().fg(Palette::RULE))
+            .style(Style::new().bg(Palette::BAR).fg(Palette::FG))
             .render(rect, buf);
         for (row, (keys, text)) in rows.iter().enumerate() {
             let Ok(row) = u16::try_from(row) else {
@@ -635,7 +780,7 @@ impl Wall {
                 break;
             }
             let line = Line::from(vec![
-                Span::raw(format!("{keys:<keys_width$}   ")).fg(Palette::TOOL),
+                Span::raw(format!("{keys:<keys_width$}   ")).fg(Palette::BLUE),
                 Span::raw(*text),
             ]);
             buf.set_line(rect.x + 2, rect.y + 1 + row, &line, width.saturating_sub(4));
@@ -643,22 +788,39 @@ impl Wall {
     }
 }
 
-/// A token count, short: `950`, `1.2k`, `61k`, `1.3M`.
-struct Tokens(u64);
+/// A token count, short: `950`, `36.0k`, `148k`, `1.3M`.
+struct Kilo(u64);
 
-impl std::fmt::Display for Tokens {
+impl std::fmt::Display for Kilo {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let n = self.0;
         match n {
             0..1_000 => write!(f, "{n}"),
-            1_000..10_000 => write!(f, "{}.{}k", n / 1000, n % 1000 / 100),
-            10_000..1_000_000 => write!(f, "{}k", n / 1000),
+            1_000..100_000 => write!(f, "{}.{}k", n / 1000, n % 1000 / 100),
+            100_000..1_000_000 => write!(f, "{}k", n / 1000),
             _ => write!(f, "{}.{}M", n / 1_000_000, n % 1_000_000 / 100_000),
         }
     }
 }
 
-/// `HH:MM:SS`, in UTC.
+/// A count with thousands grouped: `2,426`.
+struct Grouped(u64);
+
+impl std::fmt::Display for Grouped {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let digits = self.0.to_string();
+        let mut out = String::new();
+        for (index, ch) in digits.chars().enumerate() {
+            if index > 0 && (digits.len() - index).is_multiple_of(3) {
+                out.push(',');
+            }
+            out.push(ch);
+        }
+        f.write_str(&out)
+    }
+}
+
+/// `HH:MM:SS UTC`.
 struct Clock(UnixMillis);
 
 impl std::fmt::Display for Clock {
@@ -666,7 +828,7 @@ impl std::fmt::Display for Clock {
         let seconds = self.0.as_millis() / 1000 % 86_400;
         write!(
             f,
-            "{:02}:{:02}:{:02}",
+            "{:02}:{:02}:{:02} UTC",
             seconds / 3600,
             seconds / 60 % 60,
             seconds % 60
@@ -676,18 +838,20 @@ impl std::fmt::Display for Clock {
 
 #[cfg(test)]
 mod tests {
-    use super::{Clock, Tokens, Wall};
+    use super::{Clock, Grouped, Kilo, Wall};
     use tgv_recorder::time::UnixMillis;
 
     #[test]
     fn numbers_and_times_read_short() {
-        let tokens: Vec<String> = [950, 1_234, 61_000, 1_300_000]
-            .map(|n| Tokens(n).to_string())
+        let kilo: Vec<String> = [950, 1_234, 36_000, 148_000, 1_300_000]
+            .map(|n| Kilo(n).to_string())
             .into();
-        assert_eq!(tokens, ["950", "1.2k", "61k", "1.3M"]);
+        assert_eq!(kilo, ["950", "1.2k", "36.0k", "148k", "1.3M"]);
+        let grouped: Vec<String> = [7, 2_426, 1_234_567].map(|n| Grouped(n).to_string()).into();
+        assert_eq!(grouped, ["7", "2,426", "1,234,567"]);
         assert_eq!(
             Clock(UnixMillis::from_millis(3_723_000)).to_string(),
-            "01:02:03"
+            "01:02:03 UTC"
         );
     }
 
@@ -697,6 +861,21 @@ mod tests {
         assert_eq!(Wall::wrap("abcdefghij", 4), ["abcd", "efgh", "ij"]);
         assert_eq!(Wall::wrap("a\n\nb", 4), ["a", "", "b"]);
         assert_eq!(Wall::wrap("日本語の文", 4), ["日本", "語の", "文"]);
+    }
+
+    #[test]
+    fn replies_read_their_markdown_lightly() {
+        let lines: Vec<String> = Wall::markdown(
+            "## Plan\n**What to look for:** the A\n```rust\nlet x = 1;\n```\n- one",
+            40,
+        )
+        .iter()
+        .map(ToString::to_string)
+        .collect();
+        assert_eq!(
+            lines,
+            ["Plan", "What to look for: the A", "│ let x = 1;", "- one"]
+        );
     }
 
     #[test]

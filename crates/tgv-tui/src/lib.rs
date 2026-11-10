@@ -23,7 +23,9 @@ pub use call::{CallEnd, ErrorCause, Shortfall, Stop, Tone};
 pub use grid::{Grid, Size};
 pub use keys::{Command, Key};
 pub use screen::{Screen, ScreenError, ScreenEvent, ScreenEvents};
-pub use session::{Alert, Line, Phase, ResultMark, SessionPane, Span, Streaming, Tally, ToolLine};
+pub use session::{
+    Alert, CallFacts, Line, Phase, ResultMark, SessionPane, Span, Streaming, Tally, ToolLine,
+};
 
 use grid::Placement;
 use session::SessionRead;
@@ -44,6 +46,8 @@ use tgv_store::view::{CallPage, CallView, SessionView};
 /// The live sessions of one gateway, arranged in panes.
 #[derive(Debug)]
 pub struct Tui {
+    /// The terminal's size; the grid follows from it and the sessions.
+    size: Size,
     grid: Grid,
     placement: Placement,
     /// Sessions that want a pane, most wanted first, as last read.
@@ -214,7 +218,8 @@ impl Tui {
 
     pub fn new(size: Size) -> Self {
         Self {
-            grid: Grid::fit(size),
+            size,
+            grid: Grid::for_sessions(size, 0),
             placement: Placement::default(),
             wanted: Vec::new(),
             hidden: 0,
@@ -366,7 +371,7 @@ impl Tui {
             }
             Input::Observation(observation) => self.observe(&observation),
             Input::Resize(size) => {
-                self.grid = Grid::fit(size);
+                self.size = size;
                 self.arrange()
             }
             Input::ReadFailed(reason) => {
@@ -471,6 +476,7 @@ impl Tui {
     /// Places sessions in panes; asks for the turns the panes show that
     /// changed since they were read, or are still being derived.
     fn arrange(&mut self) -> Vec<Read> {
+        self.grid = Grid::for_sessions(self.size, self.wanted.len());
         self.hidden = self.placement.arrange(self.grid, &self.wanted);
         self.focus = self.focus.min(self.grid.panes().saturating_sub(1));
         // A zoomed session that left the wall leaves the zoom.
@@ -484,21 +490,21 @@ impl Tui {
         let mut reads = Vec::new();
         for session in shown.iter().copied() {
             let calls = self.session_calls(session);
-            let Some(turn) = session::SessionPane::newest_turn(&calls) else {
-                continue;
-            };
-            let signature = self.signature(turn);
-            let settled = self.turns.get(&turn).is_some_and(|held| {
-                held.signature == signature
-                    && held.activity.calls.iter().all(|call| {
-                        !call.limitations.iter().any(|limitation| {
-                            limitation.known()
+            for turn in session::SessionPane::recent_turns(&calls) {
+                let signature = self.signature(turn);
+                let settled =
+                    self.turns.get(&turn).is_some_and(|held| {
+                        held.signature == signature
+                            && held.activity.calls.iter().all(|call| {
+                                !call.limitations.iter().any(|limitation| {
+                                    limitation.known()
                                 == Some(tgv_protocol::activity::ActivityLimitation::NotYetDerived)
-                        })
-                    })
-            });
-            if !settled {
-                reads.push(Read::Turn(turn));
+                                })
+                            })
+                    });
+                if !settled {
+                    reads.push(Read::Turn(turn));
+                }
             }
         }
         // Turns no pane shows any more are let go.
@@ -551,12 +557,20 @@ impl Tui {
                     return Pane::Free;
                 };
                 let calls = self.session_calls(session.id);
-                let turn = session::SessionPane::newest_turn(&calls)
-                    .and_then(|turn| self.turns.get(&turn))
-                    .map(|held| &held.activity);
+                let recent = session::SessionPane::recent_turns(&calls);
+                let held = |turn: Option<&TurnId>| {
+                    turn.and_then(|turn| self.turns.get(turn))
+                        .map(|held| &held.activity)
+                };
+                let (earlier, turn) = match recent.as_slice() {
+                    [earlier, newest] => (held(Some(earlier)), held(Some(newest))),
+                    [newest] => (None, held(Some(newest))),
+                    _ => (None, None),
+                };
                 let mut pane = session::SessionPane::read(&SessionRead {
                     session,
                     calls: &calls,
+                    earlier,
                     turn,
                     progress: &self.progress,
                     now,

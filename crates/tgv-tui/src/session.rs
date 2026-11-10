@@ -79,8 +79,29 @@ pub enum Line {
     Call {
         index: Option<usize>,
     },
+    /// The user's own words this call's request started with.
+    Prompt(String),
+    /// A result this call's request carried back for one of the previous
+    /// call's tool calls (or a run of like ones).
+    Result(ToolLine),
     Reply(String),
+    /// Tool calls the model asked for.
     Tools(ToolLine),
+    /// An open call whose response head has not arrived.
+    Waiting,
+}
+
+/// What the newest call measured, as the wire reported it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CallFacts {
+    pub model: Option<String>,
+    /// The prompt the model saw, in tokens; `None` until usage is reported.
+    pub input: Option<u64>,
+    /// The share of `input` read from the provider's cache, in percent.
+    pub cached: Option<u64>,
+    pub output: Option<u64>,
+    pub reasoning: Option<u64>,
+    pub stop_reason: Option<String>,
 }
 
 /// What a streaming call has said so far, from progress updates: never
@@ -131,6 +152,10 @@ pub struct SessionPane {
     pub context: Option<u64>,
     /// That call's output tokens.
     pub output: Option<u64>,
+    /// Output tokens over the session's calls, provider-reported.
+    pub session_output: Option<u64>,
+    /// The newest call's measurements.
+    pub facts: Option<CallFacts>,
     pub lines: Vec<Line>,
     pub streaming: Option<Streaming>,
     pub tally: Option<Tally>,
@@ -145,6 +170,9 @@ pub(crate) struct SessionRead<'a> {
     /// Its calls in the window and its open ones, oldest first.
     pub calls: &'a [&'a CallView],
     pub turn: Option<&'a TurnActivity>,
+    /// The turn before it, when read: the pane shows how the session got
+    /// here.
+    pub earlier: Option<&'a TurnActivity>,
     pub progress: &'a HashMap<CallId, Progress>,
     pub now: UnixMillis,
 }
@@ -178,7 +206,38 @@ impl SessionPane {
             .find(|call| call.usage.is_some())
             .map(|call| CallMetrics::of(call));
         let phase = Self::phase(calls, read.now);
-        let lines = turn.map_or_else(Vec::new, |turn| Self::lines(turn, &order));
+        let earlier = read.earlier.filter(|earlier| Some(earlier.turn) != turn_id);
+        let mut lines = earlier.map_or_else(Vec::new, |earlier| {
+            let order: HashMap<CallId, usize> = calls
+                .iter()
+                .filter(|call| call.turn == Some(earlier.turn))
+                .enumerate()
+                .map(|(index, call)| (call.id, index + 1))
+                .collect();
+            Self::lines(earlier, &order)
+        });
+        lines.extend(turn.map_or_else(Vec::new, |turn| Self::lines(turn, &order)));
+        let skip = lines.len().saturating_sub(Self::MAX_LINES);
+        lines.drain(..skip);
+        // The newest open call, when its text is not read yet: its rule,
+        // then what it has streamed (`streaming`) or that it is waiting.
+        let open = calls.iter().rev().find(|call| Self::is_open(call));
+        let streaming = Self::streaming(calls, &order, read.progress);
+        if let Some(open) = open {
+            let read_already = turn.is_some_and(|turn| {
+                turn.calls
+                    .iter()
+                    .any(|call| call.call == open.id && !Self::underived(call))
+            });
+            if !read_already {
+                lines.push(Line::Call {
+                    index: order.get(&open.id).copied(),
+                });
+                if open.status.is_none() && streaming.is_none() {
+                    lines.push(Line::Waiting);
+                }
+            }
+        }
         let mut pane = Self {
             session: read.session.id,
             harness: read
@@ -192,7 +251,16 @@ impl SessionPane {
             model: calls.iter().rev().find_map(|call| call.model.clone()),
             context: measured.as_ref().and_then(|metrics| metrics.context_tokens),
             output: measured.as_ref().and_then(|metrics| metrics.output_tokens),
-            streaming: Self::streaming(calls, &order, read.progress),
+            session_output: read.session.tokens.output,
+            facts: calls.last().map(|call| {
+                // An open call names its model only once it ends.
+                let mut facts = Self::facts(call);
+                if facts.model.is_none() {
+                    facts.model = calls.iter().rev().find_map(|call| call.model.clone());
+                }
+                facts
+            }),
+            streaming,
             tally: turn.map(|turn| Tally {
                 read: turn.files_read.len(),
                 wrote: turn.files_written.len(),
@@ -208,6 +276,23 @@ impl SessionPane {
         pane
     }
 
+    fn facts(call: &CallView) -> CallFacts {
+        let metrics = CallMetrics::of(call);
+        CallFacts {
+            model: call.model.clone(),
+            input: metrics.context_tokens,
+            cached: match (metrics.cache_read_tokens, metrics.context_tokens) {
+                (Some(read), Some(context)) if context > 0 => {
+                    Some(read.saturating_mul(100) / context)
+                }
+                (Some(_) | None, Some(_) | None) => None,
+            },
+            output: metrics.output_tokens,
+            reasoning: call.usage.as_ref().and_then(|usage| usage.reasoning_tokens),
+            stop_reason: call.stop_reason.clone(),
+        }
+    }
+
     fn is_open(call: &CallView) -> bool {
         call.state.known() == Some(tgv_recorder::capture::CallState::Open)
     }
@@ -215,6 +300,21 @@ impl SessionPane {
     /// The newest turn a call carried.
     pub(crate) fn newest_turn(calls: &[&CallView]) -> Option<TurnId> {
         calls.iter().rev().find_map(|call| call.turn)
+    }
+
+    /// The newest two turns the calls carried, oldest first.
+    pub(crate) fn recent_turns(calls: &[&CallView]) -> Vec<TurnId> {
+        let mut turns: Vec<TurnId> = Vec::new();
+        for turn in calls.iter().rev().filter_map(|call| call.turn) {
+            if !turns.contains(&turn) {
+                turns.push(turn);
+            }
+            if turns.len() == 2 {
+                break;
+            }
+        }
+        turns.reverse();
+        turns
     }
 
     fn phase(calls: &[&CallView], now: UnixMillis) -> Phase {
@@ -266,6 +366,9 @@ impl SessionPane {
     fn lines(turn: &TurnActivity, order: &HashMap<CallId, usize>) -> Vec<Line> {
         let workdir = Workdir::of(turn);
         let mut lines = Vec::new();
+        // The previous read call's tool lines: this call's request carries
+        // their results back.
+        let mut asked: Vec<ToolLine> = Vec::new();
         for (index, call) in turn.calls.iter().enumerate() {
             if Self::underived(call) {
                 continue;
@@ -273,6 +376,24 @@ impl SessionPane {
             lines.push(Line::Call {
                 index: order.get(&call.call).copied(),
             });
+            match call
+                .prompt
+                .as_ref()
+                .map(|prompt| prompt.text.trim())
+                .filter(|text| !text.is_empty())
+            {
+                Some(prompt) => lines.push(Line::Prompt(prompt.to_owned())),
+                None => lines.extend(
+                    Self::runs(
+                        std::mem::take(&mut asked)
+                            .into_iter()
+                            .filter(|tool| tool.result != ResultMark::Pending),
+                    )
+                    .into_iter()
+                    .map(Line::Result),
+                ),
+            }
+            asked.clear();
             if let Some(reply) = call
                 .reply
                 .as_ref()
@@ -282,25 +403,44 @@ impl SessionPane {
                 lines.push(Line::Reply(reply.to_owned()));
             }
             let later = turn.calls.get(index + 1..).unwrap_or_default();
-            let mut run: Option<Run> = None;
-            for tool in &call.tool_calls {
-                let line = Self::tool_line(tool, later, workdir.as_ref());
-                run = Some(match run {
-                    Some(mut same) if same.takes(&line) => {
-                        same.push(line);
-                        same
-                    }
-                    Some(other) => {
-                        lines.push(Line::Tools(other.finish()));
-                        Run::new(line)
-                    }
-                    None => Run::new(line),
-                });
+            asked = call
+                .tool_calls
+                .iter()
+                .map(|tool| Self::tool_line(tool, later, workdir.as_ref()))
+                .collect();
+            lines.extend(
+                Self::runs(asked.iter().cloned())
+                    .into_iter()
+                    .map(Line::Tools),
+            );
+            // A call with nothing to show keeps no rule of its own.
+            if matches!(lines.last(), Some(Line::Call { .. })) {
+                lines.pop();
             }
-            lines.extend(run.map(|run| Line::Tools(run.finish())));
         }
         let skip = lines.len().saturating_sub(Self::MAX_LINES);
         lines.into_iter().skip(skip).collect()
+    }
+
+    /// Like tool calls in a row merged into one line each.
+    fn runs(tools: impl IntoIterator<Item = ToolLine>) -> Vec<ToolLine> {
+        let mut lines = Vec::new();
+        let mut run: Option<Run> = None;
+        for line in tools {
+            run = Some(match run {
+                Some(mut same) if same.takes(&line) => {
+                    same.push(line);
+                    same
+                }
+                Some(other) => {
+                    lines.push(other.finish());
+                    Run::new(line)
+                }
+                None => Run::new(line),
+            });
+        }
+        lines.extend(run.map(Run::finish));
+        lines
     }
 
     fn underived(call: &CallActivity) -> bool {
@@ -410,45 +550,35 @@ impl SessionPane {
                 });
             }
         }
-        // Rate limits come in bursts: one alert, with the count.
-        let limited: Vec<&&CallView> = calls
-            .iter()
-            .filter(|call| call.status == Some(429))
-            .collect();
-        if let Some(newest) = limited.last() {
-            alerts.push(Alert {
-                tone: Tone::Warning,
-                label: match limited.len() {
-                    1 => "429".to_owned(),
-                    count => format!("{count} × 429"),
-                },
-                detail: "rate limited".to_owned(),
-                at: newest.started_at,
-            });
-        }
-        for call in calls {
-            if call.status == Some(429) {
-                continue;
-            }
+        // How the newest call ended, when it ended badly: an earlier
+        // failure the session has moved past is not shown again.
+        if let Some(call) = calls.last() {
             let end = CallEnd::of(call);
-            if !end.troubled() {
-                continue;
+            if end.troubled() {
+                let limited = calls.iter().filter(|call| call.status == Some(429)).count();
+                let (label, detail) = match call.status {
+                    Some(429) if limited > 1 => (
+                        "429 rate limited".to_owned(),
+                        format!("{limited} in the window"),
+                    ),
+                    Some(429) => ("429 rate limited".to_owned(), String::new()),
+                    Some(_) | None => (
+                        end.label(call.status),
+                        call.model
+                            .clone()
+                            .unwrap_or_else(|| call.endpoint.label().to_owned()),
+                    ),
+                };
+                alerts.push(Alert {
+                    tone: match end.tone() {
+                        Tone::Error => Tone::Error,
+                        Tone::Live | Tone::Warning | Tone::Success | Tone::Neutral => Tone::Warning,
+                    },
+                    label,
+                    detail,
+                    at: call.ended_at.unwrap_or(call.started_at),
+                });
             }
-            alerts.push(Alert {
-                tone: match end.tone() {
-                    Tone::Error => Tone::Error,
-                    Tone::Live | Tone::Warning | Tone::Success | Tone::Neutral => Tone::Warning,
-                },
-                label: match call.status {
-                    Some(status) if status >= 400 => status.to_string(),
-                    Some(_) | None => end.label(None),
-                },
-                detail: call
-                    .model
-                    .clone()
-                    .unwrap_or_else(|| call.endpoint.label().to_owned()),
-                at: call.ended_at.unwrap_or(call.started_at),
-            });
         }
         if let Some(turn) = turn {
             let at = turn.ended_at.or(turn.started_at).unwrap_or(now);

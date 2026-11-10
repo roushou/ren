@@ -53,18 +53,24 @@ interrupt, or if the first connection fails.
 
 `tgv tui`, in a CLI built with `--features tui`, shows the same daemon's live
 sessions in the terminal: one pane per active session (seen in the last five
-minutes, or with a call open), as many as the terminal has room for. Each
-pane shows the session's client and provider, the newest turn's replies and
-tool calls with their results, a streaming call's reply and tools so far,
-what the session is doing (waiting for a response, responding, the client's
-turn or yours, inferred from how the last call ended, or how it stopped), the
-turn's files read and written and commands run, context and output tokens
-from the newest call that reported usage, and alerts (slow response heads,
-429s, failed or interrupted calls, unknown endings, secrets sent, repeated
-tool failures). The status line counts sessions and open calls, and shows
-each client's output tokens over the last four minutes, counted when calls
-end: not a live rate. It reads a snapshot of sessions and calls every two
-seconds and whenever the feed says a call opened or ended, and asks for
+minutes, or with a call open), in a grid sized to them, as many as the
+terminal has room for; one session fills the screen. Each pane reads as a
+conversation, kept to the bottom as it streams: the newest turn and the one
+before it, call by call, with the user's prompt (`>`), the tool results the
+request carried back (`⎿`), the reply (code blocks drawn behind a rule), and
+the tool calls the model asked for (`●`), then a streaming call's reply and
+tools so far. Its title bar turns green while a response streams, and amber
+or red when the newest call needs a look (a slow response head, a 429, a
+failed, interrupted, or unknown ending, a secret sent, repeated tool
+failures); an earlier failure the session has moved past is not shown again.
+Under the conversation, what the session is doing (waiting for the first
+byte, streaming, complete with the client running tools or waiting for you,
+inferred from how the last call ended, or how it stopped), and the newest
+call's model, input with its cached share, output, reasoning, and stop
+reason. The status line counts sessions and open calls, and shows each
+client's output tokens over the last four minutes, counted when calls end:
+not a live rate. It reads a snapshot of sessions and calls every two seconds
+and whenever the feed says a call opened or ended, and asks for
 [progress events](#live-feed). A read that fails is shown as `stale` until
 one succeeds. Keys: tab and the arrows move between panes, enter zooms into a
 session, `p` keeps a session on the wall even when quiet, `?` lists the

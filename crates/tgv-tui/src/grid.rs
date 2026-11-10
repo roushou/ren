@@ -41,6 +41,33 @@ impl Grid {
     pub fn panes(self) -> usize {
         usize::from(self.columns) * usize::from(self.rows)
     }
+
+    /// The grid for `sessions` within what `size` has room for: as few
+    /// panes left empty as can be, then panes whose shape is closest to a
+    /// terminal pane's usual one, about 3.5 cells across for each line
+    /// down. One session fills the screen.
+    pub fn for_sessions(size: Size, sessions: usize) -> Self {
+        let room = Self::fit(size);
+        let wanted = sessions.clamp(1, room.panes());
+        let height = f64::from(size.height.saturating_sub(Self::STATUS_LINES).max(1));
+        let width = f64::from(size.width.max(1));
+        let mut best: Option<(f64, Self)> = None;
+        for columns in 1..=room.columns {
+            for rows in 1..=room.rows {
+                let grid = Self { columns, rows };
+                if grid.panes() < wanted {
+                    continue;
+                }
+                let empty = u32::try_from(grid.panes() - wanted).unwrap_or(u32::MAX);
+                let shape = (width / f64::from(columns)) / (height / f64::from(rows));
+                let score = f64::from(empty) + (shape / 3.5).ln().abs();
+                if best.is_none_or(|(least, _)| score < least) {
+                    best = Some((score, grid));
+                }
+            }
+        }
+        best.map_or(room, |(_, grid)| grid)
+    }
 }
 
 /// Which session each pane shows, in pane order.

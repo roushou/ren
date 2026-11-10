@@ -1,42 +1,42 @@
-▶0:00000001 claude-code → anthropic  call 2                │ 1:00000003 opencode → anthropic                   model-a │ 2:00000002 codex → openai  call 1                  model-b
- ── call 1 ─────────────────────────────────────────────── │                                                           │
+ 0:00000001  claude-code → anthropic  call 2               │ 1:00000003  opencode → anthropic                3,139 tok │ 2:00000002  codex → openai  call 1               2,426 tok
+                                                           │                                                           │
+                                                           │                                                           │
+                                                           │                                                           │
+                                                           │                                                           │
+                                                           │                                                           │
+                                                           │                                                           │
+                                                           │                                                           │
+                                                           │                                                           │
+                                                           │                                                           │
+                                                           │                                                           │
+                                                           │                                                           │
+                                                           │                                                           │
+                                                           │                                                           │
+                                                           │                                                           │
+                                                           │                                                           │
+                                                           │                                                           │
+                                                           │                                                           │
+                                                           │                                                           │
+                                                           │                                                           │
+                                                           │                                                           │
+                                                           │                                                           │
+                                                           │                                                           │
+                                                           │                                                           │
+                                                           │                                                           │
+                                                           │                                                           │
+                                                           │                                                           │
+                                                           │                                                           │
+                                                           │                                                           │
+                                                           │                                                           │
+ ── call 1 ──                                              │                                                           │
+ > Why does the parser drop the last field?                │                                                           │
  I'll run the tests first, then look at the failure in the │                                                           │
  parser.                                                   │                                                           │
- ⏺ Read src/lib.rs  ok                                     │                                                           │
- ⏺ Bash cargo test  failed                                 │                                                           │
- ── call 2 · streaming ─────────────────────────────────── │                                                           │
- ⏺ Edit …                                                  │ ── streaming ──────────────────────────────────────────── │
- The parser drops the last field when                      │ thinking…                                                 │
- responding · 10 s · read 1 · wrote 0 · ran 1 · 1 failed   │ responding · 20 s                                         │ ! 529 model-b · error 529
- 3: free                                                   │ 4: free                                                   │ 5: free
-                                                           │                                                           │
-                                                           │                                                           │
-                                                           │                                                           │
-                                                           │                                                           │
- the next session to start appears here                    │ the next session to start appears here                    │ the next session to start appears here
-                                                           │                                                           │
-                                                           │                                                           │
-                                                           │                                                           │
-                                                           │                                                           │
- 6: free                                                   │ 7: free                                                   │ 8: free
-                                                           │                                                           │
-                                                           │                                                           │
-                                                           │                                                           │
-                                                           │                                                           │
- the next session to start appears here                    │ the next session to start appears here                    │ the next session to start appears here
-                                                           │                                                           │
-                                                           │                                                           │
-                                                           │                                                           │
-                                                           │                                                           │
- 9: free                                                   │ 10: free                                                  │ 11: free
-                                                           │                                                           │
-                                                           │                                                           │
-                                                           │                                                           │
-                                                           │                                                           │
- the next session to start appears here                    │ the next session to start appears here                    │ the next session to start appears here
-                                                           │                                                           │
-                                                           │                                                           │
-                                                           │                                                           │
-                                                           │                                                           │
-                                                           │                                                           │
- tgv  ! 1 needs a look  cc                  █        3 sessions · 2 responding · 0 waiting                                                                     ? help  08:05:00 UTC
+ ● Read src/lib.rs                                         │                                                           │
+ ● Bash cargo test                                         │                                                           │
+ ── call 2 ──                                              │                                                           │
+ ● Edit                                                    │ ── call ──                                                │
+ The parser drops the last field when▌                     │ thinking…                                                 │
+ streaming · 10 s                                          │ streaming · 20 s                                          │ ! error 529 · model-b
+ model-a · in —                                            │ model-a · in —                                            │ model-b · in —
+ tgv  ! 1 needs a look │ cc                  █       1.2k tok │ 3 sessions · 2 streaming · 0 waiting                                                          ? help │ 08:05:00 UTC

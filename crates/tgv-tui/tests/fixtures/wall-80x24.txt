@@ -1,24 +1,24 @@
-▶0:00000001 claude-code → anthropic  call 2        model-a · ctx 61k · out 1.2k
-
-
- ── call 1 ────────────────────────────────────────────────────────────────────
+ 0:00000001  claude-code → anthropic  call 2              ctx 61.2k · 1,713 tok
+ ── call 1 ──
+ > Why does the parser drop the last field?
  I'll run the tests first, then look at the failure in the parser.
- ⏺ Read src/lib.rs  ok
- ⏺ Bash cargo test  failed
- ── call 2 · streaming ────────────────────────────────────────────────────────
- ⏺ Edit …
- The parser drops the last field when
- responding · 10 s · read 1 · wrote 0 · ran 1 · 1 failed
- 1:00000003 opencode → anthropic                                        model-a
+ ● Read src/lib.rs
+ ● Bash cargo test
+ ── call 2 ──
+ ● Edit
+ The parser drops the last field when▌
+ streaming · 10 s
+ model-a · in —
+────────────────────────────────────────────────────────────────────────────────
+ 1:00000003  opencode → anthropic                                     3,139 tok
 
 
 
 
 
 
-
-
- ── streaming ─────────────────────────────────────────────────────────────────
+ ── call ──
  thinking…
- responding · 20 s
- tgv  cc         █     3 sessions · 1 without a pane       ? help  08:05:00 UTC
+ streaming · 20 s
+ model-a · in —
+ tgv │ 3 sessions · 2 streaming · 0 waiting · 1 hidden    ? help │ 08:05:00 UTC

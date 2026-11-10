@@ -1,4 +1,4 @@
- 00000001 claude-code → anthropic  call 2          model-a · ctx 61k · out 1.2k
+ 00000001  claude-code → anthropic  call 2                ctx 61.2k · 1,713 tok
 
 
 
@@ -11,14 +11,14 @@
     │ ↑  k           pane above                                            │
     │ ↓  j           pane below                                            │
     │ enter  z       zoom into the focused session, or back to the panes   │
-    │ p              keep the focused session on the wall, even when quiet │
-    │ esc            close the help, or leave a zoomed session             │
- ── │ ?              show or hide this help                                │───
- I'l│ q  ctrl-c      quit                                                  │
- ⏺ R└──────────────────────────────────────────────────────────────────────┘
- ⏺ Bash cargo test  failed
- ── call 2 · streaming ────────────────────────────────────────────────────────
- ⏺ Edit …
- The parser drops the last field when
- responding · 10 s · read 1 · wrote 0 · ran 1 · 1 failed
- tgv  cc         █     3 sessions · 1 without a pane       ? help  08:05:00 UTC
+ ── │ p              keep the focused session on the wall, even when quiet │
+ > W│ esc            close the help, or leave a zoomed session             │
+ I'l│ ?              show or hide this help                                │
+ ● R│ q  ctrl-c      quit                                                  │
+ ● B└──────────────────────────────────────────────────────────────────────┘
+ ── call 2 ──
+ ● Edit
+ The parser drops the last field when▌
+ streaming · 10 s
+ model-a · in —
+ tgv │ 3 sessions · 2 streaming · 0 waiting · 1 hidden    ? help │ 08:05:00 UTC

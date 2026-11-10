@@ -39,7 +39,7 @@ fn session(n: u128, source: &str, seconds: u64) -> SessionView {
         "call_count": 1,
         "turn_count": 1,
         "error_count": 0,
-        "tokens": { "input": null, "output": null, "cache_read": null }
+        "tokens": { "input": null, "output": 1_000 + n * 713, "cache_read": null }
     }))
     .unwrap()
 }
@@ -150,6 +150,12 @@ fn activity_call(n: u128, reply: Option<&str>, tools: Vec<Value>, limitations: &
     })
 }
 
+/// `call` as a request that starts with the user's own words.
+fn prompted(prompt: &str, mut call: Value) -> Value {
+    call["prompt"] = json!({ "text": prompt, "omitted_chars": 0 });
+    call
+}
+
 fn turn(t: u128, s: u128, commands: &[&str], calls: Vec<Value>) -> Input {
     Input::Turn(Box::new(
         serde_json::from_value(json!({
@@ -219,7 +225,7 @@ fn sessions_with_open_calls_come_first_and_keep_their_panes() {
 }
 
 #[test]
-fn sessions_outside_the_window_leave_free_panes() {
+fn the_grid_is_sized_to_the_active_sessions() {
     let mut tui = tui();
     let _ = tui.apply(snapshot(
         1000,
@@ -229,9 +235,51 @@ fn sessions_outside_the_window_leave_free_panes() {
         ],
         vec![],
     ));
+    // One active session fills the screen, however wide the terminal.
     let wall = tui.wall(at(1000));
+    assert_eq!(
+        wall.grid,
+        Grid {
+            columns: 1,
+            rows: 1
+        }
+    );
     assert_eq!(pane(&wall, 0).session, session_id(1));
-    assert_eq!(wall.panes[1..], [Pane::Free, Pane::Free]);
+    // None: one pane, free.
+    let _ = tui.apply(snapshot(
+        5000,
+        vec![session(1, "claude_code_headers", 990)],
+        vec![],
+    ));
+    let wall = tui.wall(at(5000));
+    assert_eq!(wall.panes, [Pane::Free]);
+}
+
+#[test]
+fn a_grid_leaves_as_few_panes_empty_as_it_can() {
+    let size = Size {
+        width: 240,
+        height: 61,
+    };
+    let shapes: Vec<(u16, u16)> = [1, 2, 3, 4, 5, 6, 9, 40]
+        .map(|sessions| {
+            let grid = Grid::for_sessions(size, sessions);
+            (grid.columns, grid.rows)
+        })
+        .into();
+    assert_eq!(
+        shapes,
+        [
+            (1, 1),
+            (2, 1),
+            (3, 1),
+            (2, 2),
+            (3, 2),
+            (3, 2),
+            (3, 3),
+            (4, 4)
+        ]
+    );
 }
 
 #[test]
@@ -303,49 +351,76 @@ fn how_the_last_call_ended_sets_the_phase() {
 }
 
 #[test]
-fn bad_endings_and_rate_limit_bursts_are_alerts() {
-    let mut tui = tui();
-    let _ = tui.apply(snapshot(
-        100,
-        vec![session(1, "claude_code_headers", 100)],
-        vec![
-            call(
-                11,
-                1,
-                None,
-                10,
-                11,
-                json!({ "status": 429, "outcome": null }),
-            ),
+fn only_how_the_newest_call_went_is_an_alert() {
+    let alerts = |calls: Vec<CallView>| {
+        let mut tui = tui();
+        let _ = tui.apply(snapshot(
+            100,
+            vec![session(1, "claude_code_headers", 100)],
+            calls,
+        ));
+        let wall = tui.wall(at(100));
+        pane(&wall, 0)
+            .alerts
+            .iter()
+            .map(|alert| format!("{} | {}", alert.label, alert.detail))
+            .collect::<Vec<_>>()
+    };
+    let limited = |n, start| {
+        call(
+            n,
+            1,
+            None,
+            start,
+            start + 1,
+            json!({ "status": 429, "outcome": null }),
+        )
+    };
+    // Failures the session has moved past are not shown again; a head
+    // that has not come for a while is.
+    assert_eq!(
+        alerts(vec![
+            limited(11, 10),
             call(
                 12,
                 1,
                 None,
-                20,
-                21,
-                json!({ "status": 429, "outcome": null }),
-            ),
-            call(
-                13,
-                1,
-                None,
                 30,
                 31,
-                json!({ "terminal": "interrupted", "outcome": null }),
+                json!({ "terminal": "interrupted", "outcome": null })
             ),
-            call(14, 1, None, 40, 41, json!({})),
-            open(15, 1, None, 50, false),
-        ],
-    ));
-    let wall = tui.wall(at(100));
-    let labels: Vec<&str> = pane(&wall, 0)
-        .alerts
-        .iter()
-        .map(|alert| alert.label.as_str())
-        .collect();
-    // Newest first: the slow head, the interruption, then one line for both 429s.
-    assert_eq!(labels, ["no response head", "interrupted", "2 × 429"]);
-    assert_eq!(wall.status.attention, 1);
+            call(13, 1, None, 40, 41, json!({})),
+            open(14, 1, None, 50, false),
+        ]),
+        ["no response head | waiting 50 s"]
+    );
+    // Rate limits come in bursts: one alert, with the count.
+    assert_eq!(
+        alerts(vec![limited(11, 10), limited(12, 20)]),
+        ["429 rate limited | 2 in the window"]
+    );
+    assert_eq!(
+        alerts(vec![call(
+            11,
+            1,
+            None,
+            30,
+            31,
+            json!({ "terminal": "interrupted", "outcome": null })
+        )]),
+        ["interrupted | model-a"]
+    );
+    assert_eq!(
+        alerts(vec![call(
+            11,
+            1,
+            None,
+            30,
+            31,
+            json!({ "status": 529, "outcome": null })
+        )]),
+        ["error 529 | model-a"]
+    );
 }
 
 #[test]
@@ -469,7 +544,15 @@ fn a_turn_reads_as_replies_and_merged_tool_runs() {
             tool.result.clone(),
             tool.count,
         )),
-        Line::Call { .. } | Line::Reply(_) => None,
+        Line::Call { .. } | Line::Prompt(_) | Line::Result(_) | Line::Reply(_) | Line::Waiting => {
+            None
+        }
+    };
+    let results = |line: &Line| match line {
+        Line::Result(tool) => Some((tool.name.clone(), tool.result.clone(), tool.count)),
+        Line::Call { .. } | Line::Prompt(_) | Line::Tools(_) | Line::Reply(_) | Line::Waiting => {
+            None
+        }
     };
     assert_eq!(pane.lines[0], Line::Call { index: Some(1) });
     assert_eq!(pane.lines[1], Line::Reply("Looking.".to_owned()));
@@ -492,10 +575,19 @@ fn a_turn_reads_as_replies_and_merged_tool_runs() {
             2
         ))
     );
+    // The next call carries their results back.
     assert_eq!(pane.lines[4], Line::Call { index: Some(2) });
+    assert_eq!(
+        results(&pane.lines[5]),
+        Some(("Read".to_owned(), ResultMark::AllSucceeded(2), 2))
+    );
+    assert_eq!(
+        results(&pane.lines[6]),
+        Some(("Bash".to_owned(), ResultMark::Failures(1), 2))
+    );
     // The result rides in the next request, which is still being derived.
     assert_eq!(
-        tools(&pane.lines[5]),
+        tools(&pane.lines[7]),
         Some((
             "Edit".to_owned(),
             Some("src/lib.rs".to_owned()),
@@ -503,7 +595,9 @@ fn a_turn_reads_as_replies_and_merged_tool_runs() {
             1
         ))
     );
-    assert_eq!(pane.lines.len(), 6);
+    // That request is open, with its response streaming.
+    assert_eq!(pane.lines[8], Line::Call { index: Some(3) });
+    assert_eq!(pane.lines.len(), 9);
     assert_eq!(pane.turn_calls, 3);
     assert_eq!(
         pane.tally,
@@ -570,7 +664,8 @@ fn progress_streams_into_the_pane_until_its_call_ends() {
     assert_eq!(tui.apply(Input::Progress(progress.clone())), []);
     let wall = tui.wall(at(100));
     let pane = pane(&wall, 0);
-    assert!(pane.lines.is_empty());
+    // No turn: only the open call's rule, then what it streamed.
+    assert_eq!(pane.lines, [Line::Call { index: None }]);
     assert_eq!(pane.harness, Some(Harness::OpenCode.into()));
     let streaming = pane.streaming.as_ref().unwrap();
     assert_eq!(
@@ -736,24 +831,27 @@ fn busy(size: Size) -> Tui {
         1,
         &["cd /w/app && cargo test"],
         vec![
-            activity_call(
-                11,
-                Some("I'll run the tests first, then look at the failure in the parser."),
-                vec![
-                    tool(
-                        "a",
-                        "Read",
-                        Some(("read_file", "/w/app/src/lib.rs")),
-                        Some("succeeded"),
-                    ),
-                    tool(
-                        "b",
-                        "Bash",
-                        Some(("run_command", "cd /w/app && cargo test")),
-                        Some("failed"),
-                    ),
-                ],
-                &[],
+            prompted(
+                "Why does the parser drop the last field?",
+                activity_call(
+                    11,
+                    Some("I'll run the tests first, then look at the failure in the parser."),
+                    vec![
+                        tool(
+                            "a",
+                            "Read",
+                            Some(("read_file", "/w/app/src/lib.rs")),
+                            Some("succeeded"),
+                        ),
+                        tool(
+                            "b",
+                            "Bash",
+                            Some(("run_command", "cd /w/app && cargo test")),
+                            Some("failed"),
+                        ),
+                    ],
+                    &[],
+                ),
             ),
             activity_call(12, None, vec![], &["not_yet_derived"]),
         ],
@@ -988,10 +1086,18 @@ fn title_bars_carry_the_state_in_color() {
     let area = Rect::new(0, 0, size.width, size.height);
     let mut buffer = Buffer::empty(area);
     busy(size).wall(at(300)).render(area, &mut buffer);
-    // Responding: green. Stopped on an error: red. A free pane: plain.
-    assert_eq!(buffer[(5, 0)].bg, Color::Indexed(22));
-    assert_eq!(buffer[(125, 0)].bg, Color::Indexed(52));
-    assert_eq!(buffer[(5, 10)].bg, Color::Indexed(236));
+    // Three sessions, three panes across. Responding: green. Stopped on
+    // an error: red. The body: the pane's ground.
+    assert_eq!(
+        busy(size).wall(at(300)).grid,
+        Grid {
+            columns: 3,
+            rows: 1
+        }
+    );
+    assert_eq!(buffer[(5, 0)].bg, Color::Rgb(0x7e, 0xe7, 0x87));
+    assert_eq!(buffer[(125, 0)].bg, Color::Rgb(0xff, 0x7b, 0x72));
+    assert_eq!(buffer[(5, 10)].bg, Color::Rgb(0x0e, 0x12, 0x17));
 }
 
 #[test]
@@ -1023,4 +1129,48 @@ fn a_failed_read_is_shown_until_a_snapshot_succeeds() {
         vec![],
     ));
     assert_eq!(tui.wall(at(302)).status.failure, None);
+}
+
+#[test]
+fn a_pane_shows_the_turn_before_the_newest_one() {
+    let mut tui = tui();
+    let sessions = vec![session(1, "claude_code_headers", 100)];
+    let calls = vec![
+        call(11, 1, Some(4), 10, 20, json!({})),
+        call(12, 1, Some(5), 60, 70, json!({})),
+    ];
+    assert_eq!(
+        tui.apply(snapshot(100, sessions, calls)),
+        [Read::Turn(turn_id(4)), Read::Turn(turn_id(5))]
+    );
+    let _ = tui.apply(turn(
+        4,
+        1,
+        &[],
+        vec![prompted(
+            "First ask.",
+            activity_call(11, Some("Done."), vec![], &[]),
+        )],
+    ));
+    let _ = tui.apply(turn(
+        5,
+        1,
+        &[],
+        vec![prompted(
+            "Next ask.",
+            activity_call(12, Some("Also done."), vec![], &[]),
+        )],
+    ));
+    let wall = tui.wall(at(100));
+    assert_eq!(
+        pane(&wall, 0).lines,
+        [
+            Line::Call { index: Some(1) },
+            Line::Prompt("First ask.".to_owned()),
+            Line::Reply("Done.".to_owned()),
+            Line::Call { index: Some(1) },
+            Line::Prompt("Next ask.".to_owned()),
+            Line::Reply("Also done.".to_owned()),
+        ]
+    );
 }

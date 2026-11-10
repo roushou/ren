@@ -238,12 +238,14 @@ dependencies under "Crates" below. Read the code for current module ownership.
   failed reads, shown until a snapshot succeeds) and key presses (`Tui::press`, with `Key` and the `Command`s keys give in
   `keys`), and answers with the reads it needs (`Read`);
   `Tui::snapshot_query` builds the snapshot's queries, and `Tui::wall` is
-  what to draw at a given time: panes (`grid`: a session keeps its pane
-  while it stays active; a pinned one stays even when quiet), a focused
-  pane or one zoomed session, the help, and a status line. Each pane reads
-  its session as the UI's Live wall does (`session`: the phase, the newest
-  turn's replies and merged tool runs, progress on a streaming call, the
-  tally, and alerts), and `call` reads how a call ended (`CallEnd`).
+  what to draw at a given time: panes (`grid`: sized to the active
+  sessions; a session keeps its pane while it stays active, and a pinned
+  one stays even when quiet), a focused pane or one zoomed session, the
+  help, and a status line. Each pane reads its session as a conversation
+  (`session`: the newest two turns call by call, with prompts, the results
+  each request carried back, replies, and merged tool runs; progress on a
+  streaming call; the phase, the newest call's measurements, and alerts on
+  the newest call), and `call` reads how a call ended (`CallEnd`).
   `draw` renders a `Wall` into a ratatui buffer, pinned as text in
   `tests/fixtures/wall-*.txt`; `Screen` (`screen`) is the only part that
   touches the terminal: raw mode and the alternate screen until dropped,
