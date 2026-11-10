@@ -1,5 +1,5 @@
 <div align="center">
-  
+
 <img src="docs/wordmark.svg" alt="TGV" height="60">
 
 <h3>Self-hosted gateway and flight recorder for coding agents</h3>
