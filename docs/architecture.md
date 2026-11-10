@@ -190,7 +190,7 @@ root, and dependencies run one way; Cargo rejects cycles.
 ren-cli      ─► ren-daemon, ren-gateway, ren-tui (with the `tui` feature)
 ren-daemon   ─► ren-gateway, ren-store, ren-supervisor
 ren-gateway  ─► ren-harness, ren-recorder, ren-store, ren-supervisor
-ren-tui      ─► ren-store, ren-recorder, ren-harness, ren-protocol
+ren-tui      ─► ren-supervisor, ren-store, ren-recorder, ren-harness, ren-protocol
 ren-supervisor ─► ren-recorder, ren-harness, ren-protocol
 ren-store    ─► ren-recorder
 ren-recorder ─► ren-harness, ren-protocol

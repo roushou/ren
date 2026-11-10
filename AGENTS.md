@@ -403,7 +403,7 @@ directly.
 | `ren-recorder`                             | `Recorder`, with its `RecordSink` port              | protocol, harness     |
 | `ren-store`                                | `Store`, which implements `RecordSink`              | recorder              |
 | `ren-supervisor`                           | `Supervisor`, with its `AgentHost` port             | recorder, harness     |
-| `ren-tui`                                  | `Tui`                                               | store                 |
+| `ren-tui`                                  | `Tui`                                               | supervisor, store     |
 | `ren-gateway`                              | `Gateway`                                           | supervisor, store     |
 | `ren-daemon`                               | `Daemon`                                            | gateway, store        |
 | `ren-cli` (package `ren-rs`, binary `ren`) | `Cli`                                               | daemon; tui (feature) |
