@@ -142,8 +142,9 @@ fn head() -> TurnHead {
     }
 }
 
-#[test]
-fn a_turn_joins_prompt_tool_calls_results_and_effects() {
+/// A Claude Code turn: a prompt, reads, a failed command, an edit, and a
+/// tool call left unanswered.
+fn worked_calls() -> Vec<ReadCall> {
     let first = ReadCall {
         view: view(1, HintSource::ClaudeCodeHeaders),
         request: RequestActivity {
@@ -195,14 +196,19 @@ fn a_turn_joins_prompt_tool_calls_results_and_effects() {
         },
         response: ResponseActivity::default(),
     };
+    vec![first, second, third]
+}
+
+#[test]
+fn a_turn_joins_prompt_tool_calls_results_and_effects() {
     let turn = assemble(
         head(),
-        vec![first, second, third],
+        worked_calls(),
         0,
         ActivityBudget::DEFAULT,
         &tgv_recorder::secrets::SecretScanner::new().unwrap(),
     );
-    assert_eq!(turn.client, Some(Harness::ClaudeCode));
+    assert_eq!(turn.client, Some(Harness::ClaudeCode.into()));
     assert_eq!(
         turn.prompt.as_ref().map(|prompt| prompt.text.as_str()),
         Some("Make the tests pass")
@@ -221,15 +227,15 @@ fn a_turn_joins_prompt_tool_calls_results_and_effects() {
     assert_eq!(calls[1].earlier_results, 0);
     assert!(calls[1].prompt.is_none());
     let bash = &calls[0].tool_calls[1];
-    assert_eq!(bash.effects[0].kind, EffectKind::RunCommand);
+    assert_eq!(bash.effects[0].kind, EffectKind::RunCommand.into());
     let failed = bash.result.as_ref().unwrap();
-    assert_eq!(failed.status, ResultStatus::Failed);
+    assert_eq!(failed.status, ResultStatus::Failed.into());
     assert_eq!(failed.output.text.chars().count(), 400);
     assert_eq!(failed.output.omitted_chars, 800);
     assert!(calls[1].tool_calls[1].result.is_none());
     assert_eq!(
         calls[1].limitations,
-        [ActivityLimitation::UnfinishedToolCall]
+        [ActivityLimitation::UnfinishedToolCall.into()]
     );
     assert_eq!(calls[0].reply.as_ref().unwrap().text, "Looking.");
     assert!(calls[1].reply.is_none());
@@ -458,37 +464,9 @@ mod report {
 
     #[test]
     fn turns_report_large_outputs_and_repeated_failures() {
-        let tools: Vec<_> = (0..3)
-            .map(|n| tool(&format!("t{n}"), "Bash", json!({ "command": "cargo test" })))
-            .chain([tool("big", "Read", json!({ "file_path": "big.log" }))])
-            .collect();
-        let first = ReadCall {
-            view: view(1, HintSource::ClaudeCodeHeaders),
-            request: RequestActivity::default(),
-            response: ResponseActivity {
-                tool_uses: tools,
-                reply: String::new(),
-                limitations: Vec::new(),
-            },
-        };
-        let second = ReadCall {
-            view: view(2, HintSource::ClaudeCodeHeaders),
-            request: RequestActivity {
-                max_output_tokens: None,
-                user_text: Vec::new(),
-                tool_results: vec![
-                    result("t0", ResultStatus::Failed, "boom"),
-                    result("t1", ResultStatus::Failed, "boom"),
-                    result("t2", ResultStatus::Failed, "boom"),
-                    result("big", ResultStatus::Succeeded, &"x".repeat(25_000)),
-                ],
-                limitations: Vec::new(),
-            },
-            response: ResponseActivity::default(),
-        };
         let turn = assemble(
             head(),
-            vec![first, second],
+            super::failing_calls(),
             0,
             ActivityBudget::DEFAULT,
             &tgv_recorder::secrets::SecretScanner::new().unwrap(),
@@ -559,4 +537,52 @@ fn secrets_a_turn_carried_are_findings_without_the_secret() {
         })
         .collect();
     assert_eq!(fields, ["prompt", "tool_output"]);
+}
+
+/// A turn whose command fails three times and whose read returns a large
+/// output.
+fn failing_calls() -> Vec<ReadCall> {
+    let tools: Vec<_> = (0..3)
+        .map(|n| tool(&format!("t{n}"), "Bash", json!({ "command": "cargo test" })))
+        .chain([tool("big", "Read", json!({ "file_path": "big.log" }))])
+        .collect();
+    let first = ReadCall {
+        view: view(1, HintSource::ClaudeCodeHeaders),
+        request: RequestActivity::default(),
+        response: ResponseActivity {
+            tool_uses: tools,
+            reply: String::new(),
+            limitations: Vec::new(),
+        },
+    };
+    let second = ReadCall {
+        view: view(2, HintSource::ClaudeCodeHeaders),
+        request: RequestActivity {
+            max_output_tokens: None,
+            user_text: Vec::new(),
+            tool_results: vec![
+                result("t0", ResultStatus::Failed, "boom"),
+                result("t1", ResultStatus::Failed, "boom"),
+                result("t2", ResultStatus::Failed, "boom"),
+                result("big", ResultStatus::Succeeded, &"x".repeat(25_000)),
+            ],
+            limitations: Vec::new(),
+        },
+        response: ResponseActivity::default(),
+    };
+    vec![first, second]
+}
+
+/// The turn view's JSON is what the read API returns: pinned, so a change
+/// to the view's types cannot change it unnoticed.
+#[test]
+fn turn_views_keep_their_json() {
+    let scanner = SecretScanner::new().unwrap();
+    let turns = [worked_calls(), failing_calls()]
+        .map(|calls| assemble(head(), calls, 0, ActivityBudget::DEFAULT, &scanner));
+    let json = serde_json::to_string_pretty(&turns).unwrap();
+    assert_eq!(
+        json.trim_end(),
+        include_str!("../../tests/fixtures/turn-activity.json").trim_end()
+    );
 }

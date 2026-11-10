@@ -1,0 +1,351 @@
+[
+  {
+    "turn": "00000000-0000-0000-0000-000000000007",
+    "session": "00000000-0000-0000-0000-000000000008",
+    "native_id": "prompt-1",
+    "client": "claude_code",
+    "started_at": 1000,
+    "ended_at": 3500,
+    "prompt": {
+      "text": "Make the tests pass",
+      "omitted_chars": 0
+    },
+    "files_read": [
+      "src/lib.rs"
+    ],
+    "files_written": [
+      "src/lib.rs"
+    ],
+    "commands": [
+      "cargo test"
+    ],
+    "tool_calls": 4,
+    "failed_tool_calls": 1,
+    "unanswered_tool_calls": 1,
+    "findings": [],
+    "calls": [
+      {
+        "call": "00000000-0000-0000-0000-000000000001",
+        "started_at": 1000,
+        "ended_at": 1500,
+        "model": "model",
+        "status": 200,
+        "outcome": null,
+        "metrics": {
+          "context_tokens": null,
+          "cache_read_tokens": null,
+          "cache_written_tokens": null,
+          "output_tokens": null,
+          "request_bytes": null,
+          "duration_ms": 500
+        },
+        "prompt": {
+          "text": "Make the tests pass",
+          "omitted_chars": 0
+        },
+        "tool_calls": [
+          {
+            "id": "a",
+            "name": "Read",
+            "effects": [
+              {
+                "kind": "read_file",
+                "target": "src/lib.rs"
+              }
+            ],
+            "input": {
+              "text": "{\"file_path\":\"src/lib.rs\"}",
+              "omitted_chars": 0
+            },
+            "result": {
+              "status": "succeeded",
+              "output": {
+                "text": "fn main() {}",
+                "omitted_chars": 0
+              }
+            }
+          },
+          {
+            "id": "b",
+            "name": "Bash",
+            "effects": [
+              {
+                "kind": "run_command",
+                "target": "cargo test"
+              }
+            ],
+            "input": {
+              "text": "{\"command\":\"cargo test\"}",
+              "omitted_chars": 0
+            },
+            "result": {
+              "status": "failed",
+              "output": {
+                "text": "error error error error error error error error error error error error error error error error error error error error error error error error error error error error error error error error error error error error error error error error error error error error error error error error error error error error error error error error error error error error error error error error error error erro",
+                "omitted_chars": 800
+              }
+            }
+          }
+        ],
+        "earlier_results": 1,
+        "reply": {
+          "text": "Looking.",
+          "omitted_chars": 0
+        },
+        "limitations": []
+      },
+      {
+        "call": "00000000-0000-0000-0000-000000000002",
+        "started_at": 2000,
+        "ended_at": 2500,
+        "model": "model",
+        "status": 200,
+        "outcome": null,
+        "metrics": {
+          "context_tokens": null,
+          "cache_read_tokens": null,
+          "cache_written_tokens": null,
+          "output_tokens": null,
+          "request_bytes": null,
+          "duration_ms": 500
+        },
+        "prompt": null,
+        "tool_calls": [
+          {
+            "id": "c",
+            "name": "Edit",
+            "effects": [
+              {
+                "kind": "write_file",
+                "target": "src/lib.rs"
+              }
+            ],
+            "input": {
+              "text": "{\"file_path\":\"src/lib.rs\"}",
+              "omitted_chars": 0
+            },
+            "result": {
+              "status": "succeeded",
+              "output": {
+                "text": "ok",
+                "omitted_chars": 0
+              }
+            }
+          },
+          {
+            "id": "d",
+            "name": "Read",
+            "effects": [
+              {
+                "kind": "read_file",
+                "target": "src/lib.rs"
+              }
+            ],
+            "input": {
+              "text": "{\"file_path\":\"src/lib.rs\"}",
+              "omitted_chars": 0
+            },
+            "result": null
+          }
+        ],
+        "earlier_results": 0,
+        "reply": null,
+        "limitations": [
+          "unfinished_tool_call"
+        ]
+      },
+      {
+        "call": "00000000-0000-0000-0000-000000000003",
+        "started_at": 3000,
+        "ended_at": 3500,
+        "model": "model",
+        "status": 200,
+        "outcome": null,
+        "metrics": {
+          "context_tokens": null,
+          "cache_read_tokens": null,
+          "cache_written_tokens": null,
+          "output_tokens": null,
+          "request_bytes": null,
+          "duration_ms": 500
+        },
+        "prompt": null,
+        "tool_calls": [],
+        "earlier_results": 0,
+        "reply": null,
+        "limitations": []
+      }
+    ],
+    "omitted_calls": 0
+  },
+  {
+    "turn": "00000000-0000-0000-0000-000000000007",
+    "session": "00000000-0000-0000-0000-000000000008",
+    "native_id": "prompt-1",
+    "client": "claude_code",
+    "started_at": 1000,
+    "ended_at": 2500,
+    "prompt": null,
+    "files_read": [
+      "big.log"
+    ],
+    "files_written": [],
+    "commands": [
+      "cargo test"
+    ],
+    "tool_calls": 4,
+    "failed_tool_calls": 3,
+    "unanswered_tool_calls": 0,
+    "findings": [
+      {
+        "kind": "large_tool_output",
+        "call": "00000000-0000-0000-0000-000000000001",
+        "tool": "Read",
+        "tool_call_id": "big",
+        "target": "big.log",
+        "output_chars": 25000
+      },
+      {
+        "kind": "repeated_failure",
+        "tool": "Bash",
+        "target": "cargo test",
+        "failures": 3,
+        "calls": [
+          "00000000-0000-0000-0000-000000000001",
+          "00000000-0000-0000-0000-000000000001",
+          "00000000-0000-0000-0000-000000000001"
+        ]
+      }
+    ],
+    "calls": [
+      {
+        "call": "00000000-0000-0000-0000-000000000001",
+        "started_at": 1000,
+        "ended_at": 1500,
+        "model": "model",
+        "status": 200,
+        "outcome": null,
+        "metrics": {
+          "context_tokens": null,
+          "cache_read_tokens": null,
+          "cache_written_tokens": null,
+          "output_tokens": null,
+          "request_bytes": null,
+          "duration_ms": 500
+        },
+        "prompt": null,
+        "tool_calls": [
+          {
+            "id": "t0",
+            "name": "Bash",
+            "effects": [
+              {
+                "kind": "run_command",
+                "target": "cargo test"
+              }
+            ],
+            "input": {
+              "text": "{\"command\":\"cargo test\"}",
+              "omitted_chars": 0
+            },
+            "result": {
+              "status": "failed",
+              "output": {
+                "text": "boom",
+                "omitted_chars": 0
+              }
+            }
+          },
+          {
+            "id": "t1",
+            "name": "Bash",
+            "effects": [
+              {
+                "kind": "run_command",
+                "target": "cargo test"
+              }
+            ],
+            "input": {
+              "text": "{\"command\":\"cargo test\"}",
+              "omitted_chars": 0
+            },
+            "result": {
+              "status": "failed",
+              "output": {
+                "text": "boom",
+                "omitted_chars": 0
+              }
+            }
+          },
+          {
+            "id": "t2",
+            "name": "Bash",
+            "effects": [
+              {
+                "kind": "run_command",
+                "target": "cargo test"
+              }
+            ],
+            "input": {
+              "text": "{\"command\":\"cargo test\"}",
+              "omitted_chars": 0
+            },
+            "result": {
+              "status": "failed",
+              "output": {
+                "text": "boom",
+                "omitted_chars": 0
+              }
+            }
+          },
+          {
+            "id": "big",
+            "name": "Read",
+            "effects": [
+              {
+                "kind": "read_file",
+                "target": "big.log"
+              }
+            ],
+            "input": {
+              "text": "{\"file_path\":\"big.log\"}",
+              "omitted_chars": 0
+            },
+            "result": {
+              "status": "succeeded",
+              "output": {
+                "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+                "omitted_chars": 24600
+              }
+            }
+          }
+        ],
+        "earlier_results": 0,
+        "reply": null,
+        "limitations": []
+      },
+      {
+        "call": "00000000-0000-0000-0000-000000000002",
+        "started_at": 2000,
+        "ended_at": 2500,
+        "model": "model",
+        "status": 200,
+        "outcome": null,
+        "metrics": {
+          "context_tokens": null,
+          "cache_read_tokens": null,
+          "cache_written_tokens": null,
+          "output_tokens": null,
+          "request_bytes": null,
+          "duration_ms": 500
+        },
+        "prompt": null,
+        "tool_calls": [],
+        "earlier_results": 0,
+        "reply": null,
+        "limitations": []
+      }
+    ],
+    "omitted_calls": 0
+  }
+]
