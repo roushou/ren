@@ -248,6 +248,9 @@ pub enum ChannelEnd {
 pub enum RunEnd {
     /// The process could not be started; the agent never ran.
     SpawnFailed,
+    /// The process started, but the client refused to open the
+    /// conversation, so Ren stopped it.
+    OpenRefused,
     /// The process exited without Ren asking it to.
     Exited,
     /// The operator stopped the run, and the process then ended.

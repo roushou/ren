@@ -2166,6 +2166,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "ren-supervisor"
+version = "0.1.0"
+dependencies = [
+ "futures-util",
+ "ren-harness",
+ "ren-protocol",
+ "ren-recorder",
+ "serde_json",
+ "thiserror",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "ren-tui"
 version = "0.1.0"
 dependencies = [
