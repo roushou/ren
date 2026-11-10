@@ -188,7 +188,7 @@ dependencies under "Crates" below. Read the code for current module ownership.
 - `crates/ren-harness`: the harnesses, with `Harness` (`ClaudeCode`, `Codex`, `Pi`, `OpenCode`)
   as its primary type: attribution (`attribution`, with its private `headers`
   parser implementing `Harness::attribution`), session launch plans
-  (`Harness::launch`), the bundled Pi extension cache (`pi`), the gateway URL a
+  (`Harness::launch`, and `Harness::drive` for Codex's structured mode), the bundled Pi extension cache (`pi`), the gateway URL a
   harness is pointed at and the `UserToken` it presents there (`endpoint`),
   `HostEnv` (`host`), the host environment
   that launching and configuration read, and what each harness's tools and

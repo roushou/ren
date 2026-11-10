@@ -22,6 +22,11 @@ pub enum LaunchError {
     Spawn(#[source] std::io::Error),
 }
 
+/// A harness Ren cannot drive through a structured mode yet.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[error("{0} cannot be driven by Ren yet")]
+pub struct NotDrivable(pub Harness);
+
 /// One launcher argument. The Pi extension path is resolved only when the
 /// client is actually executed; dry runs show a placeholder instead.
 #[derive(Clone)]
@@ -175,6 +180,26 @@ impl Harness {
     /// The environment variable opencode reads inline configuration from.
     const OPENCODE_CONFIG: &'static str = "OPENCODE_CONFIG_CONTENT";
 
+    /// How to start this harness in its structured mode, driven by Ren
+    /// through `drive`, with its model traffic sent to `gateway`. The client
+    /// keeps its own sign-in. Only Codex can be driven so far.
+    pub fn drive(self, gateway: &GatewayEndpoint) -> Result<LaunchPlan, NotDrivable> {
+        match self {
+            Self::Codex => {
+                let mut arguments: Vec<LaunchArg> =
+                    vec!["app-server".into(), "--listen".into(), "stdio://".into()];
+                arguments.extend(Self::codex_provider(gateway));
+                Ok(LaunchPlan {
+                    harness: self,
+                    executable: "codex",
+                    arguments,
+                    environment: BTreeMap::new(),
+                })
+            }
+            Self::ClaudeCode | Self::Pi | Self::OpenCode => Err(NotDrivable(self)),
+        }
+    }
+
     /// Whether a launched session can send a user token. opencode's header
     /// configuration is not yet confirmed, so it sends none.
     pub fn sends_user_token(self) -> bool {
@@ -286,6 +311,29 @@ impl LaunchPlan {
 mod tests {
     use super::{GatewayEndpoint, Harness, HostEnv, LaunchArg, OsString, Path, PiCache};
     use crate::endpoint::UserToken;
+
+    #[test]
+    fn drives_codex_app_server_over_stdio_through_the_gateway() {
+        let gateway = GatewayEndpoint::parse("http://127.0.0.1:8787").unwrap();
+        let driven = Harness::Codex.drive(&gateway).unwrap();
+        let launched = Harness::Codex.launch(&gateway);
+        let command = driven.command(None, &[]);
+        assert_eq!(command.get_program(), "codex");
+        let arguments: Vec<_> = command.get_args().collect();
+        assert_eq!(arguments[..3], ["app-server", "--listen", "stdio://"]);
+        // The same provider overrides as an interactive session.
+        let interactive = launched.command(None, &[]);
+        let overrides: Vec<_> = interactive.get_args().skip(1).collect();
+        assert_eq!(arguments[3..], overrides[..]);
+        assert_eq!(command.get_envs().count(), 0);
+        for harness in [Harness::ClaudeCode, Harness::Pi, Harness::OpenCode] {
+            assert_eq!(
+                harness.drive(&gateway).err(),
+                Some(super::NotDrivable(harness))
+            );
+        }
+    }
+
     #[test]
     fn keeps_arguments_literal_and_auth_out_of_overrides() {
         let gateway = GatewayEndpoint::parse("http://[::1]:8787").unwrap();
