@@ -71,6 +71,10 @@ These describe what Ren must do. They hold through every refactor.
 - Never spoof client identity. OAuth availability does not prove that every client is
   entitled to a subscription. Check current official provider documentation before
   changing authentication or gateway behavior.
+- Ren starts and drives only the official client programs, under the sign-in the
+  operator gave each one. It never signs in for a client, never reads or copies a
+  client's stored credentials, and never imitates a client (its user agent, system
+  prompt, tool names, or originator) to use a subscription.
 - Listeners default to loopback. Remote access and management controls are explicit,
   with Tailscale as the preferred private path.
 
