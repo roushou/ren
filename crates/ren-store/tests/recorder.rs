@@ -727,6 +727,32 @@ async fn a_runs_lifecycle_is_recorded_and_read_back() {
         .unwrap();
     let thread = ren_protocol::native::NativeThreadId::new(uuid::Uuid::from_u128(7)).unwrap();
     tap.opened(thread);
+    // The run's model traffic: Codex names its thread as the session.
+    let call = harness.recorder.start(
+        CallStart {
+            transport: Transport::Http,
+            api: Provider::Codex.native_api(),
+            endpoint: Endpoint::Responses,
+            method: Method::Post,
+            config_revision: ConfigRevision::new("rev"),
+            attribution: Attribution {
+                hint: Some(ren_harness::attribution::SessionHint {
+                    source: ren_harness::attribution::HintSource::CodexHeaders,
+                    session: ren_protocol::native::NativeSessionId::new(thread.as_uuid()).unwrap(),
+                    turn: None,
+                    thread: Some(thread),
+                }),
+                issues: Vec::new(),
+            },
+            caller: ren_recorder::caller::Caller::Unidentified,
+            operator_revision: None,
+            plan: None,
+            attempts: 1,
+        },
+        AttemptStart::unchanged(UpstreamId::default_for(Provider::Codex), Provider::Codex),
+    );
+    let call_id = call.call();
+    drop(call);
     tap.end(RunEnd::Stopped, Some(ProcessExit::Signal(9)));
     let unfinished = RunId::generate(&ids);
     let left = harness
@@ -745,6 +771,9 @@ async fn a_runs_lifecycle_is_recorded_and_read_back() {
     assert_eq!(ended.harness, Stored::Known(ren_harness::Harness::Codex));
     assert_eq!(ended.workdir, "/work/acme");
     assert_eq!(ended.thread, Some(thread.to_string()));
+    let session = reader.call(call_id).await.unwrap().call.session;
+    assert!(session.is_some());
+    assert_eq!(ended.session, session, "the run's session is its thread's");
     assert_eq!(ended.end, Some(Stored::Known(RunEnd::Stopped)));
     assert_eq!(ended.exit, Some(ProcessExit::Signal(9)));
     let open = reader.run(unfinished).await.unwrap().unwrap();
@@ -754,6 +783,7 @@ async fn a_runs_lifecycle_is_recorded_and_read_back() {
         .await
         .unwrap()
         .into_iter()
+        .filter(|observation| observation.call.is_none())
         .map(|observation| observation.kind)
         .collect();
     assert_eq!(

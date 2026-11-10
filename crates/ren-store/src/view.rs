@@ -567,6 +567,9 @@ pub struct RunView {
     pub started_at: UnixMillis,
     /// The client's own conversation id, once it opened one.
     pub thread: Option<String>,
+    /// The session whose calls name the run's thread as their session: the
+    /// run's model traffic, once a call was recorded.
+    pub session: Option<SessionId>,
     pub ended_at: Option<UnixMillis>,
     /// How the run ended; `None` while it runs.
     pub end: Option<Stored<RunEnd>>,
@@ -575,7 +578,7 @@ pub struct RunView {
 }
 
 impl RunView {
-    pub(super) const SELECT: &'static str = "SELECT id, harness, workdir, started_at, thread, ended_at, run_end, exit_kind, exit_value FROM runs";
+    pub(super) const SELECT: &'static str = "SELECT id, harness, workdir, started_at, thread, ended_at, run_end, exit_kind, exit_value, (SELECT sessions.id FROM sessions WHERE sessions.native_id = runs.thread ORDER BY sessions.first_seen, sessions.id LIMIT 1) AS session FROM runs";
 
     pub(super) fn from_row(row: &SqliteRow) -> Result<Self, StoreError> {
         let row = Columns(row);
@@ -593,6 +596,7 @@ impl RunView {
             workdir: row.text("workdir")?.ok_or(StoreError::Corrupt("run"))?,
             started_at: row.time("started_at")?,
             thread: row.text("thread")?,
+            session: row.optional_id("session")?,
             ended_at: row.optional_time("ended_at")?,
             end: row.optional_label("run_end")?,
             exit,

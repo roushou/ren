@@ -617,7 +617,8 @@ these as findings.
 **Query tables.** `channels`, `calls`, `attempts`, `sessions`, `turns`,
 `operator_actions` (the newest 10,000), the `operator_state` snapshot, `runs`
 (each agent run's harness, folder, the client's thread once opened, and its end
-and exit; a run whose end was never recorded is marked recovered at startup),
+and exit; a run's session is the session its client named with that thread, as
+Codex sends its thread id as its session id; a run whose end was never recorded is marked recovered at startup),
 and the search columns. Derived from each finished call: `call_digests` (version, purpose,
 prompt, and the digest as JSON), `call_exposures`, and `search_texts` with its FTS5 index
 `search` (external content, kept in step by triggers). They reference `calls`

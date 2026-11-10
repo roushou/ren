@@ -17,3 +17,7 @@ CREATE TABLE runs (
     exit_value INTEGER
 );
 CREATE INDEX runs_started ON runs(started_at DESC, id DESC);
+
+-- A run's session is the session its client named with the run's thread id
+-- (Codex sends its thread id as its session id).
+CREATE INDEX sessions_native ON sessions(native_id, first_seen, id);
