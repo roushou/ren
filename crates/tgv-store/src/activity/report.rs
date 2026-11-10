@@ -9,7 +9,7 @@
 
 use crate::search::{ExposureView, SearchField};
 use crate::view::CallView;
-use serde::{Serialize, Serializer};
+use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error as _};
 use serde_with::{DeserializeFromStr, SerializeDisplay};
 use strum::{Display, EnumString, IntoStaticStr, VariantArray};
 use tgv_protocol::inspect::InputAccounting;
@@ -21,7 +21,7 @@ use tgv_recorder::{
 };
 
 /// One call's numbers.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CallMetrics {
     /// The prompt the model saw, in tokens: new input plus what was read
     /// from and written to the cache.
@@ -79,7 +79,7 @@ pub enum FindingKind {
 
 /// A call read less than half of the earlier peak context from the cache
 /// and wrote at least half of it, and at least [`FindingKind::REBUILD_TOKENS`].
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CacheRebuild {
     pub call: CallId,
     pub turn: Option<TurnId>,
@@ -93,7 +93,7 @@ pub struct CacheRebuild {
 
 /// A call's context passed the session's earlier peak by at least
 /// [`FindingKind::GROWTH_TOKENS`].
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ContextGrowth {
     pub call: CallId,
     pub turn: Option<TurnId>,
@@ -102,7 +102,7 @@ pub struct ContextGrowth {
 }
 
 /// A tool result of at least [`FindingKind::LARGE_OUTPUT_CHARS`].
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LargeToolOutput {
     /// The call whose response requested the tool.
     pub call: CallId,
@@ -115,7 +115,7 @@ pub struct LargeToolOutput {
 
 /// At least [`FindingKind::REPEATED_FAILURES`] reported failures of one tool on
 /// one target in a turn.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RepeatedFailure {
     pub tool: String,
     pub target: Option<String>,
@@ -127,7 +127,7 @@ pub struct RepeatedFailure {
 /// A credential a call carried: in the user's input, a tool's input or
 /// output (all sent to the provider), or the model's reply. Never the
 /// secret itself: its format, a masked hint, and a fingerprint.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SecretExposure {
     pub call: CallId,
     pub turn: Option<TurnId>,
@@ -146,6 +146,28 @@ pub enum Finding {
     LargeToolOutput(LargeToolOutput),
     RepeatedFailure(RepeatedFailure),
     SecretExposure(SecretExposure),
+    /// A finding of a kind this binary does not know, read from a newer
+    /// one: kept as read.
+    Unknown(RawFinding),
+}
+
+/// A finding of an unknown kind: its label and the rest of its fields,
+/// verbatim. Only reading one makes it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RawFinding {
+    kind: Stored<FindingKind>,
+    detail: serde_json::Map<String, serde_json::Value>,
+}
+
+impl RawFinding {
+    pub fn kind(&self) -> &Stored<FindingKind> {
+        &self.kind
+    }
+
+    /// Its fields other than `kind`.
+    pub fn detail(&self) -> &serde_json::Map<String, serde_json::Value> {
+        &self.detail
+    }
 }
 
 impl FindingKind {
@@ -165,34 +187,67 @@ impl FindingKind {
 }
 
 impl Finding {
-    pub fn kind(&self) -> FindingKind {
+    pub fn kind(&self) -> Stored<FindingKind> {
         match self {
-            Self::CacheRebuild(_) => FindingKind::CacheRebuild,
-            Self::ContextGrowth(_) => FindingKind::ContextGrowth,
-            Self::LargeToolOutput(_) => FindingKind::LargeToolOutput,
-            Self::RepeatedFailure(_) => FindingKind::RepeatedFailure,
-            Self::SecretExposure(_) => FindingKind::SecretExposure,
+            Self::CacheRebuild(_) => FindingKind::CacheRebuild.into(),
+            Self::ContextGrowth(_) => FindingKind::ContextGrowth.into(),
+            Self::LargeToolOutput(_) => FindingKind::LargeToolOutput.into(),
+            Self::RepeatedFailure(_) => FindingKind::RepeatedFailure.into(),
+            Self::SecretExposure(_) => FindingKind::SecretExposure.into(),
+            Self::Unknown(raw) => raw.kind.clone(),
         }
     }
 }
 
 #[derive(Serialize)]
 struct Tagged<'a, T> {
-    kind: FindingKind,
+    kind: &'a Stored<FindingKind>,
     #[serde(flatten)]
     detail: &'a T,
 }
 
 impl Serialize for Finding {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        let kind = self.kind();
+        let kind = &self.kind();
         match self {
             Self::CacheRebuild(detail) => Tagged { kind, detail }.serialize(serializer),
             Self::ContextGrowth(detail) => Tagged { kind, detail }.serialize(serializer),
             Self::LargeToolOutput(detail) => Tagged { kind, detail }.serialize(serializer),
             Self::RepeatedFailure(detail) => Tagged { kind, detail }.serialize(serializer),
             Self::SecretExposure(detail) => Tagged { kind, detail }.serialize(serializer),
+            Self::Unknown(raw) => Tagged {
+                kind,
+                detail: &raw.detail,
+            }
+            .serialize(serializer),
         }
+    }
+}
+
+impl<'de> Deserialize<'de> for Finding {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let mut detail = serde_json::Map::deserialize(deserializer)?;
+        let kind = match detail.remove("kind") {
+            Some(serde_json::Value::String(label)) => Stored::<FindingKind>::from_label(&label),
+            Some(_) | None => return Err(D::Error::missing_field("kind")),
+        };
+        let known = match kind {
+            Stored::Known(known) => known,
+            Stored::Unknown(_) => return Ok(Self::Unknown(RawFinding { kind, detail })),
+        };
+        let fields = serde_json::Value::Object(detail);
+        let finding = match known {
+            FindingKind::CacheRebuild => serde_json::from_value(fields).map(Self::CacheRebuild),
+            FindingKind::ContextGrowth => serde_json::from_value(fields).map(Self::ContextGrowth),
+            FindingKind::LargeToolOutput => {
+                serde_json::from_value(fields).map(Self::LargeToolOutput)
+            }
+            FindingKind::RepeatedFailure => {
+                serde_json::from_value(fields).map(Self::RepeatedFailure)
+            }
+            FindingKind::SecretExposure => serde_json::from_value(fields).map(Self::SecretExposure),
+        };
+        finding.map_err(D::Error::custom)
     }
 }
 

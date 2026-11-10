@@ -391,12 +391,16 @@ mod report {
         assert_eq!(report.totals.calls, 8);
         assert_eq!(report.totals.calls_with_usage, 7);
         assert_eq!(report.totals.peak_context_tokens, 83_002);
-        let kinds: Vec<_> = report.findings.iter().map(Finding::kind).collect();
+        let kinds: Vec<_> = report
+            .findings
+            .iter()
+            .map(|finding| finding.kind().known())
+            .collect();
         assert_eq!(
             kinds,
             [
-                report::FindingKind::ContextGrowth,
-                report::FindingKind::CacheRebuild
+                Some(report::FindingKind::ContextGrowth),
+                Some(report::FindingKind::CacheRebuild)
             ]
         );
         let Finding::ContextGrowth(growth) = &report.findings[0] else {
@@ -533,7 +537,8 @@ fn secrets_a_turn_carried_are_findings_without_the_secret() {
             other @ (Finding::CacheRebuild(_)
             | Finding::ContextGrowth(_)
             | Finding::LargeToolOutput(_)
-            | Finding::RepeatedFailure(_)) => panic!("{other:?}"),
+            | Finding::RepeatedFailure(_)
+            | Finding::Unknown(_)) => panic!("{other:?}"),
         })
         .collect();
     assert_eq!(fields, ["prompt", "tool_output"]);
@@ -585,4 +590,44 @@ fn turn_views_keep_their_json() {
         json.trim_end(),
         include_str!("../../tests/fixtures/turn-activity.json").trim_end()
     );
+}
+
+/// What the read API sends for a turn reads back into the same view.
+#[test]
+fn turn_views_read_back_as_sent() {
+    let sent = include_str!("../../tests/fixtures/turn-activity.json");
+    let turns: Vec<TurnActivity> = serde_json::from_str(sent).unwrap();
+    let scanner = SecretScanner::new().unwrap();
+    let assembled = [worked_calls(), failing_calls()]
+        .map(|calls| assemble(head(), calls, 0, ActivityBudget::DEFAULT, &scanner));
+    assert_eq!(turns, assembled);
+}
+
+/// Labels a newer daemon sends, and findings of a kind this binary does
+/// not know, are kept as sent rather than failing the read.
+#[test]
+fn turn_views_keep_labels_they_do_not_know() {
+    let mut sent: Vec<serde_json::Value> =
+        serde_json::from_str(include_str!("../../tests/fixtures/turn-activity.json")).unwrap();
+    let turn = &mut sent[0];
+    turn["client"] = json!("a_newer_client");
+    turn["findings"] = json!([{ "kind": "a_newer_finding", "call": "c", "size": 3 }]);
+    let call = &mut turn["calls"][0];
+    call["limitations"] = json!(["a_newer_limitation"]);
+    call["tool_calls"][0]["effects"][0]["kind"] = json!("a_newer_effect");
+    call["tool_calls"][0]["result"]["status"] = json!("a_newer_status");
+
+    let turns: Vec<TurnActivity> = serde_json::from_value(serde_json::json!(sent)).unwrap();
+    let turn = &turns[0];
+    assert_eq!(turn.client.as_ref().unwrap().label(), "a_newer_client");
+    let Finding::Unknown(finding) = &turn.findings[0] else {
+        panic!("{:?}", turn.findings[0]);
+    };
+    assert_eq!(finding.kind().label(), "a_newer_finding");
+    assert_eq!(finding.detail()["size"], json!(3));
+    let tool = &turn.calls[0].tool_calls[0];
+    assert_eq!(tool.effects[0].kind.known(), None);
+    assert_eq!(tool.result.as_ref().unwrap().status.known(), None);
+    assert_eq!(turn.calls[0].limitations[0].known(), None);
+    assert_eq!(serde_json::to_value(&turns).unwrap(), json!(sent));
 }

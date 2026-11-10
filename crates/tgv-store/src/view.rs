@@ -110,7 +110,7 @@ impl Columns<'_> {
 }
 
 /// A body's capture accounting.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BodyView {
     /// Bytes the relay saw; unknown until the body's end is recorded.
     pub observed_bytes: Option<u64>,
@@ -158,7 +158,7 @@ pub struct SessionHintView {
 }
 
 /// Who made a call, as recorded.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CallerView {
     pub kind: Stored<CallerKind>,
     /// The named user it proved to be.
@@ -181,7 +181,7 @@ impl CallerView {
 }
 
 /// One call, as listed.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CallView {
     pub id: CallId,
     pub channel: ChannelId,
@@ -400,7 +400,7 @@ impl MessageView {
 }
 
 /// One page of calls.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CallPage {
     pub calls: Vec<CallView>,
     /// Pass as `after` for the next page; absent on the last page.
@@ -408,7 +408,7 @@ pub struct CallPage {
 }
 
 /// A group of calls a client attributed to one session.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SessionView {
     pub id: SessionId,
     pub provider: Stored<Provider>,
@@ -430,7 +430,7 @@ pub struct SessionView {
 /// provider accounts it, because cached context is most of a coding agent's
 /// input; `cache_read` is the part of it read from the provider's cache.
 /// Token counts are not subscription allowance or charges.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TokenTotals {
     pub input: Option<u64>,
     pub output: Option<u64>,
@@ -623,4 +623,90 @@ pub struct StorageView {
     pub unique_bytes: u64,
     /// Bytes the chunks occupy after compression.
     pub compressed_bytes: u64,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{CallPage, SessionView};
+    use serde_json::{Value, json};
+
+    /// What the read API sends for a call listing, every optional field
+    /// present, and some labels this binary does not know.
+    fn call_page() -> Value {
+        json!({
+            "calls": [{
+                "id": "00000000-0000-0000-0000-000000000001",
+                "channel": "00000000-0000-0000-0000-000000000002",
+                "started_at": 1000,
+                "ended_at": 1500,
+                "provider": "anthropic",
+                "wire": "a_newer_wire",
+                "endpoint": "messages",
+                "method": "post",
+                "config_revision": "r1",
+                "session": "00000000-0000-0000-0000-000000000003",
+                "turn": "00000000-0000-0000-0000-000000000004",
+                "attribution": {
+                    "hint": {
+                        "source": "claude_code_headers",
+                        "session": "s",
+                        "turn": "t",
+                        "thread": null
+                    },
+                    "issues": []
+                },
+                "caller": { "kind": "user_token", "user": "acme", "login": null },
+                "state": "a_newer_state",
+                "terminal": "completed",
+                "status": 200,
+                "model": "model",
+                "outcome": "completed",
+                "stop_reason": "end_turn",
+                "tool_names": ["Read"],
+                "usage": {
+                    "accounting": "excludes_cache",
+                    "input_tokens": 10,
+                    "output_tokens": 20,
+                    "cache_read_tokens": 30,
+                    "cache_creation_tokens": 40,
+                    "reasoning_tokens": null
+                },
+                "capture_complete": true,
+                "request": { "observed_bytes": 100, "stored_bytes": 100, "ending": "ended" },
+                "response": { "observed_bytes": null, "stored_bytes": 0, "ending": "open" },
+                "rejection": null,
+                "operator_revision": 3,
+                "plan": { "candidates": ["a"] },
+                "purpose": "work"
+            }],
+            "next": "1000:00000000-0000-0000-0000-000000000001"
+        })
+    }
+
+    #[test]
+    fn a_call_page_reads_back_as_sent() {
+        let page: CallPage = serde_json::from_value(call_page()).unwrap();
+        assert_eq!(page.calls[0].wire.as_ref().unwrap().known(), None);
+        assert_eq!(page.next, Some(page.calls[0].cursor()));
+        assert_eq!(serde_json::to_value(&page).unwrap(), call_page());
+    }
+
+    #[test]
+    fn a_session_reads_back_as_sent() {
+        let sent = json!({
+            "id": "00000000-0000-0000-0000-000000000003",
+            "provider": "openai",
+            "source": "a_newer_source",
+            "native_id": "native",
+            "first_seen": 1000,
+            "last_seen": 2000,
+            "call_count": 4,
+            "turn_count": 2,
+            "error_count": 1,
+            "tokens": { "input": 10, "output": null, "cache_read": 5 }
+        });
+        let session: SessionView = serde_json::from_value(sent.clone()).unwrap();
+        assert_eq!(session.source.known(), None);
+        assert_eq!(serde_json::to_value(&session).unwrap(), sent);
+    }
 }

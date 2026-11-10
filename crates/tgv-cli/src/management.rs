@@ -10,14 +10,18 @@
 
 use crate::client::{ClientError, GatewayChoice};
 use reqwest::{Method, StatusCode};
+use serde::{Deserialize, de::DeserializeOwned};
 use serde_json::{Map, Value};
 use std::time::Duration;
 use tgv_gateway::ApiRead;
 use tgv_harness::{endpoint::GatewayEndpoint, host::HostEnv};
 use tgv_protocol::direction::Direction;
-use tgv_recorder::id::CallId;
+use tgv_recorder::id::{CallId, TurnId};
 use tgv_store::Reader;
+use tgv_store::activity::{ActivityBudget, TurnActivity};
+use tgv_store::query::{CallQuery, PageLimit};
 use tgv_store::read::ReadRequest;
+use tgv_store::view::{CallPage, SessionView};
 
 /// Where a history or control command acts.
 pub enum Target {
@@ -40,6 +44,38 @@ impl History {
         match self {
             Self::Local(reader) => Ok(serde_json::to_value(reader.serve(request).await?)?),
             Self::Remote(gateway) => gateway.serve(request).await,
+        }
+    }
+
+    /// Calls, newest first, as `query` narrows them.
+    pub async fn calls(&self, query: &CallQuery) -> Result<CallPage, ManagementError> {
+        match self {
+            Self::Local(reader) => Ok(reader.calls(query).await?),
+            Self::Remote(gateway) => gateway.read_as(&ReadRequest::Calls(query.clone())).await,
+        }
+    }
+
+    /// Sessions, most recently seen first.
+    pub async fn sessions(&self, limit: PageLimit) -> Result<Vec<SessionView>, ManagementError> {
+        /// The read API's body for a session listing.
+        #[derive(Deserialize)]
+        struct Sessions {
+            sessions: Vec<SessionView>,
+        }
+        match self {
+            Self::Local(reader) => Ok(reader.sessions(limit).await?),
+            Self::Remote(gateway) => gateway
+                .read_as::<Sessions>(&ReadRequest::Sessions(limit))
+                .await
+                .map(|page| page.sessions),
+        }
+    }
+
+    /// One turn's activity, as much of it as the read API shows.
+    pub async fn turn(&self, turn: TurnId) -> Result<TurnActivity, ManagementError> {
+        match self {
+            Self::Local(reader) => Ok(reader.turn_activity(turn, ActivityBudget::DEFAULT).await?),
+            Self::Remote(gateway) => gateway.read_as(&ReadRequest::Turn(turn)).await,
         }
     }
 }
@@ -68,6 +104,8 @@ pub enum ManagementError {
     Store(#[from] tgv_store::StoreError),
     #[error("cannot encode a history answer")]
     Json(#[from] serde_json::Error),
+    #[error("the gateway's history answer does not match this CLI's views")]
+    Answer(#[source] serde_json::Error),
     #[error("the gateway's answer is not management API JSON ({status})")]
     Shape { status: StatusCode },
     #[error(
@@ -310,6 +348,15 @@ impl Management {
         ))
     }
 
+    /// One history read, through the read API, parsed into its view.
+    async fn read_as<T: DeserializeOwned>(
+        &self,
+        request: &ReadRequest,
+    ) -> Result<T, ManagementError> {
+        let body = self.read(&ApiRead(request.clone()).uri()).await?;
+        serde_json::from_value(Value::Object(body)).map_err(ManagementError::Answer)
+    }
+
     /// A successful read's body, without `api_version`. `uri` is a path and
     /// query string.
     async fn read(&self, uri: &str) -> Result<Map<String, Value>, ManagementError> {
@@ -407,5 +454,103 @@ mod tests {
             Management::error(StatusCode::BAD_GATEWAY, b"<html>"),
             ManagementError::Shape { .. }
         ));
+    }
+
+    /// A gateway's read API answering with fixed bodies, until `reads`
+    /// finishes.
+    async fn against_gateway<F, T>(reads: impl FnOnce(Management) -> F) -> T
+    where
+        F: Future<Output = T>,
+    {
+        use axum::{Json, Router, routing::get};
+        use serde_json::json;
+        let session = "00000000-0000-0000-0000-000000000003";
+        let router = Router::new()
+            .route(
+                "/api/sessions",
+                get(move || async move {
+                    Json(json!({
+                        "api_version": 1,
+                        "sessions": [{
+                            "id": session,
+                            "provider": "openai",
+                            "source": "a_newer_source",
+                            "native_id": "native",
+                            "first_seen": 1000,
+                            "last_seen": 2000,
+                            "call_count": 4,
+                            "turn_count": 2,
+                            "error_count": 1,
+                            "tokens": { "input": 10, "output": null, "cache_read": 5 }
+                        }]
+                    }))
+                }),
+            )
+            .route(
+                "/api/calls",
+                get(|| async { Json(json!({ "api_version": 1, "calls": [], "next": null })) }),
+            )
+            .route(
+                "/api/turns/{turn}",
+                get(move || async move {
+                    Json(json!({
+                        "api_version": 1,
+                        "turn": "00000000-0000-0000-0000-000000000004",
+                        "session": session,
+                        "native_id": "prompt-1",
+                        "client": "a_newer_client",
+                        "files_read": [],
+                        "files_written": [],
+                        "commands": [],
+                        "tool_calls": 0,
+                        "failed_tool_calls": 0,
+                        "unanswered_tool_calls": 0,
+                        "findings": [],
+                        "calls": [],
+                        "omitted_calls": 0
+                    }))
+                }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let root = format!("http://{}", listener.local_addr().unwrap());
+        let gateway = Management::new(GatewayEndpoint::parse(&root).unwrap()).unwrap();
+        tokio::select! {
+            served = axum::serve(listener, router).into_future() => panic!("{served:?}"),
+            answer = reads(gateway) => answer,
+        }
+    }
+
+    #[tokio::test]
+    async fn a_gateway_answers_reads_as_views() {
+        let (sessions, calls, turn) = against_gateway(|gateway| async move {
+            let history = History::Remote(gateway);
+            let sessions = history.sessions(PageLimit::new(10).unwrap()).await.unwrap();
+            let calls = history.calls(&CallQuery::default()).await.unwrap();
+            let turn = history
+                .turn("00000000-0000-0000-0000-000000000004".parse().unwrap())
+                .await
+                .unwrap();
+            (sessions, calls, turn)
+        })
+        .await;
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].source.label(), "a_newer_source");
+        assert!(calls.calls.is_empty() && calls.next.is_none());
+        assert_eq!(turn.client.unwrap().label(), "a_newer_client");
+    }
+
+    #[tokio::test]
+    async fn an_answer_that_is_not_the_view_asked_for_is_refused() {
+        // A session listing read as a page of calls.
+        let wrong = against_gateway(|gateway| async move {
+            gateway
+                .read_as::<CallPage>(&ReadRequest::Sessions(PageLimit::new(10).unwrap()))
+                .await
+        })
+        .await;
+        assert!(
+            matches!(wrong, Err(ManagementError::Answer(_))),
+            "{wrong:?}"
+        );
     }
 }

@@ -12,7 +12,7 @@ pub mod report;
 
 use crate::view::{CallView, TokenTotals};
 use report::{CallMetrics, Finding, FindingKind, LargeToolOutput, RepeatedFailure, SecretExposure};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use tgv_harness::{
     Harness,
@@ -49,7 +49,7 @@ impl ActivityBudget {
 }
 
 /// A tool result, as the client reported it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ResultView {
     pub status: Stored<ResultStatus>,
     pub output: Excerpt,
@@ -57,7 +57,7 @@ pub struct ResultView {
 
 /// What a tool's input names, as a view: a known kind of effect, or the
 /// label of one this binary does not know.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EffectView {
     pub kind: Stored<EffectKind>,
     pub target: String,
@@ -74,7 +74,7 @@ impl From<ToolEffect> for EffectView {
 
 /// A tool call a response requested, and its result when a later request in
 /// the turn carried one.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ToolCallView {
     pub id: Option<String>,
     pub name: String,
@@ -85,7 +85,7 @@ pub struct ToolCallView {
 }
 
 /// What one call shows.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CallActivity {
     pub call: CallId,
     pub started_at: UnixMillis,
@@ -104,7 +104,7 @@ pub struct CallActivity {
 }
 
 /// One turn's activity.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TurnActivity {
     pub turn: TurnId,
     pub session: SessionId,
