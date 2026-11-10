@@ -13,8 +13,10 @@ use crate::commands::history::TargetArgs;
 use crate::context::Context;
 use crate::management::{Management, ManagementError};
 use crate::tail::{LiveDecoder, LiveEvent, LiveUpdates};
+use crate::tui_settings::TuiSettings;
 use anyhow::Result;
 use clap::Args;
+use clap::builder::{PossibleValuesParser, TypedValueParser};
 use futures_util::StreamExt;
 use futures_util::stream::FuturesUnordered;
 use std::future::Future;
@@ -22,16 +24,24 @@ use std::pin::Pin;
 use std::process::ExitCode;
 use std::time::Duration;
 use tgv_daemon::host::SystemClock;
+use tgv_harness::host::HostEnv;
+use tgv_protocol::label::Labeled;
 use tgv_recorder::id::{CallId, TurnId};
 use tgv_recorder::time::{Clock, Monotonic};
 use tgv_store::activity::{CallActivity, TurnActivity};
-use tgv_tui::{Input, Pressed, Read, Screen, ScreenEvent, Snapshot, Tui};
+use tgv_tui::{Input, Pressed, Read, Screen, ScreenEvent, Snapshot, Theme, ThemeName, Tui};
 
 /// Watch live sessions in the terminal, one pane per session.
 #[derive(Args)]
 pub struct TuiCmd {
     #[command(flatten)]
     target: TargetArgs,
+    /// Theme for this run (terminal, dark, light); overrides the saved preference.
+    #[arg(long, value_parser = Self::theme_parser())]
+    theme: Option<ThemeName>,
+    /// Save a local theme preference and exit without connecting to a daemon.
+    #[arg(long, conflicts_with = "theme", value_parser = Self::theme_parser())]
+    save_theme: Option<ThemeName>,
 }
 
 /// A read that finished.
@@ -64,6 +74,11 @@ struct InFlight {
 }
 
 impl TuiCmd {
+    fn theme_parser() -> impl TypedValueParser<Value = ThemeName> {
+        PossibleValuesParser::new(ThemeName::ALL.iter().map(|name| name.label()))
+            .try_map(|value| value.parse::<ThemeName>())
+    }
+
     /// A snapshot at least this often, however quiet the feed.
     const SNAPSHOT_EVERY: Duration = Duration::from_secs(2);
     /// How often the clock and elapsed times on the wall move.
@@ -71,6 +86,14 @@ impl TuiCmd {
     const RECONNECT: Duration = Duration::from_secs(2);
 
     pub async fn run(self, ctx: &Context) -> Result<ExitCode> {
+        if let Some(theme) = self.save_theme {
+            let path = TuiSettings::save(theme, &ctx.env)?;
+            println!("Saved TUI theme {theme} to {}", path.display());
+            return Ok(ExitCode::SUCCESS);
+        }
+        let selected = TuiSettings::select(self.theme, &ctx.env)?;
+        let mut theme_name = selected.unwrap_or_default();
+        let theme = Self::theme(selected, &ctx.env);
         let gateway = self.target.gateway(ctx)?;
         let clock = SystemClock::start();
         // The first read happens before the terminal is taken over, so a
@@ -79,6 +102,7 @@ impl TuiCmd {
         let feed = Self::connect(&gateway, &clock).await;
 
         let mut screen = Screen::open()?;
+        screen.set_theme(theme);
         let mut tui = Tui::new(screen.size()?);
         let mut events = screen.events();
         let pending: Pending<'_> = FuturesUnordered::new();
@@ -108,6 +132,11 @@ impl TuiCmd {
                         ScreenEvent::Key(key) => match tui.press(key) {
                             Pressed::Quit => break,
                             Pressed::Continue(reads) => reads,
+                            Pressed::CycleTheme => {
+                                theme_name = theme_name.next();
+                                screen.set_theme(theme_name.theme());
+                                Vec::new()
+                            }
                         },
                         ScreenEvent::Resize(size) => tui.apply(Input::Resize(size)),
                     },
@@ -138,6 +167,16 @@ impl TuiCmd {
         drop(events);
         drop(screen);
         Ok(ExitCode::SUCCESS)
+    }
+
+    /// Explicit per-application preferences override NO_COLOR; otherwise it
+    /// selects monochrome. Environment access stays in the CLI shell.
+    fn theme(selected: Option<ThemeName>, env: &HostEnv) -> Theme {
+        match selected {
+            Some(name) => name.theme(),
+            None if env.is_set("NO_COLOR") => Theme::monochrome(),
+            None => Theme::default(),
+        }
     }
 
     async fn snapshot(
@@ -287,6 +326,24 @@ impl<'a> Shell<'a> {
         match input {
             Ok(input) => tui.apply(input),
             Err(error) => tui.apply(Input::ReadFailed(error.to_string())),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::TuiCmd;
+    use tgv_harness::host::HostEnv;
+    use tgv_tui::{Theme, ThemeName};
+
+    #[test]
+    fn color_policy_uses_terminal_defaults_unless_the_user_chooses() {
+        let none = HostEnv::default();
+        assert_eq!(TuiCmd::theme(None, &none), Theme::default());
+        let no_color = HostEnv::from_pairs([("NO_COLOR", "1")]);
+        assert_eq!(TuiCmd::theme(None, &no_color), Theme::monochrome());
+        for name in [ThemeName::Terminal, ThemeName::Dark, ThemeName::Light] {
+            assert_eq!(TuiCmd::theme(Some(name), &no_color), name.theme());
         }
     }
 }

@@ -1077,7 +1077,7 @@ fn tiny_terminals_draw_without_panicking() {
 }
 
 #[test]
-fn title_bars_carry_the_state_in_color() {
+fn dark_title_bars_keep_the_original_palette() {
     use ratatui::{buffer::Buffer, layout::Rect, style::Color, widgets::Widget};
     let size = Size {
         width: 180,
@@ -1085,7 +1085,10 @@ fn title_bars_carry_the_state_in_color() {
     };
     let area = Rect::new(0, 0, size.width, size.height);
     let mut buffer = Buffer::empty(area);
-    busy(size).wall(at(300)).render(area, &mut buffer);
+    busy(size)
+        .wall(at(300))
+        .themed(&crate::ThemeName::Dark.theme())
+        .render(area, &mut buffer);
     // Three sessions, three panes across. Responding: green. Stopped on
     // an error: red. The body: the pane's ground.
     assert_eq!(
@@ -1102,6 +1105,108 @@ fn title_bars_carry_the_state_in_color() {
     assert_eq!(buffer[(179, 0)].bg, Color::Rgb(0xff, 0x7b, 0x72));
     assert_eq!(buffer[(179, 1)].symbol(), "▀");
     assert_eq!(buffer[(179, 1)].fg, Color::Rgb(0xff, 0x7b, 0x72));
+}
+
+#[test]
+fn switching_themes_resets_every_cell_in_panes_zoom_and_help() {
+    use crate::{Theme, ThemeName};
+    use ratatui::{
+        Terminal,
+        backend::TestBackend,
+        buffer::Buffer,
+        layout::Rect,
+        style::{Color, Modifier, Style},
+        widgets::Widget,
+    };
+
+    for size in [
+        Size {
+            width: 80,
+            height: 24,
+        },
+        Size {
+            width: 180,
+            height: 42,
+        },
+    ] {
+        let mut tui = busy(size);
+        let area = Rect::new(0, 0, size.width, size.height);
+        let mut terminal = Terminal::new(TestBackend::new(size.width, size.height)).unwrap();
+        for keys in [&[][..], &[Key::Enter][..], &[Key::Char('?')][..]] {
+            for key in keys {
+                let _ = tui.press(*key);
+            }
+            let wall = tui.wall(at(300));
+            let mut reused = Buffer::empty(area);
+            // Model styles left by a previous custom theme, including modifiers.
+            reused.set_style(
+                area,
+                Style::new()
+                    .fg(Color::Rgb(1, 2, 3))
+                    .bg(Color::Rgb(4, 5, 6))
+                    .add_modifier(Modifier::ITALIC | Modifier::REVERSED),
+            );
+            let mut name = ThemeName::Terminal;
+            let mut symbols = None;
+            for _ in 0..7 {
+                let theme = name.theme();
+                let mut fresh = Buffer::empty(area);
+                wall.themed(&theme).render(area, &mut fresh);
+                wall.themed(&theme).render(area, &mut reused);
+                assert_eq!(reused, fresh, "stale styles in {name}");
+                terminal
+                    .draw(|frame| frame.render_widget(wall.themed(&theme), frame.area()))
+                    .unwrap();
+                terminal.backend().assert_buffer(&fresh);
+                let shown: Vec<_> = fresh
+                    .content
+                    .iter()
+                    .map(|cell| cell.symbol().to_owned())
+                    .collect();
+                match &symbols {
+                    Some(previous) => assert_eq!(&shown, previous, "theme changed the content"),
+                    None => symbols = Some(shown),
+                }
+                if name == ThemeName::Terminal {
+                    for cell in &fresh.content {
+                        assert_eq!(cell.bg, Color::Reset);
+                        assert!(!matches!(cell.fg, Color::Rgb(..) | Color::Indexed(_)));
+                    }
+                }
+                name = name.next();
+            }
+            let mono = Theme::monochrome();
+            wall.themed(&mono).render(area, &mut reused);
+            assert!(
+                reused
+                    .content
+                    .iter()
+                    .all(|cell| cell.fg == Color::Reset && cell.bg == Color::Reset)
+            );
+            assert!(
+                reused
+                    .content
+                    .iter()
+                    .any(|cell| cell.modifier.contains(Modifier::BOLD))
+            );
+        }
+    }
+}
+
+#[test]
+fn theme_key_leaves_the_conversation_and_help_unchanged() {
+    let mut tui = busy(Size {
+        width: 80,
+        height: 24,
+    });
+    for keys in [&[][..], &[Key::Enter][..], &[Key::Char('?')][..]] {
+        for key in keys {
+            let _ = tui.press(*key);
+        }
+        let before = tui.wall(at(300));
+        assert_eq!(tui.press(Key::Char('t')), Pressed::CycleTheme);
+        assert_eq!(tui.wall(at(300)), before);
+    }
 }
 
 #[test]
@@ -1255,7 +1360,8 @@ fn a_plain_title_has_a_rule_under_it() {
     ));
     let area = Rect::new(0, 0, 60, 12);
     let mut buffer = Buffer::empty(area);
-    tui.wall(at(100)).render(area, &mut buffer);
+    let theme = ThemeName::Dark.theme();
+    tui.wall(at(100)).themed(&theme).render(area, &mut buffer);
     assert_eq!(buffer[(0, 0)].bg, Color::Rgb(0x0e, 0x12, 0x17));
     assert_eq!(buffer[(0, 1)].symbol(), "─");
     assert_eq!(buffer[(59, 1)].fg, Color::Rgb(0x2a, 0x30, 0x38));

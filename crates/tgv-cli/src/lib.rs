@@ -10,6 +10,8 @@ pub mod mcp;
 pub mod service;
 pub mod style;
 pub mod tail;
+#[cfg(feature = "tui")]
+mod tui_settings;
 
 use crate::context::Context;
 use crate::style::{Terminal, Tone};

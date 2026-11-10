@@ -60,7 +60,7 @@ before it (for a client that sends no turns, such as OpenCode, its newest
 four calls), call by call, with the user's prompt (`>`), the tool results the
 request carried back (`⎿`), the reply (code blocks drawn behind a rule), and
 the tool calls the model asked for (`●`), then a streaming call's reply and
-tools so far. Its title bar turns green while a response streams, and amber
+tools so far. Its title uses green while a response streams, and amber
 or red when the newest call needs a look (a slow response head, a 429, a
 failed, interrupted, or unknown ending, a secret sent, repeated tool
 failures); an earlier failure the session has moved past is not shown again.
@@ -77,6 +77,31 @@ one succeeds. Keys: tab and the arrows move between panes, enter zooms into a
 session, `p` keeps a session on the wall even when quiet, `?` lists the
 keys, and `q` quits. It needs a running daemon; a gateway that cannot be
 reached is reported before the screen is taken over.
+
+The default `terminal` theme uses the terminal's foreground, background, and
+ANSI palette. `dark` and `light` use fixed RGB palettes and need a true-color
+terminal. Choose a theme for one run, or save this machine's preference:
+
+```sh
+tgv tui --theme dark
+tgv tui --save-theme light
+tgv tui --save-theme terminal
+```
+
+`--save-theme` saves and exits without connecting to a daemon. The preference
+lives in `$XDG_CONFIG_HOME/tgv/tui.toml` (or `~/.config/tgv/tui.toml`), separate
+from gateway and daemon settings:
+
+```toml
+theme = "light"
+```
+
+`--theme` overrides the saved preference; without either, the theme is
+`terminal`. Press `t` to cycle terminal → dark → light while viewing panes,
+a zoomed session, or help. This preview lasts for the current run and does
+not save. A non-empty `NO_COLOR` selects monochrome when there is no explicit
+flag or saved preference; an explicit choice, including `t`, enables that
+theme. Labels and focus emphasis remain available without color.
 
 ## Activity
 

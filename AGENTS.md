@@ -247,7 +247,8 @@ dependencies under "Crates" below. Read the code for current module ownership.
   each request carried back, replies, and merged tool runs; progress on a
   streaming call; the phase, the newest call's measurements, and alerts on
   the newest call), and `call` reads how a call ended (`CallEnd`).
-  `draw` renders a `Wall` into a ratatui buffer, pinned as text in
+  `draw` renders a `Wall` with a resolved `Theme` (`theme`: terminal colors by
+  default, or dark/light presets named by `ThemeName`) into a ratatui buffer, pinned as text in
   `tests/fixtures/wall-*.txt`; `Screen` (`screen`) is the only part that
   touches the terminal: raw mode and the alternate screen until dropped,
   and its events as keys and sizes. `src/purity.rs` keeps the core's
@@ -314,6 +315,8 @@ dependencies under "Crates" below. Read the code for current module ownership.
   feature (off by default), `commands::tui` is `tgv tui`: the shell around
   `tgv-tui`'s `Tui`, reading snapshots, turns, and the live feed through
   the gateway's API alongside one another, and drawing to its `Screen`.
+  `tui_settings` owns its local theme preference in `tui.toml`; the CLI resolves
+  flags, saved preferences, and `NO_COLOR`, and passes styles to `Screen`.
   `mcp` is the pure core of `tgv mcp` (a source test keeps it free
   of runtime and I/O): JSON-RPC over stdio in both MCP eras, and the read-only
   tools, whose arguments parse into `tgv_store::query` types. `style` decides once, per stream,

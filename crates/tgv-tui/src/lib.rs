@@ -18,14 +18,17 @@ mod screen;
 mod session;
 #[cfg(test)]
 mod tests;
+mod theme;
 
 pub use call::{CallEnd, ErrorCause, Shortfall, Stop, Tone};
+pub use draw::ThemedWall;
 pub use grid::{Grid, Size};
 pub use keys::{Command, Key};
 pub use screen::{Screen, ScreenError, ScreenEvent, ScreenEvents};
 pub use session::{
     Alert, CallFacts, Line, Phase, ResultMark, SessionPane, Span, Streaming, Tally, ToolLine,
 };
+pub use theme::{Theme, ThemeName};
 
 use grid::Placement;
 use session::SessionRead;
@@ -83,6 +86,8 @@ pub enum Help {
 pub enum Pressed {
     /// Go on, with these reads.
     Continue(Vec<Read>),
+    /// Preview the next theme; the shell owns the local preference.
+    CycleTheme,
     Quit,
 }
 
@@ -248,10 +253,11 @@ impl Tui {
         let Some(command) = Command::of(key) else {
             return Pressed::Continue(Vec::new());
         };
-        // The help takes no command but closing it, or quitting.
+        // The help permits theme previews, closing it, and quitting.
         if self.help == Help::Shown {
             match command {
                 Command::Quit => return Pressed::Quit,
+                Command::Theme => return Pressed::CycleTheme,
                 Command::Help | Command::Back => self.help = Help::Hidden,
                 Command::Next
                 | Command::Previous
@@ -267,6 +273,7 @@ impl Tui {
         let panes = self.grid.panes();
         let columns = usize::from(self.grid.columns);
         match command {
+            Command::Theme => return Pressed::CycleTheme,
             Command::Quit => return Pressed::Quit,
             Command::Help => self.help = Help::Shown,
             Command::Next | Command::Previous if self.zoom.is_some() => {

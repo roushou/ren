@@ -12,11 +12,11 @@
     │ ↓  j           pane below                                            │
     │ enter  z       zoom into the focused session, or back to the panes   │
  ── │ p              keep the focused session on the wall, even when quiet │
- > W│ esc            close the help, or leave a zoomed session             │
- I'l│ ?              show or hide this help                                │
- ● R│ q  ctrl-c      quit                                                  │
- ● B└──────────────────────────────────────────────────────────────────────┘
- ── call 2 ──
+ > W│ t              cycle theme: terminal, dark, light (not saved)        │
+ I'l│ esc            close the help, or leave a zoomed session             │
+ ● R│ ?              show or hide this help                                │
+ ● B│ q  ctrl-c      quit                                                  │
+ ── └──────────────────────────────────────────────────────────────────────┘
  ● Edit
  The parser drops the last field when▌
  streaming · 10 s

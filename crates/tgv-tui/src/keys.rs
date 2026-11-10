@@ -35,13 +35,14 @@ pub enum Command {
     /// stop keeping it.
     Pin,
     Help,
+    Theme,
     /// Close the help, or leave a zoomed session.
     Back,
 }
 
 impl Command {
     /// Every command, in the order the help lists them.
-    pub const ALL: [Self; 11] = [
+    pub const ALL: [Self; 12] = [
         Self::Next,
         Self::Previous,
         Self::Left,
@@ -50,6 +51,7 @@ impl Command {
         Self::Down,
         Self::Zoom,
         Self::Pin,
+        Self::Theme,
         Self::Back,
         Self::Help,
         Self::Quit,
@@ -68,6 +70,7 @@ impl Command {
             Key::Enter | Key::Char('z') => Some(Self::Zoom),
             Key::Char('p') => Some(Self::Pin),
             Key::Char('?') => Some(Self::Help),
+            Key::Char('t') => Some(Self::Theme),
             Key::Esc => Some(Self::Back),
             Key::Char(_) => None,
         }
@@ -86,6 +89,7 @@ impl Command {
             Self::Zoom => "enter  z",
             Self::Pin => "p",
             Self::Help => "?",
+            Self::Theme => "t",
             Self::Back => "esc",
         }
     }
@@ -102,6 +106,7 @@ impl Command {
             Self::Zoom => "zoom into the focused session, or back to the panes",
             Self::Pin => "keep the focused session on the wall, even when quiet",
             Self::Help => "show or hide this help",
+            Self::Theme => "cycle theme: terminal, dark, light (not saved)",
             Self::Back => "close the help, or leave a zoomed session",
         }
     }
@@ -124,6 +129,7 @@ mod tests {
             Key::Enter,
             Key::Char('p'),
             Key::Char('?'),
+            Key::Char('t'),
             Key::Esc,
         ];
         for command in Command::ALL {

@@ -4,7 +4,7 @@
 //! panicked. [`ScreenEvents`] turns the terminal's events into the keys and
 //! sizes the view reads.
 
-use crate::{Key, Size, Wall};
+use crate::{Key, Size, Theme, Wall};
 use crossterm::event::{Event, EventStream, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use crossterm::{cursor, execute, terminal};
 use futures_util::StreamExt;
@@ -16,6 +16,7 @@ use std::io::{self, Stdout};
 #[must_use = "dropping the screen puts the terminal back"]
 pub struct Screen {
     terminal: Terminal<CrosstermBackend<Stdout>>,
+    theme: Theme,
 }
 
 /// Why the terminal could not be used.
@@ -44,6 +45,9 @@ pub struct ScreenEvents {
 impl Screen {
     /// Raw mode, the alternate screen, and a hidden cursor.
     pub fn open() -> Result<Self, ScreenError> {
+        // The caller resolves color policy (including NO_COLOR). Let the
+        // backend emit that theme, including resets and explicit overrides.
+        crossterm::style::force_color_output(true);
         terminal::enable_raw_mode().map_err(ScreenError::Open)?;
         let mut stdout = io::stdout();
         if let Err(error) = execute!(stdout, terminal::EnterAlternateScreen, cursor::Hide) {
@@ -51,7 +55,10 @@ impl Screen {
             return Err(ScreenError::Open(error));
         }
         match Terminal::new(CrosstermBackend::new(stdout)) {
-            Ok(terminal) => Ok(Self { terminal }),
+            Ok(terminal) => Ok(Self {
+                terminal,
+                theme: Theme::default(),
+            }),
             Err(error) => {
                 Self::restore();
                 Err(ScreenError::Open(error))
@@ -69,9 +76,14 @@ impl Screen {
 
     pub fn draw(&mut self, wall: &Wall) -> Result<(), ScreenError> {
         self.terminal
-            .draw(|frame| frame.render_widget(wall, frame.area()))
+            .draw(|frame| frame.render_widget(wall.themed(&self.theme), frame.area()))
             .map(|_| ())
             .map_err(ScreenError::Draw)
+    }
+
+    /// Used on the next draw; the root style resets the previous theme.
+    pub fn set_theme(&mut self, theme: Theme) {
+        self.theme = theme;
     }
 
     pub fn events(&self) -> ScreenEvents {

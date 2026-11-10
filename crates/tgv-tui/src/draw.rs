@@ -1,18 +1,12 @@
-//! A [`Wall`] drawn into a ratatui buffer, in the Flow mockup's terminal
-//! style: panes on a dark ground split by one-cell rules, each with a title
-//! bar that takes the session's state as its color (green while a response
-//! streams, amber or red when something needs a look), the newest turn as
-//! a conversation kept to the bottom as it streams, a state line, and a
-//! line of the newest call's measurements; then a status line of segments.
-//! Drawing reads only the wall, so it is tested on a buffer without a
-//! terminal.
+//! A wall rendered with resolved semantic styles. Drawing reads only the
+//! wall and its theme, and can be tested without a terminal.
 
 use crate::call::Tone;
 use crate::keys::Command;
 use crate::session::{
     CallFacts, Line as PaneLine, Phase, ResultMark, SessionPane, Span as Elapsed, ToolLine,
 };
-use crate::{Help, Pane, Reading, Status, View, Wall};
+use crate::{Help, Pane, Reading, Status, Theme, View, Wall};
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style, Stylize};
@@ -23,50 +17,31 @@ use tgv_protocol::activity::ResultStatus;
 use tgv_recorder::time::UnixMillis;
 use unicode_width::UnicodeWidthChar;
 
-/// The mockup's terminal palette, the same in light and dark themes.
-struct Palette;
+/// A wall and its resolved rendering styles.
+#[must_use]
+pub struct ThemedWall<'a> {
+    wall: &'a Wall,
+    theme: &'a Theme,
+}
 
-impl Palette {
-    const GROUND: Color = Color::Rgb(0x0b, 0x0e, 0x12);
-    const PANE: Color = Color::Rgb(0x0e, 0x12, 0x17);
-    const RULE: Color = Color::Rgb(0x2a, 0x30, 0x38);
-    const BAR: Color = Color::Rgb(0x16, 0x1b, 0x22);
-    const FG: Color = Color::Rgb(0xc9, 0xd1, 0xd9);
-    const DIM: Color = Color::Rgb(0x6e, 0x76, 0x81);
-    const CODE: Color = Color::Rgb(0xe6, 0xed, 0xf3);
-    const GREEN: Color = Color::Rgb(0x7e, 0xe7, 0x87);
-    const BLUE: Color = Color::Rgb(0x79, 0xc0, 0xff);
-    const RED: Color = Color::Rgb(0xff, 0x7b, 0x72);
-    const YELLOW: Color = Color::Rgb(0xe3, 0xb3, 0x41);
-    const YOU: Color = Color::Rgb(0xd2, 0xa8, 0xff);
-
-    fn tone(tone: Tone) -> Color {
-        match tone {
-            Tone::Live => Self::FG,
-            Tone::Success => Self::GREEN,
-            Tone::Error => Self::RED,
-            Tone::Warning => Self::YELLOW,
-            Tone::Neutral => Self::DIM,
-        }
-    }
-
-    fn harness(harness: Option<Harness>) -> Color {
-        match harness {
-            Some(Harness::ClaudeCode) => Color::Rgb(0xf0, 0xa5, 0x81),
-            Some(Harness::Codex) => Color::Rgb(0x9a, 0xb8, 0xe8),
-            Some(Harness::Pi) => Color::Rgb(0x7f, 0xd4, 0xd9),
-            Some(Harness::OpenCode) => Color::Rgb(0xf7, 0x9c, 0xc7),
-            None => Self::DIM,
-        }
+impl Wall {
+    pub fn themed<'a>(&'a self, theme: &'a Theme) -> ThemedWall<'a> {
+        ThemedWall { wall: self, theme }
     }
 }
 
 impl Widget for &Wall {
     fn render(self, area: Rect, buf: &mut Buffer) {
+        self.themed(&Theme::default()).render(area, buf);
+    }
+}
+
+impl Widget for ThemedWall<'_> {
+    fn render(self, area: Rect, buf: &mut Buffer) {
         if area.height == 0 || area.width == 0 {
             return;
         }
-        buf.set_style(area, Style::new().bg(Palette::GROUND).fg(Palette::FG));
+        buf.set_style(area, self.theme.ground);
         let panes = Rect {
             height: area.height - 1,
             ..area
@@ -77,21 +52,21 @@ impl Widget for &Wall {
             ..area
         };
         self.draw_panes(panes, buf);
-        Wall::draw_status(&self.status, status, buf);
-        if self.help == Help::Shown {
-            Wall::draw_help(area, buf);
+        self.draw_status(&self.wall.status, status, buf);
+        if self.wall.help == Help::Shown {
+            self.draw_help(area, buf);
         }
     }
 }
 
-impl Wall {
+impl ThemedWall<'_> {
     fn draw_panes(&self, area: Rect, buf: &mut Buffer) {
-        let columns = self.grid.columns.max(1);
-        let rows = self.grid.rows.max(1);
+        let columns = self.wall.grid.columns.max(1);
+        let rows = self.wall.grid.rows.max(1);
         // One-cell rules between columns and between rows.
         let width = area.width.saturating_sub(columns - 1);
         let height = area.height.saturating_sub(rows - 1);
-        let rule = Style::new().fg(Palette::RULE).bg(Palette::GROUND);
+        let rule = self.theme.rule;
         let rule_row = |row: u16| area.y + Self::start(height, rows, row) + row - 1;
         for row in 1..rows {
             for x in area.x..area.x + area.width {
@@ -105,8 +80,8 @@ impl Wall {
                 buf.set_string(x, y, if crossing { "┼" } else { "│" }, rule);
             }
         }
-        let all_free = self.panes.iter().all(|pane| *pane == Pane::Free);
-        for (index, pane) in self.panes.iter().enumerate() {
+        let all_free = self.wall.panes.iter().all(|pane| *pane == Pane::Free);
+        for (index, pane) in self.wall.panes.iter().enumerate() {
             let Ok(index16) = u16::try_from(index) else {
                 continue;
             };
@@ -121,15 +96,15 @@ impl Wall {
                     - Self::start(width, columns, column),
                 height: Self::start(height, rows, row + 1) - Self::start(height, rows, row),
             };
-            let (focused, place) = match self.view {
+            let (focused, place) = match self.wall.view {
                 View::Panes { focus } => (focus == index, Some(index)),
                 View::Zoomed => (false, None),
             };
             match pane {
-                Pane::Free if all_free => Self::draw_empty(rect, buf),
+                Pane::Free if all_free => self.draw_empty(rect, buf),
                 Pane::Free => {}
                 Pane::Session(session) => {
-                    Self::draw_session(rect, place, session, focused, self.status.now, buf);
+                    self.draw_session(rect, place, session, focused, self.wall.status.now, buf);
                 }
             }
         }
@@ -142,7 +117,7 @@ impl Wall {
     }
 
     /// No session in the window at all.
-    fn draw_empty(rect: Rect, buf: &mut Buffer) {
+    fn draw_empty(&self, rect: Rect, buf: &mut Buffer) {
         let text = "no live sessions · a session appears here when its client calls";
         let width = u16::try_from(Self::width(text)).unwrap_or(u16::MAX);
         let x = rect.x + rect.width.saturating_sub(width) / 2;
@@ -151,11 +126,12 @@ impl Wall {
             rect.y + rect.height / 2,
             text,
             usize::from(rect.width),
-            Style::new().fg(Palette::DIM),
+            self.theme.muted,
         );
     }
 
     fn draw_session(
+        &self,
         rect: Rect,
         place: Option<usize>,
         pane: &SessionPane,
@@ -166,8 +142,8 @@ impl Wall {
         if rect.height == 0 || rect.width == 0 {
             return;
         }
-        buf.set_style(rect, Style::new().bg(Palette::PANE).fg(Palette::FG));
-        Self::draw_title(rect, place, pane, focused, buf);
+        buf.set_style(rect, self.theme.pane);
+        self.draw_title(rect, place, pane, focused, buf);
         let inner = rect.width.saturating_sub(2);
         // A state line and a facts line at the foot, when there is room.
         let foot = match rect.height {
@@ -177,28 +153,28 @@ impl Wall {
         };
         if foot >= 1 {
             let y = rect.y + rect.height - foot;
-            buf.set_line(rect.x + 1, y, &Self::state_line(pane, now), inner);
+            buf.set_line(rect.x + 1, y, &self.state_line(pane, now), inner);
         }
         if foot >= 2
             && let Some(facts) = &pane.facts
         {
             let text = Self::fit(&Self::facts(facts), usize::from(inner));
-            buf.set_string(
-                rect.x + 1,
-                rect.y + rect.height - 1,
-                text,
-                Style::new().fg(Palette::DIM),
-            );
+            buf.set_string(rect.x + 1, rect.y + rect.height - 1, text, self.theme.muted);
         }
         // A rule under the title, as the mockup's border: in the rule's
-        // color, or a half block in a lit bar's own color, so the bar and
+        // style, or a half block in a lit bar's own color, so the bar and
         // its edge read as one. Left out when the pane cannot spare a line.
         let head = if rect.height >= 7 {
-            let (edge, color) = match Self::lit(pane) {
-                Some(color) => ("▀", color),
-                None => ("─", Palette::RULE),
+            let (edge, style) = match self.lit(pane) {
+                // A theme that leaves the bar unfilled lends the half block
+                // the title's text color instead.
+                Some(title) => match title.bg {
+                    Some(color) if color != Color::Reset => ("▀", Style::new().fg(color)),
+                    Some(_) | None => ("▀", Style::new().fg(title.fg.unwrap_or(Color::Reset))),
+                },
+                None => ("─", self.theme.rule),
             };
-            let style = Style::new().fg(color).bg(Palette::PANE);
+            let style = self.theme.pane.patch(style);
             for x in rect.x..rect.x + rect.width {
                 buf.set_string(x, rect.y + 1, edge, style);
             }
@@ -208,7 +184,7 @@ impl Wall {
         };
         let body_top = rect.y + head;
         let body_height = usize::from(rect.height.saturating_sub(head + foot));
-        let lines = Self::body(pane, usize::from(inner));
+        let lines = self.body(pane, usize::from(inner));
         let skip = lines.len().saturating_sub(body_height);
         let top = body_top + u16::try_from(body_height - (lines.len() - skip)).unwrap_or(0);
         for (row, line) in lines.iter().skip(skip).enumerate() {
@@ -223,18 +199,15 @@ impl Wall {
     /// an alert; the place, session, client and provider, the turn's call
     /// count, and at the right the context and the session's output.
     fn draw_title(
+        &self,
         rect: Rect,
         place: Option<usize>,
         pane: &SessionPane,
         focused: bool,
         buf: &mut Buffer,
     ) {
-        let lit = Self::lit(pane);
-        let (bg, fg) = match lit {
-            Some(color) => (color, Palette::GROUND),
-            None => (Palette::PANE, Palette::DIM),
-        };
-        let base = Style::new().bg(bg).fg(fg);
+        let lit = self.lit(pane);
+        let base = lit.unwrap_or(self.theme.pane.patch(self.theme.muted));
         buf.set_style(Rect { height: 1, ..rect }, base);
         let harness = pane.harness.as_ref().and_then(|harness| harness.known());
         let name = pane.harness.as_ref().map_or_else(
@@ -245,12 +218,9 @@ impl Wall {
         let short = session.get(..8).unwrap_or(&session);
         let mut spans = vec![Span::raw(" ")];
         match place {
-            Some(place) if focused => spans.push(
-                Span::raw(format!("{place}"))
-                    .bg(Palette::FG)
-                    .fg(Palette::GROUND)
-                    .add_modifier(Modifier::BOLD),
-            ),
+            Some(place) if focused => {
+                spans.push(Span::raw(format!("{place}")).style(self.theme.focus))
+            }
             Some(place) => spans.push(Span::raw(format!("{place}"))),
             None => {}
         }
@@ -258,12 +228,12 @@ impl Wall {
             Some(_) => format!(":{short}  "),
             None => format!("{short}  "),
         }));
-        let route_color = match lit {
-            Some(_) => Palette::GROUND,
-            None => Palette::harness(harness),
+        let route_style = match lit {
+            Some(_) => Style::new(),
+            None => self.theme.harness(harness),
         };
-        spans.push(Span::raw(name).fg(route_color));
-        spans.push(Span::raw(format!(" → {}", pane.provider.label())).fg(route_color));
+        spans.push(Span::raw(name).style(route_style));
+        spans.push(Span::raw(format!(" → {}", pane.provider.label())).style(route_style));
         if pane.turn_calls > 0 {
             spans.push(Span::raw(format!("  call {}", pane.turn_calls)));
         }
@@ -295,14 +265,15 @@ impl Wall {
         }
     }
 
-    /// A lit title bar's color: green while a response streams, amber or
-    /// red when the newest call needs a look; `None` when it is plain.
-    fn lit(pane: &SessionPane) -> Option<Color> {
+    /// A lit title bar's style: responding while a response streams,
+    /// warning or error when the newest call needs a look; `None` when it
+    /// is plain.
+    fn lit(&self, pane: &SessionPane) -> Option<Style> {
         match pane.alerts.first().map(|alert| alert.tone) {
-            Some(Tone::Error) => Some(Palette::RED),
-            Some(Tone::Warning) => Some(Palette::YELLOW),
+            Some(Tone::Error) => Some(self.theme.error_title),
+            Some(Tone::Warning) => Some(self.theme.warning_title),
             Some(Tone::Live | Tone::Success | Tone::Neutral) | None => match pane.phase {
-                Phase::Responding { .. } => Some(Palette::GREEN),
+                Phase::Responding { .. } => Some(self.theme.responding_title),
                 Phase::Awaiting { .. }
                 | Phase::ClientsTurn { .. }
                 | Phase::YourTurn { .. }
@@ -313,7 +284,7 @@ impl Wall {
     }
 
     /// `! alert · state · detail`, as the mockup words it.
-    fn state_line(pane: &SessionPane, now: UnixMillis) -> Line<'static> {
+    fn state_line(&self, pane: &SessionPane, now: UnixMillis) -> Line<'static> {
         let mut spans = Vec::new();
         if let Some(alert) = pane.alerts.first() {
             let more = match pane.alerts.len() {
@@ -324,8 +295,8 @@ impl Wall {
                 "" => format!("! {}{more}", alert.label),
                 detail => format!("! {} · {detail}{more}", alert.label),
             };
-            spans.push(Span::raw(text).fg(Palette::tone(alert.tone)));
-            spans.push(Span::raw(" · ").fg(Palette::DIM));
+            spans.push(Span::raw(text).style(self.theme.tone(alert.tone)));
+            spans.push(Span::raw(" · ").style(self.theme.muted));
         }
         let since = |at: UnixMillis| Elapsed(now.as_millis().saturating_sub(at.as_millis()));
         let (label, tone, detail) = match &pane.phase {
@@ -363,9 +334,9 @@ impl Wall {
             spans.pop();
             return Line::from(spans);
         }
-        spans.push(Span::raw(label).fg(Palette::tone(tone)));
+        spans.push(Span::raw(label).style(self.theme.tone(tone)));
         if !detail.is_empty() {
-            spans.push(Span::raw(format!(" · {detail}")).fg(Palette::DIM));
+            spans.push(Span::raw(format!(" · {detail}")).style(self.theme.muted));
         }
         Line::from(spans)
     }
@@ -413,8 +384,8 @@ impl Wall {
     }
 
     /// The pane's turn as a conversation, wrapped to `width`, oldest first.
-    fn body(pane: &SessionPane, width: usize) -> Vec<Line<'static>> {
-        let dim = Style::new().fg(Palette::DIM);
+    fn body(&self, pane: &SessionPane, width: usize) -> Vec<Line<'static>> {
+        let dim = self.theme.muted;
         let mut lines = Vec::new();
         for line in &pane.lines {
             match line {
@@ -426,16 +397,11 @@ impl Wall {
                     dim,
                 )),
                 PaneLine::Prompt(text) => {
-                    lines.extend(Self::hanging(
-                        "> ",
-                        text,
-                        width,
-                        Style::new().fg(Palette::YOU),
-                    ));
+                    lines.extend(Self::hanging("> ", text, width, self.theme.prompt));
                 }
-                PaneLine::Result(tool) => lines.push(Self::result(tool)),
-                PaneLine::Reply(text) => lines.extend(Self::markdown(text, width)),
-                PaneLine::Tools(tool) => lines.push(Self::tool(tool)),
+                PaneLine::Result(tool) => lines.push(self.result(tool)),
+                PaneLine::Reply(text) => lines.extend(self.markdown(text, width)),
+                PaneLine::Tools(tool) => lines.push(self.tool(tool)),
                 PaneLine::Waiting => {
                     lines.push(Line::styled("request sent · waiting for the provider", dim));
                 }
@@ -444,9 +410,9 @@ impl Wall {
         if let Some(streaming) = &pane.streaming {
             for tool in &streaming.tools {
                 lines.push(Line::from(vec![
-                    Span::raw("● ").fg(Palette::BLUE),
+                    Span::raw("● ").style(self.theme.tool),
                     Span::raw(tool.clone())
-                        .fg(Palette::BLUE)
+                        .style(self.theme.tool)
                         .add_modifier(Modifier::BOLD),
                 ]));
             }
@@ -461,13 +427,13 @@ impl Wall {
                 } else {
                     streaming.reply.clone()
                 };
-                let mut reply = Self::markdown(&text, width);
+                let mut reply = self.markdown(&text, width);
                 // The cursor sits where the stream has got to.
                 match reply.last_mut() {
                     Some(last) if last.width() < width => {
-                        last.push_span(Span::raw("▌").fg(Palette::FG));
+                        last.push_span(Span::raw("▌").style(self.theme.text));
                     }
-                    Some(_) | None => reply.push(Line::raw("▌").fg(Palette::FG)),
+                    Some(_) | None => reply.push(Line::raw("▌").style(self.theme.text)),
                 }
                 lines.extend(reply);
             }
@@ -495,9 +461,9 @@ impl Wall {
     /// A reply's text with its markdown read lightly: fenced code drawn as
     /// a block behind a rule, headings and whole `**bold**` lines in bold,
     /// and emphasis markers left out.
-    fn markdown(text: &str, width: usize) -> Vec<Line<'static>> {
-        let code = Style::new().fg(Palette::CODE);
-        let rule = Style::new().fg(Palette::RULE);
+    fn markdown(&self, text: &str, width: usize) -> Vec<Line<'static>> {
+        let code = self.theme.code;
+        let rule = self.theme.rule;
         let mut lines = Vec::new();
         let mut in_code = false;
         for source in text.lines() {
@@ -524,9 +490,9 @@ impl Wall {
             let bold = heading || (trimmed.starts_with("**") && trimmed.contains(":**"));
             let plain = shown.replace("**", "").replace("__", "");
             let style = if bold {
-                Style::new().fg(Palette::FG).add_modifier(Modifier::BOLD)
+                self.theme.text.add_modifier(Modifier::BOLD)
             } else {
-                Style::new().fg(Palette::FG)
+                self.theme.text
             };
             for part in Self::wrap(&plain, width) {
                 lines.push(Line::styled(part, style));
@@ -536,25 +502,25 @@ impl Wall {
     }
 
     /// `● Bash cargo test ×2`
-    fn tool(tool: &ToolLine) -> Line<'static> {
+    fn tool(&self, tool: &ToolLine) -> Line<'static> {
         let mut spans = vec![
-            Span::raw("● ").fg(Palette::BLUE),
+            Span::raw("● ").style(self.theme.tool),
             Span::raw(tool.name.clone())
-                .fg(Palette::BLUE)
+                .style(self.theme.tool)
                 .add_modifier(Modifier::BOLD),
         ];
         if let Some(target) = &tool.target {
-            spans.push(Span::raw(format!(" {target}")).fg(Palette::BLUE));
+            spans.push(Span::raw(format!(" {target}")).style(self.theme.tool));
         }
         if tool.count > 1 {
-            spans.push(Span::raw(format!(" ×{}", tool.count)).fg(Palette::BLUE));
+            spans.push(Span::raw(format!(" ×{}", tool.count)).style(self.theme.tool));
         }
         Line::from(spans)
     }
 
     /// `⎿ Read src/lib.rs → fn main() {}`: what the client sent back.
-    fn result(tool: &ToolLine) -> Line<'static> {
-        let dim = Style::new().fg(Palette::DIM);
+    fn result(&self, tool: &ToolLine) -> Line<'static> {
+        let dim = self.theme.muted;
         let mut head = format!("⎿ {}", tool.name);
         if let Some(target) = &tool.target {
             head.push(' ');
@@ -563,30 +529,30 @@ impl Wall {
         if tool.count > 1 {
             head.push_str(&format!(" ×{}", tool.count));
         }
-        let (outcome, color) = match &tool.result {
-            ResultMark::Pending => ("…".to_owned(), Palette::DIM),
-            ResultMark::Unreadable => ("result not readable".to_owned(), Palette::DIM),
-            ResultMark::Missing => ("no result".to_owned(), Palette::YELLOW),
+        let (outcome, style) = match &tool.result {
+            ResultMark::Pending => ("…".to_owned(), self.theme.muted),
+            ResultMark::Unreadable => ("result not readable".to_owned(), self.theme.muted),
+            ResultMark::Missing => ("no result".to_owned(), self.theme.warning),
             ResultMark::Reported(status) => match status.known() {
                 Some(ResultStatus::Succeeded | ResultStatus::Unreported) => (
                     tool.output.clone().unwrap_or_else(|| "ok".to_owned()),
-                    Palette::DIM,
+                    self.theme.muted,
                 ),
                 Some(ResultStatus::Failed) => (
                     tool.output
                         .as_ref()
                         .map_or_else(|| "failed".to_owned(), |output| format!("failed: {output}")),
-                    Palette::RED,
+                    self.theme.error,
                 ),
-                None => (status.label().replace('_', " "), Palette::DIM),
+                None => (status.label().replace('_', " "), self.theme.muted),
             },
-            ResultMark::Failures(count) => (format!("{count} failed"), Palette::RED),
-            ResultMark::AllSucceeded(count) => (format!("{count} ok"), Palette::DIM),
+            ResultMark::Failures(count) => (format!("{count} failed"), self.theme.error),
+            ResultMark::AllSucceeded(count) => (format!("{count} ok"), self.theme.muted),
         };
         Line::from(vec![
             Span::styled(head, dim),
             Span::styled(" → ", dim),
-            Span::styled(outcome, Style::new().fg(color)),
+            Span::styled(outcome, style),
         ])
     }
 
@@ -636,22 +602,17 @@ impl Wall {
     /// Segments split by rules: the tag, what is stale or needs a look,
     /// each client's recent output, the counts; the help hint and the clock
     /// keep their place at the right.
-    fn draw_status(status: &Status, area: Rect, buf: &mut Buffer) {
-        let base = Style::new().bg(Palette::BAR).fg(Palette::FG);
+    fn draw_status(&self, status: &Status, area: Rect, buf: &mut Buffer) {
+        let base = self.theme.bar;
         buf.set_style(area, base);
-        let rule = Span::styled("│", Style::new().fg(Palette::RULE).bg(Palette::BAR));
+        let rule = Span::styled("│", self.theme.rule);
         let mut spans = vec![
             Span::raw(" tgv ")
-                .bg(Palette::GREEN)
-                .fg(Palette::GROUND)
+                .style(self.theme.responding_title)
                 .add_modifier(Modifier::BOLD),
         ];
         if let Some(failure) = &status.failure {
-            spans.push(
-                Span::raw(format!(" ! stale: {failure} "))
-                    .bg(Palette::RED)
-                    .fg(Palette::GROUND),
-            );
+            spans.push(Span::raw(format!(" ! stale: {failure} ")).style(self.theme.error_title));
         }
         if status.attention > 0 {
             let needs = if status.attention == 1 {
@@ -661,15 +622,14 @@ impl Wall {
             };
             spans.push(
                 Span::raw(format!(" ! {} {needs} a look ", status.attention))
-                    .bg(Palette::YELLOW)
-                    .fg(Palette::GROUND),
+                    .style(self.theme.warning_title),
             );
         }
         let right = format!(" ? help │ {} ", Clock(status.now));
         let right_width = u16::try_from(Self::width(&right)).unwrap_or(u16::MAX);
         let left_width = match area.width.checked_sub(right_width) {
             Some(left) => {
-                buf.set_string(area.x + left, area.y, right, base.fg(Palette::DIM));
+                buf.set_string(area.x + left, area.y, right, base.patch(self.theme.muted));
                 left
             }
             None => area.width,
@@ -721,10 +681,10 @@ impl Wall {
             .unwrap_or(0);
         let mut used = 0;
         for (harness, bins, total) in &merged {
-            let color = Palette::harness(Some(*harness));
-            let mut spark = vec![Span::raw(format!(" {} ", Self::short(*harness))).fg(color)];
+            let style = self.theme.harness(Some(*harness));
+            let mut spark = vec![Span::raw(format!(" {} ", Self::short(*harness))).style(style)];
             if glyphs > 0 {
-                spark.push(Span::raw(Self::spark(bins, peak)).fg(color));
+                spark.push(Span::raw(Self::spark(bins, peak)).style(style));
             }
             spark.push(Span::raw(format!(" {} tok ", Kilo(*total))));
             let width = 1 + Self::spans_width(&spark);
@@ -763,7 +723,7 @@ impl Wall {
             .collect()
     }
 
-    fn draw_help(area: Rect, buf: &mut Buffer) {
+    fn draw_help(&self, area: Rect, buf: &mut Buffer) {
         let rows: Vec<(String, &str)> = Command::ALL
             .iter()
             .map(|command| (command.keys().to_owned(), command.describe()))
@@ -791,8 +751,8 @@ impl Wall {
         Clear.render(rect, buf);
         Block::bordered()
             .title(" keys ")
-            .border_style(Style::new().fg(Palette::RULE))
-            .style(Style::new().bg(Palette::BAR).fg(Palette::FG))
+            .border_style(self.theme.rule)
+            .style(self.theme.bar)
             .render(rect, buf);
         for (row, (keys, text)) in rows.iter().enumerate() {
             let Ok(row) = u16::try_from(row) else {
@@ -802,7 +762,7 @@ impl Wall {
                 break;
             }
             let line = Line::from(vec![
-                Span::raw(format!("{keys:<keys_width$}   ")).fg(Palette::BLUE),
+                Span::raw(format!("{keys:<keys_width$}   ")).style(self.theme.tool),
                 Span::raw(*text),
             ]);
             buf.set_line(rect.x + 2, rect.y + 1 + row, &line, width.saturating_sub(4));
@@ -860,7 +820,8 @@ impl std::fmt::Display for Clock {
 
 #[cfg(test)]
 mod tests {
-    use super::{Clock, Grouped, Kilo, Wall};
+    use super::{Clock, Grouped, Kilo, ThemedWall};
+    use crate::{Size, Theme, Tui};
     use tgv_recorder::time::UnixMillis;
 
     #[test]
@@ -879,21 +840,29 @@ mod tests {
 
     #[test]
     fn text_wraps_at_spaces_and_breaks_long_words() {
-        assert_eq!(Wall::wrap("one two three", 7), ["one two", "three"]);
-        assert_eq!(Wall::wrap("abcdefghij", 4), ["abcd", "efgh", "ij"]);
-        assert_eq!(Wall::wrap("a\n\nb", 4), ["a", "", "b"]);
-        assert_eq!(Wall::wrap("日本語の文", 4), ["日本", "語の", "文"]);
+        assert_eq!(ThemedWall::wrap("one two three", 7), ["one two", "three"]);
+        assert_eq!(ThemedWall::wrap("abcdefghij", 4), ["abcd", "efgh", "ij"]);
+        assert_eq!(ThemedWall::wrap("a\n\nb", 4), ["a", "", "b"]);
+        assert_eq!(ThemedWall::wrap("日本語の文", 4), ["日本", "語の", "文"]);
     }
 
     #[test]
     fn replies_read_their_markdown_lightly() {
-        let lines: Vec<String> = Wall::markdown(
-            "## Plan\n**What to look for:** the A\n```rust\nlet x = 1;\n```\n- one",
-            40,
-        )
-        .iter()
-        .map(ToString::to_string)
-        .collect();
+        let wall = Tui::new(Size {
+            width: 80,
+            height: 24,
+        })
+        .wall(UnixMillis::from_millis(0));
+        let theme = Theme::default();
+        let lines: Vec<String> = wall
+            .themed(&theme)
+            .markdown(
+                "## Plan\n**What to look for:** the A\n```rust\nlet x = 1;\n```\n- one",
+                40,
+            )
+            .iter()
+            .map(ToString::to_string)
+            .collect();
         assert_eq!(
             lines,
             ["Plan", "What to look for: the A", "│ let x = 1;", "- one"]
@@ -902,7 +871,7 @@ mod tests {
 
     #[test]
     fn sparks_share_one_scale() {
-        assert_eq!(Wall::spark(&[0, 1, 4, 8], 8), " ▁▄█");
-        assert_eq!(Wall::spark(&[0, 0], 0), "  ");
+        assert_eq!(ThemedWall::spark(&[0, 1, 4, 8], 8), " ▁▄█");
+        assert_eq!(ThemedWall::spark(&[0, 0], 0), "  ");
     }
 }
