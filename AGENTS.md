@@ -307,7 +307,11 @@ dependencies under "Crates" below. Read the code for current module ownership.
   control APIs, printing the same JSON either way (`History` serves a
   `ReadRequest` from either). `tail` is the pure core of
   `tgv tail`: the live feed decoded through the protocol crate's SSE framer, and
-  its lines. `mcp` is the pure core of `tgv mcp` (a source test keeps it free
+  its lines (and progress events, which `tgv tui` asks for). With the `tui`
+  feature (off by default), `commands::tui` is `tgv tui`: the shell around
+  `tgv-tui`'s `Tui`, reading snapshots, turns, and the live feed through
+  the gateway's API alongside one another, and drawing to its `Screen`.
+  `mcp` is the pure core of `tgv mcp` (a source test keeps it free
   of runtime and I/O): JSON-RPC over stdio in both MCP eras, and the read-only
   tools, whose arguments parse into `tgv_store::query` types. `style` decides once, per stream,
   whether stdout and stderr are colored (a terminal, `NO_COLOR`,
@@ -364,7 +368,7 @@ directly.
 | `tgv-tui`                                  | `Tui`                                               | store                    |
 | `tgv-gateway`                              | `Gateway`                                           | harness, recorder, store |
 | `tgv-daemon`                               | `Daemon`                                            | gateway, store           |
-| `tgv-cli` (package `tgv-rs`, binary `tgv`) | `Cli`                                               | daemon                   |
+| `tgv-cli` (package `tgv-rs`, binary `tgv`) | `Cli`                                               | daemon; tui (feature)    |
 | `xtask` (unpublished)                      | `Xtask`                                             | daemon                   |
 
 `docs/architecture.md` lists what each crate owns. These rules apply to every

@@ -52,23 +52,15 @@ impl History {
     pub async fn calls(&self, query: &CallQuery) -> Result<CallPage, ManagementError> {
         match self {
             Self::Local(reader) => Ok(reader.calls(query).await?),
-            Self::Remote(gateway) => gateway.read_as(&ReadRequest::Calls(query.clone())).await,
+            Self::Remote(gateway) => gateway.calls(query).await,
         }
     }
 
     /// Sessions, most recently seen first.
     pub async fn sessions(&self, limit: PageLimit) -> Result<Vec<SessionView>, ManagementError> {
-        /// The read API's body for a session listing.
-        #[derive(Deserialize)]
-        struct Sessions {
-            sessions: Vec<SessionView>,
-        }
         match self {
             Self::Local(reader) => Ok(reader.sessions(limit).await?),
-            Self::Remote(gateway) => gateway
-                .read_as::<Sessions>(&ReadRequest::Sessions(limit))
-                .await
-                .map(|page| page.sessions),
+            Self::Remote(gateway) => gateway.sessions(limit).await,
         }
     }
 
@@ -76,7 +68,7 @@ impl History {
     pub async fn turn(&self, turn: TurnId) -> Result<TurnActivity, ManagementError> {
         match self {
             Self::Local(reader) => Ok(reader.turn_activity(turn, ActivityBudget::DEFAULT).await?),
-            Self::Remote(gateway) => gateway.read_as(&ReadRequest::Turn(turn)).await,
+            Self::Remote(gateway) => gateway.turn(turn).await,
         }
     }
 }
@@ -357,6 +349,28 @@ impl Management {
         Ok(Value::Object(
             self.read(&ApiRead(request.clone()).uri()).await?,
         ))
+    }
+
+    /// Calls, newest first, as `query` narrows them.
+    pub async fn calls(&self, query: &CallQuery) -> Result<CallPage, ManagementError> {
+        self.read_as(&ReadRequest::Calls(query.clone())).await
+    }
+
+    /// Sessions, most recently seen first.
+    pub async fn sessions(&self, limit: PageLimit) -> Result<Vec<SessionView>, ManagementError> {
+        /// The read API's body for a session listing.
+        #[derive(Deserialize)]
+        struct Sessions {
+            sessions: Vec<SessionView>,
+        }
+        self.read_as::<Sessions>(&ReadRequest::Sessions(limit))
+            .await
+            .map(|page| page.sessions)
+    }
+
+    /// One turn's activity, as much of it as the read API shows.
+    pub async fn turn(&self, turn: TurnId) -> Result<TurnActivity, ManagementError> {
+        self.read_as(&ReadRequest::Turn(turn)).await
     }
 
     /// One history read, through the read API, parsed into its view.

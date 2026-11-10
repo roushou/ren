@@ -27,6 +27,7 @@ path = "src/main.rs"
 anstyle = "1.0"
 anyhow = "1.0"
 clap.workspace = true
+futures-util = { workspace = true, optional = true }
 reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -39,12 +40,18 @@ tgv-harness.workspace = true
 tgv-protocol.workspace = true
 tgv-recorder.workspace = true
 tgv-store.workspace = true
+tgv-tui = { workspace = true, optional = true }
 thiserror.workspace = true
 tokio = { workspace = true, features = ["io-std", "io-util", "macros", "rt-multi-thread", "signal", "sync", "time"] }
 toml.workspace = true
 tracing.workspace = true
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 uuid.workspace = true
+
+# `tgv tui`, the terminal view of live sessions: off by default, so the
+# default build has no terminal UI dependencies.
+[features]
+tui = ["dep:tgv-tui", "dep:futures-util"]
 
 # build.rs records the source revision (TGV_REVISION) from git or from
 # cargo's packaging metadata.

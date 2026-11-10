@@ -55,6 +55,8 @@ enum Command {
     Activity(commands::history::ActivityCmd),
     Inspect(commands::history::InspectCmd),
     Tail(commands::tail::TailCmd),
+    #[cfg(feature = "tui")]
+    Tui(commands::tui::TuiCmd),
     Control(commands::control::ControlCmd),
     Users(commands::users::UsersCmd),
     Mcp(commands::mcp::McpCmd),
@@ -104,6 +106,8 @@ impl Cli {
             Command::Activity(cmd) => cmd.run(&ctx).await,
             Command::Inspect(cmd) => cmd.run(&ctx).await,
             Command::Tail(cmd) => cmd.run(&ctx).await,
+            #[cfg(feature = "tui")]
+            Command::Tui(cmd) => cmd.run(&ctx).await,
             Command::Control(cmd) => cmd.run(&ctx).await,
             Command::Users(cmd) => cmd.run(&ctx),
             Command::Mcp(cmd) => cmd.run(&ctx).await,

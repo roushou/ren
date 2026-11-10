@@ -51,6 +51,8 @@ With the Rust toolchain pinned in `rust-toolchain.toml`:
 cargo install --path crates/tgv-cli --locked
 ```
 
+Add `--features tui` for `tgv tui`, a terminal view of live sessions.
+
 ## Run
 
 ```sh
@@ -85,6 +87,7 @@ tgv sessions
 tgv history --limit 10
 tgv inspect <call-id>
 tgv tail
+tgv tui          # built with --features tui
 ```
 
 With a saved gateway, these read the remote daemon.

@@ -2879,6 +2879,7 @@ dependencies = [
  "tgv-protocol",
  "tgv-recorder",
  "tgv-store",
+ "tgv-tui",
  "thiserror",
  "tokio",
  "toml",
