@@ -58,6 +58,9 @@ pub struct ManagementSetup {
     pub build: Build,
     /// What `/health` reports this instance to be.
     pub instance: InstanceOptions,
+    /// Agent runs, when run roots are configured; the run routes answer
+    /// `runs_disabled` without it.
+    pub runs: Option<ren_supervisor::Supervisor>,
 }
 
 /// What the read API reads and reports, from the management setup.

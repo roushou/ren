@@ -395,7 +395,7 @@ impl CodexAppServer {
             // Ren learns the thread from `thread/start`'s response.
             "thread/started" => return,
             _ => {
-                received.events.push(DriveEvent::Unknown(line));
+                received.events.push(DriveEvent::Unknown { line });
                 return;
             }
         };
@@ -551,8 +551,12 @@ impl TurnBody {
             Some("failed") => TurnEnd::Failed {
                 message: self.error.map(|error| error.message),
             },
-            Some(other) => TurnEnd::Unknown(other.to_owned()),
-            None => TurnEnd::Unknown(String::new()),
+            Some(other) => TurnEnd::Unknown {
+                status: other.to_owned(),
+            },
+            None => TurnEnd::Unknown {
+                status: String::new(),
+            },
         }
     }
 }
@@ -777,7 +781,7 @@ mod tests {
         );
         assert!(matches!(
             odd.events.as_slice(),
-            [DriveEvent::TurnEnded { end: TurnEnd::Unknown(s), .. }] if s == "paused"
+            [DriveEvent::TurnEnded { end: TurnEnd::Unknown { status }, .. }] if status == "paused"
         ));
     }
 
@@ -925,7 +929,7 @@ mod tests {
         let mut codec = ready();
         let unknown = json!({ "method": "thread/tokenUsage/updated", "params": { "x": 1 } });
         let received = feed(&mut codec, unknown.clone());
-        let [DriveEvent::Unknown(raw)] = received.events.as_slice() else {
+        let [DriveEvent::Unknown { line: raw }] = received.events.as_slice() else {
             panic!("{:?}", received.events);
         };
         assert_eq!(

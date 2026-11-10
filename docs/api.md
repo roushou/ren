@@ -357,6 +357,45 @@ malformed session ID is `404` `not_found`. A command the recorder cannot record
 is not made: `503` `unrecorded` when the recorder has no room now (try again),
 `500` `unrecordable` when its record cannot be written.
 
+### Runs
+
+`/control/v1/runs` starts and drives agent runs: the official client, started
+by the daemon in a folder under a `[runs]` root and driven through its
+structured mode (Codex's `codex app-server` so far). The client keeps its own
+sign-in, and its model traffic goes through this gateway like any session.
+Runs are off while `runs.roots` is empty: every route then answers `404`
+`runs_disabled`. Access is the control API's.
+
+| Endpoint                                           | Body                                       | Answer                                                                |
+| -------------------------------------------------- | ------------------------------------------ | --------------------------------------------------------------------- |
+| `GET /control/v1/runs`                             | none                                       | `{api_version, runs}`: each `{run, harness, workdir, state}`          |
+| `POST /control/v1/runs`                            | `{"harness": "codex", "dir": "/abs/path"}` | `201` `{api_version, run}`                                            |
+| `POST /control/v1/runs/{run}/prompt`               | `{"text": "…"}`, not blank                 | `204`                                                                 |
+| `POST /control/v1/runs/{run}/approvals/{approval}` | `{"decision": …}`                          | `204`; `accept`, `accept_for_session`, `decline`, or `cancel`         |
+| `POST /control/v1/runs/{run}/interrupt`            | none                                       | `204`                                                                 |
+| `POST /control/v1/runs/{run}/stop`                 | none                                       | `204`; the run ends once its process has exited                       |
+| `GET /control/v1/runs/events`                      | none                                       | server-sent `run` events from now on; `lagged` when some were skipped |
+
+A run's `state` has a `phase`: `starting`, `idle` (with `thread`, the client's
+conversation ID), `working` (with `turn` once known and `approvals`, the
+approval IDs waiting for an answer), `stopping` (with its `cause`), or `ended`
+(with `end`, one of `spawn_failed`, `open_refused`, `exited`, `stopped`,
+`drained`, `recovered`, and `exit`, `{"kind": "code"|"signal", "value": n}` or
+`{"kind": "unknown"}`). Run events are `{"kind": "state", run, state}` or
+`{"kind": "event", run, event}`, where `event` is what the agent reported: its
+`delta` text, `item`s (commands, file changes, messages) as the client
+described them, `approval` requests, `turn_started` and `turn_ended`, and
+`error`s. Events are not stored; the run's start, opening, and end are, and its
+model traffic is recorded as any session's.
+
+Refusals: `400` `invalid_directory` (not absolute, contains `..`, or outside
+every root once links are resolved), `400` `directory_not_found`, `400`
+`not_drivable` (a client Ren cannot drive yet), `502` `spawn_failed` (the
+client is not installed; the run is recorded as `spawn_failed`), `503`
+`unrecorded`, `404` `not_found` for an unknown run or approval, and `409` when
+the run's state does not allow the command: `starting`, `busy`, `not_working`,
+`turn_not_started`, `no_such_approval`, `stopping`, or `ended`.
+
 ## Live feed
 
 `GET /api/live` streams `observation` events, one per committed observation

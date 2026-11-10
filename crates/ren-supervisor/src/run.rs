@@ -9,7 +9,8 @@ use ren_recorder::capture::RunEnd;
 use std::collections::BTreeSet;
 
 /// Where a run is in its life.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(tag = "phase", rename_all = "snake_case")]
 pub enum RunState {
     /// The process started; the conversation is not open yet.
     Starting,
@@ -32,7 +33,8 @@ pub enum RunState {
 }
 
 /// Why Ren is stopping a run.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum StopCause {
     Operator,
     Shutdown,
@@ -258,7 +260,7 @@ impl RunState {
                 | DriveEvent::Error { .. }
                 | DriveEvent::Refused { .. }
                 | DriveEvent::Unsupported { .. }
-                | DriveEvent::Unknown(_)
+                | DriveEvent::Unknown { .. }
                 | DriveEvent::Unreadable { .. },
             ) => self.stay(),
         })

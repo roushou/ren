@@ -11,6 +11,8 @@
 //!   the CLI reads it there. Loopback alone is not trusted, because Serve
 //!   forwards tagged devices and Funnel traffic to loopback without identity.
 
+mod runs;
+
 use crate::control::{ControlError, Controls, RunningCall};
 use crate::operator::{OperatorCommand, OperatorState, RetryAfter};
 use crate::user::Users;
@@ -30,7 +32,10 @@ use ren_recorder::{
     time::Clock,
 };
 use ren_store::backup::{Backup, BackupError};
+use ren_supervisor::Supervisor;
+use runs::RunsApi;
 use std::{sync::Arc, time::Duration};
+use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 /// The `[control]` configuration section.
@@ -207,7 +212,16 @@ impl ControlApi {
         }
     }
 
-    pub fn router(self) -> Router {
+    /// The control routes, with the run routes when `supervisor` is given.
+    /// `shutdown` ends run update feeds so the server can drain.
+    pub fn router(self, supervisor: Option<Supervisor>, shutdown: CancellationToken) -> Router {
+        let control = Arc::new(self);
+        let runs = RunsApi {
+            control: control.clone(),
+            supervisor,
+            shutdown,
+        };
+        let run_routes = runs.router();
         Router::new()
             .route("/control/v1/state", get(Self::state))
             .route("/control/v1/pause", post(Self::pause))
@@ -221,8 +235,9 @@ impl ControlApi {
             .route("/control/v1/users/{user}/unblock", post(Self::unblock_user))
             .route("/control/v1/calls/{call}/cancel", post(Self::cancel))
             .route("/control/v1/backup", post(Self::backup))
+            .with_state(control)
+            .merge(run_routes)
             .layer(axum::middleware::map_response(Self::private))
-            .with_state(Arc::new(self))
     }
 
     async fn private(mut response: Response) -> Response {

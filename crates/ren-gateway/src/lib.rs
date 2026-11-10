@@ -439,9 +439,10 @@ impl<U: Upstream> Gateway<U> {
             self.config.users.clone(),
             management.backup,
         );
+        let feeds_end = self.shutdown.drain_token();
         self.forwarding_router()
             .merge(api.router())
-            .merge(control.router())
+            .merge(control.router(management.runs, feeds_end))
     }
 
     /// The forwarding routes, built from the upstream table's bound routes.

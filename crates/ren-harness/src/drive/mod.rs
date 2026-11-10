@@ -53,7 +53,7 @@ impl Prompt {
 }
 
 /// An approval request, named as the client named it within one process.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, SerializeDisplay)]
 pub struct ApprovalId(String);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
@@ -106,7 +106,8 @@ pub enum RequestKind {
 }
 
 /// What a driven client reported, as Ren reads it.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
 pub enum DriveEvent {
     /// The conversation is open and takes prompts.
     Ready {
@@ -153,7 +154,9 @@ pub enum DriveEvent {
         method: String,
     },
     /// A well-formed message Ren does not read, kept as it arrived.
-    Unknown(RawLine),
+    Unknown {
+        line: RawLine,
+    },
     /// A line Ren could not read.
     Unreadable {
         line: RawLine,
@@ -162,14 +165,16 @@ pub enum DriveEvent {
 }
 
 /// Whether the client said it would retry after an error.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Retry {
     WillRetry,
     Final,
 }
 
 /// Why a line could not be read.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(tag = "reason", rename_all = "snake_case")]
 pub enum Unreadable {
     NotJson,
     NotJsonRpc,
@@ -187,6 +192,13 @@ pub enum Unreadable {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RawLine(Vec<u8>);
 
+/// Serialized as text, with invalid UTF-8 replaced; the bytes stay kept.
+impl serde::Serialize for RawLine {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&String::from_utf8_lossy(&self.0))
+    }
+}
+
 impl RawLine {
     pub fn new(bytes: Vec<u8>) -> Self {
         Self(bytes)
@@ -198,7 +210,8 @@ impl RawLine {
 }
 
 /// An item of a turn, named as the client named it.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize)]
+#[serde(transparent)]
 pub struct ItemId(String);
 
 impl ItemId {
@@ -211,14 +224,15 @@ impl ItemId {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ItemPhase {
     Started,
     Completed,
 }
 
 /// One item of a turn: its kind, and the client's own body for it.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct DriveItem {
     pub id: ItemId,
     pub kind: ItemKind,
@@ -239,8 +253,26 @@ pub enum ItemKind {
     Other(String),
 }
 
+impl serde::Serialize for ItemKind {
+    /// Known kinds by their snake_case name; others by the client's own.
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(match self {
+            Self::UserMessage => "user_message",
+            Self::AgentMessage => "agent_message",
+            Self::Reasoning => "reasoning",
+            Self::Plan => "plan",
+            Self::CommandExecution => "command_execution",
+            Self::FileChange => "file_change",
+            Self::McpToolCall => "mcp_tool_call",
+            Self::WebSearch => "web_search",
+            Self::Other(kind) => kind,
+        })
+    }
+}
+
 /// What an approval asks for.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ApprovalAsk {
     /// Run a command.
     Command {
@@ -253,7 +285,8 @@ pub enum ApprovalAsk {
 }
 
 /// How a turn ended, as the client reported it.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
 pub enum TurnEnd {
     Completed,
     Interrupted,
@@ -261,7 +294,9 @@ pub enum TurnEnd {
         message: Option<String>,
     },
     /// A status Ren does not know, as the client named it.
-    Unknown(String),
+    Unknown {
+        status: String,
+    },
 }
 
 /// Why a command could not be sent.

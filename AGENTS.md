@@ -198,7 +198,7 @@ dependencies under "Crates" below. Read the code for current module ownership.
   `InterpretedCall`, a `Reading` read as its client uses it), and driving a
   client through its structured mode (`drive`: pure line framing, the
   `DriveCommand` and `DriveEvent` vocabulary, and `CodexAppServer`, the codec
-  for `codex app-server`; nothing starts a driven client yet). It performs filesystem and process I/O
+  for `codex app-server`). It performs filesystem and process I/O
   but has no async runtime, HTTP, database, or CLI dependency.
 - `crates/ren-recorder`: the bounded capture queue between forwarding and
   storage, with `Recorder` as its primary type. `CallTap` (and `ChannelTap` for a
@@ -251,8 +251,8 @@ dependencies under "Crates" below. Read the code for current module ownership.
   agent's stdout, writes its stdin, and waits for its exit, records each run
   through the recorder's `RunTap` (a run without room to be recorded does not
   start), and drains every run when the last handle is dropped. `src/purity.rs` keeps `run` and
-  `workdir` free of runtime and I/O. Nothing constructs a supervisor yet: no
-  production `AgentHost`, configuration, or routes.
+  `workdir` free of runtime and I/O. The daemon constructs it when `[runs]`
+  roots are configured, with `ProcessHost`; the gateway's control API serves it.
 - `crates/ren-tui`: the terminal view of a gateway's live sessions, with `Tui`
   as its primary type. `Tui` is sans-IO: it takes what was read (`Input`:
   snapshots of sessions and model calls, as `ren_store::view` types, turn
@@ -311,6 +311,9 @@ dependencies under "Crates" below. Read the code for current module ownership.
     `Controls` (token or Tailscale identity; browsers refused), and its
     `[control]` configuration (`ControlOptions`) and `ControlToken`. Handler state
     stays crate-private; configuration and token types are exported at the root.
+    Its `runs` module serves `/control/v1/runs`: starting, prompting, answering,
+    interrupting, and stopping runs through the `ren_supervisor::Supervisor` in
+    `ManagementSetup`, and their updates as SSE.
 - `crates/ren-daemon`: configuration, resource wiring, and lifecycle, with
   `Daemon` as its primary type (`lib.rs`). It opens storage, binds the listener,
   writes the control token, constructs the gateway and recorder, owns the
@@ -387,18 +390,18 @@ dependencies under "Crates" below. Read the code for current module ownership.
 "Depends on" names the nearest crates below; a crate may also use lower ones
 directly.
 
-| Crate                                      | Primary type                                        | Depends on               |
-| ------------------------------------------ | --------------------------------------------------- | ------------------------ |
-| `ren-protocol`                             | `CallInspector`                                     | none of ours             |
-| `ren-harness`                              | `Harness` (`ClaudeCode`, `Codex`, `Pi`, `OpenCode`) | protocol                 |
-| `ren-recorder`                             | `Recorder`, with its `RecordSink` port              | protocol, harness        |
-| `ren-store`                                | `Store`, which implements `RecordSink`              | recorder                 |
-| `ren-supervisor`                           | `Supervisor`, with its `AgentHost` port             | recorder, harness        |
-| `ren-tui`                                  | `Tui`                                               | store                    |
-| `ren-gateway`                              | `Gateway`                                           | harness, recorder, store |
-| `ren-daemon`                               | `Daemon`                                            | gateway, store           |
-| `ren-cli` (package `ren-rs`, binary `ren`) | `Cli`                                               | daemon; tui (feature)    |
-| `xtask` (unpublished)                      | `Xtask`                                             | daemon                   |
+| Crate                                      | Primary type                                        | Depends on            |
+| ------------------------------------------ | --------------------------------------------------- | --------------------- |
+| `ren-protocol`                             | `CallInspector`                                     | none of ours          |
+| `ren-harness`                              | `Harness` (`ClaudeCode`, `Codex`, `Pi`, `OpenCode`) | protocol              |
+| `ren-recorder`                             | `Recorder`, with its `RecordSink` port              | protocol, harness     |
+| `ren-store`                                | `Store`, which implements `RecordSink`              | recorder              |
+| `ren-supervisor`                           | `Supervisor`, with its `AgentHost` port             | recorder, harness     |
+| `ren-tui`                                  | `Tui`                                               | store                 |
+| `ren-gateway`                              | `Gateway`                                           | supervisor, store     |
+| `ren-daemon`                               | `Daemon`                                            | gateway, store        |
+| `ren-cli` (package `ren-rs`, binary `ren`) | `Cli`                                               | daemon; tui (feature) |
+| `xtask` (unpublished)                      | `Xtask`                                             | daemon                |
 
 `docs/architecture.md` lists what each crate owns. These rules apply to every
 crate:

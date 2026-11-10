@@ -9,18 +9,23 @@ pub mod config;
 pub mod host;
 
 use crate::config::RuntimeConfig;
-use crate::host::{ObservationThread, RandomIds, SystemClock};
+use crate::host::{ObservationThread, ProcessHost, RandomIds, SystemClock};
 use ren_gateway::{
     Build, ControlToken, Gateway, ManagementSetup, ReqwestUpstream, Shutdown, Stopped,
     control::Controls,
     operator::{OperatorState, Pause, RestoreError},
 };
 use ren_gateway::{IngressError, UpstreamConfigError};
+use ren_harness::{
+    drive::LineLimit,
+    endpoint::{GatewayEndpoint, GatewayEndpointError},
+};
 use ren_recorder::CaptureOptionsError;
 use ren_recorder::secrets::SecretScanner;
 use ren_recorder::{Recorder, RecorderSetup, id::IdSource, time::Clock};
 use ren_store::StoreError;
 use ren_store::{Reader, Store, backup::Backup};
+use ren_supervisor::{Supervisor, SupervisorError, SupervisorOptions, SupervisorTask};
 use std::{io, net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
 use tokio::{net::TcpListener, task::JoinHandle};
 
@@ -61,6 +66,10 @@ pub enum DaemonError {
     ObservationThread(#[source] io::Error),
     #[error("{0} task failed")]
     Task(&'static str, #[source] tokio::task::JoinError),
+    #[error("cannot set up agent runs")]
+    Runs(#[from] SupervisorError),
+    #[error("the listener's address is not a gateway URL")]
+    RunGateway(#[from] GatewayEndpointError),
 }
 
 type Result<T, E = DaemonError> = std::result::Result<T, E>;
@@ -92,6 +101,8 @@ impl Daemon {
     /// How long in-flight calls may continue after shutdown is requested.
     const DRAIN_DEADLINE: Duration = Duration::from_secs(10);
     const CAPTURE_DEADLINE: Duration = Duration::from_secs(10);
+    /// How long stopped runs may take to exit and be recorded.
+    const RUNS_DEADLINE: Duration = Duration::from_secs(10);
 
     /// `build` is what the binary running this daemon was compiled from;
     /// `/health` reports it.
@@ -174,6 +185,14 @@ impl Daemon {
         )?;
         let mut worker =
             ObservationThread::start(task.run()).map_err(DaemonError::ObservationThread)?;
+        let runs = match Self::runs(config, address, &recorder, &ids) {
+            Ok(runs) => runs,
+            Err(error) => {
+                drop(recorder);
+                let _ = worker.join().await;
+                return Err(error);
+            }
+        };
         let reader = match Reader::open(data_dir, 4).await {
             Ok(reader) => reader,
             Err(error) => {
@@ -206,8 +225,18 @@ impl Daemon {
                 token,
                 build: self.build.clone(),
                 instance: config.instance(),
+                runs: runs.as_ref().map(|(supervisor, _)| supervisor.clone()),
             },
         );
+        // The gateway holds the only supervisor handles: the runs drain once
+        // HTTP has stopped and the router is dropped.
+        let runs_task = runs.map(|(_, task)| {
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "process wiring: the daemon owns the supervisor's task"
+            )]
+            tokio::spawn(task.run())
+        });
         let stop = shutdown.clone();
         #[expect(
             clippy::disallowed_methods,
@@ -222,6 +251,17 @@ impl Daemon {
                     tracing::warn!("shutdown deadline passed; calls still running were cancelled")
                 }
                 Err(error) => tracing::error!(%error, "HTTP shutdown did not complete"),
+            }
+            // Runs stop once HTTP has, and record their ends before capture
+            // drains.
+            if let Some(task) = runs_task {
+                match tokio::time::timeout(Self::RUNS_DEADLINE, task).await {
+                    Ok(Ok(())) => {}
+                    Ok(Err(error)) => tracing::error!(%error, "the supervisor task failed"),
+                    Err(_) => tracing::warn!(
+                        "runs did not stop in time; their ends will be recovered on restart"
+                    ),
+                }
             }
             // The server dropped every request owner, so the recorder's senders
             // are closing. Drain accepted capture before releasing the lock.
@@ -243,6 +283,31 @@ impl Daemon {
             task,
         };
         Ok(())
+    }
+
+    /// The supervisor and its task, when run roots are configured. Driven
+    /// clients send their model traffic to this daemon's own listener.
+    fn runs(
+        config: &RuntimeConfig,
+        address: SocketAddr,
+        recorder: &Recorder,
+        ids: &Arc<dyn IdSource>,
+    ) -> Result<Option<(Supervisor, SupervisorTask<ProcessHost>)>> {
+        if config.runs().roots.is_empty() {
+            return Ok(None);
+        }
+        let options = SupervisorOptions {
+            roots: config.runs().roots.clone(),
+            gateway: GatewayEndpoint::parse(&format!("http://{address}"))?,
+            version: env!("CARGO_PKG_VERSION").to_owned(),
+            line_limit: LineLimit::DEFAULT,
+        };
+        Ok(Some(Supervisor::new(
+            options,
+            ProcessHost,
+            ids.clone(),
+            recorder.clone(),
+        )?))
     }
 
     /// Address bound by the current or most recently completed run.

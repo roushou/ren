@@ -78,6 +78,8 @@ pub enum ConfigError {
     Revision(#[source] serde_json::Error),
     #[error("set --data-dir when HOME is unavailable")]
     NoDataDir,
+    #[error("runs.roots entries must be absolute paths")]
+    RunRoot,
 }
 
 /// Where operator keys come from while resolving.
@@ -121,6 +123,28 @@ pub struct Config {
     pub users: Vec<UserConfig>,
     /// Whether this is a production or a development instance.
     pub instance: InstanceOptions,
+    /// Agent runs: off until roots are configured.
+    pub runs: RunsOptions,
+}
+
+/// The `[runs]` section: the folders agent runs may work in. Runs are off
+/// while `roots` is empty.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct RunsOptions {
+    /// Absolute paths. A run may start in a root or any folder under one,
+    /// after links are resolved.
+    pub roots: Vec<PathBuf>,
+}
+
+impl RunsOptions {
+    pub fn validate(&self) -> Result<(), ConfigError> {
+        if self.roots.iter().all(|root| root.is_absolute()) {
+            Ok(())
+        } else {
+            Err(ConfigError::RunRoot)
+        }
+    }
 }
 
 /// An operator-key upstream entry. The key is read from the daemon's
@@ -205,6 +229,7 @@ impl Default for Config {
             control: ControlOptions::default(),
             users: Vec::new(),
             instance: InstanceOptions::default(),
+            runs: RunsOptions::default(),
         }
     }
 }
@@ -295,6 +320,7 @@ impl Config {
             websocket: self.websocket,
             buffer: self.buffer,
             control: self.control.clone(),
+            runs: self.runs.clone(),
             revision: self.revision()?,
         })
     }
@@ -355,6 +381,7 @@ impl Config {
         self.websocket.validate()?;
         self.buffer.validate()?;
         self.control.validate()?;
+        self.runs.validate()?;
         Ok(())
     }
 
@@ -396,6 +423,7 @@ pub struct RuntimeConfig {
     websocket: WebSocketOptions,
     buffer: BufferOptions,
     control: ControlOptions,
+    runs: RunsOptions,
     revision: String,
 }
 
@@ -411,6 +439,9 @@ impl RuntimeConfig {
     }
     pub fn instance(&self) -> InstanceOptions {
         self.instance
+    }
+    pub fn runs(&self) -> &RunsOptions {
+        &self.runs
     }
     /// The gateway's settings from this snapshot.
     pub fn gateway(&self) -> GatewayConfig {
@@ -476,6 +507,18 @@ mod tests {
             ..Config::default()
         };
         assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn runs_need_absolute_roots() {
+        let config: Config = toml::from_str("[runs]\nroots = [\"/home/op/dev\"]\n").unwrap();
+        config.resolve().unwrap();
+        let config: Config = toml::from_str("[runs]\nroots = [\"dev\"]\n").unwrap();
+        assert!(matches!(config.validate(), Err(ConfigError::RunRoot)));
+        assert!(
+            Config::default().runs.roots.is_empty(),
+            "runs are off by default"
+        );
     }
 
     #[test]

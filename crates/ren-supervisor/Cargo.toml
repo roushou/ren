@@ -15,6 +15,7 @@ futures-util.workspace = true
 ren-harness.workspace = true
 ren-protocol.workspace = true
 ren-recorder.workspace = true
+serde.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["io-util", "macros", "sync"] }
 tracing.workspace = true

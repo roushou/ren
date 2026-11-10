@@ -74,6 +74,12 @@ environment = "production"
 # Local use (the ren control CLI) needs the daemon's control.token instead.
 tailscale_logins = []
 
+[runs]
+# Folders agent runs may work in: Ren starts a client (Codex so far) in one of
+# them, or a folder under one, and drives it through the control API. Runs are
+# off while this is empty. Absolute paths; links are resolved.
+roots = []
+
 # Optional: named users of the gateway, people or machines, recorded on each
 # call they make. A user is proven by a Tailscale login (through Tailscale
 # Serve) or by a token sent in X-Ren-User-Token; `ren users token <id>` makes
