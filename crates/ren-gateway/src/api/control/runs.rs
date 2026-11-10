@@ -206,7 +206,12 @@ impl RunsApi {
             .command(run, command)
             .await
             .map_err(|error| Denied::Run(error.into()))?;
-        Ok(StatusCode::NO_CONTENT.into_response())
+        // Sent to the agent; its reply arrives as run updates.
+        Ok((
+            StatusCode::ACCEPTED,
+            Json(serde_json::json!({ "api_version": ControlApi::API_VERSION })),
+        )
+            .into_response())
     }
 
     async fn list(State(api): Api, headers: HeaderMap) -> Result<Response, Denied> {

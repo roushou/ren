@@ -372,13 +372,14 @@ Runs are off while `runs.roots` is empty: every route then answers `404`
 | -------------------------------------------------- | --------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
 | `GET /control/v1/runs`                             | none                                                                        | `{api_version, runs}`: each `{run, harness, workdir, state}`                          |
 | `POST /control/v1/runs`                            | `{"harness": "codex", "dir": "/abs/path"}`, optional `"resume": "<thread>"` | `201` `{api_version, run}`; with `resume`, the run continues that client conversation |
-| `POST /control/v1/runs/{run}/prompt`               | `{"text": "…"}`, not blank                                                  | `204`                                                                                 |
-| `POST /control/v1/runs/{run}/approvals/{approval}` | `{"decision": …}`                                                           | `204`; `accept`, `accept_for_session`, `decline`, or `cancel`                         |
-| `POST /control/v1/runs/{run}/interrupt`            | none                                                                        | `204`                                                                                 |
-| `POST /control/v1/runs/{run}/stop`                 | none                                                                        | `204`; the run ends once its process has exited                                       |
+| `POST /control/v1/runs/{run}/prompt`               | `{"text": "…"}`, not blank                                                  | `202`                                                                                 |
+| `POST /control/v1/runs/{run}/approvals/{approval}` | `{"decision": …}`                                                           | `202`; `accept`, `accept_for_session`, `decline`, or `cancel`                         |
+| `POST /control/v1/runs/{run}/interrupt`            | none                                                                        | `202`                                                                                 |
+| `POST /control/v1/runs/{run}/stop`                 | none                                                                        | `202`; the run ends once its process has exited                                       |
 | `GET /control/v1/runs/events`                      | none                                                                        | server-sent `run` events from now on; `lagged` when some were skipped                 |
 
-A run's `state` has a `phase`: `starting`, `idle` (with `thread`, the client's
+Commands answer `202` `{api_version}` once sent to the agent; what it does
+next arrives as run events. A run's `state` has a `phase`: `starting`, `idle` (with `thread`, the client's
 conversation ID), `working` (with `turn` once known and `approvals`, the
 approval IDs waiting for an answer), `stopping` (with its `cause`), or `ended`
 (with `end`, one of `spawn_failed`, `open_refused`, `exited`, `stopped`,

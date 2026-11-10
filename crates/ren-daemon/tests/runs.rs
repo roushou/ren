@@ -121,7 +121,7 @@ async fn a_run_is_started_prompted_approved_and_stopped_through_the_control_api(
             json!({ "text": "edit src" }),
         )
         .await;
-    assert_eq!(status, StatusCode::NO_CONTENT);
+    assert_eq!(status, StatusCode::ACCEPTED);
     let (status, body) = control
         .post(&format!("/runs/{run}/prompt"), json!({ "text": "again" }))
         .await;
@@ -141,11 +141,11 @@ async fn a_run_is_started_prompted_approved_and_stopped_through_the_control_api(
             json!({ "decision": "accept" }),
         )
         .await;
-    assert_eq!(status, StatusCode::NO_CONTENT);
+    assert_eq!(status, StatusCode::ACCEPTED);
     control.until(|state| state["phase"] == "idle").await;
 
     let (status, _) = control.post(&format!("/runs/{run}/stop"), json!({})).await;
-    assert_eq!(status, StatusCode::NO_CONTENT);
+    assert_eq!(status, StatusCode::ACCEPTED);
     let ended = control.until(|state| state["phase"] == "ended").await;
     assert_eq!(ended["end"], "stopped");
     assert_eq!(ended["exit"], json!({ "kind": "signal", "value": 9 }));
