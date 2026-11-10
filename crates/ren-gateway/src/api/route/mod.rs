@@ -19,7 +19,7 @@ pub struct ApiRead(pub ReadRequest);
 
 impl ApiRead {
     /// The routes reads are served on, in the router's path syntax.
-    pub(crate) const ROUTES: [&str; 11] = [
+    pub(crate) const ROUTES: [&str; 13] = [
         "/api/calls",
         "/api/calls/{id}",
         "/api/calls/{id}/activity",
@@ -31,6 +31,8 @@ impl ApiRead {
         "/api/usage",
         "/api/search",
         "/api/exposures",
+        "/api/runs",
+        "/api/runs/{id}",
     ];
 
     /// The path and query string that ask for this read.
@@ -86,6 +88,11 @@ impl ApiRead {
                     .opt("session", query.session)
                     .range(query.time),
             ),
+            ReadRequest::Runs(limit) => (
+                "/api/runs".to_owned(),
+                QueryParams::default().with("limit", limit.get()),
+            ),
+            ReadRequest::Run(run) => (format!("/api/runs/{run}"), QueryParams::default()),
         };
         match serde_urlencoded::to_string(&query.0) {
             Ok(query) if !query.is_empty() => format!("{path}?{query}"),
@@ -140,6 +147,14 @@ impl ApiRead {
             }
             ["search"] => ReadRequest::Search(Self::query::<RawSearchQuery>(uri)?.parse()?),
             ["exposures"] => ReadRequest::Exposures(Self::query::<RawExposureQuery>(uri)?.parse()?),
+            ["runs"] => {
+                let page = Self::query::<RawPageQuery>(uri)?;
+                if page.after.is_some() {
+                    return Err(QueryError::Cursor.into());
+                }
+                ReadRequest::Runs(page.limit()?)
+            }
+            ["runs", run] => ReadRequest::Run(Self::id(run)?),
             _ => return Err(ApiError::NotFound),
         };
         Ok(Self(request))

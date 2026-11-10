@@ -7,9 +7,9 @@ use crate::activity::report::SessionReport;
 use crate::activity::{ActivityBudget, CallActivity, TurnActivity, TurnSummary};
 use crate::query::{CallQuery, Cursor, PageLimit, TimeRange};
 use crate::search::{ExposureQuery, ExposureView, SearchPage, SearchQuery};
-use crate::view::{CallDetail, CallPage, SessionView, UsageView};
+use crate::view::{CallDetail, CallPage, RunView, SessionView, UsageView};
 use crate::{Reader, StoreError};
-use ren_recorder::id::{CallId, SessionId, TurnId};
+use ren_recorder::id::{CallId, RunId, SessionId, TurnId};
 use serde::Serialize;
 
 /// A read of recorded history.
@@ -35,6 +35,9 @@ pub enum ReadRequest {
     Usage(TimeRange),
     Search(SearchQuery),
     Exposures(ExposureQuery),
+    /// Agent runs, newest first.
+    Runs(PageLimit),
+    Run(RunId),
 }
 
 /// What a [`ReadRequest`] returns. Serialized, each is the API's JSON body
@@ -52,6 +55,8 @@ pub enum ReadResponse {
     Usage(UsageView),
     Search(SearchPage),
     Exposures { exposures: Vec<ExposureView> },
+    Runs { runs: Vec<RunView> },
+    Run(Box<RunView>),
 }
 
 impl Reader {
@@ -85,6 +90,12 @@ impl Reader {
             ReadRequest::Exposures(query) => ReadResponse::Exposures {
                 exposures: self.exposures(query).await?,
             },
+            ReadRequest::Runs(limit) => ReadResponse::Runs {
+                runs: self.runs(*limit).await?,
+            },
+            ReadRequest::Run(run) => {
+                ReadResponse::Run(Box::new(self.run(*run).await?.ok_or(StoreError::NotFound)?))
+            }
         })
     }
 }

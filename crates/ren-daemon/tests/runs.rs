@@ -166,6 +166,42 @@ async fn a_run_is_started_prompted_approved_and_stopped_through_the_control_api(
     assert!(feed.contains("\"text\":\"Edited.\""), "{feed}");
     drop(events);
 
+    // The read API serves the stored run once its end is committed.
+    let stored = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let body = control
+                .http
+                .get(format!("{}/api/runs/{run}", gateway.base()))
+                .send()
+                .await
+                .unwrap()
+                .bytes()
+                .await
+                .unwrap();
+            let body: Value = serde_json::from_slice(&body).unwrap_or(Value::Null);
+            if body["end"] == "stopped" {
+                return body;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("the stored run");
+    assert_eq!(stored["harness"], "codex");
+    assert_eq!(stored["workdir"], "/work/acme");
+    assert_eq!(stored["thread"], support::agent::THREAD);
+    let listed = control
+        .http
+        .get(format!("{}/api/runs?limit=5", gateway.base()))
+        .send()
+        .await
+        .unwrap()
+        .bytes()
+        .await
+        .unwrap();
+    let listed: Value = serde_json::from_slice(&listed).unwrap();
+    assert_eq!(listed["runs"][0]["id"], run.as_str());
+
     gateway.stop().await;
     let reader = Reader::open(dir.path(), 1).await.unwrap();
     let stored = reader.runs(PageLimit::DEFAULT).await.unwrap();
