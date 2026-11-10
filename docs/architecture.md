@@ -176,7 +176,7 @@ Identities: `ChannelId`, `CallId`, `AttemptId`, `SessionId`, `TurnId`, and
 `UpstreamId`, plus a separate type for each provider-native identifier.
 
 A **run** is one agent process Ren starts and drives through its client's
-structured mode. `RunId` names it and `RunEnd` says how it ended; nothing starts
+structured mode. `RunId` names it, `RunEnd` says how it ended, and `ProcessExit` how its process exited; nothing starts
 runs yet.
 
 ---

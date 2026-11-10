@@ -4,6 +4,7 @@
 
 use ren_harness::drive::{ApprovalId, Decision, DriveCommand, DriveEvent, Prompt, RequestKind};
 use ren_protocol::native::{NativeThreadId, NativeTurnId};
+pub use ren_recorder::capture::ProcessExit;
 use ren_recorder::capture::RunEnd;
 use std::collections::BTreeSet;
 
@@ -47,15 +48,6 @@ impl StopCause {
             Self::OpenRefused => RunEnd::OpenRefused,
         }
     }
-}
-
-/// How the process exited, as the host reported it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ProcessExit {
-    Code(i32),
-    Signal(i32),
-    /// The host could not say how the process exited.
-    Unknown,
 }
 
 /// What the operator asks of a run.

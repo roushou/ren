@@ -239,6 +239,16 @@ pub enum ChannelEnd {
     Recovered,
 }
 
+/// How an agent process exited, as the host reported it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case", tag = "kind", content = "value")]
+pub enum ProcessExit {
+    Code(i32),
+    Signal(i32),
+    /// The host could not say how the process exited.
+    Unknown,
+}
+
 /// How a run, one agent process Ren started and drove, ended. The process's
 /// exit status, when there is one, is recorded beside the label; neither says
 /// whether the agent's work succeeded.
