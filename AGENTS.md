@@ -257,7 +257,8 @@ dependencies under "Crates" below. Read the code for current module ownership.
   as its primary type. `Tui` is sans-IO: it takes what was read (`Input`:
   snapshots of sessions and model calls, as `ren_store::view` types, turn
   activity, progress updates, live observations, the terminal's size, and
-  failed reads, shown until a snapshot succeeds) and key presses (`Tui::press`, with `Key` and the `Command`s keys give in
+  failed reads, shown until a snapshot succeeds, and the daemon's runs as the
+  control API lists them) and key presses (`Tui::press`, with `Key` and the `Command`s keys give in
   `keys`), and answers with the reads it needs (`Read`);
   `Tui::snapshot_query` builds the snapshot's queries, and `Tui::wall` is
   what to draw at a given time: panes (`grid`: sized to the active
@@ -275,6 +276,10 @@ dependencies under "Crates" below. Read the code for current module ownership.
   touches the terminal: raw mode and the alternate screen until dropped,
   and its events as keys and sizes. `src/purity.rs` keeps the core's
   sources free of runtime, I/O, and terminal dependencies.
+  Runs (`runs`): a live run's session keeps its pane with the run's mark and
+  its oldest approval's ask; keys start a run, type a prompt in the status line,
+  answer, interrupt, and stop, as a `RunControl` the shell sends through the
+  control API.
 - `crates/ren-gateway`: Ren's HTTP interface, with `Gateway` as its primary type.
   It owns forwarding, management, and control routes on one listener, assembled
   by `Gateway::router` or `Gateway::into_ingress`. Forwarding uses a declarative

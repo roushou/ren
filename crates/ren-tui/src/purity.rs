@@ -10,6 +10,7 @@ fn the_core_stays_free_of_runtime_and_io_dependencies() {
         ("call.rs", include_str!("call.rs")),
         ("grid.rs", include_str!("grid.rs")),
         ("keys.rs", include_str!("keys.rs")),
+        ("runs.rs", include_str!("runs.rs")),
         ("session.rs", include_str!("session.rs")),
     ];
     let forbidden = [

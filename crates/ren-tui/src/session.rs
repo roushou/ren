@@ -162,6 +162,8 @@ pub struct SessionPane {
     pub alerts: Vec<Alert>,
     /// Kept ahead of other sessions by the viewer.
     pub pinned: bool,
+    /// The live run driving this session, when Ren started it.
+    pub run: Option<crate::runs::RunMark>,
 }
 
 /// A session's calls and its newest turn, as read.
@@ -281,6 +283,7 @@ impl SessionPane {
             }),
             alerts: Vec::new(),
             pinned: false,
+            run: None,
             lines,
             phase,
         };

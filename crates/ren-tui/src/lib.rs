@@ -14,6 +14,7 @@ mod grid;
 mod keys;
 #[cfg(test)]
 mod purity;
+mod runs;
 mod screen;
 mod session;
 #[cfg(test)]
@@ -24,6 +25,7 @@ pub use call::{CallEnd, ErrorCause, Shortfall, Stop, Tone};
 pub use draw::ThemedWall;
 pub use grid::{Grid, Size};
 pub use keys::{Command, Key};
+pub use runs::{EntryLine, RunControl, RunCounts, RunMark, RunPhase, Runs};
 pub use screen::{Screen, ScreenError, ScreenEvent, ScreenEvents};
 pub use session::{
     Alert, CallFacts, Line, Phase, ResultMark, SessionPane, Span, Streaming, Tally, ToolLine,
@@ -32,16 +34,19 @@ pub use theme::{Theme, ThemeName};
 
 use grid::Placement;
 use ren_harness::Harness;
+use ren_harness::drive::{ApprovalId, Decision, Prompt};
 use ren_protocol::label::{Labeled, Stored};
 use ren_recorder::Observation;
 use ren_recorder::batch::ObservationKind;
 use ren_recorder::capture::CallState;
-use ren_recorder::id::{CallId, SessionId, TurnId};
+use ren_recorder::id::{CallId, RunId, SessionId, TurnId};
 use ren_recorder::progress::Progress;
 use ren_recorder::time::UnixMillis;
 use ren_store::activity::{CallActivity, TurnActivity};
 use ren_store::query::{CallFilter, CallQuery, KindFilter, PageLimit, StatusFilter, TimeRange};
 use ren_store::view::{CallPage, CallView, SessionView};
+use ren_supervisor::RunState;
+use runs::Entry;
 use session::SessionRead;
 use std::collections::HashMap;
 use std::time::Duration;
@@ -71,6 +76,13 @@ pub struct Tui {
     help: Help,
     /// Why the last read failed, until a snapshot succeeds.
     failure: Option<String>,
+    runs: Runs,
+    /// Text being typed in the status line: keys go there until it is
+    /// sent or dropped.
+    entry: Option<Entry>,
+    /// What the last run command answered, or why a key did nothing; until
+    /// the next key.
+    notice: Option<String>,
 }
 
 /// Whether the help is over the wall.
@@ -88,6 +100,8 @@ pub enum Pressed {
     Continue(Vec<Read>),
     /// Preview the next theme; the shell owns the local preference.
     CycleTheme,
+    /// Send this to the run's daemon; answer with [`Input::RunAnswered`].
+    Run(RunControl),
     Quit,
 }
 
@@ -135,6 +149,10 @@ pub enum Input {
     /// A read failed: why, as the reader words it. The view keeps what it
     /// last read and says it is stale until a snapshot succeeds.
     ReadFailed(String),
+    /// The gateway's runs, as asked for with [`Read::Runs`].
+    Runs(Runs),
+    /// How a [`Pressed::Run`] command was answered: refused, and why.
+    RunAnswered(Result<(), String>),
 }
 
 /// A read the view needs.
@@ -145,6 +163,8 @@ pub enum Read {
     Turn(TurnId),
     /// One call's activity, for a session whose client sends no turns.
     Call(CallId),
+    /// The gateway's live runs, through its control API.
+    Runs,
 }
 
 /// Everything to draw at one time.
@@ -157,6 +177,8 @@ pub struct Wall {
     pub view: View,
     pub help: Help,
     pub status: Status,
+    /// Text being typed in the status line, in place of the status.
+    pub entry: Option<EntryLine>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -185,6 +207,10 @@ pub struct Status {
     /// Output tokens of finished calls, per client, over the last few
     /// minutes. Measured when each call ends: not a live rate.
     pub output: Vec<Spark>,
+    /// Live runs, once read.
+    pub runs: Option<RunCounts>,
+    /// What the last run command or key left to say.
+    pub notice: Option<String>,
 }
 
 /// How complete the view's reads are.
@@ -245,11 +271,18 @@ impl Tui {
             pins: Vec::new(),
             help: Help::Hidden,
             failure: None,
+            runs: Runs::Unread,
+            entry: None,
+            notice: None,
         }
     }
 
     /// Takes one key press.
     pub fn press(&mut self, key: Key) -> Pressed {
+        self.notice = None;
+        if self.entry.is_some() {
+            return self.type_into(key);
+        }
         let Some(command) = Command::of(key) else {
             return Pressed::Continue(Vec::new());
         };
@@ -266,7 +299,14 @@ impl Tui {
                 | Command::Up
                 | Command::Down
                 | Command::Zoom
-                | Command::Pin => {}
+                | Command::Pin
+                | Command::StartRun
+                | Command::Compose
+                | Command::Accept
+                | Command::AcceptForSession
+                | Command::Decline
+                | Command::InterruptRun
+                | Command::StopRun => {}
             }
             return Pressed::Continue(Vec::new());
         }
@@ -293,6 +333,13 @@ impl Tui {
                 };
             }
             Command::Back => self.zoom = None,
+            Command::StartRun
+            | Command::Compose
+            | Command::Accept
+            | Command::AcceptForSession
+            | Command::Decline
+            | Command::InterruptRun
+            | Command::StopRun => return self.run_command(command),
             Command::Pin => {
                 if let Some(session) = self.zoom.or_else(|| self.focused()) {
                     match self.pins.iter().position(|pinned| *pinned == session) {
@@ -307,6 +354,142 @@ impl Tui {
             }
         }
         Pressed::Continue(Vec::new())
+    }
+
+    /// A key while text is being typed: it goes into the text, sends it,
+    /// or drops it. Ctrl-C drops the text rather than quitting.
+    fn type_into(&mut self, key: Key) -> Pressed {
+        let Some(entry) = self.entry.as_mut() else {
+            return Pressed::Continue(Vec::new());
+        };
+        match key {
+            Key::Char(ch) => entry.text().push(ch),
+            Key::Backspace => {
+                entry.text().pop();
+            }
+            Key::Esc | Key::Interrupt => self.entry = None,
+            Key::Enter => {
+                let control = match self.entry.take() {
+                    Some(Entry::Prompt { run, text }) => match Prompt::parse(text) {
+                        Ok(prompt) => RunControl::Prompt { run, prompt },
+                        Err(_) => {
+                            self.notice = Some("a prompt cannot be blank".to_owned());
+                            return Pressed::Continue(Vec::new());
+                        }
+                    },
+                    Some(Entry::Folder { text }) if !text.trim().is_empty() => RunControl::Start {
+                        dir: text.trim().to_owned(),
+                    },
+                    Some(Entry::Folder { .. }) | None => {
+                        return Pressed::Continue(Vec::new());
+                    }
+                };
+                return Pressed::Run(control);
+            }
+            Key::Tab | Key::BackTab | Key::Left | Key::Right | Key::Up | Key::Down => {}
+        }
+        Pressed::Continue(Vec::new())
+    }
+
+    /// A key that acts on runs: on the focused session's, or a new one.
+    fn run_command(&mut self, command: Command) -> Pressed {
+        if let Runs::Unavailable(reason) = &self.runs {
+            self.notice = Some(format!("runs: {reason}"));
+            return Pressed::Continue(Vec::new());
+        }
+        let focused = self.zoom.or_else(|| self.focused()).and_then(|session| {
+            self.snapshot
+                .as_ref()
+                .and_then(|held| {
+                    held.snapshot
+                        .sessions
+                        .iter()
+                        .find(|view| view.id == session)
+                })
+                .and_then(|view| self.runs.of(view))
+                .and_then(Runs::mark)
+        });
+        if command == Command::StartRun {
+            self.entry = Some(Entry::Folder {
+                text: String::new(),
+            });
+            return Pressed::Continue(Vec::new());
+        }
+        let Some(mark) = focused else {
+            self.notice = Some("no run in this pane; s starts one".to_owned());
+            return Pressed::Continue(Vec::new());
+        };
+        let answer = |decision| match &mark.phase {
+            RunPhase::Waiting { .. } => Some(decision),
+            RunPhase::Idle | RunPhase::Working => None,
+        };
+        let decision = match command {
+            Command::Accept => answer(Decision::Accept),
+            Command::AcceptForSession => answer(Decision::AcceptForSession),
+            Command::Decline => answer(Decision::Decline),
+            Command::Compose => {
+                return match mark.phase {
+                    RunPhase::Idle => {
+                        self.entry = Some(Entry::Prompt {
+                            run: mark.run,
+                            text: String::new(),
+                        });
+                        Pressed::Continue(Vec::new())
+                    }
+                    RunPhase::Working | RunPhase::Waiting { .. } => {
+                        self.notice = Some("a turn is running; x interrupts it".to_owned());
+                        Pressed::Continue(Vec::new())
+                    }
+                };
+            }
+            Command::InterruptRun => return Pressed::Run(RunControl::Interrupt(mark.run)),
+            Command::StopRun => return Pressed::Run(RunControl::Stop(mark.run)),
+            Command::StartRun
+            | Command::Quit
+            | Command::Next
+            | Command::Previous
+            | Command::Left
+            | Command::Right
+            | Command::Up
+            | Command::Down
+            | Command::Zoom
+            | Command::Pin
+            | Command::Help
+            | Command::Theme
+            | Command::Back => return Pressed::Continue(Vec::new()),
+        };
+        let approval = self.runs_waiting(mark.run);
+        match (decision, approval) {
+            (Some(decision), Some(approval)) => Pressed::Run(RunControl::Answer {
+                run: mark.run,
+                approval,
+                decision,
+            }),
+            (Some(_) | None, Some(_) | None) => {
+                self.notice = Some("nothing to approve".to_owned());
+                Pressed::Continue(Vec::new())
+            }
+        }
+    }
+
+    /// The run's oldest waiting approval.
+    fn runs_waiting(&self, run: RunId) -> Option<ApprovalId> {
+        match &self.runs {
+            Runs::Read(runs) => {
+                runs.iter()
+                    .find(|held| held.run == run)
+                    .and_then(|held| match &held.state {
+                        RunState::Working { approvals, .. } => {
+                            approvals.first().map(|waiting| waiting.approval.clone())
+                        }
+                        RunState::Starting
+                        | RunState::Idle { .. }
+                        | RunState::Stopping { .. }
+                        | RunState::Ended { .. } => None,
+                    })
+            }
+            Runs::Unread | Runs::Unavailable(_) => None,
+        }
     }
 
     fn focused(&self) -> Option<SessionId> {
@@ -398,6 +581,15 @@ impl Tui {
                 self.failure = Some(reason);
                 Vec::new()
             }
+            Input::Runs(runs) => {
+                self.runs = runs;
+                self.rank();
+                self.arrange()
+            }
+            Input::RunAnswered(answer) => {
+                self.notice = answer.err();
+                vec![Read::Runs]
+            }
         }
     }
 
@@ -417,13 +609,16 @@ impl Tui {
                 | ObservationKind::AttemptFinished
                 | ObservationKind::ChannelClosed
                 | ObservationKind::OperatorAction
-                // Runs are not shown on the wall yet.
-                | ObservationKind::RunStarted
-                | ObservationKind::RunOpened
-                | ObservationKind::RunEnded
                 | ObservationKind::RunRecovered,
             )
             | None => Vec::new(),
+            // A run's session appears with its first call; its state is the
+            // control API's.
+            Some(
+                ObservationKind::RunStarted
+                | ObservationKind::RunOpened
+                | ObservationKind::RunEnded,
+            ) => vec![Read::Runs, Read::Snapshot],
         }
     }
 
@@ -455,18 +650,20 @@ impl Tui {
                 &held.snapshot.sessions,
                 &held.calls,
                 &self.pins,
+                &self.runs.threads(),
                 held.snapshot.read_at,
             )
         });
     }
 
-    /// Sessions that want a pane, most wanted first: pinned ones, however
-    /// quiet, then active ones with an open call, then the most recently
-    /// seen.
+    /// Sessions that want a pane, most wanted first: pinned ones and those
+    /// a live run drives (by their thread), however quiet, then active ones
+    /// with an open call, then the most recently seen.
     fn wanted(
         sessions: &[SessionView],
         calls: &[CallView],
         pins: &[SessionId],
+        threads: &[String],
         now: UnixMillis,
     ) -> Vec<SessionId> {
         let open = |session: &SessionView| {
@@ -475,7 +672,9 @@ impl Tui {
             })
         };
         let window = Self::millis(Self::WINDOW);
-        let pinned = |session: &SessionView| pins.contains(&session.id);
+        let pinned = |session: &SessionView| {
+            pins.contains(&session.id) || threads.contains(&session.native_id)
+        };
         let mut active: Vec<(&SessionView, bool)> = sessions
             .iter()
             .map(|session| (session, open(session)))
@@ -632,6 +831,7 @@ impl Tui {
                     now,
                 });
                 pane.pinned = self.pins.contains(&session.id);
+                pane.run = self.runs.of(session).and_then(Runs::mark);
                 Pane::Session(Box::new(pane))
             })
             .collect();
@@ -660,6 +860,8 @@ impl Tui {
                 })
                 .count(),
             output: Self::output(calls, now),
+            runs: self.runs.counts(),
+            notice: self.notice.clone(),
         };
         let (grid, view) = match self.zoom {
             Some(_) => (
@@ -677,6 +879,7 @@ impl Tui {
             view,
             help: self.help,
             status,
+            entry: self.entry.as_ref().map(Entry::line),
         }
     }
 

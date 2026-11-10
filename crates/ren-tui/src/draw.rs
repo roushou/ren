@@ -3,6 +3,7 @@
 
 use crate::call::Tone;
 use crate::keys::Command;
+use crate::runs::{EntryLine, RunPhase};
 use crate::session::{
     CallFacts, Line as PaneLine, Phase, ResultMark, SessionPane, Span as Elapsed, ToolLine,
 };
@@ -13,6 +14,7 @@ use ratatui::style::{Color, Modifier, Style, Stylize};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Clear, Widget};
 use ren_harness::Harness;
+use ren_harness::drive::ApprovalAsk;
 use ren_protocol::activity::ResultStatus;
 use ren_recorder::time::UnixMillis;
 use unicode_width::UnicodeWidthChar;
@@ -52,7 +54,10 @@ impl Widget for ThemedWall<'_> {
             ..area
         };
         self.draw_panes(panes, buf);
-        self.draw_status(&self.wall.status, status, buf);
+        match &self.wall.entry {
+            Some(entry) => self.draw_entry(entry, status, buf),
+            None => self.draw_status(&self.wall.status, status, buf),
+        }
         if self.wall.help == Help::Shown {
             self.draw_help(area, buf);
         }
@@ -243,6 +248,13 @@ impl ThemedWall<'_> {
         if pane.pinned {
             spans.push(Span::raw("  pinned"));
         }
+        if let Some(run) = &pane.run {
+            spans.push(Span::raw(match run.phase {
+                RunPhase::Idle => "  run · idle",
+                RunPhase::Working => "  run · working",
+                RunPhase::Waiting { .. } => "  run · asks",
+            }));
+        }
         let title = Line::from(spans);
         buf.set_line(rect.x, rect.y, &title, rect.width);
         // Only what is known: context, then the session's output.
@@ -269,6 +281,9 @@ impl ThemedWall<'_> {
     /// warning or error when the newest call needs a look; `None` when it
     /// is plain.
     fn lit(&self, pane: &SessionPane) -> Option<Style> {
+        if let Some(RunPhase::Waiting { .. }) = pane.run.as_ref().map(|run| &run.phase) {
+            return Some(self.theme.warning_title);
+        }
         match pane.alerts.first().map(|alert| alert.tone) {
             Some(Tone::Error) => Some(self.theme.error_title),
             Some(Tone::Warning) => Some(self.theme.warning_title),
@@ -285,6 +300,34 @@ impl ThemedWall<'_> {
 
     /// `! alert · state · detail`, as the mockup words it.
     fn state_line(&self, pane: &SessionPane, now: UnixMillis) -> Line<'static> {
+        // A run waiting for the operator says what it asks, and how to answer.
+        if let Some(RunPhase::Waiting { ask, more }) = pane.run.as_ref().map(|run| &run.phase) {
+            let (what, reason) = match ask {
+                ApprovalAsk::Command {
+                    command,
+                    cwd,
+                    reason,
+                } => (
+                    match (command, cwd) {
+                        (Some(command), Some(cwd)) => format!("run `{command}` in {cwd}"),
+                        (Some(command), None) => format!("run `{command}`"),
+                        (None, Some(_) | None) => "run a command".to_owned(),
+                    },
+                    reason,
+                ),
+                ApprovalAsk::FileChange { reason } => ("change files".to_owned(), reason),
+            };
+            let mut spans =
+                vec![Span::raw(format!("? {what}")).style(self.theme.tone(Tone::Warning))];
+            if let Some(reason) = reason {
+                spans.push(Span::raw(format!(" · {reason}")).style(self.theme.muted));
+            }
+            if *more > 0 {
+                spans.push(Span::raw(format!(" (+{more})")).style(self.theme.muted));
+            }
+            spans.push(Span::raw("  a yes · A always · d no").style(self.theme.muted));
+            return Line::from(spans);
+        }
         let mut spans = Vec::new();
         if let Some(alert) = pane.alerts.first() {
             let more = match pane.alerts.len() {
@@ -614,6 +657,9 @@ impl ThemedWall<'_> {
         if let Some(failure) = &status.failure {
             spans.push(Span::raw(format!(" ! stale: {failure} ")).style(self.theme.error_title));
         }
+        if let Some(notice) = &status.notice {
+            spans.push(Span::raw(format!(" {notice} ")).style(self.theme.warning_title));
+        }
         if status.attention > 0 {
             let needs = if status.attention == 1 {
                 "needs"
@@ -643,6 +689,16 @@ impl ThemedWall<'_> {
         counts.push(format!("{} waiting", status.awaiting));
         if status.hidden > 0 {
             counts.push(format!("{} hidden", status.hidden));
+        }
+        if let Some(runs) = status.runs {
+            counts.push(format!(
+                "{} run{}",
+                runs.live,
+                if runs.live == 1 { "" } else { "s" }
+            ));
+            if runs.waiting > 0 {
+                counts.push(format!("{} asking", runs.waiting));
+            }
         }
         match status.reading {
             Reading::Pending => counts.push("reading…".to_owned()),
@@ -698,6 +754,42 @@ impl ThemedWall<'_> {
         spans.push(rule);
         spans.extend(counts);
         buf.set_line(area.x, area.y, &Line::from(spans), left_width);
+    }
+
+    /// The status line while text is typed: what it is for, the text with
+    /// a cursor, and how to send or drop it.
+    fn draw_entry(&self, entry: &EntryLine, area: Rect, buf: &mut Buffer) {
+        let base = self.theme.bar;
+        buf.set_style(area, base);
+        let right = " enter send · esc cancel ";
+        let right_width = u16::try_from(Self::width(right)).unwrap_or(u16::MAX);
+        let left_width = match area.width.checked_sub(right_width) {
+            Some(left) => {
+                buf.set_string(area.x + left, area.y, right, base.patch(self.theme.muted));
+                left
+            }
+            None => area.width,
+        };
+        let label = format!(" {} › ", entry.label);
+        // The end of a long text stays in view, where the cursor is.
+        let room = usize::from(left_width).saturating_sub(Self::width(&label) + 2);
+        let mut shown: Vec<char> = Vec::new();
+        let mut width = 0;
+        for ch in entry.text.chars().rev() {
+            let wide = ch.width().unwrap_or(0);
+            if width + wide > room {
+                break;
+            }
+            width += wide;
+            shown.push(ch);
+        }
+        let text: String = shown.into_iter().rev().collect();
+        let line = Line::from(vec![
+            Span::raw(label).style(self.theme.responding_title),
+            Span::raw(format!(" {text}")),
+            Span::raw("▏").style(self.theme.focus),
+        ]);
+        buf.set_line(area.x, area.y, &line, left_width);
     }
 
     fn short(harness: Harness) -> &'static str {

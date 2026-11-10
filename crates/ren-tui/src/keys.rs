@@ -14,6 +14,7 @@ pub enum Key {
     Down,
     Enter,
     Esc,
+    Backspace,
     /// Ctrl-C: in raw mode the terminal sends it as a key, not a signal.
     Interrupt,
 }
@@ -38,11 +39,25 @@ pub enum Command {
     Theme,
     /// Close the help, or leave a zoomed session.
     Back,
+    /// Type a prompt for the focused session's run.
+    Compose,
+    /// Answer the run's oldest approval: allow it once.
+    Accept,
+    /// Allow it, and the same kind of action for the rest of the session.
+    AcceptForSession,
+    /// Refuse it; the turn goes on.
+    Decline,
+    /// Interrupt the run's turn.
+    InterruptRun,
+    /// Stop the run's process.
+    StopRun,
+    /// Start a new run: type the folder.
+    StartRun,
 }
 
 impl Command {
     /// Every command, in the order the help lists them.
-    pub const ALL: [Self; 12] = [
+    pub const ALL: [Self; 19] = [
         Self::Next,
         Self::Previous,
         Self::Left,
@@ -51,6 +66,13 @@ impl Command {
         Self::Down,
         Self::Zoom,
         Self::Pin,
+        Self::StartRun,
+        Self::Compose,
+        Self::Accept,
+        Self::AcceptForSession,
+        Self::Decline,
+        Self::InterruptRun,
+        Self::StopRun,
         Self::Theme,
         Self::Back,
         Self::Help,
@@ -72,7 +94,14 @@ impl Command {
             Key::Char('?') => Some(Self::Help),
             Key::Char('t') => Some(Self::Theme),
             Key::Esc => Some(Self::Back),
-            Key::Char(_) => None,
+            Key::Char('s') => Some(Self::StartRun),
+            Key::Char('c') => Some(Self::Compose),
+            Key::Char('a') => Some(Self::Accept),
+            Key::Char('A') => Some(Self::AcceptForSession),
+            Key::Char('d') => Some(Self::Decline),
+            Key::Char('x') => Some(Self::InterruptRun),
+            Key::Char('X') => Some(Self::StopRun),
+            Key::Char(_) | Key::Backspace => None,
         }
     }
 
@@ -91,6 +120,13 @@ impl Command {
             Self::Help => "?",
             Self::Theme => "t",
             Self::Back => "esc",
+            Self::StartRun => "s",
+            Self::Compose => "c",
+            Self::Accept => "a",
+            Self::AcceptForSession => "A",
+            Self::Decline => "d",
+            Self::InterruptRun => "x",
+            Self::StopRun => "X",
         }
     }
 
@@ -108,6 +144,13 @@ impl Command {
             Self::Help => "show or hide this help",
             Self::Theme => "cycle theme: terminal, dark, light (not saved)",
             Self::Back => "close the help, or leave a zoomed session",
+            Self::StartRun => "start a Codex run: type its folder",
+            Self::Compose => "prompt the focused session's run",
+            Self::Accept => "approve the run's oldest request, once",
+            Self::AcceptForSession => "approve it for the rest of the session",
+            Self::Decline => "decline it; the turn goes on",
+            Self::InterruptRun => "interrupt the run's turn",
+            Self::StopRun => "stop the run",
         }
     }
 }
@@ -131,6 +174,13 @@ mod tests {
             Key::Char('?'),
             Key::Char('t'),
             Key::Esc,
+            Key::Char('s'),
+            Key::Char('c'),
+            Key::Char('a'),
+            Key::Char('A'),
+            Key::Char('d'),
+            Key::Char('x'),
+            Key::Char('X'),
         ];
         for command in Command::ALL {
             assert!(
@@ -139,6 +189,6 @@ mod tests {
             );
         }
         assert_eq!(Command::of(Key::Interrupt), Some(Command::Quit));
-        assert_eq!(Command::of(Key::Char('x')), None);
+        assert_eq!(Command::of(Key::Char('w')), None);
     }
 }

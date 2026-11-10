@@ -96,6 +96,18 @@ session, `p` keeps a session on the wall even when quiet, `?` lists the
 keys, and `q` quits. It needs a running daemon; a gateway that cannot be
 reached is reported before the screen is taken over.
 
+With control access (this host's control token, or an allowed Tailscale login
+through a gateway) and `[runs]` roots on the daemon, `ren tui` also drives
+[runs](#runs). A live run's session keeps its pane, marked `run · idle`,
+`working`, or `asks`; a run waiting for an answer lights its title amber and
+says under the conversation what it asks (`? run `cargo test` in /work/acme`).
+`s` starts a Codex run in a folder typed in the status line, `c` types a prompt
+for the focused run (enter sends, esc drops it), `a` approves its oldest
+request once, `A` for the rest of the session, `d` declines it, `x` interrupts
+the turn, and `X` stops the run. The daemon's answer to a refused command is
+shown in the status line until the next key. Without control access the wall
+shows sessions as before, and the run keys say why they do nothing.
+
 The default `terminal` theme uses the terminal's foreground, background, and
 ANSI palette. `dark` and `light` use fixed RGB palettes and need a true-color
 terminal. Choose a theme for one run, or save this machine's preference:

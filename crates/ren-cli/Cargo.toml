@@ -34,6 +34,7 @@ ren-harness.workspace = true
 ren-protocol.workspace = true
 ren-recorder.workspace = true
 ren-store.workspace = true
+ren-supervisor = { workspace = true, optional = true }
 ren-tui = { workspace = true, optional = true }
 reqwest.workspace = true
 serde.workspace = true
@@ -51,7 +52,7 @@ uuid.workspace = true
 # `ren tui`, the terminal view of live sessions: off by default, so the
 # default build has no terminal UI dependencies.
 [features]
-tui = ["dep:ren-tui", "dep:futures-util"]
+tui = ["dep:ren-tui", "dep:ren-supervisor", "dep:futures-util"]
 
 # build.rs records the source revision (REN_REVISION) from git or from
 # cargo's packaging metadata.

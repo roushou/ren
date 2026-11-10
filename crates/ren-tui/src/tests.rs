@@ -1,6 +1,8 @@
 //! The view against reads shaped as the management API sends them.
 
 use super::*;
+use ren_harness::drive::{Decision, Prompt};
+use ren_recorder::id::RunId;
 use serde_json::{Value, json};
 
 const T0: u64 = 1_800_000_000_000;
@@ -1365,4 +1367,221 @@ fn a_plain_title_has_a_rule_under_it() {
     assert_eq!(buffer[(0, 0)].bg, Color::Rgb(0x0e, 0x12, 0x17));
     assert_eq!(buffer[(0, 1)].symbol(), "─");
     assert_eq!(buffer[(59, 1)].fg, Color::Rgb(0x2a, 0x30, 0x38));
+}
+
+const THREAD: &str = "0190f3a0-0000-7000-8000-0000000000aa";
+const RUN: &str = "0190f3a0-0000-7000-8000-0000000000cc";
+
+/// A Codex session whose native id is the run's thread.
+fn run_session(n: u128, seconds: u64) -> SessionView {
+    let mut view = session(n, "codex_headers", seconds);
+    view.native_id = THREAD.to_owned();
+    view
+}
+
+/// The daemon's runs, with one live run in `state`.
+fn runs(state: Value) -> Input {
+    Input::Runs(Runs::Read(vec![
+        serde_json::from_value(json!({
+            "run": RUN, "harness": "codex", "workdir": "/work/acme", "state": state
+        }))
+        .unwrap(),
+    ]))
+}
+
+fn idle() -> Value {
+    json!({ "phase": "idle", "thread": THREAD })
+}
+
+fn asking() -> Value {
+    json!({
+        "phase": "working", "thread": THREAD, "turn": null,
+        "approvals": [
+            { "approval": "ap-1", "ask": { "kind": "command", "command": "cargo test",
+                                           "cwd": "/work/acme", "reason": null } },
+            { "approval": "ap-2", "ask": { "kind": "file_change", "reason": null } }
+        ]
+    })
+}
+
+fn run_id() -> RunId {
+    RUN.parse().unwrap()
+}
+
+/// A wall with the run's session in the only pane, and quiet otherwise.
+fn with_run(state: Value) -> Tui {
+    let mut tui = tui();
+    // Seen long ago: only the run keeps the session on the wall.
+    let _ = tui.apply(snapshot(600, vec![run_session(7, 10)], vec![]));
+    assert!(
+        tui.wall(at(600))
+            .panes
+            .iter()
+            .all(|pane| *pane == Pane::Free)
+    );
+    let _ = tui.apply(runs(state));
+    tui
+}
+
+fn type_text(tui: &mut Tui, text: &str) {
+    for ch in text.chars() {
+        assert_eq!(tui.press(Key::Char(ch)), Pressed::Continue(vec![]));
+    }
+}
+
+#[test]
+fn a_live_runs_session_keeps_a_pane_with_the_runs_mark() {
+    let tui = with_run(asking());
+    let wall = tui.wall(at(600));
+    let pane = pane(&wall, 0);
+    let mark = pane.run.as_ref().expect("the run's mark");
+    assert_eq!(mark.run, run_id());
+    assert!(matches!(&mark.phase, RunPhase::Waiting { more: 1, .. }));
+    assert_eq!(
+        wall.status.runs,
+        Some(RunCounts {
+            live: 1,
+            waiting: 1
+        })
+    );
+}
+
+#[test]
+fn keys_answer_interrupt_and_stop_the_focused_run() {
+    let mut tui = with_run(asking());
+    let answer = |decision| {
+        Pressed::Run(RunControl::Answer {
+            run: run_id(),
+            approval: "ap-1".parse().unwrap(),
+            decision,
+        })
+    };
+    assert_eq!(tui.press(Key::Char('a')), answer(Decision::Accept));
+    assert_eq!(
+        tui.press(Key::Char('A')),
+        answer(Decision::AcceptForSession)
+    );
+    assert_eq!(tui.press(Key::Char('d')), answer(Decision::Decline));
+    assert_eq!(
+        tui.press(Key::Char('x')),
+        Pressed::Run(RunControl::Interrupt(run_id()))
+    );
+    assert_eq!(
+        tui.press(Key::Char('X')),
+        Pressed::Run(RunControl::Stop(run_id()))
+    );
+    // A turn is running: no prompt until it ends.
+    assert_eq!(tui.press(Key::Char('c')), Pressed::Continue(vec![]));
+    assert!(tui.wall(at(600)).status.notice.is_some());
+}
+
+#[test]
+fn a_prompt_is_typed_in_the_status_line_and_sent() {
+    let mut tui = with_run(idle());
+    assert_eq!(tui.press(Key::Char('a')), Pressed::Continue(vec![]));
+    assert_eq!(
+        tui.wall(at(600)).status.notice.as_deref(),
+        Some("nothing to approve")
+    );
+    assert_eq!(tui.press(Key::Char('c')), Pressed::Continue(vec![]));
+    type_text(&mut tui, "fix it!");
+    assert_eq!(tui.press(Key::Backspace), Pressed::Continue(vec![]));
+    // Keys that would quit or move type into the text instead.
+    type_text(&mut tui, " q");
+    assert_eq!(
+        tui.wall(at(600)).entry,
+        Some(EntryLine {
+            label: "prompt",
+            text: "fix it q".to_owned()
+        })
+    );
+    assert_eq!(
+        tui.press(Key::Enter),
+        Pressed::Run(RunControl::Prompt {
+            run: run_id(),
+            prompt: Prompt::parse("fix it q".to_owned()).unwrap()
+        })
+    );
+    assert_eq!(tui.wall(at(600)).entry, None);
+    // A blank prompt is not sent; Esc drops the text.
+    assert_eq!(tui.press(Key::Char('c')), Pressed::Continue(vec![]));
+    assert_eq!(tui.press(Key::Enter), Pressed::Continue(vec![]));
+    assert_eq!(tui.press(Key::Char('c')), Pressed::Continue(vec![]));
+    type_text(&mut tui, "never mind");
+    assert_eq!(tui.press(Key::Esc), Pressed::Continue(vec![]));
+    assert_eq!(tui.wall(at(600)).entry, None);
+}
+
+#[test]
+fn a_run_starts_in_a_typed_folder_and_refusals_are_shown() {
+    let mut tui = tui();
+    assert_eq!(tui.press(Key::Char('c')), Pressed::Continue(vec![]));
+    assert_eq!(
+        tui.wall(at(0)).status.notice.as_deref(),
+        Some("no run in this pane; s starts one")
+    );
+    assert_eq!(tui.press(Key::Char('s')), Pressed::Continue(vec![]));
+    type_text(&mut tui, "/work/acme");
+    assert_eq!(
+        tui.press(Key::Enter),
+        Pressed::Run(RunControl::Start {
+            dir: "/work/acme".to_owned()
+        })
+    );
+    assert_eq!(
+        tui.apply(Input::RunAnswered(Err("invalid_directory".to_owned()))),
+        [Read::Runs]
+    );
+    assert_eq!(
+        tui.wall(at(0)).status.notice.as_deref(),
+        Some("invalid_directory")
+    );
+    // The next key clears it.
+    assert_eq!(tui.press(Key::Char('n')), Pressed::Continue(vec![]));
+    assert_eq!(tui.wall(at(0)).status.notice, None);
+
+    let _ = tui.apply(Input::Runs(Runs::Unavailable(
+        "runs are off on this daemon".to_owned(),
+    )));
+    assert_eq!(tui.press(Key::Char('s')), Pressed::Continue(vec![]));
+    assert_eq!(
+        tui.wall(at(0)).status.notice.as_deref(),
+        Some("runs: runs are off on this daemon")
+    );
+}
+
+#[test]
+fn run_observations_ask_for_the_runs() {
+    let mut tui = tui();
+    let observation: Observation = serde_json::from_value(json!({
+        "seq": 1, "at": T0, "kind": "run_started",
+        "channel": "00000000-0000-0000-0000-000000000000", "call": null, "attempt": null
+    }))
+    .unwrap();
+    assert_eq!(
+        tui.apply(Input::Observation(observation)),
+        [Read::Runs, Read::Snapshot]
+    );
+}
+
+#[test]
+fn a_waiting_run_and_a_typed_prompt_draw_as_pinned() {
+    let size = Size {
+        width: 80,
+        height: 12,
+    };
+    let mut tui = Tui::new(size);
+    let _ = tui.apply(snapshot(600, vec![run_session(7, 10)], vec![]));
+    let _ = tui.apply(runs(asking()));
+    assert_eq!(
+        drawn(&tui.wall(at(600)), size),
+        include_str!("../tests/fixtures/wall-run.txt")
+    );
+    let _ = tui.apply(runs(idle()));
+    assert_eq!(tui.press(Key::Char('c')), Pressed::Continue(vec![]));
+    type_text(&mut tui, "run the tests again");
+    assert_eq!(
+        drawn(&tui.wall(at(600)), size),
+        include_str!("../tests/fixtures/wall-run-prompt.txt")
+    );
 }

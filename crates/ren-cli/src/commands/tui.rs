@@ -9,7 +9,7 @@
 //! the keys. Everything goes through the gateway's API, local or remote:
 //! progress on streaming calls exists only in a running daemon.
 
-use crate::commands::history::TargetArgs;
+use crate::commands::{control::ControlTarget, history::TargetArgs};
 use crate::context::Context;
 use crate::management::{Management, ManagementError};
 use crate::tail::{LiveDecoder, LiveEvent, LiveUpdates};
@@ -25,7 +25,10 @@ use ren_protocol::label::Labeled;
 use ren_recorder::id::{CallId, TurnId};
 use ren_recorder::time::{Clock, Monotonic};
 use ren_store::activity::{CallActivity, TurnActivity};
-use ren_tui::{Input, Pressed, Read, Screen, ScreenEvent, Snapshot, Theme, ThemeName, Tui};
+use ren_tui::{
+    Input, Pressed, Read, RunControl, Runs, Screen, ScreenEvent, Snapshot, Theme, ThemeName, Tui,
+};
+use reqwest::Method;
 use std::future::Future;
 use std::pin::Pin;
 use std::process::ExitCode;
@@ -49,6 +52,9 @@ enum Done {
     Snapshot(Result<Snapshot, ManagementError>),
     Turn(TurnId, Result<TurnActivity, ManagementError>),
     Call(CallId, Result<CallActivity, ManagementError>),
+    Runs(Runs),
+    /// How a run command was answered.
+    Answered(Result<(), String>),
 }
 
 type Pending<'a> = FuturesUnordered<Pin<Box<dyn Future<Output = Done> + 'a>>>;
@@ -69,6 +75,7 @@ struct InFlight {
     snapshot: bool,
     turns: Vec<TurnId>,
     calls: Vec<CallId>,
+    runs: bool,
     /// When the last snapshot was asked for.
     asked: Monotonic,
 }
@@ -95,6 +102,10 @@ impl TuiCmd {
         let mut theme_name = selected.unwrap_or_default();
         let theme = Self::theme(selected, &ctx.env);
         let gateway = self.target.gateway(ctx)?;
+        // Runs need control access: this host's token, or a Tailscale
+        // identity through a gateway. Without it the wall still shows
+        // sessions, and run keys say why they do nothing.
+        let control = ControlTarget::select(&self.target, ctx).map_err(|error| error.to_string());
         let clock = SystemClock::start();
         // The first read happens before the terminal is taken over, so a
         // gateway that cannot be reached is reported as any command's error.
@@ -110,11 +121,17 @@ impl TuiCmd {
             snapshot: false,
             turns: Vec::new(),
             calls: Vec::new(),
+            runs: false,
             asked: clock.now().monotonic,
         };
-        let reads = tui.apply(Input::Snapshot(first));
+        let mut reads = tui.apply(Input::Snapshot(first));
+        match &control {
+            Ok(_) => reads.push(Read::Runs),
+            Err(reason) => reads.extend(tui.apply(Input::Runs(Runs::Unavailable(reason.clone())))),
+        }
         let mut shell = Shell {
             gateway: &gateway,
+            control: control.as_ref().ok(),
             clock: &clock,
             pending,
         };
@@ -132,6 +149,10 @@ impl TuiCmd {
                         ScreenEvent::Key(key) => match tui.press(key) {
                             Pressed::Quit => break,
                             Pressed::Continue(reads) => reads,
+                            Pressed::Run(command) => {
+                                shell.send(command);
+                                Vec::new()
+                            }
                             Pressed::CycleTheme => {
                                 theme_name = theme_name.next();
                                 screen.set_theme(theme_name.theme());
@@ -155,7 +176,7 @@ impl TuiCmd {
                         feed = Self::connect(&gateway, &clock).await;
                     }
                     if now.saturating_since(in_flight.asked) >= Self::SNAPSHOT_EVERY {
-                        vec![Read::Snapshot]
+                        vec![Read::Snapshot, Read::Runs]
                     } else {
                         Vec::new()
                     }
@@ -271,6 +292,8 @@ impl TuiCmd {
 /// The reads in flight, and what they read from.
 struct Shell<'a> {
     gateway: &'a Management,
+    /// Where run reads and commands go, when this view has control access.
+    control: Option<&'a ControlTarget>,
     clock: &'a SystemClock,
     pending: Pending<'a>,
 }
@@ -302,9 +325,77 @@ impl<'a> Shell<'a> {
                         Done::Call(call, gateway.call_activity(call).await)
                     }));
                 }
-                Read::Snapshot | Read::Turn(_) | Read::Call(_) => {}
+                Read::Runs if !in_flight.runs => {
+                    let Some(control) = self.control else {
+                        continue;
+                    };
+                    in_flight.runs = true;
+                    self.pending.push(Box::pin(
+                        async move { Done::Runs(Self::runs(control).await) },
+                    ));
+                }
+                Read::Snapshot | Read::Turn(_) | Read::Call(_) | Read::Runs => {}
             }
         }
+    }
+
+    /// The daemon's runs: read, off on the daemon, or out of reach.
+    async fn runs(control: &ControlTarget) -> Runs {
+        #[derive(serde::Deserialize)]
+        struct Listed {
+            runs: Vec<ren_supervisor::RunSnapshot>,
+        }
+        match control.send(Method::GET, "runs", None).await {
+            Ok((status, body)) if status.is_success() => {
+                match serde_json::from_value::<Listed>(body) {
+                    Ok(listed) => Runs::Read(listed.runs),
+                    Err(_) => Runs::Unavailable("the daemon's runs are not readable".to_owned()),
+                }
+            }
+            Ok((_, body)) => Runs::Unavailable(match body["error"].as_str() {
+                Some("runs_disabled") => "runs are off on this daemon; set [runs] roots".to_owned(),
+                Some(error) => error.to_owned(),
+                None => "the daemon refused".to_owned(),
+            }),
+            Err(error) => Runs::Unavailable(error.to_string()),
+        }
+    }
+
+    /// Sends a run command; its answer reaches the view as it arrives.
+    fn send(&mut self, command: RunControl) {
+        let Some(control) = self.control else {
+            return;
+        };
+        let (path, body) = match command {
+            RunControl::Start { dir } => (
+                "runs".to_owned(),
+                Some(serde_json::json!({ "harness": "codex", "dir": dir })),
+            ),
+            RunControl::Prompt { run, prompt } => (
+                format!("runs/{run}/prompt"),
+                Some(serde_json::json!({ "text": prompt.as_str() })),
+            ),
+            RunControl::Answer {
+                run,
+                approval,
+                decision,
+            } => (
+                format!("runs/{run}/approvals/{approval}"),
+                Some(serde_json::json!({ "decision": decision })),
+            ),
+            RunControl::Interrupt(run) => (format!("runs/{run}/interrupt"), None),
+            RunControl::Stop(run) => (format!("runs/{run}/stop"), None),
+        };
+        self.pending.push(Box::pin(async move {
+            Done::Answered(match control.send(Method::POST, &path, body).await {
+                Ok((status, _)) if status.is_success() => Ok(()),
+                Ok((_, body)) => Err(body["error"]
+                    .as_str()
+                    .unwrap_or("the daemon refused")
+                    .replace('_', " ")),
+                Err(error) => Err(error.to_string()),
+            })
+        }));
     }
 
     /// Hands a finished read to the view; returns the reads it asks for.
@@ -322,6 +413,11 @@ impl<'a> Shell<'a> {
                 in_flight.calls.retain(|running| *running != call);
                 result.map(|activity| Input::Call(Box::new(activity)))
             }
+            Done::Runs(runs) => {
+                in_flight.runs = false;
+                Ok(Input::Runs(runs))
+            }
+            Done::Answered(answer) => Ok(Input::RunAnswered(answer)),
         };
         match input {
             Ok(input) => tui.apply(input),

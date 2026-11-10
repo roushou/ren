@@ -151,8 +151,8 @@ impl ScreenEvent {
             KeyCode::Down => Some(Key::Down),
             KeyCode::Enter => Some(Key::Enter),
             KeyCode::Esc => Some(Key::Esc),
-            KeyCode::Backspace
-            | KeyCode::Home
+            KeyCode::Backspace => Some(Key::Backspace),
+            KeyCode::Home
             | KeyCode::End
             | KeyCode::PageUp
             | KeyCode::PageDown
