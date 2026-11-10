@@ -2560,6 +2560,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "tgv-tui"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "tgv-harness",
+ "tgv-protocol",
+ "tgv-recorder",
+ "tgv-store",
+ "uuid",
+]
+
+[[package]]
 name = "thiserror"
 version = "2.0.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"

@@ -1,0 +1,26 @@
+[package]
+name = "tgv-tui"
+version.workspace = true
+edition.workspace = true
+homepage.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "A terminal view of a TGV gateway's live sessions: one pane per session, as its calls stream."
+
+# The terminal view of live sessions. Its core (`Tui`, the `Wall` it
+# builds) reads views and live events and returns the reads it needs; it
+# performs no I/O (`src/purity.rs`). The CLI drives it behind its `tui`
+# feature (docs/architecture.md).
+[dependencies]
+tgv-harness.workspace = true
+tgv-protocol.workspace = true
+tgv-recorder.workspace = true
+tgv-store.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+uuid.workspace = true
+
+[lints]
+workspace = true
