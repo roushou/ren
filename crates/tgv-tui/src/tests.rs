@@ -1098,6 +1098,10 @@ fn title_bars_carry_the_state_in_color() {
     assert_eq!(buffer[(5, 0)].bg, Color::Rgb(0x7e, 0xe7, 0x87));
     assert_eq!(buffer[(125, 0)].bg, Color::Rgb(0xff, 0x7b, 0x72));
     assert_eq!(buffer[(5, 10)].bg, Color::Rgb(0x0e, 0x12, 0x17));
+    // A lit bar runs the pane's whole width, and its edge below it too.
+    assert_eq!(buffer[(179, 0)].bg, Color::Rgb(0xff, 0x7b, 0x72));
+    assert_eq!(buffer[(179, 1)].symbol(), "▀");
+    assert_eq!(buffer[(179, 1)].fg, Color::Rgb(0xff, 0x7b, 0x72));
 }
 
 #[test]
@@ -1238,4 +1242,21 @@ fn a_session_without_turns_reads_its_newest_calls() {
         tui.apply(snapshot(101, sessions, calls)),
         [Read::Call(call_id(14)), Read::Call(call_id(13))]
     );
+}
+
+#[test]
+fn a_plain_title_has_a_rule_under_it() {
+    use ratatui::{buffer::Buffer, layout::Rect, style::Color, widgets::Widget};
+    let mut tui = tui();
+    let _ = tui.apply(snapshot(
+        100,
+        vec![session(1, "claude_code_headers", 100)],
+        vec![call(11, 1, None, 10, 20, json!({}))],
+    ));
+    let area = Rect::new(0, 0, 60, 12);
+    let mut buffer = Buffer::empty(area);
+    tui.wall(at(100)).render(area, &mut buffer);
+    assert_eq!(buffer[(0, 0)].bg, Color::Rgb(0x0e, 0x12, 0x17));
+    assert_eq!(buffer[(0, 1)].symbol(), "─");
+    assert_eq!(buffer[(59, 1)].fg, Color::Rgb(0x2a, 0x30, 0x38));
 }

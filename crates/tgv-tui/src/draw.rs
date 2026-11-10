@@ -190,8 +190,24 @@ impl Wall {
                 Style::new().fg(Palette::DIM),
             );
         }
-        let body_top = rect.y + 1;
-        let body_height = usize::from(rect.height.saturating_sub(1 + foot));
+        // A rule under the title, as the mockup's border: in the rule's
+        // color, or a half block in a lit bar's own color, so the bar and
+        // its edge read as one. Left out when the pane cannot spare a line.
+        let head = if rect.height >= 7 {
+            let (edge, color) = match Self::lit(pane) {
+                Some(color) => ("▀", color),
+                None => ("─", Palette::RULE),
+            };
+            let style = Style::new().fg(color).bg(Palette::PANE);
+            for x in rect.x..rect.x + rect.width {
+                buf.set_string(x, rect.y + 1, edge, style);
+            }
+            2
+        } else {
+            1
+        };
+        let body_top = rect.y + head;
+        let body_height = usize::from(rect.height.saturating_sub(head + foot));
         let lines = Self::body(pane, usize::from(inner));
         let skip = lines.len().saturating_sub(body_height);
         let top = body_top + u16::try_from(body_height - (lines.len() - skip)).unwrap_or(0);
@@ -213,18 +229,7 @@ impl Wall {
         focused: bool,
         buf: &mut Buffer,
     ) {
-        let lit = match pane.alerts.first().map(|alert| alert.tone) {
-            Some(Tone::Error) => Some(Palette::RED),
-            Some(Tone::Warning) => Some(Palette::YELLOW),
-            Some(Tone::Live | Tone::Success | Tone::Neutral) | None => match pane.phase {
-                Phase::Responding { .. } => Some(Palette::GREEN),
-                Phase::Awaiting { .. }
-                | Phase::ClientsTurn { .. }
-                | Phase::YourTurn { .. }
-                | Phase::Stopped { .. }
-                | Phase::Idle { .. } => None,
-            },
-        };
+        let lit = Self::lit(pane);
         let (bg, fg) = match lit {
             Some(color) => (color, Palette::GROUND),
             None => (Palette::PANE, Palette::DIM),
@@ -287,6 +292,23 @@ impl Wall {
         let title_width = u16::try_from(title.width()).unwrap_or(u16::MAX);
         if title_width + 2 + right_width <= rect.width {
             buf.set_string(rect.x + rect.width - right_width, rect.y, right, base);
+        }
+    }
+
+    /// A lit title bar's color: green while a response streams, amber or
+    /// red when the newest call needs a look; `None` when it is plain.
+    fn lit(pane: &SessionPane) -> Option<Color> {
+        match pane.alerts.first().map(|alert| alert.tone) {
+            Some(Tone::Error) => Some(Palette::RED),
+            Some(Tone::Warning) => Some(Palette::YELLOW),
+            Some(Tone::Live | Tone::Success | Tone::Neutral) | None => match pane.phase {
+                Phase::Responding { .. } => Some(Palette::GREEN),
+                Phase::Awaiting { .. }
+                | Phase::ClientsTurn { .. }
+                | Phase::YourTurn { .. }
+                | Phase::Stopped { .. }
+                | Phase::Idle { .. } => None,
+            },
         }
     }
 
