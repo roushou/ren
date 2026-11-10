@@ -60,6 +60,7 @@ enum Command {
     #[cfg(feature = "tui")]
     Tui(commands::tui::TuiCmd),
     Control(commands::control::ControlCmd),
+    Runs(commands::runs::RunsCmd),
     Users(commands::users::UsersCmd),
     Mcp(commands::mcp::McpCmd),
 }
@@ -111,6 +112,7 @@ impl Cli {
             #[cfg(feature = "tui")]
             Command::Tui(cmd) => cmd.run(&ctx).await,
             Command::Control(cmd) => cmd.run(&ctx).await,
+            Command::Runs(cmd) => cmd.run(&ctx).await,
             Command::Users(cmd) => cmd.run(&ctx),
             Command::Mcp(cmd) => cmd.run(&ctx).await,
         }

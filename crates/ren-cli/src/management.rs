@@ -344,6 +344,22 @@ impl Management {
         }
     }
 
+    /// A streamed control response (server-sent events) through the
+    /// gateway, without a token. Read it with [`Self::chunk`].
+    pub async fn control_stream(&self, path: &str) -> Result<reqwest::Response, ManagementError> {
+        let url = self.endpoint.url(&format!("/control/v1/{path}"));
+        let response = self
+            .send(self.http.get(url).header("accept", "text/event-stream"))
+            .await?;
+        let status = response.status();
+        if status.is_success() {
+            Ok(response)
+        } else {
+            let body = self.bytes(response).await?;
+            Err(Self::error(status, &body))
+        }
+    }
+
     /// One history read, through the read API: its JSON body.
     pub async fn serve(&self, request: &ReadRequest) -> Result<Value, ManagementError> {
         Ok(Value::Object(

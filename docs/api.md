@@ -22,6 +22,24 @@ ren tail --json
 ren tui
 ```
 
+Runs (see [runs](#runs)) have their own commands, through the control API:
+
+```sh
+ren runs start codex ~/dev/acme
+ren runs ls
+ren runs say <run-id> fix the failing test
+ren runs answer <run-id> <approval-id>          # or: decline, cancel, accept-for-session
+ren runs interrupt <run-id>
+ren runs stop <run-id>
+ren runs watch --run <run-id>
+ren runs history
+```
+
+`start` takes the current folder when none is given and `--resume <thread>` to
+continue a client conversation; through a gateway the folder must be an
+absolute path on the gateway's host. `watch` prints each run update as one
+JSON line. `history` reads recorded runs like the other history commands.
+
 Commands emit the same JSON the read API answers (without `api_version`),
 whether they read this host's storage or a gateway: `history` and `timeline` a
 page `{calls, next}`, `sessions` `{sessions}`, `turns` `{turns}` for a session,

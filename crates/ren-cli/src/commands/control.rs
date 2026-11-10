@@ -169,6 +169,34 @@ impl ControlTarget {
         }
     }
 
+    /// A streamed `GET`, relative to `/control/v1/`: server-sent events.
+    pub(crate) async fn stream(&self, path: &str) -> Result<reqwest::Response> {
+        match self {
+            Self::Remote(gateway) => Ok(gateway.control_stream(path).await?),
+            Self::Local {
+                client,
+                base,
+                token,
+            } => {
+                let response = client
+                    .get(format!("{base}/{path}"))
+                    .bearer_auth(token.expose())
+                    .header("accept", "text/event-stream")
+                    .send()
+                    .await
+                    .context("cannot reach the daemon")?;
+                let status = response.status();
+                if !status.is_success() {
+                    let body: serde_json::Value =
+                        serde_json::from_slice(&response.bytes().await?).unwrap_or_default();
+                    println!("{}", serde_json::to_string_pretty(&body)?);
+                    bail!("control request failed with {status}");
+                }
+                Ok(response)
+            }
+        }
+    }
+
     /// Print the daemon's answer; a refusal is an error after it.
     pub(crate) fn report(
         status: reqwest::StatusCode,

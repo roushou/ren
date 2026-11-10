@@ -613,3 +613,172 @@ async fn tail_follows_calls_and_resumes_after_a_daemon_restart() {
     daemon.wait().await.unwrap();
     upstream.abort();
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn runs_on_this_host_use_the_control_token_and_report_refusals() {
+    let temp = tempfile::tempdir().unwrap();
+    let home = temp.path().join("home");
+    std::fs::create_dir(&home).unwrap();
+    let state = temp.path().join("state");
+    let root = temp.path().join("work");
+    std::fs::create_dir(&root).unwrap();
+    let mut daemon = Daemon::new(
+        Config {
+            listen: "127.0.0.1:0".parse().unwrap(),
+            runs: ren_daemon::config::RunsOptions {
+                roots: vec![root.clone()],
+            },
+            ..Config::default()
+        }
+        .resolve()
+        .unwrap(),
+        &state,
+        ren_cli::Cli::build(),
+    );
+    daemon.start().await.unwrap();
+    let config = temp.path().join("ren.toml");
+    std::fs::write(
+        &config,
+        format!("version = 1\nlisten = \"{}\"\n", daemon.address().unwrap()),
+    )
+    .unwrap();
+    let host = |args: &[&str]| {
+        isolated(
+            &home,
+            &[
+                &[
+                    "--config",
+                    config.to_str().unwrap(),
+                    "--data-dir",
+                    state.to_str().unwrap(),
+                    "runs",
+                ],
+                args,
+            ]
+            .concat(),
+        )
+    };
+
+    let output = host(&["ls"]);
+    success(&output);
+    assert_eq!(json(&output)["runs"], serde_json::json!([]));
+    // A folder outside the roots is refused, and the refusal is printed.
+    let outside = temp.path().to_str().unwrap();
+    let output = host(&["start", "codex", outside]);
+    assert!(!output.status.success());
+    assert_eq!(json(&output)["error"], "invalid_directory");
+    assert!(String::from_utf8_lossy(&output.stderr).contains("400"));
+    let output = host(&["stop", "33333333-3333-4333-8333-333333333333"]);
+    assert!(!output.status.success());
+    assert_eq!(json(&output)["error"], "not_found");
+    let output = host(&["history"]);
+    success(&output);
+    assert_eq!(json(&output)["runs"], serde_json::json!([]));
+
+    daemon.shutdown();
+    daemon.wait().await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn runs_through_a_gateway_send_the_control_requests() {
+    use axum::{
+        Json, Router,
+        extract::{Request, State},
+        http::StatusCode,
+    };
+    use std::sync::Mutex;
+    type Seen = Arc<Mutex<Vec<(String, String, Value)>>>;
+    let seen: Seen = Arc::default();
+    let app = Router::new()
+        .fallback(
+            |State(seen): State<Seen>, request: Request| async move {
+                let method = request.method().to_string();
+                let path = request.uri().path().to_owned();
+                let body = axum::body::to_bytes(request.into_body(), 1 << 20).await.unwrap();
+                let body = serde_json::from_slice(&body).unwrap_or(Value::Null);
+                seen.lock().unwrap().push((method.clone(), path.clone(), body));
+                match (method.as_str(), path.as_str()) {
+                    ("POST", "/control/v1/runs") => (
+                        StatusCode::CREATED,
+                        Json(serde_json::json!({ "api_version": 1, "run": "11111111-1111-4111-8111-111111111111" })),
+                    ),
+                    ("GET", "/control/v1/runs") => (
+                        StatusCode::OK,
+                        Json(serde_json::json!({ "api_version": 1, "runs": [] })),
+                    ),
+                    _ => (StatusCode::ACCEPTED, Json(serde_json::json!({ "api_version": 1 }))),
+                }
+            },
+        )
+        .with_state(seen.clone());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let gateway = format!("http://{}", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let home = tempfile::tempdir().unwrap();
+    let run = "11111111-1111-4111-8111-111111111111";
+    let remote = |args: &[&str]| {
+        isolated(
+            home.path(),
+            &[&["runs", "--gateway", &gateway], args].concat(),
+        )
+    };
+
+    let output = remote(&[
+        "start",
+        "codex",
+        "/srv/acme",
+        "--resume",
+        "22222222-2222-4222-8222-222222222222",
+    ]);
+    success(&output);
+    assert_eq!(json(&output)["run"], run);
+    // Through a gateway, a relative folder would name this host's: refused
+    // before anything is sent.
+    let output = remote(&["start", "codex", "acme"]);
+    assert!(!output.status.success());
+    success(&remote(&["say", run, "fix", "the", "build"]));
+    success(&remote(&["answer", run, "ap-1"]));
+    success(&remote(&["answer", run, "ap-2", "decline"]));
+    success(&remote(&["interrupt", run]));
+    success(&remote(&["stop", run]));
+    success(&remote(&["ls"]));
+
+    let seen = seen.lock().unwrap().clone();
+    let expected = [
+        (
+            "POST",
+            "/control/v1/runs".to_owned(),
+            serde_json::json!({ "harness": "codex", "dir": "/srv/acme", "resume": "22222222-2222-4222-8222-222222222222" }),
+        ),
+        (
+            "POST",
+            format!("/control/v1/runs/{run}/prompt"),
+            serde_json::json!({ "text": "fix the build" }),
+        ),
+        (
+            "POST",
+            format!("/control/v1/runs/{run}/approvals/ap-1"),
+            serde_json::json!({ "decision": "accept" }),
+        ),
+        (
+            "POST",
+            format!("/control/v1/runs/{run}/approvals/ap-2"),
+            serde_json::json!({ "decision": "decline" }),
+        ),
+        (
+            "POST",
+            format!("/control/v1/runs/{run}/interrupt"),
+            Value::Null,
+        ),
+        ("POST", format!("/control/v1/runs/{run}/stop"), Value::Null),
+        ("GET", "/control/v1/runs".to_owned(), Value::Null),
+    ];
+    assert_eq!(seen.len(), expected.len(), "{seen:?}");
+    for ((method, path, body), (want_method, want_path, want_body)) in seen.iter().zip(expected) {
+        assert_eq!(
+            (method.as_str(), path, body),
+            (want_method, &want_path, &want_body)
+        );
+    }
+    server.abort();
+}
