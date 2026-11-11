@@ -1,5 +1,9 @@
  00000001  claude-code → anthropic  call 2                ctx 61.2k · 1,713 tok
-▀▀▀▀┌ keys ────────────────────────────────────────────────────────────────┐▀▀▀▀
+▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+
+
+
+    ┌ keys ────────────────────────────────────────────────────────────────┐
     │ tab  n         next pane (zoomed: next session)                      │
     │ shift-tab  N   previous pane (zoomed: previous session)              │
     │ ←  h           pane to the left                                      │
@@ -7,18 +11,14 @@
     │ ↑  k           pane above                                            │
     │ ↓  j           pane below                                            │
     │ enter  z       zoom into the focused session, or back to the panes   │
-    │ p              keep the focused session on the wall, even when quiet │
-    │ s              start a run: pick its folder and client               │
-    │ c              prompt the focused run, or one just started           │
-    │ a              approve the run's oldest request, once                │
- ── │ A              approve it for the rest of the session                │
- > W│ d              decline it; the turn goes on                          │
- I'l│ x              interrupt the run's turn                              │
- ● R│ X              stop the run                                          │
- ● B│ t              cycle theme: terminal, dark, light (not saved)        │
- ── │ esc            close the help, or leave a zoomed session             │
- ● E│ ?              show or hide this help                                │
- The│ q  ctrl-c      quit                                                  │
- str└──────────────────────────────────────────────────────────────────────┘
+ ── │ p              keep the focused session on the wall, even when quiet │
+ > W│ t              cycle theme: terminal, dark, light (not saved)        │
+ I'l│ esc            close the help, or leave a zoomed session             │
+ ● R│ ?              show or hide this help                                │
+ ● B│ q  ctrl-c      quit                                                  │
+ ── └──────────────────────────────────────────────────────────────────────┘
+ ● Edit
+ The parser drops the last field when▌
+ streaming · 10 s
  model-a · in —
  ren │ 3 sessions · 2 streaming · 0 waiting · 1 hidden    ? help │ 08:05:00 UTC

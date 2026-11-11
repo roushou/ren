@@ -3,7 +3,7 @@
 
 use crate::call::Tone;
 use crate::keys::Command;
-use crate::runs::{EntryLine, PickerView, RunPhase};
+use crate::runs::RunPhase;
 use crate::session::{
     CallFacts, Line as PaneLine, Phase, ResultMark, SessionPane, Span as Elapsed, ToolLine,
 };
@@ -54,13 +54,7 @@ impl Widget for ThemedWall<'_> {
             ..area
         };
         self.draw_panes(panes, buf);
-        match &self.wall.entry {
-            Some(entry) => self.draw_entry(entry, status, buf),
-            None => self.draw_status(&self.wall.status, status, buf),
-        }
-        if let Some(picker) = &self.wall.picker {
-            self.draw_picker(picker, area, buf);
-        }
+        self.draw_status(&self.wall.status, status, buf);
         if self.wall.help == Help::Shown {
             self.draw_help(area, buf);
         }
@@ -329,7 +323,7 @@ impl ThemedWall<'_> {
             if *more > 0 {
                 spans.push(Span::raw(format!(" (+{more})")).style(self.theme.muted));
             }
-            spans.push(Span::raw("  a yes · A always · d no").style(self.theme.muted));
+            spans.push(Span::raw("  answer in ren runs").style(self.theme.muted));
             return Line::from(spans);
         }
         let mut spans = Vec::new();
@@ -661,9 +655,6 @@ impl ThemedWall<'_> {
         if let Some(failure) = &status.failure {
             spans.push(Span::raw(format!(" ! stale: {failure} ")).style(self.theme.error_title));
         }
-        if let Some(notice) = &status.notice {
-            spans.push(Span::raw(format!(" {notice} ")).style(self.theme.warning_title));
-        }
         if status.attention > 0 {
             let needs = if status.attention == 1 {
                 "needs"
@@ -762,40 +753,6 @@ impl ThemedWall<'_> {
 
     /// The status line while text is typed: what it is for, the text with
     /// a cursor, and how to send or drop it.
-    fn draw_entry(&self, entry: &EntryLine, area: Rect, buf: &mut Buffer) {
-        let base = self.theme.bar;
-        buf.set_style(area, base);
-        let right = " enter send · esc cancel ";
-        let right_width = u16::try_from(Self::width(right)).unwrap_or(u16::MAX);
-        let left_width = match area.width.checked_sub(right_width) {
-            Some(left) => {
-                buf.set_string(area.x + left, area.y, right, base.patch(self.theme.muted));
-                left
-            }
-            None => area.width,
-        };
-        let label = format!(" {} › ", entry.label);
-        // The end of a long text stays in view, where the cursor is.
-        let room = usize::from(left_width).saturating_sub(Self::width(&label) + 2);
-        let mut shown: Vec<char> = Vec::new();
-        let mut width = 0;
-        for ch in entry.text.chars().rev() {
-            let wide = ch.width().unwrap_or(0);
-            if width + wide > room {
-                break;
-            }
-            width += wide;
-            shown.push(ch);
-        }
-        let text: String = shown.into_iter().rev().collect();
-        let line = Line::from(vec![
-            Span::raw(label).style(self.theme.responding_title),
-            Span::raw(format!(" {text}")),
-            Span::raw("▏").style(self.theme.focus),
-        ]);
-        buf.set_line(area.x, area.y, &line, left_width);
-    }
-
     fn short(harness: Harness) -> &'static str {
         match harness {
             Harness::ClaudeCode => "cc",
@@ -817,97 +774,6 @@ impl ThemedWall<'_> {
                 GLYPHS[usize::try_from(level - 1).unwrap_or(0).min(7)]
             })
             .collect()
-    }
-
-    /// Where a new run starts: the client, the filter, and the daemon's
-    /// folders that match it.
-    fn draw_picker(&self, picker: &PickerView, area: Rect, buf: &mut Buffer) {
-        const LISTED: u16 = 12;
-        let shown = u16::try_from(picker.rows.len())
-            .unwrap_or(u16::MAX)
-            .clamp(1, LISTED);
-        let width = area.width.min(72);
-        let height = (shown + 6).min(area.height);
-        if width < 8 || height < 4 {
-            return;
-        }
-        let rect = Rect {
-            x: area.x + (area.width - width) / 2,
-            y: area.y + (area.height - height) / 3,
-            width,
-            height,
-        };
-        Clear.render(rect, buf);
-        Block::bordered()
-            .title(" start a run ")
-            .border_style(self.theme.rule)
-            .style(self.theme.bar)
-            .render(rect, buf);
-        let inner = width.saturating_sub(4);
-        let (x, mut y) = (rect.x + 2, rect.y + 1);
-        let bottom = rect.y + height - 1;
-        let mut line = |line: Line<'_>, y: &mut u16| {
-            if *y < bottom {
-                buf.set_line(x, *y, &line, inner);
-                *y += 1;
-            }
-        };
-        let client = |name: &'static str| {
-            if picker.client == name {
-                Span::raw(format!("[{name}]")).style(self.theme.focus)
-            } else {
-                Span::raw(format!(" {name} ")).style(self.theme.muted)
-            }
-        };
-        line(
-            Line::from(vec![
-                Span::raw("client  "),
-                client("Codex"),
-                Span::raw(" "),
-                client("Claude Code"),
-                Span::raw("   tab switches").style(self.theme.muted),
-            ]),
-            &mut y,
-        );
-        line(
-            Line::from(vec![
-                Span::raw("folder  "),
-                Span::raw(format!("{}▏", picker.filter)).style(self.theme.prompt),
-            ]),
-            &mut y,
-        );
-        y += 1;
-        let chosen = picker.rows.iter().position(|row| row.chosen).unwrap_or(0);
-        let first = chosen.saturating_sub(usize::from(LISTED) - 1);
-        match &picker.note {
-            Some(note) => line(
-                Line::from(Span::raw(note.clone()).style(self.theme.muted)),
-                &mut y,
-            ),
-            None => {
-                for row in picker.rows.iter().skip(first).take(usize::from(LISTED)) {
-                    let (mark, style) = if row.chosen {
-                        ("› ", self.theme.focus)
-                    } else {
-                        ("  ", self.theme.text)
-                    };
-                    line(
-                        Line::from(vec![
-                            Span::raw(format!("{mark}{}", row.name)).style(style),
-                            Span::raw(format!("  {}", row.path)).style(self.theme.muted),
-                        ]),
-                        &mut y,
-                    );
-                }
-            }
-        }
-        buf.set_stringn(
-            x,
-            bottom.saturating_sub(1),
-            "↑↓ choose · enter starts · or type a full path · esc closes",
-            usize::from(inner),
-            self.theme.muted,
-        );
     }
 
     fn draw_help(&self, area: Rect, buf: &mut Buffer) {

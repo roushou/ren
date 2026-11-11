@@ -1,10 +1,7 @@
 //! The view against reads shaped as the management API sends them.
 
 use super::*;
-use ren_harness::{
-    Harness,
-    drive::{Decision, Prompt},
-};
+use ren_harness::Harness;
 use ren_recorder::id::RunId;
 use serde_json::{Value, json};
 
@@ -1392,10 +1389,6 @@ fn runs(state: Value) -> Input {
     ]))
 }
 
-fn idle() -> Value {
-    json!({ "phase": "idle", "thread": THREAD })
-}
-
 fn asking() -> Value {
     json!({
         "phase": "working", "thread": THREAD, "turn": null,
@@ -1426,12 +1419,6 @@ fn with_run(state: Value) -> Tui {
     tui
 }
 
-fn type_text(tui: &mut Tui, text: &str) {
-    for ch in text.chars() {
-        assert_eq!(tui.press(Key::Char(ch)), Pressed::Continue(vec![]));
-    }
-}
-
 #[test]
 fn a_live_runs_session_keeps_a_pane_with_the_runs_mark() {
     let tui = with_run(asking());
@@ -1450,246 +1437,6 @@ fn a_live_runs_session_keeps_a_pane_with_the_runs_mark() {
 }
 
 #[test]
-fn keys_answer_interrupt_and_stop_the_focused_run() {
-    let mut tui = with_run(asking());
-    let answer = |decision| {
-        Pressed::Run(RunControl::Answer {
-            run: run_id(),
-            approval: "ap-1".parse().unwrap(),
-            decision,
-        })
-    };
-    assert_eq!(tui.press(Key::Char('a')), answer(Decision::Accept));
-    assert_eq!(
-        tui.press(Key::Char('A')),
-        answer(Decision::AcceptForSession)
-    );
-    assert_eq!(tui.press(Key::Char('d')), answer(Decision::Decline));
-    assert_eq!(
-        tui.press(Key::Char('x')),
-        Pressed::Run(RunControl::Interrupt(run_id()))
-    );
-    assert_eq!(
-        tui.press(Key::Char('X')),
-        Pressed::Run(RunControl::Stop(run_id()))
-    );
-    // A turn is running: no prompt until it ends.
-    assert_eq!(tui.press(Key::Char('c')), Pressed::Continue(vec![]));
-    assert!(tui.wall(at(600)).status.notice.is_some());
-}
-
-#[test]
-fn a_prompt_is_typed_in_the_status_line_and_sent() {
-    let mut tui = with_run(idle());
-    assert_eq!(tui.press(Key::Char('a')), Pressed::Continue(vec![]));
-    assert_eq!(
-        tui.wall(at(600)).status.notice.as_deref(),
-        Some("nothing to approve")
-    );
-    assert_eq!(tui.press(Key::Char('c')), Pressed::Continue(vec![]));
-    type_text(&mut tui, "fix it!");
-    assert_eq!(tui.press(Key::Backspace), Pressed::Continue(vec![]));
-    // Keys that would quit or move type into the text instead.
-    type_text(&mut tui, " q");
-    assert_eq!(
-        tui.wall(at(600)).entry,
-        Some(EntryLine {
-            label: "prompt",
-            text: "fix it q".to_owned()
-        })
-    );
-    assert_eq!(
-        tui.press(Key::Enter),
-        Pressed::Run(RunControl::Prompt {
-            run: run_id(),
-            prompt: Prompt::parse("fix it q".to_owned()).unwrap()
-        })
-    );
-    assert_eq!(tui.wall(at(600)).entry, None);
-    // A blank prompt is not sent; Esc drops the text.
-    assert_eq!(tui.press(Key::Char('c')), Pressed::Continue(vec![]));
-    assert_eq!(tui.press(Key::Enter), Pressed::Continue(vec![]));
-    assert_eq!(tui.press(Key::Char('c')), Pressed::Continue(vec![]));
-    type_text(&mut tui, "never mind");
-    assert_eq!(tui.press(Key::Esc), Pressed::Continue(vec![]));
-    assert_eq!(tui.wall(at(600)).entry, None);
-}
-
-#[test]
-fn a_run_starts_from_the_folder_picker_and_opens_its_first_prompt() {
-    let mut tui = tui();
-    assert_eq!(tui.press(Key::Char('c')), Pressed::Continue(vec![]));
-    assert_eq!(
-        tui.wall(at(0)).status.notice.as_deref(),
-        Some("no run in this pane; s starts one")
-    );
-    // `s` opens the picker and asks for the daemon's folders.
-    assert_eq!(
-        tui.press(Key::Char('s')),
-        Pressed::Continue(vec![Read::Folders])
-    );
-    let picker = tui.wall(at(0)).picker.unwrap();
-    assert_eq!(picker.client, "Codex");
-    assert_eq!(
-        picker.note.as_deref(),
-        Some("reading the daemon's folders…")
-    );
-    let folder = |path: &str, name: &str| ren_supervisor::Folder {
-        path: path.into(),
-        name: name.into(),
-    };
-    let _ = tui.apply(Input::Folders(Folders::Read(vec![
-        folder("/home/op/dev", "dev"),
-        folder("/home/op/dev/acme", "dev/acme"),
-        folder("/home/op/dev/web", "dev/web"),
-        folder("/home/op/ren", "ren"),
-    ])));
-    // Typing narrows the list; the arrows choose; tab switches the client.
-    type_text(&mut tui, "dev/");
-    let names = |tui: &Tui| -> Vec<(String, bool)> {
-        tui.wall(at(0))
-            .picker
-            .unwrap()
-            .rows
-            .into_iter()
-            .map(|row| (row.name, row.chosen))
-            .collect()
-    };
-    assert_eq!(
-        names(&tui),
-        [("dev/acme".to_owned(), true), ("dev/web".to_owned(), false)]
-    );
-    let _ = tui.press(Key::Down);
-    let _ = tui.press(Key::Down);
-    assert_eq!(names(&tui)[1], ("dev/web".to_owned(), true));
-    let _ = tui.press(Key::Tab);
-    assert_eq!(tui.wall(at(0)).picker.unwrap().client, "Claude Code");
-    assert_eq!(
-        tui.press(Key::Enter),
-        Pressed::Run(RunControl::Start {
-            harness: Harness::ClaudeCode,
-            dir: "/home/op/dev/web".to_owned()
-        })
-    );
-    assert_eq!(tui.wall(at(0)).picker, None);
-
-    // Started: its first prompt opens at once, before it has a pane.
-    let run = RunId::restore(uuid::Uuid::from_u128(77));
-    assert_eq!(
-        tui.apply(Input::RunAnswered(Ok(Answered::Started(run)))),
-        [Read::Runs]
-    );
-    type_text(&mut tui, "fix it");
-    assert_eq!(
-        tui.press(Key::Enter),
-        Pressed::Run(RunControl::Prompt {
-            run,
-            prompt: Prompt::parse("fix it".into()).unwrap()
-        })
-    );
-    // Once idle with no pane, `c` still reaches it.
-    let thread = ren_protocol::native::NativeThreadId::new(uuid::Uuid::from_u128(0xe1)).unwrap();
-    let _ = tui.apply(Input::Runs(Runs::Read(vec![ren_supervisor::RunSnapshot {
-        run,
-        harness: Harness::ClaudeCode,
-        workdir: "/home/op/dev/web".into(),
-        state: ren_supervisor::RunState::Idle { thread },
-    }])));
-    assert_eq!(tui.press(Key::Char('c')), Pressed::Continue(vec![]));
-    assert_eq!(
-        tui.wall(at(0)).entry.map(|entry| entry.label),
-        Some("prompt")
-    );
-    let _ = tui.press(Key::Esc);
-    // Asking before it has a pane, it is answered the same way.
-    let mut approvals = ren_supervisor::Approvals::default();
-    approvals.insert(
-        "perm-1".parse().unwrap(),
-        ren_harness::drive::ApprovalAsk::FileChange { reason: None },
-    );
-    let _ = tui.apply(Input::Runs(Runs::Read(vec![ren_supervisor::RunSnapshot {
-        run,
-        harness: Harness::ClaudeCode,
-        workdir: "/home/op/dev/web".into(),
-        state: ren_supervisor::RunState::Working {
-            thread,
-            turn: None,
-            approvals,
-        },
-    }])));
-    assert_eq!(
-        tui.press(Key::Char('a')),
-        Pressed::Run(RunControl::Answer {
-            run,
-            approval: "perm-1".parse().unwrap(),
-            decision: Decision::Accept,
-        })
-    );
-
-    // A refusal reads in words and stays until esc.
-    let _ = tui.apply(Input::RunAnswered(Err(Refusal::parse("invalid_directory"))));
-    let refused =
-        Some("that folder is not a full path under one of the daemon's run roots · esc".to_owned());
-    assert_eq!(tui.wall(at(0)).status.notice, refused);
-    let _ = tui.press(Key::Char('n'));
-    assert_eq!(tui.wall(at(0)).status.notice, refused);
-    assert_eq!(tui.press(Key::Esc), Pressed::Continue(vec![]));
-    assert_eq!(tui.wall(at(0)).status.notice, None);
-
-    // Any full path on the daemon's host can be typed; other text is not a folder.
-    let _ = tui.press(Key::Char('s'));
-    let _ = tui.apply(Input::Folders(Folders::Read(vec![])));
-    type_text(&mut tui, "nowhere");
-    assert_eq!(tui.press(Key::Enter), Pressed::Continue(vec![]));
-    assert!(tui.wall(at(0)).status.notice.is_some());
-    for _ in 0.."nowhere".len() {
-        let _ = tui.press(Key::Backspace);
-    }
-    type_text(&mut tui, "/srv/other");
-    assert_eq!(
-        tui.press(Key::Enter),
-        Pressed::Run(RunControl::Start {
-            harness: Harness::Codex,
-            dir: "/srv/other".to_owned()
-        })
-    );
-
-    let _ = tui.apply(Input::Runs(Runs::Unavailable(
-        "runs are off on this daemon".to_owned(),
-    )));
-    assert_eq!(tui.press(Key::Char('s')), Pressed::Continue(vec![]));
-    assert_eq!(
-        tui.wall(at(0)).status.notice.as_deref(),
-        Some("runs: runs are off on this daemon")
-    );
-}
-
-#[test]
-fn the_picker_draws_over_the_wall() {
-    let size = Size {
-        width: 80,
-        height: 24,
-    };
-    let mut tui = busy(size);
-    let _ = tui.press(Key::Char('s'));
-    let _ = tui.apply(Input::Folders(Folders::Read(vec![
-        ren_supervisor::Folder {
-            path: "/home/op/dev".into(),
-            name: "dev".into(),
-        },
-        ren_supervisor::Folder {
-            path: "/home/op/dev/acme".into(),
-            name: "dev/acme".into(),
-        },
-    ])));
-    type_text(&mut tui, "ac");
-    assert_eq!(
-        drawn(&tui.wall(at(300)), size),
-        include_str!("../tests/fixtures/wall-picker.txt")
-    );
-}
-
-#[test]
 fn run_observations_ask_for_the_runs() {
     let mut tui = tui();
     let observation: Observation = serde_json::from_value(json!({
@@ -1704,7 +1451,7 @@ fn run_observations_ask_for_the_runs() {
 }
 
 #[test]
-fn a_waiting_run_and_a_typed_prompt_draw_as_pinned() {
+fn a_waiting_run_draws_as_pinned() {
     let size = Size {
         width: 80,
         height: 12,
@@ -1715,12 +1462,5 @@ fn a_waiting_run_and_a_typed_prompt_draw_as_pinned() {
     assert_eq!(
         drawn(&tui.wall(at(600)), size),
         include_str!("../tests/fixtures/wall-run.txt")
-    );
-    let _ = tui.apply(runs(idle()));
-    assert_eq!(tui.press(Key::Char('c')), Pressed::Continue(vec![]));
-    type_text(&mut tui, "run the tests again");
-    assert_eq!(
-        drawn(&tui.wall(at(600)), size),
-        include_str!("../tests/fixtures/wall-run-prompt.txt")
     );
 }

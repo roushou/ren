@@ -139,12 +139,19 @@ impl ScreenEvent {
             return None;
         }
         let control = event.modifiers.contains(KeyModifiers::CONTROL);
+        let alt = event.modifiers.contains(KeyModifiers::ALT);
         match event.code {
             KeyCode::Char('c') if control => Some(Key::Interrupt),
+            KeyCode::Char('j') if control => Some(Key::Newline),
             KeyCode::Char(_) if control => None,
+            // macOS terminals send Option-← and Option-→ as Alt-b and Alt-f.
+            KeyCode::Char('b') if alt => Some(Key::AltLeft),
+            KeyCode::Char('f') if alt => Some(Key::AltRight),
             KeyCode::Char(ch) => Some(Key::Char(ch)),
             KeyCode::Tab => Some(Key::Tab),
             KeyCode::BackTab => Some(Key::BackTab),
+            KeyCode::Left if alt => Some(Key::AltLeft),
+            KeyCode::Right if alt => Some(Key::AltRight),
             KeyCode::Left => Some(Key::Left),
             KeyCode::Right => Some(Key::Right),
             KeyCode::Up => Some(Key::Up),
@@ -152,12 +159,12 @@ impl ScreenEvent {
             KeyCode::Enter => Some(Key::Enter),
             KeyCode::Esc => Some(Key::Esc),
             KeyCode::Backspace => Some(Key::Backspace),
-            KeyCode::Home
-            | KeyCode::End
-            | KeyCode::PageUp
-            | KeyCode::PageDown
-            | KeyCode::Delete
-            | KeyCode::Insert
+            KeyCode::Delete => Some(Key::Delete),
+            KeyCode::Home => Some(Key::Home),
+            KeyCode::End => Some(Key::End),
+            KeyCode::PageUp => Some(Key::PageUp),
+            KeyCode::PageDown => Some(Key::PageDown),
+            KeyCode::Insert
             | KeyCode::F(_)
             | KeyCode::Null
             | KeyCode::CapsLock
