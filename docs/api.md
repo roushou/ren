@@ -22,7 +22,32 @@ ren tail --json
 ren tui
 ```
 
-Runs (see [runs](#runs)) have their own commands, through the control API:
+`ren runs` with no subcommand opens the console for [runs](#runs) (with the `tui`
+feature, like `ren tui`). One run's conversation fills the screen, with a message
+box under it:
+
+- The runs that need you come first: a run waiting for an approval opens when
+  nothing else is open, and answering one moves on to the next that waits.
+  The top line marks every live run (`◆` the open one, `◇` one that waits
+  for you, `▪` the others), and Alt-← and Alt-→ move between them.
+- An approval shows as a card in the conversation: `1` allows it once, `2`
+  for the rest of the run, `3` denies it, `4` denies it and stops the turn.
+  Typing instead denies it and sends your words next.
+- Enter sends a prompt; Ctrl-J starts a new line. Typed while a turn runs, a
+  message waits and is sent when the turn ends. Esc interrupts the turn.
+  Typed into a run that ended, it continues that conversation in a new run.
+- Slash commands, completed with Tab: `/new <project> [claude|codex]
+  <prompt>` starts a run in one of the daemon's projects with its first
+  prompt (the client named last is the default), `/resume [search]` lists
+  every run, what needs you first, with the chosen one previewed, `/stop`
+  ends the open run's process, `/help`, and `/quit` (or Ctrl-C), which
+  leaves runs running.
+
+A turn's live copy gives way to its recorded copy once the turn is recorded.
+Live updates are not stored, so a console opened mid-turn shows that turn
+once it is recorded.
+
+Runs (see [runs](#runs)) also have their own commands, through the control API:
 
 ```sh
 ren runs start codex ~/dev/acme
@@ -103,8 +128,8 @@ through a gateway) and `[runs]` roots on the daemon, `ren tui` also shows
 [runs](#runs): a live run's session keeps its pane, marked `run · idle`,
 `working`, or `asks`, and a run waiting for an answer lights its title amber
 and says under the conversation what it asks (`? run `cargo test` in
-/work/acme`). The wall only watches; runs are started and driven from `ren
-runs`, the web UI, or the `ren runs` subcommands.
+/work/acme`). The wall only watches; runs are started and driven from the
+`ren runs` console, the web UI, or the `ren runs` subcommands.
 
 The default `terminal` theme uses the terminal's foreground, background, and
 ANSI palette. `dark` and `light` use fixed RGB palettes and need a true-color

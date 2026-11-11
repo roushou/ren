@@ -1,3 +1,5 @@
+#[cfg(feature = "tui")]
+pub mod console;
 pub mod control;
 pub mod doctor;
 pub mod history;

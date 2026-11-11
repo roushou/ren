@@ -184,7 +184,7 @@ impl TuiCmd {
 
     /// Explicit per-application preferences override NO_COLOR; otherwise it
     /// selects monochrome. Environment access stays in the CLI shell.
-    fn theme(selected: Option<ThemeName>, env: &HostEnv) -> Theme {
+    pub(crate) fn theme(selected: Option<ThemeName>, env: &HostEnv) -> Theme {
         match selected {
             Some(name) => name.theme(),
             None if env.is_set("NO_COLOR") => Theme::monochrome(),
