@@ -12,9 +12,68 @@ mod lines;
 
 pub use lines::{Framed, Line, LineLimit, Lines};
 
+use crate::{Harness, launch::NotDrivable};
+use codex::CodexAppServer;
+
 use ren_protocol::native::{NativeThreadId, NativeTurnId};
 use serde_with::{DeserializeFromStr, SerializeDisplay};
 use strum::{Display, EnumString, IntoStaticStr, VariantArray};
+
+/// How a driven process's one conversation is opened.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Opening {
+    /// A new conversation in this working directory.
+    New { cwd: String },
+    /// An existing conversation, continued in this working directory.
+    Resume { thread: NativeThreadId, cwd: String },
+}
+
+/// What one line from a driven client produced.
+#[derive(Debug, Default)]
+#[must_use]
+pub struct Received {
+    pub events: Vec<DriveEvent>,
+    /// Lines to write to the client's stdin, in order.
+    pub replies: Vec<Line>,
+}
+
+/// One driven client's side of its structured mode, chosen by its harness.
+#[derive(Debug)]
+pub enum Driver {
+    Codex(CodexAppServer),
+}
+
+impl Driver {
+    /// The codec for a freshly started `harness` process, and the lines to
+    /// send it first. `version` is Ren's own version.
+    pub fn open(
+        harness: Harness,
+        opening: Opening,
+        version: &str,
+    ) -> Result<(Self, Vec<Line>), NotDrivable> {
+        match harness {
+            Harness::Codex => {
+                let (codec, first) = CodexAppServer::open(opening, version);
+                Ok((Self::Codex(codec), vec![first]))
+            }
+            Harness::ClaudeCode | Harness::Pi | Harness::OpenCode => Err(NotDrivable(harness)),
+        }
+    }
+
+    /// The line that carries `command`, or why it cannot be sent now.
+    pub fn command(&mut self, command: DriveCommand) -> Result<Line, CommandRefused> {
+        match self {
+            Self::Codex(codec) => codec.command(command),
+        }
+    }
+
+    /// Read one frame from the client's stdout.
+    pub fn receive(&mut self, frame: Framed) -> Received {
+        match self {
+            Self::Codex(codec) => codec.receive(frame),
+        }
+    }
+}
 
 /// What Ren asks a driven client to do.
 #[derive(Debug, Clone, PartialEq, Eq)]

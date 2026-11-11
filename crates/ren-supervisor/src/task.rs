@@ -21,10 +21,7 @@ use futures_util::{
 };
 use ren_harness::{
     Harness,
-    drive::{
-        DriveEvent, Framed, Line, LineLimit, Lines,
-        codex::{CodexAppServer, Opening},
-    },
+    drive::{DriveEvent, Driver, Framed, Line, LineLimit, Lines, Opening},
     endpoint::GatewayEndpoint,
 };
 use ren_recorder::{
@@ -57,7 +54,7 @@ struct Live {
     harness: Harness,
     workdir: Workdir,
     state: RunState,
-    codec: Option<CodexAppServer>,
+    codec: Option<Driver>,
     stdin: Option<Box<dyn AsyncWrite + Send + Unpin>>,
     kill: Option<KillSwitch>,
     /// Records the run's opening and end; taken when the end is recorded.
@@ -166,9 +163,20 @@ impl<H: AgentHost> SupervisorTask<H> {
             .resolve(requested.as_path())
             .map_err(StartError::Resolve)?;
         let workdir = Workdir::confirm(&self.roots, resolved).map_err(StartError::Workdir)?;
+        let opening = match conversation {
+            Conversation::New => Opening::New {
+                cwd: workdir.as_str().to_owned(),
+            },
+            Conversation::Resume(thread) => Opening::Resume {
+                thread,
+                cwd: workdir.as_str().to_owned(),
+            },
+        };
         let plan = harness
             .drive(&self.gateway)
             .map_err(StartError::NotDrivable)?;
+        let (codec, first) =
+            Driver::open(harness, opening, &self.version).map_err(StartError::NotDrivable)?;
         let run = RunId::generate(self.ids.as_ref());
         // Every run is recorded: without room, it does not start.
         let tap = self
@@ -208,12 +216,6 @@ impl<H: AgentHost> SupervisorTask<H> {
             exit,
             kill,
         } = process;
-        let cwd = workdir.as_str().to_owned();
-        let opening = match conversation {
-            Conversation::New => Opening::New { cwd },
-            Conversation::Resume(thread) => Opening::Resume { thread, cwd },
-        };
-        let (codec, first) = CodexAppServer::open(opening, &self.version);
         let mut live = Live {
             harness,
             workdir,
@@ -227,7 +229,9 @@ impl<H: AgentHost> SupervisorTask<H> {
             run,
             state: RunState::Starting,
         });
-        Self::write(run, &mut live, &first).await;
+        for line in &first {
+            Self::write(run, &mut live, line).await;
+        }
         outputs.push(Self::output(run, stdout, self.line_limit));
         exits.push(exit.map(move |exit| (run, exit)).boxed());
         runs.insert(run, live);

@@ -12,23 +12,14 @@
 
 use super::{
     ApprovalAsk, ApprovalId, CommandRefused, Decision, DriveCommand, DriveEvent, DriveItem, Framed,
-    ItemId, ItemKind, ItemPhase, ItemRead, ItemStatus, Line, Prompt, RawLine, RequestKind, Retry,
-    TurnEnd, Unreadable,
+    ItemId, ItemKind, ItemPhase, ItemRead, ItemStatus, Line, Opening, Prompt, RawLine, Received,
+    RequestKind, Retry, TurnEnd, Unreadable,
 };
 use ren_protocol::native::{NativeThreadId, NativeTurnId};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use uuid::Uuid;
-
-/// How the process's one thread is opened.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Opening {
-    /// A new thread in this working directory.
-    New { cwd: String },
-    /// An existing thread, continued in this working directory.
-    Resume { thread: NativeThreadId, cwd: String },
-}
 
 /// The client's side of one `codex app-server` process.
 #[derive(Debug)]
@@ -54,15 +45,6 @@ enum TurnSlot {
     /// `turn/start` was sent; its id is not known yet.
     Requested,
     Running(NativeTurnId),
-}
-
-/// What one line from the server produced.
-#[derive(Debug, Default)]
-#[must_use]
-pub struct Received {
-    pub events: Vec<DriveEvent>,
-    /// Lines to write to the server's stdin, in order.
-    pub replies: Vec<Line>,
 }
 
 /// JSON-RPC's "method not found", for server requests Ren never serves.
@@ -670,12 +652,13 @@ struct FileChangeApproval {
 
 #[cfg(test)]
 mod tests {
-    use super::{CodexAppServer, Opening, Received};
+    use super::CodexAppServer;
     use crate::drive::{
         ApprovalAsk, ApprovalId, CommandRefused, Decision, DriveCommand, DriveEvent, Framed,
         ItemKind, ItemPhase, ItemRead, ItemStatus, Line, Prompt, RequestKind, Retry, TurnEnd,
         Unreadable,
     };
+    use crate::drive::{Opening, Received};
     use serde_json::{Value, json};
 
     const THREAD: &str = "0190f3a0-0000-7000-8000-000000000001";
