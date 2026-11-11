@@ -56,7 +56,7 @@ pub struct Supervisor {
 }
 
 /// A change to a run, as it happens.
-#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum RunUpdate {
     State { run: RunId, state: RunState },

@@ -559,7 +559,7 @@ impl OperatorActionView {
 }
 
 /// One agent run, as recorded.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RunView {
     pub id: RunId,
     pub harness: Stored<Harness>,

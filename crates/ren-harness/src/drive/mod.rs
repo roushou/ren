@@ -178,7 +178,7 @@ pub enum RequestKind {
 }
 
 /// What a driven client reported, as Ren reads it.
-#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum DriveEvent {
     /// The conversation is open and takes prompts.
@@ -237,7 +237,7 @@ pub enum DriveEvent {
 }
 
 /// Whether the client said it would retry after an error.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Retry {
     WillRetry,
@@ -245,7 +245,7 @@ pub enum Retry {
 }
 
 /// Why a line could not be read.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "reason", rename_all = "snake_case")]
 pub enum Unreadable {
     NotJson,
@@ -273,6 +273,13 @@ impl serde::Serialize for RawLine {
     }
 }
 
+/// Read back as the text it was serialized as.
+impl<'de> serde::Deserialize<'de> for RawLine {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        String::deserialize(deserializer).map(|text| Self(text.into_bytes()))
+    }
+}
+
 impl RawLine {
     pub fn new(bytes: Vec<u8>) -> Self {
         Self(bytes)
@@ -284,7 +291,7 @@ impl RawLine {
 }
 
 /// An item of a turn, named as the client named it.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(transparent)]
 pub struct ItemId(String);
 
@@ -298,7 +305,7 @@ impl ItemId {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ItemPhase {
     Started,
@@ -307,7 +314,7 @@ pub enum ItemPhase {
 
 /// One item of a turn: its kind, what Ren read of it, and the client's own
 /// body for it.
-#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct DriveItem {
     pub id: ItemId,
     pub kind: ItemKind,
@@ -317,7 +324,7 @@ pub struct DriveItem {
 
 /// What Ren read from an item, the same for every client, so consumers never
 /// parse a client's own body. Each client's codec fills it.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "as", rename_all = "snake_case")]
 pub enum ItemRead {
     /// The operator's prompt, as the client echoed it.
@@ -373,6 +380,20 @@ impl ItemStatus {
     }
 }
 
+/// Known statuses by their snake_case name; any other name is kept.
+impl<'de> serde::Deserialize<'de> for ItemStatus {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let name = String::deserialize(deserializer)?;
+        Ok(match name.as_str() {
+            "in_progress" => Self::InProgress,
+            "completed" => Self::Completed,
+            "failed" => Self::Failed,
+            "declined" => Self::Declined,
+            _ => Self::Other(name),
+        })
+    }
+}
+
 impl serde::Serialize for ItemStatus {
     /// Known statuses by their snake_case name; others by the client's own.
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
@@ -398,6 +419,31 @@ pub enum ItemKind {
     McpToolCall,
     WebSearch,
     Other(String),
+}
+
+impl ItemKind {
+    /// The snake_case name a known kind serializes as.
+    fn known(name: &str) -> Option<Self> {
+        Some(match name {
+            "user_message" => Self::UserMessage,
+            "agent_message" => Self::AgentMessage,
+            "reasoning" => Self::Reasoning,
+            "plan" => Self::Plan,
+            "command_execution" => Self::CommandExecution,
+            "file_change" => Self::FileChange,
+            "mcp_tool_call" => Self::McpToolCall,
+            "web_search" => Self::WebSearch,
+            _ => return None,
+        })
+    }
+}
+
+/// Known kinds by their snake_case name; any other name is kept.
+impl<'de> serde::Deserialize<'de> for ItemKind {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let name = String::deserialize(deserializer)?;
+        Ok(Self::known(&name).unwrap_or(Self::Other(name)))
+    }
 }
 
 impl serde::Serialize for ItemKind {
@@ -437,7 +483,7 @@ pub enum ApprovalAsk {
 }
 
 /// How a turn ended, as the client reported it.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum TurnEnd {
     Completed,
@@ -464,4 +510,74 @@ pub enum CommandRefused {
     TurnNotStarted,
     #[error("no approval {0} is waiting")]
     UnknownApproval(ApprovalId),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        ApprovalAsk, ApprovalId, DriveEvent, DriveItem, ItemId, ItemKind, ItemPhase, ItemRead,
+        ItemStatus, RawLine, Retry, TurnEnd, Unreadable,
+    };
+
+    /// What the daemon sends on its run feed reads back as the same events,
+    /// unknown kinds and statuses keeping the client's own names.
+    #[test]
+    fn events_read_back_as_they_were_sent() {
+        let turn = ren_protocol::native::NativeTurnId::new(uuid::Uuid::from_u128(7)).unwrap();
+        let events = [
+            DriveEvent::TurnStarted { turn },
+            DriveEvent::Item {
+                phase: ItemPhase::Completed,
+                item: DriveItem {
+                    id: ItemId::new("cmd_1".into()),
+                    kind: ItemKind::CommandExecution,
+                    read: ItemRead::Command {
+                        command: "cargo test".into(),
+                        status: ItemStatus::Other("queued".into()),
+                        output: Some("ok".into()),
+                        exit_code: Some(0),
+                    },
+                    body: serde_json::json!({ "anything": true }),
+                },
+            },
+            DriveEvent::Item {
+                phase: ItemPhase::Started,
+                item: DriveItem {
+                    id: ItemId::new("x".into()),
+                    kind: ItemKind::Other("hologram".into()),
+                    read: ItemRead::Unread,
+                    body: serde_json::Value::Null,
+                },
+            },
+            DriveEvent::Approval {
+                approval: "perm-1".parse::<ApprovalId>().unwrap(),
+                ask: ApprovalAsk::Tool {
+                    tool: "WebFetch".into(),
+                    detail: None,
+                },
+            },
+            DriveEvent::TurnEnded {
+                turn,
+                end: TurnEnd::Failed {
+                    message: Some("boom".into()),
+                },
+            },
+            DriveEvent::Error {
+                message: "overloaded".into(),
+                retry: Retry::WillRetry,
+            },
+            DriveEvent::Unreadable {
+                line: RawLine::new(b"not json".to_vec()),
+                reason: Unreadable::TooLong { bytes: 9 },
+            },
+        ];
+        for event in events {
+            let text = serde_json::to_string(&event).unwrap();
+            assert_eq!(
+                serde_json::from_str::<DriveEvent>(&text).unwrap(),
+                event,
+                "{text}"
+            );
+        }
+    }
 }
