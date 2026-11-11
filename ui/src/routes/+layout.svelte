@@ -52,7 +52,9 @@
                   ? 'turn'
                   : page.route.id === '/search'
                     ? 'search'
-                    : 'traffic',
+                    : page.route.id === '/runs'
+                      ? 'runs'
+                      : 'traffic',
   );
   /** A session page's ID; reports and turns belong under Sessions too. */
   const sessionId = $derived(page.route.id === '/sessions/[id]' ? (page.params.id ?? null) : null);
@@ -112,9 +114,11 @@
                     ? 'Turn'
                     : view === 'search'
                       ? 'Search'
-                      : sessionId
-                        ? 'Session activity'
-                        : 'Traffic',
+                      : view === 'runs'
+                        ? 'Runs'
+                        : sessionId
+                          ? 'Session activity'
+                          : 'Traffic',
   );
   const gatewayOrigin = $derived(page.data.gatewayUrl);
   // The header names where the gateway runs, not its address.
@@ -183,6 +187,7 @@
       '/sessions/[id]/report',
       '/turns/[id]',
       '/search',
+      '/runs',
     ] as const)
       void preloadCode(route);
   });
@@ -230,6 +235,11 @@
         data-sveltekit-preload-data="hover"
         class:active={view === 'live'}
         aria-current={view === 'live' ? 'page' : undefined}><Icon name="pulse" size={14} />Live</a
+      >
+      <a
+        href="/runs"
+        class:active={view === 'runs'}
+        aria-current={view === 'runs' ? 'page' : undefined}><Icon name="spark" size={14} />Runs</a
       >
       <a
         href="/traffic"
@@ -344,7 +354,12 @@
     {@render children()}
   </main>
   <footer class="statusline" aria-label="Gateway status">
-    <span class="read-only">READ ONLY</span>
+    <span
+      class="read-only"
+      title={page.data.runsControl
+        ? 'History is read-only; this UI starts and drives agent runs'
+        : undefined}>{page.data.runsControl ? 'READ ONLY · RUNS' : 'READ ONLY'}</span
+    >
     <span
       class="connection-state"
       title={error ||

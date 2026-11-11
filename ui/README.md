@@ -102,6 +102,8 @@ produces `build/`. Cargo never builds or embeds the UI.
 | `REN_GATEWAY_URL`        | `http://127.0.0.1:8787`          | Daemon origin reached by the UI server                                          |
 | `REN_PUBLIC_GATEWAY_URL` | Same as `REN_GATEWAY_URL`        | Daemon origin displayed in the header and copied client commands                |
 | `REN_DEV_TRAFFIC_URL`    | Unset                            | Dev slot only: loopback origin of its traffic controls, for the dev toolbar     |
+| `REN_CONTROL_TOKEN_FILE` | Unset (read-only)                | The daemon's `control.token` (absolute path); set, the Runs view drives runs    |
+| `REN_CONTROL_LOGINS`     | Unset (anyone reaching the UI)   | Comma-separated Tailscale logins allowed to drive runs; set it behind Serve     |
 | `HOST`                   | `127.0.0.1` with `bun run start` | UI listener address                                                             |
 | `PORT`                   | `3000` with `bun run start`      | UI listener port                                                                |
 | `ORIGIN`                 | Inferred from incoming request   | Set to the UI's external origin behind Tailscale Serve or another reverse proxy |
@@ -121,6 +123,31 @@ The browser talks only to the UI origin. The UI server relays allowlisted GET/HE
 management requests to the daemon. It forwards no browser cookies or credentials
 and doesn't follow redirects. The UI has no authentication of its own: keep it on
 loopback or behind private Tailscale access, like the daemon.
+
+## Runs
+
+The Runs view starts and drives agent runs (Codex in a folder under the daemon's
+`[runs]` roots; see [runs](../docs/api.md#runs)): a sidebar of folders and their
+runs, the conversation (the run's recorded turns, then what streams in), its
+approvals with what each asks, and a prompt box. History stays read-only; runs
+are the one thing the UI changes, and only when the UI server is given the
+daemon's control token file:
+
+```ini
+REN_CONTROL_TOKEN_FILE=/home/you/.local/state/ren/control.token
+REN_CONTROL_LOGINS=you@example.com
+```
+
+The UI server reads the token from the file on each request (the daemon writes a
+new one when it starts), so it never reaches the browser, and it forwards only
+`/control/runs*` to the daemon's `/control/v1/runs*`: list, start, prompt,
+answer, interrupt, stop, and the update feed. A request must come from the UI's
+own pages (`Sec-Fetch-Site: same-origin`, or an `Origin` naming this host, and a
+JSON body), and with `REN_CONTROL_LOGINS` set, carry one of those logins in the
+`Tailscale-User-Login` header Tailscale Serve adds. Without it, anyone who
+reaches the UI can drive runs: leave it unset only for a UI on loopback. Without
+`REN_CONTROL_TOKEN_FILE`, the view lists recorded runs and explains how to turn
+it on.
 
 ## Payload previews
 

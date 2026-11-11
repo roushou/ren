@@ -265,6 +265,16 @@ on `127.0.0.1:13001`, never published; the UI server forwards the toolbar's
 requests there only when `REN_DEV_TRAFFIC_URL` is set, as the slot sets it, and
 only a development gateway's UI shows the toolbar.
 
+The slot's daemon has runs on, with `~/.local/share/ren-dev/work` as its root
+(`acme-api` and `acme-web` in it), and the dev UI drives them. Its `codex` is a
+fake (`cargo xtask dev agent`, first on the dev daemon's `PATH`), never the
+real client: it speaks Codex's app-server protocol, asks to run a command for
+prompts that mention testing, running, or building and to change files for
+ones that mention fixing, editing, changing, adding, or writing, and sends each
+turn's model call through the dev gateway to the fake provider, so a run's
+turns are recorded under its session. `dev up` restarts the daemon, which
+stops the slot's runs.
+
 `--ui` publishes the preview with the same Serve step as `install-vps` (with
 `sudo -n` if it last did, or `--sudo-tailscale`); `--local` keeps it on
 loopback. `down` removes each preview route only while it still points at the
@@ -329,6 +339,11 @@ publish it on a second **unused** Serve port (for example 8444). Set
 `ORIGIN=https://your-vps.your-tailnet.ts.net:8444` in the UI service environment.
 The public gateway setting keeps copied client commands pointed at the daemon.
 See the [UI service instructions](../ui/README.md#vps-service) for installation.
+To drive [runs](api.md#runs) from the UI, also add
+`REN_CONTROL_TOKEN_FILE=<data dir>/control.token` and
+`REN_CONTROL_LOGINS=<your Tailscale login>` to `~/.config/ren/ui.env` and restart
+`ren-ui.service` (see [the UI's runs](../ui/README.md#runs)); `install-vps` keeps
+an existing `ui.env` as it is.
 The UI may instead run on your laptop with `REN_GATEWAY_URL` set to the daemon's
 Tailscale URL; no UI process is required on the VPS.
 

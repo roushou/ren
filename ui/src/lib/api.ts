@@ -1296,7 +1296,7 @@ const sessionReport = object<SessionReport>({
 });
 
 /** Check the version envelope, then decode the fields beside it. */
-const versioned =
+export const versioned =
   <T>(decode: Decoder<T>): Decoder<T> =>
   (value, path) => {
     const found = isRecord(value) ? value.api_version : undefined;

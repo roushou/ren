@@ -423,6 +423,10 @@ described them, `approval` requests, `turn_started` and `turn_ended`, and
 `error`s. Events are not stored; the run's start, opening, and end are, and its
 model traffic is recorded as any session's.
 
+The web UI's Runs view drives runs through this API when its server is given
+the control token file (see the [UI's README](../ui/README.md#runs)), and
+`ren tui` and `ren runs` do from a terminal.
+
 Refusals: `400` `invalid_directory` (not absolute, contains `..`, or outside
 every root once links are resolved), `400` `directory_not_found`, `400`
 `not_drivable` (a client Ren cannot drive yet), `502` `spawn_failed` (the

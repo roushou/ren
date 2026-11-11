@@ -361,10 +361,16 @@ dependencies under "Crates" below. Read the code for current module ownership.
 - `ui`: an independent SvelteKit, Svelte 5, and TypeScript server (Node adapter). It
   reads the daemon only through the management API and forwards only allowlisted
   read-only endpoints. It never forwards browser cookies or credentials, never reads
-  storage directly, and never proxies inference. The one exception is the dev
-  slot's: with `REN_DEV_TRAFFIC_URL` set (loopback only), `/dev/traffic` forwards
-  the dev toolbar's three JSON requests to the slot's fake traffic generator,
-  never to the daemon.
+  storage directly, and never proxies inference. There are two exceptions.
+  Runs: with `REN_CONTROL_TOKEN_FILE` set, `/control/runs*` (`src/lib/server/control.ts`,
+  `RunsProxy`) forwards the Runs view's same-origin JSON requests to the
+  daemon's `/control/v1/runs*` only, with the control token read from that
+  file on each request, never sent to the browser, and, with
+  `REN_CONTROL_LOGINS` set, only for those Tailscale logins; `src/lib/runs.ts`
+  is the view's pure core (run states, the live transcript, and the sidebar).
+  The dev slot's: with `REN_DEV_TRAFFIC_URL` set (loopback only), `/dev/traffic`
+  forwards the dev toolbar's three JSON requests to the slot's fake traffic
+  generator, never to the daemon.
 - `crates/ren-harness/pi`: the embedded Pi extension and its dependency-free contract tests.
   Pi owns provider authentication, refresh, payload conversion, and retries.
 - `xtask`: repository tasks run with `cargo xtask` (alias in `.cargo/config.toml`),
@@ -382,7 +388,9 @@ dependencies under "Crates" below. Read the code for current module ownership.
   this checkout's build beside the installed service, with its own config,
   data, and ports, against a fake provider (`dev::provider`, whose replies are
   the pure, tested `script`), seeded with fake traffic (`dev::seed`, scenarios
-  as pure data), as `ren-dev-*` transient units, with live traffic whose
+  as pure data), as `ren-dev-*` transient units, runs driven against a fake `codex`
+  (`dev::agent`: the shell, and `script`, the pure app-server conversation it
+  plays), with live traffic whose
   settings both the generator and the fake provider reread (`dev::traffic`,
   with its loopback control API for the dev UI's toolbar), an optional private
   preview on the tailnet, and
