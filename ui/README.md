@@ -126,7 +126,7 @@ loopback or behind private Tailscale access, like the daemon.
 
 ## Runs
 
-The Runs view starts and drives agent runs (Codex in a folder under the daemon's
+The Runs view starts and drives agent runs (Codex or Claude Code in a folder under the daemon's
 `[runs]` roots; see [runs](../docs/api.md#runs)): a sidebar of folders and their
 runs, the conversation (the run's recorded turns, then what streams in), its
 approvals with what each asks, and a prompt box. History stays read-only; runs

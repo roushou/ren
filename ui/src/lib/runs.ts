@@ -7,6 +7,7 @@ import {
   API_VERSION,
   SessionId,
   versioned,
+  type Excerpt,
   type Harness,
   type NativeThreadId,
   type NativeTurnId,
@@ -60,6 +61,7 @@ export type ProcessExit =
 export type ApprovalAsk =
   | { kind: 'command'; command: string | null; cwd: string | null; reason: string | null }
   | { kind: 'file_change'; reason: string | null }
+  | { kind: 'tool'; tool: string; detail: string | null }
   | { kind: 'unrecognized'; text: string };
 
 export interface Waiting {
@@ -187,6 +189,12 @@ const approvalAsk: Decoder<ApprovalAsk> = (value, path) => {
       };
     case 'file_change':
       return { kind: 'file_change', reason: optionalString(value.reason, `${path}.reason`) };
+    case 'tool':
+      return {
+        kind: 'tool',
+        tool: string(value.tool, `${path}.tool`),
+        detail: optionalString(value.detail, `${path}.detail`),
+      };
     default:
       return { kind: 'unrecognized', text: String(value.kind) };
   }
@@ -426,6 +434,10 @@ export class RunCommandError extends Error {
   }
 }
 
+/** The clients the daemon can drive, as the new-run form offers them. */
+export const DRIVABLE = ['codex', 'claude_code'] as const satisfies readonly Harness[];
+export type Drivable = (typeof DRIVABLE)[number];
+
 /** Run commands and reads through a capability-supplied `fetch`. */
 export class RunsClient {
   readonly #fetch: typeof fetch;
@@ -436,8 +448,12 @@ export class RunsClient {
   async live(signal?: AbortSignal): Promise<RunSnapshot[]> {
     return (await this.#send('GET', '/control/runs', undefined, liveRuns, signal)).runs;
   }
-  async start(dir: string, resume: NativeThreadId | null = null): Promise<RunId> {
-    const body = { harness: 'codex', dir, ...(resume ? { resume } : {}) };
+  async start(
+    harness: Drivable,
+    dir: string,
+    resume: NativeThreadId | null = null,
+  ): Promise<RunId> {
+    const body = { harness, dir, ...(resume ? { resume } : {}) };
     return (await this.#send('POST', '/control/runs', body, started)).run;
   }
   async prompt(run: RunId, text: string): Promise<void> {
@@ -529,10 +545,62 @@ export class Transcript {
   readonly entries: Entry[];
   /** The turn the newest entries belong to, once the agent named it. */
   readonly turn: NativeTurnId | null;
+  /**
+   * Recorded turns already read when this turn started, by native id; null
+   * when the page has not read them.
+   */
+  readonly known: readonly string[] | null;
 
-  constructor(entries: Entry[] = [], turn: NativeTurnId | null = null) {
+  constructor(
+    entries: Entry[] = [],
+    turn: NativeTurnId | null = null,
+    known: readonly string[] | null = null,
+  ) {
     this.entries = entries;
     this.turn = turn;
+    this.known = known;
+  }
+
+  /** The recorded turns read when the current turn started. */
+  knowing(known: readonly string[]): Transcript {
+    return new Transcript(this.entries, this.turn, known);
+  }
+
+  /**
+   * Whether the turn that just ended is now among `turns`, the recorded
+   * ones: by its id where the client names its turns the same live and on
+   * the wire (Codex), or else (Claude Code) as a recorded turn that was not
+   * there when it started and carries its prompt, or any such turn when this
+   * page joined after the prompt was sent.
+   */
+  recordedIn(turns: readonly { native_id: string; prompt: Excerpt | null }[]): boolean {
+    const turn = this.turn;
+    if (turn === null || !this.ended(turn)) return false;
+    if (turns.some((recorded) => recorded.native_id === turn)) return true;
+    const known = this.known;
+    if (known === null) return false;
+    const prompt = this.#endedPrompt();
+    return turns.some(
+      (recorded) =>
+        !known.includes(recorded.native_id) &&
+        (prompt === null ||
+          (recorded.prompt !== null &&
+            (recorded.prompt.omitted_chars > 0
+              ? prompt.startsWith(recorded.prompt.text)
+              : prompt === recorded.prompt.text))),
+    );
+  }
+
+  /** The prompt of the turn the transcript ends with. */
+  #endedPrompt(): string | null {
+    const last = this.entries.length - 1;
+    const previous = this.entries.findLastIndex(
+      (entry, index) => index < last && entry.kind === 'turn_end',
+    );
+    const prompt = this.entries
+      .slice(previous + 1, last)
+      .findLast((entry) => entry.kind === 'prompt');
+    return prompt?.kind === 'prompt' ? prompt.text : null;
   }
 
   /**
@@ -560,7 +628,7 @@ export class Transcript {
   apply(event: DriveEvent): Transcript {
     switch (event.kind) {
       case 'turn_started':
-        return new Transcript(this.entries, event.turn);
+        return new Transcript(this.entries, event.turn, this.known);
       case 'delta': {
         const index = this.#find(event.item);
         const entry = index === -1 ? undefined : this.entries[index];
@@ -666,11 +734,11 @@ export class Transcript {
   #replace(index: number, entry: Entry): Transcript {
     const entries = this.entries.slice();
     entries[index] = entry;
-    return new Transcript(entries, this.turn);
+    return new Transcript(entries, this.turn, this.known);
   }
 
   #with(entries: Entry[], turn: NativeTurnId | null): Transcript {
-    return new Transcript(entries.slice(-KEPT_ENTRIES), turn);
+    return new Transcript(entries.slice(-KEPT_ENTRIES), turn, this.known);
   }
 }
 
@@ -780,11 +848,18 @@ export class Runs {
         };
       case 'file_change':
         return { action: 'Change files', detail: null, reason: ask.reason };
+      case 'tool':
+        return { action: `Use ${ask.tool}`, detail: ask.detail, reason: null };
       case 'unrecognized':
         return { action: `Allow ${ask.text}`, detail: null, reason: null };
       default:
         return assertNever(ask);
     }
+  }
+
+  /** A run's client, when the daemon can drive it to resume the conversation. */
+  static drivable(harness: Stored<Harness>): Drivable | null {
+    return DRIVABLE.find((drivable) => drivable === harness) ?? null;
   }
 
   /** The folder's last component, as the sidebar names a project. */
@@ -826,6 +901,7 @@ export class Runs {
 /** A run in the sidebar: live, or recorded and ended. */
 export interface DeskRun {
   run: RunId;
+  harness: Stored<Harness>;
   workdir: string;
   started_at: UnixMillis | null;
   /** The live state, while the daemon holds the run. */
@@ -849,6 +925,7 @@ export class Desk {
     for (const run of recorded) {
       byRun.set(run.id, {
         run: run.id,
+        harness: run.harness,
         workdir: run.workdir,
         started_at: run.started_at,
         state: null,
@@ -859,6 +936,7 @@ export class Desk {
       const known = byRun.get(run.run);
       byRun.set(run.run, {
         run: run.run,
+        harness: run.harness,
         workdir: run.workdir,
         started_at: known?.started_at ?? null,
         state: run.state,

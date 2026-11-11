@@ -8,6 +8,7 @@
   import { date } from '#lib/display.ts';
   import { getWorkbench } from '#lib/workbench.svelte.ts';
   import {
+    DRIVABLE,
     Desk,
     RunCommandError,
     Runs,
@@ -16,6 +17,7 @@
     runUpdate,
     type Decision,
     type DeskRun,
+    type Drivable,
     type RecordedRun,
     type RunId,
     type RunSnapshot,
@@ -58,6 +60,7 @@
   let historyError = $state<string | null>(null);
 
   let folder = $state('');
+  let starting = $state<Drivable>('codex');
   let prompt = $state('');
   let busy = $state(false);
   let notice = $state<string | null>(null);
@@ -92,9 +95,9 @@
 
   /**
    * Read the selected run's session turns, newest ten, oldest first. Returns
-   * the native ids of the turns read.
+   * whether the run's live turn, once ended, is now among them.
    */
-  async function readHistory(run: RunId): Promise<string[]> {
+  async function readHistory(run: RunId): Promise<boolean> {
     try {
       const stored = await client.recordedRun(run).catch(() => null);
       const session = stored?.session ?? null;
@@ -105,24 +108,22 @@
       }
       if (!session) {
         if (selected === run) history = { run, session: null, turns: [] };
-        return [];
+        return false;
       }
       const listed = await api.turns(session as never, 10);
       const turns = await Promise.all(listed.turns.map((turn) => api.turn(turn.turn)));
       turns.reverse();
-      const read = turns.map((turn) => turn.native_id as string);
-      if (selected !== run) return read;
+      const live = transcripts.get(run);
+      const landed = live?.recordedIn(turns) ?? false;
+      if (selected !== run) return landed;
       history = { run, session, turns };
       historyError = null;
       // A turn now recorded no longer needs its live copy.
-      const live = transcripts.get(run);
-      if (live?.turn && read.includes(live.turn) && live.ended(live.turn)) {
-        transcripts.set(run, new Transcript());
-      }
-      return read;
+      if (landed) transcripts.set(run, new Transcript());
+      return landed;
     } catch (error) {
       if (selected === run) historyError = message(error);
-      return [];
+      return false;
     }
   }
 
@@ -130,11 +131,11 @@
    * A turn's record lands shortly after its calls finish: read the history
    * again until it holds `turn`, for up to about fifteen seconds.
    */
-  async function awaitRecorded(run: RunId, turn: string) {
+  async function awaitRecorded(run: RunId) {
     for (const delay of [500, 1000, 2000, 4000, 8000]) {
       await new Promise((resolve) => setTimeout(resolve, delay));
       if (selected !== run) return;
-      if ((await readHistory(run)).includes(turn)) return;
+      if (await readHistory(run)) return;
     }
   }
 
@@ -154,11 +155,17 @@
     void goto(run ? `/runs?run=${run}` : '/runs');
   }
 
-  async function start(resume: { workdir: string; thread: string } | null = null) {
+  async function start(
+    resume: { harness: Drivable; workdir: string; thread: string } | null = null,
+  ) {
     const dir = resume?.workdir ?? folder.trim();
     if (!dir) return;
     await act(async () => {
-      const run = await client.start(dir, (resume?.thread ?? null) as never);
+      const run = await client.start(
+        resume?.harness ?? starting,
+        dir,
+        (resume?.thread ?? null) as never,
+      );
       folder = '';
       await readLive();
       select(run);
@@ -246,10 +253,15 @@
         if (update.state.phase === 'ended' || update.state.phase === 'idle') void readRecorded();
         return;
       }
-      const before = transcripts.get(update.run) ?? new Transcript();
-      transcripts.set(update.run, before.apply(update.event));
+      // What was recorded before this turn, to tell its record apart.
+      const read =
+        history?.run === update.run ? history.turns.map((turn) => turn.native_id as string) : null;
+      const before = transcripts.get(update.run) ?? new Transcript([], null, read);
+      let after = before.apply(update.event);
+      if (update.event.kind === 'turn_started' && read !== null) after = after.knowing(read);
+      transcripts.set(update.run, after);
       if (update.event.kind === 'turn_ended' && update.run === selected) {
-        void awaitRecorded(update.run, update.event.turn);
+        void awaitRecorded(update.run);
       }
     });
     return () => source.close();
@@ -272,13 +284,18 @@
     current &&
       runState?.phase === 'ended' &&
       current.recorded?.thread &&
+      Runs.drivable(current.harness) &&
       !live.some(
         (run) =>
           run.workdir === current.workdir &&
           run.state.phase !== 'ended' &&
           Runs.thread(run.state) === current.recorded?.thread,
       )
-      ? { workdir: current.workdir, thread: current.recorded.thread }
+      ? {
+          harness: Runs.drivable(current.harness) ?? 'codex',
+          workdir: current.workdir,
+          thread: current.recorded.thread,
+        }
       : null,
   );
 </script>
@@ -369,7 +386,16 @@
           void start();
         }}
       >
-        <label for="run-folder">Start Codex in a folder</label>
+        <label for="run-folder">Start a run in a folder</label>
+        <div class="segmented" role="radiogroup" aria-label="Client">
+          {#each DRIVABLE as harness (harness)}<button
+              type="button"
+              role="radio"
+              aria-checked={starting === harness}
+              class:chosen={starting === harness}
+              onclick={() => (starting = harness)}>{harnessLabel(harness)}</button
+            >{/each}
+        </div>
         <div class="new-run-row">
           <input
             id="run-folder"
@@ -438,8 +464,8 @@
         <div class="empty-icon"><Icon name="spark" size={26} /></div>
         <h2>{selected ? 'This run is not listed' : 'Pick a run, or start one'}</h2>
         <p>
-          A run is Codex working in one of your folders, driven from here. It keeps its own sign-in;
-          its model traffic is recorded like any session’s.
+          A run is Codex or Claude Code working in one of your folders, driven from here. Each keeps
+          its own sign-in; its model traffic is recorded like any session’s.
         </p>
       </div>
     {:else}
@@ -452,9 +478,7 @@
           ><span class="phase-dot tone-{mark.tone}"></span>{mark.label}</span
         >
         {#if exitText(current)}<span class="muted mono">{exitText(current)}</span>{/if}
-        <span class="muted"
-          >{harnessLabel(current.recorded?.harness ?? 'codex')} · run {short(current.run)}</span
-        >
+        <span class="muted">{harnessLabel(current.harness)} · run {short(current.run)}</span>
         <span class="run-actions">
           {#if history?.session}<a class="text-button" href="/sessions/{history.session}"
               >Calls <Icon name="arrow" size={11} /></a
@@ -499,7 +523,8 @@
                 <Icon name="terminal" size={12} />
                 <span class="tool-target mono">{entry.command}</span>
                 <span
-                  class="chip {entry.status === 'completed' && entry.exit === 0
+                  class="chip {entry.status === 'completed' &&
+                  (entry.exit === 0 || entry.exit === null)
                     ? 'success'
                     : entry.status === 'in_progress'
                       ? 'live'
@@ -577,9 +602,9 @@
             onkeydown={composerKey}
             rows="3"
             placeholder={controls.prompt
-              ? 'Ask Codex to do something. Enter sends, Shift+Enter adds a line.'
+              ? `Ask ${harnessLabel(current.harness)} to do something. Enter sends, Shift+Enter adds a line.`
               : runState.phase === 'working'
-                ? 'Codex is working. You can type the next prompt now.'
+                ? `${harnessLabel(current.harness)} is working. You can type the next prompt now.`
                 : 'Waiting for the run to open its conversation…'}
             aria-label="Prompt"></textarea>
           <button class="button primary" disabled={busy || !controls.prompt || !prompt.trim()}

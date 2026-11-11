@@ -308,7 +308,8 @@ test('the client sends commands as JSON and reports refusals by their code', asy
     }
     return Response.json({ api_version: 1 }, { status: 202 });
   }) as typeof fetch);
-  assert.equal(await client.start('/work/acme'), run);
+  assert.equal(await client.start('codex', '/work/acme'), run);
+  assert.equal(await client.start('claude_code', '/work/web'), run);
   await client.answer(run as never, 'ap/1' as never, 'accept_for_session');
   await assert.rejects(client.stop(run as never), (error: unknown) => {
     assert.ok(error instanceof RunCommandError);
@@ -318,7 +319,61 @@ test('the client sends commands as JSON and reports refusals by their code', asy
   });
   assert.deepEqual(sent, [
     'POST /control/runs {"harness":"codex","dir":"/work/acme"}',
+    'POST /control/runs {"harness":"claude_code","dir":"/work/web"}',
     `POST /control/runs/${run}/approvals/ap%2F1 {"decision":"accept_for_session"}`,
     `POST /control/runs/${run}/stop {}`,
   ]);
+});
+
+test('a turn is matched to its record by id, or by its prompt where the ids differ', () => {
+  const ended = (turn: string, prompt: string, known: string[] = []) =>
+    new Transcript()
+      .prompted(prompt)
+      .apply(event({ kind: 'turn_started', turn }))
+      .knowing(known)
+      .apply(event({ kind: 'turn_ended', turn, end: { kind: 'completed' } }));
+  const excerpt = (text: string, omitted_chars = 0) => ({ text, omitted_chars });
+  // Codex: the live turn id is the recorded one.
+  assert.equal(
+    ended('t1', 'go').recordedIn([{ native_id: 't1', prompt: excerpt('something else') }]),
+    true,
+  );
+  // Claude Code: a new recorded turn carrying the prompt.
+  const claude = ended('live-1', 'fix the build', ['old']);
+  assert.equal(claude.recordedIn([{ native_id: 'old', prompt: excerpt('fix the build') }]), false);
+  assert.equal(
+    claude.recordedIn([
+      { native_id: 'old', prompt: excerpt('fix the build') },
+      { native_id: 'new', prompt: excerpt('fix the', 6) },
+    ]),
+    true,
+  );
+  assert.equal(claude.recordedIn([{ native_id: 'new', prompt: excerpt('other') }]), false);
+  // A page that joined mid-turn, after the prompt: any turn new since it read.
+  const joined = new Transcript([], null, ['old']).apply(
+    event({ kind: 'turn_ended', turn: 'live-2', end: { kind: 'completed' } }),
+  );
+  assert.equal(joined.recordedIn([{ native_id: 'old', prompt: excerpt('x') }]), false);
+  assert.equal(joined.recordedIn([{ native_id: 'new', prompt: excerpt('x') }]), true);
+  // Nothing read yet: only an id can match.
+  const unread = new Transcript().apply(
+    event({ kind: 'turn_ended', turn: 'live-3', end: { kind: 'completed' } }),
+  );
+  assert.equal(unread.recordedIn([{ native_id: 'new', prompt: excerpt('x') }]), false);
+  // A turn still running is not replaced by its record.
+  const running = new Transcript()
+    .prompted('go')
+    .apply(event({ kind: 'turn_started', turn: 't2' }));
+  assert.equal(running.recordedIn([{ native_id: 't2', prompt: excerpt('go') }]), false);
+});
+
+test('an approval to use another tool says which, and only drivable clients resume', () => {
+  assert.deepEqual(Runs.ask({ kind: 'tool', tool: 'WebFetch', detail: 'https://example.com' }), {
+    action: 'Use WebFetch',
+    detail: 'https://example.com',
+    reason: null,
+  });
+  assert.equal(Runs.drivable('claude_code'), 'claude_code');
+  assert.equal(Runs.drivable('codex'), 'codex');
+  assert.equal(Runs.drivable('pi'), null);
 });
