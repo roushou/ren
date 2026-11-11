@@ -1,6 +1,7 @@
 //! `cargo xtask dev`: a development slot on this host, with fake providers
 //! and fake data, separate from the installed service.
 
+mod agent;
 mod provider;
 mod seed;
 mod shot;
@@ -12,6 +13,7 @@ use crate::{
     install::{InstallError, TailscaleCli},
     publish::Publish,
 };
+use agent::{AgentError, FakeAgent};
 use clap::{Args, Subcommand};
 use provider::{FakeProvider, ProviderError};
 use ren_harness::host::HostEnv;
@@ -55,6 +57,20 @@ enum DevAction {
     Traffic(TrafficArgs),
     /// Screenshot the dev UI's pages with a headless Chromium.
     Shot(ShotArgs),
+    /// Act as `codex app-server` on stdio for the dev daemon's runs (the
+    /// slot's `codex` runs this).
+    #[command(hide = true)]
+    Agent(AgentArgs),
+}
+
+#[derive(Args)]
+struct AgentArgs {
+    /// Where the agent numbers its threads (the slot's data directory).
+    #[arg(long)]
+    data_dir: PathBuf,
+    /// The arguments the daemon gave `codex`.
+    #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+    arguments: Vec<String>,
 }
 
 #[derive(Args)]
@@ -193,12 +209,15 @@ pub enum DevError {
     Traffic(#[from] TrafficError),
     #[error(transparent)]
     Settings(#[from] SettingsError),
+    #[error(transparent)]
+    Agent(#[from] AgentError),
 }
 
 impl Dev {
     pub fn run(self, env: &HostEnv) -> Result<(), DevError> {
         match self.action {
             DevAction::Provider(args) => Ok(FakeProvider::serve(args.listen, args.settings)?),
+            DevAction::Agent(args) => Ok(FakeAgent::new(&args.data_dir, &args.arguments)?.run()?),
             DevAction::Up(args) => {
                 let slot = Slot::new(env)?;
                 if args.ui {

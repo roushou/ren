@@ -26,10 +26,19 @@ pub enum Page {
     Session,
     Usage,
     Search,
+    /// The newest run, with its conversation.
+    Runs,
+}
+
+/// The newest session and run, which some pages show.
+#[derive(Debug, Default)]
+struct Newest {
+    session: Option<String>,
+    run: Option<String>,
 }
 
 impl Page {
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 8] = [
         Self::Overview,
         Self::Live,
         Self::Traffic,
@@ -37,6 +46,7 @@ impl Page {
         Self::Session,
         Self::Usage,
         Self::Search,
+        Self::Runs,
     ];
 
     fn name(self) -> &'static str {
@@ -48,19 +58,27 @@ impl Page {
             Self::Session => "session",
             Self::Usage => "usage",
             Self::Search => "search",
+            Self::Runs => "runs",
         }
     }
 
-    /// The page's path; `newest` is the newest session, for `Session`.
-    fn path(self, newest: Option<&str>) -> Option<String> {
+    /// The page's path: the newest session for `Session`, the newest run
+    /// (if any) for `Runs`.
+    fn path(self, newest: &Newest) -> Option<String> {
         match self {
             Self::Overview => Some("/".into()),
             Self::Live => Some("/live".into()),
             Self::Traffic => Some("/traffic".into()),
             Self::Sessions => Some("/sessions".into()),
-            Self::Session => newest.map(|id| format!("/sessions/{id}")),
+            Self::Session => newest.session.as_ref().map(|id| format!("/sessions/{id}")),
             Self::Usage => Some("/usage".into()),
             Self::Search => Some("/search?q=retry".into()),
+            Self::Runs => Some(
+                newest
+                    .run
+                    .as_ref()
+                    .map_or_else(|| "/runs".into(), |id| format!("/runs?run={id}")),
+            ),
         }
     }
 }
@@ -127,15 +145,16 @@ impl Camera {
         shells.pop()
     }
 
-    /// The newest session's id, from the dev gateway's API.
-    fn newest_session(&self) -> Option<String> {
+    /// The newest item's id in a listing of the dev gateway's API, such as
+    /// `sessions` or `runs`.
+    fn newest(&self, listing: &str) -> Option<String> {
         let answer = Invocation::new("curl")
             .args(["--silent", "--fail", "--max-time", "5"])
-            .arg(format!("http://{}/api/sessions?limit=1", self.gateway))
+            .arg(format!("http://{}/api/{listing}?limit=1", self.gateway))
             .capture()
             .ok()?;
         let answer: serde_json::Value = serde_json::from_str(&answer).ok()?;
-        answer["sessions"][0]["id"].as_str().map(str::to_owned)
+        answer[listing][0]["id"].as_str().map(str::to_owned)
     }
 
     /// Capture `pages` at `width`×`height`; returns the files written.
@@ -145,10 +164,13 @@ impl Camera {
         (width, height): (u16, u16),
     ) -> Result<Vec<PathBuf>, DevError> {
         fs::create_dir_all(&self.out).map_err(InstallError::file(&self.out))?;
-        let newest = self.newest_session();
+        let newest = Newest {
+            session: self.newest("sessions"),
+            run: self.newest("runs"),
+        };
         let mut written = Vec::new();
         for page in pages {
-            let Some(path) = page.path(newest.as_deref()) else {
+            let Some(path) = page.path(&newest) else {
                 println!("skipped {}: no session yet", page.name());
                 continue;
             };
@@ -179,22 +201,31 @@ impl Camera {
 
 #[cfg(test)]
 mod tests {
-    use super::Page;
+    use super::{Newest, Page};
 
     #[test]
     fn every_page_has_a_path_and_the_session_needs_one() {
+        let none = Newest::default();
+        let some = Newest {
+            session: Some("s1".into()),
+            run: Some("r1".into()),
+        };
         for page in Page::ALL {
             match page {
                 Page::Session => {
-                    assert_eq!(page.path(None), None);
-                    assert_eq!(page.path(Some("s1")).as_deref(), Some("/sessions/s1"));
+                    assert_eq!(page.path(&none), None);
+                    assert_eq!(page.path(&some).as_deref(), Some("/sessions/s1"));
+                }
+                Page::Runs => {
+                    assert_eq!(page.path(&none).as_deref(), Some("/runs"));
+                    assert_eq!(page.path(&some).as_deref(), Some("/runs?run=r1"));
                 }
                 Page::Overview
                 | Page::Live
                 | Page::Traffic
                 | Page::Sessions
                 | Page::Usage
-                | Page::Search => assert!(page.path(None).is_some_and(|p| p.starts_with('/'))),
+                | Page::Search => assert!(page.path(&none).is_some_and(|p| p.starts_with('/'))),
             }
         }
     }

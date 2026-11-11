@@ -11,9 +11,9 @@ use crate::{
     tailscale::{Route, ServeStatus},
     ui::UiDeploy,
 };
-use ren_daemon::config::{Config, UpstreamConfig};
+use ren_daemon::config::{Config, RunsOptions, UpstreamConfig};
 use ren_gateway::{
-    EntryIngress, Environment, InstanceOptions,
+    ControlToken, EntryIngress, Environment, InstanceOptions,
     user::{TokenDigest, UserConfig},
 };
 use ren_harness::{endpoint::UserToken, host::HostEnv};
@@ -121,6 +121,8 @@ pub struct Slot {
     home: PathBuf,
     ui_dir: PathBuf,
     ui_next: PathBuf,
+    /// The dev daemon's run root, with a few fake projects to start runs in.
+    pub work_dir: PathBuf,
 }
 
 impl Slot {
@@ -159,6 +161,7 @@ impl Slot {
             bin_dir: share.join("bin"),
             ui_dir: share.join("ui"),
             ui_next: share.join("ui.next"),
+            work_dir: share.join("work"),
             home: home.clone(),
         })
     }
@@ -223,6 +226,9 @@ impl Slot {
             instance: InstanceOptions {
                 environment: Environment::Development,
             },
+            runs: RunsOptions {
+                roots: vec![self.work_dir.clone()],
+            },
             ..Config::default()
         })
     }
@@ -245,7 +251,46 @@ impl Slot {
             let contents = fs::read(&built).map_err(InstallError::file(&built))?;
             InstallVps::write_private(&self.bin_dir.join(name), &contents, 0o755)?;
         }
+        self.write_agent()
+    }
+
+    /// The fake projects runs start in.
+    pub const PROJECTS: [&'static str; 2] = ["acme-api", "acme-web"];
+
+    /// The folder holding the `codex` the dev daemon starts: the fake agent.
+    fn agent_dir(&self) -> PathBuf {
+        self.bin_dir.join("agent")
+    }
+
+    /// Put the fake agent first on the dev daemon's PATH as `codex`, and
+    /// create the fake projects under the run root.
+    fn write_agent(&self) -> Result<(), DevError> {
+        let dir = self.agent_dir();
+        fs::create_dir_all(&dir).map_err(InstallError::file(&dir))?;
+        let script = format!(
+            "#!/bin/sh\n# The dev slot's fake Codex (`cargo xtask dev agent`); never the real one.\nexec {} dev agent --data-dir {} \"$@\"\n",
+            Self::quote(&self.bin_dir.join("xtask")),
+            Self::quote(&self.data_dir),
+        );
+        InstallVps::write_private(&dir.join("codex"), script.as_bytes(), 0o755)?;
+        for project in Self::PROJECTS {
+            let folder = self.work_dir.join(project);
+            fs::create_dir_all(folder.join("src")).map_err(InstallError::file(&folder))?;
+            let readme = folder.join("README.md");
+            if !readme.exists() {
+                fs::write(
+                    &readme,
+                    format!("# {project}\n\nA fake project for the dev slot's runs.\n"),
+                )
+                .map_err(InstallError::file(&readme))?;
+            }
+        }
         Ok(())
+    }
+
+    /// `path` as one single-quoted shell word.
+    fn quote(path: &Path) -> String {
+        format!("'{}'", path.display().to_string().replace('\'', "'\\''"))
     }
 
     fn write_config(&self) -> Result<(), DevError> {
@@ -338,6 +383,10 @@ impl Slot {
                 ("REN_PUBLIC_GATEWAY_URL", public_gateway),
                 ("ORIGIN", origin.clone()),
                 ("REN_DEV_TRAFFIC_URL", format!("http://{}", Self::CONTROL)),
+                (
+                    "REN_CONTROL_TOKEN_FILE",
+                    self.data_dir.join(ControlToken::FILE).display().to_string(),
+                ),
             ],
         )?;
         // The UI's /health relays the dev daemon's.
@@ -381,7 +430,17 @@ impl Slot {
                 self.config.display().to_string(),
                 "serve".into(),
             ],
-            &[(Self::OPERATOR_KEY_ENV, Self::OPERATOR_KEY.into())],
+            &[
+                (Self::OPERATOR_KEY_ENV, Self::OPERATOR_KEY.into()),
+                // Runs start the fake agent as `codex`, never a real client.
+                (
+                    "PATH",
+                    format!(
+                        "{}:/usr/local/bin:/usr/bin:/bin",
+                        self.agent_dir().display()
+                    ),
+                ),
+            ],
         )?;
         Self::wait_for(Self::DAEMON, "/health")?;
         self.start_traffic()
@@ -467,6 +526,7 @@ impl Slot {
         println!("traffic control    http://{}", Self::CONTROL);
         println!("config             {}", self.config.display());
         println!("data               {}", self.data_dir.display());
+        println!("run root           {}", self.work_dir.display());
         println!(
             "history            {} --config {} history",
             self.bin_dir.join("ren").display(),
@@ -512,6 +572,10 @@ mod tests {
                 .all(|upstream| upstream.base_url.starts_with("http://127.0.0.1:18999/"))
         );
         assert!(config.listen.ip().is_loopback());
+        assert_eq!(
+            config.runs.roots,
+            [std::path::Path::new("/home/dev/.local/share/ren-dev/work")]
+        );
         assert_eq!(
             config.instance.environment,
             ren_gateway::Environment::Development
