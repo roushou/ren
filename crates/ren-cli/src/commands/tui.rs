@@ -22,11 +22,12 @@ use futures_util::stream::FuturesUnordered;
 use ren_daemon::host::SystemClock;
 use ren_harness::host::HostEnv;
 use ren_protocol::label::Labeled;
-use ren_recorder::id::{CallId, TurnId};
+use ren_recorder::id::{CallId, RunId, TurnId};
 use ren_recorder::time::{Clock, Monotonic};
 use ren_store::activity::{CallActivity, TurnActivity};
 use ren_tui::{
-    Input, Pressed, Read, RunControl, Runs, Screen, ScreenEvent, Snapshot, Theme, ThemeName, Tui,
+    Answered, Folders, Input, Pressed, Read, Refusal, RunControl, Runs, Screen, ScreenEvent,
+    Snapshot, Theme, ThemeName, Tui,
 };
 use reqwest::Method;
 use std::future::Future;
@@ -53,8 +54,9 @@ enum Done {
     Turn(TurnId, Result<TurnActivity, ManagementError>),
     Call(CallId, Result<CallActivity, ManagementError>),
     Runs(Runs),
+    Folders(Folders),
     /// How a run command was answered.
-    Answered(Result<(), String>),
+    Answered(Result<Answered, Refusal>),
 }
 
 type Pending<'a> = FuturesUnordered<Pin<Box<dyn Future<Output = Done> + 'a>>>;
@@ -334,6 +336,14 @@ impl<'a> Shell<'a> {
                         async move { Done::Runs(Self::runs(control).await) },
                     ));
                 }
+                Read::Folders => {
+                    let Some(control) = self.control else {
+                        continue;
+                    };
+                    self.pending.push(Box::pin(async move {
+                        Done::Folders(Self::folders(control).await)
+                    }));
+                }
                 Read::Snapshot | Read::Turn(_) | Read::Call(_) | Read::Runs => {}
             }
         }
@@ -361,11 +371,32 @@ impl<'a> Shell<'a> {
         }
     }
 
+    /// The folders a run can start in, as the daemon lists them.
+    async fn folders(control: &ControlTarget) -> Folders {
+        #[derive(serde::Deserialize)]
+        struct Listed {
+            folders: Vec<ren_supervisor::Folder>,
+        }
+        match control.send(Method::GET, "runs/folders", None).await {
+            Ok((status, body)) if status.is_success() => {
+                match serde_json::from_value::<Listed>(body) {
+                    Ok(listed) => Folders::Read(listed.folders),
+                    Err(_) => Folders::Failed("the daemon's answer is not readable".to_owned()),
+                }
+            }
+            Ok((_, body)) => Folders::Failed(
+                Refusal::parse(body["error"].as_str().unwrap_or("the daemon refused")).to_string(),
+            ),
+            Err(error) => Folders::Failed(error.to_string()),
+        }
+    }
+
     /// Sends a run command; its answer reaches the view as it arrives.
     fn send(&mut self, command: RunControl) {
         let Some(control) = self.control else {
             return;
         };
+        let starts = matches!(command, RunControl::Start { .. });
         let (path, body) = match command {
             RunControl::Start { harness, dir } => (
                 "runs".to_owned(),
@@ -388,12 +419,17 @@ impl<'a> Shell<'a> {
         };
         self.pending.push(Box::pin(async move {
             Done::Answered(match control.send(Method::POST, &path, body).await {
-                Ok((status, _)) if status.is_success() => Ok(()),
-                Ok((_, body)) => Err(body["error"]
+                Ok((status, body)) if status.is_success() => match body["run"]
                     .as_str()
-                    .unwrap_or("the daemon refused")
-                    .replace('_', " ")),
-                Err(error) => Err(error.to_string()),
+                    .and_then(|run| run.parse::<uuid::Uuid>().ok())
+                {
+                    Some(run) if starts => Ok(Answered::Started(RunId::restore(run))),
+                    Some(_) | None => Ok(Answered::Sent),
+                },
+                Ok((_, body)) => Err(Refusal::parse(
+                    body["error"].as_str().unwrap_or("the daemon refused"),
+                )),
+                Err(error) => Err(Refusal::Other(error.to_string())),
             })
         }));
     }
@@ -417,6 +453,7 @@ impl<'a> Shell<'a> {
                 in_flight.runs = false;
                 Ok(Input::Runs(runs))
             }
+            Done::Folders(folders) => Ok(Input::Folders(folders)),
             Done::Answered(answer) => Ok(Input::RunAnswered(answer)),
         };
         match input {

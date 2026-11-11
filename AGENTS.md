@@ -247,8 +247,9 @@ dependencies under "Crates" below. Read the code for current module ownership.
   their client's structured mode (Codex and Claude Code). `RunState` (`run`) is the
   pure lifecycle machine (starting, idle, working with its waiting approvals,
   stopping, ended with a `RunEnd`); `Workdir` (`workdir`) keeps runs inside
-  `Roots`, resolved by the host so links cannot escape; `AgentHost` (`host`) is
-  the port for resolving paths and starting processes, which tests fill with
+  `Roots`, resolved by the host so links cannot escape, and offers each root's
+  `Folder`s to start in; `AgentHost` (`host`) is the port for resolving paths,
+  listing folders, and starting processes, which tests fill with
   scripted in-memory agents. `SupervisorTask` is the shell: one task reads every
   agent's stdout, writes its stdin, and waits for its exit, records each run
   through the recorder's `RunTap` (a run without room to be recorded does not
@@ -279,9 +280,10 @@ dependencies under "Crates" below. Read the code for current module ownership.
   and its events as keys and sizes. `src/purity.rs` keeps the core's
   sources free of runtime, I/O, and terminal dependencies.
   Runs (`runs`): a live run's session keeps its pane with the run's mark and
-  its oldest approval's ask; keys start a run, type a prompt in the status line,
-  answer, interrupt, and stop, as a `RunControl` the shell sends through the
-  control API.
+  its oldest approval's ask; keys start a run from a picker of the daemon's
+  folders (`Picker`), type a prompt in the status line (a new run's first one
+  at once), answer, interrupt, and stop, as a `RunControl` the shell sends
+  through the control API; refusals read as a `Refusal`.
 - `crates/ren-gateway`: Ren's HTTP interface, with `Gateway` as its primary type.
   It owns forwarding, management, and control routes on one listener, assembled
   by `Gateway::router` or `Gateway::into_ingress`. Forwarding uses a declarative

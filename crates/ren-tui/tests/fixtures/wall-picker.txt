@@ -1,0 +1,24 @@
+ 0:00000001  claude-code → anthropic  call 2              ctx 61.2k · 1,713 tok
+▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+ > Why does the parser drop the last field?
+ I'll run the tests first, then look at the failure in the parser.
+ ● Read src/lib.rs
+ ● B┌ start a run ─────────────────────────────────────────────────────────┐
+ ── │ client  [Codex]  Claude Code    tab switches                         │
+ ● E│ folder  ac▏                                                          │
+ The│                                                                      │
+ str│ › dev/acme  /home/op/dev/acme                                        │
+ mod│ ↑↓ choose · enter starts · or type a full path · esc closes          │
+────└──────────────────────────────────────────────────────────────────────┘────
+ 1:00000003  opencode → anthropic                                     3,139 tok
+▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+
+
+
+
+
+ ── call ──
+ thinking…
+ streaming · 20 s
+ model-a · in —
+ ren │ 3 sessions · 2 streaming · 0 waiting · 1 hidden    ? help │ 08:05:00 UTC
