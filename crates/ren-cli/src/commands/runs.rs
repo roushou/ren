@@ -30,6 +30,8 @@ pub struct RunsCmd {
 enum RunsAction {
     /// List the daemon's runs and their states.
     Ls,
+    /// The folders a run can start in: each run root and the folders inside it.
+    Folders,
     /// Start a client in a folder under the daemon's run roots.
     Start(StartArgs),
     /// Send a prompt: start a turn.
@@ -153,6 +155,7 @@ impl RunsCmd {
                 return Self::watch(ctx, &control, args.run).await;
             }
             RunsAction::Ls => (Method::GET, "runs".to_owned(), None),
+            RunsAction::Folders => (Method::GET, "runs/folders".to_owned(), None),
             RunsAction::Start(args) => {
                 let local = matches!(self.target.select(ctx)?, Target::Local);
                 let dir = Self::dir(args.dir, local)?;

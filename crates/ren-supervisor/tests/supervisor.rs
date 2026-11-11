@@ -89,6 +89,13 @@ impl AgentHost for FakeHost {
         }
     }
 
+    fn subfolders(&self, dir: &Path) -> io::Result<Vec<String>> {
+        Ok(match dir.to_str() {
+            Some("/work") => vec!["acme".into(), ".git".into()],
+            Some(_) | None => vec![],
+        })
+    }
+
     fn spawn(&self, plan: &LaunchPlan, workdir: &Workdir) -> io::Result<AgentProcess> {
         if self.spawn_fails {
             return Err(io::Error::from(io::ErrorKind::NotFound));

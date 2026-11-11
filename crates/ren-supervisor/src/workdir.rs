@@ -17,6 +17,16 @@ pub struct RequestedDir(PathBuf);
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Workdir(PathBuf);
 
+/// A folder a run can start in, as offered to pick from: a root, or a folder
+/// directly inside one.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct Folder {
+    /// The absolute path to start a run in.
+    pub path: String,
+    /// A short name: the root's own name, then `root/child` for its folders.
+    pub name: String,
+}
+
 /// Why a directory was refused. Paths are not echoed back.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum WorkdirError {
@@ -46,6 +56,39 @@ impl Roots {
 
     pub fn iter(&self) -> impl Iterator<Item = &Path> {
         self.0.iter().map(PathBuf::as_path)
+    }
+
+    /// Each root, then the folders directly inside it, given the names
+    /// `listed` gives for each root. Hidden folders are left out, and so is a
+    /// root or name that is not UTF-8.
+    pub fn folders(&self, listed: impl Fn(&Path) -> Vec<String>) -> Vec<Folder> {
+        let mut folders = Vec::new();
+        for root in self.iter() {
+            let Some(path) = root.to_str() else {
+                continue;
+            };
+            let root_name = root
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or(path);
+            folders.push(Folder {
+                path: path.to_owned(),
+                name: root_name.to_owned(),
+            });
+            let mut names: Vec<String> = listed(root)
+                .into_iter()
+                .filter(|name| !name.starts_with('.') && !name.contains('/'))
+                .collect();
+            names.sort();
+            names.dedup();
+            folders.extend(names.into_iter().filter_map(|name| {
+                Some(Folder {
+                    path: root.join(&name).to_str()?.to_owned(),
+                    name: format!("{root_name}/{name}"),
+                })
+            }));
+        }
+        folders
     }
 }
 
@@ -133,6 +176,32 @@ mod tests {
                 "{outside}"
             );
         }
+    }
+
+    #[test]
+    fn offers_each_root_and_its_visible_folders() {
+        let roots = Roots::new(vec![
+            PathBuf::from("/home/op/dev"),
+            PathBuf::from("/srv/ren"),
+        ])
+        .unwrap();
+        let folders = roots.folders(|root| match root.to_str() {
+            Some("/home/op/dev") => vec!["web".into(), ".cache".into(), "api".into()],
+            Some(_) | None => vec![],
+        });
+        let listed: Vec<(&str, &str)> = folders
+            .iter()
+            .map(|folder| (folder.name.as_str(), folder.path.as_str()))
+            .collect();
+        assert_eq!(
+            listed,
+            [
+                ("dev", "/home/op/dev"),
+                ("dev/api", "/home/op/dev/api"),
+                ("dev/web", "/home/op/dev/web"),
+                ("ren", "/srv/ren"),
+            ]
+        );
     }
 
     #[test]

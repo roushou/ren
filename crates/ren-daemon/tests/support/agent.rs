@@ -26,6 +26,13 @@ impl AgentHost for ScriptedHost {
         Ok(path.to_path_buf())
     }
 
+    fn subfolders(&self, dir: &Path) -> io::Result<Vec<String>> {
+        Ok(match dir.to_str() {
+            Some("/work") => vec!["acme".into(), "web".into()],
+            Some(_) | None => vec![],
+        })
+    }
+
     fn spawn(&self, _plan: &LaunchPlan, _workdir: &Workdir) -> io::Result<AgentProcess> {
         let (stdin, agent_in) = tokio::io::duplex(64 * 1024);
         let (agent_out, stdout) = tokio::io::duplex(64 * 1024);

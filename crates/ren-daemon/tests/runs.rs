@@ -108,6 +108,29 @@ async fn a_run_is_started_prompted_approved_and_stopped_through_the_control_api(
         .unwrap();
     assert_eq!(events.status(), StatusCode::OK);
 
+    // The folders a run can start in: the root and the folders inside it.
+    let folders: serde_json::Value = serde_json::from_slice(
+        &control
+            .http
+            .get(format!("{}/runs/folders", control.base))
+            .bearer_auth(TestGateway::CONTROL_TOKEN)
+            .send()
+            .await
+            .unwrap()
+            .bytes()
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        folders["folders"],
+        json!([
+            { "path": "/work", "name": "work" },
+            { "path": "/work/acme", "name": "work/acme" },
+            { "path": "/work/web", "name": "work/web" },
+        ])
+    );
+
     let (status, body) = control
         .post("/runs", json!({ "harness": "codex", "dir": "/work/acme" }))
         .await;

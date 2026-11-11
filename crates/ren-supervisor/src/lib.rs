@@ -18,7 +18,7 @@ pub mod workdir;
 pub use host::{AgentHost, AgentProcess, KillSignal, KillSwitch};
 pub use run::{Approvals, ProcessExit, RunCommand, RunRefused, RunState, Waiting};
 pub use task::SupervisorTask;
-pub use workdir::{Roots, Workdir, WorkdirError};
+pub use workdir::{Folder, Roots, Workdir, WorkdirError};
 
 use ren_harness::{
     Harness,
@@ -145,6 +145,9 @@ pub(crate) enum Request {
     List {
         reply: oneshot::Sender<Vec<RunSnapshot>>,
     },
+    Folders {
+        reply: oneshot::Sender<Vec<Folder>>,
+    },
 }
 
 impl Supervisor {
@@ -224,6 +227,17 @@ impl Supervisor {
         let (reply, answer) = oneshot::channel();
         self.requests
             .send(Request::List { reply })
+            .await
+            .map_err(|_| Gone)?;
+        answer.await.map_err(|_| Gone)
+    }
+
+    /// The folders a run can start in: each root and the folders directly
+    /// inside it.
+    pub async fn folders(&self) -> Result<Vec<Folder>, Gone> {
+        let (reply, answer) = oneshot::channel();
+        self.requests
+            .send(Request::Folders { reply })
             .await
             .map_err(|_| Gone)?;
         answer.await.map_err(|_| Gone)

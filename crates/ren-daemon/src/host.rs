@@ -187,6 +187,19 @@ impl AgentHost for ProcessHost {
         std::fs::canonicalize(path)
     }
 
+    fn subfolders(&self, dir: &Path) -> io::Result<Vec<String>> {
+        let mut names = Vec::new();
+        for entry in std::fs::read_dir(dir)? {
+            let entry = entry?;
+            if entry.file_type()?.is_dir()
+                && let Ok(name) = entry.file_name().into_string()
+            {
+                names.push(name);
+            }
+        }
+        Ok(names)
+    }
+
     fn spawn(&self, plan: &LaunchPlan, workdir: &Workdir) -> io::Result<AgentProcess> {
         Self::start(plan.command(None, &[]), workdir.as_path())
     }

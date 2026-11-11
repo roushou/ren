@@ -19,6 +19,9 @@ pub trait AgentHost: Send + Sync + 'static {
     /// The real, absolute path of `path`, with every link resolved.
     fn resolve(&self, path: &Path) -> io::Result<PathBuf>;
 
+    /// The names of the folders directly inside `dir`, links not followed.
+    fn subfolders(&self, dir: &Path) -> io::Result<Vec<String>>;
+
     /// Start `plan` in `workdir`, with piped stdin and stdout.
     fn spawn(&self, plan: &LaunchPlan, workdir: &Workdir) -> io::Result<AgentProcess>;
 }

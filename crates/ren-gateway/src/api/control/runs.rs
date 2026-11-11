@@ -170,6 +170,7 @@ impl RunsApi {
         Router::new()
             .route("/control/v1/runs", get(Self::list).post(Self::start))
             .route("/control/v1/runs/events", get(Self::events))
+            .route("/control/v1/runs/folders", get(Self::folders))
             .route("/control/v1/runs/{run}/prompt", post(Self::prompt))
             .route(
                 "/control/v1/runs/{run}/approvals/{approval}",
@@ -224,6 +225,19 @@ impl RunsApi {
             api_version: ControlApi::API_VERSION,
             runs,
         })
+        .into_response())
+    }
+
+    async fn folders(State(api): Api, headers: HeaderMap) -> Result<Response, Denied> {
+        let folders = api
+            .admit(&headers)?
+            .folders()
+            .await
+            .map_err(|_| Denied::Run(RunRefusal::Unavailable))?;
+        Ok(Json(serde_json::json!({
+            "api_version": ControlApi::API_VERSION,
+            "folders": folders,
+        }))
         .into_response())
     }
 

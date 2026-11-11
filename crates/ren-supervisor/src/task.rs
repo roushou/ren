@@ -134,6 +134,15 @@ impl<H: AgentHost> SupervisorTask<H> {
                 };
                 let _ = reply.send(result);
             }
+            Request::Folders { reply } => {
+                let folders = self.roots.folders(|root| {
+                    self.host.subfolders(root).unwrap_or_else(|error| {
+                        tracing::debug!(%error, "cannot list a run root");
+                        Vec::new()
+                    })
+                });
+                let _ = reply.send(folders);
+            }
             Request::List { reply } => {
                 let _ = reply.send(
                     runs.iter()
