@@ -316,6 +316,7 @@ impl ThemedWall<'_> {
                     reason,
                 ),
                 ApprovalAsk::FileChange { reason } => ("change files".to_owned(), reason),
+                ApprovalAsk::Tool { tool, detail } => (format!("use {tool}"), detail),
             };
             let mut spans =
                 vec![Span::raw(format!("? {what}")).style(self.theme.tone(Tone::Warning))];

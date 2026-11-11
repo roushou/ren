@@ -377,16 +377,20 @@ impl Tui {
                             return Pressed::Continue(Vec::new());
                         }
                     },
-                    Some(Entry::Folder { text }) if !text.trim().is_empty() => RunControl::Start {
-                        dir: text.trim().to_owned(),
-                    },
+                    Some(Entry::Folder { harness, text }) if !text.trim().is_empty() => {
+                        RunControl::Start {
+                            harness,
+                            dir: text.trim().to_owned(),
+                        }
+                    }
                     Some(Entry::Folder { .. }) | None => {
                         return Pressed::Continue(Vec::new());
                     }
                 };
                 return Pressed::Run(control);
             }
-            Key::Tab | Key::BackTab | Key::Left | Key::Right | Key::Up | Key::Down => {}
+            Key::Tab | Key::BackTab => entry.switch_client(),
+            Key::Left | Key::Right | Key::Up | Key::Down => {}
         }
         Pressed::Continue(Vec::new())
     }
@@ -411,6 +415,7 @@ impl Tui {
         });
         if command == Command::StartRun {
             self.entry = Some(Entry::Folder {
+                harness: Harness::Codex,
                 text: String::new(),
             });
             return Pressed::Continue(Vec::new());

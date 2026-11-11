@@ -50,12 +50,15 @@ enum RunsAction {
 #[derive(Clone, Copy, ValueEnum)]
 enum Client {
     Codex,
+    /// Claude Code.
+    Claude,
 }
 
 impl From<Client> for Harness {
     fn from(client: Client) -> Self {
         match client {
             Client::Codex => Self::Codex,
+            Client::Claude => Self::ClaudeCode,
         }
     }
 }

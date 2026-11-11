@@ -1,6 +1,6 @@
 //! The supervisor with an in-memory host: each "process" is a scripted agent
-//! that speaks Codex's app-server protocol over in-memory pipes. No real
-//! client, network, or credentials.
+//! that speaks Codex's app-server protocol, or Claude Code's stream-json, over
+//! in-memory pipes. No real client, network, or credentials.
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,
@@ -54,6 +54,9 @@ enum Script {
     RefusesOpening,
     /// Exits with code 3 right after `initialize`.
     ExitsEarly,
+    /// A well-behaved Claude Code in stream-json print mode: echoes each
+    /// prompt, asks to run one command, and ends the turn once answered.
+    Claude,
 }
 
 /// The arguments and working directory of one spawned agent.
@@ -103,7 +106,12 @@ impl AgentHost for FakeHost {
         let (agent_out, stdout) = tokio::io::duplex(64 * 1024);
         let (exit_tx, exit_rx) = oneshot::channel();
         let (kill, signal) = KillSwitch::pair();
-        tokio::spawn(agent(self.script, agent_in, agent_out, signal, exit_tx));
+        match self.script {
+            Script::Claude => tokio::spawn(claude(agent_in, agent_out, signal, exit_tx)),
+            Script::Codex | Script::RefusesOpening | Script::ExitsEarly => {
+                tokio::spawn(agent(self.script, agent_in, agent_out, signal, exit_tx))
+            }
+        };
         Ok(AgentProcess {
             stdin: Box::new(stdin),
             stdout: Box::new(stdout),
@@ -214,6 +222,62 @@ fn options() -> SupervisorOptions {
 }
 
 /// A supervisor recording into a real store, with its recorder running.
+/// A scripted Claude Code in stream-json print mode.
+async fn claude(
+    input: DuplexStream,
+    mut out: DuplexStream,
+    kill: KillSignal,
+    exit: oneshot::Sender<ProcessExit>,
+) {
+    let mut lines = BufReader::new(input).lines();
+    let serve = async {
+        while let Ok(Some(line)) = lines.next_line().await {
+            let message: Value = serde_json::from_str(&line).unwrap();
+            match message["type"].as_str() {
+                Some("control_request") => {
+                    let id = message["request_id"].clone();
+                    send(
+                        &mut out,
+                        json!({ "type": "control_response", "response": {
+                            "subtype": "success", "request_id": id, "response": {} } }),
+                    )
+                    .await;
+                }
+                Some("user") => {
+                    let mut echo = message.clone();
+                    echo["uuid"] = TURN.into();
+                    echo["isReplay"] = true.into();
+                    send(&mut out, echo).await;
+                    send(
+                        &mut out,
+                        json!({ "type": "control_request", "request_id": "perm-1", "request": {
+                            "subtype": "can_use_tool", "tool_name": "Bash",
+                            "input": { "command": "cargo test" }, "description": "Run tests" } }),
+                    )
+                    .await;
+                }
+                Some("control_response") => {
+                    assert_eq!(message["response"]["request_id"], "perm-1");
+                    assert_eq!(message["response"]["response"]["behavior"], "allow");
+                    send(
+                        &mut out,
+                        json!({ "type": "result", "subtype": "success", "is_error": false,
+                                "result": "Tests pass." }),
+                    )
+                    .await;
+                }
+                Some(_) | None => {}
+            }
+        }
+        ProcessExit::Code(0)
+    };
+    let status = tokio::select! {
+        status = serve => status,
+        () = kill.fired() => ProcessExit::Signal(9),
+    };
+    let _ = exit.send(status);
+}
+
 struct Supervised {
     supervisor: Supervisor,
     task: tokio::task::JoinHandle<()>,
@@ -391,7 +455,7 @@ async fn refuses_directories_outside_the_roots_and_undrivable_clients() {
     }
     assert!(matches!(
         supervisor
-            .start(Harness::ClaudeCode, "/work/acme", Conversation::New)
+            .start(Harness::Pi, "/work/acme", Conversation::New)
             .await,
         Err(StartError::NotDrivable(_))
     ));
@@ -511,4 +575,70 @@ async fn a_run_can_resume_the_clients_thread() {
     );
     let (stored, _dir) = supervised.stored().await;
     assert_eq!(stored[0].thread.as_deref(), Some(earlier));
+}
+
+#[tokio::test]
+async fn drives_claude_code_through_a_turn_in_the_conversation_ren_names() {
+    let host = FakeHost::new(Script::Claude);
+    let spawned = host.spawned.clone();
+    let supervised = supervise(host).await;
+    let supervisor = &supervised.supervisor;
+    let mut updates = supervisor.subscribe();
+
+    let run = supervisor
+        .start(Harness::ClaudeCode, "/work/acme", Conversation::New)
+        .await
+        .unwrap();
+    let (arguments, _) = spawned.lock().unwrap()[0].clone();
+    assert_eq!(arguments[0], "-p");
+    let named = arguments
+        .iter()
+        .position(|argument| argument == "--session-id")
+        .map(|at| arguments[at + 1].clone())
+        .expect("Ren names the conversation");
+    let RunState::Idle { thread } =
+        state(&mut updates, |s| matches!(s, RunState::Idle { .. })).await
+    else {
+        unreachable!()
+    };
+    assert_eq!(thread.to_string(), named);
+
+    supervisor.command(run, prompt()).await.unwrap();
+    let waiting = state(
+        &mut updates,
+        |s| matches!(s, RunState::Working { turn: Some(_), approvals, .. } if !approvals.is_empty()),
+    )
+    .await;
+    let RunState::Working { approvals, .. } = waiting else {
+        unreachable!()
+    };
+    let waiting = approvals.first().unwrap();
+    assert_eq!(
+        waiting.ask,
+        ren_harness::drive::ApprovalAsk::Command {
+            command: Some("cargo test".into()),
+            cwd: None,
+            reason: Some("Run tests".into()),
+        }
+    );
+    supervisor
+        .command(
+            run,
+            RunCommand::Answer {
+                approval: waiting.approval.clone(),
+                decision: Decision::Accept,
+            },
+        )
+        .await
+        .unwrap();
+    state(&mut updates, |s| matches!(s, RunState::Idle { .. })).await;
+    supervisor.command(run, RunCommand::Stop).await.unwrap();
+    state(&mut updates, RunState::is_ended).await;
+
+    let (stored, _dir) = supervised.stored().await;
+    let [stored] = stored.as_slice() else {
+        panic!("one run is stored: {stored:?}");
+    };
+    assert_eq!(stored.harness, Stored::Known(Harness::ClaudeCode));
+    assert_eq!(stored.thread.as_deref(), Some(named.as_str()));
 }

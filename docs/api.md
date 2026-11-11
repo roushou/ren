@@ -26,6 +26,7 @@ Runs (see [runs](#runs)) have their own commands, through the control API:
 
 ```sh
 ren runs start codex ~/dev/acme
+ren runs start claude ~/dev/acme
 ren runs ls
 ren runs say <run-id> fix the failing test
 ren runs answer <run-id> <approval-id>          # or: decline, cancel, accept-for-session
@@ -101,7 +102,8 @@ through a gateway) and `[runs]` roots on the daemon, `ren tui` also drives
 [runs](#runs). A live run's session keeps its pane, marked `run · idle`,
 `working`, or `asks`; a run waiting for an answer lights its title amber and
 says under the conversation what it asks (`? run `cargo test` in /work/acme`).
-`s` starts a Codex run in a folder typed in the status line, `c` types a prompt
+`s` starts a run in a folder typed in the status line (tab switches between
+Codex and Claude Code), `c` types a prompt
 for the focused run (enter sends, esc drops it), `a` approves its oldest
 request once, `A` for the rest of the session, `d` declines it, `x` interrupts
 the turn, and `X` stops the run. The daemon's answer to a refused command is
@@ -393,27 +395,43 @@ is not made: `503` `unrecorded` when the recorder has no room now (try again),
 
 `/control/v1/runs` starts and drives agent runs: the official client, started
 by the daemon in a folder under a `[runs]` root and driven through its
-structured mode (Codex's `codex app-server` so far). The client keeps its own
-sign-in, and its model traffic goes through this gateway like any session.
+structured mode: Codex's `codex app-server`, or Claude Code's print mode with
+streaming JSON (`claude -p --input-format stream-json --output-format
+stream-json`). The client keeps its own sign-in, and its model traffic goes
+through this gateway like any session. Ren names a new Claude Code
+conversation itself (`--session-id`), so a run's `thread` is the session the
+recorded calls carry; Claude Code's permission prompts are its approvals, and
+Ren answers no other request (hooks, MCP, elicitation). Claude Code reports no
+live turn id matching its recorded prompt id, so a driven turn's `turn` is its
+prompt's message id, not the recorded turn's `native_id`.
+
+Driving Claude Code with a Claude subscription is the operator signing in to
+the unmodified `claude` program on their own machine, which Anthropic's
+[terms for Claude Code](https://code.claude.com/docs/en/legal-and-compliance)
+allow; offering that sign-in or its usage to other people is not. Allow only
+your own Tailscale login to drive runs (`[control]`, and `REN_CONTROL_LOGINS`
+for the web UI), and keep runs to ordinary, individual use: plan limits assume
+it.
 Runs are off while `runs.roots` is empty: every route then answers `404`
 `runs_disabled`. Access is the control API's.
 
-| Endpoint                                           | Body                                                                        | Answer                                                                                |
-| -------------------------------------------------- | --------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
-| `GET /control/v1/runs`                             | none                                                                        | `{api_version, runs}`: each `{run, harness, workdir, state}`                          |
-| `POST /control/v1/runs`                            | `{"harness": "codex", "dir": "/abs/path"}`, optional `"resume": "<thread>"` | `201` `{api_version, run}`; with `resume`, the run continues that client conversation |
-| `POST /control/v1/runs/{run}/prompt`               | `{"text": "…"}`, not blank                                                  | `202`                                                                                 |
-| `POST /control/v1/runs/{run}/approvals/{approval}` | `{"decision": …}`                                                           | `202`; `accept`, `accept_for_session`, `decline`, or `cancel`                         |
-| `POST /control/v1/runs/{run}/interrupt`            | none                                                                        | `202`                                                                                 |
-| `POST /control/v1/runs/{run}/stop`                 | none                                                                        | `202`; the run ends once its process has exited                                       |
-| `GET /control/v1/runs/events`                      | none                                                                        | server-sent `run` events from now on; `lagged` when some were skipped                 |
+| Endpoint                                           | Body                                                                                       | Answer                                                                                |
+| -------------------------------------------------- | ------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------- |
+| `GET /control/v1/runs`                             | none                                                                                       | `{api_version, runs}`: each `{run, harness, workdir, state}`                          |
+| `POST /control/v1/runs`                            | `{"harness": "codex"\|"claude_code", "dir": "/abs/path"}`, optional `"resume": "<thread>"` | `201` `{api_version, run}`; with `resume`, the run continues that client conversation |
+| `POST /control/v1/runs/{run}/prompt`               | `{"text": "…"}`, not blank                                                                 | `202`                                                                                 |
+| `POST /control/v1/runs/{run}/approvals/{approval}` | `{"decision": …}`                                                                          | `202`; `accept`, `accept_for_session`, `decline`, or `cancel`                         |
+| `POST /control/v1/runs/{run}/interrupt`            | none                                                                                       | `202`                                                                                 |
+| `POST /control/v1/runs/{run}/stop`                 | none                                                                                       | `202`; the run ends once its process has exited                                       |
+| `GET /control/v1/runs/events`                      | none                                                                                       | server-sent `run` events from now on; `lagged` when some were skipped                 |
 
 Commands answer `202` `{api_version}` once sent to the agent; what it does
 next arrives as run events. A run's `state` has a `phase`: `starting`, `idle` (with `thread`, the client's
 conversation ID), `working` (with `turn` once known and `approvals`, each
 `{approval, ask}` waiting for an answer, oldest first: `ask` is a `command`
-with its `command`, `cwd`, and `reason`, or a `file_change` with its
-`reason`), `stopping` (with its `cause`), or `ended`
+with its `command`, `cwd`, and `reason`, a `file_change` with its
+`reason`, or a `tool` (another of the client's tools) with its `tool` and
+`detail`), `stopping` (with its `cause`), or `ended`
 (with `end`, one of `spawn_failed`, `open_refused`, `exited`, `stopped`,
 `drained`, `recovered`, and `exit`, `{"kind": "code"|"signal", "value": n}` or
 `{"kind": "unknown"}`). Run events are `{"kind": "state", run, state}` or

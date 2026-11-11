@@ -8,7 +8,7 @@
     │ ↓  j           pane below                                            │
     │ enter  z       zoom into the focused session, or back to the panes   │
     │ p              keep the focused session on the wall, even when quiet │
-    │ s              start a Codex run: type its folder                    │
+    │ s              start a run: type its folder, tab picks the client    │
     │ c              prompt the focused session's run                      │
     │ a              approve the run's oldest request, once                │
  ── │ A              approve it for the rest of the session                │

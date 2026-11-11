@@ -131,7 +131,7 @@ impl From<StartError> for RunRefusal {
             StartError::NotDrivable(_) => Self::NotDrivable,
             StartError::Unrecorded(_) => Self::Unrecorded,
             StartError::Spawn { .. } => Self::SpawnFailed,
-            StartError::Gone => Self::Unavailable,
+            StartError::Gone | StartError::NilId => Self::Unavailable,
         }
     }
 }

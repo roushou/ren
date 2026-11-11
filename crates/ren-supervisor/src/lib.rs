@@ -107,6 +107,9 @@ pub enum StartError {
     },
     #[error("the supervisor has stopped")]
     Gone,
+    /// The ID source gave the nil UUID, which names no conversation.
+    #[error("cannot name the new conversation: the ID source gave a nil UUID")]
+    NilId,
 }
 
 /// Why a command was not carried out.

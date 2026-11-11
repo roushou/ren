@@ -2,7 +2,10 @@
 //! pane shows of it, and what the keys ask of it. The view reads runs as
 //! the control API lists them; the shell sends what the keys ask.
 
-use ren_harness::drive::{ApprovalAsk, ApprovalId, Decision, Prompt};
+use ren_harness::{
+    Harness,
+    drive::{ApprovalAsk, ApprovalId, Decision, Prompt},
+};
 use ren_recorder::id::RunId;
 use ren_store::view::SessionView;
 use ren_supervisor::{RunSnapshot, RunState};
@@ -21,8 +24,9 @@ pub enum Runs {
 /// What a key asked of a run; the shell sends it to the control API.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RunControl {
-    /// Start Codex in this folder on the daemon's host.
+    /// Start this client in this folder on the daemon's host.
     Start {
+        harness: Harness,
         dir: String,
     },
     Prompt {
@@ -60,8 +64,8 @@ pub enum RunPhase {
 pub(crate) enum Entry {
     /// A prompt for a run.
     Prompt { run: RunId, text: String },
-    /// The folder a new run starts in.
-    Folder { text: String },
+    /// The folder a new run of `harness` starts in.
+    Folder { harness: Harness, text: String },
 }
 
 /// What the status line shows of an entry.
@@ -160,8 +164,11 @@ impl Entry {
                 label: "prompt",
                 text: text.clone(),
             },
-            Self::Folder { text } => EntryLine {
-                label: "start codex in",
+            Self::Folder { harness, text } => EntryLine {
+                label: match harness {
+                    Harness::ClaudeCode => "start claude code in",
+                    Harness::Codex | Harness::Pi | Harness::OpenCode => "start codex in",
+                },
                 text: text.clone(),
             },
         }
@@ -169,7 +176,17 @@ impl Entry {
 
     pub(crate) fn text(&mut self) -> &mut String {
         match self {
-            Self::Prompt { text, .. } | Self::Folder { text } => text,
+            Self::Prompt { text, .. } | Self::Folder { text, .. } => text,
+        }
+    }
+
+    /// Tab while typing a folder: the other client Ren can drive.
+    pub(crate) fn switch_client(&mut self) {
+        if let Self::Folder { harness, .. } = self {
+            *harness = match harness {
+                Harness::Codex => Harness::ClaudeCode,
+                Harness::ClaudeCode | Harness::Pi | Harness::OpenCode => Harness::Codex,
+            };
         }
     }
 }

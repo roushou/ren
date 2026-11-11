@@ -144,7 +144,7 @@ impl Command {
             Self::Help => "show or hide this help",
             Self::Theme => "cycle theme: terminal, dark, light (not saved)",
             Self::Back => "close the help, or leave a zoomed session",
-            Self::StartRun => "start a Codex run: type its folder",
+            Self::StartRun => "start a run: type its folder, tab picks the client",
             Self::Compose => "prompt the focused session's run",
             Self::Accept => "approve the run's oldest request, once",
             Self::AcceptForSession => "approve it for the rest of the session",

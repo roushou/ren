@@ -240,7 +240,7 @@ async fn runs_refuse_bad_requests_browsers_and_missing_tokens() {
             "invalid_directory",
         ),
         (
-            json!({ "harness": "claude_code", "dir": "/work/a" }),
+            json!({ "harness": "pi", "dir": "/work/a" }),
             StatusCode::BAD_REQUEST,
             "not_drivable",
         ),

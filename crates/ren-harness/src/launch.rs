@@ -1,6 +1,7 @@
 //! Session-only client overrides. Authentication remains owned by the client.
 use crate::{
     Harness,
+    drive::{Opening, claude::ClaudeStreamJson},
     endpoint::{GatewayEndpoint, UserToken},
     host::HostEnv,
     pi::{PiCache, PiCacheError},
@@ -182,8 +183,12 @@ impl Harness {
 
     /// How to start this harness in its structured mode, driven by Ren
     /// through `drive`, with its model traffic sent to `gateway`. The client
-    /// keeps its own sign-in. Only Codex can be driven so far.
-    pub fn drive(self, gateway: &GatewayEndpoint) -> Result<LaunchPlan, NotDrivable> {
+    /// keeps its own sign-in. Codex and Claude Code can be driven so far.
+    pub fn drive(
+        self,
+        gateway: &GatewayEndpoint,
+        opening: &Opening,
+    ) -> Result<LaunchPlan, NotDrivable> {
         match self {
             Self::Codex => {
                 let mut arguments: Vec<LaunchArg> =
@@ -196,7 +201,17 @@ impl Harness {
                     environment: BTreeMap::new(),
                 })
             }
-            Self::ClaudeCode | Self::Pi | Self::OpenCode => Err(NotDrivable(self)),
+            Self::ClaudeCode => {
+                // The same environment as a launched session: its traffic
+                // goes through the gateway, which reads its hint headers.
+                let mut plan = self.launch(gateway);
+                plan.arguments = ClaudeStreamJson::arguments(opening)
+                    .into_iter()
+                    .map(LaunchArg::Literal)
+                    .collect();
+                Ok(plan)
+            }
+            Self::Pi | Self::OpenCode => Err(NotDrivable(self)),
         }
     }
 
@@ -310,12 +325,22 @@ impl LaunchPlan {
 #[cfg(test)]
 mod tests {
     use super::{GatewayEndpoint, Harness, HostEnv, LaunchArg, OsString, Path, PiCache};
-    use crate::endpoint::UserToken;
+    use crate::{drive::Opening, endpoint::UserToken};
+    use ren_protocol::native::NativeThreadId;
+
+    const SESSION: &str = "0190f3a0-0000-7000-8000-00000000000a";
+
+    fn opening() -> Opening {
+        Opening::New {
+            cwd: "/work/acme".into(),
+            id: NativeThreadId::new(uuid::Uuid::parse_str(SESSION).unwrap()).unwrap(),
+        }
+    }
 
     #[test]
     fn drives_codex_app_server_over_stdio_through_the_gateway() {
         let gateway = GatewayEndpoint::parse("http://127.0.0.1:8787").unwrap();
-        let driven = Harness::Codex.drive(&gateway).unwrap();
+        let driven = Harness::Codex.drive(&gateway, &opening()).unwrap();
         let launched = Harness::Codex.launch(&gateway);
         let command = driven.command(None, &[]);
         assert_eq!(command.get_program(), "codex");
@@ -326,12 +351,62 @@ mod tests {
         let overrides: Vec<_> = interactive.get_args().skip(1).collect();
         assert_eq!(arguments[3..], overrides[..]);
         assert_eq!(command.get_envs().count(), 0);
-        for harness in [Harness::ClaudeCode, Harness::Pi, Harness::OpenCode] {
+        for harness in [Harness::Pi, Harness::OpenCode] {
             assert_eq!(
-                harness.drive(&gateway).err(),
+                harness.drive(&gateway, &opening()).err(),
                 Some(super::NotDrivable(harness))
             );
         }
+    }
+
+    #[test]
+    fn drives_claude_code_in_stream_json_print_mode_through_the_gateway() {
+        let gateway = GatewayEndpoint::parse("http://127.0.0.1:8787").unwrap();
+        let command = Harness::ClaudeCode
+            .drive(&gateway, &opening())
+            .unwrap()
+            .command(None, &[]);
+        assert_eq!(command.get_program(), "claude");
+        let arguments: Vec<_> = command
+            .get_args()
+            .map(|argument| argument.to_str().unwrap())
+            .collect();
+        assert_eq!(
+            arguments,
+            [
+                "-p",
+                "--input-format",
+                "stream-json",
+                "--output-format",
+                "stream-json",
+                "--verbose",
+                "--include-partial-messages",
+                "--replay-user-messages",
+                "--permission-prompt-tool",
+                "stdio",
+                "--session-id",
+                SESSION,
+            ]
+        );
+        // The same environment as an interactive session: the gateway and
+        // its hint headers, and nothing that signs in or names the client.
+        let launched = Harness::ClaudeCode.launch(&gateway).command(None, &[]);
+        assert_eq!(
+            command.get_envs().collect::<Vec<_>>(),
+            launched.get_envs().collect::<Vec<_>>()
+        );
+        let resumed = Harness::ClaudeCode
+            .drive(
+                &gateway,
+                &Opening::Resume {
+                    thread: NativeThreadId::new(uuid::Uuid::parse_str(SESSION).unwrap()).unwrap(),
+                    cwd: "/work/acme".into(),
+                },
+            )
+            .unwrap()
+            .command(None, &[]);
+        let tail: Vec<_> = resumed.get_args().skip(10).collect();
+        assert_eq!(tail, ["--resume", SESSION]);
     }
 
     #[test]

@@ -266,7 +266,7 @@ impl CodexAppServer {
                     .replies
                     .push(Line::json(&json!({ "method": "initialized" })));
                 received.replies.push(match opening {
-                    Opening::New { cwd } => {
+                    Opening::New { cwd, .. } => {
                         self.request(RequestKind::ThreadStart, json!({ "cwd": cwd }))
                     }
                     Opening::Resume { thread, cwd } => self.request(
@@ -664,6 +664,11 @@ mod tests {
     const THREAD: &str = "0190f3a0-0000-7000-8000-000000000001";
     const TURN: &str = "0190f3a0-0000-7000-8000-000000000002";
 
+    /// The id Ren would give a new conversation, which Codex ignores.
+    fn named() -> ren_protocol::native::NativeThreadId {
+        ren_protocol::native::NativeThreadId::new(uuid::Uuid::from_u128(9)).unwrap()
+    }
+
     fn sent(line: &Line) -> Value {
         let bytes = line.as_bytes();
         assert_eq!(bytes.last(), Some(&b'\n'));
@@ -679,6 +684,7 @@ mod tests {
         let (mut codec, first) = CodexAppServer::open(
             Opening::New {
                 cwd: "/work/acme".into(),
+                id: named(),
             },
             "0.1.0",
         );
@@ -716,7 +722,13 @@ mod tests {
 
     #[test]
     fn refuses_commands_before_the_thread_opens() {
-        let (mut codec, _) = CodexAppServer::open(Opening::New { cwd: "/w".into() }, "0.1.0");
+        let (mut codec, _) = CodexAppServer::open(
+            Opening::New {
+                cwd: "/w".into(),
+                id: named(),
+            },
+            "0.1.0",
+        );
         assert_eq!(codec.command(prompt("hi")), Err(CommandRefused::NotReady));
     }
 

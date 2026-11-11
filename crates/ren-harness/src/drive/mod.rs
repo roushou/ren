@@ -7,12 +7,14 @@
 //! stdin out; lines from its stdout in, events and replies out. Framing
 //! (`lines`) knows nothing about JSON.
 
+pub mod claude;
 pub mod codex;
 mod lines;
 
 pub use lines::{Framed, Line, LineLimit, Lines};
 
 use crate::{Harness, launch::NotDrivable};
+use claude::ClaudeStreamJson;
 use codex::CodexAppServer;
 
 use ren_protocol::native::{NativeThreadId, NativeTurnId};
@@ -22,8 +24,10 @@ use strum::{Display, EnumString, IntoStaticStr, VariantArray};
 /// How a driven process's one conversation is opened.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Opening {
-    /// A new conversation in this working directory.
-    New { cwd: String },
+    /// A new conversation in this working directory. `id` is the id Ren
+    /// gives it where the client lets Ren choose (Claude Code); Codex
+    /// chooses its own and reports it.
+    New { cwd: String, id: NativeThreadId },
     /// An existing conversation, continued in this working directory.
     Resume { thread: NativeThreadId, cwd: String },
 }
@@ -41,6 +45,7 @@ pub struct Received {
 #[derive(Debug)]
 pub enum Driver {
     Codex(CodexAppServer),
+    ClaudeCode(ClaudeStreamJson),
 }
 
 impl Driver {
@@ -56,7 +61,11 @@ impl Driver {
                 let (codec, first) = CodexAppServer::open(opening, version);
                 Ok((Self::Codex(codec), vec![first]))
             }
-            Harness::ClaudeCode | Harness::Pi | Harness::OpenCode => Err(NotDrivable(harness)),
+            Harness::ClaudeCode => {
+                let (codec, first) = ClaudeStreamJson::open(&opening);
+                Ok((Self::ClaudeCode(codec), vec![first]))
+            }
+            Harness::Pi | Harness::OpenCode => Err(NotDrivable(harness)),
         }
     }
 
@@ -64,6 +73,7 @@ impl Driver {
     pub fn command(&mut self, command: DriveCommand) -> Result<Line, CommandRefused> {
         match self {
             Self::Codex(codec) => codec.command(command),
+            Self::ClaudeCode(codec) => codec.command(command),
         }
     }
 
@@ -71,6 +81,7 @@ impl Driver {
     pub fn receive(&mut self, frame: Framed) -> Received {
         match self {
             Self::Codex(codec) => codec.receive(frame),
+            Self::ClaudeCode(codec) => codec.receive(frame),
         }
     }
 }
@@ -243,6 +254,8 @@ pub enum Unreadable {
     UnexpectedResponse,
     /// A known message whose parameters did not match its shape.
     BadParams,
+    /// JSON without the message type every line of the client's protocol has.
+    Untyped,
     /// A line longer than the framer keeps.
     TooLong {
         bytes: usize,
@@ -416,6 +429,11 @@ pub enum ApprovalAsk {
     },
     /// Apply file changes.
     FileChange { reason: Option<String> },
+    /// Use another of the client's tools.
+    Tool {
+        tool: String,
+        detail: Option<String>,
+    },
 }
 
 /// How a turn ended, as the client reported it.

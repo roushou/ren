@@ -24,6 +24,7 @@ use ren_harness::{
     drive::{DriveEvent, Driver, Framed, Line, LineLimit, Lines, Opening},
     endpoint::GatewayEndpoint,
 };
+use ren_protocol::native::NativeThreadId;
 use ren_recorder::{
     Recorder, RunTap,
     capture::RunEnd,
@@ -166,6 +167,7 @@ impl<H: AgentHost> SupervisorTask<H> {
         let opening = match conversation {
             Conversation::New => Opening::New {
                 cwd: workdir.as_str().to_owned(),
+                id: NativeThreadId::new(self.ids.next_uuid()).ok_or(StartError::NilId)?,
             },
             Conversation::Resume(thread) => Opening::Resume {
                 thread,
@@ -173,7 +175,7 @@ impl<H: AgentHost> SupervisorTask<H> {
             },
         };
         let plan = harness
-            .drive(&self.gateway)
+            .drive(&self.gateway, &opening)
             .map_err(StartError::NotDrivable)?;
         let (codec, first) =
             Driver::open(harness, opening, &self.version).map_err(StartError::NotDrivable)?;

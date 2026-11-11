@@ -189,7 +189,7 @@ dependencies under "Crates" below. Read the code for current module ownership.
 - `crates/ren-harness`: the harnesses, with `Harness` (`ClaudeCode`, `Codex`, `Pi`, `OpenCode`)
   as its primary type: attribution (`attribution`, with its private `headers`
   parser implementing `Harness::attribution`), session launch plans
-  (`Harness::launch`, and `Harness::drive` for Codex's structured mode), the bundled Pi extension cache (`pi`), the gateway URL a
+  (`Harness::launch`, and `Harness::drive` for Codex's and Claude Code's structured modes), the bundled Pi extension cache (`pi`), the gateway URL a
   harness is pointed at and the `UserToken` it presents there (`endpoint`),
   `HostEnv` (`host`), the host environment
   that launching and configuration read, and what each harness's tools and
@@ -197,8 +197,10 @@ dependencies under "Crates" below. Read the code for current module ownership.
   client sent a call (`CallPurpose`: work, or Claude Code's quota probe), and
   `InterpretedCall`, a `Reading` read as its client uses it), and driving a
   client through its structured mode (`drive`: pure line framing, the
-  `DriveCommand` and `DriveEvent` vocabulary, and `CodexAppServer`, the codec
-  for `codex app-server`). It performs filesystem and process I/O
+  `DriveCommand` and `DriveEvent` vocabulary, with `ItemRead`, what Ren reads
+  of each item for every client, and the `Driver` over each client's codec:
+  `CodexAppServer` for `codex app-server`, `ClaudeStreamJson` for `claude -p`
+  in stream-json). It performs filesystem and process I/O
   but has no async runtime, HTTP, database, or CLI dependency.
 - `crates/ren-recorder`: the bounded capture queue between forwarding and
   storage, with `Recorder` as its primary type. `CallTap` (and `ChannelTap` for a
@@ -242,7 +244,7 @@ dependencies under "Crates" below. Read the code for current module ownership.
   `tests/recorder.rs`, the recorder against the real store.
 - `crates/ren-supervisor`: runs, with `Supervisor` as its primary type: agent
   processes started in a folder inside the configured roots and driven through
-  their client's structured mode (Codex only so far). `RunState` (`run`) is the
+  their client's structured mode (Codex and Claude Code). `RunState` (`run`) is the
   pure lifecycle machine (starting, idle, working with its waiting approvals,
   stopping, ended with a `RunEnd`); `Workdir` (`workdir`) keeps runs inside
   `Roots`, resolved by the host so links cannot escape; `AgentHost` (`host`) is
@@ -388,9 +390,9 @@ dependencies under "Crates" below. Read the code for current module ownership.
   this checkout's build beside the installed service, with its own config,
   data, and ports, against a fake provider (`dev::provider`, whose replies are
   the pure, tested `script`), seeded with fake traffic (`dev::seed`, scenarios
-  as pure data), as `ren-dev-*` transient units, runs driven against a fake `codex`
-  (`dev::agent`: the shell, and `script`, the pure app-server conversation it
-  plays), with live traffic whose
+  as pure data), as `ren-dev-*` transient units, runs driven against a fake `codex` and `claude`
+  (`dev::agent`: the shell, and `script` and `claude`, the pure conversations
+  it plays as each client), with live traffic whose
   settings both the generator and the fake provider reread (`dev::traffic`,
   with its loopback control API for the dev UI's toolbar), an optional private
   preview on the tailnet, and

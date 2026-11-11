@@ -1,7 +1,10 @@
 //! The view against reads shaped as the management API sends them.
 
 use super::*;
-use ren_harness::drive::{Decision, Prompt};
+use ren_harness::{
+    Harness,
+    drive::{Decision, Prompt},
+};
 use ren_recorder::id::RunId;
 use serde_json::{Value, json};
 
@@ -1523,8 +1526,19 @@ fn a_run_starts_in_a_typed_folder_and_refusals_are_shown() {
     assert_eq!(tui.press(Key::Char('s')), Pressed::Continue(vec![]));
     type_text(&mut tui, "/work/acme");
     assert_eq!(
+        tui.wall(at(0)).entry.map(|entry| entry.label),
+        Some("start codex in")
+    );
+    // Tab picks the other client.
+    let _ = tui.press(Key::Tab);
+    assert_eq!(
+        tui.wall(at(0)).entry.map(|entry| entry.label),
+        Some("start claude code in")
+    );
+    assert_eq!(
         tui.press(Key::Enter),
         Pressed::Run(RunControl::Start {
+            harness: Harness::ClaudeCode,
             dir: "/work/acme".to_owned()
         })
     );

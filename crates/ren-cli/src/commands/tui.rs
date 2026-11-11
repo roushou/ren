@@ -367,9 +367,9 @@ impl<'a> Shell<'a> {
             return;
         };
         let (path, body) = match command {
-            RunControl::Start { dir } => (
+            RunControl::Start { harness, dir } => (
                 "runs".to_owned(),
-                Some(serde_json::json!({ "harness": "codex", "dir": dir })),
+                Some(serde_json::json!({ "harness": harness, "dir": dir })),
             ),
             RunControl::Prompt { run, prompt } => (
                 format!("runs/{run}/prompt"),
