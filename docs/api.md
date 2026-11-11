@@ -418,8 +418,12 @@ with its `command`, `cwd`, and `reason`, or a `file_change` with its
 `drained`, `recovered`, and `exit`, `{"kind": "code"|"signal", "value": n}` or
 `{"kind": "unknown"}`). Run events are `{"kind": "state", run, state}` or
 `{"kind": "event", run, event}`, where `event` is what the agent reported: its
-`delta` text, `item`s (commands, file changes, messages) as the client
-described them, `approval` requests, `turn_started` and `turn_ended`, and
+`delta` text, `item`s (each with its `kind`, its `read`, what Ren read of it
+the same way for every client: `{"as": "prompt"|"reply"|"plan", text}`,
+`{"as": "command", command, status, output, exit_code}`,
+`{"as": "file_change", paths, status}`, `{"as": "tool", name, status}`,
+`{"as": "reasoning"}`, or `{"as": "unread"}`; and its `body` as the client
+described it), `approval` requests, `turn_started` and `turn_ended`, and
 `error`s. Events are not stored; the run's start, opening, and end are, and its
 model traffic is recorded as any session's.
 

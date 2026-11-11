@@ -89,11 +89,32 @@ export interface RunSnapshot {
   state: RunState;
 }
 
-/** One item of a turn: its kind and the client's own body for it. */
+/** Where an item's action stands; a status a newer daemon names is kept as text. */
+export type ItemStatus = 'in_progress' | 'completed' | 'failed' | 'declined' | (string & {});
+
+/** What the daemon read from an item, the same for every client. */
+export type ItemRead =
+  | { as: 'prompt'; text: string }
+  | { as: 'reply'; text: string }
+  | { as: 'reasoning' }
+  | { as: 'plan'; text: string }
+  | {
+      as: 'command';
+      command: string;
+      status: ItemStatus;
+      output: string | null;
+      exit_code: number | null;
+    }
+  | { as: 'file_change'; paths: string[]; status: ItemStatus }
+  | { as: 'tool'; name: string; status: ItemStatus }
+  /** Nothing read, or a reading a newer daemon gives: shown by the item's kind. */
+  | { as: 'unread' };
+
+/** One item of a turn: its kind and what the daemon read of it. */
 export interface DriveItem {
   id: ItemId;
   kind: string;
-  body: unknown;
+  read: ItemRead;
 }
 
 export type TurnEnd =
@@ -201,6 +222,38 @@ const runState: Decoder<RunState> = (value, path) => {
   }
 };
 
+const itemRead: Decoder<ItemRead> = (value, path) => {
+  if (!isRecord(value)) return { as: 'unread' };
+  const at = (key: string) => `${path}.${key}`;
+  const status = () => string(value.status, at('status'));
+  switch (value.as) {
+    case 'prompt':
+    case 'reply':
+    case 'plan':
+      return { as: value.as, text: string(value.text, at('text')) };
+    case 'reasoning':
+      return { as: 'reasoning' };
+    case 'command':
+      return {
+        as: 'command',
+        command: string(value.command, at('command')),
+        status: status(),
+        output: optionalString(value.output, at('output')),
+        exit_code: value.exit_code == null ? null : integer(value.exit_code, at('exit_code')),
+      };
+    case 'file_change':
+      return {
+        as: 'file_change',
+        paths: array(string)(value.paths, at('paths')),
+        status: status(),
+      };
+    case 'tool':
+      return { as: 'tool', name: string(value.name, at('name')), status: status() };
+    default:
+      return { as: 'unread' };
+  }
+};
+
 const runSnapshot = object<RunSnapshot>({
   run: RunId.decode,
   harness: label(harnesses),
@@ -245,7 +298,7 @@ const driveEvent: Decoder<DriveEvent> = (value, path) => {
         item: {
           id: branded<'ItemId'>()(item.id, at('item.id')),
           kind: string(item.kind, at('item.kind')),
-          body: item.body,
+          read: itemRead(item.read, at('item.read')),
         },
       };
     }
@@ -554,71 +607,50 @@ export class Transcript {
   }
 
   #item(item: DriveItem, done: boolean): Transcript {
-    const body = isRecord(item.body) ? item.body : {};
-    const text = (key: string) => (typeof body[key] === 'string' ? (body[key] as string) : null);
+    const read = item.read;
     let entry: Entry | null;
-    switch (item.kind) {
-      case 'user_message': {
+    switch (read.as) {
+      case 'prompt':
         // The operator's prompt, which `prompted` usually showed already.
-        const content = Array.isArray(body.content) ? body.content : [];
-        const prompt = content
-          .map((part) => (isRecord(part) && typeof part.text === 'string' ? part.text : ''))
-          .join('');
         entry =
-          prompt === '' || this.#prompts().includes(prompt)
+          read.text === '' || this.#prompts().includes(read.text)
             ? null
-            : { kind: 'prompt', text: prompt };
+            : { kind: 'prompt', text: read.text };
         break;
-      }
-      case 'agent_message': {
+      case 'reply': {
         const index = this.#find(item.id);
         const before = index === -1 ? undefined : this.entries[index];
         const streamed = before?.kind === 'message' ? before.text : '';
-        entry = { kind: 'message', item: item.id, text: text('text') || streamed, done };
+        entry = { kind: 'message', item: item.id, text: read.text || streamed, done };
         break;
       }
       case 'reasoning':
         entry = { kind: 'reasoning', item: item.id, done };
         break;
-      case 'command_execution': {
-        const exit = body.exitCode;
+      case 'command':
         entry = {
           kind: 'command',
           item: item.id,
-          command: text('command') ?? '',
-          status: text('status') ?? (done ? 'completed' : 'inProgress'),
-          output: text('aggregatedOutput'),
-          exit: typeof exit === 'number' ? exit : null,
+          command: read.command,
+          status: read.status,
+          output: read.output,
+          exit: read.exit_code,
         };
         break;
-      }
-      case 'file_change': {
-        const changes = Array.isArray(body.changes) ? body.changes : [];
-        entry = {
-          kind: 'file_change',
-          item: item.id,
-          paths: changes.flatMap((change) =>
-            isRecord(change) && typeof change.path === 'string' ? [change.path] : [],
-          ),
-          status: text('status') ?? (done ? 'completed' : 'inProgress'),
-        };
+      case 'file_change':
+        entry = { kind: 'file_change', item: item.id, paths: read.paths, status: read.status };
         break;
-      }
       case 'plan':
-        entry = text('text')
-          ? { kind: 'message', item: item.id, text: text('text') ?? '', done }
-          : null;
+        entry = read.text ? { kind: 'message', item: item.id, text: read.text, done } : null;
         break;
-      case 'mcp_tool_call':
-      case 'web_search':
+      case 'tool':
+        entry = { kind: 'tool', item: item.id, name: read.name, done };
+        break;
+      case 'unread':
+        entry = { kind: 'tool', item: item.id, name: item.kind, done };
+        break;
       default:
-        entry = {
-          kind: 'tool',
-          item: item.id,
-          name: text('tool') ?? text('query') ?? item.kind,
-          done,
-        };
-        break;
+        return assertNever(read);
     }
     if (entry === null) return this;
     const index = this.#find(item.id);

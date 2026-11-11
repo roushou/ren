@@ -12,7 +12,8 @@
 
 use super::{
     ApprovalAsk, ApprovalId, CommandRefused, Decision, DriveCommand, DriveEvent, DriveItem, Framed,
-    ItemId, ItemKind, ItemPhase, Line, Prompt, RawLine, RequestKind, Retry, TurnEnd, Unreadable,
+    ItemId, ItemKind, ItemPhase, ItemRead, ItemStatus, Line, Prompt, RawLine, RequestKind, Retry,
+    TurnEnd, Unreadable,
 };
 use ren_protocol::native::{NativeThreadId, NativeTurnId};
 use serde::Deserialize;
@@ -363,11 +364,13 @@ impl CodexAppServer {
                 Self::parse::<ItemHolder>(params).and_then(|holder| {
                     let id = holder.item.get("id")?.as_str()?.to_owned();
                     let kind = Self::item_kind(holder.item.get("type")?.as_str()?);
+                    let read = Self::item_read(&kind, &holder.item, phase);
                     Some(DriveEvent::Item {
                         phase,
                         item: DriveItem {
                             id: ItemId::new(id),
                             kind,
+                            read,
                             body: holder.item,
                         },
                     })
@@ -504,6 +507,73 @@ impl CodexAppServer {
             other => ItemKind::Other(other.to_owned()),
         }
     }
+
+    /// What Ren reads of an item, from the fields Codex's schema gives each
+    /// kind. A field that is missing or of another type reads as absent.
+    fn item_read(kind: &ItemKind, body: &Value, phase: ItemPhase) -> ItemRead {
+        let text = |key: &str| body.get(key).and_then(Value::as_str).map(str::to_owned);
+        let status = || match body.get("status").and_then(Value::as_str) {
+            Some("inProgress") => ItemStatus::InProgress,
+            Some("completed") => ItemStatus::Completed,
+            Some("failed") => ItemStatus::Failed,
+            Some("declined") => ItemStatus::Declined,
+            Some(other) => ItemStatus::Other(other.to_owned()),
+            None => ItemStatus::of(phase),
+        };
+        match kind {
+            ItemKind::UserMessage => ItemRead::Prompt {
+                text: body
+                    .get("content")
+                    .and_then(Value::as_array)
+                    .map(|parts| {
+                        parts
+                            .iter()
+                            .filter_map(|part| part.get("text").and_then(Value::as_str))
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+            },
+            ItemKind::AgentMessage => ItemRead::Reply {
+                text: text("text").unwrap_or_default(),
+            },
+            ItemKind::Reasoning => ItemRead::Reasoning,
+            ItemKind::Plan => ItemRead::Plan {
+                text: text("text").unwrap_or_default(),
+            },
+            ItemKind::CommandExecution => ItemRead::Command {
+                command: text("command").unwrap_or_default(),
+                status: status(),
+                output: text("aggregatedOutput"),
+                exit_code: body.get("exitCode").and_then(Value::as_i64),
+            },
+            ItemKind::FileChange => ItemRead::FileChange {
+                paths: body
+                    .get("changes")
+                    .and_then(Value::as_array)
+                    .map(|changes| {
+                        changes
+                            .iter()
+                            .filter_map(|change| change.get("path").and_then(Value::as_str))
+                            .map(str::to_owned)
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+                status: status(),
+            },
+            ItemKind::McpToolCall => ItemRead::Tool {
+                name: text("tool").unwrap_or_else(|| "MCP tool".to_owned()),
+                status: status(),
+            },
+            ItemKind::WebSearch => ItemRead::Tool {
+                name: text("query").map_or_else(
+                    || "web search".to_owned(),
+                    |query| format!("search: {query}"),
+                ),
+                status: status(),
+            },
+            ItemKind::Other(_) => ItemRead::Unread,
+        }
+    }
 }
 
 /// Any JSON-RPC message, before it is told apart.
@@ -603,7 +673,8 @@ mod tests {
     use super::{CodexAppServer, Opening, Received};
     use crate::drive::{
         ApprovalAsk, ApprovalId, CommandRefused, Decision, DriveCommand, DriveEvent, Framed,
-        ItemKind, ItemPhase, Line, Prompt, RequestKind, Retry, TurnEnd, Unreadable,
+        ItemKind, ItemPhase, ItemRead, ItemStatus, Line, Prompt, RequestKind, Retry, TurnEnd,
+        Unreadable,
     };
     use serde_json::{Value, json};
 
@@ -733,7 +804,12 @@ mod tests {
         assert!(matches!(
             item.events.as_slice(),
             [DriveEvent::Item { phase: ItemPhase::Completed, item }]
-                if item.kind == ItemKind::CommandExecution && item.body["exitCode"] == 0
+                if item.kind == ItemKind::CommandExecution && item.read == ItemRead::Command {
+                    command: "cargo build".into(),
+                    status: ItemStatus::Completed,
+                    output: None,
+                    exit_code: Some(0),
+                }
         ));
 
         let interrupt = codec.command(DriveCommand::Interrupt).unwrap();

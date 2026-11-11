@@ -126,7 +126,7 @@ test('the transcript streams a reply, then commands and file changes as items up
       item: {
         id: 'u1',
         kind: 'user_message',
-        body: { content: [{ type: 'text', text: 'fix the failing test' }] },
+        read: { as: 'prompt', text: 'fix the failing test' },
       },
     },
     {
@@ -135,11 +135,12 @@ test('the transcript streams a reply, then commands and file changes as items up
       item: {
         id: 'c1',
         kind: 'command_execution',
-        body: {
+        read: {
+          as: 'command',
           command: 'cargo test',
-          status: 'inProgress',
-          aggregatedOutput: null,
-          exitCode: null,
+          status: 'in_progress',
+          output: null,
+          exit_code: null,
         },
       },
     },
@@ -149,7 +150,13 @@ test('the transcript streams a reply, then commands and file changes as items up
       item: {
         id: 'c1',
         kind: 'command_execution',
-        body: { command: 'cargo test', status: 'completed', aggregatedOutput: 'ok', exitCode: 0 },
+        read: {
+          as: 'command',
+          command: 'cargo test',
+          status: 'completed',
+          output: 'ok',
+          exit_code: 0,
+        },
       },
     },
     {
@@ -158,7 +165,7 @@ test('the transcript streams a reply, then commands and file changes as items up
       item: {
         id: 'f1',
         kind: 'file_change',
-        body: { changes: [{ path: 'src/lib.rs', kind: {}, diff: '' }], status: 'completed' },
+        read: { as: 'file_change', paths: ['src/lib.rs'], status: 'completed' },
       },
     },
     { kind: 'delta', item: 'm1', text: 'Fixed ' },
@@ -189,7 +196,7 @@ test('the transcript streams a reply, then commands and file changes as items up
     event({
       kind: 'item',
       phase: 'completed',
-      item: { id: 'm1', kind: 'agent_message', body: {} },
+      item: { id: 'm1', kind: 'agent_message', read: { as: 'reply', text: '' } },
     }),
   );
   assert.deepEqual(done.entries[3], { kind: 'message', item: 'm1', text: 'Fixed it.', done: true });
@@ -199,7 +206,7 @@ test('a prompt shows once, whether the echo or the local copy comes first', () =
   const echo = event({
     kind: 'item',
     phase: 'completed',
-    item: { id: 'u1', kind: 'user_message', body: { content: [{ type: 'text', text: 'go' }] } },
+    item: { id: 'u1', kind: 'user_message', read: { as: 'prompt', text: 'go' } },
   });
   const ended = event({ kind: 'turn_ended', turn: 't1', end: { kind: 'completed' } });
   assert.deepEqual(new Transcript().apply(echo).prompted('go').entries, [

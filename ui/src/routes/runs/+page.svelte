@@ -501,12 +501,12 @@
                 <span
                   class="chip {entry.status === 'completed' && entry.exit === 0
                     ? 'success'
-                    : entry.status === 'inProgress'
+                    : entry.status === 'in_progress'
                       ? 'live'
                       : entry.status === 'declined'
                         ? 'neutral'
                         : 'error'}"
-                  >{entry.status === 'inProgress'
+                  >{entry.status === 'in_progress'
                     ? 'running'
                     : entry.exit !== null
                       ? `exit ${entry.exit}`
@@ -520,7 +520,7 @@
               <Icon name="pencil" size={12} />
               <span class="tool-target mono">{entry.paths.join(', ') || 'files'}</span>
               <span class="chip {entry.status === 'completed' ? 'success' : 'neutral'}"
-                >{entry.status === 'inProgress' ? 'editing' : entry.status}</span
+                >{entry.status === 'in_progress' ? 'editing' : entry.status}</span
               >
             </div>
           {:else if entry.kind === 'tool'}

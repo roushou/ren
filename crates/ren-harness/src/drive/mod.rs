@@ -233,12 +233,85 @@ pub enum ItemPhase {
     Completed,
 }
 
-/// One item of a turn: its kind, and the client's own body for it.
+/// One item of a turn: its kind, what Ren read of it, and the client's own
+/// body for it.
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct DriveItem {
     pub id: ItemId,
     pub kind: ItemKind,
+    pub read: ItemRead,
     pub body: serde_json::Value,
+}
+
+/// What Ren read from an item, the same for every client, so consumers never
+/// parse a client's own body. Each client's codec fills it.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(tag = "as", rename_all = "snake_case")]
+pub enum ItemRead {
+    /// The operator's prompt, as the client echoed it.
+    Prompt {
+        text: String,
+    },
+    /// Reply text; empty while it is still streaming as deltas.
+    Reply {
+        text: String,
+    },
+    Reasoning,
+    Plan {
+        text: String,
+    },
+    Command {
+        command: String,
+        status: ItemStatus,
+        output: Option<String>,
+        exit_code: Option<i64>,
+    },
+    FileChange {
+        paths: Vec<String>,
+        status: ItemStatus,
+    },
+    /// Any other tool the client used, by the name it gave.
+    Tool {
+        name: String,
+        status: ItemStatus,
+    },
+    /// An item Ren reads nothing from; its kind and body say what it is.
+    Unread,
+}
+
+/// Where an item's action stands.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ItemStatus {
+    InProgress,
+    Completed,
+    Failed,
+    /// The operator or a policy refused it.
+    Declined,
+    /// A status Ren does not know, as the client named it.
+    Other(String),
+}
+
+impl ItemStatus {
+    /// The status an item has when its client names none.
+    pub fn of(phase: ItemPhase) -> Self {
+        match phase {
+            ItemPhase::Started => Self::InProgress,
+            ItemPhase::Completed => Self::Completed,
+        }
+    }
+}
+
+impl serde::Serialize for ItemStatus {
+    /// Known statuses by their snake_case name; others by the client's own.
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(match self {
+            Self::InProgress => "in_progress",
+            Self::Completed => "completed",
+            Self::Failed => "failed",
+            Self::Declined => "declined",
+            Self::Other(status) => status,
+        })
+    }
 }
 
 /// The kinds of items Ren reads. Others keep the client's own name.
