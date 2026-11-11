@@ -32,6 +32,12 @@ impl Wall {
     }
 }
 
+impl crate::Drawn for Wall {
+    fn render(&self, theme: &Theme, area: Rect, buf: &mut Buffer) {
+        Widget::render(self.themed(theme), area, buf);
+    }
+}
+
 impl Widget for &Wall {
     fn render(self, area: Rect, buf: &mut Buffer) {
         self.themed(&Theme::default()).render(area, buf);

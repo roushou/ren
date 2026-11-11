@@ -104,7 +104,48 @@ impl Default for Theme {
     }
 }
 
+/// What a style is for, so views outside this crate draw with the theme.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Ink {
+    /// The whole screen's background.
+    Ground,
+    /// A bar: the status line, an overlay.
+    Bar,
+    Rule,
+    Text,
+    Muted,
+    Code,
+    /// The operator's own words.
+    Prompt,
+    Tool,
+    Success,
+    Error,
+    Warning,
+    /// What has the keyboard.
+    Focus,
+    WarningTitle,
+}
+
 impl Theme {
+    /// The style for `ink`.
+    pub fn ink(&self, ink: Ink) -> Style {
+        match ink {
+            Ink::Ground => self.ground,
+            Ink::Bar => self.bar,
+            Ink::Rule => self.rule,
+            Ink::Text => self.text,
+            Ink::Muted => self.muted,
+            Ink::Code => self.code,
+            Ink::Prompt => self.prompt,
+            Ink::Tool => self.tool,
+            Ink::Success => self.success,
+            Ink::Error => self.error,
+            Ink::Warning => self.warning,
+            Ink::Focus => self.focus,
+            Ink::WarningTitle => self.warning_title,
+        }
+    }
+
     /// Terminal defaults with emphasis and labels, without color accents.
     pub fn monochrome() -> Self {
         let text = Style::new().fg(Color::Reset);

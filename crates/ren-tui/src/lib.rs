@@ -26,11 +26,11 @@ pub use draw::ThemedWall;
 pub use grid::{Grid, Size};
 pub use keys::{Command, Key};
 pub use runs::{RunCounts, RunMark, RunPhase, Runs};
-pub use screen::{Screen, ScreenError, ScreenEvent, ScreenEvents};
+pub use screen::{Drawn, Screen, ScreenError, ScreenEvent, ScreenEvents};
 pub use session::{
     Alert, CallFacts, Line, Phase, ResultMark, SessionPane, Span, Streaming, Tally, ToolLine,
 };
-pub use theme::{Theme, ThemeName};
+pub use theme::{Ink, Theme, ThemeName};
 
 use grid::Placement;
 use ren_harness::Harness;

@@ -881,7 +881,7 @@ fn drawn(wall: &Wall, size: Size) -> String {
     use ratatui::{buffer::Buffer, layout::Rect, widgets::Widget};
     let area = Rect::new(0, 0, size.width, size.height);
     let mut buffer = Buffer::empty(area);
-    wall.render(area, &mut buffer);
+    Widget::render(wall, area, &mut buffer);
     (0..size.height)
         .map(|y| {
             let row: String = (0..size.width)
@@ -1073,7 +1073,7 @@ fn tiny_terminals_draw_without_panicking() {
             }
             let area = Rect::new(0, 0, width, height);
             let mut buffer = Buffer::empty(area);
-            tui.wall(at(300)).render(area, &mut buffer);
+            Widget::render(&tui.wall(at(300)), area, &mut buffer);
         }
     }
 }
