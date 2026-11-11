@@ -290,15 +290,16 @@ impl Console {
             let text = match (&self.control, &self.projects) {
                 (Control::Unavailable(why), _) => format!("runs cannot be driven from here: {why}"),
                 (_, Projects::Read(projects)) if !projects.is_empty() => format!(
-                    "no runs yet. start one: /new {} <prompt>",
+                    "no live runs. start one with /new {} <prompt>, or /resume an earlier one",
                     projects
                         .first()
                         .map_or("<project>", |project| project.name.as_str())
                 ),
                 (_, Projects::Read(_)) => {
-                    "no runs and no projects: add a folder to the daemon's [runs] roots".to_owned()
+                    "no live runs, and no projects: add a folder to the daemon's [runs] roots"
+                        .to_owned()
                 }
-                (_, Projects::Unread | Projects::Failed(_)) => "no runs yet".to_owned(),
+                (_, Projects::Unread | Projects::Failed(_)) => "no live runs".to_owned(),
             };
             lines.push(vec![styled(format!("    {text}"), Ink::Muted)]);
             return lines;
