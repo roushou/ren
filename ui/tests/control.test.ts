@@ -75,7 +75,7 @@ test('commands reach the control API with the token from the file, never browser
   assert.equal(daemon.seen, 1);
 });
 
-test('starting, listing, answering, and the feed map to their control routes', async () => {
+test('starting, listing, folders, answering, and the feed map to their control routes', async () => {
   const seen: string[] = [];
   const daemon = host((url, init) => {
     seen.push(`${init.method} ${url.pathname}`);
@@ -90,6 +90,11 @@ test('starting, listing, answering, and the feed map to their control routes', a
   await proxy.respond(
     new Request('http://ui.test/control/runs', { headers: { 'sec-fetch-site': 'same-origin' } }),
   );
+  await proxy.respond(
+    new Request('http://ui.test/control/runs/folders', {
+      headers: { 'sec-fetch-site': 'same-origin' },
+    }),
+  );
   await proxy.respond(post(`/control/runs/${run}/approvals/ap-1`, { decision: 'accept' }));
   await proxy.respond(post(`/control/runs/${run}/stop`, {}));
   const feed = await proxy.respond(new Request('http://ui.test/control/runs/events'));
@@ -97,6 +102,7 @@ test('starting, listing, answering, and the feed map to their control routes', a
   assert.deepEqual(seen, [
     'POST /control/v1/runs',
     'GET /control/v1/runs',
+    'GET /control/v1/runs/folders',
     `POST /control/v1/runs/${run}/approvals/ap-1`,
     `POST /control/v1/runs/${run}/stop`,
     'GET /control/v1/runs/events',

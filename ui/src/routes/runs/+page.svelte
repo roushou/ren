@@ -18,6 +18,7 @@
     type Decision,
     type DeskRun,
     type Drivable,
+    type RunFolder,
     type RecordedRun,
     type RunId,
     type RunSnapshot,
@@ -60,6 +61,9 @@
   let historyError = $state<string | null>(null);
 
   let folder = $state('');
+  /** The folders the daemon offers to start a run in. */
+  let offered = $state.raw<RunFolder[]>([]);
+  const choices = $derived(Runs.choose(offered, folder));
   let starting = $state<Drivable>('codex');
   let prompt = $state('');
   let busy = $state(false);
@@ -82,6 +86,15 @@
       unavailable = null;
     } catch (error) {
       unavailable = message(error);
+    }
+  }
+
+  async function readFolders() {
+    if (!data.runsControl) return;
+    try {
+      offered = await client.folders();
+    } catch {
+      // The list is a convenience; a typed path still starts a run.
     }
   }
 
@@ -225,6 +238,7 @@
 
   onMount(() => {
     void readLive();
+    void readFolders();
     void readRecorded();
     if (!data.runsControl) return;
     const source = new EventSource('/control/runs/events');
@@ -411,6 +425,21 @@
         <datalist id="run-folders">
           {#each folders as known (known)}<option value={known}></option>{/each}
         </datalist>
+        {#if choices.length}
+          <ul class="folder-choices" aria-label="Folders on the daemon's host">
+            {#each choices as choice (choice.path)}
+              <li>
+                <button
+                  type="button"
+                  class:chosen={folder === choice.path}
+                  title={choice.path}
+                  onclick={() => (folder = choice.path)}
+                  ><span>{choice.name}</span><span class="muted mono">{choice.path}</span></button
+                >
+              </li>
+            {/each}
+          </ul>
+        {/if}
       </form>
     {/if}
     {#if unavailable}<p class="sidebar-note danger">{unavailable}</p>{/if}
@@ -641,6 +670,43 @@
   .new-run label {
     font-size: 11px;
     color: var(--muted);
+  }
+  .folder-choices {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    max-height: 180px;
+    overflow-y: auto;
+    border: 1px solid var(--line);
+  }
+  .folder-choices li + li {
+    border-top: 1px solid var(--line);
+  }
+  .folder-choices button {
+    display: flex;
+    width: 100%;
+    gap: 8px;
+    align-items: baseline;
+    padding: 4px 8px;
+    border-radius: 0;
+    font-size: 12px;
+    text-align: left;
+    color: var(--ink);
+    background: none;
+  }
+  .folder-choices button span:first-child {
+    flex-shrink: 0;
+    white-space: nowrap;
+  }
+  .folder-choices button span:last-child {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 11px;
+  }
+  .folder-choices button:hover,
+  .folder-choices button.chosen {
+    background: var(--surface-hover);
   }
   .new-run-row {
     display: flex;

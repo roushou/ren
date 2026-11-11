@@ -377,3 +377,17 @@ test('an approval to use another tool says which, and only drivable clients resu
   assert.equal(Runs.drivable('codex'), 'codex');
   assert.equal(Runs.drivable('pi'), null);
 });
+
+test('the offered folders narrow as a name or path is typed', () => {
+  const offered = [
+    { path: '/home/op/dev', name: 'dev' },
+    { path: '/home/op/dev/acme', name: 'dev/acme' },
+    { path: '/home/op/ren', name: 'ren' },
+  ];
+  assert.equal(Runs.choose(offered, '').length, 3);
+  assert.deepEqual(
+    Runs.choose(offered, 'ACME').map((folder) => folder.name),
+    ['dev/acme'],
+  );
+  assert.deepEqual(Runs.choose(offered, '/home/op/ren'), []);
+});
