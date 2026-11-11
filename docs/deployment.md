@@ -266,9 +266,10 @@ requests there only when `REN_DEV_TRAFFIC_URL` is set, as the slot sets it, and
 only a development gateway's UI shows the toolbar.
 
 The slot's daemon has runs on, with `~/.local/share/ren-dev/work` as its root
-(`acme-api` and `acme-web` in it), and the dev UI drives them. Its `codex` is a
-fake (`cargo xtask dev agent`, first on the dev daemon's `PATH`), never the
-real client: it speaks Codex's app-server protocol, asks to run a command for
+(`acme-api` and `acme-web` in it), and the dev UI drives them. Its `codex` and
+`claude` are fakes (`cargo xtask dev agent`, first on the dev daemon's `PATH`),
+never the real clients: each speaks its client's protocol (Codex's app server,
+Claude Code's stream-json print mode), asks to run a command for
 prompts that mention testing, running, or building and to change files for
 ones that mention fixing, editing, changing, adding, or writing, and sends each
 turn's model call through the dev gateway to the fake provider, so a run's

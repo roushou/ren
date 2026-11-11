@@ -270,6 +270,30 @@ impl Scenario {
         }
     }
 
+    /// A Claude Code turn's model call in a session the caller names: the
+    /// dev slot's fake `claude`, whose session Ren chose.
+    pub(in crate::dev) fn claude_turn_call(session: &str, prompt_id: &str, prompt: &str) -> Call {
+        let mut headers = Caller::Unidentified.headers();
+        headers.extend(Self::claude_code_headers(
+            session.to_owned(),
+            Some(prompt_id.to_owned()),
+        ));
+        headers.push(("content-type".into(), "application/json".into()));
+        let body = Self::messages(
+            "claude-sonnet-5-5",
+            prompt,
+            Client::ClaudeCode.toolset(),
+            session,
+            0,
+        );
+        Call {
+            label: format!("claude code: {}", Self::short(prompt)),
+            path: "/anthropic/v1/messages".into(),
+            headers,
+            body: body.to_string(),
+        }
+    }
+
     /// Claude Code's side call `side` in session `session`: its session's
     /// headers, but no turn.
     pub(in crate::dev) fn side_call(

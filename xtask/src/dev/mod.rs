@@ -13,7 +13,7 @@ use crate::{
     install::{InstallError, TailscaleCli},
     publish::Publish,
 };
-use agent::{AgentError, FakeAgent};
+use agent::{AgentError, FakeAgent, Played};
 use clap::{Args, Subcommand};
 use provider::{FakeProvider, ProviderError};
 use ren_harness::host::HostEnv;
@@ -65,10 +65,13 @@ enum DevAction {
 
 #[derive(Args)]
 struct AgentArgs {
+    /// The client the agent plays.
+    #[arg(long, value_enum, default_value = "codex")]
+    client: Played,
     /// Where the agent numbers its threads (the slot's data directory).
     #[arg(long)]
     data_dir: PathBuf,
-    /// The arguments the daemon gave `codex`.
+    /// The arguments the daemon gave the client.
     #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
     arguments: Vec<String>,
 }
@@ -217,7 +220,9 @@ impl Dev {
     pub fn run(self, env: &HostEnv) -> Result<(), DevError> {
         match self.action {
             DevAction::Provider(args) => Ok(FakeProvider::serve(args.listen, args.settings)?),
-            DevAction::Agent(args) => Ok(FakeAgent::new(&args.data_dir, &args.arguments)?.run()?),
+            DevAction::Agent(args) => {
+                Ok(FakeAgent::new(args.client, env, &args.data_dir, &args.arguments)?.run()?)
+            }
             DevAction::Up(args) => {
                 let slot = Slot::new(env)?;
                 if args.ui {
