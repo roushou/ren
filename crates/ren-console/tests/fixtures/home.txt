@@ -1,0 +1,24 @@
+ nothing needs you                                                           ▪ ▪   2 live
+──────────────────────────────────────────────────────────────────────────────────────────
+
+  › acme-web   new Claude Code run            your turn
+    acme-api   new Codex run                  working
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+──────────────────────────────────────────────────────────────────────────────────────────
+ › /new <project> <prompt> starts a run · /help
+ ↑↓ choose · enter opens                                    alt-←→ runs · /resume · /help

@@ -1,0 +1,29 @@
+[package]
+name = "ren-console"
+version.workspace = true
+edition.workspace = true
+homepage.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "A terminal console for Ren's agent runs: one conversation at a time, what needs you first."
+
+# The console for agent runs. Its core (`Console`, the `Frame` it builds)
+# reads runs, run updates, and recorded turns, and returns the reads and
+# control commands it needs; it performs no I/O (`src/purity.rs`). `draw`
+# renders a frame into a ratatui buffer; ren-tui's `Screen` touches the
+# terminal (docs/architecture.md).
+[dependencies]
+ratatui = { version = "0.30", default-features = false, features = ["crossterm_0_29", "layout-cache"] }
+ren-harness.workspace = true
+ren-protocol.workspace = true
+ren-recorder.workspace = true
+ren-store.workspace = true
+ren-supervisor.workspace = true
+ren-tui.workspace = true
+serde_json.workspace = true
+unicode-width = "0.2"
+uuid.workspace = true
+
+[lints]
+workspace = true

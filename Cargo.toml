@@ -1,6 +1,7 @@
 [workspace]
 members = [
   "crates/ren-cli",
+  "crates/ren-console",
   "crates/ren-daemon",
   "crates/ren-gateway",
   "crates/ren-harness",
@@ -22,6 +23,7 @@ default-members = [
   "crates/ren-store",
   "crates/ren-supervisor",
   "crates/ren-tui",
+  "crates/ren-console",
 ]
 resolver = "3"
 
@@ -50,6 +52,7 @@ http = "1.5"
 http-body = "1.1"
 http-body-util = "0.1.5"
 proptest = { version = "1", default-features = false, features = ["std"] }
+ren-console = { path = "crates/ren-console", version = "0.1.0" }
 ren-daemon = { path = "crates/ren-daemon", version = "0.1.0" }
 ren-gateway = { path = "crates/ren-gateway", version = "0.1.0" }
 ren-harness = { path = "crates/ren-harness", version = "0.1.0" }

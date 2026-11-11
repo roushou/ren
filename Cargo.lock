@@ -1986,6 +1986,22 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 
 [[package]]
+name = "ren-console"
+version = "0.1.0"
+dependencies = [
+ "ratatui",
+ "ren-harness",
+ "ren-protocol",
+ "ren-recorder",
+ "ren-store",
+ "ren-supervisor",
+ "ren-tui",
+ "serde_json",
+ "unicode-width",
+ "uuid",
+]
+
+[[package]]
 name = "ren-daemon"
 version = "0.1.0"
 dependencies = [
@@ -2124,6 +2140,7 @@ dependencies = [
  "bytes",
  "clap",
  "futures-util",
+ "ren-console",
  "ren-daemon",
  "ren-gateway",
  "ren-harness",

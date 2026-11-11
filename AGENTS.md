@@ -6,7 +6,7 @@ and exposing it, using the operator's own Anthropic and OpenAI subscriptions. On
 a laptop and a VPS reached through Tailscale.
 
 [`docs/architecture.md`](docs/architecture.md) describes how Ren is built and
-lists its known limitations. Section 4 below maps the nine crates and the `xtask` package.
+lists its known limitations. Section 4 below maps the ten crates and the `xtask` package.
 
 - All code follows the principles (section 2) and the workspace lints.
 - Never describe unbuilt functionality as working. Read the source before assuming
@@ -165,7 +165,7 @@ saturation, and persistence recovery.
 
 ## 4. Workspace map
 
-This map describes the code as it is: the nine crates, listed with their
+This map describes the code as it is: the ten crates, listed with their
 dependencies under "Crates" below. Read the code for current module ownership.
 
 - `docs/architecture.md`: how Ren is built, and its known limitations. The other
@@ -282,6 +282,19 @@ dependencies under "Crates" below. Read the code for current module ownership.
   sources free of runtime, I/O, and terminal dependencies.
   Runs (`runs`): a live run's session keeps its pane with the run's mark and
   its oldest approval's ask. The wall only watches runs.
+- `crates/ren-console`: the terminal console for runs (`ren runs`), with
+  `Console` as its primary type. `Console` is sans-IO: it takes what was read
+  (`Input`: live runs, recorded runs, projects, run updates from the feed,
+  and recorded turns) and key presses, and answers with `Out`s, the reads it
+  needs and the `Command`s the shell sends through the control API. One
+  run's conversation fills the screen with a message box under it; slash
+  commands (`slash`: `/new`, `/resume`, `/stop`) start and switch runs; the
+  runs that need you come first (`desk`: `Attention`), and answering one
+  moves on to the next that does. `transcript` is the live conversation and
+  how a finished turn gives way to its record. `Console::frame` is what to
+  draw (`view`); `draw` renders a `Frame` through `ren-tui`'s `Drawn`,
+  pinned as text in `tests/fixtures`. `src/purity.rs` keeps the core free of
+  runtime, I/O, and terminal dependencies.
 - `crates/ren-gateway`: Ren's HTTP interface, with `Gateway` as its primary type.
   It owns forwarding, management, and control routes on one listener, assembled
   by `Gateway::router` or `Gateway::into_ingress`. Forwarding uses a declarative
@@ -347,7 +360,10 @@ dependencies under "Crates" below. Read the code for current module ownership.
   its lines (and progress events, which `ren tui` asks for). With the `tui`
   feature (off by default), `commands::tui` is `ren tui`: the shell around
   `ren-tui`'s `Tui`, reading snapshots, turns, and the live feed through
-  the gateway's API alongside one another, and drawing to its `Screen`.
+  the gateway's API alongside one another, and drawing to its `Screen`;
+  `commands::console` is `ren runs` with no subcommand: the shell around
+  `ren-console`'s `Console`, following the run feed, reading runs, projects,
+  and recorded turns, and sending its commands through `ControlTarget`.
   `tui_settings` owns its local theme preference in `tui.toml`; the CLI resolves
   flags, saved preferences, and `NO_COLOR`, and passes styles to `Screen`.
   `mcp` is the pure core of `ren mcp` (a source test keeps it free
@@ -406,18 +422,19 @@ dependencies under "Crates" below. Read the code for current module ownership.
 "Depends on" names the nearest crates below; a crate may also use lower ones
 directly.
 
-| Crate                                      | Primary type                                        | Depends on            |
-| ------------------------------------------ | --------------------------------------------------- | --------------------- |
-| `ren-protocol`                             | `CallInspector`                                     | none of ours          |
-| `ren-harness`                              | `Harness` (`ClaudeCode`, `Codex`, `Pi`, `OpenCode`) | protocol              |
-| `ren-recorder`                             | `Recorder`, with its `RecordSink` port              | protocol, harness     |
-| `ren-store`                                | `Store`, which implements `RecordSink`              | recorder              |
-| `ren-supervisor`                           | `Supervisor`, with its `AgentHost` port             | recorder, harness     |
-| `ren-tui`                                  | `Tui`                                               | supervisor, store     |
-| `ren-gateway`                              | `Gateway`                                           | supervisor, store     |
-| `ren-daemon`                               | `Daemon`                                            | gateway, store        |
-| `ren-cli` (package `ren-rs`, binary `ren`) | `Cli`                                               | daemon; tui (feature) |
-| `xtask` (unpublished)                      | `Xtask`                                             | daemon                |
+| Crate                                      | Primary type                                        | Depends on                |
+| ------------------------------------------ | --------------------------------------------------- | ------------------------- |
+| `ren-protocol`                             | `CallInspector`                                     | none of ours              |
+| `ren-harness`                              | `Harness` (`ClaudeCode`, `Codex`, `Pi`, `OpenCode`) | protocol                  |
+| `ren-recorder`                             | `Recorder`, with its `RecordSink` port              | protocol, harness         |
+| `ren-store`                                | `Store`, which implements `RecordSink`              | recorder                  |
+| `ren-supervisor`                           | `Supervisor`, with its `AgentHost` port             | recorder, harness         |
+| `ren-tui`                                  | `Tui`                                               | supervisor, store         |
+| `ren-console`                              | `Console`                                           | tui                       |
+| `ren-gateway`                              | `Gateway`                                           | supervisor, store         |
+| `ren-daemon`                               | `Daemon`                                            | gateway, store            |
+| `ren-cli` (package `ren-rs`, binary `ren`) | `Cli`                                               | daemon; console (feature) |
+| `xtask` (unpublished)                      | `Xtask`                                             | daemon                    |
 
 `docs/architecture.md` lists what each crate owns. These rules apply to every
 crate:
