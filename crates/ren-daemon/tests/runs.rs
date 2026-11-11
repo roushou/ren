@@ -108,11 +108,12 @@ async fn a_run_is_started_prompted_approved_and_stopped_through_the_control_api(
         .unwrap();
     assert_eq!(events.status(), StatusCode::OK);
 
-    // The folders a run can start in: the root and the folders inside it.
-    let folders: serde_json::Value = serde_json::from_slice(
+    // The projects a run can start in: a repository, and a root's folder
+    // with none below it.
+    let projects: serde_json::Value = serde_json::from_slice(
         &control
             .http
-            .get(format!("{}/runs/folders", control.base))
+            .get(format!("{}/runs/projects", control.base))
             .bearer_auth(TestGateway::CONTROL_TOKEN)
             .send()
             .await
@@ -123,11 +124,10 @@ async fn a_run_is_started_prompted_approved_and_stopped_through_the_control_api(
     )
     .unwrap();
     assert_eq!(
-        folders["folders"],
+        projects["projects"],
         json!([
-            { "path": "/work", "name": "work" },
-            { "path": "/work/acme", "name": "work/acme" },
-            { "path": "/work/web", "name": "work/web" },
+            { "path": "/work/acme", "name": "acme", "git": { "kind": "branch", "name": "main" } },
+            { "path": "/work/web", "name": "web", "git": { "kind": "none" } },
         ])
     );
 

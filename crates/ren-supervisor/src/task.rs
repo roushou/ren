@@ -9,8 +9,9 @@
 //! [`Supervisor`]: crate::Supervisor
 
 use crate::{
-    CommandError, Conversation, Request, RunSnapshot, RunUpdate, StartError,
+    CommandError, Conversation, Request, RunSnapshot, RunUpdate, Start, StartError,
     host::{AgentHost, AgentProcess, KillSwitch},
+    project::Search,
     run::{ProcessExit, RunAction, RunCommand, RunEvent, RunState},
     workdir::{RequestedDir, Roots, Workdir},
 };
@@ -21,7 +22,7 @@ use futures_util::{
 };
 use ren_harness::{
     Harness,
-    drive::{DriveEvent, Driver, Framed, Line, LineLimit, Lines, Opening},
+    drive::{DriveEvent, Driver, Framed, Line, LineLimit, Lines, Opening, Prompt},
     endpoint::GatewayEndpoint,
 };
 use ren_protocol::native::NativeThreadId;
@@ -60,6 +61,8 @@ struct Live {
     kill: Option<KillSwitch>,
     /// Records the run's opening and end; taken when the end is recorded.
     tap: Option<RunTap>,
+    /// The first prompt, sent once the conversation opens.
+    first: Option<Prompt>,
 }
 
 type Outputs = SelectAll<BoxStream<'static, (RunId, Vec<Framed>)>>;
@@ -112,15 +115,8 @@ impl<H: AgentHost> SupervisorTask<H> {
         exits: &mut Exits,
     ) {
         match request {
-            Request::Start {
-                harness,
-                dir,
-                conversation,
-                reply,
-            } => {
-                let started = self
-                    .start(harness, &dir, conversation, runs, outputs, exits)
-                    .await;
+            Request::Start { start, reply } => {
+                let started = self.start(start, runs, outputs, exits).await;
                 let _ = reply.send(started);
             }
             Request::Command {
@@ -134,14 +130,16 @@ impl<H: AgentHost> SupervisorTask<H> {
                 };
                 let _ = reply.send(result);
             }
-            Request::Folders { reply } => {
-                let folders = self.roots.folders(|root| {
-                    self.host.subfolders(root).unwrap_or_else(|error| {
-                        tracing::debug!(%error, "cannot list a run root");
-                        Vec::new()
-                    })
+            Request::Projects { reply } => {
+                // Bounded by `Search`; the host reads only folder listings
+                // and `HEAD` files.
+                let projects = self.roots.projects(Search::DEFAULT, |folder| {
+                    self.host
+                        .look(folder)
+                        .inspect_err(|error| tracing::debug!(%error, "cannot look in a folder"))
+                        .ok()
                 });
-                let _ = reply.send(folders);
+                let _ = reply.send(projects);
             }
             Request::List { reply } => {
                 let _ = reply.send(
@@ -160,14 +158,17 @@ impl<H: AgentHost> SupervisorTask<H> {
 
     async fn start(
         &self,
-        harness: Harness,
-        dir: &str,
-        conversation: Conversation,
+        Start {
+            harness,
+            dir,
+            conversation,
+            first,
+        }: Start,
         runs: &mut BTreeMap<RunId, Live>,
         outputs: &mut Outputs,
         exits: &mut Exits,
     ) -> Result<RunId, StartError> {
-        let requested = RequestedDir::parse(dir).map_err(StartError::Workdir)?;
+        let requested = RequestedDir::parse(&dir).map_err(StartError::Workdir)?;
         let resolved = self
             .host
             .resolve(requested.as_path())
@@ -186,7 +187,7 @@ impl<H: AgentHost> SupervisorTask<H> {
         let plan = harness
             .drive(&self.gateway, &opening)
             .map_err(StartError::NotDrivable)?;
-        let (codec, first) =
+        let (codec, opening_lines) =
             Driver::open(harness, opening, &self.version).map_err(StartError::NotDrivable)?;
         let run = RunId::generate(self.ids.as_ref());
         // Every run is recorded: without room, it does not start.
@@ -216,6 +217,7 @@ impl<H: AgentHost> SupervisorTask<H> {
                         stdin: None,
                         kill: None,
                         tap: None,
+                        first: None,
                     },
                 );
                 return Err(StartError::Spawn { run, source });
@@ -235,12 +237,13 @@ impl<H: AgentHost> SupervisorTask<H> {
             stdin: Some(stdin),
             kill: Some(kill),
             tap: Some(tap),
+            first,
         };
         self.publish(RunUpdate::State {
             run,
             state: RunState::Starting,
         });
-        for line in &first {
+        for line in &opening_lines {
             Self::write(run, &mut live, line).await;
         }
         outputs.push(Self::output(run, stdout, self.line_limit));
@@ -299,6 +302,13 @@ impl<H: AgentHost> SupervisorTask<H> {
                 event: event.clone(),
             });
             self.apply(run, live, RunEvent::Agent(event)).await;
+            // Open now: the first prompt goes out.
+            if let RunState::Idle { .. } = live.state
+                && let Some(prompt) = live.first.take()
+                && let Err(error) = self.command(run, live, RunCommand::Prompt(prompt)).await
+            {
+                tracing::debug!(%run, %error, "the first prompt was refused");
+            }
         }
     }
 

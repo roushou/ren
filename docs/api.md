@@ -26,9 +26,9 @@ Runs (see [runs](#runs)) have their own commands, through the control API:
 
 ```sh
 ren runs start codex ~/dev/acme
-ren runs start claude ~/dev/acme
+ren runs start claude ~/dev/acme --prompt "fix the failing test"
 ren runs ls
-ren runs folders                                 # where a run can start
+ren runs projects                                # where a run can start
 ren runs say <run-id> fix the failing test
 ren runs answer <run-id> <approval-id>          # or: decline, cancel, accept-for-session
 ren runs interrupt <run-id>
@@ -99,20 +99,12 @@ keys, and `q` quits. It needs a running daemon; a gateway that cannot be
 reached is reported before the screen is taken over.
 
 With control access (this host's control token, or an allowed Tailscale login
-through a gateway) and `[runs]` roots on the daemon, `ren tui` also drives
-[runs](#runs). A live run's session keeps its pane, marked `run · idle`,
-`working`, or `asks`; a run waiting for an answer lights its title amber and
-says under the conversation what it asks (`? run `cargo test` in /work/acme`).
-`s` opens a picker of the daemon's run folders (each root and the folders
-directly inside it): typing narrows the list or names any full path on the
-daemon's host, ↑↓ choose, tab switches between Codex and Claude Code, and
-enter starts the run and opens its first prompt (its pane appears once its
-first model call is recorded; until then `c` reaches it). `c` types a prompt
-for the focused run (enter sends, esc drops it), `a` approves its oldest
-request once, `A` for the rest of the session, `d` declines it, `x` interrupts
-the turn, and `X` stops the run. A refused command is
-shown in words in the status line until esc. Without control access the wall
-shows sessions as before, and the run keys say why they do nothing.
+through a gateway) and `[runs]` roots on the daemon, `ren tui` also shows
+[runs](#runs): a live run's session keeps its pane, marked `run · idle`,
+`working`, or `asks`, and a run waiting for an answer lights its title amber
+and says under the conversation what it asks (`? run `cargo test` in
+/work/acme`). The wall only watches; runs are started and driven from `ren
+runs`, the web UI, or the `ren runs` subcommands.
 
 The default `terminal` theme uses the terminal's foreground, background, and
 ANSI palette. `dark` and `light` use fixed RGB palettes and need a true-color
@@ -419,16 +411,16 @@ it.
 Runs are off while `runs.roots` is empty: every route then answers `404`
 `runs_disabled`. Access is the control API's.
 
-| Endpoint                                           | Body                                                                                       | Answer                                                                                                           |
-| -------------------------------------------------- | ------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------- |
-| `GET /control/v1/runs`                             | none                                                                                       | `{api_version, runs}`: each `{run, harness, workdir, state}`                                                     |
-| `POST /control/v1/runs`                            | `{"harness": "codex"\|"claude_code", "dir": "/abs/path"}`, optional `"resume": "<thread>"` | `201` `{api_version, run}`; with `resume`, the run continues that client conversation                            |
-| `POST /control/v1/runs/{run}/prompt`               | `{"text": "…"}`, not blank                                                                 | `202`                                                                                                            |
-| `POST /control/v1/runs/{run}/approvals/{approval}` | `{"decision": …}`                                                                          | `202`; `accept`, `accept_for_session`, `decline`, or `cancel`                                                    |
-| `POST /control/v1/runs/{run}/interrupt`            | none                                                                                       | `202`                                                                                                            |
-| `POST /control/v1/runs/{run}/stop`                 | none                                                                                       | `202`; the run ends once its process has exited                                                                  |
-| `GET /control/v1/runs/folders`                     | none                                                                                       | `{api_version, folders}`: each run root and the folders directly inside it, `{path, name}`, hidden ones left out |
-| `GET /control/v1/runs/events`                      | none                                                                                       | server-sent `run` events from now on; `lagged` when some were skipped                                            |
+| Endpoint                                           | Body                                                                                                                                                          | Answer                                                                                                                                                                                                                                                                                                                                                                      |
+| -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /control/v1/runs`                             | none                                                                                                                                                          | `{api_version, runs}`: each `{run, harness, workdir, state}`                                                                                                                                                                                                                                                                                                                |
+| `POST /control/v1/runs`                            | `{"harness": "codex"\|"claude_code", "dir": "/abs/path"}`, optional `"resume": "<thread>"` and `"prompt"`, the first prompt, sent once the conversation opens | `201` `{api_version, run}`; with `resume`, the run continues that client conversation                                                                                                                                                                                                                                                                                       |
+| `POST /control/v1/runs/{run}/prompt`               | `{"text": "…"}`, not blank                                                                                                                                    | `202`                                                                                                                                                                                                                                                                                                                                                                       |
+| `POST /control/v1/runs/{run}/approvals/{approval}` | `{"decision": …}`                                                                                                                                             | `202`; `accept`, `accept_for_session`, `decline`, or `cancel`                                                                                                                                                                                                                                                                                                               |
+| `POST /control/v1/runs/{run}/interrupt`            | none                                                                                                                                                          | `202`                                                                                                                                                                                                                                                                                                                                                                       |
+| `POST /control/v1/runs/{run}/stop`                 | none                                                                                                                                                          | `202`; the run ends once its process has exited                                                                                                                                                                                                                                                                                                                             |
+| `GET /control/v1/runs/projects`                    | none                                                                                                                                                          | `{api_version, projects}`: the git repositories under the run roots (not looked inside, three levels down at most, hidden, `node_modules`, `target`, `vendor`, `dist`, and `build` folders skipped), and each root's folders with none below them; each `{path, name, git}`, `git` one of `{"kind": "branch", name}`, `detached` with its `commit`, `unreadable`, or `none` |
+| `GET /control/v1/runs/events`                      | none                                                                                                                                                          | server-sent `run` events from now on; `lagged` when some were skipped                                                                                                                                                                                                                                                                                                       |
 
 Commands answer `202` `{api_version}` once sent to the agent; what it does
 next arrives as run events. A run's `state` has a `phase`: `starting`, `idle` (with `thread`, the client's

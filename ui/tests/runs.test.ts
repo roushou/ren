@@ -378,16 +378,19 @@ test('an approval to use another tool says which, and only drivable clients resu
   assert.equal(Runs.drivable('pi'), null);
 });
 
-test('the offered folders narrow as a name or path is typed', () => {
-  const offered = [
-    { path: '/home/op/dev', name: 'dev' },
-    { path: '/home/op/dev/acme', name: 'dev/acme' },
-    { path: '/home/op/ren', name: 'ren' },
-  ];
-  assert.equal(Runs.choose(offered, '').length, 3);
+test('projects narrow as a name or path is typed, and say their branch', () => {
+  const projects = [
+    { path: '/home/op/dev/acme', name: 'acme', git: { kind: 'branch', name: 'main' } },
+    { path: '/home/op/dev/notes', name: 'notes', git: { kind: 'none' } },
+    { path: '/home/op/ren', name: 'ren', git: { kind: 'detached', commit: 'abc1234' } },
+  ] as const;
+  assert.equal(Runs.choose([...projects], '').length, 3);
   assert.deepEqual(
-    Runs.choose(offered, 'ACME').map((folder) => folder.name),
-    ['dev/acme'],
+    Runs.choose([...projects], 'ACME').map((project) => project.name),
+    ['acme'],
   );
-  assert.deepEqual(Runs.choose(offered, '/home/op/ren'), []);
+  assert.deepEqual(
+    projects.map((project) => Runs.branch(project.git)),
+    ['main', 'no git', 'at abc1234'],
+  );
 });

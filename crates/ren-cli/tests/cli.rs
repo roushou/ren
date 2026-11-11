@@ -729,6 +729,8 @@ async fn runs_through_a_gateway_send_the_control_requests() {
         "/srv/acme",
         "--resume",
         "22222222-2222-4222-8222-222222222222",
+        "--prompt",
+        "fix the failing test",
     ]);
     success(&output);
     assert_eq!(json(&output)["run"], run);
@@ -748,7 +750,7 @@ async fn runs_through_a_gateway_send_the_control_requests() {
         (
             "POST",
             "/control/v1/runs".to_owned(),
-            serde_json::json!({ "harness": "codex", "dir": "/srv/acme", "resume": "22222222-2222-4222-8222-222222222222" }),
+            serde_json::json!({ "harness": "codex", "dir": "/srv/acme", "resume": "22222222-2222-4222-8222-222222222222", "prompt": "fix the failing test" }),
         ),
         (
             "POST",

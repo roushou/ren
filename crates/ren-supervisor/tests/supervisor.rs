@@ -26,7 +26,7 @@ use ren_recorder::{
 };
 use ren_store::{Reader, Store, query::PageLimit, view::RunView};
 use ren_supervisor::{
-    AgentHost, AgentProcess, CommandError, Conversation, KillSignal, KillSwitch, ProcessExit,
+    AgentHost, AgentProcess, CommandError, Conversation, KillSignal, KillSwitch, Look, ProcessExit,
     RunCommand, RunRefused, RunState, RunUpdate, StartError, Supervisor, SupervisorOptions,
     Workdir,
 };
@@ -89,10 +89,17 @@ impl AgentHost for FakeHost {
         }
     }
 
-    fn subfolders(&self, dir: &Path) -> io::Result<Vec<String>> {
+    fn look(&self, dir: &Path) -> io::Result<Look> {
         Ok(match dir.to_str() {
-            Some("/work") => vec!["acme".into(), ".git".into()],
-            Some(_) | None => vec![],
+            Some("/work") => Look {
+                folders: vec!["acme".into(), "notes".into()],
+                git: None,
+            },
+            Some("/work/acme") => Look {
+                folders: vec!["src".into()],
+                git: Some(Some("ref: refs/heads/main".into())),
+            },
+            Some(_) | None => Look::default(),
         })
     }
 
@@ -368,7 +375,7 @@ async fn runs_a_turn_through_an_approval_and_stops() {
     let mut updates = supervisor.subscribe();
 
     let run = supervisor
-        .start(Harness::Codex, "/work/acme", Conversation::New)
+        .start(Harness::Codex, "/work/acme", Conversation::New, None)
         .await
         .unwrap();
     let (arguments, workdir) = spawned.lock().unwrap()[0].clone();
@@ -452,7 +459,7 @@ async fn refuses_directories_outside_the_roots_and_undrivable_clients() {
     ];
     for (dir, expected) in refused {
         let error = supervisor
-            .start(Harness::Codex, dir, Conversation::New)
+            .start(Harness::Codex, dir, Conversation::New, None)
             .await
             .unwrap_err();
         assert!(
@@ -462,7 +469,7 @@ async fn refuses_directories_outside_the_roots_and_undrivable_clients() {
     }
     assert!(matches!(
         supervisor
-            .start(Harness::Pi, "/work/acme", Conversation::New)
+            .start(Harness::Pi, "/work/acme", Conversation::New, None)
             .await,
         Err(StartError::NotDrivable(_))
     ));
@@ -476,7 +483,7 @@ async fn a_failed_spawn_is_reported_and_kept() {
     let supervised = supervise(host).await;
     let supervisor = &supervised.supervisor;
     let Err(StartError::Spawn { run, .. }) = supervisor
-        .start(Harness::Codex, "/work/acme", Conversation::New)
+        .start(Harness::Codex, "/work/acme", Conversation::New, None)
         .await
     else {
         panic!("expected a spawn failure");
@@ -501,7 +508,7 @@ async fn a_refused_opening_stops_the_run() {
     let supervisor = &supervised.supervisor;
     let mut updates = supervisor.subscribe();
     supervisor
-        .start(Harness::Codex, "/work/acme", Conversation::New)
+        .start(Harness::Codex, "/work/acme", Conversation::New, None)
         .await
         .unwrap();
     assert_eq!(
@@ -519,7 +526,7 @@ async fn an_agent_that_exits_on_its_own_ends_the_run() {
     let supervisor = &supervised.supervisor;
     let mut updates = supervisor.subscribe();
     supervisor
-        .start(Harness::Codex, "/work/acme", Conversation::New)
+        .start(Harness::Codex, "/work/acme", Conversation::New, None)
         .await
         .unwrap();
     assert_eq!(
@@ -537,11 +544,11 @@ async fn dropping_every_handle_drains_the_runs_and_ends_the_task() {
     let supervisor = &supervised.supervisor;
     let mut updates = supervisor.subscribe();
     supervisor
-        .start(Harness::Codex, "/work/a", Conversation::New)
+        .start(Harness::Codex, "/work/a", Conversation::New, None)
         .await
         .unwrap();
     supervisor
-        .start(Harness::Codex, "/work/b", Conversation::New)
+        .start(Harness::Codex, "/work/b", Conversation::New, None)
         .await
         .unwrap();
     state(&mut updates, |s| matches!(s, RunState::Idle { .. })).await;
@@ -573,7 +580,12 @@ async fn a_run_can_resume_the_clients_thread() {
     let thread =
         ren_protocol::native::NativeThreadId::new(uuid::Uuid::parse_str(earlier).unwrap()).unwrap();
     supervisor
-        .start(Harness::Codex, "/work/acme", Conversation::Resume(thread))
+        .start(
+            Harness::Codex,
+            "/work/acme",
+            Conversation::Resume(thread),
+            None,
+        )
         .await
         .unwrap();
     assert_eq!(
@@ -593,7 +605,7 @@ async fn drives_claude_code_through_a_turn_in_the_conversation_ren_names() {
     let mut updates = supervisor.subscribe();
 
     let run = supervisor
-        .start(Harness::ClaudeCode, "/work/acme", Conversation::New)
+        .start(Harness::ClaudeCode, "/work/acme", Conversation::New, None)
         .await
         .unwrap();
     let (arguments, _) = spawned.lock().unwrap()[0].clone();
@@ -648,4 +660,41 @@ async fn drives_claude_code_through_a_turn_in_the_conversation_ren_names() {
     };
     assert_eq!(stored.harness, Stored::Known(Harness::ClaudeCode));
     assert_eq!(stored.thread.as_deref(), Some(named.as_str()));
+}
+
+#[tokio::test]
+async fn a_first_prompt_goes_out_once_the_conversation_opens() {
+    let supervised = supervise(FakeHost::new(Script::Claude)).await;
+    let supervisor = &supervised.supervisor;
+    let mut updates = supervisor.subscribe();
+    supervisor
+        .start(
+            Harness::ClaudeCode,
+            "/work/acme",
+            Conversation::New,
+            Some(prompt_text("run the tests")),
+        )
+        .await
+        .unwrap();
+    // No prompt command: the run asks its first approval on its own.
+    state(
+        &mut updates,
+        |s| matches!(s, RunState::Working { approvals, .. } if !approvals.is_empty()),
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn projects_are_the_repositories_and_plain_folders_under_the_roots() {
+    let supervised = supervise(FakeHost::new(Script::Codex)).await;
+    let projects = supervised.supervisor.projects().await.unwrap();
+    let listed: Vec<(&str, &str)> = projects
+        .iter()
+        .map(|project| (project.name.as_str(), project.path.as_str()))
+        .collect();
+    assert_eq!(listed, [("acme", "/work/acme"), ("notes", "/work/notes")]);
+}
+
+fn prompt_text(text: &str) -> Prompt {
+    Prompt::parse(text.into()).unwrap()
 }

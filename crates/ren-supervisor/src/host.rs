@@ -2,7 +2,7 @@
 //! agent processes. Declared here, implemented by the daemon; tests use
 //! in-memory processes.
 
-use crate::{run::ProcessExit, workdir::Workdir};
+use crate::{project::Look, run::ProcessExit, workdir::Workdir};
 use futures_util::future::BoxFuture;
 use ren_harness::launch::LaunchPlan;
 use std::{
@@ -19,8 +19,9 @@ pub trait AgentHost: Send + Sync + 'static {
     /// The real, absolute path of `path`, with every link resolved.
     fn resolve(&self, path: &Path) -> io::Result<PathBuf>;
 
-    /// The names of the folders directly inside `dir`, links not followed.
-    fn subfolders(&self, dir: &Path) -> io::Result<Vec<String>>;
+    /// What `dir` holds: its folders (links not followed), and whether it
+    /// is a git repository, with its `HEAD`'s text when readable.
+    fn look(&self, dir: &Path) -> io::Result<Look>;
 
     /// Start `plan` in `workdir`, with piped stdin and stdout.
     fn spawn(&self, plan: &LaunchPlan, workdir: &Workdir) -> io::Result<AgentProcess>;

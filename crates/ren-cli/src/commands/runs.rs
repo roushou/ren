@@ -30,8 +30,9 @@ pub struct RunsCmd {
 enum RunsAction {
     /// List the daemon's runs and their states.
     Ls,
-    /// The folders a run can start in: each run root and the folders inside it.
-    Folders,
+    /// The projects a run can start in: the git repositories under the run
+    /// roots, and each root's folders with none below them.
+    Projects,
     /// Start a client in a folder under the daemon's run roots.
     Start(StartArgs),
     /// Send a prompt: start a turn.
@@ -76,6 +77,9 @@ struct StartArgs {
     /// starting a new one.
     #[arg(long)]
     resume: Option<Uuid>,
+    /// The first prompt, sent once the conversation opens.
+    #[arg(long)]
+    prompt: Option<String>,
 }
 
 #[derive(Args)]
@@ -155,18 +159,26 @@ impl RunsCmd {
                 return Self::watch(ctx, &control, args.run).await;
             }
             RunsAction::Ls => (Method::GET, "runs".to_owned(), None),
-            RunsAction::Folders => (Method::GET, "runs/folders".to_owned(), None),
+            RunsAction::Projects => (Method::GET, "runs/projects".to_owned(), None),
             RunsAction::Start(args) => {
                 let local = matches!(self.target.select(ctx)?, Target::Local);
                 let dir = Self::dir(args.dir, local)?;
                 (
                     Method::POST,
                     "runs".to_owned(),
-                    Some(serde_json::json!({
-                        "harness": Harness::from(args.client),
-                        "dir": dir,
-                        "resume": args.resume,
-                    })),
+                    Some({
+                        let mut body = serde_json::json!({
+                            "harness": Harness::from(args.client),
+                            "dir": dir,
+                        });
+                        if let Some(resume) = args.resume {
+                            body["resume"] = resume.to_string().into();
+                        }
+                        if let Some(prompt) = args.prompt {
+                            body["prompt"] = prompt.into();
+                        }
+                        body
+                    }),
                 )
             }
             RunsAction::Say(args) => (

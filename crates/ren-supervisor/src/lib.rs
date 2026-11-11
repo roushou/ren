@@ -9,6 +9,7 @@
 //! the supervisor starts the official program and never handles credentials.
 
 pub mod host;
+pub mod project;
 #[cfg(test)]
 mod purity;
 pub mod run;
@@ -16,13 +17,14 @@ mod task;
 pub mod workdir;
 
 pub use host::{AgentHost, AgentProcess, KillSignal, KillSwitch};
+pub use project::{Look, Project, ProjectGit, Search};
 pub use run::{Approvals, ProcessExit, RunCommand, RunRefused, RunState, Waiting};
 pub use task::SupervisorTask;
-pub use workdir::{Folder, Roots, Workdir, WorkdirError};
+pub use workdir::{Roots, Workdir, WorkdirError};
 
 use ren_harness::{
     Harness,
-    drive::{CommandRefused, DriveEvent, LineLimit},
+    drive::{CommandRefused, DriveEvent, LineLimit, Prompt},
     endpoint::GatewayEndpoint,
     launch::NotDrivable,
 };
@@ -130,11 +132,18 @@ pub enum CommandError {
 #[error("the supervisor has stopped")]
 pub struct Gone;
 
+/// What a new run starts: which client, where, which conversation, and its
+/// first prompt.
+pub(crate) struct Start {
+    pub(crate) harness: Harness,
+    pub(crate) dir: String,
+    pub(crate) conversation: Conversation,
+    pub(crate) first: Option<Prompt>,
+}
+
 pub(crate) enum Request {
     Start {
-        harness: Harness,
-        dir: String,
-        conversation: Conversation,
+        start: Start,
         reply: oneshot::Sender<Result<RunId, StartError>>,
     },
     Command {
@@ -145,8 +154,8 @@ pub(crate) enum Request {
     List {
         reply: oneshot::Sender<Vec<RunSnapshot>>,
     },
-    Folders {
-        reply: oneshot::Sender<Vec<Folder>>,
+    Projects {
+        reply: oneshot::Sender<Vec<Project>>,
     },
 }
 
@@ -189,19 +198,23 @@ impl Supervisor {
     }
 
     /// Start `harness` in `dir`, which must lie inside a root, opening
-    /// `conversation`.
+    /// `conversation`, and send it `first` once it is open.
     pub async fn start(
         &self,
         harness: Harness,
         dir: &str,
         conversation: Conversation,
+        first: Option<Prompt>,
     ) -> Result<RunId, StartError> {
         let (reply, answer) = oneshot::channel();
         self.requests
             .send(Request::Start {
-                harness,
-                dir: dir.to_owned(),
-                conversation,
+                start: Start {
+                    harness,
+                    dir: dir.to_owned(),
+                    conversation,
+                    first,
+                },
                 reply,
             })
             .await
@@ -232,12 +245,12 @@ impl Supervisor {
         answer.await.map_err(|_| Gone)
     }
 
-    /// The folders a run can start in: each root and the folders directly
-    /// inside it.
-    pub async fn folders(&self) -> Result<Vec<Folder>, Gone> {
+    /// The projects a run can start in: the git repositories under the
+    /// roots, and each root's folders with none below them.
+    pub async fn projects(&self) -> Result<Vec<Project>, Gone> {
         let (reply, answer) = oneshot::channel();
         self.requests
-            .send(Request::Folders { reply })
+            .send(Request::Projects { reply })
             .await
             .map_err(|_| Gone)?;
         answer.await.map_err(|_| Gone)

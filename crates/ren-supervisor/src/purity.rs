@@ -7,6 +7,7 @@ fn pure_modules_stay_free_of_runtime_and_io_dependencies() {
     let sources = [
         ("run.rs", include_str!("run.rs")),
         ("workdir.rs", include_str!("workdir.rs")),
+        ("project.rs", include_str!("project.rs")),
     ];
     let forbidden = [
         "tokio",

@@ -40,6 +40,9 @@ struct StartRequest {
     /// The client's thread to continue, instead of a new conversation.
     #[serde(default)]
     resume: Option<uuid::Uuid>,
+    /// The first prompt, sent once the conversation opens.
+    #[serde(default)]
+    prompt: Option<String>,
 }
 
 #[derive(serde::Deserialize)]
@@ -170,7 +173,7 @@ impl RunsApi {
         Router::new()
             .route("/control/v1/runs", get(Self::list).post(Self::start))
             .route("/control/v1/runs/events", get(Self::events))
-            .route("/control/v1/runs/folders", get(Self::folders))
+            .route("/control/v1/runs/projects", get(Self::projects))
             .route("/control/v1/runs/{run}/prompt", post(Self::prompt))
             .route(
                 "/control/v1/runs/{run}/approvals/{approval}",
@@ -228,15 +231,15 @@ impl RunsApi {
         .into_response())
     }
 
-    async fn folders(State(api): Api, headers: HeaderMap) -> Result<Response, Denied> {
-        let folders = api
+    async fn projects(State(api): Api, headers: HeaderMap) -> Result<Response, Denied> {
+        let projects = api
             .admit(&headers)?
-            .folders()
+            .projects()
             .await
             .map_err(|_| Denied::Run(RunRefusal::Unavailable))?;
         Ok(Json(serde_json::json!({
             "api_version": ControlApi::API_VERSION,
-            "folders": folders,
+            "projects": projects,
         }))
         .into_response())
     }
@@ -254,8 +257,13 @@ impl RunsApi {
                 NativeThreadId::new(thread).ok_or(Denied::Control(Refusal::Invalid))?,
             ),
         };
+        let first = request
+            .prompt
+            .map(Prompt::parse)
+            .transpose()
+            .map_err(|_| Denied::Control(Refusal::Invalid))?;
         let run = supervisor
-            .start(request.harness, &request.dir, conversation)
+            .start(request.harness, &request.dir, conversation, first)
             .await
             .map_err(|error| Denied::Run(error.into()))?;
         Ok((

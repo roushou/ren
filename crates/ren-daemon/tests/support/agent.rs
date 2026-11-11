@@ -3,7 +3,7 @@
 //! the turn once it is answered. No real client, network, or credentials.
 
 use ren_harness::launch::LaunchPlan;
-use ren_supervisor::{AgentHost, AgentProcess, KillSignal, KillSwitch, ProcessExit, Workdir};
+use ren_supervisor::{AgentHost, AgentProcess, KillSignal, KillSwitch, Look, ProcessExit, Workdir};
 use serde_json::{Value, json};
 use std::{
     io,
@@ -26,10 +26,17 @@ impl AgentHost for ScriptedHost {
         Ok(path.to_path_buf())
     }
 
-    fn subfolders(&self, dir: &Path) -> io::Result<Vec<String>> {
+    fn look(&self, dir: &Path) -> io::Result<Look> {
         Ok(match dir.to_str() {
-            Some("/work") => vec!["acme".into(), "web".into()],
-            Some(_) | None => vec![],
+            Some("/work") => Look {
+                folders: vec!["acme".into(), "web".into()],
+                git: None,
+            },
+            Some("/work/acme") => Look {
+                folders: vec![],
+                git: Some(Some("ref: refs/heads/main".into())),
+            },
+            Some(_) | None => Look::default(),
         })
     }
 

@@ -18,7 +18,7 @@
     type Decision,
     type DeskRun,
     type Drivable,
-    type RunFolder,
+    type RunProject,
     type RecordedRun,
     type RunId,
     type RunSnapshot,
@@ -51,8 +51,6 @@
   const transcript = $derived(selected ? (transcripts.get(selected) ?? new Transcript()) : null);
   const waiting = $derived(projects.reduce((sum, project) => sum + project.waiting, 0));
   const liveCount = $derived(live.filter((run) => run.state.phase !== 'ended').length);
-  /** Folders runs were started in, offered when starting another. */
-  const folders = $derived([...new Set(runs.map((run) => run.workdir))]);
 
   /** The selected run's recorded turns, oldest first, and the session they belong to. */
   let history = $state.raw<{ run: RunId; session: string | null; turns: TurnActivity[] } | null>(
@@ -60,10 +58,17 @@
   );
   let historyError = $state<string | null>(null);
 
+  /** What is typed to find a project, or a full path on the daemon's host. */
   let folder = $state('');
-  /** The folders the daemon offers to start a run in. */
-  let offered = $state.raw<RunFolder[]>([]);
+  /** The project chosen to start in. */
+  let chosen = $state<string | null>(null);
+  /** The new run's first prompt. */
+  let firstPrompt = $state('');
+  /** The projects the daemon offers to start a run in. */
+  let offered = $state.raw<RunProject[]>([]);
   const choices = $derived(Runs.choose(offered, folder));
+  /** Where a new run would start: the chosen project, or a typed full path. */
+  const target = $derived(chosen ?? (folder.trim().startsWith('/') ? folder.trim() : null));
   let starting = $state<Drivable>('codex');
   let prompt = $state('');
   let busy = $state(false);
@@ -89,10 +94,10 @@
     }
   }
 
-  async function readFolders() {
+  async function readProjects() {
     if (!data.runsControl) return;
     try {
-      offered = await client.folders();
+      offered = await client.projects();
     } catch {
       // The list is a convenience; a typed path still starts a run.
     }
@@ -171,15 +176,20 @@
   async function start(
     resume: { harness: Drivable; workdir: string; thread: string } | null = null,
   ) {
-    const dir = resume?.workdir ?? folder.trim();
+    const dir = resume?.workdir ?? target;
     if (!dir) return;
+    const first = resume ? null : firstPrompt.trim() || null;
     await act(async () => {
       const run = await client.start(
         resume?.harness ?? starting,
         dir,
         (resume?.thread ?? null) as never,
+        first,
       );
+      if (first) transcripts.set(run, new Transcript().prompted(first));
       folder = '';
+      chosen = null;
+      firstPrompt = '';
       await readLive();
       select(run);
     });
@@ -238,7 +248,7 @@
 
   onMount(() => {
     void readLive();
-    void readFolders();
+    void readProjects();
     void readRecorded();
     if (!data.runsControl) return;
     const source = new EventSource('/control/runs/events');
@@ -400,46 +410,55 @@
           void start();
         }}
       >
-        <label for="run-folder">Start a run in a folder</label>
-        <div class="segmented" role="radiogroup" aria-label="Client">
-          {#each DRIVABLE as harness (harness)}<button
-              type="button"
-              role="radio"
-              aria-checked={starting === harness}
-              class:chosen={starting === harness}
-              onclick={() => (starting = harness)}>{harnessLabel(harness)}</button
-            >{/each}
+        <div class="new-run-head">
+          <label for="run-folder">New run</label>
+          <div class="segmented" role="radiogroup" aria-label="Client">
+            {#each DRIVABLE as harness (harness)}<button
+                type="button"
+                role="radio"
+                aria-checked={starting === harness}
+                class:chosen={starting === harness}
+                onclick={() => (starting = harness)}>{harnessLabel(harness)}</button
+              >{/each}
+          </div>
         </div>
-        <div class="new-run-row">
-          <input
-            id="run-folder"
-            class="mono"
-            list="run-folders"
-            placeholder="/home/you/dev/project"
-            autocomplete="off"
-            spellcheck="false"
-            bind:value={folder}
-          />
-          <button class="button primary" disabled={busy || !folder.trim()}>Start</button>
-        </div>
-        <datalist id="run-folders">
-          {#each folders as known (known)}<option value={known}></option>{/each}
-        </datalist>
+        <input
+          id="run-folder"
+          class="mono"
+          placeholder="Find a project, or a full path"
+          autocomplete="off"
+          spellcheck="false"
+          bind:value={folder}
+          oninput={() => (chosen = null)}
+        />
         {#if choices.length}
-          <ul class="folder-choices" aria-label="Folders on the daemon's host">
+          <ul class="folder-choices" aria-label="Projects on the daemon's host">
             {#each choices as choice (choice.path)}
               <li>
                 <button
                   type="button"
-                  class:chosen={folder === choice.path}
+                  class:chosen={chosen === choice.path}
                   title={choice.path}
-                  onclick={() => (folder = choice.path)}
-                  ><span>{choice.name}</span><span class="muted mono">{choice.path}</span></button
+                  onclick={() => (chosen = choice.path)}
+                  ><span>{choice.name}</span><span class="muted mono"
+                    >{Runs.branch(choice.git)}</span
+                  ></button
                 >
               </li>
             {/each}
           </ul>
         {/if}
+        <textarea
+          class="first-prompt"
+          rows="3"
+          placeholder={target
+            ? `What should ${harnessLabel(starting)} do in ${Runs.folder(target)}?`
+            : 'Pick a project first'}
+          bind:value={firstPrompt}
+          aria-label="First prompt"></textarea>
+        <button class="button primary" disabled={busy || !target}
+          >{firstPrompt.trim() ? 'Start' : 'Start without a prompt'}</button
+        >
       </form>
     {/if}
     {#if unavailable}<p class="sidebar-note danger">{unavailable}</p>{/if}
@@ -670,6 +689,21 @@
   .new-run label {
     font-size: 11px;
     color: var(--muted);
+  }
+  .new-run-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .first-prompt {
+    resize: vertical;
+    font: inherit;
+    font-size: 12px;
+    padding: 4px 8px;
+    border: 1px solid var(--control-border);
+    border-radius: 3px;
+    background: var(--surface);
+    color: var(--ink);
   }
   .folder-choices {
     list-style: none;

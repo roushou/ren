@@ -373,14 +373,36 @@ const recordedRun = object<RecordedRun>({
 });
 
 const liveRuns = versioned(object<{ runs: RunSnapshot[] }>({ runs: array(runSnapshot) }));
-/** A folder a run can start in: a run root, or a folder directly inside one. */
-export interface RunFolder {
+/** A project's repository, as its `HEAD` reads. */
+export type ProjectGit =
+  | { kind: 'branch'; name: string }
+  | { kind: 'detached'; commit: string }
+  | { kind: 'unreadable' }
+  | { kind: 'none' };
+
+/** A place a run can start in: a git repository under a run root, or a root's folder. */
+export interface RunProject {
   path: string;
   name: string;
+  git: ProjectGit;
 }
-const runFolders = versioned(
-  object<{ folders: RunFolder[] }>({
-    folders: array(object<RunFolder>({ path: string, name: string })),
+
+const projectGit: Decoder<ProjectGit> = (value, path) => {
+  if (!isRecord(value)) throw new ShapeError(path, 'an object');
+  switch (value.kind) {
+    case 'branch':
+      return { kind: 'branch', name: string(value.name, `${path}.name`) };
+    case 'detached':
+      return { kind: 'detached', commit: string(value.commit, `${path}.commit`) };
+    case 'none':
+      return { kind: 'none' };
+    default:
+      return { kind: 'unreadable' };
+  }
+};
+const runProjects = versioned(
+  object<{ projects: RunProject[] }>({
+    projects: array(object<RunProject>({ path: string, name: string, git: projectGit })),
   }),
 );
 const recordedRuns = versioned(object<{ runs: RecordedRun[] }>({ runs: array(recordedRun) }));
@@ -458,16 +480,17 @@ export class RunsClient {
   async live(signal?: AbortSignal): Promise<RunSnapshot[]> {
     return (await this.#send('GET', '/control/runs', undefined, liveRuns, signal)).runs;
   }
-  async folders(signal?: AbortSignal): Promise<RunFolder[]> {
-    return (await this.#send('GET', '/control/runs/folders', undefined, runFolders, signal))
-      .folders;
+  async projects(signal?: AbortSignal): Promise<RunProject[]> {
+    return (await this.#send('GET', '/control/runs/projects', undefined, runProjects, signal))
+      .projects;
   }
   async start(
     harness: Drivable,
     dir: string,
     resume: NativeThreadId | null = null,
+    prompt: string | null = null,
   ): Promise<RunId> {
-    const body = { harness, dir, ...(resume ? { resume } : {}) };
+    const body = { harness, dir, ...(resume ? { resume } : {}), ...(prompt ? { prompt } : {}) };
     return (await this.#send('POST', '/control/runs', body, started)).run;
   }
   async prompt(run: RunId, text: string): Promise<void> {
@@ -871,17 +894,29 @@ export class Runs {
     }
   }
 
-  /**
-   * The offered folders matching what is typed, by name or path, ignoring
-   * case; none once the typed text names one of them exactly.
-   */
-  static choose(offered: readonly RunFolder[], typed: string): RunFolder[] {
+  /** The projects matching what is typed, by name or path, ignoring case. */
+  static choose(projects: readonly RunProject[], typed: string): RunProject[] {
     const text = typed.trim().toLowerCase();
-    if (offered.some((folder) => folder.path === typed.trim())) return [];
-    return offered.filter(
-      (folder) =>
-        folder.name.toLowerCase().includes(text) || folder.path.toLowerCase().includes(text),
+    return projects.filter(
+      (project) =>
+        project.name.toLowerCase().includes(text) || project.path.toLowerCase().includes(text),
     );
+  }
+
+  /** What a project's repository is on, in a few words. */
+  static branch(git: ProjectGit): string {
+    switch (git.kind) {
+      case 'branch':
+        return git.name;
+      case 'detached':
+        return `at ${git.commit}`;
+      case 'unreadable':
+        return 'git';
+      case 'none':
+        return 'no git';
+      default:
+        return assertNever(git);
+    }
   }
 
   /** A run's client, when the daemon can drive it to resume the conversation. */

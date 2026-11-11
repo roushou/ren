@@ -11,7 +11,7 @@ use ren_recorder::{
     id::IdSource,
     time::{Clock, Moment, Monotonic, UnixMillis},
 };
-use ren_supervisor::{AgentHost, AgentProcess, KillSwitch, ProcessExit, Workdir};
+use ren_supervisor::{AgentHost, AgentProcess, KillSwitch, Look, ProcessExit, Workdir};
 use std::future::Future;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -182,22 +182,58 @@ impl ProcessHost {
     }
 }
 
+impl ProcessHost {
+    /// Whether `dir` holds a git repository, and its `HEAD`'s text when it
+    /// can be read. `.git` is a folder, or, in a linked worktree, a file
+    /// naming the repository's folder (`gitdir: <path>`).
+    fn git(dir: &Path) -> Option<Option<String>> {
+        let dot_git = dir.join(".git");
+        let kind = std::fs::symlink_metadata(&dot_git).ok()?.file_type();
+        let git_dir = if kind.is_dir() {
+            Some(dot_git)
+        } else if kind.is_file() {
+            Self::small(&dot_git).and_then(|text| {
+                let path = text.trim().strip_prefix("gitdir:")?.trim().to_owned();
+                Some(dir.join(path))
+            })
+        } else {
+            None
+        };
+        Some(git_dir.and_then(|git_dir| Self::small(&git_dir.join("HEAD"))))
+    }
+
+    /// A small text file's first bytes; `HEAD` is one line.
+    fn small(path: &Path) -> Option<String> {
+        use std::io::Read as _;
+        let mut text = String::new();
+        std::fs::File::open(path)
+            .ok()?
+            .take(1024)
+            .read_to_string(&mut text)
+            .ok()?;
+        Some(text)
+    }
+}
+
 impl AgentHost for ProcessHost {
     fn resolve(&self, path: &Path) -> io::Result<PathBuf> {
         std::fs::canonicalize(path)
     }
 
-    fn subfolders(&self, dir: &Path) -> io::Result<Vec<String>> {
-        let mut names = Vec::new();
+    fn look(&self, dir: &Path) -> io::Result<Look> {
+        let mut folders = Vec::new();
         for entry in std::fs::read_dir(dir)? {
             let entry = entry?;
             if entry.file_type()?.is_dir()
                 && let Ok(name) = entry.file_name().into_string()
             {
-                names.push(name);
+                folders.push(name);
             }
         }
-        Ok(names)
+        Ok(Look {
+            folders,
+            git: Self::git(dir),
+        })
     }
 
     fn spawn(&self, plan: &LaunchPlan, workdir: &Workdir) -> io::Result<AgentProcess> {
