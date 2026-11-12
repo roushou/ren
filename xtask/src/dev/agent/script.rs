@@ -155,6 +155,7 @@ impl AgentScript {
                         "reasoningEffort": effort, "description": "" })) })),
                 "nextCursor": null } }))],
             (Some("turn/start"), Some(id)) => self.start(id, &params),
+            (Some("turn/steer"), Some(id)) => self.steer(id, &params),
             (Some("turn/interrupt"), Some(id)) => {
                 let mut out = vec![Out::Send(json!({ "id": id, "result": {} }))];
                 out.extend(self.end("interrupted"));
@@ -219,6 +220,33 @@ impl AgentScript {
             None => self.call(),
         });
         out
+    }
+
+    /// A message into the running turn: taken as a user message of it.
+    fn steer(&mut self, id: Value, params: &Value) -> Vec<Out> {
+        let text: String = params["input"]
+            .as_array()
+            .map(|parts| {
+                parts
+                    .iter()
+                    .filter_map(|part| part["text"].as_str())
+                    .collect()
+            })
+            .unwrap_or_default();
+        let Some(turn) = self.turn.as_ref() else {
+            return vec![Out::Send(json!({ "id": id,
+                "error": { "code": -32600, "message": "no turn is running" } }))];
+        };
+        let (turn_id, index) = (turn.id.clone(), turn.index);
+        self.requests += 1;
+        vec![
+            Out::Send(json!({ "id": id, "result": { "turnId": turn_id } })),
+            Out::Send(self.item(
+                "completed",
+                json!({ "type": "userMessage", "id": format!("steer-{index}-{}", self.requests),
+                "content": [{ "type": "text", "text": text }] }),
+            )),
+        ]
     }
 
     /// The number a turn's id is made from: unique per process, so a
@@ -387,6 +415,25 @@ mod tests {
         );
         assert_eq!(sent(&out)[0]["result"]["thread"]["id"], Run(7).uuid(1));
         agent
+    }
+
+    #[test]
+    fn a_steer_joins_the_running_turn_and_is_refused_without_one() {
+        let mut agent = opened();
+        let refused = agent.receive(&json!({ "id": 2, "method": "turn/steer",
+            "params": { "input": [{ "type": "text", "text": "too early" }] } }));
+        assert!(sent(&refused)[0]["error"].is_object());
+        let out = agent.receive(&json!({ "id": 3, "method": "turn/start",
+            "params": { "input": [{ "type": "text", "text": "explain the parser" }] } }));
+        let turn = sent(&out)[0]["result"]["turn"]["id"].clone();
+        let steered = agent.receive(&json!({ "id": 4, "method": "turn/steer",
+            "params": { "input": [{ "type": "text", "text": "only the lexer" }] } }));
+        assert_eq!(methods(&steered), ["(response)", "item/completed"]);
+        assert_eq!(sent(&steered)[0]["result"]["turnId"], turn);
+        assert_eq!(
+            sent(&steered)[1]["params"]["item"]["content"][0]["text"],
+            "only the lexer"
+        );
     }
 
     #[test]
