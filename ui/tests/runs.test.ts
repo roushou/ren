@@ -400,9 +400,27 @@ test('an approval to use another tool says which, and only drivable clients resu
 
 test('projects narrow as a name or path is typed, and say their branch', () => {
   const projects = [
-    { path: '/home/op/dev/acme', name: 'acme', git: { kind: 'branch', name: 'main' } },
-    { path: '/home/op/dev/notes', name: 'notes', git: { kind: 'none' } },
-    { path: '/home/op/ren', name: 'ren', git: { kind: 'detached', commit: 'abc1234' } },
+    {
+      path: '/home/op/dev/acme',
+      name: 'acme',
+      shown: '~/dev/acme',
+      kind: 'project',
+      git: { kind: 'branch', name: 'main' },
+    },
+    {
+      path: '/home/op/dev/notes',
+      name: 'notes',
+      shown: '~/dev/notes',
+      kind: 'project',
+      git: { kind: 'none' },
+    },
+    {
+      path: '/home/op/ren',
+      name: 'ren',
+      shown: '~/ren',
+      kind: 'project',
+      git: { kind: 'detached', commit: 'abc1234' },
+    },
   ] as const;
   assert.equal(Runs.choose([...projects], '').length, 3);
   assert.deepEqual(
@@ -439,20 +457,23 @@ test('projects are grouped by the folder they are in, and the newest runs name t
   const project = (path: string) => ({
     path,
     name: path.split('/').at(-1)!,
+    shown: path.replace(/^\/home\/op/, '~'),
+    kind: 'project' as const,
     git: { kind: 'none' as const },
   });
   const offered = [
     project('/srv/ren'),
-    project('/dev/web'),
-    project('/dev/api'),
-    project('/dev/tools/cli'),
+    project('/home/op/dev/web'),
+    project('/home/op/dev/api'),
+    project('/home/op/dev/tools/cli'),
   ];
+  // Grouped by the folder they are in, as the operator reads it.
   assert.deepEqual(
     Runs.places(offered).map((place) => [place.parent, place.projects.map((p) => p.name)]),
     [
-      ['/dev/', ['api', 'web']],
-      ['/dev/tools/', ['cli']],
-      ['/srv/', ['ren']],
+      ['/srv', ['ren']],
+      ['~/dev', ['api', 'web']],
+      ['~/dev/tools', ['cli']],
     ],
   );
   const desk = (workdir: string, started_at: number) => ({
@@ -464,7 +485,12 @@ test('projects are grouped by the folder they are in, and the newest runs name t
     recorded: null,
     settings: { model: null, effort: null, approvals: null },
   });
-  const runs = [desk('/dev/web', 3), desk('/srv/ren', 5), desk('/dev/web', 9), desk('/gone', 10)];
+  const runs = [
+    desk('/home/op/dev/web', 3),
+    desk('/srv/ren', 5),
+    desk('/home/op/dev/web', 9),
+    desk('/gone', 10),
+  ];
   assert.deepEqual(
     Desk.recent(runs, offered).map((project) => project.name),
     ['web', 'ren'],
@@ -647,4 +673,29 @@ test('a client’s models read as listed, grouped by provider, the default known
     effort: null,
     approvals: 'auto',
   });
+});
+
+test('scratch runs share one group, whatever folder each got', () => {
+  const live = (id: string, workdir: string): RunSnapshot => ({
+    run: id as never,
+    harness: 'codex',
+    workdir,
+    state: { phase: 'idle', thread: thread as never },
+    settings: { model: null, effort: null, approvals: null },
+  });
+  const scratch = '/home/op/.local/share/ren/scratch';
+  const projects = Desk.projects(
+    [
+      live(run, `${scratch}/scratch-1a2b3c4d`),
+      live(other, `${scratch}/scratch-5e6f7a8b`),
+      live('0190f3a0-0000-7000-8000-0000000000dd', '/home/op/dev/acme'),
+    ],
+    [],
+    new Set(),
+    scratch,
+  );
+  assert.deepEqual(projects.map((project) => [project.name, project.runs.length]).sort(), [
+    ['Scratch', 2],
+    ['acme', 1],
+  ]);
 });

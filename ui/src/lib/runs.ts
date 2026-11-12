@@ -420,11 +420,29 @@ export type ProjectGit =
   | { kind: 'unreadable' }
   | { kind: 'none' };
 
-/** A place a run can start in: a git repository under a run root, or a root's folder. */
+const placeKinds = ['project', 'other', 'scratch'] as const;
+/** What kind of place a run can start in. */
+export type PlaceKind = (typeof placeKinds)[number];
+
+/**
+ * A place a run can start in: a project under a run root (a git repository,
+ * or a root's own folder), a folder of another configured place, or the
+ * folder of an earlier scratch run.
+ */
 export interface RunProject {
   path: string;
   name: string;
+  /** The path as the operator reads it: `~/…` under their home. */
+  shown: string;
+  kind: Stored<PlaceKind>;
   git: ProjectGit;
+}
+
+/** Where runs can start, and the folder scratch runs get theirs in. */
+export interface RunPlaces {
+  projects: RunProject[];
+  /** Null when runs cannot start in scratch on the daemon's host. */
+  scratch: string | null;
 }
 
 const projectGit: Decoder<ProjectGit> = (value, path) => {
@@ -441,8 +459,17 @@ const projectGit: Decoder<ProjectGit> = (value, path) => {
   }
 };
 const runProjects = versioned(
-  object<{ projects: RunProject[] }>({
-    projects: array(object<RunProject>({ path: string, name: string, git: projectGit })),
+  object<RunPlaces>({
+    projects: array(
+      object<RunProject>({
+        path: string,
+        name: string,
+        shown: string,
+        kind: label(placeKinds),
+        git: projectGit,
+      }),
+    ),
+    scratch: nullable(string),
   }),
 );
 const recordedRuns = versioned(object<{ runs: RecordedRun[] }>({ runs: array(recordedRun) }));
@@ -508,7 +535,8 @@ const runModels = versioned(
 /** What a run starts with. */
 export interface StartRequest {
   harness: Drivable;
-  dir: string;
+  /** Null: a new scratch folder of the run's own. */
+  dir: string | null;
   /** The client's thread to continue, instead of a new conversation. */
   resume?: NativeThreadId | null;
   prompt?: string | null;
@@ -612,9 +640,9 @@ export class RunsClient {
   async live(signal?: AbortSignal): Promise<RunSnapshot[]> {
     return (await this.#send('GET', '/control/runs', undefined, liveRuns, signal)).runs;
   }
-  async projects(signal?: AbortSignal): Promise<RunProject[]> {
-    return (await this.#send('GET', '/control/runs/projects', undefined, runProjects, signal))
-      .projects;
+  /** Where runs can start, and the scratch folder. */
+  async projects(signal?: AbortSignal): Promise<RunPlaces> {
+    return this.#send('GET', '/control/runs/projects', undefined, runProjects, signal);
   }
   /** Every client, and whether a run can start with it on the daemon's host. */
   async clients(signal?: AbortSignal): Promise<RunClient[]> {
@@ -637,7 +665,7 @@ export class RunsClient {
   }: StartRequest): Promise<RunId> {
     const body = {
       harness,
-      dir,
+      ...(dir ? { dir } : {}),
       ...(resume ? { resume } : {}),
       ...(prompt ? { prompt } : {}),
       ...(model ? { model } : {}),
@@ -1104,10 +1132,12 @@ export class Runs {
    * Projects grouped by the folder they are in, groups in path order, and
    * each group's projects by name.
    */
+  /** Places by the folder they are in, as the operator reads it (`~/dev`). */
   static places(projects: readonly RunProject[]): { parent: string; projects: RunProject[] }[] {
     const groups = new Map<string, RunProject[]>();
     for (const project of projects) {
-      const parent = project.path.slice(0, project.path.length - project.name.length) || '/';
+      const cut = project.shown.lastIndexOf('/');
+      const parent = cut > 0 ? project.shown.slice(0, cut) : project.shown;
       groups.set(parent, [...(groups.get(parent) ?? []), project]);
     }
     return [...groups]
@@ -1123,7 +1153,7 @@ export class Runs {
     const text = typed.trim().toLowerCase();
     return projects.filter(
       (project) =>
-        project.name.toLowerCase().includes(text) || project.path.toLowerCase().includes(text),
+        project.name.toLowerCase().includes(text) || project.shown.toLowerCase().includes(text),
     );
   }
 
@@ -1220,6 +1250,7 @@ export class Desk {
     live: RunSnapshot[],
     recorded: RecordedRun[],
     hidden: ReadonlySet<RunId> = new Set(),
+    scratch: string | null = null,
   ): Project[] {
     const byRun = new Map<RunId, DeskRun>();
     for (const run of recorded) {
@@ -1246,11 +1277,14 @@ export class Desk {
         settings: run.settings,
       });
     }
+    // Scratch runs each have a folder of their own: they share one group.
+    const group = (workdir: string) =>
+      scratch && workdir.startsWith(`${scratch}/`) ? scratch : workdir;
     const groups = new Map<string, DeskRun[]>();
     for (const run of byRun.values()) {
-      const runs = groups.get(run.workdir) ?? [];
+      const runs = groups.get(group(run.workdir)) ?? [];
       runs.push(run);
-      groups.set(run.workdir, runs);
+      groups.set(group(run.workdir), runs);
     }
     // Live runs first, then newest first; a run not yet recorded is newest.
     const newest = (run: DeskRun) => run.started_at ?? Number.MAX_SAFE_INTEGER;
@@ -1259,7 +1293,7 @@ export class Desk {
       runs.sort((a, b) => live_(b) - live_(a) || newest(b) - newest(a));
       return {
         workdir,
-        name: Runs.folder(workdir),
+        name: workdir === scratch ? 'Scratch' : Runs.folder(workdir),
         runs,
         waiting: runs.reduce(
           (sum, run) => sum + (run.state ? Runs.controls(run.state).approvals.length : 0),

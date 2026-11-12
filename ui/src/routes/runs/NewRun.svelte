@@ -31,6 +31,7 @@
 
   let {
     offered,
+    scratch,
     clients,
     runs,
     busy,
@@ -38,13 +39,16 @@
     onstart,
   }: {
     offered: readonly RunProject[];
+    /** The folder scratch runs get theirs in; null: no scratch here. */
+    scratch: string | null;
     clients: readonly RunClient[];
     runs: readonly DeskRun[];
     busy: boolean;
     listModels: (harness: Drivable) => Promise<RunModel[]>;
     onstart: (
       harness: Drivable,
-      dir: string,
+      /** Null: a new scratch folder. */
+      dir: string | null,
       prompt: string | null,
       settings: { model: ModelId | null; effort: Effort | null; approvals: ApprovalPolicy | null },
     ) => void;
@@ -95,8 +99,11 @@
     | { state: 'failed'; reason: string };
 
   let prompt = $state('');
-  /** Where the run works: chosen each time, never assumed. */
+  /** Where the run works: a folder chosen each time, or, with none, a new
+   * scratch folder of its own where the daemon offers scratch. */
   let dir = $state<string | null>(null);
+  /** Whether the folder list shows the other places (`~/.config`). */
+  let others = $state(false);
   let harness = $state<Drivable>(saved.harness);
   let listings = $state<Partial<Record<Drivable, Listing>>>({});
   /** The chosen effort and approval policy; none is the client's own. */
@@ -107,30 +114,52 @@
   let field = $state<HTMLTextAreaElement>();
   let folders = $state<ReturnType<typeof Picker>>();
 
-  const recent = $derived(Desk.recent(runs, offered));
+  /** The picker's value for scratch: never a folder's path, which is never blank. */
+  const SCRATCH = '';
+  const shownPlaces = $derived(
+    offered.filter((place) => place.kind === 'project' || (others && place.kind === 'other')),
+  );
+  const hasOthers = $derived(offered.some((place) => place.kind === 'other'));
+  const recent = $derived(Desk.recent(runs, shownPlaces));
+  const placeOption = (project: RunProject) => ({
+    value: project.path,
+    label: project.name,
+    hint: Runs.branch(project.git),
+    hintIcon: Runs.versioned(project.git) ? ('branch' as const) : undefined,
+  });
   const projectGroups = $derived<PickerGroup[]>([
+    ...(scratch
+      ? [
+          {
+            label: null,
+            options: [
+              {
+                value: SCRATCH,
+                label: 'Scratch',
+                detail: 'A new folder of its own, kept with the run',
+              },
+            ],
+          },
+        ]
+      : []),
     ...(recent.length
       ? [
           {
             label: 'Recent',
-            options: recent.map((project) => ({
-              value: project.path,
-              label: project.name,
-              hint: Runs.branch(project.git),
-              hintIcon: Runs.versioned(project.git) ? ('branch' as const) : undefined,
-            })),
+            options: recent.map(placeOption),
           },
         ]
       : []),
-    ...Runs.places(offered).map((place) => ({
+    ...Runs.places(offered.filter((place) => place.kind === 'project')).map((place) => ({
       label: place.parent,
-      options: place.projects.map((project) => ({
-        value: project.path,
-        label: project.name,
-        hint: Runs.branch(project.git),
-        hintIcon: Runs.versioned(project.git) ? ('branch' as const) : undefined,
-      })),
+      options: place.projects.map(placeOption),
     })),
+    ...(others
+      ? Runs.places(offered.filter((place) => place.kind === 'other')).map((place) => ({
+          label: place.parent,
+          options: place.projects.map(placeOption),
+        }))
+      : []),
   ]);
   const clientGroups = $derived<PickerGroup[]>([
     {
@@ -271,6 +300,8 @@
   }
 
   const chosenProject = $derived(offered.find((project) => project.path === dir));
+  /** Whether the run has somewhere to work: a folder, or scratch. */
+  const placed = $derived(dir !== null || scratch !== null);
   const ready = $derived(!busy);
 
   export function focus() {
@@ -279,7 +310,7 @@
 
   function start() {
     if (busy) return;
-    if (!dir) {
+    if (!placed) {
       folders?.open();
       return;
     }
@@ -322,7 +353,9 @@
       rows="4"
       placeholder={chosenProject
         ? `Ask ${harnessLabel(harness)} to do something in ${chosenProject.name}. Enter starts, Shift+Enter adds a line.`
-        : 'Describe the task, and choose the folder it works in below.'}
+        : dir === null && scratch
+          ? `Ask ${harnessLabel(harness)} anything. It works in a scratch folder of its own; choose a folder below to work in a project.`
+          : 'Describe the task, and choose the folder it works in below.'}
       aria-label="First prompt"></textarea>
     <div class="row">
       <Picker
@@ -389,13 +422,16 @@
         label="Folder"
         icon="file"
         groups={projectGroups}
-        value={dir}
+        value={dir ?? (scratch ? SCRATCH : null)}
         placeholder="Choose a folder"
         free={(typed) => typed.startsWith('/')}
-        onchange={(value) => (dir = value)}
+        toggle={hasOthers
+          ? { label: 'Show other places', on: others, onchange: (on) => (others = on) }
+          : null}
+        onchange={(value) => (dir = value === SCRATCH ? null : value)}
       />
       <button class="button primary" disabled={!ready}
-        >{!dir ? 'Choose a folder' : prompt.trim() ? 'Start' : 'Start without a prompt'}</button
+        >{!placed ? 'Choose a folder' : prompt.trim() ? 'Start' : 'Start without a prompt'}</button
       >
     </div>
   </form>

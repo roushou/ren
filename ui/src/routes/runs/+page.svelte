@@ -53,10 +53,12 @@
   /** Each run's conversation since this page started following it. */
   const transcripts = new SvelteMap<RunId, Transcript>();
   const selected = $derived(data.selected);
+  /** The folder scratch runs get theirs in; null until read, or with none. */
+  let scratch = $state<string | null>(null);
   const projects = $derived(
     shelf === 'current'
-      ? Desk.projects(live, recorded, new Set(archived.map((run) => run.id)))
-      : Desk.projects([], archived),
+      ? Desk.projects(live, recorded, new Set(archived.map((run) => run.id)), scratch)
+      : Desk.projects([], archived, new Set(), scratch),
   );
   const runs = $derived(projects.flatMap((project) => project.runs));
   const current = $derived<DeskRun | null>(runs.find((run) => run.run === selected) ?? null);
@@ -115,7 +117,7 @@
   async function readProjects() {
     if (!data.runsControl) return;
     try {
-      offered = await client.projects();
+      ({ projects: offered, scratch } = await client.projects());
     } catch {
       // The list is a convenience; a typed path still starts a run.
     }
@@ -619,6 +621,7 @@
         <NewRun
           bind:this={newRun}
           {offered}
+          {scratch}
           {clients}
           {runs}
           {busy}

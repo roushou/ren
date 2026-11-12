@@ -4,7 +4,8 @@
   cannot be chosen, and carry a muted hint, with an icon that says what it
   is (a folder's branch). An option with a detail (a model's description)
   takes two lines, and a badge marks one apart (the default). A note says
-  why the list is short (still loading, or why nothing is listed).
+  why the list is short (still loading, or why nothing is listed), and a
+  toggle at its foot shows more of it (places offered only when asked).
 
   <Picker label="Project" options={groups} value={path} onchange={(path) => (chosen = path)} />
 -->
@@ -38,6 +39,7 @@
     search = true,
     free = null,
     note = null,
+    toggle = null,
     onchange,
   }: {
     /** The accessible name. */
@@ -53,6 +55,8 @@
     free?: ((typed: string) => boolean) | null;
     /** Said at the foot of the list: why it is short, or still loading. */
     note?: string | null;
+    /** A switch at the list's foot that shows more of it. */
+    toggle?: { label: string; on: boolean; onchange: (on: boolean) => void } | null;
     onchange: (value: string) => void;
   } = $props();
 
@@ -241,6 +245,20 @@
         {/each}
       </ul>
       {#if note}<p class="note muted">{note}</p>{/if}
+      {#if toggle}
+        <div class="toggle">
+          <label class="toggle-control"
+            ><input
+              type="checkbox"
+              checked={toggle.on}
+              onchange={(event) => {
+                toggle.onchange(event.currentTarget.checked);
+                (search ? field : panel)?.focus();
+              }}
+            /><span class="switch"></span><span>{toggle.label}</span></label
+          >
+        </div>
+      {/if}
     </div>
   {/if}
 </div>
@@ -379,7 +397,9 @@
     padding: 8px 10px 4px;
     font-size: 11px;
     color: var(--muted);
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
+  }
+  .toggle {
+    padding: 8px 10px;
+    border-top: 1px solid var(--line);
   }
 </style>
