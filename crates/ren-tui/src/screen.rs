@@ -4,7 +4,7 @@
 //! panicked. [`ScreenEvents`] turns the terminal's events into the keys and
 //! sizes the view reads.
 
-use crate::{Key, Size, Theme};
+use crate::{Frame, Key, Size, Theme};
 use crossterm::event::{Event, EventStream, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use crossterm::{cursor, execute, terminal};
 use futures_util::StreamExt;
@@ -42,6 +42,15 @@ pub enum ScreenEvent {
 /// A view the screen can draw: the wall, or another screen built on it.
 pub trait Drawn {
     fn render(&self, theme: &Theme, area: Rect, buf: &mut Buffer);
+}
+
+impl Drawn for Frame {
+    fn render(&self, theme: &Theme, area: Rect, buf: &mut Buffer) {
+        match self {
+            Self::Wall(frame) => frame.render(theme, area, buf),
+            Self::Console(frame) => frame.render(theme, area, buf),
+        }
+    }
 }
 
 /// The terminal's events, as the view reads them.

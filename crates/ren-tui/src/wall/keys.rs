@@ -1,34 +1,7 @@
-//! Keys the view reads, and what each asks it to do. Whatever reads the
-//! terminal turns its key events into [`Key`]s; the help overlay lists
+//! What each key asks the wall to do; the help overlay lists
 //! [`Command::ALL`] with the keys that give each.
 
-/// A key, as the view reads it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Key {
-    Char(char),
-    Tab,
-    BackTab,
-    Left,
-    Right,
-    Up,
-    Down,
-    Enter,
-    Esc,
-    Backspace,
-    Delete,
-    Home,
-    End,
-    PageUp,
-    PageDown,
-    /// Alt (Option) with ← or →.
-    AltLeft,
-    AltRight,
-    /// Ctrl-J: a new line in typed text, as terminals cannot tell
-    /// Shift-Enter from Enter.
-    Newline,
-    /// Ctrl-C: in raw mode the terminal sends it as a key, not a signal.
-    Interrupt,
-}
+use crate::Key;
 
 /// What a key asks the view to do.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -135,7 +108,8 @@ impl Command {
 
 #[cfg(test)]
 mod tests {
-    use super::{Command, Key};
+    use super::Command;
+    use crate::Key;
 
     #[test]
     fn every_command_has_a_key_that_gives_it() {

@@ -257,42 +257,46 @@ dependencies under "Crates" below. Read the code for current module ownership.
   start), and drains every run when the last handle is dropped. `src/purity.rs` keeps `run` and
   `workdir` free of runtime and I/O. The daemon constructs it when `[runs]`
   roots are configured, with `ProcessHost`; the gateway's control API serves it.
-- `crates/ren-tui`: the terminal view of a gateway's live sessions, with `Tui`
-  as its primary type. `Tui` is sans-IO: it takes what was read (`Input`:
-  snapshots of sessions and model calls, as `ren_store::view` types, turn
-  activity, progress updates, live observations, the terminal's size, and
-  failed reads, shown until a snapshot succeeds, and the daemon's runs as the
-  control API lists them) and key presses (`Tui::press`, with `Key` and the `Command`s keys give in
-  `keys`), and answers with the reads it needs (`Read`);
-  `Tui::snapshot_query` builds the snapshot's queries, and `Tui::wall` is
-  what to draw at a given time: panes (`grid`: sized to the active
-  sessions; a session keeps its pane while it stays active, and a pinned
-  one stays even when quiet), a focused pane or one zoomed session, the
-  help, and a status line. Each pane reads its session as a conversation
-  (`session`: the newest two turns call by call, or a turnless client's
-  newest calls (`Read::Call`), with prompts, the results
-  each request carried back, replies, and merged tool runs; progress on a
+- `crates/ren-tui`: Ren in the terminal, with `Tui` as its primary type: one
+  program over one gateway with two routes (`Route`), the wall and the
+  console. `Tui` is sans-IO: it holds both routes, hands key presses (`Key`)
+  to the one shown and what was read (`Input`) to the one it is for, and
+  answers with `Out`s, each route's reads and the console's control
+  commands; `Tui::frame` is what to draw. Both routes keep reading while
+  hidden, so each is current when shown, and the daemon's run listing
+  reaches both.
+  The wall (`wall`, `ren tui`): every session's traffic, watched. `Wall`
+  takes snapshots of sessions and model calls, as `ren_store::view` types,
+  turn activity, progress updates, live observations, and failed reads,
+  shown until a snapshot succeeds; `Wall::snapshot_query` builds the
+  snapshot's queries, and `Wall::frame` is panes (`grid`: sized to the
+  active sessions; a session keeps its pane while it stays active, and a
+  pinned one stays even when quiet), a focused pane or one zoomed session,
+  the help, and a status line. Each pane reads its session as a
+  conversation (`session`: the newest two turns call by call, or a turnless
+  client's newest calls (`Read::Call`), with prompts, the results each
+  request carried back, replies, and merged tool runs; progress on a
   streaming call; the phase, the newest call's measurements, and alerts on
-  the newest call), and `call` reads how a call ended (`CallEnd`).
-  `draw` renders a `Wall` with a resolved `Theme` (`theme`: terminal colors by
-  default, or dark/light presets named by `ThemeName`) into a ratatui buffer, pinned as text in
-  `tests/fixtures/wall-*.txt`; `Screen` (`screen`) is the only part that
+  the newest call), `call` reads how a call ended (`CallEnd`), and `runs`
+  marks a live run's pane with its oldest approval's ask. Keys give
+  `Command`s (`keys`). Frames are pinned as text in `tests/fixtures/wall-*.txt`.
+  The console (`console`, `ren runs`): the agent runs, worked with.
+  `Console` takes live runs, recorded runs, projects, run updates from the
+  feed, and recorded turns, and answers with its reads and the `Command`s
+  the shell sends through the control API. One run's conversation fills
+  the screen with a message box under it; slash commands (`slash`: `/new`,
+  `/resume`, `/stop`) start and switch runs; the runs that need you come
+  first (`desk`: `Attention`), and answering one moves on to the next that
+  does. `transcript` is the live conversation and how a finished turn gives
+  way to its record. `Console::frame` is what to draw (`view`), pinned as
+  text in `tests/fixtures/console-*.txt`.
+  `draw` in each route renders its frame into a ratatui buffer with a
+  resolved `Theme` (`theme`: terminal colors by default, or dark/light
+  presets named by `ThemeName`); `Screen` (`screen`) is the only part that
   touches the terminal: raw mode and the alternate screen until dropped,
-  and its events as keys and sizes. `src/purity.rs` keeps the core's
-  sources free of runtime, I/O, and terminal dependencies.
-  Runs (`runs`): a live run's session keeps its pane with the run's mark and
-  its oldest approval's ask. The wall only watches runs.
-  The console for runs (`console`, which `ren runs` opens): `Console` is sans-IO: it takes what was read
-  (`Input`: live runs, recorded runs, projects, run updates from the feed,
-  and recorded turns) and key presses, and answers with `Out`s, the reads it
-  needs and the `Command`s the shell sends through the control API. One
-  run's conversation fills the screen with a message box under it; slash
-  commands (`slash`: `/new`, `/resume`, `/stop`) start and switch runs; the
-  runs that need you come first (`desk`: `Attention`), and answering one
-  moves on to the next that does. `transcript` is the live conversation and
-  how a finished turn gives way to its record. `Console::frame` is what to
-  draw (`view`); `draw` renders a `Frame` through `Drawn`, pinned as text in
-  `tests/fixtures/console-*.txt`. `src/purity.rs` covers it too.
+  and its events as keys and sizes (`event`). `src/purity.rs` keeps the
+  cores' sources (all but `draw`, `theme`, and `screen`) free of runtime,
+  I/O, and terminal dependencies.
 - `crates/ren-gateway`: Ren's HTTP interface, with `Gateway` as its primary type.
   It owns forwarding, management, and control routes on one listener, assembled
   by `Gateway::router` or `Gateway::into_ingress`. Forwarding uses a declarative
@@ -356,12 +360,12 @@ dependencies under "Crates" below. Read the code for current module ownership.
   `ReadRequest` from either). `tail` is the pure core of
   `ren tail`: the live feed decoded through the protocol crate's SSE framer, and
   its lines (and progress events, which `ren tui` asks for). With the `tui`
-  feature (off by default), `commands::tui` is `ren tui`: the shell around
-  `ren-tui`'s `Tui`, reading snapshots, turns, and the live feed through
-  the gateway's API alongside one another, and drawing to its `Screen`;
-  `commands::console` is `ren runs` with no subcommand: the shell around
-  `ren-tui`'s `Console`, following the run feed, reading runs, projects,
-  and recorded turns, and sending its commands through `ControlTarget`.
+  feature (off by default), `commands::tui` is `ren tui` and `ren runs` with
+  no subcommand: the shell around `ren-tui`'s `Tui`, opened on the wall or
+  the console, reading snapshots, turns, runs, projects, and recorded turns
+  through the gateway's APIs alongside one another, following the live and
+  run feeds, sending the console's commands through `ControlTarget`, and
+  drawing to its `Screen`.
   `tui_settings` owns its local theme preference in `tui.toml`; the CLI resolves
   flags, saved preferences, and `NO_COLOR`, and passes styles to `Screen`.
   `mcp` is the pure core of `ren mcp` (a source test keeps it free

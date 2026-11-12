@@ -1,4 +1,4 @@
-//! The view's core stays sans-IO: no runtime, no I/O, no terminal. It
+//! The views' cores stay sans-IO: no runtime, no I/O, no terminal. It
 //! depends on `ren-store` for its views, and that crate depends on Tokio
 //! and SQLx, so this is checked on the sources rather than by the
 //! manifest.
@@ -7,11 +7,13 @@
 fn the_core_stays_free_of_runtime_and_io_dependencies() {
     let sources = [
         ("lib.rs", include_str!("lib.rs")),
-        ("call.rs", include_str!("call.rs")),
-        ("grid.rs", include_str!("grid.rs")),
-        ("keys.rs", include_str!("keys.rs")),
-        ("runs.rs", include_str!("runs.rs")),
-        ("session.rs", include_str!("session.rs")),
+        ("event.rs", include_str!("event.rs")),
+        ("wall/mod.rs", include_str!("wall/mod.rs")),
+        ("wall/call.rs", include_str!("wall/call.rs")),
+        ("wall/grid.rs", include_str!("wall/grid.rs")),
+        ("wall/keys.rs", include_str!("wall/keys.rs")),
+        ("wall/runs.rs", include_str!("wall/runs.rs")),
+        ("wall/session.rs", include_str!("wall/session.rs")),
         ("console/mod.rs", include_str!("console/mod.rs")),
         ("console/composer.rs", include_str!("console/composer.rs")),
         ("console/desk.rs", include_str!("console/desk.rs")),

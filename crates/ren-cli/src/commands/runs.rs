@@ -225,13 +225,7 @@ impl RunsCmd {
 
     #[cfg(feature = "tui")]
     async fn console(target: &TargetArgs, ctx: &Context) -> Result<ExitCode> {
-        let gateway = target.gateway(ctx)?;
-        // Without control access the console still shows recorded runs, and
-        // says why it cannot drive them.
-        let control = ControlTarget::select(target, ctx).map_err(|error| error.to_string());
-        let selected = crate::tui_settings::TuiSettings::select(None, &ctx.env)?;
-        let theme = super::tui::TuiCmd::theme(selected, &ctx.env);
-        super::console::ConsoleShell::run(&gateway, control, theme).await
+        super::tui::TuiCmd::open(target, None, ctx, ren_tui::Route::Console).await
     }
 
     #[cfg(not(feature = "tui"))]

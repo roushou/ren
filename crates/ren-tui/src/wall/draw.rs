@@ -1,13 +1,14 @@
 //! A wall rendered with resolved semantic styles. Drawing reads only the
 //! wall and its theme, and can be tested without a terminal.
 
-use crate::call::Tone;
-use crate::keys::Command;
-use crate::runs::RunPhase;
-use crate::session::{
+use super::call::Tone;
+use super::keys::Command;
+use super::runs::RunPhase;
+use super::session::{
     CallFacts, Line as PaneLine, Phase, ResultMark, SessionPane, Span as Elapsed, ToolLine,
 };
-use crate::{Help, Pane, Reading, Status, Theme, View, Wall};
+use super::{Frame, Help, Pane, Reading, Status, View};
+use crate::Theme;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style, Stylize};
@@ -22,23 +23,23 @@ use unicode_width::UnicodeWidthChar;
 /// A wall and its resolved rendering styles.
 #[must_use]
 pub struct ThemedWall<'a> {
-    wall: &'a Wall,
+    wall: &'a Frame,
     theme: &'a Theme,
 }
 
-impl Wall {
+impl Frame {
     pub fn themed<'a>(&'a self, theme: &'a Theme) -> ThemedWall<'a> {
         ThemedWall { wall: self, theme }
     }
 }
 
-impl crate::Drawn for Wall {
+impl crate::Drawn for Frame {
     fn render(&self, theme: &Theme, area: Rect, buf: &mut Buffer) {
         Widget::render(self.themed(theme), area, buf);
     }
 }
 
-impl Widget for &Wall {
+impl Widget for &Frame {
     fn render(self, area: Rect, buf: &mut Buffer) {
         self.themed(&Theme::default()).render(area, buf);
     }
@@ -880,7 +881,8 @@ impl std::fmt::Display for Clock {
 #[cfg(test)]
 mod tests {
     use super::{Clock, Grouped, Kilo, ThemedWall};
-    use crate::{Size, Theme, Tui};
+    use crate::wall::Wall;
+    use crate::{Size, Theme};
     use ren_recorder::time::UnixMillis;
 
     #[test]
@@ -907,11 +909,11 @@ mod tests {
 
     #[test]
     fn replies_read_their_markdown_lightly() {
-        let wall = Tui::new(Size {
+        let wall = Wall::new(Size {
             width: 80,
             height: 24,
         })
-        .wall(UnixMillis::from_millis(0));
+        .frame(UnixMillis::from_millis(0));
         let theme = Theme::default();
         let lines: Vec<String> = wall
             .themed(&theme)

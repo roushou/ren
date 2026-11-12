@@ -3,6 +3,7 @@
 //! places as activity moves; a pane freed by a session that went quiet
 //! takes the next session that needs one.
 
+use crate::Size;
 use ren_recorder::id::SessionId;
 
 /// Panes in columns and rows.
@@ -10,13 +11,6 @@ use ren_recorder::id::SessionId;
 pub struct Grid {
     pub columns: u16,
     pub rows: u16,
-}
-
-/// A terminal's size in cells.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Size {
-    pub width: u16,
-    pub height: u16,
 }
 
 impl Grid {
@@ -108,7 +102,8 @@ impl Placement {
 
 #[cfg(test)]
 mod tests {
-    use super::{Grid, Placement, Size};
+    use super::{Grid, Placement};
+    use crate::Size;
     use ren_recorder::id::SessionId;
     use uuid::Uuid;
 

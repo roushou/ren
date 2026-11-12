@@ -1,7 +1,7 @@
 //! Rendering preferences. Terminal defaults stay symbolic, so the terminal
 //! owns their actual colors, including when its palette changes.
 
-use crate::Tone;
+use crate::wall::Tone;
 use ratatui::style::{Color, Modifier, Style};
 use ren_harness::Harness;
 use serde_with::{DeserializeFromStr, SerializeDisplay};

@@ -2,7 +2,7 @@
 //! replies and tool calls, and what in it needs a look. The same readings
 //! as the web UI's Live wall, so the two never disagree about a session.
 
-use crate::call::{CallEnd, Tone};
+use super::call::{CallEnd, Tone};
 use ren_harness::Harness;
 use ren_harness::tools::EffectKind;
 use ren_protocol::activity::{ActivityLimitation, ResultStatus};
@@ -163,7 +163,7 @@ pub struct SessionPane {
     /// Kept ahead of other sessions by the viewer.
     pub pinned: bool,
     /// The live run driving this session, when Ren started it.
-    pub run: Option<crate::runs::RunMark>,
+    pub run: Option<super::runs::RunMark>,
 }
 
 /// A session's calls and its newest turn, as read.
