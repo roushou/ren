@@ -84,18 +84,6 @@ impl<'a> HeaderReading<'a> {
         })
     }
 
-    /// Claude Code's session and prompt headers.
-    fn claude_code(&mut self) -> Claim {
-        let session = self.uuid("x-claude-code-session-id");
-        let turn = self.uuid("x-claude-code-prompt-id");
-        Claim {
-            source: (session.is_some() || turn.is_some()).then_some(HintSource::ClaudeCodeHeaders),
-            session,
-            turn,
-            thread: None,
-        }
-    }
-
     fn new(headers: &'a HeaderMap) -> Self {
         Self {
             headers,

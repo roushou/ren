@@ -15,11 +15,11 @@
 //! Claude Code reports no turn identifier that matches the prompt id its
 //! model requests carry, so a driven turn's id is its prompt's message id.
 
-use super::{
-    ApprovalAsk, ApprovalId, ApprovalPolicy, CommandRefused, Decision, DriveCommand, DriveEvent,
-    DriveItem, Framed, ItemId, ItemKind, ItemPhase, ItemRead, ItemStatus, Line, Opening, Prompt,
-    RawLine, Received, RequestKind, Retry, RunSettings, TurnEnd, Unreadable,
-    model::{DefaultChoice, Listing, Model, ModelId, ModelListing},
+use crate::drive::{
+    ApprovalAsk, ApprovalId, ApprovalPolicy, CommandRefused, Decision, DefaultChoice, DriveCommand,
+    DriveEvent, DriveItem, Framed, ItemId, ItemKind, ItemPhase, ItemRead, ItemStatus, Line,
+    Listing, Model, ModelId, ModelListing, Opening, Prompt, RawLine, Received, RequestKind, Retry,
+    RunSettings, TurnEnd, Unreadable,
 };
 use ren_protocol::native::{NativeThreadId, NativeTurnId};
 use serde_json::{Value, json};

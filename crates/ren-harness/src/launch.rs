@@ -1,9 +1,9 @@
 //! Session-only client overrides. Authentication remains owned by the client.
 use crate::{
     Harness,
+    claude_code::{ClaudeModels, ClaudeStreamJson},
     drive::{
         Opening,
-        claude::{ClaudeModels, ClaudeStreamJson},
         pi::{PiModels, PiRpc},
     },
     endpoint::{GatewayEndpoint, UserToken},
@@ -211,23 +211,6 @@ impl Harness {
 }
 
 impl LaunchPlan {
-    /// Claude Code, its model traffic sent to `gateway`, which reads its hint
-    /// headers.
-    pub(crate) fn claude_code(gateway: &GatewayEndpoint) -> Self {
-        let mut environment = BTreeMap::new();
-        environment.insert(
-            "ANTHROPIC_BASE_URL".into(),
-            gateway.url("/anthropic").to_string().into(),
-        );
-        environment.insert("CLAUDE_CODE_GATEWAY_HINT_HEADERS".into(), "1".into());
-        Self {
-            harness: Harness::ClaudeCode,
-            executable: "claude",
-            arguments: Vec::new(),
-            environment,
-        }
-    }
-
     /// Pi with Ren's extension, which sends its providers to `gateway`.
     pub(crate) fn pi(gateway: &GatewayEndpoint) -> Self {
         let mut environment = BTreeMap::new();

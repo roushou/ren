@@ -3,7 +3,8 @@
 //! conversation, asked for its models, and stopped. Each client's listing is
 //! a pure codec beside its conversation codec.
 
-use super::{Effort, Framed, Line, claude::ClaudeModels, pi::PiModels};
+use super::{Effort, Framed, Line, pi::PiModels};
+use crate::claude_code::ClaudeModels;
 use crate::codex::CodexModels;
 use crate::{Harness, launch::NotDrivable};
 use serde_with::{DeserializeFromStr, SerializeDisplay};
@@ -172,11 +173,12 @@ impl ModelListing {
 #[cfg(test)]
 mod tests {
     use super::{DefaultChoice, Listing, Model, ModelId, ModelListing};
+    use crate::claude_code::ClaudeStreamJson;
     use crate::codex::CodexAppServer;
     use crate::drive::{ApprovalPolicy, Effort, RunSettings};
     use crate::{
         Harness,
-        drive::{Framed, Line, Opening, claude::ClaudeStreamJson, pi::PiRpc},
+        drive::{Framed, Line, Opening, pi::PiRpc},
     };
     use serde_json::{Value, json};
 

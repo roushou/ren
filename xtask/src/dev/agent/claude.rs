@@ -479,7 +479,7 @@ mod tests {
 
     #[test]
     fn its_models_read_as_claude_code_lists_them() {
-        let arguments = ren_harness::drive::claude::ClaudeModels::arguments();
+        let arguments = ren_harness::claude_code::ClaudeModels::arguments();
         let mut agent = ClaudeScript::new(Run(7), &arguments, "/work".into()).unwrap();
         let models = listed(ren_harness::Harness::ClaudeCode, |message| {
             sent(&agent.receive(message))
