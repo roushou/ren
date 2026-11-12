@@ -51,9 +51,13 @@ the bar at the bottom.
   (interrupt or stop a live run; archive or delete an ended run or a
   watched session; group the list; preview the next theme), each with a letter
   that works inside the menu only. A delete asks once more there.
-- `i` writes to the selected run: Enter sends,
-  Ctrl-J starts a new line, Ctrl-P and Ctrl-N (or ↑ and ↓ with nothing
-  typed) bring back what you sent, and Esc closes the box, keeping a draft.
+- `i` writes to the selected run: Enter sends, Ctrl-J starts a new line,
+  ↑ and ↓ move through the wrapped rows, Ctrl-E opens the text in your editor
+  (`$VISUAL`, then `$EDITOR`, then `vi`) and takes back what it saves,
+  Ctrl-P and Ctrl-N (or ↑ and ↓ with nothing typed) bring back what you sent,
+  and Esc closes the box, keeping a draft. The box grows with the text, up to
+  half the screen, then scrolls. Pasted text keeps its line breaks (bracketed
+  paste), so an Enter inside a paste does not send it.
   Written while a turn runs, a message waits and is sent when the turn ends;
   written to a run that ended, it continues that conversation in a new run;
   a session Ren did not start takes nothing.
@@ -62,9 +66,14 @@ the bar at the bottom.
   menu also denies it and stops the turn; writing instead denies it and sends
   your words next. Answering one moves
   on to the next run that needs you.
-- `n` opens the new-run form: type to find a project, pick the client, write
-  the first prompt, and Enter starts it. `?` lists every key, by layer, and
-  `q` quits, leaving runs running; Ctrl-C quits only when pressed twice in a
+- `n` opens the new-run composer, full screen: the prompt has the whole
+  body, as long as it needs to be, with the same editing keys as writing to
+  a run (Ctrl-E for your editor, pasting with line breaks); Enter starts the
+  run. The project and the client are one header line, defaulting to what the
+  last run used; Tab moves to it, ←→ picks one, and Enter opens its list
+  under the header (type to search projects). A line under the prompt is
+  kept for the files a prompt carries; Ren cannot add files yet.
+- `?` lists every key, by layer, and `q` quits, leaving runs running; Ctrl-C quits only when pressed twice in a
   row, so a stray press does not.
 
 A turn's live copy gives way to its recorded copy once the turn is recorded.

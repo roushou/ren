@@ -286,6 +286,14 @@ pub enum Place {
     Center { width: u16, height: u16 },
     /// Against the bottom, `inset` cells from the left, at most this big.
     Bottom { inset: u16, width: u16, height: u16 },
+    /// Hanging from row `top`, `inset` cells from the left, at most this
+    /// big: a list opened under what it changes. It moves left to fit.
+    Under {
+        top: u16,
+        inset: u16,
+        width: u16,
+        height: u16,
+    },
 }
 
 impl View {

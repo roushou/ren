@@ -474,7 +474,7 @@ impl Main {
     pub fn verb(&mut self, verb: Verb, ctx: &mut Ctx<'_>) -> Vec<Action> {
         match verb {
             Verb::Write => self.open_writing(ctx.model),
-            Verb::NewRun => vec![Action::Push(Screen::NewRun(NewRun::new(ctx.model.client)))],
+            Verb::NewRun => vec![Action::Push(Screen::NewRun(NewRun::new(ctx.model)))],
             Verb::Answer(decision) => self.answer(ctx, decision, None),
             Verb::Interrupt => self.interrupt(ctx.model),
             Verb::Stop => match self.live_run(ctx.model) {
@@ -757,14 +757,52 @@ impl Main {
             | Key::AltRight
             | Key::Newline
             | Key::Older
-            | Key::Newer => {}
+            | Key::Newer
+            | Key::Editor => {}
         }
         // The selection stays on a match.
         self.changed(ctx, &[])
     }
 
+    /// The detail's width in a screen `width` wide: what the list leaves.
+    fn detail_width(width: u16) -> u16 {
+        width.saturating_sub(Self::side(width) + 1)
+    }
+
+    /// The list's width in a screen `width` wide.
+    fn side(width: u16) -> u16 {
+        (width / 4).clamp(24, 36).min(width / 2)
+    }
+
+    /// Text pasted: into the message box, opened for the selected run.
+    pub fn paste(&mut self, text: &str, ctx: &mut Ctx<'_>) -> Vec<Action> {
+        match self.mode {
+            Mode::Writing => {}
+            Mode::Searching => {
+                self.filter
+                    .push_str(text.lines().next().unwrap_or_default());
+                return self.changed(ctx, &[]);
+            }
+            Mode::Normal => {
+                let opened = self.open_writing(ctx.model);
+                if self.mode != Mode::Writing {
+                    return opened;
+                }
+            }
+        }
+        ctx.message.paste(text);
+        Vec::new()
+    }
+
+    /// The text the operator's editor gave back, for the message box.
+    pub fn edited(&mut self, text: &str, ctx: &mut Ctx<'_>) -> Vec<Action> {
+        ctx.message.edited(text);
+        Vec::new()
+    }
+
     fn write(&mut self, key: Key, ctx: &mut Ctx<'_>) -> Vec<Action> {
-        match ctx.message.press(key) {
+        let width = Self::message_width(Self::detail_width(ctx.size.width));
+        match ctx.message.press(key, width) {
             Typed::Took => Vec::new(),
             Typed::Submit => {
                 let actions = self.send(ctx);
@@ -792,6 +830,7 @@ impl Main {
                 self.scroll = self.scroll.saturating_sub(8);
                 Vec::new()
             }
+            Typed::Left(Key::Editor) => vec![Action::Edit(ctx.message.text())],
             Typed::Left(_) => Vec::new(),
         }
     }
@@ -901,7 +940,7 @@ impl Main {
 
     pub fn view(&self, look: &Look<'_>) -> View {
         let width = look.size.width;
-        let side = (width / 4).clamp(24, 36).min(width / 2);
+        let side = Self::side(width);
         let listing = Listing::of(look.model, &self.filter, self.grouping);
         let mut list = listing.lines(look.model, self.selected, usize::from(side), look.now);
         if self.mode == Mode::Searching || !self.filter.is_empty() {
@@ -975,7 +1014,7 @@ impl Main {
     fn hints(&self, model: &Model) -> &'static str {
         match self.mode {
             Mode::Writing => {
-                "enter sends · ctrl-j new line · ctrl-p/n earlier messages · esc keeps a draft"
+                "enter sends · ctrl-j new line · ctrl-e your editor · ctrl-p/n earlier · esc keeps a draft"
             }
             Mode::Searching => "type to search · enter keeps it · esc clears",
             Mode::Normal => match self.waiting(model) {

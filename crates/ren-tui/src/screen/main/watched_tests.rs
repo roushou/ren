@@ -55,7 +55,7 @@ impl Wall {
             .into_iter()
             .filter_map(|out| match out {
                 Out::Read(read) => Some(read),
-                Out::Send(_) | Out::CycleTheme | Out::Quit => None,
+                Out::Send(_) | Out::CycleTheme | Out::Edit(_) | Out::Quit => None,
             })
             .collect()
     }

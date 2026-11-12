@@ -31,6 +31,8 @@ pub enum Key {
     Older,
     /// Ctrl-N: the message sent after.
     Newer,
+    /// Ctrl-E: edit what is written in the operator's own editor.
+    Editor,
 }
 
 /// A terminal's size in cells.

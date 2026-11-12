@@ -56,6 +56,9 @@ pub(crate) enum Action {
     Help,
     /// Do this to the main screen's selection.
     Verb(main::Verb),
+    /// Edit this text in the operator's editor; what it gives back goes
+    /// to the screen on top.
+    Edit(String),
     /// Say something in the key bar until the next key.
     Say(Notice),
     /// Preview the next theme; the shell owns the local preference.
@@ -134,6 +137,24 @@ impl Screen {
         }
     }
 
+    /// Text pasted while it is on top.
+    pub fn paste(&mut self, text: &str, ctx: &mut Ctx<'_>) -> Vec<Action> {
+        match self {
+            Self::Main(screen) => screen.paste(text, ctx),
+            Self::NewRun(screen) => screen.paste(text),
+            Self::Actions(_) | Self::Help(_) => Vec::new(),
+        }
+    }
+
+    /// The text the operator's editor gave back.
+    pub fn edited(&mut self, text: &str, ctx: &mut Ctx<'_>) -> Vec<Action> {
+        match self {
+            Self::Main(screen) => screen.edited(text, ctx),
+            Self::NewRun(screen) => screen.edited(text),
+            Self::Actions(_) | Self::Help(_) => Vec::new(),
+        }
+    }
+
     pub fn press(&mut self, key: Key, ctx: &mut Ctx<'_>) -> Vec<Action> {
         match self {
             Self::Main(screen) => screen.press(key, ctx),
@@ -147,7 +168,8 @@ impl Screen {
     pub fn view(&self, look: &Look<'_>, under: Option<View>) -> View {
         match self {
             Self::Main(screen) => screen.view(look),
-            Self::NewRun(screen) => screen.view(under.unwrap_or(View::Empty), look),
+            // The composer is a screen of its own: nothing shows under it.
+            Self::NewRun(screen) => screen.view(look),
             Self::Actions(screen) => screen.over(under.unwrap_or(View::Empty)),
             Self::Help(screen) => screen.over(under.unwrap_or(View::Empty)),
         }

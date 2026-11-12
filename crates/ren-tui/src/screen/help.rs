@@ -41,7 +41,8 @@ impl Help {
             | Key::AltRight
             | Key::Newline
             | Key::Older
-            | Key::Newer => Vec::new(),
+            | Key::Newer
+            | Key::Editor => Vec::new(),
         }
     }
 

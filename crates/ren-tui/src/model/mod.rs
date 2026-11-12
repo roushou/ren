@@ -173,8 +173,10 @@ pub(crate) struct Model {
     /// The clients as the daemon has them; empty until read.
     clients: Vec<Client>,
     pub control: Control,
-    /// The client `/new` starts when none is named: the last one started.
+    /// The client a new run starts with: the last one started.
     pub client: Harness,
+    /// The folder a new run starts in: the last one started in.
+    pub project: Option<String>,
     /// The run asked to start here, until the daemon answers.
     starting: Option<Starting>,
 }
@@ -191,6 +193,7 @@ impl Model {
             clients: Vec::new(),
             control: Control::Unread,
             client: Harness::ClaudeCode,
+            project: None,
             starting: None,
         }
     }

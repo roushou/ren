@@ -58,6 +58,9 @@ pub enum Out {
     Send(Command),
     /// Preview the next theme; the shell owns the local preference.
     CycleTheme,
+    /// Open this text in the operator's editor, and hand what it saves to
+    /// [`Tui::edited`].
+    Edit(String),
     Quit,
 }
 
@@ -97,6 +100,30 @@ impl Tui {
         let actions = self.with_top(|screen, ctx| screen.press(key, ctx));
         let outs = self.act(actions);
         Self::once(outs)
+    }
+
+    /// Text pasted (bracketed paste): one block, its line breaks kept.
+    pub fn paste(&mut self, text: &str) -> Vec<Out> {
+        self.notice = None;
+        let actions = self.with_top(|screen, ctx| screen.paste(text, ctx));
+        let outs = self.act(actions);
+        Self::once(outs)
+    }
+
+    /// What the operator's editor gave back, after [`Out::Edit`]: the text,
+    /// or why it could not be edited (the text stays as it was).
+    pub fn edited(&mut self, edited: Result<&str, &str>) -> Vec<Out> {
+        match edited {
+            Ok(text) => {
+                let actions = self.with_top(|screen, ctx| screen.edited(text, ctx));
+                let outs = self.act(actions);
+                Self::once(outs)
+            }
+            Err(why) => {
+                self.notice = Some(Notice::refusal(format!("not edited: {why}")));
+                Vec::new()
+            }
+        }
     }
 
     /// Takes one input; returns what it calls for.
@@ -148,7 +175,7 @@ impl Tui {
         for out in outs {
             let repeated = match &out {
                 Out::Read(_) => kept.contains(&out),
-                Out::Send(_) | Out::CycleTheme | Out::Quit => false,
+                Out::Send(_) | Out::CycleTheme | Out::Edit(_) | Out::Quit => false,
             };
             if !repeated {
                 kept.push(out);
@@ -183,6 +210,7 @@ impl Tui {
                 Action::Read(read) => outs.push(Out::Read(read)),
                 Action::Send(command) => outs.push(Out::Send(command)),
                 Action::CycleTheme => outs.push(Out::CycleTheme),
+                Action::Edit(text) => outs.push(Out::Edit(text)),
                 Action::Quit => outs.push(Out::Quit),
                 Action::Say(notice) => self.notice = Some(notice),
                 Action::Push(screen) => {

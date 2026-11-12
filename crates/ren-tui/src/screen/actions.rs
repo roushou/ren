@@ -94,7 +94,8 @@ impl Actions {
                 | Key::AltRight
                 | Key::Newline
                 | Key::Older
-                | Key::Newer => {
+                | Key::Newer
+                | Key::Editor => {
                     self.confirming = None;
                     Vec::new()
                 }
@@ -133,7 +134,8 @@ impl Actions {
             | Key::AltRight
             | Key::Newline
             | Key::Older
-            | Key::Newer => Vec::new(),
+            | Key::Newer
+            | Key::Editor => Vec::new(),
         }
     }
 

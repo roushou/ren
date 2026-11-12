@@ -283,8 +283,10 @@ dependencies under "Crates" below. Read the code for current module ownership.
     folded to a line each, the approval card), with a top bar for the
     traffic and a key bar; `watched` reads a session Ren did not start (its
     phase, alerts, and conversation). Keys act in normal mode; `message`
-    (with `composer`) takes text only while writing to a run, and `new_run`
-    is the form for starting one. Keys come in layers: moving and a few
+    (with `composer`, the one editor every prompt is written in: wrapped
+    rows, a cursor that moves through them, and pastes) takes text only
+    while writing to a run, and `new_run` is the full-screen composer for
+    starting one, its project and client in a header. Keys come in layers: moving and a few
     verbs are `main`'s `Keymap`s, an approval's answers act only while it
     waits, and everything else is a `Verb` in the action menu (`actions`),
     which lists only what applies to the selection. Each screen's keys are a
@@ -299,8 +301,9 @@ dependencies under "Crates" below. Read the code for current module ownership.
     (`ui/draw.rs`) puts on a ratatui buffer. Screens are pinned as text in
     `tests/fixtures`.
   - `Terminal` (`terminal`) is the only part that touches the terminal: raw
-    mode and the alternate screen until dropped, and its events as keys and
-    sizes (`event`). `src/purity.rs` keeps every other module but the theme
+    mode, the alternate screen, and bracketed paste until dropped (or
+    suspended while the operator's editor has the terminal), and its events
+    as keys, pastes, and sizes (`event`). `src/purity.rs` keeps every other module but the theme
     free of runtime, I/O, and terminal dependencies.
 - `crates/ren-gateway`: Ren's HTTP interface, with `Gateway` as its primary type.
   It owns forwarding, management, and control routes on one listener, assembled
@@ -371,7 +374,8 @@ dependencies under "Crates" below. Read the code for current module ownership.
   no subcommand: the shell around `ren-tui`'s `Tui`, reading snapshots, turns, runs, projects, and recorded turns
   through the gateway's APIs alongside one another, following the live and
   run feeds, sending the console's commands through `ControlTarget`, and
-  drawing to its `Terminal`.
+  drawing to its `Terminal`; its `editor` hands a prompt to the operator's
+  `$VISUAL` or `$EDITOR` on a temporary file and takes back what it saves.
   `tui_settings` owns its local theme preference in `tui.toml`; the CLI resolves
   flags, saved preferences, and `NO_COLOR`, and passes styles to `Screen`.
   `mcp` is the pure core of `ren mcp` (a source test keeps it free

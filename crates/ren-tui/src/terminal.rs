@@ -6,7 +6,10 @@
 
 use crate::ui::View;
 use crate::{Key, Size, Theme};
-use crossterm::event::{Event, EventStream, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use crossterm::event::{
+    DisableBracketedPaste, EnableBracketedPaste, Event, EventStream, KeyCode, KeyEvent,
+    KeyEventKind, KeyModifiers,
+};
 use crossterm::{cursor, execute, terminal};
 use futures_util::StreamExt;
 use ratatui::Terminal as Ratatui;
@@ -32,9 +35,12 @@ pub enum TerminalError {
 }
 
 /// What the terminal reports that the view reads.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TerminalEvent {
     Key(Key),
+    /// Text pasted, as one block with its line breaks (bracketed paste),
+    /// not as keys: an Enter in it does not send.
+    Paste(String),
     Resize(Size),
 }
 
@@ -51,7 +57,12 @@ impl Terminal {
         crossterm::style::force_color_output(true);
         terminal::enable_raw_mode().map_err(TerminalError::Open)?;
         let mut stdout = io::stdout();
-        if let Err(error) = execute!(stdout, terminal::EnterAlternateScreen, cursor::Hide) {
+        if let Err(error) = execute!(
+            stdout,
+            terminal::EnterAlternateScreen,
+            cursor::Hide,
+            EnableBracketedPaste
+        ) {
             Self::restore();
             return Err(TerminalError::Open(error));
         }
@@ -102,10 +113,43 @@ impl Terminal {
         }
     }
 
+    /// Hands the terminal to another program (the operator's editor) until
+    /// [`Self::resume`]. Drop the [`TerminalEvents`] first, or they read
+    /// that program's keys.
+    pub fn suspend(&mut self) -> Result<(), TerminalError> {
+        Self::restore();
+        Ok(())
+    }
+
+    /// Takes the terminal back after [`Self::suspend`] and draws it whole.
+    pub fn resume(&mut self) -> Result<(), TerminalError> {
+        terminal::enable_raw_mode().map_err(TerminalError::Open)?;
+        execute!(
+            io::stdout(),
+            terminal::EnterAlternateScreen,
+            cursor::Hide,
+            EnableBracketedPaste
+        )
+        .map_err(TerminalError::Open)?;
+        // A fresh surface draws every cell on the next draw. (Clearing the
+        // old one asks the terminal where its cursor is, which a terminal
+        // just handed back may not answer in time.)
+        execute!(io::stdout(), terminal::Clear(terminal::ClearType::All))
+            .map_err(TerminalError::Open)?;
+        self.terminal =
+            Ratatui::new(CrosstermBackend::new(io::stdout())).map_err(TerminalError::Open)?;
+        Ok(())
+    }
+
     /// Puts the terminal back as best it can: nothing is left to report
     /// a failure to.
     fn restore() {
-        let _ = execute!(io::stdout(), cursor::Show, terminal::LeaveAlternateScreen);
+        let _ = execute!(
+            io::stdout(),
+            DisableBracketedPaste,
+            cursor::Show,
+            terminal::LeaveAlternateScreen
+        );
         let _ = terminal::disable_raw_mode();
     }
 }
@@ -117,8 +161,8 @@ impl Drop for Terminal {
 }
 
 impl TerminalEvents {
-    /// The next key or size change; `None` when the terminal's events end.
-    /// Other events (mouse, focus, paste, key releases) are skipped.
+    /// The next key, paste, or size change; `None` when the terminal's
+    /// events end. Other events (mouse, focus, key releases) are skipped.
     pub async fn next(&mut self) -> Option<Result<TerminalEvent, TerminalError>> {
         loop {
             let event = match self.stream.next().await? {
@@ -140,7 +184,8 @@ impl TerminalEvent {
                 width: *width,
                 height: *height,
             })),
-            Event::FocusGained | Event::FocusLost | Event::Mouse(_) | Event::Paste(_) => None,
+            Event::Paste(text) => Some(Self::Paste(text.clone())),
+            Event::FocusGained | Event::FocusLost | Event::Mouse(_) => None,
         }
     }
 
@@ -155,6 +200,7 @@ impl TerminalEvent {
             KeyCode::Char('j') if control => Some(Key::Newline),
             KeyCode::Char('p') if control => Some(Key::Older),
             KeyCode::Char('n') if control => Some(Key::Newer),
+            KeyCode::Char('e') if control => Some(Key::Editor),
             KeyCode::Char(_) if control => None,
             // macOS terminals send Option-← and Option-→ as Alt-b and Alt-f.
             KeyCode::Char('b') if alt => Some(Key::AltLeft),

@@ -11,6 +11,8 @@
 //! calls) and the run feed, and draws the shown route. Everything goes
 //! through the gateway's read and control APIs, local or remote.
 
+mod editor;
+
 use crate::commands::{control::ControlTarget, history::TargetArgs};
 use crate::context::Context;
 use crate::management::{Management, ManagementError};
@@ -101,6 +103,8 @@ struct InFlight {
 /// Whether to go on after acting.
 enum Flow {
     Go,
+    /// Edit this text in the operator's editor.
+    Edit(String),
     Quit,
 }
 
@@ -150,6 +154,7 @@ impl TuiCmd {
         let mut screen = Terminal::open()?;
         screen.set_theme(Self::theme(selected, &ctx.env));
         let mut events = screen.events();
+        let editor = editor::Editor::of(&ctx.env);
         let mut tui = Tui::new(screen.size()?);
         let mut shell = Shell {
             gateway: &gateway,
@@ -189,6 +194,7 @@ impl TuiCmd {
                     None => break,
                     Some(event) => match event? {
                         TerminalEvent::Key(key) => tui.press(key),
+                        TerminalEvent::Paste(text) => tui.paste(&text),
                         TerminalEvent::Resize(size) => tui.apply(Input::Resize(size)),
                     },
                 },
@@ -231,7 +237,22 @@ impl TuiCmd {
                     outs
                 }
             };
-            if let Flow::Quit = shell.act(outs, &mut screen) {
+            let mut flow = shell.act(outs, &mut screen);
+            // The editor has the terminal until it exits; the app's events
+            // stop meanwhile, so they do not read its keys.
+            while let Flow::Edit(text) = flow {
+                drop(events);
+                screen.suspend()?;
+                let edited = editor.edit(&text);
+                screen.resume()?;
+                events = screen.events();
+                let outs = match &edited {
+                    Ok(text) => tui.edited(Ok(text)),
+                    Err(error) => tui.edited(Err(&error.to_string())),
+                };
+                flow = shell.act(outs, &mut screen);
+            }
+            if let Flow::Quit = flow {
                 break;
             }
             screen.draw(|_| tui.view(clock.now().wall))?;
@@ -373,9 +394,11 @@ struct Shell<'a> {
 impl<'a> Shell<'a> {
     /// Starts what the routes asked for.
     fn act(&mut self, outs: Vec<Out>, screen: &mut Terminal) -> Flow {
+        let mut flow = Flow::Go;
         for out in outs {
             match out {
                 Out::Quit => return Flow::Quit,
+                Out::Edit(text) => flow = Flow::Edit(text),
                 Out::CycleTheme => {
                     self.theme = self.theme.next();
                     screen.set_theme(self.theme.theme());
@@ -384,7 +407,7 @@ impl<'a> Shell<'a> {
                 Out::Send(command) => self.send(command),
             }
         }
-        Flow::Go
+        flow
     }
 
     fn read(&mut self, read: Read) {

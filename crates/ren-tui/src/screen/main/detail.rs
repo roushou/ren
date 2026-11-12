@@ -50,6 +50,12 @@ impl std::fmt::Display for Clock {
 }
 
 impl Main {
+    /// The cells the message box's text wraps to, in a detail `width` wide:
+    /// less its lead and a margin.
+    pub(super) fn message_width(width: u16) -> usize {
+        usize::from(width).saturating_sub(4)
+    }
+
     /// The selected session, `width` cells wide.
     pub(super) fn detail(&self, look: &crate::screen::Look<'_>, width: u16) -> View {
         let model = look.model;
@@ -105,62 +111,30 @@ impl Main {
             ),
         ];
         if self.mode == Mode::Writing || !look.message.is_empty() {
-            let (composer, cursor) = look.message.lines();
-            let typed = u16::try_from(composer.len().clamp(1, 6)).unwrap_or(1);
+            // The box grows with what is written, up to half the screen,
+            // then scrolls to keep the cursor in view.
+            let wrapped = look.message.wrap(Self::message_width(width));
+            let most = usize::from(look.size.height / 2).max(3);
+            let shown = wrapped.rows.len().clamp(1, most);
+            let writing = self.mode == Mode::Writing;
+            let first = wrapped.window(shown).start;
             rows.push((Size::Exact(1), View::Rule(Rule::Plain)));
             rows.push((
-                Size::Exact(typed),
+                Size::Exact(u16::try_from(shown).unwrap_or(1)),
                 View::lines(
-                    Self::composer(
-                        &composer,
-                        cursor,
-                        self.mode == Mode::Writing,
-                        usize::from(typed),
-                    ),
+                    wrapped.lines(shown, writing, |row| {
+                        let lead = match (row == first, writing) {
+                            (true, true) => " › ",
+                            (true, false) => " ✎ ",
+                            (false, true | false) => "   ",
+                        };
+                        Span::new(lead, Ink::Prompt)
+                    }),
                     Anchor::Top,
                 ),
             ));
         }
         View::fill(Ink::Pane, View::Rows(rows))
-    }
-
-    /// The message box: what is written, the cursor while writing.
-    fn composer(lines: &[String], cursor: (usize, usize), writing: bool, rows: usize) -> Vec<Line> {
-        let first = cursor.0.saturating_sub(rows - 1);
-        let lead = if writing { " › " } else { " ✎ " };
-        lines
-            .iter()
-            .enumerate()
-            .skip(first)
-            .take(rows)
-            .map(|(row, text)| {
-                let lead = Span::new(if row == 0 { lead } else { "   " }, Ink::Prompt);
-                if !writing || row != cursor.0 {
-                    return Line::new(vec![lead, Span::new(text.clone(), Ink::Text)]);
-                }
-                let mut before = String::new();
-                let mut used = 0;
-                let mut chars = text.chars();
-                while let Some(ch) = chars.next() {
-                    if used >= cursor.1 {
-                        return Line::new(vec![
-                            lead,
-                            Span::new(before, Ink::Text),
-                            Span::new(ch.to_string(), Ink::Text)
-                                .with(crate::ui::Emphasis::Reversed),
-                            Span::new(chars.as_str(), Ink::Text),
-                        ]);
-                    }
-                    used += Text(&ch.to_string()).width();
-                    before.push(ch);
-                }
-                Line::new(vec![
-                    lead,
-                    Span::new(before, Ink::Text),
-                    Span::new(" ", Ink::Text).with(crate::ui::Emphasis::Reversed),
-                ])
-            })
-            .collect()
     }
 
     /// The tabs, the chosen one marked.

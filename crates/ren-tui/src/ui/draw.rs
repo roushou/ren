@@ -325,6 +325,22 @@ impl Place {
                     height,
                 }
             }
+            Self::Under {
+                top,
+                inset,
+                width,
+                height,
+            } => {
+                let top = top.min(area.height);
+                let width = width.min(area.width);
+                let height = height.min(area.height - top);
+                Rect {
+                    x: area.x + inset.min(area.width - width),
+                    y: area.y + top,
+                    width,
+                    height,
+                }
+            }
         }
     }
 }

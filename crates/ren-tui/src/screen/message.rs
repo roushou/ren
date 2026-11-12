@@ -2,9 +2,8 @@
 //! before, to recall. It is open only while writing; what is typed stays
 //! when it closes, as a draft.
 
-use super::composer::Composer;
+use super::composer::{Composer, Wrapped};
 use crate::Key;
-use crate::ui::Text;
 
 /// Text being written, and what was sent.
 #[derive(Debug, Default)]
@@ -65,21 +64,25 @@ impl MessageBox {
         self.composer.take()
     }
 
-    /// Its lines, and where the cursor is in them: a line and a column.
-    pub fn lines(&self) -> (Vec<String>, (usize, usize)) {
-        let text = self.composer.text();
-        let before: String = text.chars().take(self.composer.cursor()).collect();
-        let line = before.matches('\n').count();
-        let column = Text(before.rsplit('\n').next().unwrap_or_default()).width();
-        (
-            text.split('\n').map(str::to_owned).collect(),
-            (line, column),
-        )
+    /// Its text wrapped to `width`, and the cursor in it.
+    pub fn wrap(&self, width: usize) -> Wrapped {
+        self.composer.wrap(width)
     }
 
-    /// Takes a key: recalling what was sent (ctrl-p and ctrl-n, or ↑ and ↓
-    /// with nothing typed or a recalled message shown), then editing.
-    pub fn press(&mut self, key: Key) -> Typed {
+    /// Text pasted at the cursor, with its line breaks.
+    pub fn paste(&mut self, text: &str) {
+        self.typed(|composer| composer.paste(text));
+    }
+
+    /// The text as the operator's editor gave it back.
+    pub fn edited(&mut self, text: &str) {
+        self.typed(|composer| composer.set(text.trim_end_matches('\n')));
+    }
+
+    /// Takes a key, with the text wrapped to `width`: recalling what was
+    /// sent (ctrl-p and ctrl-n, or ↑ and ↓ with nothing typed or a recalled
+    /// message shown), then editing; ↑ and ↓ move through wrapped rows.
+    pub fn press(&mut self, key: Key, width: usize) -> Typed {
         let recallable = self.composer.is_empty() || self.recall.is_some();
         match key {
             Key::Older => {
@@ -92,6 +95,8 @@ impl MessageBox {
             Key::Down if self.recall.is_some() => {
                 self.step(false);
             }
+            Key::Up if self.composer.up(width) => {}
+            Key::Down if self.composer.down(width) => {}
             Key::Char(ch) => self.typed(|composer| composer.insert(ch)),
             Key::Newline => self.typed(|composer| composer.insert('\n')),
             Key::Backspace => self.typed(Composer::backspace),
@@ -110,7 +115,8 @@ impl MessageBox {
             | Key::PageUp
             | Key::PageDown
             | Key::AltLeft
-            | Key::AltRight => return Typed::Left(key),
+            | Key::AltRight
+            | Key::Editor => return Typed::Left(key),
         }
         Typed::Took
     }
@@ -166,7 +172,7 @@ mod tests {
 
     fn typed(message: &mut MessageBox, text: &str) {
         for ch in text.chars() {
-            assert_eq!(message.press(Key::Char(ch)), Typed::Took);
+            assert_eq!(message.press(Key::Char(ch), 40), Typed::Took);
         }
     }
 
@@ -179,22 +185,22 @@ mod tests {
         }
         typed(&mut message, "draft");
         // Ctrl-P goes back whatever is typed; repeats are kept once.
-        let _ = message.press(Key::Older);
+        let _ = message.press(Key::Older, 40);
         assert_eq!(message.text(), "also the docs");
-        let _ = message.press(Key::Up);
+        let _ = message.press(Key::Up, 40);
         assert_eq!(message.text(), "fix the test");
-        let _ = message.press(Key::Up);
+        let _ = message.press(Key::Up, 40);
         assert_eq!(message.text(), "fix the test", "the oldest stays");
-        let _ = message.press(Key::Down);
-        let _ = message.press(Key::Newer);
+        let _ = message.press(Key::Down, 40);
+        let _ = message.press(Key::Newer, 40);
         assert_eq!(message.text(), "draft");
         // ↑ recalls only with nothing typed (or a recalled message shown).
-        assert_eq!(message.press(Key::Up), Typed::Left(Key::Up));
+        assert_eq!(message.press(Key::Up, 40), Typed::Left(Key::Up));
         let _ = message.take();
-        let _ = message.press(Key::Up);
+        let _ = message.press(Key::Up, 40);
         assert_eq!(message.text(), "also the docs");
         // Editing it ends the recall: ↓ is the screen's again.
         typed(&mut message, "!");
-        assert_eq!(message.press(Key::Down), Typed::Left(Key::Down));
+        assert_eq!(message.press(Key::Down, 40), Typed::Left(Key::Down));
     }
 }

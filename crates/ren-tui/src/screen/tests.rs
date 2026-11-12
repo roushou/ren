@@ -216,7 +216,7 @@ fn sent(out: &[Out]) -> Vec<Command> {
     out.iter()
         .filter_map(|out| match out {
             Out::Send(command) => Some(command.clone()),
-            Out::Read(_) | Out::CycleTheme | Out::Quit => None,
+            Out::Read(_) | Out::CycleTheme | Out::Edit(_) | Out::Quit => None,
         })
         .collect()
 }
@@ -402,15 +402,30 @@ fn keys_move_through_the_list_and_the_action_menu_interrupts() {
 }
 
 #[test]
-fn n_opens_the_new_run_form_and_starts_with_the_prompt() {
+fn n_opens_the_composer_where_a_long_prompt_is_written_and_started() {
     let mut console = desk();
     let _ = console.press(Key::Char('n'));
     assert!(console.tui.overlaid());
-    type_text(&mut console, "web");
-    let _ = console.press(Key::Tab);
-    let _ = console.press(Key::Char(' '));
-    let _ = console.press(Key::Tab);
+    // The prompt has the keys: typed, and pasted with its line breaks.
     type_text(&mut console, "add the upload form");
+    let _ = console.press(Key::Newline);
+    assert!(
+        console
+            .tui
+            .paste("with a progress bar\nand a retry button")
+            .is_empty()
+    );
+    // The project defaults to the first offered; tab, then type, searches it.
+    let _ = console.press(Key::Tab);
+    type_text(&mut console, "web");
+    assert!(drawn(&console).contains("/dev/acme-web"));
+    let _ = console.press(Key::Enter);
+    // The client's list opens under the header; ↓ picks Codex.
+    let _ = console.press(Key::Tab);
+    let _ = console.press(Key::Right);
+    let _ = console.press(Key::Enter);
+    let _ = console.press(Key::Down);
+    let _ = console.press(Key::Enter);
     let out = console.press(Key::Enter);
     assert_eq!(
         sent(&out),
@@ -418,7 +433,12 @@ fn n_opens_the_new_run_form_and_starts_with_the_prompt() {
             harness: Harness::Codex,
             dir: "/dev/acme-web".into(),
             resume: None,
-            prompt: Some(Prompt::parse("add the upload form".into()).unwrap()),
+            prompt: Some(
+                Prompt::parse(
+                    "add the upload form\nwith a progress bar\nand a retry button".into()
+                )
+                .unwrap()
+            ),
         }]
     );
     assert!(!console.tui.overlaid());
@@ -426,8 +446,22 @@ fn n_opens_the_new_run_form_and_starts_with_the_prompt() {
     let out = console.apply(Input::Answered(Ok(Answered::Started(run_id(9)))));
     assert!(out.contains(&Out::Read(Read::Runs)));
     assert_eq!(console.current(), Some(run_id(9)));
-    // Esc leaves the form without starting anything.
+    // The next composer starts where the last run did, with its client.
     let _ = console.press(Key::Char('n'));
+    let shown = drawn(&console);
+    assert!(
+        shown.contains("acme-web  /dev/acme-web · feat/upload"),
+        "{shown}"
+    );
+    assert!(shown.contains("Codex"), "{shown}");
+    // Ctrl-E hands the prompt to the editor; what it saves comes back.
+    type_text(&mut console, "draft");
+    assert_eq!(console.press(Key::Editor), [Out::Edit("draft".into())]);
+    let _ = console.tui.edited(Ok("the whole plan\n"));
+    assert!(drawn(&console).contains("the whole plan"));
+    let _ = console.tui.edited(Err("vi exited with an error"));
+    assert!(drawn(&console).contains("not edited: vi exited with an error"));
+    // Esc leaves the composer without starting anything.
     let _ = console.press(Key::Esc);
     assert!(!console.tui.overlaid());
 }
@@ -456,33 +490,31 @@ fn clients() -> Vec<ren_supervisor::Client> {
 }
 
 #[test]
-fn the_form_offers_the_clients_installed_on_the_daemons_host() {
+fn the_composer_offers_the_clients_installed_on_the_daemons_host() {
     let mut console = desk();
-    let _ = console.press(Key::Char('n'));
-    // Unread, every client Ren drives is offered.
-    assert!(drawn(&console).contains("○ Pi   "));
     let _ = console.apply(Input::Clients(Ok(clients())));
-    let form = drawn(&console);
-    assert!(form.contains("○ Pi (not installed)"), "{form}");
-    assert!(!form.contains("OpenCode"));
-    // Choosing steps over a client that is not there, both ways.
-    let _ = console.press(Key::Tab);
-    let _ = console.press(Key::Right);
-    assert!(drawn(&console).contains("◉ Codex"));
-    let _ = console.press(Key::Right);
-    assert!(drawn(&console).contains("◉ Claude Code"));
-    let _ = console.press(Key::Left);
-    assert!(drawn(&console).contains("◉ Codex"));
+    let _ = console.press(Key::Char('n'));
+    let _ = console.press(Key::BackTab);
+    let _ = console.press(Key::Enter);
+    let list = drawn(&console);
+    assert!(list.contains("Pi  not installed"), "{list}");
+    assert!(!list.contains("OpenCode"));
+    // A client not there is not taken, and says why.
+    let _ = console.press(Key::Down);
+    let _ = console.press(Key::Down);
+    assert!(sent(&console.press(Key::Enter)).is_empty());
+    assert!(drawn(&console).contains("Pi is not installed on the daemon's host"));
     // Should the chosen client be gone from the host, starting says why.
+    let _ = console.press(Key::Esc);
+    let _ = console.press(Key::Tab);
     let _ = console.apply(Input::Clients(Ok(vec![ren_supervisor::Client {
-        harness: Harness::Codex,
+        harness: Harness::ClaudeCode,
         status: ren_supervisor::ClientStatus::NotInstalled,
     }])));
-    let _ = console.press(Key::Tab);
     type_text(&mut console, "go");
     let out = console.press(Key::Enter);
     assert!(sent(&out).is_empty());
-    assert!(drawn(&console).contains("Codex is not installed on the daemon's host"));
+    assert!(drawn(&console).contains("Claude Code is not installed on the daemon's host"));
 }
 
 #[test]
@@ -657,11 +689,25 @@ fn screens_draw_as_pinned() {
     );
     let _ = console.apply(Input::Clients(Ok(clients())));
     let _ = console.press(Key::Char('n'));
-    type_text(&mut console, "ac");
+    let _ = console.tui.paste(
+        "The upload test is flaky on CI: it fails about one run in ten with a lease timeout. \
+         Look at how the worker renews its lease in src/upload/worker.rs, and why the retry \
+         counter can be bumped after the lease check.\n\n\
+         Fix it, add a test that reproduces the race every time, and push a branch named \
+         fix/upload-lease. Leave the public API as it is.",
+    );
     assert_eq!(
         drawn(&console),
         include_str!("../../tests/fixtures/app-new-run.txt")
     );
+    let _ = console.press(Key::Tab);
+    type_text(&mut console, "ac");
+    assert_eq!(
+        drawn(&console),
+        include_str!("../../tests/fixtures/app-new-run-project.txt")
+    );
+    let _ = console.press(Key::Esc);
+    let _ = console.press(Key::Esc);
     let _ = console.press(Key::Esc);
     let _ = console.press(Key::Tab);
     assert_eq!(
