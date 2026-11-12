@@ -464,28 +464,30 @@
 
 {#snippet recordedTurn(turn: TurnActivity)}
   {@const workdir = Board.workdir(turn)}
-  {#if turn.prompt}<div class="entry prompt"><p>{turn.prompt.text}</p></div>{/if}
-  {#each turn.calls as call (call.call)}
-    {#each call.tool_calls as tool, index (tool.id ?? index)}
-      {@const badge = resultBadge(tool.result)}
-      <div class="entry tool">
-        <Icon name="tool" size={12} />
-        <span class="tool-name">{tool.name}</span>
-        <span class="tool-target mono"
-          >{#if tool.effects.length}{#each tool.effects as effect, effectIndex (effectIndex)}<span
-                ><span class="muted">{effectLabel(effect.kind)}</span>
-                {Board.shorten(effect.target, workdir)}</span
-              >{/each}{:else}{tool.input.text.split('\n')[0]}{/if}</span
-        >
-        <span class="chip {badge.tone}">{badge.label}</span>
-      </div>
+  <section class="turn">
+    {#if turn.prompt}<div class="entry prompt"><p>{turn.prompt.text}</p></div>{/if}
+    {#each turn.calls as call (call.call)}
+      {#each call.tool_calls as tool, index (tool.id ?? index)}
+        {@const badge = resultBadge(tool.result)}
+        <div class="entry tool">
+          <Icon name="tool" size={12} />
+          <span class="tool-name">{tool.name}</span>
+          <span class="tool-target mono"
+            >{#if tool.effects.length}{#each tool.effects as effect, effectIndex (effectIndex)}<span
+                  ><span class="muted">{effectLabel(effect.kind)}</span>
+                  {Board.shorten(effect.target, workdir)}</span
+                >{/each}{:else}{tool.input.text.split('\n')[0]}{/if}</span
+          >
+          <span class="chip {badge.tone}">{badge.label}</span>
+        </div>
+      {/each}
+      {#if call.reply?.text}<div class="entry reply"><Markdown text={call.reply.text} /></div>{/if}
     {/each}
-    {#if call.reply?.text}<div class="entry reply"><Markdown text={call.reply.text} /></div>{/if}
-  {/each}
-  <div class="turn-rule">
-    <span>{turn.started_at ? `${date(turn.started_at)} ${clock(turn.started_at)}` : 'Turn'}</span>
-    <a href="/turns/{turn.turn}">Turn details <Icon name="arrow" size={11} /></a>
-  </div>
+    <div class="turn-foot">
+      <span>{turn.started_at ? `${date(turn.started_at)} ${clock(turn.started_at)}` : 'Turn'}</span>
+      <a href="/turns/{turn.turn}">Turn details <Icon name="arrow" size={11} /></a>
+    </div>
+  </section>
 {/snippet}
 
 {#snippet activity()}
@@ -495,7 +497,7 @@
   }))}
   {#each steps as { turn, tools } (turn.turn)}
     {#if tools.length}
-      <div class="entry step-head muted">{turn.prompt?.text.split('\n')[0] ?? 'Turn'}</div>
+      <div class="band">{turn.prompt?.text.split('\n')[0] ?? 'Turn'}</div>
       {#each tools as tool, index (tool.id ?? index)}
         {@const badge = resultBadge(tool.result)}
         <div class="entry tool">
@@ -512,6 +514,9 @@
       {/each}
     {/if}
   {/each}
+  {#if transcript?.entries.some((entry) => entry.kind === 'command' || entry.kind === 'file_change' || entry.kind === 'tool')}
+    <div class="band">This turn</div>
+  {/if}
   {#each transcript?.entries ?? [] as entry, index (index)}
     {#if entry.kind === 'command'}
       <div class="entry tool">
@@ -553,16 +558,17 @@
   {@const read = [...new Set((history?.turns ?? []).flatMap((turn) => turn.files_read))].filter(
     (path) => !written.includes(path),
   )}
-  <div class="entry files">
-    <h3>Written <span class="muted">{written.length}</span></h3>
-    {#each written as path (path)}<div class="mono file">
-        <Icon name="pencil" size={11} />
-        {path}
-      </div>{/each}
-    <h3>Read <span class="muted">{read.length}</span></h3>
-    {#each read as path (path)}<div class="mono file muted">{path}</div>{/each}
-    {#if !written.length && !read.length}<p class="quiet-empty">No files touched yet.</p>{/if}
-  </div>
+  <div class="band">Written <span class="count">{written.length}</span></div>
+  {#each written as path (path)}<div class="entry tool mono">
+      <Icon name="pencil" size={11} />
+      {path}
+    </div>{:else}<p class="quiet-empty">Nothing written yet.</p>{/each}
+  <div class="band">Read <span class="count">{read.length}</span></div>
+  {#each read as path (path)}<div class="entry tool mono muted">{path}</div>{:else}<p
+      class="quiet-empty"
+    >
+      Nothing read yet.
+    </p>{/each}
 {/snippet}
 
 {#snippet callList()}
@@ -571,7 +577,7 @@
   {:else if !calls}
     <p class="quiet-empty">Reading calls…</p>
   {:else}
-    <table class="entry calls">
+    <table class="calls">
       <thead
         ><tr><th>Started</th><th>Model</th><th>Ended</th><th>Time</th><th>Tokens</th></tr></thead
       >
@@ -595,9 +601,9 @@
         {/each}
       </tbody>
     </table>
-    <p class="entry">
-      <a href="/sessions/{history.session}">Open the session <Icon name="arrow" size={11} /></a>
-    </p>
+    <a class="foot-link" href="/sessions/{history.session}"
+      >Open the session <Icon name="arrow" size={11} /></a
+    >
   {/if}
 {/snippet}
 
@@ -698,72 +704,76 @@
         <div class="conversation" bind:this={conversation} onscroll={onScroll}>
           {#if historyError}<p class="entry notice-entry danger">{historyError}</p>{/if}
           {#each history?.turns ?? [] as turn (turn.turn)}{@render recordedTurn(turn)}{/each}
-          {#each transcript?.entries ?? [] as entry, index (index)}
-            {#if entry.kind === 'prompt'}
-              <div class="entry prompt"><p>{entry.text}</p></div>
-            {:else if entry.kind === 'message'}
-              <div class="entry reply" class:streaming={!entry.done}>
-                <Markdown text={entry.text} />
-              </div>
-            {:else if entry.kind === 'reasoning'}
-              {#if !entry.done}<div class="entry tool muted">
-                  <Icon name="thought" size={12} /> Thinking…
+          {#if transcript?.entries.length || runState.phase === 'working'}<section class="turn">
+              {#each transcript?.entries ?? [] as entry, index (index)}
+                {#if entry.kind === 'prompt'}
+                  <div class="entry prompt"><p>{entry.text}</p></div>
+                {:else if entry.kind === 'message'}
+                  <div class="entry reply" class:streaming={!entry.done}>
+                    <Markdown text={entry.text} />
+                  </div>
+                {:else if entry.kind === 'reasoning'}
+                  {#if !entry.done}<div class="entry tool muted">
+                      <Icon name="thought" size={12} /> Thinking…
+                    </div>{/if}
+                {:else if entry.kind === 'command'}
+                  <details class="entry tool command">
+                    <summary>
+                      <Icon name="terminal" size={12} />
+                      <span class="tool-target mono">{entry.command}</span>
+                      <span
+                        class="chip {entry.status === 'completed' &&
+                        (entry.exit === 0 || entry.exit === null)
+                          ? 'success'
+                          : entry.status === 'in_progress'
+                            ? 'live'
+                            : entry.status === 'declined'
+                              ? 'neutral'
+                              : 'error'}"
+                        >{entry.status === 'in_progress'
+                          ? 'running'
+                          : entry.exit !== null
+                            ? `exit ${entry.exit}`
+                            : entry.status}</span
+                      >
+                    </summary>
+                    {#if entry.output}<pre class="activity-pre">{entry.output}</pre>{/if}
+                  </details>
+                {:else if entry.kind === 'file_change'}
+                  <div class="entry tool">
+                    <Icon name="pencil" size={12} />
+                    <span class="tool-target mono">{entry.paths.join(', ') || 'files'}</span>
+                    <span class="chip {entry.status === 'completed' ? 'success' : 'neutral'}"
+                      >{entry.status === 'in_progress' ? 'editing' : entry.status}</span
+                    >
+                  </div>
+                {:else if entry.kind === 'tool'}
+                  <div class="entry tool">
+                    <Icon name="tool" size={12} /><span class="tool-name">{entry.name}</span>
+                    {#if !entry.done}<span class="chip live">running</span>{/if}
+                  </div>
+                {:else if entry.kind === 'turn_end'}
+                  {#if entry.end.kind !== 'completed'}<p
+                      class="entry notice-entry {entry.end.kind === 'interrupted'
+                        ? 'warn'
+                        : 'danger'}"
+                    >
+                      Turn {entry.end.kind === 'interrupted'
+                        ? 'interrupted'
+                        : entry.end.kind === 'failed'
+                          ? `failed${entry.end.message ? `: ${entry.end.message}` : ''}`
+                          : `ended: ${entry.end.status}`}
+                    </p>{/if}
+                {:else if entry.kind === 'notice'}
+                  <p class="entry notice-entry {entry.tone}">{entry.text}</p>
+                {/if}
+              {/each}
+              {#if runState.phase === 'working' && !controls.approvals.length}<div
+                  class="entry tool muted working"
+                >
+                  <span class="phase-dot tone-live"></span> Working…
                 </div>{/if}
-            {:else if entry.kind === 'command'}
-              <details class="entry tool command">
-                <summary>
-                  <Icon name="terminal" size={12} />
-                  <span class="tool-target mono">{entry.command}</span>
-                  <span
-                    class="chip {entry.status === 'completed' &&
-                    (entry.exit === 0 || entry.exit === null)
-                      ? 'success'
-                      : entry.status === 'in_progress'
-                        ? 'live'
-                        : entry.status === 'declined'
-                          ? 'neutral'
-                          : 'error'}"
-                    >{entry.status === 'in_progress'
-                      ? 'running'
-                      : entry.exit !== null
-                        ? `exit ${entry.exit}`
-                        : entry.status}</span
-                  >
-                </summary>
-                {#if entry.output}<pre class="activity-pre">{entry.output}</pre>{/if}
-              </details>
-            {:else if entry.kind === 'file_change'}
-              <div class="entry tool">
-                <Icon name="pencil" size={12} />
-                <span class="tool-target mono">{entry.paths.join(', ') || 'files'}</span>
-                <span class="chip {entry.status === 'completed' ? 'success' : 'neutral'}"
-                  >{entry.status === 'in_progress' ? 'editing' : entry.status}</span
-                >
-              </div>
-            {:else if entry.kind === 'tool'}
-              <div class="entry tool">
-                <Icon name="tool" size={12} /><span class="tool-name">{entry.name}</span>
-                {#if !entry.done}<span class="chip live">running</span>{/if}
-              </div>
-            {:else if entry.kind === 'turn_end'}
-              {#if entry.end.kind !== 'completed'}<p
-                  class="entry notice-entry {entry.end.kind === 'interrupted' ? 'warn' : 'danger'}"
-                >
-                  Turn {entry.end.kind === 'interrupted'
-                    ? 'interrupted'
-                    : entry.end.kind === 'failed'
-                      ? `failed${entry.end.message ? `: ${entry.end.message}` : ''}`
-                      : `ended: ${entry.end.status}`}
-                </p>{/if}
-            {:else if entry.kind === 'notice'}
-              <p class="entry notice-entry {entry.tone}">{entry.text}</p>
-            {/if}
-          {/each}
-          {#if runState.phase === 'working' && !controls.approvals.length}<div
-              class="entry tool muted working"
-            >
-              <span class="phase-dot tone-live"></span> Working…
-            </div>{/if}
+            </section>{/if}
           {#if !history?.turns.length && !transcript?.entries.length && runState.phase === 'idle'}
             <p class="quiet-empty">The conversation is open. Say what to do.</p>
           {/if}
@@ -885,36 +895,49 @@
     border-bottom-color: var(--accent, var(--ink));
   }
   .lost {
-    margin: 12px 16px 0;
+    margin: 0;
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--line);
     font-size: 12px;
   }
-  .step-head {
-    margin-top: 14px;
-    font-size: 12px;
+  /* A heading row: what the rows under it belong to. */
+  .band {
+    padding: 7px 16px;
+    border-bottom: 1px solid var(--line);
+    background: var(--sidebar);
+    color: var(--muted);
+    font-size: 11px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
-  .files h3 {
-    margin: 16px 0 6px;
-    font-size: 12px;
-  }
-  .file {
-    padding: 2px 0;
-    font-size: 12px;
+  .band .count {
+    margin-left: 4px;
+    color: var(--ink);
   }
   table.calls {
-    width: 100%;
-    border-collapse: collapse;
     font-size: 12px;
   }
-  table.calls th {
-    text-align: left;
-    font-weight: 500;
-    color: var(--muted);
-    padding: 6px 8px 6px 0;
-    border-bottom: 1px solid var(--line);
+  table.calls th:first-child,
+  table.calls td:first-child {
+    padding-left: 16px;
   }
   table.calls td {
-    padding: 5px 8px 5px 0;
-    border-bottom: 1px solid var(--line-subtle);
+    vertical-align: middle;
+  }
+  .foot-link {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 8px 16px;
+    border-bottom: 1px solid var(--line);
+    font-size: 12px;
+  }
+  .run-main :global(.quiet-empty) {
+    margin: 0;
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--line);
+    font-size: 12px;
   }
   .run-main > .empty-state {
     margin: auto;
@@ -962,29 +985,29 @@
     flex: 1;
     min-height: 0;
     overflow: auto;
-    padding: 16px 0 24px;
+  }
+  /* A turn: its prompt, steps, and reply as rows, ruled off from the next. */
+  .turn {
+    border-bottom: 1px solid var(--line);
   }
   .entry {
-    max-width: 860px;
-    margin: 0 auto;
-    padding: 0 24px;
+    padding: 0 16px;
     font-size: 13px;
-  }
-  .entry.prompt {
-    margin-top: 16px;
-    margin-bottom: 10px;
   }
   .entry.prompt p {
     margin: 0;
-    padding: 10px 14px;
-    background: var(--surface-inset);
-    border-left: 2px solid var(--role-user);
+    padding: 10px 0;
     white-space: pre-wrap;
     overflow-wrap: anywhere;
   }
+  .entry.prompt {
+    background: var(--surface-inset);
+    box-shadow: inset 2px 0 var(--role-user);
+    border-bottom: 1px solid var(--line);
+  }
   .entry.reply {
-    padding-top: 6px;
-    padding-bottom: 6px;
+    padding-top: 10px;
+    padding-bottom: 10px;
   }
   .entry.reply.streaming :global(.markdown > :last-child::after) {
     content: '▍';
@@ -994,10 +1017,14 @@
     display: flex;
     align-items: center;
     gap: 8px;
-    padding-top: 3px;
-    padding-bottom: 3px;
+    padding-top: 6px;
+    padding-bottom: 6px;
+    border-bottom: 1px solid var(--line-subtle);
     font-size: 12px;
     color: var(--ink);
+  }
+  .entry.tool.muted {
+    color: var(--muted);
   }
   .entry.tool.command {
     display: block;
@@ -1021,25 +1048,26 @@
     content: ' · ';
     color: var(--muted);
   }
-  .turn-rule {
+  .turn-foot {
     display: flex;
     justify-content: space-between;
-    max-width: 812px;
-    margin: 10px auto 0;
-    padding: 4px 0 0;
+    padding: 6px 16px;
     border-top: 1px solid var(--line-subtle);
+    background: var(--sidebar);
     font-size: 11px;
     color: var(--muted);
   }
-  .turn-rule a {
+  .turn-foot a {
     color: var(--muted);
     display: inline-flex;
     align-items: center;
     gap: 4px;
   }
   .notice-entry {
-    margin-top: 6px;
-    margin-bottom: 6px;
+    margin: 0;
+    padding-top: 8px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--line-subtle);
     font-size: 12px;
   }
   .notice-entry.warn {
@@ -1094,27 +1122,32 @@
     flex-wrap: wrap;
     justify-content: flex-end;
   }
+  /* The prompt fills its strip; only the Send control sits inside it. */
   .composer {
     display: flex;
     align-items: flex-end;
-    gap: 8px;
-    padding: 10px 16px;
     border-top: 1px solid var(--line);
     background: var(--surface);
+  }
+  .composer:focus-within {
+    box-shadow: inset 2px 0 var(--accent);
   }
   .composer textarea {
     flex: 1;
     min-width: 0;
-    resize: vertical;
-    min-height: 44px;
+    resize: none;
+    min-height: 64px;
     max-height: 40vh;
-    padding: 8px 10px;
-    border: 1px solid var(--control-border);
-    border-radius: 3px;
-    background: var(--surface);
+    padding: 12px 16px;
+    border: 0;
+    outline: none;
+    background: transparent;
     color: var(--ink);
     font: inherit;
     font-size: 13px;
+  }
+  .composer .button {
+    margin: 0 12px 12px 0;
   }
   @media (max-width: 760px) {
     .runs-page {
