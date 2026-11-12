@@ -266,12 +266,13 @@ requests there only when `REN_DEV_TRAFFIC_URL` is set, as the slot sets it, and
 only a development gateway's UI shows the toolbar.
 
 The slot's daemon has runs on, with `~/.local/share/ren-dev/work` as its root
-(`acme-api` and `acme-web` in it), and the dev UI drives them. Its `codex` and
-`claude` are fakes (`cargo xtask dev agent`, first on the dev daemon's `PATH`),
-never the real clients: each speaks its client's protocol (Codex's app server,
-Claude Code's stream-json print mode), asks to run a command for
-prompts that mention testing, running, or building and to change files for
-ones that mention fixing, editing, changing, adding, or writing, and sends each
+(`acme-api` and `acme-web` in it), and the dev UI drives them. Its `codex`,
+`claude`, and `pi` are fakes (`cargo xtask dev agent`, first on the dev
+daemon's `PATH`), never the real clients: each speaks its client's protocol
+(Codex's app server, Claude Code's stream-json print mode, Pi's RPC mode), runs
+a command for prompts that mention testing, running, or building and changes
+files for ones that mention fixing, editing, changing, adding, or writing
+(Codex and Claude Code ask first; Pi asks for no approvals), and sends each
 turn's model call through the dev gateway to the fake provider, so a run's
 turns are recorded under its session. `dev up` restarts the daemon, which
 stops the slot's runs.

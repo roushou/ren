@@ -408,9 +408,9 @@ dependencies under "Crates" below. Read the code for current module ownership.
   this checkout's build beside the installed service, with its own config,
   data, and ports, against a fake provider (`dev::provider`, whose replies are
   the pure, tested `script`), seeded with fake traffic (`dev::seed`, scenarios
-  as pure data), as `ren-dev-*` transient units, runs driven against a fake `codex` and `claude`
-  (`dev::agent`: the shell, and `script` and `claude`, the pure conversations
-  it plays as each client), with live traffic whose
+  as pure data), as `ren-dev-*` transient units, runs driven against a fake `codex`, `claude`, and `pi`
+  (`dev::agent`: the shell, and `script`, `claude`, and `pi`, the pure
+  conversations it plays as each client), with live traffic whose
   settings both the generator and the fake provider reread (`dev::traffic`,
   with its loopback control API for the dev UI's toolbar), an optional private
   preview on the tailnet, and

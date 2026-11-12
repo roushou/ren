@@ -57,8 +57,9 @@ enum DevAction {
     Traffic(TrafficArgs),
     /// Screenshot the dev UI's pages with a headless Chromium.
     Shot(ShotArgs),
-    /// Act as `codex app-server` on stdio for the dev daemon's runs (the
-    /// slot's `codex` runs this).
+    /// Act as `codex app-server`, `claude -p`, or `pi --mode rpc` on stdio
+    /// for the dev daemon's runs (the slot's `codex`, `claude`, and `pi`
+    /// run this).
     #[command(hide = true)]
     Agent(AgentArgs),
 }

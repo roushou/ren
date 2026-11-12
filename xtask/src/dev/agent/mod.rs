@@ -1,13 +1,15 @@
-//! `cargo xtask dev agent`: a fake `codex app-server` or `claude -p` for the
-//! dev slot's runs. The slot puts a `codex` and a `claude` that run it first
-//! on the dev daemon's PATH, so the daemon starts and drives them as it
-//! would the real clients. Each speaks its client's protocol on stdio
-//! ([`script`] for Codex, [`claude`] for Claude Code) and sends each turn's
+//! `cargo xtask dev agent`: a fake `codex app-server`, `claude -p`, or
+//! `pi --mode rpc` for the dev slot's runs. The slot puts a `codex`, a
+//! `claude`, and a `pi` that run it first on the dev daemon's PATH, so the
+//! daemon starts and drives them as it would the real clients. Each speaks
+//! its client's protocol on stdio ([`script`] for Codex, [`claude`] for
+//! Claude Code, [`pi`] for Pi) and sends each turn's
 //! model call through the dev gateway to the fake provider, as the client
 //! would, so the run's traffic is recorded under its session. It never reads
 //! a real client's configuration or credentials.
 
 mod claude;
+mod pi;
 mod script;
 
 use super::seed::{Call, Caller, Client, Run, Scenario, Seeder};
@@ -21,10 +23,10 @@ use std::{io::BufRead as _, path::Path};
 #[derive(Debug, thiserror::Error)]
 pub enum AgentError {
     #[error(
-        "no gateway: expected a model_providers base_url argument (codex) or ANTHROPIC_BASE_URL (claude)"
+        "no gateway: expected a model_providers base_url argument (codex), ANTHROPIC_BASE_URL (claude), or REN_PI_GATEWAY (pi)"
     )]
     NoGateway,
-    #[error("no conversation: expected --session-id or --resume")]
+    #[error("no conversation: expected --session-id (or --resume for claude)")]
     NoSession,
     #[error("cannot start the agent's runtime: {0}")]
     Runtime(#[source] std::io::Error),
@@ -39,12 +41,14 @@ pub enum AgentError {
 pub enum Played {
     Codex,
     Claude,
+    Pi,
 }
 
 /// One client's script.
 enum Script {
     Codex(script::AgentScript),
     Claude(claude::ClaudeScript),
+    Pi(pi::PiScript),
 }
 
 /// What a script asks of the shell, whichever client it plays.
@@ -92,6 +96,14 @@ impl FakeAgent {
                 Ok(Self {
                     gateway: Self::root(base, "/anthropic"),
                     script: Script::Claude(script),
+                })
+            }
+            Played::Pi => {
+                let base = env.get("REN_PI_GATEWAY").ok_or(AgentError::NoGateway)?;
+                let script = pi::PiScript::new(own, arguments).ok_or(AgentError::NoSession)?;
+                Ok(Self {
+                    gateway: base.trim_end_matches('/').to_owned(),
+                    script: Script::Pi(script),
                 })
             }
         }
@@ -149,6 +161,11 @@ impl FakeAgent {
                 .into_iter()
                 .map(Self::claude_step)
                 .collect(),
+            Script::Pi(script) => script
+                .receive(message)
+                .into_iter()
+                .map(Self::pi_step)
+                .collect(),
         }
     }
 
@@ -163,6 +180,11 @@ impl FakeAgent {
                 .replied(reply)
                 .into_iter()
                 .map(Self::claude_step)
+                .collect(),
+            Script::Pi(script) => script
+                .replied(reply)
+                .into_iter()
+                .map(Self::pi_step)
                 .collect(),
         }
     }
@@ -193,6 +215,13 @@ impl FakeAgent {
         }
     }
 
+    fn pi_step(out: pi::Out) -> Step {
+        match out {
+            pi::Out::Send(value) => Step::Send(value),
+            pi::Out::Call(call) => Step::Call(call),
+        }
+    }
+
     fn write(stdout: &mut impl std::io::Write, value: &Value) -> Result<(), AgentError> {
         let mut line = value.to_string();
         line.push('\n');
@@ -206,8 +235,10 @@ impl FakeAgent {
     fn text(&self, kind: &str, event: &Value) -> Option<String> {
         let text = match (&self.script, kind) {
             (Script::Codex(_), "response.output_text.delta") => event["delta"].as_str(),
-            (Script::Claude(_), "content_block_delta") => event["delta"]["text"].as_str(),
-            (Script::Codex(_) | Script::Claude(_), _) => None,
+            (Script::Claude(_) | Script::Pi(_), "content_block_delta") => {
+                event["delta"]["text"].as_str()
+            }
+            (Script::Codex(_) | Script::Claude(_) | Script::Pi(_), _) => None,
         };
         text.map(str::to_owned)
     }
@@ -216,6 +247,7 @@ impl FakeAgent {
         match &self.script {
             Script::Codex(script) => script.delta(text),
             Script::Claude(script) => script.delta(text),
+            Script::Pi(script) => script.delta(text),
         }
     }
 

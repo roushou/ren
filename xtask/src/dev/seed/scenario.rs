@@ -294,6 +294,30 @@ impl Scenario {
         }
     }
 
+    /// A Pi turn's model call in a session the caller names, with the
+    /// headers Ren's extension sends: the dev slot's fake `pi`.
+    pub(in crate::dev) fn pi_turn_call(session: &str, turn: &str, prompt: &str) -> Call {
+        let mut headers = Caller::Unidentified.headers();
+        headers.extend([
+            ("x-ren-pi-session-id".into(), session.to_owned()),
+            ("x-ren-pi-turn-id".into(), turn.to_owned()),
+            ("content-type".into(), "application/json".into()),
+        ]);
+        let body = Self::messages(
+            "claude-sonnet-5-5",
+            prompt,
+            Client::Pi.toolset(),
+            session,
+            0,
+        );
+        Call {
+            label: format!("pi: {}", Self::short(prompt)),
+            path: "/anthropic/v1/messages".into(),
+            headers,
+            body: body.to_string(),
+        }
+    }
+
     /// Claude Code's side call `side` in session `session`: its session's
     /// headers, but no turn.
     pub(in crate::dev) fn side_call(

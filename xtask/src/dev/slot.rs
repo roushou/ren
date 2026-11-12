@@ -257,20 +257,21 @@ impl Slot {
     /// The fake projects runs start in.
     pub const PROJECTS: [&'static str; 2] = ["acme-api", "acme-web"];
 
-    /// The folder holding the `codex` and `claude` the dev daemon starts:
+    /// The folder holding the `codex`, `claude`, and `pi` the dev daemon starts:
     /// the fake agent.
     fn agent_dir(&self) -> PathBuf {
         self.bin_dir.join("agent")
     }
 
-    /// Put the fake agent first on the dev daemon's PATH as `codex` and
-    /// `claude`, and create the fake projects under the run root.
+    /// Put the fake agent first on the dev daemon's PATH as `codex`,
+    /// `claude`, and `pi`, and create the fake projects under the run root.
     fn write_agent(&self) -> Result<(), DevError> {
         let dir = self.agent_dir();
         fs::create_dir_all(&dir).map_err(InstallError::file(&dir))?;
         for (program, client, name) in [
             ("codex", "codex", "Codex"),
             ("claude", "claude", "Claude Code"),
+            ("pi", "pi", "Pi"),
         ] {
             let script = format!(
                 "#!/bin/sh\n# The dev slot's fake {name} (`cargo xtask dev agent`); never the real one.\nexec {} dev agent --client {client} --data-dir {} \"$@\"\n",
