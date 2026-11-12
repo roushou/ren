@@ -132,7 +132,8 @@ total response duration limit.
 
 The daemon handles Ctrl-C and SIGTERM by draining: it refuses new calls with `503`,
 lets running calls continue for up to 10 seconds, then cancels what remains
-(recorded as `cancelled` with cause `shutdown`), and finally drains recording.
+(recorded as `cancelled` with cause `shutdown`), ends the runs it drives
+(recorded as `drained`), and finally drains recording.
 
 ## Response inspection
 

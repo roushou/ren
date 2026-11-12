@@ -59,6 +59,17 @@ impl Unit {
         format!("{}.service", self.name())
     }
 
+    /// Which of the unit's processes systemd signals when it stops. The
+    /// daemon is signalled alone, as the installed unit does, so it drains
+    /// its runs itself before the final kill covers what is left; the rest
+    /// stop as a whole.
+    fn kill_mode(self) -> &'static str {
+        match self {
+            Self::Daemon => "mixed",
+            Self::Provider | Self::Ui | Self::Traffic => "control-group",
+        }
+    }
+
     pub fn active(self) -> Result<bool, InstallError> {
         Invocation::new("systemctl")
             .args(["--user", "is-active", "--quiet"])
@@ -92,7 +103,8 @@ impl Unit {
         let mut run = Invocation::new("systemd-run")
             .args(["--user", "--collect", "--quiet"])
             .arg(format!("--unit={}", self.name()))
-            .arg(format!("--description=Ren dev slot: {}", self.name()));
+            .arg(format!("--description=Ren dev slot: {}", self.name()))
+            .arg(format!("--property=KillMode={}", self.kill_mode()));
         if let Some(dir) = dir {
             run = run.arg(format!("--working-directory={}", dir.display()));
         }

@@ -588,6 +588,7 @@ mod tests {
         let exit = ProcessExit::Signal(9);
         let cases = [
             (RunState::Starting, RunEnd::Exited),
+            (RunState::Idle { thread: thread() }, RunEnd::Exited),
             (
                 RunState::Working {
                     thread: thread(),
@@ -648,6 +649,41 @@ mod tests {
         assert_eq!(drained.actions, vec![RunAction::Kill]);
         let again = drained.state.apply(RunEvent::Shutdown).unwrap();
         assert!(again.actions.is_empty(), "a stopping run is killed once");
+    }
+
+    #[test]
+    fn only_an_exit_after_shutdown_is_drained() {
+        // The daemon drains its runs itself: the shutdown asks for the
+        // kill, and the exit that follows is the drain's.
+        let idle = RunState::Idle { thread: thread() };
+        let stopping = idle.apply(RunEvent::Shutdown).unwrap().state;
+        let drained = stopping
+            .apply(RunEvent::Exited(ProcessExit::Signal(9)))
+            .unwrap();
+        assert_eq!(
+            drained.state,
+            RunState::Ended {
+                end: RunEnd::Drained,
+                exit: Some(ProcessExit::Signal(9))
+            }
+        );
+        // An exit seen before the shutdown reached the run was not Ren's
+        // doing, whatever signalled it: it stays an exit, with its signal.
+        let exited = idle
+            .apply(RunEvent::Exited(ProcessExit::Signal(15)))
+            .unwrap();
+        assert_eq!(
+            exited.state,
+            RunState::Ended {
+                end: RunEnd::Exited,
+                exit: Some(ProcessExit::Signal(15))
+            }
+        );
+        assert_eq!(
+            exited.state.apply(RunEvent::Shutdown).unwrap().state,
+            exited.state,
+            "a shutdown does not rewrite an end already recorded"
+        );
     }
 
     #[test]

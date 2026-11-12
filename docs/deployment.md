@@ -115,6 +115,12 @@ Both definitions restart after failure, run without a shell, use owner-only file
 creation permissions, disable core dumps, and allow 30 seconds for SIGTERM shutdown.
 The daemon lets running calls continue for 10 seconds, cancels what remains,
 then has a separate 10-second budget to drain the recorder.
+The systemd unit uses `KillMode=mixed`: SIGTERM goes to the daemon alone, so it
+ends the [runs](api.md#runs) it drives itself, after its calls, and records each
+as `drained` (a kill Ren sent, so the exit is usually `signal 9`). A run whose
+process exits before the daemon reaches it is recorded as `exited` with the
+exit seen. Whatever is still running when the stop timeout passes is killed
+with the rest of the unit.
 Systemd limits repeated startup failures to five in a minute; fix the cause and
 run `systemctl --user reset-failed ren` before restarting if it hits that limit.
 Launchd throttles respawns to at most once every 10 seconds. Neither manager's
