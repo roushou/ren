@@ -10,7 +10,7 @@ use ren_harness::{
 use ren_protocol::label::Stored;
 use ren_protocol::native::NativeThreadId;
 use ren_recorder::{id::RunId, time::UnixMillis};
-use ren_store::{activity::TurnActivity, view::RunView};
+use ren_store::view::RunView;
 use ren_supervisor::{RunSnapshot, RunState, Waiting};
 
 /// How much a run needs the operator, most first.
@@ -39,14 +39,10 @@ pub struct Run {
     pub live: Option<RunState>,
     pub recorded: Option<RunView>,
     pub transcript: Transcript,
-    /// Recorded turns, oldest first.
-    pub history: Vec<TurnActivity>,
     /// Typed while a turn ran: sent once the run waits for a prompt.
     pub queued: Option<Prompt>,
-    /// History reads asked for since its last turn ended without its record.
-    pub awaiting: u8,
-    /// Whether its history was asked for once already, to name it.
-    pub named: bool,
+    /// Whether its conversation was asked for once already.
+    pub asked: bool,
 }
 
 impl Run {
@@ -60,10 +56,8 @@ impl Run {
             live: None,
             recorded: None,
             transcript: Transcript::default(),
-            history: Vec::new(),
             queued: None,
-            awaiting: 0,
-            named: false,
+            asked: false,
         }
     }
 
@@ -135,10 +129,8 @@ impl Run {
     /// What the run is called: its first prompt, shortened.
     pub fn title(&self) -> String {
         let first = self
-            .history
-            .first()
-            .and_then(|turn| turn.prompt.as_ref().map(|prompt| prompt.text.as_str()))
-            .or_else(|| self.transcript.first_prompt())
+            .transcript
+            .first_prompt()
             .or_else(|| self.queued.as_ref().map(Prompt::as_str));
         match (first, self.started_at) {
             (Some(text), _) => Text(text.lines().next().unwrap_or(text)).summary(32),
@@ -263,11 +255,6 @@ impl Desk {
                 Run::new(view.id, view.harness.clone(), view.workdir.clone(), seen)
             });
             run.started_at = Some(view.started_at);
-            // No call recorded yet: no turn either, so every turn recorded
-            // from now on is new.
-            if view.session.is_none() && !run.transcript.knows() {
-                run.transcript.knowing(Vec::new());
-            }
             run.recorded = Some(view);
         }
     }

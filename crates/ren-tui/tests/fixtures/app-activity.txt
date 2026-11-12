@@ -2,10 +2,10 @@
 ──────────────────────────────┬─────────────────────────────────────────────────────────────────────────────────────────
  ren ◆1  /srv/                │ ren · Claude Code · needs you                                                  /srv/ren
  1 ◆ fix the flaky upl…  wants│  Conversation   Activity   Files   Calls
-                              │▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+                              │─────────────────────────────────────────────────────────────────────────────────────────
  acme-api  /dev/              │
  2 ● new Codex run  working   │ › fix the flaky upload test
-                              │ ● Bash cargo test -p upload
+                              │ ● Bash cargo test -p upload · exit 0
  acme-web  /dev/              │
  3 ○ new Claude Code r…  your │
                               │

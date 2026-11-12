@@ -13,15 +13,11 @@ use crate::ui::{Anchor, Bar, Ink, Keep, Line, Lines, Rule, Size, Span, Text, Vie
 use ren_harness::drive::ApprovalAsk;
 use ren_recorder::id::SessionId;
 use ren_recorder::time::UnixMillis;
-use ren_store::activity::TurnActivity;
 use ren_store::activity::report::CallMetrics;
-use std::collections::HashMap;
 
 /// One turn of a run: recorded, or the one streaming now.
 struct Turn {
     prompt: String,
-    /// `3m · 6 tools · 1 failed`, once it is recorded.
-    summary: String,
     blocks: Vec<Block>,
     files: Files,
 }
@@ -90,13 +86,8 @@ impl Main {
                 }),
             ),
             (Size::Exact(1), View::Bar(self.tabs())),
-            (
-                Size::Exact(1),
-                View::Rule(match lit {
-                    Some(ink) => Rule::Edge(ink),
-                    None => Rule::Plain,
-                }),
-            ),
+            // A plain rule: the header's own color says the state.
+            (Size::Exact(1), View::Rule(Rule::Plain)),
             (
                 Size::Fill,
                 View::pad(
@@ -151,7 +142,7 @@ impl Main {
         }
         let focus = match self.focus {
             Focus::List => "",
-            Focus::Session => "j/k turns · enter open/fold ",
+            Focus::Session => "↑↓ scroll · pgup pgdn page ",
         };
         Bar {
             left,
@@ -210,87 +201,40 @@ impl Main {
             .map(|view| SessionPane::of(model, view, now))
     }
 
-    /// A run's turns, oldest first: those recorded, then the one streaming.
+    /// A run's turns, oldest first, from its whole conversation: each
+    /// starts at its prompt.
     fn turns(run: &Run) -> Vec<Turn> {
-        let mut turns: Vec<Turn> = run.history.iter().map(Self::recorded).collect();
-        if !run.transcript.is_empty() {
-            let blocks = Conversation::live(run.transcript.entries()).blocks;
-            let prompt = blocks
-                .iter()
-                .rev()
-                .find_map(|block| {
-                    if let Block::Prompt(text) = block {
-                        Some(text.clone())
-                    } else {
-                        None
-                    }
-                })
-                .unwrap_or_default();
-            let written = blocks
-                .iter()
-                .filter_map(|block| {
-                    if let Block::Step(step) = block
-                        && step.kind == crate::conversation::StepKind::Edit
-                    {
-                        Some(step.target.clone())
-                    } else {
-                        None
-                    }
-                })
-                .collect();
-            turns.push(Turn {
-                prompt,
-                summary: match run.attention() {
-                    Attention::Working | Attention::NeedsYou | Attention::Starting => {
-                        "now".to_owned()
-                    }
-                    Attention::YourTurn | Attention::Ended => "just now".to_owned(),
-                },
-                blocks,
-                files: Files {
-                    written,
-                    read: Vec::new(),
-                },
-            });
+        let blocks = Conversation::live(run.transcript.entries()).blocks;
+        let mut turns: Vec<Turn> = Vec::new();
+        for block in blocks {
+            if let Block::Prompt(text) = &block {
+                turns.push(Turn {
+                    prompt: text.clone(),
+                    blocks: Vec::new(),
+                    files: Files::default(),
+                });
+            }
+            let turn = match turns.last_mut() {
+                Some(turn) => turn,
+                None => {
+                    turns.push(Turn {
+                        prompt: String::new(),
+                        blocks: Vec::new(),
+                        files: Files::default(),
+                    });
+                    let at = turns.len() - 1;
+                    &mut turns[at]
+                }
+            };
+            if let Block::Step(step) = &block
+                && step.kind == crate::conversation::StepKind::Edit
+                && !turn.files.written.contains(&step.target)
+            {
+                turn.files.written.push(step.target.clone());
+            }
+            turn.blocks.push(block);
         }
         turns
-    }
-
-    fn recorded(turn: &TurnActivity) -> Turn {
-        let blocks = Conversation::turn(turn, &HashMap::new()).blocks;
-        let mut summary = Vec::new();
-        if let (Some(start), Some(end)) = (turn.started_at, turn.ended_at) {
-            summary.push(Elapsed(end.as_millis().saturating_sub(start.as_millis())).to_string());
-        }
-        if turn.tool_calls > 0 {
-            summary.push(format!(
-                "{} tool{}",
-                turn.tool_calls,
-                if turn.tool_calls == 1 { "" } else { "s" }
-            ));
-        }
-        if turn.failed_tool_calls > 0 {
-            summary.push(format!("{} failed", turn.failed_tool_calls));
-        }
-        Turn {
-            prompt: turn
-                .prompt
-                .as_ref()
-                .map(|prompt| prompt.text.clone())
-                .unwrap_or_default(),
-            summary: summary.join(" · "),
-            blocks,
-            files: Files {
-                written: turn.files_written.clone(),
-                read: turn.files_read.clone(),
-            },
-        }
-    }
-
-    /// Whether turn `index` of `count` is open: the newest unless folded by
-    /// hand, an earlier one if opened by hand.
-    fn open(&self, index: usize, count: usize) -> bool {
-        (index + 1 == count) != self.toggled.contains(&index)
     }
 
     fn conversation(&self, model: &Model, item: Item, width: usize, now: UnixMillis) -> Vec<Line> {
@@ -312,46 +256,21 @@ impl Main {
         if let Some(handoff) = &self.handoff {
             lines.push(Line::of(format!("↳ {handoff}"), Ink::Muted));
         }
-        let turns = Self::turns(run);
-        let count = turns.len();
-        let cursor = (self.focus == Focus::Session).then(|| self.turn.min(count.saturating_sub(1)));
-        for (index, turn) in turns.iter().enumerate() {
-            let open = self.open(index, count);
-            let here = cursor == Some(index);
-            lines.push(Line::default());
-            let mark = match (open, here) {
-                (true, true) => "▼ ",
-                (true, false) => "▾ ",
-                (false, true) => "▶ ",
-                (false, false) => "▸ ",
-            };
-            let room = width.saturating_sub(Text(&turn.summary).width() + 6);
-            let mut head = Line::new(vec![
-                Span::new(mark, if here { Ink::Focus } else { Ink::Muted }),
-                Span::new(
-                    Text(turn.prompt.lines().next().unwrap_or_default()).fit(room),
-                    Ink::Prompt,
-                ),
-            ]);
-            if !turn.summary.is_empty() {
-                head.push(Span::new(format!("  {}", turn.summary), Ink::Muted));
-            }
-            lines.push(head);
-            if open {
-                let blocks: Vec<Block> = turn
-                    .blocks
-                    .iter()
-                    .filter(|block| !matches!(block, Block::Prompt(_)))
-                    .cloned()
-                    .collect();
-                lines.extend(Conversation { blocks }.lines(width, Density::Page));
-            }
+        if run.transcript.earlier() {
+            lines.push(Line::of(
+                "earlier turns are not shown: the conversation is longer than one read",
+                Ink::Muted,
+            ));
         }
+        // The whole conversation, every turn open, as one scroll.
+        let blocks = Conversation::live(run.transcript.entries()).blocks;
+        let count = blocks.len();
+        lines.extend(Conversation { blocks }.lines(width, Density::Page));
         if let Some(waiting) = run.waiting() {
             lines.push(Line::default());
             Self::card(&run.client(), &waiting.ask, width, &mut lines);
         }
-        if count == 0 && run.waiting().is_none() {
+        if count == 0 && run.waiting().is_none() && run.transcript.is_read() {
             lines.push(Line::default());
             let text = match run.attention() {
                 Attention::Starting => format!("starting {} in {}…", run.client(), run.workdir),

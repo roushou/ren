@@ -12,9 +12,9 @@ use ren_harness::{
     drive::{ApprovalAsk, Decision, DriveEvent, Prompt},
 };
 use ren_protocol::native::{NativeThreadId, NativeTurnId};
-use ren_recorder::id::{RunId, SessionId};
+use ren_recorder::id::RunId;
 use ren_recorder::time::UnixMillis;
-use ren_store::{activity::TurnActivity, view::RunView};
+use ren_store::view::RunView;
 use ren_supervisor::{Approvals, Project, ProjectGit, RunSnapshot, RunState, RunUpdate};
 use serde_json::json;
 
@@ -155,45 +155,38 @@ fn state(run: u128, state: RunState) -> Input {
     })
 }
 
-fn recorded_turn(native: &str, prompt: &str, reply: &str) -> TurnActivity {
-    serde_json::from_value(json!({
-        "turn": "00000000-0000-0000-0000-0000000000f1",
-        "session": "00000000-0000-0000-0000-0000000000f2",
-        "native_id": native,
-        "client": "claude_code",
-        "started_at": 1000, "ended_at": 2000,
-        "prompt": { "text": prompt, "omitted_chars": 0 },
-        "files_read": [], "files_written": [], "commands": [],
-        "tool_calls": 1, "failed_tool_calls": 0, "unanswered_tool_calls": 0,
-        "findings": [],
-        "calls": [{
-            "call": "00000000-0000-0000-0000-0000000000f3",
-            "started_at": 1000, "ended_at": 2000, "model": "claude", "status": 200,
-            "outcome": null,
-            "metrics": {
-                "context_tokens": null, "cache_read_tokens": null, "cache_written_tokens": null,
-                "output_tokens": null, "request_bytes": null, "duration_ms": null
-            },
-            "prompt": null,
-            "tool_calls": [{
-                "id": "t1", "name": "Bash",
-                "effects": [{ "kind": "command", "target": "cargo test -p upload" }],
-                "input": { "text": "{}", "omitted_chars": 0 },
-                "result": { "status": "succeeded", "output": { "text": "ok", "omitted_chars": 0 } }
-            }],
-            "earlier_results": 0,
-            "reply": { "text": reply, "omitted_chars": 0 },
-            "limitations": []
-        }],
-        "omitted_calls": 0
-    }))
-    .unwrap()
-}
-
-const SESSION: &str = "00000000-0000-0000-0000-00000000aaaa";
-
-fn session() -> SessionId {
-    serde_json::from_value(json!(SESSION)).unwrap()
+/// What the daemon stored of run `n`'s conversation: each turn's prompt,
+/// a command, and its reply.
+fn stored(n: u128, turns: &[(&str, &str)]) -> Input {
+    let mut entries = Vec::new();
+    for (index, (prompt, reply)) in turns.iter().enumerate() {
+        let turn = NativeTurnId::new(uuid::Uuid::from_u128(
+            n * 100 + u128::try_from(index).unwrap() + 1,
+        ))
+        .unwrap();
+        for event in [
+            json!({ "kind": "turn_started", "turn": turn }),
+            json!({ "kind": "item", "phase": "completed", "item": {
+                "id": format!("u{n}-{index}"), "kind": "user_message",
+                "read": { "as": "prompt", "text": prompt }, "body": null } }),
+            json!({ "kind": "item", "phase": "completed", "item": {
+                "id": format!("c{n}-{index}"), "kind": "command_execution",
+                "read": { "as": "command", "command": "cargo test -p upload", "status": "completed",
+                          "output": "ok", "exit_code": 0 }, "body": null } }),
+            json!({ "kind": "item", "phase": "completed", "item": {
+                "id": format!("m{n}-{index}"), "kind": "agent_message",
+                "read": { "as": "reply", "text": reply }, "body": null } }),
+            json!({ "kind": "turn_ended", "turn": turn, "end": { "kind": "completed" } }),
+        ] {
+            entries.push(json!({ "run": run_id(n), "seq": entries.len() + 1, "at": 0,
+                                 "turn": turn, "event": event }));
+        }
+    }
+    Input::Conversation {
+        run: run_id(n),
+        conversation: serde_json::from_value(json!({ "entries": entries, "earlier": false }))
+            .unwrap(),
+    }
 }
 
 /// A run as recorded: started, opened with its thread, maybe with a session.
@@ -265,19 +258,10 @@ fn the_run_that_needs_you_is_selected_first() {
         snapshot(2, Harness::ClaudeCode, "/srv/ren", asking(2, push())),
     ])));
     assert_eq!(console.current(), Some(run_id(2)));
-    // Its session is not known yet: the recorded runs are read first.
-    assert_eq!(out, [Out::Read(Read::Recorded)]);
-    let out = console.apply(Input::Recorded(vec![recorded(
-        2,
-        "/srv/ren",
-        Some(SESSION),
-    )]));
-    assert_eq!(
-        out,
-        [Out::Read(Read::History {
-            run: run_id(2),
-            session: session(),
-        })]
+    // Its conversation is read at once: what the daemon stored of it.
+    assert!(
+        out.contains(&Out::Read(Read::Conversation(run_id(2)))),
+        "{out:?}"
     );
 }
 
@@ -518,67 +502,53 @@ fn the_composer_offers_the_clients_installed_on_the_daemons_host() {
 }
 
 #[test]
-fn a_live_turn_gives_way_to_its_record() {
+fn a_run_shows_its_whole_conversation_and_what_streams_on_top() {
     let mut console = desk();
-    let _ = console.apply(Input::Recorded(vec![recorded(
-        3,
-        "/dev/acme-web",
-        Some(SESSION),
-    )]));
     let _ = console.press(Key::Char('3'));
     assert_eq!(console.current(), Some(run_id(3)));
-    let _ = console.apply(Input::History {
-        run: run_id(3),
-        turns: vec![recorded_turn("old", "earlier work", "Done earlier.")],
-    });
+    let long = "The lease token was compared before the retry counter. ".repeat(40);
+    let _ = console.apply(stored(
+        3,
+        &[
+            ("earlier work", "Done earlier."),
+            ("look at the lease", &long),
+        ],
+    ));
     assert_eq!(sent(&console.write("fix the flaky upload test")).len(), 1);
     let _ = console.apply(state(3, working(3)));
     let _ = console.apply(event(3, json!({ "kind": "turn_started", "turn": turn(3) })));
     let _ = console.apply(event(
         3,
-        json!({ "kind": "delta", "item": "m1", "text": "The lease " }),
+        json!({ "kind": "delta", "item": "m1", "text": "Moving the " }),
     ));
     let _ = console.apply(event(
         3,
-        json!({ "kind": "delta", "item": "m1", "text": "token…" }),
+        json!({ "kind": "delta", "item": "m1", "text": "check." }),
     ));
-    assert!(drawn(&console).contains("The lease token…"));
     let out = console.apply(event(
         3,
         json!({ "kind": "turn_ended", "turn": turn(3), "end": { "kind": "completed" } }),
     ));
+    // Nothing is read again: the conversation is already whole.
+    assert!(out.is_empty(), "{out:?}");
+    // Every turn stays open: the first reply and the newest both show,
+    // and the long reply is not cut (its last words are there).
+    let _ = console.press(Key::Enter);
+    for _ in 0..60 {
+        let _ = console.press(Key::Up);
+    }
+    let top = drawn(&console);
+    assert!(top.contains("Done earlier."), "{top}");
+    assert!(!top.contains("▸ "), "nothing is folded: {top}");
+    let _ = console.press(Key::PageDown);
+    let _ = console.press(Key::PageDown);
+    let _ = console.press(Key::PageDown);
+    let bottom = drawn(&console);
+    assert!(bottom.contains("Moving the check."), "{bottom}");
     assert_eq!(
-        out,
-        [Out::Read(Read::HistoryLater {
-            run: run_id(3),
-            session: session(),
-        })]
-    );
-    let out = console.apply(Input::History {
-        run: run_id(3),
-        turns: vec![recorded_turn("old", "earlier work", "Done earlier.")],
-    });
-    assert_eq!(
-        out,
-        [Out::Read(Read::HistoryLater {
-            run: run_id(3),
-            session: session(),
-        })]
-    );
-    // Recorded under its own id (Claude Code's prompt id): matched by prompt.
-    let out = console.apply(Input::History {
-        run: run_id(3),
-        turns: vec![
-            recorded_turn("old", "earlier work", "Done earlier."),
-            recorded_turn("new", "fix the flaky upload test", "The lease token…"),
-        ],
-    });
-    assert!(out.is_empty());
-    let shown = drawn(&console);
-    assert_eq!(
-        shown.matches("fix the flaky upload test").count(),
+        bottom.matches("fix the flaky upload test").count(),
         1,
-        "{shown}"
+        "{bottom}"
     );
 }
 
@@ -622,26 +592,6 @@ fn refusals_read_in_words_and_esc_and_ctrl_c_leave_writing() {
 }
 
 #[test]
-fn earlier_turns_fold_and_open_from_the_session() {
-    let mut console = desk();
-    let _ = console.apply(Input::History {
-        run: run_id(2),
-        turns: vec![
-            recorded_turn("t1", "first ask", "First answer."),
-            recorded_turn("t2", "second ask", "Second answer."),
-        ],
-    });
-    let shown = drawn(&console);
-    assert!(!shown.contains("First answer."), "{shown}");
-    assert!(shown.contains("Second answer."), "{shown}");
-    // Into the session, up to the earlier turn, and open it.
-    let _ = console.press(Key::Enter);
-    let _ = console.press(Key::Char('k'));
-    let _ = console.press(Key::Enter);
-    assert!(drawn(&console).contains("First answer."));
-}
-
-#[test]
 fn runs_are_grouped_by_folder_or_by_what_they_need() {
     let mut console = Console::new(SIZE);
     let _ = console.apply(Input::Runs(Ok(vec![
@@ -675,14 +625,13 @@ fn runs_are_grouped_by_folder_or_by_what_they_need() {
 #[test]
 fn screens_draw_as_pinned() {
     let mut console = desk();
-    let _ = console.apply(Input::History {
-        run: run_id(2),
-        turns: vec![recorded_turn(
-            "t1",
+    let _ = console.apply(stored(
+        2,
+        &[(
             "fix the flaky upload test",
             "The lease token was compared before the retry counter was bumped, so a late worker could still finish the job. I moved the check after the bump.",
         )],
-    });
+    ));
     assert_eq!(
         drawn(&console),
         include_str!("../../tests/fixtures/app-run-asking.txt")
@@ -728,7 +677,7 @@ fn screens_draw_as_pinned() {
 }
 
 #[test]
-fn a_new_runs_first_turn_gives_way_to_its_record_by_prompt() {
+fn a_new_runs_first_prompt_shows_once_and_names_it() {
     let mut console = Console::new(SIZE);
     let _ = console.apply(Input::Runs(Ok(vec![snapshot(
         4,
@@ -736,41 +685,57 @@ fn a_new_runs_first_turn_gives_way_to_its_record_by_prompt() {
         "/srv/ren",
         idle(4),
     )])));
-    // Started here: recorded, with no call yet.
     let _ = console.apply(Input::Recorded(vec![recorded(4, "/srv/ren", None)]));
     assert_eq!(console.current(), Some(run_id(4)));
     let _ = console.write("run the tests");
     let _ = console.apply(event(4, json!({ "kind": "turn_started", "turn": turn(4) })));
+    // The client echoes the prompt under its own id: still one prompt.
+    let _ = console.apply(event(
+        4,
+        json!({ "kind": "item", "phase": "completed", "item": {
+        "id": "echo", "kind": "user_message", "read": { "as": "prompt", "text": "run the tests" },
+        "body": null } }),
+    ));
     let _ = console.apply(event(
         4,
         json!({ "kind": "delta", "item": "m", "text": "All pass." }),
     ));
-    let out = console.apply(event(
+    let _ = console.apply(event(
         4,
         json!({ "kind": "turn_ended", "turn": turn(4), "end": { "kind": "completed" } }),
     ));
-    // Its session is not known yet: the recorded runs are read, then its turns.
-    assert_eq!(out, [Out::Read(Read::Recorded)]);
-    let out = console.apply(Input::Recorded(vec![recorded(
-        4,
-        "/srv/ren",
-        Some(SESSION),
-    )]));
-    assert_eq!(
-        out,
-        [Out::Read(Read::History {
-            run: run_id(4),
-            session: session()
-        })]
-    );
-    let _ = console.apply(Input::History {
+    // The stored copy lands after: the same events, the streamed reply kept
+    // whole as the daemon closed it. Nothing shows twice.
+    let events = [
+        json!({ "kind": "turn_started", "turn": turn(4) }),
+        json!({ "kind": "item", "phase": "completed", "item": {
+            "id": "echo", "kind": "user_message",
+            "read": { "as": "prompt", "text": "run the tests" }, "body": null } }),
+        json!({ "kind": "item", "phase": "completed", "item": {
+            "id": "m", "kind": "agent_message", "read": { "as": "reply", "text": "All pass." },
+            "body": null } }),
+        json!({ "kind": "turn_ended", "turn": turn(4), "end": { "kind": "completed" } }),
+    ];
+    let entries: Vec<serde_json::Value> = events
+        .iter()
+        .enumerate()
+        .map(|(seq, event)| {
+            json!({ "run": run_id(4), "seq": seq + 1, "at": 0, "turn": turn(4), "event": event })
+        })
+        .collect();
+    let _ = console.apply(Input::Conversation {
         run: run_id(4),
-        turns: vec![recorded_turn("prompt-id", "run the tests", "All pass.")],
+        conversation: serde_json::from_value(json!({ "entries": entries, "earlier": false }))
+            .unwrap(),
     });
-    // Once in the conversation (the list names the run by it too).
     let shown = drawn(&console);
-    assert_eq!(shown.matches("run the tests  1 s").count(), 1, "{shown}");
     assert_eq!(shown.matches("All pass.").count(), 1, "{shown}");
+    // The list names the run by it, and the conversation shows it once.
+    assert_eq!(
+        shown.matches("run the tests").count(),
+        2,
+        "the list, and the prompt: {shown}"
+    );
 }
 
 #[test]

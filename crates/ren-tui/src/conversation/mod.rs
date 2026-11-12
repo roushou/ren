@@ -90,7 +90,7 @@ impl Conversation {
         let blocks = entries
             .iter()
             .filter_map(|entry| match entry {
-                Entry::Prompt(text) => Some(Block::Prompt(text.clone())),
+                Entry::Prompt { text, .. } => Some(Block::Prompt(text.clone())),
                 Entry::Message {
                     text, done: true, ..
                 } => Some(Block::Reply(text.clone())),
@@ -98,7 +98,11 @@ impl Conversation {
                     text, done: false, ..
                 } => Some(Block::Streaming(text.clone())),
                 Entry::Reasoning { done: false, .. } => Some(Block::Thinking),
-                Entry::Reasoning { done: true, .. } | Entry::TurnEnd(TurnEnd::Completed) => None,
+                Entry::Reasoning { done: true, .. }
+                | Entry::TurnEnd {
+                    end: TurnEnd::Completed,
+                    ..
+                } => None,
                 Entry::Command {
                     command,
                     status,
@@ -165,11 +169,17 @@ impl Conversation {
                         tone: Tone::Error,
                     },
                 }),
-                Entry::TurnEnd(TurnEnd::Interrupted) => Some(Block::Notice {
+                Entry::TurnEnd {
+                    end: TurnEnd::Interrupted,
+                    ..
+                } => Some(Block::Notice {
                     text: "turn interrupted".to_owned(),
                     tone: Tone::Neutral,
                 }),
-                Entry::TurnEnd(TurnEnd::Failed { message }) => Some(Block::Notice {
+                Entry::TurnEnd {
+                    end: TurnEnd::Failed { message },
+                    ..
+                } => Some(Block::Notice {
                     text: format!(
                         "turn failed{}",
                         message
@@ -178,7 +188,10 @@ impl Conversation {
                     ),
                     tone: Tone::Error,
                 }),
-                Entry::TurnEnd(TurnEnd::Unknown { status }) => Some(Block::Notice {
+                Entry::TurnEnd {
+                    end: TurnEnd::Unknown { status },
+                    ..
+                } => Some(Block::Notice {
                     text: format!("turn ended: {status}"),
                     tone: Tone::Neutral,
                 }),

@@ -26,7 +26,7 @@ use super::{Action, Ctx, Look, News, Notice, Screen};
 use crate::Key;
 use crate::keys::{Bind, HelpRow, Keymap};
 use crate::model::desk::{Attention, Run};
-use crate::model::{Command, Control, Model};
+use crate::model::{Command, Control, Model, Read};
 use crate::ui::{Anchor, Ink, Joint, Keep, Line, Lines, Rule, Size, Span, View};
 use ren_harness::drive::{ApprovalId, Decision, Prompt};
 use ren_protocol::native::NativeThreadId;
@@ -45,11 +45,6 @@ pub(crate) struct Main {
     filter: String,
     /// How the list is grouped.
     grouping: Grouping,
-    /// The turn the cursor is on, once the session has the focus: an index
-    /// into its turns, oldest first.
-    turn: usize,
-    /// Turns opened or closed by hand: the newest is open unless closed.
-    toggled: Vec<usize>,
     /// Lines scrolled up from the newest.
     scroll: usize,
     /// What happened to the run just left, shown atop the next.
@@ -332,14 +327,12 @@ impl Main {
         let revision = model.sessions.revision();
         match item {
             Item::Run(run) => {
-                let known = Self::session_known(model, run);
-                let asked = matches!(self.read, Some((read, _, true)) if read == item);
-                let asked_unknown = matches!(self.read, Some((read, _, false)) if read == item);
-                if asked || (asked_unknown && !known) {
+                // Read once a run is chosen: the feed keeps it current.
+                if self.read.is_some_and(|(read, _, _)| read == item) {
                     return Vec::new();
                 }
-                self.read = Some((item, revision, known));
-                vec![Action::Read(model.history(run, false))]
+                self.read = Some((item, revision, true));
+                vec![Action::Read(Read::Conversation(run))]
             }
             Item::Watched(session) => {
                 if self.read == Some((item, revision, true)) {
@@ -356,14 +349,6 @@ impl Main {
         }
     }
 
-    fn session_known(model: &Model, run: RunId) -> bool {
-        model
-            .desk
-            .get(run)
-            .and_then(|run| run.recorded.as_ref())
-            .is_some_and(|recorded| recorded.session.is_some())
-    }
-
     /// The operator's choice of entry.
     fn select(&mut self, item: Item) {
         self.chosen = true;
@@ -374,8 +359,6 @@ impl Main {
     }
 
     fn reset_session(&mut self) {
-        self.turn = usize::MAX;
-        self.toggled.clear();
         self.scroll = 0;
         self.handoff = None;
     }
@@ -446,13 +429,12 @@ impl Main {
                 let forward = act == Act::Down;
                 match self.focus {
                     Focus::List => return self.step(ctx.model, forward),
-                    Focus::Session => self.step_turn(ctx.model, forward),
+                    // In the session, the arrows scroll it a line at a time.
+                    Focus::Session if forward => self.scroll = self.scroll.saturating_sub(1),
+                    Focus::Session => self.scroll = self.scroll.saturating_add(1),
                 }
             }
-            Act::IntoSession => match self.focus {
-                Focus::List => self.focus = Focus::Session,
-                Focus::Session => self.toggle_turn(ctx.model),
-            },
+            Act::IntoSession => self.focus = Focus::Session,
             Act::IntoList => self.focus = Focus::List,
             Act::NextTab => self.tab = self.tab.next(),
             Act::PreviousTab => self.tab = self.tab.previous(),
@@ -650,33 +632,6 @@ impl Main {
             self.select(*item);
         }
         self.reads(model)
-    }
-
-    fn step_turn(&mut self, model: &Model, forward: bool) {
-        let count = self.turn_count(model);
-        if count == 0 {
-            return;
-        }
-        let at = self.turn.min(count - 1);
-        self.turn = if forward {
-            (at + 1).min(count - 1)
-        } else {
-            at.saturating_sub(1)
-        };
-    }
-
-    fn toggle_turn(&mut self, model: &Model) {
-        let count = self.turn_count(model);
-        if count == 0 {
-            return;
-        }
-        let at = self.turn.min(count - 1);
-        match self.toggled.iter().position(|turn| *turn == at) {
-            Some(index) => {
-                self.toggled.remove(index);
-            }
-            None => self.toggled.push(at),
-        }
     }
 
     /// The live run selected, if one is.
@@ -1025,7 +980,7 @@ impl Main {
                         "↑↓ select · enter open · i write · space actions · n new run"
                     }
                     (Focus::Session, Some(_)) => {
-                        "↑↓ turns · enter fold · tab views · i write · space actions · esc list"
+                        "↑↓ scroll · tab views · i write · space actions · esc list"
                     }
                 },
             },
@@ -1096,16 +1051,6 @@ impl Main {
             right,
             fill: Ink::Bar,
             keep: Keep::Right,
-        }
-    }
-
-    /// The turns of the selected session.
-    fn turn_count(&self, model: &Model) -> usize {
-        match self.selected {
-            Some(Item::Run(run)) => model.desk.get(run).map_or(0, |run| {
-                run.history.len() + usize::from(!run.transcript.is_empty())
-            }),
-            Some(Item::Watched(_)) | None => 0,
         }
     }
 }

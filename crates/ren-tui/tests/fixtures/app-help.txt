@@ -2,7 +2,7 @@
 ──────────────────────────────┬─────────────────────────────────────────────────────────────────────────────────────────
  ren ◆1  /srv/          ┌ keys ────────────────────────────────────────────────────────────────┐               /srv/ren
  1 ◆ fix the flaky upl… │  move                                                                │
-                        │  ↓ j         next session, or next turn in a session                 │▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+                        │  ↓ j         next session, or next turn in a session                 │────────────────────────
  acme-api  /dev/        │  ↑ k         previous session, or previous turn                      │
  2 ● new Codex run  work│  → enter     into the session; on a turn, open or fold it            │
                         │  ← esc       back to the list                                        │

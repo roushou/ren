@@ -27,18 +27,17 @@ use ren_daemon::host::SystemClock;
 use ren_harness::host::HostEnv;
 use ren_protocol::label::Labeled;
 use ren_protocol::sse::{EventName, SseFramer, SseLimits, SseOutput};
-use ren_recorder::id::{CallId, RunId, SessionId, TurnId};
+use ren_recorder::id::{CallId, RunId, TurnId};
 use ren_recorder::time::{Clock, Monotonic};
 use ren_store::activity::{CallActivity, TurnActivity};
 use ren_store::query::{PageLimit, Shelf};
 use ren_store::read::ReadRequest;
-use ren_store::view::RunView;
+use ren_store::view::{ConversationView, RunView};
 use ren_supervisor::{Client, Project, RunSnapshot, RunUpdate};
 use ren_tui::{
     Answered, Command, Input, Out, Read, Snapshot, Terminal, TerminalEvent, Theme, ThemeName, Tui,
 };
 use reqwest::Method;
-use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
 use std::process::ExitCode;
@@ -64,6 +63,8 @@ enum Done {
     Call(CallId, Result<CallActivity, ManagementError>),
     Runs(Result<Vec<RunSnapshot>, String>),
     Other(Box<Input>),
+    /// A read that gave nothing to apply.
+    Nothing,
 }
 
 type Pending<'a> = FuturesUnordered<Pin<Box<dyn Future<Output = Done> + 'a>>>;
@@ -119,8 +120,6 @@ impl TuiCmd {
     /// How often the clock and elapsed times on the wall move.
     const TICK: Duration = Duration::from_millis(250);
     const RECONNECT: Duration = Duration::from_secs(2);
-    /// How many recorded turns a run's conversation shows.
-    const TURNS: u32 = 10;
 
     pub async fn run(self, ctx: &Context) -> Result<ExitCode> {
         if let Some(theme) = self.save_theme {
@@ -168,7 +167,6 @@ impl TuiCmd {
                 runs: false,
                 asked: clock.now().monotonic,
             },
-            later: HashMap::new(),
             theme: selected.unwrap_or_default(),
         };
         let mut outs = tui.apply(Input::Snapshot(first));
@@ -385,8 +383,6 @@ struct Shell<'a> {
     clock: &'a SystemClock,
     pending: Pending<'a>,
     in_flight: InFlight,
-    /// History reads after a turn ended, per run, for the pause before the next.
-    later: HashMap<RunId, u32>,
     /// The theme shown, which `t` cycles.
     theme: ThemeName,
 }
@@ -455,29 +451,14 @@ impl<'a> Shell<'a> {
                     Err(why) => Err(why),
                 }))
             })),
-            Read::History { run, session } => {
-                self.later.remove(&run);
-                self.pending.push(Box::pin(async move {
-                    done(Input::History {
-                        run,
-                        turns: Self::turns(gateway, session).await,
-                    })
-                }));
-            }
-            Read::HistoryLater { run, session } => {
-                // 0.5 s, then twice as long each time: a turn's record lands
-                // shortly after its calls finish.
-                let tries = self.later.entry(run).or_insert(0);
-                let pause = Duration::from_millis(500) * 2u32.saturating_pow(*tries);
-                *tries += 1;
-                self.pending.push(Box::pin(async move {
-                    tokio::time::sleep(pause).await;
-                    done(Input::History {
-                        run,
-                        turns: Self::turns(gateway, session).await,
-                    })
-                }));
-            }
+            Read::Conversation(run) => self.pending.push(Box::pin(async move {
+                // A failed read leaves what the feed shows; selecting the run
+                // again reads it again.
+                match Shell::conversation(gateway, run).await {
+                    Some(conversation) => done(Input::Conversation { run, conversation }),
+                    None => Done::Nothing,
+                }
+            })),
         }
     }
 
@@ -589,6 +570,7 @@ impl<'a> Shell<'a> {
                 Ok(Input::Runs(runs))
             }
             Done::Other(input) => Ok(*input),
+            Done::Nothing => return Vec::new(),
         };
         match input {
             Ok(input) => tui.apply(input),
@@ -649,34 +631,10 @@ impl<'a> Shell<'a> {
         }
     }
 
-    /// A session's newest turns, oldest first. A failed read reads as none.
-    async fn turns(gateway: &Management, session: SessionId) -> Vec<TurnActivity> {
-        #[derive(serde::Deserialize)]
-        struct Listed {
-            turns: Vec<Summary>,
-        }
-        #[derive(serde::Deserialize)]
-        struct Summary {
-            turn: TurnId,
-        }
-        let Ok(limit) = PageLimit::new(TuiCmd::TURNS) else {
-            return Vec::new();
-        };
-        let Ok(body) = gateway.serve(&ReadRequest::Turns { session, limit }).await else {
-            return Vec::new();
-        };
-        let Ok(listed) = serde_json::from_value::<Listed>(body) else {
-            return Vec::new();
-        };
-        let mut turns = Vec::new();
-        for summary in listed.turns {
-            if let Ok(turn) = gateway.turn(summary.turn).await {
-                turns.push(turn);
-            }
-        }
-        // Listed newest first.
-        turns.reverse();
-        turns
+    /// A run's conversation, whole, as the daemon stored it.
+    async fn conversation(gateway: &Management, run: RunId) -> Option<ConversationView> {
+        let body = gateway.serve(&ReadRequest::Conversation(run)).await.ok()?;
+        serde_json::from_value(body).ok()
     }
 
     /// Follow the run feed; waiting to reconnect when it cannot be opened.

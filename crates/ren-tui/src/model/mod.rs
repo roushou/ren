@@ -19,16 +19,16 @@ use crate::Size;
 use desk::{Attention, Desk, Run};
 use ren_harness::{
     Harness,
-    drive::{ApprovalId, Decision, DriveEvent, Prompt},
+    drive::{ApprovalId, Decision, Prompt},
 };
 use ren_protocol::label::{Labeled, Stored};
 use ren_protocol::native::NativeThreadId;
 use ren_recorder::Observation;
 use ren_recorder::batch::{HistoryChange, HistorySubject};
-use ren_recorder::id::{CallId, RunId, SessionId, TurnId};
+use ren_recorder::id::{CallId, RunId, TurnId};
 use ren_recorder::progress::Progress;
 use ren_store::activity::{CallActivity, TurnActivity};
-use ren_store::view::RunView;
+use ren_store::view::{ConversationView, RunView};
 use ren_supervisor::{Client, ClientStatus, Project, RunSnapshot, RunState, RunUpdate};
 use sessions::Sessions;
 
@@ -58,10 +58,10 @@ pub enum Input {
     Update(RunUpdate),
     /// The run feed skipped updates: the runs are read again.
     Lagged,
-    /// A run's recorded turns, oldest first.
-    History {
+    /// A run's conversation, as the daemon stored it.
+    Conversation {
         run: RunId,
-        turns: Vec<TurnActivity>,
+        conversation: ConversationView,
     },
     /// How a command was answered.
     Answered(Result<Answered, String>),
@@ -88,16 +88,8 @@ pub enum Read {
     Recorded,
     Projects,
     Clients,
-    /// A run's recorded turns, from its session, now.
-    History {
-        run: RunId,
-        session: SessionId,
-    },
-    /// Again after a pause: its newest turn ended and is not recorded yet.
-    HistoryLater {
-        run: RunId,
-        session: SessionId,
-    },
+    /// A run's conversation, whole, as the daemon stored it.
+    Conversation(RunId),
 }
 
 /// A command for the control API.
@@ -182,9 +174,6 @@ pub(crate) struct Model {
 }
 
 impl Model {
-    /// History reads after a turn ends before its record is given up on.
-    const HISTORY_TRIES: u8 = 5;
-
     pub fn new() -> Self {
         Self {
             sessions: Sessions::default(),
@@ -288,7 +277,12 @@ impl Model {
             }
             Input::Lagged => vec![Effect::Read(Read::Runs)],
             Input::Update(update) => self.update(update),
-            Input::History { run, turns } => self.history_read(run, turns),
+            Input::Conversation { run, conversation } => {
+                if let Some(held) = self.desk.get_mut(run) {
+                    held.transcript.load(&conversation);
+                }
+                Vec::new()
+            }
             Input::Answered(Ok(Answered::Started(run))) => {
                 if let Some(starting) = self.starting.take() {
                     let held = self.desk.entry(run, |seen| {
@@ -299,11 +293,6 @@ impl Model {
                             seen,
                         )
                     });
-                    // A new conversation has no recorded turns: every one
-                    // recorded from now on is new.
-                    if !starting.resumes {
-                        held.transcript.knowing(Vec::new());
-                    }
                     if let Some(prompt) = &starting.prompt {
                         held.transcript.prompted(prompt.as_str());
                     }
@@ -324,21 +313,6 @@ impl Model {
             }
             // The size is the screens'.
             Input::Resize(_) => Vec::new(),
-        }
-    }
-
-    /// Read `run`'s recorded turns, now or `later`; a run whose session is
-    /// not known yet has the recorded runs read first.
-    pub fn history(&self, run: RunId, later: bool) -> Read {
-        let session = self
-            .desk
-            .get(run)
-            .and_then(|run| run.recorded.as_ref())
-            .and_then(|recorded| recorded.session);
-        match (session, later) {
-            (Some(session), false) => Read::History { run, session },
-            (Some(session), true) => Read::HistoryLater { run, session },
-            (None, _) => Read::Recorded,
         }
     }
 
@@ -385,56 +359,23 @@ impl Model {
         Command::Prompt { run, prompt }
     }
 
-    fn history_read(&mut self, run: RunId, turns: Vec<TurnActivity>) -> Vec<Effect> {
-        let Some(held) = self.desk.get_mut(run) else {
-            return Vec::new();
-        };
-        let recorded = held.transcript.recorded_in(&turns);
-        let waiting = held.awaiting > 0;
-        if recorded {
-            held.transcript.clear();
-            held.awaiting = 0;
-        } else if waiting {
-            held.awaiting += 1;
-        }
-        if held.transcript.is_empty() || !waiting {
-            // What was recorded before the next turn starts.
-            held.transcript
-                .knowing(turns.iter().map(|turn| turn.native_id.clone()).collect());
-        }
-        held.history = turns;
-        if !recorded && waiting && held.awaiting <= Self::HISTORY_TRIES {
-            return vec![Effect::Read(self.history(run, true))];
-        }
-        if !recorded && waiting {
-            held.awaiting = 0;
-        }
-        Vec::new()
-    }
-
-    /// Read the history of live runs not read yet, which names them by
-    /// their first prompt.
+    /// Read the conversations of live runs not read yet: what each is
+    /// doing, and what it was first asked, which names it.
     fn name_runs(&mut self) -> Vec<Effect> {
-        let unnamed: Vec<RunId> = self
+        let unread: Vec<RunId> = self
             .desk
             .ordered()
             .iter()
-            .filter(|run| {
-                !run.named
-                    && run
-                        .recorded
-                        .as_ref()
-                        .is_some_and(|recorded| recorded.session.is_some())
-            })
+            .filter(|run| !run.asked)
             .map(|run| run.id)
             .collect();
-        unnamed
+        unread
             .into_iter()
             .map(|id| {
                 if let Some(run) = self.desk.get_mut(id) {
-                    run.named = true;
+                    run.asked = true;
                 }
-                Effect::Read(self.history(id, false))
+                Effect::Read(Read::Conversation(id))
             })
             .collect()
     }
@@ -480,23 +421,7 @@ impl Model {
                     return vec![Effect::Read(Read::Runs)];
                 };
                 held.transcript.apply(&event);
-                match event {
-                    DriveEvent::TurnEnded { .. } => {
-                        held.awaiting = 1;
-                        vec![Effect::Read(self.history(run, true))]
-                    }
-                    DriveEvent::Ready { .. }
-                    | DriveEvent::TurnStarted { .. }
-                    | DriveEvent::Delta { .. }
-                    | DriveEvent::Item { .. }
-                    | DriveEvent::Approval { .. }
-                    | DriveEvent::ApprovalResolved { .. }
-                    | DriveEvent::Error { .. }
-                    | DriveEvent::Refused { .. }
-                    | DriveEvent::Unsupported { .. }
-                    | DriveEvent::Unknown { .. }
-                    | DriveEvent::Unreadable { .. } => Vec::new(),
-                }
+                Vec::new()
             }
         }
     }
