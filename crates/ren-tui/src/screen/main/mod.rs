@@ -22,6 +22,7 @@ pub(crate) use list::{Grouping, Item, Listing};
 use super::actions::{Actions, Entry, Section};
 use super::message::Typed;
 use super::new_run::NewRun;
+use super::offer::Offering;
 use super::{Action, Ctx, Look, News, Notice, Screen};
 use crate::Key;
 use crate::keys::{Bind, HelpRow, Keymap};
@@ -58,6 +59,8 @@ pub(crate) struct Main {
     chosen: bool,
     /// Ctrl-C was pressed once: pressed again, right away, it quits.
     leaving: bool,
+    /// What the message box offers for the word at its cursor.
+    offering: Offering,
 }
 
 /// Which side has the keys.
@@ -293,15 +296,15 @@ impl Main {
         rows.push(HelpRow::heading("while writing"));
         rows.push(HelpRow::key(
             "enter",
-            "send; while a turn runs, queue it for after the turn",
-        ));
-        rows.push(HelpRow::key(
-            "alt-enter",
-            "send into the running turn, where the client can",
+            "send; queued while a turn runs (alt-enter: into it)",
         ));
         rows.push(HelpRow::key(
             "ctrl-p/n",
             "the messages sent before and after",
+        ));
+        rows.push(HelpRow::key(
+            "/ $ @",
+            "the client's commands, its skills, the folder's files",
         ));
         rows
     }
@@ -817,7 +820,91 @@ impl Main {
         if let Some(run) = self.run() {
             ctx.message.for_run(run);
         }
-        match ctx.message.press(key, width, &prompts) {
+        if let Some(taken) = self.offered(key, ctx) {
+            return taken;
+        }
+        let before = ctx.message.text();
+        let typed = ctx.message.press(key, width, &prompts);
+        if ctx.message.text() != before {
+            self.offering.dismissed = None;
+        }
+        let mut actions = self.typed(typed, ctx);
+        actions.extend(self.offer_reads(ctx));
+        actions
+    }
+
+    /// The key, when the menu of offers takes it: moving through them,
+    /// choosing one (Tab or Enter), or closing it (Esc).
+    fn offered(&mut self, key: Key, ctx: &mut Ctx<'_>) -> Option<Vec<Action>> {
+        let (Some(run), Some(mention)) = (self.run(), self.offering.open(ctx.message)) else {
+            return None;
+        };
+        let offers = Offering::offers(ctx.model, run, &mention);
+        self.offering.follow(Some(&mention));
+        match key {
+            Key::Esc => {
+                self.offering.dismissed = Some(mention.start);
+                Some(Vec::new())
+            }
+            Key::Up | Key::Down if !offers.is_empty() => {
+                self.offering.step(key == Key::Down, offers.len());
+                Some(Vec::new())
+            }
+            Key::Tab | Key::Enter if !offers.is_empty() => {
+                let chosen = offers
+                    .get(self.offering.active)
+                    .or_else(|| offers.first())
+                    .map(|offer| offer.written.clone())
+                    .unwrap_or_default();
+                ctx.message.choose(&mention, &chosen);
+                Some(self.offer_reads(ctx))
+            }
+            Key::Up
+            | Key::Down
+            | Key::Tab
+            | Key::Enter
+            | Key::Char(_)
+            | Key::Backspace
+            | Key::Delete
+            | Key::Left
+            | Key::Right
+            | Key::Home
+            | Key::End
+            | Key::BackTab
+            | Key::PageUp
+            | Key::PageDown
+            | Key::AltLeft
+            | Key::AltRight
+            | Key::Newline
+            | Key::Older
+            | Key::Newer
+            | Key::Editor
+            | Key::Folder
+            | Key::Client
+            | Key::Model
+            | Key::Interrupt
+            | Key::SendNow => None,
+        }
+    }
+
+    /// What the word now at the cursor needs read.
+    fn offer_reads(&mut self, ctx: &mut Ctx<'_>) -> Vec<Action> {
+        let mention = self.offering.open(ctx.message);
+        self.offering.follow(mention.as_ref());
+        match (self.run(), mention) {
+            (Some(run), Some(mention)) => self
+                .offering
+                .read(ctx.model, run, &mention)
+                .map(Action::Read)
+                .into_iter()
+                .collect(),
+            (Some(_) | None, Some(_) | None) => Vec::new(),
+        }
+    }
+
+    /// What the message box did with a key.
+    fn typed(&mut self, typed: Typed, ctx: &mut Ctx<'_>) -> Vec<Action> {
+        match typed {
             Typed::Took => Vec::new(),
             Typed::Submit => {
                 let actions = self.send(ctx, Delivery::Queue);
@@ -866,7 +953,7 @@ impl Main {
         let Some(run) = ctx.model.desk.get(id) else {
             return Vec::new();
         };
-        let Ok(prompt) = Prompt::parse(ctx.message.text()) else {
+        let Ok(prompt) = Prompt::parse(ctx.message.text().trim().to_owned()) else {
             return Vec::new();
         };
         let approval = run.approval();

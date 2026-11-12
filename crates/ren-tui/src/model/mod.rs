@@ -19,6 +19,7 @@ use crate::Size;
 use desk::{Desk, Run};
 use ren_harness::{
     Harness,
+    commands::ClientCommand,
     drive::{ApprovalId, Decision, Prompt},
     settings::{ApprovalPolicy, Midway, RunSettings},
 };
@@ -31,7 +32,7 @@ use ren_recorder::progress::Progress;
 use ren_store::activity::{CallActivity, TurnActivity};
 use ren_store::view::{ConversationView, RunView};
 use ren_supervisor::{
-    Client, ClientStatus, Delivery, Places, Project, RunSnapshot, RunState, RunUpdate,
+    Client, ClientStatus, Delivery, FileMatch, Places, Project, RunSnapshot, RunState, RunUpdate,
 };
 use sessions::Sessions;
 use std::collections::HashMap;
@@ -73,6 +74,17 @@ pub enum Input {
         run: RunId,
         conversation: ConversationView,
     },
+    /// The commands a run's client offers, or why they were not read.
+    Commands {
+        run: RunId,
+        commands: Result<Vec<ClientCommand>, String>,
+    },
+    /// The paths of a run's folder matching `query`, best first.
+    Files {
+        run: RunId,
+        query: String,
+        files: Result<Vec<FileMatch>, String>,
+    },
     /// How a command was answered.
     Answered(Result<Answered, String>),
     Resize(Size),
@@ -86,7 +98,7 @@ pub enum Answered {
 }
 
 /// A read the terminal needs.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Read {
     /// A new [`Snapshot`], from [`Model::snapshot_query`].
     Snapshot,
@@ -102,6 +114,13 @@ pub enum Read {
     Models(Harness),
     /// A run's conversation, whole, as the daemon stored it.
     Conversation(RunId),
+    /// The commands a run's client offers a prompt.
+    Commands(RunId),
+    /// The paths of a run's folder matching what was typed after `@`.
+    Files {
+        run: RunId,
+        query: String,
+    },
 }
 
 /// A command for the control API.
@@ -164,6 +183,14 @@ pub(crate) enum Offered {
     Failed(String),
 }
 
+/// The newest search of a run's folder, and what it found.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct FileSearch {
+    pub run: RunId,
+    pub query: String,
+    pub files: Result<Vec<FileMatch>, String>,
+}
+
 /// Whether runs can be driven from here.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Control {
@@ -202,6 +229,10 @@ pub(crate) struct Model {
     pub chosen: HashMap<Harness, RunSettings>,
     /// The run asked to start here, until the daemon answers.
     starting: Option<Starting>,
+    /// Each run's commands, as its client listed them, once read.
+    pub commands: HashMap<RunId, Result<Vec<ClientCommand>, String>>,
+    /// The newest file search's answer.
+    pub files: Option<FileSearch>,
 }
 
 impl Model {
@@ -217,6 +248,8 @@ impl Model {
             models: HashMap::new(),
             chosen: HashMap::new(),
             starting: None,
+            commands: HashMap::new(),
+            files: None,
         }
     }
 
@@ -362,6 +395,14 @@ impl Model {
                         Err(why) => Offered::Failed(why),
                     },
                 );
+                Vec::new()
+            }
+            Input::Commands { run, commands } => {
+                self.commands.insert(run, commands);
+                Vec::new()
+            }
+            Input::Files { run, query, files } => {
+                self.files = Some(FileSearch { run, query, files });
                 Vec::new()
             }
             Input::Lagged => vec![Effect::Read(Read::Runs)],

@@ -22,9 +22,9 @@
                         │  a           allow it for the rest of the run                        │
                         │  d           deny it (space also has: deny and stop the turn)        │
                         │  while writing                                                       │
-                        │  enter       send; while a turn runs, queue it for after the turn    │
-                        │  alt-enter   send into the running turn, where the client can        │
+                        │  enter       send; queued while a turn runs (alt-enter: into it)     │
                         │  ctrl-p/n    the messages sent before and after                      │
+                        │  / $ @       the client's commands, its skills, the folder's files   │
                         └──────────────────────────────────────────────────────────────────────┘
 ──────────────────────────────┴─────────────────────────────────────────────────────────────────────────────────────────
  y allow · a allow for the run · d deny · space more · i reply instead                            ? keys │ 00:00:00 UTC

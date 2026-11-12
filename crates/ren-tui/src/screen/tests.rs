@@ -357,6 +357,102 @@ fn writing_during_a_turn_queues_it_for_after_the_turn() {
 }
 
 #[test]
+fn a_slash_offers_the_clients_commands_and_an_at_sign_the_folders_files() {
+    use ren_harness::commands::{ClientCommand, CommandKind, Sigil};
+    use ren_supervisor::{FileMatch, PathKind};
+    let mut console = desk();
+    let _ = console.press(Key::Char('j'));
+    assert_eq!(console.current(), Some(run_id(1)));
+    let _ = console.press(Key::Char('i'));
+    // The client's commands are read once a word asks for them.
+    let out = console.press(Key::Char('/'));
+    assert!(
+        out.contains(&Out::Read(Read::Commands(run_id(1)))),
+        "{out:?}"
+    );
+    assert!(drawn(&console).contains("reading the commands"));
+    let _ = console.apply(Input::Commands {
+        run: run_id(1),
+        commands: Ok(vec![
+            ClientCommand {
+                name: "release-notes".into(),
+                description: "Draft release notes".into(),
+                hint: None,
+                kind: CommandKind::Skill,
+                sigil: Sigil::Dollar,
+            },
+            ClientCommand {
+                name: "review".into(),
+                description: "Review the changes".into(),
+                hint: Some("<path>".into()),
+                kind: CommandKind::Command,
+                sigil: Sigil::Slash,
+            },
+        ]),
+    });
+    type_text(&mut console, "re");
+    let shown = drawn(&console);
+    assert!(
+        shown.contains("$release-notes  skill  Draft release notes"),
+        "{shown}"
+    );
+    assert!(
+        shown.contains("/review <path>  Review the changes"),
+        "{shown}"
+    );
+    // Down, then Tab: the second is written in place of what was typed.
+    let _ = console.press(Key::Down);
+    assert!(sent(&console.press(Key::Tab)).is_empty());
+    type_text(&mut console, "the parser, see @lea");
+    let out = console.press(Key::Char('s'));
+    assert!(
+        out.contains(&Out::Read(Read::Files {
+            run: run_id(1),
+            query: "leas".into()
+        })),
+        "{out:?}"
+    );
+    let _ = console.apply(Input::Files {
+        run: run_id(1),
+        query: "leas".into(),
+        files: Ok(vec![FileMatch {
+            path: "src/lease.rs".into(),
+            kind: PathKind::File,
+            positions: vec![4, 5, 6, 7],
+        }]),
+    });
+    assert!(drawn(&console).contains("files in the run's folder"));
+    // Enter chooses while something is offered; then it sends.
+    assert!(sent(&console.press(Key::Enter)).is_empty());
+    assert_eq!(
+        sent(&console.press(Key::Enter)),
+        [Command::Prompt {
+            run: run_id(1),
+            prompt: Prompt::parse("/review the parser, see @src/lease.rs".into()).unwrap(),
+            delivery: Delivery::Queue,
+        }]
+    );
+}
+
+#[test]
+fn esc_closes_the_offers_and_a_path_is_not_a_command() {
+    let mut console = desk();
+    let _ = console.press(Key::Char('j'));
+    let _ = console.press(Key::Char('i'));
+    let _ = console.press(Key::Char('@'));
+    assert!(drawn(&console).contains("files in the run's folder"));
+    let _ = console.press(Key::Esc);
+    assert!(!drawn(&console).contains("files in the run's folder"));
+    assert_eq!(console.tui.mode(), Mode::Writing);
+    // Typing opens it again.
+    let _ = console.press(Key::Char('s'));
+    assert!(drawn(&console).contains("files in the run's folder"));
+    let _ = console.press(Key::Char(' '));
+    type_text(&mut console, "/etc/hosts");
+    assert!(!drawn(&console).contains("commands"));
+}
+
+#[test]
 fn alt_enter_sends_into_the_running_turn() {
     let mut console = desk();
     let _ = console.press(Key::Char('j'));

@@ -460,6 +460,22 @@ impl<'a> Shell<'a> {
                     },
                 })
             })),
+            Read::Commands(run) => self.pending.push(Box::pin(async move {
+                done(Input::Commands {
+                    run,
+                    commands: match control {
+                        Ok(control) => Self::commands(control, run).await,
+                        Err(why) => Err(why),
+                    },
+                })
+            })),
+            Read::Files { run, query } => self.pending.push(Box::pin(async move {
+                let files = match control {
+                    Ok(control) => Self::files(control, run, &query).await,
+                    Err(why) => Err(why),
+                };
+                done(Input::Files { run, query, files })
+            })),
             Read::Conversation(run) => self.pending.push(Box::pin(async move {
                 // A failed read leaves what the feed shows; selecting the run
                 // again reads it again.
@@ -659,6 +675,59 @@ impl<'a> Shell<'a> {
             Ok((_, body)) => Err(body["message"]
                 .as_str()
                 .or_else(|| body["error"].as_str())
+                .unwrap_or("the daemon refused")
+                .to_owned()),
+            Err(error) => Err(error.to_string()),
+        }
+    }
+
+    /// What a run's client offers a prompt.
+    async fn commands(
+        control: &ControlTarget,
+        run: RunId,
+    ) -> Result<Vec<ren_harness::commands::ClientCommand>, String> {
+        #[derive(serde::Deserialize)]
+        struct Listed {
+            commands: Vec<ren_harness::commands::ClientCommand>,
+        }
+        match control
+            .send(Method::GET, &format!("runs/{run}/commands"), None)
+            .await
+        {
+            Ok((status, body)) if status.is_success() => serde_json::from_value::<Listed>(body)
+                .map(|listed| listed.commands)
+                .map_err(|_| "the run's commands are not readable".to_owned()),
+            Ok((_, body)) => Err(body["error"]
+                .as_str()
+                .unwrap_or("the daemon refused")
+                .to_owned()),
+            Err(error) => Err(error.to_string()),
+        }
+    }
+
+    /// The paths of a run's folder that best match `query`.
+    async fn files(
+        control: &ControlTarget,
+        run: RunId,
+        query: &str,
+    ) -> Result<Vec<ren_supervisor::FileMatch>, String> {
+        #[derive(serde::Deserialize)]
+        struct Found {
+            files: Vec<ren_supervisor::FileMatch>,
+        }
+        let mut search =
+            reqwest::Url::parse("http://query.invalid/").map_err(|error| error.to_string())?;
+        search
+            .query_pairs_mut()
+            .append_pair("q", query)
+            .append_pair("limit", "20");
+        let path = format!("runs/{run}/files?{}", search.query().unwrap_or_default());
+        match control.send(Method::GET, &path, None).await {
+            Ok((status, body)) if status.is_success() => serde_json::from_value::<Found>(body)
+                .map(|found| found.files)
+                .map_err(|_| "the folder's files are not readable".to_owned()),
+            Ok((_, body)) => Err(body["error"]
+                .as_str()
                 .unwrap_or("the daemon refused")
                 .to_owned()),
             Err(error) => Err(error.to_string()),

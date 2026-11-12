@@ -3,6 +3,7 @@
 //! writing; what is typed stays when it closes, as that run's draft.
 
 use super::composer::{Composer, Wrapped};
+use super::offer::Mention;
 use crate::Key;
 use ren_recorder::id::RunId;
 use std::collections::HashMap;
@@ -70,6 +71,17 @@ impl MessageBox {
 
     pub fn is_empty(&self) -> bool {
         self.composer.is_empty()
+    }
+
+    /// What the word at the cursor asks to be offered.
+    pub fn mention(&self) -> Option<Mention> {
+        let (text, cursor) = self.composer.at_cursor();
+        Mention::at(text, cursor)
+    }
+
+    /// The mention's word replaced by what was chosen.
+    pub fn choose(&mut self, mention: &Mention, written: &str) {
+        self.typed(|composer| composer.replace(mention.start, mention.end, written));
     }
 
     /// The text, leaving the box empty.

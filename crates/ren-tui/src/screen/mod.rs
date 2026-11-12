@@ -14,6 +14,7 @@ mod help;
 pub(crate) mod main;
 mod message;
 mod new_run;
+mod offer;
 #[cfg(test)]
 mod tests;
 

@@ -106,6 +106,26 @@ impl Composer {
         self.cursor += count;
     }
 
+    /// The characters `start..end` replaced by `text`, the cursor after it;
+    /// one space kept between it and what follows, not two.
+    pub fn replace(&mut self, start: usize, end: usize, text: &str) {
+        let end = end.min(self.chars.len());
+        let start = start.min(end);
+        let mut written: Vec<char> = text.chars().collect();
+        if written.last() == Some(&' ') && self.chars.get(end) == Some(&' ') {
+            written.pop();
+        }
+        let count = written.len();
+        let spaced = count < text.chars().count();
+        self.chars.splice(start..end, written);
+        self.cursor = start + count + usize::from(spaced);
+    }
+
+    /// The characters, and the cursor among them.
+    pub fn at_cursor(&self) -> (&[char], usize) {
+        (&self.chars, self.cursor)
+    }
+
     pub fn backspace(&mut self) {
         if self.cursor > 0 {
             self.cursor -= 1;

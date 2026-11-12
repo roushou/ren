@@ -9,6 +9,8 @@ use super::{Focus, Main, Mode, Tab};
 use crate::conversation::{Block, Conversation, Density};
 use crate::model::desk::{Attention, Run};
 use crate::model::{CallEnd, Model};
+use crate::screen::Look;
+use crate::screen::offer::{Asks, Offering};
 use crate::ui::{Anchor, Bar, Ink, Keep, Line, Lines, Rule, Size, Span, Text, View};
 use ren_harness::drive::ApprovalAsk;
 use ren_recorder::id::SessionId;
@@ -131,6 +133,9 @@ impl Main {
             let shown = wrapped.rows.len().clamp(1, most);
             let writing = self.mode == Mode::Writing;
             let first = wrapped.window(shown).start;
+            if writing {
+                rows.extend(self.offers(look, width));
+            }
             rows.push((Size::Exact(1), View::Rule(Rule::Plain)));
             rows.push((
                 Size::Exact(u16::try_from(shown).unwrap_or(1)),
@@ -148,6 +153,70 @@ impl Main {
             ));
         }
         View::fill(Ink::Pane, View::Rows(rows))
+    }
+
+    /// The menu of what the word at the cursor asks for: a heading, then
+    /// a window of offers around the lit one, each with what it does.
+    fn offers(&self, look: &Look<'_>, width: u16) -> Vec<(Size, View)> {
+        const SHOWN: usize = 6;
+        let (Some(run), Some(mention)) = (self.run(), self.offering.open(look.message)) else {
+            return Vec::new();
+        };
+        let offers = Offering::offers(look.model, run, &mention);
+        let heading = match mention.asks {
+            Asks::Commands => "commands",
+            Asks::Skills => "skills",
+            Asks::Files => "files in the run's folder",
+        };
+        let mut lines = vec![Line::new(vec![
+            Span::new(format!(" {heading}"), Ink::Muted),
+            Span::new("  ↑↓ choose · tab or enter insert · esc close", Ink::Muted),
+        ])];
+        if offers.is_empty() {
+            lines.push(Line::of(
+                format!("   {}", Offering::note(look.model, run, &mention)),
+                Ink::Muted,
+            ));
+        }
+        let active = self.offering.active.min(offers.len().saturating_sub(1));
+        let first = (active + 1).saturating_sub(SHOWN);
+        let cells = usize::from(width).saturating_sub(4);
+        for (index, offer) in offers.iter().enumerate().skip(first).take(SHOWN) {
+            let lit = index == active;
+            let mut line = Line::new(vec![Span::new(
+                if lit { " › " } else { "   " },
+                if lit { Ink::Focus } else { Ink::Muted },
+            )]);
+            for (at, ch) in offer.label.chars().enumerate() {
+                let ink = if offer.hits.contains(&at) {
+                    Ink::Focus
+                } else {
+                    Ink::Prompt
+                };
+                line.push(Span::new(ch.to_string(), ink));
+            }
+            if let Some(hint) = &offer.hint {
+                line.push(Span::new(format!(" {hint}"), Ink::Muted));
+            }
+            if let Some(tag) = offer.tag {
+                line.push(Span::new(format!("  {tag}"), Ink::Muted));
+            }
+            if !offer.detail.is_empty() {
+                let room = cells.saturating_sub(line.width() + 2);
+                let detail: String = offer.detail.chars().take(room).collect();
+                if !detail.is_empty() {
+                    line.push(Span::new(format!("  {detail}"), Ink::Muted));
+                }
+            }
+            lines.push(line);
+        }
+        vec![
+            (Size::Exact(1), View::Rule(Rule::Plain)),
+            (
+                Size::Exact(u16::try_from(lines.len()).unwrap_or(1)),
+                View::lines(lines, Anchor::Top),
+            ),
+        ]
     }
 
     /// The tabs, the chosen one marked.
