@@ -1,5 +1,6 @@
 //! Agent runs on the wall: which session each live run drives, and what its
-//! pane shows of it. The wall only watches runs; `ren runs` drives them.
+//! pane shows of it. The wall only watches runs; `r` opens
+//! the console, which drives them.
 
 use ren_harness::drive::ApprovalAsk;
 use ren_recorder::id::RunId;

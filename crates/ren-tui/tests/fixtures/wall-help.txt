@@ -2,7 +2,6 @@
 ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
 
 
-
     ┌ keys ────────────────────────────────────────────────────────────────┐
     │ tab  n         next pane (zoomed: next session)                      │
     │ shift-tab  N   previous pane (zoomed: previous session)              │
@@ -11,7 +10,8 @@
     │ ↑  k           pane above                                            │
     │ ↓  j           pane below                                            │
     │ enter  z       zoom into the focused session, or back to the panes   │
- ── │ p              keep the focused session on the wall, even when quiet │
+    │ p              keep the focused session on the wall, even when quiet │
+ ── │ r              runs: open the focused run, or the console            │
  > W│ t              cycle theme: terminal, dark, light (not saved)        │
  I'l│ esc            close the help, or leave a zoomed session             │
  ● R│ ?              show or hide this help                                │

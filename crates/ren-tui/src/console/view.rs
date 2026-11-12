@@ -278,7 +278,7 @@ impl Console {
                 }
             },
         };
-        let right = vec![styled("alt-←→ runs · /resume · /help ", Ink::Muted)];
+        let right = vec![styled("alt-←→ runs · /resume · /wall · /help ", Ink::Muted)];
         (left, right)
     }
 

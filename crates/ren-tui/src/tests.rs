@@ -42,6 +42,26 @@ fn keys_go_to_the_route_shown() {
 }
 
 #[test]
+fn r_on_the_wall_opens_the_console_and_slash_wall_comes_back() {
+    let mut tui = Tui::new(SIZE, Route::Wall);
+    let _ = tui.apply(Input::Runs(Ok(vec![idle_run()])));
+    let _ = tui.press(Key::Char('r'));
+    assert_eq!(tui.route(), Route::Console);
+    assert!(matches!(
+        tui.frame(UnixMillis::from_millis(0)),
+        Frame::Console(_)
+    ));
+    for ch in "/wall".chars() {
+        let _ = tui.press(Key::Char(ch));
+    }
+    let outs = tui.press(Key::Enter);
+    assert_eq!(tui.route(), Route::Wall);
+    assert_eq!(outs, vec![Out::Wall(wall::Read::Snapshot)]);
+    // Back on the wall, keys are the wall's again.
+    assert_eq!(tui.press(Key::Char('q')), vec![Out::Quit]);
+}
+
+#[test]
 fn runs_reach_both_routes() {
     let mut tui = Tui::new(SIZE, Route::Console);
     let _ = tui.apply(Input::Runs(Ok(vec![idle_run()])));

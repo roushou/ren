@@ -22,9 +22,14 @@ ren tail --json
 ren tui
 ```
 
-`ren runs` with no subcommand opens the console for [runs](#runs) (with the `tui`
-feature, like `ren tui`). One run's conversation fills the screen, with a message
-box under it:
+`ren tui` and `ren runs` (with no subcommand) open the same terminal program,
+built with the `tui` feature, on one of its two screens: `ren tui` on the wall
+of live sessions, `ren runs` on the console for [runs](#runs). `r` on the wall
+opens the console, on the focused session's run if it is one, and `/wall` in the
+console goes back. Both stay current while the other is shown.
+
+In the console, one run's conversation fills the screen, with a message box
+under it:
 
 - The runs that need you come first: a run waiting for an approval opens when
   nothing else is open, and answering one moves on to the next that waits.
@@ -40,8 +45,8 @@ box under it:
   <prompt>` starts a run in one of the daemon's projects with its first
   prompt (the client named last is the default), `/resume [search]` lists
   every run, what needs you first, with the chosen one previewed, `/stop`
-  ends the open run's process, `/help`, and `/quit` (or Ctrl-C), which
-  leaves runs running.
+  ends the open run's process, `/wall` shows the wall, `/help`, and `/quit`
+  (or Ctrl-C), which leaves runs running.
 
 A turn's live copy gives way to its recorded copy once the turn is recorded.
 Live updates are not stored, so a console opened mid-turn shows that turn
@@ -119,8 +124,8 @@ not a live rate. It reads a snapshot of sessions and calls every two seconds
 and whenever the feed says a call opened or ended, and asks for
 [progress events](#live-feed). A read that fails is shown as `stale` until
 one succeeds. Keys: tab and the arrows move between panes, enter zooms into a
-session, `p` keeps a session on the wall even when quiet, `?` lists the
-keys, and `q` quits. It needs a running daemon; a gateway that cannot be
+session, `p` keeps a session on the wall even when quiet, `r` opens the
+console, `?` lists the keys, and `q` quits. It needs a running daemon; a gateway that cannot be
 reached is reported before the screen is taken over.
 
 With control access (this host's control token, or an allowed Tailscale login
@@ -128,8 +133,9 @@ through a gateway) and `[runs]` roots on the daemon, `ren tui` also shows
 [runs](#runs): a live run's session keeps its pane, marked `run · idle`,
 `working`, or `asks`, and a run waiting for an answer lights its title amber
 and says under the conversation what it asks (`? run `cargo test` in
-/work/acme`). The wall only watches; runs are started and driven from the
-`ren runs` console, the web UI, or the `ren runs` subcommands.
+/work/acme  r to answer`). The wall only watches; `r` opens that run in the
+console, where runs are started and driven, as they are from the web UI or
+the `ren runs` subcommands.
 
 The default `terminal` theme uses the terminal's foreground, background, and
 ANSI palette. `dark` and `light` use fixed RGB palettes and need a true-color
@@ -468,8 +474,8 @@ described it), `approval` requests, `turn_started` and `turn_ended`, and
 model traffic is recorded as any session's.
 
 The web UI's Runs view drives runs through this API when its server is given
-the control token file (see the [UI's README](../ui/README.md#runs)), and
-`ren tui` and `ren runs` do from a terminal.
+the control token file (see the [UI's README](../ui/README.md#runs)), and the
+terminal's console (`ren runs`) does from a terminal.
 
 Refusals: `400` `invalid_directory` (not absolute, contains `..`, or outside
 every root once links are resolved), `400` `directory_not_found`, `400`

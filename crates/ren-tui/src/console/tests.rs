@@ -176,7 +176,7 @@ fn sent(out: &[Out]) -> Vec<Command> {
     out.iter()
         .filter_map(|out| match out {
             Out::Send(command) => Some(command.clone()),
-            Out::Read(_) | Out::Quit => None,
+            Out::Read(_) | Out::Wall | Out::Quit => None,
         })
         .collect()
 }

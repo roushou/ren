@@ -7,6 +7,6 @@
 
 
 
- ? run `cargo test` in /work/acme (+1)  answer in ren runs
+ ? run `cargo test` in /work/acme (+1)  r to answer
 
  ren │ 1 session · 0 streaming · 0 waiting · 1 run · 1 as ? help │ 08:10:00 UTC

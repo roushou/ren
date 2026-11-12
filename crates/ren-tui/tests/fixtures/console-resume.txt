@@ -21,4 +21,4 @@
                                                            │
 ──────────────────────────────────────────────────────────────────────────────────────────
  › /new <project> <prompt> starts a run · /help
- ↑↓ choose · enter opens · esc back                         alt-←→ runs · /resume · /help
+ ↑↓ choose · enter opens · esc back                 alt-←→ runs · /resume · /wall · /help

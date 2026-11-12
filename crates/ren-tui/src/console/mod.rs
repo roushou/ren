@@ -188,6 +188,8 @@ pub enum Command {
 pub enum Out {
     Read(Read),
     Send(Command),
+    /// Show the wall instead.
+    Wall,
     Quit,
 }
 
@@ -220,6 +222,14 @@ impl Console {
             Out::Read(Read::Recorded),
             Out::Read(Read::Projects),
         ]
+    }
+
+    /// Shown again, on `run` if one is named and known.
+    pub fn show(&mut self, run: Option<RunId>) -> Vec<Out> {
+        match run {
+            Some(run) if self.desk.get(run).is_some() => self.open(run),
+            Some(_) | None => Vec::new(),
+        }
     }
 
     fn current(&self) -> Option<RunId> {
@@ -724,6 +734,7 @@ impl Console {
                 self.composer.set("/help");
                 Vec::new()
             }
+            Slash::Wall => vec![Out::Wall],
             Slash::Quit => vec![Out::Quit],
             Slash::Unknown(name) => {
                 self.refuse(format!("no command /{name}: /help lists them"));

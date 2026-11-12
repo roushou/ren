@@ -23,11 +23,13 @@ pub enum Command {
     Theme,
     /// Close the help, or leave a zoomed session.
     Back,
+    /// Open the console, on the focused session's run if it drives one.
+    Runs,
 }
 
 impl Command {
     /// Every command, in the order the help lists them.
-    pub const ALL: [Self; 12] = [
+    pub const ALL: [Self; 13] = [
         Self::Next,
         Self::Previous,
         Self::Left,
@@ -36,6 +38,7 @@ impl Command {
         Self::Down,
         Self::Zoom,
         Self::Pin,
+        Self::Runs,
         Self::Theme,
         Self::Back,
         Self::Help,
@@ -54,6 +57,7 @@ impl Command {
             Key::Down | Key::Char('j') => Some(Self::Down),
             Key::Enter | Key::Char('z') => Some(Self::Zoom),
             Key::Char('p') => Some(Self::Pin),
+            Key::Char('r') => Some(Self::Runs),
             Key::Char('?') => Some(Self::Help),
             Key::Char('t') => Some(Self::Theme),
             Key::Esc => Some(Self::Back),
@@ -82,6 +86,7 @@ impl Command {
             Self::Down => "↓  j",
             Self::Zoom => "enter  z",
             Self::Pin => "p",
+            Self::Runs => "r",
             Self::Help => "?",
             Self::Theme => "t",
             Self::Back => "esc",
@@ -99,6 +104,7 @@ impl Command {
             Self::Down => "pane below",
             Self::Zoom => "zoom into the focused session, or back to the panes",
             Self::Pin => "keep the focused session on the wall, even when quiet",
+            Self::Runs => "runs: open the focused run, or the console",
             Self::Help => "show or hide this help",
             Self::Theme => "cycle theme: terminal, dark, light (not saved)",
             Self::Back => "close the help, or leave a zoomed session",
@@ -123,6 +129,7 @@ mod tests {
             Key::Down,
             Key::Enter,
             Key::Char('p'),
+            Key::Char('r'),
             Key::Char('?'),
             Key::Char('t'),
             Key::Esc,

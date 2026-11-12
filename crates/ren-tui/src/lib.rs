@@ -90,9 +90,10 @@ impl Tui {
 
     /// The reads to make first: both routes' own, so each is ready when
     /// shown.
-    pub fn start(&self) -> Vec<Out> {
+    pub fn start(&mut self) -> Vec<Out> {
         let mut outs = vec![Out::Wall(wall::Read::Snapshot), Out::Wall(wall::Read::Runs)];
-        outs.extend(Self::from_console(self.console.start()));
+        let console = self.console.start();
+        outs.extend(self.console_outs(console));
         outs
     }
 
@@ -102,9 +103,17 @@ impl Tui {
             Route::Wall => match self.wall.press(key) {
                 Pressed::Continue(reads) => reads.into_iter().map(Out::Wall).collect(),
                 Pressed::CycleTheme => vec![Out::CycleTheme],
+                Pressed::Runs(run) => {
+                    self.route = Route::Console;
+                    let outs = self.console.show(run);
+                    self.console_outs(outs)
+                }
                 Pressed::Quit => vec![Out::Quit],
             },
-            Route::Console => Self::from_console(self.console.press(key)),
+            Route::Console => {
+                let outs = self.console.press(key);
+                self.console_outs(outs)
+            }
         }
     }
 
@@ -112,7 +121,10 @@ impl Tui {
     pub fn apply(&mut self, input: Input) -> Vec<Out> {
         match input {
             Input::Wall(input) => self.wall.apply(input).into_iter().map(Out::Wall).collect(),
-            Input::Console(input) => Self::from_console(self.console.apply(input)),
+            Input::Console(input) => {
+                let outs = self.console.apply(input);
+                self.console_outs(outs)
+            }
             Input::Runs(runs) => {
                 let listed = match &runs {
                     Ok(runs) => Runs::Read(runs.clone()),
@@ -124,9 +136,8 @@ impl Tui {
                     .into_iter()
                     .map(Out::Wall)
                     .collect();
-                outs.extend(Self::from_console(
-                    self.console.apply(console::Input::Runs(runs)),
-                ));
+                let console = self.console.apply(console::Input::Runs(runs));
+                outs.extend(self.console_outs(console));
                 outs
             }
             Input::Resize(size) => {
@@ -136,9 +147,8 @@ impl Tui {
                     .into_iter()
                     .map(Out::Wall)
                     .collect();
-                outs.extend(Self::from_console(
-                    self.console.apply(console::Input::Resize(size)),
-                ));
+                let console = self.console.apply(console::Input::Resize(size));
+                outs.extend(self.console_outs(console));
                 outs
             }
         }
@@ -152,11 +162,17 @@ impl Tui {
         }
     }
 
-    fn from_console(outs: Vec<console::Out>) -> Vec<Out> {
+    /// The console's outs as the shell's; asking for the wall shows it,
+    /// with a fresh snapshot.
+    fn console_outs(&mut self, outs: Vec<console::Out>) -> Vec<Out> {
         outs.into_iter()
             .map(|out| match out {
                 console::Out::Read(read) => Out::Console(read),
                 console::Out::Send(command) => Out::Send(command),
+                console::Out::Wall => {
+                    self.route = Route::Wall;
+                    Out::Wall(wall::Read::Snapshot)
+                }
                 console::Out::Quit => Out::Quit,
             })
             .collect()

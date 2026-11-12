@@ -53,7 +53,8 @@ With the Rust toolchain pinned in `rust-toolchain.toml`:
 cargo install --path crates/ren-cli --locked
 ```
 
-Add `--features tui` for `ren tui`, a terminal view of live sessions.
+Add `--features tui` for `ren tui`, the terminal view: the wall of live
+sessions, and the console for agent runs (`ren runs`).
 
 ## Run
 
@@ -89,7 +90,7 @@ ren sessions
 ren history --limit 10
 ren inspect <call-id>
 ren tail
-ren tui          # built with --features tui
+ren tui          # built with --features tui; ren runs opens its console
 ```
 
 With a saved gateway, these read the remote daemon.

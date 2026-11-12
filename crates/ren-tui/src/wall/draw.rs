@@ -330,7 +330,7 @@ impl ThemedWall<'_> {
             if *more > 0 {
                 spans.push(Span::raw(format!(" (+{more})")).style(self.theme.muted));
             }
-            spans.push(Span::raw("  answer in ren runs").style(self.theme.muted));
+            spans.push(Span::raw("  r to answer").style(self.theme.muted));
             return Line::from(spans);
         }
         let mut spans = Vec::new();

@@ -264,7 +264,8 @@ dependencies under "Crates" below. Read the code for current module ownership.
   answers with `Out`s, each route's reads and the console's control
   commands; `Tui::frame` is what to draw. Both routes keep reading while
   hidden, so each is current when shown, and the daemon's run listing
-  reaches both.
+  reaches both. `r` on the wall opens the console (on the focused session's
+  run, if it is one), and `/wall` in the console goes back.
   The wall (`wall`, `ren tui`): every session's traffic, watched. `Wall`
   takes snapshots of sessions and model calls, as `ren_store::view` types,
   turn activity, progress updates, live observations, and failed reads,

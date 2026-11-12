@@ -33,7 +33,7 @@ use ren_protocol::label::{Labeled, Stored};
 use ren_recorder::Observation;
 use ren_recorder::batch::ObservationKind;
 use ren_recorder::capture::CallState;
-use ren_recorder::id::{CallId, SessionId, TurnId};
+use ren_recorder::id::{CallId, RunId, SessionId, TurnId};
 use ren_recorder::progress::Progress;
 use ren_recorder::time::UnixMillis;
 use ren_store::activity::{CallActivity, TurnActivity};
@@ -86,6 +86,8 @@ pub enum Pressed {
     Continue(Vec<Read>),
     /// Preview the next theme; the shell owns the local preference.
     CycleTheme,
+    /// Show the console, on this run if one is named.
+    Runs(Option<RunId>),
     Quit,
 }
 
@@ -263,6 +265,10 @@ impl Wall {
             match command {
                 Command::Quit => return Pressed::Quit,
                 Command::Theme => return Pressed::CycleTheme,
+                Command::Runs => {
+                    self.help = Help::Hidden;
+                    return Pressed::Runs(None);
+                }
                 Command::Help | Command::Back => self.help = Help::Hidden,
                 Command::Next
                 | Command::Previous
@@ -280,6 +286,7 @@ impl Wall {
         match command {
             Command::Theme => return Pressed::CycleTheme,
             Command::Quit => return Pressed::Quit,
+            Command::Runs => return Pressed::Runs(self.focused_run()),
             Command::Help => self.help = Help::Shown,
             Command::Next | Command::Previous if self.zoom.is_some() => {
                 self.zoom = self.neighbour(command == Command::Next);
@@ -312,6 +319,19 @@ impl Wall {
             }
         }
         Pressed::Continue(Vec::new())
+    }
+
+    /// The live run the zoomed or focused session belongs to.
+    fn focused_run(&self) -> Option<RunId> {
+        let session = self.zoom.or_else(|| self.focused())?;
+        let view = self
+            .snapshot
+            .as_ref()?
+            .snapshot
+            .sessions
+            .iter()
+            .find(|view| view.id == session)?;
+        self.runs.of(view).map(|run| run.run)
     }
 
     fn focused(&self) -> Option<SessionId> {

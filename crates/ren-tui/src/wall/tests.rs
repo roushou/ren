@@ -1438,6 +1438,15 @@ fn a_live_runs_session_keeps_a_pane_with_the_runs_mark() {
 }
 
 #[test]
+fn r_opens_the_focused_sessions_run() {
+    let mut wall = with_run(asking());
+    assert_eq!(wall.press(Key::Char('r')), Pressed::Runs(Some(run_id())));
+    // A pane with no run opens the console as it was.
+    let mut quiet = tui();
+    assert_eq!(quiet.press(Key::Char('r')), Pressed::Runs(None));
+}
+
+#[test]
 fn run_observations_ask_for_the_runs() {
     let mut tui = tui();
     let observation: Observation = serde_json::from_value(json!({

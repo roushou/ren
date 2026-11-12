@@ -17,6 +17,8 @@ pub enum Slash {
     Resume { search: String },
     /// `/stop`: end the run's process.
     Stop,
+    /// `/wall`: every session's traffic.
+    Wall,
     /// `/help`
     Help,
     /// `/quit`
@@ -44,10 +46,11 @@ pub enum Unresolved {
 }
 
 /// The commands, with what each does, as completion and help list them.
-const COMMANDS: [(&str, &str); 5] = [
+const COMMANDS: [(&str, &str); 6] = [
     ("new", "start a run: /new <project> [claude|codex] <prompt>"),
     ("resume", "every run, what needs you first"),
     ("stop", "end this run's process"),
+    ("wall", "every session's traffic, one pane each"),
     ("help", "keys and commands"),
     ("quit", "leave (runs keep going)"),
 ];
@@ -83,6 +86,7 @@ impl Slash {
                 search: args.to_owned(),
             },
             "stop" => Self::Stop,
+            "wall" => Self::Wall,
             "help" => Self::Help,
             "quit" | "exit" => Self::Quit,
             other => Self::Unknown(other.to_owned()),

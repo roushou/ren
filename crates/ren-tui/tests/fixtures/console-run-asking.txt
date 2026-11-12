@@ -21,4 +21,4 @@
 
 ──────────────────────────────────────────────────────────────────────────────────────────
  › 1–4 answers, or type to reply instead
- 1–4 answers                                                alt-←→ runs · /resume · /help
+ 1–4 answers                                        alt-←→ runs · /resume · /wall · /help
