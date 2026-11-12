@@ -1,6 +1,6 @@
  ren   0 sessions · 0 streaming · 0 waiting                                                         1 needs you  3 live
 ──────────────────────────────┬─────────────────────────────────────────────────────────────────────────────────────────
- ren ◆1  /srv/          ┌ keys ────────────────────────────────────────────────────────────────┐               /srv/ren
+ ren ◆1  /srv/          ┌ keys ────────────────────────────────────────────────────────────────┐ Claude Code · /srv/ren
  1 ◆ fix the flaky upl… │  move                                                                │
                         │  ↓ j         next session, or next turn in a session                 │────────────────────────
  acme-api  /dev/        │  ↑ k         previous session, or previous turn                      │

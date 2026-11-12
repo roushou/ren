@@ -165,18 +165,23 @@ impl Main {
                     Attention::Working => Some(Ink::LiveTitle),
                     Attention::YourTurn | Attention::Starting | Attention::Ended => None,
                 };
+                // Its name, then how it stands in words; how it is set up
+                // and where it works on the right, quieter.
+                let client = match run.setup() {
+                    Some(setup) => format!("{} · {setup}", run.client()),
+                    None => run.client(),
+                };
                 let title = Line::new(vec![
-                    Span::plain(format!(" {}", Listing::run_name(model, run))),
-                    Span::plain(format!(" · {} · {}", run.client(), run.phase())),
+                    Span::plain(format!(" {}", Listing::run_name(model, run)))
+                        .with(crate::ui::Emphasis::Bold),
+                    Span::plain(format!("  {}", run.status())),
                 ]);
-                // How it was set up, where any setting was not the client's own.
-                let mut title = title;
-                if let Some(setup) = run.setup() {
-                    title.push(Span::new(format!(" · {setup}"), Ink::Muted));
-                }
                 (
                     title,
-                    Line::from(Span::plain(format!("{} ", run.workdir))),
+                    Line::from(Span::new(
+                        format!("{client} · {} ", model.place(&run.workdir)),
+                        Ink::Muted,
+                    )),
                     lit,
                 )
             }

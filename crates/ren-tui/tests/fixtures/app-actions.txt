@@ -1,6 +1,6 @@
  ren   0 sessions · 0 streaming · 0 waiting                                                         1 needs you  3 live
 ──────────────────────────────┬─────────────────────────────────────────────────────────────────────────────────────────
- ren ◆1  /srv/                │ ren · Claude Code · needs you                                                  /srv/ren
+ ren ◆1  /srv/                │ ren  Needs you                                                   Claude Code · /srv/ren
  1 ◆ fix the flaky upl…  wants│  Conversation   Activity   Files   Calls
                               │─────────────────────────────────────────────────────────────────────────────────────────
  acme-api  /dev/              │

@@ -252,6 +252,31 @@ impl Model {
         }
     }
 
+    /// Where a run works, as the operator would say it: Scratch for a
+    /// scratch run, else its folder as `~/…` where a place read shows the
+    /// home.
+    pub fn place(&self, workdir: &str) -> String {
+        if let Some(scratch) = &self.scratch
+            && workdir
+                .strip_prefix(scratch.as_str())
+                .is_some_and(|rest| rest.starts_with('/'))
+        {
+            return "Scratch".to_owned();
+        }
+        if let Some(known) = self.projects().iter().find(|place| place.path == workdir) {
+            return known.shown.clone();
+        }
+        // The home, as a place read under it shows it.
+        let home = self.projects().iter().find_map(|place| {
+            let rest = place.shown.strip_prefix('~')?;
+            place.path.strip_suffix(rest)
+        });
+        match home.and_then(|home| workdir.strip_prefix(home)) {
+            Some(rest) if rest.starts_with('/') => format!("~{rest}"),
+            Some(_) | None => workdir.to_owned(),
+        }
+    }
+
     /// What is known of `harness`'s models.
     pub fn models(&self, harness: Harness) -> Option<&Offered> {
         self.models.get(&harness)

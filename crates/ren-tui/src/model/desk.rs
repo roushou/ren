@@ -10,7 +10,11 @@ use ren_harness::{
 };
 use ren_protocol::label::Stored;
 use ren_protocol::native::NativeThreadId;
-use ren_recorder::{id::RunId, time::UnixMillis};
+use ren_recorder::{
+    capture::{ProcessExit, RunEnd},
+    id::RunId,
+    time::UnixMillis,
+};
 use ren_store::view::RunView;
 use ren_supervisor::{RunSnapshot, RunState, Waiting};
 
@@ -252,6 +256,47 @@ impl Run {
     }
 
     /// The state in a word or two, as the header and lists write it.
+    /// How it stands, as the operator would say it: the state while it
+    /// runs, or how it ended, with the process's exit left to the details.
+    pub fn status(&self) -> &'static str {
+        match &self.live {
+            Some(RunState::Stopping { .. }) => "Stopping",
+            Some(RunState::Ended { end, exit }) => Self::ended(Some(*end), *exit),
+            Some(RunState::Starting | RunState::Idle { .. } | RunState::Working { .. }) => {
+                match self.attention() {
+                    Attention::NeedsYou => "Needs you",
+                    Attention::YourTurn => "Your turn",
+                    Attention::Working => "Working",
+                    Attention::Starting => "Starting",
+                    Attention::Ended => "Ended",
+                }
+            }
+            None => match &self.recorded {
+                Some(recorded) => {
+                    Self::ended(recorded.end.as_ref().and_then(Stored::known), recorded.exit)
+                }
+                None => "Ended",
+            },
+        }
+    }
+
+    /// How a run ended, in words.
+    fn ended(end: Option<RunEnd>, exit: Option<ProcessExit>) -> &'static str {
+        match end {
+            Some(RunEnd::SpawnFailed) => "Couldn't start",
+            Some(RunEnd::OpenRefused) => "Couldn't open its conversation",
+            Some(RunEnd::Exited) => match exit {
+                Some(ProcessExit::Code(0)) | Some(ProcessExit::Unknown) | None => "Ended",
+                Some(ProcessExit::Code(_)) => "Ended with an error",
+                Some(ProcessExit::Signal(_)) => "Killed",
+            },
+            Some(RunEnd::Stopped) => "Stopped",
+            Some(RunEnd::Drained) => "Stopped when Ren shut down",
+            Some(RunEnd::Recovered) => "Lost when Ren restarted",
+            None => "Ended",
+        }
+    }
+
     pub fn phase(&self) -> &'static str {
         match self.attention() {
             Attention::NeedsYou => "needs you",
@@ -416,6 +461,33 @@ mod tests {
             workdir.into(),
             0,
         )
+    }
+
+    /// How a run ended reads in words; a process's exit is never the
+    /// headline.
+    #[test]
+    fn an_ended_run_says_how_in_words() {
+        use ren_recorder::capture::{ProcessExit, RunEnd};
+        use ren_supervisor::RunState;
+        let ended = |end, exit| {
+            let mut run = run("/home/op/dev/acme");
+            run.live = Some(RunState::Ended { end, exit });
+            run.status()
+        };
+        assert_eq!(
+            ended(RunEnd::Drained, Some(ProcessExit::Signal(9))),
+            "Stopped when Ren shut down"
+        );
+        assert_eq!(ended(RunEnd::Exited, Some(ProcessExit::Code(0))), "Ended");
+        assert_eq!(
+            ended(RunEnd::Exited, Some(ProcessExit::Code(2))),
+            "Ended with an error"
+        );
+        assert_eq!(
+            ended(RunEnd::Exited, Some(ProcessExit::Signal(11))),
+            "Killed"
+        );
+        assert_eq!(ended(RunEnd::SpawnFailed, None), "Couldn't start");
     }
 
     /// Scratch runs each got a folder of their own: they are listed under
