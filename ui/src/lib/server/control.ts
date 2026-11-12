@@ -79,6 +79,10 @@ const routes: { pattern: RegExp; route: Route }[] = [
   { pattern: /^\/control\/runs\/projects$/, route: { method: 'GET', feed: false } },
   { pattern: /^\/control\/runs\/clients$/, route: { method: 'GET', feed: false } },
   {
+    pattern: /^\/control\/runs\/clients\/(claude_code|codex|pi|opencode)\/models$/,
+    route: { method: 'GET', feed: false },
+  },
+  {
     pattern: new RegExp(`^/control/runs/${runId}/(?:prompt|interrupt|stop)$`),
     route: { method: 'POST', feed: false },
   },

@@ -435,6 +435,46 @@ const runClients = versioned(
     clients: array(object<RunClient>({ harness: label(harnesses), status: label(clientStatuses) })),
   }),
 );
+/** A model, named as its client names it (`--model`, or Pi's `provider/id`). */
+export type ModelId = Brand<string, 'ModelId'>;
+const modelChoices = ['default', 'other'] as const;
+
+/** A model a client offers, as the client itself lists it. */
+export interface RunModel {
+  id: ModelId;
+  name: string;
+  description: string | null;
+  /** The provider serving it, where the client offers several (Pi). */
+  provider: string | null;
+  /** Whether a run gets it when no model is chosen. */
+  choice: Stored<(typeof modelChoices)[number]>;
+}
+
+const runModels = versioned(
+  object<{ models: RunModel[] }>({
+    models: array(
+      object<RunModel>({
+        id: branded<'ModelId'>(),
+        name: string,
+        description: nullable(string),
+        provider: nullable(string),
+        choice: label(modelChoices),
+      }),
+    ),
+  }),
+);
+
+/** What a run starts with. */
+export interface StartRequest {
+  harness: Drivable;
+  dir: string;
+  /** The client's thread to continue, instead of a new conversation. */
+  resume?: NativeThreadId | null;
+  prompt?: string | null;
+  /** With none, the client's own default. */
+  model?: ModelId | null;
+}
+
 const started = versioned(object<{ run: RunId }>({ run: RunId.decode }));
 const versionedRecordedRun = versioned(recordedRun);
 const storedConversation = versioned(
@@ -474,6 +514,8 @@ export class RunCommandError extends Error {
         return 'Ren cannot drive that client yet.';
       case 'spawn_failed':
         return 'The client could not be started; is it installed on the daemon’s host?';
+      case 'models_unavailable':
+        return 'The client could not list its models.';
       case 'unrecorded':
         return 'The recorder has no room to record a new run right now.';
       case 'busy':
@@ -534,13 +576,19 @@ export class RunsClient {
     return (await this.#send('GET', '/control/runs/clients', undefined, runClients, signal))
       .clients;
   }
-  async start(
-    harness: Drivable,
-    dir: string,
-    resume: NativeThreadId | null = null,
-    prompt: string | null = null,
-  ): Promise<RunId> {
-    const body = { harness, dir, ...(resume ? { resume } : {}), ...(prompt ? { prompt } : {}) };
+  /** The models `harness` offers, as it lists them on the daemon's host. */
+  async models(harness: Drivable, signal?: AbortSignal): Promise<RunModel[]> {
+    const path = `/control/runs/clients/${harness}/models`;
+    return (await this.#send('GET', path, undefined, runModels, signal, 30_000)).models;
+  }
+  async start({ harness, dir, resume, prompt, model }: StartRequest): Promise<RunId> {
+    const body = {
+      harness,
+      dir,
+      ...(resume ? { resume } : {}),
+      ...(prompt ? { prompt } : {}),
+      ...(model ? { model } : {}),
+    };
     return (await this.#send('POST', '/control/runs', body, started)).run;
   }
   async prompt(run: RunId, text: string): Promise<void> {
@@ -596,8 +644,9 @@ export class RunsClient {
     body: unknown,
     decode: Decoder<T> | null,
     signal?: AbortSignal,
+    wait = 15_000,
   ): Promise<T> {
-    const timeout = AbortSignal.timeout(15_000);
+    const timeout = AbortSignal.timeout(wait);
     const response = await this.#fetch(path, {
       method,
       cache: 'no-store',
@@ -1198,5 +1247,29 @@ export class Desk {
     if (recorded?.end) return { phase: 'ended', end: recorded.end, exit: recorded.exit };
     // Recorded as started but not held by the daemon: it ended without a record yet.
     return { phase: 'unrecognized', text: 'not running' };
+  }
+}
+
+/** A client's models as the new-run form offers them. */
+export class Models {
+  /** The models by provider, in the order the client lists them. */
+  static groups(models: readonly RunModel[]): { provider: string | null; models: RunModel[] }[] {
+    const groups: { provider: string | null; models: RunModel[] }[] = [];
+    for (const model of models) {
+      const group = groups.find((group) => group.provider === model.provider);
+      if (group) group.models.push(model);
+      else groups.push({ provider: model.provider, models: [model] });
+    }
+    return groups;
+  }
+
+  /** The model a run gets when none is chosen, when the client says. */
+  static fallback(models: readonly RunModel[]): RunModel | null {
+    return models.find((model) => model.choice === 'default') ?? null;
+  }
+
+  /** `wanted` when the client still lists it; otherwise no choice. */
+  static keep(models: readonly RunModel[], wanted: string | null): ModelId | null {
+    return models.find((model) => model.id === wanted)?.id ?? null;
   }
 }

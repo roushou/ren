@@ -75,7 +75,7 @@ test('commands reach the control API with the token from the file, never browser
   assert.equal(daemon.seen, 1);
 });
 
-test('starting, listing, projects, answering, history edits, and the feed map to their control routes', async () => {
+test('starting, listing, projects, models, answering, history edits, and the feed map to their control routes', async () => {
   const seen: string[] = [];
   const daemon = host((url, init) => {
     seen.push(`${init.method} ${url.pathname}`);
@@ -100,6 +100,11 @@ test('starting, listing, projects, answering, history edits, and the feed map to
       headers: { 'sec-fetch-site': 'same-origin' },
     }),
   );
+  await proxy.respond(
+    new Request('http://ui.test/control/runs/clients/pi/models', {
+      headers: { 'sec-fetch-site': 'same-origin' },
+    }),
+  );
   await proxy.respond(post(`/control/runs/${run}/approvals/ap-1`, { decision: 'accept' }));
   await proxy.respond(post(`/control/runs/${run}/stop`, {}));
   await proxy.respond(post(`/control/history/sessions/${run}/archive`, {}));
@@ -111,6 +116,7 @@ test('starting, listing, projects, answering, history edits, and the feed map to
     'GET /control/v1/runs',
     'GET /control/v1/runs/projects',
     'GET /control/v1/runs/clients',
+    'GET /control/v1/runs/clients/pi/models',
     `POST /control/v1/runs/${run}/approvals/ap-1`,
     `POST /control/v1/runs/${run}/stop`,
     `POST /control/v1/history/sessions/${run}/archive`,
@@ -161,6 +167,7 @@ test('cross-site, non-JSON, unknown, and unlisted requests never reach the daemo
     [post(`/control/runs/${run}/delete`, {}), 404],
     [post(`/control/history/sessions/${run}/shred`, {}), 404],
     [post(`/control/history/calls/${run}/delete`, {}), 404],
+    [new Request('http://ui.test/control/runs/clients/hermes/models'), 404],
     [new Request(`http://ui.test/control/history/runs/${run}/delete`), 405],
     [post('/control/pause', {}), 404],
     [new Request(`http://ui.test/control/runs/${run}/stop`), 405],

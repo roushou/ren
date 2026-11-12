@@ -2,11 +2,14 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   Desk,
+  Models,
   RunCommandError,
   Runs,
   RunsClient,
   Transcript,
   runUpdate,
+  type ModelId,
+  type RunModel,
   type DriveEvent,
   type RecordedRun,
   type RunSnapshot,
@@ -302,8 +305,16 @@ test('the client sends commands as JSON and reports refusals by their code', asy
     }
     return Response.json({ api_version: 1 }, { status: 202 });
   }) as typeof fetch);
-  assert.equal(await client.start('codex', '/work/acme'), run);
-  assert.equal(await client.start('claude_code', '/work/web'), run);
+  assert.equal(await client.start({ harness: 'codex', dir: '/work/acme' }), run);
+  assert.equal(
+    await client.start({
+      harness: 'claude_code',
+      dir: '/work/web',
+      prompt: 'fix it',
+      model: 'small' as ModelId,
+    }),
+    run,
+  );
   await client.answer(run as never, 'ap/1' as never, 'accept_for_session');
   await assert.rejects(client.stop(run as never), (error: unknown) => {
     assert.ok(error instanceof RunCommandError);
@@ -313,7 +324,7 @@ test('the client sends commands as JSON and reports refusals by their code', asy
   });
   assert.deepEqual(sent, [
     'POST /control/runs {"harness":"codex","dir":"/work/acme"}',
-    'POST /control/runs {"harness":"claude_code","dir":"/work/web"}',
+    'POST /control/runs {"harness":"claude_code","dir":"/work/web","prompt":"fix it","model":"small"}',
     `POST /control/runs/${run}/approvals/ap%2F1 {"decision":"accept_for_session"}`,
     `POST /control/runs/${run}/stop {}`,
   ]);
@@ -541,4 +552,51 @@ test('an archived run the daemon still lists as ended is left out, a running one
     project?.runs.map((entry) => entry.run),
     [other],
   );
+});
+
+test('a client’s models read as listed, grouped by provider, the default known', async () => {
+  const client = new RunsClient((async (url: string) => {
+    assert.equal(url, '/control/runs/clients/pi/models');
+    return Response.json({
+      api_version: 1,
+      harness: 'pi',
+      models: [
+        {
+          id: 'anthropic/big',
+          name: 'Big',
+          description: null,
+          provider: 'anthropic',
+          choice: 'other',
+        },
+        {
+          id: 'openai/fast',
+          name: 'Fast',
+          description: 'Quick.',
+          provider: 'openai',
+          choice: 'default',
+        },
+        {
+          id: 'anthropic/small',
+          name: 'Small',
+          description: null,
+          provider: 'anthropic',
+          choice: 'later',
+        },
+      ],
+    });
+  }) as typeof fetch);
+  const models: RunModel[] = await client.models('pi');
+  assert.deepEqual(
+    Models.groups(models).map((group) => [group.provider, group.models.map((model) => model.id)]),
+    [
+      ['anthropic', ['anthropic/big', 'anthropic/small']],
+      ['openai', ['openai/fast']],
+    ],
+  );
+  assert.equal(Models.fallback(models)?.id, 'openai/fast');
+  // An unknown choice label is kept, not taken for the default.
+  assert.equal(models[2]!.choice, 'later');
+  assert.equal(Models.keep(models, 'anthropic/big'), 'anthropic/big');
+  assert.equal(Models.keep(models, 'gone/model'), null);
+  assert.equal(Models.keep(models, null), null);
 });

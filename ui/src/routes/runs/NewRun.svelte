@@ -1,8 +1,10 @@
 <!--
-  Starting a run: the prompt, where the run works, and with which client.
-  The folder is always chosen, never assumed: its picker lists the folders
-  recent runs worked in first, and Enter without one opens it. The client is
-  the last one used until changed.
+  Starting a run: the prompt, where the run works, with which client, and on
+  which model. The folder is always chosen, never assumed: its picker lists
+  the folders recent runs worked in first, and Enter without one opens it.
+  The client is the last one used until changed. Its models are the ones the
+  client itself lists on the daemon's host; with none chosen, the client's
+  own default, and the last model chosen for a client is kept while listed.
 -->
 <script lang="ts">
   import { harnessLabel } from '#lib/activity.ts';
@@ -10,10 +12,14 @@
   import {
     DRIVABLE,
     Desk,
+    Models,
+    RunCommandError,
     Runs,
     type DeskRun,
     type Drivable,
+    type ModelId,
     type RunClient,
+    type RunModel,
     type RunProject,
   } from '#lib/runs.ts';
 
@@ -22,32 +28,57 @@
     clients,
     runs,
     busy,
+    listModels,
     onstart,
   }: {
     offered: readonly RunProject[];
     clients: readonly RunClient[];
     runs: readonly DeskRun[];
     busy: boolean;
-    onstart: (harness: Drivable, dir: string, prompt: string | null) => void;
+    listModels: (harness: Drivable) => Promise<RunModel[]>;
+    onstart: (harness: Drivable, dir: string, prompt: string | null, model: ModelId | null) => void;
   } = $props();
 
-  /** The client the last run started with: a per-viewer convenience. */
+  /** The client the last run started with, and the model last chosen for
+   * each client: a per-viewer convenience. */
+  type Saved = { harness: Drivable; models: Partial<Record<Drivable, string>> };
   const remembered = 'ren.runs.last';
-  function recall(): Drivable {
+  function recall(): Saved {
     try {
       const saved = JSON.parse(localStorage.getItem(remembered) ?? 'null') as {
         harness?: unknown;
+        models?: unknown;
       } | null;
-      return DRIVABLE.find((drivable) => drivable === saved?.harness) ?? 'codex';
+      const models: Partial<Record<Drivable, string>> = {};
+      if (saved?.models && typeof saved.models === 'object') {
+        for (const drivable of DRIVABLE) {
+          const id = (saved.models as Record<string, unknown>)[drivable];
+          if (typeof id === 'string') models[drivable] = id;
+        }
+      }
+      return {
+        harness: DRIVABLE.find((drivable) => drivable === saved?.harness) ?? 'codex',
+        models,
+      };
     } catch {
-      return 'codex';
+      return { harness: 'codex', models: {} };
     }
   }
+  const saved = recall();
+
+  /** A client's models, as far as they are known. */
+  type Listing =
+    | { state: 'loading' }
+    | { state: 'listed'; models: RunModel[] }
+    | { state: 'failed'; reason: string };
 
   let prompt = $state('');
   /** Where the run works: chosen each time, never assumed. */
   let dir = $state<string | null>(null);
-  let harness = $state<Drivable>(recall());
+  let harness = $state<Drivable>(saved.harness);
+  let listings = $state<Partial<Record<Drivable, Listing>>>({});
+  /** The chosen model; none is the client's own default. */
+  let model = $state<ModelId | null>(null);
   let field = $state<HTMLTextAreaElement>();
   let folders = $state<ReturnType<typeof Picker>>();
 
@@ -89,6 +120,69 @@
       })),
     },
   ]);
+  const listing = $derived<Listing>(listings[harness] ?? { state: 'loading' });
+  const listed = $derived(listing.state === 'listed' ? listing.models : []);
+  const fallback = $derived(Models.fallback(listed));
+  /** The picker's value for "no model chosen": never a model's id, which is never blank. */
+  const DEFAULT = '';
+  const modelGroups = $derived<PickerGroup[]>([
+    {
+      label: null,
+      options: [
+        {
+          value: DEFAULT,
+          label: 'Default',
+          detail: `${harnessLabel(harness)}’s own choice`,
+          // What the default is now, on the chip as in the list.
+          hint: fallback?.name,
+        },
+      ],
+    },
+    ...Models.groups(listed).map((group) => ({
+      label: group.provider ?? 'Models',
+      options: group.models.map((offered) => ({
+        value: offered.id,
+        label: offered.name,
+        detail: offered.description ?? (offered.name === offered.id ? null : offered.id),
+        badge: offered.choice === 'default' ? 'default' : null,
+      })),
+    })),
+  ]);
+  const modelNote = $derived.by(() => {
+    switch (listing.state) {
+      case 'loading':
+        return `Asking ${harnessLabel(harness)} for its models…`;
+      case 'failed':
+        return listing.reason;
+      case 'listed':
+        return listing.models.length
+          ? null
+          : `${harnessLabel(harness)} lists no models here. Is it signed in on the daemon’s host?`;
+    }
+  });
+
+  /** Ask the chosen client for its models once; the daemon keeps them too. */
+  $effect(() => {
+    const asked = harness;
+    if (listings[asked]) return;
+    listings[asked] = { state: 'loading' };
+    listModels(asked).then(
+      (models) => {
+        listings[asked] = { state: 'listed', models };
+        if (asked === harness) model = Models.keep(models, saved.models[asked] ?? null);
+      },
+      (error: unknown) => {
+        listings[asked] = {
+          state: 'failed',
+          reason:
+            error instanceof RunCommandError
+              ? error.message
+              : `${harnessLabel(asked)} could not list its models.`,
+        };
+      },
+    );
+  });
+
   const chosenProject = $derived(offered.find((project) => project.path === dir));
   const ready = $derived(!busy);
 
@@ -102,12 +196,15 @@
       folders?.open();
       return;
     }
+    if (model) saved.models[harness] = model;
+    else delete saved.models[harness];
+    saved.harness = harness;
     try {
-      localStorage.setItem(remembered, JSON.stringify({ harness }));
+      localStorage.setItem(remembered, JSON.stringify(saved));
     } catch {
       // Remembering is a convenience.
     }
-    onstart(harness, dir, prompt.trim() || null);
+    onstart(harness, dir, prompt.trim() || null, model);
     prompt = '';
   }
 
@@ -156,8 +253,26 @@
         placeholder="Client"
         search={false}
         onchange={(value) => {
-          harness = DRIVABLE.find((drivable) => drivable === value) ?? harness;
+          const next = DRIVABLE.find((drivable) => drivable === value) ?? harness;
+          if (next === harness) return;
+          harness = next;
+          // Another client's models are its own.
+          const known = listings[next];
+          model =
+            known?.state === 'listed'
+              ? Models.keep(known.models, saved.models[next] ?? null)
+              : null;
         }}
+      />
+      <Picker
+        label="Model"
+        icon="cpu"
+        groups={modelGroups}
+        value={model ?? DEFAULT}
+        placeholder="Default"
+        search={listed.length > 8}
+        note={modelNote}
+        onchange={(value) => (model = Models.keep(listed, value))}
       />
       <button class="button primary" disabled={!ready}
         >{!dir ? 'Choose a folder' : prompt.trim() ? 'Start' : 'Start without a prompt'}</button

@@ -41,6 +41,11 @@
     arrow: ['M5 12h14m-5-5 5 5-5 5'],
     shield: ['m12 3 8 3v6c0 5-8 9-8 9s-8-4-8-9V6l8-3Z', 'm8 12 3 3 5-6'],
     terminal: ['m4 6 6 6-6 6m9 0h7'],
+    cpu: [
+      'M7 7h10v10H7z',
+      'M10 10h4v4h-4z',
+      'M9 3v4m6-4v4M9 17v4m6-4v4M3 9h4m-4 6h4m10-6h4m-4 6h4',
+    ],
     grid: ['M3 3h8v8H3zM13 3h8v8h-8zM3 13h8v8H3zM13 13h8v8h-8z'],
     rows: ['M3 5h18M3 12h18M3 19h18'],
     pulse: ['M2 12h4l3-8 6 16 3-8h4'],

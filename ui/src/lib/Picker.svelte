@@ -2,7 +2,9 @@
   A chip that opens a searchable list: type to narrow it, ↑ and ↓ to move,
   Enter to choose, Esc to close. Options come in groups, may say why they
   cannot be chosen, and carry a muted hint, with an icon that says what it
-  is (a folder's branch).
+  is (a folder's branch). An option with a detail (a model's description)
+  takes two lines, and a badge marks one apart (the default). A note says
+  why the list is short (still loading, or why nothing is listed).
 
   <Picker label="Project" options={groups} value={path} onchange={(path) => (chosen = path)} />
 -->
@@ -15,6 +17,10 @@
     hintIcon?: IconName;
     /** Why it cannot be chosen; it is shown, but not chosen. */
     unavailable?: string | null;
+    /** A second line under the label. */
+    detail?: string | null;
+    /** A short mark beside the label. */
+    badge?: string | null;
   };
   export type PickerGroup = { label: string | null; options: PickerOption[] };
 </script>
@@ -31,6 +37,7 @@
     placeholder,
     search = true,
     free = null,
+    note = null,
     onchange,
   }: {
     /** The accessible name. */
@@ -44,6 +51,8 @@
     search?: boolean;
     /** Typed text that is a value of its own when it passes this test (a full path). */
     free?: ((typed: string) => boolean) | null;
+    /** Said at the foot of the list: why it is short, or still loading. */
+    note?: string | null;
     onchange: (value: string) => void;
   } = $props();
 
@@ -66,7 +75,8 @@
           (option) =>
             !text ||
             option.label.toLowerCase().includes(text) ||
-            option.value.toLowerCase().includes(text),
+            option.value.toLowerCase().includes(text) ||
+            !!option.detail?.toLowerCase().includes(text),
         ),
       }))
       .filter((group) => group.options.length);
@@ -202,20 +212,35 @@
                 choose(option);
               }}
             >
-              <span>{option.label}</span>
-              {#if option.unavailable}<span class="muted">{option.unavailable}</span>{:else}<span
-                  class="hint muted"
-                  >{#if option.hint && option.hintIcon}<Icon
-                      name={option.hintIcon}
-                      size={11}
-                    />{/if}<span class="mono">{option.hint ?? ''}</span></span
-                >{/if}
+              {#if option.detail}
+                <span class="rich">
+                  <span class="name"
+                    >{option.label}{#if option.badge}<span class="badge">{option.badge}</span
+                      >{/if}</span
+                  >
+                  <span class="detail muted">{option.detail}</span>
+                </span>
+                {#if option.hint}<span class="hint muted mono">{option.hint}</span>{/if}
+              {:else}
+                <span class="name"
+                  >{option.label}{#if option.badge}<span class="badge">{option.badge}</span
+                    >{/if}</span
+                >
+                {#if option.unavailable}<span class="muted">{option.unavailable}</span>{:else}<span
+                    class="hint muted"
+                    >{#if option.hint && option.hintIcon}<Icon
+                        name={option.hintIcon}
+                        size={11}
+                      />{/if}<span class="mono">{option.hint ?? ''}</span></span
+                  >{/if}
+              {/if}
             </li>
           {/each}
         {:else}
-          {#if !typedValue}<li class="group" role="presentation">Nothing matches</li>{/if}
+          {#if !typedValue && !note}<li class="group" role="presentation">Nothing matches</li>{/if}
         {/each}
       </ul>
+      {#if note}<p class="note muted">{note}</p>{/if}
     </div>
   {/if}
 </div>
@@ -306,8 +331,45 @@
   li.active {
     background: var(--row-hover);
   }
-  li.chosen > span:first-child {
+  li.chosen .name {
     font-weight: 600;
+  }
+  /* A label over its detail: the name, then a quieter line. */
+  .rich {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+  }
+  .rich .detail {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 11px;
+  }
+  li[role='option']:has(.rich) {
+    align-items: center;
+    padding: 7px 10px;
+  }
+  .name {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .badge {
+    padding: 0 5px;
+    border: 1px solid var(--line);
+    color: var(--muted);
+    font-size: 10px;
+    font-weight: 400;
+    line-height: 15px;
+    text-transform: lowercase;
+  }
+  .note {
+    margin: 0;
+    padding: 8px 10px;
+    border-top: 1px solid var(--line);
+    font-size: 11px;
   }
   li.unavailable {
     cursor: not-allowed;

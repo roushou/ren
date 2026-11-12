@@ -16,7 +16,7 @@
     type Decision,
     type DeskRun,
     type Entry,
-    type Drivable,
+    type StartRequest,
     type RunClient,
     type RunProject,
     type HistoryChange,
@@ -219,15 +219,10 @@
     void goto(run ? `/runs?run=${run}` : '/runs');
   }
 
-  async function start(
-    harness: Drivable,
-    dir: string,
-    first: string | null,
-    resume: string | null = null,
-  ) {
+  async function start(request: StartRequest) {
     await act(async () => {
-      const run = await client.start(harness, dir, resume as never, first);
-      if (first) transcripts.set(run, new Transcript().prompted(first));
+      const run = await client.start(request);
+      if (request.prompt) transcripts.set(run, new Transcript().prompted(request.prompt));
       await readLive();
       select(run);
     });
@@ -626,7 +621,8 @@
           {clients}
           {runs}
           {busy}
-          onstart={(harness, dir, first) => void start(harness, dir, first)}
+          listModels={(harness) => client.models(harness)}
+          onstart={(harness, dir, prompt, model) => void start({ harness, dir, prompt, model })}
         />
         {#if notice}<div class="notice danger" role="alert">
             <Icon name="alert" size={14} /><span>{notice}</span>
@@ -702,7 +698,11 @@
               disabled={busy}
               onclick={() =>
                 resumable &&
-                void start(resumable.harness, resumable.workdir, null, resumable.thread)}
+                void start({
+                  harness: resumable.harness,
+                  dir: resumable.workdir,
+                  resume: resumable.thread,
+                })}
               title="Start a new run that continues this conversation">Resume</button
             >{/if}
         </span>
