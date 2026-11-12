@@ -483,7 +483,7 @@ export class RunCommandError extends Error {
 }
 
 /** The clients the daemon can drive, as the new-run form offers them. */
-export const DRIVABLE = ['codex', 'claude_code'] as const satisfies readonly Harness[];
+export const DRIVABLE = ['codex', 'claude_code', 'pi'] as const satisfies readonly Harness[];
 export type Drivable = (typeof DRIVABLE)[number];
 
 /** Run commands and reads through a capability-supplied `fetch`. */

@@ -375,7 +375,8 @@ test('an approval to use another tool says which, and only drivable clients resu
   });
   assert.equal(Runs.drivable('claude_code'), 'claude_code');
   assert.equal(Runs.drivable('codex'), 'codex');
-  assert.equal(Runs.drivable('pi'), null);
+  assert.equal(Runs.drivable('pi'), 'pi');
+  assert.equal(Runs.drivable('opencode'), null);
 });
 
 test('projects narrow as a name or path is typed, and say their branch', () => {

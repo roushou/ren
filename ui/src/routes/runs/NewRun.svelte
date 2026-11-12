@@ -172,8 +172,8 @@
     </p>
   {/if}
   <p class="about muted">
-    A run is Codex or Claude Code working in one of your folders, driven from here. Each keeps its
-    own sign-in; its model traffic is recorded like any session’s.
+    A run is Codex, Claude Code, or Pi working in one of your folders, driven from here. Each keeps
+    its own sign-in; its model traffic is recorded like any session’s.
   </p>
 </div>
 
