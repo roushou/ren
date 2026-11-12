@@ -337,12 +337,16 @@
     following = true;
     if (!run) return;
     // Loaded with the page when it was opened on this run; read otherwise.
-    const given = untrack(() => data.conversation);
-    if (given?.run === run) {
-      transcripts.set(run, (transcripts.get(run) ?? new Transcript()).load(given.conversation));
-    } else {
-      void readConversation(run);
-    }
+    // Untracked: the effect follows the selection, not the transcripts it
+    // writes, or writing one would run it again.
+    untrack(() => {
+      const given = data.conversation;
+      if (given?.run === run) {
+        transcripts.set(run, (transcripts.get(run) ?? new Transcript()).load(given.conversation));
+      } else {
+        void readConversation(run);
+      }
+    });
   });
 
   $effect(() => {
