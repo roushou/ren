@@ -417,6 +417,8 @@ pub struct SessionView {
     pub native_id: String,
     pub first_seen: UnixMillis,
     pub last_seen: UnixMillis,
+    /// When the operator archived it, while it has no newer traffic.
+    pub archived_at: Option<UnixMillis>,
     pub call_count: u64,
     pub turn_count: u64,
     /// Calls with an error status, a failed transport, or a failed model
@@ -517,6 +519,7 @@ impl SessionView {
             native_id: row.text("native_id")?.unwrap_or_default(),
             first_seen: row.time("first_seen")?,
             last_seen: row.time("last_seen")?,
+            archived_at: row.optional_time("archived_at")?,
             call_count: row.count("calls")?,
             turn_count: row.count("turn_count")?,
             error_count: row.count("errors")?,
@@ -558,6 +561,15 @@ impl OperatorActionView {
     }
 }
 
+/// What an archive or delete would touch, read before it is asked for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HistoryTarget {
+    /// Calls of its sessions still open.
+    pub open_calls: u64,
+    /// Its runs that have not ended.
+    pub running_runs: u64,
+}
+
 /// One agent run, as recorded.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RunView {
@@ -575,10 +587,12 @@ pub struct RunView {
     pub end: Option<Stored<RunEnd>>,
     /// How its process exited, when one did.
     pub exit: Option<ProcessExit>,
+    /// When the operator archived it; it is listed as archived once ended.
+    pub archived_at: Option<UnixMillis>,
 }
 
 impl RunView {
-    pub(super) const SELECT: &'static str = "SELECT id, harness, workdir, started_at, thread, ended_at, run_end, exit_kind, exit_value, (SELECT sessions.id FROM sessions WHERE sessions.native_id = runs.thread ORDER BY sessions.first_seen, sessions.id LIMIT 1) AS session FROM runs";
+    pub(super) const SELECT: &'static str = "SELECT id, harness, workdir, started_at, thread, ended_at, run_end, exit_kind, exit_value, archived_at, (SELECT sessions.id FROM sessions WHERE sessions.native_id = runs.thread ORDER BY sessions.first_seen, sessions.id LIMIT 1) AS session FROM runs";
 
     pub(super) fn from_row(row: &SqliteRow) -> Result<Self, StoreError> {
         let row = Columns(row);
@@ -600,6 +614,7 @@ impl RunView {
             ended_at: row.optional_time("ended_at")?,
             end: row.optional_label("run_end")?,
             exit,
+            archived_at: row.optional_time("archived_at")?,
         })
     }
 }
@@ -747,6 +762,7 @@ mod tests {
             "native_id": "native",
             "first_seen": 1000,
             "last_seen": 2000,
+            "archived_at": 1500,
             "call_count": 4,
             "turn_count": 2,
             "error_count": 1,

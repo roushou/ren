@@ -60,6 +60,7 @@ fn every_label_is_pinned() {
         query::KindFilter,
         query::StatusFilter,
         query::ToolFilter,
+        query::Shelf,
     ];
     let pinned = include_str!("fixtures/labels.txt");
     assert!(

@@ -1,20 +1,21 @@
  ren   0 sessions · 0 streaming · 0 waiting                                                         1 needs you  3 live
-──────────────────────────────┬─────────────────────────────────────────────────────────────────────────────────────────
- ren ◆1  /srv/             ┌ keys ─────────────────────────────────────────────────────────┐                   /srv/ren
- 1 ◆ fix the flaky upl…  wa│ j ↓         next session, or next turn in a session           │
-                           │ k ↑         previous session, or previous turn                │▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
- acme-api  /dev/           │ l → enter   into the session; on a turn, open or fold it      │
- 2 ● new Codex run  working│ h ← esc     back to the list                                  │
-                           │ tab         conversation, activity, files, calls              │
- acme-web  /dev/           │ shift-tab   the tab before                                    │
- 3 ○ new Claude Code r…  yo│ i           write to the run (enter sends, esc keeps a draft) │
-                           │ n           start a run                                       │
+───────────────────────────┌ keys ─────────────────────────────────────────────────────────┐────────────────────────────
+ ren ◆1  /srv/             │ j ↓         next session, or next turn in a session           │                   /srv/ren
+ 1 ◆ fix the flaky upl…  wa│ k ↑         previous session, or previous turn                │
+                           │ l → enter   into the session; on a turn, open or fold it      │▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+ acme-api  /dev/           │ h ← esc     back to the list                                  │
+ 2 ● new Codex run  working│ tab         conversation, activity, files, calls              │
+                           │ shift-tab   the tab before                                    │
+ acme-web  /dev/           │ i           write to the run (enter sends, esc keeps a draft) │
+ 3 ○ new Claude Code r…  yo│ n           start a run                                       │
                            │ y           allow what the run asks, once                     │
                            │ a           allow it for the rest of the run                  │
                            │ d           deny it                                           │
                            │ D           deny it and stop the turn                         │
                            │ x           interrupt the turn                                │
                            │ S           stop the run's process                            │
+                           │ e           archive it, an ended run or a session             │
+                           │ # ×2        delete its recorded calls, pressed twice          │
                            │ /           search the sessions (esc clears)                  │
                            │ g           group the list by folder, or by what each needs   │
                            │ pgup        scroll the session up                             │
@@ -25,6 +26,5 @@
                            │ ctrl-c ×2   quit, pressed twice in a row                      │
                            │ 1–9         jump to that session in the list                  │
                            │ ctrl-p/n    while writing: the messages sent before and after │
-                           └───────────────────────────────────────────────────────────────┘
-──────────────────────────────┴─────────────────────────────────────────────────────────────────────────────────────────
+───────────────────────────└───────────────────────────────────────────────────────────────┘────────────────────────────
  y allow · a allow for the run · d deny · D deny and stop · i reply instead                       ? keys │ 00:00:00 UTC

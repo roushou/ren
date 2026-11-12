@@ -11,6 +11,7 @@
 //!   the CLI reads it there. Loopback alone is not trusted, because Serve
 //!   forwards tagged devices and Funnel traffic to loopback without identity.
 
+mod history;
 mod runs;
 
 use crate::control::{ControlError, Controls, RunningCall};
@@ -22,6 +23,7 @@ use axum::{
     response::{IntoResponse, Response},
     routing::{get, post},
 };
+use history::HistoryApi;
 use http::{HeaderMap, HeaderValue, StatusCode, header};
 use ren_protocol::native::NativeSessionId;
 use ren_recorder::{
@@ -213,8 +215,14 @@ impl ControlApi {
     }
 
     /// The control routes, with the run routes when `supervisor` is given.
-    /// `shutdown` ends run update feeds so the server can drain.
-    pub fn router(self, supervisor: Option<Supervisor>, shutdown: CancellationToken) -> Router {
+    /// `reader` tells what a history edit would touch; `shutdown` ends run
+    /// update feeds so the server can drain.
+    pub fn router(
+        self,
+        reader: ren_store::Reader,
+        supervisor: Option<Supervisor>,
+        shutdown: CancellationToken,
+    ) -> Router {
         let control = Arc::new(self);
         let runs = RunsApi {
             control: control.clone(),
@@ -222,6 +230,11 @@ impl ControlApi {
             shutdown,
         };
         let run_routes = runs.router();
+        let history_routes = HistoryApi {
+            control: control.clone(),
+            reader,
+        }
+        .router();
         Router::new()
             .route("/control/v1/state", get(Self::state))
             .route("/control/v1/pause", post(Self::pause))
@@ -237,6 +250,7 @@ impl ControlApi {
             .route("/control/v1/backup", post(Self::backup))
             .with_state(control)
             .merge(run_routes)
+            .merge(history_routes)
             .layer(axum::middleware::map_response(Self::private))
     }
 

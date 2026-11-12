@@ -220,3 +220,9 @@ Retention changes history: old links can return `404`, and the live feed reports
 `gone`; a pagination cursor stays valid and continues after the pruned calls. Refresh from the start. Session counts
 describe retained calls, and a resumed client whose entire session expired receives
 a new Ren session ID. Raw captures cannot be recovered through Ren after pruning.
+
+The operator can also delete a session or a run's recorded calls on demand
+(`ren control delete`, or Delete in the UI; see
+[archiving and deleting](api.md#archiving-and-deleting)). The same per-call
+removal applies, as one recorded edit; the following retention pass sweeps
+the freed chunks. Archiving deletes nothing: it only hides from listings.

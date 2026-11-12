@@ -17,9 +17,9 @@ use ren_recorder::digest::{CallDigest, StoredExchange};
 use ren_recorder::{Committed, Observation, Pruned, RecordSink};
 use ren_recorder::{
     batch::{
-        AttemptBody, Batch, BodyEnd, BodyKey, CloseChannel, FinishAttempt, FinishCall, MessageMark,
-        ObservationKind, Op, OpenCall, OperatorAction, ResponseHead, RunFact, RunRecord, Segment,
-        Stamp, StartAttempt,
+        AttemptBody, Batch, BodyEnd, BodyKey, CloseChannel, FinishAttempt, FinishCall,
+        HistoryChange, HistoryEdit, HistorySubject, MessageMark, ObservationKind, Op, OpenCall,
+        OperatorAction, ResponseHead, RunFact, RunRecord, Segment, Stamp, StartAttempt,
     },
     inspection::InspectionRecord,
     retention::RetentionPolicy,
@@ -633,6 +633,7 @@ impl MetadataTx<'_> {
             Op::CloseChannel(close) => self.close_channel(close).await.map(Some),
             Op::Operator(action) => self.operator(action).await.map(Some),
             Op::Run(record) => self.run(record).await.map(Some),
+            Op::History(edit) => self.history(edit).await.map(Some),
             Op::Digest { call, digest } => self.digest(*call, digest).await.map(|()| None),
         }
     }
@@ -780,6 +781,108 @@ impl MetadataTx<'_> {
             record,
         )
         .await
+    }
+
+    /// Archive, unarchive, or delete a session or a run. A run's edit
+    /// applies to the sessions its client recorded under its thread too, and
+    /// a session's to the runs that worked in it, so the two never disagree.
+    async fn history(&mut self, edit: &HistoryEdit) -> Result<Observation, StoreError> {
+        let at = i64::try_from(edit.at.wall.as_millis()).unwrap_or(i64::MAX);
+        let (sessions, runs) = self.subjects(edit.subject).await?;
+        match edit.change {
+            HistoryChange::Archive | HistoryChange::Unarchive => {
+                let at = match edit.change {
+                    HistoryChange::Archive => Some(at),
+                    HistoryChange::Unarchive | HistoryChange::Delete => None,
+                };
+                for (table, ids) in [("sessions", &sessions), ("runs", &runs)] {
+                    for id in ids {
+                        sqlx::query(AssertSqlSafe(format!(
+                            "UPDATE {table} SET archived_at = ? WHERE id = ?"
+                        )))
+                        .bind(at)
+                        .bind(id)
+                        .execute(&mut *self.tx)
+                        .await?;
+                    }
+                }
+            }
+            HistoryChange::Delete => {
+                for session in &sessions {
+                    let calls = sqlx::query(
+                        "SELECT id, channel FROM calls WHERE session = ? AND state <> ?",
+                    )
+                    .bind(session)
+                    .bind(CallState::Open.label())
+                    .fetch_all(&mut *self.tx)
+                    .await?;
+                    for row in calls {
+                        let call: String = row.try_get("id")?;
+                        let channel: String = row.try_get("channel")?;
+                        self.retire(&call, &channel, Some(session)).await?;
+                    }
+                }
+                for run in &runs {
+                    // A running run stays, with its log rows.
+                    let ended =
+                        sqlx::query("DELETE FROM runs WHERE id = ? AND ended_at IS NOT NULL")
+                            .bind(run)
+                            .execute(&mut *self.tx)
+                            .await?
+                            .rows_affected();
+                    if ended > 0 {
+                        sqlx::query("DELETE FROM observations WHERE call IS NULL AND kind IN (?, ?, ?, ?) AND json_extract(payload, '$.run') = ?")
+                            .bind(ObservationKind::RunStarted.label())
+                            .bind(ObservationKind::RunOpened.label())
+                            .bind(ObservationKind::RunEnded.label())
+                            .bind(ObservationKind::RunRecovered.label())
+                            .bind(run)
+                            .execute(&mut *self.tx)
+                            .await?;
+                    }
+                }
+            }
+        }
+        // History edits share the nil channel, which has no row.
+        self.log(
+            edit.at,
+            ChannelId::restore(uuid::Uuid::nil()),
+            None,
+            None,
+            ObservationKind::HistoryEdited,
+            edit,
+        )
+        .await
+    }
+
+    /// The sessions and runs an edit of `subject` applies to: a session and
+    /// the runs whose thread it is, or a run and the sessions its thread
+    /// names.
+    async fn subjects(
+        &mut self,
+        subject: HistorySubject,
+    ) -> Result<(Vec<String>, Vec<String>), StoreError> {
+        let (id, sessions, runs) = match subject {
+            HistorySubject::Session(session) => (
+                session.to_string(),
+                "SELECT id FROM sessions WHERE id = ?1",
+                "SELECT id FROM runs WHERE thread = (SELECT native_id FROM sessions WHERE id = ?1)",
+            ),
+            HistorySubject::Run(run) => (
+                run.to_string(),
+                "SELECT id FROM sessions WHERE native_id = (SELECT thread FROM runs WHERE id = ?1)",
+                "SELECT id FROM runs WHERE id = ?1",
+            ),
+        };
+        let sessions = sqlx::query_scalar(sessions)
+            .bind(&id)
+            .fetch_all(&mut *self.tx)
+            .await?;
+        let runs = sqlx::query_scalar(runs)
+            .bind(&id)
+            .fetch_all(&mut *self.tx)
+            .await?;
+        Ok((sessions, runs))
     }
 
     async fn message(&mut self, body: BodyKey, mark: &MessageMark) -> Result<(), StoreError> {

@@ -4,7 +4,9 @@ use ren_protocol::route::Provider;
 use ren_recorder::caller::UserId;
 use ren_recorder::id::{CallId, RunId, SessionId, TurnId};
 use ren_recorder::time::UnixMillis;
-use ren_store::query::{CallFilter, KindFilter, PageLimit, SearchText, StatusFilter, ToolFilter};
+use ren_store::query::{
+    CallFilter, KindFilter, PageLimit, SearchText, Shelf, StatusFilter, ToolFilter,
+};
 use ren_store::search::{ExposureQuery, SearchField, SearchQuery, SearchTerms};
 use uuid::Uuid;
 
@@ -40,7 +42,14 @@ fn every_read() -> Vec<ReadRequest> {
         ReadRequest::Calls(filtered),
         ReadRequest::Call(call),
         ReadRequest::CallActivity(call),
-        ReadRequest::Sessions(limit),
+        ReadRequest::Sessions {
+            limit,
+            shelf: Shelf::Current,
+        },
+        ReadRequest::Sessions {
+            limit,
+            shelf: Shelf::Archived,
+        },
         ReadRequest::SessionCalls {
             session,
             limit,
@@ -49,7 +58,10 @@ fn every_read() -> Vec<ReadRequest> {
         ReadRequest::Turns { session, limit },
         ReadRequest::Report(session),
         ReadRequest::Turn(turn),
-        ReadRequest::Runs(limit),
+        ReadRequest::Runs {
+            limit,
+            shelf: Shelf::Archived,
+        },
         ReadRequest::Run(RunId::restore(Uuid::from_u128(4))),
         ReadRequest::Usage(TimeRange::default()),
         ReadRequest::Usage(time),

@@ -712,3 +712,50 @@ fn a_new_runs_first_turn_gives_way_to_its_record_by_prompt() {
     assert_eq!(shown.matches("run the tests  1 s").count(), 1, "{shown}");
     assert_eq!(shown.matches("All pass.").count(), 1, "{shown}");
 }
+
+#[test]
+fn an_ended_run_is_archived_or_deleted_with_a_second_press_and_leaves_the_list() {
+    use ren_recorder::batch::{HistoryChange, HistorySubject};
+    let mut console = Console::new(SIZE);
+    let mut ended = recorded(5, "/srv/ren", None);
+    ended.ended_at = Some(UnixMillis::from_millis(2000));
+    let _ = console.apply(Input::Recorded(vec![ended.clone()]));
+    let _ = console.apply(Input::Runs(Ok(vec![snapshot(
+        1,
+        Harness::Codex,
+        "/dev/acme-api",
+        idle(1),
+    )])));
+    // A live run is not archived away.
+    let _ = console.press(Key::Char('1'));
+    let out = console.press(Key::Char('e'));
+    assert!(sent(&out).is_empty());
+    assert!(drawn(&console).contains("stop the run first"));
+
+    let _ = console.press(Key::Char('2'));
+    assert_eq!(console.current(), Some(run_id(5)));
+    let subject = HistorySubject::Run(run_id(5));
+    assert_eq!(
+        sent(&console.press(Key::Char('e'))),
+        [Command::Edit {
+            subject,
+            change: HistoryChange::Archive,
+        }]
+    );
+    // # asks once more; another key in between keeps it.
+    assert!(sent(&console.press(Key::Char('#'))).is_empty());
+    assert!(drawn(&console).contains("press # again"));
+    let _ = console.press(Key::Char('j'));
+    assert!(sent(&console.press(Key::Char('#'))).is_empty());
+    assert_eq!(
+        sent(&console.press(Key::Char('#'))),
+        [Command::Edit {
+            subject,
+            change: HistoryChange::Delete,
+        }]
+    );
+    // Once history no longer lists it, the ended run leaves the desk.
+    assert!(drawn(&console).contains("/srv/ren"));
+    let _ = console.apply(Input::Recorded(vec![]));
+    assert!(!drawn(&console).contains("srv/ren"));
+}

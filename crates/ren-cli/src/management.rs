@@ -16,7 +16,7 @@ use ren_protocol::direction::Direction;
 use ren_recorder::id::{CallId, TurnId};
 use ren_store::Reader;
 use ren_store::activity::{ActivityBudget, CallActivity, TurnActivity};
-use ren_store::query::{CallQuery, PageLimit};
+use ren_store::query::{CallQuery, PageLimit, Shelf};
 use ren_store::read::ReadRequest;
 use ren_store::view::{CallPage, SessionView};
 use reqwest::{Method, StatusCode};
@@ -59,7 +59,7 @@ impl History {
     /// Sessions, most recently seen first.
     pub async fn sessions(&self, limit: PageLimit) -> Result<Vec<SessionView>, ManagementError> {
         match self {
-            Self::Local(reader) => Ok(reader.sessions(limit).await?),
+            Self::Local(reader) => Ok(reader.sessions(limit, Shelf::Current).await?),
             Self::Remote(gateway) => gateway.sessions(limit).await,
         }
     }
@@ -379,9 +379,12 @@ impl Management {
         struct Sessions {
             sessions: Vec<SessionView>,
         }
-        self.read_as::<Sessions>(&ReadRequest::Sessions(limit))
-            .await
-            .map(|page| page.sessions)
+        self.read_as::<Sessions>(&ReadRequest::Sessions {
+            limit,
+            shelf: Shelf::Current,
+        })
+        .await
+        .map(|page| page.sessions)
     }
 
     /// One turn's activity, as much of it as the read API shows.
@@ -612,7 +615,10 @@ mod tests {
         // A session listing read as a page of calls.
         let wrong = against_gateway(|gateway| async move {
             gateway
-                .read_as::<CallPage>(&ReadRequest::Sessions(PageLimit::new(10).unwrap()))
+                .read_as::<CallPage>(&ReadRequest::Sessions {
+                    limit: PageLimit::new(10).unwrap(),
+                    shelf: Shelf::Current,
+                })
                 .await
         })
         .await;

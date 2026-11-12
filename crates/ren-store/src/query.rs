@@ -151,6 +151,37 @@ pub enum KindFilter {
     Other,
 }
 
+/// Which part of a listing: what is current, or what was archived.
+#[derive(Display, EnumString, IntoStaticStr, VariantArray)]
+#[strum(serialize_all = "snake_case")]
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Hash, SerializeDisplay, DeserializeFromStr,
+)]
+pub enum Shelf {
+    #[default]
+    Current,
+    Archived,
+}
+
+impl Shelf {
+    /// The SQL condition a session `s` meets on this shelf.
+    pub(crate) fn sessions(self) -> &'static str {
+        match self {
+            Self::Current => "(s.archived_at IS NULL OR s.archived_at < s.last_seen)",
+            Self::Archived => "(s.archived_at IS NOT NULL AND s.archived_at >= s.last_seen)",
+        }
+    }
+
+    /// The SQL condition a run meets on this shelf: a running run is always
+    /// current.
+    pub(crate) fn runs(self) -> &'static str {
+        match self {
+            Self::Current => "(archived_at IS NULL OR ended_at IS NULL)",
+            Self::Archived => "(archived_at IS NOT NULL AND ended_at IS NOT NULL)",
+        }
+    }
+}
+
 /// Whether the model requested tools.
 #[derive(Display, EnumString, IntoStaticStr, VariantArray)]
 #[strum(serialize_all = "snake_case")]

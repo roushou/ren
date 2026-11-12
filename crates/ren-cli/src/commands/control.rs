@@ -9,7 +9,10 @@ use anyhow::{Context as _, Result, bail};
 use clap::{Args, Subcommand};
 use ren_gateway::ControlToken;
 use ren_protocol::native::NativeSessionId;
-use ren_recorder::{caller::UserId, id::CallId};
+use ren_recorder::{
+    caller::UserId,
+    id::{CallId, RunId, SessionId},
+};
 use reqwest::Method;
 use std::process::ExitCode;
 use uuid::Uuid;
@@ -43,6 +46,48 @@ enum ControlAction {
     /// Copy the history into <data-dir>/backup while the daemon runs. Only
     /// new chunks are copied; keep this running until it reports.
     Backup,
+    /// Hide a recorded session, or an ended run with its session, from
+    /// listings. A session with new traffic is listed again.
+    Archive {
+        #[command(subcommand)]
+        subject: Subject,
+    },
+    /// List an archived session or run again.
+    Unarchive {
+        #[command(subcommand)]
+        subject: Subject,
+    },
+    /// Delete a recorded session, or a run with its session: their calls,
+    /// bodies, and runs. Refused while a call is open or a run is running.
+    /// It cannot be undone.
+    Delete(DeleteArgs),
+}
+
+/// What an archive or delete applies to.
+#[derive(Subcommand, Clone, Copy)]
+enum Subject {
+    /// A session, by Ren's session id (`ren sessions` lists them).
+    Session { session: SessionId },
+    /// A run, by its run id, with the session its client recorded.
+    Run { run: RunId },
+}
+
+impl Subject {
+    fn path(self, change: &str) -> String {
+        match self {
+            Self::Session { session } => format!("history/sessions/{session}/{change}"),
+            Self::Run { run } => format!("history/runs/{run}/{change}"),
+        }
+    }
+}
+
+#[derive(Args)]
+struct DeleteArgs {
+    #[command(subcommand)]
+    subject: Subject,
+    /// Confirm: what is deleted cannot be recovered.
+    #[arg(long, global = true)]
+    yes: bool,
 }
 
 #[derive(Args)]
@@ -212,6 +257,9 @@ impl ControlTarget {
 
 impl ControlCmd {
     pub async fn run(self, ctx: &Context) -> Result<ExitCode> {
+        if let ControlAction::Delete(DeleteArgs { yes: false, .. }) = self.action {
+            bail!("deleting recorded history cannot be undone; pass --yes to delete");
+        }
         let target = ControlTarget::select(&self.target, ctx)?;
         let (method, path, body) = self.action.request();
         let (status, body) = target.send(method, &path, body).await?;
@@ -252,6 +300,9 @@ impl ControlAction {
                 Some(serde_json::json!({ "block_session_seconds": args.block_session })),
             ),
             Self::Backup => (Method::POST, "backup".to_owned(), None),
+            Self::Archive { subject } => (Method::POST, subject.path("archive"), None),
+            Self::Unarchive { subject } => (Method::POST, subject.path("unarchive"), None),
+            Self::Delete(args) => (Method::POST, args.subject.path("delete"), None),
         }
     }
 }

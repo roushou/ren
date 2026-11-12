@@ -12,8 +12,8 @@ use super::{metrics::Counters, options::CaptureOptions};
 pub(super) use crate::recording::{Piece, Record, Track};
 use crate::{
     batch::{
-        BodyEnd, CloseChannel, OpenCall, OperatorAction, ResponseHead, RunRecord, Stamp,
-        StartAttempt,
+        BodyEnd, CloseChannel, HistoryEdit, OpenCall, OperatorAction, ResponseHead, RunRecord,
+        Stamp, StartAttempt,
     },
     capture::{CallRejection, Omission, TerminalRecord},
     id::{AttemptId, IdSource},
@@ -71,6 +71,11 @@ pub(super) enum Item {
     },
     Run {
         record: RunRecord,
+        /// Released when dequeued.
+        _slot: OwnedSemaphorePermit,
+    },
+    History {
+        edit: HistoryEdit,
         /// Released when dequeued.
         _slot: OwnedSemaphorePermit,
     },
@@ -136,6 +141,7 @@ impl Item {
             ),
             Self::Operator { action, _slot } => (Record::Operator(action), None),
             Self::Run { record, _slot } => (Record::Run(record), None),
+            Self::History { edit, _slot } => (Record::History(edit), None),
         }
     }
 }

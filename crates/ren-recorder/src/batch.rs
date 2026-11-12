@@ -12,7 +12,7 @@ use crate::caller::Caller;
 use crate::digest::CallDigest;
 use crate::{
     capture::{BodyEnding, CallRejection, ChannelEnd, ProcessExit, RunEnd, TerminalRecord},
-    id::{AttemptId, CallId, ChannelId, RunId},
+    id::{AttemptId, CallId, ChannelId, RunId, SessionId},
     routing::{ConfigRevision, OperatorRevision, UpstreamId},
     time::{Moment, UnixMillis},
 };
@@ -95,7 +95,8 @@ impl Batch {
                     | Op::FinishCall(_)
                     | Op::CloseChannel(_)
                     | Op::Operator(_)
-                    | Op::Run(_) => true,
+                    | Op::Run(_)
+                    | Op::History(_) => true,
                 })
                 .collect(),
         }
@@ -187,6 +188,7 @@ pub enum Op {
     CloseChannel(CloseChannel),
     Operator(OperatorAction),
     Run(RunRecord),
+    History(HistoryEdit),
     /// What a finished call's bodies showed, derived as they were recorded
     /// or again from storage. It replaces any earlier digest of the call.
     Digest {
@@ -218,6 +220,40 @@ pub struct OperatorAction {
     /// The state the command made, stored as the current snapshot.
     #[serde(skip)]
     pub state: Recorded,
+}
+
+/// The operator archived, unarchived, or deleted what was recorded of a
+/// session or a run. Not tied to a channel or call.
+#[derive(Debug, Clone, Serialize)]
+pub struct HistoryEdit {
+    #[serde(skip)]
+    pub at: Moment,
+    pub actor: Actor,
+    pub subject: HistorySubject,
+    pub change: HistoryChange,
+}
+
+/// What a history edit applies to: a session, or a run with the session its
+/// client recorded, when there is one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case", tag = "kind", content = "id")]
+pub enum HistorySubject {
+    Session(SessionId),
+    Run(RunId),
+}
+
+/// What a history edit does.
+#[derive(Display, EnumString, IntoStaticStr, VariantArray)]
+#[strum(serialize_all = "snake_case")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SerializeDisplay, DeserializeFromStr)]
+pub enum HistoryChange {
+    /// Hide it from listings until it is unarchived, or until a session
+    /// has new traffic.
+    Archive,
+    Unarchive,
+    /// Remove its finished calls, their bodies and derived data, and its
+    /// ended runs. Calls still open, and runs still running, stay.
+    Delete,
 }
 
 /// A fact about a run, when it happened. Not tied to a channel or call.
@@ -311,6 +347,9 @@ pub enum ObservationKind {
     RunEnded,
     /// Recorded at startup for a run the previous daemon never saw end.
     RunRecovered,
+    /// The operator archived, unarchived, or deleted recorded history. Not
+    /// tied to a call.
+    HistoryEdited,
 }
 
 /// Where an operation belongs and when it happened. Every observation has it.

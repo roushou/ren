@@ -6,8 +6,9 @@ use super::item::{AttemptSlots, Item, Piece, Shared, Track};
 use crate::caller::Caller;
 use crate::{
     batch::{
-        AttemptBody, BodyEnd, CloseChannel, MessageMark, OpenCall, OperatorAction, Recorded,
-        ResponseHead, RunFact, RunRecord, Stamp, StartAttempt, Unattributed,
+        AttemptBody, BodyEnd, CloseChannel, HistoryChange, HistoryEdit, HistorySubject,
+        MessageMark, OpenCall, OperatorAction, Recorded, ResponseHead, RunFact, RunRecord, Stamp,
+        StartAttempt, Unattributed,
     },
     capture::{
         BodyEnding, CallRejection, ChannelEnd, Omission, ProcessExit, RunEnd, TerminalRecord,
@@ -540,6 +541,44 @@ impl OperatorSlot {
             _slot: self.permit,
         });
         Ok(())
+    }
+}
+
+/// One reserved slot for a history edit. Without one, the edit is not made:
+/// every archive and delete is recorded with who asked for it.
+pub struct HistorySlot {
+    shared: Arc<Shared>,
+    slot: OwnedPermit<Item>,
+    permit: OwnedSemaphorePermit,
+}
+
+impl HistorySlot {
+    pub(super) fn reserve(shared: Arc<Shared>) -> Option<Self> {
+        let (slot, permit) = shared.reserve_close()?;
+        Some(Self {
+            shared,
+            slot,
+            permit,
+        })
+    }
+
+    /// Make `change` to `subject`, as `actor` asked. It applies when the
+    /// recorder reaches it, after everything queued before.
+    pub fn record(
+        self,
+        actor: crate::batch::Actor,
+        subject: HistorySubject,
+        change: HistoryChange,
+    ) {
+        self.slot.send(Item::History {
+            edit: HistoryEdit {
+                at: self.shared.clock.now(),
+                actor,
+                subject,
+                change,
+            },
+            _slot: self.permit,
+        });
     }
 }
 

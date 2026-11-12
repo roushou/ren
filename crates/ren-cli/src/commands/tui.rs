@@ -28,7 +28,7 @@ use ren_protocol::sse::{EventName, SseFramer, SseLimits, SseOutput};
 use ren_recorder::id::{CallId, RunId, SessionId, TurnId};
 use ren_recorder::time::{Clock, Monotonic};
 use ren_store::activity::{CallActivity, TurnActivity};
-use ren_store::query::PageLimit;
+use ren_store::query::{PageLimit, Shelf};
 use ren_store::read::ReadRequest;
 use ren_store::view::RunView;
 use ren_supervisor::{Client, Project, RunSnapshot, RunUpdate};
@@ -276,7 +276,10 @@ impl TuiCmd {
             runs: Vec<RunView>,
         }
         let body = gateway
-            .serve(&ReadRequest::Runs(PageLimit::DEFAULT))
+            .serve(&ReadRequest::Runs {
+                limit: PageLimit::DEFAULT,
+                shelf: Shelf::Current,
+            })
             .await?;
         Ok(serde_json::from_value::<Listed>(body)?.runs)
     }
@@ -512,6 +515,17 @@ impl<'a> Shell<'a> {
             ),
             Command::Interrupt(run) => (format!("runs/{run}/interrupt"), None),
             Command::Stop(run) => (format!("runs/{run}/stop"), None),
+            Command::Edit { subject, change } => (
+                match subject {
+                    ren_recorder::batch::HistorySubject::Session(session) => {
+                        format!("history/sessions/{session}/{change}")
+                    }
+                    ren_recorder::batch::HistorySubject::Run(run) => {
+                        format!("history/runs/{run}/{change}")
+                    }
+                },
+                None,
+            ),
         };
         self.pending.push(Box::pin(async move {
             let answer = match control.send(Method::POST, &path, body).await {

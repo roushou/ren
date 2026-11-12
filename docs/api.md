@@ -316,28 +316,28 @@ A body export answers with the raw bytes (`application/octet-stream`) only when
 the body was stored whole; otherwise `not_found`. At most two run at once
 (`busy`), and the UI does not forward it.
 
-| Endpoint                                                               | Result                                                                                                                                                                                                         |
-| ---------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `GET /health`                                                          | `ok` or `degraded` (HTTP 503), the build, the instance (`environment`: `production` or `development`), a summary of the operator state (pause, and how many sessions and users are blocked), recorder counters |
-| `GET /api/metrics`                                                     | Recorder counters and storage usage                                                                                                                                                                            |
-| `GET /api/caller`                                                      | How the gateway identifies this request's caller (`kind`, `user`, `login`), as it would a forwarded call; `401` `identity_refused` for a refused token or login                                                |
-| `GET /api/storage`                                                     | Active retention policy, disk usage of the database files, calls with derived activity, and the per-body capture limit (`capture.body_limit_bytes`)                                                            |
-| `GET /api/calls?limit=100`                                             | Filtered, paginated calls, newest first (see [search](#call-search))                                                                                                                                           |
-| `GET /api/calls/{call-id}`                                             | One call with its attempts, inspection, and observation log                                                                                                                                                    |
-| `GET /api/calls/{call-id}/body/{request\|response}`                    | Bounded body preview                                                                                                                                                                                           |
-| `GET /api/calls/{call-id}/body/{request\|response}/export`             | The complete captured body as raw bytes, as `ren inspect --body` exports it                                                                                                                                    |
-| `GET /api/sessions?limit=100`                                          | Recent sessions with call, turn, and error counts and token totals                                                                                                                                             |
-| `GET /api/usage?from_ms=&until_ms=`                                    | Calls, errors, and tokens in total, by UTC hour, by model, and by user (see [usage](#usage))                                                                                                                   |
-| `GET /api/sessions/{session-id}/calls?limit=100`                       | One session's calls, oldest first                                                                                                                                                                              |
-| `GET /api/sessions/{session-id}/turns?limit=100`                       | A session's turns, newest first, with prompt excerpts (see [activity](#activity))                                                                                                                              |
-| `GET /api/search?q=&field=&session=&client=&from_ms=&until_ms=&limit=` | [Full-text search](#search), newest call first                                                                                                                                                                 |
-| `GET /api/exposures?session=&from_ms=&until_ms=&limit=`                | [Exposed secrets](#exposed-secrets), newest call first                                                                                                                                                         |
-| `GET /api/sessions/{session-id}/report`                                | A session's [context and cost report](#session-report)                                                                                                                                                         |
-| `GET /api/turns/{turn-id}`                                             | One turn's [activity](#activity)                                                                                                                                                                               |
-| `GET /api/calls/{call-id}/activity`                                    | One call's [activity](#activity)                                                                                                                                                                               |
-| `GET /api/runs?limit=100`                                              | Recorded [runs](#runs), newest first: harness, folder, the client's `thread` and the `session` it names, `started_at`, and once ended `ended_at`, `end`, and `exit`                                            |
-| `GET /api/runs/{run-id}`                                               | One recorded run                                                                                                                                                                                               |
-| `GET /api/live?after={seq}`                                            | Server-sent events as observations commit                                                                                                                                                                      |
+| Endpoint                                                               | Result                                                                                                                                                                                                          |
+| ---------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /health`                                                          | `ok` or `degraded` (HTTP 503), the build, the instance (`environment`: `production` or `development`), a summary of the operator state (pause, and how many sessions and users are blocked), recorder counters  |
+| `GET /api/metrics`                                                     | Recorder counters and storage usage                                                                                                                                                                             |
+| `GET /api/caller`                                                      | How the gateway identifies this request's caller (`kind`, `user`, `login`), as it would a forwarded call; `401` `identity_refused` for a refused token or login                                                 |
+| `GET /api/storage`                                                     | Active retention policy, disk usage of the database files, calls with derived activity, and the per-body capture limit (`capture.body_limit_bytes`)                                                             |
+| `GET /api/calls?limit=100`                                             | Filtered, paginated calls, newest first (see [search](#call-search))                                                                                                                                            |
+| `GET /api/calls/{call-id}`                                             | One call with its attempts, inspection, and observation log                                                                                                                                                     |
+| `GET /api/calls/{call-id}/body/{request\|response}`                    | Bounded body preview                                                                                                                                                                                            |
+| `GET /api/calls/{call-id}/body/{request\|response}/export`             | The complete captured body as raw bytes, as `ren inspect --body` exports it                                                                                                                                     |
+| `GET /api/sessions?limit=100`                                          | Recent sessions with call, turn, and error counts and token totals; `shelf=archived` lists the [archived](#archiving-and-deleting) ones instead                                                                 |
+| `GET /api/usage?from_ms=&until_ms=`                                    | Calls, errors, and tokens in total, by UTC hour, by model, and by user (see [usage](#usage))                                                                                                                    |
+| `GET /api/sessions/{session-id}/calls?limit=100`                       | One session's calls, oldest first                                                                                                                                                                               |
+| `GET /api/sessions/{session-id}/turns?limit=100`                       | A session's turns, newest first, with prompt excerpts (see [activity](#activity))                                                                                                                               |
+| `GET /api/search?q=&field=&session=&client=&from_ms=&until_ms=&limit=` | [Full-text search](#search), newest call first                                                                                                                                                                  |
+| `GET /api/exposures?session=&from_ms=&until_ms=&limit=`                | [Exposed secrets](#exposed-secrets), newest call first                                                                                                                                                          |
+| `GET /api/sessions/{session-id}/report`                                | A session's [context and cost report](#session-report)                                                                                                                                                          |
+| `GET /api/turns/{turn-id}`                                             | One turn's [activity](#activity)                                                                                                                                                                                |
+| `GET /api/calls/{call-id}/activity`                                    | One call's [activity](#activity)                                                                                                                                                                                |
+| `GET /api/runs?limit=100`                                              | Recorded [runs](#runs), newest first: harness, folder, the client's `thread` and the `session` it names, `started_at`, and once ended `ended_at`, `end`, and `exit`; `shelf=archived` lists archived ended runs |
+| `GET /api/runs/{run-id}`                                               | One recorded run                                                                                                                                                                                                |
+| `GET /api/live?after={seq}`                                            | Server-sent events as observations commit                                                                                                                                                                       |
 
 Omit `after` for the first page; pass the returned `next` cursor unchanged for the
 next one. The CLI accepts the same cursor with `timeline --after`. Pages order by
@@ -413,6 +413,33 @@ A malformed body or a value out of range is `400` `invalid_request`, and a
 malformed session ID is `404` `not_found`. A command the recorder cannot record
 is not made: `503` `unrecorded` when the recorder has no room now (try again),
 `500` `unrecordable` when its record cannot be written.
+
+### Archiving and deleting
+
+`POST /control/v1/history/sessions/{session}/{change}` and
+`POST /control/v1/history/runs/{run}/{change}` archive, unarchive, or delete
+what was recorded. `{session}` is Ren's session ID (as `/api/sessions` lists
+it, not the client's), and `{change}` is `archive`, `unarchive`, or `delete`.
+A run's change applies to the sessions its client recorded under the run's
+thread too, and a session's to the runs that worked in it. The CLI is
+`ren control archive|unarchive session|run <id>` and
+`ren control delete session|run <id> --yes`.
+
+- **Archive** hides it from `/api/sessions` and `/api/runs`, which list it
+  with `shelf=archived` instead, with its `archived_at`. A session with traffic
+  newer than its archiving is listed again by itself; a run still running is
+  always listed.
+- **Delete** removes its finished calls with their bodies, attempts, log rows,
+  digests, and search entries, and its ended runs. Calls still open and runs
+  still running are kept, so a delete is refused while there are any: `409`
+  `call_open` or `409` `run_running`. The next retention pass frees the chunks
+  only those calls referenced. It cannot be undone; a client that keeps
+  calling starts a new Ren session.
+
+Each edit is recorded (a `history_edited` observation with the actor) and
+applied by the recorder after what it was recording; the answer is `202`
+`{api_version, subject, change}` once it is queued. `404` `not_found` is an
+unknown subject or change.
 
 ### Runs
 
@@ -496,7 +523,8 @@ the run's state does not allow the command: `starting`, `busy`, `not_working`,
 
 `GET /api/live` streams `observation` events, one per committed observation
 (`call_opened`, `attempt_started`, `response_head`, `attempt_finished`,
-`call_finished`, `call_recovered`, `channel_closed`, `operator_action`). Each event's `id` is its sequence number. Without
+`call_finished`, `call_recovered`, `channel_closed`, `operator_action`,
+`run_started`, `run_opened`, `run_ended`, `run_recovered`, `history_edited`). Each event's `id` is its sequence number. Without
 `after`, only new observations are sent; with `after` (or a `Last-Event-ID` header,
 which browsers send on reconnect) the feed first replays retained observations after
 that position. A `gone` event (`{"oldest_retained": <seq>}`) means the position was

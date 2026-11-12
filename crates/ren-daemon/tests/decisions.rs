@@ -816,3 +816,83 @@ on_status = [529]
     );
     assert_eq!(second.status, Some(200));
 }
+
+/// The sessions on `shelf` the read API lists, once `expected` many are.
+async fn sessions_on(gateway: &TestGateway, shelf: &str, expected: usize) -> serde_json::Value {
+    for _ in 0..100 {
+        let listed = read(
+            client()
+                .get(format!("{}/api/sessions?shelf={shelf}", gateway.base()))
+                .send()
+                .await
+                .unwrap(),
+        )
+        .await;
+        if listed["sessions"].as_array().map(Vec::len) == Some(expected) {
+            return listed["sessions"].clone();
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    panic!("{shelf} never listed {expected} sessions");
+}
+
+#[tokio::test]
+async fn a_session_is_archived_unarchived_and_deleted_through_the_control_api() {
+    let mock = mock(upstream(StatusCode::OK, Arc::default())).await;
+    let dir = tempfile::tempdir().unwrap();
+    let gateway = TestGateway::start(&config(&mock, ""), dir.path()).await;
+    assert_eq!(post(&gateway, "{}").await.status(), StatusCode::OK);
+    let listed = sessions_on(&gateway, "current", 1).await;
+    let session = listed[0]["id"].as_str().unwrap().to_owned();
+    let edit = |change: &str| control(&gateway, &format!("history/sessions/{session}/{change}"));
+
+    let archived = edit("archive").send().await.unwrap();
+    assert_eq!(archived.status(), StatusCode::ACCEPTED);
+    let answer = read(archived).await;
+    assert_eq!(answer["change"], "archive");
+    assert_eq!(answer["subject"]["kind"], "session");
+    sessions_on(&gateway, "current", 0).await;
+    let shelved = sessions_on(&gateway, "archived", 1).await;
+    assert!(shelved[0]["archived_at"].is_u64());
+
+    assert_eq!(
+        edit("unarchive").send().await.unwrap().status(),
+        StatusCode::ACCEPTED
+    );
+    sessions_on(&gateway, "current", 1).await;
+
+    // Unknown changes and subjects are not found, and browsers are refused.
+    assert_eq!(
+        edit("shred").send().await.unwrap().status(),
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        control(
+            &gateway,
+            "history/sessions/00000000-0000-0000-0000-00000000abcd/delete"
+        )
+        .send()
+        .await
+        .unwrap()
+        .status(),
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        edit("delete")
+            .header("origin", "https://evil.example")
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::FORBIDDEN
+    );
+
+    assert_eq!(
+        edit("delete").send().await.unwrap().status(),
+        StatusCode::ACCEPTED
+    );
+    sessions_on(&gateway, "current", 0).await;
+    sessions_on(&gateway, "archived", 0).await;
+    gateway.stop().await;
+    assert!(support::recorded(dir.path()).await.is_empty());
+}

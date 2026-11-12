@@ -26,6 +26,7 @@ use crate::model::{Command, Control, Model};
 use crate::ui::{Anchor, Ink, Joint, Keep, Line, Lines, Rule, Size, Span, View};
 use ren_harness::drive::{ApprovalId, Decision, Prompt};
 use ren_protocol::native::NativeThreadId;
+use ren_recorder::batch::{HistoryChange, HistorySubject};
 use ren_recorder::id::RunId;
 use ren_supervisor::RunState;
 
@@ -55,8 +56,17 @@ pub(crate) struct Main {
     /// Whether the operator chose the selection; until then it follows
     /// the top of the list, what needs you first.
     chosen: bool,
-    /// Ctrl-C was pressed once: pressed again, right away, it quits.
-    leaving: bool,
+    /// A key pressed once that acts when pressed again, right away.
+    armed: Option<Armed>,
+}
+
+/// What a second press of the same key does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Armed {
+    /// Ctrl-C: quit.
+    Quit,
+    /// `#`: delete this, for good.
+    Delete(HistorySubject),
 }
 
 /// Which side has the keys.
@@ -106,6 +116,8 @@ enum Act {
     DenyAndStop,
     Interrupt,
     Stop,
+    Archive,
+    Delete,
     Search,
     Group,
     PageUp,
@@ -202,6 +214,18 @@ impl Act {
             label: "S",
             does: "stop the run's process",
             command: Self::Stop,
+        },
+        Bind {
+            keys: &[Key::Char('e')],
+            label: "e",
+            does: "archive it, an ended run or a session",
+            command: Self::Archive,
+        },
+        Bind {
+            keys: &[Key::Char('#')],
+            label: "# ×2",
+            does: "delete its recorded calls, pressed twice",
+            command: Self::Delete,
         },
         Bind {
             keys: &[Key::Char('/')],
@@ -374,16 +398,28 @@ impl Main {
     }
 
     pub fn press(&mut self, key: Key, ctx: &mut Ctx<'_>) -> Vec<Action> {
-        // Ctrl-C quits only when pressed again right away.
-        let leaving = std::mem::take(&mut self.leaving);
-        if key == Key::Interrupt && self.mode == Mode::Normal {
-            if leaving {
-                return vec![Action::Quit];
+        // Ctrl-C quits, and # deletes, only when pressed again right away.
+        let armed = self.armed.take();
+        if self.mode == Mode::Normal {
+            match (key, armed) {
+                (Key::Interrupt, Some(Armed::Quit)) => return vec![Action::Quit],
+                (Key::Interrupt, _) => {
+                    self.armed = Some(Armed::Quit);
+                    return vec![Action::Say(Notice::info(
+                        "press ctrl-c again to quit · runs keep going",
+                    ))];
+                }
+                (Key::Char('#'), Some(Armed::Delete(subject))) => {
+                    return vec![
+                        Action::Send(Command::Edit {
+                            subject,
+                            change: HistoryChange::Delete,
+                        }),
+                        Action::Say(Notice::info("deleting…")),
+                    ];
+                }
+                _ => {}
             }
-            self.leaving = true;
-            return vec![Action::Say(Notice::info(
-                "press ctrl-c again to quit · runs keep going",
-            ))];
         }
         match self.mode {
             Mode::Writing => self.write(key, ctx),
@@ -440,6 +476,18 @@ impl Main {
                     None => vec![Action::Say(Notice::info("no live run selected to stop"))],
                 };
             }
+            Act::Archive => return self.archive(ctx.model),
+            Act::Delete => {
+                return match self.subject(ctx.model) {
+                    Ok(subject) => {
+                        self.armed = Some(Armed::Delete(subject));
+                        vec![Action::Say(Notice::refusal(
+                            "press # again to delete its recorded calls for good · any other key keeps them",
+                        ))]
+                    }
+                    Err(why) => vec![Action::Say(Notice::info(why))],
+                };
+            }
             Act::Search => {
                 self.mode = Mode::Searching;
                 self.focus = Focus::List;
@@ -463,6 +511,35 @@ impl Main {
             Act::Leave => {}
         }
         Vec::new()
+    }
+
+    /// What an archive or delete of the selection applies to: an ended
+    /// run, or a watched session.
+    fn subject(&self, model: &Model) -> Result<HistorySubject, &'static str> {
+        match self.selected {
+            Some(Item::Run(run)) => match model.desk.get(run).map(Run::attention) {
+                Some(Attention::Ended) => Ok(HistorySubject::Run(run)),
+                Some(_) => Err("stop the run first: only ended runs are archived or deleted"),
+                None => Err("nothing selected"),
+            },
+            Some(Item::Watched(session)) => Ok(HistorySubject::Session(session)),
+            None => Err("nothing selected"),
+        }
+    }
+
+    /// Archive the selection, or unarchive it if it was. The list drops it
+    /// once the daemon has.
+    fn archive(&self, model: &Model) -> Vec<Action> {
+        match self.subject(model) {
+            Ok(subject) => vec![
+                Action::Send(Command::Edit {
+                    subject,
+                    change: HistoryChange::Archive,
+                }),
+                Action::Say(Notice::info("archived · it leaves the list")),
+            ],
+            Err(why) => vec![Action::Say(Notice::info(why))],
+        }
     }
 
     /// The next (or previous) entry of the list.

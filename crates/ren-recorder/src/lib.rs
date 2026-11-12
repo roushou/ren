@@ -41,7 +41,9 @@ pub mod time;
 pub use metrics::RecorderMetrics;
 pub use options::{CaptureOptions, CaptureOptionsError};
 pub use sink::{Committed, Observation, Pruned, RecordSink};
-pub use tap::{AttemptStart, CallStart, CallTap, ChannelTap, OperatorSlot, RunTap, RunUnrecorded};
+pub use tap::{
+    AttemptStart, CallStart, CallTap, ChannelTap, HistorySlot, OperatorSlot, RunTap, RunUnrecorded,
+};
 pub use task::RecorderTask;
 
 use crate::{
@@ -189,6 +191,12 @@ impl Recorder {
     /// no room.
     pub fn operator_slot(&self) -> Option<OperatorSlot> {
         OperatorSlot::reserve(self.shared.clone())
+    }
+
+    /// A slot to record one history edit, or `None` when the recorder has no
+    /// room.
+    pub fn history_slot(&self) -> Option<HistorySlot> {
+        HistorySlot::reserve(self.shared.clone())
     }
 
     /// Record the start of `run`, `harness` working in `workdir`, and reserve

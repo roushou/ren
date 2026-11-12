@@ -12,7 +12,10 @@ use clap::{Args, Subcommand, ValueEnum};
 use ren_harness::Harness;
 use ren_protocol::sse::{EventName, SseFramer, SseLimits, SseOutput};
 use ren_recorder::id::RunId;
-use ren_store::{query::PageLimit, read::ReadRequest};
+use ren_store::{
+    query::{PageLimit, Shelf},
+    read::ReadRequest,
+};
 use reqwest::Method;
 use std::{path::PathBuf, process::ExitCode};
 use uuid::Uuid;
@@ -140,6 +143,9 @@ struct WatchArgs {
 struct HistoryArgs {
     #[arg(long, default_value_t = PageLimit::DEFAULT)]
     limit: PageLimit,
+    /// `current`, or `archived`: the ended runs that were archived.
+    #[arg(long, default_value_t = Shelf::Current)]
+    shelf: Shelf,
 }
 
 impl RunsCmd {
@@ -153,7 +159,10 @@ impl RunsCmd {
                     .target
                     .history(ctx)
                     .await?
-                    .serve(&ReadRequest::Runs(args.limit))
+                    .serve(&ReadRequest::Runs {
+                        limit: args.limit,
+                        shelf: args.shelf,
+                    })
                     .await?;
                 println!("{}", serde_json::to_string_pretty(&answer)?);
                 return Ok(ExitCode::SUCCESS);

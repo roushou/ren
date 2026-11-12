@@ -24,6 +24,7 @@ use ren_harness::{
 use ren_protocol::label::{Labeled, Stored};
 use ren_protocol::native::NativeThreadId;
 use ren_recorder::Observation;
+use ren_recorder::batch::{HistoryChange, HistorySubject};
 use ren_recorder::id::{CallId, RunId, SessionId, TurnId};
 use ren_recorder::progress::Progress;
 use ren_store::activity::{CallActivity, TurnActivity};
@@ -119,6 +120,11 @@ pub enum Command {
     },
     Interrupt(RunId),
     Stop(RunId),
+    /// Archive, unarchive, or delete what was recorded of a session or run.
+    Edit {
+        subject: HistorySubject,
+        change: HistoryChange,
+    },
 }
 
 /// What an input calls for.
@@ -507,6 +513,8 @@ impl Model {
             "no_such_approval" => "that approval no longer waits",
             "stopping" | "ended" => "the run is stopping or has ended",
             "not_found" => "the daemon does not know that run",
+            "call_open" => "a call of it is still open: delete it once the call ends",
+            "run_running" => "a run of it is still running: stop it before deleting",
             "unauthorized" | "forbidden" => "the daemon refused this terminal's control access",
             other => return other.to_owned(),
         }

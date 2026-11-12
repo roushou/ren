@@ -139,7 +139,7 @@ impl Shown {
             (ObservationKind::CallOpened, Some(call)) => Self::Started(call),
             (ObservationKind::CallFinished, Some(call)) => Self::Ended(call, Ending::Finished),
             (ObservationKind::CallRecovered, Some(call)) => Self::Ended(call, Ending::Recovered),
-            (ObservationKind::OperatorAction, _) => Self::Operator,
+            (ObservationKind::OperatorAction | ObservationKind::HistoryEdited, _) => Self::Operator,
             (
                 ObservationKind::CallOpened
                 | ObservationKind::CallFinished

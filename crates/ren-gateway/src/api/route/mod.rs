@@ -4,11 +4,13 @@
 //! round-trip test keeps the two directions one table.
 
 use super::ApiError;
-use super::params::{RawCallQuery, RawExposureQuery, RawPageQuery, RawSearchQuery, RawUsageQuery};
+use super::params::{
+    RawCallQuery, RawExposureQuery, RawPageQuery, RawSearchQuery, RawShelfQuery, RawUsageQuery,
+};
 use axum::extract::Query;
 use http::Uri;
 use ren_protocol::label::Labeled;
-use ren_store::query::{CallQuery, QueryError, TimeRange};
+use ren_store::query::{CallQuery, QueryError, Shelf, TimeRange};
 use ren_store::read::ReadRequest;
 use serde::de::DeserializeOwned;
 use std::fmt::Display;
@@ -44,9 +46,11 @@ impl ApiRead {
                 format!("/api/calls/{call}/activity"),
                 QueryParams::default(),
             ),
-            ReadRequest::Sessions(limit) => (
+            ReadRequest::Sessions { limit, shelf } => (
                 "/api/sessions".to_owned(),
-                QueryParams::default().with("limit", limit.get()),
+                QueryParams::default()
+                    .with("limit", limit.get())
+                    .shelf(*shelf),
             ),
             ReadRequest::SessionCalls {
                 session,
@@ -88,9 +92,11 @@ impl ApiRead {
                     .opt("session", query.session)
                     .range(query.time),
             ),
-            ReadRequest::Runs(limit) => (
+            ReadRequest::Runs { limit, shelf } => (
                 "/api/runs".to_owned(),
-                QueryParams::default().with("limit", limit.get()),
+                QueryParams::default()
+                    .with("limit", limit.get())
+                    .shelf(*shelf),
             ),
             ReadRequest::Run(run) => (format!("/api/runs/{run}"), QueryParams::default()),
         };
@@ -116,11 +122,8 @@ impl ApiRead {
             ["calls", call] => ReadRequest::Call(Self::id(call)?),
             ["calls", call, "activity"] => ReadRequest::CallActivity(Self::id(call)?),
             ["sessions"] => {
-                let page = Self::query::<RawPageQuery>(uri)?;
-                if page.after.is_some() {
-                    return Err(QueryError::Cursor.into());
-                }
-                ReadRequest::Sessions(page.limit()?)
+                let (limit, shelf) = Self::query::<RawShelfQuery>(uri)?.parse()?;
+                ReadRequest::Sessions { limit, shelf }
             }
             ["sessions", session, "calls"] => {
                 let page = Self::query::<RawPageQuery>(uri)?;
@@ -148,11 +151,8 @@ impl ApiRead {
             ["search"] => ReadRequest::Search(Self::query::<RawSearchQuery>(uri)?.parse()?),
             ["exposures"] => ReadRequest::Exposures(Self::query::<RawExposureQuery>(uri)?.parse()?),
             ["runs"] => {
-                let page = Self::query::<RawPageQuery>(uri)?;
-                if page.after.is_some() {
-                    return Err(QueryError::Cursor.into());
-                }
-                ReadRequest::Runs(page.limit()?)
+                let (limit, shelf) = Self::query::<RawShelfQuery>(uri)?.parse()?;
+                ReadRequest::Runs { limit, shelf }
             }
             ["runs", run] => ReadRequest::Run(Self::id(run)?),
             _ => return Err(ApiError::NotFound),
@@ -208,6 +208,14 @@ impl QueryParams {
     }
 
     /// `from_ms` and `until_ms`, for the ends `range` has.
+    /// The shelf, left out when it is the current one.
+    fn shelf(self, shelf: Shelf) -> Self {
+        match shelf {
+            Shelf::Current => self,
+            Shelf::Archived => self.with("shelf", shelf),
+        }
+    }
+
     fn range(self, range: TimeRange) -> Self {
         self.opt("from_ms", range.from().map(|time| time.as_millis()))
             .opt("until_ms", range.until().map(|time| time.as_millis()))

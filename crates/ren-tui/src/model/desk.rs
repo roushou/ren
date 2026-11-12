@@ -252,7 +252,12 @@ impl Desk {
         }
     }
 
+    /// The runs history lists now. An ended run it no longer lists was
+    /// archived or deleted, and leaves the desk.
     pub fn recorded(&mut self, recorded: Vec<RunView>) {
+        self.runs.retain(|run| {
+            run.attention() != Attention::Ended || recorded.iter().any(|view| view.id == run.id)
+        });
         for view in recorded {
             let run = self.entry(view.id, |seen| {
                 Run::new(view.id, view.harness.clone(), view.workdir.clone(), seen)

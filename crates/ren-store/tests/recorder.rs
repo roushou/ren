@@ -763,7 +763,10 @@ async fn a_runs_lifecycle_is_recorded_and_read_back() {
     let (dir, _, reader) = harness.drain().await;
 
     let runs = reader
-        .runs(ren_store::query::PageLimit::DEFAULT)
+        .runs(
+            ren_store::query::PageLimit::DEFAULT,
+            ren_store::query::Shelf::Current,
+        )
         .await
         .unwrap();
     assert_eq!(runs.len(), 2);

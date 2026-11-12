@@ -11,8 +11,8 @@ use ren_protocol::{
 };
 use ren_recorder::{caller::UserId, id::CallId, time::UnixMillis};
 use ren_store::query::{
-    CallFilter, CallQuery, Cursor, KindFilter, PageLimit, SearchText, StatusFilter, TimeRange,
-    ToolFilter,
+    CallFilter, CallQuery, Cursor, KindFilter, PageLimit, SearchText, Shelf, StatusFilter,
+    TimeRange, ToolFilter,
 };
 use ren_store::read::ReadRequest;
 use ren_store::search::{ExposureQuery, SearchField, SearchQuery, SearchTerms};
@@ -329,7 +329,10 @@ impl ToolCall {
             }
             ToolName::ListSessions => {
                 let args: PageArgs = Self::arguments(arguments)?;
-                ReadRequest::Sessions(Field("limit").limit(args.limit, Self::DEFAULT_ROWS)?)
+                ReadRequest::Sessions {
+                    limit: Field("limit").limit(args.limit, Self::DEFAULT_ROWS)?,
+                    shelf: Shelf::Current,
+                }
             }
             ToolName::SessionCalls => {
                 let args: SessionArgs = Self::arguments(arguments)?;

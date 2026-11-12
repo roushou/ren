@@ -5,7 +5,7 @@
 
 use crate::activity::report::SessionReport;
 use crate::activity::{ActivityBudget, CallActivity, TurnActivity, TurnSummary};
-use crate::query::{CallQuery, Cursor, PageLimit, TimeRange};
+use crate::query::{CallQuery, Cursor, PageLimit, Shelf, TimeRange};
 use crate::search::{ExposureQuery, ExposureView, SearchPage, SearchQuery};
 use crate::view::{CallDetail, CallPage, RunView, SessionView, UsageView};
 use crate::{Reader, StoreError};
@@ -18,7 +18,11 @@ pub enum ReadRequest {
     /// Calls, newest first, narrowed by the query's filters.
     Calls(CallQuery),
     Call(CallId),
-    Sessions(PageLimit),
+    /// Sessions, most recently active first.
+    Sessions {
+        limit: PageLimit,
+        shelf: Shelf,
+    },
     /// A session's calls, oldest first, a page at a time.
     SessionCalls {
         session: SessionId,
@@ -36,7 +40,10 @@ pub enum ReadRequest {
     Search(SearchQuery),
     Exposures(ExposureQuery),
     /// Agent runs, newest first.
-    Runs(PageLimit),
+    Runs {
+        limit: PageLimit,
+        shelf: Shelf,
+    },
     Run(RunId),
 }
 
@@ -65,8 +72,8 @@ impl Reader {
         Ok(match request {
             ReadRequest::Calls(query) => ReadResponse::Calls(self.calls(query).await?),
             ReadRequest::Call(call) => ReadResponse::Call(Box::new(self.call(*call).await?)),
-            ReadRequest::Sessions(limit) => ReadResponse::Sessions {
-                sessions: self.sessions(*limit).await?,
+            ReadRequest::Sessions { limit, shelf } => ReadResponse::Sessions {
+                sessions: self.sessions(*limit, *shelf).await?,
             },
             ReadRequest::SessionCalls {
                 session,
@@ -90,8 +97,8 @@ impl Reader {
             ReadRequest::Exposures(query) => ReadResponse::Exposures {
                 exposures: self.exposures(query).await?,
             },
-            ReadRequest::Runs(limit) => ReadResponse::Runs {
-                runs: self.runs(*limit).await?,
+            ReadRequest::Runs { limit, shelf } => ReadResponse::Runs {
+                runs: self.runs(*limit, *shelf).await?,
             },
             ReadRequest::Run(run) => {
                 ReadResponse::Run(Box::new(self.run(*run).await?.ok_or(StoreError::NotFound)?))

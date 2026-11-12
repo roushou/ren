@@ -373,6 +373,8 @@ impl Sessions {
                 | ObservationKind::RunOpened
                 | ObservationKind::RunEnded,
             ) => vec![Read::Runs, Read::Snapshot],
+            // Archived or deleted history leaves the lists.
+            Some(ObservationKind::HistoryEdited) => vec![Read::Recorded, Read::Snapshot],
         }
     }
 

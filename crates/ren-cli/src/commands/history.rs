@@ -10,7 +10,7 @@ use ren_harness::endpoint::GatewayEndpoint;
 use ren_protocol::direction::Direction;
 use ren_recorder::caller::UserId;
 use ren_recorder::id::{CallId, SessionId, TurnId};
-use ren_store::query::{CallFilter, CallQuery, Cursor, PageLimit, TimeRange};
+use ren_store::query::{CallFilter, CallQuery, Cursor, PageLimit, Shelf, TimeRange};
 use ren_store::read::ReadRequest;
 use ren_store::search::{ExposureQuery, SearchField, SearchQuery, SearchTerms};
 use std::{
@@ -98,13 +98,22 @@ impl HistoryCmd {
 pub struct SessionsCmd {
     #[arg(long, default_value = "20")]
     limit: PageLimit,
+    /// `current`, or `archived`: the sessions archived and not active since.
+    #[arg(long, default_value_t = Shelf::Current)]
+    shelf: Shelf,
     #[command(flatten)]
     target: TargetArgs,
 }
 impl SessionsCmd {
     pub async fn run(self, ctx: &Context) -> Result<ExitCode> {
         self.target
-            .print(ctx, ReadRequest::Sessions(self.limit))
+            .print(
+                ctx,
+                ReadRequest::Sessions {
+                    limit: self.limit,
+                    shelf: self.shelf,
+                },
+            )
             .await
     }
 }

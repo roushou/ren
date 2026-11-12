@@ -408,7 +408,10 @@ impl Supervised {
             .expect("the recorder drains")
             .unwrap();
         let reader = Reader::open(self.dir.path(), 1).await.unwrap();
-        let runs = reader.runs(PageLimit::DEFAULT).await.unwrap();
+        let runs = reader
+            .runs(PageLimit::DEFAULT, ren_store::query::Shelf::Current)
+            .await
+            .unwrap();
         reader.close().await;
         (runs, self.dir)
     }

@@ -162,6 +162,24 @@ async fn a_run_is_started_prompted_approved_and_stopped_through_the_control_api(
     assert_eq!(status, StatusCode::CREATED, "{body}");
     let run = body["run"].as_str().unwrap().to_owned();
     control.until(|state| state["phase"] == "idle").await;
+    // A running run is not deleted (once its start is recorded, it is found).
+    let refused = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let answer = control
+                .post(&format!("/history/runs/{run}/delete"), json!({}))
+                .await;
+            if answer.0 != StatusCode::NOT_FOUND {
+                return answer;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("the run is recorded");
+    assert_eq!(
+        (refused.0, &refused.1["error"]),
+        (StatusCode::CONFLICT, &json!("run_running"))
+    );
 
     let (status, _) = control
         .post(
@@ -252,10 +270,38 @@ async fn a_run_is_started_prompted_approved_and_stopped_through_the_control_api(
         .unwrap();
     let listed: Value = serde_json::from_slice(&listed).unwrap();
     assert_eq!(listed["runs"][0]["id"], run.as_str());
+    // Ended, it is archived: listed only on the archived shelf.
+    let (status, _) = control
+        .post(&format!("/history/runs/{run}/archive"), json!({}))
+        .await;
+    assert_eq!(status, StatusCode::ACCEPTED);
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let body = control
+                .http
+                .get(format!("{}/api/runs?shelf=archived", gateway.base()))
+                .send()
+                .await
+                .unwrap()
+                .bytes()
+                .await
+                .unwrap();
+            let body: Value = serde_json::from_slice(&body).unwrap();
+            if body["runs"][0]["id"] == run.as_str() {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("the archived run");
 
     gateway.stop().await;
     let reader = Reader::open(dir.path(), 1).await.unwrap();
-    let stored = reader.runs(PageLimit::DEFAULT).await.unwrap();
+    let stored = reader
+        .runs(PageLimit::DEFAULT, ren_store::query::Shelf::Archived)
+        .await
+        .unwrap();
     assert_eq!(stored.len(), 1);
     assert_eq!(stored[0].id.to_string(), run);
     assert_eq!(stored[0].thread.as_deref(), Some(support::agent::THREAD));
