@@ -28,7 +28,7 @@ use ren_protocol::native::NativeThreadId;
 use ren_recorder::id::RunId;
 use ren_supervisor::{
     CommandError, Conversation, ModelsError, RunCommand, RunRefused, RunSnapshot, Start,
-    StartError, Supervisor, WorkdirError,
+    StartError, StartPlace, Supervisor, WorkdirError,
 };
 use std::{convert::Infallible, sync::Arc, time::Duration};
 use tokio::sync::broadcast::error::RecvError;
@@ -38,7 +38,10 @@ use tokio_util::sync::CancellationToken;
 #[serde(deny_unknown_fields)]
 struct StartRequest {
     harness: Harness,
-    dir: String,
+    /// The folder, inside a root or another place; left out, the run gets
+    /// a new folder of its own in scratch.
+    #[serde(default)]
+    dir: Option<String>,
     /// The client's thread to continue, instead of a new conversation.
     #[serde(default)]
     resume: Option<uuid::Uuid>,
@@ -105,6 +108,7 @@ enum RunRefusal {
     DirectoryNotFound,
     NotDrivable,
     NoApprovals,
+    NoScratch,
     Unrecorded,
     SpawnFailed,
     NotFound,
@@ -120,6 +124,7 @@ impl IntoResponse for RunRefusal {
             Self::DirectoryNotFound => (StatusCode::BAD_REQUEST, "directory_not_found"),
             Self::NotDrivable => (StatusCode::BAD_REQUEST, "not_drivable"),
             Self::NoApprovals => (StatusCode::BAD_REQUEST, "no_approvals"),
+            Self::NoScratch => (StatusCode::SERVICE_UNAVAILABLE, "no_scratch"),
             Self::Unrecorded => (StatusCode::SERVICE_UNAVAILABLE, "unrecorded"),
             Self::SpawnFailed => (StatusCode::BAD_GATEWAY, "spawn_failed"),
             Self::NotFound => (StatusCode::NOT_FOUND, "not_found"),
@@ -147,6 +152,7 @@ impl From<StartError> for RunRefusal {
             StartError::Resolve(_) => Self::DirectoryNotFound,
             StartError::NotDrivable(_) => Self::NotDrivable,
             StartError::NoApprovals(_) => Self::NoApprovals,
+            StartError::NoScratch | StartError::Scratch(_) => Self::NoScratch,
             StartError::Unrecorded(_) => Self::Unrecorded,
             StartError::Spawn { .. } => Self::SpawnFailed,
             StartError::Gone | StartError::NilId => Self::Unavailable,
@@ -259,7 +265,8 @@ impl RunsApi {
             .map_err(|_| Denied::Run(RunRefusal::Unavailable))?;
         Ok(Json(serde_json::json!({
             "api_version": ControlApi::API_VERSION,
-            "projects": projects,
+            "projects": projects.projects,
+            "scratch": projects.scratch,
         }))
         .into_response())
     }
@@ -342,7 +349,10 @@ impl RunsApi {
         let run = supervisor
             .start(Start {
                 harness: request.harness,
-                dir: request.dir,
+                place: match request.dir {
+                    Some(dir) => StartPlace::Folder(dir),
+                    None => StartPlace::Scratch,
+                },
                 conversation,
                 settings: RunSettings {
                     model,

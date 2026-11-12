@@ -30,7 +30,7 @@ use ren_recorder::id::{CallId, RunId, TurnId};
 use ren_recorder::progress::Progress;
 use ren_store::activity::{CallActivity, TurnActivity};
 use ren_store::view::{ConversationView, RunView};
-use ren_supervisor::{Client, ClientStatus, Project, RunSnapshot, RunState, RunUpdate};
+use ren_supervisor::{Client, ClientStatus, Places, Project, RunSnapshot, RunState, RunUpdate};
 use sessions::Sessions;
 use std::collections::HashMap;
 
@@ -52,7 +52,8 @@ pub enum Input {
     Runs(Result<Vec<RunSnapshot>, String>),
     /// Recorded runs, newest first.
     Recorded(Vec<RunView>),
-    Projects(Result<Vec<Project>, String>),
+    /// Where runs can start, and the scratch folder, or why not read.
+    Projects(Result<Places, String>),
     /// The clients and whether a run can start with each, or why they
     /// cannot be read.
     Clients(Result<Vec<Client>, String>),
@@ -106,7 +107,8 @@ pub enum Read {
 pub enum Command {
     Start {
         harness: Harness,
-        dir: String,
+        /// None: a new scratch folder of the run's own.
+        dir: Option<String>,
         resume: Option<NativeThreadId>,
         prompt: Option<Prompt>,
         /// Each left out is the client's own.
@@ -170,7 +172,8 @@ pub(crate) enum Control {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Starting {
     harness: Harness,
-    dir: String,
+    /// None: a scratch folder, named once the daemon lists the run.
+    dir: Option<String>,
     resumes: bool,
     prompt: Option<Prompt>,
 }
@@ -186,6 +189,8 @@ pub(crate) struct Model {
     pub control: Control,
     /// The client a new run starts with: the last one started.
     pub client: Harness,
+    /// The folder scratch runs get theirs in, once read; none: no scratch.
+    pub scratch: Option<String>,
     /// Each client's models, once asked for.
     models: HashMap<Harness, Offered>,
     /// The settings each client last started a run with, while this app runs.
@@ -203,6 +208,7 @@ impl Model {
             clients: Vec::new(),
             control: Control::Unread,
             client: Harness::ClaudeCode,
+            scratch: None,
             models: HashMap::new(),
             chosen: HashMap::new(),
             starting: None,
@@ -305,7 +311,10 @@ impl Model {
             }
             Input::Projects(projects) => {
                 self.projects = match projects {
-                    Ok(projects) => Projects::Read(projects),
+                    Ok(places) => {
+                        self.scratch = places.scratch;
+                        Projects::Read(places.projects)
+                    }
                     Err(why) => Projects::Failed(why),
                 };
                 Vec::new()
@@ -340,7 +349,11 @@ impl Model {
                         Run::new(
                             run,
                             Stored::Known(starting.harness),
-                            starting.dir.clone(),
+                            starting
+                                .dir
+                                .clone()
+                                .or_else(|| self.scratch.clone())
+                                .unwrap_or_default(),
                             seen,
                         )
                     });
@@ -371,7 +384,7 @@ impl Model {
     pub fn start(
         &mut self,
         harness: Harness,
-        dir: String,
+        dir: Option<String>,
         resume: Option<NativeThreadId>,
         prompt: Option<Prompt>,
         settings: RunSettings,

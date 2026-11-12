@@ -111,6 +111,22 @@ impl Run {
         self.harness.known()
     }
 
+    /// The folder it is listed under: its own, or the scratch folder for
+    /// a scratch run, which each got a folder of their own inside it.
+    pub fn folder<'a>(&'a self, scratch: Option<&'a str>) -> &'a str {
+        match scratch {
+            Some(scratch)
+                if self
+                    .workdir
+                    .strip_prefix(scratch)
+                    .is_some_and(|rest| rest.starts_with('/')) =>
+            {
+                scratch
+            }
+            Some(_) | None => &self.workdir,
+        }
+    }
+
     /// Its settings in a few words, each left to the client left out:
     /// `gpt-deep · high effort · edits alone`.
     pub fn setup(&self) -> Option<String> {
@@ -289,6 +305,8 @@ impl Desk {
         }
         for snapshot in snapshots {
             let run = self.entry(snapshot.run, |seen| Run::from_snapshot(snapshot, seen));
+            // A scratch run's folder is known once the daemon lists it.
+            run.workdir = snapshot.workdir.to_string_lossy().into_owned();
             run.live = Some(snapshot.state.clone());
             run.settings = Some(snapshot.settings.clone());
         }
@@ -381,5 +399,38 @@ impl Desk {
             .iter()
             .filter_map(|run| run.thread_now().map(ToString::to_string))
             .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Run;
+    use ren_harness::Harness;
+    use ren_protocol::label::Stored;
+    use ren_recorder::id::RunId;
+
+    fn run(workdir: &str) -> Run {
+        Run::new(
+            RunId::restore(uuid::Uuid::from_u128(1)),
+            Stored::Known(Harness::Codex),
+            workdir.into(),
+            0,
+        )
+    }
+
+    /// Scratch runs each got a folder of their own: they are listed under
+    /// the scratch folder; other runs under their own.
+    #[test]
+    fn a_scratch_run_is_listed_under_the_scratch_folder() {
+        let scratch = Some("/home/op/scratch");
+        assert_eq!(
+            run("/home/op/scratch/scratch-1a2b").folder(scratch),
+            "/home/op/scratch"
+        );
+        assert_eq!(
+            run("/home/op/scratchpad").folder(scratch),
+            "/home/op/scratchpad"
+        );
+        assert_eq!(run("/home/op/dev/acme").folder(None), "/home/op/dev/acme");
     }
 }

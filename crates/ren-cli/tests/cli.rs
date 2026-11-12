@@ -551,6 +551,7 @@ async fn runs_on_this_host_use_the_control_token_and_report_refusals() {
             listen: "127.0.0.1:0".parse().unwrap(),
             runs: ren_daemon::config::RunsOptions {
                 roots: vec![root.clone()],
+                ..ren_daemon::config::RunsOptions::default()
             },
             ..Config::default()
         }

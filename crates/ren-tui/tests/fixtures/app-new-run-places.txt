@@ -1,0 +1,30 @@
+ new run   ctrl-o folder scratch · a new folder of its own
+           ctrl-l client Claude Code   ctrl-k model default   shift-tab approvals default
+──┌ folder ─────────────────────────────────────────────────┐───────────────────────────────────────────────────────────
+ W│  search  ▏                                              │s your editor.
+  │  › scratch   a new folder of its own, kept with the run │
+  │  recent                                                 │
+  │    acme-web  /dev/acme-web   feat/upload                │
+  │    ren       /srv/ren        agent-runs                 │
+  │    acme-api  /dev/acme-api   main                       │
+  │  folders                                                │
+  │    nvim      ~/.config/nvim  no git  other place        │
+  │    tab hides other places                               │
+  └─────────────────────────────────────────────────────────┘
+
+
+
+
+
+
+
+
+
+
+
+
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ files   none
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ where should the run work? type to search · ↑↓ choose · tab other places · enter take it · esc back   1 line · 0 chars

@@ -44,6 +44,14 @@ impl AgentHost for ScriptedHost {
         })
     }
 
+    fn make_dir(&self, _dir: &Path) -> io::Result<()> {
+        Ok(())
+    }
+
+    fn make_scratch(&self, _dir: &Path) -> io::Result<()> {
+        Ok(())
+    }
+
     fn spawn(&self, _plan: &LaunchPlan, _workdir: &Workdir) -> io::Result<AgentProcess> {
         let (stdin, agent_in) = tokio::io::duplex(64 * 1024);
         let (agent_out, stdout) = tokio::io::duplex(64 * 1024);

@@ -126,8 +126,10 @@ async fn a_run_is_started_prompted_approved_and_stopped_through_the_control_api(
     assert_eq!(
         projects["projects"],
         json!([
-            { "path": "/work/acme", "name": "acme", "git": { "kind": "branch", "name": "main" } },
-            { "path": "/work/web", "name": "web", "git": { "kind": "none" } },
+            { "path": "/work/acme", "name": "acme", "shown": "~/acme", "kind": "project",
+              "git": { "kind": "branch", "name": "main" } },
+            { "path": "/work/web", "name": "web", "shown": "~/web", "kind": "project",
+              "git": { "kind": "none" } },
         ])
     );
 
@@ -401,7 +403,7 @@ async fn runs_refuse_bad_requests_browsers_and_missing_tokens() {
             "not_drivable",
         ),
         (
-            json!({ "harness": "codex" }),
+            json!({ "dir": "/work/acme" }),
             StatusCode::BAD_REQUEST,
             "invalid_request",
         ),
@@ -460,5 +462,25 @@ async fn without_roots_runs_are_disabled() {
         (status, body["error"].as_str()),
         (StatusCode::NOT_FOUND, Some("runs_disabled"))
     );
+    gateway.stop().await;
+}
+
+#[tokio::test]
+async fn a_run_without_a_folder_starts_in_a_scratch_folder_of_its_own() {
+    let upstream = mock(Router::new()).await;
+    let dir = tempfile::tempdir().unwrap();
+    let gateway = TestGateway::with_runs(
+        &config(&upstream),
+        dir.path(),
+        vec![PathBuf::from("/work")],
+        ScriptedHost,
+    )
+    .await;
+    let control = Control::new(&gateway);
+    let (status, body) = control.post("/runs", json!({ "harness": "codex" })).await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    let runs = control.runs().await;
+    let workdir = runs["runs"][0]["workdir"].as_str().unwrap().to_owned();
+    assert!(workdir.starts_with("/scratch/scratch-"), "{workdir}");
     gateway.stop().await;
 }

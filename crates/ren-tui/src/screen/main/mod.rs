@@ -837,7 +837,7 @@ impl Main {
             Attention::Ended => match resume {
                 Some((harness, dir, resume)) => vec![Action::Send(ctx.model.start(
                     harness,
-                    dir,
+                    Some(dir),
                     resume,
                     Some(prompt),
                     settings,

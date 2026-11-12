@@ -33,7 +33,7 @@ use ren_store::activity::{CallActivity, TurnActivity};
 use ren_store::query::{PageLimit, Shelf};
 use ren_store::read::ReadRequest;
 use ren_store::view::{ConversationView, RunView};
-use ren_supervisor::{Client, Project, RunSnapshot, RunUpdate};
+use ren_supervisor::{Client, Places, RunSnapshot, RunUpdate};
 use ren_tui::{
     Answered, Command, Input, Out, Read, Snapshot, Terminal, TerminalEvent, Theme, ThemeName, Tui,
 };
@@ -506,7 +506,11 @@ impl<'a> Shell<'a> {
                 prompt,
                 settings,
             } => {
-                let mut body = serde_json::json!({ "harness": harness, "dir": dir });
+                let mut body = serde_json::json!({ "harness": harness });
+                // Without a folder, the run gets a scratch folder of its own.
+                if let Some(dir) = dir {
+                    body["dir"] = dir.into();
+                }
                 if let Some(model) = settings.model {
                     body["model"] = model.as_str().into();
                 }
@@ -656,14 +660,9 @@ impl<'a> Shell<'a> {
         }
     }
 
-    async fn projects(control: &ControlTarget) -> Result<Vec<Project>, String> {
-        #[derive(serde::Deserialize)]
-        struct Listed {
-            projects: Vec<Project>,
-        }
+    async fn projects(control: &ControlTarget) -> Result<Places, String> {
         match control.send(Method::GET, "runs/projects", None).await {
-            Ok((status, body)) if status.is_success() => serde_json::from_value::<Listed>(body)
-                .map(|listed| listed.projects)
+            Ok((status, body)) if status.is_success() => serde_json::from_value::<Places>(body)
                 .map_err(|_| "the daemon's projects are not readable".to_owned()),
             Ok((_, body)) => Err(body["error"]
                 .as_str()

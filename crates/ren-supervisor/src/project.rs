@@ -1,11 +1,16 @@
-//! Where a run can start: the projects under the run roots. A folder that
-//! holds a git repository is a project, and the search does not go inside
-//! it; a folder directly inside a root with no repository below it is a
-//! project too, without git. The search is pure: the host looks at each
-//! folder (`AgentHost::look`), and this module decides where to look next.
+//! Where a run can start. Projects under the run roots: a folder that holds
+//! a git repository is a project, and the search does not go inside it; a
+//! folder directly inside a root with no repository below it is a project
+//! too, without git. Other places: each configured place's own folders,
+//! hidden ones included, or the place itself when it is a repository. And
+//! the scratch folders earlier scratch runs worked in. The search is pure:
+//! the host looks at each folder (`AgentHost::look`), and this module decides
+//! where to look next.
 
-use crate::workdir::Roots;
+use crate::workdir::{Bounds, Roots};
+use serde_with::{DeserializeFromStr, SerializeDisplay};
 use std::path::{Path, PathBuf};
+use strum::{Display, EnumString, IntoStaticStr, VariantArray};
 
 /// What the host saw in one folder.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -22,9 +27,25 @@ pub struct Look {
 pub struct Project {
     /// The absolute path to start a run in.
     pub path: String,
-    /// Its folder's name, with its parent's when two projects share it.
+    /// Its folder's name, with its parent's when two of a kind share it.
     pub name: String,
+    /// The path as the operator reads it: `~/…` under their home.
+    pub shown: String,
+    pub kind: PlaceKind,
     pub git: ProjectGit,
+}
+
+/// What kind of place a run can start in.
+#[derive(Display, EnumString, IntoStaticStr, VariantArray)]
+#[strum(serialize_all = "snake_case")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SerializeDisplay, DeserializeFromStr)]
+pub enum PlaceKind {
+    /// A project under a run root.
+    Project,
+    /// A folder of another configured place, offered only when asked.
+    Other,
+    /// The folder an earlier scratch run worked in.
+    Scratch,
 }
 
 /// A project's repository, as its `HEAD` reads.
@@ -141,35 +162,115 @@ impl Search {
     ];
 
     fn skips(name: &str) -> bool {
-        name.starts_with('.') || name.contains('/') || Self::SKIPPED.contains(&name)
+        name.starts_with('.') || Self::skips_shown(name)
+    }
+
+    /// Skipped even where hidden folders are offered.
+    fn skips_shown(name: &str) -> bool {
+        name.contains('/') || Self::SKIPPED.contains(&name)
+    }
+}
+
+impl Bounds {
+    /// Every place a run can start in: the projects under the roots, the
+    /// folders of the other places, and the scratch folders, each named
+    /// within its kind and in path order.
+    pub fn places(
+        &self,
+        search: Search,
+        mut look: impl FnMut(&Path) -> Option<Look>,
+    ) -> Vec<Project> {
+        let projects = self.named(self.roots().found(search, &mut look), PlaceKind::Project);
+        let mut looks = 0;
+        let mut seen = |path: &Path| {
+            looks += 1;
+            if looks > search.looks {
+                None
+            } else {
+                look(path)
+            }
+        };
+        let mut others = Vec::new();
+        for place in self.others() {
+            let Some(inside) = seen(place) else { continue };
+            if let Some(head) = inside.git {
+                others.push((place.clone(), ProjectGit::read(head.as_deref())));
+                continue;
+            }
+            others.extend(Self::folders(
+                place,
+                &inside,
+                Search::skips_shown,
+                &mut seen,
+            ));
+        }
+        let scratch = match self.scratch() {
+            Some(root) => match seen(root) {
+                Some(inside) => Self::folders(root, &inside, Search::skips, &mut seen),
+                None => Vec::new(),
+            },
+            None => Vec::new(),
+        };
+        let mut places = projects;
+        for (kind, mut found) in [(PlaceKind::Other, others), (PlaceKind::Scratch, scratch)] {
+            found.sort_by(|a, b| a.0.cmp(&b.0));
+            found.dedup_by(|a, b| a.0 == b.0);
+            places.extend(self.named(found, kind));
+        }
+        places
+    }
+
+    /// The folders directly inside `folder`, each with its repository.
+    fn folders(
+        folder: &Path,
+        inside: &Look,
+        skips: fn(&str) -> bool,
+        look: &mut impl FnMut(&Path) -> Option<Look>,
+    ) -> Vec<(PathBuf, ProjectGit)> {
+        inside
+            .folders
+            .iter()
+            .filter(|name| !skips(name))
+            .filter_map(|name| {
+                let child = folder.join(name);
+                let git = match look(&child)?.git {
+                    Some(head) => ProjectGit::read(head.as_deref()),
+                    None => ProjectGit::None,
+                };
+                Some((child, git))
+            })
+            .collect()
     }
 }
 
 impl Roots {
     /// The projects under every root, found by looking at folders with
-    /// `look` (`None`: the folder could not be read), in path order.
-    pub fn projects(
+    /// `look` (`None`: the folder could not be read), in path order and
+    /// not yet named.
+    fn found(
         &self,
         search: Search,
-        mut look: impl FnMut(&Path) -> Option<Look>,
-    ) -> Vec<Project> {
+        look: &mut impl FnMut(&Path) -> Option<Look>,
+    ) -> Vec<(PathBuf, ProjectGit)> {
         let mut walk = Walk {
             search,
             looks: 0,
             found: Vec::new(),
         };
         for root in self.iter() {
-            walk.folder(root, 0, &mut look);
+            walk.folder(root, 0, look);
         }
         let mut found = walk.found;
         found.sort_by(|a, b| a.0.cmp(&b.0));
         found.dedup_by(|a, b| a.0 == b.0);
-        Self::named(found)
+        found
     }
+}
 
-    /// Names projects by their folder, adding the parent's name where two
-    /// would read the same. Paths that are not UTF-8 are left out.
-    fn named(found: Vec<(PathBuf, ProjectGit)>) -> Vec<Project> {
+impl Bounds {
+    /// Names places of `kind` by their folder, adding the parent's name
+    /// where two would read the same. Paths that are not UTF-8 are left out.
+    fn named(&self, found: Vec<(PathBuf, ProjectGit)>, kind: PlaceKind) -> Vec<Project> {
         let last = |path: &Path| -> String {
             path.file_name()
                 .and_then(|name| name.to_str())
@@ -189,6 +290,8 @@ impl Roots {
                 Some(Project {
                     path: path.to_str()?.to_owned(),
                     name,
+                    shown: self.shown(path),
+                    kind,
                     git: git.clone(),
                 })
             })
@@ -198,8 +301,8 @@ impl Roots {
 
 #[cfg(test)]
 mod tests {
-    use super::{Look, ProjectGit, Search};
-    use crate::workdir::Roots;
+    use super::{Look, PlaceKind, ProjectGit, Search};
+    use crate::workdir::{Bounds, Roots};
     use std::{collections::BTreeMap, path::PathBuf};
 
     /// A fake tree: each folder's subfolders, and the repos' `HEAD`s.
@@ -238,12 +341,85 @@ mod tests {
         ])
     }
 
+    /// Projects under `roots`, with no other place and no scratch folder.
+    fn bounds(roots: &[&str]) -> Bounds {
+        Bounds::new(
+            Roots::new(roots.iter().map(PathBuf::from).collect()).unwrap(),
+            Vec::new(),
+            None,
+            None,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn other_places_and_scratch_folders_are_listed_apart() {
+        let bounds = Bounds::new(
+            Roots::new(vec![PathBuf::from("/home/op/dev")]).unwrap(),
+            vec![
+                PathBuf::from("/home/op/.config"),
+                PathBuf::from("/home/op/dotfiles"),
+            ],
+            Some(PathBuf::from("/home/op/scratch")),
+            Some(PathBuf::from("/home/op")),
+        )
+        .unwrap();
+        let folder = |names: &[&str], git: Option<&str>| Look {
+            folders: names.iter().map(|name| (*name).to_owned()).collect(),
+            git: git.map(|head| Some(head.to_owned())),
+        };
+        let tree = BTreeMap::from([
+            ("/home/op/dev", folder(&["acme"], None)),
+            (
+                "/home/op/dev/acme",
+                folder(&[], Some("ref: refs/heads/main")),
+            ),
+            // Hidden folders are offered in another place; dependencies not.
+            (
+                "/home/op/.config",
+                folder(&["nvim", ".private", "node_modules"], None),
+            ),
+            (
+                "/home/op/.config/nvim",
+                folder(&[], Some("ref: refs/heads/main")),
+            ),
+            ("/home/op/.config/.private", folder(&[], None)),
+            // A place that is a repository is offered itself.
+            (
+                "/home/op/dotfiles",
+                folder(&["zsh"], Some("ref: refs/heads/main")),
+            ),
+            ("/home/op/scratch", folder(&["scratch-1a2b", ".tmp"], None)),
+            (
+                "/home/op/scratch/scratch-1a2b",
+                folder(&[], Some("ref: refs/heads/main")),
+            ),
+        ]);
+        let places = bounds.places(Search::DEFAULT, |path| {
+            tree.get(path.to_str().unwrap()).cloned()
+        });
+        let listed: Vec<(PlaceKind, &str, &str)> = places
+            .iter()
+            .map(|place| (place.kind, place.name.as_str(), place.shown.as_str()))
+            .collect();
+        assert_eq!(
+            listed,
+            [
+                (PlaceKind::Project, "acme", "~/dev/acme"),
+                (PlaceKind::Other, ".private", "~/.config/.private"),
+                (PlaceKind::Other, "nvim", "~/.config/nvim"),
+                (PlaceKind::Other, "dotfiles", "~/dotfiles"),
+                (PlaceKind::Scratch, "scratch-1a2b", "~/scratch/scratch-1a2b"),
+            ]
+        );
+    }
+
     #[test]
     fn finds_repositories_without_going_inside_them() {
-        let roots = Roots::new(vec![PathBuf::from("/dev"), PathBuf::from("/srv/ren")]).unwrap();
+        let roots = bounds(&["/dev", "/srv/ren"]);
         let tree = tree();
         let mut looked = Vec::new();
-        let projects = roots.projects(Search::DEFAULT, |path| {
+        let projects = roots.places(Search::DEFAULT, |path| {
             looked.push(path.to_str().unwrap().to_owned());
             tree.get(path.to_str().unwrap()).cloned()
         });
@@ -302,9 +478,9 @@ mod tests {
 
     #[test]
     fn shared_names_take_their_parent_and_limits_hold() {
-        let roots = Roots::new(vec![PathBuf::from("/dev"), PathBuf::from("/srv/other")]).unwrap();
+        let roots = bounds(&["/dev", "/srv/other"]);
         let tree = tree();
-        let projects = roots.projects(Search::DEFAULT, |path| {
+        let projects = roots.places(Search::DEFAULT, |path| {
             tree.get(path.to_str().unwrap()).cloned()
         });
         let names: Vec<&str> = projects
@@ -324,13 +500,13 @@ mod tests {
         );
 
         let mut looks = 0;
-        let few = roots.projects(Search { depth: 3, looks: 2 }, |path| {
+        let few = roots.places(Search { depth: 3, looks: 2 }, |path| {
             looks += 1;
             tree.get(path.to_str().unwrap()).cloned()
         });
         assert_eq!(looks, 2);
         assert!(few.len() <= 2);
-        let shallow = roots.projects(
+        let shallow = roots.places(
             Search {
                 depth: 1,
                 looks: 100,

@@ -259,17 +259,22 @@ dependencies under "Crates" below. Read the code for current module ownership.
   (`read`); the API, the CLI, and MCP all ask through it. Its tests include
   `tests/recorder.rs`, the recorder against the real store.
 - `crates/ren-supervisor`: runs, with `Supervisor` as its primary type: agent
-  processes started in a folder inside the configured roots and driven through
-  their client's structured mode (Codex, Claude Code, and Pi). `RunState` (`run`) is the
+  processes started in a folder and driven through their client's
+  structured mode (Codex, Claude Code, and Pi). `RunState` (`run`) is the
   pure lifecycle machine (starting, idle, working with its waiting approvals,
   stopping, ended with a `RunEnd`); `Workdir` (`workdir`) keeps runs inside
-  `Roots`, resolved by the host so links cannot escape; `project` finds the
-  `Project`s a run can start in (git repositories under the roots, not looked
-  inside); `models` lists each client's models through a short listing
+  `Bounds`: the configured roots, the other places (`~/.config`), and the
+  scratch folder Ren owns, where a run started without a folder
+  (`StartPlace::Scratch`) gets a new git repository of its own; all resolved
+  by the host so links cannot escape; `project` finds the places a run can
+  start in, each a `Project` of a `PlaceKind` (git repositories under the
+  roots, not looked inside; other places' folders; earlier scratch
+  folders); `models` lists each client's models through a short listing
   process and keeps the answer (`Supervisor::models`); `Client` and
   `ClientStatus` (`client`) say whether a run can start
   with each client here; `AgentHost` (`host`) is the port for resolving paths,
-  looking in folders, finding programs, and starting processes, which tests
+  looking in folders, making folders (a scratch run's as a repository),
+  finding programs, and starting processes, which tests
   fill with
   scripted in-memory agents. `SupervisorTask` is the shell: one task reads every
   agent's stdout, writes its stdin, and waits for its exit, records each run

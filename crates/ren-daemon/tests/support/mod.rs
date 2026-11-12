@@ -268,6 +268,9 @@ impl TestGateway {
                 let (supervisor, task) = Supervisor::new(
                     SupervisorOptions {
                         roots,
+                        places: Vec::new(),
+                        scratch: Some(std::path::PathBuf::from("/scratch")),
+                        home: Some(std::path::PathBuf::from("/work")),
                         gateway: GatewayEndpoint::parse(&format!("http://{address}")).unwrap(),
                         version: "0.0.0-test".into(),
                         line_limit: LineLimit::DEFAULT,

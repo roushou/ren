@@ -1,13 +1,27 @@
-//! Where a run may work: inside one of the configured roots. A requested path
-//! is read lexically first, then resolved by the host (symlinks included) and
-//! checked again, so a link cannot lead a run outside the roots. No I/O here:
-//! resolving is the host's.
+//! Where a run may work: inside a configured root (where projects are found),
+//! inside another configured place (`~/.config`, a dotfiles folder), or in
+//! the scratch folder Ren owns. A requested path is read lexically first,
+//! then resolved by the host (symlinks included) and checked again, so a link
+//! cannot lead a run outside them. No I/O here: resolving is the host's.
 
 use std::path::{Component, Path, PathBuf};
 
 /// The folders runs may work in, each already resolved by the host.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Roots(Vec<PathBuf>);
+
+/// Everywhere a run may work, each folder already resolved by the host.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Bounds {
+    roots: Roots,
+    /// Other places, found apart from projects and shown only when asked.
+    others: Vec<PathBuf>,
+    /// The folder scratch runs get their own folder in; none when it could
+    /// not be set up.
+    scratch: Option<PathBuf>,
+    /// The operator's home, for showing paths as `~/…`.
+    home: Option<PathBuf>,
+}
 
 /// A directory a run was asked to work in, before the host resolved it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -24,7 +38,7 @@ pub enum WorkdirError {
     Relative,
     #[error("the directory must not contain `..`")]
     Unnormalized,
-    #[error("the directory is outside every configured root")]
+    #[error("the directory is outside every configured root and place")]
     OutsideRoots,
     #[error("no roots are configured, so no run can start")]
     NoRoots,
@@ -46,6 +60,65 @@ impl Roots {
 
     pub fn iter(&self) -> impl Iterator<Item = &Path> {
         self.0.iter().map(PathBuf::as_path)
+    }
+}
+
+impl Bounds {
+    /// Each folder must be absolute, as the host resolved it.
+    pub fn new(
+        roots: Roots,
+        others: Vec<PathBuf>,
+        scratch: Option<PathBuf>,
+        home: Option<PathBuf>,
+    ) -> Result<Self, WorkdirError> {
+        if others
+            .iter()
+            .chain(&scratch)
+            .any(|path| !path.is_absolute())
+        {
+            return Err(WorkdirError::Relative);
+        }
+        Ok(Self {
+            roots,
+            others,
+            scratch,
+            home,
+        })
+    }
+
+    pub fn roots(&self) -> &Roots {
+        &self.roots
+    }
+
+    pub fn others(&self) -> &[PathBuf] {
+        &self.others
+    }
+
+    pub fn scratch(&self) -> Option<&Path> {
+        self.scratch.as_deref()
+    }
+
+    /// `path` as the operator reads it: under their home as `~/…`.
+    pub fn shown(&self, path: &Path) -> String {
+        match self
+            .home
+            .as_deref()
+            .and_then(|home| path.strip_prefix(home).ok())
+        {
+            Some(rest) if rest.as_os_str().is_empty() => "~".to_owned(),
+            Some(rest) => format!("~/{}", rest.display()),
+            None => path.display().to_string(),
+        }
+    }
+
+    /// Whether `path` lies inside a root, another place, or the scratch
+    /// folder, compared component by component.
+    fn holds(&self, path: &Path) -> bool {
+        self.roots
+            .iter()
+            .chain(self.others.iter().map(PathBuf::as_path))
+            .chain(self.scratch.as_deref())
+            .any(|bound| path.starts_with(bound))
     }
 }
 
@@ -72,15 +145,15 @@ impl RequestedDir {
 
 impl Workdir {
     /// `resolved` is what the host made of a [`RequestedDir`]; it must lie
-    /// inside a root, compared component by component.
-    pub fn confirm(roots: &Roots, resolved: PathBuf) -> Result<Self, WorkdirError> {
+    /// inside a root, another place, or the scratch folder.
+    pub fn confirm(bounds: &Bounds, resolved: PathBuf) -> Result<Self, WorkdirError> {
         if !resolved.is_absolute() {
             return Err(WorkdirError::Relative);
         }
         if resolved.to_str().is_none() {
             return Err(WorkdirError::NotUtf8);
         }
-        if roots.iter().any(|root| resolved.starts_with(root)) {
+        if bounds.holds(&resolved) {
             Ok(Self(resolved))
         } else {
             Err(WorkdirError::OutsideRoots)
@@ -99,11 +172,17 @@ impl Workdir {
 
 #[cfg(test)]
 mod tests {
-    use super::{RequestedDir, Roots, Workdir, WorkdirError};
-    use std::path::PathBuf;
+    use super::{Bounds, RequestedDir, Roots, Workdir, WorkdirError};
+    use std::path::{Path, PathBuf};
 
-    fn roots() -> Roots {
-        Roots::new(vec![PathBuf::from("/home/op/dev")]).unwrap()
+    fn roots() -> Bounds {
+        Bounds::new(
+            Roots::new(vec![PathBuf::from("/home/op/dev")]).unwrap(),
+            vec![PathBuf::from("/home/op/.config")],
+            Some(PathBuf::from("/home/op/.local/share/ren/scratch")),
+            Some(PathBuf::from("/home/op")),
+        )
+        .unwrap()
     }
 
     #[test]
@@ -126,13 +205,26 @@ mod tests {
         let roots = roots();
         assert!(Workdir::confirm(&roots, "/home/op/dev".into()).is_ok());
         assert!(Workdir::confirm(&roots, "/home/op/dev/acme/api".into()).is_ok());
-        for outside in ["/home/op/devious", "/home/op", "/etc"] {
+        // Another place, and a scratch run's own folder.
+        assert!(Workdir::confirm(&roots, "/home/op/.config/nvim".into()).is_ok());
+        assert!(
+            Workdir::confirm(&roots, "/home/op/.local/share/ren/scratch/scratch-1".into()).is_ok()
+        );
+        for outside in ["/home/op/devious", "/home/op", "/home/op/.ssh", "/etc"] {
             assert_eq!(
                 Workdir::confirm(&roots, outside.into()),
                 Err(WorkdirError::OutsideRoots),
                 "{outside}"
             );
         }
+    }
+
+    #[test]
+    fn shows_paths_under_home_with_a_tilde() {
+        let bounds = roots();
+        assert_eq!(bounds.shown(Path::new("/home/op/dev/ren")), "~/dev/ren");
+        assert_eq!(bounds.shown(Path::new("/home/op")), "~");
+        assert_eq!(bounds.shown(Path::new("/srv/ren")), "/srv/ren");
     }
 
     #[test]

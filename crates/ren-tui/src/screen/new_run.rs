@@ -30,7 +30,7 @@ use ren_harness::{
     models::{DefaultChoice, ModelId},
     settings::{ApprovalPolicy, Effort, RunSettings},
 };
-use ren_supervisor::{Client, ClientStatus, Project, ProjectGit};
+use ren_supervisor::{Client, ClientStatus, PlaceKind, Project, ProjectGit};
 
 /// The composer, as written so far.
 #[derive(Debug)]
@@ -40,6 +40,8 @@ pub(crate) struct NewRun {
     /// the first offered.
     project: Option<String>,
     client: Harness,
+    /// Whether the folder list shows the other places (`~/.config`).
+    others: bool,
     /// The model; none is the client's own default.
     model: Option<ModelId>,
     /// The effort; none is the model's own.
@@ -47,6 +49,14 @@ pub(crate) struct NewRun {
     /// What the client may do without asking; none is its own setting.
     approvals: Option<ApprovalPolicy>,
     focus: Focus,
+}
+
+/// One entry of the folder list.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Spot<'a> {
+    /// A new scratch folder of the run's own.
+    Scratch,
+    Place(&'a Project),
 }
 
 /// What has the keys.
@@ -94,6 +104,7 @@ impl NewRun {
             prompt: Composer::default(),
             project: None,
             client: model.client,
+            others: false,
             model: None,
             effort: None,
             approvals: None,
@@ -276,20 +287,31 @@ impl NewRun {
             .and_then(|path| projects.iter().find(|project| &project.path == path))
     }
 
-    /// The folders whose name or path holds `search`, ignoring case: those
-    /// recent runs worked in first, newest first, then the rest; and how
-    /// many are recent.
-    fn choices<'a>(search: &str, model: &'a Model) -> (Vec<&'a Project>, usize) {
+    /// What the folder list offers, `search` narrowing it: scratch first
+    /// where the daemon offers it, then the folders recent runs worked in,
+    /// newest first, then the rest (other places only when shown); and how
+    /// many entries lead before the recent ones, and how many are recent.
+    fn choices<'a>(&self, search: &str, model: &'a Model) -> (Vec<Spot<'a>>, usize, usize) {
         let search = search.to_lowercase();
         let matching: Vec<&Project> = model
             .projects()
             .iter()
+            .filter(|project| match project.kind {
+                PlaceKind::Project => true,
+                PlaceKind::Other => self.others,
+                PlaceKind::Scratch => false,
+            })
             .filter(|project| {
                 project.name.to_lowercase().contains(&search)
-                    || project.path.to_lowercase().contains(&search)
+                    || project.shown.to_lowercase().contains(&search)
             })
             .collect();
-        let mut chosen: Vec<&Project> = model
+        let mut spots = Vec::new();
+        if model.scratch.is_some() && "scratch".contains(&search) {
+            spots.push(Spot::Scratch);
+        }
+        let lead = spots.len();
+        let recent: Vec<&Project> = model
             .desk
             .recent_folders()
             .into_iter()
@@ -301,14 +323,15 @@ impl NewRun {
             })
             .take(5)
             .collect();
-        let recent = chosen.len();
-        chosen.extend(
+        let count = recent.len();
+        spots.extend(recent.iter().copied().map(Spot::Place));
+        spots.extend(
             matching
                 .into_iter()
-                .filter(|project| !chosen.iter().any(|seen| seen.path == project.path))
-                .collect::<Vec<_>>(),
+                .filter(|project| !recent.iter().any(|seen| seen.path == project.path))
+                .map(Spot::Place),
         );
-        (chosen, recent)
+        (spots, lead, count)
     }
 
     pub fn paste(&mut self, text: &str) -> Vec<Action> {
@@ -379,7 +402,7 @@ impl NewRun {
 
     fn pick(&mut self, mut picker: Picker, key: Key, ctx: &mut Ctx<'_>) -> Vec<Action> {
         let count = match picker.setting {
-            Setting::Project => Self::choices(&picker.search, ctx.model).0.len(),
+            Setting::Project => self.choices(&picker.search, ctx.model).0.len(),
             Setting::Client => ctx.model.clients().len(),
             Setting::Model => self.model_choices(&picker.search, ctx.model).len(),
         };
@@ -400,6 +423,11 @@ impl NewRun {
                 let choice = choices.get(picker.at).copied().flatten();
                 let efforts = self.efforts(choice, ctx.model);
                 picker.effort = Self::step(picker.effort, efforts, key == Key::Right);
+            }
+            // Tab shows or hides the other places in the folder list.
+            Key::Tab if picker.setting == Setting::Project => {
+                self.others = !self.others;
+                picker.at = 0;
             }
             Key::Enter | Key::Tab => return self.choose(&picker, ctx.model),
             // Back to the prompt, as it was: no folder is assumed.
@@ -454,8 +482,11 @@ impl NewRun {
     fn choose(&mut self, picker: &Picker, model: &mut Model) -> Vec<Action> {
         match picker.setting {
             Setting::Project => {
-                if let Some(project) = Self::choices(&picker.search, model).0.get(picker.at) {
-                    self.project = Some(project.path.clone());
+                match self.choices(&picker.search, model).0.get(picker.at) {
+                    Some(Spot::Place(project)) => self.project = Some(project.path.clone()),
+                    // No folder: a new scratch folder of the run's own.
+                    Some(Spot::Scratch) => self.project = None,
+                    None => {}
                 }
             }
             Setting::Client => match model.clients().get(picker.at) {
@@ -501,11 +532,15 @@ impl NewRun {
     }
 
     fn start(&mut self, ctx: &mut Ctx<'_>) -> Vec<Action> {
-        let Some(project) = self.project(ctx.model.projects()) else {
-            self.focus = Self::picking(Setting::Project);
-            return vec![Action::Say(Notice::info(
-                "choose the folder the run works in, then enter starts it",
-            ))];
+        let dir = match self.project(ctx.model.projects()) {
+            Some(project) => Some(project.path.clone()),
+            None if ctx.model.scratch.is_some() => None,
+            None => {
+                self.focus = Self::picking(Setting::Project);
+                return vec![Action::Say(Notice::info(
+                    "choose the folder the run works in, then enter starts it",
+                ))];
+            }
         };
         let ready =
             ctx.model.clients().iter().any(|client| {
@@ -518,7 +553,6 @@ impl NewRun {
                 Self::name(self.client)
             )))];
         }
-        let dir = project.path.clone();
         let prompt = Prompt::parse(self.prompt.text()).ok();
         let settings = RunSettings {
             model: self.kept(ctx.model),
@@ -624,6 +658,7 @@ impl NewRun {
     fn project_label(&self, model: &Model) -> String {
         match self.project(model.projects()) {
             Some(project) => format!("{} · {}", project.name, Self::branch(&project.git)),
+            None if model.scratch.is_some() => "scratch · a new folder of its own".to_owned(),
             None => "none yet".to_owned(),
         }
     }
@@ -644,7 +679,7 @@ impl NewRun {
                 span
             }
         };
-        let folder_ink = if self.project(model.projects()).is_some() {
+        let folder_ink = if self.project(model.projects()).is_some() || model.scratch.is_some() {
             Ink::Text
         } else {
             Ink::Error
@@ -662,7 +697,7 @@ impl NewRun {
             ),
         ]);
         let path = match self.project(model.projects()) {
-            Some(project) => Line::of(format!("{} ", project.path), Ink::Muted),
+            Some(project) => Line::of(format!("{} ", project.shown), Ink::Muted),
             None => Line::default(),
         };
         // How: the client, its model and effort, and what it may do alone.
@@ -862,15 +897,20 @@ impl NewRun {
         };
         match picker.setting {
             Setting::Project => {
-                let (projects, recent) = Self::choices(&picker.search, model);
-                let name = projects
-                    .iter()
+                let (spots, lead, recent) = self.choices(&picker.search, model);
+                let places = || {
+                    spots.iter().filter_map(|spot| match spot {
+                        Spot::Place(project) => Some(*project),
+                        Spot::Scratch => None,
+                    })
+                };
+                let name = places()
                     .map(|project| Text(&project.name).width())
+                    .chain([Text("scratch").width()])
                     .max()
                     .unwrap_or(0);
-                let path = projects
-                    .iter()
-                    .map(|project| Text(&project.path).width())
+                let path = places()
+                    .map(|project| Text(&project.shown).width())
                     .max()
                     .unwrap_or(0);
                 let mut lines = vec![Line::new(vec![
@@ -878,24 +918,48 @@ impl NewRun {
                     Span::new(format!("{}▏", picker.search), Ink::Text),
                 ])];
                 let first = picker.at.saturating_sub(Self::LISTED - 1);
-                for (index, project) in projects.iter().enumerate().skip(first).take(Self::LISTED) {
-                    if index == 0 && recent > 0 {
+                for (index, spot) in spots.iter().enumerate().skip(first).take(Self::LISTED) {
+                    if index == lead && recent > 0 {
                         lines.push(Line::of(" recent", Ink::Muted));
                     }
-                    if index == recent && recent > 0 {
-                        lines.push(Line::of(" all folders", Ink::Muted));
+                    if index == lead + recent && index > 0 {
+                        lines.push(Line::of(" folders", Ink::Muted));
                     }
-                    lines.push(mark(
-                        index,
-                        vec![
-                            Span::new(format!("{:<name$}  ", project.name), Ink::Text),
-                            Span::new(format!("{:<path$}  ", project.path), Ink::Muted),
-                            Span::new(Self::branch(&project.git), Ink::Muted),
+                    let spans = match spot {
+                        Spot::Scratch => vec![
+                            Span::new(format!("{:<name$}  ", "scratch"), Ink::Text),
+                            Span::new("a new folder of its own, kept with the run", Ink::Muted),
                         ],
-                    ));
+                        Spot::Place(project) => {
+                            let mut spans = vec![
+                                Span::new(format!("{:<name$}  ", project.name), Ink::Text),
+                                Span::new(format!("{:<path$}  ", project.shown), Ink::Muted),
+                                Span::new(Self::branch(&project.git), Ink::Muted),
+                            ];
+                            if project.kind == PlaceKind::Other {
+                                spans.push(Span::new("  other place", Ink::Tool));
+                            }
+                            spans
+                        }
+                    };
+                    lines.push(mark(index, spans));
                 }
-                if projects.is_empty() {
+                if spots.is_empty() {
                     lines.push(Line::of("   no folder matches", Ink::Muted));
+                }
+                if model
+                    .projects()
+                    .iter()
+                    .any(|project| project.kind == PlaceKind::Other)
+                {
+                    lines.push(Line::of(
+                        if self.others {
+                            "   tab hides other places"
+                        } else {
+                            "   tab shows other places (~/.config and the like)"
+                        },
+                        Ink::Muted,
+                    ));
                 }
                 lines
             }
@@ -937,6 +1001,15 @@ impl NewRun {
                         " enter start · ctrl-j new line · ctrl-e your editor · esc cancel"
                     }
                     Focus::Picking(picker) => match picker.setting {
+                        Setting::Project
+                            if look
+                                .model
+                                .projects()
+                                .iter()
+                                .any(|project| project.kind == PlaceKind::Other) =>
+                        {
+                            " where should the run work? type to search · ↑↓ choose · tab other places · enter take it · esc back"
+                        }
                         Setting::Project => {
                             " where should the run work? type to search · ↑↓ choose · enter take it · esc back to the prompt"
                         }

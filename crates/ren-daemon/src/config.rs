@@ -78,7 +78,9 @@ pub enum ConfigError {
     Revision(#[source] serde_json::Error),
     #[error("set --data-dir when HOME is unavailable")]
     NoDataDir,
-    #[error("runs.roots entries must be absolute paths")]
+    #[error(
+        "runs.roots entries must be absolute paths, and runs.places and runs.scratch absolute or under ~/"
+    )]
     RunRoot,
 }
 
@@ -133,16 +135,56 @@ pub struct Config {
 #[serde(default, deny_unknown_fields)]
 pub struct RunsOptions {
     /// Absolute paths. A run may start in a root or any folder under one,
-    /// after links are resolved.
+    /// after links are resolved; the projects offered are found under them.
     pub roots: Vec<PathBuf>,
+    /// Other places runs may start in, offered only when asked for: each
+    /// one's own folders, hidden ones included (`~/.config`). Absolute, or
+    /// under the home as `~/…`.
+    pub places: Vec<PathBuf>,
+    /// Where scratch runs each get a new folder. Absolute or `~/…`; by
+    /// default `$XDG_DATA_HOME/ren/scratch`, else `~/.local/share/ren/scratch`.
+    pub scratch: Option<PathBuf>,
+}
+
+/// The `[runs]` paths with the home resolved, as the supervisor takes them.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RunPlaces {
+    pub places: Vec<PathBuf>,
+    pub scratch: Option<PathBuf>,
+    pub home: Option<PathBuf>,
 }
 
 impl RunsOptions {
     pub fn validate(&self) -> Result<(), ConfigError> {
-        if self.roots.iter().all(|root| root.is_absolute()) {
+        let anchored = |path: &PathBuf| path.is_absolute() || path.starts_with("~");
+        if self.roots.iter().all(|root| root.is_absolute())
+            && self.places.iter().chain(&self.scratch).all(anchored)
+        {
             Ok(())
         } else {
             Err(ConfigError::RunRoot)
+        }
+    }
+
+    /// The other places and the scratch folder, `~` read as the home `env`
+    /// names. A path under a home that is not known is left out.
+    pub fn places_in(&self, env: &HostEnv) -> RunPlaces {
+        let home = env.absolute_path("HOME");
+        let anchored = |path: &PathBuf| match path.strip_prefix("~") {
+            Ok(rest) => home.as_ref().map(|home| home.join(rest)),
+            Err(_) => Some(path.clone()),
+        };
+        let scratch = match &self.scratch {
+            Some(scratch) => anchored(scratch),
+            None => env
+                .absolute_path("XDG_DATA_HOME")
+                .or_else(|| home.as_ref().map(|home| home.join(".local/share")))
+                .map(|data| data.join("ren/scratch")),
+        };
+        RunPlaces {
+            places: self.places.iter().filter_map(anchored).collect(),
+            scratch,
+            home,
         }
     }
 }
@@ -321,6 +363,10 @@ impl Config {
             buffer: self.buffer,
             control: self.control.clone(),
             runs: self.runs.clone(),
+            run_places: match keys {
+                Keys::Env(env) => self.runs.places_in(env),
+                Keys::Unchecked => RunPlaces::default(),
+            },
             pi_cache: match keys {
                 Keys::Env(env) => PiCache::locate(env).ok(),
                 Keys::Unchecked => None,
@@ -428,6 +474,8 @@ pub struct RuntimeConfig {
     buffer: BufferOptions,
     control: ControlOptions,
     runs: RunsOptions,
+    /// The runs' other places and scratch folder, with the home resolved.
+    run_places: RunPlaces,
     /// Where driven Pi processes find Ren's extension, when the host
     /// environment names a cache.
     pi_cache: Option<PiCache>,
@@ -449,6 +497,9 @@ impl RuntimeConfig {
     }
     pub fn runs(&self) -> &RunsOptions {
         &self.runs
+    }
+    pub fn run_places(&self) -> &RunPlaces {
+        &self.run_places
     }
     pub fn pi_cache(&self) -> Option<&PiCache> {
         self.pi_cache.as_ref()
@@ -517,6 +568,37 @@ mod tests {
             ..Config::default()
         };
         assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn run_places_and_scratch_read_the_home() {
+        let config: Config = toml::from_str(
+            "[runs]\nroots = [\"/home/op/dev\"]\nplaces = [\"~/.config\", \"/srv/dotfiles\"]\n",
+        )
+        .unwrap();
+        let env = HostEnv::from_pairs([("HOME", "/home/op")]);
+        let places = config.runs.places_in(&env);
+        assert_eq!(
+            places.places,
+            [
+                PathBuf::from("/home/op/.config"),
+                PathBuf::from("/srv/dotfiles")
+            ]
+        );
+        assert_eq!(
+            places.scratch,
+            Some(PathBuf::from("/home/op/.local/share/ren/scratch"))
+        );
+        let env = HostEnv::from_pairs([("HOME", "/home/op"), ("XDG_DATA_HOME", "/data")]);
+        assert_eq!(
+            config.runs.places_in(&env).scratch,
+            Some(PathBuf::from("/data/ren/scratch"))
+        );
+        // Without a home, a place under it is left out.
+        let homeless = config.runs.places_in(&HostEnv::from_pairs([]));
+        assert_eq!(homeless.places, [PathBuf::from("/srv/dotfiles")]);
+        let relative: Config = toml::from_str("[runs]\nplaces = [\"dotfiles\"]\n").unwrap();
+        assert!(relative.runs.validate().is_err());
     }
 
     #[test]

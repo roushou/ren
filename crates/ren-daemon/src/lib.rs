@@ -298,6 +298,9 @@ impl Daemon {
         }
         let options = SupervisorOptions {
             roots: config.runs().roots.clone(),
+            places: config.run_places().places.clone(),
+            scratch: config.run_places().scratch.clone(),
+            home: config.run_places().home.clone(),
             gateway: GatewayEndpoint::parse(&format!("http://{address}"))?,
             version: env!("CARGO_PKG_VERSION").to_owned(),
             line_limit: LineLimit::DEFAULT,

@@ -167,22 +167,28 @@ impl Listing {
             }
             Grouping::Folder => {
                 // Folders by their most pressing run, then their newest.
+                let scratch = model.scratch.as_deref();
                 let mut folders: Vec<(&str, u8, u64)> = Vec::new();
                 for run in &runs {
                     let rank = Group::of(run).rank();
-                    match folders.iter_mut().find(|(path, ..)| *path == run.workdir) {
+                    match folders
+                        .iter_mut()
+                        .find(|(path, ..)| *path == run.folder(scratch))
+                    {
                         Some((_, best, newest)) => {
                             *best = (*best).min(rank);
                             *newest = (*newest).max(run.seen);
                         }
-                        None => folders.push((&run.workdir, rank, run.seen)),
+                        None => folders.push((run.folder(scratch), rank, run.seen)),
                     }
                 }
                 folders.sort_by(|a, b| a.1.cmp(&b.1).then(b.2.cmp(&a.2)));
                 let mut rows = Vec::new();
                 for (path, ..) in folders {
-                    let mut inside: Vec<&&Run> =
-                        runs.iter().filter(|run| run.workdir == path).collect();
+                    let mut inside: Vec<&&Run> = runs
+                        .iter()
+                        .filter(|run| run.folder(scratch) == path)
+                        .collect();
                     inside.sort_by(|a, b| {
                         Group::of(a)
                             .rank()
@@ -292,15 +298,22 @@ impl Listing {
             Heading::State(group) => Line::of(format!(" {}", group.heading()), Ink::Muted),
             Heading::Elsewhere => Line::of(" STARTED ELSEWHERE", Ink::Muted),
             Heading::Folder(path) => {
-                let name = path
-                    .rsplit('/')
-                    .find(|part| !part.is_empty())
-                    .unwrap_or(path);
+                let scratch = model.scratch.as_deref();
+                let name = if scratch == Some(path.as_str()) {
+                    "Scratch"
+                } else {
+                    path.rsplit('/')
+                        .find(|part| !part.is_empty())
+                        .unwrap_or(path)
+                };
                 let needs = model
                     .desk
                     .all()
                     .iter()
-                    .filter(|run| run.workdir == *path && run.attention() == Attention::NeedsYou)
+                    .filter(|run| {
+                        run.folder(scratch) == path.as_str()
+                            && run.attention() == Attention::NeedsYou
+                    })
                     .count();
                 let mut line = Line::new(vec![
                     Span::new(format!(" {name}"), Ink::Text).with(crate::ui::Emphasis::Bold),

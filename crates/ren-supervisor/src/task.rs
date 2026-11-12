@@ -11,12 +11,13 @@
 use crate::entries::Entries;
 use crate::models::{Listings, ModelProbe, ModelsError, ModelsReply};
 use crate::{
-    CommandError, Conversation, Request, RunSnapshot, RunUpdate, Start, StartError,
+    CommandError, Conversation, Places, Request, RunSnapshot, RunUpdate, Start, StartError,
+    StartPlace,
     client::{Client, ClientStatus},
     host::{AgentHost, AgentProcess, KillSwitch},
     project::Search,
     run::{ProcessExit, RunAction, RunCommand, RunEvent, RunState},
-    workdir::{RequestedDir, Roots, Workdir},
+    workdir::{Bounds, RequestedDir, Workdir},
 };
 use futures_util::{
     FutureExt, StreamExt,
@@ -52,7 +53,7 @@ pub struct SupervisorTask<H> {
     pub(crate) host: H,
     pub(crate) ids: Arc<dyn IdSource>,
     pub(crate) recorder: Recorder,
-    pub(crate) roots: Roots,
+    pub(crate) bounds: Bounds,
     pub(crate) gateway: GatewayEndpoint,
     pub(crate) version: String,
     pub(crate) line_limit: LineLimit,
@@ -148,13 +149,20 @@ impl<H: AgentHost> SupervisorTask<H> {
             Request::Projects { reply } => {
                 // Bounded by `Search`; the host reads only folder listings
                 // and `HEAD` files.
-                let projects = self.roots.projects(Search::DEFAULT, |folder| {
+                let projects = self.bounds.places(Search::DEFAULT, |folder| {
                     self.host
                         .look(folder)
                         .inspect_err(|error| tracing::debug!(%error, "cannot look in a folder"))
                         .ok()
                 });
-                let _ = reply.send(projects);
+                let _ = reply.send(Places {
+                    projects,
+                    scratch: self
+                        .bounds
+                        .scratch()
+                        .and_then(|scratch| scratch.to_str())
+                        .map(str::to_owned),
+                });
             }
             Request::Clients { reply } => {
                 let clients = Harness::ALL
@@ -196,7 +204,7 @@ impl<H: AgentHost> SupervisorTask<H> {
         &self,
         Start {
             harness,
-            dir,
+            place,
             conversation,
             settings,
             first,
@@ -205,12 +213,29 @@ impl<H: AgentHost> SupervisorTask<H> {
         outputs: &mut Outputs,
         exits: &mut Exits,
     ) -> Result<RunId, StartError> {
-        let requested = RequestedDir::parse(&dir).map_err(StartError::Workdir)?;
+        let requested = match place {
+            StartPlace::Folder(dir) => RequestedDir::parse(&dir).map_err(StartError::Workdir)?,
+            StartPlace::Scratch => {
+                let scratch = self.bounds.scratch().ok_or(StartError::NoScratch)?;
+                // Its last eight hex digits: random for real ids, and
+                // distinct for sequential ones.
+                let id = self.ids.next_uuid().simple().to_string();
+                let folder = scratch.join(format!(
+                    "scratch-{}",
+                    id.get(id.len().saturating_sub(8)..).unwrap_or(&id)
+                ));
+                self.host
+                    .make_scratch(&folder)
+                    .map_err(StartError::Scratch)?;
+                RequestedDir::parse(folder.to_str().ok_or(StartError::NoScratch)?)
+                    .map_err(StartError::Workdir)?
+            }
+        };
         let resolved = self
             .host
             .resolve(requested.as_path())
             .map_err(StartError::Resolve)?;
-        let workdir = Workdir::confirm(&self.roots, resolved).map_err(StartError::Workdir)?;
+        let workdir = Workdir::confirm(&self.bounds, resolved).map_err(StartError::Workdir)?;
         if let Some(policy) = settings.approvals
             && !ApprovalPolicy::offered(harness).contains(&policy)
         {
@@ -325,9 +350,14 @@ impl<H: AgentHost> SupervisorTask<H> {
             .map_err(ModelsError::NotDrivable)?;
         let (listing, first) =
             ModelListing::open(harness, &self.version).map_err(ModelsError::NotDrivable)?;
-        let root = self.roots.iter().next().ok_or(ModelsError::NoRoot)?;
+        let root = self
+            .bounds
+            .roots()
+            .iter()
+            .next()
+            .ok_or(ModelsError::NoRoot)?;
         let workdir =
-            Workdir::confirm(&self.roots, root.to_path_buf()).map_err(|_| ModelsError::NoRoot)?;
+            Workdir::confirm(&self.bounds, root.to_path_buf()).map_err(|_| ModelsError::NoRoot)?;
         let process = self.host.spawn(&plan, &workdir).map_err(|error| {
             tracing::debug!(%harness, %error, "cannot start a client to list its models");
             ModelsError::Spawn

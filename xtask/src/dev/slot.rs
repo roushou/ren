@@ -123,6 +123,10 @@ pub struct Slot {
     ui_next: PathBuf,
     /// The dev daemon's run root, with a few fake projects to start runs in.
     pub work_dir: PathBuf,
+    /// Its other place, with a few fake folders, like `~/.config`.
+    places_dir: PathBuf,
+    /// Where its scratch runs get their folders.
+    scratch_dir: PathBuf,
 }
 
 impl Slot {
@@ -162,6 +166,8 @@ impl Slot {
             ui_dir: share.join("ui"),
             ui_next: share.join("ui.next"),
             work_dir: share.join("work"),
+            places_dir: share.join("config"),
+            scratch_dir: share.join("scratch"),
             home: home.clone(),
         })
     }
@@ -228,6 +234,8 @@ impl Slot {
             },
             runs: RunsOptions {
                 roots: vec![self.work_dir.clone()],
+                places: vec![self.places_dir.clone()],
+                scratch: Some(self.scratch_dir.clone()),
             },
             ..Config::default()
         })
@@ -257,6 +265,9 @@ impl Slot {
     /// The fake projects runs start in.
     pub const PROJECTS: [&'static str; 2] = ["acme-api", "acme-web"];
 
+    /// The fake folders of its other place.
+    const PLACES: [&'static str; 3] = ["nvim", "acme-cli", ".hidden-tool"];
+
     /// The folder holding the `codex`, `claude`, and `pi` the dev daemon starts:
     /// the fake agent.
     fn agent_dir(&self) -> PathBuf {
@@ -279,6 +290,10 @@ impl Slot {
                 Self::quote(&self.data_dir),
             );
             InstallVps::write_private(&dir.join(program), script.as_bytes(), 0o755)?;
+        }
+        for place in Self::PLACES {
+            let folder = self.places_dir.join(place);
+            fs::create_dir_all(&folder).map_err(InstallError::file(&folder))?;
         }
         for project in Self::PROJECTS {
             let folder = self.work_dir.join(project);

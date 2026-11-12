@@ -71,6 +71,8 @@ struct FakeHost {
     script: Script,
     spawn_fails: bool,
     spawned: Arc<Mutex<Vec<Spawned>>>,
+    /// Folders made, scratch runs' marked as repositories.
+    made: Arc<Mutex<Vec<(PathBuf, bool)>>>,
 }
 
 impl FakeHost {
@@ -79,6 +81,7 @@ impl FakeHost {
             script,
             spawn_fails: false,
             spawned: Arc::default(),
+            made: Arc::default(),
         }
     }
 }
@@ -93,7 +96,14 @@ impl AgentHost for FakeHost {
         match path.to_str() {
             // A link that leads out of the roots.
             Some("/work/escape") => Ok(PathBuf::from("/etc")),
-            Some(path) if path.starts_with("/work") || path == "/elsewhere" => Ok(path.into()),
+            Some(path)
+                if ["/work", "/scratch", "/home/op/.config"]
+                    .iter()
+                    .any(|bound| path.starts_with(bound))
+                    || path == "/elsewhere" =>
+            {
+                Ok(path.into())
+            }
             Some(_) | None => Err(io::Error::from(io::ErrorKind::NotFound)),
         }
     }
@@ -110,6 +120,16 @@ impl AgentHost for FakeHost {
             },
             Some(_) | None => Look::default(),
         })
+    }
+
+    fn make_dir(&self, dir: &Path) -> io::Result<()> {
+        self.made.lock().unwrap().push((dir.to_path_buf(), false));
+        Ok(())
+    }
+
+    fn make_scratch(&self, dir: &Path) -> io::Result<()> {
+        self.made.lock().unwrap().push((dir.to_path_buf(), true));
+        Ok(())
     }
 
     fn spawn(&self, plan: &LaunchPlan, workdir: &Workdir) -> io::Result<AgentProcess> {
@@ -257,6 +277,9 @@ async fn agent(
 fn options() -> SupervisorOptions {
     SupervisorOptions {
         roots: vec![PathBuf::from("/work")],
+        places: vec![PathBuf::from("/home/op/.config")],
+        scratch: Some(PathBuf::from("/scratch")),
+        home: Some(PathBuf::from("/home/op")),
         gateway: GatewayEndpoint::parse("http://127.0.0.1:8787").unwrap(),
         version: "0.1.0".into(),
         line_limit: LineLimit::DEFAULT,
@@ -845,8 +868,11 @@ async fn a_first_prompt_goes_out_once_the_conversation_opens() {
 #[tokio::test]
 async fn projects_are_the_repositories_and_plain_folders_under_the_roots() {
     let supervised = supervise(FakeHost::new(Script::Codex)).await;
-    let projects = supervised.supervisor.projects().await.unwrap();
-    let listed: Vec<(&str, &str)> = projects
+    let places = supervised.supervisor.projects().await.unwrap();
+    // The scratch folder runs get theirs in comes with them.
+    assert_eq!(places.scratch.as_deref(), Some("/scratch"));
+    let listed: Vec<(&str, &str)> = places
+        .projects
         .iter()
         .map(|project| (project.name.as_str(), project.path.as_str()))
         .collect();
@@ -943,6 +969,28 @@ async fn a_run_starts_with_its_chosen_settings() {
     ));
 }
 
+#[tokio::test]
+async fn a_scratch_run_gets_a_new_repository_of_its_own() {
+    let host = FakeHost::new(Script::Codex);
+    let (spawned, made) = (host.spawned.clone(), host.made.clone());
+    let supervised = supervise(host).await;
+    let mut start = starting(Harness::Codex, "/unused", Conversation::New, None);
+    start.place = ren_supervisor::StartPlace::Scratch;
+    supervised.supervisor.start(start).await.unwrap();
+    let (_, workdir) = spawned.lock().unwrap()[0].clone();
+    assert!(
+        workdir.to_str().unwrap().starts_with("/scratch/scratch-"),
+        "{workdir:?}"
+    );
+    // The scratch folder was made at setup; the run's own as a repository.
+    let made = made.lock().unwrap().clone();
+    assert_eq!(made[0], (PathBuf::from("/scratch"), false));
+    assert_eq!(made[1], (workdir, true));
+    // A folder outside every root and place is refused, a home included.
+    let outside = starting(Harness::Codex, "/home/op", Conversation::New, None);
+    assert!(supervised.supervisor.start(outside).await.is_err());
+}
+
 fn prompt_text(text: &str) -> Prompt {
     Prompt::parse(text.into()).unwrap()
 }
@@ -956,7 +1004,7 @@ fn starting(
 ) -> ren_supervisor::Start {
     ren_supervisor::Start {
         harness,
-        dir: dir.into(),
+        place: ren_supervisor::StartPlace::Folder(dir.into()),
         conversation,
         settings: ren_harness::settings::RunSettings::default(),
         first,

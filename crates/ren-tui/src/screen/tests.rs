@@ -115,6 +115,8 @@ fn projects() -> Vec<Project> {
     let project = |name: &str, path: &str, git: ProjectGit| Project {
         path: path.into(),
         name: name.into(),
+        shown: path.into(),
+        kind: ren_supervisor::PlaceKind::Project,
         git,
     };
     vec![
@@ -218,7 +220,10 @@ fn sent(out: &[Out]) -> Vec<Command> {
 /// A console with three live runs: one asking, one working, one idle.
 fn desk() -> Console {
     let mut console = Console::new(SIZE);
-    let _ = console.apply(Input::Projects(Ok(projects())));
+    let _ = console.apply(Input::Projects(Ok(ren_supervisor::Places {
+        projects: projects(),
+        scratch: None,
+    })));
     let _ = console.apply(Input::Runs(Ok(vec![
         snapshot(1, Harness::Codex, "/dev/acme-api", working(1)),
         snapshot(2, Harness::ClaudeCode, "/srv/ren", asking(2, push())),
@@ -426,7 +431,7 @@ fn n_opens_the_composer_on_where_the_run_works_then_the_prompt() {
         sent(&out),
         [Command::Start {
             harness: Harness::Codex,
-            dir: "/dev/acme-web".into(),
+            dir: Some("/dev/acme-web".into()),
             resume: None,
             prompt: Some(
                 Prompt::parse(
@@ -485,6 +490,44 @@ fn clients() -> Vec<ren_supervisor::Client> {
             approvals: ren_harness::settings::ApprovalPolicy::offered(Harness::OpenCode).to_vec(),
         },
     ]
+}
+
+#[test]
+fn the_composer_starts_in_scratch_unless_a_folder_is_chosen_and_shows_other_places_on_tab() {
+    let mut console = desk();
+    let _ = console.apply(Input::Clients(Ok(clients())));
+    let mut places = projects();
+    places.push(Project {
+        path: "/home/op/.config/nvim".into(),
+        name: "nvim".into(),
+        shown: "~/.config/nvim".into(),
+        kind: ren_supervisor::PlaceKind::Other,
+        git: ProjectGit::None,
+    });
+    let _ = console.apply(Input::Projects(Ok(ren_supervisor::Places {
+        projects: places,
+        scratch: Some("/home/op/.local/share/ren/scratch".into()),
+    })));
+    let _ = console.press(Key::Char('n'));
+    // Scratch is first; other places are hidden until tab shows them.
+    let shown = drawn(&console);
+    assert!(shown.contains("› scratch"), "{shown}");
+    assert!(!shown.contains("nvim"), "{shown}");
+    let _ = console.press(Key::Tab);
+    assert_eq!(
+        drawn(&console),
+        include_str!("../../tests/fixtures/app-new-run-places.txt")
+    );
+    // Taking scratch, the run gets a new folder of its own: no dir sent.
+    let _ = console.press(Key::Enter);
+    assert!(drawn(&console).contains("ctrl-o folder scratch · a new folder of its own"));
+    type_text(&mut console, "what is a monad");
+    let out = console.press(Key::Enter);
+    let started = sent(&out);
+    let [Command::Start { dir, .. }] = started.as_slice() else {
+        panic!("one start: {out:?}");
+    };
+    assert_eq!(dir, &None);
 }
 
 /// Models as a client lists them: one is its default.
@@ -682,7 +725,7 @@ fn writing_to_an_ended_run_continues_its_conversation() {
         sent(&console.write("pick it back up")),
         [Command::Start {
             harness: Harness::ClaudeCode,
-            dir: "/srv/ren".into(),
+            dir: Some("/srv/ren".into()),
             resume: Some(thread(5)),
             prompt: Some(Prompt::parse("pick it back up".into()).unwrap()),
             settings: ren_harness::settings::RunSettings::default(),

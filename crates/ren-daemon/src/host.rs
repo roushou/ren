@@ -254,6 +254,26 @@ impl AgentHost for ProcessHost {
         path.is_some_and(|path| std::env::split_paths(&path).any(|dir| dir.join(program).is_file()))
     }
 
+    fn make_dir(&self, dir: &Path) -> io::Result<()> {
+        std::fs::create_dir_all(dir)
+    }
+
+    fn make_scratch(&self, dir: &Path) -> io::Result<()> {
+        std::fs::create_dir(dir)?;
+        let mut git = std::process::Command::new("git");
+        git.args(["init", "--quiet"])
+            .current_dir(dir)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        let status = git.status();
+        // Without git the folder still works; its changes are not tracked.
+        if let Err(error) = status {
+            tracing::debug!(%error, "cannot make a scratch folder a repository");
+        }
+        Ok(())
+    }
+
     fn spawn(&self, plan: &LaunchPlan, workdir: &Workdir) -> io::Result<AgentProcess> {
         let extension = if plan.loads_pi_extension() {
             let cache = self.pi.as_ref().ok_or_else(|| {

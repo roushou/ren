@@ -26,6 +26,13 @@ pub trait AgentHost: Send + Sync + 'static {
     /// Whether `program` is on the path a started process searches.
     fn finds(&self, program: &str) -> bool;
 
+    /// Create `dir` and the folders above it, where they are missing.
+    fn make_dir(&self, dir: &Path) -> io::Result<()>;
+
+    /// Create `dir`, a new empty folder a scratch run works in, as a git
+    /// repository, so what the run changes can be read as changes.
+    fn make_scratch(&self, dir: &Path) -> io::Result<()>;
+
     /// Start `plan` in `workdir`, with piped stdin and stdout.
     fn spawn(&self, plan: &LaunchPlan, workdir: &Workdir) -> io::Result<AgentProcess>;
 }

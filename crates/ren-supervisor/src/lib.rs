@@ -22,10 +22,10 @@ pub mod workdir;
 pub use client::{Client, ClientStatus};
 pub use host::{AgentHost, AgentProcess, KillSignal, KillSwitch};
 pub use models::ModelsError;
-pub use project::{Look, Project, ProjectGit, Search};
+pub use project::{Look, PlaceKind, Project, ProjectGit, Search};
 pub use run::{Approvals, ProcessExit, RunCommand, RunRefused, RunState, Waiting};
 pub use task::SupervisorTask;
-pub use workdir::{Roots, Workdir, WorkdirError};
+pub use workdir::{Bounds, Roots, Workdir, WorkdirError};
 
 use ren_harness::{
     Harness,
@@ -48,6 +48,14 @@ use tokio::sync::{broadcast, mpsc, oneshot};
 pub struct SupervisorOptions {
     /// The folders runs may work in, as configured; the host resolves them.
     pub roots: Vec<PathBuf>,
+    /// Other places runs may start in (`~/.config`), offered only when
+    /// asked for: as configured, resolved by the host.
+    pub places: Vec<PathBuf>,
+    /// Where scratch runs each get a new folder; created when missing.
+    /// None: runs cannot start in scratch.
+    pub scratch: Option<PathBuf>,
+    /// The operator's home, for showing paths as `~/…`.
+    pub home: Option<PathBuf>,
     /// Where driven clients send their model traffic.
     pub gateway: GatewayEndpoint,
     /// Ren's version, reported to clients as theirs.
@@ -69,6 +77,24 @@ pub struct Supervisor {
 pub enum RunUpdate {
     State { run: RunId, state: RunState },
     Event { run: RunId, event: DriveEvent },
+}
+
+/// Where a new run works.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StartPlace {
+    /// A new folder of its own in the scratch folder.
+    Scratch,
+    /// This folder, which must lie inside a root or another place.
+    Folder(String),
+}
+
+/// Where runs can start: every place, and the folder scratch runs get
+/// theirs in.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct Places {
+    pub projects: Vec<Project>,
+    /// None when runs cannot start in scratch here.
+    pub scratch: Option<String>,
 }
 
 /// Which conversation a new run opens.
@@ -107,6 +133,10 @@ pub enum StartError {
     Workdir(WorkdirError),
     #[error("cannot resolve the directory")]
     Resolve(#[source] io::Error),
+    #[error("runs cannot start in scratch here: its folder could not be set up")]
+    NoScratch,
+    #[error("cannot create the scratch run's folder")]
+    Scratch(#[source] io::Error),
     #[error(transparent)]
     NotDrivable(NotDrivable),
     #[error("{0} asks for no approvals, so it takes no approval policy")]
@@ -148,8 +178,7 @@ pub struct Gone;
 /// settings, and its first prompt.
 pub struct Start {
     pub harness: Harness,
-    /// The folder, which must lie inside a root.
-    pub dir: String,
+    pub place: StartPlace,
     pub conversation: Conversation,
     /// Each left out is the client's own.
     pub settings: RunSettings,
@@ -171,7 +200,7 @@ pub(crate) enum Request {
         reply: oneshot::Sender<Vec<RunSnapshot>>,
     },
     Projects {
-        reply: oneshot::Sender<Vec<Project>>,
+        reply: oneshot::Sender<Places>,
     },
     Clients {
         reply: oneshot::Sender<Vec<Client>>,
@@ -204,6 +233,26 @@ impl Supervisor {
             .collect::<Result<Vec<_>, _>>()
             .map_err(SupervisorError::Root)?;
         let roots = Roots::new(resolved).map_err(SupervisorError::Roots)?;
+        // Other places that cannot be resolved are left out, not fatal.
+        let places = options
+            .places
+            .iter()
+            .filter_map(|place| {
+                host.resolve(place)
+                    .inspect_err(
+                        |error| tracing::warn!(?place, %error, "a run place is unreadable"),
+                    )
+                    .ok()
+            })
+            .collect();
+        let scratch = options.scratch.as_deref().and_then(|scratch| {
+            host.make_dir(scratch)
+                .and_then(|()| host.resolve(scratch))
+                .inspect_err(|error| tracing::warn!(?scratch, %error, "no scratch folder for runs"))
+                .ok()
+        });
+        let bounds =
+            Bounds::new(roots, places, scratch, options.home).map_err(SupervisorError::Roots)?;
         let (requests, receiver) = mpsc::channel(Self::QUEUE);
         let (updates, _) = broadcast::channel(Self::UPDATES);
         let task = SupervisorTask {
@@ -212,7 +261,7 @@ impl Supervisor {
             host,
             ids,
             recorder,
-            roots,
+            bounds,
             gateway: options.gateway,
             version: options.version,
             line_limit: options.line_limit,
@@ -255,7 +304,7 @@ impl Supervisor {
 
     /// The projects a run can start in: the git repositories under the
     /// roots, and each root's folders with none below them.
-    pub async fn projects(&self) -> Result<Vec<Project>, Gone> {
+    pub async fn projects(&self) -> Result<Places, Gone> {
         let (reply, answer) = oneshot::channel();
         self.requests
             .send(Request::Projects { reply })
