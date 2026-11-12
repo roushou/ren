@@ -29,6 +29,7 @@
     type RunClient,
     type RunModel,
     type RunProject,
+    type Read,
     type Remembered,
   } from '#lib/runs.ts';
 
@@ -36,6 +37,7 @@
     offered,
     scratch,
     remembered,
+    models: opening,
     clients,
     runs,
     busy,
@@ -47,6 +49,8 @@
     scratch: string | null;
     /** The remembered-settings cookie, as the server read it. */
     remembered: string | null;
+    /** The opening client's models, when the server read them in time. */
+    models: { harness: Drivable; read: Read<RunModel[]> } | null;
     clients: readonly RunClient[];
     runs: readonly DeskRun[];
     busy: boolean;
@@ -77,7 +81,15 @@
   /** Whether the folder list shows the other places (`~/.config`). */
   let others = $state(false);
   let harness = $state<Drivable>(saved.harness);
-  let listings = $state<Partial<Record<Drivable, Listing>>>({});
+  /** Each client's models, as far as they are known: the opening client's
+   * as the page was loaded with them. */
+  let listings = $state<Partial<Record<Drivable, Listing>>>(
+    untrack(() =>
+      opening?.read.state === 'read'
+        ? { [opening.harness]: { state: 'listed', models: opening.read.value } }
+        : {},
+    ),
+  );
   /** What the client last started with, until its models are listed. */
   const kept = untrack(() => saved.settings[saved.harness] ?? {});
   /** The chosen effort and approval policy; none is the client's own. */
@@ -287,6 +299,12 @@
     const takes = Setup.efforts(models, model)?.efforts ?? [];
     effort = EFFORTS.find((level) => level === kept.effort && takes.includes(level)) ?? null;
   }
+  // The settings kept for the opening client, checked against its models
+  // when the page came with them.
+  untrack(() => {
+    const known = listings[harness];
+    if (known?.state === 'listed') restore(harness, known.models);
+  });
 
   const chosenProject = $derived(offered.find((project) => project.path === dir));
   /** Whether the run has somewhere to work: a folder, or scratch. */

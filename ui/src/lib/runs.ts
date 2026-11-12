@@ -640,6 +640,8 @@ export interface RunsStart {
   clients: Read<RunClient[]>;
   recorded: Read<RecordedRun[]>;
   archived: Read<RecordedRun[]>;
+  /** The models of the client the form opens on, when they came in time. */
+  models: { harness: Drivable; read: Read<RunModel[]> } | null;
 }
 
 /** Run commands and reads through a capability-supplied `fetch`. */
@@ -656,7 +658,7 @@ export class RunsClient {
    * Everything the Runs page starts with, read at once; each read that
    * fails says why, and the others stand.
    */
-  async opening(): Promise<RunsStart> {
+  async opening(harness: Drivable | null = null, wait = 1_500): Promise<RunsStart> {
     const read = async <T>(reading: Promise<T>): Promise<Read<T>> => {
       try {
         return { state: 'read', value: await reading };
@@ -667,14 +669,20 @@ export class RunsClient {
         };
       }
     };
-    const [live, places, clients, recorded, archived] = await Promise.all([
+    // The daemon keeps each client's models, so this is quick; a client
+    // still listing is not waited for: the form asks again.
+    const models = harness
+      ? read(this.models(harness, AbortSignal.timeout(wait))).then((read) => ({ harness, read }))
+      : Promise.resolve(null);
+    const [live, places, clients, recorded, archived, listed] = await Promise.all([
       read(this.live()),
       read(this.projects()),
       read(this.clients()),
       read(this.recorded(100)),
       read(this.recorded(100, 'archived')),
+      models,
     ]);
-    return { live, places, clients, recorded, archived };
+    return { live, places, clients, recorded, archived, models: listed };
   }
   /** Where runs can start, and the scratch folder. */
   async projects(signal?: AbortSignal): Promise<RunPlaces> {

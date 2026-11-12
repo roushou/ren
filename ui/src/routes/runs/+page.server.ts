@@ -1,3 +1,4 @@
+import { Memory } from '#lib/runs.ts';
 import { RunsStartRead } from '#lib/server/runsStart.ts';
 import type { PageServerLoad } from './$types';
 
@@ -6,9 +7,12 @@ import type { PageServerLoad } from './$types';
 // does not read everything again.
 export const load: PageServerLoad = async ({ request, parent, cookies }) => {
   const { runsControl } = await parent();
+  /** The choices last started with, as this browser kept them. */
+  const remembered = cookies.get(Memory.COOKIE) ?? null;
   return {
-    initial: runsControl ? await RunsStartRead.read(request) : null,
-    /** The choices last started with, as this browser kept them. */
-    remembered: cookies.get('ren_runs') ?? null,
+    initial: runsControl
+      ? await RunsStartRead.read(request, Memory.parse(remembered).harness)
+      : null,
+    remembered,
   };
 };

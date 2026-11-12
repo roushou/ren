@@ -646,6 +646,7 @@
           {offered}
           {scratch}
           remembered={data.remembered}
+          models={initial?.models ?? null}
           {clients}
           {runs}
           {busy}
