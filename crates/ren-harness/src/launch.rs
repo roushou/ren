@@ -123,9 +123,6 @@ impl Harness {
         }
     }
 
-    /// The environment variable opencode reads inline configuration from.
-    const OPENCODE_CONFIG: &'static str = "OPENCODE_CONFIG_CONTENT";
-
     /// The program Ren runs to drive this harness, when it can drive it.
     pub fn driven_program(self) -> Result<&'static str, NotDrivable> {
         match self {
@@ -208,32 +205,6 @@ impl Harness {
 }
 
 impl LaunchPlan {
-    /// opencode, through its documented runtime override, which it merges
-    /// over the global and project files. Only the two providers' base URLs
-    /// are set: keys, sign-in, and every other provider stay opencode's own.
-    /// Its OpenAI WebSocket is refused with 426, and opencode keeps the
-    /// session on HTTP/SSE.
-    pub(crate) fn opencode(gateway: &GatewayEndpoint) -> Self {
-        let config = serde_json::json!({
-            "provider": {
-                "anthropic": {
-                    "options": { "baseURL": gateway.url("/anthropic/v1").as_str() }
-                },
-                "openai": {
-                    "options": { "baseURL": gateway.url("/openai/v1").as_str() }
-                },
-            }
-        });
-        let mut environment = BTreeMap::new();
-        environment.insert(Harness::OPENCODE_CONFIG.into(), config.to_string().into());
-        Self {
-            harness: Harness::OpenCode,
-            executable: "opencode",
-            arguments: Vec::new(),
-            environment,
-        }
-    }
-
     /// The plan with `token` sent to the gateway on every request. Claude
     /// Code takes it as a custom header, after any the user set; Codex and
     /// the Pi extension read it from the environment.
@@ -303,10 +274,10 @@ impl LaunchPlan {
                 Some(PiCache::locate(env)?.materialize()?)
             }
             Harness::OpenCode => {
-                if env.is_set(Harness::OPENCODE_CONFIG) {
+                if env.is_set(LaunchPlan::OPENCODE_CONFIG) {
                     eprintln!(
                         "Ren replaces {} for this session; keep other settings in opencode.json.",
-                        Harness::OPENCODE_CONFIG
+                        LaunchPlan::OPENCODE_CONFIG
                     );
                 }
                 eprintln!(

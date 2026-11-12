@@ -14,6 +14,7 @@ pub mod drive;
 pub mod endpoint;
 pub mod host;
 pub mod launch;
+pub mod opencode;
 pub mod pi;
 pub mod tools;
 
