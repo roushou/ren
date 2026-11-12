@@ -256,6 +256,18 @@ pub enum Rule {
     Plain,
     /// `▀` in the color of a lit title bar above it, so the two read as one.
     Edge(Ink),
+    /// `─` meeting a column's `│` `at` cells in: `┬` above the columns, `┴`
+    /// below them.
+    Joined { at: u16, joint: Joint },
+}
+
+/// Where a rule meets a column's rule.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Joint {
+    /// The rule is above the columns: `┬`.
+    Above,
+    /// The rule is below them: `┴`.
+    Below,
 }
 
 /// Equal cells with rules between them.

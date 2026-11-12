@@ -1,4 +1,5 @@
  ren   0 sessions · 0 streaming · 0 waiting                                                         1 needs you  3 live
+──────────────────────────────┬─────────────────────────────────────────────────────────────────────────────────────────
  ren ◆1  /srv/                │ ren · Claude Code · needs you                                                  /srv/ren
  1 ◆ fix the flaky upl…  wants│  Conversation   Activity   Files   Calls
                               │▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
@@ -6,15 +7,14 @@
  2 ● new Codex run  working   │ ▾ fix the flaky upload test  1 s · 1 tool
                               │     The lease token was compared before the retry counter was bumped, so a late
  acme-web  /dev/              │     worker could still finish the job. I moved the check after the bump.
- 3 ○ new Claude Code r…  your │   ● Bash   cargo test -p upload
-               ┌ new run ───────────────────────────────────────────────────────────────────────────────┐
-               │  project   ac▏                                                                         │─────────────┐
-               │    › acme-api  /dev/acme-api  main                                                     │             │
+ 3 ○ new Claude┌ new run ───────────────────────────────────────────────────────────────────────────────┐
+               │  project   ac▏                                                                         │
+               │    › acme-api  /dev/acme-api  main                                                     │─────────────┐
                │      acme-web  /dev/acme-web  feat/upload                                              │             │
                │                                                                                        │             │
-               │  client    ◉ Claude Code   ○ Codex                                                     │rn           │
-               │                                                                                        │─────────────┘
-               │  prompt                                                                                │
+               │  client    ◉ Claude Code   ○ Codex                                                     │             │
+               │                                                                                        │rn           │
+               │  prompt                                                                                │─────────────┘
                │                                                                                        │
                │                                                                                        │
                │  tab next field · ↑↓ project · space client · enter start · esc cancel                 │
@@ -26,5 +26,5 @@
                               │
                               │
                               │
-                              │
+──────────────────────────────┴─────────────────────────────────────────────────────────────────────────────────────────
  y allow · a allow for the run · d deny · D deny and stop · i reply instead                       ? keys │ 00:00:00 UTC

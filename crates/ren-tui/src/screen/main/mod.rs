@@ -23,7 +23,7 @@ use crate::Key;
 use crate::keys::{Bind, HelpRow, Keymap};
 use crate::model::desk::{Attention, Run};
 use crate::model::{Command, Control, Model};
-use crate::ui::{Anchor, Ink, Keep, Line, Lines, Size, Span, View};
+use crate::ui::{Anchor, Ink, Joint, Keep, Line, Lines, Rule, Size, Span, View};
 use ren_harness::drive::{ApprovalId, Decision, Prompt};
 use ren_protocol::native::NativeThreadId;
 use ren_recorder::id::RunId;
@@ -756,9 +756,25 @@ impl Main {
             Ink::Ground,
             View::Rows(vec![
                 (Size::Exact(1), View::Bar(self.top_bar(look))),
+                // The list and the session are framed above and below, the
+                // rule between them meeting both.
+                (
+                    Size::Exact(1),
+                    View::Rule(Rule::Joined {
+                        at: side,
+                        joint: Joint::Above,
+                    }),
+                ),
                 (
                     Size::Fill,
                     View::Columns(vec![(Size::Exact(side), list_view), (Size::Fill, detail)]),
+                ),
+                (
+                    Size::Exact(1),
+                    View::Rule(Rule::Joined {
+                        at: side,
+                        joint: Joint::Below,
+                    }),
                 ),
                 (Size::Exact(1), View::Bar(self.key_bar(look))),
             ]),

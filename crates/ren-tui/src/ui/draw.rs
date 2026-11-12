@@ -1,7 +1,9 @@
 //! The one renderer: any [`View`] onto a ratatui buffer, with a resolved
 //! theme. Tested by drawing views to a buffer, without a terminal.
 
-use super::{Anchor, Bar, Emphasis, Grid, Ink, Keep, Line, Lines, Place, Rule, Size, Text, View};
+use super::{
+    Anchor, Bar, Emphasis, Grid, Ink, Joint, Keep, Line, Lines, Place, Rule, Size, Text, View,
+};
 use crate::Theme;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
@@ -225,6 +227,20 @@ impl Rule {
     fn render(self, theme: &Theme, area: Rect, buf: &mut Buffer) {
         let (glyph, style) = match self {
             Self::Plain => ("─", theme.ink(Ink::Rule)),
+            Self::Joined { at, joint } => {
+                let style = theme.ink(Ink::Rule);
+                for x in area.x..area.x + area.width {
+                    buf.set_string(x, area.y, "─", style);
+                }
+                if at < area.width {
+                    let glyph = match joint {
+                        Joint::Above => "┬",
+                        Joint::Below => "┴",
+                    };
+                    buf.set_string(area.x + at, area.y, glyph, style);
+                }
+                return;
+            }
             Self::Edge(ink) => {
                 // A theme that leaves the bar unfilled lends the half block
                 // the title's text color instead.
@@ -364,6 +380,41 @@ mod tests {
             ),
         ]);
         assert_eq!(drawn(&view, 8, 5), ["top    r", "", "a", "b", "end"]);
+    }
+
+    #[test]
+    fn rules_above_and_below_meet_the_rule_between_columns() {
+        use super::super::{Joint, Rule};
+        let view = View::Rows(vec![
+            (
+                Size::Exact(1),
+                View::Rule(Rule::Joined {
+                    at: 3,
+                    joint: Joint::Above,
+                }),
+            ),
+            (
+                Size::Fill,
+                View::Columns(vec![
+                    (
+                        Size::Exact(3),
+                        View::lines(vec![Line::of("ab", Ink::Text)], Anchor::Top),
+                    ),
+                    (
+                        Size::Fill,
+                        View::lines(vec![Line::of("cd", Ink::Text)], Anchor::Top),
+                    ),
+                ]),
+            ),
+            (
+                Size::Exact(1),
+                View::Rule(Rule::Joined {
+                    at: 3,
+                    joint: Joint::Below,
+                }),
+            ),
+        ]);
+        assert_eq!(drawn(&view, 7, 3), ["───┬───", "ab │cd", "───┴───"]);
     }
 
     #[test]
