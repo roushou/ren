@@ -114,14 +114,16 @@ export function healthLine(
   return items;
 }
 
-/** `just now`, `45 s ago`, `12 min ago`, `3 h ago`. */
+/** `just now`, `45 s ago`, `12 min ago`, `3 h ago`, `4 days ago`. */
 export function ago(ms: number, now: number): string {
   const seconds = Math.max(0, Math.round((now - ms) / 1000));
   if (seconds < 5) return 'just now';
   if (seconds < 60) return `${seconds} s ago`;
   const minutes = Math.round(seconds / 60);
   if (minutes < 60) return `${minutes} min ago`;
-  return `${Math.round(minutes / 60)} h ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 48) return `${hours} h ago`;
+  return `${Math.round(hours / 24)} days ago`;
 }
 
 /** How much a line of the overview needs you. */

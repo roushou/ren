@@ -406,6 +406,22 @@ const runProjects = versioned(
   }),
 );
 const recordedRuns = versioned(object<{ runs: RecordedRun[] }>({ runs: array(recordedRun) }));
+
+const clientStatuses = ['ready', 'not_installed', 'not_drivable'] as const;
+/** Whether a run can start with a client on the daemon's host. */
+export type ClientStatus = (typeof clientStatuses)[number];
+
+/** A client, and whether a run can start with it on the daemon's host. */
+export interface RunClient {
+  harness: Stored<Harness>;
+  status: Stored<ClientStatus>;
+}
+
+const runClients = versioned(
+  object<{ clients: RunClient[] }>({
+    clients: array(object<RunClient>({ harness: label(harnesses), status: label(clientStatuses) })),
+  }),
+);
 const started = versioned(object<{ run: RunId }>({ run: RunId.decode }));
 const versionedRecordedRun = versioned(recordedRun);
 
@@ -483,6 +499,11 @@ export class RunsClient {
   async projects(signal?: AbortSignal): Promise<RunProject[]> {
     return (await this.#send('GET', '/control/runs/projects', undefined, runProjects, signal))
       .projects;
+  }
+  /** Every client, and whether a run can start with it on the daemon's host. */
+  async clients(signal?: AbortSignal): Promise<RunClient[]> {
+    return (await this.#send('GET', '/control/runs/clients', undefined, runClients, signal))
+      .clients;
   }
   async start(
     harness: Drivable,
@@ -894,6 +915,38 @@ export class Runs {
     }
   }
 
+  /** Why a run cannot start with a client, or null when it can. */
+  static unavailable(status: Stored<ClientStatus>): string | null {
+    switch (status) {
+      case 'ready':
+        return null;
+      case 'not_installed':
+        return 'not installed on the daemon’s host';
+      case 'not_drivable':
+        return 'Ren cannot drive it yet';
+      default:
+        return unrecognised(status);
+    }
+  }
+
+  /**
+   * Projects grouped by the folder they are in, groups in path order, and
+   * each group's projects by name.
+   */
+  static places(projects: readonly RunProject[]): { parent: string; projects: RunProject[] }[] {
+    const groups = new Map<string, RunProject[]>();
+    for (const project of projects) {
+      const parent = project.path.slice(0, project.path.length - project.name.length) || '/';
+      groups.set(parent, [...(groups.get(parent) ?? []), project]);
+    }
+    return [...groups]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([parent, projects]) => ({
+        parent,
+        projects: projects.toSorted((a, b) => a.name.localeCompare(b.name)),
+      }));
+  }
+
   /** The projects matching what is typed, by name or path, ignoring case. */
   static choose(projects: readonly RunProject[], typed: string): RunProject[] {
     const text = typed.trim().toLowerCase();
@@ -1033,6 +1086,29 @@ export class Desk {
         newest(b.runs[0]!) - newest(a.runs[0]!),
     );
     return projects;
+  }
+
+  /** The projects runs worked in, most recently started first, at most `count`. */
+  static recent(runs: readonly DeskRun[], offered: readonly RunProject[], count = 3): RunProject[] {
+    const newest = runs
+      .filter((run) => run.started_at !== null)
+      .toSorted((a, b) => (b.started_at ?? 0) - (a.started_at ?? 0));
+    const recent: RunProject[] = [];
+    for (const run of newest) {
+      const project = offered.find((project) => project.path === run.workdir);
+      if (project && !recent.includes(project)) recent.push(project);
+      if (recent.length === count) break;
+    }
+    return recent;
+  }
+
+  /** A folder's runs that have not ended, then those that have, newest first. */
+  static split(project: Project): { open: DeskRun[]; ended: DeskRun[] } {
+    const ended = (run: DeskRun) => Desk.state(run).phase === 'ended';
+    return {
+      open: project.runs.filter((run) => !ended(run)),
+      ended: project.runs.filter(ended),
+    };
   }
 
   /** The state a sidebar run shows: live if held, else its recorded end. */

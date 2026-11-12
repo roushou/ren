@@ -394,3 +394,86 @@ test('projects narrow as a name or path is typed, and say their branch', () => {
     ['main', 'no git', 'at abc1234'],
   );
 });
+
+test('clients say whether a run can start with each, keeping newer statuses', async () => {
+  const client = new RunsClient((async () =>
+    Response.json({
+      api_version: 1,
+      clients: [
+        { harness: 'codex', status: 'ready' },
+        { harness: 'claude_code', status: 'not_installed' },
+        { harness: 'pi', status: 'not_drivable' },
+        { harness: 'opencode', status: 'paused' },
+      ],
+    })) as unknown as typeof fetch);
+  const clients = await client.clients();
+  assert.deepEqual(
+    clients.map((entry) => Runs.unavailable(entry.status)),
+    [null, 'not installed on the daemon’s host', 'Ren cannot drive it yet', 'paused'],
+  );
+});
+
+test('projects are grouped by the folder they are in, and the newest runs name the recent ones', () => {
+  const project = (path: string) => ({
+    path,
+    name: path.split('/').at(-1)!,
+    git: { kind: 'none' as const },
+  });
+  const offered = [
+    project('/srv/ren'),
+    project('/dev/web'),
+    project('/dev/api'),
+    project('/dev/tools/cli'),
+  ];
+  assert.deepEqual(
+    Runs.places(offered).map((place) => [place.parent, place.projects.map((p) => p.name)]),
+    [
+      ['/dev/', ['api', 'web']],
+      ['/dev/tools/', ['cli']],
+      ['/srv/', ['ren']],
+    ],
+  );
+  const desk = (workdir: string, started_at: number) => ({
+    run: run as never,
+    harness: 'codex' as const,
+    workdir,
+    started_at: started_at as never,
+    state: null,
+    recorded: null,
+  });
+  const runs = [desk('/dev/web', 3), desk('/srv/ren', 5), desk('/dev/web', 9), desk('/gone', 10)];
+  assert.deepEqual(
+    Desk.recent(runs, offered).map((project) => project.name),
+    ['web', 'ren'],
+  );
+});
+
+test('a folder lists its runs that have not ended before those that have', () => {
+  const live: RunSnapshot = {
+    run: run as never,
+    harness: 'codex',
+    workdir: '/work/acme',
+    state: { phase: 'idle', thread: thread as never },
+  };
+  const ended: RecordedRun = {
+    id: other as never,
+    harness: 'codex',
+    workdir: '/work/acme',
+    started_at: 1 as never,
+    thread: null,
+    session: null,
+    ended_at: 2 as never,
+    end: 'stopped',
+    exit: null,
+  };
+  const [project] = Desk.projects([live], [ended]);
+  const { open, ended: gone } = Desk.split(project!);
+  assert.deepEqual(
+    open.map((entry) => entry.run),
+    [run],
+  );
+  assert.deepEqual(
+    gone.map((entry) => entry.run),
+    [other],
+  );
+});

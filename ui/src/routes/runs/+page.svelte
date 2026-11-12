@@ -2,13 +2,12 @@
   import { onMount, tick } from 'svelte';
   import { SvelteMap } from 'svelte/reactivity';
   import { goto } from '$app/navigation';
-  import { ManagementApi, clock, short, type TurnActivity } from '#lib/api.ts';
+  import { ManagementApi, clock, short, type CallView, type TurnActivity } from '#lib/api.ts';
   import { effectLabel, harnessLabel, resultBadge } from '#lib/activity.ts';
   import { Board } from '#lib/board.ts';
-  import { date } from '#lib/display.ts';
+  import { callStatus, date, statusBadge, tokenSummary } from '#lib/display.ts';
   import { getWorkbench } from '#lib/workbench.svelte.ts';
   import {
-    DRIVABLE,
     Desk,
     RunCommandError,
     Runs,
@@ -18,6 +17,7 @@
     type Decision,
     type DeskRun,
     type Drivable,
+    type RunClient,
     type RunProject,
     type RecordedRun,
     type RunId,
@@ -26,6 +26,8 @@
   } from '#lib/runs.ts';
   import Icon from '#lib/Icon.svelte';
   import Markdown from '#lib/Markdown.svelte';
+  import NewRun from './NewRun.svelte';
+  import RunList from './RunList.svelte';
   import type { PageProps } from './$types';
 
   let { data }: PageProps = $props();
@@ -58,18 +60,23 @@
   );
   let historyError = $state<string | null>(null);
 
-  /** What is typed to find a project, or a full path on the daemon's host. */
-  let folder = $state('');
-  /** The project chosen to start in. */
-  let chosen = $state<string | null>(null);
-  /** The new run's first prompt. */
-  let firstPrompt = $state('');
   /** The projects the daemon offers to start a run in. */
   let offered = $state.raw<RunProject[]>([]);
-  const choices = $derived(Runs.choose(offered, folder));
-  /** Where a new run would start: the chosen project, or a typed full path. */
-  const target = $derived(chosen ?? (folder.trim().startsWith('/') ? folder.trim() : null));
-  let starting = $state<Drivable>('codex');
+  /** The clients a run can start with, and whether each is ready. */
+  let clients = $state.raw<RunClient[]>([]);
+  const tabs = [
+    ['conversation', 'Conversation'],
+    ['activity', 'Activity'],
+    ['files', 'Files'],
+    ['calls', 'Calls'],
+  ] as const;
+  /** What the selected run shows. */
+  let tab = $state<(typeof tabs)[number][0]>('conversation');
+  /** The selected run's model calls, read when its Calls tab opens. */
+  let calls = $state.raw<{ session: string; calls: CallView[] } | null>(null);
+  /** Now, for how long ago runs started; moves every half minute. */
+  let now = $state(Date.now());
+  let newRun = $state<ReturnType<typeof NewRun>>();
   let prompt = $state('');
   let busy = $state(false);
   let notice = $state<string | null>(null);
@@ -101,6 +108,35 @@
     } catch {
       // The list is a convenience; a typed path still starts a run.
     }
+  }
+
+  async function readClients() {
+    if (!data.runsControl) return;
+    try {
+      clients = await client.clients();
+    } catch {
+      // Without the list, both drivable clients are offered.
+    }
+  }
+
+  async function readCalls(session: string) {
+    try {
+      const page = await api.sessionCalls(session as never, null);
+      calls = { session, calls: page.calls };
+    } catch (error) {
+      notice = message(error);
+    }
+  }
+
+  /** What a run was asked first, when known here: its first recorded or live prompt. */
+  function title(run: DeskRun): string | null {
+    const recordedPrompt =
+      history?.run === run.run
+        ? (history.turns.find((turn) => turn.prompt)?.prompt?.text ?? null)
+        : null;
+    const live = transcripts.get(run.run)?.entries.find((entry) => entry.kind === 'prompt');
+    const text = recordedPrompt ?? (live?.kind === 'prompt' ? live.text : null);
+    return text ? text.split('\n')[0]!.trim() || null : null;
   }
 
   async function readRecorded() {
@@ -174,25 +210,64 @@
   }
 
   async function start(
-    resume: { harness: Drivable; workdir: string; thread: string } | null = null,
+    harness: Drivable,
+    dir: string,
+    first: string | null,
+    resume: string | null = null,
   ) {
-    const dir = resume?.workdir ?? target;
-    if (!dir) return;
-    const first = resume ? null : firstPrompt.trim() || null;
     await act(async () => {
-      const run = await client.start(
-        resume?.harness ?? starting,
-        dir,
-        (resume?.thread ?? null) as never,
-        first,
-      );
+      const run = await client.start(harness, dir, resume as never, first);
       if (first) transcripts.set(run, new Transcript().prompted(first));
-      folder = '';
-      chosen = null;
-      firstPrompt = '';
       await readLive();
       select(run);
     });
+  }
+
+  /** The runs in the list's order, for j and k. */
+  const order = $derived(
+    projects.flatMap((project) => {
+      const { open, ended } = Desk.split(project);
+      return [...open, ...ended];
+    }),
+  );
+
+  function typing(target: EventTarget | null): boolean {
+    return (
+      target instanceof HTMLElement &&
+      (target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName))
+    );
+  }
+
+  function shortcut(event: KeyboardEvent) {
+    if (event.metaKey || event.ctrlKey || event.altKey || typing(event.target)) return;
+    switch (event.key) {
+      case 'n':
+        event.preventDefault();
+        select(null);
+        void tick().then(() => newRun?.focus());
+        break;
+      case 'j':
+      case 'k': {
+        if (!order.length) return;
+        event.preventDefault();
+        const at = order.findIndex((run) => run.run === selected);
+        const next = event.key === 'j' ? Math.min(at + 1, order.length - 1) : Math.max(at - 1, 0);
+        select(order[at === -1 ? 0 : next]!.run);
+        break;
+      }
+      case 'y':
+      case 'a':
+      case 'd': {
+        const waiting = controls?.approvals[0];
+        if (!waiting) return;
+        event.preventDefault();
+        answer(
+          waiting,
+          event.key === 'y' ? 'accept' : event.key === 'a' ? 'accept_for_session' : 'decline',
+        );
+        break;
+      }
+    }
   }
 
   async function send() {
@@ -237,8 +312,16 @@
     const run = selected;
     history = null;
     historyError = null;
+    calls = null;
+    tab = 'conversation';
     following = true;
     if (run) void readHistory(run);
+  });
+
+  $effect(() => {
+    // The Calls tab reads its session's calls when it opens.
+    const session = history?.session ?? null;
+    if (tab === 'calls' && session && calls?.session !== session) void readCalls(session);
   });
 
   $effect(() => {
@@ -247,10 +330,12 @@
   });
 
   onMount(() => {
+    const ticking = setInterval(() => (now = Date.now()), 30_000);
     void readLive();
     void readProjects();
+    void readClients();
     void readRecorded();
-    if (!data.runsControl) return;
+    if (!data.runsControl) return () => clearInterval(ticking);
     const source = new EventSource('/control/runs/events');
     source.addEventListener('open', () => {
       feed = 'open';
@@ -288,7 +373,10 @@
         void awaitRecorded(update.run);
       }
     });
-    return () => source.close();
+    return () => {
+      source.close();
+      clearInterval(ticking);
+    };
   });
 
   function exitText(run: DeskRun): string | null {
@@ -356,19 +444,19 @@
         disabled={busy}
         onclick={() => answer(waiting, 'accept_for_session')}
         title="Allow this, and the same kind of action for the rest of the session"
-        >Always allow</button
+        >Allow for this run</button
       >
       <button
         class="button small"
         disabled={busy}
         onclick={() => answer(waiting, 'decline')}
-        title="Refuse it; the turn goes on">Decline</button
+        title="Refuse it; the turn goes on">Deny</button
       >
       <button
         class="button small"
         disabled={busy}
         onclick={() => answer(waiting, 'cancel')}
-        title="Refuse it and end the turn">Cancel turn</button
+        title="Refuse it and end the turn">Deny and stop</button
       >
     </div>
   </div>
@@ -400,126 +488,168 @@
   </div>
 {/snippet}
 
+{#snippet activity()}
+  {@const steps = (history?.turns ?? []).map((turn) => ({
+    turn,
+    tools: turn.calls.flatMap((call) => call.tool_calls),
+  }))}
+  {#each steps as { turn, tools } (turn.turn)}
+    {#if tools.length}
+      <div class="entry step-head muted">{turn.prompt?.text.split('\n')[0] ?? 'Turn'}</div>
+      {#each tools as tool, index (tool.id ?? index)}
+        {@const badge = resultBadge(tool.result)}
+        <div class="entry tool">
+          <Icon name="tool" size={12} />
+          <span class="tool-name">{tool.name}</span>
+          <span class="tool-target mono"
+            >{#if tool.effects.length}{#each tool.effects as effect, effectIndex (effectIndex)}<span
+                  ><span class="muted">{effectLabel(effect.kind)}</span>
+                  {Board.shorten(effect.target, Board.workdir(turn))}</span
+                >{/each}{:else}{tool.input.text.split('\n')[0]}{/if}</span
+          >
+          <span class="chip {badge.tone}">{badge.label}</span>
+        </div>
+      {/each}
+    {/if}
+  {/each}
+  {#each transcript?.entries ?? [] as entry, index (index)}
+    {#if entry.kind === 'command'}
+      <div class="entry tool">
+        <Icon name="terminal" size={12} /><span class="tool-target mono">{entry.command}</span>
+        <span class="chip neutral"
+          >{entry.status === 'in_progress'
+            ? 'running'
+            : entry.exit !== null
+              ? `exit ${entry.exit}`
+              : entry.status}</span
+        >
+      </div>
+    {:else if entry.kind === 'file_change'}
+      <div class="entry tool">
+        <Icon name="pencil" size={12} /><span class="tool-target mono"
+          >{entry.paths.join(', ') || 'files'}</span
+        >
+      </div>
+    {:else if entry.kind === 'tool'}
+      <div class="entry tool">
+        <Icon name="tool" size={12} /><span class="tool-name">{entry.name}</span>
+      </div>
+    {/if}
+  {/each}
+  {#if !history?.turns.some( (turn) => turn.calls.some((call) => call.tool_calls.length) ) && !transcript?.entries.some((entry) => entry.kind === 'command' || entry.kind === 'file_change' || entry.kind === 'tool')}
+    <p class="quiet-empty">No steps yet.</p>
+  {/if}
+{/snippet}
+
+{#snippet files()}
+  {@const written = [
+    ...new Set([
+      ...(history?.turns ?? []).flatMap((turn) => turn.files_written),
+      ...(transcript?.entries ?? []).flatMap((entry) =>
+        entry.kind === 'file_change' ? entry.paths : [],
+      ),
+    ]),
+  ]}
+  {@const read = [...new Set((history?.turns ?? []).flatMap((turn) => turn.files_read))].filter(
+    (path) => !written.includes(path),
+  )}
+  <div class="entry files">
+    <h3>Written <span class="muted">{written.length}</span></h3>
+    {#each written as path (path)}<div class="mono file">
+        <Icon name="pencil" size={11} />
+        {path}
+      </div>{/each}
+    <h3>Read <span class="muted">{read.length}</span></h3>
+    {#each read as path (path)}<div class="mono file muted">{path}</div>{/each}
+    {#if !written.length && !read.length}<p class="quiet-empty">No files touched yet.</p>{/if}
+  </div>
+{/snippet}
+
+{#snippet callList()}
+  {#if !history?.session}
+    <p class="quiet-empty">No calls recorded yet.</p>
+  {:else if !calls}
+    <p class="quiet-empty">Reading calls…</p>
+  {:else}
+    <table class="entry calls">
+      <thead
+        ><tr><th>Started</th><th>Model</th><th>Ended</th><th>Time</th><th>Tokens</th></tr></thead
+      >
+      <tbody>
+        {#each calls.calls as call (call.id)}
+          {@const badge = statusBadge(callStatus(call))}
+          {@const tokens = tokenSummary(call.usage)}
+          <tr>
+            <td class="mono muted">{clock(call.started_at)}</td>
+            <td class="mono">{call.model ?? '—'}</td>
+            <td><span class="chip {badge.tone}">{badge.label}</span></td>
+            <td class="mono muted"
+              >{call.ended_at
+                ? `${Math.round((call.ended_at - call.started_at) / 100) / 10} s`
+                : '…'}</td
+            >
+            <td class="mono muted" title={tokens?.title}
+              >{tokens ? `${tokens.input} in · ${tokens.output} out` : '—'}</td
+            >
+          </tr>
+        {/each}
+      </tbody>
+    </table>
+    <p class="entry">
+      <a href="/sessions/{history.session}">Open the session <Icon name="arrow" size={11} /></a>
+    </p>
+  {/if}
+{/snippet}
+
+<svelte:window onkeydown={shortcut} />
+
 <div class="runs-page">
   <aside class="runs-sidebar" aria-label="Runs">
-    {#if data.runsControl}
-      <form
-        class="new-run"
-        onsubmit={(event) => {
-          event.preventDefault();
-          void start();
-        }}
-      >
-        <div class="new-run-head">
-          <label for="run-folder">New run</label>
-          <div class="segmented" role="radiogroup" aria-label="Client">
-            {#each DRIVABLE as harness (harness)}<button
-                type="button"
-                role="radio"
-                aria-checked={starting === harness}
-                class:chosen={starting === harness}
-                onclick={() => (starting = harness)}>{harnessLabel(harness)}</button
-              >{/each}
-          </div>
-        </div>
-        <input
-          id="run-folder"
-          class="mono"
-          placeholder="Find a project, or a full path"
-          autocomplete="off"
-          spellcheck="false"
-          bind:value={folder}
-          oninput={() => (chosen = null)}
-        />
-        {#if choices.length}
-          <ul class="folder-choices" aria-label="Projects on the daemon's host">
-            {#each choices as choice (choice.path)}
-              <li>
-                <button
-                  type="button"
-                  class:chosen={chosen === choice.path}
-                  title={choice.path}
-                  onclick={() => (chosen = choice.path)}
-                  ><span>{choice.name}</span><span class="muted mono"
-                    >{Runs.branch(choice.git)}</span
-                  ></button
-                >
-              </li>
-            {/each}
-          </ul>
-        {/if}
-        <textarea
-          class="first-prompt"
-          rows="3"
-          placeholder={target
-            ? `What should ${harnessLabel(starting)} do in ${Runs.folder(target)}?`
-            : 'Pick a project first'}
-          bind:value={firstPrompt}
-          aria-label="First prompt"></textarea>
-        <button class="button primary" disabled={busy || !target}
-          >{firstPrompt.trim() ? 'Start' : 'Start without a prompt'}</button
-        >
-      </form>
-    {/if}
     {#if unavailable}<p class="sidebar-note danger">{unavailable}</p>{/if}
-    <nav class="projects" aria-label="Runs by folder">
-      {#each projects as project (project.workdir)}
-        <section class="project">
-          <header title={project.workdir}>
-            <Icon name="file" size={12} /><strong>{project.name}</strong>
-            {#if project.waiting}<span class="chip warning">{project.waiting}</span>{/if}
-          </header>
-          {#each project.runs as run (run.run)}
-            {@const runMark = Runs.mark(Desk.state(run))}
-            <button
-              class="run-row"
-              class:selected={run.run === selected}
-              aria-current={run.run === selected ? 'true' : undefined}
-              onclick={() => select(run.run)}
-            >
-              <span class="phase-dot tone-{runMark.tone}"></span>
-              <span class="run-label">{runMark.label}</span>
-              <span class="muted mono run-when"
-                >{run.started_at ? clock(run.started_at) : short(run.run)}</span
-              >
-            </button>
-          {/each}
-        </section>
-      {:else}
-        <p class="sidebar-note">
-          {data.runsControl
-            ? 'No runs yet. Start one in a folder under the daemon’s run roots.'
-            : 'No recorded runs.'}
-        </p>
-      {/each}
-    </nav>
+    <RunList
+      {projects}
+      {selected}
+      {now}
+      {title}
+      onselect={(run) => select(run)}
+      onnew={() => {
+        select(null);
+        void tick().then(() => newRun?.focus());
+      }}
+    />
   </aside>
 
-  <section class="run-main" aria-label="Conversation">
-    {#if !data.runsControl && !current}
-      <div class="empty-state">
-        <div class="empty-icon"><Icon name="lock" size={26} /></div>
-        <h2>This UI is read-only</h2>
-        <p>
-          To start and drive agent runs here, give the UI server the daemon’s control token file
-          with <code>REN_CONTROL_TOKEN_FILE</code> (and, when published with Tailscale Serve, the
-          allowed logins in <code>REN_CONTROL_LOGINS</code>), and add folders to the daemon’s
-          <code>[runs] roots</code>.
-        </p>
-      </div>
-    {:else if !current || !runState || !mark || !controls}
-      <div class="empty-state">
-        <div class="empty-icon"><Icon name="spark" size={26} /></div>
-        <h2>{selected ? 'This run is not listed' : 'Pick a run, or start one'}</h2>
-        <p>
-          A run is Codex or Claude Code working in one of your folders, driven from here. Each keeps
-          its own sign-in; its model traffic is recorded like any session’s.
-        </p>
-      </div>
+  <section class="run-main" aria-label="Run">
+    {#if !current || !runState || !mark || !controls}
+      {#if data.runsControl}
+        {#if selected}<p class="lost muted">This run is not listed. Start another below.</p>{/if}
+        <NewRun
+          bind:this={newRun}
+          {offered}
+          {clients}
+          {runs}
+          {busy}
+          onstart={(harness, dir, first) => void start(harness, dir, first)}
+        />
+        {#if notice}<div class="notice danger" role="alert">
+            <Icon name="alert" size={14} /><span>{notice}</span>
+          </div>{/if}
+      {:else}
+        <div class="empty-state">
+          <div class="empty-icon"><Icon name="lock" size={26} /></div>
+          <h2>This UI is read-only</h2>
+          <p>
+            To start and drive agent runs here, give the UI server the daemon’s control token file
+            with <code>REN_CONTROL_TOKEN_FILE</code> (and, when published with Tailscale Serve, the
+            allowed logins in <code>REN_CONTROL_LOGINS</code>), and add folders to the daemon’s
+            <code>[runs] roots</code>.
+          </p>
+        </div>
+      {/if}
     {:else}
       <header class="run-head">
         <div class="run-title">
-          <strong>{Runs.folder(current.workdir)}</strong>
+          <strong>{title(current) ?? Runs.folder(current.workdir)}</strong>
           <span class="muted mono" title={current.workdir}>{current.workdir}</span>
         </div>
         <span class="chip phase tone-{mark.tone}"
@@ -545,85 +675,112 @@
           {#if data.runsControl && resumable}<button
               class="button small primary"
               disabled={busy}
-              onclick={() => void start(resumable)}
+              onclick={() =>
+                resumable &&
+                void start(resumable.harness, resumable.workdir, null, resumable.thread)}
               title="Start a new run that continues this conversation">Resume</button
             >{/if}
         </span>
       </header>
 
-      <div class="conversation" bind:this={conversation} onscroll={onScroll}>
-        {#if historyError}<p class="entry notice-entry danger">{historyError}</p>{/if}
-        {#each history?.turns ?? [] as turn (turn.turn)}{@render recordedTurn(turn)}{/each}
-        {#each transcript?.entries ?? [] as entry, index (index)}
-          {#if entry.kind === 'prompt'}
-            <div class="entry prompt"><p>{entry.text}</p></div>
-          {:else if entry.kind === 'message'}
-            <div class="entry reply" class:streaming={!entry.done}>
-              <Markdown text={entry.text} />
-            </div>
-          {:else if entry.kind === 'reasoning'}
-            {#if !entry.done}<div class="entry tool muted">
-                <Icon name="thought" size={12} /> Thinking…
-              </div>{/if}
-          {:else if entry.kind === 'command'}
-            <details class="entry tool command">
-              <summary>
-                <Icon name="terminal" size={12} />
-                <span class="tool-target mono">{entry.command}</span>
-                <span
-                  class="chip {entry.status === 'completed' &&
-                  (entry.exit === 0 || entry.exit === null)
-                    ? 'success'
-                    : entry.status === 'in_progress'
-                      ? 'live'
-                      : entry.status === 'declined'
-                        ? 'neutral'
-                        : 'error'}"
-                  >{entry.status === 'in_progress'
-                    ? 'running'
-                    : entry.exit !== null
-                      ? `exit ${entry.exit}`
-                      : entry.status}</span
-                >
-              </summary>
-              {#if entry.output}<pre class="activity-pre">{entry.output}</pre>{/if}
-            </details>
-          {:else if entry.kind === 'file_change'}
-            <div class="entry tool">
-              <Icon name="pencil" size={12} />
-              <span class="tool-target mono">{entry.paths.join(', ') || 'files'}</span>
-              <span class="chip {entry.status === 'completed' ? 'success' : 'neutral'}"
-                >{entry.status === 'in_progress' ? 'editing' : entry.status}</span
-              >
-            </div>
-          {:else if entry.kind === 'tool'}
-            <div class="entry tool">
-              <Icon name="tool" size={12} /><span class="tool-name">{entry.name}</span>
-              {#if !entry.done}<span class="chip live">running</span>{/if}
-            </div>
-          {:else if entry.kind === 'turn_end'}
-            {#if entry.end.kind !== 'completed'}<p
-                class="entry notice-entry {entry.end.kind === 'interrupted' ? 'warn' : 'danger'}"
-              >
-                Turn {entry.end.kind === 'interrupted'
-                  ? 'interrupted'
-                  : entry.end.kind === 'failed'
-                    ? `failed${entry.end.message ? `: ${entry.end.message}` : ''}`
-                    : `ended: ${entry.end.status}`}
-              </p>{/if}
-          {:else if entry.kind === 'notice'}
-            <p class="entry notice-entry {entry.tone}">{entry.text}</p>
-          {/if}
-        {/each}
-        {#if runState.phase === 'working' && !controls.approvals.length}<div
-            class="entry tool muted working"
+      <div class="tabs" role="tablist" aria-label="What the run shows">
+        {#each tabs as [name, label] (name)}
+          <button
+            role="tab"
+            aria-selected={tab === name}
+            class:chosen={tab === name}
+            onclick={() => (tab = name)}>{label}</button
           >
-            <span class="phase-dot tone-live"></span> Working…
-          </div>{/if}
-        {#if !history?.turns.length && !transcript?.entries.length && runState.phase === 'idle'}
-          <p class="quiet-empty">The conversation is open. Say what to do.</p>
-        {/if}
+        {/each}
       </div>
+
+      {#if tab === 'conversation'}
+        <div class="conversation" bind:this={conversation} onscroll={onScroll}>
+          {#if historyError}<p class="entry notice-entry danger">{historyError}</p>{/if}
+          {#each history?.turns ?? [] as turn (turn.turn)}{@render recordedTurn(turn)}{/each}
+          {#each transcript?.entries ?? [] as entry, index (index)}
+            {#if entry.kind === 'prompt'}
+              <div class="entry prompt"><p>{entry.text}</p></div>
+            {:else if entry.kind === 'message'}
+              <div class="entry reply" class:streaming={!entry.done}>
+                <Markdown text={entry.text} />
+              </div>
+            {:else if entry.kind === 'reasoning'}
+              {#if !entry.done}<div class="entry tool muted">
+                  <Icon name="thought" size={12} /> Thinking…
+                </div>{/if}
+            {:else if entry.kind === 'command'}
+              <details class="entry tool command">
+                <summary>
+                  <Icon name="terminal" size={12} />
+                  <span class="tool-target mono">{entry.command}</span>
+                  <span
+                    class="chip {entry.status === 'completed' &&
+                    (entry.exit === 0 || entry.exit === null)
+                      ? 'success'
+                      : entry.status === 'in_progress'
+                        ? 'live'
+                        : entry.status === 'declined'
+                          ? 'neutral'
+                          : 'error'}"
+                    >{entry.status === 'in_progress'
+                      ? 'running'
+                      : entry.exit !== null
+                        ? `exit ${entry.exit}`
+                        : entry.status}</span
+                  >
+                </summary>
+                {#if entry.output}<pre class="activity-pre">{entry.output}</pre>{/if}
+              </details>
+            {:else if entry.kind === 'file_change'}
+              <div class="entry tool">
+                <Icon name="pencil" size={12} />
+                <span class="tool-target mono">{entry.paths.join(', ') || 'files'}</span>
+                <span class="chip {entry.status === 'completed' ? 'success' : 'neutral'}"
+                  >{entry.status === 'in_progress' ? 'editing' : entry.status}</span
+                >
+              </div>
+            {:else if entry.kind === 'tool'}
+              <div class="entry tool">
+                <Icon name="tool" size={12} /><span class="tool-name">{entry.name}</span>
+                {#if !entry.done}<span class="chip live">running</span>{/if}
+              </div>
+            {:else if entry.kind === 'turn_end'}
+              {#if entry.end.kind !== 'completed'}<p
+                  class="entry notice-entry {entry.end.kind === 'interrupted' ? 'warn' : 'danger'}"
+                >
+                  Turn {entry.end.kind === 'interrupted'
+                    ? 'interrupted'
+                    : entry.end.kind === 'failed'
+                      ? `failed${entry.end.message ? `: ${entry.end.message}` : ''}`
+                      : `ended: ${entry.end.status}`}
+                </p>{/if}
+            {:else if entry.kind === 'notice'}
+              <p class="entry notice-entry {entry.tone}">{entry.text}</p>
+            {/if}
+          {/each}
+          {#if runState.phase === 'working' && !controls.approvals.length}<div
+              class="entry tool muted working"
+            >
+              <span class="phase-dot tone-live"></span> Working…
+            </div>{/if}
+          {#if !history?.turns.length && !transcript?.entries.length && runState.phase === 'idle'}
+            <p class="quiet-empty">The conversation is open. Say what to do.</p>
+          {/if}
+        </div>
+      {:else if tab === 'activity'}
+        <div class="conversation">
+          {@render activity()}
+        </div>
+      {:else if tab === 'files'}
+        <div class="conversation">
+          {@render files()}
+        </div>
+      {:else}
+        <div class="conversation">
+          {@render callList()}
+        </div>
+      {/if}
 
       {#if controls.approvals.length}
         <div class="approvals" aria-label="Waiting for your answer">
@@ -679,124 +836,6 @@
     border-right: 1px solid var(--line);
     background: var(--sidebar);
   }
-  .new-run {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-    padding: 12px;
-    border-bottom: 1px solid var(--line);
-  }
-  .new-run label {
-    font-size: 11px;
-    color: var(--muted);
-  }
-  .new-run-head {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-  }
-  .first-prompt {
-    resize: vertical;
-    font: inherit;
-    font-size: 12px;
-    padding: 4px 8px;
-    border: 1px solid var(--control-border);
-    border-radius: 3px;
-    background: var(--surface);
-    color: var(--ink);
-  }
-  .folder-choices {
-    list-style: none;
-    margin: 0;
-    padding: 0;
-    max-height: 180px;
-    overflow-y: auto;
-    border: 1px solid var(--line);
-  }
-  .folder-choices li + li {
-    border-top: 1px solid var(--line);
-  }
-  .folder-choices button {
-    display: flex;
-    width: 100%;
-    gap: 8px;
-    align-items: baseline;
-    padding: 4px 8px;
-    border-radius: 0;
-    font-size: 12px;
-    text-align: left;
-    color: var(--ink);
-    background: none;
-  }
-  .folder-choices button span:first-child {
-    flex-shrink: 0;
-    white-space: nowrap;
-  }
-  .folder-choices button span:last-child {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    font-size: 11px;
-  }
-  .folder-choices button:hover,
-  .folder-choices button.chosen {
-    background: var(--surface-hover);
-  }
-  .new-run-row {
-    display: flex;
-    gap: 6px;
-  }
-  .new-run input {
-    flex: 1;
-    min-width: 0;
-    font-size: 12px;
-    padding: 4px 8px;
-    border: 1px solid var(--control-border);
-    border-radius: 3px;
-    background: var(--surface);
-    color: var(--ink);
-  }
-  .projects {
-    overflow: auto;
-    min-height: 0;
-  }
-  .project {
-    border-bottom: 1px solid var(--line);
-  }
-  .project header {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    padding: 8px 12px 4px;
-    font-size: 12px;
-  }
-  .project header .chip {
-    margin-left: auto;
-  }
-  .run-row {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    width: 100%;
-    padding: 6px 12px 6px 30px;
-    border: 0;
-    background: none;
-    color: var(--ink);
-    font: inherit;
-    font-size: 12px;
-    text-align: left;
-    cursor: pointer;
-  }
-  .run-row:hover {
-    background: var(--row-hover);
-  }
-  .run-row.selected {
-    background: var(--row-selected);
-  }
-  .run-when {
-    margin-left: auto;
-    font-size: 11px;
-  }
   .sidebar-note {
     margin: 0;
     padding: 12px;
@@ -825,6 +864,60 @@
   }
   .tone-danger.phase-dot {
     background: var(--error);
+  }
+  .tabs {
+    display: flex;
+    border-bottom: 1px solid var(--line);
+    padding: 0 12px;
+  }
+  .tabs button {
+    padding: 8px 12px;
+    border: 0;
+    border-bottom: 2px solid transparent;
+    background: none;
+    color: var(--muted);
+    font: inherit;
+    font-size: 12px;
+    cursor: pointer;
+  }
+  .tabs button.chosen {
+    color: var(--ink);
+    border-bottom-color: var(--accent, var(--ink));
+  }
+  .lost {
+    margin: 12px 16px 0;
+    font-size: 12px;
+  }
+  .step-head {
+    margin-top: 14px;
+    font-size: 12px;
+  }
+  .files h3 {
+    margin: 16px 0 6px;
+    font-size: 12px;
+  }
+  .file {
+    padding: 2px 0;
+    font-size: 12px;
+  }
+  table.calls {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+  }
+  table.calls th {
+    text-align: left;
+    font-weight: 500;
+    color: var(--muted);
+    padding: 6px 8px 6px 0;
+    border-bottom: 1px solid var(--line);
+  }
+  table.calls td {
+    padding: 5px 8px 5px 0;
+    border-bottom: 1px solid var(--line-subtle);
+  }
+  .run-main > .empty-state {
+    margin: auto;
   }
   .run-main {
     display: flex;
