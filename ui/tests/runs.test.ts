@@ -115,7 +115,7 @@ test('controls follow the state: prompt when idle, answer and interrupt while wo
       approvals: [{ approval: 'a' as never, ask: { kind: 'file_change', reason: null } }],
     }),
     {
-      label: 'needs you',
+      label: 'Needs you',
       tone: 'warn',
     },
   );
@@ -750,4 +750,39 @@ test('the page’s opening reads each stand on their own', async () => {
   // The opening client's models come with them.
   assert.deepEqual(opening.models, { harness: 'codex', read: { state: 'read', value: [] } });
   assert.equal((await client.opening()).models, null);
+});
+
+test('how a run ended reads in words; the process’s exit is a detail', () => {
+  const ended = (end: string, exit: unknown = null) =>
+    Runs.mark({ phase: 'ended', end: end as never, exit: exit as never }).label;
+  assert.equal(ended('drained', { kind: 'signal', value: 9 }), 'Stopped when Ren shut down');
+  assert.equal(ended('recovered'), 'Lost when Ren restarted');
+  assert.equal(ended('stopped'), 'Stopped');
+  assert.equal(ended('spawn_failed'), 'Couldn’t start');
+  assert.equal(ended('exited', { kind: 'code', value: 0 }), 'Ended');
+  assert.equal(ended('exited', { kind: 'code', value: 2 }), 'Ended with an error');
+  assert.equal(ended('exited', { kind: 'signal', value: 11 }), 'Killed');
+  assert.equal(Runs.exitDetail({ kind: 'signal', value: 9 }), 'killed by SIGKILL (signal 9)');
+  assert.equal(Runs.exitDetail({ kind: 'signal', value: 40 }), 'killed by signal 40');
+  assert.equal(Runs.exitDetail({ kind: 'code', value: 1 }), 'exit code 1');
+  assert.equal(Runs.exitDetail(null), null);
+});
+
+test('where a run works reads as Scratch or under the home as ~/', () => {
+  const offered = [
+    {
+      path: '/home/op/dev/acme',
+      name: 'acme',
+      shown: '~/dev/acme',
+      kind: 'project' as const,
+      git: { kind: 'none' as const },
+    },
+  ];
+  const scratch = '/home/op/.local/share/ren/scratch';
+  assert.equal(Runs.place(`${scratch}/scratch-1a2b`, scratch, offered), 'Scratch');
+  assert.equal(Runs.place(scratch, scratch, offered), 'Scratch');
+  assert.equal(Runs.place('/home/op/dev/acme', scratch, offered), '~/dev/acme');
+  assert.equal(Runs.place('/home/op/notes/drafts', scratch, offered), '~/notes/drafts');
+  assert.equal(Runs.place('/srv/ren', scratch, offered), '/srv/ren');
+  assert.equal(Runs.place('/home/op/dev/acme', null, []), '/home/op/dev/acme');
 });

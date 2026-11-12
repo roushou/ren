@@ -1081,20 +1081,24 @@ export class Runs {
     }
   }
 
+  /** A run's state in a few words, with the tone of its dot. */
   static mark(state: RunState): PhaseMark {
     switch (state.phase) {
       case 'starting':
-        return { label: 'starting', tone: 'neutral' };
+        return { label: 'Starting', tone: 'neutral' };
       case 'idle':
-        return { label: 'your turn', tone: 'ok' };
+        return { label: 'Your turn', tone: 'ok' };
       case 'working':
         return state.approvals.length
-          ? { label: 'needs you', tone: 'warn' }
-          : { label: 'working', tone: 'live' };
+          ? { label: 'Needs you', tone: 'warn' }
+          : { label: 'Working', tone: 'live' };
       case 'stopping':
-        return { label: 'stopping', tone: 'neutral' };
+        return { label: 'Stopping', tone: 'neutral' };
       case 'ended':
-        return { label: Runs.endLabel(state.end), tone: Runs.endTone(state.end) };
+        return {
+          label: Runs.endLabel(state.end, state.exit),
+          tone: Runs.endTone(state.end, state.exit),
+        };
       case 'unrecognized':
         return { label: state.text, tone: 'neutral' };
       default:
@@ -1102,31 +1106,44 @@ export class Runs {
     }
   }
 
-  static endLabel(end: Stored<RunEnd>): string {
+  /** How a run ended, as the operator would say it; the process's exit is a
+   * detail ({@link Runs.exitDetail}), not the headline. */
+  static endLabel(end: Stored<RunEnd>, exit: ProcessExit | null = null): string {
     switch (end) {
       case 'spawn_failed':
-        return 'did not start';
+        return 'Couldn’t start';
       case 'open_refused':
-        return 'refused to open';
+        return 'Couldn’t open its conversation';
       case 'exited':
-        return 'exited';
+        switch (exit?.kind) {
+          case 'code':
+            return exit.value === 0 ? 'Ended' : 'Ended with an error';
+          case 'signal':
+            return 'Killed';
+          case 'unknown':
+          case undefined:
+            return 'Ended';
+          default:
+            return assertNever(exit);
+        }
       case 'stopped':
-        return 'stopped';
+        return 'Stopped';
       case 'drained':
-        return 'stopped at shutdown';
+        return 'Stopped when Ren shut down';
       case 'recovered':
-        return 'lost at restart';
+        return 'Lost when Ren restarted';
       default:
         return unrecognised(end);
     }
   }
 
-  static endTone(end: Stored<RunEnd>): PhaseMark['tone'] {
+  static endTone(end: Stored<RunEnd>, exit: ProcessExit | null = null): PhaseMark['tone'] {
     switch (end) {
       case 'stopped':
-      case 'drained':
         return 'neutral';
       case 'exited':
+        return exit?.kind === 'code' && exit.value === 0 ? 'neutral' : 'warn';
+      case 'drained':
       case 'recovered':
         return 'warn';
       case 'spawn_failed':
@@ -1136,6 +1153,46 @@ export class Runs {
         unrecognised(end);
         return 'neutral';
     }
+  }
+
+  /** How the process exited, for the run's details: `exit code 1`, or the
+   * signal by name, `killed by SIGKILL (signal 9)`. */
+  static exitDetail(exit: ProcessExit | null): string | null {
+    const signals: Record<number, string> = {
+      1: 'SIGHUP',
+      2: 'SIGINT',
+      6: 'SIGABRT',
+      9: 'SIGKILL',
+      11: 'SIGSEGV',
+      15: 'SIGTERM',
+    };
+    switch (exit?.kind) {
+      case 'code':
+        return `exit code ${exit.value}`;
+      case 'signal': {
+        const name = signals[exit.value];
+        return name ? `killed by ${name} (signal ${exit.value})` : `killed by signal ${exit.value}`;
+      }
+      case 'unknown':
+      case undefined:
+        return null;
+      default:
+        return assertNever(exit);
+    }
+  }
+
+  /**
+   * Where a run works, as the operator would say it: Scratch for a scratch
+   * run, else its folder as `~/…` where a place offered shows the home.
+   */
+  static place(workdir: string, scratch: string | null, offered: readonly RunProject[]): string {
+    if (scratch && (workdir === scratch || workdir.startsWith(`${scratch}/`))) return 'Scratch';
+    const known = offered.find((place) => place.path === workdir);
+    if (known) return known.shown;
+    // The home, as a place offered under it shows it.
+    const homed = offered.find((place) => place.shown.startsWith('~/'));
+    const home = homed ? homed.path.slice(0, homed.path.length - homed.shown.length + 1) : null;
+    return home && workdir.startsWith(`${home}/`) ? `~${workdir.slice(home.length)}` : workdir;
   }
 
   /** One line saying what an approval asks. */

@@ -17,6 +17,7 @@
     selected,
     now,
     title,
+    place,
     shelf,
     archivedCount,
     onshelf,
@@ -28,6 +29,8 @@
     now: number;
     /** What a run was asked, when known here. */
     title: (run: DeskRun) => string | null;
+    /** A folder as the operator reads it: Scratch, or `~/…`. */
+    place: (workdir: string) => string;
     /** Which runs are listed: current, or archived. */
     shelf: Shelf;
     archivedCount: number;
@@ -70,12 +73,15 @@
   {/if}
   {#each projects as project (project.workdir)}
     {@const { open, ended } = Desk.split(project)}
+    {@const shown = place(project.workdir)}
     <section class="folder">
       <header title={project.workdir}>
         <Icon name="file" size={12} />
         <strong>{project.name}</strong>
         {#if project.waiting}<span class="chip warning">{project.waiting} needs you</span>{/if}
-        <span class="muted mono parent">{project.workdir.slice(0, -project.name.length)}</span>
+        {#if shown.includes('/')}<span class="muted mono parent"
+            ><bdi>{shown.slice(0, shown.lastIndexOf('/') + 1)}</bdi></span
+          >{/if}
       </header>
       {#each open as run (run.run)}{@render row(run)}{/each}
       {#if ended.length}

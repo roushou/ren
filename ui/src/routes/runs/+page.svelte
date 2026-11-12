@@ -3,6 +3,7 @@
   import { SvelteMap } from 'svelte/reactivity';
   import { goto } from '$app/navigation';
   import { ManagementApi, clock, short, type CallView } from '#lib/api.ts';
+  import { ago } from '#lib/overview.ts';
   import { harnessLabel } from '#lib/activity.ts';
   import { callStatus, statusBadge, tokenSummary } from '#lib/display.ts';
   import { getWorkbench } from '#lib/workbench.svelte.ts';
@@ -30,6 +31,7 @@
   } from '#lib/runs.ts';
   import Icon from '#lib/Icon.svelte';
   import Markdown from '#lib/Markdown.svelte';
+  import ActionMenu, { type ActionItem } from '#lib/ActionMenu.svelte';
   import NewRun from './NewRun.svelte';
   import RunList from './RunList.svelte';
   import type { PageProps } from './$types';
@@ -407,18 +409,56 @@
     };
   });
 
-  function exitText(run: DeskRun): string | null {
-    const ended = Desk.state(run);
-    if (ended.phase !== 'ended' || !ended.exit) return null;
-    switch (ended.exit.kind) {
-      case 'code':
-        return `exit ${ended.exit.value}`;
-      case 'signal':
-        return `signal ${ended.exit.value}`;
-      case 'unknown':
-        return null;
-    }
+  /** Its first prompt, whole, for the title's tooltip. */
+  function firstPrompt(run: DeskRun): string | null {
+    return transcripts.get(run.run)?.firstPrompt()?.trim() || null;
   }
+
+  /** The run's facts after its state: client and settings, place, and when. */
+  const facts = $derived(
+    current
+      ? [
+          [harnessLabel(current.harness), ...Setup.words(current.settings)].join(' · '),
+          Runs.place(current.workdir, scratch, offered),
+          ...(current.started_at ? [ago(current.started_at, now)] : []),
+        ]
+      : [],
+  );
+
+  /** What the run's menu says of it: the details the header leaves out. */
+  const details = $derived(
+    current
+      ? [
+          `Run ${short(current.run)}`,
+          current.workdir,
+          ...(runState?.phase === 'ended'
+            ? [Runs.exitDetail(runState.exit)].filter((d) => d !== null)
+            : []),
+        ]
+      : [],
+  );
+
+  /** The run's other actions, least risky first; destructive ones last. */
+  const menu = $derived.by((): ActionItem[] => {
+    if (!current || !controls) return [];
+    const items: ActionItem[] = [];
+    const run = current.run;
+    if (data.runsControl && controls.stop) {
+      items.push({ label: 'Stop run', onselect: () => void act(() => client.stop(run)) });
+    }
+    const session = current.recorded?.session;
+    if (session)
+      items.push({ label: 'Open its calls', onselect: () => void goto(`/sessions/${session}`) });
+    if (data.runsControl && runState?.phase === 'ended') {
+      const archivedAt = current.recorded?.archived_at;
+      items.push({
+        label: archivedAt ? 'Unarchive' : 'Archive',
+        onselect: () => void edit(archivedAt ? 'unarchive' : 'archive'),
+      });
+      items.push({ label: 'Delete…', danger: true, onselect: () => (confirming = run) });
+    }
+    return items;
+  });
 
   const resumable = $derived(
     current &&
@@ -627,6 +667,7 @@
       {selected}
       {now}
       {title}
+      place={(workdir) => Runs.place(workdir, scratch, offered)}
       {shelf}
       archivedCount={archived.length}
       onshelf={(next) => {
@@ -675,78 +716,50 @@
       {/if}
     {:else}
       <header class="run-head">
-        <div class="run-title">
-          <strong>{title(current) ?? Runs.folder(current.workdir)}</strong>
-          <span class="muted mono" title={current.workdir}>{current.workdir}</span>
+        <div class="run-heading">
+          <h2 class="run-title" title={firstPrompt(current) ?? undefined}>
+            {title(current) ?? `${harnessLabel(current.harness)} run`}
+          </h2>
+          <p class="run-facts">
+            <span class="state tone-{mark.tone}"><span class="dot"></span>{mark.label}</span>
+            {#each facts as fact (fact)}<span class="sep" aria-hidden="true">·</span><span
+                >{fact}</span
+              >{/each}
+          </p>
         </div>
-        <span class="chip phase tone-{mark.tone}"
-          ><span class="phase-dot tone-{mark.tone}"></span>{mark.label}</span
-        >
-        {#if exitText(current)}<span class="muted mono">{exitText(current)}</span>{/if}
-        <span class="muted"
-          >{[
-            harnessLabel(current.harness),
-            ...Setup.words(current.settings),
-            `run ${short(current.run)}`,
-          ].join(' · ')}</span
-        >
-        <span class="run-actions">
-          {#if current.recorded?.session}<a
-              class="text-button"
-              href="/sessions/{current.recorded.session}">Calls <Icon name="arrow" size={11} /></a
-            >{/if}
-          {#if data.runsControl && controls.interrupt}<button
-              class="button small"
+        {#if confirming === current.run}
+          <span class="run-actions confirming" role="alert">
+            <span class="confirm-text">Delete this run and its recorded calls for good?</span>
+            <button
+              class="button small danger confirm"
               disabled={busy}
-              onclick={() => selected && void act(() => client.interrupt(selected))}
-              >Interrupt</button
-            >{/if}
-          {#if data.runsControl && controls.stop}<button
-              class="button small"
-              disabled={busy}
-              onclick={() => selected && void act(() => client.stop(selected))}>Stop</button
-            >{/if}
-          {#if data.runsControl && runState.phase === 'ended'}
-            {#if confirming === current.run}
-              <span class="confirm-text">Delete this run and its recorded calls for good?</span>
-              <button
-                class="button small danger confirm"
-                disabled={busy}
-                onclick={() => edit('delete')}>Delete</button
-              >
-              <button class="button small" onclick={() => (confirming = null)}>Cancel</button>
-            {:else}
-              <button
+              onclick={() => edit('delete')}>Delete</button
+            >
+            <button class="button small" onclick={() => (confirming = null)}>Cancel</button>
+          </span>
+        {:else}
+          <span class="run-actions">
+            {#if data.runsControl && controls.interrupt}<button
                 class="button small"
                 disabled={busy}
-                onclick={() => edit(current.recorded?.archived_at ? 'unarchive' : 'archive')}
-                title={current.recorded?.archived_at
-                  ? 'List it with the current runs again'
-                  : 'Hide it, with its session, from the current runs'}
-                >{current.recorded?.archived_at ? 'Unarchive' : 'Archive'}</button
-              >
-              <button
-                class="button small danger"
+                onclick={() => selected && void act(() => client.interrupt(selected))}
+                >Interrupt</button
+              >{:else if data.runsControl && resumable}<button
+                class="button small"
                 disabled={busy}
-                onclick={() => (confirming = current.run)}
-                title="Delete it and its session's recorded calls">Delete</button
-              >
-            {/if}
-          {/if}
-          {#if data.runsControl && resumable}<button
-              class="button small primary"
-              disabled={busy}
-              onclick={() =>
-                resumable &&
-                void start({
-                  harness: resumable.harness,
-                  dir: resumable.workdir,
-                  resume: resumable.thread,
-                  ...Setup.known(current.settings),
-                })}
-              title="Start a new run that continues this conversation">Resume</button
-            >{/if}
-        </span>
+                onclick={() =>
+                  resumable &&
+                  void start({
+                    harness: resumable.harness,
+                    dir: resumable.workdir,
+                    resume: resumable.thread,
+                    ...Setup.known(current.settings),
+                  })}
+                title="Start a new run that continues this conversation">Continue</button
+              >{/if}
+            <ActionMenu label="Run actions" items={menu} {details} disabled={busy} />
+          </span>
+        {/if}
       </header>
 
       <div class="tabs" role="tablist" aria-label="What the run shows">
@@ -955,37 +968,72 @@
   .run-head {
     display: flex;
     align-items: center;
-    flex-wrap: wrap;
-    gap: 10px;
+    gap: 12px;
     padding: 10px 16px;
     border-bottom: 1px solid var(--line);
     font-size: 12px;
   }
-  .run-title {
-    display: flex;
-    align-items: baseline;
-    gap: 8px;
+  .run-heading {
+    flex: 1;
     min-width: 0;
   }
-  .run-title strong {
+  .run-title {
+    margin: 0;
+    overflow: hidden;
     font-size: 14px;
+    font-weight: 600;
+    white-space: nowrap;
+    text-overflow: ellipsis;
   }
-  .run-title .mono {
+  .run-facts {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin: 3px 0 0;
+    overflow: hidden;
+    color: var(--muted);
+    white-space: nowrap;
+  }
+  .run-facts > span {
     overflow: hidden;
     text-overflow: ellipsis;
-    white-space: nowrap;
+  }
+  .run-facts .sep {
+    flex: none;
+  }
+  .state {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    flex: none;
+    color: var(--ink);
+  }
+  .state .dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--muted);
+  }
+  .state.tone-live .dot {
+    background: var(--live);
+  }
+  .state.tone-ok .dot {
+    background: var(--success);
+  }
+  .state.tone-warn .dot {
+    background: var(--warning);
+  }
+  .state.tone-danger .dot {
+    background: var(--error);
   }
   .confirm-text {
     color: var(--error);
   }
-  .chip.phase {
-    gap: 6px;
-  }
   .run-actions {
     display: flex;
+    flex: none;
     align-items: center;
     gap: 6px;
-    margin-left: auto;
   }
   .conversation {
     flex: 1;
