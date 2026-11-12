@@ -6,7 +6,6 @@ use crate::Harness;
 use crate::attribution::{Attribution, HintIssue, HintSource, SessionHint};
 use http::HeaderMap;
 use ren_protocol::native::{NativeSessionId, NativeThreadId, NativeTurnId};
-use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
@@ -56,7 +55,6 @@ impl<'a> HeaderReading<'a> {
     const PI_SESSION: &'static str = "x-ren-pi-session-id";
     const PI_TURN: &'static str = "x-ren-pi-turn-id";
     const OPENCODE_SESSION: &'static str = "x-opencode-session-id";
-    const MAX_TURN_METADATA: usize = 8192;
 
     /// Pi's extension headers, on any route.
     fn pi(&mut self) -> Option<Claim> {
@@ -102,37 +100,6 @@ impl<'a> HeaderReading<'a> {
         Self {
             headers,
             issues: Vec::new(),
-        }
-    }
-
-    fn codex(&mut self) -> Claim {
-        let mut session = self.uuid("session-id");
-        let mut thread = self.uuid("thread-id");
-        let mut turn = None;
-        if let Some(raw) = self.header("x-codex-turn-metadata", Self::MAX_TURN_METADATA) {
-            match serde_json::from_str::<TurnMetadata>(raw) {
-                Ok(metadata) => {
-                    turn = self.metadata_id(metadata.turn_id);
-                    let claimed_session = self.metadata_id(metadata.session_id);
-                    let claimed_thread = self.metadata_id(metadata.thread_id);
-                    // Do not silently prefer one source when identifiers disagree.
-                    if Self::conflicts(session, claimed_session)
-                        || Self::conflicts(thread, claimed_thread)
-                    {
-                        self.issue(HintIssue::ConflictingIdentifiers);
-                        session = None;
-                        thread = None;
-                        turn = None;
-                    }
-                }
-                Err(_) => self.issue(HintIssue::InvalidTurnMetadata),
-            }
-        }
-        Claim {
-            source: session.is_some().then_some(HintSource::CodexHeaders),
-            session,
-            turn,
-            thread,
         }
     }
 
@@ -245,15 +212,6 @@ impl<'a> OpenCodeSessionId<'a> {
         bytes.copy_from_slice(&digest[..16]);
         uuid::Builder::from_custom_bytes(bytes).into_uuid()
     }
-}
-
-// Serde rejects duplicate known fields. Ignore all other fields: account,
-// installation, machine, tool policy, and user-defined names never enter storage.
-#[derive(Deserialize)]
-struct TurnMetadata {
-    turn_id: Option<String>,
-    session_id: Option<String>,
-    thread_id: Option<String>,
 }
 
 #[cfg(test)]

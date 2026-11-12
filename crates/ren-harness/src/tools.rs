@@ -8,6 +8,7 @@
 //! is still reported with its name.
 
 use crate::Harness;
+use crate::codex::CodexTool;
 use ren_protocol::activity::{
     ActivityLimitation, Reading, RequestActivity, ResultStatus, ToolInput, ToolResult, ToolUse,
 };
@@ -81,24 +82,6 @@ pub enum ClaudeCodeTool {
     WebFetch,
     #[strum(to_string = "WebSearch")]
     WebSearch,
-}
-
-/// Codex's tools, by function name or by the item type that carries them.
-#[derive(Display, EnumString, IntoStaticStr, VariantArray)]
-#[strum(serialize_all = "snake_case")]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SerializeDisplay, DeserializeFromStr)]
-pub enum CodexTool {
-    Shell,
-    #[strum(to_string = "container.exec")]
-    ContainerExec,
-    ExecCommand,
-    LocalShellCall,
-    ShellCall,
-    ApplyPatch,
-    ApplyPatchCall,
-    ViewImage,
-    ReadFile,
-    WebSearchCall,
 }
 
 /// Pi's built-in tools.
@@ -255,59 +238,6 @@ impl ClaudeCodeTool {
         request.max_output_tokens == Some(1)
             && request.tool_results.is_empty()
             && matches!(request.user_text.as_slice(), [text] if text == Self::QUOTA_PROBE)
-    }
-}
-
-impl CodexTool {
-    /// What Codex adds to user messages: its environment, the user's
-    /// instructions, and AGENTS.md.
-    pub(crate) const CONTEXT: UserContext = UserContext {
-        wrappers: &[
-            ("<environment_context>", "</environment_context>"),
-            ("<user_instructions>", "</user_instructions>"),
-            ("# AGENTS.md instructions", ""),
-        ],
-        notices: &[],
-    };
-
-    pub(crate) fn effects(tool: &ToolUse) -> Vec<ToolEffect> {
-        let effect = |kind, name| ToolEffect::of(kind, tool, name);
-        match Self::from_label(&tool.name).or_else(|| Self::from_label(&tool.kind)) {
-            Some(Self::Shell | Self::ContainerExec | Self::LocalShellCall) => {
-                effect(EffectKind::RunCommand, "command")
-            }
-            Some(Self::ExecCommand) => effect(EffectKind::RunCommand, "cmd"),
-            Some(Self::ShellCall) => effect(EffectKind::RunCommand, "commands"),
-            Some(Self::ApplyPatch) => match &tool.input {
-                ToolInput::Text(patch) => ToolEffect::patched(patch),
-                ToolInput::Json(input) => input
-                    .get("input")
-                    .and_then(Value::as_str)
-                    .map(ToolEffect::patched)
-                    .unwrap_or_default(),
-            },
-            Some(Self::ApplyPatchCall) => effect(EffectKind::WriteFile, "path"),
-            Some(Self::ViewImage | Self::ReadFile) => effect(EffectKind::ReadFile, "path"),
-            Some(Self::WebSearchCall) => effect(EffectKind::Search, "query"),
-            None => Vec::new(),
-        }
-    }
-
-    /// Codex reports a command's exit code as a first line `Exit code: N`,
-    /// or as JSON `{"metadata": {"exit_code": N}}`.
-    pub(crate) fn exit_code(output: &str) -> Option<i64> {
-        if let Some(code) = output
-            .lines()
-            .next()
-            .and_then(|line| line.trim().strip_prefix("Exit code:"))
-        {
-            return code.trim().parse().ok();
-        }
-        serde_json::from_str::<Value>(output)
-            .ok()?
-            .get("metadata")?
-            .get("exit_code")?
-            .as_i64()
     }
 }
 

@@ -8,6 +8,7 @@
 //! refresh, and retries; nothing here handles credentials.
 
 pub mod attribution;
+pub mod codex;
 pub mod drive;
 pub mod endpoint;
 pub mod host;

@@ -8,7 +8,6 @@
 //! (`lines`) knows nothing about JSON.
 
 pub mod claude;
-pub mod codex;
 mod lines;
 mod model;
 pub mod pi;
@@ -18,9 +17,9 @@ pub use lines::{Framed, Line, LineLimit, Lines};
 pub use model::{BlankModelId, DefaultChoice, Listing, Model, ModelId, ModelListing};
 pub use settings::{ApprovalPolicy, Effort, RunSettings};
 
+use crate::codex::CodexAppServer;
 use crate::{Harness, launch::NotDrivable};
 use claude::ClaudeStreamJson;
-use codex::CodexAppServer;
 use pi::PiRpc;
 
 use ren_protocol::native::{NativeThreadId, NativeTurnId};
@@ -149,7 +148,7 @@ impl Prompt {
 #[derive(
     Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, SerializeDisplay, DeserializeFromStr,
 )]
-pub struct ApprovalId(String);
+pub struct ApprovalId(pub(crate) String);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 #[error("an approval identifier cannot be empty")]

@@ -53,7 +53,7 @@ macro_rules! table {
 
 #[test]
 fn every_label_is_pinned() {
-    use ren_harness::{attribution, drive, tools};
+    use ren_harness::{attribution, codex, drive, tools};
     let table = table![
         ren_harness::Harness,
         attribution::HintSource,
@@ -61,7 +61,7 @@ fn every_label_is_pinned() {
         tools::EffectKind,
         tools::CallPurpose,
         tools::ClaudeCodeTool,
-        tools::CodexTool,
+        codex::CodexTool,
         tools::PiTool,
         tools::OpenCodeTool,
         drive::Decision,

@@ -10,11 +10,11 @@
 //! tokens, tool calls, and elicitation are refused: the client keeps its own
 //! sign-in, and Ren provides no tools.
 
-use super::{
-    ApprovalAsk, ApprovalId, ApprovalPolicy, CommandRefused, Decision, DriveCommand, DriveEvent,
-    DriveItem, Effort, Framed, ItemId, ItemKind, ItemPhase, ItemRead, ItemStatus, Line, Opening,
-    Prompt, RawLine, Received, RequestKind, Retry, RunSettings, TurnEnd, Unreadable,
-    model::{DefaultChoice, Listing, Model, ModelId, ModelListing},
+use crate::drive::{
+    ApprovalAsk, ApprovalId, ApprovalPolicy, CommandRefused, Decision, DefaultChoice, DriveCommand,
+    DriveEvent, DriveItem, Effort, Framed, ItemId, ItemKind, ItemPhase, ItemRead, ItemStatus, Line,
+    Listing, Model, ModelId, ModelListing, Opening, Prompt, RawLine, Received, RequestKind, Retry,
+    RunSettings, TurnEnd, Unreadable,
 };
 use ren_protocol::native::{NativeThreadId, NativeTurnId};
 use serde::Deserialize;
