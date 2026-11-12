@@ -60,16 +60,13 @@ test('gateway reads health and storage together and accept degraded recorder hea
   assert.equal(result.value.storage.policy.max_calls, 100);
 });
 
-test('the gateway names its environment, and an older one reads as production', async () => {
+test('the gateway names its environment', async () => {
   const read = (body: object) =>
     gatewaySnapshot(async (input) =>
       path(input) === '/health' ? versioned(body) : versioned(storageFixture()),
     );
   const development = await read({ ...healthBody(), instance: { environment: 'development' } });
   assert.equal(development.value?.health.instance.environment, 'development');
-  const { instance: _, ...older } = healthBody();
-  const production = await read(older);
-  assert.equal(production.value?.health.instance.environment, 'production');
 });
 
 test('every response is version-checked and a mismatch is reported distinctly', async () => {
@@ -94,12 +91,8 @@ test('every response is version-checked and a mismatch is reported distinctly', 
     new ManagementApi(async () => versioned(storageFixture(), undefined, 7)).storage(),
     ApiVersionError,
   );
-  // A daemon older than the capture limit reports none, and that is not an error.
-  const { capture: _capture, ...older } = storageFixture();
-  const storage = await new ManagementApi(async () => versioned(older)).storage();
-  assert.equal(storage.capture, null);
   const current = await new ManagementApi(async () => versioned(storageFixture())).storage();
-  assert.equal(current.capture?.body_limit_bytes, 4096);
+  assert.equal(current.capture.body_limit_bytes, 4096);
 });
 
 test('responses are parsed at the boundary: labels keep unknown text, shapes are enforced', async () => {
@@ -294,12 +287,4 @@ test('sessions are read a few at a time', async () => {
   const result = await new SessionsReader(new SessionDetails()).read(fetcher);
   assert.equal(result.value?.details.size, 20);
   assert.equal(most, SessionDetails.parallel);
-});
-
-test('a call from a daemon older than purpose reads as not derived', async () => {
-  const { purpose: _purpose, ...older } = callFixture();
-  const page = await new ManagementApi(async () => versioned({ calls: [older], next: null })).calls(
-    new URLSearchParams(),
-  );
-  assert.equal(page.calls[0]?.purpose, null);
 });

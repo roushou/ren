@@ -298,9 +298,9 @@ export interface CallView {
   rejection: Stored<CallRejection> | null;
   /** The operator state revision the call was planned against. */
   operator_revision: number | null;
-  /** Why the client sent it, once derived; null before then, or from an older daemon. */
+  /** Why the client sent it, once derived; null before then */
   purpose: Stored<CallPurpose> | null;
-  /** Null for calls recorded before callers were, or from an older daemon. */
+  /** Null for calls recorded before callers were */
   caller: CallerView | null;
 }
 export interface ToolCallRecord {
@@ -427,7 +427,6 @@ export interface UsageView {
   /** Hours with calls, oldest first. */
   hours: UsageBucket[];
   models: ModelUsage[];
-  /** Empty from daemons older than named users. */
   users: UserUsage[];
 }
 export interface FileUsage {
@@ -512,8 +511,8 @@ export interface Metrics {
 export interface Storage {
   policy: RetentionPolicy;
   usage: StorageView;
-  /** What capture keeps of each body; null from a daemon that does not say. */
-  capture: CaptureLimits | null;
+  /** What capture keeps of each body. */
+  capture: CaptureLimits;
 }
 export interface CaptureLimits {
   /** Bytes stored per body; past this, the rest is left out by design. */
@@ -589,18 +588,14 @@ const callView = object<CallView>({
   response: nullable(bodyView),
   rejection: nullable(label(callRejections)),
   operator_revision: nullable(count),
-  // Absent from daemons older than the field: read as not derived.
-  purpose: (value, path) =>
-    value === undefined || value === null ? null : label(callPurposes)(value, path),
-  // Absent from daemons older than the field: an unknown caller.
-  caller: (value, path) =>
-    value === undefined || value === null
-      ? null
-      : object<CallerView>({
-          kind: label(callerKinds),
-          user: nullable(string),
-          login: nullable(string),
-        })(value, path),
+  purpose: nullable(label(callPurposes)),
+  caller: nullable(
+    object<CallerView>({
+      kind: label(callerKinds),
+      user: nullable(string),
+      login: nullable(string),
+    }),
+  ),
 });
 const inspection = object<InspectionRecord>({
   coverage: label(coverages),
@@ -724,10 +719,7 @@ const usageView = object<UsageView>({
       ...usageCounts,
     }),
   ),
-  users: (value, path) =>
-    value === undefined
-      ? []
-      : array(object<UserUsage>({ user: nullable(string), ...usageCounts }))(value, path),
+  users: array(object<UserUsage>({ user: nullable(string), ...usageCounts })),
 });
 const fileUsage = object<FileUsage>({ page_size: count, page_count: count, freelist_count: count });
 const storageView = object<StorageView>({
@@ -797,10 +789,7 @@ const operatorSummary = object<OperatorSummary>({ pause, blocked_sessions: count
 const health = object<Health>({
   status: label(healthStatuses),
   build,
-  instance: (value, path) =>
-    value === undefined
-      ? { environment: 'production' }
-      : object<Health['instance']>({ environment: label(environments) })(value, path),
+  instance: object<Health['instance']>({ environment: label(environments) }),
   operator: operatorSummary,
   recorder: recorderMetrics,
 });
@@ -813,11 +802,7 @@ const storage = object<Storage>({
     max_storage_bytes: count,
   }),
   usage: storageView,
-  // Absent from daemons older than the field: read as not reported.
-  capture: (value, path) =>
-    value === undefined || value === null
-      ? null
-      : object<CaptureLimits>({ body_limit_bytes: count })(value, path),
+  capture: object<CaptureLimits>({ body_limit_bytes: count }),
 });
 const bodyPreview = object<BodyPreview>({
   observed_bytes: nullable(count),
