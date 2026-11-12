@@ -7,6 +7,7 @@
   own default, and the last model chosen for a client is kept while listed.
 -->
 <script lang="ts">
+  import { untrack } from 'svelte';
   import { harnessLabel } from '#lib/activity.ts';
   import Picker, { type PickerGroup } from '#lib/Picker.svelte';
   import Icon from '#lib/Icon.svelte';
@@ -15,6 +16,7 @@
     Desk,
     APPROVAL_POLICIES,
     EFFORTS,
+    Memory,
     Models,
     RunCommandError,
     Setup,
@@ -27,11 +29,13 @@
     type RunClient,
     type RunModel,
     type RunProject,
+    type Remembered,
   } from '#lib/runs.ts';
 
   let {
     offered,
     scratch,
+    remembered,
     clients,
     runs,
     busy,
@@ -41,6 +45,8 @@
     offered: readonly RunProject[];
     /** The folder scratch runs get theirs in; null: no scratch here. */
     scratch: string | null;
+    /** The remembered-settings cookie, as the server read it. */
+    remembered: string | null;
     clients: readonly RunClient[];
     runs: readonly DeskRun[];
     busy: boolean;
@@ -54,43 +60,9 @@
     ) => void;
   } = $props();
 
-  /** The client the last run started with, and the settings last chosen
-   * for each client: a per-viewer convenience, checked again on use. */
-  type Kept = { model?: string; effort?: string; approvals?: string };
-  type Saved = { harness: Drivable; settings: Partial<Record<Drivable, Kept>> };
-  const remembered = 'ren.runs.last';
-  function recall(): Saved {
-    try {
-      const saved = JSON.parse(localStorage.getItem(remembered) ?? 'null') as {
-        harness?: unknown;
-        settings?: unknown;
-      } | null;
-      const settings: Partial<Record<Drivable, Kept>> = {};
-      const stored = saved?.settings;
-      if (stored && typeof stored === 'object') {
-        for (const drivable of DRIVABLE) {
-          const kept = (stored as Record<string, unknown>)[drivable];
-          if (!kept || typeof kept !== 'object') continue;
-          const text = (key: string) => {
-            const value = (kept as Record<string, unknown>)[key];
-            return typeof value === 'string' ? value : undefined;
-          };
-          settings[drivable] = {
-            model: text('model'),
-            effort: text('effort'),
-            approvals: text('approvals'),
-          };
-        }
-      }
-      return {
-        harness: DRIVABLE.find((drivable) => drivable === saved?.harness) ?? 'codex',
-        settings,
-      };
-    } catch {
-      return { harness: 'codex', settings: {} };
-    }
-  }
-  const saved = recall();
+  /** The client the last run started with, and each client's last
+   * settings: kept in a cookie, so the server renders them too. */
+  const saved: Remembered = untrack(() => Memory.parse(remembered));
 
   /** A client's models, as far as they are known. */
   type Listing =
@@ -106,11 +78,16 @@
   let others = $state(false);
   let harness = $state<Drivable>(saved.harness);
   let listings = $state<Partial<Record<Drivable, Listing>>>({});
+  /** What the client last started with, until its models are listed. */
+  const kept = untrack(() => saved.settings[saved.harness] ?? {});
   /** The chosen effort and approval policy; none is the client's own. */
-  let effort = $state<Effort | null>(null);
-  let approvals = $state<ApprovalPolicy | null>(null);
-  /** The chosen model; none is the client's own default. */
-  let model = $state<ModelId | null>(null);
+  let effort = $state<Effort | null>(EFFORTS.find((level) => level === kept.effort) ?? null);
+  let approvals = $state<ApprovalPolicy | null>(
+    APPROVAL_POLICIES.find((policy) => policy === kept.approvals) ?? null,
+  );
+  /** The chosen model; none is the client's own default. Until the client
+   * lists its models, the one last chosen, shown by its kept name. */
+  let model = $state<ModelId | null>((kept.model as ModelId | undefined) ?? null);
   let field = $state<HTMLTextAreaElement>();
   let folders = $state<ReturnType<typeof Picker>>();
 
@@ -190,6 +167,10 @@
           // What the default is now, on the chip as in the list.
           hint: fallback?.name,
         },
+        // Until the client lists its models, the one chosen, as kept.
+        ...(listing.state !== 'listed' && model
+          ? [{ value: model, label: saved.settings[harness]?.modelName ?? model }]
+          : []),
       ],
     },
     ...Models.groups(listed).map((group) => ({
@@ -248,7 +229,15 @@
   );
   /** The model the run gets, chosen or the default, and the efforts it takes. */
   const effective = $derived(Setup.efforts(listed, model));
-  const efforts = $derived<Effort[]>(EFFORTS.filter((level) => effective?.efforts.includes(level)));
+  /** The efforts offered: the model's, once listed; until then the one
+   * chosen, so the chip reads as it will stay. */
+  const efforts = $derived<Effort[]>(
+    listing.state === 'listed'
+      ? EFFORTS.filter((level) => effective?.efforts.includes(level))
+      : effort
+        ? [effort]
+        : [],
+  );
   const effortGroups = $derived<PickerGroup[]>([
     {
       label: null,
@@ -316,15 +305,13 @@
     }
     saved.settings[harness] = {
       model: model ?? undefined,
+      modelName: listed.find((offered) => offered.id === model)?.name,
       effort: effort ?? undefined,
       approvals: approvals ?? undefined,
     };
     saved.harness = harness;
-    try {
-      localStorage.setItem(remembered, JSON.stringify(saved));
-    } catch {
-      // Remembering is a convenience.
-    }
+    // Remembering is a convenience: a refused cookie changes nothing else.
+    document.cookie = Memory.cookie(saved);
     onstart(harness, dir, prompt.trim() || null, { model, effort, approvals });
     prompt = '';
   }
@@ -389,17 +376,18 @@
           if (effort && !takes.includes(effort)) effort = null;
         }}
       />
-      {#if efforts.length}
-        <Picker
-          label="Effort"
-          icon="thought"
-          groups={effortGroups}
-          value={effort ?? DEFAULT}
-          placeholder="Default"
-          search={false}
-          onchange={(value) => (effort = efforts.find((level) => level === value) ?? null)}
-        />
-      {/if}
+      <Picker
+        label="Effort"
+        icon="thought"
+        groups={effortGroups}
+        value={effort ?? DEFAULT}
+        placeholder="Default"
+        search={false}
+        disabled={listing.state === 'listed' && efforts.length === 0
+          ? 'This model takes no effort setting'
+          : null}
+        onchange={(value) => (effort = efforts.find((level) => level === value) ?? null)}
+      />
       {#if policies.length}
         <Picker
           label="Approvals"

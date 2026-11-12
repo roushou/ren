@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, tick } from 'svelte';
+  import { onMount, tick, untrack } from 'svelte';
   import { SvelteMap } from 'svelte/reactivity';
   import { goto } from '$app/navigation';
   import { ManagementApi, clock, short, type CallView } from '#lib/api.ts';
@@ -21,6 +21,7 @@
     type RunClient,
     type RunProject,
     type HistoryChange,
+    type Read,
     type RecordedRun,
     type RunId,
     type Shelf,
@@ -39,22 +40,34 @@
   const client = new RunsClient();
   const api = new ManagementApi();
 
-  let live = $state.raw<RunSnapshot[]>([]);
-  let recorded = $state.raw<RecordedRun[]>([]);
+  /** What the server read for the first render; the feed follows from here. */
+  const initial = untrack(() => data.initial);
+  const first = <T,>(read: Read<T> | undefined, none: T): T =>
+    read?.state === 'read' ? read.value : none;
+  let live = $state.raw<RunSnapshot[]>(first(initial?.live, []));
+  let recorded = $state.raw<RecordedRun[]>(first(initial?.recorded, []));
   /** Ended runs the operator archived. */
-  let archived = $state.raw<RecordedRun[]>([]);
+  let archived = $state.raw<RecordedRun[]>(first(initial?.archived, []));
   /** Which runs the list shows. */
   let shelf = $state<Shelf>('current');
   /** The run whose delete waits for a second click. */
   let confirming = $state<RunId | null>(null);
   /** Why runs cannot be listed or driven, when they cannot. */
-  let unavailable = $state<string | null>(null);
+  let unavailable = $state<string | null>(
+    initial?.live.state === 'failed' ? initial.live.reason : null,
+  );
   let feed = $state<'connecting' | 'open' | 'closed'>('connecting');
   /** Each run's conversation since this page started following it. */
   const transcripts = new SvelteMap<RunId, Transcript>();
+  // The selected run's conversation, as the page was loaded with it.
+  untrack(() => {
+    if (data.conversation) {
+      transcripts.set(data.conversation.run, new Transcript().load(data.conversation.conversation));
+    }
+  });
   const selected = $derived(data.selected);
-  /** The folder scratch runs get theirs in; null until read, or with none. */
-  let scratch = $state<string | null>(null);
+  /** The folder scratch runs get theirs in; null when there is none. */
+  let scratch = $state<string | null>(first(initial?.places, null)?.scratch ?? null);
   const projects = $derived(
     shelf === 'current'
       ? Desk.projects(live, recorded, new Set(archived.map((run) => run.id)), scratch)
@@ -74,9 +87,9 @@
   let readError = $state<string | null>(null);
 
   /** The projects the daemon offers to start a run in. */
-  let offered = $state.raw<RunProject[]>([]);
+  let offered = $state.raw<RunProject[]>(first(initial?.places, null)?.projects ?? []);
   /** The clients a run can start with, and whether each is ready. */
-  let clients = $state.raw<RunClient[]>([]);
+  let clients = $state.raw<RunClient[]>(first(initial?.clients, []));
   const tabs = [
     ['conversation', 'Conversation'],
     ['activity', 'Activity'],
@@ -322,7 +335,14 @@
     confirming = null;
     tab = 'conversation';
     following = true;
-    if (run) void readConversation(run);
+    if (!run) return;
+    // Loaded with the page when it was opened on this run; read otherwise.
+    const given = untrack(() => data.conversation);
+    if (given?.run === run) {
+      transcripts.set(run, (transcripts.get(run) ?? new Transcript()).load(given.conversation));
+    } else {
+      void readConversation(run);
+    }
   });
 
   $effect(() => {
@@ -338,10 +358,13 @@
 
   onMount(() => {
     const ticking = setInterval(() => (now = Date.now()), 30_000);
-    void readLive();
-    void readProjects();
-    void readClients();
-    void readRecorded();
+    // The server read them for the first render; only what it could not
+    // read is asked for again. Live runs are read once the feed opens.
+    if (initial?.places.state !== 'read') void readProjects();
+    if (initial?.clients.state !== 'read') void readClients();
+    if (initial?.recorded.state !== 'read' || initial.archived.state !== 'read')
+      void readRecorded();
+    if (!initial) void readLive();
     if (!data.runsControl) return () => clearInterval(ticking);
     const source = new EventSource('/control/runs/events');
     source.addEventListener('open', () => {
@@ -622,6 +645,7 @@
           bind:this={newRun}
           {offered}
           {scratch}
+          remembered={data.remembered}
           {clients}
           {runs}
           {busy}

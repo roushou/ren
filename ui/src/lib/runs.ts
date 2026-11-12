@@ -630,6 +630,18 @@ export class RunCommandError extends Error {
 export const DRIVABLE = ['codex', 'claude_code', 'pi'] as const satisfies readonly Harness[];
 export type Drivable = (typeof DRIVABLE)[number];
 
+/** One read the page starts with: what was read, or why it was not. */
+export type Read<T> = { state: 'read'; value: T } | { state: 'failed'; reason: string };
+
+/** Everything the Runs page shows before it starts following the feed. */
+export interface RunsStart {
+  live: Read<RunSnapshot[]>;
+  places: Read<RunPlaces>;
+  clients: Read<RunClient[]>;
+  recorded: Read<RecordedRun[]>;
+  archived: Read<RecordedRun[]>;
+}
+
 /** Run commands and reads through a capability-supplied `fetch`. */
 export class RunsClient {
   readonly #fetch: typeof fetch;
@@ -639,6 +651,30 @@ export class RunsClient {
 
   async live(signal?: AbortSignal): Promise<RunSnapshot[]> {
     return (await this.#send('GET', '/control/runs', undefined, liveRuns, signal)).runs;
+  }
+  /**
+   * Everything the Runs page starts with, read at once; each read that
+   * fails says why, and the others stand.
+   */
+  async opening(): Promise<RunsStart> {
+    const read = async <T>(reading: Promise<T>): Promise<Read<T>> => {
+      try {
+        return { state: 'read', value: await reading };
+      } catch (error) {
+        return {
+          state: 'failed',
+          reason: error instanceof Error ? error.message : 'The read failed.',
+        };
+      }
+    };
+    const [live, places, clients, recorded, archived] = await Promise.all([
+      read(this.live()),
+      read(this.projects()),
+      read(this.clients()),
+      read(this.recorded(100)),
+      read(this.recorded(100, 'archived')),
+    ]);
+    return { live, places, clients, recorded, archived };
   }
   /** Where runs can start, and the scratch folder. */
   async projects(signal?: AbortSignal): Promise<RunPlaces> {
@@ -1425,5 +1461,70 @@ export class Setup {
     return (
       (model ? models.find((offered) => offered.id === model) : Models.fallback(models)) ?? null
     );
+  }
+}
+
+/** The settings a client last started a run with, as kept for the viewer. */
+export interface Kept {
+  model?: string;
+  /** The model's name, shown before the client lists its models again. */
+  modelName?: string;
+  effort?: string;
+  approvals?: string;
+}
+
+/** The client the last run started with, and each client's last settings. */
+export interface Remembered {
+  harness: Drivable;
+  settings: Partial<Record<Drivable, Kept>>;
+}
+
+/**
+ * What the new-run form remembers for this viewer, kept in a cookie so the
+ * server renders the form as it will stay. Only labels and names: never a
+ * prompt, a path, or anything secret. Read as untrusted text.
+ */
+export class Memory {
+  static readonly COOKIE = 'ren_runs';
+  static readonly NONE: Remembered = { harness: 'codex', settings: {} };
+
+  /** The cookie's value, read; anything unreadable is the default. */
+  static parse(raw: string | null | undefined): Remembered {
+    if (!raw) return Memory.NONE;
+    let saved: unknown;
+    try {
+      saved = JSON.parse(raw);
+    } catch {
+      return Memory.NONE;
+    }
+    if (!isRecord(saved)) return Memory.NONE;
+    const settings: Partial<Record<Drivable, Kept>> = {};
+    const stored = saved.settings;
+    if (isRecord(stored)) {
+      for (const drivable of DRIVABLE) {
+        const kept = stored[drivable];
+        if (!isRecord(kept)) continue;
+        const text = (key: string) => {
+          const value = kept[key];
+          return typeof value === 'string' && value.length <= 200 ? value : undefined;
+        };
+        settings[drivable] = {
+          model: text('model'),
+          modelName: text('modelName'),
+          effort: text('effort'),
+          approvals: text('approvals'),
+        };
+      }
+    }
+    return {
+      harness: DRIVABLE.find((drivable) => drivable === saved.harness) ?? 'codex',
+      settings,
+    };
+  }
+
+  /** The cookie that keeps `remembered` for a year, for the Runs page only. */
+  static cookie(remembered: Remembered): string {
+    const value = encodeURIComponent(JSON.stringify(remembered));
+    return `${Memory.COOKIE}=${value}; Path=/runs; Max-Age=31536000; SameSite=Lax`;
   }
 }

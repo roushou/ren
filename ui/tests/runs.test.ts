@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   Desk,
+  Memory,
   Models,
   Setup,
   RunCommandError,
@@ -698,4 +699,49 @@ test('scratch runs share one group, whatever folder each got', () => {
     ['Scratch', 2],
     ['acme', 1],
   ]);
+});
+
+test('the remembered settings read back from their cookie, and junk is the default', () => {
+  const remembered = {
+    harness: 'claude_code' as const,
+    settings: { claude_code: { model: 'opus', modelName: 'Opus', effort: 'high' } },
+  };
+  const cookie = Memory.cookie(remembered);
+  assert.match(cookie, /^ren_runs=[^;]+; Path=\/runs; Max-Age=31536000; SameSite=Lax$/);
+  const value = decodeURIComponent(cookie.slice('ren_runs='.length, cookie.indexOf(';')));
+  assert.deepEqual(Memory.parse(value), {
+    harness: 'claude_code',
+    settings: {
+      claude_code: { model: 'opus', modelName: 'Opus', effort: 'high', approvals: undefined },
+    },
+  });
+  for (const junk of [null, '', '{', '[]', '{"harness":"gpt"}']) {
+    assert.equal(Memory.parse(junk).harness, 'codex', String(junk));
+  }
+  // A client this UI does not drive, or a value that is not text, is left out.
+  assert.deepEqual(
+    Memory.parse('{"harness":"pi","settings":{"opencode":{"model":"x"},"pi":{"model":7}}}'),
+    {
+      harness: 'pi',
+      settings: {
+        pi: { model: undefined, modelName: undefined, effort: undefined, approvals: undefined },
+      },
+    },
+  );
+});
+
+test('the page’s opening reads each stand on their own', async () => {
+  const client = new RunsClient((async (url: string) => {
+    if (url === '/control/runs/clients') return Response.json({ error: 'busy' }, { status: 503 });
+    if (url === '/control/runs') return Response.json({ api_version: 1, runs: [] });
+    if (url === '/control/runs/projects') {
+      return Response.json({ api_version: 1, projects: [], scratch: '/s' });
+    }
+    return Response.json({ api_version: 1, runs: [] });
+  }) as typeof fetch);
+  const opening = await client.opening();
+  assert.deepEqual(opening.live, { state: 'read', value: [] });
+  assert.deepEqual(opening.places, { state: 'read', value: { projects: [], scratch: '/s' } });
+  assert.equal(opening.clients.state, 'failed');
+  assert.equal(opening.recorded.state, 'read');
 });

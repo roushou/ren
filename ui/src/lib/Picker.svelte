@@ -40,6 +40,7 @@
     free = null,
     note = null,
     toggle = null,
+    disabled = null,
     onchange,
   }: {
     /** The accessible name. */
@@ -57,6 +58,8 @@
     note?: string | null;
     /** A switch at the list's foot that shows more of it. */
     toggle?: { label: string; on: boolean; onchange: (on: boolean) => void } | null;
+    /** Why it cannot be changed now; it keeps its place, greyed out. */
+    disabled?: string | null;
     onchange: (value: string) => void;
   } = $props();
 
@@ -159,6 +162,8 @@
     aria-haspopup="listbox"
     aria-expanded={isOpen}
     aria-label={label}
+    disabled={!!disabled}
+    title={disabled ?? undefined}
     onclick={() => (isOpen ? close() : void show())}
   >
     <Icon name={icon} size={12} />
@@ -281,9 +286,13 @@
     font-size: 12px;
     cursor: pointer;
   }
-  .chip-button:hover,
+  .chip-button:hover:not(:disabled),
   .chip-button[aria-expanded='true'] {
     background: var(--surface-hover);
+  }
+  .chip-button:disabled {
+    color: var(--muted);
+    cursor: default;
   }
   /* A hint stands apart from its label: a rule, then its icon and text. */
   .chip-button .hint {
