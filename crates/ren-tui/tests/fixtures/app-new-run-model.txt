@@ -1,0 +1,30 @@
+ new run    ctrl-o folder acme-web · feat/upload    ctrl-l client Claude Code    ctrl-k model default · Big 2
+──┌ Claude Code models ─────────────────────────────────────┐───────────────────────────────────────────────────────────
+ W│  › ● default  Claude Code's own choice, now Big 2       │s your editor.
+  │      Big 2    Best for everyday, complex tasks  default │
+  │      Deep 2   Most capable for the hardest tasks        │
+  │      Small 2  Fastest for quick answers                 │
+  └─────────────────────────────────────────────────────────┘
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ files   none
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ type to search · ↑↓ choose · enter take it · esc back to the prompt                                   1 line · 0 chars

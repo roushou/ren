@@ -1,4 +1,4 @@
- new run    ctrl-o folder acme-web  /dev/acme-web · feat/upload    ctrl-l client Claude Code
+ new run    ctrl-o folder acme-web · feat/upload    ctrl-l client Claude Code    ctrl-k model default     /dev/acme-web
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
  The upload test is flaky on CI: it fails about one run in ten with a lease timeout. Look at how the worker renews its
  lease in src/upload/worker.rs, and why the retry counter can be bumped after the lease check.
@@ -27,4 +27,4 @@
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
  files   none
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
- enter start · ctrl-o folder · ctrl-l client · ctrl-j new line · ctrl-e your editor · esc cancel    3 lines · 341 chars
+ enter start · ctrl-j new line · ctrl-e your editor · esc cancel                                    3 lines · 341 chars

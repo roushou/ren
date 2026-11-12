@@ -1,4 +1,4 @@
- new run    ctrl-o folder none yet    ctrl-l client Claude Code
+ new run    ctrl-o folder none yet    ctrl-l client Claude Code    ctrl-k model default
 ──┌ folder ─────────────────────────────────┐───────────────────────────────────────────────────────────────────────────
  W│  search  ac▏                            │ it; ctrl-e opens your editor.
   │  recent                                 │

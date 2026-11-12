@@ -19,7 +19,7 @@ use crate::Size;
 use desk::{Attention, Desk, Run};
 use ren_harness::{
     Harness,
-    drive::{ApprovalId, Decision, Prompt},
+    drive::{self, ApprovalId, Decision, ModelId, Prompt},
 };
 use ren_protocol::label::{Labeled, Stored};
 use ren_protocol::native::NativeThreadId;
@@ -31,6 +31,7 @@ use ren_store::activity::{CallActivity, TurnActivity};
 use ren_store::view::{ConversationView, RunView};
 use ren_supervisor::{Client, ClientStatus, Project, RunSnapshot, RunState, RunUpdate};
 use sessions::Sessions;
+use std::collections::HashMap;
 
 /// What was read, or what happened.
 #[derive(Debug, Clone, PartialEq)]
@@ -54,6 +55,11 @@ pub enum Input {
     /// The clients and whether a run can start with each, or why they
     /// cannot be read.
     Clients(Result<Vec<Client>, String>),
+    /// The models a client offers, as it lists them, or why it did not.
+    Models {
+        harness: Harness,
+        models: Result<Vec<drive::Model>, String>,
+    },
     /// One update from the run feed.
     Update(RunUpdate),
     /// The run feed skipped updates: the runs are read again.
@@ -88,6 +94,8 @@ pub enum Read {
     Recorded,
     Projects,
     Clients,
+    /// The models a client offers, through the control API.
+    Models(Harness),
     /// A run's conversation, whole, as the daemon stored it.
     Conversation(RunId),
 }
@@ -100,6 +108,8 @@ pub enum Command {
         dir: String,
         resume: Option<NativeThreadId>,
         prompt: Option<Prompt>,
+        /// With none, the client's own default.
+        model: Option<ModelId>,
     },
     Prompt {
         run: RunId,
@@ -138,6 +148,14 @@ pub(crate) enum Projects {
     Failed(String),
 }
 
+/// A client's models, as far as they are known.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum Offered {
+    Asked,
+    Listed(Vec<drive::Model>),
+    Failed(String),
+}
+
 /// Whether runs can be driven from here.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Control {
@@ -167,6 +185,10 @@ pub(crate) struct Model {
     pub control: Control,
     /// The client a new run starts with: the last one started.
     pub client: Harness,
+    /// Each client's models, once asked for.
+    models: HashMap<Harness, Offered>,
+    /// The model last chosen for each client, while this app runs.
+    pub chosen: HashMap<Harness, ModelId>,
     /// The run asked to start here, until the daemon answers.
     starting: Option<Starting>,
 }
@@ -180,6 +202,8 @@ impl Model {
             clients: Vec::new(),
             control: Control::Unread,
             client: Harness::ClaudeCode,
+            models: HashMap::new(),
+            chosen: HashMap::new(),
             starting: None,
         }
     }
@@ -217,6 +241,24 @@ impl Model {
                 })
                 .copied()
                 .collect()
+        }
+    }
+
+    /// What is known of `harness`'s models.
+    pub fn models(&self, harness: Harness) -> Option<&Offered> {
+        self.models.get(&harness)
+    }
+
+    /// The read for `harness`'s models, the first time they are wanted, or
+    /// again after a listing that failed or was empty.
+    pub fn ask_models(&mut self, harness: Harness) -> Option<Read> {
+        match self.models.get(&harness) {
+            Some(Offered::Asked) => None,
+            Some(Offered::Listed(models)) if !models.is_empty() => None,
+            Some(Offered::Listed(_) | Offered::Failed(_)) | None => {
+                self.models.insert(harness, Offered::Asked);
+                Some(Read::Models(harness))
+            }
         }
     }
 
@@ -272,6 +314,16 @@ impl Model {
                 self.clients = clients.unwrap_or_default();
                 Vec::new()
             }
+            Input::Models { harness, models } => {
+                self.models.insert(
+                    harness,
+                    match models {
+                        Ok(models) => Offered::Listed(models),
+                        Err(why) => Offered::Failed(why),
+                    },
+                );
+                Vec::new()
+            }
             Input::Lagged => vec![Effect::Read(Read::Runs)],
             Input::Update(update) => self.update(update),
             Input::Conversation { run, conversation } => {
@@ -320,6 +372,7 @@ impl Model {
         dir: String,
         resume: Option<NativeThreadId>,
         prompt: Option<Prompt>,
+        model: Option<ModelId>,
     ) -> Command {
         self.starting = Some(Starting {
             harness,
@@ -332,6 +385,7 @@ impl Model {
             dir,
             resume,
             prompt,
+            model,
         }
     }
 

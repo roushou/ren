@@ -433,6 +433,7 @@ fn n_opens_the_composer_on_where_the_run_works_then_the_prompt() {
                 )
                 .unwrap()
             ),
+            model: None,
         }]
     );
     assert!(!console.tui.overlaid());
@@ -479,6 +480,84 @@ fn clients() -> Vec<ren_supervisor::Client> {
             status: ClientStatus::NotDrivable,
         },
     ]
+}
+
+/// Models as a client lists them: one is its default.
+fn models() -> Vec<ren_harness::drive::Model> {
+    let model = |id: &str, name: &str, description: &str, choice| ren_harness::drive::Model {
+        id: id.parse().unwrap(),
+        name: name.into(),
+        description: Some(description.into()),
+        provider: None,
+        choice,
+    };
+    use ren_harness::drive::DefaultChoice::{Default, Other};
+    vec![
+        model("big", "Big 2", "Best for everyday, complex tasks", Default),
+        model(
+            "deep",
+            "Deep 2",
+            "Most capable for the hardest tasks",
+            Other,
+        ),
+        model("small", "Small 2", "Fastest for quick answers", Other),
+    ]
+}
+
+#[test]
+fn the_composer_starts_on_the_model_chosen_from_the_clients_list() {
+    let mut console = desk();
+    let _ = console.apply(Input::Clients(Ok(clients())));
+    // Opening the composer asks the client for its models.
+    let out = console.press(Key::Char('n'));
+    assert!(out.contains(&Out::Read(Read::Models(Harness::ClaudeCode))));
+    type_text(&mut console, "ac");
+    let _ = console.press(Key::Enter);
+    let _ = console.apply(Input::Models {
+        harness: Harness::ClaudeCode,
+        models: Ok(models()),
+    });
+    let shown = drawn(&console);
+    assert!(shown.contains("ctrl-k model default · Big 2"), "{shown}");
+    let _ = console.press(Key::Model);
+    assert_eq!(
+        drawn(&console),
+        include_str!("../../tests/fixtures/app-new-run-model.txt")
+    );
+    // Typing narrows the list: the default stays first.
+    type_text(&mut console, "fast");
+    let _ = console.press(Key::Down);
+    let _ = console.press(Key::Enter);
+    assert!(drawn(&console).contains("ctrl-k model Small 2"));
+    type_text(&mut console, "tidy up");
+    let out = console.press(Key::Enter);
+    let started = sent(&out);
+    let [Command::Start { model, .. }] = started.as_slice() else {
+        panic!("one start: {out:?}");
+    };
+    assert_eq!(model.as_ref().map(|model| model.as_str()), Some("small"));
+    // The next composer remembers the choice; a client that fails to list
+    // says why.
+    let _ = console.press(Key::Char('n'));
+    assert!(drawn(&console).contains("Small 2"));
+    let _ = console.apply(Input::Models {
+        harness: Harness::Codex,
+        models: Err("the client did not list its models in time".into()),
+    });
+    let _ = console.press(Key::Client);
+    let _ = console.press(Key::Down);
+    // Choosing Codex asks again, since its listing failed.
+    let out = console.press(Key::Enter);
+    assert_eq!(out, [Out::Read(Read::Models(Harness::Codex))]);
+    let shown = drawn(&console);
+    let header = shown.lines().next().unwrap_or_default();
+    assert!(
+        header.trim_end().ends_with("ctrl-k model default"),
+        "{header}"
+    );
+    // Asked already: opening the list does not ask twice.
+    assert!(console.press(Key::Model).is_empty());
+    assert!(drawn(&console).contains("asking Codex for its models…"));
 }
 
 #[test]
@@ -574,6 +653,7 @@ fn writing_to_an_ended_run_continues_its_conversation() {
             dir: "/srv/ren".into(),
             resume: Some(thread(5)),
             prompt: Some(Prompt::parse("pick it back up".into()).unwrap()),
+            model: None,
         }]
     );
 }

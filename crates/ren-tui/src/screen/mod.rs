@@ -124,7 +124,7 @@ impl Screen {
     pub fn shown(&mut self, ctx: &mut Ctx<'_>) -> Vec<Action> {
         match self {
             Self::Main(screen) => screen.shown(ctx),
-            Self::NewRun(screen) => screen.shown(),
+            Self::NewRun(screen) => screen.shown(ctx.model),
             Self::Actions(_) | Self::Help(_) => Vec::new(),
         }
     }

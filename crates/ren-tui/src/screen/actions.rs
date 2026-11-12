@@ -97,7 +97,8 @@ impl Actions {
                 | Key::Newer
                 | Key::Editor
                 | Key::Folder
-                | Key::Client => {
+                | Key::Client
+                | Key::Model => {
                     self.confirming = None;
                     Vec::new()
                 }
@@ -139,7 +140,8 @@ impl Actions {
             | Key::Newer
             | Key::Editor
             | Key::Folder
-            | Key::Client => Vec::new(),
+            | Key::Client
+            | Key::Model => Vec::new(),
         }
     }
 

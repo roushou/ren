@@ -1,9 +1,11 @@
 //! Starting a run: a full-screen composer. It opens on where the run will
 //! work: the folder is always chosen, never assumed, from a list with the
 //! folders recent runs worked in first. Then the prompt owns the screen, as
-//! long as it needs to be. The folder and the client are one header line,
-//! each naming the key that changes it, which works while typing: Ctrl-O the
-//! folder, Ctrl-L the client (the last one used, until changed). Below the
+//! long as it needs to be. The folder, the client, and the model are one
+//! header line, each naming the key that changes it, which works while
+//! typing: Ctrl-O the folder, Ctrl-L the client (the last one used, until
+//! changed), Ctrl-K the model, from the models the client itself lists on
+//! the daemon's host (none chosen is the client's own default). Below the
 //! prompt a line is kept for the files a prompt carries, which Ren cannot add
 //! yet.
 //!
@@ -14,12 +16,13 @@
 use super::composer::Composer;
 use super::{Action, Ctx, Look, Notice};
 use crate::Key;
+use crate::model::Offered;
 use crate::model::{Model, Read};
 use crate::ui::{
     Anchor, Bar, Emphasis, Ink, Keep, Line, Place, Rule, Size as Fit, Span, Text, View,
 };
 use ren_harness::Harness;
-use ren_harness::drive::Prompt;
+use ren_harness::drive::{self, DefaultChoice, ModelId, Prompt};
 use ren_supervisor::{Client, ClientStatus, Project, ProjectGit};
 
 /// The composer, as written so far.
@@ -30,6 +33,8 @@ pub(crate) struct NewRun {
     /// the first offered.
     project: Option<String>,
     client: Harness,
+    /// The model; none is the client's own default.
+    model: Option<ModelId>,
     focus: Focus,
 }
 
@@ -45,6 +50,7 @@ enum Focus {
 enum Setting {
     Project,
     Client,
+    Model,
 }
 
 /// A setting's list: what is typed to narrow it, and the entry chosen.
@@ -64,11 +70,15 @@ impl NewRun {
     const LIST_AT: u16 = 2;
 
     /// The composer, open on choosing where the run works.
+    /// The widest a model's description is shown in its list.
+    const DESCRIBED: usize = 56;
+
     pub fn new(model: &Model) -> Self {
         Self {
             prompt: Composer::default(),
             project: None,
             client: model.client,
+            model: model.chosen.get(&model.client).cloned(),
             focus: Self::picking(Setting::Project),
         }
     }
@@ -81,8 +91,78 @@ impl NewRun {
         })
     }
 
-    pub fn shown(&mut self) -> Vec<Action> {
-        vec![Action::Read(Read::Projects), Action::Read(Read::Clients)]
+    pub fn shown(&mut self, model: &mut Model) -> Vec<Action> {
+        let mut reads = vec![Action::Read(Read::Projects), Action::Read(Read::Clients)];
+        reads.extend(model.ask_models(self.client).map(Action::Read));
+        reads
+    }
+
+    /// The client's models, as listed so far.
+    fn listed<'a>(&self, model: &'a Model) -> &'a [drive::Model] {
+        match model.models(self.client) {
+            Some(Offered::Listed(models)) => models,
+            Some(Offered::Asked | Offered::Failed(_)) | None => &[],
+        }
+    }
+
+    /// The models whose name, id, provider, or description holds `search`,
+    /// ignoring case, by provider in the order the client lists them; after
+    /// the default, which is always first.
+    fn model_choices<'a>(&self, search: &str, model: &'a Model) -> Vec<Option<&'a drive::Model>> {
+        let search = search.to_lowercase();
+        let matching: Vec<&drive::Model> = self
+            .listed(model)
+            .iter()
+            .filter(|offered| {
+                [
+                    Some(offered.name.as_str()),
+                    Some(offered.id.as_str()),
+                    offered.provider.as_deref(),
+                    offered.description.as_deref(),
+                ]
+                .into_iter()
+                .flatten()
+                .any(|text| text.to_lowercase().contains(&search))
+            })
+            .collect();
+        let mut providers: Vec<Option<&str>> = Vec::new();
+        for offered in &matching {
+            if !providers.contains(&offered.provider.as_deref()) {
+                providers.push(offered.provider.as_deref());
+            }
+        }
+        let mut choices = vec![None];
+        for provider in providers {
+            choices.extend(
+                matching
+                    .iter()
+                    .filter(|offered| offered.provider.as_deref() == provider)
+                    .map(|offered| Some(*offered)),
+            );
+        }
+        choices
+    }
+
+    /// The model the client uses when none is chosen, when it says.
+    fn fallback<'a>(&self, model: &'a Model) -> Option<&'a drive::Model> {
+        self.listed(model)
+            .iter()
+            .find(|offered| offered.choice == DefaultChoice::Default)
+    }
+
+    /// The chosen model, while the client still lists it (or has not
+    /// listed yet).
+    fn kept(&self, model: &Model) -> Option<ModelId> {
+        let chosen = self.model.as_ref()?;
+        match model.models(self.client) {
+            Some(Offered::Listed(models)) if !models.is_empty() => models
+                .iter()
+                .any(|offered| &offered.id == chosen)
+                .then(|| chosen.clone()),
+            Some(Offered::Listed(_) | Offered::Asked | Offered::Failed(_)) | None => {
+                Some(chosen.clone())
+            }
+        }
     }
 
     /// The prompt's width in a screen `width` wide: a margin each side.
@@ -167,6 +247,15 @@ impl NewRun {
             Key::Esc | Key::Interrupt => return vec![Action::Pop],
             Key::Folder | Key::Tab => self.focus = Self::picking(Setting::Project),
             Key::Client | Key::BackTab => self.focus = Self::picking(Setting::Client),
+            Key::Model => {
+                self.focus = Self::picking(Setting::Model);
+                return ctx
+                    .model
+                    .ask_models(self.client)
+                    .map(Action::Read)
+                    .into_iter()
+                    .collect();
+            }
             Key::Editor => return vec![Action::Edit(self.prompt.text())],
             Key::Char(ch) => self.prompt.insert(ch),
             Key::Newline => self.prompt.insert('\n'),
@@ -196,15 +285,16 @@ impl NewRun {
         let count = match picker.setting {
             Setting::Project => Self::choices(&picker.search, ctx.model).0.len(),
             Setting::Client => ctx.model.clients().len(),
+            Setting::Model => self.model_choices(&picker.search, ctx.model).len(),
         };
         match key {
             Key::Up => picker.at = picker.at.saturating_sub(1),
             Key::Down => picker.at = (picker.at + 1).min(count.saturating_sub(1)),
-            Key::Char(ch) if picker.setting == Setting::Project => {
+            Key::Char(ch) if picker.setting != Setting::Client => {
                 picker.search.push(ch);
                 picker.at = 0;
             }
-            Key::Backspace if picker.setting == Setting::Project => {
+            Key::Backspace if picker.setting != Setting::Client => {
                 picker.search.pop();
                 picker.at = 0;
             }
@@ -227,6 +317,20 @@ impl NewRun {
                     search: String::new(),
                     at: 0,
                 }
+            }
+            Key::Model => {
+                picker = Picker {
+                    setting: Setting::Model,
+                    search: String::new(),
+                    at: 0,
+                };
+                self.focus = Focus::Picking(picker);
+                return ctx
+                    .model
+                    .ask_models(self.client)
+                    .map(Action::Read)
+                    .into_iter()
+                    .collect();
             }
             Key::Interrupt => return vec![Action::Pop],
             Key::Char(_)
@@ -251,7 +355,7 @@ impl NewRun {
     }
 
     /// Take the picked entry, and give the keys back to the prompt.
-    fn choose(&mut self, picker: &Picker, model: &Model) -> Vec<Action> {
+    fn choose(&mut self, picker: &Picker, model: &mut Model) -> Vec<Action> {
         match picker.setting {
             Setting::Project => {
                 if let Some(project) = Self::choices(&picker.search, model).0.get(picker.at) {
@@ -262,7 +366,21 @@ impl NewRun {
                 Some(Client {
                     harness,
                     status: ClientStatus::Ready,
-                }) => self.client = *harness,
+                }) => {
+                    let harness = *harness;
+                    self.focus = Focus::Prompt;
+                    if harness == self.client {
+                        return Vec::new();
+                    }
+                    // Another client's models are its own.
+                    self.client = harness;
+                    self.model = model.chosen.get(&harness).cloned();
+                    return model
+                        .ask_models(harness)
+                        .map(Action::Read)
+                        .into_iter()
+                        .collect();
+                }
                 Some(Client { harness, .. }) => {
                     return vec![Action::Say(Notice::refusal(format!(
                         "{} is not installed on the daemon's host",
@@ -271,6 +389,11 @@ impl NewRun {
                 }
                 None => {}
             },
+            Setting::Model => {
+                if let Some(choice) = self.model_choices(&picker.search, model).get(picker.at) {
+                    self.model = choice.map(|offered| offered.id.clone());
+                }
+            }
         }
         self.focus = Focus::Prompt;
         Vec::new()
@@ -296,8 +419,17 @@ impl NewRun {
         }
         let dir = project.path.clone();
         let prompt = Prompt::parse(self.prompt.text()).ok();
+        let chosen = self.kept(ctx.model);
         ctx.model.client = self.client;
-        let command = ctx.model.start(self.client, dir, None, prompt);
+        match &chosen {
+            Some(chosen) => {
+                ctx.model.chosen.insert(self.client, chosen.clone());
+            }
+            None => {
+                ctx.model.chosen.remove(&self.client);
+            }
+        }
+        let command = ctx.model.start(self.client, dir, None, prompt, chosen);
         vec![Action::Pop, Action::Send(command)]
     }
 
@@ -372,6 +504,7 @@ impl NewRun {
                         title: match picker.setting {
                             Setting::Project => " folder ".to_owned(),
                             Setting::Client => " client ".to_owned(),
+                            Setting::Model => format!(" {} models ", Self::name(self.client)),
                         },
                         ink: Ink::Bar,
                         body: Box::new(View::lines(lines, Anchor::Top)),
@@ -390,12 +523,7 @@ impl NewRun {
 
     fn project_label(&self, model: &Model) -> String {
         match self.project(model.projects()) {
-            Some(project) => format!(
-                "{}  {} · {}",
-                project.name,
-                project.path,
-                Self::branch(&project.git)
-            ),
+            Some(project) => format!("{} · {}", project.name, Self::branch(&project.git)),
             None => "none yet".to_owned(),
         }
     }
@@ -435,13 +563,135 @@ impl NewRun {
                 Self::name(self.client).to_owned(),
                 Ink::Text,
             ),
+            Span::plain("   "),
+            Span::new("ctrl-k", Ink::Tool),
+            Span::new(" model", Ink::Muted),
+            value(Setting::Model, self.model_label(model), Ink::Text),
         ]);
+        // The folder's full path, where there is room for it.
+        let right = match self.project(model.projects()) {
+            Some(project) => Line::of(format!("{} ", project.path), Ink::Muted),
+            None => Line::default(),
+        };
         Bar {
             left,
-            right: Line::default(),
+            right,
             fill: Ink::Bar,
             keep: Keep::Left,
         }
+    }
+
+    /// The model as the header names it: the chosen one's name, or the
+    /// default and what it is now.
+    fn model_label(&self, model: &Model) -> String {
+        match self.kept(model) {
+            Some(chosen) => self
+                .listed(model)
+                .iter()
+                .find(|offered| offered.id == chosen)
+                .map_or_else(|| chosen.to_string(), |offered| offered.name.clone()),
+            None => match self.fallback(model) {
+                Some(fallback) => format!("default · {}", fallback.name),
+                None => "default".to_owned(),
+            },
+        }
+    }
+
+    /// The model list: the default first, then each provider's models,
+    /// each with its description; what is still being asked, or why
+    /// nothing is listed, at the foot.
+    fn model_list(
+        &self,
+        picker: &Picker,
+        model: &Model,
+        mark: impl Fn(usize, Vec<Span>) -> Line,
+    ) -> Vec<Line> {
+        let choices = self.model_choices(&picker.search, model);
+        let chosen = self.kept(model);
+        let name = choices
+            .iter()
+            .map(|choice| choice.map_or(7, |offered| Text(&offered.name).width()))
+            .max()
+            .unwrap_or(0);
+        let mut lines = Vec::new();
+        if !picker.search.is_empty() || choices.len() > Self::LISTED {
+            lines.push(Line::new(vec![
+                Span::new(" search  ", Ink::Muted),
+                Span::new(format!("{}▏", picker.search), Ink::Text),
+            ]));
+        }
+        let first = picker.at.saturating_sub(Self::LISTED - 1);
+        let mut provider: Option<Option<&str>> = None;
+        for (index, choice) in choices.iter().enumerate().skip(first).take(Self::LISTED) {
+            let current = choice.map(|offered| &offered.id) == chosen.as_ref();
+            let tick = Span::new(if current { "● " } else { "  " }, Ink::Prompt);
+            match choice {
+                None => {
+                    let about = match self.fallback(model) {
+                        Some(fallback) => format!(
+                            "{}'s own choice, now {}",
+                            Self::name(self.client),
+                            fallback.name
+                        ),
+                        None => format!("{}'s own choice", Self::name(self.client)),
+                    };
+                    lines.push(mark(
+                        index,
+                        vec![
+                            tick,
+                            Span::new(format!("{:<name$}  ", "default"), Ink::Text),
+                            Span::new(about, Ink::Muted),
+                        ],
+                    ));
+                }
+                Some(offered) => {
+                    let group = offered.provider.as_deref();
+                    if provider != Some(group) {
+                        provider = Some(group);
+                        if let Some(group) = group {
+                            lines.push(Line::of(format!(" {group}"), Ink::Muted));
+                        }
+                    }
+                    let mut spans = vec![
+                        tick,
+                        Span::new(format!("{:<name$}  ", offered.name), Ink::Text),
+                        Span::new(
+                            Text(
+                                offered
+                                    .description
+                                    .as_deref()
+                                    .unwrap_or(offered.id.as_str()),
+                            )
+                            .summary(Self::DESCRIBED),
+                            Ink::Muted,
+                        ),
+                    ];
+                    if offered.choice == DefaultChoice::Default {
+                        spans.push(Span::new("  default", Ink::Tool));
+                    }
+                    lines.push(mark(index, spans));
+                }
+            }
+        }
+        let note = match model.models(self.client) {
+            Some(Offered::Asked) | None => Some(format!(
+                "asking {} for its models…",
+                Self::name(self.client)
+            )),
+            Some(Offered::Failed(why)) => Some(why.clone()),
+            Some(Offered::Listed(models)) if models.is_empty() => Some(format!(
+                "{} lists no models here; is it signed in on the daemon's host?",
+                Self::name(self.client)
+            )),
+            Some(Offered::Listed(_)) if choices.len() == 1 && !picker.search.is_empty() => {
+                Some("no model matches".to_owned())
+            }
+            Some(Offered::Listed(_)) => None,
+        };
+        if let Some(note) = note {
+            lines.push(Line::of(format!("   {note}"), Ink::Muted));
+        }
+        lines
     }
 
     /// An open setting's list, its entry marked.
@@ -500,6 +750,7 @@ impl NewRun {
                 }
                 lines
             }
+            Setting::Model => self.model_list(picker, model, mark),
             Setting::Client => model
                 .clients()
                 .iter()
@@ -534,13 +785,16 @@ impl NewRun {
             None => Line::of(
                 match &self.focus {
                     Focus::Prompt => {
-                        " enter start · ctrl-o folder · ctrl-l client · ctrl-j new line · ctrl-e your editor · esc cancel"
+                        " enter start · ctrl-j new line · ctrl-e your editor · esc cancel"
                     }
                     Focus::Picking(picker) => match picker.setting {
                         Setting::Project => {
                             " where should the run work? type to search · ↑↓ choose · enter take it · esc back to the prompt"
                         }
                         Setting::Client => " ↑↓ choose · enter take it · esc back to the prompt",
+                        Setting::Model => {
+                            " type to search · ↑↓ choose · enter take it · esc back to the prompt"
+                        }
                     },
                 },
                 Ink::Muted,

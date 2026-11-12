@@ -451,6 +451,15 @@ impl<'a> Shell<'a> {
                     Err(why) => Err(why),
                 }))
             })),
+            Read::Models(harness) => self.pending.push(Box::pin(async move {
+                done(Input::Models {
+                    harness,
+                    models: match control {
+                        Ok(control) => Self::models(control, harness).await,
+                        Err(why) => Err(why),
+                    },
+                })
+            })),
             Read::Conversation(run) => self.pending.push(Box::pin(async move {
                 // A failed read leaves what the feed shows; selecting the run
                 // again reads it again.
@@ -495,8 +504,12 @@ impl<'a> Shell<'a> {
                 dir,
                 resume,
                 prompt,
+                model,
             } => {
                 let mut body = serde_json::json!({ "harness": harness, "dir": dir });
+                if let Some(model) = model {
+                    body["model"] = model.as_str().into();
+                }
                 if let Some(resume) = resume {
                     body["resume"] = resume.to_string().into();
                 }
@@ -608,6 +621,29 @@ impl<'a> Shell<'a> {
                 .map_err(|_| "the daemon's clients are not readable".to_owned()),
             Ok((_, body)) => Err(body["error"]
                 .as_str()
+                .unwrap_or("the daemon refused")
+                .to_owned()),
+            Err(error) => Err(error.to_string()),
+        }
+    }
+
+    /// The models `harness` offers, as it lists them on the daemon's host.
+    async fn models(
+        control: &ControlTarget,
+        harness: ren_harness::Harness,
+    ) -> Result<Vec<ren_harness::drive::Model>, String> {
+        #[derive(serde::Deserialize)]
+        struct Listed {
+            models: Vec<ren_harness::drive::Model>,
+        }
+        let path = format!("runs/clients/{harness}/models");
+        match control.send(Method::GET, &path, None).await {
+            Ok((status, body)) if status.is_success() => serde_json::from_value::<Listed>(body)
+                .map(|listed| listed.models)
+                .map_err(|_| "the client's models are not readable".to_owned()),
+            Ok((_, body)) => Err(body["message"]
+                .as_str()
+                .or_else(|| body["error"].as_str())
                 .unwrap_or("the daemon refused")
                 .to_owned()),
             Err(error) => Err(error.to_string()),

@@ -37,6 +37,8 @@ pub enum Key {
     Folder,
     /// Ctrl-L: choose the client a run starts with.
     Client,
+    /// Ctrl-K: choose the model, while writing a new run.
+    Model,
 }
 
 /// A terminal's size in cells.

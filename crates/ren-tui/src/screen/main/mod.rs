@@ -715,7 +715,8 @@ impl Main {
             | Key::Newer
             | Key::Editor
             | Key::Folder
-            | Key::Client => {}
+            | Key::Client
+            | Key::Model => {}
         }
         // The selection stays on a match.
         self.changed(ctx, &[])
@@ -837,6 +838,8 @@ impl Main {
                     dir,
                     resume,
                     Some(prompt),
+                    // The run's own model is not recorded: the client's default.
+                    None,
                 ))],
                 None => vec![Action::Say(Notice::info(
                     "this run ended before it opened a conversation: n starts another",

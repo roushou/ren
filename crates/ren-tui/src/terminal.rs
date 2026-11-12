@@ -203,6 +203,7 @@ impl TerminalEvent {
             KeyCode::Char('e') if control => Some(Key::Editor),
             KeyCode::Char('o') if control => Some(Key::Folder),
             KeyCode::Char('l') if control => Some(Key::Client),
+            KeyCode::Char('k') if control => Some(Key::Model),
             KeyCode::Char(_) if control => None,
             // macOS terminals send Option-← and Option-→ as Alt-b and Alt-f.
             KeyCode::Char('b') if alt => Some(Key::AltLeft),
@@ -262,6 +263,7 @@ mod tests {
             ('e', Key::Editor),
             ('o', Key::Folder),
             ('l', Key::Client),
+            ('k', Key::Model),
             ('j', Key::Newline),
         ] {
             assert_eq!(

@@ -118,7 +118,8 @@ impl MessageBox {
             | Key::AltRight
             | Key::Editor
             | Key::Folder
-            | Key::Client => return Typed::Left(key),
+            | Key::Client
+            | Key::Model => return Typed::Left(key),
         }
         Typed::Took
     }
