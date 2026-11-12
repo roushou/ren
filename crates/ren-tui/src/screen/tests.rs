@@ -425,6 +425,59 @@ fn n_opens_the_new_run_form_and_starts_with_the_prompt() {
     assert!(!console.tui.overlaid());
 }
 
+/// Claude Code and Codex installed, Pi not, OpenCode not drivable.
+fn clients() -> Vec<ren_supervisor::Client> {
+    use ren_supervisor::{Client, ClientStatus};
+    vec![
+        Client {
+            harness: Harness::ClaudeCode,
+            status: ClientStatus::Ready,
+        },
+        Client {
+            harness: Harness::Codex,
+            status: ClientStatus::Ready,
+        },
+        Client {
+            harness: Harness::Pi,
+            status: ClientStatus::NotInstalled,
+        },
+        Client {
+            harness: Harness::OpenCode,
+            status: ClientStatus::NotDrivable,
+        },
+    ]
+}
+
+#[test]
+fn the_form_offers_the_clients_installed_on_the_daemons_host() {
+    let mut console = desk();
+    let _ = console.press(Key::Char('n'));
+    // Unread, every client Ren drives is offered.
+    assert!(drawn(&console).contains("○ Pi   "));
+    let _ = console.apply(Input::Clients(Ok(clients())));
+    let form = drawn(&console);
+    assert!(form.contains("○ Pi (not installed)"), "{form}");
+    assert!(!form.contains("OpenCode"));
+    // Choosing steps over a client that is not there, both ways.
+    let _ = console.press(Key::Tab);
+    let _ = console.press(Key::Right);
+    assert!(drawn(&console).contains("◉ Codex"));
+    let _ = console.press(Key::Right);
+    assert!(drawn(&console).contains("◉ Claude Code"));
+    let _ = console.press(Key::Left);
+    assert!(drawn(&console).contains("◉ Codex"));
+    // Should the chosen client be gone from the host, starting says why.
+    let _ = console.apply(Input::Clients(Ok(vec![ren_supervisor::Client {
+        harness: Harness::Codex,
+        status: ren_supervisor::ClientStatus::NotInstalled,
+    }])));
+    let _ = console.press(Key::Tab);
+    type_text(&mut console, "go");
+    let out = console.press(Key::Enter);
+    assert!(sent(&out).is_empty());
+    assert!(drawn(&console).contains("Codex is not installed on the daemon's host"));
+}
+
 #[test]
 fn a_live_turn_gives_way_to_its_record() {
     let mut console = desk();
@@ -594,6 +647,7 @@ fn screens_draw_as_pinned() {
         drawn(&console),
         include_str!("../../tests/fixtures/app-run-asking.txt")
     );
+    let _ = console.apply(Input::Clients(Ok(clients())));
     let _ = console.press(Key::Char('n'));
     type_text(&mut console, "ac");
     assert_eq!(

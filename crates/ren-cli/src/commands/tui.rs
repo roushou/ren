@@ -31,7 +31,7 @@ use ren_store::activity::{CallActivity, TurnActivity};
 use ren_store::query::PageLimit;
 use ren_store::read::ReadRequest;
 use ren_store::view::RunView;
-use ren_supervisor::{Project, RunSnapshot, RunUpdate};
+use ren_supervisor::{Client, Project, RunSnapshot, RunUpdate};
 use ren_tui::{
     Answered, Command, Input, Out, Read, Snapshot, Terminal, TerminalEvent, Theme, ThemeName, Tui,
 };
@@ -423,6 +423,12 @@ impl<'a> Shell<'a> {
                     Err(why) => Err(why),
                 }))
             })),
+            Read::Clients => self.pending.push(Box::pin(async move {
+                done(Input::Clients(match control {
+                    Ok(control) => Self::clients(control).await,
+                    Err(why) => Err(why),
+                }))
+            })),
             Read::History { run, session } => {
                 self.later.remove(&run);
                 self.pending.push(Box::pin(async move {
@@ -568,6 +574,23 @@ impl<'a> Shell<'a> {
                 Some(error) => error.to_owned(),
                 None => "the daemon refused".to_owned(),
             }),
+            Err(error) => Err(error.to_string()),
+        }
+    }
+
+    async fn clients(control: &ControlTarget) -> Result<Vec<Client>, String> {
+        #[derive(serde::Deserialize)]
+        struct Listed {
+            clients: Vec<Client>,
+        }
+        match control.send(Method::GET, "runs/clients", None).await {
+            Ok((status, body)) if status.is_success() => serde_json::from_value::<Listed>(body)
+                .map(|listed| listed.clients)
+                .map_err(|_| "the daemon's clients are not readable".to_owned()),
+            Ok((_, body)) => Err(body["error"]
+                .as_str()
+                .unwrap_or("the daemon refused")
+                .to_owned()),
             Err(error) => Err(error.to_string()),
         }
     }

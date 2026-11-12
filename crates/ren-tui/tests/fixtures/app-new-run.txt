@@ -12,12 +12,12 @@
                │    › acme-api  /dev/acme-api  main                                                     │─────────────┐
                │      acme-web  /dev/acme-web  feat/upload                                              │             │
                │                                                                                        │             │
-               │  client    ◉ Claude Code   ○ Codex                                                     │             │
+               │  client    ◉ Claude Code   ○ Codex   ○ Pi (not installed)                              │             │
                │                                                                                        │rn           │
                │  prompt                                                                                │─────────────┘
                │                                                                                        │
                │                                                                                        │
-               │  tab next field · ↑↓ project · space client · enter start · esc cancel                 │
+               │  tab next field · ↑↓ project · ←→ client · enter start · esc cancel                    │
                └────────────────────────────────────────────────────────────────────────────────────────┘
                               │
                               │

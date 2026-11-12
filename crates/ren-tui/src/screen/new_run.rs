@@ -9,7 +9,7 @@ use crate::model::Read;
 use crate::ui::{Anchor, Emphasis, Ink, Line, Place, Span, Text, View};
 use ren_harness::Harness;
 use ren_harness::drive::Prompt;
-use ren_supervisor::{Project, ProjectGit};
+use ren_supervisor::{Client, ClientStatus, Project, ProjectGit};
 
 /// The form, as filled in so far.
 #[derive(Debug)]
@@ -30,8 +30,6 @@ enum Field {
 }
 
 impl NewRun {
-    /// The clients Ren can drive.
-    const CLIENTS: [Harness; 2] = [Harness::ClaudeCode, Harness::Codex];
     /// Projects shown at once.
     const SHOWN: usize = 8;
 
@@ -46,7 +44,7 @@ impl NewRun {
     }
 
     pub fn shown(&mut self) -> Vec<Action> {
-        vec![Action::Read(Read::Projects)]
+        vec![Action::Read(Read::Projects), Action::Read(Read::Clients)]
     }
 
     /// Projects whose name or path holds the search, ignoring case.
@@ -80,12 +78,8 @@ impl NewRun {
                 self.chosen = (self.chosen + 1).min(count.saturating_sub(1));
             }
             (Key::Enter, Field::Project | Field::Client) => self.field = self.field.next(),
-            (Key::Left | Key::Right | Key::Char(' '), Field::Client) => {
-                self.client = match self.client {
-                    Harness::ClaudeCode => Harness::Codex,
-                    Harness::Codex | Harness::Pi | Harness::OpenCode => Harness::ClaudeCode,
-                };
-            }
+            (Key::Right | Key::Char(' '), Field::Client) => self.step(&ctx.model.clients(), false),
+            (Key::Left, Field::Client) => self.step(&ctx.model.clients(), true),
             (Key::Enter, Field::Prompt) => return self.start(ctx),
             (Key::Char(ch), Field::Prompt) => self.prompt.insert(ch),
             (Key::Newline, Field::Prompt) => self.prompt.insert('\n'),
@@ -118,7 +112,43 @@ impl NewRun {
         Vec::new()
     }
 
+    /// The next (or, `back`, the previous) client a run can start with
+    /// here; the first one when the chosen client is not among them.
+    fn step(&mut self, clients: &[Client], back: bool) {
+        let ready: Vec<Harness> = clients
+            .iter()
+            .filter(|client| client.status == ClientStatus::Ready)
+            .map(|client| client.harness)
+            .collect();
+        let next = match ready.iter().position(|&harness| harness == self.client) {
+            Some(at) if back => (at + ready.len() - 1) % ready.len(),
+            Some(at) => (at + 1) % ready.len(),
+            None => 0,
+        };
+        if let Some(&harness) = ready.get(next) {
+            self.client = harness;
+        }
+    }
+
     fn start(&mut self, ctx: &mut Ctx<'_>) -> Vec<Action> {
+        let clients = ctx.model.clients();
+        match clients.iter().find(|client| client.harness == self.client) {
+            Some(Client {
+                status: ClientStatus::Ready,
+                ..
+            }) => {}
+            Some(Client {
+                status: ClientStatus::NotInstalled | ClientStatus::NotDrivable,
+                ..
+            })
+            | None => {
+                self.field = Field::Client;
+                return vec![Action::Say(Notice::refusal(format!(
+                    "{} is not installed on the daemon's host",
+                    Self::name(self.client)
+                )))];
+            }
+        }
         let Some(project) = self
             .matching(ctx.model.projects())
             .get(self.chosen)
@@ -180,19 +210,20 @@ impl NewRun {
             Span::new(" client  ", field(Field::Client)),
             Span::plain("  "),
         ]);
-        for harness in Self::CLIENTS {
+        for Client { harness, status } in look.model.clients() {
             let (mark, ink) = if harness == self.client {
                 ("◉", Ink::Text)
             } else {
                 ("○", Ink::Muted)
             };
-            let name = match harness {
-                Harness::ClaudeCode => "Claude Code",
-                Harness::Codex => "Codex",
-                Harness::Pi => "Pi",
-                Harness::OpenCode => "OpenCode",
-            };
-            client.push(Span::new(format!("{mark} {name}   "), ink));
+            let name = Self::name(harness);
+            match status {
+                ClientStatus::Ready => client.push(Span::new(format!("{mark} {name}   "), ink)),
+                ClientStatus::NotInstalled | ClientStatus::NotDrivable => client.push(Span::new(
+                    format!("{mark} {name} (not installed)   "),
+                    Ink::Muted,
+                )),
+            }
         }
         lines.push(client);
         lines.push(Line::default());
@@ -214,7 +245,7 @@ impl NewRun {
         }
         lines.push(Line::default());
         lines.push(Line::of(
-            " tab next field · ↑↓ project · space client · enter start · esc cancel",
+            " tab next field · ↑↓ project · ←→ client · enter start · esc cancel",
             Ink::Muted,
         ));
         let height = u16::try_from(lines.len() + 2).unwrap_or(u16::MAX);
@@ -230,6 +261,17 @@ impl NewRun {
                 height,
             },
         )
+    }
+}
+
+impl NewRun {
+    fn name(harness: Harness) -> &'static str {
+        match harness {
+            Harness::ClaudeCode => "Claude Code",
+            Harness::Codex => "Codex",
+            Harness::Pi => "Pi",
+            Harness::OpenCode => "OpenCode",
+        }
     }
 }
 

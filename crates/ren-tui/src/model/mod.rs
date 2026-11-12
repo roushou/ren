@@ -1,7 +1,7 @@
 //! Everything the terminal has read from its gateway, in the one place every
 //! screen reads it from: the sessions and their model calls (`sessions`),
 //! the daemon's runs with their live conversations (`desk`, `transcript`),
-//! and the projects a run can start in.
+//! and the projects and clients a run can start with.
 //!
 //! [`Model::apply`] takes one [`Input`] and answers with what it calls for:
 //! reads, commands (a prompt kept for a run that now waits for one), and
@@ -21,14 +21,14 @@ use ren_harness::{
     Harness,
     drive::{ApprovalId, Decision, DriveEvent, Prompt},
 };
-use ren_protocol::label::Stored;
+use ren_protocol::label::{Labeled, Stored};
 use ren_protocol::native::NativeThreadId;
 use ren_recorder::Observation;
 use ren_recorder::id::{CallId, RunId, SessionId, TurnId};
 use ren_recorder::progress::Progress;
 use ren_store::activity::{CallActivity, TurnActivity};
 use ren_store::view::RunView;
-use ren_supervisor::{Project, RunSnapshot, RunState, RunUpdate};
+use ren_supervisor::{Client, ClientStatus, Project, RunSnapshot, RunState, RunUpdate};
 use sessions::Sessions;
 
 /// What was read, or what happened.
@@ -50,6 +50,9 @@ pub enum Input {
     /// Recorded runs, newest first.
     Recorded(Vec<RunView>),
     Projects(Result<Vec<Project>, String>),
+    /// The clients and whether a run can start with each, or why they
+    /// cannot be read.
+    Clients(Result<Vec<Client>, String>),
     /// One update from the run feed.
     Update(RunUpdate),
     /// The run feed skipped updates: the runs are read again.
@@ -83,6 +86,7 @@ pub enum Read {
     Runs,
     Recorded,
     Projects,
+    Clients,
     /// A run's recorded turns, from its session, now.
     History {
         run: RunId,
@@ -160,6 +164,8 @@ pub(crate) struct Model {
     pub sessions: Sessions,
     pub desk: Desk,
     pub projects: Projects,
+    /// The clients as the daemon has them; empty until read.
+    clients: Vec<Client>,
     pub control: Control,
     /// The client `/new` starts when none is named: the last one started.
     pub client: Harness,
@@ -176,6 +182,7 @@ impl Model {
             sessions: Sessions::default(),
             desk: Desk::default(),
             projects: Projects::Unread,
+            clients: Vec::new(),
             control: Control::Unread,
             client: Harness::ClaudeCode,
             starting: None,
@@ -191,6 +198,30 @@ impl Model {
         match &self.projects {
             Projects::Read(projects) => projects,
             Projects::Unread | Projects::Failed(_) => &[],
+        }
+    }
+
+    /// The clients a run can be started with, ready or not: as the daemon
+    /// said, or, until it has, every client Ren drives.
+    pub fn clients(&self) -> Vec<Client> {
+        if self.clients.is_empty() {
+            Harness::ALL
+                .iter()
+                .filter(|harness| harness.driven_program().is_ok())
+                .map(|&harness| Client {
+                    harness,
+                    status: ClientStatus::Ready,
+                })
+                .collect()
+        } else {
+            self.clients
+                .iter()
+                .filter(|client| match client.status {
+                    ClientStatus::Ready | ClientStatus::NotInstalled => true,
+                    ClientStatus::NotDrivable => false,
+                })
+                .copied()
+                .collect()
         }
     }
 
@@ -238,6 +269,12 @@ impl Model {
                     Ok(projects) => Projects::Read(projects),
                     Err(why) => Projects::Failed(why),
                 };
+                Vec::new()
+            }
+            Input::Clients(clients) => {
+                // Unreadable, every client Ren drives is offered; starting
+                // one says whether it is there.
+                self.clients = clients.unwrap_or_default();
                 Vec::new()
             }
             Input::Lagged => vec![Effect::Read(Read::Runs)],
