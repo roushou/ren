@@ -29,10 +29,11 @@ use crate::model::desk::{Attention, Run};
 use crate::model::{Command, Control, Model, Read};
 use crate::ui::{Anchor, Ink, Joint, Keep, Line, Lines, Rule, Size, Span, View};
 use ren_harness::drive::{ApprovalId, Decision, Prompt};
+use ren_harness::settings::Midway;
 use ren_protocol::native::NativeThreadId;
 use ren_recorder::batch::{HistoryChange, HistorySubject};
 use ren_recorder::id::RunId;
-use ren_supervisor::RunState;
+use ren_supervisor::{Delivery, RunState};
 
 /// The session list and the selected session.
 #[derive(Debug, Default)]
@@ -246,6 +247,8 @@ impl Answer {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Verb {
     Write,
+    /// Take back the message queued for after the turn, to edit it.
+    TakeBack,
     Answer(Decision),
     Interrupt,
     Stop,
@@ -263,6 +266,7 @@ impl Verb {
         match self {
             Self::Delete => true,
             Self::Write
+            | Self::TakeBack
             | Self::Answer(_)
             | Self::Interrupt
             | Self::Stop
@@ -287,6 +291,14 @@ impl Main {
         rows.push(HelpRow::heading("while a run asks"));
         rows.extend(Answer::KEYS.help());
         rows.push(HelpRow::heading("while writing"));
+        rows.push(HelpRow::key(
+            "enter",
+            "send; while a turn runs, queue it for after the turn",
+        ));
+        rows.push(HelpRow::key(
+            "alt-enter",
+            "send into the running turn, where the client can",
+        ));
         rows.push(HelpRow::key(
             "ctrl-p/n",
             "the messages sent before and after",
@@ -456,6 +468,7 @@ impl Main {
     pub fn verb(&mut self, verb: Verb, ctx: &mut Ctx<'_>) -> Vec<Action> {
         match verb {
             Verb::Write => self.open_writing(ctx.model),
+            Verb::TakeBack => self.take_back(ctx),
             Verb::NewRun => vec![Action::Push(Screen::NewRun(NewRun::new(ctx.model)))],
             Verb::Answer(decision) => self.answer(ctx, decision, None),
             Verb::Interrupt => self.interrupt(ctx.model),
@@ -521,11 +534,21 @@ impl Main {
                         ]);
                     }
                     match run.attention() {
-                        Attention::Working | Attention::NeedsYou => entries.extend([
-                            entry('i', "write to the run", Verb::Write, Section::Run),
-                            entry('x', "interrupt the turn", Verb::Interrupt, Section::Run),
-                            entry('s', "stop the run", Verb::Stop, Section::Run),
-                        ]),
+                        Attention::Working | Attention::NeedsYou => {
+                            entries.push(entry('i', "write to the run", Verb::Write, Section::Run));
+                            if run.queued().is_some() {
+                                entries.push(entry(
+                                    'e',
+                                    "take back the queued message",
+                                    Verb::TakeBack,
+                                    Section::Run,
+                                ));
+                            }
+                            entries.extend([
+                                entry('x', "interrupt the turn", Verb::Interrupt, Section::Run),
+                                entry('s', "stop the run", Verb::Stop, Section::Run),
+                            ]);
+                        }
                         Attention::YourTurn | Attention::Starting => entries.extend([
                             entry('i', "write to the run", Verb::Write, Section::Run),
                             entry('s', "stop the run", Verb::Stop, Section::Run),
@@ -597,6 +620,7 @@ impl Main {
             Verb::Delete => (HistoryChange::Delete, "deleting its recorded calls…"),
             Verb::Archive
             | Verb::Write
+            | Verb::TakeBack
             | Verb::Answer(_)
             | Verb::Interrupt
             | Verb::Stop
@@ -660,6 +684,30 @@ impl Main {
         }
     }
 
+    /// The message queued for after the turn, back in the message box to
+    /// edit: the run no longer sends it.
+    fn take_back(&mut self, ctx: &mut Ctx<'_>) -> Vec<Action> {
+        let Some(run) = self.run().and_then(|run| ctx.model.desk.get(run)) else {
+            return vec![Action::Say(Notice::info("select a run"))];
+        };
+        let Some(queued) = run.queued().map(|queued| queued.as_str().to_owned()) else {
+            return vec![Action::Say(Notice::info("nothing is queued"))];
+        };
+        let id = run.id;
+        let opened = self.open_writing(ctx.model);
+        if self.mode != Mode::Writing {
+            return opened;
+        }
+        ctx.message.for_run(id);
+        let draft = ctx.message.take();
+        ctx.message.edited(&if draft.trim().is_empty() {
+            queued
+        } else {
+            format!("{queued}\n\n{draft}")
+        });
+        vec![Action::Send(Command::Unqueue(id))]
+    }
+
     fn open_writing(&mut self, model: &Model) -> Vec<Action> {
         match self.selected {
             Some(Item::Run(_)) => {
@@ -716,7 +764,8 @@ impl Main {
             | Key::Editor
             | Key::Folder
             | Key::Client
-            | Key::Model => {}
+            | Key::Model
+            | Key::SendNow => {}
         }
         // The selection stays on a match.
         self.changed(ctx, &[])
@@ -760,10 +809,23 @@ impl Main {
 
     fn write(&mut self, key: Key, ctx: &mut Ctx<'_>) -> Vec<Action> {
         let width = Self::message_width(Self::detail_width(ctx.size.width));
-        match ctx.message.press(key, width) {
+        let prompts = self
+            .run()
+            .and_then(|run| ctx.model.desk.get(run))
+            .map(|run| run.transcript.prompts())
+            .unwrap_or_default();
+        if let Some(run) = self.run() {
+            ctx.message.for_run(run);
+        }
+        match ctx.message.press(key, width, &prompts) {
             Typed::Took => Vec::new(),
             Typed::Submit => {
-                let actions = self.send(ctx);
+                let actions = self.send(ctx, Delivery::Queue);
+                self.mode = Mode::Normal;
+                actions
+            }
+            Typed::SubmitNow => {
+                let actions = self.send(ctx, Delivery::Steer);
                 self.mode = Mode::Normal;
                 actions
             }
@@ -793,9 +855,11 @@ impl Main {
         }
     }
 
-    /// What is written, to the selected run: sent now, kept until the turn
-    /// ends, or (to a run that ended) a new run continuing it.
-    fn send(&mut self, ctx: &mut Ctx<'_>) -> Vec<Action> {
+    /// What is written, to the selected run: a turn started with it, or,
+    /// while a turn runs, queued for after it (`Delivery::Queue`, after
+    /// anything queued before) or sent into it (`Delivery::Steer`, where
+    /// the client can); to a run that ended, a new run continuing it.
+    fn send(&mut self, ctx: &mut Ctx<'_>, delivery: Delivery) -> Vec<Action> {
         let Some(id) = self.run() else {
             return Vec::new();
         };
@@ -820,20 +884,48 @@ impl Main {
             )),
             (Some(_) | None, Some(_) | None) => None,
         };
-        ctx.message.send();
+        let queued = run.queued().map(|queued| queued.as_str().to_owned());
+        let steers = run
+            .harness()
+            .is_some_and(|harness| Midway::offered(harness).contains(&Midway::Steer));
+        let _ = ctx.message.take();
         self.scroll = 0;
         // Writing while an approval waits declines it; the words go next.
         if approval.is_some() {
             return self.answer(ctx, Decision::Decline, Some(prompt));
         }
         match attention {
-            Attention::YourTurn => vec![Action::Send(ctx.model.prompt(id, prompt))],
-            Attention::Working | Attention::Starting | Attention::NeedsYou => {
-                ctx.model.queue(id, prompt);
-                vec![Action::Say(Notice::info(
-                    "kept: it is sent when this turn ends",
-                ))]
+            Attention::YourTurn => {
+                vec![Action::Send(ctx.model.prompt(id, prompt, Delivery::Start))]
             }
+            Attention::Starting => vec![Action::Say(Notice::info(
+                "the run is still opening its conversation: write again once it is your turn",
+            ))],
+            Attention::Working | Attention::NeedsYou => match delivery {
+                Delivery::Steer if steers => {
+                    vec![Action::Send(ctx.model.prompt(id, prompt, Delivery::Steer))]
+                }
+                Delivery::Steer | Delivery::Start | Delivery::Queue => {
+                    // After what was queued before: one message, in order.
+                    let prompt = match queued {
+                        Some(earlier) => Prompt::parse(format!("{earlier}\n\n{}", prompt.as_str()))
+                            .unwrap_or(prompt),
+                        None => prompt,
+                    };
+                    vec![
+                        Action::Send(ctx.model.prompt(id, prompt, Delivery::Queue)),
+                        Action::Say(Notice::info(match delivery {
+                            Delivery::Steer => {
+                                "this client cannot take a message mid-turn: queued for after it"
+                            }
+                            Delivery::Start | Delivery::Queue if steers => {
+                                "queued for after this turn · alt-enter sends into the turn"
+                            }
+                            Delivery::Start | Delivery::Queue => "queued for after this turn",
+                        })),
+                    ]
+                }
+            },
             Attention::Ended => match resume {
                 Some((harness, dir, resume)) => vec![Action::Send(ctx.model.start(
                     harness,
@@ -871,14 +963,15 @@ impl Main {
             Some(RunState::Working { approvals, .. }) => approvals.len() > 1,
             Some(_) | None => false,
         };
-        if let Some(prompt) = then {
-            ctx.model.queue(id, prompt);
-        }
-        let actions = vec![Action::Send(Command::Answer {
+        let mut actions = vec![Action::Send(Command::Answer {
             run: id,
             approval,
             decision,
         })];
+        // The words written instead go as the turn ends.
+        if let Some(prompt) = then {
+            actions.push(Action::Send(ctx.model.prompt(id, prompt, Delivery::Queue)));
+        }
         if !more && let Some(next) = ctx.model.desk.next_needing(Some(id)) {
             let verb = match decision {
                 Decision::Accept | Decision::AcceptForSession => "allowed",

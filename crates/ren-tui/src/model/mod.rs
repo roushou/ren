@@ -16,11 +16,11 @@ pub use call::CallEnd;
 pub use sessions::{Snapshot, SnapshotQuery};
 
 use crate::Size;
-use desk::{Attention, Desk, Run};
+use desk::{Desk, Run};
 use ren_harness::{
     Harness,
     drive::{ApprovalId, Decision, Prompt},
-    settings::{ApprovalPolicy, RunSettings},
+    settings::{ApprovalPolicy, Midway, RunSettings},
 };
 use ren_protocol::label::{Labeled, Stored};
 use ren_protocol::native::NativeThreadId;
@@ -30,7 +30,9 @@ use ren_recorder::id::{CallId, RunId, TurnId};
 use ren_recorder::progress::Progress;
 use ren_store::activity::{CallActivity, TurnActivity};
 use ren_store::view::{ConversationView, RunView};
-use ren_supervisor::{Client, ClientStatus, Places, Project, RunSnapshot, RunState, RunUpdate};
+use ren_supervisor::{
+    Client, ClientStatus, Delivery, Places, Project, RunSnapshot, RunState, RunUpdate,
+};
 use sessions::Sessions;
 use std::collections::HashMap;
 
@@ -117,7 +119,11 @@ pub enum Command {
     Prompt {
         run: RunId,
         prompt: Prompt,
+        /// Start a turn, queue it for after the running one, or steer it.
+        delivery: Delivery,
     },
+    /// Take back the prompt queued for after the running turn.
+    Unqueue(RunId),
     Answer {
         run: RunId,
         approval: ApprovalId,
@@ -136,7 +142,6 @@ pub enum Command {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Effect {
     Read(Read),
-    Send(Command),
     /// A run asked for here started.
     Started(RunId),
     /// The daemon refused a command, in words.
@@ -238,6 +243,7 @@ impl Model {
                     harness,
                     status: ClientStatus::Ready,
                     approvals: ApprovalPolicy::offered(harness).to_vec(),
+                    midway: Midway::offered(harness).to_vec(),
                 })
                 .collect()
         } else {
@@ -322,9 +328,7 @@ impl Model {
             Input::Runs(Ok(snapshots)) => {
                 self.control = Control::Ready;
                 self.desk.live(&snapshots);
-                let mut effects = self.release_queued();
-                effects.extend(self.name_runs());
-                effects
+                self.name_runs()
             }
             Input::Runs(Err(why)) => {
                 self.control = Control::Unavailable(why);
@@ -429,25 +433,22 @@ impl Model {
         }
     }
 
-    /// Keep `prompt` until the run waits for one.
-    pub fn queue(&mut self, run: RunId, prompt: Prompt) {
-        if let Some(run) = self.desk.get_mut(run) {
-            run.queued = Some(match run.queued.take() {
-                Some(earlier) => {
-                    Prompt::parse(format!("{}\n\n{}", earlier.as_str(), prompt.as_str()))
-                        .unwrap_or(prompt)
+    /// Send `prompt` to `run` as `delivery` says; what starts a turn or
+    /// goes into one shows in its conversation at once.
+    pub fn prompt(&mut self, run: RunId, prompt: Prompt, delivery: Delivery) -> Command {
+        match delivery {
+            Delivery::Start | Delivery::Steer => {
+                if let Some(held) = self.desk.get_mut(run) {
+                    held.transcript.prompted(prompt.as_str());
                 }
-                None => prompt,
-            });
+            }
+            Delivery::Queue => {}
         }
-    }
-
-    /// Send `prompt` to `run` now.
-    pub fn prompt(&mut self, run: RunId, prompt: Prompt) -> Command {
-        if let Some(held) = self.desk.get_mut(run) {
-            held.transcript.prompted(prompt.as_str());
+        Command::Prompt {
+            run,
+            prompt,
+            delivery,
         }
-        Command::Prompt { run, prompt }
     }
 
     /// Read the conversations of live runs not read yet: what each is
@@ -471,24 +472,6 @@ impl Model {
             .collect()
     }
 
-    /// Prompts kept for runs that now wait for one.
-    fn release_queued(&mut self) -> Vec<Effect> {
-        let ready: Vec<RunId> = self
-            .desk
-            .ordered()
-            .iter()
-            .filter(|run| run.queued.is_some() && run.attention() == Attention::YourTurn)
-            .map(|run| run.id)
-            .collect();
-        let mut effects = Vec::new();
-        for id in ready {
-            if let Some(prompt) = self.desk.get_mut(id).and_then(|run| run.queued.take()) {
-                effects.push(Effect::Send(self.prompt(id, prompt)));
-            }
-        }
-        effects
-    }
-
     fn update(&mut self, update: RunUpdate) -> Vec<Effect> {
         match update {
             RunUpdate::State { run, state } => {
@@ -498,7 +481,7 @@ impl Model {
                     return vec![Effect::Read(Read::Runs), Effect::Read(Read::Recorded)];
                 };
                 held.live = Some(state);
-                let mut effects = self.release_queued();
+                let mut effects = Vec::new();
                 // A run that ended is read again to learn how.
                 if let Some(RunState::Ended { .. }) =
                     self.desk.get(run).and_then(|run| run.live.as_ref())

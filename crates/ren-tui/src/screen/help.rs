@@ -45,7 +45,8 @@ impl Help {
             | Key::Editor
             | Key::Folder
             | Key::Client
-            | Key::Model => Vec::new(),
+            | Key::Model
+            | Key::SendNow => Vec::new(),
         }
     }
 

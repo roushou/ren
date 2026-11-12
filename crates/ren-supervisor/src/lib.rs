@@ -23,7 +23,7 @@ pub use client::{Client, ClientStatus};
 pub use host::{AgentHost, AgentProcess, KillSignal, KillSwitch};
 pub use models::ModelsError;
 pub use project::{Look, PlaceKind, Project, ProjectGit, Search};
-pub use run::{Approvals, ProcessExit, RunCommand, RunRefused, RunState, Waiting};
+pub use run::{Approvals, Delivery, ProcessExit, RunCommand, RunRefused, RunState, Waiting};
 pub use task::SupervisorTask;
 pub use workdir::{Bounds, Roots, Workdir, WorkdirError};
 

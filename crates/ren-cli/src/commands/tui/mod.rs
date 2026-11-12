@@ -528,10 +528,15 @@ impl<'a> Shell<'a> {
                 }
                 ("runs".to_owned(), Some(body))
             }
-            Command::Prompt { run, prompt } => (
+            Command::Prompt {
+                run,
+                prompt,
+                delivery,
+            } => (
                 format!("runs/{run}/prompt"),
-                Some(serde_json::json!({ "text": prompt.as_str() })),
+                Some(serde_json::json!({ "text": prompt.as_str(), "delivery": delivery })),
             ),
+            Command::Unqueue(run) => (format!("runs/{run}/unqueue"), None),
             Command::Answer {
                 run,
                 approval,

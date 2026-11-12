@@ -5,6 +5,7 @@
 use ren_harness::drive::{
     ApprovalAsk, ApprovalId, Decision, DriveCommand, DriveEvent, Prompt, RequestKind,
 };
+use ren_harness::settings::RunSettings;
 use ren_protocol::native::{NativeThreadId, NativeTurnId};
 pub use ren_recorder::capture::ProcessExit;
 use ren_recorder::capture::RunEnd;
@@ -23,6 +24,9 @@ pub enum RunState {
         thread: NativeThreadId,
         turn: Option<NativeTurnId>,
         approvals: Approvals,
+        /// The operator's next prompt, sent as the turn ends.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        queued: Option<Prompt>,
     },
     /// Ren asked the process to end and waits for it to exit.
     Stopping { cause: StopCause },
@@ -108,13 +112,56 @@ impl StopCause {
 /// What the operator asks of a run.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RunCommand {
+    /// Start a turn with this prompt; refused while one runs.
     Prompt(Prompt),
+    /// Send this as the running turn ends (now, when none runs). It
+    /// replaces any prompt queued before.
+    Queue(Prompt),
+    /// Take back the queued prompt.
+    Unqueue,
+    /// Add this to the running turn (start a turn with it when none runs).
+    Steer(Prompt),
+    /// Run on these settings from the next turn on.
+    Configure(RunSettings),
     Answer {
         approval: ApprovalId,
         decision: Decision,
     },
     Interrupt,
     Stop,
+}
+
+/// How a prompt goes to a run.
+#[derive(strum::Display, strum::EnumString, strum::IntoStaticStr, strum::VariantArray)]
+#[strum(serialize_all = "snake_case")]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    serde_with::SerializeDisplay,
+    serde_with::DeserializeFromStr,
+)]
+pub enum Delivery {
+    /// Start a turn; refused while one runs.
+    Start,
+    /// Send it as the running turn ends, or now when none runs.
+    Queue,
+    /// Add it to the running turn, or start one when none runs.
+    Steer,
+}
+
+impl Delivery {
+    /// The command that delivers `prompt` this way.
+    pub fn command(self, prompt: Prompt) -> RunCommand {
+        match self {
+            Self::Start => RunCommand::Prompt(prompt),
+            Self::Queue => RunCommand::Queue(prompt),
+            Self::Steer => RunCommand::Steer(prompt),
+        }
+    }
 }
 
 /// Something that happened to a run.
@@ -164,6 +211,8 @@ pub enum RunRefused {
     Stopping,
     #[error("the run has ended")]
     Ended,
+    #[error("no prompt is queued")]
+    NothingQueued,
 }
 
 impl RunState {
@@ -235,16 +284,21 @@ impl RunState {
                 thread: *thread,
                 turn: Some(turn),
                 approvals: Approvals::default(),
+                queued: None,
             }),
             (
                 Self::Working {
-                    thread, approvals, ..
+                    thread,
+                    approvals,
+                    queued,
+                    ..
                 },
                 DriveEvent::TurnStarted { turn },
             ) => Self::to(Self::Working {
                 thread: *thread,
                 turn: Some(turn),
                 approvals: approvals.clone(),
+                queued: queued.clone(),
             }),
             (Self::Idle { thread }, DriveEvent::Approval { approval, ask }) => {
                 let mut approvals = Approvals::default();
@@ -253,6 +307,7 @@ impl RunState {
                     thread: *thread,
                     turn: None,
                     approvals,
+                    queued: None,
                 })
             }
             (
@@ -260,6 +315,7 @@ impl RunState {
                     thread,
                     turn,
                     approvals,
+                    queued,
                 },
                 DriveEvent::Approval { approval, ask },
             ) => {
@@ -269,6 +325,7 @@ impl RunState {
                     thread: *thread,
                     turn: *turn,
                     approvals,
+                    queued: queued.clone(),
                 })
             }
             (
@@ -276,6 +333,7 @@ impl RunState {
                     thread,
                     turn,
                     approvals,
+                    queued,
                 },
                 DriveEvent::ApprovalResolved { approval },
             ) => {
@@ -285,8 +343,26 @@ impl RunState {
                     thread: *thread,
                     turn: *turn,
                     approvals,
+                    queued: queued.clone(),
                 })
             }
+            // The turn ended: the queued prompt starts the next one.
+            (
+                Self::Working {
+                    thread,
+                    queued: Some(queued),
+                    ..
+                },
+                DriveEvent::TurnEnded { .. },
+            ) => Self::send(
+                Self::Working {
+                    thread: *thread,
+                    turn: None,
+                    approvals: Approvals::default(),
+                    queued: None,
+                },
+                DriveCommand::Prompt(queued.clone()),
+            ),
             (Self::Working { thread, .. }, DriveEvent::TurnEnded { .. }) => {
                 Self::to(Self::Idle { thread: *thread })
             }
@@ -324,7 +400,10 @@ impl RunState {
     fn opens(request: RequestKind) -> bool {
         match request {
             RequestKind::Initialize | RequestKind::ThreadStart | RequestKind::ThreadResume => true,
-            RequestKind::TurnStart | RequestKind::TurnInterrupt => false,
+            RequestKind::TurnStart
+            | RequestKind::TurnInterrupt
+            | RequestKind::TurnSteer
+            | RequestKind::Configure => false,
         }
     }
 
@@ -339,6 +418,10 @@ impl RunState {
             (
                 Self::Stopping { .. },
                 RunCommand::Prompt(_)
+                | RunCommand::Queue(_)
+                | RunCommand::Unqueue
+                | RunCommand::Steer(_)
+                | RunCommand::Configure(_)
                 | RunCommand::Answer { .. }
                 | RunCommand::Interrupt
                 | RunCommand::Stop,
@@ -346,6 +429,10 @@ impl RunState {
             (
                 Self::Ended { .. },
                 RunCommand::Prompt(_)
+                | RunCommand::Queue(_)
+                | RunCommand::Unqueue
+                | RunCommand::Steer(_)
+                | RunCommand::Configure(_)
                 | RunCommand::Answer { .. }
                 | RunCommand::Interrupt
                 | RunCommand::Stop,
@@ -355,17 +442,69 @@ impl RunState {
             }
             (
                 Self::Starting,
-                RunCommand::Prompt(_) | RunCommand::Interrupt | RunCommand::Answer { .. },
+                RunCommand::Prompt(_)
+                | RunCommand::Queue(_)
+                | RunCommand::Unqueue
+                | RunCommand::Steer(_)
+                | RunCommand::Configure(_)
+                | RunCommand::Interrupt
+                | RunCommand::Answer { .. },
             ) => Err(RunRefused::Starting),
-            (Self::Idle { thread }, RunCommand::Prompt(prompt)) => Ok(Self::send(
+            // With no turn running, every way to send a prompt starts one.
+            (
+                Self::Idle { thread },
+                RunCommand::Prompt(prompt) | RunCommand::Queue(prompt) | RunCommand::Steer(prompt),
+            ) => Ok(Self::send(
                 Self::Working {
                     thread: *thread,
                     turn: None,
                     approvals: Approvals::default(),
+                    queued: None,
                 },
                 DriveCommand::Prompt(prompt),
             )),
             (Self::Working { .. }, RunCommand::Prompt(_)) => Err(RunRefused::Busy),
+            (
+                Self::Working {
+                    thread,
+                    turn,
+                    approvals,
+                    ..
+                },
+                RunCommand::Queue(prompt),
+            ) => Ok(Self::to(Self::Working {
+                thread: *thread,
+                turn: *turn,
+                approvals: approvals.clone(),
+                queued: Some(prompt),
+            })),
+            (Self::Idle { .. }, RunCommand::Unqueue) => Err(RunRefused::NothingQueued),
+            (Self::Working { queued: None, .. }, RunCommand::Unqueue) => {
+                Err(RunRefused::NothingQueued)
+            }
+            (
+                Self::Working {
+                    thread,
+                    turn,
+                    approvals,
+                    queued: Some(_),
+                },
+                RunCommand::Unqueue,
+            ) => Ok(Self::to(Self::Working {
+                thread: *thread,
+                turn: *turn,
+                approvals: approvals.clone(),
+                queued: None,
+            })),
+            (Self::Working { turn: None, .. }, RunCommand::Steer(_)) => {
+                Err(RunRefused::TurnNotStarted)
+            }
+            (Self::Working { turn: Some(_), .. }, RunCommand::Steer(prompt)) => {
+                Ok(Self::send(self.clone(), DriveCommand::Steer(prompt)))
+            }
+            (Self::Idle { .. } | Self::Working { .. }, RunCommand::Configure(settings)) => {
+                Ok(Self::send(self.clone(), DriveCommand::Configure(settings)))
+            }
             (Self::Idle { .. }, RunCommand::Interrupt) => Err(RunRefused::NotWorking),
             (Self::Working { turn: None, .. }, RunCommand::Interrupt) => {
                 Err(RunRefused::TurnNotStarted)
@@ -381,6 +520,7 @@ impl RunState {
                     thread,
                     turn,
                     approvals,
+                    queued,
                 },
                 RunCommand::Answer { approval, decision },
             ) => {
@@ -393,6 +533,7 @@ impl RunState {
                         thread: *thread,
                         turn: *turn,
                         approvals: waiting,
+                        queued: queued.clone(),
                     },
                     DriveCommand::Answer { approval, decision },
                 ))
@@ -484,6 +625,7 @@ mod tests {
                 thread: thread(),
                 turn: Some(turn()),
                 approvals: waiting_for(&["a1"]),
+                queued: None,
             }
         );
 
@@ -594,6 +736,7 @@ mod tests {
                     thread: thread(),
                     turn: Some(turn()),
                     approvals: Approvals::default(),
+                    queued: None,
                 },
                 RunEnd::Exited,
             ),
@@ -695,6 +838,7 @@ mod tests {
                 thread: thread(),
                 turn: Some(turn()),
                 approvals: waiting_for(&["ap-1"]),
+                queued: None,
             },
             RunState::Stopping {
                 cause: StopCause::Shutdown,
@@ -719,6 +863,129 @@ mod tests {
         assert_eq!(
             ended.apply(RunEvent::Agent(DriveEvent::Ready { thread: thread() })),
             Err(RunRefused::Ended)
+        );
+    }
+
+    fn text(text: &str) -> Prompt {
+        Prompt::parse(text.into()).unwrap()
+    }
+
+    fn running() -> RunState {
+        RunState::Working {
+            thread: thread(),
+            turn: Some(turn()),
+            approvals: Approvals::default(),
+            queued: None,
+        }
+    }
+
+    /// A prompt queued while a turn runs is kept, shown, replaceable, and
+    /// sent as the turn ends; taken back, nothing is sent.
+    #[test]
+    fn a_queued_prompt_goes_out_as_the_turn_ends() {
+        let queued = operator(&running(), RunCommand::Queue(text("then the docs"))).unwrap();
+        assert!(
+            queued.actions.is_empty(),
+            "nothing sent while the turn runs"
+        );
+        let replaced = operator(&queued.state, RunCommand::Queue(text("then the tests"))).unwrap();
+        let RunState::Working {
+            queued: Some(kept), ..
+        } = &replaced.state
+        else {
+            panic!("queued: {:?}", replaced.state);
+        };
+        assert_eq!(kept.as_str(), "then the tests");
+        let ended = replaced
+            .state
+            .apply(RunEvent::Agent(DriveEvent::TurnEnded {
+                turn: turn(),
+                end: TurnEnd::Completed,
+            }))
+            .unwrap();
+        assert_eq!(
+            ended.actions,
+            vec![RunAction::Send(DriveCommand::Prompt(text(
+                "then the tests"
+            )))]
+        );
+        assert!(matches!(
+            ended.state,
+            RunState::Working {
+                turn: None,
+                queued: None,
+                ..
+            }
+        ));
+        // Taken back before the turn ends, the turn ends idle.
+        let taken = operator(&queued.state, RunCommand::Unqueue).unwrap();
+        assert_eq!(
+            agent(
+                &taken.state,
+                DriveEvent::TurnEnded {
+                    turn: turn(),
+                    end: TurnEnd::Completed
+                }
+            ),
+            RunState::Idle { thread: thread() }
+        );
+        assert_eq!(
+            operator(&running(), RunCommand::Unqueue),
+            Err(RunRefused::NothingQueued)
+        );
+    }
+
+    /// Steering goes to the running turn; with none running, every way to
+    /// send a prompt starts a turn.
+    #[test]
+    fn steering_goes_to_the_running_turn_and_idle_runs_start_one() {
+        let steered = operator(&running(), RunCommand::Steer(text("use the old API"))).unwrap();
+        assert_eq!(
+            steered.actions,
+            vec![RunAction::Send(DriveCommand::Steer(text(
+                "use the old API"
+            )))]
+        );
+        assert_eq!(steered.state, running());
+        let not_started = RunState::Working {
+            thread: thread(),
+            turn: None,
+            approvals: Approvals::default(),
+            queued: None,
+        };
+        assert_eq!(
+            operator(&not_started, RunCommand::Steer(text("x"))),
+            Err(RunRefused::TurnNotStarted)
+        );
+        let idle = RunState::Idle { thread: thread() };
+        for command in [RunCommand::Queue(text("go")), RunCommand::Steer(text("go"))] {
+            let started = operator(&idle, command).unwrap();
+            assert_eq!(
+                started.actions,
+                vec![RunAction::Send(DriveCommand::Prompt(text("go")))]
+            );
+        }
+    }
+
+    /// Settings go to the client whether or not a turn runs; a run still
+    /// starting takes none.
+    #[test]
+    fn settings_go_to_the_client_once_the_conversation_is_open() {
+        use ren_harness::settings::{Effort, RunSettings};
+        let settings = RunSettings {
+            model: None,
+            effort: Some(Effort::High),
+            approvals: None,
+        };
+        let configured = operator(&running(), RunCommand::Configure(settings.clone())).unwrap();
+        assert_eq!(
+            configured.actions,
+            vec![RunAction::Send(DriveCommand::Configure(settings.clone()))]
+        );
+        assert_eq!(configured.state, running());
+        assert_eq!(
+            operator(&RunState::Starting, RunCommand::Configure(settings)),
+            Err(RunRefused::Starting)
         );
     }
 }

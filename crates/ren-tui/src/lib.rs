@@ -136,7 +136,6 @@ impl Tui {
         for effect in self.model.apply(input) {
             match effect {
                 Effect::Read(read) => outs.push(Out::Read(read)),
-                Effect::Send(command) => outs.push(Out::Send(command)),
                 Effect::Started(run) => news.push(News::Started(run)),
                 Effect::Refused(why) => self.notice = Some(Notice::refusal(why)),
             }

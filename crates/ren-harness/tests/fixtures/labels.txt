@@ -11,4 +11,5 @@ drive::Decision: accept accept_for_session decline cancel
 models::DefaultChoice: default other
 settings::Effort: off minimal low medium high xhigh max
 settings::ApprovalPolicy: ask edits auto
-drive::RequestKind: initialize thread_start thread_resume turn_start turn_interrupt
+settings::Midway: steer model effort approvals
+drive::RequestKind: initialize thread_start thread_resume turn_start turn_interrupt turn_steer configure

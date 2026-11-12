@@ -295,6 +295,8 @@ pub enum RunFact {
     },
     /// The client opened its conversation, under its own thread id.
     Opened { thread: NativeThreadId },
+    /// The run moved to these settings, from its next turn on.
+    Configured { settings: RunSettings },
     Ended {
         end: RunEnd,
         exit: Option<ProcessExit>,
@@ -306,6 +308,7 @@ impl RunFact {
         match self {
             Self::Started { .. } => ObservationKind::RunStarted,
             Self::Opened { .. } => ObservationKind::RunOpened,
+            Self::Configured { .. } => ObservationKind::RunConfigured,
             Self::Ended { .. } => ObservationKind::RunEnded,
         }
     }
@@ -367,6 +370,8 @@ pub enum ObservationKind {
     /// The operator archived, unarchived, or deleted recorded history. Not
     /// tied to a call.
     HistoryEdited,
+    /// A run moved to other settings mid-run.
+    RunConfigured,
 }
 
 /// Where an operation belongs and when it happened. Every observation has it.

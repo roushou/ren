@@ -23,7 +23,7 @@ use crate::{
     },
     lines::{Framed, Line},
     models::{DefaultChoice, Listing, Model, ModelId, ModelListing},
-    settings::{ApprovalPolicy, RunSettings},
+    settings::{ApprovalPolicy, Midway, RunSettings},
 };
 use ren_protocol::native::{NativeThreadId, NativeTurnId};
 use serde_json::{Value, json};
@@ -35,6 +35,8 @@ use uuid::Uuid;
 pub struct ClaudeStreamJson {
     thread: NativeThreadId,
     ready: bool,
+    /// What the conversation runs on now, to tell what a change changes.
+    settings: RunSettings,
     next_request: u64,
     /// Control requests Ren sent and waits on, by request id.
     requests: BTreeMap<String, RequestKind>,
@@ -137,25 +139,26 @@ impl ClaudeStreamJson {
             arguments.extend(["--effort".into(), effort.to_string()]);
         }
         if let Some(policy) = settings.approvals {
-            let mode = match policy {
-                ApprovalPolicy::Ask => "default",
-                ApprovalPolicy::Edits => "acceptEdits",
-                ApprovalPolicy::Auto => "auto",
-            };
-            arguments.extend(["--permission-mode".into(), mode.into()]);
+            arguments.extend([
+                "--permission-mode".into(),
+                Self::permission_mode(policy).into(),
+            ]);
         }
         arguments
     }
 
     /// A codec for a freshly started process, and the first line to send it.
     pub fn open(opening: &Opening) -> (Self, Line) {
-        let thread = match opening {
-            Opening::New { id, .. } => *id,
-            Opening::Resume { thread, .. } => *thread,
+        let (thread, settings) = match opening {
+            Opening::New { id, settings, .. } => (*id, settings.clone()),
+            Opening::Resume {
+                thread, settings, ..
+            } => (*thread, settings.clone()),
         };
         let mut codec = Self {
             thread,
             ready: false,
+            settings,
             next_request: 0,
             requests: BTreeMap::new(),
             turn: TurnSlot::Idle,
@@ -174,22 +177,26 @@ impl ClaudeStreamJson {
     }
 
     /// The line that carries `command`, or why it cannot be sent now.
-    pub fn command(&mut self, command: DriveCommand) -> Result<Line, CommandRefused> {
+    pub fn command(&mut self, command: DriveCommand) -> Result<Vec<Line>, CommandRefused> {
         if !self.ready {
             return Err(CommandRefused::NotReady);
         }
         match command {
-            DriveCommand::Prompt(prompt) => self.prompt(&prompt),
+            DriveCommand::Prompt(prompt) => self.prompt(&prompt).map(|line| vec![line]),
+            // Claude Code holds a message sent mid-turn for after it; it has
+            // no way to add one to the turn.
+            DriveCommand::Steer(_) => Err(CommandRefused::NotOffered(Midway::Steer)),
+            DriveCommand::Configure(settings) => self.configure(settings),
             DriveCommand::Interrupt => match self.turn {
                 TurnSlot::Running { turn, .. } => {
                     self.turn = TurnSlot::Running {
                         turn,
                         interrupted: true,
                     };
-                    Ok(self.request(
+                    Ok(vec![self.request(
                         RequestKind::TurnInterrupt,
                         json!({ "subtype": "interrupt" }),
-                    ))
+                    )])
                 }
                 TurnSlot::Requested => Err(CommandRefused::TurnNotStarted),
                 TurnSlot::Idle => Err(CommandRefused::NoTurn),
@@ -216,15 +223,50 @@ impl ClaudeStreamJson {
                         json!({ "behavior": "deny", "message": DECLINED, "interrupt": true })
                     }
                 };
-                Ok(Line::json(&json!({
+                Ok(vec![Line::json(&json!({
                     "type": "control_response",
                     "response": {
                         "subtype": "success",
                         "request_id": approval.to_string(),
                         "response": answer,
                     },
-                })))
+                }))])
             }
+        }
+    }
+
+    /// The control requests that move the conversation to `settings`:
+    /// Claude Code switches model and permission mode mid-run, not effort.
+    fn configure(&mut self, settings: RunSettings) -> Result<Vec<Line>, CommandRefused> {
+        if settings.effort != self.settings.effort {
+            return Err(CommandRefused::NotOffered(Midway::Effort));
+        }
+        let mut lines = Vec::new();
+        if settings.model != self.settings.model {
+            // `default` is Claude Code's own choice.
+            let model = settings.model.as_ref().map_or("default", ModelId::as_str);
+            lines.push(self.request(
+                RequestKind::Configure,
+                json!({ "subtype": "set_model", "model": model }),
+            ));
+        }
+        if settings.approvals != self.settings.approvals {
+            let mode = settings.approvals.map_or("default", Self::permission_mode);
+            lines.push(self.request(
+                RequestKind::Configure,
+                json!({ "subtype": "set_permission_mode", "mode": mode }),
+            ));
+        }
+        self.settings = settings;
+        Ok(lines)
+    }
+
+    /// The permission mode a policy runs Claude Code in.
+    fn permission_mode(policy: ApprovalPolicy) -> &'static str {
+        match policy {
+            ApprovalPolicy::Ask => "default",
+            ApprovalPolicy::Edits => "acceptEdits",
+            ApprovalPolicy::Auto => "auto",
         }
     }
 
@@ -357,7 +399,9 @@ impl ClaudeStreamJson {
                 RequestKind::TurnInterrupt
                 | RequestKind::ThreadStart
                 | RequestKind::ThreadResume
-                | RequestKind::TurnStart => {}
+                | RequestKind::TurnStart
+                | RequestKind::TurnSteer
+                | RequestKind::Configure => {}
             },
             Some(_) | None => received.events.push(DriveEvent::Refused {
                 request: kind,
@@ -1032,7 +1076,7 @@ mod tests {
     #[test]
     fn runs_a_turn_with_streamed_text_and_a_command() {
         let mut codec = ready();
-        let line = codec.command(prompt("run the tests")).unwrap();
+        let line = codec.command(prompt("run the tests")).unwrap().remove(0);
         assert_eq!(
             sent(&line),
             json!({ "type": "user", "message": { "role": "user", "content": "run the tests" },
@@ -1154,7 +1198,7 @@ mod tests {
     #[test]
     fn answers_permission_prompts_with_the_operators_decision() {
         let mut codec = ready();
-        codec.command(prompt("write it")).unwrap();
+        codec.command(prompt("write it")).unwrap().remove(0);
         let _ = echo(&mut codec, "write it");
         let input = json!({ "file_path": "/work/acme/notes.txt", "content": "hi" });
         let asked = feed(
@@ -1181,7 +1225,8 @@ mod tests {
                 approval: approval.clone(),
                 decision: Decision::AcceptForSession,
             })
-            .unwrap();
+            .unwrap()
+            .remove(0);
         assert_eq!(
             sent(&answer),
             json!({ "type": "control_response", "response": { "subtype": "success",
@@ -1217,7 +1262,8 @@ mod tests {
                 approval: ApprovalId("perm-2".into()),
                 decision: Decision::Cancel,
             })
-            .unwrap();
+            .unwrap()
+            .remove(0);
         assert_eq!(sent(&cancel)["response"]["response"]["interrupt"], true);
         let ended = feed(
             &mut codec,
@@ -1236,9 +1282,9 @@ mod tests {
     #[test]
     fn interrupts_and_resolves_withdrawn_or_unanswered_prompts() {
         let mut codec = ready();
-        codec.command(prompt("go")).unwrap();
+        codec.command(prompt("go")).unwrap().remove(0);
         let _ = echo(&mut codec, "go");
-        let interrupt = codec.command(DriveCommand::Interrupt).unwrap();
+        let interrupt = codec.command(DriveCommand::Interrupt).unwrap().remove(0);
         assert_eq!(
             sent(&interrupt),
             json!({ "type": "control_request", "request_id": "ren-1",
@@ -1386,6 +1432,56 @@ mod tests {
             )
             .events
             .is_empty()
+        );
+    }
+
+    /// Claude Code switches model and permission mode mid-run; it has no
+    /// way to change effort or add to a running turn.
+    #[test]
+    fn switches_model_and_permission_mode_but_not_effort_or_steering() {
+        use crate::settings::{ApprovalPolicy, Effort, Midway, RunSettings};
+        let mut codec = ready();
+        assert_eq!(
+            codec.command(DriveCommand::Steer(Prompt::parse("x".into()).unwrap())),
+            Err(CommandRefused::NotOffered(Midway::Steer))
+        );
+        let lines = codec
+            .command(DriveCommand::Configure(RunSettings {
+                model: Some("small".parse().unwrap()),
+                effort: None,
+                approvals: Some(ApprovalPolicy::Edits),
+            }))
+            .unwrap();
+        let requests: Vec<Value> = lines
+            .iter()
+            .map(|line| sent(line)["request"].clone())
+            .collect();
+        assert_eq!(
+            requests,
+            vec![
+                json!({ "subtype": "set_model", "model": "small" }),
+                json!({ "subtype": "set_permission_mode", "mode": "acceptEdits" }),
+            ]
+        );
+        // Unchanged settings send nothing; back to the client's own model.
+        let back = codec
+            .command(DriveCommand::Configure(RunSettings {
+                model: None,
+                effort: None,
+                approvals: Some(ApprovalPolicy::Edits),
+            }))
+            .unwrap();
+        assert_eq!(
+            sent(&back[0])["request"],
+            json!({ "subtype": "set_model", "model": "default" })
+        );
+        assert_eq!(
+            codec.command(DriveCommand::Configure(RunSettings {
+                model: None,
+                effort: Some(Effort::High),
+                approvals: Some(ApprovalPolicy::Edits),
+            })),
+            Err(CommandRefused::NotOffered(Midway::Effort))
         );
     }
 }

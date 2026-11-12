@@ -150,6 +150,23 @@ impl Transcript {
     }
 
     /// The first prompt shown, to name the run by.
+    /// Every prompt sent, oldest first, to recall.
+    pub fn prompts(&self) -> Vec<String> {
+        self.entries
+            .iter()
+            .filter_map(|entry| match entry {
+                Entry::Prompt { text, .. } => Some(text.clone()),
+                Entry::Message { .. }
+                | Entry::Reasoning { .. }
+                | Entry::Command { .. }
+                | Entry::FileChange { .. }
+                | Entry::Tool { .. }
+                | Entry::Notice { .. }
+                | Entry::TurnEnd { .. } => None,
+            })
+            .collect()
+    }
+
     pub fn first_prompt(&self) -> Option<&str> {
         self.entries.iter().find_map(|entry| match entry {
             Entry::Prompt { text, .. } => Some(text.as_str()),

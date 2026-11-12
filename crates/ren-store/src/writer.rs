@@ -754,6 +754,15 @@ impl MetadataTx<'_> {
                 .execute(&mut *self.tx)
                 .await?;
             }
+            RunFact::Configured { settings } => {
+                sqlx::query("UPDATE runs SET model = ?, effort = ?, approvals = ? WHERE id = ?")
+                    .bind(settings.model.as_ref().map(ModelId::as_str))
+                    .bind(settings.effort.map(Labeled::label))
+                    .bind(settings.approvals.map(Labeled::label))
+                    .bind(&id)
+                    .execute(&mut *self.tx)
+                    .await?;
+            }
             RunFact::Opened { thread } => {
                 sqlx::query("UPDATE runs SET thread = ? WHERE id = ?")
                     .bind(thread.to_string())
@@ -882,9 +891,10 @@ impl MetadataTx<'_> {
                             .bind(run)
                             .execute(&mut *self.tx)
                             .await?;
-                        sqlx::query("DELETE FROM observations WHERE call IS NULL AND kind IN (?, ?, ?, ?) AND json_extract(payload, '$.run') = ?")
+                        sqlx::query("DELETE FROM observations WHERE call IS NULL AND kind IN (?, ?, ?, ?, ?) AND json_extract(payload, '$.run') = ?")
                             .bind(ObservationKind::RunStarted.label())
                             .bind(ObservationKind::RunOpened.label())
+                            .bind(ObservationKind::RunConfigured.label())
                             .bind(ObservationKind::RunEnded.label())
                             .bind(ObservationKind::RunRecovered.label())
                             .bind(run)

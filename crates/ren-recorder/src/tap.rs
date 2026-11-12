@@ -706,6 +706,15 @@ impl RunTap {
         }
     }
 
+    /// The run moved to `settings` mid-run. Without room this is counted
+    /// as unrecorded.
+    pub fn configured(&self, settings: RunSettings) {
+        match self.shared.reserve_close() {
+            Some(slot) => self.send(slot, RunFact::Configured { settings }),
+            None => self.shared.counters.omit(Omission::Unrecorded, 1),
+        }
+    }
+
     /// Record one entry of the run's conversation, in `turn`. Never blocks:
     /// without room for its bytes it is counted as omitted, by reason.
     pub fn entry(&self, turn: Option<NativeTurnId>, event: DriveEvent) {

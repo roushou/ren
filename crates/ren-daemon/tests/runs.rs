@@ -151,10 +151,12 @@ async fn a_run_is_started_prompted_approved_and_stopped_through_the_control_api(
     assert_eq!(
         clients["clients"],
         json!([
-            { "harness": "claude_code", "status": "ready", "approvals": ["ask", "edits", "auto"] },
-            { "harness": "codex", "status": "ready", "approvals": ["ask", "edits", "auto"] },
-            { "harness": "pi", "status": "ready", "approvals": [] },
-            { "harness": "opencode", "status": "not_drivable", "approvals": [] },
+            { "harness": "claude_code", "status": "ready", "approvals": ["ask", "edits", "auto"],
+              "midway": ["model", "approvals"] },
+            { "harness": "codex", "status": "ready", "approvals": ["ask", "edits", "auto"],
+              "midway": ["steer", "model", "effort", "approvals"] },
+            { "harness": "pi", "status": "ready", "approvals": [], "midway": ["steer", "model", "effort"] },
+            { "harness": "opencode", "status": "not_drivable", "approvals": [], "midway": [] },
         ])
     );
 
@@ -482,5 +484,95 @@ async fn a_run_without_a_folder_starts_in_a_scratch_folder_of_its_own() {
     let runs = control.runs().await;
     let workdir = runs["runs"][0]["workdir"].as_str().unwrap().to_owned();
     assert!(workdir.starts_with("/scratch/scratch-"), "{workdir}");
+    gateway.stop().await;
+}
+
+#[tokio::test]
+async fn a_prompt_queued_during_a_turn_goes_out_as_it_ends() {
+    let upstream = mock(Router::new()).await;
+    let dir = tempfile::tempdir().unwrap();
+    let gateway = TestGateway::with_runs(
+        &config(&upstream),
+        dir.path(),
+        vec![PathBuf::from("/work")],
+        ScriptedHost,
+    )
+    .await;
+    let control = Control::new(&gateway);
+    let (status, body) = control
+        .post(
+            "/runs",
+            json!({ "harness": "codex", "dir": "/work/acme", "prompt": "first" }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    let run = body["run"].as_str().unwrap().to_owned();
+    control
+        .until(|state| {
+            state["phase"] == "working"
+                && state["approvals"].as_array().is_some_and(|a| !a.is_empty())
+        })
+        .await;
+
+    // Mid-turn: queued for after it, a steer into it, and new settings.
+    let (status, body) = control
+        .post(
+            &format!("/runs/{run}/prompt"),
+            json!({ "text": "second", "delivery": "queue" }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+    let state = control.until(|state| state["queued"] == "second").await;
+    assert_eq!(state["phase"], "working");
+    let (status, body) = control
+        .post(
+            &format!("/runs/{run}/prompt"),
+            json!({ "text": "and tests", "delivery": "steer" }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+    let (status, body) = control
+        .post(
+            &format!("/runs/{run}/settings"),
+            json!({ "effort": "high" }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+    let runs = control.runs().await;
+    assert_eq!(runs["runs"][0]["settings"]["effort"], "high");
+    // Nothing queued twice is taken back once.
+    let (status, _) = control
+        .post(&format!("/runs/{run}/unqueue"), json!({}))
+        .await;
+    assert_eq!(status, StatusCode::ACCEPTED);
+    let (status, body) = control
+        .post(&format!("/runs/{run}/unqueue"), json!({}))
+        .await;
+    assert_eq!(
+        (status, body["error"].as_str()),
+        (StatusCode::CONFLICT, Some("nothing_queued"))
+    );
+    // Queued again, it goes out as the turn ends: the next turn asks again.
+    let _ = control
+        .post(
+            &format!("/runs/{run}/prompt"),
+            json!({ "text": "second", "delivery": "queue" }),
+        )
+        .await;
+    control.until(|state| state["queued"] == "second").await;
+    let (status, _) = control
+        .post(
+            &format!("/runs/{run}/approvals/ap-1"),
+            json!({ "decision": "accept" }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::ACCEPTED);
+    control
+        .until(|state| {
+            state["phase"] == "working"
+                && state.get("queued").is_none()
+                && state["approvals"].as_array().is_some_and(|a| !a.is_empty())
+        })
+        .await;
     gateway.stop().await;
 }

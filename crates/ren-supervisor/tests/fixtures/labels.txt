@@ -1,2 +1,3 @@
 ClientStatus: ready not_installed not_drivable
 PlaceKind: project other scratch
+Delivery: start queue steer

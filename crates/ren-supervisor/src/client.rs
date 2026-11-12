@@ -1,7 +1,10 @@
 //! The clients a run can be started with, as this host has them: ready,
 //! not installed, or not one Ren can drive yet.
 
-use ren_harness::{Harness, settings::ApprovalPolicy};
+use ren_harness::{
+    Harness,
+    settings::{ApprovalPolicy, Midway},
+};
 use serde::Serialize;
 use serde_with::{DeserializeFromStr, SerializeDisplay};
 use strum::{Display, EnumString, IntoStaticStr, VariantArray};
@@ -13,6 +16,9 @@ pub struct Client {
     pub harness: Harness,
     pub status: ClientStatus,
     pub approvals: Vec<ApprovalPolicy>,
+    /// What a running conversation takes mid-run: steering, and which
+    /// settings change from the next turn.
+    pub midway: Vec<Midway>,
 }
 
 /// Whether a run can start with a client on this host.

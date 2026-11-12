@@ -209,7 +209,8 @@ dependencies under "Crates" below. Read the code for current module ownership.
   framing (`lines`), the models a client lists (`models`: `Model` by
   `ModelId`, read by `ModelListing` from a short listing process), and a
   run's `RunSettings` (`settings`: its model, `Effort`, and
-  `ApprovalPolicy`); the gateway URL a harness is pointed at and the
+  `ApprovalPolicy`, and `Midway`, what each client takes mid-run: steering
+  and which settings change from the next turn); the gateway URL a harness is pointed at and the
   `UserToken` it presents there (`endpoint`); and `HostEnv` (`host`), the
   host environment that launching and configuration read. It performs
   filesystem and process I/O but has no async runtime, HTTP, database, or
@@ -217,7 +218,7 @@ dependencies under "Crates" below. Read the code for current module ownership.
 - `crates/ren-recorder`: the bounded capture queue between forwarding and
   storage, with `Recorder` as its primary type. `CallTap` (and `ChannelTap` for a
   WebSocket's end) is the forwarding side, `RunTap` records an agent run's
-  start, opening, end, and each entry of its conversation (`RunEntry`, whole,
+  start, opening, settings changed mid-run, end, and each entry of its conversation (`RunEntry`, whole,
   admitted against the queue's byte budget), and `HistorySlot` an operator's archive or delete
   of a session or run (`HistoryEdit`); `RecorderTask` (run by the daemon on
   its observation thread) is the shell around the pure `RecorderCore`
@@ -261,7 +262,8 @@ dependencies under "Crates" below. Read the code for current module ownership.
 - `crates/ren-supervisor`: runs, with `Supervisor` as its primary type: agent
   processes started in a folder and driven through their client's
   structured mode (Codex, Claude Code, and Pi). `RunState` (`run`) is the
-  pure lifecycle machine (starting, idle, working with its waiting approvals,
+  pure lifecycle machine (starting, idle, working with its waiting approvals and the prompt queued
+  for after the turn (a `Delivery`: start, queue, or steer),
   stopping, ended with a `RunEnd`); `Workdir` (`workdir`) keeps runs inside
   `Bounds`: the configured roots, the other places (`~/.config`), and the
   scratch folder Ren owns, where a run started without a folder

@@ -20,14 +20,14 @@ use axum::{
 use http::{HeaderMap, StatusCode};
 use ren_harness::{
     Harness,
-    drive::{ApprovalId, Decision, Prompt},
+    drive::{ApprovalId, CommandRefused, Decision, Prompt},
     models::ModelId,
     settings::{ApprovalPolicy, Effort, RunSettings},
 };
 use ren_protocol::native::NativeThreadId;
 use ren_recorder::id::RunId;
 use ren_supervisor::{
-    CommandError, Conversation, ModelsError, RunCommand, RunRefused, RunSnapshot, Start,
+    CommandError, Conversation, Delivery, ModelsError, RunCommand, RunRefused, RunSnapshot, Start,
     StartError, StartPlace, Supervisor, WorkdirError,
 };
 use std::{convert::Infallible, sync::Arc, time::Duration};
@@ -64,6 +64,28 @@ struct StartRequest {
 #[serde(deny_unknown_fields)]
 struct PromptRequest {
     text: String,
+    /// How it goes: start a turn (the default), queue it for after the
+    /// running turn, or steer the running turn with it.
+    #[serde(default = "PromptRequest::start")]
+    delivery: Delivery,
+}
+
+impl PromptRequest {
+    fn start() -> Delivery {
+        Delivery::Start
+    }
+}
+
+/// The settings a run moves to; each left out is the client's own.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SettingsRequest {
+    #[serde(default)]
+    model: Option<String>,
+    #[serde(default)]
+    effort: Option<Effort>,
+    #[serde(default)]
+    approvals: Option<ApprovalPolicy>,
 }
 
 #[derive(serde::Deserialize)]
@@ -172,8 +194,17 @@ impl From<CommandError> for RunRefusal {
                 RunRefused::NoSuchApproval(_) => "no_such_approval",
                 RunRefused::Stopping => "stopping",
                 RunRefused::Ended => "ended",
+                RunRefused::NothingQueued => "nothing_queued",
             }),
-            CommandError::Protocol(_) => Self::Refused("protocol"),
+            // What the client has no way to do mid-run.
+            CommandError::Protocol(CommandRefused::NotOffered(_)) => Self::Refused("not_offered"),
+            CommandError::Protocol(
+                CommandRefused::NotReady
+                | CommandRefused::TurnRunning
+                | CommandRefused::NoTurn
+                | CommandRefused::TurnNotStarted
+                | CommandRefused::UnknownApproval(_),
+            ) => Self::Refused("protocol"),
             CommandError::Gone => Self::Unavailable,
         }
     }
@@ -201,6 +232,8 @@ impl RunsApi {
                 get(Self::models),
             )
             .route("/control/v1/runs/{run}/prompt", post(Self::prompt))
+            .route("/control/v1/runs/{run}/unqueue", post(Self::unqueue))
+            .route("/control/v1/runs/{run}/settings", post(Self::settings))
             .route(
                 "/control/v1/runs/{run}/approvals/{approval}",
                 post(Self::answer),
@@ -381,9 +414,40 @@ impl RunsApi {
     ) -> Result<Response, Denied> {
         let supervisor = api.admit(&headers)?;
         let run = Self::run(&run)?;
-        let prompt =
-            Prompt::parse(Self::body(body)?.text).map_err(|_| Denied::Control(Refusal::Invalid))?;
-        Self::command(supervisor, run, RunCommand::Prompt(prompt)).await
+        let request = Self::body(body)?;
+        let prompt = Prompt::parse(request.text).map_err(|_| Denied::Control(Refusal::Invalid))?;
+        Self::command(supervisor, run, request.delivery.command(prompt)).await
+    }
+
+    async fn unqueue(
+        State(api): Api,
+        headers: HeaderMap,
+        Path(run): Path<String>,
+    ) -> Result<Response, Denied> {
+        let supervisor = api.admit(&headers)?;
+        Self::command(supervisor, Self::run(&run)?, RunCommand::Unqueue).await
+    }
+
+    async fn settings(
+        State(api): Api,
+        headers: HeaderMap,
+        Path(run): Path<String>,
+        body: Result<Json<SettingsRequest>, JsonRejection>,
+    ) -> Result<Response, Denied> {
+        let supervisor = api.admit(&headers)?;
+        let run = Self::run(&run)?;
+        let request = Self::body(body)?;
+        let model = request
+            .model
+            .map(|model| model.parse::<ModelId>())
+            .transpose()
+            .map_err(|_| Denied::Control(Refusal::Invalid))?;
+        let settings = RunSettings {
+            model,
+            effort: request.effort,
+            approvals: request.approvals,
+        };
+        Self::command(supervisor, run, RunCommand::Configure(settings)).await
     }
 
     async fn answer(

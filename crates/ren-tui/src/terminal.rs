@@ -197,6 +197,7 @@ impl TerminalEvent {
         let alt = event.modifiers.contains(KeyModifiers::ALT);
         match event.code {
             KeyCode::Char('c') if control => Some(Key::Interrupt),
+            KeyCode::Enter if alt => Some(Key::SendNow),
             KeyCode::Char('j') if control => Some(Key::Newline),
             KeyCode::Char('p') if control => Some(Key::Older),
             KeyCode::Char('n') if control => Some(Key::Newer),

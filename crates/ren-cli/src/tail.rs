@@ -153,6 +153,7 @@ impl Shown {
                 | ObservationKind::ChannelClosed
                 | ObservationKind::RunStarted
                 | ObservationKind::RunOpened
+                | ObservationKind::RunConfigured
                 | ObservationKind::RunEnded
                 | ObservationKind::RunRecovered,
                 _,

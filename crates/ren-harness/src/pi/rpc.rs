@@ -21,7 +21,7 @@ use crate::{
     },
     lines::{Framed, Line},
     models::{DefaultChoice, Listing, Model, ModelId, ModelListing},
-    settings::Effort,
+    settings::{Effort, Midway, RunSettings},
 };
 use ren_protocol::native::{NativeThreadId, NativeTurnId};
 use serde_json::{Value, json};
@@ -33,6 +33,8 @@ use uuid::Uuid;
 pub struct PiRpc {
     thread: NativeThreadId,
     ready: bool,
+    /// What the session runs on now, to tell what a change changes.
+    settings: RunSettings,
     /// Turn ids are this, mixed with how many turns were minted.
     seed: Uuid,
     minted: u64,
@@ -107,13 +109,16 @@ impl PiRpc {
     /// A codec for a freshly started process, and the first line to send it.
     /// `seed` is a fresh id the process's turn ids are minted from.
     pub fn open(opening: &Opening, seed: Uuid) -> (Self, Line) {
-        let (thread, kind) = match opening {
-            Opening::New { id, .. } => (*id, RequestKind::ThreadStart),
-            Opening::Resume { thread, .. } => (*thread, RequestKind::ThreadResume),
+        let (thread, kind, settings) = match opening {
+            Opening::New { id, settings, .. } => (*id, RequestKind::ThreadStart, settings.clone()),
+            Opening::Resume {
+                thread, settings, ..
+            } => (*thread, RequestKind::ThreadResume, settings.clone()),
         };
         let mut codec = Self {
             thread,
             ready: false,
+            settings,
             seed,
             minted: 0,
             next_request: 0,
@@ -134,25 +139,39 @@ impl PiRpc {
     }
 
     /// The line that carries `command`, or why it cannot be sent now.
-    pub fn command(&mut self, command: DriveCommand) -> Result<Line, CommandRefused> {
+    pub fn command(&mut self, command: DriveCommand) -> Result<Vec<Line>, CommandRefused> {
         if !self.ready {
             return Err(CommandRefused::NotReady);
         }
         match command {
-            DriveCommand::Prompt(prompt) => self.prompt(&prompt),
+            DriveCommand::Prompt(prompt) => self.prompt(&prompt).map(|line| vec![line]),
             DriveCommand::Interrupt => match self.turn {
                 TurnSlot::Running { turn, .. } => {
                     self.turn = TurnSlot::Running {
                         turn,
                         interrupted: true,
                     };
-                    Ok(self.request(RequestKind::TurnInterrupt, json!({ "type": "abort" })))
+                    Ok(vec![self.request(
+                        RequestKind::TurnInterrupt,
+                        json!({ "type": "abort" }),
+                    )])
                 }
                 TurnSlot::Requested => Err(CommandRefused::TurnNotStarted),
                 TurnSlot::Idle => Err(CommandRefused::NoTurn),
             },
             // Pi asks for no approvals.
             DriveCommand::Answer { approval, .. } => Err(CommandRefused::UnknownApproval(approval)),
+            // Read after the running assistant message's tool calls, before
+            // its next model call.
+            DriveCommand::Steer(prompt) => match self.turn {
+                TurnSlot::Running { .. } => Ok(vec![self.request(
+                    RequestKind::TurnSteer,
+                    json!({ "type": "steer", "message": prompt.as_str() }),
+                )]),
+                TurnSlot::Requested => Err(CommandRefused::TurnNotStarted),
+                TurnSlot::Idle => Err(CommandRefused::NoTurn),
+            },
+            DriveCommand::Configure(settings) => self.configure(settings),
         }
     }
 
@@ -320,8 +339,46 @@ impl PiRpc {
                     });
                 }
             }
-            RequestKind::TurnInterrupt | RequestKind::Initialize => {}
+            RequestKind::TurnInterrupt
+            | RequestKind::Initialize
+            | RequestKind::TurnSteer
+            | RequestKind::Configure => {}
         }
+    }
+
+    /// The commands that move the session to `settings`: Pi switches model
+    /// and thinking level mid-run, and asks for no approvals. Neither goes
+    /// back to "Pi's own" once chosen: it keeps the last one set.
+    fn configure(&mut self, settings: RunSettings) -> Result<Vec<Line>, CommandRefused> {
+        if settings.approvals.is_some() {
+            return Err(CommandRefused::NotOffered(Midway::Approvals));
+        }
+        let mut lines = Vec::new();
+        if settings.model != self.settings.model {
+            let model = settings
+                .model
+                .as_ref()
+                .ok_or(CommandRefused::NotOffered(Midway::Model))?;
+            let (provider, id) = model
+                .as_str()
+                .split_once('/')
+                .ok_or(CommandRefused::NotOffered(Midway::Model))?;
+            lines.push(self.request(
+                RequestKind::Configure,
+                json!({ "type": "set_model", "provider": provider, "modelId": id }),
+            ));
+        }
+        if settings.effort != self.settings.effort {
+            let level = settings
+                .effort
+                .ok_or(CommandRefused::NotOffered(Midway::Effort))?;
+            lines.push(self.request(
+                RequestKind::Configure,
+                json!({ "type": "set_thinking_level", "level": level.to_string() }),
+            ));
+        }
+        self.settings = settings;
+        Ok(lines)
     }
 
     /// The next turn id: never nil, never one this process minted before.
@@ -790,7 +847,7 @@ mod tests {
 
     /// A prompt sent and Pi's run started.
     fn started(codec: &mut PiRpc, text: &str) -> NativeTurnId {
-        let line = codec.command(prompt(text)).unwrap();
+        let line = codec.command(prompt(text)).unwrap().remove(0);
         let request = sent(&line);
         assert_eq!(request["type"], "prompt");
         assert_eq!(request["message"], text);
@@ -995,7 +1052,7 @@ mod tests {
     fn an_interrupted_or_failed_turn_says_so() {
         let mut codec = ready();
         let turn = started(&mut codec, "go");
-        let abort = sent(&codec.command(DriveCommand::Interrupt).unwrap());
+        let abort = sent(&codec.command(DriveCommand::Interrupt).unwrap().remove(0));
         assert_eq!(abort, json!({ "type": "abort", "id": "ren-2" }));
         assert!(
             feed(
@@ -1059,7 +1116,7 @@ mod tests {
     #[test]
     fn a_refused_or_handled_prompt_leaves_no_turn() {
         let mut codec = ready();
-        let line = codec.command(prompt("hi")).unwrap();
+        let line = codec.command(prompt("hi")).unwrap().remove(0);
         let id = sent(&line)["id"].clone();
         let refused = feed(
             &mut codec,
@@ -1073,7 +1130,7 @@ mod tests {
                 message: "No model selected".into(),
             }]
         );
-        let line = codec.command(prompt("/reload")).unwrap();
+        let line = codec.command(prompt("/reload")).unwrap().remove(0);
         let id = sent(&line)["id"].clone();
         let handled = feed(
             &mut codec,
@@ -1147,6 +1204,57 @@ mod tests {
                 decision: crate::drive::Decision::Accept,
             }),
             Err(CommandRefused::UnknownApproval("x".parse().unwrap()))
+        );
+    }
+
+    /// Pi takes a message into the running turn, and switches model and
+    /// thinking level mid-run; it asks for no approvals.
+    #[test]
+    fn steers_and_switches_model_and_thinking_level() {
+        use crate::settings::{ApprovalPolicy, Effort, Midway, RunSettings};
+        let mut codec = ready();
+        let _ = started(&mut codec, "go");
+        let steer = codec
+            .command(DriveCommand::Steer(
+                Prompt::parse("stop and test".into()).unwrap(),
+            ))
+            .unwrap()
+            .remove(0);
+        let steer = sent(&steer);
+        assert_eq!(
+            (steer["type"].as_str(), steer["message"].as_str()),
+            (Some("steer"), Some("stop and test"))
+        );
+        let lines = codec
+            .command(DriveCommand::Configure(RunSettings {
+                model: Some("openai/gpt-fast".parse().unwrap()),
+                effort: Some(Effort::Low),
+                approvals: None,
+            }))
+            .unwrap();
+        let sent_lines: Vec<Value> = lines.iter().map(sent).collect();
+        assert_eq!(sent_lines[0]["type"], "set_model");
+        assert_eq!(
+            (
+                sent_lines[0]["provider"].as_str(),
+                sent_lines[0]["modelId"].as_str()
+            ),
+            (Some("openai"), Some("gpt-fast"))
+        );
+        assert_eq!(
+            (
+                sent_lines[1]["type"].as_str(),
+                sent_lines[1]["level"].as_str()
+            ),
+            (Some("set_thinking_level"), Some("low"))
+        );
+        assert_eq!(
+            codec.command(DriveCommand::Configure(RunSettings {
+                model: Some("openai/gpt-fast".parse().unwrap()),
+                effort: Some(Effort::Low),
+                approvals: Some(ApprovalPolicy::Ask),
+            })),
+            Err(CommandRefused::NotOffered(Midway::Approvals))
         );
     }
 }

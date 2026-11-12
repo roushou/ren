@@ -44,8 +44,6 @@ pub struct Run {
     pub live: Option<RunState>,
     pub recorded: Option<RunView>,
     pub transcript: Transcript,
-    /// Typed while a turn ran: sent once the run waits for a prompt.
-    pub queued: Option<Prompt>,
     /// Whether its conversation was asked for once already.
     pub asked: bool,
     /// What it was started with, as the daemon holds it while it runs.
@@ -63,7 +61,6 @@ impl Run {
             live: None,
             recorded: None,
             transcript: Transcript::default(),
-            queued: None,
             asked: false,
             settings: None,
         }
@@ -89,6 +86,20 @@ impl Run {
             Some(RunState::Idle { .. }) => Attention::YourTurn,
             Some(RunState::Starting) => Attention::Starting,
             Some(RunState::Stopping { .. } | RunState::Ended { .. }) | None => Attention::Ended,
+        }
+    }
+
+    /// The prompt the daemon holds for after the running turn.
+    pub fn queued(&self) -> Option<&Prompt> {
+        match &self.live {
+            Some(RunState::Working { queued, .. }) => queued.as_ref(),
+            Some(
+                RunState::Starting
+                | RunState::Idle { .. }
+                | RunState::Stopping { .. }
+                | RunState::Ended { .. },
+            )
+            | None => None,
         }
     }
 
@@ -200,7 +211,7 @@ impl Run {
         let first = self
             .transcript
             .first_prompt()
-            .or_else(|| self.queued.as_ref().map(Prompt::as_str));
+            .or_else(|| self.queued().map(Prompt::as_str));
         match (first, self.started_at) {
             (Some(text), _) => Text(text.lines().next().unwrap_or(text)).summary(32),
             (None, Some(started)) => {

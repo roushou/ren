@@ -30,7 +30,7 @@ use ren_harness::{
     endpoint::GatewayEndpoint,
     lines::{Framed, Line, LineLimit, Lines},
     models::ModelListing,
-    settings::{ApprovalPolicy, RunSettings},
+    settings::{ApprovalPolicy, Midway, RunSettings},
 };
 use ren_protocol::label::Labeled;
 use ren_protocol::native::NativeThreadId;
@@ -180,6 +180,7 @@ impl<H: AgentHost> SupervisorTask<H> {
                             Err(_) => ClientStatus::NotDrivable,
                         },
                         approvals: ApprovalPolicy::offered(*harness).to_vec(),
+                        midway: Midway::offered(*harness).to_vec(),
                     })
                     .collect();
                 let _ = reply.send(clients);
@@ -392,6 +393,12 @@ impl<H: AgentHost> SupervisorTask<H> {
         live: &mut Live,
         command: RunCommand,
     ) -> Result<(), CommandError> {
+        // Settings the run moves to, once the client takes them.
+        let configuring = if let RunCommand::Configure(settings) = &command {
+            Some(settings.clone())
+        } else {
+            None
+        };
         let transition = live
             .state
             .apply(RunEvent::Operator(command))
@@ -404,7 +411,7 @@ impl<H: AgentHost> SupervisorTask<H> {
             match action {
                 RunAction::Send(command) => {
                     let codec = live.codec.as_mut().ok_or(CommandError::NoSuchRun(run))?;
-                    lines.push(codec.command(command).map_err(CommandError::Protocol)?);
+                    lines.extend(codec.command(command).map_err(CommandError::Protocol)?);
                 }
                 RunAction::Kill => kill = true,
             }
@@ -414,6 +421,17 @@ impl<H: AgentHost> SupervisorTask<H> {
         }
         if kill && let Some(switch) = live.kill.take() {
             switch.fire();
+        }
+        if let Some(settings) = configuring {
+            if let Some(tap) = live.tap.as_ref() {
+                tap.configured(settings.clone());
+            }
+            live.settings = settings;
+            // The state may not change, but the run did: say so.
+            self.publish(RunUpdate::State {
+                run,
+                state: transition.state.clone(),
+            });
         }
         self.settle(run, live, transition.state);
         Ok(())
@@ -464,12 +482,17 @@ impl<H: AgentHost> SupervisorTask<H> {
         for action in transition.actions {
             match action {
                 RunAction::Send(command) => {
-                    if let Some(line) = live
-                        .codec
-                        .as_mut()
-                        .and_then(|codec| codec.command(command).ok())
-                    {
-                        Self::write(run, live, &line).await;
+                    let lines = match live.codec.as_mut().map(|codec| codec.command(command)) {
+                        Some(Ok(lines)) => lines,
+                        Some(Err(refused)) => {
+                            // A queued prompt the client would not take.
+                            tracing::debug!(%run, %refused, "the client refused a command");
+                            Vec::new()
+                        }
+                        None => Vec::new(),
+                    };
+                    for line in &lines {
+                        Self::write(run, live, line).await;
                     }
                 }
                 RunAction::Kill => {

@@ -37,6 +37,8 @@ pub struct CodexAppServer {
     approvals: BTreeMap<ApprovalId, Value>,
     /// The effort every turn asks for; none is Codex's own.
     effort: Option<Effort>,
+    /// Settings changed mid-run: from then on every turn asks for them.
+    changed: Option<RunSettings>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -68,6 +70,7 @@ impl CodexAppServer {
         "model/list",
         "turn/start",
         "turn/interrupt",
+        "turn/steer",
         "thread/started",
         "turn/started",
         "turn/completed",
@@ -88,6 +91,7 @@ impl CodexAppServer {
         };
         let mut codec = Self {
             effort,
+            changed: None,
             phase: Phase::Initializing(opening),
             next_request: 0,
             requests: BTreeMap::new(),
@@ -110,17 +114,17 @@ impl CodexAppServer {
     }
 
     /// The lines that carry `command`, or why it cannot be sent now.
-    pub fn command(&mut self, command: DriveCommand) -> Result<Line, CommandRefused> {
+    pub fn command(&mut self, command: DriveCommand) -> Result<Vec<Line>, CommandRefused> {
         let Phase::Ready(thread) = self.phase else {
             return Err(CommandRefused::NotReady);
         };
         match command {
-            DriveCommand::Prompt(prompt) => self.prompt(thread, &prompt),
+            DriveCommand::Prompt(prompt) => self.prompt(thread, &prompt).map(|line| vec![line]),
             DriveCommand::Interrupt => match self.turn {
-                TurnSlot::Running(turn) => Ok(self.request(
+                TurnSlot::Running(turn) => Ok(vec![self.request(
                     RequestKind::TurnInterrupt,
                     json!({ "threadId": thread.to_string(), "turnId": turn.to_string() }),
-                )),
+                )]),
                 TurnSlot::Requested => Err(CommandRefused::TurnNotStarted),
                 TurnSlot::Idle => Err(CommandRefused::NoTurn),
             },
@@ -128,9 +132,27 @@ impl CodexAppServer {
                 let Some(id) = self.approvals.remove(&approval) else {
                     return Err(CommandRefused::UnknownApproval(approval));
                 };
-                Ok(Line::json(
+                Ok(vec![Line::json(
                     &json!({ "id": id, "result": { "decision": Self::decision(decision) } }),
-                ))
+                )])
+            }
+            DriveCommand::Steer(prompt) => match self.turn {
+                TurnSlot::Running(turn) => Ok(vec![self.request(
+                    RequestKind::TurnSteer,
+                    json!({
+                        "threadId": thread.to_string(),
+                        "expectedTurnId": turn.to_string(),
+                        "input": [{ "type": "text", "text": prompt.as_str() }],
+                    }),
+                )]),
+                TurnSlot::Requested => Err(CommandRefused::TurnNotStarted),
+                TurnSlot::Idle => Err(CommandRefused::NoTurn),
+            },
+            // Codex takes a turn's settings with the turn: kept for the
+            // next one, and every one after.
+            DriveCommand::Configure(settings) => {
+                self.changed = Some(settings);
+                Ok(Vec::new())
             }
         }
     }
@@ -204,8 +226,15 @@ impl CodexAppServer {
                         "threadId": thread.to_string(),
                         "input": [{ "type": "text", "text": prompt.as_str() }],
                     });
-                    if let (Some(effort), Value::Object(fields)) = (self.effort, &mut params) {
+                    let effort = match &self.changed {
+                        Some(changed) => changed.effort,
+                        None => self.effort,
+                    };
+                    if let (Some(effort), Value::Object(fields)) = (effort, &mut params) {
                         fields.insert("effort".into(), effort.to_string().into());
+                    }
+                    if let Some(changed) = &self.changed {
+                        Self::turn_settings(&mut params, changed);
                     }
                     params
                 }))
@@ -228,6 +257,30 @@ impl CodexAppServer {
             RequestKind::ThreadResume => "thread/resume",
             RequestKind::TurnStart => "turn/start",
             RequestKind::TurnInterrupt => "turn/interrupt",
+            RequestKind::TurnSteer => "turn/steer",
+            // Codex takes settings with each turn, never on their own.
+            RequestKind::Configure => "turn/start",
+        }
+    }
+
+    /// A turn on the model and approval policy chosen mid-run; each left
+    /// out is Codex's own. The policy goes with its sandbox, as at the
+    /// thread's start.
+    fn turn_settings(params: &mut Value, settings: &RunSettings) {
+        let Value::Object(fields) = params else {
+            return;
+        };
+        if let Some(model) = &settings.model {
+            fields.insert("model".into(), model.as_str().into());
+        }
+        if let Some(policy) = settings.approvals {
+            let (approval, sandbox) = match policy {
+                ApprovalPolicy::Ask => ("untrusted", "readOnly"),
+                ApprovalPolicy::Edits => ("untrusted", "workspaceWrite"),
+                ApprovalPolicy::Auto => ("on-request", "workspaceWrite"),
+            };
+            fields.insert("approvalPolicy".into(), approval.into());
+            fields.insert("sandboxPolicy".into(), json!({ "type": sandbox }));
         }
     }
 
@@ -345,7 +398,7 @@ impl CodexAppServer {
                     }),
                 }
             }
-            RequestKind::TurnInterrupt => {}
+            RequestKind::TurnInterrupt | RequestKind::TurnSteer | RequestKind::Configure => {}
         }
     }
 
@@ -915,7 +968,7 @@ mod tests {
     #[test]
     fn runs_a_turn_with_streamed_text_and_items() {
         let mut codec = ready();
-        let line = codec.command(prompt("fix the build")).unwrap();
+        let line = codec.command(prompt("fix the build")).unwrap().remove(0);
         assert_eq!(
             sent(&line),
             json!({ "id": 2, "method": "turn/start", "params": {
@@ -969,7 +1022,7 @@ mod tests {
                 }
         ));
 
-        let interrupt = codec.command(DriveCommand::Interrupt).unwrap();
+        let interrupt = codec.command(DriveCommand::Interrupt).unwrap().remove(0);
         assert_eq!(
             sent(&interrupt),
             json!({ "id": 3, "method": "turn/interrupt", "params": { "threadId": THREAD, "turnId": TURN } })
@@ -996,7 +1049,7 @@ mod tests {
     #[test]
     fn reports_failed_and_unknown_turn_ends() {
         let mut codec = ready();
-        let _ = codec.command(prompt("go")).unwrap();
+        let _ = codec.command(prompt("go")).unwrap().remove(0);
         let failed = feed(
             &mut codec,
             json!({ "method": "turn/completed", "params": { "threadId": THREAD, "turn": {
@@ -1006,7 +1059,7 @@ mod tests {
             failed.events.as_slice(),
             [DriveEvent::TurnEnded { end: TurnEnd::Failed { message: Some(m) }, .. }] if m == "usage limit"
         ));
-        let _ = codec.command(prompt("go")).unwrap();
+        let _ = codec.command(prompt("go")).unwrap().remove(0);
         let odd = feed(
             &mut codec,
             json!({ "method": "turn/completed", "params": { "threadId": THREAD, "turn": {
@@ -1021,7 +1074,7 @@ mod tests {
     #[test]
     fn asks_for_approval_and_answers_with_the_same_request_id() {
         let mut codec = ready();
-        let _ = codec.command(prompt("go")).unwrap();
+        let _ = codec.command(prompt("go")).unwrap().remove(0);
         let asked = feed(
             &mut codec,
             json!({ "id": "req-7", "method": "item/commandExecution/requestApproval", "params": {
@@ -1044,7 +1097,8 @@ mod tests {
                 approval: approval.clone(),
                 decision: Decision::AcceptForSession,
             })
-            .unwrap();
+            .unwrap()
+            .remove(0);
         assert_eq!(
             sent(&answer),
             json!({ "id": "req-7", "result": { "decision": "acceptForSession" } })
@@ -1091,7 +1145,7 @@ mod tests {
     #[test]
     fn a_resolved_request_no_longer_waits() {
         let mut codec = ready();
-        let _ = codec.command(prompt("go")).unwrap();
+        let _ = codec.command(prompt("go")).unwrap().remove(0);
         let _ = feed(
             &mut codec,
             json!({ "id": 4, "method": "item/fileChange/requestApproval", "params": {
@@ -1200,7 +1254,7 @@ mod tests {
     #[test]
     fn reports_refusals_and_errors() {
         let mut codec = ready();
-        let _ = codec.command(prompt("go")).unwrap();
+        let _ = codec.command(prompt("go")).unwrap().remove(0);
         let refused = feed(
             &mut codec,
             json!({ "id": 2, "error": { "code": -32000, "message": "thread busy" } }),
@@ -1242,5 +1296,53 @@ mod tests {
                 "{method} is not in the pinned schema"
             );
         }
+    }
+
+    /// A message added to the running turn goes to that turn; settings
+    /// changed mid-run go with every turn from the next.
+    #[test]
+    fn steers_the_running_turn_and_takes_new_settings_with_the_next() {
+        use crate::settings::{ApprovalPolicy, Effort, RunSettings};
+        let mut codec = ready();
+        assert_eq!(
+            codec.command(DriveCommand::Steer(Prompt::parse("x".into()).unwrap())),
+            Err(CommandRefused::NoTurn)
+        );
+        let _ = codec.command(prompt("fix the build")).unwrap();
+        let _ = feed(
+            &mut codec,
+            json!({ "id": 2, "result": { "turn": { "id": TURN } } }),
+        );
+        let steer = codec
+            .command(DriveCommand::Steer(
+                Prompt::parse("use the old API".into()).unwrap(),
+            ))
+            .unwrap()
+            .remove(0);
+        assert_eq!(
+            sent(&steer),
+            json!({ "id": 3, "method": "turn/steer", "params": { "threadId": THREAD,
+                "expectedTurnId": TURN,
+                "input": [{ "type": "text", "text": "use the old API" }] } })
+        );
+        let settings = RunSettings {
+            model: Some("gpt-deep".parse().unwrap()),
+            effort: Some(Effort::High),
+            approvals: Some(ApprovalPolicy::Ask),
+        };
+        assert_eq!(
+            codec.command(DriveCommand::Configure(settings)),
+            Ok(Vec::new())
+        );
+        let _ = feed(
+            &mut codec,
+            json!({ "method": "turn/completed", "params": { "turn": { "id": TURN, "status": "completed" } } }),
+        );
+        let next = codec.command(prompt("again")).unwrap().remove(0);
+        let params = &sent(&next)["params"];
+        assert_eq!(params["model"], "gpt-deep");
+        assert_eq!(params["effort"], "high");
+        assert_eq!(params["approvalPolicy"], "untrusted");
+        assert_eq!(params["sandboxPolicy"], json!({ "type": "readOnly" }));
     }
 }

@@ -1,14 +1,13 @@
  ren   0 sessions · 0 streaming · 0 waiting                                                         1 needs you  3 live
-──────────────────────────────┬─────────────────────────────────────────────────────────────────────────────────────────
- ren ◆1  /srv/          ┌ keys ────────────────────────────────────────────────────────────────┐ Claude Code · /srv/ren
- 1 ◆ fix the flaky upl… │  move                                                                │
-                        │  ↓ j         next session, or next turn in a session                 │────────────────────────
- acme-api  /dev/        │  ↑ k         previous session, or previous turn                      │
- 2 ● new Codex run  work│  → enter     into the session; on a turn, open or fold it            │
-                        │  ← esc       back to the list                                        │
- acme-web  /dev/        │  tab         conversation, activity, files, calls                    │
- 3 ○ new Claude Code r… │  shift-tab   the view before                                         │
-                        │  pgup pgdn   scroll the session                                      │
+────────────────────────┌ keys ────────────────────────────────────────────────────────────────┐────────────────────────
+ ren ◆1  /srv/          │  move                                                                │ Claude Code · /srv/ren
+ 1 ◆ fix the flaky upl… │  ↓ j         next session, or next turn in a session                 │
+                        │  ↑ k         previous session, or previous turn                      │────────────────────────
+ acme-api  /dev/        │  → enter     into the session; on a turn, open or fold it            │
+ 2 ● new Codex run  work│  ← esc       back to the list                                        │
+                        │  tab         conversation, activity, files, calls                    │
+ acme-web  /dev/        │  shift-tab   the view before                                         │
+ 3 ○ new Claude Code r… │  pgup pgdn   scroll the session                                      │
                         │  /           search the list (esc clears)                            │
                         │  1–9         jump to that entry of the list                          │
                         │  do                                                                  │
@@ -23,8 +22,9 @@
                         │  a           allow it for the rest of the run                        │
                         │  d           deny it (space also has: deny and stop the turn)        │
                         │  while writing                                                       │
+                        │  enter       send; while a turn runs, queue it for after the turn    │
+                        │  alt-enter   send into the running turn, where the client can        │
                         │  ctrl-p/n    the messages sent before and after                      │
                         └──────────────────────────────────────────────────────────────────────┘
-                              │
 ──────────────────────────────┴─────────────────────────────────────────────────────────────────────────────────────────
  y allow · a allow for the run · d deny · space more · i reply instead                            ? keys │ 00:00:00 UTC

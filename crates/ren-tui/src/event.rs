@@ -39,6 +39,8 @@ pub enum Key {
     Client,
     /// Ctrl-K: choose the model, while writing a new run.
     Model,
+    /// Alt-Enter: send what is written into the running turn now.
+    SendNow,
 }
 
 /// A terminal's size in cells.

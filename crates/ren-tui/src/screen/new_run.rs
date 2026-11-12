@@ -361,7 +361,7 @@ impl NewRun {
     fn write(&mut self, key: Key, ctx: &mut Ctx<'_>) -> Vec<Action> {
         let width = Self::text_width(ctx.size.width);
         match key {
-            Key::Enter => return self.start(ctx),
+            Key::Enter | Key::SendNow => return self.start(ctx),
             Key::Esc | Key::Interrupt => return vec![Action::Pop],
             Key::Folder | Key::Tab => self.focus = Self::picking(Setting::Project),
             Key::Client => self.focus = Self::picking(Setting::Client),
@@ -472,6 +472,7 @@ impl NewRun {
             | Key::Newline
             | Key::Older
             | Key::Newer
+            | Key::SendNow
             | Key::Editor => {}
         }
         self.focus = Focus::Picking(picker);

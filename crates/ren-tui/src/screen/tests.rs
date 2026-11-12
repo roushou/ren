@@ -15,7 +15,7 @@ use ren_protocol::native::{NativeThreadId, NativeTurnId};
 use ren_recorder::id::RunId;
 use ren_recorder::time::UnixMillis;
 use ren_store::view::RunView;
-use ren_supervisor::{Approvals, Project, ProjectGit, RunSnapshot, RunState, RunUpdate};
+use ren_supervisor::{Approvals, Delivery, Project, ProjectGit, RunSnapshot, RunState, RunUpdate};
 use serde_json::json;
 
 const SIZE: Size = Size {
@@ -90,6 +90,7 @@ fn working(n: u128) -> RunState {
         thread: thread(n),
         turn: Some(turn(n)),
         approvals: Approvals::default(),
+        queued: None,
     }
 }
 
@@ -100,6 +101,7 @@ fn asking(n: u128, ask: ApprovalAsk) -> RunState {
         thread: thread(n),
         turn: Some(turn(n)),
         approvals,
+        queued: None,
     }
 }
 
@@ -311,26 +313,95 @@ fn a_key_answers_and_moves_on_to_the_next_run_that_needs_you() {
     assert!(sent(&console.press(Key::Char('y'))).is_empty());
 }
 
+fn queued(n: u128, text: &str) -> RunState {
+    RunState::Working {
+        thread: thread(n),
+        turn: Some(turn(n)),
+        approvals: Approvals::default(),
+        queued: Some(Prompt::parse(text.into()).unwrap()),
+    }
+}
+
 #[test]
-fn writing_during_a_turn_waits_for_its_end() {
+fn writing_during_a_turn_queues_it_for_after_the_turn() {
     let mut console = desk();
     // The list: needs you (2), working (1), your turn (3).
     let _ = console.press(Key::Char('j'));
     assert_eq!(console.current(), Some(run_id(1)));
-    assert!(sent(&console.write("also check the dead-letter path")).is_empty());
-    assert_eq!(console.tui.mode(), Mode::Normal);
-    assert!(
-        drawn(&console).contains("queued: also check the dead-letter path")
-            || drawn(&console).contains("kept: it is sent when this turn ends")
-    );
-    let out = console.apply(state(1, idle(1)));
     assert_eq!(
-        sent(&out),
+        sent(&console.write("also check the dead-letter path")),
         [Command::Prompt {
             run: run_id(1),
             prompt: Prompt::parse("also check the dead-letter path".into()).unwrap(),
+            delivery: Delivery::Queue,
         }]
     );
+    assert_eq!(console.tui.mode(), Mode::Normal);
+    // The daemon holds it; the run shows it waiting.
+    let _ = console.apply(state(1, queued(1, "also check the dead-letter path")));
+    assert!(
+        drawn(&console).contains("after this turn  also check the dead-letter path"),
+        "{}",
+        drawn(&console)
+    );
+    // Written again, it goes after what waits, as one message.
+    assert_eq!(
+        sent(&console.write("and the retry path")),
+        [Command::Prompt {
+            run: run_id(1),
+            prompt: Prompt::parse("also check the dead-letter path\n\nand the retry path".into())
+                .unwrap(),
+            delivery: Delivery::Queue,
+        }]
+    );
+}
+
+#[test]
+fn alt_enter_sends_into_the_running_turn() {
+    let mut console = desk();
+    let _ = console.press(Key::Char('j'));
+    let _ = console.press(Key::Char('i'));
+    type_text(&mut console, "skip the flaky test");
+    assert_eq!(
+        sent(&console.press(Key::SendNow)),
+        [Command::Prompt {
+            run: run_id(1),
+            prompt: Prompt::parse("skip the flaky test".into()).unwrap(),
+            delivery: Delivery::Steer,
+        }]
+    );
+}
+
+#[test]
+fn the_queued_message_is_taken_back_to_edit() {
+    let mut console = desk();
+    let _ = console.press(Key::Char('j'));
+    let _ = console.apply(state(1, queued(1, "rename the module")));
+    let _ = console.press(Key::Char(' '));
+    assert_eq!(
+        sent(&console.press(Key::Char('e'))),
+        [Command::Unqueue(run_id(1))]
+    );
+    assert_eq!(console.tui.mode(), Mode::Writing);
+    let _ = console.apply(state(1, working(1)));
+    assert!(drawn(&console).contains("rename the module"));
+    assert!(!drawn(&console).contains("after this turn"));
+}
+
+#[test]
+fn a_draft_stays_with_its_run() {
+    let mut console = desk();
+    let _ = console.press(Key::Char('j'));
+    let _ = console.press(Key::Char('i'));
+    type_text(&mut console, "half a thought");
+    let _ = console.press(Key::Esc);
+    assert!(drawn(&console).contains("half a thought"));
+    let _ = console.press(Key::Esc);
+    let _ = console.press(Key::Down);
+    assert_eq!(console.current(), Some(run_id(3)));
+    assert!(!drawn(&console).contains("half a thought"));
+    let _ = console.press(Key::Up);
+    assert!(drawn(&console).contains("half a thought"));
 }
 
 #[test]
@@ -338,19 +409,20 @@ fn writing_while_an_approval_waits_denies_it_and_sends_the_words_next() {
     let mut console = desk();
     let out = console.write("no, push to a branch first");
     assert_eq!(
-        sent(&out),
+        sent(&out)[..1],
         [Command::Answer {
             run: run_id(2),
             approval: "ap-2".parse().unwrap(),
             decision: Decision::Decline,
         }]
     );
-    let out = console.apply(state(2, idle(2)));
+    // The words wait with the daemon for the turn to end.
     assert_eq!(
-        sent(&out),
+        sent(&out)[1..],
         [Command::Prompt {
             run: run_id(2),
             prompt: Prompt::parse("no, push to a branch first".into()).unwrap(),
+            delivery: Delivery::Queue,
         }]
     );
 }
@@ -473,21 +545,25 @@ fn clients() -> Vec<ren_supervisor::Client> {
             harness: Harness::ClaudeCode,
             status: ClientStatus::Ready,
             approvals: ren_harness::settings::ApprovalPolicy::offered(Harness::ClaudeCode).to_vec(),
+            midway: ren_harness::settings::Midway::offered(Harness::ClaudeCode).to_vec(),
         },
         Client {
             harness: Harness::Codex,
             status: ClientStatus::Ready,
             approvals: ren_harness::settings::ApprovalPolicy::offered(Harness::Codex).to_vec(),
+            midway: ren_harness::settings::Midway::offered(Harness::Codex).to_vec(),
         },
         Client {
             harness: Harness::Pi,
             status: ClientStatus::NotInstalled,
             approvals: ren_harness::settings::ApprovalPolicy::offered(Harness::Pi).to_vec(),
+            midway: ren_harness::settings::Midway::offered(Harness::Pi).to_vec(),
         },
         Client {
             harness: Harness::OpenCode,
             status: ClientStatus::NotDrivable,
             approvals: ren_harness::settings::ApprovalPolicy::offered(Harness::OpenCode).to_vec(),
+            midway: ren_harness::settings::Midway::offered(Harness::OpenCode).to_vec(),
         },
     ]
 }
@@ -655,6 +731,7 @@ fn the_composer_offers_the_clients_installed_on_the_daemons_host() {
         harness: Harness::ClaudeCode,
         status: ren_supervisor::ClientStatus::NotInstalled,
         approvals: Vec::new(),
+        midway: Vec::new(),
     }])));
     type_text(&mut console, "go");
     let out = console.press(Key::Enter);

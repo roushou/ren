@@ -11,7 +11,7 @@ use crate::claude_code::ClaudeStreamJson;
 use crate::codex::CodexAppServer;
 use crate::lines::{Framed, Line};
 use crate::pi::PiRpc;
-use crate::settings::RunSettings;
+use crate::settings::{Midway, RunSettings};
 use crate::{Harness, launch::NotDrivable};
 
 use ren_protocol::native::{NativeThreadId, NativeTurnId};
@@ -81,8 +81,9 @@ impl Driver {
         }
     }
 
-    /// The line that carries `command`, or why it cannot be sent now.
-    pub fn command(&mut self, command: DriveCommand) -> Result<Line, CommandRefused> {
+    /// The lines that carry `command` (none when it waits for the next
+    /// turn), or why it cannot be sent now.
+    pub fn command(&mut self, command: DriveCommand) -> Result<Vec<Line>, CommandRefused> {
         match self {
             Self::Codex(codec) => codec.command(command),
             Self::ClaudeCode(codec) => codec.command(command),
@@ -112,11 +113,29 @@ pub enum DriveCommand {
     },
     /// Interrupt the running turn.
     Interrupt,
+    /// Add to the running turn: the client reads it before its next step.
+    Steer(Prompt),
+    /// Run on these settings from the next turn on.
+    Configure(RunSettings),
 }
 
 /// The text of a prompt: never blank.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Prompt(String);
+
+/// Sent as its text.
+impl serde::Serialize for Prompt {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&self.0)
+    }
+}
+
+/// Read back as text that is not blank.
+impl<'de> serde::Deserialize<'de> for Prompt {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        Self::parse(String::deserialize(deserializer)?).map_err(serde::de::Error::custom)
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 #[error("a prompt cannot be blank")]
@@ -189,6 +208,9 @@ pub enum RequestKind {
     ThreadResume,
     TurnStart,
     TurnInterrupt,
+    TurnSteer,
+    /// A change of model, effort, or approvals mid-run.
+    Configure,
 }
 
 /// What a driven client reported, as Ren reads it.
@@ -524,6 +546,9 @@ pub enum CommandRefused {
     TurnNotStarted,
     #[error("no approval {0} is waiting")]
     UnknownApproval(ApprovalId),
+    /// The client has no way to do this mid-run.
+    #[error("this client cannot change {0} in a running conversation")]
+    NotOffered(Midway),
 }
 
 #[cfg(test)]

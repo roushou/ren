@@ -1,17 +1,21 @@
-//! The message box: what is being written to a run, and what was sent
-//! before, to recall. It is open only while writing; what is typed stays
-//! when it closes, as a draft.
+//! The message box: what is being written to a run, each run its own
+//! draft, and the run's earlier prompts to recall. It is open only while
+//! writing; what is typed stays when it closes, as that run's draft.
 
 use super::composer::{Composer, Wrapped};
 use crate::Key;
+use ren_recorder::id::RunId;
+use std::collections::HashMap;
 
-/// Text being written, and what was sent.
+/// The text being written to one run, and the other runs' drafts.
 #[derive(Debug, Default)]
 pub(crate) struct MessageBox {
     composer: Composer,
-    /// What was sent, oldest first.
-    sent: Vec<String>,
-    /// A sent message shown again, until the text is edited.
+    /// The run the text is written to.
+    owner: Option<RunId>,
+    /// Other runs' drafts, kept as they were left.
+    drafts: HashMap<RunId, String>,
+    /// An earlier prompt shown again, until the text is edited.
     recall: Option<Recall>,
 }
 
@@ -28,15 +32,37 @@ struct Recall {
 pub(crate) enum Typed {
     /// It edited the text, or recalled a sent message.
     Took,
-    /// Enter: send what is written.
+    /// Enter: send what is written (queued while a turn runs).
     Submit,
+    /// Alt-Enter: send it into the running turn now.
+    SubmitNow,
     /// Not a key the box takes.
     Left(Key),
 }
 
 impl MessageBox {
-    /// How many sent messages are kept to recall.
-    const KEPT: usize = 100;
+    /// Write to `run`: the text written to another run is kept as its
+    /// draft, and `run`'s own draft comes back.
+    pub fn for_run(&mut self, run: RunId) {
+        if self.owner == Some(run) {
+            return;
+        }
+        let text = self.composer.take();
+        if let Some(owner) = self.owner
+            && !text.trim().is_empty()
+        {
+            self.drafts.insert(owner, text);
+        }
+        self.composer
+            .set(&self.drafts.remove(&run).unwrap_or_default());
+        self.owner = Some(run);
+        self.recall = None;
+    }
+
+    /// The run the text is written to.
+    pub fn owner(&self) -> Option<RunId> {
+        self.owner
+    }
 
     pub fn text(&self) -> String {
         self.composer.text()
@@ -44,18 +70,6 @@ impl MessageBox {
 
     pub fn is_empty(&self) -> bool {
         self.composer.is_empty()
-    }
-
-    /// The text, sent: kept to recall, and the box left empty.
-    pub fn send(&mut self) -> String {
-        let text = self.take();
-        if !text.trim().is_empty() && self.sent.last() != Some(&text) {
-            self.sent.push(text.clone());
-            if self.sent.len() > Self::KEPT {
-                self.sent.remove(0);
-            }
-        }
-        text
     }
 
     /// The text, leaving the box empty.
@@ -79,21 +93,22 @@ impl MessageBox {
         self.typed(|composer| composer.set(text.trim_end_matches('\n')));
     }
 
-    /// Takes a key, with the text wrapped to `width`: recalling what was
-    /// sent (ctrl-p and ctrl-n, or ↑ and ↓ with nothing typed or a recalled
-    /// message shown), then editing; ↑ and ↓ move through wrapped rows.
-    pub fn press(&mut self, key: Key, width: usize) -> Typed {
+    /// Takes a key, with the text wrapped to `width`: recalling the run's
+    /// earlier `prompts`, oldest first (ctrl-p and ctrl-n, or ↑ and ↓ with
+    /// nothing typed or a recalled prompt shown), then editing; ↑ and ↓
+    /// move through wrapped rows.
+    pub fn press(&mut self, key: Key, width: usize, prompts: &[String]) -> Typed {
         let recallable = self.composer.is_empty() || self.recall.is_some();
         match key {
             Key::Older => {
-                self.step(true);
+                self.step(true, prompts);
             }
             Key::Newer => {
-                self.step(false);
+                self.step(false, prompts);
             }
-            Key::Up if recallable && self.step(true) => {}
+            Key::Up if recallable && self.step(true, prompts) => {}
             Key::Down if self.recall.is_some() => {
-                self.step(false);
+                self.step(false, prompts);
             }
             Key::Up if self.composer.up(width) => {}
             Key::Down if self.composer.down(width) => {}
@@ -106,6 +121,7 @@ impl MessageBox {
             Key::Home => self.composer.home(),
             Key::End => self.composer.end(),
             Key::Enter => return Typed::Submit,
+            Key::SendNow => return Typed::SubmitNow,
             Key::Up
             | Key::Down
             | Key::Interrupt
@@ -124,17 +140,17 @@ impl MessageBox {
         Typed::Took
     }
 
-    /// The sent message before (or after) the one shown; after the newest,
-    /// what was typed before recalling. Whether there was one.
-    fn step(&mut self, older: bool) -> bool {
+    /// The prompt before (or after) the one shown; after the newest, what
+    /// was typed before recalling. Whether there was one.
+    fn step(&mut self, older: bool, prompts: &[String]) -> bool {
         let next = match (&self.recall, older) {
-            (None, true) if !self.sent.is_empty() => Recall {
+            (None, true) if !prompts.is_empty() => Recall {
                 back: 0,
                 draft: self.composer.text(),
             },
             (None, true | false) => return false,
             (Some(recall), true) => Recall {
-                back: (recall.back + 1).min(self.sent.len().saturating_sub(1)),
+                back: (recall.back + 1).min(prompts.len().saturating_sub(1)),
                 draft: recall.draft.clone(),
             },
             (Some(recall), false) if recall.back > 0 => Recall {
@@ -149,11 +165,10 @@ impl MessageBox {
                 return true;
             }
         };
-        let Some(text) = self
-            .sent
+        let Some(text) = prompts
             .len()
             .checked_sub(next.back + 1)
-            .and_then(|at| self.sent.get(at))
+            .and_then(|at| prompts.get(at))
         else {
             return false;
         };
@@ -172,38 +187,65 @@ impl MessageBox {
 mod tests {
     use super::{MessageBox, Typed};
     use crate::Key;
+    use ren_recorder::id::RunId;
+
+    const PROMPTS: [&str; 2] = ["fix the test", "also the docs"];
+
+    fn prompts() -> Vec<String> {
+        PROMPTS.map(str::to_owned).to_vec()
+    }
 
     fn typed(message: &mut MessageBox, text: &str) {
         for ch in text.chars() {
-            assert_eq!(message.press(Key::Char(ch), 40), Typed::Took);
+            assert_eq!(message.press(Key::Char(ch), 40, &prompts()), Typed::Took);
         }
     }
 
     #[test]
-    fn what_was_sent_is_recalled_newest_first_and_the_draft_comes_back() {
+    fn the_runs_prompts_are_recalled_newest_first_and_the_draft_comes_back() {
         let mut message = MessageBox::default();
-        for text in ["fix the test", "also the docs", "also the docs", "  "] {
-            typed(&mut message, text);
-            let _ = message.send();
-        }
+        let prompts = prompts();
         typed(&mut message, "draft");
-        // Ctrl-P goes back whatever is typed; repeats are kept once.
-        let _ = message.press(Key::Older, 40);
+        // Ctrl-P goes back whatever is typed.
+        let _ = message.press(Key::Older, 40, &prompts);
         assert_eq!(message.text(), "also the docs");
-        let _ = message.press(Key::Up, 40);
+        let _ = message.press(Key::Up, 40, &prompts);
         assert_eq!(message.text(), "fix the test");
-        let _ = message.press(Key::Up, 40);
+        let _ = message.press(Key::Up, 40, &prompts);
         assert_eq!(message.text(), "fix the test", "the oldest stays");
-        let _ = message.press(Key::Down, 40);
-        let _ = message.press(Key::Newer, 40);
+        let _ = message.press(Key::Down, 40, &prompts);
+        let _ = message.press(Key::Newer, 40, &prompts);
         assert_eq!(message.text(), "draft");
-        // ↑ recalls only with nothing typed (or a recalled message shown).
-        assert_eq!(message.press(Key::Up, 40), Typed::Left(Key::Up));
+        // ↑ recalls only with nothing typed (or a recalled prompt shown).
+        assert_eq!(message.press(Key::Up, 40, &prompts), Typed::Left(Key::Up));
         let _ = message.take();
-        let _ = message.press(Key::Up, 40);
+        let _ = message.press(Key::Up, 40, &prompts);
         assert_eq!(message.text(), "also the docs");
         // Editing it ends the recall: ↓ is the screen's again.
         typed(&mut message, "!");
-        assert_eq!(message.press(Key::Down, 40), Typed::Left(Key::Down));
+        assert_eq!(
+            message.press(Key::Down, 40, &prompts),
+            Typed::Left(Key::Down)
+        );
+        assert_eq!(message.press(Key::SendNow, 40, &prompts), Typed::SubmitNow);
+    }
+
+    #[test]
+    fn each_run_keeps_its_own_draft() {
+        let (one, two) = (
+            RunId::restore(uuid::Uuid::from_u128(1)),
+            RunId::restore(uuid::Uuid::from_u128(2)),
+        );
+        let mut message = MessageBox::default();
+        message.for_run(one);
+        typed(&mut message, "for one");
+        message.for_run(two);
+        assert!(message.is_empty(), "two starts empty");
+        typed(&mut message, "for two");
+        message.for_run(one);
+        assert_eq!(message.text(), "for one");
+        message.for_run(two);
+        assert_eq!(message.text(), "for two");
+        assert_eq!(message.owner(), Some(two));
     }
 }

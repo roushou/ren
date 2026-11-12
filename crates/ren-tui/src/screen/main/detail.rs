@@ -101,7 +101,29 @@ impl Main {
                 ),
             ),
         ];
-        if self.mode == Mode::Writing || !look.message.is_empty() {
+        // What waits for the turn to end, one line: `e` in the action menu
+        // takes it back.
+        if let Some(queued) = self
+            .run()
+            .and_then(|run| model.desk.get(run))
+            .and_then(|run| run.queued())
+        {
+            let first = queued.as_str().lines().next().unwrap_or_default();
+            rows.push((Size::Exact(1), View::Rule(Rule::Plain)));
+            rows.push((
+                Size::Exact(1),
+                View::lines(
+                    vec![Line::new(vec![
+                        Span::new(" ⏎ after this turn  ", Ink::Muted),
+                        Span::new(first.to_owned(), Ink::Text),
+                    ])],
+                    Anchor::Top,
+                ),
+            ));
+        }
+        // A draft shows under the run it was written to.
+        let drafted = !look.message.is_empty() && look.message.owner() == self.run();
+        if self.mode == Mode::Writing || drafted {
             // The box grows with what is written, up to half the screen,
             // then scrolls to keep the cursor in view.
             let wrapped = look.message.wrap(Self::message_width(width));

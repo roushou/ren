@@ -408,7 +408,8 @@ mod tests {
             .command(crate::drive::DriveCommand::Prompt(
                 crate::drive::Prompt::parse("go".into()).unwrap(),
             ))
-            .unwrap();
+            .unwrap()
+            .remove(0);
         assert_eq!(sent(&turn)["params"]["effort"], "xhigh");
         assert!(ApprovalPolicy::offered(Harness::Pi).is_empty());
     }

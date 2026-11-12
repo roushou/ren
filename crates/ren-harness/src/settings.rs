@@ -49,6 +49,36 @@ impl ApprovalPolicy {
     }
 }
 
+/// What a running conversation can take mid-run, by client.
+#[derive(Display, EnumString, IntoStaticStr, VariantArray)]
+#[strum(serialize_all = "snake_case")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SerializeDisplay, DeserializeFromStr)]
+pub enum Midway {
+    /// A message added to the turn that is running.
+    Steer,
+    /// Another model from the next turn.
+    Model,
+    /// Another effort from the next turn.
+    Effort,
+    /// Another approval policy from the next turn.
+    Approvals,
+}
+
+impl Midway {
+    /// What `harness` takes mid-run: Codex sets each turn's model, effort,
+    /// and approvals and takes steering; Claude Code switches model and
+    /// permission mode; Pi switches model and thinking level and takes
+    /// steering.
+    pub fn offered(harness: Harness) -> &'static [Self] {
+        match harness {
+            Harness::Codex => Self::VARIANTS,
+            Harness::ClaudeCode => &[Self::Model, Self::Approvals],
+            Harness::Pi => &[Self::Steer, Self::Model, Self::Effort],
+            Harness::OpenCode => &[],
+        }
+    }
+}
+
 /// A run's settings; each one left out is the client's own.
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct RunSettings {
