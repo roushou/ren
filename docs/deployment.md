@@ -164,7 +164,7 @@ deploy to upgrade. After a successful run it saves its publishing flags
 `~/.config/ren/install-vps.toml`, so later runs need no flags:
 `cargo xtask install-vps`. Giving any publishing flag replaces the saved set. It refuses a checkout whose tracked files differ from the
 commit (`--allow-dirty` installs a `-dirty` build) and warns when the commit is on
-no remote branch. It builds the release binary while the old daemon keeps
+no remote branch. It builds the release binary (with `ren tui`) while the old daemon keeps
 serving, creates `~/.config/ren/ren.toml` only if missing, and checks the
 configuration with Ren's own parser before stopping anything.
 
