@@ -1024,6 +1024,11 @@ export class Runs {
   }
 
   /** What a project's repository is on, in a few words. */
+  /** Whether a folder is a git repository whose `HEAD` was read. */
+  static versioned(git: ProjectGit): boolean {
+    return git.kind === 'branch' || git.kind === 'detached';
+  }
+
   static branch(git: ProjectGit): string {
     switch (git.kind) {
       case 'branch':

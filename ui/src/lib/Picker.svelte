@@ -1,7 +1,8 @@
 <!--
   A chip that opens a searchable list: type to narrow it, ↑ and ↓ to move,
   Enter to choose, Esc to close. Options come in groups, may say why they
-  cannot be chosen, and carry a muted hint.
+  cannot be chosen, and carry a muted hint, with an icon that says what it
+  is (a folder's branch).
 
   <Picker label="Project" options={groups} value={path} onchange={(path) => (chosen = path)} />
 -->
@@ -10,6 +11,8 @@
     value: string;
     label: string;
     hint?: string;
+    /** What the hint is, shown before it. */
+    hintIcon?: IconName;
     /** Why it cannot be chosen; it is shown, but not chosen. */
     unavailable?: string | null;
   };
@@ -146,7 +149,11 @@
   >
     <Icon name={icon} size={12} />
     <span class:placeholder={!current && !value}>{current?.label ?? value ?? placeholder}</span>
-    {#if current?.hint}<span class="muted mono">{current.hint}</span>{/if}
+    {#if current?.hint}<span class="hint muted"
+        >{#if current.hintIcon}<Icon name={current.hintIcon} size={11} />{/if}<span class="mono"
+          >{current.hint}</span
+        ></span
+      >{/if}
     <Icon name="chevron" size={10} />
   </button>
   {#if isOpen}
@@ -196,7 +203,13 @@
               }}
             >
               <span>{option.label}</span>
-              <span class="muted">{option.unavailable ?? option.hint ?? ''}</span>
+              {#if option.unavailable}<span class="muted">{option.unavailable}</span>{:else}<span
+                  class="hint muted"
+                  >{#if option.hint && option.hintIcon}<Icon
+                      name={option.hintIcon}
+                      size={11}
+                    />{/if}<span class="mono">{option.hint ?? ''}</span></span
+                >{/if}
             </li>
           {/each}
         {:else}
@@ -228,6 +241,21 @@
   .chip-button:hover,
   .chip-button[aria-expanded='true'] {
     background: var(--surface-hover);
+  }
+  /* A hint stands apart from its label: a rule, then its icon and text. */
+  .chip-button .hint {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    margin-left: 2px;
+    padding-left: 8px;
+    border-left: 1px solid var(--line);
+  }
+  li .hint {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    min-width: 0;
   }
   .chip-button .placeholder {
     color: var(--muted);

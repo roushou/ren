@@ -61,6 +61,7 @@
               value: project.path,
               label: project.name,
               hint: Runs.branch(project.git),
+              hintIcon: Runs.versioned(project.git) ? ('branch' as const) : undefined,
             })),
           },
         ]
@@ -71,6 +72,7 @@
         value: project.path,
         label: project.name,
         hint: Runs.branch(project.git),
+        hintIcon: Runs.versioned(project.git) ? ('branch' as const) : undefined,
       })),
     })),
   ]);
