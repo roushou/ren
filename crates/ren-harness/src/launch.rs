@@ -118,75 +118,12 @@ impl Harness {
     /// How to launch this harness through `gateway` for one session, without
     /// editing its files. Authentication stays with the client.
     pub fn launch(self, gateway: &GatewayEndpoint) -> LaunchPlan {
-        let mut plan = LaunchPlan {
-            harness: self,
-            executable: "claude",
-            arguments: vec![],
-            environment: BTreeMap::new(),
-        };
         match self {
-            Self::Pi => {
-                plan.executable = "pi";
-                plan.arguments = vec!["--extension".into(), LaunchArg::PiExtension];
-                plan.environment
-                    .insert("REN_PI_GATEWAY".into(), gateway.url("/").to_string().into());
-            }
-            Self::ClaudeCode => {
-                plan.environment.insert(
-                    "ANTHROPIC_BASE_URL".into(),
-                    gateway.url("/anthropic").to_string().into(),
-                );
-                plan.environment
-                    .insert("CLAUDE_CODE_GATEWAY_HINT_HEADERS".into(), "1".into());
-            }
-            Self::Codex => {
-                plan.executable = "codex";
-                plan.arguments = vec!["--no-daemon".into()];
-                plan.arguments.extend(Self::codex_provider(gateway));
-            }
-            Self::OpenCode => {
-                plan.executable = "opencode";
-                // opencode's documented runtime override; it merges over the
-                // global and project files. Only the two providers' base URLs
-                // are set: keys, sign-in, and every other provider stay
-                // opencode's own. Its OpenAI WebSocket is refused with 426, and
-                // opencode keeps the session on HTTP/SSE.
-                let config = serde_json::json!({
-                    "provider": {
-                        "anthropic": {
-                            "options": { "baseURL": gateway.url("/anthropic/v1").as_str() }
-                        },
-                        "openai": {
-                            "options": { "baseURL": gateway.url("/openai/v1").as_str() }
-                        },
-                    }
-                });
-                plan.environment
-                    .insert(Self::OPENCODE_CONFIG.into(), config.to_string().into());
-            }
+            Self::ClaudeCode => LaunchPlan::claude_code(gateway),
+            Self::Codex => LaunchPlan::codex(gateway),
+            Self::Pi => LaunchPlan::pi(gateway),
+            Self::OpenCode => LaunchPlan::opencode(gateway),
         }
-        plan
-    }
-
-    /// Codex's configuration overrides that send its model traffic to
-    /// `gateway`. They replace the entire provider table so an existing entry
-    /// cannot accidentally add a bearer token or credential helper.
-    /// WebSockets are offered: a daemon that refuses them answers 426, and
-    /// Codex falls back to HTTP/SSE for the session. A user token is sent from
-    /// the environment, when it is set.
-    fn codex_provider(gateway: &GatewayEndpoint) -> [LaunchArg; 4] {
-        let base = toml::Value::String(gateway.url("/codex").to_string());
-        [
-            "--config".into(),
-            "model_provider=\"ren_session\"".into(),
-            "--config".into(),
-            format!(
-                "model_providers.ren_session={{name=\"Ren\",base_url={base},wire_api=\"responses\",requires_openai_auth=true,supports_websockets=true,env_http_headers={{\"{header}\"=\"{variable}\"}}}}",
-                header = UserToken::HEADER,
-                variable = UserToken::ENV,
-            )
-            .into(),
-        ]
     }
 
     /// The environment variable opencode reads inline configuration from.
@@ -229,7 +166,7 @@ impl Harness {
                 // One server speaks both; the listing opens no thread.
                 let mut arguments: Vec<LaunchArg> =
                     vec!["app-server".into(), "--listen".into(), "stdio://".into()];
-                arguments.extend(Self::codex_provider(gateway));
+                arguments.extend(LaunchPlan::codex_provider(gateway));
                 Ok(LaunchPlan {
                     harness: self,
                     executable: "codex",
@@ -274,6 +211,94 @@ impl Harness {
 }
 
 impl LaunchPlan {
+    /// Claude Code, its model traffic sent to `gateway`, which reads its hint
+    /// headers.
+    pub(crate) fn claude_code(gateway: &GatewayEndpoint) -> Self {
+        let mut environment = BTreeMap::new();
+        environment.insert(
+            "ANTHROPIC_BASE_URL".into(),
+            gateway.url("/anthropic").to_string().into(),
+        );
+        environment.insert("CLAUDE_CODE_GATEWAY_HINT_HEADERS".into(), "1".into());
+        Self {
+            harness: Harness::ClaudeCode,
+            executable: "claude",
+            arguments: Vec::new(),
+            environment,
+        }
+    }
+
+    /// Codex, its model provider replaced by `gateway`.
+    pub(crate) fn codex(gateway: &GatewayEndpoint) -> Self {
+        let mut arguments: Vec<LaunchArg> = vec!["--no-daemon".into()];
+        arguments.extend(Self::codex_provider(gateway));
+        Self {
+            harness: Harness::Codex,
+            executable: "codex",
+            arguments,
+            environment: BTreeMap::new(),
+        }
+    }
+
+    /// Codex's configuration overrides that send its model traffic to
+    /// `gateway`. They replace the entire provider table so an existing entry
+    /// cannot accidentally add a bearer token or credential helper.
+    /// WebSockets are offered: a daemon that refuses them answers 426, and
+    /// Codex falls back to HTTP/SSE for the session. A user token is sent from
+    /// the environment, when it is set.
+    pub(crate) fn codex_provider(gateway: &GatewayEndpoint) -> [LaunchArg; 4] {
+        let base = toml::Value::String(gateway.url("/codex").to_string());
+        [
+            "--config".into(),
+            "model_provider=\"ren_session\"".into(),
+            "--config".into(),
+            format!(
+                "model_providers.ren_session={{name=\"Ren\",base_url={base},wire_api=\"responses\",requires_openai_auth=true,supports_websockets=true,env_http_headers={{\"{header}\"=\"{variable}\"}}}}",
+                header = UserToken::HEADER,
+                variable = UserToken::ENV,
+            )
+            .into(),
+        ]
+    }
+
+    /// Pi with Ren's extension, which sends its providers to `gateway`.
+    pub(crate) fn pi(gateway: &GatewayEndpoint) -> Self {
+        let mut environment = BTreeMap::new();
+        environment.insert("REN_PI_GATEWAY".into(), gateway.url("/").to_string().into());
+        Self {
+            harness: Harness::Pi,
+            executable: "pi",
+            arguments: vec!["--extension".into(), LaunchArg::PiExtension],
+            environment,
+        }
+    }
+
+    /// opencode, through its documented runtime override, which it merges
+    /// over the global and project files. Only the two providers' base URLs
+    /// are set: keys, sign-in, and every other provider stay opencode's own.
+    /// Its OpenAI WebSocket is refused with 426, and opencode keeps the
+    /// session on HTTP/SSE.
+    pub(crate) fn opencode(gateway: &GatewayEndpoint) -> Self {
+        let config = serde_json::json!({
+            "provider": {
+                "anthropic": {
+                    "options": { "baseURL": gateway.url("/anthropic/v1").as_str() }
+                },
+                "openai": {
+                    "options": { "baseURL": gateway.url("/openai/v1").as_str() }
+                },
+            }
+        });
+        let mut environment = BTreeMap::new();
+        environment.insert(Harness::OPENCODE_CONFIG.into(), config.to_string().into());
+        Self {
+            harness: Harness::OpenCode,
+            executable: "opencode",
+            arguments: Vec::new(),
+            environment,
+        }
+    }
+
     /// The plan with `token` sent to the gateway on every request. Claude
     /// Code takes it as a custom header, after any the user set; Codex and
     /// the Pi extension read it from the environment.

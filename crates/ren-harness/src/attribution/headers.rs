@@ -11,11 +11,6 @@ use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 impl Harness {
-    const PI_SESSION: &'static str = "x-ren-pi-session-id";
-    const PI_TURN: &'static str = "x-ren-pi-turn-id";
-    const OPENCODE_SESSION: &'static str = "x-opencode-session-id";
-    const MAX_TURN_METADATA: usize = 8192;
-
     /// What `headers` say about attribution, on a route that expects `route`'s
     /// headers (`None`: a route no harness owns, such as the public OpenAI API).
     /// Pi's extension headers, then opencode's session header, are recognised
@@ -24,40 +19,17 @@ impl Harness {
     /// no grouping; every discarded hint leaves an issue.
     pub fn attribution(route: Option<Self>, headers: &HeaderMap) -> Attribution {
         let mut reading = HeaderReading::new(headers);
-        let claim = if headers.contains_key(Self::PI_SESSION) || headers.contains_key(Self::PI_TURN)
-        {
-            Claim {
-                source: Some(HintSource::PiExtensionHeaders),
-                session: reading.uuid(Self::PI_SESSION),
-                turn: reading.uuid(Self::PI_TURN),
-                thread: None,
-            }
-        } else if headers.contains_key(Self::OPENCODE_SESSION) {
-            // opencode names no turn; a subagent's call names its own child
-            // session, as opencode does.
-            Claim {
-                source: Some(HintSource::OpenCodeHeaders),
-                session: reading.opencode_session(),
-                turn: None,
-                thread: None,
-            }
+        let claim = if let Some(claim) = reading.pi() {
+            claim
+        } else if let Some(claim) = reading.opencode() {
+            claim
         } else {
             match route {
                 // Public Responses headers do not establish a Codex client
                 // identity, Pi has no headers but its extension's, and
                 // opencode's were read above.
                 None | Some(Self::Pi | Self::OpenCode) => Claim::default(),
-                Some(Self::ClaudeCode) => {
-                    let session = reading.uuid("x-claude-code-session-id");
-                    let turn = reading.uuid("x-claude-code-prompt-id");
-                    Claim {
-                        source: (session.is_some() || turn.is_some())
-                            .then_some(HintSource::ClaudeCodeHeaders),
-                        session,
-                        turn,
-                        thread: None,
-                    }
-                }
+                Some(Self::ClaudeCode) => reading.claude_code(),
                 Some(Self::Codex) => reading.codex(),
             }
         };
@@ -67,20 +39,65 @@ impl Harness {
 
 /// Identifiers read so far, before a turn is checked against its session.
 #[derive(Default)]
-struct Claim {
-    source: Option<HintSource>,
-    session: Option<Uuid>,
-    turn: Option<Uuid>,
-    thread: Option<Uuid>,
+pub(crate) struct Claim {
+    pub(crate) source: Option<HintSource>,
+    pub(crate) session: Option<Uuid>,
+    pub(crate) turn: Option<Uuid>,
+    pub(crate) thread: Option<Uuid>,
 }
 
 /// One pass over a request's headers, collecting issues as it reads.
-struct HeaderReading<'a> {
-    headers: &'a HeaderMap,
+pub(crate) struct HeaderReading<'a> {
+    pub(crate) headers: &'a HeaderMap,
     issues: Vec<HintIssue>,
 }
 
 impl<'a> HeaderReading<'a> {
+    const PI_SESSION: &'static str = "x-ren-pi-session-id";
+    const PI_TURN: &'static str = "x-ren-pi-turn-id";
+    const OPENCODE_SESSION: &'static str = "x-opencode-session-id";
+    const MAX_TURN_METADATA: usize = 8192;
+
+    /// Pi's extension headers, on any route.
+    fn pi(&mut self) -> Option<Claim> {
+        if !self.headers.contains_key(Self::PI_SESSION) && !self.headers.contains_key(Self::PI_TURN)
+        {
+            return None;
+        }
+        Some(Claim {
+            source: Some(HintSource::PiExtensionHeaders),
+            session: self.uuid(Self::PI_SESSION),
+            turn: self.uuid(Self::PI_TURN),
+            thread: None,
+        })
+    }
+
+    /// opencode's session header, on any route. opencode names no turn; a
+    /// subagent's call names its own child session, as opencode does.
+    fn opencode(&mut self) -> Option<Claim> {
+        if !self.headers.contains_key(Self::OPENCODE_SESSION) {
+            return None;
+        }
+        Some(Claim {
+            source: Some(HintSource::OpenCodeHeaders),
+            session: self.opencode_session(),
+            turn: None,
+            thread: None,
+        })
+    }
+
+    /// Claude Code's session and prompt headers.
+    fn claude_code(&mut self) -> Claim {
+        let session = self.uuid("x-claude-code-session-id");
+        let turn = self.uuid("x-claude-code-prompt-id");
+        Claim {
+            source: (session.is_some() || turn.is_some()).then_some(HintSource::ClaudeCodeHeaders),
+            session,
+            turn,
+            thread: None,
+        }
+    }
+
     fn new(headers: &'a HeaderMap) -> Self {
         Self {
             headers,
@@ -92,7 +109,7 @@ impl<'a> HeaderReading<'a> {
         let mut session = self.uuid("session-id");
         let mut thread = self.uuid("thread-id");
         let mut turn = None;
-        if let Some(raw) = self.header("x-codex-turn-metadata", Harness::MAX_TURN_METADATA) {
+        if let Some(raw) = self.header("x-codex-turn-metadata", Self::MAX_TURN_METADATA) {
             match serde_json::from_str::<TurnMetadata>(raw) {
                 Ok(metadata) => {
                     turn = self.metadata_id(metadata.turn_id);
@@ -120,7 +137,7 @@ impl<'a> HeaderReading<'a> {
     }
 
     fn opencode_session(&mut self) -> Option<Uuid> {
-        let value = self.header(Harness::OPENCODE_SESSION, OpenCodeSessionId::MAX_LEN)?;
+        let value = self.header(Self::OPENCODE_SESSION, OpenCodeSessionId::MAX_LEN)?;
         let id = OpenCodeSessionId::parse(value).map(OpenCodeSessionId::uuid);
         if id.is_none() {
             self.issue(HintIssue::InvalidOrDuplicateHeader);
@@ -147,13 +164,13 @@ impl<'a> HeaderReading<'a> {
         }
     }
 
-    fn issue(&mut self, issue: HintIssue) {
+    pub(crate) fn issue(&mut self, issue: HintIssue) {
         if !self.issues.contains(&issue) {
             self.issues.push(issue);
         }
     }
 
-    fn header(&mut self, name: &str, max: usize) -> Option<&'a str> {
+    pub(crate) fn header(&mut self, name: &str, max: usize) -> Option<&'a str> {
         let mut values = self.headers.get_all(name).iter();
         let value = values.next()?;
         if values.next().is_some() || value.as_bytes().len() > max {
@@ -169,7 +186,7 @@ impl<'a> HeaderReading<'a> {
         }
     }
 
-    fn uuid(&mut self, name: &str) -> Option<Uuid> {
+    pub(crate) fn uuid(&mut self, name: &str) -> Option<Uuid> {
         let value = self.header(name, 36)?;
         let id = Self::identifier(value);
         if id.is_none() {
@@ -178,7 +195,7 @@ impl<'a> HeaderReading<'a> {
         id
     }
 
-    fn metadata_id(&mut self, value: Option<String>) -> Option<Uuid> {
+    pub(crate) fn metadata_id(&mut self, value: Option<String>) -> Option<Uuid> {
         let id = Self::identifier(&value?);
         if id.is_none() {
             self.issue(HintIssue::InvalidTurnMetadata);
@@ -194,7 +211,7 @@ impl<'a> HeaderReading<'a> {
         Uuid::parse_str(value).ok().filter(|id| !id.is_nil())
     }
 
-    fn conflicts(left: Option<Uuid>, right: Option<Uuid>) -> bool {
+    pub(crate) fn conflicts(left: Option<Uuid>, right: Option<Uuid>) -> bool {
         matches!((left, right), (Some(a), Some(b)) if a != b)
     }
 }

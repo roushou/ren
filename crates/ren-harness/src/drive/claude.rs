@@ -894,7 +894,7 @@ impl ClaudeModels {
         (Self, line)
     }
 
-    pub(super) fn receive(&mut self, message: &Value) -> Listing {
+    pub(crate) fn receive(&mut self, message: &Value) -> Listing {
         let response = &message["response"];
         let answers = message.get("type").and_then(Value::as_str) == Some("control_response")
             && response.get("request_id").and_then(Value::as_str) == Some(Self::REQUEST);

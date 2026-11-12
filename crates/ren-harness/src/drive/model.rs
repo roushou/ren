@@ -86,7 +86,7 @@ pub enum Listing {
 
 impl Listing {
     /// Nothing to send yet.
-    pub(super) fn waiting() -> Self {
+    pub(crate) fn waiting() -> Self {
         Self::Waiting(Vec::new())
     }
 }
@@ -140,7 +140,7 @@ impl ModelListing {
     /// The efforts named in `levels` (strings, or objects naming theirs in
     /// `field`), least first; levels Ren does not know are left out, since a
     /// run could not ask for them.
-    pub(super) fn efforts(levels: Option<&serde_json::Value>, field: Option<&str>) -> Vec<Effort> {
+    pub(crate) fn efforts(levels: Option<&serde_json::Value>, field: Option<&str>) -> Vec<Effort> {
         let mut efforts: Vec<Effort> = levels
             .and_then(serde_json::Value::as_array)
             .into_iter()
@@ -158,7 +158,7 @@ impl ModelListing {
     }
 
     /// The text of `field` in `value`, when it is a non-blank string.
-    pub(super) fn text(value: &serde_json::Value, field: &str) -> Option<String> {
+    pub(crate) fn text(value: &serde_json::Value, field: &str) -> Option<String> {
         value
             .get(field)
             .and_then(serde_json::Value::as_str)

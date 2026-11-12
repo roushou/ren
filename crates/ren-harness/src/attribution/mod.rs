@@ -6,7 +6,7 @@
 //! Native identifiers have their own types, separate from Ren's `SessionId`
 //! and `TurnId`.
 
-mod headers;
+pub(crate) mod headers;
 
 use crate::Harness;
 use ren_protocol::native::{MessageHints, NativeSessionId, NativeThreadId, NativeTurnId};

@@ -725,7 +725,7 @@ impl CodexModels {
         )
     }
 
-    pub(super) fn receive(&mut self, message: &Value) -> Listing {
+    pub(crate) fn receive(&mut self, message: &Value) -> Listing {
         let Some(id) = message.get("id").and_then(Value::as_u64) else {
             return Listing::waiting();
         };

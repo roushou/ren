@@ -658,7 +658,7 @@ impl PiModels {
         (Self { listed: None }, line)
     }
 
-    pub(super) fn receive(&mut self, message: &Value) -> Listing {
+    pub(crate) fn receive(&mut self, message: &Value) -> Listing {
         if message.get("type").and_then(Value::as_str) != Some("response") {
             return Listing::waiting();
         }
