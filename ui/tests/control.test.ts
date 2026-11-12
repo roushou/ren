@@ -95,6 +95,11 @@ test('starting, listing, projects, answering, and the feed map to their control 
       headers: { 'sec-fetch-site': 'same-origin' },
     }),
   );
+  await proxy.respond(
+    new Request('http://ui.test/control/runs/clients', {
+      headers: { 'sec-fetch-site': 'same-origin' },
+    }),
+  );
   await proxy.respond(post(`/control/runs/${run}/approvals/ap-1`, { decision: 'accept' }));
   await proxy.respond(post(`/control/runs/${run}/stop`, {}));
   const feed = await proxy.respond(new Request('http://ui.test/control/runs/events'));
@@ -103,6 +108,7 @@ test('starting, listing, projects, answering, and the feed map to their control 
     'POST /control/v1/runs',
     'GET /control/v1/runs',
     'GET /control/v1/runs/projects',
+    'GET /control/v1/runs/clients',
     `POST /control/v1/runs/${run}/approvals/ap-1`,
     `POST /control/v1/runs/${run}/stop`,
     'GET /control/v1/runs/events',

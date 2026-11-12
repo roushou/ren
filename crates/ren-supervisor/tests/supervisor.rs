@@ -80,6 +80,11 @@ impl FakeHost {
 }
 
 impl AgentHost for FakeHost {
+    fn finds(&self, program: &str) -> bool {
+        // Codex is installed here; Claude Code is not.
+        program == "codex"
+    }
+
     fn resolve(&self, path: &Path) -> io::Result<PathBuf> {
         match path.to_str() {
             // A link that leads out of the roots.
@@ -693,6 +698,26 @@ async fn projects_are_the_repositories_and_plain_folders_under_the_roots() {
         .map(|project| (project.name.as_str(), project.path.as_str()))
         .collect();
     assert_eq!(listed, [("acme", "/work/acme"), ("notes", "/work/notes")]);
+}
+
+#[tokio::test]
+async fn clients_say_whether_a_run_can_start_with_them_here() {
+    use ren_supervisor::{Client, ClientStatus};
+    let supervised = supervise(FakeHost::new(Script::Codex)).await;
+    let clients = supervised.supervisor.clients().await.unwrap();
+    let status = |harness: Harness| {
+        clients
+            .iter()
+            .find(|client| client.harness == harness)
+            .map(|client: &Client| client.status)
+    };
+    assert_eq!(status(Harness::Codex), Some(ClientStatus::Ready));
+    assert_eq!(
+        status(Harness::ClaudeCode),
+        Some(ClientStatus::NotInstalled)
+    );
+    assert_eq!(status(Harness::Pi), Some(ClientStatus::NotDrivable));
+    assert_eq!(status(Harness::OpenCode), Some(ClientStatus::NotDrivable));
 }
 
 fn prompt_text(text: &str) -> Prompt {

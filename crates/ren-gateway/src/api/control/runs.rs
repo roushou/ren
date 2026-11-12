@@ -174,6 +174,7 @@ impl RunsApi {
             .route("/control/v1/runs", get(Self::list).post(Self::start))
             .route("/control/v1/runs/events", get(Self::events))
             .route("/control/v1/runs/projects", get(Self::projects))
+            .route("/control/v1/runs/clients", get(Self::clients))
             .route("/control/v1/runs/{run}/prompt", post(Self::prompt))
             .route(
                 "/control/v1/runs/{run}/approvals/{approval}",
@@ -240,6 +241,19 @@ impl RunsApi {
         Ok(Json(serde_json::json!({
             "api_version": ControlApi::API_VERSION,
             "projects": projects,
+        }))
+        .into_response())
+    }
+
+    async fn clients(State(api): Api, headers: HeaderMap) -> Result<Response, Denied> {
+        let clients = api
+            .admit(&headers)?
+            .clients()
+            .await
+            .map_err(|_| Denied::Run(RunRefusal::Unavailable))?;
+        Ok(Json(serde_json::json!({
+            "api_version": ControlApi::API_VERSION,
+            "clients": clients,
         }))
         .into_response())
     }

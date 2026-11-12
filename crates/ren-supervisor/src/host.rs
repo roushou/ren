@@ -23,6 +23,9 @@ pub trait AgentHost: Send + Sync + 'static {
     /// is a git repository, with its `HEAD`'s text when readable.
     fn look(&self, dir: &Path) -> io::Result<Look>;
 
+    /// Whether `program` is on the path a started process searches.
+    fn finds(&self, program: &str) -> bool;
+
     /// Start `plan` in `workdir`, with piped stdin and stdout.
     fn spawn(&self, plan: &LaunchPlan, workdir: &Workdir) -> io::Result<AgentProcess>;
 }

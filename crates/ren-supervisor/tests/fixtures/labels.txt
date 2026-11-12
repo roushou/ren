@@ -1,0 +1,1 @@
+ClientStatus: ready not_installed not_drivable

@@ -181,6 +181,15 @@ impl Harness {
     /// The environment variable opencode reads inline configuration from.
     const OPENCODE_CONFIG: &'static str = "OPENCODE_CONFIG_CONTENT";
 
+    /// The program Ren runs to drive this harness, when it can drive it.
+    pub fn driven_program(self) -> Result<&'static str, NotDrivable> {
+        match self {
+            Self::Codex => Ok("codex"),
+            Self::ClaudeCode => Ok("claude"),
+            Self::Pi | Self::OpenCode => Err(NotDrivable(self)),
+        }
+    }
+
     /// How to start this harness in its structured mode, driven by Ren
     /// through `drive`, with its model traffic sent to `gateway`. The client
     /// keeps its own sign-in. Codex and Claude Code can be driven so far.
@@ -344,6 +353,7 @@ mod tests {
         let launched = Harness::Codex.launch(&gateway);
         let command = driven.command(None, &[]);
         assert_eq!(command.get_program(), "codex");
+        assert_eq!(Harness::Codex.driven_program(), Ok("codex"));
         let arguments: Vec<_> = command.get_args().collect();
         assert_eq!(arguments[..3], ["app-server", "--listen", "stdio://"]);
         // The same provider overrides as an interactive session.
@@ -367,6 +377,7 @@ mod tests {
             .unwrap()
             .command(None, &[]);
         assert_eq!(command.get_program(), "claude");
+        assert_eq!(Harness::ClaudeCode.driven_program(), Ok("claude"));
         let arguments: Vec<_> = command
             .get_args()
             .map(|argument| argument.to_str().unwrap())

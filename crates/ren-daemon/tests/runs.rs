@@ -131,6 +131,31 @@ async fn a_run_is_started_prompted_approved_and_stopped_through_the_control_api(
         ])
     );
 
+    // The clients a run can start with here: the scripted host has every
+    // program; Pi and OpenCode cannot be driven yet.
+    let clients: serde_json::Value = serde_json::from_slice(
+        &control
+            .http
+            .get(format!("{}/runs/clients", control.base))
+            .bearer_auth(TestGateway::CONTROL_TOKEN)
+            .send()
+            .await
+            .unwrap()
+            .bytes()
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        clients["clients"],
+        json!([
+            { "harness": "claude_code", "status": "ready" },
+            { "harness": "codex", "status": "ready" },
+            { "harness": "pi", "status": "not_drivable" },
+            { "harness": "opencode", "status": "not_drivable" },
+        ])
+    );
+
     let (status, body) = control
         .post("/runs", json!({ "harness": "codex", "dir": "/work/acme" }))
         .await;

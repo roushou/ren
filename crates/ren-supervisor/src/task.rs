@@ -10,6 +10,7 @@
 
 use crate::{
     CommandError, Conversation, Request, RunSnapshot, RunUpdate, Start, StartError,
+    client::{Client, ClientStatus},
     host::{AgentHost, AgentProcess, KillSwitch},
     project::Search,
     run::{ProcessExit, RunAction, RunCommand, RunEvent, RunState},
@@ -25,6 +26,7 @@ use ren_harness::{
     drive::{DriveEvent, Driver, Framed, Line, LineLimit, Lines, Opening, Prompt},
     endpoint::GatewayEndpoint,
 };
+use ren_protocol::label::Labeled;
 use ren_protocol::native::NativeThreadId;
 use ren_recorder::{
     Recorder, RunTap,
@@ -140,6 +142,20 @@ impl<H: AgentHost> SupervisorTask<H> {
                         .ok()
                 });
                 let _ = reply.send(projects);
+            }
+            Request::Clients { reply } => {
+                let clients = Harness::ALL
+                    .iter()
+                    .map(|harness| Client {
+                        harness: *harness,
+                        status: match harness.driven_program() {
+                            Ok(program) if self.host.finds(program) => ClientStatus::Ready,
+                            Ok(_) => ClientStatus::NotInstalled,
+                            Err(_) => ClientStatus::NotDrivable,
+                        },
+                    })
+                    .collect();
+                let _ = reply.send(clients);
             }
             Request::List { reply } => {
                 let _ = reply.send(

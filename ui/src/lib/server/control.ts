@@ -3,8 +3,8 @@
  * on the daemon. It is off unless the operator names the daemon's control
  * token file (`REN_CONTROL_TOKEN_FILE`), and it reaches only the daemon's
  * `/control/v1/runs` routes: listing, starting, prompting, answering,
- * interrupting, and stopping runs, their update feed, and the projects a run
- * can start in. Never inference,
+ * interrupting, and stopping runs, their update feed, the projects a run
+ * can start in, and the clients it can start with. Never inference,
  * history, or the rest of the control API.
  *
  * The browser never sees the token: this server reads it from the file on
@@ -75,6 +75,7 @@ const routes: { pattern: RegExp; route: Route }[] = [
   { pattern: /^\/control\/runs$/, route: { method: 'GET', feed: false } },
   { pattern: /^\/control\/runs\/events$/, route: { method: 'GET', feed: true } },
   { pattern: /^\/control\/runs\/projects$/, route: { method: 'GET', feed: false } },
+  { pattern: /^\/control\/runs\/clients$/, route: { method: 'GET', feed: false } },
   {
     pattern: new RegExp(`^/control/runs/${runId}/(?:prompt|interrupt|stop)$`),
     route: { method: 'POST', feed: false },

@@ -249,8 +249,10 @@ dependencies under "Crates" below. Read the code for current module ownership.
   stopping, ended with a `RunEnd`); `Workdir` (`workdir`) keeps runs inside
   `Roots`, resolved by the host so links cannot escape; `project` finds the
   `Project`s a run can start in (git repositories under the roots, not looked
-  inside); `AgentHost` (`host`) is the port for resolving paths, looking in
-  folders, and starting processes, which tests fill with
+  inside); `Client` and `ClientStatus` (`client`) say whether a run can start
+  with each client here; `AgentHost` (`host`) is the port for resolving paths,
+  looking in folders, finding programs, and starting processes, which tests
+  fill with
   scripted in-memory agents. `SupervisorTask` is the shell: one task reads every
   agent's stdout, writes its stdin, and waits for its exit, records each run
   through the recorder's `RunTap` (a run without room to be recorded does not
@@ -384,7 +386,8 @@ dependencies under "Crates" below. Read the code for current module ownership.
   daemon's `/control/v1/runs*` only, with the control token read from that
   file on each request, never sent to the browser, and, with
   `REN_CONTROL_LOGINS` set, only for those Tailscale logins; `src/lib/runs.ts`
-  is the view's pure core (run states, the live transcript, and the sidebar).
+  is the view's pure core (run states, the live transcript, the run list by
+  folder, projects by place, and the clients a run can start with).
   The dev slot's: with `REN_DEV_TRAFFIC_URL` set (loopback only), `/dev/traffic`
   forwards the dev toolbar's three JSON requests to the slot's fake traffic
   generator, never to the daemon.

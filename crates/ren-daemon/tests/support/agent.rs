@@ -22,6 +22,10 @@ const TURN: &str = "0190f3a0-0000-7000-8000-0000000000bb";
 pub struct ScriptedHost;
 
 impl AgentHost for ScriptedHost {
+    fn finds(&self, _program: &str) -> bool {
+        true
+    }
+
     fn resolve(&self, path: &Path) -> io::Result<PathBuf> {
         Ok(path.to_path_buf())
     }

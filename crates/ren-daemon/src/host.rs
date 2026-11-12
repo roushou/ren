@@ -236,6 +236,17 @@ impl AgentHost for ProcessHost {
         })
     }
 
+    fn finds(&self, program: &str) -> bool {
+        // The same search a started process makes: this process's path,
+        // which every agent it starts inherits.
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "the host finds a program on the path its agents inherit"
+        )]
+        let path = std::env::var_os("PATH");
+        path.is_some_and(|path| std::env::split_paths(&path).any(|dir| dir.join(program).is_file()))
+    }
+
     fn spawn(&self, plan: &LaunchPlan, workdir: &Workdir) -> io::Result<AgentProcess> {
         Self::start(plan.command(None, &[]), workdir.as_path())
     }

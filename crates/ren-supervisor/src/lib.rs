@@ -8,6 +8,7 @@
 //! port (`host`), which the daemon implements. Clients keep their own sign-in:
 //! the supervisor starts the official program and never handles credentials.
 
+pub mod client;
 pub mod host;
 pub mod project;
 #[cfg(test)]
@@ -16,6 +17,7 @@ pub mod run;
 mod task;
 pub mod workdir;
 
+pub use client::{Client, ClientStatus};
 pub use host::{AgentHost, AgentProcess, KillSignal, KillSwitch};
 pub use project::{Look, Project, ProjectGit, Search};
 pub use run::{Approvals, ProcessExit, RunCommand, RunRefused, RunState, Waiting};
@@ -157,6 +159,9 @@ pub(crate) enum Request {
     Projects {
         reply: oneshot::Sender<Vec<Project>>,
     },
+    Clients {
+        reply: oneshot::Sender<Vec<Client>>,
+    },
 }
 
 impl Supervisor {
@@ -251,6 +256,16 @@ impl Supervisor {
         let (reply, answer) = oneshot::channel();
         self.requests
             .send(Request::Projects { reply })
+            .await
+            .map_err(|_| Gone)?;
+        answer.await.map_err(|_| Gone)
+    }
+
+    /// Every client, and whether a run can start with it here.
+    pub async fn clients(&self) -> Result<Vec<Client>, Gone> {
+        let (reply, answer) = oneshot::channel();
+        self.requests
+            .send(Request::Clients { reply })
             .await
             .map_err(|_| Gone)?;
         answer.await.map_err(|_| Gone)
