@@ -578,29 +578,19 @@ fn failing_calls() -> Vec<ReadCall> {
     vec![first, second]
 }
 
-/// The turn view's JSON is what the read API returns: pinned, so a change
-/// to the view's types cannot change it unnoticed.
+/// The turn view's JSON is what the read API returns, and reads back into
+/// the same view: pinned, so a change to the view's types cannot change it
+/// unnoticed.
 #[test]
-fn turn_views_keep_their_json() {
+fn turn_views_round_trip_through_their_json() {
     let scanner = SecretScanner::new().unwrap();
     let turns = [worked_calls(), failing_calls()]
         .map(|calls| assemble(head(), calls, 0, ActivityBudget::DEFAULT, &scanner));
-    let json = serde_json::to_string_pretty(&turns).unwrap();
-    assert_eq!(
-        json.trim_end(),
-        include_str!("../../tests/fixtures/turn-activity.json").trim_end()
-    );
-}
-
-/// What the read API sends for a turn reads back into the same view.
-#[test]
-fn turn_views_read_back_as_sent() {
     let sent = include_str!("../../tests/fixtures/turn-activity.json");
-    let turns: Vec<TurnActivity> = serde_json::from_str(sent).unwrap();
-    let scanner = SecretScanner::new().unwrap();
-    let assembled = [worked_calls(), failing_calls()]
-        .map(|calls| assemble(head(), calls, 0, ActivityBudget::DEFAULT, &scanner));
-    assert_eq!(turns, assembled);
+    let json = serde_json::to_string_pretty(&turns).unwrap();
+    assert_eq!(json.trim_end(), sent.trim_end());
+    let read: Vec<TurnActivity> = serde_json::from_str(sent).unwrap();
+    assert_eq!(read, turns);
 }
 
 /// Labels a newer daemon sends, and findings of a kind this binary does

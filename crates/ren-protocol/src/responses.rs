@@ -481,7 +481,4 @@ mod tests {
             ]
         );
     }
-
-    #[test]
-    fn vocabularies_have_unique_labels() {}
 }

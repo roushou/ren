@@ -662,22 +662,9 @@ mod tests {
         let mut reserved = with_operator_key("");
         reserved.upstreams[0].id = UpstreamId::parse("anthropic").unwrap();
         assert!(reserved.check().is_err());
-        for step in [
-            r#"{ op = "remove_header", name = "authorization" }"#,
-            r#"{ op = "set_header", name = "user-agent", value = "spoof" }"#,
-            r#"{ op = "json_remove", path = "/system" }"#,
-            r#"{ op = "json_set", path = "/metadata/user_id", value = "x" }"#,
-        ] {
-            let policy = format!(
-                "[[transform]]\nid = \"bad\"\nmatch = {{ provider = \"anthropic\" }}\nsteps = [{step}]\nreason = \"fixture\"\n"
-            );
-            assert!(with_operator_key(&policy).check().is_err(), "{step}");
-        }
-        let fallback = "[[fallback]]\nid = \"f\"\nprovider = \"anthropic\"\nto = \"anthropic\"\non_status = [429]\n";
-        assert!(
-            with_operator_key(fallback).check().is_err(),
-            "must target an operator key"
-        );
+        // Loading checks the policy; its rules are tested with the policy.
+        let spoof = "[[transform]]\nid = \"bad\"\nmatch = { provider = \"anthropic\" }\nsteps = [{ op = \"set_header\", name = \"user-agent\", value = \"spoof\" }]\nreason = \"fixture\"\n";
+        assert!(with_operator_key(spoof).check().is_err());
     }
 
     #[test]
@@ -710,7 +697,7 @@ mod tests {
     }
 
     #[test]
-    fn the_wire_key_reads_labels_and_an_omitted_one_is_not_written() {
+    fn optional_upstream_keys_read_labels_and_omitted_ones_are_not_written() {
         let entry = |wire: &str| {
             toml::from_str::<UpstreamConfig>(&format!(
                 "id = \"k\"\nprovider = \"openai\"\n{wire}base_url = \"https://api.openai.com\"\noperator_key_env = \"K\"\n"
@@ -729,22 +716,22 @@ mod tests {
         assert_eq!(omitted.wire, None);
         // A configuration without the key keeps the revision it had.
         assert!(!serde_json::to_string(&omitted).unwrap().contains("wire"));
-    }
-
-    #[test]
-    fn direct_ingress_is_opt_in_and_an_omitted_one_is_not_written() {
-        let entry = |ingress: &str| {
+        let anthropic = |ingress: &str| {
             toml::from_str::<UpstreamConfig>(&format!(
                 "id = \"k\"\nprovider = \"anthropic\"\nbase_url = \"https://api.anthropic.com\"\noperator_key_env = \"K\"\n{ingress}"
             ))
         };
-        let omitted = entry("").unwrap();
-        assert_eq!(omitted.ingress, EntryIngress::FallbackOnly);
-        assert!(!serde_json::to_string(&omitted).unwrap().contains("ingress"));
+        let omitted_ingress = anthropic("").unwrap();
+        assert_eq!(omitted_ingress.ingress, EntryIngress::FallbackOnly);
+        assert!(
+            !serde_json::to_string(&omitted_ingress)
+                .unwrap()
+                .contains("ingress")
+        );
         assert_eq!(
-            entry("ingress = \"direct\"\n").unwrap().ingress,
+            anthropic("ingress = \"direct\"\n").unwrap().ingress,
             EntryIngress::Direct
         );
-        assert!(entry("ingress = \"public\"\n").is_err());
+        assert!(anthropic("ingress = \"public\"\n").is_err());
     }
 }

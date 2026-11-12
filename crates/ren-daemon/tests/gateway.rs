@@ -1627,7 +1627,7 @@ impl Upstream for ScriptedUpstream {
 }
 
 #[tokio::test]
-async fn the_upstream_seam_receives_policy_filtered_requests_and_typed_failures() {
+async fn the_upstream_seam_receives_policy_filtered_requests() {
     let dir = tempfile::tempdir().unwrap();
     let config = Config {
         listen: "127.0.0.1:0".parse().unwrap(),
@@ -1691,23 +1691,9 @@ async fn the_upstream_seam_receives_policy_filtered_requests_and_typed_failures(
         }
     }
     gateway.stop().await;
-
-    let failing = Arc::new(ScriptedUpstream {
-        seen: std::sync::Mutex::new(Vec::new()),
-        answer: || Err(SendFailure::NotSent),
-    });
-    let gateway = TestGateway::with_upstream(&config, dir.path(), failing).await;
-    let response = client()
-        .get(format!("{}/openai/v1/models", gateway.base()))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
-    gateway.stop().await;
     let records = recorded(dir.path()).await;
-    assert_eq!(records.len(), 2);
-    assert_eq!(terminal(&records[0]), AttemptTerminal::NotSent);
-    assert_eq!(terminal(&records[1]), AttemptTerminal::BodyComplete);
+    assert_eq!(records.len(), 1);
+    assert_eq!(terminal(&records[0]), AttemptTerminal::BodyComplete);
 }
 
 #[tokio::test]

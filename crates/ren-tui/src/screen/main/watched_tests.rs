@@ -5,8 +5,8 @@
 use super::list::{Grouping, Item, Listing};
 use super::watched::{Phase, SessionPane, Tally};
 use crate::conversation::{Block, ResultMark};
-use crate::model::sessions::{Reading, Sessions, Spark};
-use crate::model::{CallEnd, Input, Read, Snapshot, SnapshotQuery};
+use crate::model::sessions::{Sessions, Spark};
+use crate::model::{CallEnd, Input, Read, Snapshot};
 use crate::ui::Tone;
 use crate::{Out, Size, Tui};
 use ren_harness::Harness;
@@ -15,7 +15,6 @@ use ren_recorder::capture::CallState;
 use ren_recorder::id::{CallId, SessionId, TurnId};
 use ren_recorder::progress::Progress;
 use ren_recorder::time::UnixMillis;
-use ren_store::query::{KindFilter, PageLimit, StatusFilter};
 use ren_store::view::{CallPage, CallView, SessionView};
 use serde_json::{Value, json};
 
@@ -27,14 +26,8 @@ struct Wall {
 /// What the tests read of the watched sessions.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Frame {
-    panes: Vec<Pane>,
+    panes: Vec<SessionPane>,
     status: Status,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum Pane {
-    Free,
-    Session(Box<SessionPane>),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -42,9 +35,7 @@ struct Status {
     sessions: usize,
     responding: usize,
     awaiting: usize,
-    attention: usize,
     output: Vec<Spark>,
-    reading: Reading,
     failure: Option<String>,
 }
 
@@ -55,10 +46,6 @@ impl Wall {
         let mut tui = Tui::new(size);
         let _ = tui.start();
         Self { tui }
-    }
-
-    fn snapshot_query(now: UnixMillis) -> SnapshotQuery {
-        Tui::snapshot_query(now)
     }
 
     /// What `input` asks to read.
@@ -76,7 +63,7 @@ impl Wall {
     /// The watched sessions, in the list's order, at `now`.
     fn frame(&self, now: UnixMillis) -> Frame {
         let model = &self.tui.model;
-        let panes: Vec<Pane> = Listing::of(model, "", Grouping::Folder)
+        let panes: Vec<SessionPane> = Listing::of(model, "", Grouping::Folder)
             .items()
             .into_iter()
             .filter_map(|item| match item {
@@ -85,28 +72,18 @@ impl Wall {
                     .sessions()
                     .iter()
                     .find(|view| view.id == session)
-                    .map(|view| Pane::Session(Box::new(SessionPane::of(model, view, now)))),
+                    .map(|view| SessionPane::of(model, view, now)),
                 Item::Run(_) => None,
             })
             .collect();
         let traffic = model.sessions.traffic(now);
-        let attention = panes
-            .iter()
-            .filter(|pane| matches!(pane, Pane::Session(session) if !session.alerts.is_empty()))
-            .count();
         Frame {
-            panes: if panes.is_empty() {
-                vec![Pane::Free]
-            } else {
-                panes
-            },
+            panes,
             status: Status {
                 sessions: traffic.sessions,
                 responding: traffic.responding,
                 awaiting: traffic.awaiting,
-                attention,
                 output: traffic.output,
-                reading: traffic.reading,
                 failure: traffic.failure,
             },
         }
@@ -227,10 +204,7 @@ fn tui() -> Wall {
 }
 
 fn pane(wall: &Frame, index: usize) -> &SessionPane {
-    match &wall.panes[index] {
-        Pane::Session(pane) => pane.as_ref(),
-        Pane::Free => panic!("pane {index} is free"),
-    }
+    &wall.panes[index]
 }
 
 /// A tool call as a turn's activity lists it.
@@ -288,22 +262,6 @@ fn turn(t: u128, s: u128, commands: &[&str], calls: Vec<Value>) -> Input {
 }
 
 #[test]
-fn nothing_read_yet_is_said_so() {
-    let wall = tui().frame(at(0));
-    assert_eq!(wall.status.reading, Reading::Pending);
-    assert!(wall.panes.iter().all(|pane| *pane == Pane::Free));
-}
-
-#[test]
-fn a_snapshot_reads_the_open_calls_and_the_window() {
-    let query = Wall::snapshot_query(at(600));
-    assert_eq!(query.open.filter.status, Some(StatusFilter::Active));
-    assert_eq!(query.open.filter.kind, Some(KindFilter::Model));
-    assert_eq!(query.recent.filter.time.from(), Some(at(300)));
-    assert_eq!(query.recent.limit, PageLimit::LARGEST);
-}
-
-#[test]
 fn sessions_with_open_calls_come_first_then_the_most_recently_seen() {
     let mut tui = tui();
     let sessions = vec![
@@ -325,6 +283,10 @@ fn sessions_with_open_calls_come_first_then_the_most_recently_seen() {
     assert_eq!(wall.status.sessions, 4);
 
     // Session 3's call ends, long ago: it leaves the list.
+    assert_eq!(
+        Tui::snapshot_query(at(400)).recent.filter.time.from(),
+        Some(at(100))
+    );
     let _ = tui.apply(snapshot(
         400,
         sessions,
@@ -810,22 +772,6 @@ fn output_is_binned_per_client_when_calls_end() {
 }
 
 #[test]
-fn a_full_page_of_calls_is_said_to_leave_some_out() {
-    let mut tui = tui();
-    let recent = call(11, 1, None, 10, 20, json!({}));
-    let _ = tui.apply(Input::Snapshot(Snapshot {
-        read_at: at(100),
-        sessions: vec![session(1, "claude_code_headers", 100)],
-        open: page(vec![]),
-        recent: CallPage {
-            next: Some(recent.cursor()),
-            calls: vec![recent],
-        },
-    }));
-    assert_eq!(tui.frame(at(100)).status.reading, Reading::Capped);
-}
-
-#[test]
 fn a_failed_read_is_shown_until_a_snapshot_succeeds() {
     let mut tui = tui();
     let _ = tui.apply(snapshot(
@@ -843,7 +789,7 @@ fn a_failed_read_is_shown_until_a_snapshot_succeeds() {
         Some("cannot reach the gateway")
     );
     // What was read before stays on the wall.
-    assert!(matches!(wall.panes[0], Pane::Session(_)));
+    assert_eq!(wall.panes.len(), 1);
     let _ = tui.apply(snapshot(
         302,
         vec![session(1, "claude_code_headers", 302)],

@@ -257,7 +257,7 @@ fn drawn(console: &Console) -> String {
 fn the_run_that_needs_you_is_selected_first() {
     let mut console = Console::new(SIZE);
     let start = console.start();
-    for read in [Read::Runs, Read::Recorded, Read::Projects] {
+    for read in [Read::Snapshot, Read::Runs, Read::Recorded, Read::Projects] {
         assert!(start.contains(&Out::Read(read)), "{start:?}");
     }
     let out = console.apply(Input::Runs(Ok(vec![

@@ -124,36 +124,35 @@ mod tests {
     }
 
     #[test]
-    fn saved_flags_round_trip_through_the_parser() {
+    fn resolve_uses_given_flags_else_saved_ones() {
         let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join("missing.toml");
+        assert_eq!(
+            Publish::default().resolve(&missing).unwrap(),
+            Publish::default(),
+            "nothing saved means nothing published"
+        );
+
         let path = dir.path().join("install-vps.toml");
         all().save(&path).unwrap();
         assert_eq!(
             std::fs::read_to_string(&path).unwrap(),
             "args = [\"--https-port\", \"8443\", \"--ui-https-port\", \"8444\", \"--sudo-tailscale\"]\n"
         );
-        assert_eq!(Publish::default().resolve(&path).unwrap(), all());
-    }
+        assert_eq!(
+            Publish::default().resolve(&path).unwrap(),
+            all(),
+            "saved flags round-trip through the parser"
+        );
 
-    #[test]
-    fn given_flags_replace_the_saved_ones() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("install-vps.toml");
-        all().save(&path).unwrap();
         let only = Publish {
             https_port: Some(9443),
             ..Publish::default()
         };
-        assert_eq!(only.clone().resolve(&path).unwrap(), only);
-    }
-
-    #[test]
-    fn nothing_saved_means_nothing_published() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("missing.toml");
         assert_eq!(
-            Publish::default().resolve(&path).unwrap(),
-            Publish::default()
+            only.clone().resolve(&path).unwrap(),
+            only,
+            "given flags replace the saved ones"
         );
     }
 

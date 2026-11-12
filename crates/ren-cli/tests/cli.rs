@@ -45,51 +45,67 @@ fn version_names_the_ren_program_and_its_revision() {
 }
 
 #[test]
-fn command_structs_preserve_help_flags_and_dry_run_output() {
+fn help_and_usage_errors_keep_their_exit_codes() {
     let output = cli(&["--help"]);
     success(&output);
     assert!(String::from_utf8_lossy(&output.stdout).contains("Usage:"));
     assert_eq!(cli(&[]).status.code(), Some(2));
+    assert_eq!(cli(&["history", "--limit", "0"]).status.code(), Some(2));
+}
+
+#[test]
+fn dry_runs_create_no_storage_and_leak_no_secret_or_prompt() {
     let temp = tempfile::tempdir().unwrap();
     let data = temp.path().join("state");
-    let output = cli(&[
-        "run",
-        "pi",
-        "--dry-run",
-        "--data-dir",
-        data.to_str().unwrap(),
-        "--gateway",
-        "http://127.0.0.1:1",
-        "--",
-        "PRIVATE_PROMPT",
-    ]);
-    success(&output);
-    let plan = json(&output);
-    assert_eq!(plan["executable"], "pi");
-    assert!(plan.get("result").is_none());
-    assert!(!String::from_utf8_lossy(&output.stdout).contains("PRIVATE_PROMPT"));
-    assert!(output.stderr.is_empty());
-    assert!(!data.exists());
-    let output = cli(&[
-        "run",
-        "opencode",
-        "--dry-run",
-        "--data-dir",
-        data.to_str().unwrap(),
-        "--gateway",
-        "http://127.0.0.1:1",
-    ]);
-    success(&output);
-    let plan = json(&output);
-    assert_eq!(plan["executable"], "opencode");
-    assert!(
-        plan["environment"]["OPENCODE_CONFIG_CONTENT"]
-            .as_str()
-            .unwrap()
-            .contains("http://127.0.0.1:1/anthropic/v1")
-    );
-    assert!(!data.exists());
-    assert_eq!(cli(&["history", "--limit", "0"]).status.code(), Some(2));
+    // Local upstream settings a dry run through --gateway never uses.
+    let config = temp.path().join("ren.toml");
+    std::fs::write(
+        &config,
+        "codex_base_url = 'https://user:SECRET@example.com'\n",
+    )
+    .unwrap();
+    for harness in ["pi", "opencode", "codex"] {
+        let output = Command::new(env!("CARGO_BIN_EXE_ren"))
+            .args([
+                "--config",
+                config.to_str().unwrap(),
+                "run",
+                harness,
+                "--dry-run",
+                "--data-dir",
+                data.to_str().unwrap(),
+                "--gateway",
+                "http://127.0.0.1:1",
+                "--",
+                "PRIVATE_PROMPT",
+            ])
+            .env("NO_COLOR", "1")
+            .env("TERM", "xterm")
+            .env("OPENAI_API_KEY", "SECRET")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{harness}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let plan = json(&output);
+        assert_eq!(plan["executable"], harness);
+        assert!(plan.get("result").is_none(), "{harness}");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(!stdout.contains("PRIVATE_PROMPT"), "{harness}");
+        assert!(!stdout.contains("SECRET"), "{harness}");
+        assert!(output.stderr.is_empty(), "{harness}");
+        assert!(!data.exists(), "{harness}");
+        if harness == "opencode" {
+            assert!(
+                plan["environment"]["OPENCODE_CONFIG_CONTENT"]
+                    .as_str()
+                    .unwrap()
+                    .contains("http://127.0.0.1:1/anthropic/v1")
+            );
+        }
+    }
 }
 
 #[tokio::test]
@@ -119,131 +135,6 @@ async fn history_keeps_direct_json_and_missing_ids_fail_on_stderr() {
     assert_eq!(output.status.code(), Some(1));
     assert!(output.stdout.is_empty());
     assert!(String::from_utf8_lossy(&output.stderr).contains("call, session, or body not found"));
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn recorded_requests_flow_through_lists_inspection_pagination_and_private_export() {
-    use axum::{Router, response::IntoResponse};
-    let payload = r#"{"type":"message","model":"fixture","content":[{"type":"text","text":"hello"}],"stop_reason":"end_turn","usage":{"input_tokens":10,"output_tokens":3}}"#;
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let address = listener.local_addr().unwrap();
-    let upstream = tokio::spawn(async move {
-        axum::serve(
-            listener,
-            Router::new().fallback(move || async move {
-                ([("content-type", "application/json")], payload).into_response()
-            }),
-        )
-        .await
-        .unwrap();
-    });
-    let temp = tempfile::tempdir().unwrap();
-    let mut daemon = Daemon::new(
-        Config {
-            listen: "127.0.0.1:0".parse().unwrap(),
-            anthropic_base_url: format!("http://{address}"),
-            ..Config::default()
-        }
-        .resolve()
-        .unwrap(),
-        temp.path(),
-        ren_cli::Cli::build(),
-    );
-    daemon.start().await.unwrap();
-    let client = reqwest::Client::builder().no_proxy().build().unwrap();
-    for _ in 0..2 {
-        let response = client
-            .post(format!(
-                "http://{}/anthropic/v1/messages",
-                daemon.address().unwrap()
-            ))
-            .header(
-                "x-claude-code-session-id",
-                "00000000-0000-4000-8000-000000000003",
-            )
-            .body("{}")
-            .send()
-            .await
-            .unwrap();
-        assert_eq!(response.text().await.unwrap(), payload);
-    }
-    daemon.shutdown();
-    daemon.wait().await.unwrap();
-    upstream.abort();
-    let data = temp.path().to_str().unwrap();
-    let output = cli(&["--data-dir", data, "history"]);
-    success(&output);
-    let records = json(&output)["calls"].clone();
-    let stored = Reader::open(temp.path(), 1)
-        .await
-        .unwrap()
-        .calls(&CallQuery::default())
-        .await
-        .unwrap();
-    assert_eq!(records, serde_json::to_value(stored.calls).unwrap());
-    assert_eq!(records.as_array().unwrap().len(), 2);
-    let id = records[0]["id"].as_str().unwrap();
-    let output = cli(&["--data-dir", data, "inspect", id]);
-    success(&output);
-    let detail = json(&output);
-    assert_eq!(detail["call"], records[0]);
-    assert_eq!(detail["attempts"][0]["inspection"]["outcome"], "completed");
-    let output = cli(&["--data-dir", data, "sessions"]);
-    let sessions = json(&output)["sessions"].clone();
-    let session = sessions[0]["id"].as_str().unwrap();
-    let output = cli(&["--data-dir", data, "timeline", session, "--limit", "1"]);
-    success(&output);
-    let page = json(&output);
-    let after = page["next"].as_str().unwrap();
-    let output = cli(&[
-        "--data-dir",
-        data,
-        "timeline",
-        session,
-        "--limit",
-        "1",
-        "--after",
-        after,
-    ]);
-    success(&output);
-    let last = json(&output);
-    assert_ne!(last["calls"][0]["id"], page["calls"][0]["id"]);
-    assert_eq!(last["next"], Value::Null);
-    let export = temp.path().join("response.bin");
-    let output = cli(&[
-        "--data-dir",
-        data,
-        "inspect",
-        id,
-        "--body",
-        "response",
-        "--output",
-        export.to_str().unwrap(),
-    ]);
-    success(&output);
-    assert!(output.stdout.is_empty());
-    assert!(output.stderr.is_empty());
-    assert_eq!(std::fs::read(&export).unwrap(), payload.as_bytes());
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        assert_eq!(
-            std::fs::metadata(&export).unwrap().permissions().mode() & 0o077,
-            0
-        );
-    }
-    let output = cli(&[
-        "--data-dir",
-        data,
-        "inspect",
-        id,
-        "--body",
-        "response",
-        "--output",
-        export.to_str().unwrap(),
-    ]);
-    assert_eq!(output.status.code(), Some(1));
-    assert_eq!(std::fs::read(export).unwrap(), payload.as_bytes());
 }
 
 /// `cli` with HOME pointed at an empty directory, so no saved gateway or
@@ -333,14 +224,25 @@ async fn history_through_a_gateway_prints_what_local_storage_prints() {
     };
     let calls = both(&["history"])["calls"].clone();
     assert_eq!(calls.as_array().unwrap().len(), 2);
+    let stored = Reader::open(&state, 1)
+        .await
+        .unwrap()
+        .calls(&CallQuery::default())
+        .await
+        .unwrap();
+    assert_eq!(calls, serde_json::to_value(stored.calls).unwrap());
     let id = calls[0]["id"].as_str().unwrap().to_owned();
     both(&["history", "--limit", "1"]);
     let sessions = both(&["sessions"])["sessions"].clone();
     let session = sessions[0]["id"].as_str().unwrap().to_owned();
     let page = both(&["timeline", &session, "--limit", "1"]);
     let after = page["next"].as_str().unwrap().to_owned();
-    both(&["timeline", &session, "--limit", "1", "--after", &after]);
-    both(&["inspect", &id]);
+    let last = both(&["timeline", &session, "--limit", "1", "--after", &after]);
+    assert_ne!(last["calls"][0]["id"], page["calls"][0]["id"]);
+    assert_eq!(last["next"], Value::Null);
+    let detail = both(&["inspect", &id]);
+    assert_eq!(detail["call"], calls[0]);
+    assert_eq!(detail["attempts"][0]["inspection"]["outcome"], "completed");
 
     // A saved gateway applies without --gateway; --data-dir still means
     // this host.
@@ -356,7 +258,7 @@ async fn history_through_a_gateway_prints_what_local_storage_prints() {
     for direction in ["request", "response"] {
         let local = temp.path().join(format!("{direction}.local"));
         let remote = temp.path().join(format!("{direction}.remote"));
-        success(&isolated(
+        let output = isolated(
             &home,
             &[
                 "--data-dir",
@@ -368,7 +270,10 @@ async fn history_through_a_gateway_prints_what_local_storage_prints() {
                 "--output",
                 local.to_str().unwrap(),
             ],
-        ));
+        );
+        success(&output);
+        assert!(output.stdout.is_empty());
+        assert!(output.stderr.is_empty());
         success(&isolated(
             &home,
             &[
@@ -389,14 +294,33 @@ async fn history_through_a_gateway_prints_what_local_storage_prints() {
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            let mode = std::fs::metadata(&remote).unwrap().permissions().mode();
-            assert_eq!(mode & 0o777, 0o600);
+            for export in [&local, &remote] {
+                let mode = std::fs::metadata(export).unwrap().permissions().mode();
+                assert_eq!(mode & 0o777, 0o600);
+            }
         }
     }
     assert_eq!(
         std::fs::read(temp.path().join("response.remote")).unwrap(),
         payload.as_bytes()
     );
+    // An existing export is never overwritten.
+    let export = temp.path().join("response.local");
+    let output = isolated(
+        &home,
+        &[
+            "--data-dir",
+            data,
+            "inspect",
+            &id,
+            "--body",
+            "response",
+            "--output",
+            export.to_str().unwrap(),
+        ],
+    );
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(std::fs::read(export).unwrap(), payload.as_bytes());
 
     // An unknown call fails remotely too, and leaves no export behind.
     let missing = temp.path().join("missing.bin");

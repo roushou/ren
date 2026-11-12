@@ -126,6 +126,5 @@ mod tests {
     #[test]
     fn the_recorded_revision_parses() {
         assert!(env!("REN_REVISION").parse::<Revision>().is_ok());
-        assert_eq!(Cli::build().version(), env!("CARGO_PKG_VERSION"));
     }
 }

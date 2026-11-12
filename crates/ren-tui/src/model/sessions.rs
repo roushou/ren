@@ -39,17 +39,6 @@ pub struct SnapshotQuery {
     pub recent: CallQuery,
 }
 
-/// How complete the reads are.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Reading {
-    /// Nothing read yet.
-    Pending,
-    Complete,
-    /// More calls started in the window than one read returns: older ones
-    /// are left out.
-    Capped,
-}
-
 /// One client's output over time, oldest bin first.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Spark {
@@ -68,7 +57,6 @@ pub struct Traffic {
     /// Output tokens of finished calls, per client, over the last few
     /// minutes. Measured when each call ends: not a live rate.
     pub output: Vec<Spark>,
-    pub reading: Reading,
     /// Why the last read failed: what is shown is from an earlier one.
     pub failure: Option<String>,
 }
@@ -142,14 +130,6 @@ impl Sessions {
 
     pub fn revision(&self) -> u64 {
         self.revision
-    }
-
-    pub fn reading(&self) -> Reading {
-        match &self.snapshot {
-            None => Reading::Pending,
-            Some(held) if held.snapshot.recent.next.is_some() => Reading::Capped,
-            Some(_) => Reading::Complete,
-        }
     }
 
     /// When the snapshot was read.
@@ -236,7 +216,6 @@ impl Sessions {
             responding,
             awaiting: open.count() - responding,
             output: self.output(now),
-            reading: self.reading(),
             failure: self.failure.clone(),
         }
     }

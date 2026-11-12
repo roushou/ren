@@ -3,7 +3,7 @@
 //! in any theme.
 
 use crate::screen::main::Item;
-use crate::{Input, Key, Out, Read, Size, Snapshot, Theme, ThemeName, Tui};
+use crate::{Input, Key, Out, Size, Snapshot, Theme, ThemeName, Tui};
 use ratatui::{buffer::Buffer, layout::Rect, style::Color};
 use ren_harness::Harness;
 use ren_protocol::native::NativeThreadId;
@@ -60,14 +60,6 @@ fn drawn(tui: &Tui, size: Size, theme: &Theme) -> Buffer {
     tui.view(UnixMillis::from_millis(1_000))
         .render(theme, area, &mut buffer);
     buffer
-}
-
-#[test]
-fn starting_reads_what_the_app_shows() {
-    let outs = Tui::new(SIZE).start();
-    for read in [Read::Snapshot, Read::Runs, Read::Recorded, Read::Projects] {
-        assert!(outs.contains(&Out::Read(read)), "{outs:?}");
-    }
 }
 
 #[test]

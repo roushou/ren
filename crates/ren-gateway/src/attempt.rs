@@ -352,22 +352,6 @@ mod tests {
     }
 
     #[test]
-    fn a_header_timeout_after_a_full_upload_is_acceptance_unknown() {
-        let timeout = record(&[
-            HttpEvent::UploadEnded,
-            HttpEvent::SendFailed(SendFailure::HeaderTimeout),
-        ]);
-        assert_eq!(
-            timeout,
-            TerminalRecord {
-                terminal: AttemptTerminal::AcceptanceUnknown,
-                cause: Some(TerminalCause::HeaderTimeout),
-                phase: Some(AttemptPhase::AwaitingHead),
-            }
-        );
-    }
-
-    #[test]
     fn a_client_upload_abort_is_cancelled_by_the_client_during_upload() {
         let aborted = record(&[HttpEvent::UploadFailed]);
         assert_eq!(
@@ -391,74 +375,80 @@ mod tests {
     }
 
     #[test]
-    fn idle_timeouts_and_broken_streams_are_distinct() {
-        let idle = record(&[
-            HttpEvent::Responded { status: 200 },
-            HttpEvent::BodyFailed(StreamFailure::IdleTimeout),
-        ]);
-        let broken = record(&[
-            HttpEvent::Responded { status: 200 },
-            HttpEvent::BodyFailed(StreamFailure::BodyError),
-        ]);
-        assert_eq!(idle.terminal, AttemptTerminal::StreamFailed);
-        assert_eq!(broken.terminal, AttemptTerminal::StreamFailed);
-        assert_eq!(idle.cause, Some(TerminalCause::IdleTimeout));
-        assert_eq!(broken.cause, Some(TerminalCause::BodyError));
-    }
-
-    #[test]
-    fn cancellation_and_drops_record_their_phase() {
+    fn events_end_with_their_terminal_cause_and_phase() {
+        let ok = HttpEvent::Responded { status: 200 };
         let cases = [
             (
-                vec![HttpEvent::Cancelled(Canceller::Shutdown)],
-                AttemptTerminal::Cancelled,
-                AttemptPhase::Upload,
-            ),
-            (
-                vec![HttpEvent::UploadEnded, HttpEvent::Dropped],
-                AttemptTerminal::Interrupted,
+                "a header timeout after a full upload",
+                vec![
+                    HttpEvent::UploadEnded,
+                    HttpEvent::SendFailed(SendFailure::HeaderTimeout),
+                ],
+                AttemptTerminal::AcceptanceUnknown,
+                Some(TerminalCause::HeaderTimeout),
                 AttemptPhase::AwaitingHead,
             ),
             (
-                vec![
-                    HttpEvent::Responded { status: 200 },
-                    HttpEvent::Cancelled(Canceller::Shutdown),
-                ],
-                AttemptTerminal::Cancelled,
+                "an idle stream",
+                vec![ok, HttpEvent::BodyFailed(StreamFailure::IdleTimeout)],
+                AttemptTerminal::StreamFailed,
+                Some(TerminalCause::IdleTimeout),
                 AttemptPhase::Response,
             ),
             (
-                vec![HttpEvent::Responded { status: 200 }, HttpEvent::Dropped],
+                "a broken stream",
+                vec![ok, HttpEvent::BodyFailed(StreamFailure::BodyError)],
+                AttemptTerminal::StreamFailed,
+                Some(TerminalCause::BodyError),
+                AttemptPhase::Response,
+            ),
+            (
+                "a delivered declared length",
+                vec![ok, HttpEvent::LengthDelivered],
+                AttemptTerminal::BodyComplete,
+                Some(TerminalCause::DeclaredLength),
+                AttemptPhase::Response,
+            ),
+            (
+                "shutdown during upload",
+                vec![HttpEvent::Cancelled(Canceller::Shutdown)],
+                AttemptTerminal::Cancelled,
+                Some(TerminalCause::Shutdown),
+                AttemptPhase::Upload,
+            ),
+            (
+                "a drop awaiting the head",
+                vec![HttpEvent::UploadEnded, HttpEvent::Dropped],
                 AttemptTerminal::Interrupted,
+                None,
+                AttemptPhase::AwaitingHead,
+            ),
+            (
+                "shutdown during the response",
+                vec![ok, HttpEvent::Cancelled(Canceller::Shutdown)],
+                AttemptTerminal::Cancelled,
+                Some(TerminalCause::Shutdown),
+                AttemptPhase::Response,
+            ),
+            (
+                "a drop during the response",
+                vec![ok, HttpEvent::Dropped],
+                AttemptTerminal::Interrupted,
+                None,
                 AttemptPhase::Response,
             ),
         ];
-        for (events, terminal, phase) in cases {
-            let ended = record(&events);
-            assert_eq!((ended.terminal, ended.phase), (terminal, Some(phase)));
+        for (case, events, terminal, cause, phase) in cases {
+            assert_eq!(
+                record(&events),
+                TerminalRecord {
+                    terminal,
+                    cause,
+                    phase: Some(phase),
+                },
+                "{case}"
+            );
         }
-    }
-
-    #[test]
-    fn a_delivered_declared_length_is_a_complete_body_with_its_cause() {
-        let delivered = record(&[
-            HttpEvent::Responded { status: 200 },
-            HttpEvent::LengthDelivered,
-        ]);
-        assert_eq!(
-            (delivered.terminal, delivered.cause, delivered.phase),
-            (
-                AttemptTerminal::BodyComplete,
-                Some(TerminalCause::DeclaredLength),
-                Some(AttemptPhase::Response)
-            )
-        );
-        assert_eq!(
-            HttpAttempt::DISPATCHED.step(HttpEvent::LengthDelivered),
-            Err(IllegalTransition::BodyBeforeHead {
-                event: HttpEvent::LengthDelivered
-            })
-        );
     }
 
     #[test]
@@ -480,6 +470,12 @@ mod tests {
                 event: HttpEvent::BodyEnded
             })
         );
+        assert_eq!(
+            HttpAttempt::DISPATCHED.step(HttpEvent::LengthDelivered),
+            Err(IllegalTransition::BodyBeforeHead {
+                event: HttpEvent::LengthDelivered
+            })
+        );
         let streaming = HttpAttempt::DISPATCHED
             .step(HttpEvent::Responded { status: 200 })
             .unwrap()
@@ -497,7 +493,4 @@ mod tests {
             })
         );
     }
-
-    #[test]
-    fn terminal_vocabularies_have_unique_labels() {}
 }
