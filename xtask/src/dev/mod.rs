@@ -10,6 +10,7 @@ mod traffic;
 mod work;
 
 use crate::{
+    daemon::RunPolicy,
     install::{InstallError, TailscaleCli},
     publish::Publish,
 };
@@ -19,7 +20,7 @@ use provider::{FakeProvider, ProviderError};
 use ren_harness::host::HostEnv;
 use seed::{Scenario, SeedError, Seeder};
 use shot::{Camera, Page};
-use slot::{Preview, Slot};
+use slot::{Preview, RunWait, Slot};
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use traffic::{Pace, SettingsError, Traffic, TrafficError};
@@ -96,6 +97,15 @@ struct UpArgs {
     /// Also build and run the UI, and publish the preview.
     #[arg(long)]
     ui: bool,
+    /// How long to wait for the dev daemon's runs to stop working before
+    /// giving up, without having changed anything.
+    #[arg(long, value_name = "SECONDS", default_value_t = 300)]
+    idle_timeout: u64,
+    /// Restart even while runs are starting or working: their turns are
+    /// lost, and each ends with the daemon (its conversation can be
+    /// continued).
+    #[arg(long)]
+    drain_runs: bool,
     /// Keep the preview on this host's loopback; do not touch Tailscale.
     #[arg(long, requires = "ui")]
     local: bool,
@@ -226,15 +236,23 @@ impl Dev {
             }
             DevAction::Up(args) => {
                 let slot = Slot::new(env)?;
+                let wait = RunWait {
+                    policy: if args.drain_runs {
+                        RunPolicy::Drain
+                    } else {
+                        RunPolicy::Wait
+                    },
+                    timeout: args.idle_timeout,
+                };
                 if args.ui {
                     let preview = if args.local {
                         Preview::Local
                     } else {
                         Preview::Tailnet(args.tailnet.cli(env)?)
                     };
-                    slot.up_with_ui(env, preview)?;
+                    slot.up_with_ui(env, preview, wait)?;
                 } else {
-                    slot.up()?;
+                    slot.up(wait)?;
                 }
                 slot.status()
             }
@@ -245,7 +263,11 @@ impl Dev {
             DevAction::Reset => {
                 let slot = Slot::new(env)?;
                 slot.wipe()?;
-                slot.up()?;
+                // The wipe stopped the daemon: no run is left to wait for.
+                slot.up(RunWait {
+                    policy: RunPolicy::Drain,
+                    timeout: 0,
+                })?;
                 slot.status()
             }
             DevAction::Status => Slot::new(env)?.status(),

@@ -1,12 +1,17 @@
 //! `cargo xtask install-vps`: install or upgrade Ren from this checkout as a
 //! Linux systemd user service, optionally published with Tailscale Serve.
 //!
-//! An upgrade restarts the daemon only between calls: it waits until none is
-//! running, pauses admission (clients get `503` with `retry-after` and wait),
-//! replaces the binary, checks that the daemon runs the new build, and
-//! resumes.
+//! An upgrade restarts the daemon only between calls and between runs' turns:
+//! it waits until no call is running and no run is starting, working, or
+//! stopping, pauses admission (clients get `503` with `retry-after` and
+//! wait), replaces the binary, checks that the daemon runs the new build, and
+//! resumes. Idle runs end with the old daemon; it names each, with how to
+//! continue its conversation.
 use crate::{
-    daemon::{AfterPause, CheckStatus, ControlState, DoctorReport, Quiesce},
+    daemon::{
+        AfterPause, Busy, CheckStatus, ControlState, DoctorReport, LiveRun, Quiesce, RunPolicy,
+        Runs,
+    },
     invocation::{Echo, Invocation},
     publish::Publish,
     tailscale::{NodeStatus, Route, ServeStatus},
@@ -43,10 +48,16 @@ pub struct InstallVps {
     /// then reports a `-dirty` revision.
     #[arg(long)]
     allow_dirty: bool,
-    /// How long to wait for running calls to finish before giving up,
-    /// without having changed anything.
+    /// How long to wait for running calls and working runs to finish before
+    /// giving up, without having changed anything.
     #[arg(long, value_name = "SECONDS", default_value_t = 900)]
     idle_timeout: u64,
+    /// Restart even while runs are starting or working: their turns are
+    /// lost, and each ends with the daemon (its conversation can be
+    /// continued).
+    /// Running calls are still waited for.
+    #[arg(long)]
+    drain_runs: bool,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -99,9 +110,11 @@ pub enum InstallError {
     )]
     Dirty,
     #[error(
-        "{running} calls were still running after {waited} seconds; nothing was changed. Run again between sessions, or raise --idle-timeout"
+        "{} still running after {waited} seconds; nothing was changed. {}",
+        .busy.summary(),
+        .busy.advice()
     )]
-    Busy { running: usize, waited: u64 },
+    Busy { busy: Busy, waited: u64 },
     #[error("the daemon does not run the build just installed: {0}")]
     BuildMismatch(String),
     #[error("{} does not hold valid install-vps flags; fix or delete it", .0.display())]
@@ -155,8 +168,15 @@ enum Verdict {
     Mismatch,
 }
 
-/// What the upgrade did to admission before replacing a running daemon.
+/// The quiet the upgrade made before replacing a running daemon: what it did
+/// to admission, and the runs that end with the old daemon.
 #[must_use]
+struct Quiesced {
+    admission: Quiet,
+    ending: Vec<LiveRun>,
+}
+
+/// What the upgrade did to admission before replacing a running daemon.
 enum Quiet {
     /// No daemon was running.
     Stopped,
@@ -272,6 +292,11 @@ impl InstallVps {
         } else {
             Backup::Run
         };
+        let policy = if self.drain_runs {
+            RunPolicy::Drain
+        } else {
+            RunPolicy::Wait
+        };
         Self::preflight()?;
         let layout = Layout::new(env)?;
         let saved = Publish::path(&layout.home);
@@ -292,9 +317,10 @@ impl InstallVps {
         }
         Self::seed_config(&layout)?;
         let config = Self::load_config(&layout)?;
-        let quiet = Self::quiesce(&layout, self.idle_timeout)?;
+        let quiesced = Self::quiesce(&layout, self.idle_timeout, policy)?;
+        Self::announce_ending(&quiesced.ending);
         let replaced = Self::replace(&layout, &built, backup, tree);
-        Self::release(&layout, quiet);
+        Self::release(&layout, quiesced.admission);
         replaced?;
         let dns = match publish.https_port {
             Some(port) => {
@@ -321,6 +347,7 @@ impl InstallVps {
         }
         publish.save(&saved)?;
         Self::step("Done");
+        Self::remind_ending(&quiesced.ending);
         Ok(())
     }
 
@@ -453,48 +480,109 @@ impl InstallVps {
         )
     }
 
-    /// Waits until no call is running and pauses admission, so the restart
-    /// interrupts nothing. A call can start between the check and the pause;
-    /// then admission resumes and the wait continues. Polls are counted
-    /// rather than timed, so this reads no clock.
-    fn quiesce(layout: &Layout, idle_timeout: u64) -> Result<Quiet, InstallError> {
-        if !Self::service_active()? || !layout.binary.exists() {
-            return Ok(Quiet::Stopped);
+    /// The runs the daemon drives now, through `ren` (`ren runs ls`).
+    pub(crate) fn runs(ren: Invocation) -> Result<Runs, InstallError> {
+        let text = ren.args(["runs", "ls"]).answer()?;
+        Runs::parse(&text).map_err(|error| InstallError::Output {
+            command: "ren runs ls".to_owned(),
+            detail: error.to_string(),
+        })
+    }
+
+    /// Says what a restart waits for, when it changed since `reported`.
+    pub(crate) fn report_wait(busy: &Busy, reported: &mut Option<Busy>, timeout: u64) {
+        if reported.as_ref() == Some(busy) {
+            return;
         }
+        Self::step(&format!(
+            "Waiting for {} to finish (up to {timeout} seconds)",
+            busy.summary()
+        ));
+        for line in busy.run_lines() {
+            println!("    {line}");
+        }
+        *reported = Some(busy.clone());
+    }
+
+    /// Names the runs whose process ends with the daemon about to stop.
+    pub(crate) fn announce_ending(ending: &[LiveRun]) {
+        if ending.is_empty() {
+            return;
+        }
+        Self::step(&format!(
+            "{} end with the daemon; each conversation can be continued:",
+            match ending.len() {
+                1 => "1 run".to_owned(),
+                n => format!("{n} runs"),
+            }
+        ));
+        for run in ending {
+            println!("    {run}\n      {}", run.continuation());
+        }
+    }
+
+    /// After the restart, once more, so it is the last thing shown.
+    pub(crate) fn remind_ending(ending: &[LiveRun]) {
+        match ending.len() {
+            0 => {}
+            1 => println!("1 run ended with the restart (listed above); it can be continued."),
+            n => println!("{n} runs ended with the restart (listed above); each can be continued."),
+        }
+    }
+
+    /// Waits until no call is running and no run is mid-way (unless `policy`
+    /// drains them), and pauses admission, so the restart interrupts nothing.
+    /// A call can start, or a run be prompted, between the check and the
+    /// pause; then admission resumes and the wait continues. Polls are
+    /// counted rather than timed, so this reads no clock.
+    fn quiesce(
+        layout: &Layout,
+        idle_timeout: u64,
+        policy: RunPolicy,
+    ) -> Result<Quiesced, InstallError> {
+        if !Self::service_active()? || !layout.binary.exists() {
+            return Ok(Quiesced {
+                admission: Quiet::Stopped,
+                ending: Vec::new(),
+            });
+        }
+        let ren = || layout.ren(&layout.binary);
         let polls = idle_timeout.div_ceil(Self::POLL.as_secs()).max(1);
         let mut reported = None;
-        let mut running = 0;
         for _ in 0..polls {
             let state = Self::control_state(layout)?;
-            running = state.running();
-            match state.quiesce() {
+            let runs = Self::runs(ren())?;
+            match state.quiesce(&runs, policy) {
                 Quiesce::Pause => {
                     Self::control(layout, &["pause", "--retry-after", Self::RETRY_AFTER])?;
-                    match Self::control_state(layout)?.after_pause() {
+                    let runs = Self::runs(ren())?;
+                    match Self::control_state(layout)?.after_pause(&runs, policy) {
                         AfterPause::Quiet => {
                             Self::step("Paused admission; clients wait and retry");
-                            return Ok(Quiet::Paused);
+                            return Ok(Quiesced {
+                                admission: Quiet::Paused,
+                                ending: runs.ending(),
+                            });
                         }
-                        AfterPause::SlippedIn { .. } => Self::control(layout, &["resume"])?,
+                        AfterPause::SlippedIn(busy) => {
+                            Self::control(layout, &["resume"])?;
+                            Self::report_wait(&busy, &mut reported, idle_timeout);
+                        }
                     }
                 }
                 Quiesce::LeaveAlone => {
                     Self::step("The daemon was already paused; leaving it paused");
-                    return Ok(Quiet::LeftAlone);
+                    return Ok(Quiesced {
+                        admission: Quiet::LeftAlone,
+                        ending: runs.ending(),
+                    });
                 }
-                Quiesce::Wait { running } => {
-                    if reported != Some(running) {
-                        Self::step(&format!(
-                            "Waiting for {running} running calls to finish (up to {idle_timeout} seconds)"
-                        ));
-                        reported = Some(running);
-                    }
-                }
+                Quiesce::Wait(busy) => Self::report_wait(&busy, &mut reported, idle_timeout),
             }
             thread::sleep(Self::POLL);
         }
         Err(InstallError::Busy {
-            running,
+            busy: reported.unwrap_or_else(|| Busy::of_runs(&Runs::default(), policy)),
             waited: idle_timeout,
         })
     }

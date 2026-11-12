@@ -437,8 +437,8 @@ dependencies under "Crates" below. Read the code for current module ownership.
   with `Xtask` as its primary type; unpublished and outside `default-members`.
   `cargo xtask install-vps` installs or upgrades Ren from a checkout as a
   systemd user service and can publish it with Tailscale Serve; it restarts a
-  running daemon only between calls, paused, and checks the new build, and with
-  `--ui-https-port` it builds and deploys the UI as `ren-ui.service`. It is a
+  running daemon only between calls and between runs' turns, paused, and
+  checks the new build, and with `--ui-https-port` it builds and deploys the UI as `ren-ui.service`. It is a
   shell: it runs external commands and reads configuration through
   `ren-daemon`'s `Config`. Its parsing of Tailscale status (`tailscale`) and of the
   installed `ren`'s output (`daemon`), its UI unit rendering (`ui`), its saved flags

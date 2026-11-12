@@ -6,6 +6,7 @@
 
 use super::DevError;
 use crate::{
+    daemon::{Busy, LiveRun, RunPolicy, Runs},
     install::{InstallError, InstallVps, TailscaleCli},
     invocation::{Echo, Invocation},
     tailscale::{Route, ServeStatus},
@@ -102,6 +103,14 @@ impl Unit {
     }
 }
 
+/// How `dev up` restarts a dev daemon that drives runs: it waits up to
+/// `timeout` seconds for runs mid-way, unless `policy` drains them.
+#[derive(Debug, Clone, Copy)]
+pub struct RunWait {
+    pub policy: RunPolicy,
+    pub timeout: u64,
+}
+
 /// Where the dev preview is reached.
 #[derive(Debug, Clone, Copy)]
 pub enum Preview {
@@ -147,6 +156,8 @@ impl Slot {
     /// The operator key the dev config's operator-key entries read: fake.
     const OPERATOR_KEY_ENV: &'static str = "REN_DEV_OPERATOR_KEY";
     const OPERATOR_KEY: &'static str = "fake-dev-operator-key";
+    /// Seconds between checks for runs mid-way.
+    const RUN_POLL: Duration = Duration::from_secs(2);
 
     pub fn new(env: &HostEnv) -> Result<Self, DevError> {
         let home = env
@@ -360,15 +371,20 @@ impl Slot {
     }
 
     /// Build, configure, and (re)start the provider and daemon.
-    pub fn up(&self) -> Result<(), DevError> {
-        self.start_core()
+    pub fn up(&self, wait: RunWait) -> Result<(), DevError> {
+        self.start_core(wait)
     }
 
     /// Start the core, then build and run the UI and, unless `Preview::Local`,
     /// publish the dev gateway and UI on the tailnet.
-    pub fn up_with_ui(&self, env: &HostEnv, preview: Preview) -> Result<(), DevError> {
+    pub fn up_with_ui(
+        &self,
+        env: &HostEnv,
+        preview: Preview,
+        wait: RunWait,
+    ) -> Result<(), DevError> {
         let ui = UiDeploy::new(env, &self.home, &self.repo)?;
-        self.start_core()?;
+        self.start_core(wait)?;
         ui.build_into(&self.ui_next)?;
         Unit::Ui.stop()?;
         if self.ui_dir.exists() {
@@ -420,9 +436,11 @@ impl Slot {
         Ok(())
     }
 
-    fn start_core(&self) -> Result<(), DevError> {
+    fn start_core(&self, wait: RunWait) -> Result<(), DevError> {
         self.build()?;
         self.write_config()?;
+        let ending = self.settle_runs(wait)?;
+        InstallVps::announce_ending(&ending);
         for unit in [Unit::Daemon, Unit::Provider] {
             unit.stop()?;
         }
@@ -465,7 +483,39 @@ impl Slot {
             ],
         )?;
         Self::wait_for(Self::DAEMON, "/health")?;
+        InstallVps::remind_ending(&ending);
         self.start_traffic()
+    }
+
+    /// Waits until the running dev daemon has no run mid-way (calls are not
+    /// waited for: the fake traffic never stops), and returns the runs that
+    /// end with it. Polls are counted rather than timed, so this reads no
+    /// clock.
+    fn settle_runs(&self, wait: RunWait) -> Result<Vec<LiveRun>, DevError> {
+        if !Unit::Daemon.active()? {
+            return Ok(Vec::new());
+        }
+        let ren = || {
+            Invocation::new(self.bin_dir.join("ren"))
+                .arg("--config")
+                .arg(&self.config)
+        };
+        let polls = wait.timeout.div_ceil(Self::RUN_POLL.as_secs()).max(1);
+        let mut reported = None;
+        for _ in 0..polls {
+            let runs = InstallVps::runs(ren())?;
+            let busy = Busy::of_runs(&runs, wait.policy);
+            if busy.is_quiet() {
+                return Ok(runs.ending());
+            }
+            InstallVps::report_wait(&busy, &mut reported, wait.timeout);
+            thread::sleep(Self::RUN_POLL);
+        }
+        Err(InstallError::Busy {
+            busy: reported.unwrap_or_else(|| Busy::of_runs(&Runs::default(), wait.policy)),
+            waited: wait.timeout,
+        }
+        .into())
     }
 
     /// (Re)start the traffic generator, which follows the settings file.

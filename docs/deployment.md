@@ -168,10 +168,18 @@ no remote branch. It builds the release binary (with `ren tui`) while the old da
 serving, creates `~/.config/ren/ren.toml` only if missing, and checks the
 configuration with Ren's own parser before stopping anything.
 
-It then replaces a running daemon only between calls. It waits until no call is
-running (up to `--idle-timeout`, 900 seconds by default, then stops without
-changing anything), pauses admission so new calls get `503` with `retry-after: 10`
-and clients wait, runs `ren control backup`, stops the service, keeps the old
+It then replaces a running daemon only between calls and between runs' turns. It
+waits until no call is running and no [run](api.md#runs) is starting, working
+(also while it waits for an approval), or stopping, naming each run it waits for
+(up to `--idle-timeout`, 900 seconds by default, then stops without changing
+anything). `--drain-runs` restarts without waiting for runs: their turns are lost
+and their processes end with the daemon; running calls are still waited for. It then pauses
+admission so new calls get `503` with `retry-after: 10` and clients wait (a run
+prompted between the check and the pause is waited for too). Idle runs end with
+the old daemon: before stopping it, it lists each with how to continue
+its conversation (from the UI's Runs page, `ren tui`, or
+`ren runs start <client> <dir> --resume <thread>`), which a new run resumes where
+it left off. It runs `ren control backup`, stops the service, keeps the old
 binary as `~/.local/bin/ren.previous`, installs the new one, rewrites the unit
 only if it changed, starts the service, enables lingering, and runs `ren doctor`.
 It requires doctor's build check to confirm the daemon runs the build just
@@ -274,8 +282,11 @@ a command for prompts that mention testing, running, or building and changes
 files for ones that mention fixing, editing, changing, adding, or writing
 (Codex and Claude Code ask first; Pi asks for no approvals), and sends each
 turn's model call through the dev gateway to the fake provider, so a run's
-turns are recorded under its session. `dev up` restarts the daemon, which
-stops the slot's runs.
+turns are recorded under its session. `dev up` restarts the daemon as
+`install-vps` does for runs: it waits for every run starting, working, or stopping
+(up to `--idle-timeout`, 300 seconds by default; `--drain-runs` does not wait), and
+names the idle runs that end with the restart, which can be continued. It does not
+wait for calls, since the fake traffic never stops.
 
 `--ui` publishes the preview with the same Serve step as `install-vps` (with
 `sudo -n` if it last did, or `--sudo-tailscale`); `--local` keeps it on
