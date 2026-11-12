@@ -29,7 +29,11 @@
     type Shelf,
     type RunSnapshot,
     type Waiting,
+    type ClientCommand,
+    type FileMatch,
   } from '#lib/runs.ts';
+  import { Mentions } from '#lib/mention.ts';
+  import ComposerMenu, { type MenuEntry } from './ComposerMenu.svelte';
   import Icon from '#lib/Icon.svelte';
   import Markdown from '#lib/Markdown.svelte';
   import ActionMenu, { type ActionItem } from '#lib/ActionMenu.svelte';
@@ -308,6 +312,131 @@
   function write(text: string) {
     if (selected) drafts.set(selected, text);
   }
+  /** Where the caret is in the prompt, for what the word there asks to be offered. */
+  let caret = $state(0);
+  /** Where an offer closed with Esc starts: it stays closed until another word asks. */
+  let dismissed = $state<number | null>(null);
+  // A closed composer's prompt is disabled, so nothing asks there.
+  const mention = $derived(Mentions.at(draft, Math.min(caret, draft.length)));
+  const offering = $derived(mention && mention.start !== dismissed ? mention : null);
+  /** Each run's commands, as its client listed them. */
+  const commandLists = new SvelteMap<RunId, ClientCommand[]>();
+  let commandsNote = $state<string | null>(null);
+  /** The newest file search's answer, with what it searched for. */
+  let found = $state<{ run: RunId; query: string; files: FileMatch[] } | null>(null);
+  let filesNote = $state<string | null>(null);
+  let active = $state(0);
+  const menuId = 'composer-offers';
+
+  $effect(() => {
+    // The run's commands, read when a word first asks for them; asked again
+    // while the client has listed none, as it lists them once it opens.
+    const run = selected;
+    const asking = offering?.kind === 'command' ? offering.start : null;
+    if (!run || asking === null) return;
+    if ((untrack(() => commandLists.get(run))?.length ?? 0) > 0) return;
+    commandsNote = 'Reading the commands…';
+    const abort = new AbortController();
+    client
+      .commands(run, abort.signal)
+      .then((commands) => {
+        commandLists.set(run, commands);
+        commandsNote =
+          commands.length > 0
+            ? null
+            : `${harnessLabel(current?.harness ?? 'codex')} lists its commands once the conversation opens.`;
+      })
+      .catch((error: unknown) => {
+        if (!abort.signal.aborted) commandsNote = message(error);
+      });
+    return () => abort.abort();
+  });
+
+  $effect(() => {
+    // A short pause after typing, then the folder is searched.
+    const run = selected;
+    const query = offering?.kind === 'file' ? offering.query : null;
+    if (!run || query === null) return;
+    const abort = new AbortController();
+    const timer = setTimeout(() => {
+      client
+        .files(run, query, 20, abort.signal)
+        .then((files) => {
+          found = { run, query, files };
+          filesNote = files.length > 0 ? null : 'No file matches.';
+        })
+        .catch((error: unknown) => {
+          if (!abort.signal.aborted) filesNote = message(error);
+        });
+    }, 90);
+    return () => {
+      clearTimeout(timer);
+      abort.abort();
+    };
+  });
+
+  const offeredCommands = $derived(
+    offering?.kind === 'command' && selected
+      ? Mentions.commands(commandLists.get(selected) ?? [], offering)
+      : [],
+  );
+  const offeredFiles = $derived(
+    offering?.kind === 'file' && found && found.run === selected ? found.files : [],
+  );
+  const entries = $derived.by((): MenuEntry[] => {
+    if (offering?.kind === 'command') {
+      return offeredCommands.map((command) => {
+        const at = command.name.toLowerCase().indexOf(offering.query.toLowerCase());
+        const hits =
+          offering.query === '' || at < 0
+            ? []
+            : Array.from(offering.query, (_, index) => command.sigil.length + at + index);
+        return {
+          key: command.invocation,
+          parts: Mentions.marked(command.invocation, hits),
+          hint: command.hint,
+          tag: command.kind === 'command' ? null : command.kind,
+          detail: command.description,
+        };
+      });
+    }
+    if (offering?.kind === 'file') {
+      return offeredFiles.map((file) => ({
+        key: file.path,
+        parts: Mentions.marked(file.path, file.positions),
+        hint: null,
+        tag: file.kind === 'directory' ? 'folder' : null,
+        detail: '',
+      }));
+    }
+    return [];
+  });
+  $effect(() => {
+    // A new list starts at its best entry.
+    void entries;
+    active = 0;
+  });
+
+  /** Write the chosen entry in place of the word that asked for it. */
+  function pick(index: number) {
+    if (!offering) return;
+    const written =
+      offering.kind === 'command'
+        ? offeredCommands[index] && Mentions.command(draft, offering, offeredCommands[index])
+        : offeredFiles[index] && Mentions.file(draft, offering, offeredFiles[index]);
+    if (!written) return;
+    write(written.text);
+    caret = written.caret;
+    void tick().then(() => {
+      composer?.focus();
+      composer?.setSelectionRange(written.caret, written.caret);
+    });
+  }
+
+  function trackCaret(event: Event) {
+    caret = (event.currentTarget as HTMLTextAreaElement).selectionStart;
+  }
+
   /** What the selected run's client takes mid-run. */
   const client_ = $derived(clients.find((entry) => entry.harness === current?.harness) ?? null);
 
@@ -373,6 +502,29 @@
 
   function composerKey(event: KeyboardEvent) {
     if (event.isComposing) return;
+    // While something is offered, the arrows, Enter, and Tab are its.
+    if (offering) {
+      const count = entries.length;
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        dismissed = offering.start;
+        return;
+      }
+      if (count > 0 && (event.key === 'ArrowDown' || event.key === 'ArrowUp')) {
+        event.preventDefault();
+        active = (active + (event.key === 'ArrowDown' ? 1 : count - 1)) % count;
+        return;
+      }
+      if (
+        count > 0 &&
+        (event.key === 'Tab' ||
+          (event.key === 'Enter' && !event.shiftKey && !event.metaKey && !event.ctrlKey))
+      ) {
+        event.preventDefault();
+        pick(active);
+        return;
+      }
+    }
     if (event.key === 'Enter' && !event.shiftKey) {
       event.preventDefault();
       // Cmd or Ctrl+Enter sends into the running turn, where the client can.
@@ -919,14 +1071,46 @@
             void send('queue');
           }}
         >
+          {#if offering}
+            <ComposerMenu
+              id={menuId}
+              heading={offering.kind === 'file'
+                ? 'Files in the run’s folder'
+                : offering.sigil === '$'
+                  ? `${harnessLabel(current.harness)} skills`
+                  : `${harnessLabel(current.harness)} commands`}
+              {entries}
+              {active}
+              note={offering.kind === 'file'
+                ? (filesNote ?? (found ? null : 'Searching…'))
+                : (commandsNote ??
+                  ((commandLists.get(selected ?? ('' as RunId))?.length ?? 0) > 0
+                    ? 'No command matches.'
+                    : null))}
+              onpick={pick}
+              onpoint={(index) => (active = index)}
+            />
+          {/if}
           <textarea
             bind:this={composer}
             value={draft}
             oninput={(event) => {
               recalling = null;
+              dismissed = null;
               write(event.currentTarget.value);
+              trackCaret(event);
             }}
             onkeydown={composerKey}
+            onkeyup={trackCaret}
+            onclick={trackCaret}
+            onfocus={trackCaret}
+            role="combobox"
+            aria-autocomplete="list"
+            aria-expanded={offering !== null}
+            aria-controls={offering ? menuId : undefined}
+            aria-activedescendant={offering && entries.length > 0
+              ? `${menuId}-${active}`
+              : undefined}
             rows="3"
             disabled={compose.kind === 'closed'}
             placeholder={compose.kind === 'start'
@@ -1293,6 +1477,7 @@
   }
   /* The prompt fills its strip; only the Send control sits inside it. */
   .composer {
+    position: relative;
     display: flex;
     flex-direction: column;
     border-top: 1px solid var(--line);

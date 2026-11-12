@@ -544,6 +544,63 @@ const runModels = versioned(
   }),
 );
 
+/** What a command is to its client. */
+export const COMMAND_KINDS = ['command', 'skill', 'template'] as const;
+export type CommandKind = (typeof COMMAND_KINDS)[number];
+/** How a prompt names a command: `/name` (Claude Code, Pi) or `$name` (Codex's skills). */
+export const SIGILS = ['/', '$'] as const;
+export type Sigil = (typeof SIGILS)[number];
+
+/** A command, skill, or prompt template a run's client offers, as it listed it. */
+export interface ClientCommand {
+  name: string;
+  /** Empty when the client gives none. */
+  description: string;
+  /** What it takes after its name, when the client says. */
+  hint: string | null;
+  kind: Stored<CommandKind>;
+  sigil: Stored<Sigil>;
+  /** What a prompt writes to run it: its sigil, then its name. */
+  invocation: string;
+}
+
+const clientCommands = versioned(
+  object<{ commands: ClientCommand[] }>({
+    commands: array(
+      object<ClientCommand>({
+        name: string,
+        description: string,
+        hint: nullable(string),
+        kind: label(COMMAND_KINDS),
+        sigil: label(SIGILS),
+        invocation: string,
+      }),
+    ),
+  }),
+);
+
+export const PATH_KINDS = ['file', 'directory'] as const;
+export type PathKind = (typeof PATH_KINDS)[number];
+/** A path of a run's folder that matched a search, with the characters (by index) that matched. */
+export interface FileMatch {
+  /** Relative to the run's folder, `/`-separated. */
+  path: string;
+  kind: Stored<PathKind>;
+  positions: number[];
+}
+
+const fileMatches = versioned(
+  object<{ files: FileMatch[] }>({
+    files: array(
+      object<FileMatch>({
+        path: string,
+        kind: label(PATH_KINDS),
+        positions: array(count),
+      }),
+    ),
+  }),
+);
+
 /** What a run starts with. */
 export interface StartRequest {
   harness: Drivable;
@@ -738,6 +795,17 @@ export class RunsClient {
     await this.#send('POST', `/control/runs/${run}/prompt`, { text, delivery }, null);
   }
   /** Take back the prompt queued for after the running turn. */
+  /** What the run's client offers a prompt: its commands, skills, and templates. */
+  async commands(run: RunId, signal?: AbortSignal): Promise<ClientCommand[]> {
+    const path = `/control/runs/${run}/commands`;
+    return (await this.#send('GET', path, undefined, clientCommands, signal)).commands;
+  }
+  /** The paths of the run's folder that best match `query`, best first. */
+  async files(run: RunId, query: string, limit = 20, signal?: AbortSignal): Promise<FileMatch[]> {
+    const search = new URLSearchParams({ q: query, limit: String(limit) });
+    const path = `/control/runs/${run}/files?${search}`;
+    return (await this.#send('GET', path, undefined, fileMatches, signal)).files;
+  }
   async unqueue(run: RunId): Promise<void> {
     await this.#send('POST', `/control/runs/${run}/unqueue`, {}, null);
   }

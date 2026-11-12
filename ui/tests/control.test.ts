@@ -129,6 +129,25 @@ test('starting, listing, projects, models, answering, history edits, and the fee
   ]);
 });
 
+test('a prompt’s commands and file search map to their routes, forwarding only q and limit', async () => {
+  const seen: string[] = [];
+  const daemon = host((url, init) => {
+    seen.push(`${init.method} ${url.pathname}${url.search}`);
+    return Response.json({ api_version: 1 });
+  });
+  const proxy = new RunsProxy(on, 'http://daemon.test', daemon);
+  const get = (path: string) =>
+    proxy.respond(
+      new Request(`http://ui.test${path}`, { headers: { 'sec-fetch-site': 'same-origin' } }),
+    );
+  await get(`/control/runs/${run}/commands?q=ignored`);
+  await get(`/control/runs/${run}/files?q=src%2Fup&limit=8&token=x`);
+  assert.deepEqual(seen, [
+    `GET /control/v1/runs/${run}/commands`,
+    `GET /control/v1/runs/${run}/files?q=src%2Fup&limit=8`,
+  ]);
+});
+
 test('cross-site, non-JSON, unknown, and unlisted requests never reach the daemon', async () => {
   const proxy = new RunsProxy(on, 'http://daemon.test', host(never));
   const cases: [Request, number][] = [

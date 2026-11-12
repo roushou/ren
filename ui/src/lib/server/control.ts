@@ -68,7 +68,8 @@ export interface ControlHost {
   readToken(path: string): Promise<string>;
 }
 
-type Route = { method: 'GET' | 'POST'; feed: boolean };
+/** `query`: the query parameters forwarded; every other one is dropped. */
+type Route = { method: 'GET' | 'POST'; feed: boolean; query?: readonly string[] };
 
 const runId = '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}';
 /** Approval ids are the client's own; kept to URL-safe text as browsers encode it. */
@@ -81,6 +82,14 @@ const routes: { pattern: RegExp; route: Route }[] = [
   {
     pattern: /^\/control\/runs\/clients\/(claude_code|codex|pi|opencode)\/models$/,
     route: { method: 'GET', feed: false },
+  },
+  {
+    pattern: new RegExp(`^/control/runs/${runId}/commands$`),
+    route: { method: 'GET', feed: false },
+  },
+  {
+    pattern: new RegExp(`^/control/runs/${runId}/files$`),
+    route: { method: 'GET', feed: false, query: ['q', 'limit'] },
   },
   {
     pattern: new RegExp(`^/control/runs/${runId}/(?:prompt|interrupt|stop|unqueue|settings)$`),
@@ -147,6 +156,10 @@ export class RunsProxy {
     }
     if (token === '') return RunsProxy.#refuse(503, 'no_control_token');
     const target = new URL(url.pathname.replace(/^\/control\//, '/control/v1/'), this.#origin);
+    for (const name of route.query ?? []) {
+      const value = url.searchParams.get(name);
+      if (value !== null) target.searchParams.set(name, value);
+    }
     const timeout = AbortSignal.timeout(30_000);
     try {
       // Global fetch: no browser cookies, credentials, or Origin are forwarded.
