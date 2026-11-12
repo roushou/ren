@@ -105,6 +105,26 @@ fn the_help_lists_the_keys_and_closes() {
 }
 
 #[test]
+fn ctrl_c_quits_only_when_pressed_twice_in_a_row() {
+    let mut tui = Tui::new(SIZE);
+    let _ = tui.apply(watched());
+    // Once: a word in the key bar, and nothing else.
+    assert_eq!(tui.press(Key::Interrupt), Vec::new());
+    let mut text = String::new();
+    let buffer = drawn(&tui, SIZE, &Theme::default());
+    for y in 0..SIZE.height {
+        for x in 0..SIZE.width {
+            text.push_str(buffer[(x, y)].symbol());
+        }
+    }
+    assert!(text.contains("press ctrl-c again to quit"), "{text}");
+    // Another key in between starts over.
+    let _ = tui.press(Key::Char('j'));
+    assert_eq!(tui.press(Key::Interrupt), Vec::new());
+    assert_eq!(tui.press(Key::Interrupt), vec![Out::Quit]);
+}
+
+#[test]
 fn tiny_terminals_draw_without_panicking() {
     for (width, height) in [(0, 0), (1, 1), (2, 1), (10, 3), (20, 2), (57, 11), (40, 30)] {
         let size = Size { width, height };

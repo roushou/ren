@@ -20,9 +20,9 @@ impl Help {
     /// It closes, previews themes, and quits; other keys do nothing.
     pub fn press(&self, key: Key) -> Vec<Action> {
         match key {
-            Key::Char('?') | Key::Esc => vec![Action::Pop],
+            Key::Char('?') | Key::Esc | Key::Interrupt => vec![Action::Pop],
             Key::Char('t') => vec![Action::CycleTheme],
-            Key::Char('q') | Key::Interrupt => vec![Action::Quit],
+            Key::Char('q') => vec![Action::Quit],
             Key::Char(_)
             | Key::Tab
             | Key::BackTab

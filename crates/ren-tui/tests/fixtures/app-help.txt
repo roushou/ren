@@ -21,10 +21,10 @@
                            │ pgdn        scroll it down                                    │
                            │ t           next theme: terminal, dark, light (not saved)     │
                            │ ?           these keys                                        │
-                           │ q ctrl-c    quit (runs keep going)                            │
+                           │ q           quit (runs keep going)                            │
+                           │ ctrl-c ×2   quit, pressed twice in a row                      │
                            │ 1–9         jump to that session in the list                  │
                            │ ctrl-p/n    while writing: the messages sent before and after │
                            └───────────────────────────────────────────────────────────────┘
-                              │
                               │
  y allow · a allow for the run · d deny · D deny and stop · i reply instead                       ? keys │ 00:00:00 UTC

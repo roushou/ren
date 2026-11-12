@@ -55,6 +55,8 @@ pub(crate) struct Main {
     /// Whether the operator chose the selection; until then it follows
     /// the top of the list, what needs you first.
     chosen: bool,
+    /// Ctrl-C was pressed once: pressed again, right away, it quits.
+    leaving: bool,
 }
 
 /// Which side has the keys.
@@ -111,6 +113,8 @@ enum Act {
     Theme,
     Help,
     Quit,
+    /// Ctrl-C: quits when pressed twice in a row, so a stray press does not.
+    Leave,
 }
 
 impl Act {
@@ -236,10 +240,16 @@ impl Act {
             command: Self::Help,
         },
         Bind {
-            keys: &[Key::Char('q'), Key::Interrupt],
-            label: "q ctrl-c",
+            keys: &[Key::Char('q')],
+            label: "q",
             does: "quit (runs keep going)",
             command: Self::Quit,
+        },
+        Bind {
+            keys: &[Key::Interrupt],
+            label: "ctrl-c ×2",
+            does: "quit, pressed twice in a row",
+            command: Self::Leave,
         },
     ]);
 }
@@ -364,6 +374,17 @@ impl Main {
     }
 
     pub fn press(&mut self, key: Key, ctx: &mut Ctx<'_>) -> Vec<Action> {
+        // Ctrl-C quits only when pressed again right away.
+        let leaving = std::mem::take(&mut self.leaving);
+        if key == Key::Interrupt && self.mode == Mode::Normal {
+            if leaving {
+                return vec![Action::Quit];
+            }
+            self.leaving = true;
+            return vec![Action::Say(Notice::info(
+                "press ctrl-c again to quit · runs keep going",
+            ))];
+        }
         match self.mode {
             Mode::Writing => self.write(key, ctx),
             Mode::Searching => self.search(key, ctx),
@@ -438,6 +459,8 @@ impl Main {
             Act::Theme => return vec![Action::CycleTheme],
             Act::Help => return vec![Action::Help],
             Act::Quit => return vec![Action::Quit],
+            // Taken in `press`, before any key is acted on.
+            Act::Leave => {}
         }
         Vec::new()
     }
@@ -550,7 +573,10 @@ impl Main {
                     return self.act(if key == Key::Down { Act::Down } else { Act::Up }, ctx);
                 }
             }
-            Key::Interrupt => return vec![Action::Quit],
+            Key::Interrupt => {
+                self.filter.clear();
+                self.mode = Mode::Normal;
+            }
             Key::Tab
             | Key::BackTab
             | Key::Left

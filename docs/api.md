@@ -56,7 +56,8 @@ the bar at the bottom.
 - `n` opens the new-run form: type to find a project, pick the client, write
   the first prompt, and Enter starts it. `x` interrupts a turn, `S` stops a
   run's process, `t` previews the next theme, `?` lists every key, and `q`
-  (or Ctrl-C) quits, leaving runs running.
+  quits, leaving runs running; Ctrl-C quits only when pressed twice in a row,
+  so a stray press does not.
 
 A turn's live copy gives way to its recorded copy once the turn is recorded.
 Live updates are not stored, so a run selected mid-turn shows that turn
