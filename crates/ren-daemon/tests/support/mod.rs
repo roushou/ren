@@ -12,7 +12,7 @@ use ren_gateway::{
     Build, ControlToken, Gateway, Ingress, IngressError, ManagementSetup, ReqwestUpstream,
     Shutdown, Stopped, Upstream, control::Controls,
 };
-use ren_harness::{drive::LineLimit, endpoint::GatewayEndpoint};
+use ren_harness::{endpoint::GatewayEndpoint, lines::LineLimit};
 use ren_protocol::{direction::Direction, label::Stored};
 use ren_recorder::{
     Recorder, RecorderSetup,

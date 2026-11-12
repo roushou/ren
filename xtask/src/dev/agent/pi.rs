@@ -330,8 +330,11 @@ mod tests {
     fn listed(
         harness: ren_harness::Harness,
         mut answer: impl FnMut(&Value) -> Vec<Value>,
-    ) -> Vec<ren_harness::drive::Model> {
-        use ren_harness::drive::{Framed, Listing, ModelListing};
+    ) -> Vec<ren_harness::models::Model> {
+        use ren_harness::{
+            lines::Framed,
+            models::{Listing, ModelListing},
+        };
         let (mut listing, mut lines) = ModelListing::open(harness, "0.1.0").unwrap();
         for _ in 0..8 {
             let mut next = Vec::new();
@@ -359,6 +362,9 @@ mod tests {
         });
         assert_eq!(models.len(), 6);
         assert_eq!(models[0].id.as_str(), "anthropic/dev-large-1");
-        assert_eq!(models[0].choice, ren_harness::drive::DefaultChoice::Default);
+        assert_eq!(
+            models[0].choice,
+            ren_harness::models::DefaultChoice::Default
+        );
     }
 }

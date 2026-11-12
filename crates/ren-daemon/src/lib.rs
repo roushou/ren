@@ -17,8 +17,8 @@ use ren_gateway::{
 };
 use ren_gateway::{IngressError, UpstreamConfigError};
 use ren_harness::{
-    drive::LineLimit,
     endpoint::{GatewayEndpoint, GatewayEndpointError},
+    lines::LineLimit,
 };
 use ren_recorder::CaptureOptionsError;
 use ren_recorder::secrets::SecretScanner;

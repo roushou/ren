@@ -20,7 +20,9 @@ use axum::{
 use http::{HeaderMap, StatusCode};
 use ren_harness::{
     Harness,
-    drive::{ApprovalId, ApprovalPolicy, Decision, Effort, ModelId, Prompt, RunSettings},
+    drive::{ApprovalId, Decision, Prompt},
+    models::ModelId,
+    settings::{ApprovalPolicy, Effort, RunSettings},
 };
 use ren_protocol::native::NativeThreadId;
 use ren_recorder::id::RunId;

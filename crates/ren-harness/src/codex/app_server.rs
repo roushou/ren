@@ -10,11 +10,15 @@
 //! tokens, tool calls, and elicitation are refused: the client keeps its own
 //! sign-in, and Ren provides no tools.
 
-use crate::drive::{
-    ApprovalAsk, ApprovalId, ApprovalPolicy, CommandRefused, Decision, DefaultChoice, DriveCommand,
-    DriveEvent, DriveItem, Effort, Framed, ItemId, ItemKind, ItemPhase, ItemRead, ItemStatus, Line,
-    Listing, Model, ModelId, ModelListing, Opening, Prompt, RawLine, Received, RequestKind, Retry,
-    RunSettings, TurnEnd, Unreadable,
+use crate::{
+    drive::{
+        ApprovalAsk, ApprovalId, CommandRefused, Decision, DriveCommand, DriveEvent, DriveItem,
+        ItemId, ItemKind, ItemPhase, ItemRead, ItemStatus, Opening, Prompt, RawLine, Received,
+        RequestKind, Retry, TurnEnd, Unreadable,
+    },
+    lines::{Framed, Line},
+    models::{DefaultChoice, Listing, Model, ModelId, ModelListing},
+    settings::{ApprovalPolicy, Effort, RunSettings},
 };
 use ren_protocol::native::{NativeThreadId, NativeTurnId};
 use serde::Deserialize;
@@ -806,12 +810,14 @@ impl CodexModels {
 #[cfg(test)]
 mod tests {
     use super::CodexAppServer;
-    use crate::drive::{
-        ApprovalAsk, ApprovalId, CommandRefused, Decision, DriveCommand, DriveEvent, Framed,
-        ItemKind, ItemPhase, ItemRead, ItemStatus, Line, Prompt, RequestKind, Retry, TurnEnd,
-        Unreadable,
-    };
     use crate::drive::{Opening, Received};
+    use crate::{
+        drive::{
+            ApprovalAsk, ApprovalId, CommandRefused, Decision, DriveCommand, DriveEvent, ItemKind,
+            ItemPhase, ItemRead, ItemStatus, Prompt, RequestKind, Retry, TurnEnd, Unreadable,
+        },
+        lines::{Framed, Line},
+    };
     use serde_json::{Value, json};
 
     const THREAD: &str = "0190f3a0-0000-7000-8000-000000000001";
@@ -838,7 +844,7 @@ mod tests {
             Opening::New {
                 cwd: "/work/acme".into(),
                 id: named(),
-                settings: crate::drive::RunSettings::default(),
+                settings: crate::settings::RunSettings::default(),
             },
             "0.1.0",
         );
@@ -880,7 +886,7 @@ mod tests {
             Opening::New {
                 cwd: "/w".into(),
                 id: named(),
-                settings: crate::drive::RunSettings::default(),
+                settings: crate::settings::RunSettings::default(),
             },
             "0.1.0",
         );
@@ -895,7 +901,7 @@ mod tests {
             Opening::Resume {
                 thread,
                 cwd: "/w".into(),
-                settings: crate::drive::RunSettings::default(),
+                settings: crate::settings::RunSettings::default(),
             },
             "0.1.0",
         );

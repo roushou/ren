@@ -19,7 +19,8 @@ use crate::Size;
 use desk::{Attention, Desk, Run};
 use ren_harness::{
     Harness,
-    drive::{self, ApprovalId, ApprovalPolicy, Decision, Prompt, RunSettings},
+    drive::{ApprovalId, Decision, Prompt},
+    settings::{ApprovalPolicy, RunSettings},
 };
 use ren_protocol::label::{Labeled, Stored};
 use ren_protocol::native::NativeThreadId;
@@ -58,7 +59,7 @@ pub enum Input {
     /// The models a client offers, as it lists them, or why it did not.
     Models {
         harness: Harness,
-        models: Result<Vec<drive::Model>, String>,
+        models: Result<Vec<ren_harness::models::Model>, String>,
     },
     /// One update from the run feed.
     Update(RunUpdate),
@@ -152,7 +153,7 @@ pub(crate) enum Projects {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Offered {
     Asked,
-    Listed(Vec<drive::Model>),
+    Listed(Vec<ren_harness::models::Model>),
     Failed(String),
 }
 

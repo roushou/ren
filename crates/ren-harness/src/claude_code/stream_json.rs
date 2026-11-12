@@ -15,11 +15,15 @@
 //! Claude Code reports no turn identifier that matches the prompt id its
 //! model requests carry, so a driven turn's id is its prompt's message id.
 
-use crate::drive::{
-    ApprovalAsk, ApprovalId, ApprovalPolicy, CommandRefused, Decision, DefaultChoice, DriveCommand,
-    DriveEvent, DriveItem, Framed, ItemId, ItemKind, ItemPhase, ItemRead, ItemStatus, Line,
-    Listing, Model, ModelId, ModelListing, Opening, Prompt, RawLine, Received, RequestKind, Retry,
-    RunSettings, TurnEnd, Unreadable,
+use crate::{
+    drive::{
+        ApprovalAsk, ApprovalId, CommandRefused, Decision, DriveCommand, DriveEvent, DriveItem,
+        ItemId, ItemKind, ItemPhase, ItemRead, ItemStatus, Opening, Prompt, RawLine, Received,
+        RequestKind, Retry, TurnEnd, Unreadable,
+    },
+    lines::{Framed, Line},
+    models::{DefaultChoice, Listing, Model, ModelId, ModelListing},
+    settings::{ApprovalPolicy, RunSettings},
 };
 use ren_protocol::native::{NativeThreadId, NativeTurnId};
 use serde_json::{Value, json};
@@ -958,10 +962,13 @@ impl ClaudeModels {
 #[cfg(test)]
 mod tests {
     use super::ClaudeStreamJson;
-    use crate::drive::{
-        ApprovalAsk, ApprovalId, CommandRefused, Decision, DriveCommand, DriveEvent, Framed,
-        ItemKind, ItemPhase, ItemRead, ItemStatus, Line, Opening, Prompt, Received, RequestKind,
-        Retry, TurnEnd, Unreadable,
+    use crate::{
+        drive::{
+            ApprovalAsk, ApprovalId, CommandRefused, Decision, DriveCommand, DriveEvent, ItemKind,
+            ItemPhase, ItemRead, ItemStatus, Opening, Prompt, Received, RequestKind, Retry,
+            TurnEnd, Unreadable,
+        },
+        lines::{Framed, Line},
     };
     use ren_protocol::native::NativeThreadId;
     use serde_json::{Value, json};
@@ -992,7 +999,7 @@ mod tests {
         let (mut codec, first) = ClaudeStreamJson::open(&Opening::New {
             cwd: "/work/acme".into(),
             id: session(),
-            settings: crate::drive::RunSettings::default(),
+            settings: crate::settings::RunSettings::default(),
         });
         assert_eq!(
             sent(&first),
@@ -1340,7 +1347,7 @@ mod tests {
         let (mut codec, _) = ClaudeStreamJson::open(&Opening::Resume {
             thread: session(),
             cwd: "/w".into(),
-            settings: crate::drive::RunSettings::default(),
+            settings: crate::settings::RunSettings::default(),
         });
         let refused = feed(
             &mut codec,

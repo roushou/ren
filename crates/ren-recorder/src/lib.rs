@@ -206,7 +206,7 @@ impl Recorder {
         run: crate::id::RunId,
         harness: ren_harness::Harness,
         workdir: String,
-        settings: ren_harness::drive::RunSettings,
+        settings: ren_harness::settings::RunSettings,
     ) -> Result<RunTap, RunUnrecorded> {
         RunTap::start(self.shared.clone(), run, harness, workdir, settings)
     }

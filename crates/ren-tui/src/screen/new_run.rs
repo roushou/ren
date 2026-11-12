@@ -25,8 +25,10 @@ use crate::ui::{
     Anchor, Bar, Emphasis, Ink, Keep, Line, Place, Rule, Size as Fit, Span, Text, View,
 };
 use ren_harness::Harness;
-use ren_harness::drive::{
-    self, ApprovalPolicy, DefaultChoice, Effort, ModelId, Prompt, RunSettings,
+use ren_harness::{
+    drive::Prompt,
+    models::{DefaultChoice, ModelId},
+    settings::{ApprovalPolicy, Effort, RunSettings},
 };
 use ren_supervisor::{Client, ClientStatus, Project, ProjectGit};
 
@@ -137,7 +139,11 @@ impl NewRun {
 
     /// The efforts a choice in the model list takes: the default's are its
     /// model's, when the client says which that is.
-    fn efforts<'a>(&self, choice: Option<&'a drive::Model>, model: &'a Model) -> &'a [Effort] {
+    fn efforts<'a>(
+        &self,
+        choice: Option<&'a ren_harness::models::Model>,
+        model: &'a Model,
+    ) -> &'a [Effort] {
         choice
             .or_else(|| self.fallback(model))
             .map_or(&[], |offered| offered.efforts.as_slice())
@@ -183,7 +189,7 @@ impl NewRun {
     }
 
     /// The client's models, as listed so far.
-    fn listed<'a>(&self, model: &'a Model) -> &'a [drive::Model] {
+    fn listed<'a>(&self, model: &'a Model) -> &'a [ren_harness::models::Model] {
         match model.models(self.client) {
             Some(Offered::Listed(models)) => models,
             Some(Offered::Asked | Offered::Failed(_)) | None => &[],
@@ -193,9 +199,13 @@ impl NewRun {
     /// The models whose name, id, provider, or description holds `search`,
     /// ignoring case, by provider in the order the client lists them; after
     /// the default, which is always first.
-    fn model_choices<'a>(&self, search: &str, model: &'a Model) -> Vec<Option<&'a drive::Model>> {
+    fn model_choices<'a>(
+        &self,
+        search: &str,
+        model: &'a Model,
+    ) -> Vec<Option<&'a ren_harness::models::Model>> {
         let search = search.to_lowercase();
-        let matching: Vec<&drive::Model> = self
+        let matching: Vec<&ren_harness::models::Model> = self
             .listed(model)
             .iter()
             .filter(|offered| {
@@ -229,7 +239,7 @@ impl NewRun {
     }
 
     /// The model the client uses when none is chosen, when it says.
-    fn fallback<'a>(&self, model: &'a Model) -> Option<&'a drive::Model> {
+    fn fallback<'a>(&self, model: &'a Model) -> Option<&'a ren_harness::models::Model> {
         self.listed(model)
             .iter()
             .find(|offered| offered.choice == DefaultChoice::Default)

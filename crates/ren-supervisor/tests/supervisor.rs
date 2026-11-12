@@ -11,9 +11,10 @@
 
 use ren_harness::{
     Harness,
-    drive::{ApprovalId, Decision, LineLimit, Prompt},
+    drive::{ApprovalId, Decision, Prompt},
     endpoint::GatewayEndpoint,
     launch::LaunchPlan,
+    lines::LineLimit,
 };
 use ren_protocol::label::Stored;
 use ren_recorder::{
@@ -886,7 +887,7 @@ async fn a_clients_models_are_listed_once_and_kept() {
     let first = first.unwrap();
     assert_eq!(first.len(), 1);
     assert_eq!(first[0].id.as_str(), "gpt-fast");
-    assert_eq!(first[0].choice, ren_harness::drive::DefaultChoice::Default);
+    assert_eq!(first[0].choice, ren_harness::models::DefaultChoice::Default);
     assert_eq!(second.unwrap(), first);
     // Asked again, the kept answer: one listing process in all, in a root.
     assert_eq!(supervisor.models(Harness::Codex).await.unwrap(), first);
@@ -920,7 +921,7 @@ async fn a_run_starts_with_its_chosen_settings() {
     let supervised = supervise(host).await;
     let mut start = starting(Harness::ClaudeCode, "/work/acme", Conversation::New, None);
     start.settings.model = Some("small".parse().unwrap());
-    start.settings.approvals = Some(ren_harness::drive::ApprovalPolicy::Auto);
+    start.settings.approvals = Some(ren_harness::settings::ApprovalPolicy::Auto);
     supervised.supervisor.start(start).await.unwrap();
     let (arguments, _) = spawned.lock().unwrap()[0].clone();
     assert_eq!(
@@ -935,7 +936,7 @@ async fn a_run_starts_with_its_chosen_settings() {
     );
     // Pi asks for nothing, so it takes no approval policy.
     let mut pi = starting(Harness::Pi, "/work/acme", Conversation::New, None);
-    pi.settings.approvals = Some(ren_harness::drive::ApprovalPolicy::Ask);
+    pi.settings.approvals = Some(ren_harness::settings::ApprovalPolicy::Ask);
     assert!(matches!(
         supervised.supervisor.start(pi).await,
         Err(StartError::NoApprovals(Harness::Pi))
@@ -957,7 +958,7 @@ fn starting(
         harness,
         dir: dir.into(),
         conversation,
-        settings: ren_harness::drive::RunSettings::default(),
+        settings: ren_harness::settings::RunSettings::default(),
         first,
     }
 }

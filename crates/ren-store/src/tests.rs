@@ -1617,7 +1617,7 @@ mod history {
                 RunFact::Started {
                     harness: ren_harness::Harness::Codex,
                     workdir: "/work/acme".into(),
-                    settings: ren_harness::drive::RunSettings::default(),
+                    settings: ren_harness::settings::RunSettings::default(),
                 },
                 RunFact::Opened {
                     thread: NativeThreadId::new(Uuid::from_u128(native)).unwrap(),
@@ -1857,7 +1857,7 @@ mod conversation {
                 RunFact::Started {
                     harness: ren_harness::Harness::ClaudeCode,
                     workdir: "/work/acme".into(),
-                    settings: ren_harness::drive::RunSettings::default(),
+                    settings: ren_harness::settings::RunSettings::default(),
                 },
                 RunFact::Opened {
                     thread: NativeThreadId::new(Uuid::from_u128(thread)).unwrap(),

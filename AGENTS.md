@@ -187,24 +187,33 @@ dependencies under "Crates" below. Read the code for current module ownership.
   manifest allows only pure dependencies, and a test keeps its sources free of
   I/O.
 - `crates/ren-harness`: the harnesses, with `Harness` (`ClaudeCode`, `Codex`, `Pi`, `OpenCode`)
-  as its primary type: attribution (`attribution`, with its private `headers`
-  parser implementing `Harness::attribution`), session launch plans
-  (`Harness::launch`, and `Harness::drive` for Codex's, Claude Code's, and Pi's structured modes), the bundled Pi extension cache (`pi`), the gateway URL a
-  harness is pointed at and the `UserToken` it presents there (`endpoint`),
-  `HostEnv` (`host`), the host environment
-  that launching and configuration read, and what each harness's tools and
-  messages mean for activity (`tools`: effects, prompt text, exit codes, why a
-  client sent a call (`CallPurpose`: work, or Claude Code's quota probe), and
-  `InterpretedCall`, a `Reading` read as its client uses it), and driving a
-  client through its structured mode (`drive`: pure line framing, the
-  `DriveCommand` and `DriveEvent` vocabulary, with `ItemRead`, what Ren reads
-  of each item for every client, and the `Driver` over each client's codec:
-  `CodexAppServer` for `codex app-server`, `ClaudeStreamJson` for `claude -p`
-  in stream-json, `PiRpc` for `pi --mode rpc`; and `model`: the `Model`s a
-  client lists, by `ModelId`, read by `ModelListing` from a short process
-  started by `Harness::list_models`, and a run's `RunSettings`: its model,
-  `Effort`, and `ApprovalPolicy`). It performs filesystem and process I/O
-  but has no async runtime, HTTP, database, or CLI dependency.
+  as its primary type. Each client is one module holding everything Ren
+  knows of it: `codex` (the `CodexAppServer` codec for `codex app-server`
+  and its model listing, its launch plan, its headers, and `CodexTool`),
+  `claude_code` (`ClaudeStreamJson` for `claude -p` in stream-json, and the
+  same parts), `pi` (`PiRpc` for `pi --mode rpc`, the bundled extension's
+  `PiCache`, and the same parts), and `opencode` (launch, headers, tools; no
+  structured mode yet). Each fills the shared types the rest of Ren reads,
+  and `Harness` dispatches to them by `match`; there is no per-client trait.
+  The shared types: attribution (`attribution`: `Attribution` and the hint
+  types, with `HeaderReading`, which each client's headers extend, behind
+  `Harness::attribution`); launch plans (`launch`: `LaunchPlan`, each client
+  a named constructor, behind `Harness::launch`, `Harness::drive`, and
+  `Harness::list_models`); what tools and messages mean for activity
+  (`tools`: effects, the user context each client adds, exit codes, why a
+  client sent a call (`CallPurpose`: work, or Claude Code's quota probe),
+  and `InterpretedCall`, a `Reading` read as its client uses it); driving a
+  client through its structured mode (`drive`: the `DriveCommand` and
+  `DriveEvent` vocabulary, with `ItemRead`, what Ren reads of each item for
+  every client, and the `Driver` over each client's codec), its pure line
+  framing (`lines`), the models a client lists (`models`: `Model` by
+  `ModelId`, read by `ModelListing` from a short listing process), and a
+  run's `RunSettings` (`settings`: its model, `Effort`, and
+  `ApprovalPolicy`); the gateway URL a harness is pointed at and the
+  `UserToken` it presents there (`endpoint`); and `HostEnv` (`host`), the
+  host environment that launching and configuration read. It performs
+  filesystem and process I/O but has no async runtime, HTTP, database, or
+  CLI dependency.
 - `crates/ren-recorder`: the bounded capture queue between forwarding and
   storage, with `Recorder` as its primary type. `CallTap` (and `ChannelTap` for a
   WebSocket's end) is the forwarding side, `RunTap` records an agent run's

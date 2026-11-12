@@ -26,7 +26,7 @@ fn idle_run() -> RunSnapshot {
         state: RunState::Idle {
             thread: NativeThreadId::new(uuid::Uuid::from_u128(0x77)).unwrap(),
         },
-        settings: ren_harness::drive::RunSettings::default(),
+        settings: ren_harness::settings::RunSettings::default(),
     }
 }
 

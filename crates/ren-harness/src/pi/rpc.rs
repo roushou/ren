@@ -14,10 +14,14 @@
 //! with. Dialogs an extension opens (`extension_ui_request`) are cancelled:
 //! Ren provides no interface for them.
 
-use crate::drive::{
-    CommandRefused, DefaultChoice, DriveCommand, DriveEvent, DriveItem, Effort, Framed, ItemId,
-    ItemKind, ItemPhase, ItemRead, ItemStatus, Line, Listing, Model, ModelId, ModelListing,
-    Opening, Prompt, RawLine, Received, RequestKind, Retry, TurnEnd, Unreadable,
+use crate::{
+    drive::{
+        CommandRefused, DriveCommand, DriveEvent, DriveItem, ItemId, ItemKind, ItemPhase, ItemRead,
+        ItemStatus, Opening, Prompt, RawLine, Received, RequestKind, Retry, TurnEnd, Unreadable,
+    },
+    lines::{Framed, Line},
+    models::{DefaultChoice, Listing, Model, ModelId, ModelListing},
+    settings::Effort,
 };
 use ren_protocol::native::{NativeThreadId, NativeTurnId};
 use serde_json::{Value, json};
@@ -719,9 +723,12 @@ impl PiModels {
 #[cfg(test)]
 mod tests {
     use super::PiRpc;
-    use crate::drive::{
-        CommandRefused, DriveCommand, DriveEvent, Framed, ItemKind, ItemPhase, ItemRead,
-        ItemStatus, Line, Opening, Prompt, Received, RequestKind, Retry, TurnEnd, Unreadable,
+    use crate::{
+        drive::{
+            CommandRefused, DriveCommand, DriveEvent, ItemKind, ItemPhase, ItemRead, ItemStatus,
+            Opening, Prompt, Received, RequestKind, Retry, TurnEnd, Unreadable,
+        },
+        lines::{Framed, Line},
     };
     use ren_protocol::native::{NativeThreadId, NativeTurnId};
     use serde_json::{Value, json};
@@ -759,7 +766,7 @@ mod tests {
         Opening::New {
             cwd: "/work/acme".into(),
             id: session(),
-            settings: crate::drive::RunSettings::default(),
+            settings: crate::settings::RunSettings::default(),
         }
     }
 
@@ -816,7 +823,7 @@ mod tests {
             PiRpc::arguments(&Opening::Resume {
                 thread: session(),
                 cwd: "/work/acme".into(),
-                settings: crate::drive::RunSettings::default(),
+                settings: crate::settings::RunSettings::default(),
             }),
             ["--mode", "rpc", "--session-id", SESSION]
         );

@@ -6,8 +6,9 @@ use crate::host::AgentProcess;
 use futures_util::{FutureExt, future::BoxFuture, stream::FuturesUnordered};
 use ren_harness::{
     Harness,
-    drive::{Framed, Line, LineLimit, Lines, Listing, Model, ModelListing},
     launch::NotDrivable,
+    lines::{Framed, Line, LineLimit, Lines},
+    models::{Listing, Model, ModelListing},
 };
 use std::{collections::HashMap, time::Duration};
 use tokio::{

@@ -5,7 +5,8 @@ use super::transcript::Transcript;
 use crate::ui::Text;
 use ren_harness::{
     Harness,
-    drive::{ApprovalAsk, ApprovalId, ApprovalPolicy, Prompt, RunSettings},
+    drive::{ApprovalAsk, ApprovalId, Prompt},
+    settings::{ApprovalPolicy, RunSettings},
 };
 use ren_protocol::label::Stored;
 use ren_protocol::native::NativeThreadId;

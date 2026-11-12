@@ -8,7 +8,7 @@ codex::CodexTool: shell container.exec exec_command local_shell_call shell_call 
 pi::PiTool: read write edit bash grep find ls
 opencode::OpenCodeTool: shell read write edit patch glob grep subagent webfetch websearch
 drive::Decision: accept accept_for_session decline cancel
-drive::DefaultChoice: default other
-drive::Effort: off minimal low medium high xhigh max
-drive::ApprovalPolicy: ask edits auto
+models::DefaultChoice: default other
+settings::Effort: off minimal low medium high xhigh max
+settings::ApprovalPolicy: ask edits auto
 drive::RequestKind: initialize thread_start thread_resume turn_start turn_interrupt

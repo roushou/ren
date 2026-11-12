@@ -6,8 +6,11 @@
 use crate::{StoreError, query::Cursor};
 use ren_harness::Harness;
 use ren_harness::attribution::{HintIssue, HintSource};
-use ren_harness::drive::{ApprovalPolicy, DriveEvent, Effort};
 use ren_harness::tools::CallPurpose;
+use ren_harness::{
+    drive::DriveEvent,
+    settings::{ApprovalPolicy, Effort},
+};
 use ren_protocol::{
     direction::Direction,
     encoding::{ResponseEncoding, ResponseFormat},

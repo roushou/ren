@@ -145,7 +145,7 @@ impl Harness {
     }
 
     /// How to start this harness only to list its models
-    /// (`drive::ModelListing`): its structured mode with no conversation.
+    /// (`models::ModelListing`): its structured mode with no conversation.
     pub fn list_models(self, gateway: &GatewayEndpoint) -> Result<LaunchPlan, NotDrivable> {
         self.structured(gateway, Structured::Listing)
     }
@@ -321,7 +321,7 @@ mod tests {
         Opening::New {
             cwd: "/work/acme".into(),
             id: NativeThreadId::new(uuid::Uuid::parse_str(SESSION).unwrap()).unwrap(),
-            settings: crate::drive::RunSettings::default(),
+            settings: crate::settings::RunSettings::default(),
         }
     }
 
@@ -426,7 +426,7 @@ mod tests {
                 &Opening::Resume {
                     thread: NativeThreadId::new(uuid::Uuid::parse_str(SESSION).unwrap()).unwrap(),
                     cwd: "/work/acme".into(),
-                    settings: crate::drive::RunSettings::default(),
+                    settings: crate::settings::RunSettings::default(),
                 },
             )
             .unwrap()

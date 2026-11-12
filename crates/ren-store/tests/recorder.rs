@@ -727,10 +727,10 @@ async fn a_runs_lifecycle_is_recorded_and_read_back() {
             run,
             ren_harness::Harness::Codex,
             "/work/acme".into(),
-            ren_harness::drive::RunSettings {
+            ren_harness::settings::RunSettings {
                 model: Some("gpt-deep".parse().unwrap()),
-                effort: Some(ren_harness::drive::Effort::High),
-                approvals: Some(ren_harness::drive::ApprovalPolicy::Edits),
+                effort: Some(ren_harness::settings::Effort::High),
+                approvals: Some(ren_harness::settings::ApprovalPolicy::Edits),
             },
         )
         .unwrap();
@@ -770,7 +770,7 @@ async fn a_runs_lifecycle_is_recorded_and_read_back() {
             unfinished,
             ren_harness::Harness::Codex,
             "/work/b".into(),
-            ren_harness::drive::RunSettings::default(),
+            ren_harness::settings::RunSettings::default(),
         )
         .unwrap();
     drop(left);
@@ -791,11 +791,11 @@ async fn a_runs_lifecycle_is_recorded_and_read_back() {
     assert_eq!(ended.model.as_deref(), Some("gpt-deep"));
     assert_eq!(
         ended.effort,
-        Some(Stored::Known(ren_harness::drive::Effort::High))
+        Some(Stored::Known(ren_harness::settings::Effort::High))
     );
     assert_eq!(
         ended.approvals,
-        Some(Stored::Known(ren_harness::drive::ApprovalPolicy::Edits))
+        Some(Stored::Known(ren_harness::settings::ApprovalPolicy::Edits))
     );
     assert_eq!(ended.thread, Some(thread.to_string()));
     let session = reader.call(call_id).await.unwrap().call.session;

@@ -7,7 +7,7 @@ use crate::{
     view::{DiskUsage, FileUsage},
 };
 use bytes::Bytes;
-use ren_harness::drive::{DriveEvent, ModelId};
+use ren_harness::{drive::DriveEvent, models::ModelId};
 use ren_protocol::{
     direction::Direction,
     label::{Labeled, Stored},

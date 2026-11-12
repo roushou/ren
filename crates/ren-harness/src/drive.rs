@@ -7,17 +7,11 @@
 //! stdin out; lines from its stdout in, events and replies out. Framing
 //! (`lines`) knows nothing about JSON.
 
-mod lines;
-mod model;
-mod settings;
-
-pub use lines::{Framed, Line, LineLimit, Lines};
-pub use model::{BlankModelId, DefaultChoice, Listing, Model, ModelId, ModelListing};
-pub use settings::{ApprovalPolicy, Effort, RunSettings};
-
 use crate::claude_code::ClaudeStreamJson;
 use crate::codex::CodexAppServer;
+use crate::lines::{Framed, Line};
 use crate::pi::PiRpc;
+use crate::settings::RunSettings;
 use crate::{Harness, launch::NotDrivable};
 
 use ren_protocol::native::{NativeThreadId, NativeTurnId};

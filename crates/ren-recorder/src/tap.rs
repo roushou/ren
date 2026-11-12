@@ -17,11 +17,7 @@ use crate::{
     routing::{ConfigRevision, OperatorRevision, UpstreamId},
 };
 use bytes::Bytes;
-use ren_harness::{
-    Harness,
-    attribution::Attribution,
-    drive::{DriveEvent, RunSettings},
-};
+use ren_harness::{Harness, attribution::Attribution, drive::DriveEvent, settings::RunSettings};
 use ren_protocol::{
     direction::Direction,
     encoding::{ResponseEncoding, ResponseFormat},

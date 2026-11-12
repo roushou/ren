@@ -1,7 +1,7 @@
 //! The clients a run can be started with, as this host has them: ready,
 //! not installed, or not one Ren can drive yet.
 
-use ren_harness::{Harness, drive::ApprovalPolicy};
+use ren_harness::{Harness, settings::ApprovalPolicy};
 use serde::Serialize;
 use serde_with::{DeserializeFromStr, SerializeDisplay};
 use strum::{Display, EnumString, IntoStaticStr, VariantArray};

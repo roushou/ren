@@ -25,11 +25,11 @@ use futures_util::{
 };
 use ren_harness::{
     Harness,
-    drive::{
-        ApprovalPolicy, DriveEvent, Driver, Framed, Line, LineLimit, Lines, ModelListing, Opening,
-        Prompt, RunSettings,
-    },
+    drive::{DriveEvent, Driver, Opening, Prompt},
     endpoint::GatewayEndpoint,
+    lines::{Framed, Line, LineLimit, Lines},
+    models::ModelListing,
+    settings::{ApprovalPolicy, RunSettings},
 };
 use ren_protocol::label::Labeled;
 use ren_protocol::native::NativeThreadId;
@@ -318,7 +318,7 @@ impl<H: AgentHost> SupervisorTask<H> {
     fn probe(
         &self,
         harness: Harness,
-    ) -> Result<BoxFuture<'static, Result<Vec<ren_harness::drive::Model>, ModelsError>>, ModelsError>
+    ) -> Result<BoxFuture<'static, Result<Vec<ren_harness::models::Model>, ModelsError>>, ModelsError>
     {
         let plan = harness
             .list_models(&self.gateway)

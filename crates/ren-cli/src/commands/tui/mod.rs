@@ -637,10 +637,10 @@ impl<'a> Shell<'a> {
     async fn models(
         control: &ControlTarget,
         harness: ren_harness::Harness,
-    ) -> Result<Vec<ren_harness::drive::Model>, String> {
+    ) -> Result<Vec<ren_harness::models::Model>, String> {
         #[derive(serde::Deserialize)]
         struct Listed {
-            models: Vec<ren_harness::drive::Model>,
+            models: Vec<ren_harness::models::Model>,
         }
         let path = format!("runs/clients/{harness}/models");
         match control.send(Method::GET, &path, None).await {

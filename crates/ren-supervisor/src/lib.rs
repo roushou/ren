@@ -29,9 +29,12 @@ pub use workdir::{Roots, Workdir, WorkdirError};
 
 use ren_harness::{
     Harness,
-    drive::{CommandRefused, DriveEvent, LineLimit, Model, Prompt, RunSettings},
+    drive::{CommandRefused, DriveEvent, Prompt},
     endpoint::GatewayEndpoint,
     launch::NotDrivable,
+    lines::LineLimit,
+    models::Model,
+    settings::RunSettings,
 };
 use ren_protocol::native::NativeThreadId;
 use ren_recorder::{

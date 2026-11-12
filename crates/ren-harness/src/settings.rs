@@ -2,8 +2,8 @@
 //! reasons, and what it may do without asking. Each is optional: none leaves
 //! the choice to the client's own configuration.
 
-use super::ModelId;
 use crate::Harness;
+use crate::models::ModelId;
 use serde_with::{DeserializeFromStr, SerializeDisplay};
 use strum::{Display, EnumString, IntoStaticStr, VariantArray};
 

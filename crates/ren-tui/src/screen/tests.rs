@@ -77,7 +77,7 @@ fn snapshot(n: u128, harness: Harness, workdir: &str, state: RunState) -> RunSna
         harness,
         workdir: workdir.into(),
         state,
-        settings: ren_harness::drive::RunSettings::default(),
+        settings: ren_harness::settings::RunSettings::default(),
     }
 }
 
@@ -434,7 +434,7 @@ fn n_opens_the_composer_on_where_the_run_works_then_the_prompt() {
                 )
                 .unwrap()
             ),
-            settings: ren_harness::drive::RunSettings::default(),
+            settings: ren_harness::settings::RunSettings::default(),
         }]
     );
     assert!(!console.tui.overlaid());
@@ -467,29 +467,29 @@ fn clients() -> Vec<ren_supervisor::Client> {
         Client {
             harness: Harness::ClaudeCode,
             status: ClientStatus::Ready,
-            approvals: ren_harness::drive::ApprovalPolicy::offered(Harness::ClaudeCode).to_vec(),
+            approvals: ren_harness::settings::ApprovalPolicy::offered(Harness::ClaudeCode).to_vec(),
         },
         Client {
             harness: Harness::Codex,
             status: ClientStatus::Ready,
-            approvals: ren_harness::drive::ApprovalPolicy::offered(Harness::Codex).to_vec(),
+            approvals: ren_harness::settings::ApprovalPolicy::offered(Harness::Codex).to_vec(),
         },
         Client {
             harness: Harness::Pi,
             status: ClientStatus::NotInstalled,
-            approvals: ren_harness::drive::ApprovalPolicy::offered(Harness::Pi).to_vec(),
+            approvals: ren_harness::settings::ApprovalPolicy::offered(Harness::Pi).to_vec(),
         },
         Client {
             harness: Harness::OpenCode,
             status: ClientStatus::NotDrivable,
-            approvals: ren_harness::drive::ApprovalPolicy::offered(Harness::OpenCode).to_vec(),
+            approvals: ren_harness::settings::ApprovalPolicy::offered(Harness::OpenCode).to_vec(),
         },
     ]
 }
 
 /// Models as a client lists them: one is its default.
-fn models() -> Vec<ren_harness::drive::Model> {
-    let model = |id: &str, name: &str, description: &str, choice| ren_harness::drive::Model {
+fn models() -> Vec<ren_harness::models::Model> {
+    let model = |id: &str, name: &str, description: &str, choice| ren_harness::models::Model {
         id: id.parse().unwrap(),
         name: name.into(),
         description: Some(description.into()),
@@ -498,8 +498,8 @@ fn models() -> Vec<ren_harness::drive::Model> {
         efforts: vec![Effort::Low, Effort::Medium, Effort::High],
         effort: Some(Effort::Medium),
     };
-    use ren_harness::drive::DefaultChoice::{Default, Other};
-    use ren_harness::drive::Effort;
+    use ren_harness::models::DefaultChoice::{Default, Other};
+    use ren_harness::settings::Effort;
     vec![
         model("big", "Big 2", "Best for everyday, complex tasks", Default),
         model(
@@ -561,10 +561,10 @@ fn the_composer_starts_on_the_model_chosen_from_the_clients_list() {
     };
     assert_eq!(
         settings,
-        &ren_harness::drive::RunSettings {
+        &ren_harness::settings::RunSettings {
             model: Some("small".parse().unwrap()),
-            effort: Some(ren_harness::drive::Effort::Medium),
-            approvals: Some(ren_harness::drive::ApprovalPolicy::Edits),
+            effort: Some(ren_harness::settings::Effort::Medium),
+            approvals: Some(ren_harness::settings::ApprovalPolicy::Edits),
         }
     );
     // The next composer remembers the choice; a client that fails to list
@@ -685,7 +685,7 @@ fn writing_to_an_ended_run_continues_its_conversation() {
             dir: "/srv/ren".into(),
             resume: Some(thread(5)),
             prompt: Some(Prompt::parse("pick it back up".into()).unwrap()),
-            settings: ren_harness::drive::RunSettings::default(),
+            settings: ren_harness::settings::RunSettings::default(),
         }]
     );
 }
