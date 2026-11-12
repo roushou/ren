@@ -11,6 +11,7 @@
 //! sign-in, and Ren provides no tools.
 
 use crate::{
+    commands::{ClientCommand, CommandKind, Sigil},
     drive::{
         ApprovalAsk, ApprovalId, CommandRefused, Decision, DriveCommand, DriveEvent, DriveItem,
         ItemId, ItemKind, ItemPhase, ItemRead, ItemStatus, Opening, Prompt, RawLine, Received,
@@ -39,6 +40,13 @@ pub struct CodexAppServer {
     effort: Option<Effort>,
     /// Settings changed mid-run: from then on every turn asks for them.
     changed: Option<RunSettings>,
+    /// The folder the thread works in, whose skills are listed.
+    cwd: String,
+    /// The skills Codex listed for the folder.
+    skills: Vec<ClientCommand>,
+    /// Each listed skill's path, by name: a prompt naming a skill (`$name`)
+    /// sends it along, as Codex's own interface does.
+    skill_paths: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -71,6 +79,8 @@ impl CodexAppServer {
         "turn/start",
         "turn/interrupt",
         "turn/steer",
+        "skills/list",
+        "skills/changed",
         "thread/started",
         "turn/started",
         "turn/completed",
@@ -86,12 +96,17 @@ impl CodexAppServer {
     /// A codec for a freshly started server, and the first line to send it.
     /// `version` is Ren's own version, reported as the client's.
     pub fn open(opening: Opening, version: &str) -> (Self, Line) {
-        let effort = match &opening {
-            Opening::New { settings, .. } | Opening::Resume { settings, .. } => settings.effort,
+        let (effort, cwd) = match &opening {
+            Opening::New { settings, cwd, .. } | Opening::Resume { settings, cwd, .. } => {
+                (settings.effort, cwd.clone())
+            }
         };
         let mut codec = Self {
             effort,
             changed: None,
+            cwd,
+            skills: Vec::new(),
+            skill_paths: BTreeMap::new(),
             phase: Phase::Initializing(opening),
             next_request: 0,
             requests: BTreeMap::new(),
@@ -111,6 +126,12 @@ impl CodexAppServer {
             Phase::Ready(thread) => Some(thread),
             Phase::Initializing(_) | Phase::Opening => None,
         }
+    }
+
+    /// The skills a prompt can name, as Codex listed them for the thread's
+    /// folder: each is `$name` in the prompt.
+    pub fn commands(&self) -> &[ClientCommand] {
+        &self.skills
     }
 
     /// The lines that carry `command`, or why it cannot be sent now.
@@ -142,7 +163,7 @@ impl CodexAppServer {
                     json!({
                         "threadId": thread.to_string(),
                         "expectedTurnId": turn.to_string(),
-                        "input": [{ "type": "text", "text": prompt.as_str() }],
+                        "input": self.input(&prompt),
                     }),
                 )]),
                 TurnSlot::Requested => Err(CommandRefused::TurnNotStarted),
@@ -224,7 +245,7 @@ impl CodexAppServer {
                 Ok(self.request(RequestKind::TurnStart, {
                     let mut params = json!({
                         "threadId": thread.to_string(),
-                        "input": [{ "type": "text", "text": prompt.as_str() }],
+                        "input": self.input(prompt),
                     });
                     let effort = match &self.changed {
                         Some(changed) => changed.effort,
@@ -243,6 +264,79 @@ impl CodexAppServer {
         }
     }
 
+    /// A prompt as Codex takes it: its text, then each listed skill the
+    /// text names (`$name`, standing on its own), once.
+    fn input(&self, prompt: &Prompt) -> Value {
+        let mut input = vec![json!({ "type": "text", "text": prompt.as_str() })];
+        let mut named = Vec::new();
+        for word in prompt.as_str().split_whitespace() {
+            let Some(name) = word
+                .strip_prefix('$')
+                .map(|name| name.trim_end_matches(['.', ',', ';', '!', '?', ')', '"', '\'']))
+            else {
+                continue;
+            };
+            if let Some(path) = self.skill_paths.get(name)
+                && !named.contains(&name)
+            {
+                named.push(name);
+                input.push(json!({ "type": "skill", "name": name, "path": path }));
+            }
+        }
+        Value::Array(input)
+    }
+
+    /// The skills in Codex's answer to `skills/list`: the enabled ones of
+    /// every folder it answered for, by name.
+    fn list_skills(&mut self, result: &Value) {
+        self.skills.clear();
+        self.skill_paths.clear();
+        let skills = result
+            .get("data")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|entry| entry.get("skills").and_then(Value::as_array))
+            .flatten();
+        for skill in skills {
+            let text = |value: Option<&Value>| {
+                value
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|text| !text.is_empty())
+                    .map(str::to_owned)
+            };
+            let (Some(name), Some(path)) = (text(skill.get("name")), text(skill.get("path")))
+            else {
+                continue;
+            };
+            if skill.get("enabled").and_then(Value::as_bool) == Some(false)
+                || self.skill_paths.contains_key(&name)
+            {
+                continue;
+            }
+            // The short description reads best in a list.
+            let description = text(skill.pointer("/interface/shortDescription"))
+                .or_else(|| text(skill.get("shortDescription")))
+                .or_else(|| text(skill.get("description")))
+                .unwrap_or_default();
+            self.skill_paths.insert(name.clone(), path);
+            self.skills.push(ClientCommand {
+                name,
+                description,
+                hint: None,
+                kind: CommandKind::Skill,
+                sigil: Sigil::Dollar,
+            });
+        }
+    }
+
+    /// Asks for the skills of the thread's folder.
+    fn ask_skills(&mut self) -> Line {
+        let cwds = json!({ "cwds": [self.cwd] });
+        self.request(RequestKind::ListCommands, cwds)
+    }
+
     fn request(&mut self, kind: RequestKind, params: Value) -> Line {
         let id = self.next_request;
         self.next_request += 1;
@@ -258,6 +352,7 @@ impl CodexAppServer {
             RequestKind::TurnStart => "turn/start",
             RequestKind::TurnInterrupt => "turn/interrupt",
             RequestKind::TurnSteer => "turn/steer",
+            RequestKind::ListCommands => "skills/list",
             // Codex takes settings with each turn, never on their own.
             RequestKind::Configure => "turn/start",
         }
@@ -330,6 +425,10 @@ impl CodexAppServer {
             return;
         };
         if let Some(error) = error {
+            // Without its skills a run goes on; the list stays empty.
+            if kind == RequestKind::ListCommands {
+                return;
+            }
             if kind == RequestKind::TurnStart {
                 self.turn = TurnSlot::Idle;
             }
@@ -379,6 +478,8 @@ impl CodexAppServer {
                     Some(thread) => {
                         self.phase = Phase::Ready(thread);
                         received.events.push(DriveEvent::Ready { thread });
+                        let ask = self.ask_skills();
+                        received.replies.push(ask);
                     }
                     None => received.events.push(DriveEvent::Unreadable {
                         line,
@@ -398,6 +499,7 @@ impl CodexAppServer {
                     }),
                 }
             }
+            RequestKind::ListCommands => self.list_skills(&result),
             RequestKind::TurnInterrupt | RequestKind::TurnSteer | RequestKind::Configure => {}
         }
     }
@@ -475,6 +577,14 @@ impl CodexAppServer {
             }),
             // Ren learns the thread from `thread/start`'s response.
             "thread/started" => return,
+            // A skill was added or removed: listed again.
+            "skills/changed" => {
+                if let Phase::Ready(_) = self.phase {
+                    let ask = self.ask_skills();
+                    received.replies.push(ask);
+                }
+                return;
+            }
             _ => {
                 received.events.push(DriveEvent::Unknown { line });
                 return;
@@ -863,6 +973,7 @@ impl CodexModels {
 #[cfg(test)]
 mod tests {
     use super::CodexAppServer;
+    use crate::commands::{ClientCommand, CommandKind, Sigil};
     use crate::drive::{Opening, Received};
     use crate::{
         drive::{
@@ -926,6 +1037,21 @@ mod tests {
                 thread: codec.thread().unwrap()
             }]
         );
+        // Once open, Ren asks for the folder's skills.
+        assert_eq!(
+            received.replies.iter().map(sent).collect::<Vec<_>>(),
+            [json!({ "id": 2, "method": "skills/list", "params": { "cwds": ["/work/acme"] } })]
+        );
+        let _ = feed(
+            &mut codec,
+            json!({ "id": 2, "result": { "data": [{ "cwd": "/work/acme", "errors": [], "skills": [
+                { "name": "release-notes", "description": "Write release notes from the log",
+                  "enabled": true, "path": "/work/acme/.codex/skills/release-notes/SKILL.md",
+                  "scope": "repo" },
+                { "name": "off", "description": "", "enabled": false,
+                  "path": "/s/off/SKILL.md", "scope": "user" }
+            ] }] } }),
+        );
         codec
     }
 
@@ -971,7 +1097,7 @@ mod tests {
         let line = codec.command(prompt("fix the build")).unwrap().remove(0);
         assert_eq!(
             sent(&line),
-            json!({ "id": 2, "method": "turn/start", "params": {
+            json!({ "id": 3, "method": "turn/start", "params": {
                 "threadId": THREAD, "input": [{ "type": "text", "text": "fix the build" }] } })
         );
         assert_eq!(
@@ -984,7 +1110,7 @@ mod tests {
         );
 
         let turn = json!({ "id": TURN, "status": "inProgress", "items": [] });
-        let started = feed(&mut codec, json!({ "id": 2, "result": { "turn": turn } }));
+        let started = feed(&mut codec, json!({ "id": 3, "result": { "turn": turn } }));
         let notified = feed(
             &mut codec,
             json!({ "method": "turn/started", "params": { "threadId": THREAD, "turn": turn } }),
@@ -1025,7 +1151,7 @@ mod tests {
         let interrupt = codec.command(DriveCommand::Interrupt).unwrap().remove(0);
         assert_eq!(
             sent(&interrupt),
-            json!({ "id": 3, "method": "turn/interrupt", "params": { "threadId": THREAD, "turnId": TURN } })
+            json!({ "id": 4, "method": "turn/interrupt", "params": { "threadId": THREAD, "turnId": TURN } })
         );
         let ended = feed(
             &mut codec,
@@ -1252,12 +1378,48 @@ mod tests {
     }
 
     #[test]
+    fn lists_the_folders_skills_and_sends_the_ones_a_prompt_names() {
+        let mut codec = ready();
+        assert_eq!(
+            codec.commands(),
+            [ClientCommand {
+                name: "release-notes".into(),
+                description: "Write release notes from the log".into(),
+                hint: None,
+                kind: CommandKind::Skill,
+                sigil: Sigil::Dollar,
+            }]
+        );
+        let line = codec
+            .command(prompt(
+                "use $release-notes, then $release-notes. $unknown too",
+            ))
+            .unwrap()
+            .remove(0);
+        assert_eq!(
+            sent(&line)["params"]["input"],
+            json!([
+                { "type": "text", "text": "use $release-notes, then $release-notes. $unknown too" },
+                { "type": "skill", "name": "release-notes",
+                  "path": "/work/acme/.codex/skills/release-notes/SKILL.md" }
+            ])
+        );
+        // A changed set of skills is listed again.
+        let changed = feed(
+            &mut codec,
+            json!({ "method": "skills/changed", "params": {} }),
+        );
+        assert_eq!(sent(&changed.replies[0])["method"], "skills/list");
+        assert!(changed.events.is_empty());
+    }
+
+    #[test]
     fn reports_refusals_and_errors() {
         let mut codec = ready();
         let _ = codec.command(prompt("go")).unwrap().remove(0);
         let refused = feed(
             &mut codec,
-            json!({ "id": 2, "error": { "code": -32000, "message": "thread busy" } }),
+            json!({ "id": 3, "error": { "code": -32000, "message": "thread busy" } }),
         );
         assert_eq!(
             refused.events,
@@ -1311,7 +1473,7 @@ mod tests {
         let _ = codec.command(prompt("fix the build")).unwrap();
         let _ = feed(
             &mut codec,
-            json!({ "id": 2, "result": { "turn": { "id": TURN } } }),
+            json!({ "id": 3, "result": { "turn": { "id": TURN } } }),
         );
         let steer = codec
             .command(DriveCommand::Steer(
@@ -1321,7 +1483,7 @@ mod tests {
             .remove(0);
         assert_eq!(
             sent(&steer),
-            json!({ "id": 3, "method": "turn/steer", "params": { "threadId": THREAD,
+            json!({ "id": 4, "method": "turn/steer", "params": { "threadId": THREAD,
                 "expectedTurnId": TURN,
                 "input": [{ "type": "text", "text": "use the old API" }] } })
         );

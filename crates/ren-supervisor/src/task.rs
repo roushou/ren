@@ -11,9 +11,10 @@
 use crate::entries::Entries;
 use crate::models::{Listings, ModelProbe, ModelsError, ModelsReply};
 use crate::{
-    CommandError, Conversation, Places, Request, RunSnapshot, RunUpdate, Start, StartError,
-    StartPlace, Warmup,
+    CommandError, ComposeError, Conversation, Places, Request, RunSnapshot, RunUpdate, Start,
+    StartError, StartPlace, Warmup,
     client::{Client, ClientStatus},
+    files::FileListing,
     host::{AgentHost, AgentProcess, KillSwitch},
     project::Search,
     run::{ProcessExit, RunAction, RunCommand, RunEvent, RunState},
@@ -75,6 +76,9 @@ struct Live {
     first: Option<Prompt>,
     /// What the run's conversation keeps of its client's events.
     entries: Entries,
+    /// The run's folder as walked for the last file search, until a turn
+    /// ends: turns change files.
+    files: Option<FileListing>,
 }
 
 type Outputs = SelectAll<BoxStream<'static, (RunId, Vec<Framed>)>>;
@@ -185,6 +189,27 @@ impl<H: AgentHost> SupervisorTask<H> {
                     .collect();
                 let _ = reply.send(clients);
             }
+            Request::Commands { run, reply } => {
+                let _ = reply.send(match runs.get(&run) {
+                    Some(live) => Ok(live
+                        .codec
+                        .as_ref()
+                        .map(|codec| codec.commands().to_vec())
+                        .unwrap_or_default()),
+                    None => Err(ComposeError::NoSuchRun(run)),
+                });
+            }
+            Request::Files {
+                run,
+                query,
+                limit,
+                reply,
+            } => {
+                let _ = reply.send(match runs.get_mut(&run) {
+                    Some(live) => self.files(live).map(|files| files.search(&query, limit)),
+                    None => Err(ComposeError::NoSuchRun(run)),
+                });
+            }
             Request::Models { harness, reply } => {
                 // Answered by the loop, which holds the listings.
                 let _ = reply.send(Err(ModelsError::Gone));
@@ -204,6 +229,19 @@ impl<H: AgentHost> SupervisorTask<H> {
                 );
             }
         }
+    }
+
+    /// The run's folder as last walked, walked now when it is not kept.
+    /// Bounded by `FileListing::LIMITS`, so a walk is short.
+    fn files<'a>(&self, live: &'a mut Live) -> Result<&'a FileListing, ComposeError> {
+        if live.files.is_none() {
+            let found = self
+                .host
+                .files(live.workdir.as_path(), FileListing::LIMITS)
+                .map_err(ComposeError::Unreadable)?;
+            live.files = Some(FileListing::new(found));
+        }
+        live.files.as_ref().ok_or(ComposeError::Gone)
     }
 
     async fn start(
@@ -296,6 +334,7 @@ impl<H: AgentHost> SupervisorTask<H> {
                         tap: None,
                         first: None,
                         entries: Entries::default(),
+                        files: None,
                     },
                 );
                 return Err(StartError::Spawn { run, source });
@@ -318,6 +357,7 @@ impl<H: AgentHost> SupervisorTask<H> {
             tap: Some(tap),
             first,
             entries: Entries::default(),
+            files: None,
         };
         self.publish(RunUpdate::State {
             run,
@@ -446,6 +486,9 @@ impl<H: AgentHost> SupervisorTask<H> {
             Self::write(run, live, reply).await;
         }
         for event in received.events {
+            if let DriveEvent::TurnEnded { .. } = event {
+                live.files = None;
+            }
             if let (DriveEvent::Ready { thread }, Some(tap)) = (&event, live.tap.as_ref()) {
                 tap.opened(*thread);
             }

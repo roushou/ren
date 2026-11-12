@@ -51,6 +51,22 @@ impl Control {
         (status, body)
     }
 
+    async fn get(&self, path: &str) -> (StatusCode, Value) {
+        let response = self
+            .http
+            .get(format!("{}{path}", self.base))
+            .bearer_auth(TestGateway::CONTROL_TOKEN)
+            .send()
+            .await
+            .unwrap();
+        let status = response.status();
+        let bytes = response.bytes().await.unwrap();
+        (
+            status,
+            serde_json::from_slice(&bytes).unwrap_or(Value::Null),
+        )
+    }
+
     async fn runs(&self) -> Value {
         self.http
             .get(format!("{}/runs", self.base))
@@ -513,6 +529,26 @@ async fn a_prompt_queued_during_a_turn_goes_out_as_it_ends() {
                 && state["approvals"].as_array().is_some_and(|a| !a.is_empty())
         })
         .await;
+
+    // What a prompt is offered: the client's commands (this scripted
+    // Codex lists none) and the folder's files.
+    let (status, body) = control.get(&format!("/runs/{run}/commands")).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["commands"], json!([]));
+    let (status, body) = control
+        .get(&format!("/runs/{run}/files?q=upl&limit=5"))
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        body["files"],
+        json!([{ "path": "src/upload.rs", "kind": "file", "positions": [4, 5, 6] }])
+    );
+    let (status, _) = control
+        .get("/runs/00000000-0000-0000-0000-000000000063/files?q=x")
+        .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let (status, _) = control.get(&format!("/runs/{run}/files?nope=1")).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
 
     // Mid-turn: queued for after it, a steer into it, and new settings.
     let (status, body) = control

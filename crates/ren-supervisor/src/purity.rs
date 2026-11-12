@@ -9,6 +9,7 @@ fn pure_modules_stay_free_of_runtime_and_io_dependencies() {
         ("workdir.rs", include_str!("workdir.rs")),
         ("project.rs", include_str!("project.rs")),
         ("entries.rs", include_str!("entries.rs")),
+        ("files.rs", include_str!("files.rs")),
     ];
     let forbidden = [
         "tokio",

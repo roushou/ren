@@ -15,6 +15,7 @@
 //! Ren provides no interface for them.
 
 use crate::{
+    commands::{ClientCommand, CommandKind, Sigil},
     drive::{
         CommandRefused, DriveCommand, DriveEvent, DriveItem, ItemId, ItemKind, ItemPhase, ItemRead,
         ItemStatus, Opening, Prompt, RawLine, Received, RequestKind, Retry, TurnEnd, Unreadable,
@@ -50,6 +51,8 @@ pub struct PiRpc {
     stopped: Option<Stopped>,
     /// Tool calls started in this turn, by tool call id, until their end.
     tools: BTreeMap<String, ToolCall>,
+    /// The extension commands, prompt templates, and skills Pi listed.
+    commands: Vec<ClientCommand>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -128,6 +131,7 @@ impl PiRpc {
             streaming: None,
             stopped: None,
             tools: BTreeMap::new(),
+            commands: Vec::new(),
         };
         let line = codec.request(kind, json!({ "type": "get_state" }));
         (codec, line)
@@ -136,6 +140,43 @@ impl PiRpc {
     /// The session, once Pi reported it open.
     pub fn thread(&self) -> Option<NativeThreadId> {
         self.ready.then_some(self.thread)
+    }
+
+    /// The commands a prompt can run, as Pi listed them once the session
+    /// opened: each is `/name` in the prompt (a skill's name starts
+    /// `skill:`).
+    pub fn commands(&self) -> &[ClientCommand] {
+        &self.commands
+    }
+
+    /// The commands in Pi's answer to `get_commands`.
+    fn listed(data: &Value) -> Vec<ClientCommand> {
+        data.get("commands")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|command| {
+                let name = command.get("name").and_then(Value::as_str)?.trim();
+                if name.is_empty() {
+                    return None;
+                }
+                let kind = match command.get("source").and_then(Value::as_str) {
+                    Some("skill") => CommandKind::Skill,
+                    Some("prompt") => CommandKind::Template,
+                    // Extension commands, and any source Pi adds later.
+                    Some(_) | None => CommandKind::Command,
+                };
+                Some(ClientCommand {
+                    name: name.to_owned(),
+                    description: Self::text(command, "description")
+                        .map(|text| text.trim().to_owned())
+                        .unwrap_or_default(),
+                    hint: None,
+                    kind,
+                    sigil: Sigil::Slash,
+                })
+            })
+            .collect()
     }
 
     /// The line that carries `command`, or why it cannot be sent now.
@@ -300,6 +341,10 @@ impl PiRpc {
             return;
         };
         if message.get("success").and_then(Value::as_bool) != Some(true) {
+            // Without its commands a run goes on; the list stays empty.
+            if kind == RequestKind::ListCommands {
+                return;
+            }
             if let (RequestKind::TurnStart, TurnSlot::Requested) = (kind, self.turn) {
                 self.turn = TurnSlot::Idle;
             }
@@ -326,7 +371,11 @@ impl PiRpc {
                 received.events.push(DriveEvent::Ready {
                     thread: self.thread,
                 });
+                let ask =
+                    self.request(RequestKind::ListCommands, json!({ "type": "get_commands" }));
+                received.replies.push(ask);
             }
+            RequestKind::ListCommands => self.commands = Self::listed(data),
             RequestKind::TurnStart => {
                 // An extension consumed the prompt: no run starts for it.
                 if data.get("disposition").and_then(Value::as_str) == Some("handled")
@@ -842,7 +891,58 @@ mod tests {
             vec![DriveEvent::Ready { thread: session() }]
         );
         assert_eq!(codec.thread(), Some(session()));
+        // Once open, Ren asks for Pi's commands.
+        assert_eq!(
+            sent(&received.replies[0]),
+            json!({ "type": "get_commands", "id": "ren-1" })
+        );
+        let _ = feed(
+            &mut codec,
+            json!({ "id": "ren-1", "type": "response", "command": "get_commands", "success": true,
+                    "data": { "commands": [
+                        { "name": "fix-tests", "description": "Fix failing tests", "source": "prompt" },
+                        { "name": "skill:release", "description": " Cut a release ", "source": "skill" },
+                        { "name": "todos", "source": "extension" },
+                        { "name": "", "source": "prompt" }
+                    ] } }),
+        );
         codec
+    }
+
+    #[test]
+    fn lists_pis_commands_once_open() {
+        use crate::commands::{CommandKind, Sigil};
+        let codec = ready();
+        let listed: Vec<_> = codec
+            .commands()
+            .iter()
+            .map(|command| {
+                (
+                    command.invocation(),
+                    command.description.as_str(),
+                    command.kind,
+                    command.sigil,
+                )
+            })
+            .collect();
+        assert_eq!(
+            listed,
+            [
+                (
+                    "/fix-tests".to_owned(),
+                    "Fix failing tests",
+                    CommandKind::Template,
+                    Sigil::Slash
+                ),
+                (
+                    "/skill:release".to_owned(),
+                    "Cut a release",
+                    CommandKind::Skill,
+                    Sigil::Slash
+                ),
+                ("/todos".to_owned(), "", CommandKind::Command, Sigil::Slash),
+            ]
+        );
     }
 
     /// A prompt sent and Pi's run started.
@@ -1053,11 +1153,11 @@ mod tests {
         let mut codec = ready();
         let turn = started(&mut codec, "go");
         let abort = sent(&codec.command(DriveCommand::Interrupt).unwrap().remove(0));
-        assert_eq!(abort, json!({ "type": "abort", "id": "ren-2" }));
+        assert_eq!(abort, json!({ "type": "abort", "id": "ren-3" }));
         assert!(
             feed(
                 &mut codec,
-                json!({ "id": "ren-2", "type": "response", "command": "abort", "success": true }),
+                json!({ "id": "ren-3", "type": "response", "command": "abort", "success": true }),
             )
             .events
             .is_empty()

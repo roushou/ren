@@ -403,7 +403,8 @@ impl RunState {
             RequestKind::TurnStart
             | RequestKind::TurnInterrupt
             | RequestKind::TurnSteer
-            | RequestKind::Configure => false,
+            | RequestKind::Configure
+            | RequestKind::ListCommands => false,
         }
     }
 

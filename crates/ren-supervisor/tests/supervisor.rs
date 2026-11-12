@@ -27,9 +27,9 @@ use ren_recorder::{
 };
 use ren_store::{Reader, Store, query::PageLimit, view::RunView};
 use ren_supervisor::{
-    AgentHost, AgentProcess, CommandError, Conversation, KillSignal, KillSwitch, Look, ProcessExit,
-    RunCommand, RunRefused, RunState, RunUpdate, StartError, Supervisor, SupervisorOptions,
-    Workdir,
+    AgentHost, AgentProcess, CommandError, ComposeError, Conversation, FileQuery, FoundPath,
+    KillSignal, KillSwitch, Look, PathKind, ProcessExit, RunCommand, RunRefused, RunState,
+    RunUpdate, StartError, Supervisor, SupervisorOptions, WalkLimits, Workdir,
 };
 use serde_json::{Value, json};
 use std::{
@@ -73,6 +73,8 @@ struct FakeHost {
     spawned: Arc<Mutex<Vec<Spawned>>>,
     /// Folders made, scratch runs' marked as repositories.
     made: Arc<Mutex<Vec<(PathBuf, bool)>>>,
+    /// Folders walked for a file search, in order.
+    walked: Arc<Mutex<Vec<PathBuf>>>,
 }
 
 impl FakeHost {
@@ -82,6 +84,7 @@ impl FakeHost {
             spawn_fails: false,
             spawned: Arc::default(),
             made: Arc::default(),
+            walked: Arc::default(),
         }
     }
 }
@@ -120,6 +123,21 @@ impl AgentHost for FakeHost {
             },
             Some(_) | None => Look::default(),
         })
+    }
+
+    fn files(&self, dir: &Path, _: WalkLimits) -> io::Result<Vec<FoundPath>> {
+        self.walked.lock().unwrap().push(dir.to_path_buf());
+        Ok(["src", "src/upload.rs", "src/lease.rs", "README.md"]
+            .iter()
+            .map(|path| FoundPath {
+                path: (*path).into(),
+                kind: if path.contains('.') {
+                    PathKind::File
+                } else {
+                    PathKind::Directory
+                },
+            })
+            .collect())
     }
 
     fn make_dir(&self, dir: &Path) -> io::Result<()> {
@@ -209,6 +227,17 @@ async fn agent(
                     send(
                         &mut out,
                         json!({ "id": id, "error": { "code": -1, "message": "no" } }),
+                    )
+                    .await;
+                }
+                (Some("skills/list"), _) => {
+                    send(
+                        &mut out,
+                        json!({ "id": id, "result": { "data": [{ "cwd": "/work/acme",
+                            "errors": [], "skills": [{ "name": "release-notes",
+                                "description": "Write release notes", "enabled": true,
+                                "path": "/work/acme/.codex/skills/release-notes/SKILL.md",
+                                "scope": "repo" }] }] } }),
                     )
                     .await;
                 }
@@ -868,6 +897,83 @@ async fn a_first_prompt_goes_out_once_the_conversation_opens() {
         |s| matches!(s, RunState::Working { approvals, .. } if !approvals.is_empty()),
     )
     .await;
+}
+
+#[tokio::test]
+async fn a_prompt_is_offered_the_clients_commands_and_the_folders_files() {
+    let host = FakeHost::new(Script::Codex);
+    let walked = host.walked.clone();
+    let supervised = supervise(host).await;
+    let supervisor = &supervised.supervisor;
+    let mut updates = supervisor.subscribe();
+    let run = supervisor
+        .start(starting(
+            Harness::Codex,
+            "/work/acme",
+            Conversation::New,
+            None,
+        ))
+        .await
+        .unwrap();
+    state(&mut updates, |s| matches!(s, RunState::Idle { .. })).await;
+    // Listed by the client once its thread opened.
+    let commands = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let commands = supervisor.commands(run).await.unwrap();
+            if !commands.is_empty() {
+                return commands;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the skills are listed");
+    assert_eq!(
+        commands.iter().map(|c| c.invocation()).collect::<Vec<_>>(),
+        ["$release-notes"]
+    );
+    let found = supervisor
+        .files(run, FileQuery::parse("lease"), 5)
+        .await
+        .unwrap();
+    assert_eq!(found[0].path, "src/lease.rs");
+    let _ = supervisor
+        .files(run, FileQuery::parse(""), 5)
+        .await
+        .unwrap();
+    assert_eq!(*walked.lock().unwrap(), [PathBuf::from("/work/acme")]);
+    // A turn changes files: the folder is walked again after it.
+    supervisor.command(run, prompt()).await.unwrap();
+    let waiting = state(
+        &mut updates,
+        |s| matches!(s, RunState::Working { approvals, .. } if !approvals.is_empty()),
+    )
+    .await;
+    let RunState::Working { approvals, .. } = waiting else {
+        unreachable!()
+    };
+    let approval = approvals.iter().next().unwrap().approval.clone();
+    supervisor
+        .command(
+            run,
+            RunCommand::Answer {
+                approval,
+                decision: ren_harness::drive::Decision::Accept,
+            },
+        )
+        .await
+        .unwrap();
+    state(&mut updates, |s| matches!(s, RunState::Idle { .. })).await;
+    let _ = supervisor
+        .files(run, FileQuery::parse("up"), 5)
+        .await
+        .unwrap();
+    assert_eq!(walked.lock().unwrap().len(), 2);
+    let unknown = ren_recorder::id::RunId::restore(uuid::Uuid::from_u128(99));
+    assert!(matches!(
+        supervisor.commands(unknown).await,
+        Err(ComposeError::NoSuchRun(_))
+    ));
 }
 
 #[tokio::test]

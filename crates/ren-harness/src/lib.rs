@@ -12,6 +12,7 @@
 pub mod attribution;
 pub mod claude_code;
 pub mod codex;
+pub mod commands;
 pub mod drive;
 pub mod endpoint;
 pub mod host;

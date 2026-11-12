@@ -10,6 +10,7 @@
 
 pub mod client;
 mod entries;
+pub mod files;
 pub mod host;
 mod models;
 pub mod project;
@@ -20,6 +21,7 @@ mod task;
 pub mod workdir;
 
 pub use client::{Client, ClientStatus};
+pub use files::{FileListing, FileMatch, FileQuery, FoundPath, PathKind, WalkLimits};
 pub use host::{AgentHost, AgentProcess, KillSignal, KillSwitch};
 pub use models::ModelsError;
 pub use project::{Look, PlaceKind, Project, ProjectGit, Search};
@@ -29,6 +31,7 @@ pub use workdir::{Bounds, Roots, Workdir, WorkdirError};
 
 use ren_harness::{
     Harness,
+    commands::ClientCommand,
     drive::{CommandRefused, DriveEvent, Prompt},
     endpoint::GatewayEndpoint,
     launch::NotDrivable,
@@ -181,6 +184,18 @@ pub enum CommandError {
     Gone,
 }
 
+/// Why what a composer offers a run's prompt (its client's commands, its
+/// folder's files) could not be read.
+#[derive(Debug, thiserror::Error)]
+pub enum ComposeError {
+    #[error("no run {0}")]
+    NoSuchRun(RunId),
+    #[error("cannot read the run's folder: {0}")]
+    Unreadable(io::Error),
+    #[error("the supervisor has stopped")]
+    Gone,
+}
+
 /// The supervisor has stopped.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 #[error("the supervisor has stopped")]
@@ -220,6 +235,16 @@ pub(crate) enum Request {
     Models {
         harness: Harness,
         reply: models::ModelsReply,
+    },
+    Commands {
+        run: RunId,
+        reply: oneshot::Sender<Result<Vec<ClientCommand>, ComposeError>>,
+    },
+    Files {
+        run: RunId,
+        query: FileQuery,
+        limit: usize,
+        reply: oneshot::Sender<Result<Vec<FileMatch>, ComposeError>>,
     },
 }
 
@@ -345,6 +370,40 @@ impl Supervisor {
             .await
             .map_err(|_| ModelsError::Gone)?;
         answer.await.map_err(|_| ModelsError::Gone)?
+    }
+
+    /// The commands, skills, and templates `run`'s client offers a prompt,
+    /// as it listed them: none until its conversation opens, or once it
+    /// ended.
+    pub async fn commands(&self, run: RunId) -> Result<Vec<ClientCommand>, ComposeError> {
+        let (reply, answer) = oneshot::channel();
+        self.requests
+            .send(Request::Commands { run, reply })
+            .await
+            .map_err(|_| ComposeError::Gone)?;
+        answer.await.map_err(|_| ComposeError::Gone)?
+    }
+
+    /// The `limit` paths of `run`'s folder that best match `query`, for a
+    /// prompt to name (`@path`). The folder is walked once and kept until
+    /// a turn there ends.
+    pub async fn files(
+        &self,
+        run: RunId,
+        query: FileQuery,
+        limit: usize,
+    ) -> Result<Vec<FileMatch>, ComposeError> {
+        let (reply, answer) = oneshot::channel();
+        self.requests
+            .send(Request::Files {
+                run,
+                query,
+                limit,
+                reply,
+            })
+            .await
+            .map_err(|_| ComposeError::Gone)?;
+        answer.await.map_err(|_| ComposeError::Gone)?
     }
 
     /// Updates from now on.

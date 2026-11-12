@@ -11,7 +11,10 @@ use ren_recorder::{
     id::IdSource,
     time::{Clock, Moment, Monotonic, UnixMillis},
 };
-use ren_supervisor::{AgentHost, AgentProcess, KillSwitch, Look, ProcessExit, Workdir};
+use ren_supervisor::{
+    AgentHost, AgentProcess, FoundPath, KillSwitch, Look, PathKind, ProcessExit, WalkLimits,
+    Workdir,
+};
 use std::future::Future;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -243,6 +246,46 @@ impl AgentHost for ProcessHost {
         })
     }
 
+    fn files(&self, dir: &Path, limits: WalkLimits) -> io::Result<Vec<FoundPath>> {
+        // Hidden files and what git ignores are left out, as an editor's
+        // file finder does; links are not followed.
+        let walk = ignore::WalkBuilder::new(dir)
+            .max_depth(Some(limits.depth))
+            .follow_links(false)
+            .require_git(false)
+            .build();
+        let mut found = Vec::new();
+        for entry in walk {
+            let entry = entry.map_err(io::Error::other)?;
+            if entry.depth() == 0 {
+                continue;
+            }
+            let Some(kind) = entry.file_type().map(|kind| {
+                if kind.is_dir() {
+                    PathKind::Directory
+                } else {
+                    PathKind::File
+                }
+            }) else {
+                continue;
+            };
+            let Some(path) = entry
+                .path()
+                .strip_prefix(dir)
+                .ok()
+                .and_then(Path::to_str)
+                .map(|path| path.replace(std::path::MAIN_SEPARATOR, "/"))
+            else {
+                continue;
+            };
+            found.push(FoundPath { path, kind });
+            if found.len() >= limits.entries {
+                break;
+            }
+        }
+        Ok(found)
+    }
+
     fn finds(&self, program: &str) -> bool {
         // The same search a started process makes: this process's path,
         // which every agent it starts inherits.
@@ -289,7 +332,58 @@ impl AgentHost for ProcessHost {
 
 #[cfg(test)]
 mod tests {
-    use super::{RandomIds, SystemClock};
+    use super::{ProcessHost, RandomIds, SystemClock};
+    use ren_supervisor::{AgentHost, FileListing, PathKind, WalkLimits};
+
+    #[test]
+    fn a_folders_files_leave_out_what_git_ignores_and_hidden_ones() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        for folder in ["src/deep/er", "target/debug", ".git", ".hidden"] {
+            std::fs::create_dir_all(root.join(folder)).unwrap();
+        }
+        for file in [
+            "src/lib.rs",
+            "src/deep/er/far.rs",
+            "target/debug/ren",
+            ".hidden/key",
+            ".env",
+            "README.md",
+        ] {
+            std::fs::write(root.join(file), "x").unwrap();
+        }
+        std::fs::write(root.join(".gitignore"), "target/\n").unwrap();
+        let host = ProcessHost::new(None);
+        let mut found: Vec<(String, PathKind)> = host
+            .files(root, FileListing::LIMITS)
+            .unwrap()
+            .into_iter()
+            .map(|found| (found.path, found.kind))
+            .collect();
+        found.sort_by(|a, b| a.0.cmp(&b.0));
+        assert_eq!(
+            found,
+            [
+                ("README.md".to_owned(), PathKind::File),
+                ("src".to_owned(), PathKind::Directory),
+                ("src/deep".to_owned(), PathKind::Directory),
+                ("src/deep/er".to_owned(), PathKind::Directory),
+                ("src/deep/er/far.rs".to_owned(), PathKind::File),
+                ("src/lib.rs".to_owned(), PathKind::File),
+            ]
+        );
+        let shallow = host
+            .files(
+                root,
+                WalkLimits {
+                    entries: 2,
+                    depth: 1,
+                },
+            )
+            .unwrap();
+        assert_eq!(shallow.len(), 2);
+        assert!(shallow.iter().all(|found| !found.path.contains('/')));
+    }
     use ren_recorder::{
         id::{AttemptId, IdSource},
         time::{Clock, UnixMillis},

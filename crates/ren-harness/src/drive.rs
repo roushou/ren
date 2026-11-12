@@ -9,6 +9,7 @@
 
 use crate::claude_code::ClaudeStreamJson;
 use crate::codex::CodexAppServer;
+use crate::commands::ClientCommand;
 use crate::lines::{Framed, Line};
 use crate::pi::PiRpc;
 use crate::settings::{Midway, RunSettings};
@@ -88,6 +89,16 @@ impl Driver {
             Self::Codex(codec) => codec.command(command),
             Self::ClaudeCode(codec) => codec.command(command),
             Self::Pi(codec) => codec.command(command),
+        }
+    }
+
+    /// The commands the client offers a prompt, as far as it has listed
+    /// them: none before its conversation opens.
+    pub fn commands(&self) -> &[ClientCommand] {
+        match self {
+            Self::Codex(codec) => codec.commands(),
+            Self::ClaudeCode(codec) => codec.commands(),
+            Self::Pi(codec) => codec.commands(),
         }
     }
 
@@ -211,6 +222,8 @@ pub enum RequestKind {
     TurnSteer,
     /// A change of model, effort, or approvals mid-run.
     Configure,
+    /// The commands, skills, and templates the client offers a prompt.
+    ListCommands,
 }
 
 /// What a driven client reported, as Ren reads it.

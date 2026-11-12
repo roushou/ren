@@ -10,7 +10,10 @@
 use super::{ControlApi, Refusal};
 use axum::{
     Json, Router,
-    extract::{Path, State, rejection::JsonRejection},
+    extract::{
+        Path, Query, State,
+        rejection::{JsonRejection, QueryRejection},
+    },
     response::{
         IntoResponse, Response,
         sse::{Event, KeepAlive, Sse},
@@ -27,12 +30,28 @@ use ren_harness::{
 use ren_protocol::native::NativeThreadId;
 use ren_recorder::id::RunId;
 use ren_supervisor::{
-    CommandError, Conversation, Delivery, ModelsError, RunCommand, RunRefused, RunSnapshot, Start,
-    StartError, StartPlace, Supervisor, WorkdirError,
+    CommandError, ComposeError, Conversation, Delivery, FileQuery, ModelsError, RunCommand,
+    RunRefused, RunSnapshot, Start, StartError, StartPlace, Supervisor, WorkdirError,
 };
 use std::{convert::Infallible, sync::Arc, time::Duration};
 use tokio::sync::broadcast::error::RecvError;
 use tokio_util::sync::CancellationToken;
+
+/// A search of a run's folder for a prompt to name a file: `q`, what was
+/// typed after `@`, and how many to answer.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FilesRequest {
+    #[serde(default)]
+    q: String,
+    #[serde(default)]
+    limit: Option<usize>,
+}
+
+impl FilesRequest {
+    const LIMIT: usize = 20;
+    const MOST: usize = 100;
+}
 
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -233,6 +252,8 @@ impl RunsApi {
             )
             .route("/control/v1/runs/{run}/prompt", post(Self::prompt))
             .route("/control/v1/runs/{run}/unqueue", post(Self::unqueue))
+            .route("/control/v1/runs/{run}/commands", get(Self::commands))
+            .route("/control/v1/runs/{run}/files", get(Self::files))
             .route("/control/v1/runs/{run}/settings", post(Self::settings))
             .route(
                 "/control/v1/runs/{run}/approvals/{approval}",
@@ -417,6 +438,69 @@ impl RunsApi {
         let request = Self::body(body)?;
         let prompt = Prompt::parse(request.text).map_err(|_| Denied::Control(Refusal::Invalid))?;
         Self::command(supervisor, run, request.delivery.command(prompt)).await
+    }
+
+    fn composed(error: ComposeError) -> Denied {
+        Denied::Run(match error {
+            ComposeError::NoSuchRun(_) => RunRefusal::NotFound,
+            ComposeError::Unreadable(_) => RunRefusal::Refused("unreadable"),
+            ComposeError::Gone => RunRefusal::Unavailable,
+        })
+    }
+
+    /// What the run's client offers a prompt: its commands, skills, and
+    /// templates, as it listed them.
+    async fn commands(
+        State(api): Api,
+        headers: HeaderMap,
+        Path(run): Path<String>,
+    ) -> Result<Response, Denied> {
+        let supervisor = api.admit(&headers)?;
+        let commands = supervisor
+            .commands(Self::run(&run)?)
+            .await
+            .map_err(Self::composed)?;
+        let commands: Vec<serde_json::Value> = commands
+            .into_iter()
+            .map(|command| {
+                let invocation = command.invocation();
+                let mut value = serde_json::json!(command);
+                if let serde_json::Value::Object(fields) = &mut value {
+                    fields.insert("invocation".into(), invocation.into());
+                }
+                value
+            })
+            .collect();
+        Ok(Json(serde_json::json!({
+            "api_version": ControlApi::API_VERSION,
+            "commands": commands,
+        }))
+        .into_response())
+    }
+
+    /// The paths of the run's folder that best match what was typed.
+    async fn files(
+        State(api): Api,
+        headers: HeaderMap,
+        Path(run): Path<String>,
+        query: Result<Query<FilesRequest>, QueryRejection>,
+    ) -> Result<Response, Denied> {
+        let supervisor = api.admit(&headers)?;
+        let run = Self::run(&run)?;
+        let Query(request) = query.map_err(|_| Denied::Control(Refusal::Invalid))?;
+        let limit = request
+            .limit
+            .unwrap_or(FilesRequest::LIMIT)
+            .clamp(1, FilesRequest::MOST);
+        let files = supervisor
+            .files(run, FileQuery::parse(&request.q), limit)
+            .await
+            .map_err(Self::composed)?;
+        Ok(Json(serde_json::json!({
+            "api_version": ControlApi::API_VERSION,
+            "files": files,
+        }))
+        .into_response())
     }
 
     async fn unqueue(

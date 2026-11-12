@@ -12,6 +12,7 @@ description = "Configuration, resource wiring, and lifecycle of the Ren LLM gate
 # clock and random IDs and the daemon's task spawns; HTTP handling belongs to
 # ren-gateway (docs/architecture.md).
 [dependencies]
+ignore = "0.4.25"
 ren-gateway.workspace = true
 ren-harness.workspace = true
 ren-protocol.workspace = true

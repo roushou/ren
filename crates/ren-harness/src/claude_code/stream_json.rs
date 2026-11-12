@@ -16,6 +16,7 @@
 //! model requests carry, so a driven turn's id is its prompt's message id.
 
 use crate::{
+    commands::{ClientCommand, CommandKind, Sigil},
     drive::{
         ApprovalAsk, ApprovalId, CommandRefused, Decision, DriveCommand, DriveEvent, DriveItem,
         ItemId, ItemKind, ItemPhase, ItemRead, ItemStatus, Opening, Prompt, RawLine, Received,
@@ -49,6 +50,8 @@ pub struct ClaudeStreamJson {
     /// its whole copy get the same item id.
     blocks: BTreeMap<String, BlockCount>,
     streaming: Option<Streaming>,
+    /// The commands and skills Claude Code listed as it opened.
+    commands: Vec<ClientCommand>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -166,6 +169,7 @@ impl ClaudeStreamJson {
             tools: BTreeMap::new(),
             blocks: BTreeMap::new(),
             streaming: None,
+            commands: Vec::new(),
         };
         let line = codec.request(RequestKind::Initialize, json!({ "subtype": "initialize" }));
         (codec, line)
@@ -174,6 +178,39 @@ impl ClaudeStreamJson {
     /// The conversation, once Claude Code accepted the opening.
     pub fn thread(&self) -> Option<NativeThreadId> {
         self.ready.then_some(self.thread)
+    }
+
+    /// The commands and skills a prompt can run, as Claude Code listed them
+    /// in its answer to `initialize`: each is `/name` in the prompt.
+    pub fn commands(&self) -> &[ClientCommand] {
+        &self.commands
+    }
+
+    /// The commands in Claude Code's answer to `initialize`.
+    fn listed(answer: &Value) -> Vec<ClientCommand> {
+        answer
+            .get("commands")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|command| {
+                let name = command.get("name").and_then(Value::as_str)?;
+                let text = |field| {
+                    command
+                        .get(field)
+                        .and_then(Value::as_str)
+                        .map(str::trim)
+                        .filter(|text| !text.is_empty())
+                };
+                Some(ClientCommand {
+                    name: name.to_owned(),
+                    description: text("description").unwrap_or_default().to_owned(),
+                    hint: text("argumentHint").map(str::to_owned),
+                    kind: CommandKind::Command,
+                    sigil: Sigil::Slash,
+                })
+            })
+            .collect()
     }
 
     /// The line that carries `command`, or why it cannot be sent now.
@@ -392,6 +429,7 @@ impl ClaudeStreamJson {
             Some("success") => match kind {
                 RequestKind::Initialize => {
                     self.ready = true;
+                    self.commands = Self::listed(&response["response"]);
                     received.events.push(DriveEvent::Ready {
                         thread: self.thread,
                     });
@@ -401,7 +439,8 @@ impl ClaudeStreamJson {
                 | RequestKind::ThreadResume
                 | RequestKind::TurnStart
                 | RequestKind::TurnSteer
-                | RequestKind::Configure => {}
+                | RequestKind::Configure
+                | RequestKind::ListCommands => {}
             },
             Some(_) | None => received.events.push(DriveEvent::Refused {
                 request: kind,
@@ -1054,13 +1093,43 @@ mod tests {
         let received = feed(
             &mut codec,
             json!({ "type": "control_response", "response": { "subtype": "success",
-                    "request_id": "ren-0", "response": { "commands": [] } } }),
+                    "request_id": "ren-0", "response": { "commands": [
+                        { "name": "review", "description": "Review the diff",
+                          "argumentHint": "<PR or path>" },
+                        { "name": "release-notes", "description": "", "argumentHint": "",
+                          "builtin": true },
+                        { "description": "no name" }
+                    ] } } }),
         );
         assert_eq!(
             received.events,
             vec![DriveEvent::Ready { thread: session() }]
         );
         codec
+    }
+
+    #[test]
+    fn lists_the_commands_claude_code_opened_with() {
+        use crate::commands::{ClientCommand, CommandKind, Sigil};
+        assert_eq!(
+            ready().commands(),
+            [
+                ClientCommand {
+                    name: "review".into(),
+                    description: "Review the diff".into(),
+                    hint: Some("<PR or path>".into()),
+                    kind: CommandKind::Command,
+                    sigil: Sigil::Slash,
+                },
+                ClientCommand {
+                    name: "release-notes".into(),
+                    description: String::new(),
+                    hint: None,
+                    kind: CommandKind::Command,
+                    sigil: Sigil::Slash,
+                },
+            ]
+        );
     }
 
     /// The prompt's echo, which starts the turn.

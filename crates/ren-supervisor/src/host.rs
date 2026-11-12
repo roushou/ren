@@ -2,7 +2,12 @@
 //! agent processes. Declared here, implemented by the daemon; tests use
 //! in-memory processes.
 
-use crate::{project::Look, run::ProcessExit, workdir::Workdir};
+use crate::{
+    files::{FoundPath, WalkLimits},
+    project::Look,
+    run::ProcessExit,
+    workdir::Workdir,
+};
 use futures_util::future::BoxFuture;
 use ren_harness::launch::LaunchPlan;
 use std::{
@@ -22,6 +27,11 @@ pub trait AgentHost: Send + Sync + 'static {
     /// What `dir` holds: its folders (links not followed), and whether it
     /// is a git repository, with its `HEAD`'s text when readable.
     fn look(&self, dir: &Path) -> io::Result<Look>;
+
+    /// The files and folders under `dir`, relative to it, leaving out what
+    /// git ignores there and hidden ones, walked no further than `limits`
+    /// allow. Links are not followed.
+    fn files(&self, dir: &Path, limits: WalkLimits) -> io::Result<Vec<FoundPath>>;
 
     /// Whether `program` is on the path a started process searches.
     fn finds(&self, program: &str) -> bool;

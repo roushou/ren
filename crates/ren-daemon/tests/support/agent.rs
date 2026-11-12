@@ -3,7 +3,10 @@
 //! the turn once it is answered. No real client, network, or credentials.
 
 use ren_harness::launch::LaunchPlan;
-use ren_supervisor::{AgentHost, AgentProcess, KillSignal, KillSwitch, Look, ProcessExit, Workdir};
+use ren_supervisor::{
+    AgentHost, AgentProcess, FoundPath, KillSignal, KillSwitch, Look, PathKind, ProcessExit,
+    WalkLimits, Workdir,
+};
 use serde_json::{Value, json};
 use std::{
     io,
@@ -42,6 +45,19 @@ impl AgentHost for ScriptedHost {
             },
             Some(_) | None => Look::default(),
         })
+    }
+
+    fn files(&self, _dir: &Path, _limits: WalkLimits) -> io::Result<Vec<FoundPath>> {
+        Ok(vec![
+            FoundPath {
+                path: "src".into(),
+                kind: PathKind::Directory,
+            },
+            FoundPath {
+                path: "src/upload.rs".into(),
+                kind: PathKind::File,
+            },
+        ])
     }
 
     fn make_dir(&self, _dir: &Path) -> io::Result<()> {
