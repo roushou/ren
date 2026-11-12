@@ -75,7 +75,7 @@ test('commands reach the control API with the token from the file, never browser
   assert.equal(daemon.seen, 1);
 });
 
-test('starting, listing, projects, answering, and the feed map to their control routes', async () => {
+test('starting, listing, projects, answering, history edits, and the feed map to their control routes', async () => {
   const seen: string[] = [];
   const daemon = host((url, init) => {
     seen.push(`${init.method} ${url.pathname}`);
@@ -102,6 +102,8 @@ test('starting, listing, projects, answering, and the feed map to their control 
   );
   await proxy.respond(post(`/control/runs/${run}/approvals/ap-1`, { decision: 'accept' }));
   await proxy.respond(post(`/control/runs/${run}/stop`, {}));
+  await proxy.respond(post(`/control/history/sessions/${run}/archive`, {}));
+  await proxy.respond(post(`/control/history/runs/${run}/delete`, {}));
   const feed = await proxy.respond(new Request('http://ui.test/control/runs/events'));
   assert.equal(await feed.text(), ': connected\n\nevent: run\ndata: {}\n\n');
   assert.deepEqual(seen, [
@@ -111,6 +113,8 @@ test('starting, listing, projects, answering, and the feed map to their control 
     'GET /control/v1/runs/clients',
     `POST /control/v1/runs/${run}/approvals/ap-1`,
     `POST /control/v1/runs/${run}/stop`,
+    `POST /control/v1/history/sessions/${run}/archive`,
+    `POST /control/v1/history/runs/${run}/delete`,
     'GET /control/v1/runs/events',
   ]);
 });
@@ -155,6 +159,9 @@ test('cross-site, non-JSON, unknown, and unlisted requests never reach the daemo
     ],
     [post('/control/runs/not-a-run/stop', {}), 404],
     [post(`/control/runs/${run}/delete`, {}), 404],
+    [post(`/control/history/sessions/${run}/shred`, {}), 404],
+    [post(`/control/history/calls/${run}/delete`, {}), 404],
+    [new Request(`http://ui.test/control/history/runs/${run}/delete`), 405],
     [post('/control/pause', {}), 404],
     [new Request(`http://ui.test/control/runs/${run}/stop`), 405],
     [post(`/control/runs/${run}/prompt`, { text: 'x'.repeat(300 * 1024) }), 413],

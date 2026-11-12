@@ -155,7 +155,18 @@ export interface RecordedRun {
   ended_at: UnixMillis | null;
   end: Stored<RunEnd> | null;
   exit: ProcessExit | null;
+  /** When the operator archived it; null when it is not, or from an older daemon. */
+  archived_at: UnixMillis | null;
 }
+
+/** Which part of a listing: what is current, or what was archived. */
+export type Shelf = 'current' | 'archived';
+
+/** What an archive or delete applies to. */
+export type HistorySubject = { kind: 'session'; id: SessionId } | { kind: 'run'; id: RunId };
+
+/** What a history edit does. */
+export type HistoryChange = 'archive' | 'unarchive' | 'delete';
 
 const optionalString: Decoder<string | null> = (value, path) =>
   value === undefined || value === null ? null : string(value, path);
@@ -370,6 +381,8 @@ const recordedRun = object<RecordedRun>({
   ended_at: nullable(brandedCount<'UnixMillis'>()),
   end: nullable(label(runEnds)),
   exit: nullable(processExit),
+  archived_at: (value, path) =>
+    value === undefined || value === null ? null : brandedCount<'UnixMillis'>()(value, path),
 });
 
 const liveRuns = versioned(object<{ runs: RunSnapshot[] }>({ runs: array(runSnapshot) }));
@@ -465,6 +478,10 @@ export class RunCommandError extends Error {
         return 'The run is stopping or has ended.';
       case 'not_found':
         return 'The daemon does not know that run.';
+      case 'call_open':
+        return 'A call of it is still open; delete it once the call ends.';
+      case 'run_running':
+        return 'A run of it is still running; stop it before deleting.';
       case 'cross_origin':
       case 'login_not_allowed':
         return 'This UI does not let you drive runs.';
@@ -527,10 +544,25 @@ export class RunsClient {
   async stop(run: RunId): Promise<void> {
     await this.#send('POST', `/control/runs/${run}/stop`, {}, null);
   }
-  /** Recorded runs, newest first, from the read-only management API. */
-  async recorded(limit = 100, signal?: AbortSignal): Promise<RecordedRun[]> {
-    return (await this.#send('GET', `/api/runs?limit=${limit}`, undefined, recordedRuns, signal))
-      .runs;
+  /**
+   * Archive, unarchive, or delete what was recorded of a session or a run.
+   * The daemon applies it after what it is recording; the live feed says
+   * when.
+   */
+  async edit(subject: HistorySubject, change: HistoryChange): Promise<void> {
+    const kind = subject.kind === 'session' ? 'sessions' : 'runs';
+    await this.#send('POST', `/control/history/${kind}/${subject.id}/${change}`, {}, null);
+  }
+  /** Recorded runs on `shelf`, newest first, from the read-only management API. */
+  async recorded(
+    limit = 100,
+    shelf: Shelf = 'current',
+    signal?: AbortSignal,
+  ): Promise<RecordedRun[]> {
+    const query = shelf === 'archived' ? `&shelf=archived` : '';
+    return (
+      await this.#send('GET', `/api/runs?limit=${limit}${query}`, undefined, recordedRuns, signal)
+    ).runs;
   }
   async recordedRun(run: RunId, signal?: AbortSignal): Promise<RecordedRun> {
     return this.#send('GET', `/api/runs/${run}`, undefined, versionedRecordedRun, signal);
@@ -1034,8 +1066,15 @@ export interface Project {
 }
 
 export class Desk {
-  /** Join live and recorded runs and group them by folder. */
-  static projects(live: RunSnapshot[], recorded: RecordedRun[]): Project[] {
+  /**
+   * Join live and recorded runs and group them by folder. Ended runs in
+   * `hidden` (archived) are left out, though the daemon still lists them.
+   */
+  static projects(
+    live: RunSnapshot[],
+    recorded: RecordedRun[],
+    hidden: ReadonlySet<RunId> = new Set(),
+  ): Project[] {
     const byRun = new Map<RunId, DeskRun>();
     for (const run of recorded) {
       byRun.set(run.id, {
@@ -1048,6 +1087,7 @@ export class Desk {
       });
     }
     for (const run of live) {
+      if (run.state.phase === 'ended' && hidden.has(run.run)) continue;
       const known = byRun.get(run.run);
       byRun.set(run.run, {
         run: run.run,

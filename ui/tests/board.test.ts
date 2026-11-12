@@ -31,6 +31,7 @@ function session(n: number, overrides: Partial<SessionView> = {}): SessionView {
     turn_count: 1,
     error_count: 0,
     tokens: { input: null, output: null, cache_read: null },
+    archived_at: null,
     ...overrides,
   };
 }

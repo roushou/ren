@@ -2,10 +2,12 @@
  * Agent runs through the UI server: the one place the UI changes something
  * on the daemon. It is off unless the operator names the daemon's control
  * token file (`REN_CONTROL_TOKEN_FILE`), and it reaches only the daemon's
- * `/control/v1/runs` routes: listing, starting, prompting, answering,
+ * `/control/v1/runs` routes (listing, starting, prompting, answering,
  * interrupting, and stopping runs, their update feed, the projects a run
- * can start in, and the clients it can start with. Never inference,
- * history, or the rest of the control API.
+ * can start in, and the clients it can start with) and its
+ * `/control/v1/history` routes (archiving, unarchiving, and deleting a
+ * session or a run). Never inference, reads of history, or the rest of the
+ * control API.
  *
  * The browser never sees the token: this server reads it from the file on
  * each request (the daemon writes a new one when it starts) and sends it as
@@ -82,6 +84,12 @@ const routes: { pattern: RegExp; route: Route }[] = [
   },
   {
     pattern: new RegExp(`^/control/runs/${runId}/approvals/${approvalId}$`),
+    route: { method: 'POST', feed: false },
+  },
+  {
+    pattern: new RegExp(
+      `^/control/history/(?:sessions|runs)/${runId}/(?:archive|unarchive|delete)$`,
+    ),
     route: { method: 'POST', feed: false },
   },
 ];

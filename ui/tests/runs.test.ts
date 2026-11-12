@@ -257,6 +257,7 @@ test('the sidebar groups runs by folder, waiting and live ones first', () => {
       ended_at: 3000 as never,
       end: 'stopped',
       exit: { kind: 'signal', value: 9 },
+      archived_at: null,
     },
     {
       id: run as never,
@@ -268,6 +269,7 @@ test('the sidebar groups runs by folder, waiting and live ones first', () => {
       ended_at: null,
       end: null,
       exit: null,
+      archived_at: null,
     },
   ];
   const live: RunSnapshot[] = [
@@ -466,6 +468,7 @@ test('a folder lists its runs that have not ended before those that have', () =>
     ended_at: 2 as never,
     end: 'stopped',
     exit: null,
+    archived_at: null,
   };
   const [project] = Desk.projects([live], [ended]);
   const { open, ended: gone } = Desk.split(project!);
@@ -475,6 +478,69 @@ test('a folder lists its runs that have not ended before those that have', () =>
   );
   assert.deepEqual(
     gone.map((entry) => entry.run),
+    [other],
+  );
+});
+
+test('history edits and the archived shelf map to their routes and words', async () => {
+  const seen: string[] = [];
+  const client = new RunsClient((async (url: string, init?: RequestInit) => {
+    seen.push(`${init?.method} ${url}`);
+    if (url.includes('/delete')) return Response.json({ error: 'run_running' }, { status: 409 });
+    return url.startsWith('/api/runs')
+      ? Response.json({
+          api_version: 1,
+          runs: [
+            {
+              id: other,
+              harness: 'codex',
+              workdir: '/work/acme',
+              started_at: 1,
+              thread: null,
+              session: null,
+              ended_at: 2,
+              end: 'stopped',
+              exit: null,
+              archived_at: 3,
+            },
+          ],
+        })
+      : Response.json({ api_version: 1, change: 'archive' }, { status: 202 });
+  }) as unknown as typeof fetch);
+  await client.edit({ kind: 'run', id: run as never }, 'archive');
+  await client.edit({ kind: 'session', id: thread as never }, 'unarchive');
+  const [shelved] = await client.recorded(5, 'archived');
+  assert.equal(shelved?.archived_at, 3);
+  await assert.rejects(
+    client.edit({ kind: 'run', id: run as never }, 'delete'),
+    (error: unknown) =>
+      error instanceof RunCommandError && error.message.includes('stop it before deleting'),
+  );
+  assert.deepEqual(seen, [
+    `POST /control/history/runs/${run}/archive`,
+    `POST /control/history/sessions/${thread}/unarchive`,
+    'GET /api/runs?limit=5&shelf=archived',
+    `POST /control/history/runs/${run}/delete`,
+  ]);
+});
+
+test('an archived run the daemon still lists as ended is left out, a running one is not', () => {
+  const ended: RunSnapshot = {
+    run: run as never,
+    harness: 'codex',
+    workdir: '/work/acme',
+    state: { phase: 'ended', end: 'stopped', exit: null },
+  };
+  const running: RunSnapshot = {
+    run: other as never,
+    harness: 'codex',
+    workdir: '/work/acme',
+    state: { phase: 'idle', thread: thread as never },
+  };
+  const hidden = new Set([run, other] as never[]);
+  const [project] = Desk.projects([ended, running], [], hidden);
+  assert.deepEqual(
+    project?.runs.map((entry) => entry.run),
     [other],
   );
 });

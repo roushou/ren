@@ -212,11 +212,15 @@ export class SessionsReader {
     this.#details = details;
   }
 
-  read(fetcher: typeof fetch): Promise<Snapshot<SessionsData>> {
+  /** The sessions on `shelf`: current, or archived. */
+  read(
+    fetcher: typeof fetch,
+    shelf: 'current' | 'archived' = 'current',
+  ): Promise<Snapshot<SessionsData>> {
     const api = new ManagementApi(fetcher);
     return readSnapshot('sessions', async (): Promise<SessionsData> => {
       const [listing, open] = await Promise.all([
-        api.sessions(100),
+        api.sessions(100, undefined, shelf),
         api
           .calls(new URLSearchParams({ status: 'active', kind: 'model', limit: '100' }))
           .then((page) => page.calls),

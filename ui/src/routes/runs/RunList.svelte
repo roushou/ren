@@ -2,20 +2,24 @@
   The runs, grouped by the folder each works in: folders with a run that
   needs you first. Each run is named by what it was asked, when that is
   known here, and says how it stands and how long ago it started; ended
-  runs fold under their folder.
+  runs fold under their folder. The archived runs are a shelf of their own,
+  switched to at the bottom.
 -->
 <script lang="ts">
   import { SvelteSet } from 'svelte/reactivity';
   import { harnessLabel } from '#lib/activity.ts';
   import Icon from '#lib/Icon.svelte';
   import { ago } from '#lib/overview.ts';
-  import { Desk, Runs, type DeskRun, type Project, type RunId } from '#lib/runs.ts';
+  import { Desk, Runs, type DeskRun, type Project, type RunId, type Shelf } from '#lib/runs.ts';
 
   let {
     projects,
     selected,
     now,
     title,
+    shelf,
+    archivedCount,
+    onshelf,
     onselect,
     onnew,
   }: {
@@ -24,6 +28,10 @@
     now: number;
     /** What a run was asked, when known here. */
     title: (run: DeskRun) => string | null;
+    /** Which runs are listed: current, or archived. */
+    shelf: Shelf;
+    archivedCount: number;
+    onshelf: (shelf: Shelf) => void;
     onselect: (run: RunId) => void;
     onnew: () => void;
   } = $props();
@@ -50,9 +58,16 @@
 {/snippet}
 
 <nav class="run-list" aria-label="Runs by folder">
-  <button class="new-run" onclick={onnew}>
-    <Icon name="spark" size={13} /> New run <kbd>n</kbd>
-  </button>
+  {#if shelf === 'archived'}
+    <button class="new-run" onclick={() => onshelf('current')}>
+      <Icon name="archive" size={13} /> Archived runs
+      <span class="muted back">Back to runs</span>
+    </button>
+  {:else}
+    <button class="new-run" onclick={onnew}>
+      <Icon name="spark" size={13} /> New run <kbd>n</kbd>
+    </button>
+  {/if}
   {#each projects as project (project.workdir)}
     {@const { open, ended } = Desk.split(project)}
     <section class="folder">
@@ -64,7 +79,7 @@
       </header>
       {#each open as run (run.run)}{@render row(run)}{/each}
       {#if ended.length}
-        {#if unfolded.has(project.workdir) || ended.some((run) => run.run === selected)}
+        {#if shelf === 'archived' || unfolded.has(project.workdir) || ended.some((run) => run.run === selected)}
           {#each ended as run (run.run)}{@render row(run)}{/each}
         {:else}
           <button class="fold" onclick={() => unfolded.add(project.workdir)}>
@@ -75,8 +90,15 @@
       {/if}
     </section>
   {:else}
-    <p class="note">No runs yet. Start one with New run.</p>
+    <p class="note">
+      {shelf === 'archived' ? 'Nothing is archived.' : 'No runs yet. Start one with New run.'}
+    </p>
   {/each}
+  {#if shelf === 'current' && archivedCount}
+    <button class="shelf" onclick={() => onshelf('archived')}>
+      <Icon name="archive" size={12} /> Archived <span class="muted">{archivedCount}</span>
+    </button>
+  {/if}
 </nav>
 
 <style>
@@ -182,6 +204,29 @@
     grid-column: 3;
     grid-row: 1 / span 2;
     font-size: 11px;
+  }
+  .new-run .back {
+    margin-left: auto;
+    font-size: 11px;
+  }
+  .shelf {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    width: 100%;
+    padding: 8px 12px;
+    border: 0;
+    border-bottom: 1px solid var(--line);
+    background: none;
+    color: var(--muted);
+    font: inherit;
+    font-size: 12px;
+    text-align: left;
+    cursor: pointer;
+  }
+  .shelf:hover {
+    background: var(--row-hover);
+    color: var(--ink);
   }
   .fold {
     display: flex;

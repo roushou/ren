@@ -204,8 +204,9 @@ dependencies under "Crates" below. Read the code for current module ownership.
   but has no async runtime, HTTP, database, or CLI dependency.
 - `crates/ren-recorder`: the bounded capture queue between forwarding and
   storage, with `Recorder` as its primary type. `CallTap` (and `ChannelTap` for a
-  WebSocket's end) is the forwarding side, and `RunTap` records an agent run's
-  start, opening, and end; `RecorderTask` (run by the daemon on
+  WebSocket's end) is the forwarding side, `RunTap` records an agent run's
+  start, opening, and end, and `HistorySlot` an operator's archive or delete
+  of a session or run (`HistoryEdit`); `RecorderTask` (run by the daemon on
   its observation thread) is the shell around the pure `RecorderCore`
   (`recording`: records in queue order in, a batch of operations out, with
   chunking, inspection, and digests), and runs group commits, retention,
@@ -335,7 +336,9 @@ dependencies under "Crates" below. Read the code for current module ownership.
     stays crate-private; configuration and token types are exported at the root.
     Its `runs` module serves `/control/v1/runs`: starting, prompting, answering,
     interrupting, and stopping runs through the `ren_supervisor::Supervisor` in
-    `ManagementSetup`, and their updates as SSE.
+    `ManagementSetup`, and their updates as SSE. Its `history` module serves
+    `/control/v1/history`: archiving, unarchiving, and deleting a session or
+    run, checked against the `Reader` and recorded through the recorder.
 - `crates/ren-daemon`: configuration, resource wiring, and lifecycle, with
   `Daemon` as its primary type (`lib.rs`). It opens storage, binds the listener,
   writes the control token, constructs the gateway and recorder, owns the
@@ -381,9 +384,10 @@ dependencies under "Crates" below. Read the code for current module ownership.
   reads the daemon only through the management API and forwards only allowlisted
   read-only endpoints. It never forwards browser cookies or credentials, never reads
   storage directly, and never proxies inference. There are two exceptions.
-  Runs: with `REN_CONTROL_TOKEN_FILE` set, `/control/runs*` (`src/lib/server/control.ts`,
-  `RunsProxy`) forwards the Runs view's same-origin JSON requests to the
-  daemon's `/control/v1/runs*` only, with the control token read from that
+  Runs: with `REN_CONTROL_TOKEN_FILE` set, `/control/runs*` and
+  `/control/history/*` (`src/lib/server/control.ts`, `RunsProxy`) forward the
+  Runs view's same-origin JSON requests to the daemon's `/control/v1/runs*`
+  and its archive, unarchive, and delete routes only, with the control token read from that
   file on each request, never sent to the browser, and, with
   `REN_CONTROL_LOGINS` set, only for those Tailscale logins; `src/lib/runs.ts`
   is the view's pure core (run states, the live transcript, the run list by

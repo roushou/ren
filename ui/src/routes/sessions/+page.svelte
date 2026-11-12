@@ -47,7 +47,15 @@
 {#snippet scope()}
   <div class="scope-group">
     <strong>{sessions.length}{sessions.length === 100 ? '+' : ''}</strong>
-    <span class="muted">sessions · grouped by the IDs clients report</span>
+    <span class="muted"
+      >{data.shelf === 'archived' ? 'archived sessions' : 'sessions'} · grouped by the IDs clients report</span
+    >
+  </div>
+  <div class="scope-group segmented" role="group" aria-label="Which sessions">
+    <a class="button small" class:chosen={data.shelf === 'current'} href="/sessions">Current</a>
+    <a class="button small" class:chosen={data.shelf === 'archived'} href="/sessions?shelf=archived"
+      >Archived</a
+    >
   </div>
   <label class="scope-group end search-input scope-search"
     ><Icon name="search" /><input
@@ -160,6 +168,15 @@
           </table>
         </details>
       {/if}
+    {:else if data.shelf === 'archived' && !query}<div class="empty-state">
+        <div class="empty-icon"><Icon name="archive" size={25} /></div>
+        <h2>Nothing archived</h2>
+        <p>
+          Archive a session from its page, or a run from Runs. A session with new traffic is listed
+          with the current ones again.
+        </p>
+        <a class="button" href="/sessions">Current sessions <Icon name="arrow" size={14} /></a>
+      </div>
     {:else}<div class="empty-state">
         <div class="empty-icon"><Icon name="sessions" size={25} /></div>
         <h2>{query ? 'No matching sessions' : 'No reported sessions'}</h2>

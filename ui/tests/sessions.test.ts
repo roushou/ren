@@ -23,6 +23,7 @@ function session(n: number, lastSeen: number, overrides: Partial<SessionView> = 
     turn_count: n,
     error_count: 0,
     tokens: { input: 1000 * n, output: 10 * n, cache_read: null },
+    archived_at: null,
     ...overrides,
   };
 }

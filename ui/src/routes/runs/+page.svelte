@@ -19,8 +19,10 @@
     type Drivable,
     type RunClient,
     type RunProject,
+    type HistoryChange,
     type RecordedRun,
     type RunId,
+    type Shelf,
     type RunSnapshot,
     type Waiting,
   } from '#lib/runs.ts';
@@ -38,13 +40,23 @@
 
   let live = $state.raw<RunSnapshot[]>([]);
   let recorded = $state.raw<RecordedRun[]>([]);
+  /** Ended runs the operator archived. */
+  let archived = $state.raw<RecordedRun[]>([]);
+  /** Which runs the list shows. */
+  let shelf = $state<Shelf>('current');
+  /** The run whose delete waits for a second click. */
+  let confirming = $state<RunId | null>(null);
   /** Why runs cannot be listed or driven, when they cannot. */
   let unavailable = $state<string | null>(null);
   let feed = $state<'connecting' | 'open' | 'closed'>('connecting');
   /** Each run's conversation since this page started following it. */
   const transcripts = new SvelteMap<RunId, Transcript>();
   const selected = $derived(data.selected);
-  const projects = $derived(Desk.projects(live, recorded));
+  const projects = $derived(
+    shelf === 'current'
+      ? Desk.projects(live, recorded, new Set(archived.map((run) => run.id)))
+      : Desk.projects([], archived),
+  );
   const runs = $derived(projects.flatMap((project) => project.runs));
   const current = $derived<DeskRun | null>(runs.find((run) => run.run === selected) ?? null);
   const runState = $derived(current ? Desk.state(current) : null);
@@ -141,10 +153,39 @@
 
   async function readRecorded() {
     try {
-      recorded = await client.recorded(100);
+      [recorded, archived] = await Promise.all([
+        client.recorded(100),
+        client.recorded(100, 'archived'),
+      ]);
     } catch {
       // The recorded list is a convenience here; live runs still work.
     }
+  }
+
+  /**
+   * Archive, unarchive, or delete the selected run with its session. The
+   * daemon applies it after what it is recording, so the lists are read
+   * again until the run has moved.
+   */
+  async function edit(change: HistoryChange) {
+    const run = selected;
+    if (!run) return;
+    confirming = null;
+    await act(async () => {
+      await client.edit({ kind: 'run', id: run }, change);
+      for (const delay of [150, 400, 1000, 2000]) {
+        await new Promise((resolve) => setTimeout(resolve, delay));
+        await readRecorded();
+        const moved =
+          change === 'archive'
+            ? archived.some((entry) => entry.id === run)
+            : change === 'unarchive'
+              ? recorded.some((entry) => entry.id === run)
+              : ![...recorded, ...archived].some((entry) => entry.id === run);
+        if (moved) break;
+      }
+      if (change !== 'unarchive') select(null);
+    });
   }
 
   /**
@@ -313,6 +354,7 @@
     history = null;
     historyError = null;
     calls = null;
+    confirming = null;
     tab = 'conversation';
     following = true;
     if (run) void readHistory(run);
@@ -617,6 +659,12 @@
       {selected}
       {now}
       {title}
+      {shelf}
+      archivedCount={archived.length}
+      onshelf={(next) => {
+        shelf = next;
+        select(null);
+      }}
       onselect={(run) => select(run)}
       onnew={() => {
         select(null);
@@ -678,6 +726,33 @@
               disabled={busy}
               onclick={() => selected && void act(() => client.stop(selected))}>Stop</button
             >{/if}
+          {#if data.runsControl && runState.phase === 'ended'}
+            {#if confirming === current.run}
+              <span class="confirm-text">Delete this run and its recorded calls for good?</span>
+              <button
+                class="button small danger confirm"
+                disabled={busy}
+                onclick={() => edit('delete')}>Delete</button
+              >
+              <button class="button small" onclick={() => (confirming = null)}>Cancel</button>
+            {:else}
+              <button
+                class="button small"
+                disabled={busy}
+                onclick={() => edit(current.recorded?.archived_at ? 'unarchive' : 'archive')}
+                title={current.recorded?.archived_at
+                  ? 'List it with the current runs again'
+                  : 'Hide it, with its session, from the current runs'}
+                >{current.recorded?.archived_at ? 'Unarchive' : 'Archive'}</button
+              >
+              <button
+                class="button small danger"
+                disabled={busy}
+                onclick={() => (confirming = current.run)}
+                title="Delete it and its session's recorded calls">Delete</button
+              >
+            {/if}
+          {/if}
           {#if data.runsControl && resumable}<button
               class="button small primary"
               disabled={busy}
@@ -971,6 +1046,9 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+  .confirm-text {
+    color: var(--error);
   }
   .chip.phase {
     gap: 6px;

@@ -37,6 +37,7 @@
   } from './traffic.ts';
   import { LiveFollow } from './live.ts';
   import Icon from './Icon.svelte';
+  import SessionActions from './SessionActions.svelte';
   import Inspector from './Inspector.svelte';
   import Select, { type SelectOption } from './Select.svelte';
   import Segmented, { type SegmentedOption } from './Segmented.svelte';
@@ -373,6 +374,7 @@
         >
       </div>{/if}
     <div class="scope-group end">
+      {#if page.data.runsControl}<SessionActions session={sessionId} />{/if}
       <a class="text-button" href={`/sessions/${encodeURIComponent(sessionId)}/report`}
         >Turns and report <Icon name="arrow" size={12} /></a
       ><a class="text-button" href={`/traffic?session=${encodeURIComponent(sessionId)}`}

@@ -395,6 +395,8 @@ export interface SessionView {
   error_count: number | null;
   /** Input includes cached context; null when no call reported usage. */
   tokens: TokenTotals;
+  /** When the operator archived it, while it has no newer traffic. */
+  archived_at: UnixMillis | null;
 }
 /** Provider-reported tokens summed over calls; null when none reported them. */
 export interface TokenTotals {
@@ -701,6 +703,8 @@ const sessions = object<Sessions>({
       turn_count: count,
       error_count: count,
       tokens: tokenTotals,
+      archived_at: (value, path) =>
+        value === undefined || value === null ? null : millis(value, path),
     }),
   ),
 });
@@ -1326,8 +1330,14 @@ export class ManagementApi {
     const suffix = query.size ? `?${query}` : '';
     return this.#read(`/api/usage${suffix}`, usageView, signal);
   }
-  sessions(limit = 100, signal?: AbortSignal): Promise<Sessions> {
-    return this.#read(`/api/sessions?limit=${limit}`, sessions, signal);
+  /** The most recently active sessions; `archived` lists those archived instead. */
+  sessions(
+    limit = 100,
+    signal?: AbortSignal,
+    shelf: 'current' | 'archived' = 'current',
+  ): Promise<Sessions> {
+    const query = shelf === 'archived' ? '&shelf=archived' : '';
+    return this.#read(`/api/sessions?limit=${limit}${query}`, sessions, signal);
   }
   /** Oldest first. Only `after` is accepted besides the limit. */
   sessionCalls(id: SessionId, after: string | null, signal?: AbortSignal): Promise<CallPage> {

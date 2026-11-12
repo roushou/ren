@@ -611,6 +611,14 @@ pre {
 .button.primary:hover {
   background: var(--accent-hover);
 }
+.button.danger {
+  color: var(--error);
+  border-color: var(--error);
+}
+.button.danger.confirm {
+  background: var(--error);
+  color: var(--surface);
+}
 .button.chosen {
   color: var(--accent-foreground);
   border-color: var(--accent-border);
