@@ -210,7 +210,9 @@ dependencies under "Crates" below. Read the code for current module ownership.
   `ModelId`, read by `ModelListing` from a short listing process), and a
   run's `RunSettings` (`settings`: its model, `Effort`, and
   `ApprovalPolicy`, and `Midway`, what each client takes mid-run: steering
-  and which settings change from the next turn); the gateway URL a harness is pointed at and the
+  and which settings change from the next turn); the commands a client
+  offers a prompt (`commands`: `ClientCommand`, each codec reading its
+  client's own list); the gateway URL a harness is pointed at and the
   `UserToken` it presents there (`endpoint`); and `HostEnv` (`host`), the
   host environment that launching and configuration read. It performs
   filesystem and process I/O but has no async runtime, HTTP, database, or
@@ -268,7 +270,8 @@ dependencies under "Crates" below. Read the code for current module ownership.
   `Bounds`: the configured roots, the other places (`~/.config`), and the
   scratch folder Ren owns, where a run started without a folder
   (`StartPlace::Scratch`) gets a new git repository of its own; all resolved
-  by the host so links cannot escape; `project` finds the places a run can
+  by the host so links cannot escape; `files` ranks the paths of a run's folder for a prompt to
+  name (`FileListing`, walked by the host's `AgentHost::files`); `project` finds the places a run can
   start in, each a `Project` of a `PlaceKind` (git repositories under the
   roots, not looked inside; other places' folders; earlier scratch
   folders); `models` lists each client's models through a short listing
@@ -284,7 +287,7 @@ dependencies under "Crates" below. Read the code for current module ownership.
   start), with every event of its conversation as `entries` keeps it (no
   streamed pieces; a reply cut off kept as far as it came), and drains every
   run when the last handle is dropped. `src/purity.rs` keeps `run`,
-  `workdir`, `project`, and `entries` free of runtime and I/O. The daemon constructs it when `[runs]`
+  `workdir`, `project`, `entries`, and `files` free of runtime and I/O. The daemon constructs it when `[runs]`
   roots are configured, with `ProcessHost`; the gateway's control API serves it.
 - `crates/ren-tui`: Ren in the terminal, with `Tui` as its primary type: one
   app over one gateway for watching and driving agent sessions. `Tui` is
@@ -311,7 +314,9 @@ dependencies under "Crates" below. Read the code for current module ownership.
     traffic and a key bar; `watched` reads a session Ren did not start (its
     phase, alerts, and conversation). Keys act in normal mode; `message`
     (with `composer`, the one editor every prompt is written in: wrapped
-    rows, a cursor that moves through them, and pastes) takes text only
+    rows, a cursor that moves through them, and pastes, and `offer`, what
+    the word at the cursor is offered: the client's commands after `/` or
+    `$`, the folder's files after `@`) takes text only
     while writing to a run, and `new_run` is the full-screen composer for
     starting one, its project and client in a header. Keys come in layers: moving and a few
     verbs are `main`'s `Keymap`s, an approval's answers act only while it
@@ -426,7 +431,9 @@ dependencies under "Crates" below. Read the code for current module ownership.
   file on each request, never sent to the browser, and, with
   `REN_CONTROL_LOGINS` set, only for those Tailscale logins; `src/lib/runs.ts`
   is the view's pure core (run states, the live transcript, the run list by
-  folder, projects by place, and the clients a run can start with), and
+  folder, projects by place, and the clients a run can start with),
+  `src/lib/mention.ts` the composer's offers (the client's commands after
+  `/` or `$`, the folder's files after `@`), and
   `src/lib/server/runsStart.ts` makes the Runs page's first reads on the UI
   server, with the browser's Tailscale login and never its cookies, so the
   page renders as it will stay.
