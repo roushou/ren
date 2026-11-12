@@ -17,7 +17,11 @@ use crate::{
     routing::{ConfigRevision, OperatorRevision, UpstreamId},
 };
 use bytes::Bytes;
-use ren_harness::{Harness, attribution::Attribution, drive::DriveEvent};
+use ren_harness::{
+    Harness,
+    attribution::Attribution,
+    drive::{DriveEvent, RunSettings},
+};
 use ren_protocol::{
     direction::Direction,
     encoding::{ResponseEncoding, ResponseFormat},
@@ -673,6 +677,7 @@ impl RunTap {
         run: RunId,
         harness: Harness,
         workdir: String,
+        settings: RunSettings,
     ) -> Result<Self, RunUnrecorded> {
         let start = shared.reserve_close().ok_or(RunUnrecorded)?;
         let end = shared.reserve_close().ok_or(RunUnrecorded)?;
@@ -681,7 +686,14 @@ impl RunTap {
             run,
             end: Some(end),
         };
-        tap.send(start, RunFact::Started { harness, workdir });
+        tap.send(
+            start,
+            RunFact::Started {
+                harness,
+                workdir,
+                settings,
+            },
+        );
         Ok(tap)
     }
 

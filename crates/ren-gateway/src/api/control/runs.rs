@@ -20,7 +20,7 @@ use axum::{
 use http::{HeaderMap, StatusCode};
 use ren_harness::{
     Harness,
-    drive::{ApprovalId, Decision, ModelId, Prompt},
+    drive::{ApprovalId, ApprovalPolicy, Decision, Effort, ModelId, Prompt, RunSettings},
 };
 use ren_protocol::native::NativeThreadId;
 use ren_recorder::id::RunId;
@@ -47,6 +47,12 @@ struct StartRequest {
     /// own default.
     #[serde(default)]
     model: Option<String>,
+    /// With none, the client's own.
+    #[serde(default)]
+    effort: Option<Effort>,
+    /// With none, the client's own.
+    #[serde(default)]
+    approvals: Option<ApprovalPolicy>,
 }
 
 #[derive(serde::Deserialize)]
@@ -96,6 +102,7 @@ enum RunRefusal {
     InvalidDirectory,
     DirectoryNotFound,
     NotDrivable,
+    NoApprovals,
     Unrecorded,
     SpawnFailed,
     NotFound,
@@ -110,6 +117,7 @@ impl IntoResponse for RunRefusal {
             Self::InvalidDirectory => (StatusCode::BAD_REQUEST, "invalid_directory"),
             Self::DirectoryNotFound => (StatusCode::BAD_REQUEST, "directory_not_found"),
             Self::NotDrivable => (StatusCode::BAD_REQUEST, "not_drivable"),
+            Self::NoApprovals => (StatusCode::BAD_REQUEST, "no_approvals"),
             Self::Unrecorded => (StatusCode::SERVICE_UNAVAILABLE, "unrecorded"),
             Self::SpawnFailed => (StatusCode::BAD_GATEWAY, "spawn_failed"),
             Self::NotFound => (StatusCode::NOT_FOUND, "not_found"),
@@ -136,6 +144,7 @@ impl From<StartError> for RunRefusal {
             StartError::Workdir(WorkdirError::NoRoots) => Self::Disabled,
             StartError::Resolve(_) => Self::DirectoryNotFound,
             StartError::NotDrivable(_) => Self::NotDrivable,
+            StartError::NoApprovals(_) => Self::NoApprovals,
             StartError::Unrecorded(_) => Self::Unrecorded,
             StartError::Spawn { .. } => Self::SpawnFailed,
             StartError::Gone | StartError::NilId => Self::Unavailable,
@@ -333,7 +342,11 @@ impl RunsApi {
                 harness: request.harness,
                 dir: request.dir,
                 conversation,
-                model,
+                settings: RunSettings {
+                    model,
+                    effort: request.effort,
+                    approvals: request.approvals,
+                },
                 first,
             })
             .await

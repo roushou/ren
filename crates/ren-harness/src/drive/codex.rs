@@ -11,9 +11,9 @@
 //! sign-in, and Ren provides no tools.
 
 use super::{
-    ApprovalAsk, ApprovalId, CommandRefused, Decision, DriveCommand, DriveEvent, DriveItem, Framed,
-    ItemId, ItemKind, ItemPhase, ItemRead, ItemStatus, Line, Opening, Prompt, RawLine, Received,
-    RequestKind, Retry, TurnEnd, Unreadable,
+    ApprovalAsk, ApprovalId, ApprovalPolicy, CommandRefused, Decision, DriveCommand, DriveEvent,
+    DriveItem, Effort, Framed, ItemId, ItemKind, ItemPhase, ItemRead, ItemStatus, Line, Opening,
+    Prompt, RawLine, Received, RequestKind, Retry, RunSettings, TurnEnd, Unreadable,
     model::{DefaultChoice, Listing, Model, ModelId, ModelListing},
 };
 use ren_protocol::native::{NativeThreadId, NativeTurnId};
@@ -31,6 +31,8 @@ pub struct CodexAppServer {
     turn: TurnSlot,
     /// Approvals waiting for an answer, with the request id to answer.
     approvals: BTreeMap<ApprovalId, Value>,
+    /// The effort every turn asks for; none is Codex's own.
+    effort: Option<Effort>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -77,7 +79,11 @@ impl CodexAppServer {
     /// A codec for a freshly started server, and the first line to send it.
     /// `version` is Ren's own version, reported as the client's.
     pub fn open(opening: Opening, version: &str) -> (Self, Line) {
+        let effort = match &opening {
+            Opening::New { settings, .. } | Opening::Resume { settings, .. } => settings.effort,
+        };
         let mut codec = Self {
+            effort,
             phase: Phase::Initializing(opening),
             next_request: 0,
             requests: BTreeMap::new(),
@@ -189,13 +195,16 @@ impl CodexAppServer {
         match self.turn {
             TurnSlot::Idle => {
                 self.turn = TurnSlot::Requested;
-                Ok(self.request(
-                    RequestKind::TurnStart,
-                    json!({
+                Ok(self.request(RequestKind::TurnStart, {
+                    let mut params = json!({
                         "threadId": thread.to_string(),
                         "input": [{ "type": "text", "text": prompt.as_str() }],
-                    }),
-                ))
+                    });
+                    if let (Some(effort), Value::Object(fields)) = (self.effort, &mut params) {
+                        fields.insert("effort".into(), effort.to_string().into());
+                    }
+                    params
+                }))
             }
             TurnSlot::Requested | TurnSlot::Running(_) => Err(CommandRefused::TurnRunning),
         }
@@ -218,10 +227,24 @@ impl CodexAppServer {
         }
     }
 
-    /// Open the thread on `model`; with none, Codex uses its own default.
-    fn choose(params: &mut Value, model: Option<&ModelId>) {
-        if let (Some(model), Value::Object(fields)) = (model, params) {
+    /// Open the thread on the run's model and approval policy; each left
+    /// out is Codex's own. A policy is Codex's approval policy with the
+    /// sandbox it runs in: asking for everything keeps the folder read-only.
+    fn choose(params: &mut Value, settings: &RunSettings) {
+        let Value::Object(fields) = params else {
+            return;
+        };
+        if let Some(model) = &settings.model {
             fields.insert("model".into(), model.as_str().into());
+        }
+        if let Some(policy) = settings.approvals {
+            let (approval, sandbox) = match policy {
+                ApprovalPolicy::Ask => ("untrusted", "read-only"),
+                ApprovalPolicy::Edits => ("untrusted", "workspace-write"),
+                ApprovalPolicy::Auto => ("on-request", "workspace-write"),
+            };
+            fields.insert("approvalPolicy".into(), approval.into());
+            fields.insert("sandbox".into(), sandbox.into());
         }
     }
 
@@ -275,14 +298,18 @@ impl CodexAppServer {
                     .replies
                     .push(Line::json(&json!({ "method": "initialized" })));
                 received.replies.push(match opening {
-                    Opening::New { cwd, model, .. } => {
+                    Opening::New { cwd, settings, .. } => {
                         let mut params = json!({ "cwd": cwd });
-                        Self::choose(&mut params, model.as_ref());
+                        Self::choose(&mut params, &settings);
                         self.request(RequestKind::ThreadStart, params)
                     }
-                    Opening::Resume { thread, cwd, model } => {
+                    Opening::Resume {
+                        thread,
+                        cwd,
+                        settings,
+                    } => {
                         let mut params = json!({ "threadId": thread.to_string(), "cwd": cwd });
-                        Self::choose(&mut params, model.as_ref());
+                        Self::choose(&mut params, &settings);
                         self.request(RequestKind::ThreadResume, params)
                     }
                 });
@@ -765,6 +792,12 @@ impl CodexModels {
                 Some(true) => DefaultChoice::Default,
                 Some(false) | None => DefaultChoice::Other,
             },
+            efforts: ModelListing::efforts(
+                entry.get("supportedReasoningEfforts"),
+                Some("reasoningEffort"),
+            ),
+            effort: ModelListing::text(entry, "defaultReasoningEffort")
+                .and_then(|effort| effort.parse().ok()),
             id,
         })
     }
@@ -805,7 +838,7 @@ mod tests {
             Opening::New {
                 cwd: "/work/acme".into(),
                 id: named(),
-                model: None,
+                settings: crate::drive::RunSettings::default(),
             },
             "0.1.0",
         );
@@ -847,7 +880,7 @@ mod tests {
             Opening::New {
                 cwd: "/w".into(),
                 id: named(),
-                model: None,
+                settings: crate::drive::RunSettings::default(),
             },
             "0.1.0",
         );
@@ -862,7 +895,7 @@ mod tests {
             Opening::Resume {
                 thread,
                 cwd: "/w".into(),
-                model: None,
+                settings: crate::drive::RunSettings::default(),
             },
             "0.1.0",
         );

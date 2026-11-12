@@ -65,6 +65,9 @@ fn every_label_is_pinned() {
         tools::PiTool,
         tools::OpenCodeTool,
         drive::Decision,
+        drive::DefaultChoice,
+        drive::Effort,
+        drive::ApprovalPolicy,
         drive::RequestKind,
     ];
     let pinned = include_str!("fixtures/labels.txt");

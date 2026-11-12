@@ -15,9 +15,9 @@
 //! Ren provides no interface for them.
 
 use super::{
-    CommandRefused, DriveCommand, DriveEvent, DriveItem, Framed, ItemId, ItemKind, ItemPhase,
-    ItemRead, ItemStatus, Line, Opening, Prompt, RawLine, Received, RequestKind, Retry, TurnEnd,
-    Unreadable,
+    CommandRefused, DriveCommand, DriveEvent, DriveItem, Effort, Framed, ItemId, ItemKind,
+    ItemPhase, ItemRead, ItemStatus, Line, Opening, Prompt, RawLine, Received, RequestKind, Retry,
+    TurnEnd, Unreadable,
     model::{DefaultChoice, Listing, Model, ModelId, ModelListing},
 };
 use ren_protocol::native::{NativeThreadId, NativeTurnId};
@@ -77,9 +77,11 @@ impl PiRpc {
     /// The arguments that put Pi in this mode on `opening`'s session, after
     /// the extension arguments of a launched Pi.
     pub fn arguments(opening: &Opening) -> Vec<String> {
-        let (thread, model) = match opening {
-            Opening::New { id, model, .. } => (id, model),
-            Opening::Resume { thread, model, .. } => (thread, model),
+        let (thread, settings) = match opening {
+            Opening::New { id, settings, .. } => (id, settings),
+            Opening::Resume {
+                thread, settings, ..
+            } => (thread, settings),
         };
         // `--session-id` keeps the session in the run's folder; `--session`
         // would move to the folder the session was started in.
@@ -89,8 +91,12 @@ impl PiRpc {
             "--session-id".into(),
             thread.to_string(),
         ];
-        if let Some(model) = model {
+        if let Some(model) = &settings.model {
             arguments.extend(["--model".into(), model.to_string()]);
+        }
+        // Pi asks for no approvals, so a policy changes nothing.
+        if let Some(effort) = settings.effort {
+            arguments.extend(["--thinking".into(), effort.to_string()]);
         }
         arguments
     }
@@ -629,6 +635,15 @@ pub struct PiModels {
 
 impl PiModels {
     const MODELS: &'static str = "ren-models";
+    /// The thinking levels every reasoning model takes; `xhigh` and `max`
+    /// only some, which the listing does not say.
+    const THINKING: [Effort; 5] = [
+        Effort::Off,
+        Effort::Minimal,
+        Effort::Low,
+        Effort::Medium,
+        Effort::High,
+    ];
     const STATE: &'static str = "ren-state";
 
     /// The arguments that put Pi in RPC mode with no session, after the
@@ -666,11 +681,15 @@ impl PiModels {
             (Some(Self::STATE), Some(listed)) => {
                 let mut models = std::mem::take(listed);
                 // Without a readable state, nothing is marked.
-                let current = Self::model(&message["data"]["model"]).filter(|_| succeeded);
+                let state = &message["data"];
+                let current = Self::model(&state["model"]).filter(|_| succeeded);
                 if let Some(current) = current
                     && let Some(model) = models.iter_mut().find(|model| model.id == current.id)
                 {
                     model.choice = DefaultChoice::Default;
+                    model.effort = ModelListing::text(state, "thinkingLevel")
+                        .and_then(|level| level.parse().ok())
+                        .filter(|level| model.efforts.contains(level));
                 }
                 Listing::Listed(models)
             }
@@ -688,6 +707,11 @@ impl PiModels {
             description: None,
             provider: Some(provider),
             choice: DefaultChoice::Other,
+            efforts: match entry.get("reasoning").and_then(Value::as_bool) {
+                Some(true) => Self::THINKING.to_vec(),
+                Some(false) | None => Vec::new(),
+            },
+            effort: None,
             id,
         })
     }
@@ -736,7 +760,7 @@ mod tests {
         Opening::New {
             cwd: "/work/acme".into(),
             id: session(),
-            model: None,
+            settings: crate::drive::RunSettings::default(),
         }
     }
 
@@ -793,7 +817,7 @@ mod tests {
             PiRpc::arguments(&Opening::Resume {
                 thread: session(),
                 cwd: "/work/acme".into(),
-                model: None,
+                settings: crate::drive::RunSettings::default(),
             }),
             ["--mode", "rpc", "--session-id", SESSION]
         );

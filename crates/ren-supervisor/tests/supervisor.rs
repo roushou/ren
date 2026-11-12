@@ -914,15 +914,32 @@ async fn a_failed_listing_is_reported_and_asked_again() {
 }
 
 #[tokio::test]
-async fn a_run_starts_on_its_chosen_model() {
+async fn a_run_starts_with_its_chosen_settings() {
     let host = FakeHost::new(Script::Claude);
     let spawned = host.spawned.clone();
     let supervised = supervise(host).await;
     let mut start = starting(Harness::ClaudeCode, "/work/acme", Conversation::New, None);
-    start.model = Some("small".parse().unwrap());
+    start.settings.model = Some("small".parse().unwrap());
+    start.settings.approvals = Some(ren_harness::drive::ApprovalPolicy::Auto);
     supervised.supervisor.start(start).await.unwrap();
     let (arguments, _) = spawned.lock().unwrap()[0].clone();
-    assert_eq!(arguments[arguments.len() - 2..], ["--model", "small"]);
+    assert_eq!(
+        arguments[arguments.len() - 4..],
+        ["--model", "small", "--permission-mode", "auto"]
+    );
+    // The run says what it was started with.
+    let runs = supervised.supervisor.runs().await.unwrap();
+    assert_eq!(
+        runs[0].settings.model.as_ref().map(|m| m.as_str()),
+        Some("small")
+    );
+    // Pi asks for nothing, so it takes no approval policy.
+    let mut pi = starting(Harness::Pi, "/work/acme", Conversation::New, None);
+    pi.settings.approvals = Some(ren_harness::drive::ApprovalPolicy::Ask);
+    assert!(matches!(
+        supervised.supervisor.start(pi).await,
+        Err(StartError::NoApprovals(Harness::Pi))
+    ));
 }
 
 fn prompt_text(text: &str) -> Prompt {
@@ -940,7 +957,7 @@ fn starting(
         harness,
         dir: dir.into(),
         conversation,
-        model: None,
+        settings: ren_harness::drive::RunSettings::default(),
         first,
     }
 }

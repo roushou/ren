@@ -3,9 +3,10 @@
 //! conversation, asked for its models, and stopped. Each client's listing is
 //! a pure codec beside its conversation codec.
 
-use super::{Framed, Line, claude::ClaudeModels, codex::CodexModels, pi::PiModels};
+use super::{Effort, Framed, Line, claude::ClaudeModels, codex::CodexModels, pi::PiModels};
 use crate::{Harness, launch::NotDrivable};
 use serde_with::{DeserializeFromStr, SerializeDisplay};
+use strum::{Display, EnumString, IntoStaticStr, VariantArray};
 
 /// A model, named as its client names it on the command line or in its
 /// protocol: Codex's model slug, Claude Code's `--model` value, Pi's
@@ -55,11 +56,16 @@ pub struct Model {
     pub provider: Option<String>,
     /// Which model a run gets when none is chosen.
     pub choice: DefaultChoice,
+    /// The efforts it offers, least first; empty when it offers no choice.
+    pub efforts: Vec<Effort>,
+    /// The effort it runs at when none is chosen, when the client says.
+    pub effort: Option<Effort>,
 }
 
 /// Whether a model is the one a client uses when none is chosen.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "snake_case")]
+#[derive(Display, EnumString, IntoStaticStr, VariantArray)]
+#[strum(serialize_all = "snake_case")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SerializeDisplay, DeserializeFromStr)]
 pub enum DefaultChoice {
     Default,
     Other,
@@ -131,6 +137,26 @@ impl ModelListing {
 }
 
 impl ModelListing {
+    /// The efforts named in `levels` (strings, or objects naming theirs in
+    /// `field`), least first; levels Ren does not know are left out, since a
+    /// run could not ask for them.
+    pub(super) fn efforts(levels: Option<&serde_json::Value>, field: Option<&str>) -> Vec<Effort> {
+        let mut efforts: Vec<Effort> = levels
+            .and_then(serde_json::Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|level| match field {
+                Some(field) => level.get(field),
+                None => Some(level),
+            })
+            .filter_map(serde_json::Value::as_str)
+            .filter_map(|level| level.parse().ok())
+            .collect();
+        efforts.sort();
+        efforts.dedup();
+        efforts
+    }
+
     /// The text of `field` in `value`, when it is a non-blank string.
     pub(super) fn text(value: &serde_json::Value, field: &str) -> Option<String> {
         value
@@ -145,6 +171,7 @@ impl ModelListing {
 #[cfg(test)]
 mod tests {
     use super::{DefaultChoice, Listing, Model, ModelId, ModelListing};
+    use crate::drive::{ApprovalPolicy, Effort, RunSettings};
     use crate::{
         Harness,
         drive::{
@@ -168,6 +195,8 @@ mod tests {
             description: None,
             provider: provider.map(str::to_owned),
             choice,
+            efforts: Vec::new(),
+            effort: None,
         }
     }
 
@@ -321,11 +350,120 @@ mod tests {
     }
 
     fn opening(model: Option<&str>) -> Opening {
+        opened(RunSettings {
+            model: model.map(|model| model.parse().unwrap()),
+            ..RunSettings::default()
+        })
+    }
+
+    fn opened(settings: RunSettings) -> Opening {
         Opening::New {
             cwd: "/work/acme".into(),
             id: ren_protocol::native::NativeThreadId::new(uuid::Uuid::from_u128(9)).unwrap(),
-            model: model.map(|model| model.parse().unwrap()),
+            settings,
         }
+    }
+
+    /// Effort and approval policy go where each client takes them.
+    #[test]
+    fn a_conversation_opens_with_its_effort_and_approval_policy() {
+        let settings = |effort, approvals| RunSettings {
+            model: None,
+            effort: Some(effort),
+            approvals: Some(approvals),
+        };
+        let claude =
+            ClaudeStreamJson::arguments(&opened(settings(Effort::High, ApprovalPolicy::Edits)));
+        assert_eq!(
+            claude[claude.len() - 4..],
+            ["--effort", "high", "--permission-mode", "acceptEdits"]
+        );
+        let pi = PiRpc::arguments(&opened(settings(Effort::Minimal, ApprovalPolicy::Auto)));
+        assert_eq!(pi[pi.len() - 2..], ["--thinking", "minimal"]);
+
+        let (mut codex, _) = CodexAppServer::open(
+            opened(settings(Effort::Xhigh, ApprovalPolicy::Ask)),
+            "0.1.0",
+        );
+        let received = codex.receive(Framed::Line(
+            json!({ "id": 0, "result": {} }).to_string().into_bytes(),
+        ));
+        assert_eq!(
+            sent(&received.replies[1])["params"],
+            json!({ "cwd": "/work/acme", "approvalPolicy": "untrusted", "sandbox": "read-only" })
+        );
+        let thread = "0190f3a0-0000-7000-8000-000000000001";
+        let _ = codex.receive(Framed::Line(
+            json!({ "id": 1, "result": { "thread": { "id": thread } } })
+                .to_string()
+                .into_bytes(),
+        ));
+        let turn = codex
+            .command(crate::drive::DriveCommand::Prompt(
+                crate::drive::Prompt::parse("go".into()).unwrap(),
+            ))
+            .unwrap();
+        assert_eq!(sent(&turn)["params"]["effort"], "xhigh");
+        assert!(ApprovalPolicy::offered(Harness::Pi).is_empty());
+    }
+
+    #[test]
+    fn listed_models_say_which_efforts_they_take() {
+        let (mut listing, _) = ModelListing::open(Harness::Codex, "0.1.0").unwrap();
+        let _ = feed(&mut listing, json!({ "id": 0, "result": {} }));
+        let Listing::Listed(codex) = feed(
+            &mut listing,
+            json!({ "id": 1, "result": { "data": [
+                { "model": "gpt-fast", "displayName": "GPT Fast", "isDefault": true,
+                  "defaultReasoningEffort": "medium", "supportedReasoningEfforts": [
+                    { "reasoningEffort": "high", "description": "" },
+                    { "reasoningEffort": "low", "description": "" },
+                    { "reasoningEffort": "ludicrous", "description": "" },
+                    { "reasoningEffort": "medium", "description": "" } ] },
+            ] } }),
+        ) else {
+            panic!("listed");
+        };
+        assert_eq!(
+            codex[0].efforts,
+            [Effort::Low, Effort::Medium, Effort::High]
+        );
+        assert_eq!(codex[0].effort, Some(Effort::Medium));
+
+        let (mut listing, first) = ModelListing::open(Harness::ClaudeCode, "0.1.0").unwrap();
+        let Listing::Listed(claude) = feed(
+            &mut listing,
+            json!({ "type": "control_response", "response": {
+                "subtype": "success", "request_id": sent(&first[0])["request_id"], "response": {
+                "models": [
+                    { "value": "big", "displayName": "Big", "supportsEffort": true,
+                      "supportedEffortLevels": ["low", "medium", "high", "xhigh", "max"] },
+                    { "value": "old", "displayName": "Old" },
+                ] } } }),
+        ) else {
+            panic!("listed");
+        };
+        assert_eq!(claude[0].efforts.len(), 5);
+        assert!(claude[1].efforts.is_empty());
+
+        let (mut listing, _) = ModelListing::open(Harness::Pi, "0.1.0").unwrap();
+        let _ = feed(
+            &mut listing,
+            json!({ "id": "ren-models", "type": "response", "success": true, "data": { "models": [
+                { "provider": "a", "id": "thinks", "name": "Thinks", "reasoning": true },
+                { "provider": "a", "id": "plain", "name": "Plain", "reasoning": false },
+            ] } }),
+        );
+        let Listing::Listed(pi) = feed(
+            &mut listing,
+            json!({ "id": "ren-state", "type": "response", "success": true, "data": {
+                "model": { "provider": "a", "id": "thinks" }, "thinkingLevel": "low" } }),
+        ) else {
+            panic!("listed");
+        };
+        assert_eq!(pi[0].efforts.first(), Some(&Effort::Off));
+        assert_eq!(pi[0].effort, Some(Effort::Low));
+        assert!(pi[1].efforts.is_empty());
     }
 
     /// A chosen model goes where each client takes it; none leaves the

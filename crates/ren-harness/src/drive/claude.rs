@@ -16,9 +16,9 @@
 //! model requests carry, so a driven turn's id is its prompt's message id.
 
 use super::{
-    ApprovalAsk, ApprovalId, CommandRefused, Decision, DriveCommand, DriveEvent, DriveItem, Framed,
-    ItemId, ItemKind, ItemPhase, ItemRead, ItemStatus, Line, Opening, Prompt, RawLine, Received,
-    RequestKind, Retry, TurnEnd, Unreadable,
+    ApprovalAsk, ApprovalId, ApprovalPolicy, CommandRefused, Decision, DriveCommand, DriveEvent,
+    DriveItem, Framed, ItemId, ItemKind, ItemPhase, ItemRead, ItemStatus, Line, Opening, Prompt,
+    RawLine, Received, RequestKind, Retry, RunSettings, TurnEnd, Unreadable,
     model::{DefaultChoice, Listing, Model, ModelId, ModelListing},
 };
 use ren_protocol::native::{NativeThreadId, NativeTurnId};
@@ -107,18 +107,38 @@ impl ClaudeStreamJson {
     /// The arguments that start Claude Code in this mode, after `claude`.
     pub fn arguments(opening: &Opening) -> Vec<String> {
         let mut arguments: Vec<String> = Self::MODE.map(str::to_owned).into();
-        let model = match opening {
-            Opening::New { id, model, .. } => {
+        let settings = match opening {
+            Opening::New { id, settings, .. } => {
                 arguments.extend(["--session-id".into(), id.to_string()]);
-                model
+                settings
             }
-            Opening::Resume { thread, model, .. } => {
+            Opening::Resume {
+                thread, settings, ..
+            } => {
                 arguments.extend(["--resume".into(), thread.to_string()]);
-                model
+                settings
             }
         };
-        if let Some(model) = model {
+        arguments.extend(Self::settings(settings));
+        arguments
+    }
+
+    /// A run's settings as Claude Code's flags; each left out is its own.
+    fn settings(settings: &RunSettings) -> Vec<String> {
+        let mut arguments = Vec::new();
+        if let Some(model) = &settings.model {
             arguments.extend(["--model".into(), model.to_string()]);
+        }
+        if let Some(effort) = settings.effort {
+            arguments.extend(["--effort".into(), effort.to_string()]);
+        }
+        if let Some(policy) = settings.approvals {
+            let mode = match policy {
+                ApprovalPolicy::Ask => "default",
+                ApprovalPolicy::Edits => "acceptEdits",
+                ApprovalPolicy::Auto => "auto",
+            };
+            arguments.extend(["--permission-mode".into(), mode.into()]);
         }
         arguments
     }
@@ -918,6 +938,15 @@ impl ClaudeModels {
                     } else {
                         DefaultChoice::Other
                     },
+                    // Claude Code lists the efforts a model takes, not which
+                    // one it starts at.
+                    efforts: match entry.get("supportsEffort").and_then(Value::as_bool) {
+                        Some(true) => {
+                            ModelListing::efforts(entry.get("supportedEffortLevels"), None)
+                        }
+                        Some(false) | None => Vec::new(),
+                    },
+                    effort: None,
                     id,
                 })
             })
@@ -963,7 +992,7 @@ mod tests {
         let (mut codec, first) = ClaudeStreamJson::open(&Opening::New {
             cwd: "/work/acme".into(),
             id: session(),
-            model: None,
+            settings: crate::drive::RunSettings::default(),
         });
         assert_eq!(
             sent(&first),
@@ -1311,7 +1340,7 @@ mod tests {
         let (mut codec, _) = ClaudeStreamJson::open(&Opening::Resume {
             thread: session(),
             cwd: "/w".into(),
-            model: None,
+            settings: crate::drive::RunSettings::default(),
         });
         let refused = feed(
             &mut codec,

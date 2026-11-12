@@ -149,10 +149,10 @@ async fn a_run_is_started_prompted_approved_and_stopped_through_the_control_api(
     assert_eq!(
         clients["clients"],
         json!([
-            { "harness": "claude_code", "status": "ready" },
-            { "harness": "codex", "status": "ready" },
-            { "harness": "pi", "status": "ready" },
-            { "harness": "opencode", "status": "not_drivable" },
+            { "harness": "claude_code", "status": "ready", "approvals": ["ask", "edits", "auto"] },
+            { "harness": "codex", "status": "ready", "approvals": ["ask", "edits", "auto"] },
+            { "harness": "pi", "status": "ready", "approvals": [] },
+            { "harness": "opencode", "status": "not_drivable", "approvals": [] },
         ])
     );
 
@@ -174,14 +174,15 @@ async fn a_run_is_started_prompted_approved_and_stopped_through_the_control_api(
         models,
         json!({ "api_version": 1, "harness": "codex", "models": [
             { "id": "gpt-fast", "name": "GPT Fast", "description": "Quick.",
-              "provider": null, "choice": "default" },
+              "provider": null, "choice": "default", "efforts": [], "effort": null },
         ] })
     );
 
     let (status, body) = control
         .post(
             "/runs",
-            json!({ "harness": "codex", "dir": "/work/acme", "model": "gpt-fast" }),
+            json!({ "harness": "codex", "dir": "/work/acme", "model": "gpt-fast",
+                    "effort": "high", "approvals": "edits" }),
         )
         .await;
     assert_eq!(status, StatusCode::CREATED, "{body}");
@@ -321,6 +322,16 @@ async fn a_run_is_started_prompted_approved_and_stopped_through_the_control_api(
         .unwrap();
     let listed: Value = serde_json::from_slice(&listed).unwrap();
     assert_eq!(listed["runs"][0]["id"], run.as_str());
+    // Its settings, as it was started.
+    let recorded = &listed["runs"][0];
+    assert_eq!(
+        (
+            &recorded["model"],
+            &recorded["effort"],
+            &recorded["approvals"]
+        ),
+        (&json!("gpt-fast"), &json!("high"), &json!("edits"))
+    );
     // Ended, it is archived: listed only on the archived shelf.
     let (status, _) = control
         .post(&format!("/history/runs/{run}/archive"), json!({}))

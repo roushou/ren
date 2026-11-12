@@ -206,8 +206,9 @@ impl Recorder {
         run: crate::id::RunId,
         harness: ren_harness::Harness,
         workdir: String,
+        settings: ren_harness::drive::RunSettings,
     ) -> Result<RunTap, RunUnrecorded> {
-        RunTap::start(self.shared.clone(), run, harness, workdir)
+        RunTap::start(self.shared.clone(), run, harness, workdir, settings)
     }
 
     /// Reserve the end record of a WebSocket channel whose handshake call

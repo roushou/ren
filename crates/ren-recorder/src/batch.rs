@@ -17,7 +17,11 @@ use crate::{
     time::{Moment, UnixMillis},
 };
 use bytes::Bytes;
-use ren_harness::{Harness, attribution::Attribution, drive::DriveEvent};
+use ren_harness::{
+    Harness,
+    attribution::Attribution,
+    drive::{DriveEvent, RunSettings},
+};
 use ren_protocol::{
     direction::Direction,
     encoding::{ResponseEncoding, ResponseFormat},
@@ -290,11 +294,11 @@ pub enum RunFact {
     Started {
         harness: Harness,
         workdir: String,
+        /// The settings it started with; each left out is the client's own.
+        settings: RunSettings,
     },
     /// The client opened its conversation, under its own thread id.
-    Opened {
-        thread: NativeThreadId,
-    },
+    Opened { thread: NativeThreadId },
     Ended {
         end: RunEnd,
         exit: Option<ProcessExit>,

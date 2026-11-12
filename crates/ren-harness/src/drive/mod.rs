@@ -12,9 +12,11 @@ pub mod codex;
 mod lines;
 mod model;
 pub mod pi;
+mod settings;
 
 pub use lines::{Framed, Line, LineLimit, Lines};
 pub use model::{BlankModelId, DefaultChoice, Listing, Model, ModelId, ModelListing};
+pub use settings::{ApprovalPolicy, Effort, RunSettings};
 
 use crate::{Harness, launch::NotDrivable};
 use claude::ClaudeStreamJson;
@@ -34,13 +36,13 @@ pub enum Opening {
     New {
         cwd: String,
         id: NativeThreadId,
-        model: Option<ModelId>,
+        settings: RunSettings,
     },
     /// An existing conversation, continued in this working directory.
     Resume {
         thread: NativeThreadId,
         cwd: String,
-        model: Option<ModelId>,
+        settings: RunSettings,
     },
 }
 

@@ -390,7 +390,7 @@ mod tests {
         Opening::New {
             cwd: "/work/acme".into(),
             id: NativeThreadId::new(uuid::Uuid::parse_str(SESSION).unwrap()).unwrap(),
-            model: None,
+            settings: crate::drive::RunSettings::default(),
         }
     }
 
@@ -495,7 +495,7 @@ mod tests {
                 &Opening::Resume {
                     thread: NativeThreadId::new(uuid::Uuid::parse_str(SESSION).unwrap()).unwrap(),
                     cwd: "/work/acme".into(),
-                    model: None,
+                    settings: crate::drive::RunSettings::default(),
                 },
             )
             .unwrap()

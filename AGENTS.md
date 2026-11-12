@@ -202,7 +202,8 @@ dependencies under "Crates" below. Read the code for current module ownership.
   `CodexAppServer` for `codex app-server`, `ClaudeStreamJson` for `claude -p`
   in stream-json, `PiRpc` for `pi --mode rpc`; and `model`: the `Model`s a
   client lists, by `ModelId`, read by `ModelListing` from a short process
-  started by `Harness::list_models`). It performs filesystem and process I/O
+  started by `Harness::list_models`, and a run's `RunSettings`: its model,
+  `Effort`, and `ApprovalPolicy`). It performs filesystem and process I/O
   but has no async runtime, HTTP, database, or CLI dependency.
 - `crates/ren-recorder`: the bounded capture queue between forwarding and
   storage, with `Recorder` as its primary type. `CallTap` (and `ChannelTap` for a

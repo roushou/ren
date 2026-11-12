@@ -6,7 +6,7 @@
 use crate::{StoreError, query::Cursor};
 use ren_harness::Harness;
 use ren_harness::attribution::{HintIssue, HintSource};
-use ren_harness::drive::DriveEvent;
+use ren_harness::drive::{ApprovalPolicy, DriveEvent, Effort};
 use ren_harness::tools::CallPurpose;
 use ren_protocol::{
     direction::Direction,
@@ -612,10 +612,15 @@ pub struct RunView {
     pub exit: Option<ProcessExit>,
     /// When the operator archived it; it is listed as archived once ended.
     pub archived_at: Option<UnixMillis>,
+    /// The model it started on, as its client names it; `None` is the
+    /// client's own (or a run recorded before settings were).
+    pub model: Option<String>,
+    pub effort: Option<Stored<Effort>>,
+    pub approvals: Option<Stored<ApprovalPolicy>>,
 }
 
 impl RunView {
-    pub(super) const SELECT: &'static str = "SELECT id, harness, workdir, started_at, thread, ended_at, run_end, exit_kind, exit_value, archived_at, (SELECT sessions.id FROM sessions WHERE sessions.native_id = runs.thread ORDER BY sessions.first_seen, sessions.id LIMIT 1) AS session FROM runs";
+    pub(super) const SELECT: &'static str = "SELECT id, harness, workdir, started_at, thread, ended_at, run_end, exit_kind, exit_value, archived_at, model, effort, approvals, (SELECT sessions.id FROM sessions WHERE sessions.native_id = runs.thread ORDER BY sessions.first_seen, sessions.id LIMIT 1) AS session FROM runs";
 
     pub(super) fn from_row(row: &SqliteRow) -> Result<Self, StoreError> {
         let row = Columns(row);
@@ -638,6 +643,9 @@ impl RunView {
             end: row.optional_label("run_end")?,
             exit,
             archived_at: row.optional_time("archived_at")?,
+            model: row.text("model")?,
+            effort: row.optional_label("effort")?,
+            approvals: row.optional_label("approvals")?,
         })
     }
 }

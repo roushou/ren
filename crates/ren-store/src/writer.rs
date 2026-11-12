@@ -7,7 +7,7 @@ use crate::{
     view::{DiskUsage, FileUsage},
 };
 use bytes::Bytes;
-use ren_harness::drive::DriveEvent;
+use ren_harness::drive::{DriveEvent, ModelId};
 use ren_protocol::{
     direction::Direction,
     label::{Labeled, Stored},
@@ -736,14 +736,21 @@ impl MetadataTx<'_> {
         let id = record.run.to_string();
         let at = i64::try_from(record.at.wall.as_millis()).unwrap_or(i64::MAX);
         match &record.fact {
-            RunFact::Started { harness, workdir } => {
+            RunFact::Started {
+                harness,
+                workdir,
+                settings,
+            } => {
                 sqlx::query(
-                    "INSERT INTO runs(id, harness, workdir, started_at) VALUES (?, ?, ?, ?)",
+                    "INSERT INTO runs(id, harness, workdir, started_at, model, effort, approvals) VALUES (?, ?, ?, ?, ?, ?, ?)",
                 )
                 .bind(&id)
                 .bind(harness.label())
                 .bind(workdir)
                 .bind(at)
+                .bind(settings.model.as_ref().map(ModelId::as_str))
+                .bind(settings.effort.map(Labeled::label))
+                .bind(settings.approvals.map(Labeled::label))
                 .execute(&mut *self.tx)
                 .await?;
             }

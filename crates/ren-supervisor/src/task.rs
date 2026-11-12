@@ -25,7 +25,10 @@ use futures_util::{
 };
 use ren_harness::{
     Harness,
-    drive::{DriveEvent, Driver, Framed, Line, LineLimit, Lines, ModelListing, Opening, Prompt},
+    drive::{
+        ApprovalPolicy, DriveEvent, Driver, Framed, Line, LineLimit, Lines, ModelListing, Opening,
+        Prompt, RunSettings,
+    },
     endpoint::GatewayEndpoint,
 };
 use ren_protocol::label::Labeled;
@@ -59,6 +62,7 @@ pub struct SupervisorTask<H> {
 struct Live {
     harness: Harness,
     workdir: Workdir,
+    settings: RunSettings,
     state: RunState,
     codec: Option<Driver>,
     stdin: Option<Box<dyn AsyncWrite + Send + Unpin>>,
@@ -162,6 +166,7 @@ impl<H: AgentHost> SupervisorTask<H> {
                             Ok(_) => ClientStatus::NotInstalled,
                             Err(_) => ClientStatus::NotDrivable,
                         },
+                        approvals: ApprovalPolicy::offered(*harness).to_vec(),
                     })
                     .collect();
                 let _ = reply.send(clients);
@@ -179,6 +184,7 @@ impl<H: AgentHost> SupervisorTask<H> {
                             harness: live.harness,
                             workdir: live.workdir.as_path().to_path_buf(),
                             state: live.state.clone(),
+                            settings: live.settings.clone(),
                         })
                         .collect(),
                 );
@@ -192,7 +198,7 @@ impl<H: AgentHost> SupervisorTask<H> {
             harness,
             dir,
             conversation,
-            model,
+            settings,
             first,
         }: Start,
         runs: &mut BTreeMap<RunId, Live>,
@@ -205,16 +211,21 @@ impl<H: AgentHost> SupervisorTask<H> {
             .resolve(requested.as_path())
             .map_err(StartError::Resolve)?;
         let workdir = Workdir::confirm(&self.roots, resolved).map_err(StartError::Workdir)?;
+        if let Some(policy) = settings.approvals
+            && !ApprovalPolicy::offered(harness).contains(&policy)
+        {
+            return Err(StartError::NoApprovals(harness));
+        }
         let opening = match conversation {
             Conversation::New => Opening::New {
                 cwd: workdir.as_str().to_owned(),
                 id: NativeThreadId::new(self.ids.next_uuid()).ok_or(StartError::NilId)?,
-                model,
+                settings: settings.clone(),
             },
             Conversation::Resume(thread) => Opening::Resume {
                 thread,
                 cwd: workdir.as_str().to_owned(),
-                model,
+                settings: settings.clone(),
             },
         };
         let plan = harness
@@ -227,7 +238,7 @@ impl<H: AgentHost> SupervisorTask<H> {
         // Every run is recorded: without room, it does not start.
         let tap = self
             .recorder
-            .run(run, harness, workdir.as_str().to_owned())
+            .run(run, harness, workdir.as_str().to_owned(), settings.clone())
             .map_err(StartError::Unrecorded)?;
         let process = match self.host.spawn(&plan, &workdir) {
             Ok(process) => process,
@@ -246,6 +257,7 @@ impl<H: AgentHost> SupervisorTask<H> {
                     Live {
                         harness,
                         workdir,
+                        settings,
                         state,
                         codec: None,
                         stdin: None,
@@ -267,6 +279,7 @@ impl<H: AgentHost> SupervisorTask<H> {
         let mut live = Live {
             harness,
             workdir,
+            settings,
             state: RunState::Starting,
             codec: Some(codec),
             stdin: Some(stdin),

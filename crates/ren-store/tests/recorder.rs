@@ -723,7 +723,16 @@ async fn a_runs_lifecycle_is_recorded_and_read_back() {
     let run = RunId::generate(&ids);
     let tap = harness
         .recorder
-        .run(run, ren_harness::Harness::Codex, "/work/acme".into())
+        .run(
+            run,
+            ren_harness::Harness::Codex,
+            "/work/acme".into(),
+            ren_harness::drive::RunSettings {
+                model: Some("gpt-deep".parse().unwrap()),
+                effort: Some(ren_harness::drive::Effort::High),
+                approvals: Some(ren_harness::drive::ApprovalPolicy::Edits),
+            },
+        )
         .unwrap();
     let thread = ren_protocol::native::NativeThreadId::new(uuid::Uuid::from_u128(7)).unwrap();
     tap.opened(thread);
@@ -757,7 +766,12 @@ async fn a_runs_lifecycle_is_recorded_and_read_back() {
     let unfinished = RunId::generate(&ids);
     let left = harness
         .recorder
-        .run(unfinished, ren_harness::Harness::Codex, "/work/b".into())
+        .run(
+            unfinished,
+            ren_harness::Harness::Codex,
+            "/work/b".into(),
+            ren_harness::drive::RunSettings::default(),
+        )
         .unwrap();
     drop(left);
     let (dir, _, reader) = harness.drain().await;
@@ -773,6 +787,16 @@ async fn a_runs_lifecycle_is_recorded_and_read_back() {
     let ended = reader.run(run).await.unwrap().unwrap();
     assert_eq!(ended.harness, Stored::Known(ren_harness::Harness::Codex));
     assert_eq!(ended.workdir, "/work/acme");
+    // Its settings as started; the other run left every one to its client.
+    assert_eq!(ended.model.as_deref(), Some("gpt-deep"));
+    assert_eq!(
+        ended.effort,
+        Some(Stored::Known(ren_harness::drive::Effort::High))
+    );
+    assert_eq!(
+        ended.approvals,
+        Some(Stored::Known(ren_harness::drive::ApprovalPolicy::Edits))
+    );
     assert_eq!(ended.thread, Some(thread.to_string()));
     let session = reader.call(call_id).await.unwrap().call.session;
     assert!(session.is_some());
@@ -781,6 +805,10 @@ async fn a_runs_lifecycle_is_recorded_and_read_back() {
     assert_eq!(ended.exit, Some(ProcessExit::Signal(9)));
     let open = reader.run(unfinished).await.unwrap().unwrap();
     assert_eq!((open.end, open.exit), (None, None), "still running");
+    assert_eq!(
+        (open.model, open.effort, open.approvals),
+        (None, None, None)
+    );
     let kinds: Vec<_> = reader
         .observations_after(0, ren_store::query::PageLimit::DEFAULT)
         .await

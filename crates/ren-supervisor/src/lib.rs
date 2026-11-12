@@ -29,7 +29,7 @@ pub use workdir::{Roots, Workdir, WorkdirError};
 
 use ren_harness::{
     Harness,
-    drive::{CommandRefused, DriveEvent, LineLimit, Model, ModelId, Prompt},
+    drive::{CommandRefused, DriveEvent, LineLimit, Model, Prompt, RunSettings},
     endpoint::GatewayEndpoint,
     launch::NotDrivable,
 };
@@ -84,6 +84,8 @@ pub struct RunSnapshot {
     pub harness: Harness,
     pub workdir: PathBuf,
     pub state: RunState,
+    /// What it was started with; each left out is the client's own.
+    pub settings: RunSettings,
 }
 
 /// Why the supervisor could not be set up.
@@ -104,6 +106,8 @@ pub enum StartError {
     Resolve(#[source] io::Error),
     #[error(transparent)]
     NotDrivable(NotDrivable),
+    #[error("{0} asks for no approvals, so it takes no approval policy")]
+    NoApprovals(Harness),
     #[error("the recorder has no room to record the run")]
     Unrecorded(RunUnrecorded),
     #[error("cannot start the client; check it is installed on PATH")]
@@ -137,15 +141,15 @@ pub enum CommandError {
 #[error("the supervisor has stopped")]
 pub struct Gone;
 
-/// What a new run starts: which client, where, which conversation, on which
-/// model, and its first prompt.
+/// What a new run starts: which client, where, which conversation, with which
+/// settings, and its first prompt.
 pub struct Start {
     pub harness: Harness,
     /// The folder, which must lie inside a root.
     pub dir: String,
     pub conversation: Conversation,
-    /// With none, the client's own default.
-    pub model: Option<ModelId>,
+    /// Each left out is the client's own.
+    pub settings: RunSettings,
     /// Sent once the conversation is open.
     pub first: Option<Prompt>,
 }
