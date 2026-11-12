@@ -2,9 +2,9 @@
 ──────────────────────────────────────────────────────────────────────────────────────────
 
   › fix the flaky upload test
-  ● Bash   cargo test -p upload
     The lease token was compared before the retry counter was bumped, so a late worker
     could still finish the job. I moved the check after the bump.
+  ● Bash   cargo test -p upload
 
   ┌ Claude Code wants to run ──────────────────────────────────────────────────────────┐
   │ git push origin fix/upload-lease                                                   │

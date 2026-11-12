@@ -1,9 +1,10 @@
 //! The wall against reads shaped as the management API sends them, run
 //! as the terminal runs it: a [`Tui`] opened on the wall.
 
-use super::pane::{Line, Phase, ResultMark, Tally};
+use super::pane::{Phase, Tally};
 use super::runs::RunPhase;
 use super::*;
+use crate::conversation::{Block, ResultMark};
 use crate::model::CallEnd;
 use crate::model::{Input, Read, Snapshot, SnapshotQuery};
 use crate::ui::Tone;
@@ -597,25 +598,37 @@ fn a_turn_reads_as_replies_and_merged_tool_runs() {
     ));
     let wall = tui.frame(at(100));
     let pane = pane(&wall, 0);
-    let tools = |line: &Line| match line {
-        Line::Tools(tool) => Some((
+    let tools = |line: &Block| match line {
+        Block::Tools(tool) => Some((
             tool.name.clone(),
             tool.target.clone(),
             tool.result.clone(),
             tool.count,
         )),
-        Line::Call { .. } | Line::Prompt(_) | Line::Result(_) | Line::Reply(_) | Line::Waiting => {
-            None
-        }
+        Block::Call { .. }
+        | Block::Prompt(_)
+        | Block::Result(_)
+        | Block::Reply(_)
+        | Block::Streaming(_)
+        | Block::Thinking
+        | Block::Step(_)
+        | Block::Notice { .. }
+        | Block::Waiting => None,
     };
-    let results = |line: &Line| match line {
-        Line::Result(tool) => Some((tool.name.clone(), tool.result.clone(), tool.count)),
-        Line::Call { .. } | Line::Prompt(_) | Line::Tools(_) | Line::Reply(_) | Line::Waiting => {
-            None
-        }
+    let results = |line: &Block| match line {
+        Block::Result(tool) => Some((tool.name.clone(), tool.result.clone(), tool.count)),
+        Block::Call { .. }
+        | Block::Prompt(_)
+        | Block::Tools(_)
+        | Block::Reply(_)
+        | Block::Streaming(_)
+        | Block::Thinking
+        | Block::Step(_)
+        | Block::Notice { .. }
+        | Block::Waiting => None,
     };
-    assert_eq!(pane.lines[0], Line::Call { index: Some(1) });
-    assert_eq!(pane.lines[1], Line::Reply("Looking.".to_owned()));
+    assert_eq!(pane.lines[0], Block::Call { index: Some(1) });
+    assert_eq!(pane.lines[1], Block::Reply("Looking.".to_owned()));
     assert_eq!(
         tools(&pane.lines[2]),
         Some((
@@ -636,7 +649,7 @@ fn a_turn_reads_as_replies_and_merged_tool_runs() {
         ))
     );
     // The next call carries their results back.
-    assert_eq!(pane.lines[4], Line::Call { index: Some(2) });
+    assert_eq!(pane.lines[4], Block::Call { index: Some(2) });
     assert_eq!(
         results(&pane.lines[5]),
         Some(("Read".to_owned(), ResultMark::AllSucceeded(2), 2))
@@ -656,7 +669,7 @@ fn a_turn_reads_as_replies_and_merged_tool_runs() {
         ))
     );
     // That request is open, with its response streaming.
-    assert_eq!(pane.lines[8], Line::Call { index: Some(3) });
+    assert_eq!(pane.lines[8], Block::Call { index: Some(3) });
     assert_eq!(pane.lines.len(), 9);
     assert_eq!(pane.turn_calls, 3);
     assert_eq!(
@@ -668,7 +681,7 @@ fn a_turn_reads_as_replies_and_merged_tool_runs() {
             failed: 1
         })
     );
-    let Line::Tools(read) = &pane.lines[2] else {
+    let Block::Tools(read) = &pane.lines[2] else {
         panic!();
     };
     assert_eq!(read.output.as_deref(), Some("succeeded output"));
@@ -695,7 +708,7 @@ fn a_tool_call_no_later_request_answered_is_missing() {
         ],
     ));
     let wall = tui.frame(at(100));
-    let Line::Tools(read) = &pane(&wall, 0).lines[1] else {
+    let Block::Tools(read) = &pane(&wall, 0).lines[1] else {
         panic!("{:?}", pane(&wall, 0).lines);
     };
     assert_eq!(read.result, ResultMark::Missing);
@@ -725,7 +738,7 @@ fn progress_streams_into_the_pane_until_its_call_ends() {
     let wall = tui.frame(at(100));
     let pane = pane(&wall, 0);
     // No turn: only the open call's rule, then what it streamed.
-    assert_eq!(pane.lines, [Line::Call { index: None }]);
+    assert_eq!(pane.lines, [Block::Call { index: None }]);
     assert_eq!(pane.harness, Some(Harness::OpenCode.into()));
     let streaming = pane.streaming.as_ref().unwrap();
     assert_eq!(
@@ -1341,12 +1354,12 @@ fn a_pane_shows_the_turn_before_the_newest_one() {
     assert_eq!(
         pane(&wall, 0).lines,
         [
-            Line::Call { index: Some(1) },
-            Line::Prompt("First ask.".to_owned()),
-            Line::Reply("Done.".to_owned()),
-            Line::Call { index: Some(1) },
-            Line::Prompt("Next ask.".to_owned()),
-            Line::Reply("Also done.".to_owned()),
+            Block::Call { index: Some(1) },
+            Block::Prompt("First ask.".to_owned()),
+            Block::Reply("Done.".to_owned()),
+            Block::Call { index: Some(1) },
+            Block::Prompt("Next ask.".to_owned()),
+            Block::Reply("Also done.".to_owned()),
         ]
     );
 }
@@ -1399,16 +1412,16 @@ fn a_session_without_turns_reads_its_newest_calls() {
     assert_eq!(
         pane.lines[..6],
         [
-            Line::Call { index: Some(5) },
-            Line::Prompt("Fix the login form.".to_owned()),
-            Line::Reply("Looking.".to_owned()),
+            Block::Call { index: Some(5) },
+            Block::Prompt("Fix the login form.".to_owned()),
+            Block::Reply("Looking.".to_owned()),
             pane.lines[3].clone(),
-            Line::Call { index: Some(6) },
+            Block::Call { index: Some(6) },
             pane.lines[5].clone(),
         ]
     );
-    assert!(matches!(pane.lines[3], Line::Tools(_)));
-    assert!(matches!(pane.lines[5], Line::Result(_)));
+    assert!(matches!(pane.lines[3], Block::Tools(_)));
+    assert!(matches!(pane.lines[5], Block::Result(_)));
     // Read, those two are not asked for again.
     assert_eq!(
         tui.apply(snapshot(101, sessions, calls)),

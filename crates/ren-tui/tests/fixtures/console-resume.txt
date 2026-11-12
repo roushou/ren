@@ -2,10 +2,10 @@
 ──────────────────────────────────────────────────────────────────────────────────────────
                                                            │ needs you
   › fix the flaky upload test                              │ › ren  fix the flaky upload…
+    The lease token was compared before the retry          │
+    counter was bumped, so a late worker could still       │ your turn
+    finish the job. I moved the check after the bump.      │   acme-web  new Claude Code…
   ● Bash   cargo test -p upload                            │
-    The lease token was compared before the retry          │ your turn
-    counter was bumped, so a late worker could still       │   acme-web  new Claude Code…
-    finish the job. I moved the check after the bump.      │
                                                            │ working
   ┌ Claude Code wants to run ──────────────────────────┐   │   acme-api  new Codex run
   │ git push origin fix/upload-lease                   │   │

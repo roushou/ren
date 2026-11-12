@@ -45,8 +45,8 @@ under it:
   <prompt>` starts a run in one of the daemon's projects with its first
   prompt (the client named last is the default), `/resume [search]` lists
   every run, what needs you first, with the chosen one previewed, `/stop`
-  ends the open run's process, `/wall` shows the wall, `/help`, and `/quit`
-  (or Ctrl-C), which leaves runs running.
+  ends the open run's process, `/wall` shows the wall, `/help` lists the
+  keys and commands, and `/quit` (or Ctrl-C) leaves runs running.
 
 A turn's live copy gives way to its recorded copy once the turn is recorded.
 Live updates are not stored, so a console opened mid-turn shows that turn

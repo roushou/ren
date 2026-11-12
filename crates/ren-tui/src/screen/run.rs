@@ -7,17 +7,16 @@ use super::message::Typed;
 use super::slash::Slash;
 use super::{Action, Ctx, Look, News, Notice, Screen};
 use crate::Key;
+use crate::conversation::{Conversation, Density};
 use crate::keys::{Bind, HelpRow, Keymap};
 use crate::model::desk::{Attention, Run};
-use crate::model::transcript::Entry;
 use crate::model::{Command, Control, Model};
 use crate::ui::{Ink, Line, Span, Text, View};
-use ren_harness::drive::{ApprovalAsk, ApprovalId, Decision, ItemStatus, Prompt, TurnEnd};
-use ren_protocol::activity::ResultStatus;
+use ren_harness::drive::{ApprovalAsk, ApprovalId, Decision, Prompt};
 use ren_protocol::native::NativeThreadId;
 use ren_recorder::id::RunId;
-use ren_store::activity::TurnActivity;
 use ren_supervisor::RunState;
+use std::collections::HashMap;
 
 /// One run, open.
 #[derive(Debug)]
@@ -430,13 +429,16 @@ impl RunScreen {
         if let Some(handoff) = handoff {
             lines.push(Line::of(format!("  ↳ {handoff}"), Ink::Muted));
         }
+        let mut conversation = Conversation::default();
         for turn in &run.history {
-            lines.push(Line::default());
-            Self::recorded_turn(turn, width, &mut lines);
+            conversation
+                .blocks
+                .extend(Conversation::turn(turn, &HashMap::new()).blocks);
         }
-        for entry in run.transcript.entries() {
-            Self::entry(entry, width, &mut lines);
-        }
+        conversation
+            .blocks
+            .extend(Conversation::live(run.transcript.entries()).blocks);
+        lines.extend(conversation.lines(width, Density::Page));
         if let Some(waiting) = run.waiting() {
             lines.push(Line::default());
             Self::card(&run.client(), &waiting.ask, width, &mut lines);
@@ -462,177 +464,6 @@ impl RunScreen {
 
     fn wrap(text: &str, width: usize) -> Vec<String> {
         Text(text).wrap(width.max(8))
-    }
-
-    fn recorded_turn(turn: &TurnActivity, width: usize, lines: &mut Vec<Line>) {
-        if let Some(prompt) = &turn.prompt {
-            for (index, text) in Self::wrap(&prompt.text, width.saturating_sub(4))
-                .into_iter()
-                .enumerate()
-            {
-                let lead = if index == 0 { "  › " } else { "    " };
-                lines.push(Line::of(format!("{lead}{text}"), Ink::Prompt));
-            }
-        }
-        for call in &turn.calls {
-            for tool in &call.tool_calls {
-                let target = tool
-                    .effects
-                    .first()
-                    .map_or_else(|| tool.input.text.clone(), |effect| effect.target.clone());
-                let failed = tool
-                    .result
-                    .as_ref()
-                    .is_some_and(|result| result.status.known() == Some(ResultStatus::Failed));
-                Self::tool_line(
-                    "●",
-                    &tool.name,
-                    &target,
-                    if failed { "failed" } else { "" },
-                    width,
-                    lines,
-                );
-            }
-            if let Some(reply) = &call.reply
-                && !reply.text.trim().is_empty()
-            {
-                for text in Self::wrap(&reply.text, width.saturating_sub(4)) {
-                    lines.push(Line::of(format!("    {text}"), Ink::Text));
-                }
-            }
-        }
-    }
-
-    fn tool_line(
-        mark: &str,
-        name: &str,
-        target: &str,
-        end: &str,
-        width: usize,
-        lines: &mut Vec<Line>,
-    ) {
-        let name = format!("  {mark} {name:<6} ");
-        let room = width.saturating_sub(Text(&name).width() + Text(end).width() + 2);
-        let target = Text(target.lines().next().unwrap_or_default()).summary(room);
-        let gap =
-            width.saturating_sub(Text(&name).width() + Text(&target).width() + Text(end).width());
-        lines.push(Line::new(vec![
-            Span::new(name, Ink::Tool),
-            Span::new(target, Ink::Code),
-            Span::new(format!("{}{end}", " ".repeat(gap)), Ink::Muted),
-        ]));
-    }
-
-    fn entry(entry: &Entry, width: usize, lines: &mut Vec<Line>) {
-        let ended = |status: &ItemStatus, running: &'static str| -> String {
-            match status {
-                ItemStatus::InProgress => running.to_owned(),
-                ItemStatus::Completed => String::new(),
-                ItemStatus::Failed => "failed".to_owned(),
-                ItemStatus::Declined => "denied".to_owned(),
-                ItemStatus::Other(other) => other.clone(),
-            }
-        };
-        match entry {
-            Entry::Prompt(text) => {
-                lines.push(Line::default());
-                for (index, text) in Self::wrap(text, width.saturating_sub(4))
-                    .into_iter()
-                    .enumerate()
-                {
-                    let lead = if index == 0 { "  › " } else { "    " };
-                    lines.push(Line::of(format!("{lead}{text}"), Ink::Prompt));
-                }
-            }
-            Entry::Message { text, done, .. } => {
-                let mut wrapped = Self::wrap(text, width.saturating_sub(4));
-                if !done && let Some(last) = wrapped.last_mut() {
-                    last.push('▍');
-                }
-                for text in wrapped {
-                    lines.push(Line::of(format!("    {text}"), Ink::Text));
-                }
-            }
-            Entry::Reasoning { done: false, .. } => {
-                lines.push(Line::of("    thinking…", Ink::Muted));
-            }
-            Entry::Reasoning { done: true, .. } => {}
-            Entry::Command {
-                command,
-                status,
-                output,
-                exit_code,
-                ..
-            } => {
-                let end = match (status, exit_code) {
-                    (ItemStatus::InProgress, _) => "running…".to_owned(),
-                    (_, Some(code)) => format!("exit {code}"),
-                    (ItemStatus::Completed, None) => "done".to_owned(),
-                    (ItemStatus::Failed, None) => "failed".to_owned(),
-                    (ItemStatus::Declined, None) => "denied".to_owned(),
-                    (ItemStatus::Other(other), None) => other.clone(),
-                };
-                Self::tool_line("●", "Bash", command, &end, width, lines);
-                // A failed command shows the end of its output.
-                let failed =
-                    matches!(status, ItemStatus::Failed) || exit_code.is_some_and(|code| code != 0);
-                if failed && let Some(output) = output {
-                    let tail: Vec<&str> = output.lines().rev().take(3).collect();
-                    for text in tail.into_iter().rev() {
-                        lines.push(Line::of(
-                            format!(
-                                "           {}",
-                                Text(text).summary(width.saturating_sub(12))
-                            ),
-                            Ink::Muted,
-                        ));
-                    }
-                }
-            }
-            Entry::FileChange { paths, status, .. } => {
-                let target = if paths.is_empty() {
-                    "files".to_owned()
-                } else {
-                    paths.join(", ")
-                };
-                Self::tool_line(
-                    "✎",
-                    "Edit",
-                    &target,
-                    &ended(status, "editing…"),
-                    width,
-                    lines,
-                );
-            }
-            Entry::Tool { name, status, .. } => {
-                let (tool, target) = name.split_once(' ').unwrap_or((name.as_str(), ""));
-                Self::tool_line("●", tool, target, &ended(status, "running…"), width, lines);
-            }
-            Entry::Notice { text, retrying } => {
-                let (text, ink) = if *retrying {
-                    (format!("    ! {text} · retrying"), Ink::Warning)
-                } else {
-                    (format!("    ! {text}"), Ink::Error)
-                };
-                lines.push(Line::of(text, ink));
-            }
-            Entry::TurnEnd(end) => match end {
-                TurnEnd::Completed => {}
-                TurnEnd::Interrupted => lines.push(Line::of("    turn interrupted", Ink::Muted)),
-                TurnEnd::Failed { message } => lines.push(Line::of(
-                    format!(
-                        "    turn failed{}",
-                        message
-                            .as_ref()
-                            .map_or_else(String::new, |message| format!(": {message}"))
-                    ),
-                    Ink::Error,
-                )),
-                TurnEnd::Unknown { status } => {
-                    lines.push(Line::of(format!("    turn ended: {status}"), Ink::Muted));
-                }
-            },
-        }
     }
 
     /// The approval card: what the client wants, and the four answers.

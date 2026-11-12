@@ -2,15 +2,15 @@
 //! conversation, and a state line; the status line under them; the help
 //! over them. Pure: the crate's one renderer draws it.
 
-use super::pane::{CallFacts, Elapsed, Line as PaneLine, Phase, ResultMark, SessionPane, ToolLine};
+use super::pane::{CallFacts, Elapsed, Phase, SessionPane};
 use super::runs::RunPhase;
 use super::{Frame, Layout, Pane};
+use crate::conversation::{Block, Conversation, Density, ToolLine};
 use crate::model::Reading;
 use crate::ui::Tone;
 use crate::ui::{Anchor, Bar, Emphasis, Grid, Ink, Keep, Line, Rule, Size, Span, Text, View};
 use ren_harness::Harness;
 use ren_harness::drive::ApprovalAsk;
-use ren_protocol::activity::ResultStatus;
 use ren_recorder::time::UnixMillis;
 
 impl Frame {
@@ -305,152 +305,23 @@ impl Frame {
         parts.join(" · ")
     }
 
-    /// The pane's turn as a conversation, wrapped to `width`, oldest first.
+    /// The pane's turns as a conversation, wrapped to `width`, oldest
+    /// first, then what a streaming call has said so far.
     fn body(&self, pane: &SessionPane, width: usize) -> Vec<Line> {
-        let mut lines = Vec::new();
-        for line in &pane.lines {
-            match line {
-                PaneLine::Call { index } => lines.push(Line::of(
-                    match index {
-                        Some(index) => format!("── call {index} ──"),
-                        None => "── call ──".to_owned(),
-                    },
-                    Ink::Muted,
-                )),
-                PaneLine::Prompt(text) => {
-                    lines.extend(Line::hanging("> ", text, width, Ink::Prompt))
-                }
-                PaneLine::Result(tool) => lines.push(Self::result(tool)),
-                PaneLine::Reply(text) => lines.extend(Self::markdown(text, width)),
-                PaneLine::Tools(tool) => lines.push(Self::tool(tool)),
-                PaneLine::Waiting => lines.push(Line::of(
-                    "request sent · waiting for the provider",
-                    Ink::Muted,
-                )),
-            }
-        }
+        let mut blocks = pane.lines.clone();
         if let Some(streaming) = &pane.streaming {
             for tool in &streaming.tools {
-                lines.push(Line::new(vec![
-                    Span::new("● ", Ink::Tool),
-                    Span::new(tool.clone(), Ink::Tool).with(Emphasis::Bold),
-                ]));
+                blocks.push(Block::Tools(ToolLine::named(tool)));
             }
-            if streaming.thinking {
-                lines.push(
-                    Span::new("thinking…", Ink::Muted)
-                        .with(Emphasis::Italic)
-                        .into(),
-                );
+            blocks.push(if streaming.thinking {
+                Block::Thinking
+            } else if streaming.cut {
+                Block::Streaming(format!("…{}", streaming.reply))
             } else {
-                let text = if streaming.cut {
-                    format!("…{}", streaming.reply)
-                } else {
-                    streaming.reply.clone()
-                };
-                let mut reply = Self::markdown(&text, width);
-                // The cursor sits where the stream has got to.
-                match reply.last_mut() {
-                    Some(last) if last.width() < width => last.push(Span::new("▌", Ink::Text)),
-                    Some(_) | None => reply.push(Line::of("▌", Ink::Text)),
-                }
-                lines.extend(reply);
-            }
+                Block::Streaming(streaming.reply.clone())
+            });
         }
-        lines
-    }
-
-    /// A reply's text with its markdown read lightly: fenced code drawn as
-    /// a block behind a rule, headings and whole `**bold**` lines in bold,
-    /// and emphasis markers left out.
-    fn markdown(text: &str, width: usize) -> Vec<Line> {
-        let mut lines = Vec::new();
-        let mut in_code = false;
-        for source in text.lines() {
-            if source.trim_start().starts_with("```") {
-                in_code = !in_code;
-                continue;
-            }
-            if in_code {
-                for part in Text(source).wrap(width.saturating_sub(2)) {
-                    lines.push(Line::new(vec![
-                        Span::new("│ ", Ink::Rule),
-                        Span::new(part, Ink::Code),
-                    ]));
-                }
-                continue;
-            }
-            let trimmed = source.trim_start();
-            let heading = trimmed.starts_with('#');
-            let shown = if heading {
-                trimmed.trim_start_matches('#').trim_start()
-            } else {
-                source
-            };
-            let bold = heading || (trimmed.starts_with("**") && trimmed.contains(":**"));
-            let plain = shown.replace("**", "").replace("__", "");
-            let emphasis = if bold {
-                Emphasis::Bold
-            } else {
-                Emphasis::Plain
-            };
-            for part in Text(&plain).wrap(width) {
-                lines.push(Span::new(part, Ink::Text).with(emphasis).into());
-            }
-        }
-        lines
-    }
-
-    /// `● Bash cargo test ×2`
-    fn tool(tool: &ToolLine) -> Line {
-        let mut line = Line::new(vec![
-            Span::new("● ", Ink::Tool),
-            Span::new(tool.name.clone(), Ink::Tool).with(Emphasis::Bold),
-        ]);
-        if let Some(target) = &tool.target {
-            line.push(Span::new(format!(" {target}"), Ink::Tool));
-        }
-        if tool.count > 1 {
-            line.push(Span::new(format!(" ×{}", tool.count), Ink::Tool));
-        }
-        line
-    }
-
-    /// `⎿ Read src/lib.rs → fn main() {}`: what the client sent back.
-    fn result(tool: &ToolLine) -> Line {
-        let mut head = format!("⎿ {}", tool.name);
-        if let Some(target) = &tool.target {
-            head.push(' ');
-            head.push_str(target);
-        }
-        if tool.count > 1 {
-            head.push_str(&format!(" ×{}", tool.count));
-        }
-        let (outcome, ink) = match &tool.result {
-            ResultMark::Pending => ("…".to_owned(), Ink::Muted),
-            ResultMark::Unreadable => ("result not readable".to_owned(), Ink::Muted),
-            ResultMark::Missing => ("no result".to_owned(), Ink::Warning),
-            ResultMark::Reported(status) => match status.known() {
-                Some(ResultStatus::Succeeded | ResultStatus::Unreported) => (
-                    tool.output.clone().unwrap_or_else(|| "ok".to_owned()),
-                    Ink::Muted,
-                ),
-                Some(ResultStatus::Failed) => (
-                    tool.output
-                        .as_ref()
-                        .map_or_else(|| "failed".to_owned(), |output| format!("failed: {output}")),
-                    Ink::Error,
-                ),
-                None => (status.label().replace('_', " "), Ink::Muted),
-            },
-            ResultMark::Failures(count) => (format!("{count} failed"), Ink::Error),
-            ResultMark::AllSucceeded(count) => (format!("{count} ok"), Ink::Muted),
-        };
-        Line::new(vec![
-            Span::new(head, Ink::Muted),
-            Span::new(" → ", Ink::Muted),
-            Span::new(outcome, ink),
-        ])
+        Conversation { blocks }.lines(width, Density::Pane)
     }
 
     /// Segments split by rules: the tag, what is stale or needs a look,
@@ -646,21 +517,6 @@ mod tests {
         assert_eq!(
             Clock(UnixMillis::from_millis(3_723_000)).to_string(),
             "01:02:03 UTC"
-        );
-    }
-
-    #[test]
-    fn replies_read_their_markdown_lightly() {
-        let lines: Vec<String> = Frame::markdown(
-            "## Plan\n**What to look for:** the A\n```rust\nlet x = 1;\n```\n- one",
-            40,
-        )
-        .iter()
-        .map(crate::ui::Line::text)
-        .collect();
-        assert_eq!(
-            lines,
-            ["Plan", "What to look for: the A", "│ let x = 1;", "- one"]
         );
     }
 

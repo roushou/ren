@@ -12,7 +12,7 @@
     │ enter  z       zoom into the focused session, or back to the panes   │
     │ p              keep the focused session on the wall, even when quiet │
  ── │ r              runs: open the focused run, or the console            │
- > W│ t              cycle theme: terminal, dark, light (not saved)        │
+ › W│ t              cycle theme: terminal, dark, light (not saved)        │
  I'l│ esc            close the help, or leave a zoomed session             │
  ● R│ ?              show or hide this help                                │
  ● B│ q  ctrl-c      quit                                                  │

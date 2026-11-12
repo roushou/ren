@@ -10,6 +10,7 @@
 //! is what to draw, built from the drawing primitives in [`ui`];
 //! [`Terminal`] is the only part that touches the terminal.
 
+mod conversation;
 mod event;
 mod keys;
 mod model;

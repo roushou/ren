@@ -6,6 +6,8 @@
 #[test]
 fn the_core_stays_free_of_runtime_and_io_dependencies() {
     let sources = [
+        ("conversation/mod.rs", include_str!("conversation/mod.rs")),
+        ("conversation/read.rs", include_str!("conversation/read.rs")),
         ("event.rs", include_str!("event.rs")),
         ("keys.rs", include_str!("keys.rs")),
         ("lib.rs", include_str!("lib.rs")),

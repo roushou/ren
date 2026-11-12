@@ -3,7 +3,7 @@
                                                            │
                                                            │
  ── call 1 ──                                              │
- > Why does the parser drop the last field?                │
+ › Why does the parser drop the last field?                │
  I'll run the tests first, then look at the failure in the │
  parser.                                                   │
  ● Read src/lib.rs                                         │
