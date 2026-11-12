@@ -22,7 +22,7 @@ pub use runs::RunCounts;
 use super::frame::{Frame, Here};
 use super::message::Typed;
 use super::session::SessionScreen;
-use super::slash::Slash;
+use super::slash::{Known, Slash};
 use super::{Action, Ctx, Look, Notice, Screen};
 use crate::keys::HelpRow;
 use crate::model::sessions::{Reading, Sessions, Spark};
@@ -151,13 +151,13 @@ impl Wall {
         {
             return self.command(command, ctx.model);
         }
-        match ctx.message.press(key, ctx.model.projects()) {
+        match ctx.message.press(key, &Known::of(ctx.model)) {
             Typed::Took => Vec::new(),
             Typed::Submit => {
                 let text = ctx.message.text();
                 match Slash::parse(&text) {
                     Some(slash) => {
-                        ctx.message.take();
+                        ctx.message.send();
                         slash.act(ctx, None)
                     }
                     None => vec![Action::Say(Notice::info(

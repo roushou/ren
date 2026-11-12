@@ -2,8 +2,9 @@
 //! completed with tab, and carried out the same from any console screen.
 
 use super::{Action, Ctx, Notice, Resume, Screen};
-use crate::model::Read;
 use crate::model::desk::Attention;
+use crate::model::{Model, Read};
+use crate::ui::Text;
 use ren_harness::{Harness, drive::Prompt};
 use ren_recorder::id::RunId;
 use ren_supervisor::{Project, ProjectGit};
@@ -42,6 +43,41 @@ pub struct Suggestion {
     pub detail: String,
     /// The message box's text once it is chosen.
     pub replacement: String,
+}
+
+/// What completion knows of: the projects a run can start in, and the
+/// runs `/resume` can open.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct Known<'a> {
+    pub projects: &'a [Project],
+    pub runs: Vec<KnownRun>,
+}
+
+/// A run as completion offers it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct KnownRun {
+    pub title: String,
+    pub project: String,
+    pub phase: &'static str,
+}
+
+impl<'a> Known<'a> {
+    /// What `model` knows: every run `/resume` lists, what needs you first.
+    pub fn of(model: &'a Model) -> Self {
+        Self {
+            projects: model.projects(),
+            runs: model
+                .desk
+                .all()
+                .into_iter()
+                .map(|run| KnownRun {
+                    title: run.title(),
+                    project: run.project().to_owned(),
+                    phase: run.phase(),
+                })
+                .collect(),
+        }
+    }
 }
 
 /// Why `/new` could not name a project.
@@ -179,7 +215,8 @@ impl Slash {
     }
 
     /// What completes `text`, the message box's whole text.
-    pub fn complete(text: &str, projects: &[Project]) -> Vec<Suggestion> {
+    pub fn complete(text: &str, known: &Known<'_>) -> Vec<Suggestion> {
+        let projects = known.projects;
         let Some(rest) = text.strip_prefix('/') else {
             return Vec::new();
         };
@@ -194,8 +231,27 @@ impl Slash {
                 })
                 .collect();
         };
-        if name != "new" {
-            return Vec::new();
+        match name {
+            "new" => {}
+            // A run, by its title or its project.
+            "resume" => {
+                let query = args.to_lowercase();
+                return known
+                    .runs
+                    .iter()
+                    .filter(|run| {
+                        run.title != args
+                            && (run.title.to_lowercase().contains(&query)
+                                || run.project.to_lowercase().contains(&query))
+                    })
+                    .map(|run| Suggestion {
+                        label: Text(&run.title).summary(40),
+                        detail: format!("{} · {}", run.project, run.phase),
+                        replacement: format!("/resume {}", run.title),
+                    })
+                    .collect();
+            }
+            _ => return Vec::new(),
         }
         match args.split_once(' ') {
             // Naming the project.
@@ -270,7 +326,7 @@ impl Slash {
 
 #[cfg(test)]
 mod tests {
-    use super::{Slash, Unresolved};
+    use super::{Known, KnownRun, Slash, Unresolved};
     use ren_harness::Harness;
     use ren_supervisor::{Project, ProjectGit};
 
@@ -326,20 +382,70 @@ mod tests {
     fn completes_commands_then_projects_then_clients() {
         let projects = projects();
         let labels = |text: &str| -> Vec<String> {
-            Slash::complete(text, &projects)
-                .into_iter()
-                .map(|suggestion| suggestion.label)
-                .collect()
+            Slash::complete(
+                text,
+                &Known {
+                    projects: &projects,
+                    runs: Vec::new(),
+                },
+            )
+            .into_iter()
+            .map(|suggestion| suggestion.label)
+            .collect()
         };
         assert_eq!(labels("/re"), ["/resume"]);
         assert_eq!(labels("/new acme"), ["acme-api", "acme-web"]);
         assert_eq!(
-            Slash::complete("/new acme-a", &projects)[0].replacement,
+            Slash::complete(
+                "/new acme-a",
+                &Known {
+                    projects: &projects,
+                    runs: Vec::new(),
+                }
+            )[0]
+            .replacement,
             "/new acme-api "
         );
         assert_eq!(labels("/new ren c"), ["claude", "codex"]);
         assert!(labels("/new ren claude fix").is_empty());
         assert!(labels("plain text").is_empty());
+    }
+
+    #[test]
+    fn resume_completes_runs_by_title_or_project() {
+        let known = Known {
+            projects: &[],
+            runs: vec![
+                KnownRun {
+                    title: "fix the flaky upload test".into(),
+                    project: "acme-web".into(),
+                    phase: "needs you",
+                },
+                KnownRun {
+                    title: "tidy the docs".into(),
+                    project: "ren".into(),
+                    phase: "ended",
+                },
+            ],
+        };
+        let labels = |text: &str| -> Vec<String> {
+            Slash::complete(text, &known)
+                .into_iter()
+                .map(|suggestion| suggestion.label)
+                .collect()
+        };
+        assert_eq!(
+            labels("/resume "),
+            ["fix the flaky upload test", "tidy the docs"]
+        );
+        assert_eq!(labels("/resume FLAKY"), ["fix the flaky upload test"]);
+        assert_eq!(labels("/resume ren"), ["tidy the docs"]);
+        assert_eq!(
+            Slash::complete("/resume fix", &known)[0].replacement,
+            "/resume fix the flaky upload test"
+        );
+        // Chosen already: nothing more to offer.
+        assert!(labels("/resume tidy the docs").is_empty());
     }
 
     #[test]

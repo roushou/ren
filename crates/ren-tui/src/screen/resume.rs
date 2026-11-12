@@ -87,7 +87,9 @@ impl Resume {
             | Key::PageDown
             | Key::AltLeft
             | Key::AltRight
-            | Key::Newline => {}
+            | Key::Newline
+            | Key::Older
+            | Key::Newer => {}
         }
         // The chosen row stays within the list.
         self.chosen = self

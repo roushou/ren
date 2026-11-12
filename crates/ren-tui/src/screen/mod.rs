@@ -15,7 +15,7 @@ mod help;
 mod message;
 mod resume;
 mod session;
-mod slash;
+pub(crate) mod slash;
 #[cfg(test)]
 mod tests;
 pub(crate) mod wall;
@@ -186,6 +186,10 @@ impl Screen {
             Self::Resume(_) => Resume::keys(),
             Self::Help(_) => Vec::new(),
         };
+        rows.push(HelpRow {
+            label: "ctrl-p/n".to_owned(),
+            does: "the messages sent before and after".to_owned(),
+        });
         rows.extend(slash::Slash::commands().map(|(command, does)| HelpRow {
             label: format!("/{command}"),
             does: does.to_owned(),

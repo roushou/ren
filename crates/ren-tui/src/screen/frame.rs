@@ -3,6 +3,7 @@
 //! you lit wherever you are), the screen's body, the message box, and the
 //! status line. Completions open over the body, just above the box.
 
+use super::slash::Known;
 use super::{Look, NoticeTone, Suggestion};
 use crate::Size;
 use crate::model::desk::Attention;
@@ -64,10 +65,10 @@ impl Frame {
             places,
             counts,
             body,
-            popup: look.message.popup(look.model.projects()),
+            popup: look.message.popup(&Known::of(look.model)),
             composer,
             cursor,
-            ghost: look.message.ghost(look.model.projects()),
+            ghost: look.message.ghost(&Known::of(look.model)),
             placeholder: look.message.is_empty().then(|| placeholder.to_owned()),
             status: match look.notice {
                 Some(notice) => Line::of(

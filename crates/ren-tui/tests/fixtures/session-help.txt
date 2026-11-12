@@ -1,24 +1,24 @@
- ren   wall  › claude-code 00000001                                      0 live
-┌ keys ───────────────────────────────────────────────────────────────────────┐
-│ 1–4       answer an approval: allow, allow for the run, deny, deny and stop │▀
-│ enter     send; while a turn runs, it waits for the turn to end             │
-│ ctrl-j    a new line                                                        │
-│ tab  →    take the /command completion filled in after the cursor           │
-│ esc       interrupt the turn; with none running, back to the wall           │
-│ alt-←     the place before: the wall, then each live run                    │
-│ alt-→     the next place                                                    │
-│ pgup      scroll up a page                                                  │
-│ pgdn      scroll down a page                                                │
-│ ↑         scroll up a line                                                  │
-│ ↓         scroll down a line                                                │
-│ ctrl-c    clear what is typed, or quit (runs keep going)                    │
-│ /new      start a run: /new <project> [claude|codex] <prompt>               │
-│ /resume   every run, what needs you first                                   │
-│ /stop     end this run's process                                            │
-│ /wall     back to the wall of every session's traffic                       │
-│ /pin      keep the wall's focused session on it, even when quiet            │
-│ /theme    the next theme: terminal, dark, light (not saved)                 │
-│ /help     keys and commands                                                 │
-│ /quit     leave (runs keep going)                                           │─
-└─────────────────────────────────────────────────────────────────────────────┘
+ ren ┌ keys ──────────────────────────────────────────────────────────────┐live
+ 0000│ 1–4        answer: allow, allow for the run, deny, deny and stop   │ tok
+▀▀▀▀▀│ enter      send; while a turn runs, it waits for the turn to end   │▀▀▀▀▀
+     │ ctrl-j     a new line                                              │
+     │ tab  →     take the /command completion filled in after the cursor │
+     │ esc        interrupt the turn; with none running, back to the wall │
+     │ alt-←      the place before: the wall, then each live run          │
+     │ alt-→      the next place                                          │
+     │ pgup       scroll up a page                                        │
+     │ pgdn       scroll down a page                                      │
+     │ ↑          nothing typed: the message sent before; else scroll     │
+     │ ↓          the message sent after; else scroll                     │
+     │ ctrl-c     clear what is typed, or quit (runs keep going)          │
+   › │ ctrl-p/n   the messages sent before and after                      │
+     │ /new       start a run: /new <project> [claude|codex] <prompt>     │
+   ● │ /resume    every run, what needs you first                         │
+   ● │ /stop      end this run's process                                  │iled
+   ● │ /wall      back to the wall of every session's traffic             │
+     │ /pin       keep the wall's focused session on it, even when quiet  │
+ stre│ /theme     the next theme: terminal, dark, light (not saved)       │
+ mode│ /help      keys and commands                                       │
+─────│ /quit      leave (runs keep going)                                 │─────
+ › Wa└────────────────────────────────────────────────────────────────────┘
  watching · esc back to the wall                           /help │ 08:05:00 UTC

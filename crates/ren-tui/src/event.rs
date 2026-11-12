@@ -27,6 +27,10 @@ pub enum Key {
     Newline,
     /// Ctrl-C: in raw mode the terminal sends it as a key, not a signal.
     Interrupt,
+    /// Ctrl-P: the message sent before, as in a shell.
+    Older,
+    /// Ctrl-N: the message sent after.
+    Newer,
 }
 
 /// A terminal's size in cells.

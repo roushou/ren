@@ -32,7 +32,11 @@ with the `tui` feature. Every screen sits in one frame:
 - At the bottom, a message box and a status line. Typing always goes to the
   box; slash commands work from every screen. While one is typed, the
   chosen completion is filled in after the cursor: Tab, or → at the end,
-  takes it, and ↑ and ↓ choose another. The commands:
+  takes it, and ↑ and ↓ choose another. `/new` completes projects and
+  clients, and `/resume` every run by its title or project. Ctrl-P and
+  Ctrl-N bring back what was sent before and after (in a session, ↑ and ↓
+  too, with nothing typed); sent messages are kept while the app runs. The
+  commands:
   `/new <project> [claude|codex] <prompt>` starts a run in one of the
   daemon's projects with its first prompt (the client named last is the
   default), `/resume [search]` lists every run, what needs you first, with

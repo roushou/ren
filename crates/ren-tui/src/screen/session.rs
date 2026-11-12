@@ -5,7 +5,7 @@
 
 use super::frame::{Frame, Here};
 use super::message::Typed;
-use super::slash::Slash;
+use super::slash::{Known, Slash};
 use super::wall::SessionPane;
 use super::{Action, Ctx, Look, News, Notice, Screen};
 use crate::Key;
@@ -71,7 +71,7 @@ impl SessionKey {
                 Key::Char('4'),
             ],
             label: "1–4",
-            does: "answer an approval: allow, allow for the run, deny, deny and stop",
+            does: "answer: allow, allow for the run, deny, deny and stop",
             command: Self::Answer,
         },
         Bind {
@@ -125,13 +125,13 @@ impl SessionKey {
         Bind {
             keys: &[Key::Up],
             label: "↑",
-            does: "scroll up a line",
+            does: "nothing typed: the message sent before; else scroll",
             command: Self::LineUp,
         },
         Bind {
             keys: &[Key::Down],
             label: "↓",
-            does: "scroll down a line",
+            does: "the message sent after; else scroll",
             command: Self::LineDown,
         },
         Bind {
@@ -265,7 +265,7 @@ impl SessionScreen {
             };
             return Self::answer(ctx, run, approval, decision, None);
         }
-        let key = match ctx.message.press(key, ctx.model.projects()) {
+        let key = match ctx.message.press(key, &Known::of(ctx.model)) {
             Typed::Took => return Vec::new(),
             Typed::Submit => return self.submit(ctx),
             Typed::Left(key) => key,
@@ -310,7 +310,7 @@ impl SessionScreen {
             return Vec::new();
         }
         if let Some(slash) = Slash::parse(&text) {
-            ctx.message.take();
+            ctx.message.send();
             return slash.act(ctx, self.shown_run());
         }
         let Some(id) = self.shown_run() else {
@@ -342,7 +342,7 @@ impl SessionScreen {
             )),
             (Some(_) | None, Some(_) | None) => None,
         };
-        ctx.message.take();
+        ctx.message.send();
         // Typing while an approval waits declines it; the words go next.
         if let Some((approval, _)) = approval {
             return Self::answer(ctx, id, approval, Decision::Decline, Some(prompt));

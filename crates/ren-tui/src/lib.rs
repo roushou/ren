@@ -376,7 +376,7 @@ impl Tui {
     #[cfg(test)]
     pub(crate) fn completions(&self) -> Vec<String> {
         self.message
-            .popup(self.model.projects())
+            .popup(&screen::slash::Known::of(&self.model))
             .into_iter()
             .map(|(suggestion, _)| suggestion.label)
             .collect()

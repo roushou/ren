@@ -1,13 +1,13 @@
-//! The message box the console's screens share: text being typed, and the
-//! slash completions offered for it. Typing carries over as screens change.
+//! The message box every screen shares: text being typed, the slash
+//! completions offered for it, and what was sent before, to recall. Typing
+//! carries over as screens change.
 
 use super::composer::Composer;
-use super::slash::{Slash, Suggestion};
+use super::slash::{Known, Slash, Suggestion};
 use crate::Key;
 use crate::ui::Text;
-use ren_supervisor::Project;
 
-/// Text being typed, and its completions.
+/// Text being typed, its completions, and what was sent.
 #[derive(Debug, Default)]
 pub(crate) struct MessageBox {
     composer: Composer,
@@ -15,6 +15,18 @@ pub(crate) struct MessageBox {
     choice: usize,
     /// Completions closed with esc until the text changes.
     dismissed: bool,
+    /// What was sent, oldest first.
+    sent: Vec<String>,
+    /// A sent message shown again, until the text is edited.
+    recall: Option<Recall>,
+}
+
+/// Which sent message is shown, and what was typed before recalling.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Recall {
+    /// Back from the newest: 0 is the newest.
+    back: usize,
+    draft: String,
 }
 
 /// What a key did to the message box.
@@ -37,24 +49,88 @@ impl MessageBox {
         self.composer.is_empty()
     }
 
+    /// How many sent messages are kept to recall.
+    const KEPT: usize = 100;
+
+    /// The text, sent: kept to recall, and the box left empty.
+    pub fn send(&mut self) -> String {
+        let text = self.take();
+        if !text.trim().is_empty() && self.sent.last() != Some(&text) {
+            self.sent.push(text.clone());
+            if self.sent.len() > Self::KEPT {
+                self.sent.remove(0);
+            }
+        }
+        text
+    }
+
+    /// Whether a sent message is shown and not edited since.
+    pub fn recalling(&self) -> bool {
+        self.recall.is_some()
+    }
+
+    /// The sent message before (or after) the one shown; after the newest,
+    /// what was typed before recalling. Whether there was one.
+    fn step_back(&mut self, older: bool) -> bool {
+        let next = match (&self.recall, older) {
+            (None, true) if !self.sent.is_empty() => Some(Recall {
+                back: 0,
+                draft: self.composer.text(),
+            }),
+            (None, true | false) => None,
+            (Some(recall), true) if recall.back + 1 < self.sent.len() => Some(Recall {
+                back: recall.back + 1,
+                draft: recall.draft.clone(),
+            }),
+            (Some(recall), true) => Some(recall.clone()),
+            (Some(recall), false) if recall.back > 0 => Some(Recall {
+                back: recall.back - 1,
+                draft: recall.draft.clone(),
+            }),
+            (Some(recall), false) => {
+                // Past the newest: back to what was being typed.
+                let draft = recall.draft.clone();
+                self.recall = None;
+                self.composer.set(&draft);
+                return true;
+            }
+        };
+        let Some(next) = next else {
+            return false;
+        };
+        let Some(text) = self
+            .sent
+            .len()
+            .checked_sub(next.back + 1)
+            .and_then(|at| self.sent.get(at))
+        else {
+            return false;
+        };
+        self.composer.set(text);
+        self.recall = Some(next);
+        self.dismissed = true;
+        true
+    }
+
     /// The text, leaving the box empty.
     pub fn take(&mut self) -> String {
+        self.recall = None;
         self.dismissed = false;
         self.choice = 0;
         self.composer.take()
     }
 
     /// Completions for what is typed, unless closed.
-    pub fn suggestions(&self, projects: &[Project]) -> Vec<Suggestion> {
+    pub fn suggestions(&self, known: &Known<'_>) -> Vec<Suggestion> {
         if self.dismissed {
             return Vec::new();
         }
-        Slash::complete(&self.composer.text(), projects)
+        Slash::complete(&self.composer.text(), known)
     }
 
     /// Completions, the chosen one marked.
-    pub fn popup(&self, projects: &[Project]) -> Vec<(Suggestion, bool)> {
-        let suggestions = self.suggestions(projects);
+    pub fn popup(&self, known: &Known<'_>) -> Vec<(Suggestion, bool)> {
+        let suggestions = self.suggestions(known);
         let choice = self.choice.min(suggestions.len().saturating_sub(1));
         suggestions
             .into_iter()
@@ -66,12 +142,12 @@ impl MessageBox {
     /// The rest of the chosen completion, filled in after the cursor: only
     /// while the cursor is at the end and the completion carries on what is
     /// typed.
-    pub fn ghost(&self, projects: &[Project]) -> Option<String> {
+    pub fn ghost(&self, known: &Known<'_>) -> Option<String> {
         if !self.composer.at_end() {
             return None;
         }
         let text = self.composer.text();
-        let suggestions = self.suggestions(projects);
+        let suggestions = self.suggestions(known);
         let chosen = suggestions.get(self.choice.min(suggestions.len().saturating_sub(1)))?;
         chosen
             .replacement
@@ -92,9 +168,11 @@ impl MessageBox {
         )
     }
 
-    /// Takes a key: completions first while offered, then editing.
-    pub fn press(&mut self, key: Key, projects: &[Project]) -> Typed {
-        let suggestions = self.suggestions(projects);
+    /// Takes a key: completions first while offered, then recalling what
+    /// was sent (ctrl-p and ctrl-n, or ↑ and ↓ with nothing typed but a
+    /// recalled message), then editing.
+    pub fn press(&mut self, key: Key, known: &Known<'_>) -> Typed {
+        let suggestions = self.suggestions(known);
         if !suggestions.is_empty() {
             match key {
                 Key::Up => {
@@ -110,7 +188,7 @@ impl MessageBox {
                     return Typed::Took;
                 }
                 // At the end, → takes the filled-in rest, as in a shell.
-                Key::Right if self.ghost(projects).is_some() => {
+                Key::Right if self.ghost(known).is_some() => {
                     self.accept(&suggestions);
                     return Typed::Took;
                 }
@@ -132,10 +210,23 @@ impl MessageBox {
                 | Key::AltLeft
                 | Key::AltRight
                 | Key::Newline
-                | Key::Interrupt => {}
+                | Key::Interrupt
+                | Key::Older
+                | Key::Newer => {}
             }
         }
+        let recallable = self.composer.is_empty() || self.recalling();
         match key {
+            Key::Older => {
+                self.step_back(true);
+            }
+            Key::Newer => {
+                self.step_back(false);
+            }
+            Key::Up if recallable && self.step_back(true) => {}
+            Key::Down if self.recalling() => {
+                self.step_back(false);
+            }
             Key::Char(ch) => self.typed(|composer| composer.insert(ch)),
             Key::Newline => self.typed(|composer| composer.insert('\n')),
             Key::Backspace => self.typed(Composer::backspace),
@@ -169,11 +260,13 @@ impl MessageBox {
         if let Some(chosen) = suggestions.get(self.choice) {
             self.composer.set(&chosen.replacement);
             self.choice = 0;
+            self.recall = None;
         }
     }
 
     fn typed(&mut self, edit: impl FnOnce(&mut Composer)) {
         edit(&mut self.composer);
+        self.recall = None;
         self.dismissed = false;
         self.choice = 0;
     }
@@ -183,14 +276,13 @@ impl MessageBox {
 mod tests {
     use super::{MessageBox, Typed};
     use crate::Key;
+    use crate::screen::slash::Known;
     use ren_supervisor::{Project, ProjectGit};
 
-    fn typed(text: &str, projects: &[Project]) -> MessageBox {
-        let mut message = MessageBox::default();
+    fn typed(message: &mut MessageBox, text: &str, known: &Known<'_>) {
         for ch in text.chars() {
-            assert_eq!(message.press(Key::Char(ch), projects), Typed::Took);
+            assert_eq!(message.press(Key::Char(ch), known), Typed::Took);
         }
-        message
     }
 
     #[test]
@@ -200,27 +292,64 @@ mod tests {
             name: "acme-api".into(),
             git: ProjectGit::None,
         }];
-        let mut message = typed("/re", &projects);
-        assert_eq!(message.ghost(&projects).as_deref(), Some("sume "));
-        let _ = message.press(Key::Right, &projects);
+        let known = Known {
+            projects: &projects,
+            runs: Vec::new(),
+        };
+        let mut message = MessageBox::default();
+        typed(&mut message, "/re", &known);
+        assert_eq!(message.ghost(&known).as_deref(), Some("sume "));
+        let _ = message.press(Key::Right, &known);
         assert_eq!(message.text(), "/resume ");
-        assert_eq!(message.ghost(&projects), None);
+        assert_eq!(message.ghost(&known), None);
 
         // A project is filled in once its name carries on what is typed.
-        let mut message = typed("/new ac", &projects);
-        assert_eq!(message.ghost(&projects).as_deref(), Some("me-api "));
-        let _ = message.press(Key::Tab, &projects);
+        let mut message = MessageBox::default();
+        typed(&mut message, "/new ac", &known);
+        assert_eq!(message.ghost(&known).as_deref(), Some("me-api "));
+        let _ = message.press(Key::Tab, &known);
         assert_eq!(message.text(), "/new acme-api ");
 
         // Matched inside the name: offered, but nothing to fill in.
-        let message = typed("/new api", &projects);
-        assert_eq!(message.ghost(&projects), None);
+        let mut message = MessageBox::default();
+        typed(&mut message, "/new api", &known);
+        assert_eq!(message.ghost(&known), None);
 
         // Away from the end, → moves the cursor.
-        let mut message = typed("/re", &projects);
-        let _ = message.press(Key::Left, &projects);
-        assert_eq!(message.ghost(&projects), None);
-        let _ = message.press(Key::Right, &projects);
+        let mut message = MessageBox::default();
+        typed(&mut message, "/re", &known);
+        let _ = message.press(Key::Left, &known);
+        assert_eq!(message.ghost(&known), None);
+        let _ = message.press(Key::Right, &known);
         assert_eq!(message.text(), "/re");
+    }
+
+    #[test]
+    fn what_was_sent_is_recalled_newest_first_and_the_draft_comes_back() {
+        let known = Known::default();
+        let mut message = MessageBox::default();
+        for text in ["fix the test", "also the docs", "also the docs", "  "] {
+            typed(&mut message, text, &known);
+            let _ = message.send();
+        }
+        typed(&mut message, "draft", &known);
+        // Ctrl-P goes back whatever is typed; repeats are kept once.
+        let _ = message.press(Key::Older, &known);
+        assert_eq!(message.text(), "also the docs");
+        let _ = message.press(Key::Up, &known);
+        assert_eq!(message.text(), "fix the test");
+        let _ = message.press(Key::Up, &known);
+        assert_eq!(message.text(), "fix the test", "the oldest stays");
+        let _ = message.press(Key::Down, &known);
+        let _ = message.press(Key::Newer, &known);
+        assert_eq!(message.text(), "draft");
+        // ↑ recalls only with nothing typed (or a recalled message shown).
+        assert_eq!(message.press(Key::Up, &known), Typed::Left(Key::Up));
+        let _ = message.take();
+        let _ = message.press(Key::Up, &known);
+        assert_eq!(message.text(), "also the docs");
+        // Editing it ends the recall: ↓ is the screen's again.
+        typed(&mut message, "!", &known);
+        assert_eq!(message.press(Key::Down, &known), Typed::Left(Key::Down));
     }
 }

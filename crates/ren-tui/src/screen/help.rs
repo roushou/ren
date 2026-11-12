@@ -39,7 +39,9 @@ impl Help {
             | Key::PageDown
             | Key::AltLeft
             | Key::AltRight
-            | Key::Newline => Vec::new(),
+            | Key::Newline
+            | Key::Older
+            | Key::Newer => Vec::new(),
         }
     }
 

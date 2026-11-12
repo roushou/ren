@@ -153,6 +153,8 @@ impl TerminalEvent {
         match event.code {
             KeyCode::Char('c') if control => Some(Key::Interrupt),
             KeyCode::Char('j') if control => Some(Key::Newline),
+            KeyCode::Char('p') if control => Some(Key::Older),
+            KeyCode::Char('n') if control => Some(Key::Newer),
             KeyCode::Char(_) if control => None,
             // macOS terminals send Option-← and Option-→ as Alt-b and Alt-f.
             KeyCode::Char('b') if alt => Some(Key::AltLeft),
