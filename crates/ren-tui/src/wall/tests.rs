@@ -879,10 +879,11 @@ fn busy(size: Size) -> Wall {
 /// The wall drawn into a buffer, as text: one line per row, trailing
 /// spaces trimmed.
 fn drawn(wall: &Frame, size: Size) -> String {
-    use ratatui::{buffer::Buffer, layout::Rect, widgets::Widget};
+    use ratatui::{buffer::Buffer, layout::Rect};
     let area = Rect::new(0, 0, size.width, size.height);
     let mut buffer = Buffer::empty(area);
-    Widget::render(wall, area, &mut buffer);
+    wall.view(size.width, size.height)
+        .render(&crate::Theme::default(), area, &mut buffer);
     (0..size.height)
         .map(|y| {
             let row: String = (0..size.width)
@@ -1064,7 +1065,7 @@ fn a_pinned_session_stays_when_quiet_and_the_help_takes_no_other_key() {
 
 #[test]
 fn tiny_terminals_draw_without_panicking() {
-    use ratatui::{buffer::Buffer, layout::Rect, widgets::Widget};
+    use ratatui::{buffer::Buffer, layout::Rect};
     for (width, height) in [(0, 0), (1, 1), (2, 1), (10, 3), (20, 2), (57, 11), (40, 30)] {
         let size = Size { width, height };
         let mut tui = busy(size);
@@ -1074,14 +1075,18 @@ fn tiny_terminals_draw_without_panicking() {
             }
             let area = Rect::new(0, 0, width, height);
             let mut buffer = Buffer::empty(area);
-            Widget::render(&tui.frame(at(300)), area, &mut buffer);
+            tui.frame(at(300)).view(width, height).render(
+                &crate::Theme::default(),
+                area,
+                &mut buffer,
+            );
         }
     }
 }
 
 #[test]
 fn dark_title_bars_keep_the_original_palette() {
-    use ratatui::{buffer::Buffer, layout::Rect, style::Color, widgets::Widget};
+    use ratatui::{buffer::Buffer, layout::Rect, style::Color};
     let size = Size {
         width: 180,
         height: 42,
@@ -1090,8 +1095,8 @@ fn dark_title_bars_keep_the_original_palette() {
     let mut buffer = Buffer::empty(area);
     busy(size)
         .frame(at(300))
-        .themed(&crate::ThemeName::Dark.theme())
-        .render(area, &mut buffer);
+        .view(area.width, area.height)
+        .render(&crate::ThemeName::Dark.theme(), area, &mut buffer);
     // Three sessions, three panes across. Responding: green. Stopped on
     // an error: red. The body: the pane's ground.
     assert_eq!(
@@ -1119,7 +1124,6 @@ fn switching_themes_resets_every_cell_in_panes_zoom_and_help() {
         buffer::Buffer,
         layout::Rect,
         style::{Color, Modifier, Style},
-        widgets::Widget,
     };
 
     for size in [
@@ -1154,11 +1158,17 @@ fn switching_themes_resets_every_cell_in_panes_zoom_and_help() {
             for _ in 0..7 {
                 let theme = name.theme();
                 let mut fresh = Buffer::empty(area);
-                wall.themed(&theme).render(area, &mut fresh);
-                wall.themed(&theme).render(area, &mut reused);
+                wall.view(area.width, area.height)
+                    .render(&theme, area, &mut fresh);
+                wall.view(area.width, area.height)
+                    .render(&theme, area, &mut reused);
                 assert_eq!(reused, fresh, "stale styles in {name}");
                 terminal
-                    .draw(|frame| frame.render_widget(wall.themed(&theme), frame.area()))
+                    .draw(|frame| {
+                        let area = frame.area();
+                        wall.view(area.width, area.height)
+                            .render(&theme, area, frame.buffer_mut());
+                    })
                     .unwrap();
                 terminal.backend().assert_buffer(&fresh);
                 let shown: Vec<_> = fresh
@@ -1179,7 +1189,8 @@ fn switching_themes_resets_every_cell_in_panes_zoom_and_help() {
                 name = name.next();
             }
             let mono = Theme::monochrome();
-            wall.themed(&mono).render(area, &mut reused);
+            wall.view(area.width, area.height)
+                .render(&mono, area, &mut reused);
             assert!(
                 reused
                     .content
@@ -1354,7 +1365,7 @@ fn a_session_without_turns_reads_its_newest_calls() {
 
 #[test]
 fn a_plain_title_has_a_rule_under_it() {
-    use ratatui::{buffer::Buffer, layout::Rect, style::Color, widgets::Widget};
+    use ratatui::{buffer::Buffer, layout::Rect, style::Color};
     let mut tui = tui();
     let _ = tui.apply(snapshot(
         100,
@@ -1364,7 +1375,9 @@ fn a_plain_title_has_a_rule_under_it() {
     let area = Rect::new(0, 0, 60, 12);
     let mut buffer = Buffer::empty(area);
     let theme = ThemeName::Dark.theme();
-    tui.frame(at(100)).themed(&theme).render(area, &mut buffer);
+    tui.frame(at(100))
+        .view(area.width, area.height)
+        .render(&theme, area, &mut buffer);
     assert_eq!(buffer[(0, 0)].bg, Color::Rgb(0x0e, 0x12, 0x17));
     assert_eq!(buffer[(0, 1)].symbol(), "─");
     assert_eq!(buffer[(59, 1)].fg, Color::Rgb(0x2a, 0x30, 0x38));

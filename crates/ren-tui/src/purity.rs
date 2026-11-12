@@ -8,6 +8,10 @@ fn the_core_stays_free_of_runtime_and_io_dependencies() {
     let sources = [
         ("lib.rs", include_str!("lib.rs")),
         ("event.rs", include_str!("event.rs")),
+        ("ui/mod.rs", include_str!("ui/mod.rs")),
+        ("ui/text.rs", include_str!("ui/text.rs")),
+        ("wall/draw.rs", include_str!("wall/draw.rs")),
+        ("console/draw.rs", include_str!("console/draw.rs")),
         ("wall/mod.rs", include_str!("wall/mod.rs")),
         ("wall/call.rs", include_str!("wall/call.rs")),
         ("wall/grid.rs", include_str!("wall/grid.rs")),

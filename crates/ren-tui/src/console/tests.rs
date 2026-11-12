@@ -2,7 +2,7 @@
 //! no terminal. Screens are pinned as text in `tests/fixtures`.
 
 use crate::console::{Answered, Command, Console, Input, Out, Read};
-use crate::{Drawn, Key, Size, Theme};
+use crate::{Key, Size, Theme};
 use ratatui::{buffer::Buffer, layout::Rect};
 use ren_harness::{
     Harness,
@@ -198,7 +198,7 @@ fn drawn(console: &Console) -> String {
     let frame = console.frame();
     let area = Rect::new(0, 0, SIZE.width, SIZE.height);
     let mut buf = Buffer::empty(area);
-    frame.render(&Theme::default(), area, &mut buf);
+    frame.view().render(&Theme::default(), area, &mut buf);
     let mut text = String::new();
     for y in 0..area.height {
         let mut line = String::new();

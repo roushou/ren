@@ -20,7 +20,7 @@ mod view;
 
 pub use slash::Suggestion;
 pub use transcript::Entry;
-pub use view::{Frame, Styled};
+pub use view::Frame;
 
 use crate::{Key, Size};
 use composer::Composer;

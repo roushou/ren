@@ -2,7 +2,8 @@
 //! replies and tool calls, and what in it needs a look. The same readings
 //! as the web UI's Live wall, so the two never disagree about a session.
 
-use super::call::{CallEnd, Tone};
+use super::call::CallEnd;
+use crate::ui::Tone;
 use ren_harness::Harness;
 use ren_harness::tools::EffectKind;
 use ren_protocol::activity::{ActivityLimitation, ResultStatus};

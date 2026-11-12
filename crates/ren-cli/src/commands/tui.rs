@@ -177,7 +177,7 @@ impl TuiCmd {
         }
         let mut ticker = tokio::time::interval(Self::TICK);
         ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-        screen.draw(&tui.frame(clock.now().wall))?;
+        screen.draw(|size| tui.frame(clock.now().wall).view(size))?;
 
         loop {
             let outs = tokio::select! {
@@ -230,7 +230,7 @@ impl TuiCmd {
             if let Flow::Quit = shell.act(outs, &mut screen) {
                 break;
             }
-            screen.draw(&tui.frame(clock.now().wall))?;
+            screen.draw(|size| tui.frame(clock.now().wall).view(size))?;
         }
         drop(events);
         drop(screen);

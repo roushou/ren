@@ -2,27 +2,19 @@
 //! header, the conversation, the approval card, the message box, and the
 //! hint under it. Pure: `draw` puts a [`Frame`] on the terminal.
 
-use crate::Ink;
 use crate::console::{
     Console, Control, Projects, Screen, Tone,
     desk::{Attention, Run},
     slash::Suggestion,
     transcript::Entry,
 };
+use crate::ui::{Ink, Span, Text};
 use ren_harness::drive::{ApprovalAsk, ItemStatus, TurnEnd};
 use ren_protocol::activity::ResultStatus;
 use ren_store::activity::TurnActivity;
-use unicode_width::UnicodeWidthChar;
-
-/// A run of text in one style.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Styled {
-    pub text: String,
-    pub ink: Ink,
-}
 
 /// One line of styled text.
-pub type Line = Vec<Styled>;
+pub type Line = Vec<Span>;
 
 /// Everything to draw.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -49,51 +41,19 @@ pub struct Frame {
     pub hint_right: Line,
 }
 
-fn styled(text: impl Into<String>, ink: Ink) -> Styled {
-    Styled {
-        text: text.into(),
-        ink,
-    }
+fn styled(text: impl Into<String>, ink: Ink) -> Span {
+    Span::new(text, ink)
 }
 
 impl Frame {
-    /// `text` cut into lines no wider than `width` columns, at spaces where
-    /// it can be, keeping its own line breaks.
+    /// `text` cut into lines no wider than `width` columns.
     pub fn wrap(text: &str, width: usize) -> Vec<String> {
-        let width = width.max(8);
-        let mut lines = Vec::new();
-        for paragraph in text.split('\n') {
-            let mut line = String::new();
-            let mut used = 0;
-            for word in paragraph.split(' ') {
-                let wide: usize = word.chars().map(|ch| ch.width().unwrap_or(0)).sum();
-                if used > 0 && used + 1 + wide > width {
-                    lines.push(std::mem::take(&mut line));
-                    used = 0;
-                }
-                if used > 0 {
-                    line.push(' ');
-                    used += 1;
-                }
-                // A word wider than the line is cut.
-                for ch in word.chars() {
-                    let w = ch.width().unwrap_or(0);
-                    if used + w > width {
-                        lines.push(std::mem::take(&mut line));
-                        used = 0;
-                    }
-                    line.push(ch);
-                    used += w;
-                }
-            }
-            lines.push(line);
-        }
-        lines
+        Text(text).wrap(width.max(8))
     }
 
     /// The column width of `text`.
     pub fn columns(text: &str) -> usize {
-        text.chars().map(|ch| ch.width().unwrap_or(0)).sum()
+        Text(text).width()
     }
 }
 

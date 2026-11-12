@@ -17,11 +17,13 @@ mod screen;
 #[cfg(test)]
 mod tests;
 mod theme;
+pub mod ui;
 pub mod wall;
 
 pub use event::{Key, Size};
-pub use screen::{Drawn, Screen, ScreenError, ScreenEvent, ScreenEvents};
-pub use theme::{Ink, Theme, ThemeName};
+pub use screen::{Screen, ScreenError, ScreenEvent, ScreenEvents};
+pub use theme::{Theme, ThemeName};
+pub use ui::Ink;
 
 use console::Console;
 use ren_recorder::time::UnixMillis;
@@ -73,6 +75,16 @@ pub enum Out {
 pub enum Frame {
     Wall(wall::Frame),
     Console(console::Frame),
+}
+
+impl Frame {
+    /// What to draw, `size` big.
+    pub fn view(&self, size: Size) -> ui::View {
+        match self {
+            Self::Wall(frame) => frame.view(size.width, size.height),
+            Self::Console(frame) => frame.view(),
+        }
+    }
 }
 
 impl Tui {

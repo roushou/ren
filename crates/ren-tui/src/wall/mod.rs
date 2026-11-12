@@ -17,8 +17,8 @@ mod session;
 #[cfg(test)]
 mod tests;
 
-pub use call::{CallEnd, ErrorCause, Shortfall, Stop, Tone};
-pub use draw::ThemedWall;
+pub use crate::ui::Tone;
+pub use call::{CallEnd, ErrorCause, Shortfall, Stop};
 pub use grid::Grid;
 pub use keys::Command;
 pub use runs::{RunCounts, RunMark, RunPhase, Runs};

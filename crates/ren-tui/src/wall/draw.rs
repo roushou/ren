@@ -1,223 +1,128 @@
-//! A wall rendered with resolved semantic styles. Drawing reads only the
-//! wall and its theme, and can be tested without a terminal.
+//! The wall as a view: panes in a grid, each a title bar, the session's
+//! conversation, and a state line; the status line under them; the help
+//! over them. Pure: the crate's one renderer draws it.
 
-use super::call::Tone;
 use super::keys::Command;
 use super::runs::RunPhase;
 use super::session::{
     CallFacts, Line as PaneLine, Phase, ResultMark, SessionPane, Span as Elapsed, ToolLine,
 };
-use super::{Frame, Help, Pane, Reading, Status, View};
-use crate::Theme;
-use ratatui::buffer::Buffer;
-use ratatui::layout::Rect;
-use ratatui::style::{Color, Modifier, Style, Stylize};
-use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Clear, Widget};
+use super::{Frame, Help, Pane, Reading, View as Layout};
+use crate::ui::Tone;
+use crate::ui::{
+    Anchor, Bar, Emphasis, Grid, Ink, Keep, Line, Place, Rule, Size, Span, Text, View,
+};
 use ren_harness::Harness;
 use ren_harness::drive::ApprovalAsk;
 use ren_protocol::activity::ResultStatus;
 use ren_recorder::time::UnixMillis;
-use unicode_width::UnicodeWidthChar;
-
-/// A wall and its resolved rendering styles.
-#[must_use]
-pub struct ThemedWall<'a> {
-    wall: &'a Frame,
-    theme: &'a Theme,
-}
 
 impl Frame {
-    pub fn themed<'a>(&'a self, theme: &'a Theme) -> ThemedWall<'a> {
-        ThemedWall { wall: self, theme }
-    }
-}
-
-impl crate::Drawn for Frame {
-    fn render(&self, theme: &Theme, area: Rect, buf: &mut Buffer) {
-        Widget::render(self.themed(theme), area, buf);
-    }
-}
-
-impl Widget for &Frame {
-    fn render(self, area: Rect, buf: &mut Buffer) {
-        self.themed(&Theme::default()).render(area, buf);
-    }
-}
-
-impl Widget for ThemedWall<'_> {
-    fn render(self, area: Rect, buf: &mut Buffer) {
-        if area.height == 0 || area.width == 0 {
-            return;
-        }
-        buf.set_style(area, self.theme.ground);
-        let panes = Rect {
-            height: area.height - 1,
-            ..area
-        };
-        let status = Rect {
-            y: area.y + area.height - 1,
-            height: 1,
-            ..area
-        };
-        self.draw_panes(panes, buf);
-        self.draw_status(&self.wall.status, status, buf);
-        if self.wall.help == Help::Shown {
-            self.draw_help(area, buf);
-        }
-    }
-}
-
-impl ThemedWall<'_> {
-    fn draw_panes(&self, area: Rect, buf: &mut Buffer) {
-        let columns = self.wall.grid.columns.max(1);
-        let rows = self.wall.grid.rows.max(1);
-        // One-cell rules between columns and between rows.
-        let width = area.width.saturating_sub(columns - 1);
-        let height = area.height.saturating_sub(rows - 1);
-        let rule = self.theme.rule;
-        let rule_row = |row: u16| area.y + Self::start(height, rows, row) + row - 1;
-        for row in 1..rows {
-            for x in area.x..area.x + area.width {
-                buf.set_string(x, rule_row(row), "─", rule);
-            }
-        }
-        for column in 1..columns {
-            let x = area.x + Self::start(width, columns, column) + column - 1;
-            for y in area.y..area.y + area.height {
-                let crossing = (1..rows).any(|row| y == rule_row(row));
-                buf.set_string(x, y, if crossing { "┼" } else { "│" }, rule);
-            }
-        }
-        let all_free = self.wall.panes.iter().all(|pane| *pane == Pane::Free);
-        for (index, pane) in self.wall.panes.iter().enumerate() {
-            let Ok(index16) = u16::try_from(index) else {
-                continue;
-            };
-            let (column, row) = (index16 % columns, index16 / columns);
-            if row >= rows {
-                continue;
-            }
-            let rect = Rect {
-                x: area.x + Self::start(width, columns, column) + column,
-                y: area.y + Self::start(height, rows, row) + row,
-                width: Self::start(width, columns, column + 1)
-                    - Self::start(width, columns, column),
-                height: Self::start(height, rows, row + 1) - Self::start(height, rows, row),
-            };
-            let (focused, place) = match self.wall.view {
-                View::Panes { focus } => (focus == index, Some(index)),
-                View::Zoomed => (false, None),
-            };
-            match pane {
-                Pane::Free if all_free => self.draw_empty(rect, buf),
-                Pane::Free => {}
-                Pane::Session(session) => {
-                    self.draw_session(rect, place, session, focused, self.wall.status.now, buf);
-                }
-            }
-        }
-    }
-
-    /// Where the `part`-th of `parts` equal shares of `total` starts.
-    fn start(total: u16, parts: u16, part: u16) -> u16 {
-        let total = u32::from(total);
-        u16::try_from(total * u32::from(part) / u32::from(parts.max(1))).unwrap_or(u16::MAX)
-    }
-
-    /// No session in the window at all.
-    fn draw_empty(&self, rect: Rect, buf: &mut Buffer) {
-        let text = "no live sessions · a session appears here when its client calls";
-        let width = u16::try_from(Self::width(text)).unwrap_or(u16::MAX);
-        let x = rect.x + rect.width.saturating_sub(width) / 2;
-        buf.set_stringn(
-            x,
-            rect.y + rect.height / 2,
-            text,
-            usize::from(rect.width),
-            self.theme.muted,
+    /// What to draw, `width` by `height` cells.
+    pub fn view(&self, width: u16, height: u16) -> View {
+        let panes = self.panes(width, height.saturating_sub(1));
+        let status = View::Bar(self.status_bar(width));
+        let wall = View::fill(
+            Ink::Ground,
+            View::Rows(vec![(Size::Fill, panes), (Size::Exact(1), status)]),
         );
+        match self.help {
+            Help::Hidden => wall,
+            Help::Shown => Self::help(wall),
+        }
     }
 
-    fn draw_session(
+    fn panes(&self, width: u16, height: u16) -> View {
+        let grid = Grid {
+            columns: self.grid.columns.max(1),
+            rows: self.grid.rows.max(1),
+            cells: Vec::new(),
+        };
+        let all_free = self.panes.iter().all(|pane| *pane == Pane::Free);
+        let cells = self
+            .panes
+            .iter()
+            .enumerate()
+            .map(|(index, pane)| {
+                let (place, focused) = match self.view {
+                    Layout::Panes { focus } => (Some(index), focus == index),
+                    Layout::Zoomed => (None, false),
+                };
+                let (cell_width, cell_height) = grid.cell(width, height, index);
+                match pane {
+                    Pane::Free if all_free => View::lines(
+                        vec![Line::of(
+                            "no live sessions · a session appears here when its client calls",
+                            Ink::Muted,
+                        )],
+                        Anchor::Middle,
+                    ),
+                    Pane::Free => View::Empty,
+                    Pane::Session(session) => {
+                        self.session(session, place, focused, cell_width, cell_height)
+                    }
+                }
+            })
+            .collect();
+        View::Grid(Grid { cells, ..grid })
+    }
+
+    /// A session's pane: its title bar, a rule under it when the pane can
+    /// spare a line, the conversation against the bottom, and a state line
+    /// and a facts line at the foot when there is room.
+    fn session(
         &self,
-        rect: Rect,
-        place: Option<usize>,
         pane: &SessionPane,
+        place: Option<usize>,
         focused: bool,
-        now: UnixMillis,
-        buf: &mut Buffer,
-    ) {
-        if rect.height == 0 || rect.width == 0 {
-            return;
+        width: u16,
+        height: u16,
+    ) -> View {
+        let inner = usize::from(width.saturating_sub(2));
+        let lit = Self::lit(pane);
+        let mut rows = vec![(
+            Size::Exact(1),
+            View::Bar(Self::title(pane, place, focused, lit)),
+        )];
+        if height >= 7 {
+            let rule = match lit {
+                Some(ink) => Rule::Edge(ink),
+                None => Rule::Plain,
+            };
+            rows.push((Size::Exact(1), View::Rule(rule)));
         }
-        buf.set_style(rect, self.theme.pane);
-        self.draw_title(rect, place, pane, focused, buf);
-        let inner = rect.width.saturating_sub(2);
-        // A state line and a facts line at the foot, when there is room.
-        let foot = match rect.height {
+        rows.push((
+            Size::Fill,
+            View::pad(1, 1, View::lines(self.body(pane, inner), Anchor::Bottom)),
+        ));
+        let foot = match height {
             0..=3 => 0,
             4..=5 => 1,
             _ => 2,
         };
         if foot >= 1 {
-            let y = rect.y + rect.height - foot;
-            buf.set_line(rect.x + 1, y, &self.state_line(pane, now), inner);
+            let state = self.state_line(pane, self.status.now);
+            rows.push((
+                Size::Exact(1),
+                View::pad(1, 1, View::lines(vec![state], Anchor::Top)),
+            ));
         }
-        if foot >= 2
-            && let Some(facts) = &pane.facts
-        {
-            let text = Self::fit(&Self::facts(facts), usize::from(inner));
-            buf.set_string(rect.x + 1, rect.y + rect.height - 1, text, self.theme.muted);
+        if foot >= 2 {
+            let facts = pane.facts.as_ref().map_or_else(Line::default, |facts| {
+                Line::of(Text(&Self::facts(facts)).fit(inner), Ink::Muted)
+            });
+            rows.push((
+                Size::Exact(1),
+                View::pad(1, 1, View::lines(vec![facts], Anchor::Top)),
+            ));
         }
-        // A rule under the title, as the mockup's border: in the rule's
-        // style, or a half block in a lit bar's own color, so the bar and
-        // its edge read as one. Left out when the pane cannot spare a line.
-        let head = if rect.height >= 7 {
-            let (edge, style) = match self.lit(pane) {
-                // A theme that leaves the bar unfilled lends the half block
-                // the title's text color instead.
-                Some(title) => match title.bg {
-                    Some(color) if color != Color::Reset => ("▀", Style::new().fg(color)),
-                    Some(_) | None => ("▀", Style::new().fg(title.fg.unwrap_or(Color::Reset))),
-                },
-                None => ("─", self.theme.rule),
-            };
-            let style = self.theme.pane.patch(style);
-            for x in rect.x..rect.x + rect.width {
-                buf.set_string(x, rect.y + 1, edge, style);
-            }
-            2
-        } else {
-            1
-        };
-        let body_top = rect.y + head;
-        let body_height = usize::from(rect.height.saturating_sub(head + foot));
-        let lines = self.body(pane, usize::from(inner));
-        let skip = lines.len().saturating_sub(body_height);
-        let top = body_top + u16::try_from(body_height - (lines.len() - skip)).unwrap_or(0);
-        for (row, line) in lines.iter().skip(skip).enumerate() {
-            let Ok(row) = u16::try_from(row) else {
-                break;
-            };
-            buf.set_line(rect.x + 1, top + row, line, inner);
-        }
+        View::fill(Ink::Pane, View::Rows(rows))
     }
 
     /// The title bar: green while a response streams, amber or red with
     /// an alert; the place, session, client and provider, the turn's call
     /// count, and at the right the context and the session's output.
-    fn draw_title(
-        &self,
-        rect: Rect,
-        place: Option<usize>,
-        pane: &SessionPane,
-        focused: bool,
-        buf: &mut Buffer,
-    ) {
-        let lit = self.lit(pane);
-        let base = lit.unwrap_or(self.theme.pane.patch(self.theme.muted));
-        buf.set_style(Rect { height: 1, ..rect }, base);
+    fn title(pane: &SessionPane, place: Option<usize>, focused: bool, lit: Option<Ink>) -> Bar {
         let harness = pane.harness.as_ref().and_then(|harness| harness.known());
         let name = pane.harness.as_ref().map_or_else(
             || "unknown".to_owned(),
@@ -225,42 +130,38 @@ impl ThemedWall<'_> {
         );
         let session = pane.session.to_string();
         let short = session.get(..8).unwrap_or(&session);
-        let mut spans = vec![Span::raw(" ")];
+        let mut left = Line::new(vec![Span::plain(" ")]);
         match place {
-            Some(place) if focused => {
-                spans.push(Span::raw(format!("{place}")).style(self.theme.focus))
-            }
-            Some(place) => spans.push(Span::raw(format!("{place}"))),
+            Some(place) if focused => left.push(Span::new(format!("{place}"), Ink::Focus)),
+            Some(place) => left.push(Span::plain(format!("{place}"))),
             None => {}
         }
-        spans.push(Span::raw(match place {
+        left.push(Span::plain(match place {
             Some(_) => format!(":{short}  "),
             None => format!("{short}  "),
         }));
-        let route_style = match lit {
-            Some(_) => Style::new(),
-            None => self.theme.harness(harness),
+        let route = match lit {
+            Some(_) => Ink::Same,
+            None => Ink::Client(harness),
         };
-        spans.push(Span::raw(name).style(route_style));
-        spans.push(Span::raw(format!(" → {}", pane.provider.label())).style(route_style));
+        left.push(Span::new(name, route));
+        left.push(Span::new(format!(" → {}", pane.provider.label()), route));
         if pane.turn_calls > 0 {
-            spans.push(Span::raw(format!("  call {}", pane.turn_calls)));
+            left.push(Span::plain(format!("  call {}", pane.turn_calls)));
         }
         if pane.open > 1 {
-            spans.push(Span::raw(format!(" · {} open", pane.open)));
+            left.push(Span::plain(format!(" · {} open", pane.open)));
         }
         if pane.pinned {
-            spans.push(Span::raw("  pinned"));
+            left.push(Span::plain("  pinned"));
         }
         if let Some(run) = &pane.run {
-            spans.push(Span::raw(match run.phase {
+            left.push(Span::plain(match run.phase {
                 RunPhase::Idle => "  run · idle",
                 RunPhase::Working => "  run · working",
                 RunPhase::Waiting { .. } => "  run · asks",
             }));
         }
-        let title = Line::from(spans);
-        buf.set_line(rect.x, rect.y, &title, rect.width);
         // Only what is known: context, then the session's output.
         let mut facts = Vec::new();
         if let Some(context) = pane.context {
@@ -270,29 +171,29 @@ impl ThemedWall<'_> {
             facts.push(format!("{} tok", Grouped(output)));
         }
         let right = if facts.is_empty() {
-            String::new()
+            Line::default()
         } else {
-            format!("{} ", facts.join(" · "))
+            Line::from(Span::plain(format!("{} ", facts.join(" · "))))
         };
-        let right_width = u16::try_from(Self::width(&right)).unwrap_or(u16::MAX);
-        let title_width = u16::try_from(title.width()).unwrap_or(u16::MAX);
-        if title_width + 2 + right_width <= rect.width {
-            buf.set_string(rect.x + rect.width - right_width, rect.y, right, base);
+        Bar {
+            left,
+            right,
+            fill: lit.unwrap_or(Ink::Muted),
+            keep: Keep::Left,
         }
     }
 
-    /// A lit title bar's style: responding while a response streams,
-    /// warning or error when the newest call needs a look; `None` when it
-    /// is plain.
-    fn lit(&self, pane: &SessionPane) -> Option<Style> {
+    /// A lit title bar's ink: live while a response streams, warning or
+    /// error when the newest call needs a look; `None` when it is plain.
+    fn lit(pane: &SessionPane) -> Option<Ink> {
         if let Some(RunPhase::Waiting { .. }) = pane.run.as_ref().map(|run| &run.phase) {
-            return Some(self.theme.warning_title);
+            return Some(Ink::WarningTitle);
         }
         match pane.alerts.first().map(|alert| alert.tone) {
-            Some(Tone::Error) => Some(self.theme.error_title),
-            Some(Tone::Warning) => Some(self.theme.warning_title),
+            Some(Tone::Error) => Some(Ink::ErrorTitle),
+            Some(Tone::Warning) => Some(Ink::WarningTitle),
             Some(Tone::Live | Tone::Success | Tone::Neutral) | None => match pane.phase {
-                Phase::Responding { .. } => Some(self.theme.responding_title),
+                Phase::Responding { .. } => Some(Ink::LiveTitle),
                 Phase::Awaiting { .. }
                 | Phase::ClientsTurn { .. }
                 | Phase::YourTurn { .. }
@@ -303,7 +204,7 @@ impl ThemedWall<'_> {
     }
 
     /// `! alert · state · detail`, as the mockup words it.
-    fn state_line(&self, pane: &SessionPane, now: UnixMillis) -> Line<'static> {
+    fn state_line(&self, pane: &SessionPane, now: UnixMillis) -> Line {
         // A run waiting for the operator says what it asks, and how to answer.
         if let Some(RunPhase::Waiting { ask, more }) = pane.run.as_ref().map(|run| &run.phase) {
             let (what, reason) = match ask {
@@ -322,18 +223,17 @@ impl ThemedWall<'_> {
                 ApprovalAsk::FileChange { reason } => ("change files".to_owned(), reason),
                 ApprovalAsk::Tool { tool, detail } => (format!("use {tool}"), detail),
             };
-            let mut spans =
-                vec![Span::raw(format!("? {what}")).style(self.theme.tone(Tone::Warning))];
+            let mut line = Line::of(format!("? {what}"), Ink::of(Tone::Warning));
             if let Some(reason) = reason {
-                spans.push(Span::raw(format!(" · {reason}")).style(self.theme.muted));
+                line.push(Span::new(format!(" · {reason}"), Ink::Muted));
             }
             if *more > 0 {
-                spans.push(Span::raw(format!(" (+{more})")).style(self.theme.muted));
+                line.push(Span::new(format!(" (+{more})"), Ink::Muted));
             }
-            spans.push(Span::raw("  r to answer").style(self.theme.muted));
-            return Line::from(spans);
+            line.push(Span::new("  r to answer", Ink::Muted));
+            return line;
         }
-        let mut spans = Vec::new();
+        let mut line = Line::default();
         if let Some(alert) = pane.alerts.first() {
             let more = match pane.alerts.len() {
                 1 => String::new(),
@@ -343,8 +243,8 @@ impl ThemedWall<'_> {
                 "" => format!("! {}{more}", alert.label),
                 detail => format!("! {} · {detail}{more}", alert.label),
             };
-            spans.push(Span::raw(text).style(self.theme.tone(alert.tone)));
-            spans.push(Span::raw(" · ").style(self.theme.muted));
+            line.push(Span::new(text, Ink::of(alert.tone)));
+            line.push(Span::new(" · ", Ink::Muted));
         }
         let since = |at: UnixMillis| Elapsed(now.as_millis().saturating_sub(at.as_millis()));
         let (label, tone, detail) = match &pane.phase {
@@ -379,14 +279,14 @@ impl ThemedWall<'_> {
         };
         // A stopped call's alert already says how it ended.
         if matches!(pane.phase, Phase::Stopped { .. }) && !pane.alerts.is_empty() {
-            spans.pop();
-            return Line::from(spans);
+            line.spans.pop();
+            return line;
         }
-        spans.push(Span::raw(label).style(self.theme.tone(tone)));
+        line.push(Span::new(label, Ink::of(tone)));
         if !detail.is_empty() {
-            spans.push(Span::raw(format!(" · {detail}")).style(self.theme.muted));
+            line.push(Span::new(format!(" · {detail}"), Ink::Muted));
         }
-        Line::from(spans)
+        line
     }
 
     /// `model · in 36.0k (93% cached) · out 122 · reasoning 63 · end_turn`
@@ -412,76 +312,54 @@ impl ThemedWall<'_> {
         parts.join(" · ")
     }
 
-    /// `text`, cut to `width` cells with an ellipsis.
-    fn fit(text: &str, width: usize) -> String {
-        if Self::width(text) <= width {
-            return text.to_owned();
-        }
-        let mut out = String::new();
-        let mut used = 0;
-        for ch in text.chars() {
-            let ch_width = ch.width().unwrap_or(0);
-            if used + ch_width + 1 > width {
-                break;
-            }
-            out.push(ch);
-            used += ch_width;
-        }
-        out.push('…');
-        out
-    }
-
     /// The pane's turn as a conversation, wrapped to `width`, oldest first.
-    fn body(&self, pane: &SessionPane, width: usize) -> Vec<Line<'static>> {
-        let dim = self.theme.muted;
+    fn body(&self, pane: &SessionPane, width: usize) -> Vec<Line> {
         let mut lines = Vec::new();
         for line in &pane.lines {
             match line {
-                PaneLine::Call { index } => lines.push(Line::styled(
+                PaneLine::Call { index } => lines.push(Line::of(
                     match index {
                         Some(index) => format!("── call {index} ──"),
                         None => "── call ──".to_owned(),
                     },
-                    dim,
+                    Ink::Muted,
                 )),
                 PaneLine::Prompt(text) => {
-                    lines.extend(Self::hanging("> ", text, width, self.theme.prompt));
+                    lines.extend(Line::hanging("> ", text, width, Ink::Prompt))
                 }
-                PaneLine::Result(tool) => lines.push(self.result(tool)),
-                PaneLine::Reply(text) => lines.extend(self.markdown(text, width)),
-                PaneLine::Tools(tool) => lines.push(self.tool(tool)),
-                PaneLine::Waiting => {
-                    lines.push(Line::styled("request sent · waiting for the provider", dim));
-                }
+                PaneLine::Result(tool) => lines.push(Self::result(tool)),
+                PaneLine::Reply(text) => lines.extend(Self::markdown(text, width)),
+                PaneLine::Tools(tool) => lines.push(Self::tool(tool)),
+                PaneLine::Waiting => lines.push(Line::of(
+                    "request sent · waiting for the provider",
+                    Ink::Muted,
+                )),
             }
         }
         if let Some(streaming) = &pane.streaming {
             for tool in &streaming.tools {
-                lines.push(Line::from(vec![
-                    Span::raw("● ").style(self.theme.tool),
-                    Span::raw(tool.clone())
-                        .style(self.theme.tool)
-                        .add_modifier(Modifier::BOLD),
+                lines.push(Line::new(vec![
+                    Span::new("● ", Ink::Tool),
+                    Span::new(tool.clone(), Ink::Tool).with(Emphasis::Bold),
                 ]));
             }
             if streaming.thinking {
-                lines.push(Line::styled(
-                    "thinking…",
-                    dim.add_modifier(Modifier::ITALIC),
-                ));
+                lines.push(
+                    Span::new("thinking…", Ink::Muted)
+                        .with(Emphasis::Italic)
+                        .into(),
+                );
             } else {
                 let text = if streaming.cut {
                     format!("…{}", streaming.reply)
                 } else {
                     streaming.reply.clone()
                 };
-                let mut reply = self.markdown(&text, width);
+                let mut reply = Self::markdown(&text, width);
                 // The cursor sits where the stream has got to.
                 match reply.last_mut() {
-                    Some(last) if last.width() < width => {
-                        last.push_span(Span::raw("▌").style(self.theme.text));
-                    }
-                    Some(_) | None => reply.push(Line::raw("▌").style(self.theme.text)),
+                    Some(last) if last.width() < width => last.push(Span::new("▌", Ink::Text)),
+                    Some(_) | None => reply.push(Line::of("▌", Ink::Text)),
                 }
                 lines.extend(reply);
             }
@@ -489,29 +367,10 @@ impl ThemedWall<'_> {
         lines
     }
 
-    /// `prefix` then `text`, wrapped, later rows indented under the text.
-    fn hanging(prefix: &str, text: &str, width: usize, style: Style) -> Vec<Line<'static>> {
-        let indent = Self::width(prefix);
-        Self::wrap(text, width.saturating_sub(indent))
-            .into_iter()
-            .enumerate()
-            .map(|(row, part)| {
-                let lead = if row == 0 {
-                    prefix.to_owned()
-                } else {
-                    " ".repeat(indent)
-                };
-                Line::styled(format!("{lead}{part}"), style)
-            })
-            .collect()
-    }
-
     /// A reply's text with its markdown read lightly: fenced code drawn as
     /// a block behind a rule, headings and whole `**bold**` lines in bold,
     /// and emphasis markers left out.
-    fn markdown(&self, text: &str, width: usize) -> Vec<Line<'static>> {
-        let code = self.theme.code;
-        let rule = self.theme.rule;
+    fn markdown(text: &str, width: usize) -> Vec<Line> {
         let mut lines = Vec::new();
         let mut in_code = false;
         for source in text.lines() {
@@ -520,10 +379,10 @@ impl ThemedWall<'_> {
                 continue;
             }
             if in_code {
-                for part in Self::wrap(source, width.saturating_sub(2)) {
-                    lines.push(Line::from(vec![
-                        Span::styled("│ ", rule),
-                        Span::styled(part, code),
+                for part in Text(source).wrap(width.saturating_sub(2)) {
+                    lines.push(Line::new(vec![
+                        Span::new("│ ", Ink::Rule),
+                        Span::new(part, Ink::Code),
                     ]));
                 }
                 continue;
@@ -537,38 +396,35 @@ impl ThemedWall<'_> {
             };
             let bold = heading || (trimmed.starts_with("**") && trimmed.contains(":**"));
             let plain = shown.replace("**", "").replace("__", "");
-            let style = if bold {
-                self.theme.text.add_modifier(Modifier::BOLD)
+            let emphasis = if bold {
+                Emphasis::Bold
             } else {
-                self.theme.text
+                Emphasis::Plain
             };
-            for part in Self::wrap(&plain, width) {
-                lines.push(Line::styled(part, style));
+            for part in Text(&plain).wrap(width) {
+                lines.push(Span::new(part, Ink::Text).with(emphasis).into());
             }
         }
         lines
     }
 
     /// `● Bash cargo test ×2`
-    fn tool(&self, tool: &ToolLine) -> Line<'static> {
-        let mut spans = vec![
-            Span::raw("● ").style(self.theme.tool),
-            Span::raw(tool.name.clone())
-                .style(self.theme.tool)
-                .add_modifier(Modifier::BOLD),
-        ];
+    fn tool(tool: &ToolLine) -> Line {
+        let mut line = Line::new(vec![
+            Span::new("● ", Ink::Tool),
+            Span::new(tool.name.clone(), Ink::Tool).with(Emphasis::Bold),
+        ]);
         if let Some(target) = &tool.target {
-            spans.push(Span::raw(format!(" {target}")).style(self.theme.tool));
+            line.push(Span::new(format!(" {target}"), Ink::Tool));
         }
         if tool.count > 1 {
-            spans.push(Span::raw(format!(" ×{}", tool.count)).style(self.theme.tool));
+            line.push(Span::new(format!(" ×{}", tool.count), Ink::Tool));
         }
-        Line::from(spans)
+        line
     }
 
     /// `⎿ Read src/lib.rs → fn main() {}`: what the client sent back.
-    fn result(&self, tool: &ToolLine) -> Line<'static> {
-        let dim = self.theme.muted;
+    fn result(tool: &ToolLine) -> Line {
         let mut head = format!("⎿ {}", tool.name);
         if let Some(target) = &tool.target {
             head.push(' ');
@@ -577,90 +433,44 @@ impl ThemedWall<'_> {
         if tool.count > 1 {
             head.push_str(&format!(" ×{}", tool.count));
         }
-        let (outcome, style) = match &tool.result {
-            ResultMark::Pending => ("…".to_owned(), self.theme.muted),
-            ResultMark::Unreadable => ("result not readable".to_owned(), self.theme.muted),
-            ResultMark::Missing => ("no result".to_owned(), self.theme.warning),
+        let (outcome, ink) = match &tool.result {
+            ResultMark::Pending => ("…".to_owned(), Ink::Muted),
+            ResultMark::Unreadable => ("result not readable".to_owned(), Ink::Muted),
+            ResultMark::Missing => ("no result".to_owned(), Ink::Warning),
             ResultMark::Reported(status) => match status.known() {
                 Some(ResultStatus::Succeeded | ResultStatus::Unreported) => (
                     tool.output.clone().unwrap_or_else(|| "ok".to_owned()),
-                    self.theme.muted,
+                    Ink::Muted,
                 ),
                 Some(ResultStatus::Failed) => (
                     tool.output
                         .as_ref()
                         .map_or_else(|| "failed".to_owned(), |output| format!("failed: {output}")),
-                    self.theme.error,
+                    Ink::Error,
                 ),
-                None => (status.label().replace('_', " "), self.theme.muted),
+                None => (status.label().replace('_', " "), Ink::Muted),
             },
-            ResultMark::Failures(count) => (format!("{count} failed"), self.theme.error),
-            ResultMark::AllSucceeded(count) => (format!("{count} ok"), self.theme.muted),
+            ResultMark::Failures(count) => (format!("{count} failed"), Ink::Error),
+            ResultMark::AllSucceeded(count) => (format!("{count} ok"), Ink::Muted),
         };
-        Line::from(vec![
-            Span::styled(head, dim),
-            Span::styled(" → ", dim),
-            Span::styled(outcome, style),
+        Line::new(vec![
+            Span::new(head, Ink::Muted),
+            Span::new(" → ", Ink::Muted),
+            Span::new(outcome, ink),
         ])
-    }
-
-    /// `text` broken into rows of at most `width` cells, at spaces where it
-    /// can, keeping its own line breaks.
-    fn wrap(text: &str, width: usize) -> Vec<String> {
-        let width = width.max(1);
-        let mut rows = Vec::new();
-        for paragraph in text.lines() {
-            let mut row = String::new();
-            let mut row_width = 0;
-            for word in paragraph.split_inclusive(' ') {
-                // A word's trailing space may fall past the row's end.
-                let word_width = Self::width(word.trim_end_matches(' '));
-                if row_width + word_width.min(width) > width && !row.is_empty() {
-                    rows.push(row.trim_end().to_owned());
-                    row = String::new();
-                    row_width = 0;
-                }
-                for ch in word.chars() {
-                    let ch_width = ch.width().unwrap_or(0);
-                    // A space at the row's end is the break itself.
-                    if ch == ' ' && row_width + ch_width > width {
-                        continue;
-                    }
-                    if row_width + ch_width > width {
-                        rows.push(std::mem::take(&mut row));
-                        row_width = 0;
-                    }
-                    row.push(ch);
-                    row_width += ch_width;
-                }
-            }
-            rows.push(row.trim_end().to_owned());
-        }
-        rows
-    }
-
-    fn width(text: &str) -> usize {
-        text.chars().map(|ch| ch.width().unwrap_or(0)).sum()
-    }
-
-    fn spans_width(spans: &[Span<'static>]) -> usize {
-        spans.iter().map(|span| Self::width(&span.content)).sum()
     }
 
     /// Segments split by rules: the tag, what is stale or needs a look,
     /// each client's recent output, the counts; the help hint and the clock
     /// keep their place at the right.
-    fn draw_status(&self, status: &Status, area: Rect, buf: &mut Buffer) {
-        let base = self.theme.bar;
-        buf.set_style(area, base);
-        let rule = Span::styled("│", self.theme.rule);
-        let mut spans = vec![
-            Span::raw(" ren ")
-                .style(self.theme.responding_title)
-                .add_modifier(Modifier::BOLD),
-        ];
+    fn status_bar(&self, width: u16) -> Bar {
+        let status = &self.status;
+        let rule = Span::new("│", Ink::Rule);
+        let mut left = Line::new(vec![
+            Span::new(" ren ", Ink::LiveTitle).with(Emphasis::Bold),
+        ]);
         if let Some(failure) = &status.failure {
-            spans.push(Span::raw(format!(" ! stale: {failure} ")).style(self.theme.error_title));
+            left.push(Span::new(format!(" ! stale: {failure} "), Ink::ErrorTitle));
         }
         if status.attention > 0 {
             let needs = if status.attention == 1 {
@@ -668,20 +478,13 @@ impl ThemedWall<'_> {
             } else {
                 "need"
             };
-            spans.push(
-                Span::raw(format!(" ! {} {needs} a look ", status.attention))
-                    .style(self.theme.warning_title),
-            );
+            left.push(Span::new(
+                format!(" ! {} {needs} a look ", status.attention),
+                Ink::WarningTitle,
+            ));
         }
-        let right = format!(" ? help │ {} ", Clock(status.now));
-        let right_width = u16::try_from(Self::width(&right)).unwrap_or(u16::MAX);
-        let left_width = match area.width.checked_sub(right_width) {
-            Some(left) => {
-                buf.set_string(area.x + left, area.y, right, base.patch(self.theme.muted));
-                left
-            }
-            None => area.width,
-        };
+        let right = Line::of(format!(" ? help │ {} ", Clock(status.now)), Ink::Muted);
+        let left_width = usize::from(width).saturating_sub(right.width());
         let mut counts = vec![format!(
             "{} session{}",
             status.sessions,
@@ -707,11 +510,10 @@ impl ThemedWall<'_> {
             Reading::Complete => {}
             Reading::Capped => counts.push("older calls not read".to_owned()),
         }
-        let counts = vec![Span::raw(format!(" {} ", counts.join(" · ")))];
+        let counts = Span::plain(format!(" {} ", counts.join(" · ")));
         // Sparks share what the counts leave: each gets as many glyphs as
         // fit (merging bins, on one shared scale), or none at all.
-        let room = usize::from(left_width)
-            .saturating_sub(Self::spans_width(&spans) + 1 + Self::spans_width(&counts));
+        let room = left_width.saturating_sub(left.width() + 1 + counts.width());
         let sparks = status.output.len().max(1);
         // Each spark also takes its rule, name, and total: about 14 cells.
         let each = (room / sparks).saturating_sub(14);
@@ -739,27 +541,30 @@ impl ThemedWall<'_> {
             .unwrap_or(0);
         let mut used = 0;
         for (harness, bins, total) in &merged {
-            let style = self.theme.harness(Some(*harness));
-            let mut spark = vec![Span::raw(format!(" {} ", Self::short(*harness))).style(style)];
+            let ink = Ink::Client(Some(*harness));
+            let mut spark = vec![Span::new(format!(" {} ", Self::short(*harness)), ink)];
             if glyphs > 0 {
-                spark.push(Span::raw(Self::spark(bins, peak)).style(style));
+                spark.push(Span::new(Self::spark(bins, peak), ink));
             }
-            spark.push(Span::raw(format!(" {} tok ", Kilo(*total))));
-            let width = 1 + Self::spans_width(&spark);
+            spark.push(Span::plain(format!(" {} tok ", Kilo(*total))));
+            let width = 1 + spark.iter().map(Span::width).sum::<usize>();
             if used + width > room {
                 break;
             }
             used += width;
-            spans.push(rule.clone());
-            spans.extend(spark);
+            left.push(rule.clone());
+            left.spans.extend(spark);
         }
-        spans.push(rule);
-        spans.extend(counts);
-        buf.set_line(area.x, area.y, &Line::from(spans), left_width);
+        left.push(rule);
+        left.push(counts);
+        Bar {
+            left,
+            right,
+            fill: Ink::Bar,
+            keep: Keep::Right,
+        }
     }
 
-    /// The status line while text is typed: what it is for, the text with
-    /// a cursor, and how to send or drop it.
     fn short(harness: Harness) -> &'static str {
         match harness {
             Harness::ClaudeCode => "cc",
@@ -783,50 +588,42 @@ impl ThemedWall<'_> {
             .collect()
     }
 
-    fn draw_help(&self, area: Rect, buf: &mut Buffer) {
-        let rows: Vec<(String, &str)> = Command::ALL
+    /// The keys, in a box over the wall.
+    fn help(wall: View) -> View {
+        let rows: Vec<(&str, &str)> = Command::ALL
             .iter()
-            .map(|command| (command.keys().to_owned(), command.describe()))
+            .map(|command| (command.keys(), command.describe()))
             .collect();
         let keys_width = rows
             .iter()
-            .map(|(keys, _)| Self::width(keys))
+            .map(|(keys, _)| Text(keys).width())
             .max()
             .unwrap_or(0);
         let text_width = rows
             .iter()
-            .map(|(_, text)| Self::width(text))
+            .map(|(_, text)| Text(text).width())
             .max()
             .unwrap_or(0);
-        let inner_width = u16::try_from(keys_width + 3 + text_width).unwrap_or(u16::MAX);
-        let inner_height = u16::try_from(rows.len()).unwrap_or(u16::MAX);
-        let width = (inner_width + 4).min(area.width);
-        let height = (inner_height + 2).min(area.height);
-        let rect = Rect {
-            x: area.x + (area.width - width) / 2,
-            y: area.y + (area.height - height) / 2,
-            width,
-            height,
-        };
-        Clear.render(rect, buf);
-        Block::bordered()
-            .title(" keys ")
-            .border_style(self.theme.rule)
-            .style(self.theme.bar)
-            .render(rect, buf);
-        for (row, (keys, text)) in rows.iter().enumerate() {
-            let Ok(row) = u16::try_from(row) else {
-                break;
-            };
-            if row + 2 >= height {
-                break;
-            }
-            let line = Line::from(vec![
-                Span::raw(format!("{keys:<keys_width$}   ")).style(self.theme.tool),
-                Span::raw(*text),
-            ]);
-            buf.set_line(rect.x + 2, rect.y + 1 + row, &line, width.saturating_sub(4));
-        }
+        let lines = rows
+            .iter()
+            .map(|(keys, text)| {
+                Line::new(vec![
+                    Span::new(format!("{keys:<keys_width$}   "), Ink::Tool),
+                    Span::plain(*text),
+                ])
+            })
+            .collect();
+        let width = u16::try_from(keys_width + 3 + text_width + 4).unwrap_or(u16::MAX);
+        let height = u16::try_from(rows.len() + 2).unwrap_or(u16::MAX);
+        View::layer(
+            wall,
+            View::Framed {
+                title: " keys ".to_owned(),
+                ink: Ink::Bar,
+                body: Box::new(View::lines(lines, Anchor::Top)),
+            },
+            Place::Center { width, height },
+        )
     }
 }
 
@@ -880,9 +677,7 @@ impl std::fmt::Display for Clock {
 
 #[cfg(test)]
 mod tests {
-    use super::{Clock, Grouped, Kilo, ThemedWall};
-    use crate::wall::Wall;
-    use crate::{Size, Theme};
+    use super::{Clock, Frame, Grouped, Kilo};
     use ren_recorder::time::UnixMillis;
 
     #[test]
@@ -900,30 +695,14 @@ mod tests {
     }
 
     #[test]
-    fn text_wraps_at_spaces_and_breaks_long_words() {
-        assert_eq!(ThemedWall::wrap("one two three", 7), ["one two", "three"]);
-        assert_eq!(ThemedWall::wrap("abcdefghij", 4), ["abcd", "efgh", "ij"]);
-        assert_eq!(ThemedWall::wrap("a\n\nb", 4), ["a", "", "b"]);
-        assert_eq!(ThemedWall::wrap("日本語の文", 4), ["日本", "語の", "文"]);
-    }
-
-    #[test]
     fn replies_read_their_markdown_lightly() {
-        let wall = Wall::new(Size {
-            width: 80,
-            height: 24,
-        })
-        .frame(UnixMillis::from_millis(0));
-        let theme = Theme::default();
-        let lines: Vec<String> = wall
-            .themed(&theme)
-            .markdown(
-                "## Plan\n**What to look for:** the A\n```rust\nlet x = 1;\n```\n- one",
-                40,
-            )
-            .iter()
-            .map(ToString::to_string)
-            .collect();
+        let lines: Vec<String> = Frame::markdown(
+            "## Plan\n**What to look for:** the A\n```rust\nlet x = 1;\n```\n- one",
+            40,
+        )
+        .iter()
+        .map(crate::ui::Line::text)
+        .collect();
         assert_eq!(
             lines,
             ["Plan", "What to look for: the A", "│ let x = 1;", "- one"]
@@ -932,7 +711,7 @@ mod tests {
 
     #[test]
     fn sparks_share_one_scale() {
-        assert_eq!(ThemedWall::spark(&[0, 1, 4, 8], 8), " ▁▄█");
-        assert_eq!(ThemedWall::spark(&[0, 0], 0), "  ");
+        assert_eq!(Frame::spark(&[0, 1, 4, 8], 8), " ▁▄█");
+        assert_eq!(Frame::spark(&[0, 0], 0), "  ");
     }
 }

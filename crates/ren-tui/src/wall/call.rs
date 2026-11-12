@@ -2,6 +2,7 @@
 //! its transport terminal, and its model outcome, kept apart so an unknown
 //! ending is never rounded up to success or down to failure.
 
+use crate::ui::Tone;
 use ren_protocol::{inspect::ModelOutcome, label::Stored};
 use ren_recorder::capture::{AttemptTerminal, CallRejection, CallState};
 use ren_store::view::CallView;
@@ -43,16 +44,6 @@ pub enum Shortfall {
     Refused,
     Cancelled,
     Incomplete,
-}
-
-/// How something reads at a glance.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Tone {
-    Live,
-    Error,
-    Warning,
-    Success,
-    Neutral,
 }
 
 /// A call's lifecycle, with unknown labels kept apart.

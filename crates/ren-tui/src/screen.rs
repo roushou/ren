@@ -4,14 +4,13 @@
 //! panicked. [`ScreenEvents`] turns the terminal's events into the keys and
 //! sizes the view reads.
 
-use crate::{Frame, Key, Size, Theme};
+use crate::ui::View;
+use crate::{Key, Size, Theme};
 use crossterm::event::{Event, EventStream, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use crossterm::{cursor, execute, terminal};
 use futures_util::StreamExt;
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
-use ratatui::buffer::Buffer;
-use ratatui::layout::Rect;
 use std::io::{self, Stdout};
 
 /// The terminal, taken over until dropped.
@@ -37,20 +36,6 @@ pub enum ScreenError {
 pub enum ScreenEvent {
     Key(Key),
     Resize(Size),
-}
-
-/// A view the screen can draw: the wall, or another screen built on it.
-pub trait Drawn {
-    fn render(&self, theme: &Theme, area: Rect, buf: &mut Buffer);
-}
-
-impl Drawn for Frame {
-    fn render(&self, theme: &Theme, area: Rect, buf: &mut Buffer) {
-        match self {
-            Self::Wall(frame) => frame.render(theme, area, buf),
-            Self::Console(frame) => frame.render(theme, area, buf),
-        }
-    }
 }
 
 /// The terminal's events, as the view reads them.
@@ -90,12 +75,17 @@ impl Screen {
         })
     }
 
-    pub fn draw(&mut self, view: &impl Drawn) -> Result<(), ScreenError> {
+    /// Draws the view `view` builds for the terminal's size.
+    pub fn draw(&mut self, view: impl FnOnce(Size) -> View) -> Result<(), ScreenError> {
         let theme = &self.theme;
         self.terminal
             .draw(|frame| {
                 let area = frame.area();
-                view.render(theme, area, frame.buffer_mut());
+                view(Size {
+                    width: area.width,
+                    height: area.height,
+                })
+                .render(theme, area, frame.buffer_mut());
             })
             .map(|_| ())
             .map_err(ScreenError::Draw)

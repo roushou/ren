@@ -1,7 +1,7 @@
 //! Rendering preferences. Terminal defaults stay symbolic, so the terminal
 //! owns their actual colors, including when its palette changes.
 
-use crate::wall::Tone;
+use crate::ui::Ink;
 use ratatui::style::{Color, Modifier, Style};
 use ren_harness::Harness;
 use serde_with::{DeserializeFromStr, SerializeDisplay};
@@ -39,25 +39,25 @@ impl ThemeName {
     }
 }
 
-/// Resolved styles for a wall. No environment, terminal queries, or I/O.
+/// Resolved styles. No environment, terminal queries, or I/O.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Theme {
-    pub(crate) ground: Style,
-    pub(crate) pane: Style,
-    pub(crate) bar: Style,
-    pub(crate) rule: Style,
-    pub(crate) text: Style,
-    pub(crate) muted: Style,
-    pub(crate) code: Style,
-    pub(crate) prompt: Style,
-    pub(crate) tool: Style,
-    pub(crate) success: Style,
-    pub(crate) error: Style,
-    pub(crate) warning: Style,
-    pub(crate) focus: Style,
-    pub(crate) responding_title: Style,
-    pub(crate) error_title: Style,
-    pub(crate) warning_title: Style,
+    ground: Style,
+    pane: Style,
+    bar: Style,
+    rule: Style,
+    text: Style,
+    muted: Style,
+    code: Style,
+    prompt: Style,
+    tool: Style,
+    success: Style,
+    error: Style,
+    warning: Style,
+    focus: Style,
+    responding_title: Style,
+    error_title: Style,
+    warning_title: Style,
     claude_code: Style,
     codex: Style,
     pi: Style,
@@ -104,33 +104,13 @@ impl Default for Theme {
     }
 }
 
-/// What a style is for, so views outside this crate draw with the theme.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Ink {
-    /// The whole screen's background.
-    Ground,
-    /// A bar: the status line, an overlay.
-    Bar,
-    Rule,
-    Text,
-    Muted,
-    Code,
-    /// The operator's own words.
-    Prompt,
-    Tool,
-    Success,
-    Error,
-    Warning,
-    /// What has the keyboard.
-    Focus,
-    WarningTitle,
-}
-
 impl Theme {
     /// The style for `ink`.
     pub fn ink(&self, ink: Ink) -> Style {
         match ink {
+            Ink::Same => Style::new(),
             Ink::Ground => self.ground,
+            Ink::Pane => self.pane,
             Ink::Bar => self.bar,
             Ink::Rule => self.rule,
             Ink::Text => self.text,
@@ -142,7 +122,14 @@ impl Theme {
             Ink::Error => self.error,
             Ink::Warning => self.warning,
             Ink::Focus => self.focus,
+            Ink::LiveTitle => self.responding_title,
+            Ink::ErrorTitle => self.error_title,
             Ink::WarningTitle => self.warning_title,
+            Ink::Client(Some(Harness::ClaudeCode)) => self.claude_code,
+            Ink::Client(Some(Harness::Codex)) => self.codex,
+            Ink::Client(Some(Harness::Pi)) => self.pi,
+            Ink::Client(Some(Harness::OpenCode)) => self.open_code,
+            Ink::Client(None) => self.muted,
         }
     }
 
@@ -231,26 +218,6 @@ impl Theme {
             codex: Style::new().fg(Color::Rgb(0x05, 0x50, 0xae)),
             pi: Style::new().fg(Color::Rgb(0x0e, 0x63, 0x70)),
             open_code: Style::new().fg(Color::Rgb(0x82, 0x1b, 0x70)),
-        }
-    }
-
-    pub(crate) fn tone(&self, tone: Tone) -> Style {
-        match tone {
-            Tone::Live => self.text,
-            Tone::Success => self.success,
-            Tone::Error => self.error,
-            Tone::Warning => self.warning,
-            Tone::Neutral => self.muted,
-        }
-    }
-
-    pub(crate) fn harness(&self, harness: Option<Harness>) -> Style {
-        match harness {
-            Some(Harness::ClaudeCode) => self.claude_code,
-            Some(Harness::Codex) => self.codex,
-            Some(Harness::Pi) => self.pi,
-            Some(Harness::OpenCode) => self.open_code,
-            None => self.muted,
         }
     }
 }
