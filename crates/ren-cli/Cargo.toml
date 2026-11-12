@@ -49,8 +49,8 @@ tracing.workspace = true
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 uuid.workspace = true
 
-# `ren tui`, the terminal view of live sessions: off by default, so the
-# default build has no terminal UI dependencies.
+# `ren tui` and the `ren runs` console: off by default, so the default build
+# has no terminal UI dependencies.
 [features]
 tui = ["dep:ren-tui", "dep:ren-supervisor", "dep:futures-util"]
 
