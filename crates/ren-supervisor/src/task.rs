@@ -9,6 +9,7 @@
 //! [`Supervisor`]: crate::Supervisor
 
 use crate::entries::Entries;
+use crate::models::{Listings, ModelProbe, ModelsError, ModelsReply};
 use crate::{
     CommandError, Conversation, Request, RunSnapshot, RunUpdate, Start, StartError,
     client::{Client, ClientStatus},
@@ -24,7 +25,7 @@ use futures_util::{
 };
 use ren_harness::{
     Harness,
-    drive::{DriveEvent, Driver, Framed, Line, LineLimit, Lines, Opening, Prompt},
+    drive::{DriveEvent, Driver, Framed, Line, LineLimit, Lines, ModelListing, Opening, Prompt},
     endpoint::GatewayEndpoint,
 };
 use ren_protocol::label::Labeled;
@@ -78,10 +79,12 @@ impl<H: AgentHost> SupervisorTask<H> {
         let mut runs: BTreeMap<RunId, Live> = BTreeMap::new();
         let mut outputs: Outputs = SelectAll::new();
         let mut exits: Exits = FuturesUnordered::new();
+        let mut listings = Listings::default();
         let mut accepting = true;
         loop {
             tokio::select! {
                 request = self.requests.recv(), if accepting => match request {
+                    Some(Request::Models { harness, reply }) => self.models(harness, reply, &mut listings),
                     Some(request) => self.request(request, &mut runs, &mut outputs, &mut exits).await,
                     None => {
                         accepting = false;
@@ -96,6 +99,9 @@ impl<H: AgentHost> SupervisorTask<H> {
                             self.frame(run, live, frame).await;
                         }
                     }
+                }
+                Some((harness, outcome)) = listings.running.next(), if !listings.running.is_empty() => {
+                    listings.finish(harness, outcome);
                 }
                 Some((run, exit)) = exits.next(), if !exits.is_empty() => {
                     if let Some(live) = runs.get_mut(&run) {
@@ -160,6 +166,11 @@ impl<H: AgentHost> SupervisorTask<H> {
                     .collect();
                 let _ = reply.send(clients);
             }
+            Request::Models { harness, reply } => {
+                // Answered by the loop, which holds the listings.
+                let _ = reply.send(Err(ModelsError::Gone));
+                tracing::debug!(%harness, "a models request reached the run handler");
+            }
             Request::List { reply } => {
                 let _ = reply.send(
                     runs.iter()
@@ -181,6 +192,7 @@ impl<H: AgentHost> SupervisorTask<H> {
             harness,
             dir,
             conversation,
+            model,
             first,
         }: Start,
         runs: &mut BTreeMap<RunId, Live>,
@@ -197,10 +209,12 @@ impl<H: AgentHost> SupervisorTask<H> {
             Conversation::New => Opening::New {
                 cwd: workdir.as_str().to_owned(),
                 id: NativeThreadId::new(self.ids.next_uuid()).ok_or(StartError::NilId)?,
+                model,
             },
             Conversation::Resume(thread) => Opening::Resume {
                 thread,
                 cwd: workdir.as_str().to_owned(),
+                model,
             },
         };
         let plan = harness
@@ -272,6 +286,40 @@ impl<H: AgentHost> SupervisorTask<H> {
         exits.push(exit.map(move |exit| (run, exit)).boxed());
         runs.insert(run, live);
         Ok(run)
+    }
+
+    /// Answer from the listings, or start the client briefly in the first
+    /// root to list its models.
+    fn models(&self, harness: Harness, reply: ModelsReply, listings: &mut Listings) {
+        let Some(reply) = listings.ask(harness, reply) else {
+            return;
+        };
+        match self.probe(harness) {
+            Ok(listing) => listings.start(harness, reply, listing),
+            Err(error) => {
+                let _ = reply.send(Err(error));
+            }
+        }
+    }
+
+    fn probe(
+        &self,
+        harness: Harness,
+    ) -> Result<BoxFuture<'static, Result<Vec<ren_harness::drive::Model>, ModelsError>>, ModelsError>
+    {
+        let plan = harness
+            .list_models(&self.gateway)
+            .map_err(ModelsError::NotDrivable)?;
+        let (listing, first) =
+            ModelListing::open(harness, &self.version).map_err(ModelsError::NotDrivable)?;
+        let root = self.roots.iter().next().ok_or(ModelsError::NoRoot)?;
+        let workdir =
+            Workdir::confirm(&self.roots, root.to_path_buf()).map_err(|_| ModelsError::NoRoot)?;
+        let process = self.host.spawn(&plan, &workdir).map_err(|error| {
+            tracing::debug!(%harness, %error, "cannot start a client to list its models");
+            ModelsError::Spawn
+        })?;
+        Ok(ModelProbe::run(listing, first, process, self.line_limit).boxed())
     }
 
     async fn command(

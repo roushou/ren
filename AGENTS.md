@@ -200,7 +200,9 @@ dependencies under "Crates" below. Read the code for current module ownership.
   `DriveCommand` and `DriveEvent` vocabulary, with `ItemRead`, what Ren reads
   of each item for every client, and the `Driver` over each client's codec:
   `CodexAppServer` for `codex app-server`, `ClaudeStreamJson` for `claude -p`
-  in stream-json, `PiRpc` for `pi --mode rpc`). It performs filesystem and process I/O
+  in stream-json, `PiRpc` for `pi --mode rpc`; and `model`: the `Model`s a
+  client lists, by `ModelId`, read by `ModelListing` from a short process
+  started by `Harness::list_models`). It performs filesystem and process I/O
   but has no async runtime, HTTP, database, or CLI dependency.
 - `crates/ren-recorder`: the bounded capture queue between forwarding and
   storage, with `Recorder` as its primary type. `CallTap` (and `ChannelTap` for a
@@ -253,7 +255,9 @@ dependencies under "Crates" below. Read the code for current module ownership.
   stopping, ended with a `RunEnd`); `Workdir` (`workdir`) keeps runs inside
   `Roots`, resolved by the host so links cannot escape; `project` finds the
   `Project`s a run can start in (git repositories under the roots, not looked
-  inside); `Client` and `ClientStatus` (`client`) say whether a run can start
+  inside); `models` lists each client's models through a short listing
+  process and keeps the answer (`Supervisor::models`); `Client` and
+  `ClientStatus` (`client`) say whether a run can start
   with each client here; `AgentHost` (`host`) is the port for resolving paths,
   looking in folders, finding programs, and starting processes, which tests
   fill with

@@ -19,6 +19,7 @@ use super::{
     ApprovalAsk, ApprovalId, CommandRefused, Decision, DriveCommand, DriveEvent, DriveItem, Framed,
     ItemId, ItemKind, ItemPhase, ItemRead, ItemStatus, Line, Opening, Prompt, RawLine, Received,
     RequestKind, Retry, TurnEnd, Unreadable,
+    model::{DefaultChoice, Listing, Model, ModelId, ModelListing},
 };
 use ren_protocol::native::{NativeThreadId, NativeTurnId};
 use serde_json::{Value, json};
@@ -89,27 +90,35 @@ struct Streaming {
 const DECLINED: &str = "The operator declined this action.";
 
 impl ClaudeStreamJson {
+    /// The arguments every driven Claude Code process starts with.
+    const MODE: [&'static str; 10] = [
+        "-p",
+        "--input-format",
+        "stream-json",
+        "--output-format",
+        "stream-json",
+        "--verbose",
+        "--include-partial-messages",
+        "--replay-user-messages",
+        "--permission-prompt-tool",
+        "stdio",
+    ];
+
     /// The arguments that start Claude Code in this mode, after `claude`.
     pub fn arguments(opening: &Opening) -> Vec<String> {
-        let mut arguments: Vec<String> = [
-            "-p",
-            "--input-format",
-            "stream-json",
-            "--output-format",
-            "stream-json",
-            "--verbose",
-            "--include-partial-messages",
-            "--replay-user-messages",
-            "--permission-prompt-tool",
-            "stdio",
-        ]
-        .map(str::to_owned)
-        .into();
-        match opening {
-            Opening::New { id, .. } => arguments.extend(["--session-id".into(), id.to_string()]),
-            Opening::Resume { thread, .. } => {
-                arguments.extend(["--resume".into(), thread.to_string()]);
+        let mut arguments: Vec<String> = Self::MODE.map(str::to_owned).into();
+        let model = match opening {
+            Opening::New { id, model, .. } => {
+                arguments.extend(["--session-id".into(), id.to_string()]);
+                model
             }
+            Opening::Resume { thread, model, .. } => {
+                arguments.extend(["--resume".into(), thread.to_string()]);
+                model
+            }
+        };
+        if let Some(model) = model {
+            arguments.extend(["--model".into(), model.to_string()]);
         }
         arguments
     }
@@ -838,6 +847,85 @@ impl ClaudeStreamJson {
     }
 }
 
+/// A listing process's side of `claude -p` in stream-json: the models are in
+/// Claude Code's answer to `initialize`. The listing keeps no session.
+#[derive(Debug)]
+pub struct ClaudeModels;
+
+impl ClaudeModels {
+    const REQUEST: &'static str = "ren-models";
+    /// The entry Claude Code lists for "no model chosen".
+    const DEFAULT: &'static str = "default";
+
+    /// The arguments that start a listing process, after `claude`.
+    pub fn arguments() -> Vec<String> {
+        let mut arguments: Vec<String> = ClaudeStreamJson::MODE.map(str::to_owned).into();
+        arguments.push("--no-session-persistence".into());
+        arguments
+    }
+
+    /// The codec, and the first line to send.
+    pub fn open() -> (Self, Line) {
+        let line = Line::json(&json!({
+            "type": "control_request",
+            "request_id": Self::REQUEST,
+            "request": { "subtype": "initialize" },
+        }));
+        (Self, line)
+    }
+
+    pub(super) fn receive(&mut self, message: &Value) -> Listing {
+        let response = &message["response"];
+        let answers = message.get("type").and_then(Value::as_str) == Some("control_response")
+            && response.get("request_id").and_then(Value::as_str) == Some(Self::REQUEST);
+        if !answers {
+            return Listing::waiting();
+        }
+        if response.get("subtype").and_then(Value::as_str) != Some("success") {
+            return Listing::Failed(
+                ModelListing::text(response, "error").unwrap_or_else(|| "refused".into()),
+            );
+        }
+        let Some(entries) = response["response"].get("models").and_then(Value::as_array) else {
+            return Listing::Failed("Claude Code listed no models".into());
+        };
+        // The "default" entry stands for no choice; the first entry it
+        // resolves to is marked as the default instead.
+        let resolved = entries
+            .iter()
+            .find(|entry| ModelListing::text(entry, "value").as_deref() == Some(Self::DEFAULT))
+            .and_then(|entry| ModelListing::text(entry, "resolvedModel"));
+        let mut marked = false;
+        let models = entries
+            .iter()
+            .filter_map(|entry| {
+                let value = ModelListing::text(entry, "value")?;
+                if value == Self::DEFAULT {
+                    return None;
+                }
+                let id: ModelId = value.parse().ok()?;
+                let default = !marked
+                    && resolved.is_some()
+                    && ModelListing::text(entry, "resolvedModel") == resolved;
+                marked |= default;
+                Some(Model {
+                    name: ModelListing::text(entry, "displayName")
+                        .unwrap_or_else(|| id.to_string()),
+                    description: ModelListing::text(entry, "description"),
+                    provider: None,
+                    choice: if default {
+                        DefaultChoice::Default
+                    } else {
+                        DefaultChoice::Other
+                    },
+                    id,
+                })
+            })
+            .collect();
+        Listing::Listed(models)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::ClaudeStreamJson;
@@ -875,6 +963,7 @@ mod tests {
         let (mut codec, first) = ClaudeStreamJson::open(&Opening::New {
             cwd: "/work/acme".into(),
             id: session(),
+            model: None,
         });
         assert_eq!(
             sent(&first),
@@ -1222,6 +1311,7 @@ mod tests {
         let (mut codec, _) = ClaudeStreamJson::open(&Opening::Resume {
             thread: session(),
             cwd: "/w".into(),
+            model: None,
         });
         let refused = feed(
             &mut codec,

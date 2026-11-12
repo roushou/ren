@@ -18,6 +18,7 @@ use super::{
     CommandRefused, DriveCommand, DriveEvent, DriveItem, Framed, ItemId, ItemKind, ItemPhase,
     ItemRead, ItemStatus, Line, Opening, Prompt, RawLine, Received, RequestKind, Retry, TurnEnd,
     Unreadable,
+    model::{DefaultChoice, Listing, Model, ModelId, ModelListing},
 };
 use ren_protocol::native::{NativeThreadId, NativeTurnId};
 use serde_json::{Value, json};
@@ -76,18 +77,22 @@ impl PiRpc {
     /// The arguments that put Pi in this mode on `opening`'s session, after
     /// the extension arguments of a launched Pi.
     pub fn arguments(opening: &Opening) -> Vec<String> {
-        let thread = match opening {
-            Opening::New { id, .. } => id,
-            Opening::Resume { thread, .. } => thread,
+        let (thread, model) = match opening {
+            Opening::New { id, model, .. } => (id, model),
+            Opening::Resume { thread, model, .. } => (thread, model),
         };
         // `--session-id` keeps the session in the run's folder; `--session`
         // would move to the folder the session was started in.
-        vec![
+        let mut arguments = vec![
             "--mode".into(),
             "rpc".into(),
             "--session-id".into(),
             thread.to_string(),
-        ]
+        ];
+        if let Some(model) = model {
+            arguments.extend(["--model".into(), model.to_string()]);
+        }
+        arguments
     }
 
     /// A codec for a freshly started process, and the first line to send it.
@@ -614,6 +619,80 @@ impl PiRpc {
     }
 }
 
+/// A listing process's side of `pi --mode rpc`, with no session:
+/// `get_available_models`, then `get_state` for the model Pi starts on.
+#[derive(Debug)]
+pub struct PiModels {
+    /// The models listed, until the state names the default.
+    listed: Option<Vec<Model>>,
+}
+
+impl PiModels {
+    const MODELS: &'static str = "ren-models";
+    const STATE: &'static str = "ren-state";
+
+    /// The arguments that put Pi in RPC mode with no session, after the
+    /// extension arguments of a launched Pi.
+    pub fn arguments() -> Vec<String> {
+        vec!["--mode".into(), "rpc".into(), "--no-session".into()]
+    }
+
+    /// The codec, and the first line to send.
+    pub fn open() -> (Self, Line) {
+        let line = Line::json(&json!({ "id": Self::MODELS, "type": "get_available_models" }));
+        (Self { listed: None }, line)
+    }
+
+    pub(super) fn receive(&mut self, message: &Value) -> Listing {
+        if message.get("type").and_then(Value::as_str) != Some("response") {
+            return Listing::waiting();
+        }
+        let succeeded = message.get("success").and_then(Value::as_bool) == Some(true);
+        match (message.get("id").and_then(Value::as_str), &mut self.listed) {
+            (Some(Self::MODELS), None) => {
+                if !succeeded {
+                    return Listing::Failed(
+                        ModelListing::text(message, "error").unwrap_or_else(|| "refused".into()),
+                    );
+                }
+                let Some(entries) = message["data"].get("models").and_then(Value::as_array) else {
+                    return Listing::Failed("Pi listed no models".into());
+                };
+                self.listed = Some(entries.iter().filter_map(Self::model).collect());
+                Listing::Waiting(vec![Line::json(
+                    &json!({ "id": Self::STATE, "type": "get_state" }),
+                )])
+            }
+            (Some(Self::STATE), Some(listed)) => {
+                let mut models = std::mem::take(listed);
+                // Without a readable state, nothing is marked.
+                let current = Self::model(&message["data"]["model"]).filter(|_| succeeded);
+                if let Some(current) = current
+                    && let Some(model) = models.iter_mut().find(|model| model.id == current.id)
+                {
+                    model.choice = DefaultChoice::Default;
+                }
+                Listing::Listed(models)
+            }
+            (Some(_) | None, Some(_) | None) => Listing::waiting(),
+        }
+    }
+
+    /// One of Pi's models, named `provider/id` as `--model` takes it.
+    fn model(entry: &Value) -> Option<Model> {
+        let provider = ModelListing::text(entry, "provider")?;
+        let model = ModelListing::text(entry, "id")?;
+        let id: ModelId = format!("{provider}/{model}").parse().ok()?;
+        Some(Model {
+            name: ModelListing::text(entry, "name").unwrap_or(model),
+            description: None,
+            provider: Some(provider),
+            choice: DefaultChoice::Other,
+            id,
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::PiRpc;
@@ -657,6 +736,7 @@ mod tests {
         Opening::New {
             cwd: "/work/acme".into(),
             id: session(),
+            model: None,
         }
     }
 
@@ -713,6 +793,7 @@ mod tests {
             PiRpc::arguments(&Opening::Resume {
                 thread: session(),
                 cwd: "/work/acme".into(),
+                model: None,
             }),
             ["--mode", "rpc", "--session-id", SESSION]
         );

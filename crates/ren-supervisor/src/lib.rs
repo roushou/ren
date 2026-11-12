@@ -11,6 +11,7 @@
 pub mod client;
 mod entries;
 pub mod host;
+mod models;
 pub mod project;
 #[cfg(test)]
 mod purity;
@@ -20,6 +21,7 @@ pub mod workdir;
 
 pub use client::{Client, ClientStatus};
 pub use host::{AgentHost, AgentProcess, KillSignal, KillSwitch};
+pub use models::ModelsError;
 pub use project::{Look, Project, ProjectGit, Search};
 pub use run::{Approvals, ProcessExit, RunCommand, RunRefused, RunState, Waiting};
 pub use task::SupervisorTask;
@@ -27,7 +29,7 @@ pub use workdir::{Roots, Workdir, WorkdirError};
 
 use ren_harness::{
     Harness,
-    drive::{CommandRefused, DriveEvent, LineLimit, Prompt},
+    drive::{CommandRefused, DriveEvent, LineLimit, Model, ModelId, Prompt},
     endpoint::GatewayEndpoint,
     launch::NotDrivable,
 };
@@ -135,13 +137,17 @@ pub enum CommandError {
 #[error("the supervisor has stopped")]
 pub struct Gone;
 
-/// What a new run starts: which client, where, which conversation, and its
-/// first prompt.
-pub(crate) struct Start {
-    pub(crate) harness: Harness,
-    pub(crate) dir: String,
-    pub(crate) conversation: Conversation,
-    pub(crate) first: Option<Prompt>,
+/// What a new run starts: which client, where, which conversation, on which
+/// model, and its first prompt.
+pub struct Start {
+    pub harness: Harness,
+    /// The folder, which must lie inside a root.
+    pub dir: String,
+    pub conversation: Conversation,
+    /// With none, the client's own default.
+    pub model: Option<ModelId>,
+    /// Sent once the conversation is open.
+    pub first: Option<Prompt>,
 }
 
 pub(crate) enum Request {
@@ -162,6 +168,10 @@ pub(crate) enum Request {
     },
     Clients {
         reply: oneshot::Sender<Vec<Client>>,
+    },
+    Models {
+        harness: Harness,
+        reply: models::ModelsReply,
     },
 }
 
@@ -203,26 +213,11 @@ impl Supervisor {
         Ok((Self { requests, updates }, task))
     }
 
-    /// Start `harness` in `dir`, which must lie inside a root, opening
-    /// `conversation`, and send it `first` once it is open.
-    pub async fn start(
-        &self,
-        harness: Harness,
-        dir: &str,
-        conversation: Conversation,
-        first: Option<Prompt>,
-    ) -> Result<RunId, StartError> {
+    /// Start a run.
+    pub async fn start(&self, start: Start) -> Result<RunId, StartError> {
         let (reply, answer) = oneshot::channel();
         self.requests
-            .send(Request::Start {
-                start: Start {
-                    harness,
-                    dir: dir.to_owned(),
-                    conversation,
-                    first,
-                },
-                reply,
-            })
+            .send(Request::Start { start, reply })
             .await
             .map_err(|_| StartError::Gone)?;
         answer.await.map_err(|_| StartError::Gone)?
@@ -270,6 +265,17 @@ impl Supervisor {
             .await
             .map_err(|_| Gone)?;
         answer.await.map_err(|_| Gone)
+    }
+
+    /// The models `harness` offers, as it lists them itself. The first
+    /// non-empty answer is kept for as long as the supervisor runs.
+    pub async fn models(&self, harness: Harness) -> Result<Vec<Model>, ModelsError> {
+        let (reply, answer) = oneshot::channel();
+        self.requests
+            .send(Request::Models { harness, reply })
+            .await
+            .map_err(|_| ModelsError::Gone)?;
+        answer.await.map_err(|_| ModelsError::Gone)?
     }
 
     /// Updates from now on.

@@ -1,7 +1,11 @@
 //! Session-only client overrides. Authentication remains owned by the client.
 use crate::{
     Harness,
-    drive::{Opening, claude::ClaudeStreamJson, pi::PiRpc},
+    drive::{
+        Opening,
+        claude::{ClaudeModels, ClaudeStreamJson},
+        pi::{PiModels, PiRpc},
+    },
     endpoint::{GatewayEndpoint, UserToken},
     host::HostEnv,
     pi::{PiCache, PiCacheError},
@@ -27,6 +31,13 @@ pub enum LaunchError {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 #[error("{0} cannot be driven by Ren yet")]
 pub struct NotDrivable(pub Harness);
+
+/// What a structured-mode process is started for.
+#[derive(Clone, Copy)]
+enum Structured<'a> {
+    Conversation(&'a Opening),
+    Listing,
+}
 
 /// One launcher argument. The Pi extension path is resolved only when the
 /// client is actually executed; dry runs show a placeholder instead.
@@ -199,8 +210,23 @@ impl Harness {
         gateway: &GatewayEndpoint,
         opening: &Opening,
     ) -> Result<LaunchPlan, NotDrivable> {
+        self.structured(gateway, Structured::Conversation(opening))
+    }
+
+    /// How to start this harness only to list its models
+    /// (`drive::ModelListing`): its structured mode with no conversation.
+    pub fn list_models(self, gateway: &GatewayEndpoint) -> Result<LaunchPlan, NotDrivable> {
+        self.structured(gateway, Structured::Listing)
+    }
+
+    fn structured(
+        self,
+        gateway: &GatewayEndpoint,
+        mode: Structured<'_>,
+    ) -> Result<LaunchPlan, NotDrivable> {
         match self {
             Self::Codex => {
+                // One server speaks both; the listing opens no thread.
                 let mut arguments: Vec<LaunchArg> =
                     vec!["app-server".into(), "--listen".into(), "stdio://".into()];
                 arguments.extend(Self::codex_provider(gateway));
@@ -215,20 +241,22 @@ impl Harness {
                 // The same environment as a launched session: its traffic
                 // goes through the gateway, which reads its hint headers.
                 let mut plan = self.launch(gateway);
-                plan.arguments = ClaudeStreamJson::arguments(opening)
-                    .into_iter()
-                    .map(LaunchArg::Literal)
-                    .collect();
+                let arguments = match mode {
+                    Structured::Conversation(opening) => ClaudeStreamJson::arguments(opening),
+                    Structured::Listing => ClaudeModels::arguments(),
+                };
+                plan.arguments = arguments.into_iter().map(LaunchArg::Literal).collect();
                 Ok(plan)
             }
             Self::Pi => {
                 // The same extension and gateway as a launched session.
                 let mut plan = self.launch(gateway);
-                plan.arguments.extend(
-                    PiRpc::arguments(opening)
-                        .into_iter()
-                        .map(LaunchArg::Literal),
-                );
+                let arguments = match mode {
+                    Structured::Conversation(opening) => PiRpc::arguments(opening),
+                    Structured::Listing => PiModels::arguments(),
+                };
+                plan.arguments
+                    .extend(arguments.into_iter().map(LaunchArg::Literal));
                 Ok(plan)
             }
             Self::OpenCode => Err(NotDrivable(self)),
@@ -362,6 +390,7 @@ mod tests {
         Opening::New {
             cwd: "/work/acme".into(),
             id: NativeThreadId::new(uuid::Uuid::parse_str(SESSION).unwrap()).unwrap(),
+            model: None,
         }
     }
 
@@ -466,6 +495,7 @@ mod tests {
                 &Opening::Resume {
                     thread: NativeThreadId::new(uuid::Uuid::parse_str(SESSION).unwrap()).unwrap(),
                     cwd: "/work/acme".into(),
+                    model: None,
                 },
             )
             .unwrap()

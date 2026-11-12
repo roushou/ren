@@ -20,13 +20,13 @@ use axum::{
 use http::{HeaderMap, StatusCode};
 use ren_harness::{
     Harness,
-    drive::{ApprovalId, Decision, Prompt},
+    drive::{ApprovalId, Decision, ModelId, Prompt},
 };
 use ren_protocol::native::NativeThreadId;
 use ren_recorder::id::RunId;
 use ren_supervisor::{
-    CommandError, Conversation, RunCommand, RunRefused, RunSnapshot, StartError, Supervisor,
-    WorkdirError,
+    CommandError, Conversation, ModelsError, RunCommand, RunRefused, RunSnapshot, Start,
+    StartError, Supervisor, WorkdirError,
 };
 use std::{convert::Infallible, sync::Arc, time::Duration};
 use tokio::sync::broadcast::error::RecvError;
@@ -43,6 +43,10 @@ struct StartRequest {
     /// The first prompt, sent once the conversation opens.
     #[serde(default)]
     prompt: Option<String>,
+    /// The model, as the client's listing names it; with none, the client's
+    /// own default.
+    #[serde(default)]
+    model: Option<String>,
 }
 
 #[derive(serde::Deserialize)]
@@ -175,6 +179,10 @@ impl RunsApi {
             .route("/control/v1/runs/events", get(Self::events))
             .route("/control/v1/runs/projects", get(Self::projects))
             .route("/control/v1/runs/clients", get(Self::clients))
+            .route(
+                "/control/v1/runs/clients/{harness}/models",
+                get(Self::models),
+            )
             .route("/control/v1/runs/{run}/prompt", post(Self::prompt))
             .route(
                 "/control/v1/runs/{run}/approvals/{approval}",
@@ -258,6 +266,45 @@ impl RunsApi {
         .into_response())
     }
 
+    async fn models(
+        State(api): Api,
+        headers: HeaderMap,
+        Path(harness): Path<String>,
+    ) -> Result<Response, Denied> {
+        let supervisor = api.admit(&headers)?;
+        let harness = harness
+            .parse::<Harness>()
+            .map_err(|_| Denied::Run(RunRefusal::NotFound))?;
+        let unlisted = |error: ModelsError| {
+            (
+                StatusCode::BAD_GATEWAY,
+                Json(serde_json::json!({
+                    "api_version": ControlApi::API_VERSION,
+                    "error": "models_unavailable",
+                    "message": error.to_string(),
+                })),
+            )
+                .into_response()
+        };
+        Ok(match supervisor.models(harness).await {
+            Ok(models) => Json(serde_json::json!({
+                "api_version": ControlApi::API_VERSION,
+                "harness": harness,
+                "models": models,
+            }))
+            .into_response(),
+            Err(ModelsError::NotDrivable(_)) => RunRefusal::NotDrivable.into_response(),
+            Err(ModelsError::NoRoot) => RunRefusal::Disabled.into_response(),
+            Err(ModelsError::Gone) => RunRefusal::Unavailable.into_response(),
+            Err(
+                error @ (ModelsError::Spawn
+                | ModelsError::Refused(_)
+                | ModelsError::Exited
+                | ModelsError::TimedOut),
+            ) => unlisted(error),
+        })
+    }
+
     async fn start(
         State(api): Api,
         headers: HeaderMap,
@@ -276,8 +323,19 @@ impl RunsApi {
             .map(Prompt::parse)
             .transpose()
             .map_err(|_| Denied::Control(Refusal::Invalid))?;
+        let model = request
+            .model
+            .map(|model| model.parse::<ModelId>())
+            .transpose()
+            .map_err(|_| Denied::Control(Refusal::Invalid))?;
         let run = supervisor
-            .start(request.harness, &request.dir, conversation, first)
+            .start(Start {
+                harness: request.harness,
+                dir: request.dir,
+                conversation,
+                model,
+                first,
+            })
             .await
             .map_err(|error| Denied::Run(error.into()))?;
         Ok((

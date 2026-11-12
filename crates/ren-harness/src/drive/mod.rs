@@ -10,9 +10,11 @@
 pub mod claude;
 pub mod codex;
 mod lines;
+mod model;
 pub mod pi;
 
 pub use lines::{Framed, Line, LineLimit, Lines};
+pub use model::{BlankModelId, DefaultChoice, Listing, Model, ModelId, ModelListing};
 
 use crate::{Harness, launch::NotDrivable};
 use claude::ClaudeStreamJson;
@@ -29,9 +31,17 @@ pub enum Opening {
     /// A new conversation in this working directory. `id` is the id Ren
     /// gives it where the client lets Ren choose (Claude Code, Pi); Codex
     /// chooses its own and reports it.
-    New { cwd: String, id: NativeThreadId },
+    New {
+        cwd: String,
+        id: NativeThreadId,
+        model: Option<ModelId>,
+    },
     /// An existing conversation, continued in this working directory.
-    Resume { thread: NativeThreadId, cwd: String },
+    Resume {
+        thread: NativeThreadId,
+        cwd: String,
+        model: Option<ModelId>,
+    },
 }
 
 /// What one line from a driven client produced.

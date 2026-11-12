@@ -14,6 +14,7 @@ use super::{
     ApprovalAsk, ApprovalId, CommandRefused, Decision, DriveCommand, DriveEvent, DriveItem, Framed,
     ItemId, ItemKind, ItemPhase, ItemRead, ItemStatus, Line, Opening, Prompt, RawLine, Received,
     RequestKind, Retry, TurnEnd, Unreadable,
+    model::{DefaultChoice, Listing, Model, ModelId, ModelListing},
 };
 use ren_protocol::native::{NativeThreadId, NativeTurnId};
 use serde::Deserialize;
@@ -58,6 +59,7 @@ impl CodexAppServer {
         "initialized",
         "thread/start",
         "thread/resume",
+        "model/list",
         "turn/start",
         "turn/interrupt",
         "thread/started",
@@ -216,6 +218,13 @@ impl CodexAppServer {
         }
     }
 
+    /// Open the thread on `model`; with none, Codex uses its own default.
+    fn choose(params: &mut Value, model: Option<&ModelId>) {
+        if let (Some(model), Value::Object(fields)) = (model, params) {
+            fields.insert("model".into(), model.as_str().into());
+        }
+    }
+
     fn decision(decision: Decision) -> &'static str {
         match decision {
             Decision::Accept => "accept",
@@ -266,13 +275,16 @@ impl CodexAppServer {
                     .replies
                     .push(Line::json(&json!({ "method": "initialized" })));
                 received.replies.push(match opening {
-                    Opening::New { cwd, .. } => {
-                        self.request(RequestKind::ThreadStart, json!({ "cwd": cwd }))
+                    Opening::New { cwd, model, .. } => {
+                        let mut params = json!({ "cwd": cwd });
+                        Self::choose(&mut params, model.as_ref());
+                        self.request(RequestKind::ThreadStart, params)
                     }
-                    Opening::Resume { thread, cwd } => self.request(
-                        RequestKind::ThreadResume,
-                        json!({ "threadId": thread.to_string(), "cwd": cwd }),
-                    ),
+                    Opening::Resume { thread, cwd, model } => {
+                        let mut params = json!({ "threadId": thread.to_string(), "cwd": cwd });
+                        Self::choose(&mut params, model.as_ref());
+                        self.request(RequestKind::ThreadResume, params)
+                    }
                 });
             }
             RequestKind::ThreadStart | RequestKind::ThreadResume => {
@@ -650,6 +662,114 @@ struct FileChangeApproval {
     reason: Option<String>,
 }
 
+/// A listing process's side of `codex app-server`: `initialize`, then
+/// `model/list`, page by page, without the models Codex hides from its own
+/// picker.
+#[derive(Debug)]
+pub struct CodexModels {
+    models: Vec<Model>,
+    /// The request Ren waits on.
+    waiting: CodexListStep,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CodexListStep {
+    Initialize,
+    List(u64),
+    Done,
+}
+
+impl CodexModels {
+    const INITIALIZE: u64 = 0;
+
+    /// The codec, and the first line to send. `version` is Ren's own version.
+    pub fn open(version: &str) -> (Self, Line) {
+        let line = Line::json(&json!({
+            "id": Self::INITIALIZE,
+            "method": "initialize",
+            "params": { "clientInfo": { "name": "ren", "title": "Ren", "version": version } },
+        }));
+        (
+            Self {
+                models: Vec::new(),
+                waiting: CodexListStep::Initialize,
+            },
+            line,
+        )
+    }
+
+    pub(super) fn receive(&mut self, message: &Value) -> Listing {
+        let Some(id) = message.get("id").and_then(Value::as_u64) else {
+            return Listing::waiting();
+        };
+        if message.get("method").is_some() {
+            // A request from the server: a listing answers none.
+            return Listing::Waiting(vec![Line::json(&json!({
+                "id": message["id"],
+                "error": { "code": METHOD_NOT_FOUND, "message": "Ren is only listing models" },
+            }))]);
+        }
+        if let Some(error) = message.get("error") {
+            return Listing::Failed(
+                ModelListing::text(error, "message").unwrap_or_else(|| "refused".into()),
+            );
+        }
+        match self.waiting {
+            CodexListStep::Initialize if id == Self::INITIALIZE => Listing::Waiting(vec![
+                Line::json(&json!({ "method": "initialized" })),
+                self.page(1, None),
+            ]),
+            CodexListStep::List(request) if id == request => {
+                let result = &message["result"];
+                let Some(data) = result.get("data").and_then(Value::as_array) else {
+                    return Listing::Failed("Codex listed no models".into());
+                };
+                self.models.extend(data.iter().filter_map(Self::model));
+                match ModelListing::text(result, "nextCursor") {
+                    Some(cursor) => Listing::Waiting(vec![self.page(request + 1, Some(cursor))]),
+                    None => {
+                        self.waiting = CodexListStep::Done;
+                        Listing::Listed(std::mem::take(&mut self.models))
+                    }
+                }
+            }
+            CodexListStep::Initialize | CodexListStep::List(_) | CodexListStep::Done => {
+                Listing::waiting()
+            }
+        }
+    }
+
+    fn page(&mut self, request: u64, cursor: Option<String>) -> Line {
+        self.waiting = CodexListStep::List(request);
+        Line::json(&json!({
+            "id": request,
+            "method": "model/list",
+            "params": { "includeHidden": false, "cursor": cursor },
+        }))
+    }
+
+    /// One listed model; its `model` slug is what `thread/start` takes.
+    fn model(entry: &Value) -> Option<Model> {
+        if entry.get("hidden").and_then(Value::as_bool) == Some(true) {
+            return None;
+        }
+        let id: ModelId = ModelListing::text(entry, "model")
+            .or_else(|| ModelListing::text(entry, "id"))?
+            .parse()
+            .ok()?;
+        Some(Model {
+            name: ModelListing::text(entry, "displayName").unwrap_or_else(|| id.to_string()),
+            description: ModelListing::text(entry, "description"),
+            provider: None,
+            choice: match entry.get("isDefault").and_then(Value::as_bool) {
+                Some(true) => DefaultChoice::Default,
+                Some(false) | None => DefaultChoice::Other,
+            },
+            id,
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::CodexAppServer;
@@ -685,6 +805,7 @@ mod tests {
             Opening::New {
                 cwd: "/work/acme".into(),
                 id: named(),
+                model: None,
             },
             "0.1.0",
         );
@@ -726,6 +847,7 @@ mod tests {
             Opening::New {
                 cwd: "/w".into(),
                 id: named(),
+                model: None,
             },
             "0.1.0",
         );
@@ -740,6 +862,7 @@ mod tests {
             Opening::Resume {
                 thread,
                 cwd: "/w".into(),
+                model: None,
             },
             "0.1.0",
         );

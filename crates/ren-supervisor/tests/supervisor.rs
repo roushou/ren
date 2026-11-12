@@ -174,6 +174,16 @@ async fn agent(
             match (message["method"].as_str(), script) {
                 (Some("initialize"), Script::ExitsEarly) => return ProcessExit::Code(3),
                 (Some("initialize"), _) => send(&mut out, json!({ "id": id, "result": {} })).await,
+                (Some("model/list"), _) => {
+                    send(
+                        &mut out,
+                        json!({ "id": id, "result": { "data": [
+                            { "id": "gpt-fast", "model": "gpt-fast", "displayName": "GPT Fast",
+                              "description": "Quick.", "isDefault": true, "hidden": false },
+                        ] } }),
+                    )
+                    .await;
+                }
                 (Some("thread/start"), Script::RefusesOpening) => {
                     send(
                         &mut out,
@@ -448,7 +458,12 @@ async fn runs_a_turn_through_an_approval_and_stops() {
     let mut updates = supervisor.subscribe();
 
     let run = supervisor
-        .start(Harness::Codex, "/work/acme", Conversation::New, None)
+        .start(starting(
+            Harness::Codex,
+            "/work/acme",
+            Conversation::New,
+            None,
+        ))
         .await
         .unwrap();
     let (arguments, workdir) = spawned.lock().unwrap()[0].clone();
@@ -532,7 +547,7 @@ async fn refuses_directories_outside_the_roots_and_undrivable_clients() {
     ];
     for (dir, expected) in refused {
         let error = supervisor
-            .start(Harness::Codex, dir, Conversation::New, None)
+            .start(starting(Harness::Codex, dir, Conversation::New, None))
             .await
             .unwrap_err();
         assert!(
@@ -542,7 +557,12 @@ async fn refuses_directories_outside_the_roots_and_undrivable_clients() {
     }
     assert!(matches!(
         supervisor
-            .start(Harness::OpenCode, "/work/acme", Conversation::New, None)
+            .start(starting(
+                Harness::OpenCode,
+                "/work/acme",
+                Conversation::New,
+                None
+            ))
             .await,
         Err(StartError::NotDrivable(_))
     ));
@@ -556,7 +576,12 @@ async fn a_failed_spawn_is_reported_and_kept() {
     let supervised = supervise(host).await;
     let supervisor = &supervised.supervisor;
     let Err(StartError::Spawn { run, .. }) = supervisor
-        .start(Harness::Codex, "/work/acme", Conversation::New, None)
+        .start(starting(
+            Harness::Codex,
+            "/work/acme",
+            Conversation::New,
+            None,
+        ))
         .await
     else {
         panic!("expected a spawn failure");
@@ -581,7 +606,12 @@ async fn a_refused_opening_stops_the_run() {
     let supervisor = &supervised.supervisor;
     let mut updates = supervisor.subscribe();
     supervisor
-        .start(Harness::Codex, "/work/acme", Conversation::New, None)
+        .start(starting(
+            Harness::Codex,
+            "/work/acme",
+            Conversation::New,
+            None,
+        ))
         .await
         .unwrap();
     assert_eq!(
@@ -599,7 +629,12 @@ async fn an_agent_that_exits_on_its_own_ends_the_run() {
     let supervisor = &supervised.supervisor;
     let mut updates = supervisor.subscribe();
     supervisor
-        .start(Harness::Codex, "/work/acme", Conversation::New, None)
+        .start(starting(
+            Harness::Codex,
+            "/work/acme",
+            Conversation::New,
+            None,
+        ))
         .await
         .unwrap();
     assert_eq!(
@@ -617,11 +652,11 @@ async fn dropping_every_handle_drains_the_runs_and_ends_the_task() {
     let supervisor = &supervised.supervisor;
     let mut updates = supervisor.subscribe();
     supervisor
-        .start(Harness::Codex, "/work/a", Conversation::New, None)
+        .start(starting(Harness::Codex, "/work/a", Conversation::New, None))
         .await
         .unwrap();
     supervisor
-        .start(Harness::Codex, "/work/b", Conversation::New, None)
+        .start(starting(Harness::Codex, "/work/b", Conversation::New, None))
         .await
         .unwrap();
     state(&mut updates, |s| matches!(s, RunState::Idle { .. })).await;
@@ -653,12 +688,12 @@ async fn a_run_can_resume_the_clients_thread() {
     let thread =
         ren_protocol::native::NativeThreadId::new(uuid::Uuid::parse_str(earlier).unwrap()).unwrap();
     supervisor
-        .start(
+        .start(starting(
             Harness::Codex,
             "/work/acme",
             Conversation::Resume(thread),
             None,
-        )
+        ))
         .await
         .unwrap();
     assert_eq!(
@@ -678,7 +713,12 @@ async fn drives_claude_code_through_a_turn_in_the_conversation_ren_names() {
     let mut updates = supervisor.subscribe();
 
     let run = supervisor
-        .start(Harness::ClaudeCode, "/work/acme", Conversation::New, None)
+        .start(starting(
+            Harness::ClaudeCode,
+            "/work/acme",
+            Conversation::New,
+            None,
+        ))
         .await
         .unwrap();
     let (arguments, _) = spawned.lock().unwrap()[0].clone();
@@ -744,7 +784,7 @@ async fn drives_pi_through_a_turn_in_the_session_ren_names() {
     let mut updates = supervisor.subscribe();
 
     let run = supervisor
-        .start(Harness::Pi, "/work/acme", Conversation::New, None)
+        .start(starting(Harness::Pi, "/work/acme", Conversation::New, None))
         .await
         .unwrap();
     let (arguments, workdir) = spawned.lock().unwrap()[0].clone();
@@ -785,12 +825,12 @@ async fn a_first_prompt_goes_out_once_the_conversation_opens() {
     let supervisor = &supervised.supervisor;
     let mut updates = supervisor.subscribe();
     supervisor
-        .start(
+        .start(starting(
             Harness::ClaudeCode,
             "/work/acme",
             Conversation::New,
             Some(prompt_text("run the tests")),
-        )
+        ))
         .await
         .unwrap();
     // No prompt command: the run asks its first approval on its own.
@@ -832,6 +872,75 @@ async fn clients_say_whether_a_run_can_start_with_them_here() {
     assert_eq!(status(Harness::OpenCode), Some(ClientStatus::NotDrivable));
 }
 
+#[tokio::test]
+async fn a_clients_models_are_listed_once_and_kept() {
+    let host = FakeHost::new(Script::Codex);
+    let spawned = host.spawned.clone();
+    let supervised = supervise(host).await;
+    let supervisor = &supervised.supervisor;
+
+    let (first, second) = tokio::join!(
+        supervisor.models(Harness::Codex),
+        supervisor.models(Harness::Codex)
+    );
+    let first = first.unwrap();
+    assert_eq!(first.len(), 1);
+    assert_eq!(first[0].id.as_str(), "gpt-fast");
+    assert_eq!(first[0].choice, ren_harness::drive::DefaultChoice::Default);
+    assert_eq!(second.unwrap(), first);
+    // Asked again, the kept answer: one listing process in all, in a root.
+    assert_eq!(supervisor.models(Harness::Codex).await.unwrap(), first);
+    let spawned = spawned.lock().unwrap().clone();
+    assert_eq!(spawned.len(), 1);
+    assert_eq!(spawned[0].1, PathBuf::from("/work"));
+    assert!(matches!(
+        supervisor.models(Harness::OpenCode).await,
+        Err(ren_supervisor::ModelsError::NotDrivable(_))
+    ));
+}
+
+#[tokio::test]
+async fn a_failed_listing_is_reported_and_asked_again() {
+    let host = FakeHost::new(Script::ExitsEarly);
+    let spawned = host.spawned.clone();
+    let supervised = supervise(host).await;
+    let supervisor = &supervised.supervisor;
+    assert_eq!(
+        supervisor.models(Harness::Codex).await,
+        Err(ren_supervisor::ModelsError::Exited)
+    );
+    let _ = supervisor.models(Harness::Codex).await;
+    assert_eq!(spawned.lock().unwrap().len(), 2);
+}
+
+#[tokio::test]
+async fn a_run_starts_on_its_chosen_model() {
+    let host = FakeHost::new(Script::Claude);
+    let spawned = host.spawned.clone();
+    let supervised = supervise(host).await;
+    let mut start = starting(Harness::ClaudeCode, "/work/acme", Conversation::New, None);
+    start.model = Some("small".parse().unwrap());
+    supervised.supervisor.start(start).await.unwrap();
+    let (arguments, _) = spawned.lock().unwrap()[0].clone();
+    assert_eq!(arguments[arguments.len() - 2..], ["--model", "small"]);
+}
+
 fn prompt_text(text: &str) -> Prompt {
     Prompt::parse(text.into()).unwrap()
+}
+
+/// What a run starts with, on the client's own default model.
+fn starting(
+    harness: Harness,
+    dir: &str,
+    conversation: Conversation,
+    first: Option<ren_harness::drive::Prompt>,
+) -> ren_supervisor::Start {
+    ren_supervisor::Start {
+        harness,
+        dir: dir.into(),
+        conversation,
+        model: None,
+        first,
+    }
 }

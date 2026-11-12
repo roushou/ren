@@ -156,8 +156,33 @@ async fn a_run_is_started_prompted_approved_and_stopped_through_the_control_api(
         ])
     );
 
+    // The models a client offers, as it lists them itself.
+    let models: serde_json::Value = serde_json::from_slice(
+        &control
+            .http
+            .get(format!("{}/runs/clients/codex/models", control.base))
+            .bearer_auth(TestGateway::CONTROL_TOKEN)
+            .send()
+            .await
+            .unwrap()
+            .bytes()
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        models,
+        json!({ "api_version": 1, "harness": "codex", "models": [
+            { "id": "gpt-fast", "name": "GPT Fast", "description": "Quick.",
+              "provider": null, "choice": "default" },
+        ] })
+    );
+
     let (status, body) = control
-        .post("/runs", json!({ "harness": "codex", "dir": "/work/acme" }))
+        .post(
+            "/runs",
+            json!({ "harness": "codex", "dir": "/work/acme", "model": "gpt-fast" }),
+        )
         .await;
     assert_eq!(status, StatusCode::CREATED, "{body}");
     let run = body["run"].as_str().unwrap().to_owned();

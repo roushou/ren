@@ -78,6 +78,16 @@ async fn serve(
             let id = message["id"].clone();
             match message["method"].as_str() {
                 Some("initialize") => send(&mut out, json!({ "id": id, "result": {} })).await,
+                Some("model/list") => {
+                    send(
+                        &mut out,
+                        json!({ "id": id, "result": { "data": [
+                            { "id": "gpt-fast", "model": "gpt-fast", "displayName": "GPT Fast",
+                              "description": "Quick.", "isDefault": true, "hidden": false },
+                        ] } }),
+                    )
+                    .await;
+                }
                 Some("thread/start") => {
                     send(
                         &mut out,
