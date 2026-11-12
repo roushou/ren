@@ -83,7 +83,7 @@ const routes: { pattern: RegExp; route: Route }[] = [
     route: { method: 'GET', feed: false },
   },
   {
-    pattern: new RegExp(`^/control/runs/${runId}/(?:prompt|interrupt|stop)$`),
+    pattern: new RegExp(`^/control/runs/${runId}/(?:prompt|interrupt|stop|unqueue|settings)$`),
     route: { method: 'POST', feed: false },
   },
   {

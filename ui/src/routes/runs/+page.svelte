@@ -18,6 +18,7 @@
     type DeskRun,
     type Entry,
     type StartRequest,
+    Compose,
     Setup,
     type RunClient,
     type RunProject,
@@ -32,7 +33,9 @@
   import Icon from '#lib/Icon.svelte';
   import Markdown from '#lib/Markdown.svelte';
   import ActionMenu, { type ActionItem } from '#lib/ActionMenu.svelte';
+  import { assertNever } from '#lib/decode.ts';
   import NewRun from './NewRun.svelte';
+  import RunSettingsBar from './RunSettingsBar.svelte';
   import RunList from './RunList.svelte';
   import type { PageProps } from './$types';
 
@@ -105,7 +108,6 @@
   /** Now, for how long ago runs started; moves every half minute. */
   let now = $state(Date.now());
   let newRun = $state<ReturnType<typeof NewRun>>();
-  let prompt = $state('');
   let busy = $state(false);
   let notice = $state<string | null>(null);
   let conversation = $state<HTMLElement>();
@@ -293,14 +295,61 @@
     }
   }
 
-  async function send() {
-    const text = prompt.trim();
-    if (!selected || !text || !controls?.prompt) return;
+  /** The key that sends into a running turn, as this platform names it. */
+  const navigatorKey =
+    typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform) ? '⌘' : 'Ctrl';
+  /** Each run's draft, kept while the page is open. */
+  const drafts = new SvelteMap<RunId, string>();
+  /** How far back ↑ has recalled the run's prompts; null: not recalling. */
+  let recalling = $state<number | null>(null);
+  /** What was written before recalling, for ↓ to come back to. */
+  let beforeRecall = '';
+  const draft = $derived(selected ? (drafts.get(selected) ?? '') : '');
+  function write(text: string) {
+    if (selected) drafts.set(selected, text);
+  }
+  /** What the selected run's client takes mid-run. */
+  const client_ = $derived(clients.find((entry) => entry.harness === current?.harness) ?? null);
+
+  /** Send what is written: start a turn, queue it or steer the running one, or continue an ended run. */
+  async function send(delivery: 'queue' | 'steer' = 'queue') {
+    const text = draft.trim();
     const run = selected;
+    if (!run || !text || !compose) return;
     await act(async () => {
-      await client.prompt(run, text);
-      transcripts.set(run, (transcripts.get(run) ?? new Transcript()).prompted(text));
-      prompt = '';
+      switch (compose.kind) {
+        case 'start':
+          await client.prompt(run, text, 'start');
+          transcripts.set(run, (transcripts.get(run) ?? new Transcript()).prompted(text));
+          break;
+        case 'during':
+          if (delivery === 'steer' && compose.steer) {
+            await client.prompt(run, text, 'steer');
+            transcripts.set(run, (transcripts.get(run) ?? new Transcript()).prompted(text));
+          } else {
+            // Queued after what was queued before: one message, in order.
+            const next = compose.queued ? `${compose.queued}\n\n${text}` : text;
+            await client.prompt(run, next, 'queue');
+          }
+          break;
+        case 'continue':
+          if (resumable && current) {
+            await start({
+              harness: resumable.harness,
+              dir: resumable.workdir,
+              resume: resumable.thread,
+              prompt: text,
+              ...Setup.known(current.settings),
+            });
+          }
+          break;
+        case 'closed':
+          return;
+        default:
+          return assertNever(compose);
+      }
+      drafts.delete(run);
+      recalling = null;
       following = true;
     });
   }
@@ -311,10 +360,42 @@
     void act(() => client.answer(run, waiting.approval, decision));
   }
 
+  /** Take the queued prompt back into the composer to change it. */
+  async function editQueued(queued: string) {
+    const run = selected;
+    if (!run) return;
+    await act(async () => {
+      await client.unqueue(run);
+      write(draft ? `${queued}\n\n${draft}` : queued);
+      composer?.focus();
+    });
+  }
+
   function composerKey(event: KeyboardEvent) {
-    if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
+    if (event.isComposing) return;
+    if (event.key === 'Enter' && !event.shiftKey) {
       event.preventDefault();
-      void send();
+      // Cmd or Ctrl+Enter sends into the running turn, where the client can.
+      void send(event.metaKey || event.ctrlKey ? 'steer' : 'queue');
+      return;
+    }
+    const field = event.currentTarget as HTMLTextAreaElement;
+    const atStart = field.selectionStart === 0 && field.selectionEnd === 0;
+    if (event.key === 'ArrowUp' && atStart && (draft === '' || recalling !== null)) {
+      const prompts = selected ? (transcripts.get(selected)?.prompts() ?? []) : [];
+      if (recalling === null) beforeRecall = draft;
+      const next = Compose.recall(prompts, recalling, true);
+      if (!next) return;
+      event.preventDefault();
+      recalling = next.at;
+      write(next.text);
+    } else if (event.key === 'ArrowDown' && recalling !== null) {
+      const prompts = selected ? (transcripts.get(selected)?.prompts() ?? []) : [];
+      const next = Compose.recall(prompts, recalling, false);
+      if (!next) return;
+      event.preventDefault();
+      recalling = next.at;
+      write(next.at === null ? beforeRecall : next.text);
     }
   }
 
@@ -477,6 +558,9 @@
           thread: current.recorded.thread,
         }
       : null,
+  );
+  const compose = $derived(
+    current && runState ? Compose.mode(runState, client_?.midway ?? [], resumable !== null) : null,
   );
 </script>
 
@@ -746,16 +830,8 @@
                 >Interrupt</button
               >{:else if data.runsControl && resumable}<button
                 class="button small"
-                disabled={busy}
-                onclick={() =>
-                  resumable &&
-                  void start({
-                    harness: resumable.harness,
-                    dir: resumable.workdir,
-                    resume: resumable.thread,
-                    ...Setup.known(current.settings),
-                  })}
-                title="Start a new run that continues this conversation">Continue</button
+                onclick={() => composer?.focus()}
+                title="Write to continue this conversation in a new run">Continue</button
               >{/if}
             <ActionMenu label="Run actions" items={menu} {details} disabled={busy} />
           </span>
@@ -819,28 +895,86 @@
       {#if notice}<div class="notice danger" role="alert">
           <Icon name="alert" size={14} /><span>{notice}</span>
         </div>{/if}
-      {#if data.runsControl && runState.phase !== 'ended'}
+      {#if data.runsControl && compose && !(compose.kind === 'closed' && runState.phase === 'ended')}
+        {#if compose.kind === 'during' && compose.queued}
+          <div class="queued" role="status">
+            <span class="queued-label">After this turn</span>
+            <span class="queued-text">{compose.queued}</span>
+            <button
+              class="text-button"
+              disabled={busy}
+              onclick={() => editQueued(compose.queued ?? '')}>Edit</button
+            >
+            <button
+              class="text-button"
+              disabled={busy}
+              onclick={() => selected && void act(() => client.unqueue(selected))}>Remove</button
+            >
+          </div>
+        {/if}
         <form
           class="composer"
           onsubmit={(event) => {
             event.preventDefault();
-            void send();
+            void send('queue');
           }}
         >
           <textarea
             bind:this={composer}
-            bind:value={prompt}
+            value={draft}
+            oninput={(event) => {
+              recalling = null;
+              write(event.currentTarget.value);
+            }}
             onkeydown={composerKey}
             rows="3"
-            placeholder={controls.prompt
-              ? `Ask ${harnessLabel(current.harness)} to do something. Enter sends, Shift+Enter adds a line.`
-              : runState.phase === 'working'
-                ? `${harnessLabel(current.harness)} is working. You can type the next prompt now.`
-                : 'Waiting for the run to open its conversation…'}
+            disabled={compose.kind === 'closed'}
+            placeholder={compose.kind === 'start'
+              ? `Ask ${harnessLabel(current.harness)} to do something. Enter sends, ↑ recalls an earlier prompt.`
+              : compose.kind === 'during'
+                ? compose.steer
+                  ? `Enter queues for after this turn; ${navigatorKey}+Enter sends it into the turn now.`
+                  : `Enter queues for after this turn; ${harnessLabel(current.harness)} reads it then.`
+                : compose.kind === 'continue'
+                  ? 'Write to continue this conversation in a new run, with the same settings.'
+                  : compose.reason}
             aria-label="Prompt"></textarea>
-          <button class="button primary" disabled={busy || !controls.prompt || !prompt.trim()}
-            >Send</button
-          >
+          <div class="composer-bar">
+            {#if Runs.drivable(current.harness) && client_ && runState.phase !== 'ended'}
+              <RunSettingsBar
+                harness={Runs.drivable(current.harness) ?? 'codex'}
+                settings={current.settings}
+                midway={client_.midway}
+                approvals={client_.approvals}
+                listModels={(harness) => client.models(harness)}
+                {busy}
+                onchange={(settings) =>
+                  selected &&
+                  void act(async () => {
+                    await client.settings(selected, settings);
+                    await readLive();
+                  })}
+              />
+            {/if}
+            <span class="composer-actions">
+              {#if compose.kind === 'during' && compose.steer}<button
+                  type="button"
+                  class="button"
+                  disabled={busy || !draft.trim()}
+                  title="Add it to the turn that is running"
+                  onclick={() => void send('steer')}>Send now</button
+                >{/if}
+              <button
+                class="button primary"
+                disabled={busy || !draft.trim() || compose.kind === 'closed'}
+                >{compose.kind === 'during'
+                  ? 'Queue'
+                  : compose.kind === 'continue'
+                    ? 'Continue'
+                    : 'Send'}</button
+              >
+            </span>
+          </div>
         </form>
       {/if}
     {/if}
@@ -1160,7 +1294,7 @@
   /* The prompt fills its strip; only the Send control sits inside it. */
   .composer {
     display: flex;
-    align-items: flex-end;
+    flex-direction: column;
     border-top: 1px solid var(--line);
     background: var(--surface);
   }
@@ -1168,9 +1302,8 @@
     box-shadow: inset 2px 0 var(--accent);
   }
   .composer textarea {
-    flex: 1;
     min-width: 0;
-    resize: none;
+    resize: vertical;
     min-height: 64px;
     max-height: 40vh;
     padding: 12px 16px;
@@ -1181,8 +1314,37 @@
     font: inherit;
     font-size: 13px;
   }
-  .composer .button {
-    margin: 0 12px 12px 0;
+  .composer-bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 0 12px 10px 16px;
+  }
+  .composer-actions {
+    display: flex;
+    gap: 6px;
+    margin-left: auto;
+  }
+  /* The prompt queued for after the turn, ruled off above the composer. */
+  .queued {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    padding: 8px 16px;
+    border-top: 1px solid var(--line);
+    background: var(--surface);
+    font-size: 12px;
+  }
+  .queued-label {
+    flex: none;
+    color: var(--muted);
+  }
+  .queued-text {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
   }
   @media (max-width: 760px) {
     .runs-page {

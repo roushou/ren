@@ -55,6 +55,12 @@ const decisions = ['accept', 'accept_for_session', 'decline', 'cancel'] as const
 /** How much a model reasons, from none to the most. */
 export const EFFORTS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const;
 export type Effort = (typeof EFFORTS)[number];
+/** What a running conversation can take mid-run. */
+export const MIDWAY = ['steer', 'model', 'effort', 'approvals'] as const;
+export type Midway = (typeof MIDWAY)[number];
+/** How a prompt goes to a run: start a turn, after the running turn, or into it. */
+export type Delivery = 'start' | 'queue' | 'steer';
+
 /** What a driven client may do without asking. */
 export const APPROVAL_POLICIES = ['ask', 'edits', 'auto'] as const;
 export type ApprovalPolicy = (typeof APPROVAL_POLICIES)[number];
@@ -97,6 +103,8 @@ export type RunState =
       thread: NativeThreadId;
       turn: NativeTurnId | null;
       approvals: Waiting[];
+      /** The operator's next prompt, sent as the turn ends. */
+      queued: string | null;
     }
   | { phase: 'stopping'; cause: Stored<StopCause> }
   | { phase: 'ended'; end: Stored<RunEnd>; exit: ProcessExit | null }
@@ -251,6 +259,7 @@ const runState: Decoder<RunState> = (value, path) => {
         thread: thread(),
         turn: nullable(branded<'NativeTurnId'>())(value.turn ?? null, `${path}.turn`),
         approvals: array(waiting)(value.approvals ?? [], `${path}.approvals`),
+        queued: optionalString(value.queued, `${path}.queued`),
       };
     case 'stopping':
       return { phase: 'stopping', cause: label(stopCauses)(value.cause, `${path}.cause`) };
@@ -484,6 +493,8 @@ export interface RunClient {
   status: Stored<ClientStatus>;
   /** The approval policies it can run under; none for a client that never asks. */
   approvals: Stored<ApprovalPolicy>[];
+  /** What a running conversation takes mid-run. */
+  midway: Stored<Midway>[];
 }
 
 const runClients = versioned(
@@ -493,6 +504,7 @@ const runClients = versioned(
         harness: label(harnesses),
         status: label(clientStatuses),
         approvals: array(label(APPROVAL_POLICIES)),
+        midway: array(label(MIDWAY)),
       }),
     ),
   }),
@@ -585,6 +597,10 @@ export class RunCommandError extends Error {
         return 'Ren cannot drive that client yet.';
       case 'spawn_failed':
         return 'The client could not be started; is it installed on the daemon’s host?';
+      case 'nothing_queued':
+        return 'Nothing is queued.';
+      case 'not_offered':
+        return 'That client cannot do this in a running conversation.';
       case 'no_approvals':
         return 'That client asks for nothing, so it takes no approval policy.';
       case 'models_unavailable':
@@ -718,8 +734,19 @@ export class RunsClient {
     };
     return (await this.#send('POST', '/control/runs', body, started)).run;
   }
-  async prompt(run: RunId, text: string): Promise<void> {
-    await this.#send('POST', `/control/runs/${run}/prompt`, { text }, null);
+  async prompt(run: RunId, text: string, delivery: Delivery = 'start'): Promise<void> {
+    await this.#send('POST', `/control/runs/${run}/prompt`, { text, delivery }, null);
+  }
+  /** Take back the prompt queued for after the running turn. */
+  async unqueue(run: RunId): Promise<void> {
+    await this.#send('POST', `/control/runs/${run}/unqueue`, {}, null);
+  }
+  /** Run on these settings from the next turn on. */
+  async settings(
+    run: RunId,
+    settings: { model: ModelId | null; effort: Effort | null; approvals: ApprovalPolicy | null },
+  ): Promise<void> {
+    await this.#send('POST', `/control/runs/${run}/settings`, settings, null);
   }
   async answer(run: RunId, approval: ApprovalId, decision: Decision): Promise<void> {
     const path = `/control/runs/${run}/approvals/${encodeURIComponent(approval)}`;
@@ -873,6 +900,11 @@ export class Transcript {
   /** The prompt the operator just sent; the client's echo of it is the same prompt. */
   prompted(text: string): Transcript {
     return this.#push({ kind: 'prompt', item: null, text });
+  }
+
+  /** Every prompt sent, oldest first, to recall. */
+  prompts(): string[] {
+    return this.entries.flatMap((entry) => (entry.kind === 'prompt' ? [entry.text] : []));
   }
 
   /** The first prompt shown, to name the run by. */
@@ -1591,5 +1623,60 @@ export class Memory {
   static cookie(remembered: Remembered): string {
     const value = encodeURIComponent(JSON.stringify(remembered));
     return `${Memory.COOKIE}=${value}; Path=/runs; Max-Age=31536000; SameSite=Lax`;
+  }
+}
+
+/** What the composer of a run does, by how the run stands. */
+export type ComposeMode =
+  /** No turn runs: Enter starts one. */
+  | { kind: 'start' }
+  /** A turn runs: Enter queues for after it; "send now" steers it where the client can. */
+  | { kind: 'during'; steer: boolean; queued: string | null }
+  /** The run ended with a conversation: writing continues it in a new run. */
+  | { kind: 'continue' }
+  /** Nothing can be sent yet, or any more: why. */
+  | { kind: 'closed'; reason: string };
+
+export class Compose {
+  /** How the composer of a run in `state` works, for a client taking `midway`. */
+  static mode(state: RunState, midway: readonly Stored<Midway>[], resumable: boolean): ComposeMode {
+    switch (state.phase) {
+      case 'idle':
+        return { kind: 'start' };
+      case 'working':
+        return { kind: 'during', steer: midway.includes('steer'), queued: state.queued };
+      case 'starting':
+        return { kind: 'closed', reason: 'The run is opening its conversation…' };
+      case 'stopping':
+        return { kind: 'closed', reason: 'The run is stopping.' };
+      case 'ended':
+        return resumable
+          ? { kind: 'continue' }
+          : { kind: 'closed', reason: 'This run ended before it opened a conversation.' };
+      case 'unrecognized':
+        return { kind: 'closed', reason: 'The daemon reports a state this page does not know.' };
+      default:
+        return assertNever(state);
+    }
+  }
+
+  /**
+   * The earlier prompt ↑ or ↓ recalls: `prompts` oldest first, `at` how
+   * far back the composer is now (null: not recalling). Null when there is
+   * nothing further that way, `at` null again when back past the newest.
+   */
+  static recall(
+    prompts: readonly string[],
+    at: number | null,
+    older: boolean,
+  ): { at: number | null; text: string } | null {
+    if (older) {
+      const next = at === null ? 0 : at + 1;
+      const text = prompts[prompts.length - 1 - next];
+      return text === undefined ? null : { at: next, text };
+    }
+    if (at === null) return null;
+    if (at === 0) return { at: null, text: '' };
+    return { at: at - 1, text: prompts[prompts.length - at]! };
   }
 }

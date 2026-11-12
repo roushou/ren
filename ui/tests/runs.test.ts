@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   Desk,
   Memory,
+  Compose,
   Models,
   Setup,
   RunCommandError,
@@ -42,6 +43,7 @@ test('run states parse as the control API sends them, keeping newer phases and l
             ask: { kind: 'command', command: 'cargo test', cwd: '/work/acme', reason: null },
           },
         ],
+        queued: null,
       },
     },
     '',
@@ -59,6 +61,7 @@ test('run states parse as the control API sends them, keeping newer phases and l
           ask: { kind: 'command', command: 'cargo test', cwd: '/work/acme', reason: null },
         },
       ],
+      queued: null,
     },
   });
   const ended = runUpdate(
@@ -102,6 +105,7 @@ test('controls follow the state: prompt when idle, answer and interrupt while wo
     thread: thread as never,
     turn: null,
     approvals: [],
+    queued: null,
   });
   assert.equal(working.prompt, false);
   assert.equal(working.interrupt, false, 'no turn to interrupt until the agent names it');
@@ -113,6 +117,7 @@ test('controls follow the state: prompt when idle, answer and interrupt while wo
       thread: thread as never,
       turn: null,
       approvals: [{ approval: 'a' as never, ask: { kind: 'file_change', reason: null } }],
+      queued: null,
     }),
     {
       label: 'Needs you',
@@ -285,6 +290,7 @@ test('the sidebar groups runs by folder, waiting and live ones first', () => {
         thread: thread as never,
         turn: null,
         approvals: [{ approval: 'a' as never, ask: { kind: 'file_change', reason: null } }],
+        queued: null,
       },
       settings: { model: null, effort: null, approvals: null },
     },
@@ -439,10 +445,20 @@ test('clients say whether a run can start with each, keeping newer statuses', as
     Response.json({
       api_version: 1,
       clients: [
-        { harness: 'codex', status: 'ready', approvals: ['ask', 'edits', 'auto'] },
-        { harness: 'claude_code', status: 'not_installed', approvals: ['ask', 'later'] },
-        { harness: 'pi', status: 'not_drivable', approvals: [] },
-        { harness: 'opencode', status: 'paused', approvals: [] },
+        {
+          harness: 'codex',
+          status: 'ready',
+          approvals: ['ask', 'edits', 'auto'],
+          midway: ['steer'],
+        },
+        {
+          harness: 'claude_code',
+          status: 'not_installed',
+          approvals: ['ask', 'later'],
+          midway: ['steer'],
+        },
+        { harness: 'pi', status: 'not_drivable', approvals: [], midway: ['steer'] },
+        { harness: 'opencode', status: 'paused', approvals: [], midway: ['steer'] },
       ],
     })) as unknown as typeof fetch);
   const clients = await client.clients();
@@ -785,4 +801,66 @@ test('where a run works reads as Scratch or under the home as ~/', () => {
   assert.equal(Runs.place('/home/op/notes/drafts', scratch, offered), '~/notes/drafts');
   assert.equal(Runs.place('/srv/ren', scratch, offered), '/srv/ren');
   assert.equal(Runs.place('/home/op/dev/acme', null, []), '/home/op/dev/acme');
+});
+
+test('the composer starts, queues or steers, or continues, by how the run stands', () => {
+  const working = {
+    phase: 'working' as const,
+    thread: thread as never,
+    turn: null,
+    approvals: [],
+    queued: 'then the docs',
+  };
+  assert.deepEqual(Compose.mode({ phase: 'idle', thread: thread as never }, [], false), {
+    kind: 'start',
+  });
+  assert.deepEqual(Compose.mode(working, ['steer', 'model'], false), {
+    kind: 'during',
+    steer: true,
+    queued: 'then the docs',
+  });
+  assert.deepEqual(Compose.mode(working, ['model'], false), {
+    kind: 'during',
+    steer: false,
+    queued: 'then the docs',
+  });
+  const ended = { phase: 'ended' as const, end: 'stopped' as const, exit: null };
+  assert.deepEqual(Compose.mode(ended, [], true), { kind: 'continue' });
+  assert.equal(Compose.mode(ended, [], false).kind, 'closed');
+  assert.equal(Compose.mode({ phase: 'starting' }, [], false).kind, 'closed');
+});
+
+test('↑ recalls the run’s earlier prompts, newest first, and ↓ comes back', () => {
+  const prompts = ['first', 'second', 'third'];
+  let at: number | null = null;
+  const step = (older: boolean) => {
+    const next = Compose.recall(prompts, at, older);
+    if (next) at = next.at;
+    return next?.text ?? null;
+  };
+  assert.equal(step(true), 'third');
+  assert.equal(step(true), 'second');
+  assert.equal(step(true), 'first');
+  assert.equal(step(true), null, 'nothing older');
+  assert.equal(step(false), 'second');
+  assert.equal(step(false), 'third');
+  assert.equal(step(false), '', 'back past the newest: the draft again');
+  assert.equal(at, null);
+  assert.equal(Compose.recall([], null, true), null);
+});
+
+test('a prompt goes with how to deliver it; the queue and settings have their own routes', async () => {
+  const sent: string[] = [];
+  const client = new RunsClient((async (url: string, init?: RequestInit) => {
+    sent.push(`${url} ${init?.body ?? ''}`);
+    return Response.json({ api_version: 1 }, { status: 202 });
+  }) as typeof fetch);
+  await client.prompt(run as never, 'go', 'steer');
+  await client.unqueue(run as never);
+  await client.settings(run as never, { model: null, effort: 'high', approvals: null });
+  assert.deepEqual(sent, [
+    `/control/runs/${run}/prompt {"text":"go","delivery":"steer"}`,
+    `/control/runs/${run}/unqueue {}`,
+    `/control/runs/${run}/settings {"model":null,"effort":"high","approvals":null}`,
+  ]);
 });

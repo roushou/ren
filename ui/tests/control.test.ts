@@ -107,6 +107,8 @@ test('starting, listing, projects, models, answering, history edits, and the fee
   );
   await proxy.respond(post(`/control/runs/${run}/approvals/ap-1`, { decision: 'accept' }));
   await proxy.respond(post(`/control/runs/${run}/stop`, {}));
+  await proxy.respond(post(`/control/runs/${run}/unqueue`, {}));
+  await proxy.respond(post(`/control/runs/${run}/settings`, { effort: 'high' }));
   await proxy.respond(post(`/control/history/sessions/${run}/archive`, {}));
   await proxy.respond(post(`/control/history/runs/${run}/delete`, {}));
   const feed = await proxy.respond(new Request('http://ui.test/control/runs/events'));
@@ -119,6 +121,8 @@ test('starting, listing, projects, models, answering, history edits, and the fee
     'GET /control/v1/runs/clients/pi/models',
     `POST /control/v1/runs/${run}/approvals/ap-1`,
     `POST /control/v1/runs/${run}/stop`,
+    `POST /control/v1/runs/${run}/unqueue`,
+    `POST /control/v1/runs/${run}/settings`,
     `POST /control/v1/history/sessions/${run}/archive`,
     `POST /control/v1/history/runs/${run}/delete`,
     'GET /control/v1/runs/events',
