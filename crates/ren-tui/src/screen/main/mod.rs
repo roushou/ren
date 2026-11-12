@@ -14,7 +14,7 @@ pub(crate) mod watched;
 #[cfg(test)]
 mod watched_tests;
 
-pub(crate) use list::{Item, Listing};
+pub(crate) use list::{Grouping, Item, Listing};
 
 use super::message::Typed;
 use super::new_run::NewRun;
@@ -38,6 +38,8 @@ pub(crate) struct Main {
     mode: Mode,
     /// Narrows the list, by name, project, or title.
     filter: String,
+    /// How the list is grouped.
+    grouping: Grouping,
     /// The turn the cursor is on, once the session has the focus: an index
     /// into its turns, oldest first.
     turn: usize,
@@ -103,6 +105,7 @@ enum Act {
     Interrupt,
     Stop,
     Search,
+    Group,
     PageUp,
     PageDown,
     Theme,
@@ -203,6 +206,12 @@ impl Act {
             command: Self::Search,
         },
         Bind {
+            keys: &[Key::Char('g')],
+            label: "g",
+            does: "group the list by folder, or by what each needs",
+            command: Self::Group,
+        },
+        Bind {
             keys: &[Key::PageUp],
             label: "pgup",
             does: "scroll the session up",
@@ -266,7 +275,7 @@ impl Main {
             self.select(Item::Run(*run));
             self.focus = Focus::Session;
         }
-        let listing = Listing::of(ctx.model, &self.filter);
+        let listing = Listing::of(ctx.model, &self.filter, self.grouping);
         let lost = self
             .selected
             .is_none_or(|item| listing.position(item).is_none());
@@ -361,7 +370,10 @@ impl Main {
             Mode::Normal => {
                 if let Key::Char(digit @ '1'..='9') = key {
                     let index = usize::from(u8::try_from(digit).unwrap_or(b'1') - b'1');
-                    if let Some(item) = Listing::of(ctx.model, &self.filter).items().get(index) {
+                    if let Some(item) = Listing::of(ctx.model, &self.filter, self.grouping)
+                        .items()
+                        .get(index)
+                    {
                         self.select(*item);
                         return self.reads(ctx.model);
                     }
@@ -411,6 +423,16 @@ impl Main {
                 self.mode = Mode::Searching;
                 self.focus = Focus::List;
             }
+            Act::Group => {
+                self.grouping = match self.grouping {
+                    Grouping::Folder => Grouping::State,
+                    Grouping::State => Grouping::Folder,
+                };
+                return vec![Action::Say(Notice::info(match self.grouping {
+                    Grouping::Folder => "grouped by folder · g groups by what each needs",
+                    Grouping::State => "grouped by what each needs · g groups by folder",
+                }))];
+            }
             Act::PageUp => self.scroll = self.scroll.saturating_add(page),
             Act::PageDown => self.scroll = self.scroll.saturating_sub(page),
             Act::Theme => return vec![Action::CycleTheme],
@@ -422,7 +444,7 @@ impl Main {
 
     /// The next (or previous) entry of the list.
     fn step(&mut self, model: &Model, forward: bool) -> Vec<Action> {
-        let items = Listing::of(model, &self.filter).items();
+        let items = Listing::of(model, &self.filter, self.grouping).items();
         if items.is_empty() {
             return Vec::new();
         }
@@ -687,7 +709,7 @@ impl Main {
     pub fn view(&self, look: &Look<'_>) -> View {
         let width = look.size.width;
         let side = (width / 4).clamp(24, 36).min(width / 2);
-        let listing = Listing::of(look.model, &self.filter);
+        let listing = Listing::of(look.model, &self.filter, self.grouping);
         let mut list = listing.lines(look.model, self.selected, usize::from(side), look.now);
         if self.mode == Mode::Searching || !self.filter.is_empty() {
             list.insert(
@@ -754,7 +776,7 @@ impl Main {
                 None => match (self.focus, self.selected) {
                     (_, None) => "n start a run · ? keys",
                     (Focus::List, Some(_)) => {
-                        "j/k sessions · enter open · i write · n new run · / search"
+                        "j/k sessions · enter open · i write · n new run · / search · g group"
                     }
                     (Focus::Session, Some(_)) => {
                         "j/k turns · enter open or fold · tab views · i write · esc list"

@@ -27,11 +27,15 @@ with the `tui` feature: the session list on the left, the selected session on
 the right, the gateway's traffic in the top bar, and the keys that matter now in
 the bar at the bottom.
 
-- The list groups every session worth a look by what it needs from you:
-  runs that need you, runs working, runs waiting for your next prompt,
-  sessions started outside Ren (watched), and the runs that ended last. `j`
-  and `k` (or the arrows) move through it, a digit jumps to an entry, and `/`
-  searches it by name, project, or prompt. Until you choose, the selection
+- The list groups every session worth a look by the folder each run works
+  in: the folders with a run that needs you first (marked `◆` with how
+  many), each listing its runs by what they need, then the newest, under
+  what each was asked, with its three newest ended runs. Sessions started
+  outside Ren follow, under "started
+  elsewhere": Ren does not know their folder. `g` groups the list by what
+  each needs instead (needs you, working, your turn, watched, ended). `j` and
+  `k` (or the arrows) move through it, a digit jumps to an entry, and `/`
+  searches it by folder, project, or prompt. Until you choose, the selection
   follows the top of the list: what needs you first.
 - The selected session shows its conversation, its activity (each command,
   edit, and tool step), the files it wrote and read, and its model calls

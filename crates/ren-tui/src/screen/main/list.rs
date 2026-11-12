@@ -1,7 +1,9 @@
-//! The session list: every session worth a look, grouped by what it needs
-//! from you, in the order they are visited. Runs Ren drives come first, by
-//! attention; then sessions started outside Ren, watched; then the newest
-//! runs that ended.
+//! The session list: every session worth a look, grouped by the folder a
+//! run works in, or by what each needs from you. By folder, the folders
+//! with a run that needs you come first, and each lists its runs by what
+//! they need, then the newest; sessions started outside Ren, whose folder
+//! Ren does not know, follow. By state: runs that need you, working, your
+//! turn, then sessions watched, then the newest runs that ended.
 
 use super::watched::SessionPane;
 use crate::model::Model;
@@ -31,10 +33,31 @@ pub(crate) enum Group {
     Ended,
 }
 
+/// How the list is grouped.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) enum Grouping {
+    /// By the folder each run works in.
+    #[default]
+    Folder,
+    /// By what each needs from you.
+    State,
+}
+
+/// The heading a row is listed under.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum Heading {
+    State(Group),
+    /// A folder runs work in, by its path.
+    Folder(String),
+    /// Sessions started outside Ren: their folder is not known.
+    Elsewhere,
+}
+
 /// The list as read now, filtered.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Listing {
-    pub rows: Vec<(Group, Item)>,
+    pub rows: Vec<(Heading, Item)>,
+    grouping: Grouping,
 }
 
 impl Group {
@@ -47,7 +70,7 @@ impl Group {
         }
     }
 
-    /// Where the group comes in the list.
+    /// Where the group comes in the list, and a run's place in its folder.
     fn rank(self) -> u8 {
         match self {
             Self::NeedsYou => 0,
@@ -72,9 +95,12 @@ impl Group {
 impl Listing {
     /// How many ended runs the list keeps.
     const ENDED: usize = 8;
+    /// How many of them a folder shows.
+    const ENDED_PER_FOLDER: usize = 3;
 
-    /// Every entry, filtered by `filter` (by name, project, or title).
-    pub fn of(model: &Model, filter: &str) -> Self {
+    /// Every entry, filtered by `filter` (by name, project, or title),
+    /// grouped `by` folder or state.
+    pub fn of(model: &Model, filter: &str, by: Grouping) -> Self {
         let filter = filter.to_lowercase();
         let matches = |words: &[&str]| {
             filter.is_empty()
@@ -82,35 +108,99 @@ impl Listing {
                     .iter()
                     .any(|word| word.to_lowercase().contains(&filter))
         };
-        let mut rows: Vec<(Group, Item)> = Vec::new();
+        // Runs, with the newest ended ones only.
+        let mut runs: Vec<&Run> = Vec::new();
         let mut ended = 0;
         for run in model.desk.all() {
-            let group = Group::of(run);
-            if group == Group::Ended {
+            if Group::of(run) == Group::Ended {
                 if ended == Self::ENDED {
                     continue;
                 }
                 ended += 1;
             }
-            if matches(&[run.project(), &run.title(), &run.client()]) {
-                rows.push((group, Item::Run(run.id)));
+            if matches(&[run.project(), &run.workdir, &run.title(), &run.client()]) {
+                runs.push(run);
             }
         }
         let threads = model.desk.threads();
-        for session in model.sessions.active(&threads) {
+        let watched: Vec<Item> = model
+            .sessions
+            .active(&threads)
+            .into_iter()
             // A session a run drives is listed as the run.
-            if model.desk.driving(&session.native_id).is_some() {
-                continue;
+            .filter(|session| model.desk.driving(&session.native_id).is_none())
+            .filter(|session| {
+                matches(&[
+                    &session.id.to_string(),
+                    &Self::client(session.source.known()),
+                ])
+            })
+            .map(|session| Item::Watched(session.id))
+            .collect();
+        let mut rows: Vec<(Heading, Item)> = match by {
+            Grouping::State => {
+                let mut rows: Vec<(Heading, Item)> = runs
+                    .iter()
+                    .map(|run| (Heading::State(Group::of(run)), Item::Run(run.id)))
+                    .collect();
+                rows.extend(
+                    watched
+                        .iter()
+                        .map(|item| (Heading::State(Group::Watching), *item)),
+                );
+                // Ended runs last, after the sessions watched.
+                rows.sort_by_key(|(heading, _)| match heading {
+                    Heading::State(group) => group.rank(),
+                    Heading::Folder(_) | Heading::Elsewhere => 0,
+                });
+                rows
             }
-            let id = session.id.to_string();
-            let client = Self::client(session.source.known());
-            if matches(&[&id, &client]) {
-                rows.push((Group::Watching, Item::Watched(session.id)));
+            Grouping::Folder => {
+                // Folders by their most pressing run, then their newest.
+                let mut folders: Vec<(&str, u8, u64)> = Vec::new();
+                for run in &runs {
+                    let rank = Group::of(run).rank();
+                    match folders.iter_mut().find(|(path, ..)| *path == run.workdir) {
+                        Some((_, best, newest)) => {
+                            *best = (*best).min(rank);
+                            *newest = (*newest).max(run.seen);
+                        }
+                        None => folders.push((&run.workdir, rank, run.seen)),
+                    }
+                }
+                folders.sort_by(|a, b| a.1.cmp(&b.1).then(b.2.cmp(&a.2)));
+                let mut rows = Vec::new();
+                for (path, ..) in folders {
+                    let mut inside: Vec<&&Run> =
+                        runs.iter().filter(|run| run.workdir == path).collect();
+                    inside.sort_by(|a, b| {
+                        Group::of(a)
+                            .rank()
+                            .cmp(&Group::of(b).rank())
+                            .then(b.seen.cmp(&a.seen))
+                    });
+                    // The newest few ended runs of each folder; a search
+                    // or the other grouping finds the rest.
+                    let mut ended = 0;
+                    inside.retain(|run| {
+                        if Group::of(run) != Group::Ended {
+                            return true;
+                        }
+                        ended += 1;
+                        ended <= Self::ENDED_PER_FOLDER || !filter.is_empty()
+                    });
+                    rows.extend(
+                        inside
+                            .into_iter()
+                            .map(|run| (Heading::Folder(path.to_owned()), Item::Run(run.id))),
+                    );
+                }
+                rows.extend(watched.into_iter().map(|item| (Heading::Elsewhere, item)));
+                rows
             }
-        }
-        // Ended runs last, after the sessions watched.
-        rows.sort_by_key(|(group, _)| group.rank());
-        Self { rows }
+        };
+        rows.dedup_by(|a, b| a.1 == b.1);
+        Self { rows, grouping: by }
     }
 
     fn client(source: Option<HintSource>) -> String {
@@ -137,16 +227,27 @@ impl Listing {
         now: UnixMillis,
     ) -> Vec<Line> {
         let mut lines = Vec::new();
-        let mut group = None;
-        for (index, (row_group, item)) in self.rows.iter().enumerate() {
-            if group != Some(*row_group) {
-                group = Some(*row_group);
+        let mut heading: Option<&Heading> = None;
+        for (index, (row_heading, item)) in self.rows.iter().enumerate() {
+            if heading != Some(row_heading) {
+                heading = Some(row_heading);
                 if !lines.is_empty() {
                     lines.push(Line::default());
                 }
-                lines.push(Line::of(format!(" {}", row_group.heading()), Ink::Muted));
+                lines.push(Self::heading(model, row_heading, width));
             }
-            let (mark, name, doing, tone) = Self::describe(model, *item, now);
+            let (mark, mut name, mut doing, tone) = Self::describe(model, *item, now);
+            // Under its folder, a run is named by what it was asked, and
+            // says how it stands.
+            if let (Grouping::Folder, Item::Run(id)) = (self.grouping, item)
+                && let Some(run) = model.desk.get(*id)
+            {
+                name = Text(&run.title()).summary(width * 3 / 5);
+                match run.attention() {
+                    Attention::YourTurn | Attention::Ended => doing = run.phase().to_owned(),
+                    Attention::NeedsYou | Attention::Working | Attention::Starting => {}
+                }
+            }
             let number = match index {
                 0..9 => format!("{} ", index + 1),
                 _ => "  ".to_owned(),
@@ -172,6 +273,42 @@ impl Listing {
             lines.push(Line::of(" nothing yet · n starts a run", Ink::Muted));
         }
         lines
+    }
+
+    /// A heading: a state's name, or a folder's (its last part) and where
+    /// it is, with a mark when a run in it needs you.
+    fn heading(model: &Model, heading: &Heading, width: usize) -> Line {
+        match heading {
+            Heading::State(group) => Line::of(format!(" {}", group.heading()), Ink::Muted),
+            Heading::Elsewhere => Line::of(" STARTED ELSEWHERE", Ink::Muted),
+            Heading::Folder(path) => {
+                let name = path
+                    .rsplit('/')
+                    .find(|part| !part.is_empty())
+                    .unwrap_or(path);
+                let needs = model
+                    .desk
+                    .all()
+                    .iter()
+                    .filter(|run| run.workdir == *path && run.attention() == Attention::NeedsYou)
+                    .count();
+                let mut line = Line::new(vec![
+                    Span::new(format!(" {name}"), Ink::Text).with(crate::ui::Emphasis::Bold),
+                ]);
+                if needs > 0 {
+                    line.push(Span::new(format!(" ◆{needs}"), Ink::Warning));
+                }
+                let room = width.saturating_sub(line.width() + 2);
+                if room > 6 {
+                    let parent = path.strip_suffix(name).unwrap_or(path);
+                    line.push(Span::new(
+                        format!("  {}", Text(parent).fit(room)),
+                        Ink::Muted,
+                    ));
+                }
+                line
+            }
+        }
     }
 
     /// An entry's mark, name, what it is doing, and its tone.

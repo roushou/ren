@@ -550,6 +550,36 @@ fn earlier_turns_fold_and_open_from_the_session() {
 }
 
 #[test]
+fn runs_are_grouped_by_folder_or_by_what_they_need() {
+    let mut console = Console::new(SIZE);
+    let _ = console.apply(Input::Runs(Ok(vec![
+        snapshot(1, Harness::Codex, "/dev/acme-api", idle(1)),
+        snapshot(2, Harness::ClaudeCode, "/srv/ren", working(2)),
+        snapshot(3, Harness::ClaudeCode, "/dev/acme-api", asking(3, push())),
+    ])));
+    // By folder: the folder with the run that needs you first, that run
+    // first in it, the other run of the folder next.
+    assert_eq!(console.current(), Some(run_id(3)));
+    let _ = console.press(Key::Char('j'));
+    assert_eq!(console.current(), Some(run_id(1)));
+    let shown = drawn(&console);
+    assert!(shown.contains(" acme-api ◆1  /dev/"), "{shown}");
+    assert_eq!(
+        shown.matches(" acme-api ◆1").count(),
+        1,
+        "one heading: {shown}"
+    );
+    assert!(shown.contains(" 2 ○ new Codex run  your turn"), "{shown}");
+    // By what each needs: needs you, working, your turn.
+    let _ = console.press(Key::Char('g'));
+    let _ = console.press(Key::Char('1'));
+    assert_eq!(console.current(), Some(run_id(3)));
+    let _ = console.press(Key::Char('j'));
+    assert_eq!(console.current(), Some(run_id(2)));
+    assert!(drawn(&console).contains(" WORKING"));
+}
+
+#[test]
 fn screens_draw_as_pinned() {
     let mut console = desk();
     let _ = console.apply(Input::History {

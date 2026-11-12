@@ -1,13 +1,12 @@
  ren   0 sessions · 0 streaming · 0 waiting                                                         1 needs you  3 live
- NEEDS YOU                    │ ren · Claude Code · needs you                                                  /srv/ren
- 1 ◆ ren  wants git push origi│  Conversation   Activity   Files   Calls
-                           ┌ keys ─────────────────────────────────────────────────────────┐▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
- WORKING                   │ j ↓         next session, or next turn in a session           │
- 2 ● acme-api  working     │ k ↑         previous session, or previous turn                │
-                           │ l → enter   into the session; on a turn, open or fold it      │
- YOUR TURN                 │ h ← esc     back to the list                                  │
- 3 ○ acme-web  new Claude C│ tab         conversation, activity, files, calls              │
-                           │ shift-tab   the tab before                                    │
+ ren ◆1  /srv/                │ ren · Claude Code · needs you                                                  /srv/ren
+ 1 ◆ fix the flaky upl…  wa┌ keys ─────────────────────────────────────────────────────────┐
+                           │ j ↓         next session, or next turn in a session           │▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+ acme-api  /dev/           │ k ↑         previous session, or previous turn                │
+ 2 ● new Codex run  working│ l → enter   into the session; on a turn, open or fold it      │
+                           │ h ← esc     back to the list                                  │
+ acme-web  /dev/           │ tab         conversation, activity, files, calls              │
+ 3 ○ new Claude Code r…  yo│ shift-tab   the tab before                                    │
                            │ i           write to the run (enter sends, esc keeps a draft) │
                            │ n           start a run                                       │
                            │ y           allow what the run asks, once                     │
@@ -17,6 +16,7 @@
                            │ x           interrupt the turn                                │
                            │ S           stop the run's process                            │
                            │ /           search the sessions (esc clears)                  │
+                           │ g           group the list by folder, or by what each needs   │
                            │ pgup        scroll the session up                             │
                            │ pgdn        scroll it down                                    │
                            │ t           next theme: terminal, dark, light (not saved)     │

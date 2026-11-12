@@ -274,8 +274,8 @@ dependencies under "Crates" below. Read the code for current module ownership.
     a call ended (`call`, `CallEnd`). `Model::apply` answers with reads,
     prompts kept for a run that now waits for one, and news.
   - `screen`: `enum Screen { Main, NewRun, Help }`. `main` is the session
-    list (`list`: runs by what they need from you, then sessions watched,
-    then runs that ended) beside the selected session (`detail`: a lit
+    list (`list`: runs grouped by their folder, the folders that need you
+    first, then sessions watched; or by what each needs, `Grouping`) beside the selected session (`detail`: a lit
     header, the Conversation, Activity, Files, and Calls tabs, a run's turns
     folded to a line each, the approval card), with a top bar for the
     traffic and a key bar; `watched` reads a session Ren did not start (its

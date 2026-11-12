@@ -2,7 +2,7 @@
 //! API sends them, run as the terminal runs it: a [`Tui`], its list
 //! selecting the first session.
 
-use super::list::{Item, Listing};
+use super::list::{Grouping, Item, Listing};
 use super::watched::{Phase, SessionPane, Tally};
 use crate::conversation::{Block, ResultMark};
 use crate::model::sessions::{Reading, Sessions, Spark};
@@ -76,7 +76,7 @@ impl Wall {
     /// The watched sessions, in the list's order, at `now`.
     fn frame(&self, now: UnixMillis) -> Frame {
         let model = &self.tui.model;
-        let panes: Vec<Pane> = Listing::of(model, "")
+        let panes: Vec<Pane> = Listing::of(model, "", Grouping::Folder)
             .items()
             .into_iter()
             .filter_map(|item| match item {

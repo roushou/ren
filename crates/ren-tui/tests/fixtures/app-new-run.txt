@@ -1,12 +1,12 @@
  ren   0 sessions · 0 streaming · 0 waiting                                                         1 needs you  3 live
- NEEDS YOU                    │ ren · Claude Code · needs you                                                  /srv/ren
- 1 ◆ ren  wants git push origi│  Conversation   Activity   Files   Calls
+ ren ◆1  /srv/                │ ren · Claude Code · needs you                                                  /srv/ren
+ 1 ◆ fix the flaky upl…  wants│  Conversation   Activity   Files   Calls
                               │▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
- WORKING                      │
- 2 ● acme-api  working        │ ▾ fix the flaky upload test  1 s · 1 tool
+ acme-api  /dev/              │
+ 2 ● new Codex run  working   │ ▾ fix the flaky upload test  1 s · 1 tool
                               │     The lease token was compared before the retry counter was bumped, so a late
- YOUR TURN                    │     worker could still finish the job. I moved the check after the bump.
- 3 ○ acme-web  new Claude Code│   ● Bash   cargo test -p upload
+ acme-web  /dev/              │     worker could still finish the job. I moved the check after the bump.
+ 3 ○ new Claude Code r…  your │   ● Bash   cargo test -p upload
                ┌ new run ───────────────────────────────────────────────────────────────────────────────┐
                │  project   ac▏                                                                         │─────────────┐
                │    › acme-api  /dev/acme-api  main                                                     │             │
