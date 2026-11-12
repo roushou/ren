@@ -45,7 +45,7 @@
   } = $props();
 
   const id = $props.id();
-  let open = $state(false);
+  let isOpen = $state(false);
   let typed = $state('');
   let active = $state(0);
   let field = $state<HTMLInputElement>();
@@ -74,8 +74,13 @@
     ...shown.flatMap((group) => group.options),
   ]);
 
+  /** Open the list, as a click on the chip does. */
+  export function open() {
+    if (!isOpen) void show();
+  }
+
   async function show() {
-    open = true;
+    isOpen = true;
     typed = '';
     active = Math.max(
       0,
@@ -86,7 +91,7 @@
   }
 
   function close(focusChip = true) {
-    open = false;
+    isOpen = false;
     if (focusChip) chip?.focus();
   }
 
@@ -121,7 +126,7 @@
   }
 
   function outside(event: PointerEvent) {
-    if (!open) return;
+    if (!isOpen) return;
     const target = event.target as Node;
     if (!panel?.contains(target) && !chip?.contains(target)) close(false);
   }
@@ -135,16 +140,16 @@
     type="button"
     class="chip-button"
     aria-haspopup="listbox"
-    aria-expanded={open}
+    aria-expanded={isOpen}
     aria-label={label}
-    onclick={() => (open ? close() : void show())}
+    onclick={() => (isOpen ? close() : void show())}
   >
     <Icon name={icon} size={12} />
     <span class:placeholder={!current && !value}>{current?.label ?? value ?? placeholder}</span>
     {#if current?.hint}<span class="muted mono">{current.hint}</span>{/if}
     <Icon name="chevron" size={10} />
   </button>
-  {#if open}
+  {#if isOpen}
     <div class="panel" bind:this={panel} tabindex="-1" role="presentation" onkeydown={key}>
       {#if search}
         <input

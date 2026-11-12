@@ -1,7 +1,8 @@
 <!--
-  Starting a run: the prompt first, then where and with which client, each
-  a picker under the prompt. Both default to what was used last, so a run
-  usually starts with a prompt and Enter.
+  Starting a run: the prompt, where the run works, and with which client.
+  The folder is always chosen, never assumed: its picker lists the folders
+  recent runs worked in first, and Enter without one opens it. The client is
+  the last one used until changed.
 -->
 <script lang="ts">
   import { harnessLabel } from '#lib/activity.ts';
@@ -30,26 +31,25 @@
     onstart: (harness: Drivable, dir: string, prompt: string | null) => void;
   } = $props();
 
-  /** Where and with what the last run started: a per-viewer convenience. */
+  /** The client the last run started with: a per-viewer convenience. */
   const remembered = 'ren.runs.last';
-  function recall(): { dir: string | null; harness: Drivable } {
+  function recall(): Drivable {
     try {
       const saved = JSON.parse(localStorage.getItem(remembered) ?? 'null') as {
-        dir?: unknown;
         harness?: unknown;
       } | null;
-      const harness = DRIVABLE.find((drivable) => drivable === saved?.harness) ?? 'codex';
-      return { dir: typeof saved?.dir === 'string' ? saved.dir : null, harness };
+      return DRIVABLE.find((drivable) => drivable === saved?.harness) ?? 'codex';
     } catch {
-      return { dir: null, harness: 'codex' };
+      return 'codex';
     }
   }
-  const last = recall();
 
   let prompt = $state('');
-  let dir = $state<string | null>(last.dir);
-  let harness = $state<Drivable>(last.harness);
+  /** Where the run works: chosen each time, never assumed. */
+  let dir = $state<string | null>(null);
+  let harness = $state<Drivable>(recall());
   let field = $state<HTMLTextAreaElement>();
+  let folders = $state<ReturnType<typeof Picker>>();
 
   const recent = $derived(Desk.recent(runs, offered));
   const projectGroups = $derived<PickerGroup[]>([
@@ -88,16 +88,20 @@
     },
   ]);
   const chosenProject = $derived(offered.find((project) => project.path === dir));
-  const ready = $derived(!!dir && !busy);
+  const ready = $derived(!busy);
 
   export function focus() {
     field?.focus();
   }
 
   function start() {
-    if (!dir || busy) return;
+    if (busy) return;
+    if (!dir) {
+      folders?.open();
+      return;
+    }
     try {
-      localStorage.setItem(remembered, JSON.stringify({ dir, harness }));
+      localStorage.setItem(remembered, JSON.stringify({ harness }));
     } catch {
       // Remembering is a convenience.
     }
@@ -129,15 +133,16 @@
       rows="4"
       placeholder={chosenProject
         ? `Ask ${harnessLabel(harness)} to do something in ${chosenProject.name}. Enter starts, Shift+Enter adds a line.`
-        : 'Describe the task. Pick a project below, then Enter starts it.'}
+        : 'Describe the task, and choose the folder it works in below.'}
       aria-label="First prompt"></textarea>
     <div class="row">
       <Picker
-        label="Project"
+        bind:this={folders}
+        label="Folder"
         icon="file"
         groups={projectGroups}
         value={dir}
-        placeholder="Choose a project"
+        placeholder="Choose a folder"
         free={(typed) => typed.startsWith('/')}
         onchange={(value) => (dir = value)}
       />
@@ -153,7 +158,7 @@
         }}
       />
       <button class="button primary" disabled={!ready}
-        >{prompt.trim() ? 'Start' : 'Start without a prompt'}</button
+        >{!dir ? 'Choose a folder' : prompt.trim() ? 'Start' : 'Start without a prompt'}</button
       >
     </div>
   </form>
