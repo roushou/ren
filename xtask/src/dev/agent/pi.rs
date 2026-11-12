@@ -103,13 +103,15 @@ impl PiScript {
                 "get_state",
                 json!({ "sessionId": self.session, "isStreaming": self.turn.is_some(),
                         "messageCount": self.turns * 2,
-                        "model": { "provider": "anthropic", "id": "dev-large-1" } }),
+                        "model": { "provider": "anthropic", "id": "dev-large-1" },
+                        "thinkingLevel": "medium" }),
             )],
             Some("get_available_models") => vec![Self::response(
                 id,
                 "get_available_models",
                 json!({ "models": Self::MODELS.map(|(provider, id, name)| json!({
-                    "provider": provider, "id": id, "name": name })) }),
+                    "provider": provider, "id": id, "name": name,
+                    "reasoning": !id.ends_with("8b") })) }),
             )],
             Some("prompt") => self.prompted(id, message["message"].as_str().unwrap_or_default()),
             Some("abort") => {

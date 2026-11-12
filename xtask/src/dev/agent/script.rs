@@ -96,6 +96,9 @@ impl AgentScript {
                 "params": { "threadId": self.thread_id(), "turnId": turn, "item": item } })
     }
 
+    /// The efforts each of its models takes.
+    const EFFORTS: [&'static str; 4] = ["low", "medium", "high", "xhigh"];
+
     /// The models it lists: invented, one the default.
     const MODELS: [(&'static str, &'static str, &'static str, bool); 4] = [
         (
@@ -147,7 +150,9 @@ impl AgentScript {
             (Some("model/list"), Some(id)) => vec![Out::Send(json!({ "id": id, "result": {
                 "data": Self::MODELS.map(|(model, name, description, default)| json!({
                     "id": model, "model": model, "displayName": name, "description": description,
-                    "isDefault": default, "hidden": false })),
+                    "isDefault": default, "hidden": false, "defaultReasoningEffort": "medium",
+                    "supportedReasoningEfforts": Self::EFFORTS.map(|effort| json!({
+                        "reasoningEffort": effort, "description": "" })) })),
                 "nextCursor": null } }))],
             (Some("turn/start"), Some(id)) => self.start(id, &params),
             (Some("turn/interrupt"), Some(id)) => {
