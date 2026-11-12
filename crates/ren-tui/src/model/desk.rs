@@ -5,7 +5,7 @@ use super::transcript::Transcript;
 use crate::ui::Text;
 use ren_harness::{
     Harness,
-    drive::{ApprovalAsk, ApprovalId, Prompt},
+    drive::{ApprovalAsk, ApprovalId, ApprovalPolicy, Prompt, RunSettings},
 };
 use ren_protocol::label::Stored;
 use ren_protocol::native::NativeThreadId;
@@ -43,6 +43,8 @@ pub struct Run {
     pub queued: Option<Prompt>,
     /// Whether its conversation was asked for once already.
     pub asked: bool,
+    /// What it was started with, as the daemon holds it while it runs.
+    pub settings: Option<RunSettings>,
 }
 
 impl Run {
@@ -58,6 +60,7 @@ impl Run {
             transcript: Transcript::default(),
             queued: None,
             asked: false,
+            settings: None,
         }
     }
 
@@ -105,6 +108,51 @@ impl Run {
 
     pub fn harness(&self) -> Option<Harness> {
         self.harness.known()
+    }
+
+    /// Its settings in a few words, each left to the client left out:
+    /// `gpt-deep · high effort · edits alone`.
+    pub fn setup(&self) -> Option<String> {
+        let settings = self.settings();
+        let words: Vec<String> = [
+            settings.model.map(|model| model.to_string()),
+            settings.effort.map(|effort| format!("{effort} effort")),
+            settings
+                .approvals
+                .map(|policy| Self::policy(policy).to_owned()),
+        ]
+        .into_iter()
+        .flatten()
+        .collect();
+        (!words.is_empty()).then(|| words.join(" · "))
+    }
+
+    /// An approval policy in a few words.
+    pub fn policy(policy: ApprovalPolicy) -> &'static str {
+        match policy {
+            ApprovalPolicy::Ask => "ask first",
+            ApprovalPolicy::Edits => "edits alone",
+            ApprovalPolicy::Auto => "auto",
+        }
+    }
+
+    /// What it was started with: as the daemon holds it, or as recorded.
+    /// Settings this binary does not know are left to the client.
+    pub fn settings(&self) -> RunSettings {
+        if let Some(settings) = &self.settings {
+            return settings.clone();
+        }
+        match &self.recorded {
+            Some(recorded) => RunSettings {
+                model: recorded
+                    .model
+                    .as_deref()
+                    .and_then(|model| model.parse().ok()),
+                effort: recorded.effort.as_ref().and_then(Stored::known),
+                approvals: recorded.approvals.as_ref().and_then(Stored::known),
+            },
+            None => RunSettings::default(),
+        }
     }
 
     /// The client's name, as the header writes it.
@@ -241,6 +289,7 @@ impl Desk {
         for snapshot in snapshots {
             let run = self.entry(snapshot.run, |seen| Run::from_snapshot(snapshot, seen));
             run.live = Some(snapshot.state.clone());
+            run.settings = Some(snapshot.settings.clone());
         }
     }
 

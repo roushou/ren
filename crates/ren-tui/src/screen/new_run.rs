@@ -1,11 +1,13 @@
 //! Starting a run: a full-screen composer. It opens on where the run will
 //! work: the folder is always chosen, never assumed, from a list with the
 //! folders recent runs worked in first. Then the prompt owns the screen, as
-//! long as it needs to be. The folder, the client, and the model are one
-//! header line, each naming the key that changes it, which works while
-//! typing: Ctrl-O the folder, Ctrl-L the client (the last one used, until
-//! changed), Ctrl-K the model, from the models the client itself lists on
-//! the daemon's host (none chosen is the client's own default). Below the
+//! long as it needs to be. Two header lines name where the run works and how
+//! it is set up, each setting beside the key that changes it, which works
+//! while typing: Ctrl-O the folder; Ctrl-L the client (the last one used,
+//! until changed); Ctrl-K the model, from the models the client itself lists
+//! on the daemon's host, with ← and → choosing the effort of the one
+//! highlighted; Shift-Tab cycles what the client may do without asking.
+//! Each left as `default` is the client's own choice. Below the
 //! prompt a line is kept for the files a prompt carries, which Ren cannot add
 //! yet.
 //!
@@ -17,12 +19,15 @@ use super::composer::Composer;
 use super::{Action, Ctx, Look, Notice};
 use crate::Key;
 use crate::model::Offered;
+use crate::model::desk::Run;
 use crate::model::{Model, Read};
 use crate::ui::{
     Anchor, Bar, Emphasis, Ink, Keep, Line, Place, Rule, Size as Fit, Span, Text, View,
 };
 use ren_harness::Harness;
-use ren_harness::drive::{self, DefaultChoice, ModelId, Prompt};
+use ren_harness::drive::{
+    self, ApprovalPolicy, DefaultChoice, Effort, ModelId, Prompt, RunSettings,
+};
 use ren_supervisor::{Client, ClientStatus, Project, ProjectGit};
 
 /// The composer, as written so far.
@@ -35,6 +40,10 @@ pub(crate) struct NewRun {
     client: Harness,
     /// The model; none is the client's own default.
     model: Option<ModelId>,
+    /// The effort; none is the model's own.
+    effort: Option<Effort>,
+    /// What the client may do without asking; none is its own setting.
+    approvals: Option<ApprovalPolicy>,
     focus: Focus,
 }
 
@@ -59,28 +68,47 @@ struct Picker {
     setting: Setting,
     search: String,
     at: usize,
+    /// The effort being chosen in the model list, for the model taken.
+    effort: Option<Effort>,
 }
 
 impl NewRun {
     /// Rows a setting's list shows at once.
     const LISTED: usize = 10;
-    /// The rows around the prompt: header, rules, files, and key bar.
-    const CHROME: u16 = 6;
+    /// The rows around the prompt: the two header lines, rules, files, and
+    /// key bar.
+    const CHROME: u16 = 7;
     /// Where a setting's list opens under the header.
     const LIST_AT: u16 = 2;
+    /// The header's height.
+    const HEADER: u16 = 2;
 
     /// The composer, open on choosing where the run works.
     /// The widest a model's description is shown in its list.
     const DESCRIBED: usize = 56;
 
     pub fn new(model: &Model) -> Self {
-        Self {
+        let mut screen = Self {
             prompt: Composer::default(),
             project: None,
             client: model.client,
-            model: model.chosen.get(&model.client).cloned(),
+            model: None,
+            effort: None,
+            approvals: None,
             focus: Self::picking(Setting::Project),
-        }
+        };
+        screen.recall(model);
+        screen
+    }
+
+    /// The settings last started with on this client.
+    fn recall(&mut self, model: &Model) {
+        let saved = model.chosen.get(&self.client).cloned().unwrap_or_default();
+        self.model = saved.model;
+        self.effort = saved.effort;
+        self.approvals = saved
+            .approvals
+            .filter(|policy| ApprovalPolicy::offered(self.client).contains(policy));
     }
 
     fn picking(setting: Setting) -> Focus {
@@ -88,7 +116,64 @@ impl NewRun {
             setting,
             search: String::new(),
             at: 0,
+            effort: None,
         })
+    }
+
+    /// The model list, open on the model and effort chosen.
+    fn picking_model(&self, model: &Model) -> Focus {
+        let at = self
+            .model_choices("", model)
+            .iter()
+            .position(|choice| choice.map(|offered| &offered.id) == self.kept(model).as_ref())
+            .unwrap_or(0);
+        Focus::Picking(Picker {
+            setting: Setting::Model,
+            search: String::new(),
+            at,
+            effort: self.effort,
+        })
+    }
+
+    /// The efforts a choice in the model list takes: the default's are its
+    /// model's, when the client says which that is.
+    fn efforts<'a>(&self, choice: Option<&'a drive::Model>, model: &'a Model) -> &'a [Effort] {
+        choice
+            .or_else(|| self.fallback(model))
+            .map_or(&[], |offered| offered.efforts.as_slice())
+    }
+
+    /// `effort` moved one step along `efforts` (none, the model's own,
+    /// comes first), or kept where it ends.
+    fn step(effort: Option<Effort>, efforts: &[Effort], forward: bool) -> Option<Effort> {
+        let at = effort.and_then(|effort| efforts.iter().position(|offered| *offered == effort));
+        match (at, forward) {
+            (None, true) => efforts.first().copied(),
+            (None, false) => None,
+            (Some(at), true) => efforts.get(at + 1).or(efforts.get(at)).copied(),
+            (Some(0), false) => None,
+            (Some(at), false) => efforts.get(at - 1).copied(),
+        }
+    }
+
+    /// The next approval policy the client offers after the one chosen,
+    /// back to its own setting after the last.
+    fn cycle_approvals(&mut self) -> Vec<Action> {
+        let offered = ApprovalPolicy::offered(self.client);
+        if offered.is_empty() {
+            return vec![Action::Say(Notice::info(format!(
+                "{} asks for nothing: it runs every tool itself",
+                Self::name(self.client)
+            )))];
+        }
+        let at = self
+            .approvals
+            .and_then(|policy| offered.iter().position(|offered| *offered == policy));
+        self.approvals = match at {
+            None => offered.first().copied(),
+            Some(at) => offered.get(at + 1).copied(),
+        };
+        Vec::new()
     }
 
     pub fn shown(&mut self, model: &mut Model) -> Vec<Action> {
@@ -246,9 +331,10 @@ impl NewRun {
             Key::Enter => return self.start(ctx),
             Key::Esc | Key::Interrupt => return vec![Action::Pop],
             Key::Folder | Key::Tab => self.focus = Self::picking(Setting::Project),
-            Key::Client | Key::BackTab => self.focus = Self::picking(Setting::Client),
+            Key::Client => self.focus = Self::picking(Setting::Client),
+            Key::BackTab => return self.cycle_approvals(),
             Key::Model => {
-                self.focus = Self::picking(Setting::Model);
+                self.focus = self.picking_model(ctx.model);
                 return ctx
                     .model
                     .ask_models(self.client)
@@ -298,6 +384,13 @@ impl NewRun {
                 picker.search.pop();
                 picker.at = 0;
             }
+            // The highlighted model's effort, one step down or up.
+            Key::Left | Key::Right if picker.setting == Setting::Model => {
+                let choices = self.model_choices(&picker.search, ctx.model);
+                let choice = choices.get(picker.at).copied().flatten();
+                let efforts = self.efforts(choice, ctx.model);
+                picker.effort = Self::step(picker.effort, efforts, key == Key::Right);
+            }
             Key::Enter | Key::Tab => return self.choose(&picker, ctx.model),
             // Back to the prompt, as it was: no folder is assumed.
             Key::Esc => {
@@ -305,26 +398,15 @@ impl NewRun {
                 return Vec::new();
             }
             Key::Folder => {
-                picker = Picker {
-                    setting: Setting::Project,
-                    search: String::new(),
-                    at: 0,
-                }
+                self.focus = Self::picking(Setting::Project);
+                return Vec::new();
             }
             Key::Client => {
-                picker = Picker {
-                    setting: Setting::Client,
-                    search: String::new(),
-                    at: 0,
-                }
+                self.focus = Self::picking(Setting::Client);
+                return Vec::new();
             }
             Key::Model => {
-                picker = Picker {
-                    setting: Setting::Model,
-                    search: String::new(),
-                    at: 0,
-                };
-                self.focus = Focus::Picking(picker);
+                self.focus = self.picking_model(ctx.model);
                 return ctx
                     .model
                     .ask_models(self.client)
@@ -332,9 +414,13 @@ impl NewRun {
                     .into_iter()
                     .collect();
             }
+            Key::BackTab => {
+                let said = self.cycle_approvals();
+                self.focus = Focus::Picking(picker);
+                return said;
+            }
             Key::Interrupt => return vec![Action::Pop],
             Key::Char(_)
-            | Key::BackTab
             | Key::Left
             | Key::Right
             | Key::Backspace
@@ -366,15 +452,16 @@ impl NewRun {
                 Some(Client {
                     harness,
                     status: ClientStatus::Ready,
+                    ..
                 }) => {
                     let harness = *harness;
                     self.focus = Focus::Prompt;
                     if harness == self.client {
                         return Vec::new();
                     }
-                    // Another client's models are its own.
+                    // Another client's settings are its own.
                     self.client = harness;
-                    self.model = model.chosen.get(&harness).cloned();
+                    self.recall(model);
                     return model
                         .ask_models(harness)
                         .map(Action::Read)
@@ -392,6 +479,10 @@ impl NewRun {
             Setting::Model => {
                 if let Some(choice) = self.model_choices(&picker.search, model).get(picker.at) {
                     self.model = choice.map(|offered| offered.id.clone());
+                    // Kept only where the model takes it.
+                    self.effort = picker
+                        .effort
+                        .filter(|effort| self.efforts(*choice, model).contains(effort));
                 }
             }
         }
@@ -419,17 +510,14 @@ impl NewRun {
         }
         let dir = project.path.clone();
         let prompt = Prompt::parse(self.prompt.text()).ok();
-        let chosen = self.kept(ctx.model);
+        let settings = RunSettings {
+            model: self.kept(ctx.model),
+            effort: self.effort,
+            approvals: self.approvals,
+        };
         ctx.model.client = self.client;
-        match &chosen {
-            Some(chosen) => {
-                ctx.model.chosen.insert(self.client, chosen.clone());
-            }
-            None => {
-                ctx.model.chosen.remove(&self.client);
-            }
-        }
-        let command = ctx.model.start(self.client, dir, None, prompt, chosen);
+        ctx.model.chosen.insert(self.client, settings.clone());
+        let command = ctx.model.start(self.client, dir, None, prompt, settings);
         vec![Action::Pop, Action::Send(command)]
     }
 
@@ -472,10 +560,12 @@ impl NewRun {
                 .wrap(width)
                 .lines(height, writing, |_| Span::plain(" "))
         };
+        let (place, setup) = self.header(look.model);
         let screen = View::fill(
             Ink::Pane,
             View::Rows(vec![
-                (Fit::Exact(1), View::Bar(self.header(look.model))),
+                (Fit::Exact(1), View::Bar(place)),
+                (Fit::Exact(1), View::Bar(setup)),
                 (Fit::Exact(1), View::Rule(Rule::Plain)),
                 (Fit::Fill, View::lines(body, Anchor::Top)),
                 (Fit::Exact(1), View::Rule(Rule::Plain)),
@@ -510,7 +600,7 @@ impl NewRun {
                         body: Box::new(View::lines(lines, Anchor::Top)),
                     },
                     Place::Under {
-                        top: 1,
+                        top: Self::HEADER,
                         inset: Self::LIST_AT,
                         width: u16::try_from(widest + 4).unwrap_or(u16::MAX),
                         height: u16::try_from(tall + 2).unwrap_or(u16::MAX),
@@ -531,14 +621,14 @@ impl NewRun {
     /// The header: the screen's name, then each setting with the key that
     /// changes it; the one being changed is marked, and a folder not yet
     /// chosen says so.
-    fn header(&self, model: &Model) -> Bar {
+    fn header(&self, model: &Model) -> (Bar, Bar) {
         let open = match &self.focus {
             Focus::Picking(picker) => Some(picker.setting),
             Focus::Prompt => None,
         };
-        let value = |setting: Setting, text: String, ink: Ink| {
+        let value = |setting: Option<Setting>, text: String, ink: Ink| {
             let span = Span::new(format!(" {text} "), ink);
-            if open == Some(setting) {
+            if setting.is_some() && open == setting {
                 span.with(Emphasis::Reversed)
             } else {
                 span
@@ -549,41 +639,66 @@ impl NewRun {
         } else {
             Ink::Error
         };
-        let left = Line::new(vec![
+        // Where: the folder, its full path at the right where there is room.
+        let place = Line::new(vec![
             Span::new(" new run ", Ink::LiveTitle).with(Emphasis::Bold),
-            Span::plain("   "),
+            Span::plain("  "),
             Span::new("ctrl-o", Ink::Tool),
             Span::new(" folder", Ink::Muted),
-            value(Setting::Project, self.project_label(model), folder_ink),
-            Span::plain("   "),
-            Span::new("ctrl-l", Ink::Tool),
-            Span::new(" client", Ink::Muted),
             value(
-                Setting::Client,
-                Self::name(self.client).to_owned(),
-                Ink::Text,
+                Some(Setting::Project),
+                self.project_label(model),
+                folder_ink,
             ),
-            Span::plain("   "),
-            Span::new("ctrl-k", Ink::Tool),
-            Span::new(" model", Ink::Muted),
-            value(Setting::Model, self.model_label(model), Ink::Text),
         ]);
-        // The folder's full path, where there is room for it.
-        let right = match self.project(model.projects()) {
+        let path = match self.project(model.projects()) {
             Some(project) => Line::of(format!("{} ", project.path), Ink::Muted),
             None => Line::default(),
         };
-        Bar {
+        // How: the client, its model and effort, and what it may do alone.
+        let approvals = if ApprovalPolicy::offered(self.client).is_empty() {
+            "never asks".to_owned()
+        } else {
+            self.approvals.map_or("default", Run::policy).to_owned()
+        };
+        let setup = Line::new(vec![
+            Span::plain(" ".repeat(Text(" new run ").width() + 2)),
+            Span::new("ctrl-l", Ink::Tool),
+            Span::new(" client", Ink::Muted),
+            value(
+                Some(Setting::Client),
+                Self::name(self.client).to_owned(),
+                Ink::Text,
+            ),
+            Span::plain("  "),
+            Span::new("ctrl-k", Ink::Tool),
+            Span::new(" model", Ink::Muted),
+            value(Some(Setting::Model), self.model_label(model), Ink::Text),
+            Span::plain("  "),
+            Span::new("shift-tab", Ink::Tool),
+            Span::new(" approvals", Ink::Muted),
+            value(None, approvals, Ink::Text),
+        ]);
+        let bar = |left, right| Bar {
             left,
             right,
             fill: Ink::Bar,
             keep: Keep::Left,
-        }
+        };
+        (bar(place, path), bar(setup, Line::default()))
     }
 
     /// The model as the header names it: the chosen one's name, or the
     /// default and what it is now.
     fn model_label(&self, model: &Model) -> String {
+        let name = self.model_name(model);
+        match self.effort {
+            Some(effort) => format!("{name} · {effort} effort"),
+            None => name,
+        }
+    }
+
+    fn model_name(&self, model: &Model) -> String {
         match self.kept(model) {
             Some(chosen) => self
                 .listed(model)
@@ -672,6 +787,30 @@ impl NewRun {
                     lines.push(mark(index, spans));
                 }
             }
+        }
+        // The highlighted model's efforts, the one to take marked.
+        let highlighted = choices.get(picker.at).copied().flatten();
+        let efforts = self.efforts(highlighted, model);
+        if !efforts.is_empty() {
+            let mut line = Line::new(vec![Span::new("   ←→ effort  ", Ink::Muted)]);
+            let own = highlighted
+                .or_else(|| self.fallback(model))
+                .and_then(|offered| offered.effort);
+            let default = match own {
+                Some(own) => format!("default ({own})"),
+                None => "default".to_owned(),
+            };
+            for (label, effort) in std::iter::once((default, None))
+                .chain(efforts.iter().map(|e| (e.to_string(), Some(*e))))
+            {
+                let span = Span::new(format!(" {label} "), Ink::Text);
+                line.push(if effort == picker.effort {
+                    span.with(Emphasis::Reversed)
+                } else {
+                    span
+                });
+            }
+            lines.push(line);
         }
         let note = match model.models(self.client) {
             Some(Offered::Asked) | None => Some(format!(
@@ -793,7 +932,7 @@ impl NewRun {
                         }
                         Setting::Client => " ↑↓ choose · enter take it · esc back to the prompt",
                         Setting::Model => {
-                            " type to search · ↑↓ choose · enter take it · esc back to the prompt"
+                            " type to search · ↑↓ choose · ←→ effort · enter take it · esc back to the prompt"
                         }
                     },
                 },

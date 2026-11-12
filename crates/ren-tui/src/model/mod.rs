@@ -19,7 +19,7 @@ use crate::Size;
 use desk::{Attention, Desk, Run};
 use ren_harness::{
     Harness,
-    drive::{self, ApprovalId, Decision, ModelId, Prompt},
+    drive::{self, ApprovalId, ApprovalPolicy, Decision, Prompt, RunSettings},
 };
 use ren_protocol::label::{Labeled, Stored};
 use ren_protocol::native::NativeThreadId;
@@ -108,8 +108,8 @@ pub enum Command {
         dir: String,
         resume: Option<NativeThreadId>,
         prompt: Option<Prompt>,
-        /// With none, the client's own default.
-        model: Option<ModelId>,
+        /// Each left out is the client's own.
+        settings: RunSettings,
     },
     Prompt {
         run: RunId,
@@ -187,8 +187,8 @@ pub(crate) struct Model {
     pub client: Harness,
     /// Each client's models, once asked for.
     models: HashMap<Harness, Offered>,
-    /// The model last chosen for each client, while this app runs.
-    pub chosen: HashMap<Harness, ModelId>,
+    /// The settings each client last started a run with, while this app runs.
+    pub chosen: HashMap<Harness, RunSettings>,
     /// The run asked to start here, until the daemon answers.
     starting: Option<Starting>,
 }
@@ -230,6 +230,7 @@ impl Model {
                 .map(|&harness| Client {
                     harness,
                     status: ClientStatus::Ready,
+                    approvals: ApprovalPolicy::offered(harness).to_vec(),
                 })
                 .collect()
         } else {
@@ -239,7 +240,7 @@ impl Model {
                     ClientStatus::Ready | ClientStatus::NotInstalled => true,
                     ClientStatus::NotDrivable => false,
                 })
-                .copied()
+                .cloned()
                 .collect()
         }
     }
@@ -372,7 +373,7 @@ impl Model {
         dir: String,
         resume: Option<NativeThreadId>,
         prompt: Option<Prompt>,
-        model: Option<ModelId>,
+        settings: RunSettings,
     ) -> Command {
         self.starting = Some(Starting {
             harness,
@@ -385,7 +386,7 @@ impl Model {
             dir,
             resume,
             prompt,
-            model,
+            settings,
         }
     }
 

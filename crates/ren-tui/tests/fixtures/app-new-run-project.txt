@@ -1,11 +1,11 @@
- new run    ctrl-o folder none yet    ctrl-l client Claude Code    ctrl-k model default
+ new run   ctrl-o folder none yet
+           ctrl-l client Claude Code   ctrl-k model default   shift-tab approvals default
 ──┌ folder ─────────────────────────────────┐───────────────────────────────────────────────────────────────────────────
  W│  search  ac▏                            │ it; ctrl-e opens your editor.
   │  recent                                 │
   │  › acme-web  /dev/acme-web  feat/upload │
   │    acme-api  /dev/acme-api  main        │
   └─────────────────────────────────────────┘
-
 
 
 

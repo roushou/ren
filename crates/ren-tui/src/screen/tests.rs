@@ -77,6 +77,7 @@ fn snapshot(n: u128, harness: Harness, workdir: &str, state: RunState) -> RunSna
         harness,
         workdir: workdir.into(),
         state,
+        settings: ren_harness::drive::RunSettings::default(),
     }
 }
 
@@ -433,7 +434,7 @@ fn n_opens_the_composer_on_where_the_run_works_then_the_prompt() {
                 )
                 .unwrap()
             ),
-            model: None,
+            settings: ren_harness::drive::RunSettings::default(),
         }]
     );
     assert!(!console.tui.overlaid());
@@ -466,18 +467,22 @@ fn clients() -> Vec<ren_supervisor::Client> {
         Client {
             harness: Harness::ClaudeCode,
             status: ClientStatus::Ready,
+            approvals: ren_harness::drive::ApprovalPolicy::offered(Harness::ClaudeCode).to_vec(),
         },
         Client {
             harness: Harness::Codex,
             status: ClientStatus::Ready,
+            approvals: ren_harness::drive::ApprovalPolicy::offered(Harness::Codex).to_vec(),
         },
         Client {
             harness: Harness::Pi,
             status: ClientStatus::NotInstalled,
+            approvals: ren_harness::drive::ApprovalPolicy::offered(Harness::Pi).to_vec(),
         },
         Client {
             harness: Harness::OpenCode,
             status: ClientStatus::NotDrivable,
+            approvals: ren_harness::drive::ApprovalPolicy::offered(Harness::OpenCode).to_vec(),
         },
     ]
 }
@@ -490,8 +495,11 @@ fn models() -> Vec<ren_harness::drive::Model> {
         description: Some(description.into()),
         provider: None,
         choice,
+        efforts: vec![Effort::Low, Effort::Medium, Effort::High],
+        effort: Some(Effort::Medium),
     };
     use ren_harness::drive::DefaultChoice::{Default, Other};
+    use ren_harness::drive::Effort;
     vec![
         model("big", "Big 2", "Best for everyday, complex tasks", Default),
         model(
@@ -519,27 +527,50 @@ fn the_composer_starts_on_the_model_chosen_from_the_clients_list() {
     });
     let shown = drawn(&console);
     assert!(shown.contains("ctrl-k model default · Big 2"), "{shown}");
+    assert!(shown.contains("shift-tab approvals default"), "{shown}");
     let _ = console.press(Key::Model);
     assert_eq!(
         drawn(&console),
         include_str!("../../tests/fixtures/app-new-run-model.txt")
     );
-    // Typing narrows the list: the default stays first.
+    // Typing narrows the list: the default stays first. ←→ choose the
+    // highlighted model's effort.
     type_text(&mut console, "fast");
     let _ = console.press(Key::Down);
+    for _ in 0..4 {
+        let _ = console.press(Key::Right);
+    }
+    let _ = console.press(Key::Left);
+    let shown = drawn(&console);
+    assert!(
+        shown.contains("←→ effort   default (medium)  low  medium  high"),
+        "{shown}"
+    );
     let _ = console.press(Key::Enter);
-    assert!(drawn(&console).contains("ctrl-k model Small 2"));
+    assert!(drawn(&console).contains("ctrl-k model Small 2 · medium effort"));
+    // Shift-Tab cycles what the client may do alone, back to its own.
+    for _ in 0..2 {
+        let _ = console.press(Key::BackTab);
+    }
+    assert!(drawn(&console).contains("shift-tab approvals edits alone"));
     type_text(&mut console, "tidy up");
     let out = console.press(Key::Enter);
     let started = sent(&out);
-    let [Command::Start { model, .. }] = started.as_slice() else {
+    let [Command::Start { settings, .. }] = started.as_slice() else {
         panic!("one start: {out:?}");
     };
-    assert_eq!(model.as_ref().map(|model| model.as_str()), Some("small"));
+    assert_eq!(
+        settings,
+        &ren_harness::drive::RunSettings {
+            model: Some("small".parse().unwrap()),
+            effort: Some(ren_harness::drive::Effort::Medium),
+            approvals: Some(ren_harness::drive::ApprovalPolicy::Edits),
+        }
+    );
     // The next composer remembers the choice; a client that fails to list
     // says why.
     let _ = console.press(Key::Char('n'));
-    assert!(drawn(&console).contains("Small 2"));
+    assert!(drawn(&console).contains("Small 2 · medium effort"));
     let _ = console.apply(Input::Models {
         harness: Harness::Codex,
         models: Err("the client did not list its models in time".into()),
@@ -550,10 +581,10 @@ fn the_composer_starts_on_the_model_chosen_from_the_clients_list() {
     let out = console.press(Key::Enter);
     assert_eq!(out, [Out::Read(Read::Models(Harness::Codex))]);
     let shown = drawn(&console);
-    let header = shown.lines().next().unwrap_or_default();
+    let setup = shown.lines().nth(1).unwrap_or_default();
     assert!(
-        header.trim_end().ends_with("ctrl-k model default"),
-        "{header}"
+        setup.contains("ctrl-k model default   shift-tab approvals default"),
+        "{setup}"
     );
     // Asked already: opening the list does not ask twice.
     assert!(console.press(Key::Model).is_empty());
@@ -580,6 +611,7 @@ fn the_composer_offers_the_clients_installed_on_the_daemons_host() {
     let _ = console.apply(Input::Clients(Ok(vec![ren_supervisor::Client {
         harness: Harness::ClaudeCode,
         status: ren_supervisor::ClientStatus::NotInstalled,
+        approvals: Vec::new(),
     }])));
     type_text(&mut console, "go");
     let out = console.press(Key::Enter);
@@ -653,7 +685,7 @@ fn writing_to_an_ended_run_continues_its_conversation() {
             dir: "/srv/ren".into(),
             resume: Some(thread(5)),
             prompt: Some(Prompt::parse("pick it back up".into()).unwrap()),
-            model: None,
+            settings: ren_harness::drive::RunSettings::default(),
         }]
     );
 }

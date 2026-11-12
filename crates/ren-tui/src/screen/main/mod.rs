@@ -807,6 +807,8 @@ impl Main {
         };
         let approval = run.approval();
         let attention = run.attention();
+        // A conversation continues with the settings it had.
+        let settings = run.settings();
         let resume = match (run.harness(), run.thread()) {
             (Some(harness), Some(thread)) => Some((
                 harness,
@@ -838,8 +840,7 @@ impl Main {
                     dir,
                     resume,
                     Some(prompt),
-                    // The run's own model is not recorded: the client's default.
-                    None,
+                    settings,
                 ))],
                 None => vec![Action::Say(Notice::info(
                     "this run ended before it opened a conversation: n starts another",

@@ -504,11 +504,17 @@ impl<'a> Shell<'a> {
                 dir,
                 resume,
                 prompt,
-                model,
+                settings,
             } => {
                 let mut body = serde_json::json!({ "harness": harness, "dir": dir });
-                if let Some(model) = model {
+                if let Some(model) = settings.model {
                     body["model"] = model.as_str().into();
+                }
+                if let Some(effort) = settings.effort {
+                    body["effort"] = effort.to_string().into();
+                }
+                if let Some(approvals) = settings.approvals {
+                    body["approvals"] = approvals.to_string().into();
                 }
                 if let Some(resume) = resume {
                     body["resume"] = resume.to_string().into();

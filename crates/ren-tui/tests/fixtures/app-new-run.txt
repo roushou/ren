@@ -1,11 +1,11 @@
- new run    ctrl-o folder acme-web · feat/upload    ctrl-l client Claude Code    ctrl-k model default     /dev/acme-web
+ new run   ctrl-o folder acme-web · feat/upload                                                           /dev/acme-web
+           ctrl-l client Claude Code   ctrl-k model default   shift-tab approvals default
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
  The upload test is flaky on CI: it fails about one run in ten with a lease timeout. Look at how the worker renews its
  lease in src/upload/worker.rs, and why the retry counter can be bumped after the lease check.
 
  Fix it, add a test that reproduces the race every time, and push a branch named fix/upload-lease. Leave the public
  API as it is.
-
 
 
 

@@ -169,6 +169,11 @@ impl Main {
                     Span::plain(format!(" {}", Listing::run_name(model, run))),
                     Span::plain(format!(" · {} · {}", run.client(), run.phase())),
                 ]);
+                // How it was set up, where any setting was not the client's own.
+                let mut title = title;
+                if let Some(setup) = run.setup() {
+                    title.push(Span::new(format!(" · {setup}"), Ink::Muted));
+                }
                 (
                     title,
                     Line::from(Span::plain(format!("{} ", run.workdir))),
