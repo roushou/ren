@@ -155,7 +155,7 @@ export interface RecordedRun {
   ended_at: UnixMillis | null;
   end: Stored<RunEnd> | null;
   exit: ProcessExit | null;
-  /** When the operator archived it; null when it is not, or from an older daemon. */
+  /** When the operator archived it; null when it is not. */
   archived_at: UnixMillis | null;
 }
 
@@ -381,8 +381,7 @@ const recordedRun = object<RecordedRun>({
   ended_at: nullable(brandedCount<'UnixMillis'>()),
   end: nullable(label(runEnds)),
   exit: nullable(processExit),
-  archived_at: (value, path) =>
-    value === undefined || value === null ? null : brandedCount<'UnixMillis'>()(value, path),
+  archived_at: nullable(brandedCount<'UnixMillis'>()),
 });
 
 const liveRuns = versioned(object<{ runs: RunSnapshot[] }>({ runs: array(runSnapshot) }));

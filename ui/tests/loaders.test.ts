@@ -241,6 +241,7 @@ function sessionRow(n: number, lastSeen: number, calls = 3, turns = 1) {
     turn_count: turns,
     error_count: 0,
     tokens: { input: null, output: null, cache_read: null },
+    archived_at: null,
   };
 }
 

@@ -703,8 +703,7 @@ const sessions = object<Sessions>({
       turn_count: count,
       error_count: count,
       tokens: tokenTotals,
-      archived_at: (value, path) =>
-        value === undefined || value === null ? null : millis(value, path),
+      archived_at: nullable(millis),
     }),
   ),
 });
