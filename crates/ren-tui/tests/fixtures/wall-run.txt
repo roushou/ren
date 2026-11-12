@@ -1,12 +1,12 @@
+ ren   wall   ◇ acme                                       1 needs you · 1 live
  0:00000007  codex → openai  run · asks                               5,991 tok
 ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
 
 
 
 
+ ? run `cargo test` in /work/acme (+1)  enter to answer
 
-
-
- ? run `cargo test` in /work/acme (+1)  r to answer
-
- ren │ 1 session · 0 streaming · 0 waiting · 1 run · 1 as ? help │ 08:10:00 UTC
+────────────────────────────────────────────────────────────────────────────────
+ › /new <project> <prompt> starts a run · enter opens the focused session
+ 1 session · 0 streaming · 0 waiting · 1 run · 1 asking    /help │ 08:10:00 UTC

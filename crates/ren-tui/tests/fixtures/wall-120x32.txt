@@ -1,7 +1,6 @@
+ ren   wall                                                                                                      0 live
  0:00000001  claude-code → anthropic  call 2               │ 1:00000003  opencode → anthropic                 3,139 tok
 ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀│▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
-                                                           │
-                                                           │
  ── call 1 ──                                              │
  › Why does the parser drop the last field?                │
  I'll run the tests first, then look at the failure in the │
@@ -26,7 +25,8 @@
                                                            │
                                                            │
                                                            │
-                                                           │
  ! error 529 · model-b                                     │
  model-b · in —                                            │
- ren  ! 1 needs a look │ cc         █    1.2k tok │ 3 sessions · 2 streaming · 0 waiting          ? help │ 08:05:00 UTC
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ › /new <project> <prompt> starts a run · enter opens the focused session
+ ! 1 needs a look │ cc                  █       1.2k tok │ 3 sessions · 2 streaming · 0 waiting    /help │ 08:05:00 UTC

@@ -296,22 +296,6 @@ impl Desk {
         all
     }
 
-    /// The live run after (or before) `from` in [`Desk::ordered`].
-    pub fn step(&self, from: Option<RunId>, forward: bool) -> Option<RunId> {
-        let order = self.ordered();
-        if order.is_empty() {
-            return None;
-        }
-        let at = from.and_then(|from| order.iter().position(|run| run.id == from));
-        let next = match (at, forward) {
-            (None, true) => 0,
-            (None, false) => order.len() - 1,
-            (Some(at), true) => (at + 1) % order.len(),
-            (Some(at), false) => (at + order.len() - 1) % order.len(),
-        };
-        order.get(next).map(|run| run.id)
-    }
-
     /// The run that needs you most, other than `except`.
     pub fn next_needing(&self, except: Option<RunId>) -> Option<RunId> {
         self.ordered()
@@ -325,10 +309,6 @@ impl Desk {
             .iter()
             .filter(|run| run.attention() == Attention::NeedsYou)
             .count()
-    }
-
-    pub fn live_count(&self) -> usize {
-        self.ordered().len()
     }
 
     /// The live run driving the session whose client names its

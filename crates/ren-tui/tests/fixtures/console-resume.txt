@@ -1,5 +1,4 @@
- /resume   search: ▏                                         ◇ ▪ ▪   1 needs you · 3 live
-──────────────────────────────────────────────────────────────────────────────────────────
+ ren   wall  › /resume   ◇ ren   ▪ acme-web   ▪ acme-api             1 needs you · 3 live
                                                            │ needs you
   › fix the flaky upload test                              │ › ren  fix the flaky upload…
     The lease token was compared before the retry          │
@@ -19,6 +18,7 @@
                                                            │
                                                            │
                                                            │
+                                                           │
 ──────────────────────────────────────────────────────────────────────────────────────────
- › /new <project> <prompt> starts a run · /help
- ↑↓ choose · enter opens · esc back                 alt-←→ runs · /resume · /wall · /help
+ › type to search the runs
+ search: ▏ · ↑↓ choose · enter opens · esc back                      /help │ 00:00:00 UTC

@@ -116,40 +116,6 @@ impl Transcript {
         })
     }
 
-    /// The newest reply text, for a one-line summary.
-    pub fn last_reply(&self) -> Option<&str> {
-        self.entries.iter().rev().find_map(|entry| match entry {
-            Entry::Message { text, .. } if !text.trim().is_empty() => Some(text.as_str()),
-            Entry::Prompt(_)
-            | Entry::Message { .. }
-            | Entry::Reasoning { .. }
-            | Entry::Command { .. }
-            | Entry::FileChange { .. }
-            | Entry::Tool { .. }
-            | Entry::Notice { .. }
-            | Entry::TurnEnd(_) => None,
-        })
-    }
-
-    /// The newest item's action, in a few words, while a turn runs.
-    pub fn doing(&self) -> Option<String> {
-        self.entries.iter().rev().find_map(|entry| match entry {
-            Entry::Command { command, .. } => Some(format!("running {command}")),
-            Entry::FileChange { paths, .. } => Some(format!(
-                "editing {}",
-                paths.first().map_or("files", String::as_str)
-            )),
-            Entry::Tool { name, .. } => Some(name.clone()),
-            Entry::Message { done: false, .. } => Some("writing".to_owned()),
-            Entry::Reasoning { done: false, .. } => Some("thinking".to_owned()),
-            Entry::Prompt(_)
-            | Entry::Message { .. }
-            | Entry::Reasoning { .. }
-            | Entry::Notice { .. }
-            | Entry::TurnEnd(_) => None,
-        })
-    }
-
     fn prompts_since_turn_end(&self) -> Vec<&str> {
         let start = self
             .entries

@@ -18,14 +18,12 @@ impl Grid {
     pub const PANE_WIDTH: u16 = 56;
     /// The shortest a pane gets, in lines.
     pub const PANE_HEIGHT: u16 = 10;
-    /// Lines below the panes: the status line.
-    pub const STATUS_LINES: u16 = 1;
     /// At most this many panes across and down.
     pub const MAX: u16 = 4;
 
-    /// As many panes as fit, at least one.
+    /// As many panes as fit in `size`, the panes' room, at least one.
     pub fn fit(size: Size) -> Self {
-        let height = size.height.saturating_sub(Self::STATUS_LINES);
+        let height = size.height;
         Self {
             columns: (size.width / Self::PANE_WIDTH).clamp(1, Self::MAX),
             rows: (height / Self::PANE_HEIGHT).clamp(1, Self::MAX),
@@ -43,7 +41,7 @@ impl Grid {
     pub fn for_sessions(size: Size, sessions: usize) -> Self {
         let room = Self::fit(size);
         let wanted = sessions.clamp(1, room.panes());
-        let height = f64::from(size.height.saturating_sub(Self::STATUS_LINES).max(1));
+        let height = f64::from(size.height.max(1));
         let width = f64::from(size.width.max(1));
         let mut best: Option<(f64, Self)> = None;
         for columns in 1..=room.columns {

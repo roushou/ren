@@ -1,45 +1,59 @@
-//! One run's conversation fills the screen, with the message box under it.
-//! Typing replies; an approval is answered with 1–4, and answering one
-//! moves on to the next run that waits for you.
+//! One session full screen, in the frame: a run Ren drives, whose message
+//! box sends to it, or a session watched from the wall, read the same way
+//! and shown the same way, whose box only takes commands. A run's approval
+//! is answered with 1–4, and answering moves on to the next run that waits.
 
-use super::chrome::Chrome;
+use super::frame::{Frame, Here};
 use super::message::Typed;
 use super::slash::Slash;
+use super::wall::SessionPane;
 use super::{Action, Ctx, Look, News, Notice, Screen};
 use crate::Key;
 use crate::conversation::{Conversation, Density};
 use crate::keys::{Bind, HelpRow, Keymap};
 use crate::model::desk::{Attention, Run};
 use crate::model::{Command, Control, Model};
-use crate::ui::{Ink, Line, Span, Text, View};
+use crate::ui::{Anchor, Bar, Ink, Keep, Line, Lines, Rule, Size, Span, Text, View};
 use ren_harness::drive::{ApprovalAsk, ApprovalId, Decision, Prompt};
+use ren_protocol::label::Labeled;
 use ren_protocol::native::NativeThreadId;
-use ren_recorder::id::RunId;
+use ren_recorder::id::{RunId, SessionId};
 use ren_supervisor::RunState;
 use std::collections::HashMap;
 
-/// One run, open.
+/// Which session is shown.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Subject {
+    /// A run Ren drives.
+    Run(RunId),
+    /// A session started outside Ren, watched.
+    Watched(SessionId),
+}
+
+/// One session, open.
 #[derive(Debug)]
-pub(crate) struct RunScreen {
-    run: RunId,
+pub(crate) struct SessionScreen {
+    subject: Subject,
     /// Lines scrolled up from the newest.
     scroll: usize,
     /// What happened to the run just left, shown atop this one.
     handoff: Option<String>,
-    /// Whether its recorded turns were asked for.
+    /// Whether a run's recorded turns were asked for.
     asked: bool,
+    /// The sessions' revision a watched session's reads were asked at.
+    read_at: Option<u64>,
 }
 
-/// What a run screen's own keys do.
+/// What a session screen's own keys do.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum RunKey {
+enum SessionKey {
     Answer,
     Send,
     NewLine,
     Complete,
-    Interrupt,
-    Previous,
-    Next,
+    Back,
+    PreviousPlace,
+    NextPlace,
     PageUp,
     PageDown,
     LineUp,
@@ -47,7 +61,7 @@ enum RunKey {
     Quit,
 }
 
-impl RunKey {
+impl SessionKey {
     const KEYS: Keymap<Self> = Keymap(&[
         Bind {
             keys: &[
@@ -81,20 +95,20 @@ impl RunKey {
         Bind {
             keys: &[Key::Esc],
             label: "esc",
-            does: "interrupt the turn",
-            command: Self::Interrupt,
+            does: "interrupt the turn; with none running, back to the wall",
+            command: Self::Back,
         },
         Bind {
             keys: &[Key::AltLeft],
             label: "alt-←",
-            does: "the run before, what needs you first",
-            command: Self::Previous,
+            does: "the place before: the wall, then each live run",
+            command: Self::PreviousPlace,
         },
         Bind {
             keys: &[Key::AltRight],
             label: "alt-→",
-            does: "the next run",
-            command: Self::Next,
+            does: "the next place",
+            command: Self::NextPlace,
         },
         Bind {
             keys: &[Key::PageUp],
@@ -129,44 +143,68 @@ impl RunKey {
     ]);
 }
 
-impl RunScreen {
-    pub fn new(run: RunId) -> Self {
+impl SessionScreen {
+    fn new(subject: Subject) -> Self {
         Self {
-            run,
+            subject,
             scroll: 0,
             handoff: None,
             asked: false,
+            read_at: None,
         }
+    }
+
+    pub fn run(run: RunId) -> Self {
+        Self::new(Subject::Run(run))
+    }
+
+    pub fn watching(session: SessionId) -> Self {
+        Self::new(Subject::Watched(session))
     }
 
     /// `run`, with what happened to the run left for it.
     pub fn after(run: RunId, handoff: String) -> Self {
         Self {
             handoff: Some(handoff),
-            ..Self::new(run)
+            ..Self::run(run)
         }
     }
 
+    /// The session it watches, if it watches one.
     #[cfg(test)]
-    pub fn run(&self) -> RunId {
-        self.run
+    pub fn watched(&self) -> Option<SessionId> {
+        match self.subject {
+            Subject::Watched(session) => Some(session),
+            Subject::Run(_) => None,
+        }
     }
 
-    /// The console's keys and commands, for the help.
-    pub fn help() -> Vec<HelpRow> {
-        let mut rows = RunKey::KEYS.help();
-        rows.extend(Slash::commands().map(|(command, does)| HelpRow {
-            label: format!("/{command}"),
-            does: does.to_owned(),
-        }));
-        rows
+    /// The run it shows, if it shows one.
+    pub fn shown_run(&self) -> Option<RunId> {
+        match self.subject {
+            Subject::Run(run) => Some(run),
+            Subject::Watched(_) => None,
+        }
     }
 
-    /// Shown: its recorded turns are read.
+    /// Its keys, for the help.
+    pub fn keys() -> Vec<HelpRow> {
+        SessionKey::KEYS.help()
+    }
+
+    /// Shown: what it shows is read.
     pub fn shown(&mut self, ctx: &mut Ctx<'_>) -> Vec<Action> {
         self.scroll = 0;
-        self.asked = Self::session_known(ctx.model, self.run);
-        vec![Action::Read(ctx.model.history(self.run, false))]
+        match self.subject {
+            Subject::Run(run) => {
+                self.asked = Self::session_known(ctx.model, run);
+                vec![Action::Read(ctx.model.history(run, false))]
+            }
+            Subject::Watched(_) => {
+                self.read_at = None;
+                self.changed(ctx, &[])
+            }
+        }
     }
 
     fn session_known(model: &Model, run: RunId) -> bool {
@@ -179,27 +217,45 @@ impl RunScreen {
 
     pub fn changed(&mut self, ctx: &mut Ctx<'_>, news: &[News]) -> Vec<Action> {
         if let Some(News::Started(run)) = news.first() {
-            return vec![Action::Replace(Screen::Run(Self::new(*run)))];
+            return vec![Action::Replace(Screen::Session(Self::run(*run)))];
         }
-        // Its recorded turns, once its session is known.
-        if !self.asked && Self::session_known(ctx.model, self.run) {
-            self.asked = true;
-            let empty = ctx
-                .model
-                .desk
-                .get(self.run)
-                .is_some_and(|run| run.history.is_empty());
-            if empty {
-                return vec![Action::Read(ctx.model.history(self.run, false))];
+        match self.subject {
+            Subject::Run(run) => {
+                // Its recorded turns, once its session is known.
+                if !self.asked && Self::session_known(ctx.model, run) {
+                    self.asked = true;
+                    let empty = ctx
+                        .model
+                        .desk
+                        .get(run)
+                        .is_some_and(|run| run.history.is_empty());
+                    if empty {
+                        return vec![Action::Read(ctx.model.history(run, false))];
+                    }
+                }
+                Vec::new()
+            }
+            Subject::Watched(session) => {
+                let revision = ctx.model.sessions.revision();
+                if self.read_at == Some(revision) {
+                    return Vec::new();
+                }
+                self.read_at = Some(revision);
+                ctx.model
+                    .sessions
+                    .reads_for(session)
+                    .into_iter()
+                    .map(Action::Read)
+                    .collect()
             }
         }
-        Vec::new()
     }
 
     pub fn press(&mut self, key: Key, ctx: &mut Ctx<'_>) -> Vec<Action> {
         // An approval waiting takes 1-4 while nothing is typed.
-        if let (Key::Char(digit @ '1'..='4'), true) = (key, ctx.message.is_empty())
-            && let Some((approval, _)) = ctx.model.desk.get(self.run).and_then(Run::approval)
+        if let (Key::Char(digit @ '1'..='4'), true, Some(run)) =
+            (key, ctx.message.is_empty(), self.shown_run())
+            && let Some((approval, _)) = ctx.model.desk.get(run).and_then(Run::approval)
         {
             let decision = match digit {
                 '1' => Decision::Accept,
@@ -207,7 +263,7 @@ impl RunScreen {
                 '3' => Decision::Decline,
                 _ => Decision::Cancel,
             };
-            return self.answer(ctx, approval, decision, None);
+            return Self::answer(ctx, run, approval, decision, None);
         }
         let key = match ctx.message.press(key, ctx.model.projects()) {
             Typed::Took => return Vec::new(),
@@ -215,35 +271,36 @@ impl RunScreen {
             Typed::Left(key) => key,
         };
         let page = usize::from(ctx.size.height.saturating_sub(8).max(1));
-        match RunKey::KEYS.find(key) {
-            Some(RunKey::Interrupt) => return self.interrupt(ctx.model),
-            Some(RunKey::Previous) => return Self::step(ctx.model, Some(self.run), false),
-            Some(RunKey::Next) => return Self::step(ctx.model, Some(self.run), true),
-            Some(RunKey::PageUp) => self.scroll = self.scroll.saturating_add(page),
-            Some(RunKey::PageDown) => self.scroll = self.scroll.saturating_sub(page),
-            Some(RunKey::LineUp) => self.scroll = self.scroll.saturating_add(1),
-            Some(RunKey::LineDown) => self.scroll = self.scroll.saturating_sub(1),
-            Some(RunKey::Quit) => return vec![Action::Quit],
-            Some(RunKey::Answer | RunKey::Send | RunKey::NewLine | RunKey::Complete) | None => {}
+        match SessionKey::KEYS.find(key) {
+            Some(SessionKey::Back) => return self.back(ctx.model),
+            Some(SessionKey::PreviousPlace) => return vec![Action::Step { forward: false }],
+            Some(SessionKey::NextPlace) => return vec![Action::Step { forward: true }],
+            Some(SessionKey::PageUp) => self.scroll = self.scroll.saturating_add(page),
+            Some(SessionKey::PageDown) => self.scroll = self.scroll.saturating_sub(page),
+            Some(SessionKey::LineUp) => self.scroll = self.scroll.saturating_add(1),
+            Some(SessionKey::LineDown) => self.scroll = self.scroll.saturating_sub(1),
+            Some(SessionKey::Quit) => return vec![Action::Quit],
+            Some(
+                SessionKey::Answer | SessionKey::Send | SessionKey::NewLine | SessionKey::Complete,
+            )
+            | None => {}
         }
         Vec::new()
     }
 
-    /// The live run after (or before) `from`, what needs you first.
-    pub fn step(model: &Model, from: Option<RunId>, forward: bool) -> Vec<Action> {
-        match model.desk.step(from, forward) {
-            Some(run) => vec![Action::Replace(Screen::Run(Self::new(run)))],
-            None => vec![Action::Say(Notice::info("no live runs: /new starts one"))],
-        }
-    }
-
-    /// Esc interrupts the running turn, as in the clients themselves.
-    fn interrupt(&self, model: &Model) -> Vec<Action> {
-        match model.desk.get(self.run).map(Run::attention) {
-            Some(Attention::Working | Attention::NeedsYou) => {
-                vec![Action::Send(Command::Interrupt(self.run))]
-            }
-            Some(Attention::YourTurn | Attention::Starting | Attention::Ended) | None => Vec::new(),
+    /// Esc interrupts a running turn, as in the clients themselves; with
+    /// none running, it goes back to the wall.
+    fn back(&self, model: &Model) -> Vec<Action> {
+        match self.shown_run().and_then(|run| model.desk.get(run)) {
+            Some(run) => match run.attention() {
+                Attention::Working | Attention::NeedsYou => {
+                    vec![Action::Send(Command::Interrupt(run.id))]
+                }
+                Attention::YourTurn | Attention::Starting | Attention::Ended => {
+                    vec![Action::Wall]
+                }
+            },
+            None => vec![Action::Wall],
         }
     }
 
@@ -254,14 +311,19 @@ impl RunScreen {
         }
         if let Some(slash) = Slash::parse(&text) {
             ctx.message.take();
-            return slash.act(ctx, Some(self.run));
+            return slash.act(ctx, self.shown_run());
         }
+        let Some(id) = self.shown_run() else {
+            return vec![Action::Say(Notice::info(
+                "Ren did not start this session, so it cannot send to it · /new starts a run",
+            ))];
+        };
         if let Control::Unavailable(why) = &ctx.model.control {
             return vec![Action::Say(Notice::refusal(format!(
                 "runs cannot be driven from here: {why}"
             )))];
         }
-        let Some(run) = ctx.model.desk.get(self.run) else {
+        let Some(run) = ctx.model.desk.get(id) else {
             return Vec::new();
         };
         let Ok(prompt) = Prompt::parse(text) else {
@@ -283,15 +345,15 @@ impl RunScreen {
         ctx.message.take();
         // Typing while an approval waits declines it; the words go next.
         if let Some((approval, _)) = approval {
-            return self.answer(ctx, approval, Decision::Decline, Some(prompt));
+            return Self::answer(ctx, id, approval, Decision::Decline, Some(prompt));
         }
         match attention {
             Attention::YourTurn => {
                 self.scroll = 0;
-                vec![Action::Send(ctx.model.prompt(self.run, prompt))]
+                vec![Action::Send(ctx.model.prompt(id, prompt))]
             }
             Attention::Working | Attention::Starting | Attention::NeedsYou => {
-                ctx.model.queue(self.run, prompt);
+                ctx.model.queue(id, prompt);
                 Vec::new()
             }
             // A message to a run that ended continues its conversation in a
@@ -311,13 +373,13 @@ impl RunScreen {
     }
 
     fn answer(
-        &mut self,
         ctx: &mut Ctx<'_>,
+        id: RunId,
         approval: ApprovalId,
         decision: Decision,
         then: Option<Prompt>,
     ) -> Vec<Action> {
-        let Some(run) = ctx.model.desk.get(self.run) else {
+        let Some(run) = ctx.model.desk.get(id) else {
             return Vec::new();
         };
         let what = Run::asked(run.approval().map(|(_, ask)| ask).as_ref());
@@ -329,20 +391,20 @@ impl RunScreen {
             Some(_) | None => false,
         };
         let mut actions = vec![Action::Send(Command::Answer {
-            run: self.run,
+            run: id,
             approval,
             decision,
         })];
         if let Some(prompt) = then {
-            ctx.model.queue(self.run, prompt);
+            ctx.model.queue(id, prompt);
         }
-        if !more && let Some(next) = ctx.model.desk.next_needing(Some(self.run)) {
+        if !more && let Some(next) = ctx.model.desk.next_needing(Some(id)) {
             let verb = match decision {
                 Decision::Accept | Decision::AcceptForSession => "allowed",
                 Decision::Decline => "denied",
                 Decision::Cancel => "denied and stopped",
             };
-            actions.push(Action::Replace(Screen::Run(Self::after(
+            actions.push(Action::Replace(Screen::Session(Self::after(
                 next,
                 format!("from {project} · {left}: {verb} {what}"),
             ))));
@@ -350,46 +412,128 @@ impl RunScreen {
         actions
     }
 
+    /// Where it is, as the places line names it.
+    pub fn here(&self, model: &Model) -> Here {
+        match self.subject {
+            Subject::Run(run) => Here::Run(run),
+            Subject::Watched(session) => Here::Watching(Self::watched_name(model, session)),
+        }
+    }
+
+    fn watched_name(model: &Model, session: SessionId) -> String {
+        let id = session.to_string();
+        let short = id.get(..8).unwrap_or(&id).to_owned();
+        let client = model
+            .sessions
+            .sessions()
+            .iter()
+            .find(|view| view.id == session)
+            .and_then(|view| view.source.known())
+            .map(|source| source.harness().label().replace('_', "-"));
+        match client {
+            Some(client) => format!("{client} {short}"),
+            None => short,
+        }
+    }
+
     pub fn view(&self, look: &Look<'_>) -> View {
-        let width = usize::from(look.size.width);
-        let Some(run) = look.model.desk.get(self.run) else {
-            return Chrome::new(
-                look,
-                Line::of(" run", Ink::Text),
-                Vec::new(),
-                Some(self.run),
-                Self::idle_placeholder(),
-                Line::default(),
-            )
-            .view();
-        };
-        let mut chrome = Chrome::new(
-            look,
-            Self::title(run),
-            Self::conversation(run, self.handoff.as_deref(), width.saturating_sub(4)),
-            Some(self.run),
-            Self::placeholder(run),
-            Self::keys(run),
-        );
-        chrome.scroll = self.scroll;
-        chrome.view()
+        let room = Frame::body(look);
+        let here = self.here(look.model);
+        match self.subject {
+            Subject::Run(id) => {
+                let (body, status, placeholder) = match look.model.desk.get(id) {
+                    Some(run) => (
+                        self.run_body(run, room),
+                        Frame::trouble(look).unwrap_or_else(|| Self::keys_line(run)),
+                        Self::placeholder(run),
+                    ),
+                    None => (
+                        View::Empty,
+                        Line::default(),
+                        "/new <project> <prompt> starts a run".to_owned(),
+                    ),
+                };
+                Frame::new(look, &here, body, status, &placeholder).view()
+            }
+            Subject::Watched(session) => {
+                let view = look
+                    .model
+                    .sessions
+                    .sessions()
+                    .iter()
+                    .find(|view| view.id == session);
+                let body = match view {
+                    Some(view) => SessionPane::of(look.model, view, look.now).view(
+                        None,
+                        false,
+                        room,
+                        look.now,
+                        Density::Page,
+                    ),
+                    None => View::lines(
+                        vec![Line::of(
+                            "this session is no longer on the wall",
+                            Ink::Muted,
+                        )],
+                        Anchor::Middle,
+                    ),
+                };
+                Frame::new(
+                    look,
+                    &here,
+                    body,
+                    Line::of(" watching · esc back to the wall", Ink::Muted),
+                    "Watching: Ren did not start this session · /new starts a run",
+                )
+                .view()
+            }
+        }
     }
 
-    fn title(run: &Run) -> Line {
-        let ink = match run.attention() {
-            Attention::NeedsYou => Ink::Warning,
-            Attention::YourTurn | Attention::Working | Attention::Starting => Ink::Text,
-            Attention::Ended => Ink::Muted,
+    /// A run's body: a title bar lit by what it waits for, then its
+    /// conversation.
+    fn run_body(&self, run: &Run, room: crate::Size) -> View {
+        let lit = match run.attention() {
+            Attention::NeedsYou => Some(Ink::WarningTitle),
+            Attention::Working => Some(Ink::LiveTitle),
+            Attention::YourTurn | Attention::Starting | Attention::Ended => None,
         };
-        Line::new(vec![
-            Span::new(format!(" {}", run.project()), Ink::Text),
-            Span::new(format!(" · {} · ", run.client()), Ink::Muted),
-            Span::new(run.phase(), ink),
-        ])
-    }
-
-    pub fn idle_placeholder() -> String {
-        "/new <project> <prompt> starts a run · /help".to_owned()
+        let title = Bar {
+            left: Line::new(vec![
+                Span::plain(format!(" {}", run.project())),
+                Span::plain(format!(" · {} · ", run.client())),
+                Span::plain(run.phase()),
+            ]),
+            right: Line::from(Span::plain(format!("{} ", Text(&run.title()).summary(40)))),
+            fill: lit.unwrap_or(Ink::Muted),
+            keep: Keep::Left,
+        };
+        let width = usize::from(room.width);
+        View::fill(
+            Ink::Pane,
+            View::Rows(vec![
+                (Size::Exact(1), View::Bar(title)),
+                (
+                    Size::Exact(1),
+                    View::Rule(match lit {
+                        Some(ink) => Rule::Edge(ink),
+                        None => Rule::Plain,
+                    }),
+                ),
+                (
+                    Size::Fill,
+                    View::Lines(Lines {
+                        lines: Self::conversation(
+                            run,
+                            self.handoff.as_deref(),
+                            width.saturating_sub(4),
+                        ),
+                        anchor: Anchor::Newest,
+                        scroll: self.scroll,
+                    }),
+                ),
+            ]),
+        )
     }
 
     fn placeholder(run: &Run) -> String {
@@ -403,7 +547,7 @@ impl RunScreen {
         }
     }
 
-    fn keys(run: &Run) -> Line {
+    fn keys_line(run: &Run) -> Line {
         match (&run.queued, run.attention()) {
             (Some(queued), _) => Line::of(
                 format!(
@@ -412,13 +556,14 @@ impl RunScreen {
                 ),
                 Ink::Muted,
             ),
-            (None, Attention::NeedsYou) => Line::of(" 1–4 answers", Ink::Muted),
+            (None, Attention::NeedsYou) => Line::of(" 1–4 answers · esc interrupts", Ink::Muted),
             (None, Attention::Working | Attention::Starting) => {
                 Line::of(" esc interrupts", Ink::Muted)
             }
-            (None, Attention::YourTurn | Attention::Ended) => {
-                Line::of(" enter sends · ctrl-j new line", Ink::Muted)
-            }
+            (None, Attention::YourTurn | Attention::Ended) => Line::of(
+                " enter sends · ctrl-j new line · esc back to the wall",
+                Ink::Muted,
+            ),
         }
     }
 

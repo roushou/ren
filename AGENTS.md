@@ -258,35 +258,38 @@ dependencies under "Crates" below. Read the code for current module ownership.
   `workdir` free of runtime and I/O. The daemon constructs it when `[runs]`
   roots are configured, with `ProcessHost`; the gateway's control API serves it.
 - `crates/ren-tui`: Ren in the terminal, with `Tui` as its primary type: one
-  program over one gateway, made of screens. `Tui` is sans-IO: it holds the
-  model and a stack of screens that is never empty, hands key presses
-  (`Key`) to the screen on top and what was read (`Input`) to the model and
-  then that screen, and answers with `Out`s: the reads to make (`Read`) and
-  the `Command`s the shell sends through the control API. `Tui::view` is
-  what to draw. `ren tui` opens it on the wall and `ren runs` on the
-  console's runs (`Opening`).
+  app over one gateway, made of screens drawn in one frame. `Tui` is
+  sans-IO: it holds the model and a stack of screens over the wall, hands
+  key presses (`Key`) to the screen on top and what was read (`Input`) to
+  the model and then that screen, and answers with `Out`s: the reads to make
+  (`Read`) and the `Command`s the shell sends through the control API.
+  `Tui::view` is what to draw. The wall and each live run are places, which
+  Alt-← and Alt-→ move between; `ren tui` opens on the wall and `ren runs`
+  on the run that needs you (`Opening`).
   - `model`: everything read from the gateway, in the one place every
     screen reads it from: sessions and their model calls (`sessions`:
     snapshots, as `ren_store::view` types, turn and call activity, progress
-    on streaming calls, failed reads), the daemon's runs (`desk`: what needs
-    you first, `Attention`), each run's live conversation and how a
-    finished turn gives way to its record (`transcript`), projects, and how
-    a call ended (`call`, `CallEnd`). `Model::apply` answers with reads,
-    prompts kept for a run that now waits for one, and news.
-  - `screen`: `enum Screen { Wall, Home, Run, Resume, Help }`, one file
-    each with the same shape (`shown`, `changed`, `press`, `view`, `keys`),
-    answering with `Action`s that include moves between screens. The wall
-    (`wall`: panes sized to the active sessions in `grid`, each session read
-    for its pane in `pane`, a live run's mark in `runs`, laid out in
-    `view`); the console's live runs (`home`), one run (`run`), `/resume`
-    (`resume`), sharing their title line and message box (`chrome`,
-    `message`, `composer`) and slash commands (`slash`), which carry
-    themselves out from any of them; and the help (`help`), laid over the
-    screen under it with that screen's keys. `r` on the wall opens the
-    console; `/wall` goes back.
+    on streaming calls, failed reads, and what to read to show a session),
+    the daemon's runs (`desk`: what needs you first, `Attention`), each
+    run's live conversation and how a finished turn gives way to its record
+    (`transcript`), projects, and how a call ended (`call`, `CallEnd`).
+    `Model::apply` answers with reads, prompts kept for a run that now waits
+    for one, and news.
+  - `screen`: `enum Screen { Wall, Session, Resume, Help }`, one file each
+    with the same shape (`shown`, `changed`, `press`, `view`, `keys`),
+    answering with `Action`s that include moves between screens and places.
+    Every screen is drawn in `frame`: the places line, the body, the message
+    box (`message`, `composer`), and the status line; slash commands
+    (`slash`) work from every screen. The wall (`wall`: panes sized to the
+    active sessions in `grid`, each session read for its pane in `pane`, a
+    live run's mark in `runs`, laid out in `view`) opens the focused session
+    full screen in `session`, which shows a run Ren drives (its box sends to
+    it, approvals are answered there) and a session watched from the wall
+    the same way; `resume` is `/resume`'s list, and `help`, laid over the
+    screen under it, lists that screen's keys and the commands.
   - `conversation`: a conversation read once (from recorded calls in
     `read`, or a run's live events) and laid out at a wall pane's density
-    or a run page's, so the two never draw it differently.
+    or a full screen's, so the two never draw it differently.
   - `keys`: each screen's keys as data (`Keymap`), which both looking a key
     up and the help read.
   - `ui`: what every screen draws with: `Span` and `Line` in an `Ink` (what
@@ -363,7 +366,7 @@ dependencies under "Crates" below. Read the code for current module ownership.
   its lines (and progress events, which `ren tui` asks for). With the `tui`
   feature (off by default), `commands::tui` is `ren tui` and `ren runs` with
   no subcommand: the shell around `ren-tui`'s `Tui`, opened on the wall or
-  the console's runs, reading snapshots, turns, runs, projects, and recorded turns
+  the run that needs you, reading snapshots, turns, runs, projects, and recorded turns
   through the gateway's APIs alongside one another, following the live and
   run feeds, sending the console's commands through `ControlTarget`, and
   drawing to its `Terminal`.

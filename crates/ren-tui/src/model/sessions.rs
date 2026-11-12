@@ -176,6 +176,50 @@ impl Sessions {
         &self.progress
     }
 
+    /// What to read to show `session`: its newest two turns where they
+    /// changed since they were read or are still being derived, or, for a
+    /// client that sends no turns, its newest finished calls.
+    pub fn reads_for(&self, session: SessionId) -> Vec<Read> {
+        /// How many of a turnless session's newest calls are read.
+        const TURNLESS_CALLS: usize = 4;
+        let calls = self.session_calls(session);
+        let turns = Self::recent_turns(&calls);
+        let mut reads = Vec::new();
+        if turns.is_empty() {
+            for call in calls
+                .iter()
+                .rev()
+                .filter(|call| call.state.known() != Some(CallState::Open))
+                .take(TURNLESS_CALLS)
+            {
+                if !self.call_settled(call.id) {
+                    reads.push(Read::Call(call.id));
+                }
+            }
+        }
+        for turn in turns {
+            if !self.settled(turn) {
+                reads.push(Read::Turn(turn));
+            }
+        }
+        reads
+    }
+
+    /// The newest two turns the calls carried, oldest first.
+    pub fn recent_turns(calls: &[&CallView]) -> Vec<TurnId> {
+        let mut turns: Vec<TurnId> = Vec::new();
+        for turn in calls.iter().rev().filter_map(|call| call.turn) {
+            if !turns.contains(&turn) {
+                turns.push(turn);
+            }
+            if turns.len() == 2 {
+                break;
+            }
+        }
+        turns.reverse();
+        turns
+    }
+
     /// Whether `turn` was read since its calls last changed, and its text
     /// is derived.
     pub fn settled(&self, turn: TurnId) -> bool {

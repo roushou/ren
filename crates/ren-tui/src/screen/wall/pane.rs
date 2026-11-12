@@ -2,8 +2,10 @@
 //! replies and tool calls, and what in it needs a look. The same readings
 //! as the web UI's Live wall, so the two never disagree about a session.
 
-use crate::conversation::{Block, Conversation};
+use crate::conversation::{Block, Conversation, ToolLine};
 use crate::model::CallEnd;
+use crate::model::Model;
+use crate::model::sessions::Sessions;
 use crate::ui::Tone;
 use ren_harness::Harness;
 use ren_protocol::label::Stored;
@@ -135,6 +137,55 @@ pub(crate) struct SessionRead<'a> {
 }
 
 impl SessionPane {
+    /// `session` as read now, with what the model holds of it.
+    pub(crate) fn of(model: &Model, session: &SessionView, now: UnixMillis) -> Self {
+        let calls = model.sessions.session_calls(session.id);
+        let recent = Sessions::recent_turns(&calls);
+        let held = |turn| model.sessions.turn(turn);
+        let (earlier, turn) = match recent.as_slice() {
+            [earlier, newest] => (held(*earlier), held(*newest)),
+            [newest] => (None, held(*newest)),
+            _ => (None, None),
+        };
+        let activities: Vec<&CallActivity> = calls
+            .iter()
+            .filter_map(|call| model.sessions.activity(call.id))
+            .collect();
+        let mut pane = Self::read(&SessionRead {
+            activities: &activities,
+            session,
+            calls: &calls,
+            earlier,
+            turn,
+            progress: model.sessions.progress(),
+            now,
+        });
+        pane.run = model
+            .desk
+            .driving(&session.native_id)
+            .and_then(super::runs::RunMark::of);
+        pane
+    }
+
+    /// The conversation it shows, with what a streaming call has said so
+    /// far.
+    pub(crate) fn conversation(&self) -> Conversation {
+        let mut blocks = self.lines.clone();
+        if let Some(streaming) = &self.streaming {
+            for tool in &streaming.tools {
+                blocks.push(Block::Tools(ToolLine::named(tool)));
+            }
+            blocks.push(if streaming.thinking {
+                Block::Thinking
+            } else if streaming.cut {
+                Block::Streaming(format!("…{}", streaming.reply))
+            } else {
+                Block::Streaming(streaming.reply.clone())
+            });
+        }
+        Conversation { blocks }
+    }
+
     /// The most lines a pane keeps; it shows the newest that fit.
     pub const MAX_LINES: usize = 60;
     /// A last call that completed its turn this recently is still your turn.
@@ -267,21 +318,6 @@ impl SessionPane {
     /// The newest turn a call carried.
     pub(crate) fn newest_turn(calls: &[&CallView]) -> Option<TurnId> {
         calls.iter().rev().find_map(|call| call.turn)
-    }
-
-    /// The newest two turns the calls carried, oldest first.
-    pub(crate) fn recent_turns(calls: &[&CallView]) -> Vec<TurnId> {
-        let mut turns: Vec<TurnId> = Vec::new();
-        for turn in calls.iter().rev().filter_map(|call| call.turn) {
-            if !turns.contains(&turn) {
-                turns.push(turn);
-            }
-            if turns.len() == 2 {
-                break;
-            }
-        }
-        turns.reverse();
-        turns
     }
 
     fn phase(calls: &[&CallView], now: UnixMillis) -> Phase {

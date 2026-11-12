@@ -1,10 +1,10 @@
 //! The wall: every live session's traffic, one pane per session, each
-//! showing its newest turns as its calls stream, and a status line.
+//! showing its newest turns as its calls stream. It is the first place on
+//! the places line and always under every other screen.
 //!
 //! [`Wall`] holds only how the wall is arranged: which session has which
-//! pane, the focus, a zoomed session, and pins. What it shows comes from
-//! the model; [`Wall::frame`] reads it at a given time, and `view` lays the
-//! frame out.
+//! pane, the focused pane, and pins. Enter opens the focused session full
+//! screen; typing goes to the message box, as everywhere.
 
 mod grid;
 mod keys;
@@ -17,25 +17,27 @@ mod view;
 pub use grid::Grid;
 pub use keys::Command;
 pub use pane::SessionPane;
-pub use runs::{RunCounts, RunMark};
+pub use runs::RunCounts;
 
-use super::{Action, Ctx, Look, Screen};
+use super::frame::{Frame, Here};
+use super::message::Typed;
+use super::session::SessionScreen;
+use super::slash::Slash;
+use super::{Action, Ctx, Look, Notice, Screen};
 use crate::keys::HelpRow;
 use crate::model::sessions::{Reading, Sessions, Spark};
 use crate::model::{Control, Model, Read};
 use crate::{Key, Size};
 use grid::Placement;
-use pane::SessionRead;
 use ren_recorder::capture::CallState;
-use ren_recorder::id::{RunId, SessionId};
+use ren_recorder::id::SessionId;
 use ren_recorder::time::UnixMillis;
-use ren_store::activity::CallActivity;
 use ren_store::view::{CallView, SessionView};
 
 /// How the wall is arranged.
 #[derive(Debug)]
 pub struct Wall {
-    /// The size the grid was made for.
+    /// The room the grid was made for.
     size: Size,
     grid: Grid,
     placement: Placement,
@@ -45,33 +47,22 @@ pub struct Wall {
     hidden: usize,
     /// The focused pane's place, always within the grid.
     focus: usize,
-    /// The session filling the screen, if any.
-    zoom: Option<SessionId>,
     /// Sessions kept on the wall, first, even when they go quiet.
     pins: Vec<SessionId>,
-    /// What it was last arranged from: the sessions' revision, the size,
+    /// What it was last arranged from: the sessions' revision, the room,
     /// and the threads live runs hold.
     arranged: Option<(u64, Size, Vec<String>)>,
 }
 
-/// How the wall is laid out.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Layout {
-    /// Every pane, one focused.
-    Panes { focus: usize },
-    /// One session fills the screen.
-    Zoomed,
-}
-
-/// Everything to draw at one time.
+/// What the wall shows at one time.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Frame {
+pub struct Panes {
+    /// The room the panes have.
     pub size: Size,
-    /// One pane across and down when zoomed.
     pub grid: Grid,
     /// In pane order: across, then down.
     pub panes: Vec<Pane>,
-    pub layout: Layout,
+    pub focus: usize,
     pub status: Status,
 }
 
@@ -106,9 +97,6 @@ pub struct Status {
 }
 
 impl Wall {
-    /// How many of a turnless session's newest calls a pane reads.
-    pub const TURNLESS_CALLS: usize = 4;
-
     pub fn new(size: Size) -> Self {
         Self {
             size,
@@ -117,7 +105,6 @@ impl Wall {
             wanted: Vec::new(),
             hidden: 0,
             focus: 0,
-            zoom: None,
             pins: Vec::new(),
             arranged: None,
         }
@@ -135,41 +122,62 @@ impl Wall {
         actions
     }
 
-    /// The model or the size changed: arranged again when what it is
+    /// The model or the room changed: arranged again when what it is
     /// arranged from moved.
     pub(crate) fn changed(&mut self, ctx: &mut Ctx<'_>) -> Vec<Action> {
+        let room = Size {
+            width: ctx.size.width,
+            height: ctx.size.height.saturating_sub(Frame::ROWS),
+        };
         let now = (
             ctx.model.sessions.revision(),
-            ctx.size,
+            room,
             ctx.model.desk.threads(),
         );
         if self.arranged.as_ref() == Some(&now) {
             return Vec::new();
         }
         self.arranged = Some(now);
-        self.size = ctx.size;
+        self.size = room;
         self.rank(ctx.model);
         self.arrange(ctx.model)
     }
 
-    /// Takes one key press.
+    /// Takes one key press: the panes' keys while nothing is typed, else
+    /// the message box's.
     pub(crate) fn press(&mut self, key: Key, ctx: &mut Ctx<'_>) -> Vec<Action> {
-        let Some(command) = Command::KEYS.find(key) else {
-            return Vec::new();
-        };
+        if ctx.message.is_empty()
+            && let Some(command) = Command::KEYS.find(key)
+        {
+            return self.command(command, ctx.model);
+        }
+        match ctx.message.press(key, ctx.model.projects()) {
+            Typed::Took => Vec::new(),
+            Typed::Submit => {
+                let text = ctx.message.text();
+                match Slash::parse(&text) {
+                    Some(slash) => {
+                        ctx.message.take();
+                        slash.act(ctx, None)
+                    }
+                    None => vec![Action::Say(Notice::info(
+                        "open a session to reply to it · /new <project> <prompt> starts a run",
+                    ))],
+                }
+            }
+            Typed::Left(key) => match Command::KEYS.find(key) {
+                Some(command @ (Command::PreviousPlace | Command::NextPlace | Command::Quit)) => {
+                    self.command(command, ctx.model)
+                }
+                Some(_) | None => Vec::new(),
+            },
+        }
+    }
+
+    fn command(&mut self, command: Command, model: &Model) -> Vec<Action> {
         let panes = self.grid.panes();
         let columns = usize::from(self.grid.columns);
         match command {
-            Command::Theme => return vec![Action::CycleTheme],
-            Command::Quit => return vec![Action::Quit],
-            Command::Help => return vec![Action::Help],
-            Command::Runs => {
-                let run = self.focused_run(ctx.model);
-                return vec![Action::Push(Screen::runs(run))];
-            }
-            Command::Next | Command::Previous if self.zoom.is_some() => {
-                self.zoom = self.neighbour(command == Command::Next);
-            }
             Command::Next => self.focus = (self.focus + 1) % panes,
             Command::Previous => self.focus = (self.focus + panes - 1) % panes,
             Command::Left if !self.focus.is_multiple_of(columns) => self.focus -= 1,
@@ -177,57 +185,58 @@ impl Wall {
             Command::Up if self.focus >= columns => self.focus -= columns,
             Command::Down if self.focus + columns < panes => self.focus += columns,
             Command::Left | Command::Right | Command::Up | Command::Down => {}
-            Command::Zoom => {
-                self.zoom = match self.zoom {
-                    Some(_) => None,
-                    None => self.focused(),
-                };
-            }
-            Command::Back => self.zoom = None,
-            Command::Pin => {
-                if let Some(session) = self.zoom.or_else(|| self.focused()) {
-                    match self.pins.iter().position(|pinned| *pinned == session) {
-                        Some(at) => {
-                            self.pins.remove(at);
-                        }
-                        None => self.pins.push(session),
-                    }
-                    self.rank(ctx.model);
-                    return self.arrange(ctx.model);
-                }
-            }
+            Command::Open => return self.open(model),
+            Command::PreviousPlace => return vec![Action::Step { forward: false }],
+            Command::NextPlace => return vec![Action::Step { forward: true }],
+            Command::Quit => return vec![Action::Quit],
         }
         Vec::new()
     }
 
-    /// The live run the zoomed or focused session belongs to.
-    fn focused_run(&self, model: &Model) -> Option<RunId> {
-        let session = self.zoom.or_else(|| self.focused())?;
-        let view = model
+    /// The focused session, full screen: driven when a live run drives it,
+    /// else watched.
+    fn open(&self, model: &Model) -> Vec<Action> {
+        let Some(session) = self.focused() else {
+            return Vec::new();
+        };
+        let run = model
             .sessions
             .sessions()
             .iter()
-            .find(|view| view.id == session)?;
-        model.desk.driving(&view.native_id).map(|run| run.id)
+            .find(|view| view.id == session)
+            .and_then(|view| model.desk.driving(&view.native_id))
+            .map(|run| run.id);
+        let screen = match run {
+            Some(run) => SessionScreen::run(run),
+            None => SessionScreen::watching(session),
+        };
+        vec![Action::Push(Screen::Session(screen))]
+    }
+
+    /// Keeps the focused session on the wall even when it goes quiet, or
+    /// stops keeping it.
+    pub(crate) fn pin(&mut self, model: &Model) -> Vec<Action> {
+        let Some(session) = self.focused() else {
+            return vec![Action::Say(Notice::info("no session in the focused pane"))];
+        };
+        let said = match self.pins.iter().position(|pinned| *pinned == session) {
+            Some(at) => {
+                self.pins.remove(at);
+                "unpinned: it leaves the wall when it goes quiet"
+            }
+            None => {
+                self.pins.push(session);
+                "pinned: it stays on the wall, even when quiet"
+            }
+        };
+        self.rank(model);
+        let mut actions = self.arrange(model);
+        actions.push(Action::Say(Notice::info(said)));
+        actions
     }
 
     fn focused(&self) -> Option<SessionId> {
         self.placement.panes().get(self.focus).copied().flatten()
-    }
-
-    /// The placed session after (or before) the zoomed one, in pane order.
-    fn neighbour(&self, forward: bool) -> Option<SessionId> {
-        let placed: Vec<SessionId> = self.placement.panes().iter().flatten().copied().collect();
-        let at = placed
-            .iter()
-            .position(|session| Some(*session) == self.zoom)?;
-        let count = placed.len();
-        let next = if forward {
-            (at + 1) % count
-        } else {
-            (at + count - 1) % count
-        };
-        placed.get(next).copied()
     }
 
     /// Ranks the active sessions.
@@ -285,56 +294,27 @@ impl Wall {
         active.into_iter().map(|(session, _)| session.id).collect()
     }
 
-    /// Places sessions in panes; asks for the turns the panes show that
-    /// changed since they were read, or are still being derived.
+    /// Places sessions in panes; asks for what the panes show that changed
+    /// since it was read, or is still being derived.
     fn arrange(&mut self, model: &Model) -> Vec<Action> {
         self.grid = Grid::for_sessions(self.size, self.wanted.len());
         self.hidden = self.placement.arrange(self.grid, &self.wanted);
         self.focus = self.focus.min(self.grid.panes().saturating_sub(1));
-        // A zoomed session that left the wall leaves the zoom.
-        if self
-            .zoom
-            .is_some_and(|session| !self.placement.panes().contains(&Some(session)))
-        {
-            self.zoom = None;
-        }
-        let mut reads = Vec::new();
-        for session in self.placement.panes().iter().flatten().copied() {
-            let calls = model.sessions.session_calls(session);
-            let turns = SessionPane::recent_turns(&calls);
-            if turns.is_empty() {
-                // No turns: the newest finished calls, each read once its
-                // text is derived.
-                for call in calls
-                    .iter()
-                    .rev()
-                    .filter(|call| call.state.known() != Some(CallState::Open))
-                    .take(Self::TURNLESS_CALLS)
-                {
-                    if !model.sessions.call_settled(call.id) {
-                        reads.push(Action::Read(Read::Call(call.id)));
-                    }
-                }
-            }
-            for turn in turns {
-                if !model.sessions.settled(turn) {
-                    reads.push(Action::Read(Read::Turn(turn)));
-                }
-            }
-        }
-        reads
+        self.placement
+            .panes()
+            .iter()
+            .flatten()
+            .flat_map(|session| model.sessions.reads_for(*session))
+            .map(Action::Read)
+            .collect()
     }
 
-    /// What to draw at `now`.
-    pub(crate) fn frame(&self, look: &Look<'_>) -> Frame {
-        let model = look.model;
-        let now = look.now;
+    /// What the wall shows at `now`, in `size`.
+    pub(crate) fn panes(&self, model: &Model, now: UnixMillis, size: Size) -> Panes {
         let sessions = model.sessions.sessions();
-        let placed: Vec<Option<SessionId>> = match self.zoom {
-            Some(session) => vec![Some(session)],
-            None => self.placement.panes().to_vec(),
-        };
-        let panes: Vec<Pane> = placed
+        let panes: Vec<Pane> = self
+            .placement
+            .panes()
             .iter()
             .map(|pane| {
                 let Some(session) =
@@ -342,29 +322,8 @@ impl Wall {
                 else {
                     return Pane::Free;
                 };
-                let calls = model.sessions.session_calls(session.id);
-                let recent = SessionPane::recent_turns(&calls);
-                let held = |turn| model.sessions.turn(turn);
-                let (earlier, turn) = match recent.as_slice() {
-                    [earlier, newest] => (held(*earlier), held(*newest)),
-                    [newest] => (None, held(*newest)),
-                    _ => (None, None),
-                };
-                let activities: Vec<&CallActivity> = calls
-                    .iter()
-                    .filter_map(|call| model.sessions.activity(call.id))
-                    .collect();
-                let mut pane = SessionPane::read(&SessionRead {
-                    activities: &activities,
-                    session,
-                    calls: &calls,
-                    earlier,
-                    turn,
-                    progress: model.sessions.progress(),
-                    now,
-                });
+                let mut pane = SessionPane::of(model, session, now);
                 pane.pinned = self.pins.contains(&session.id);
-                pane.run = model.desk.driving(&session.native_id).and_then(RunMark::of);
                 Pane::Session(Box::new(pane))
             })
             .collect();
@@ -394,26 +353,25 @@ impl Wall {
                 Control::Unread | Control::Unavailable(_) => None,
             },
         };
-        let (grid, layout) = match self.zoom {
-            Some(_) => (
-                Grid {
-                    columns: 1,
-                    rows: 1,
-                },
-                Layout::Zoomed,
-            ),
-            None => (self.grid, Layout::Panes { focus: self.focus }),
-        };
-        Frame {
-            size: look.size,
-            grid,
+        Panes {
+            size,
+            grid: self.grid,
             panes,
-            layout,
+            focus: self.focus,
             status,
         }
     }
 
     pub(crate) fn view(&self, look: &Look<'_>) -> crate::ui::View {
-        self.frame(look).view()
+        let panes = self.panes(look.model, look.now, Frame::body(look));
+        let status = panes.status_line();
+        Frame::new(
+            look,
+            &Here::Wall,
+            panes.view(),
+            status,
+            "/new <project> <prompt> starts a run · enter opens the focused session",
+        )
+        .view()
     }
 }

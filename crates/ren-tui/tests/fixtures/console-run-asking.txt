@@ -1,5 +1,6 @@
- ren · Claude Code · needs you                               ◆ ▪ ▪   1 needs you · 3 live
-──────────────────────────────────────────────────────────────────────────────────────────
+ ren   wall   ◇ ren   ▪ acme-web   ▪ acme-api                        1 needs you · 3 live
+ ren · Claude Code · needs you                                  fix the flaky upload test
+▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
 
   › fix the flaky upload test
     The lease token was compared before the retry counter was bumped, so a late worker
@@ -18,7 +19,6 @@
 
 
 
-
 ──────────────────────────────────────────────────────────────────────────────────────────
  › 1–4 answers, or type to reply instead
- 1–4 answers                                        alt-←→ runs · /resume · /wall · /help
+ 1–4 answers · esc interrupts                                        /help │ 00:00:00 UTC

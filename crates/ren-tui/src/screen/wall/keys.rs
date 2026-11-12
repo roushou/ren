@@ -1,4 +1,5 @@
-//! The wall's keys and what each asks it to do.
+//! The wall's keys, while nothing is typed: moving between panes, opening
+//! the focused session, and moving between places.
 
 use crate::Key;
 use crate::keys::{Bind, Keymap};
@@ -6,106 +7,80 @@ use crate::keys::{Bind, Keymap};
 /// What a key asks the wall to do.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Command {
-    Quit,
-    /// Focus the next pane, or zoom into the next session.
     Next,
     Previous,
     Left,
     Right,
     Up,
     Down,
-    /// Fill the screen with the focused session, or go back to the panes.
-    Zoom,
-    /// Keep the focused session on the wall even when it goes quiet, or
-    /// stop keeping it.
-    Pin,
-    Help,
-    Theme,
-    /// Leave a zoomed session.
-    Back,
-    /// Open the console, on the focused session's run if it drives one.
-    Runs,
+    /// The focused session, full screen.
+    Open,
+    PreviousPlace,
+    NextPlace,
+    Quit,
 }
 
 impl Command {
     /// The wall's keys, in the order the help lists them.
     pub const KEYS: Keymap<Self> = Keymap(&[
         Bind {
-            keys: &[Key::Tab, Key::Char('n')],
-            label: "tab  n",
-            does: "next pane (zoomed: next session)",
+            keys: &[Key::Tab],
+            label: "tab",
+            does: "next pane",
             command: Self::Next,
         },
         Bind {
-            keys: &[Key::BackTab, Key::Char('N')],
-            label: "shift-tab  N",
-            does: "previous pane (zoomed: previous session)",
+            keys: &[Key::BackTab],
+            label: "shift-tab",
+            does: "previous pane",
             command: Self::Previous,
         },
         Bind {
-            keys: &[Key::Left, Key::Char('h')],
-            label: "←  h",
+            keys: &[Key::Left],
+            label: "←",
             does: "pane to the left",
             command: Self::Left,
         },
         Bind {
-            keys: &[Key::Right, Key::Char('l')],
-            label: "→  l",
+            keys: &[Key::Right],
+            label: "→",
             does: "pane to the right",
             command: Self::Right,
         },
         Bind {
-            keys: &[Key::Up, Key::Char('k')],
-            label: "↑  k",
+            keys: &[Key::Up],
+            label: "↑",
             does: "pane above",
             command: Self::Up,
         },
         Bind {
-            keys: &[Key::Down, Key::Char('j')],
-            label: "↓  j",
+            keys: &[Key::Down],
+            label: "↓",
             does: "pane below",
             command: Self::Down,
         },
         Bind {
-            keys: &[Key::Enter, Key::Char('z')],
-            label: "enter  z",
-            does: "zoom into the focused session, or back to the panes",
-            command: Self::Zoom,
+            keys: &[Key::Enter],
+            label: "enter",
+            does: "open the focused session",
+            command: Self::Open,
         },
         Bind {
-            keys: &[Key::Char('p')],
-            label: "p",
-            does: "keep the focused session on the wall, even when quiet",
-            command: Self::Pin,
+            keys: &[Key::AltLeft],
+            label: "alt-←",
+            does: "the place before: the wall, then each live run",
+            command: Self::PreviousPlace,
         },
         Bind {
-            keys: &[Key::Char('r')],
-            label: "r",
-            does: "runs: open the focused run, or the console",
-            command: Self::Runs,
+            keys: &[Key::AltRight],
+            label: "alt-→",
+            does: "the next place",
+            command: Self::NextPlace,
         },
         Bind {
-            keys: &[Key::Char('t')],
-            label: "t",
-            does: "cycle theme: terminal, dark, light (not saved)",
-            command: Self::Theme,
-        },
-        Bind {
-            keys: &[Key::Esc],
-            label: "esc",
-            does: "close the help, or leave a zoomed session",
-            command: Self::Back,
-        },
-        Bind {
-            keys: &[Key::Char('?')],
-            label: "?",
-            does: "show or hide this help",
-            command: Self::Help,
-        },
-        Bind {
-            keys: &[Key::Char('q'), Key::Interrupt],
-            label: "q  ctrl-c",
-            does: "quit",
+            keys: &[Key::Interrupt],
+            label: "ctrl-c",
+            does: "clear what is typed, or quit (runs keep going)",
             command: Self::Quit,
         },
     ]);
@@ -118,10 +93,9 @@ mod tests {
 
     #[test]
     fn keys_give_their_commands() {
-        assert_eq!(Command::KEYS.find(Key::Char('q')), Some(Command::Quit));
         assert_eq!(Command::KEYS.find(Key::Interrupt), Some(Command::Quit));
-        assert_eq!(Command::KEYS.find(Key::Enter), Some(Command::Zoom));
-        assert_eq!(Command::KEYS.find(Key::Char('w')), None);
-        assert_eq!(Command::KEYS.help().len(), 13);
+        assert_eq!(Command::KEYS.find(Key::Enter), Some(Command::Open));
+        assert_eq!(Command::KEYS.find(Key::AltRight), Some(Command::NextPlace));
+        assert_eq!(Command::KEYS.find(Key::Char('q')), None);
     }
 }

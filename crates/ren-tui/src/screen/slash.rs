@@ -21,6 +21,10 @@ pub enum Slash {
     Resume { search: String },
     /// `/stop`: end the run's process.
     Stop,
+    /// `/pin`: keep the wall's focused session on it, even when quiet.
+    Pin,
+    /// `/theme`: the next theme, for this time.
+    Theme,
     /// `/wall`: every session's traffic.
     Wall,
     /// `/help`
@@ -50,11 +54,16 @@ pub enum Unresolved {
 }
 
 /// The commands, with what each does, as completion and help list them.
-const COMMANDS: [(&str, &str); 6] = [
+const COMMANDS: [(&str, &str); 8] = [
     ("new", "start a run: /new <project> [claude|codex] <prompt>"),
     ("resume", "every run, what needs you first"),
     ("stop", "end this run's process"),
-    ("wall", "every session's traffic, one pane each"),
+    ("wall", "back to the wall of every session's traffic"),
+    (
+        "pin",
+        "keep the wall's focused session on it, even when quiet",
+    ),
+    ("theme", "the next theme: terminal, dark, light (not saved)"),
     ("help", "keys and commands"),
     ("quit", "leave (runs keep going)"),
 ];
@@ -91,6 +100,8 @@ impl Slash {
             },
             "stop" => Self::Stop,
             "wall" => Self::Wall,
+            "pin" => Self::Pin,
+            "theme" => Self::Theme,
             "help" => Self::Help,
             "quit" | "exit" => Self::Quit,
             other => Self::Unknown(other.to_owned()),
@@ -145,6 +156,8 @@ impl Slash {
                 vec![Action::Send(ctx.model.start(harness, dir, None, prompt))]
             }
             Self::Resume { search } => vec![Action::Push(Screen::Resume(Resume::new(search)))],
+            Self::Pin => vec![Action::Pin],
+            Self::Theme => vec![Action::CycleTheme],
             Self::Stop => match current.and_then(|run| ctx.model.desk.get(run)) {
                 Some(run) if run.attention() != Attention::Ended => {
                     vec![Action::Send(crate::model::Command::Stop(run.id))]

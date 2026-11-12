@@ -1,8 +1,8 @@
- nothing needs you                                                           ▪ ▪   2 live
+ ren   wall   ▪ acme-web   ▪ acme-api                                              2 live
+ acme-web · Claude Code · your turn                                   new Claude Code run
 ──────────────────────────────────────────────────────────────────────────────────────────
 
-  › acme-web   new Claude Code run            your turn
-    acme-api   new Codex run                  working
+  Claude Code is ready in /dev/acme-web. What should it do?
 
 
 
@@ -20,5 +20,5 @@
 
 
 ──────────────────────────────────────────────────────────────────────────────────────────
- › /new <project> <prompt> starts a run · /help
- ↑↓ choose · enter opens                            alt-←→ runs · /resume · /wall · /help
+ › Message Claude Code…
+ enter sends · ctrl-j new line · esc back to the wall                /help │ 00:00:00 UTC

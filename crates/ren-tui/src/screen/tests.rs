@@ -557,7 +557,7 @@ fn screens_draw_as_pinned() {
     ])));
     assert_eq!(
         drawn(&quiet),
-        include_str!("../../tests/fixtures/console-home.txt")
+        include_str!("../../tests/fixtures/console-newest-run.txt")
     );
 }
 

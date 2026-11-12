@@ -22,34 +22,40 @@ ren tail --json
 ren tui
 ```
 
-`ren tui` and `ren runs` (with no subcommand) open the same terminal program,
-built with the `tui` feature, on one of its two screens: `ren tui` on the wall
-of live sessions, `ren runs` on the console for [runs](#runs). `r` on the wall
-opens the console, on the focused session's run if it is one, and `/wall` in the
-console goes back. Both stay current while the other is shown.
+`ren tui` and `ren runs` (with no subcommand) open the same terminal app, built
+with the `tui` feature. Every screen sits in one frame:
 
-In the console, one run's conversation fills the screen, with a message box
-under it:
+- The top line lists the places: the wall of live sessions, then each live
+  [run](#runs), what needs you first (`◇` one waiting for an answer, `▪` the
+  others). Alt-← and Alt-→ move between them. A run that needs you is lit
+  there wherever you are.
+- At the bottom, a message box and a status line. Typing always goes to the
+  box; slash commands, completed with Tab, work from every screen:
+  `/new <project> [claude|codex] <prompt>` starts a run in one of the
+  daemon's projects with its first prompt (the client named last is the
+  default), `/resume [search]` lists every run, what needs you first, with
+  the chosen one previewed, `/stop` ends the open run's process, `/wall` goes
+  back to the wall, `/pin` keeps the wall's focused session on it, `/theme`
+  previews the next theme, `/help` lists the keys and commands, and `/quit`
+  (or Ctrl-C with nothing typed) leaves runs running.
 
-- The runs that need you come first: a run waiting for an approval opens when
-  nothing else is open, and answering one moves on to the next that waits.
-  The top line marks every live run (`◆` the open one, `◇` one that waits
-  for you, `▪` the others), and Alt-← and Alt-→ move between them.
-- An approval shows as a card in the conversation: `1` allows it once, `2`
-  for the rest of the run, `3` denies it, `4` denies it and stops the turn.
-  Typing instead denies it and sends your words next.
+`ren tui` opens on the wall; `ren runs` opens on the run that needs you, else
+the newest live one. On the wall, while nothing is typed, Tab and the arrows
+move between panes and Enter opens the focused session full screen. A session
+full screen reads the same whether Ren drives it or not:
+
+- A run Ren drives takes what you type. An approval shows as a card in the
+  conversation: `1` allows it once, `2` for the rest of the run, `3` denies
+  it, `4` denies it and stops the turn; typing instead denies it and sends
+  your words next. Answering one moves on to the next run that waits.
 - Enter sends a prompt; Ctrl-J starts a new line. Typed while a turn runs, a
-  message waits and is sent when the turn ends. Esc interrupts the turn.
-  Typed into a run that ended, it continues that conversation in a new run.
-- Slash commands, completed with Tab: `/new <project> [claude|codex]
-  <prompt>` starts a run in one of the daemon's projects with its first
-  prompt (the client named last is the default), `/resume [search]` lists
-  every run, what needs you first, with the chosen one previewed, `/stop`
-  ends the open run's process, `/wall` shows the wall, `/help` lists the
-  keys and commands, and `/quit` (or Ctrl-C) leaves runs running.
+  message waits and is sent when the turn ends. Esc interrupts the turn, or
+  with none running goes back to the wall. Typed into a run that ended, a
+  message continues that conversation in a new run.
+- A session started outside Ren is watched: its box takes only commands.
 
 A turn's live copy gives way to its recorded copy once the turn is recorded.
-Live updates are not stored, so a console opened mid-turn shows that turn
+Live updates are not stored, so a run opened mid-turn shows that turn
 once it is recorded.
 
 Runs (see [runs](#runs)) also have their own commands, through the control API:
@@ -107,7 +113,7 @@ minutes, or with a call open), in a grid sized to them, as many as the
 terminal has room for; one session fills the screen. Each pane reads as a
 conversation, kept to the bottom as it streams: the newest turn and the one
 before it (for a client that sends no turns, such as OpenCode, its newest
-four calls), call by call, with the user's prompt (`>`), the tool results the
+four calls), call by call, with the user's prompt (`›`), the tool results the
 request carried back (`⎿`), the reply (code blocks drawn behind a rule), and
 the tool calls the model asked for (`●`), then a streaming call's reply and
 tools so far. Its title uses green while a response streams, and amber
@@ -124,8 +130,8 @@ not a live rate. It reads a snapshot of sessions and calls every two seconds
 and whenever the feed says a call opened or ended, and asks for
 [progress events](#live-feed). A read that fails is shown as `stale` until
 one succeeds. Keys: tab and the arrows move between panes, enter zooms into a
-session, `p` keeps a session on the wall even when quiet, `r` opens the
-console, `?` lists the keys, and `q` quits. It needs a running daemon; a gateway that cannot be
+session full screen, and `/pin` keeps the focused session on the wall even
+when quiet. It needs a running daemon; a gateway that cannot be
 reached is reported before the screen is taken over.
 
 With control access (this host's control token, or an allowed Tailscale login
@@ -133,9 +139,8 @@ through a gateway) and `[runs]` roots on the daemon, `ren tui` also shows
 [runs](#runs): a live run's session keeps its pane, marked `run · idle`,
 `working`, or `asks`, and a run waiting for an answer lights its title amber
 and says under the conversation what it asks (`? run `cargo test` in
-/work/acme  r to answer`). The wall only watches; `r` opens that run in the
-console, where runs are started and driven, as they are from the web UI or
-the `ren runs` subcommands.
+/work/acme  enter to answer`). Enter opens that run full screen, where it is
+driven, as it is from the web UI or the `ren runs` subcommands.
 
 The default `terminal` theme uses the terminal's foreground, background, and
 ANSI palette. `dark` and `light` use fixed RGB palettes and need a true-color
@@ -475,7 +480,7 @@ model traffic is recorded as any session's.
 
 The web UI's Runs view drives runs through this API when its server is given
 the control token file (see the [UI's README](../ui/README.md#runs)), and the
-terminal's console (`ren runs`) does from a terminal.
+terminal app (`ren tui`, `ren runs`) does from a terminal.
 
 Refusals: `400` `invalid_directory` (not absolute, contains `..`, or outside
 every root once links are resolved), `400` `directory_not_found`, `400`

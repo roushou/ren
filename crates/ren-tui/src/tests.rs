@@ -1,33 +1,62 @@
-//! The screens together: which one a key reaches, how they open on one
-//! another, and the help over each.
+//! The screens as one app: the wall under everything, the places Alt-← and
+//! Alt-→ move between, slash commands everywhere, and the help over each.
 
 use crate::{Input, Key, Opening, Out, Read, Size, Tui};
 use ren_harness::Harness;
+use ren_harness::drive::ApprovalAsk;
 use ren_protocol::native::NativeThreadId;
 use ren_recorder::id::RunId;
 use ren_recorder::time::UnixMillis;
-use ren_supervisor::{RunSnapshot, RunState};
+use ren_supervisor::{Approvals, RunSnapshot, RunState};
 
 const SIZE: Size = Size {
     width: 90,
     height: 24,
 };
 
-fn idle_run() -> RunSnapshot {
+fn run_id(n: u128) -> RunId {
+    RunId::restore(uuid::Uuid::from_u128(n))
+}
+
+fn run(n: u128, state: RunState) -> RunSnapshot {
     RunSnapshot {
-        run: RunId::restore(uuid::Uuid::from_u128(1)),
+        run: run_id(n),
         harness: Harness::Codex,
-        workdir: "/dev/acme".into(),
-        state: RunState::Idle {
-            thread: NativeThreadId::new(uuid::Uuid::from_u128(0x77)).unwrap(),
-        },
+        workdir: format!("/dev/acme-{n}").into(),
+        state,
     }
 }
 
-fn typed(tui: &mut Tui, text: &str) -> Vec<Out> {
-    text.chars()
+fn idle(n: u128) -> RunState {
+    RunState::Idle {
+        thread: NativeThreadId::new(uuid::Uuid::from_u128(0x7700 + n)).unwrap(),
+    }
+}
+
+fn asking(n: u128) -> RunState {
+    let mut approvals = Approvals::default();
+    approvals.insert(
+        "ap-1".parse().unwrap(),
+        ApprovalAsk::FileChange { reason: None },
+    );
+    RunState::Working {
+        thread: NativeThreadId::new(uuid::Uuid::from_u128(0x7700 + n)).unwrap(),
+        turn: None,
+        approvals,
+    }
+}
+
+fn send(tui: &mut Tui, text: &str) -> Vec<Out> {
+    let mut outs: Vec<Out> = text
+        .chars()
         .flat_map(|ch| tui.press(Key::Char(ch)))
-        .collect()
+        .collect();
+    outs.extend(tui.press(Key::Enter));
+    outs
+}
+
+fn on_wall(tui: &Tui) -> bool {
+    tui.wall_frame(UnixMillis::from_millis(0)).is_some()
 }
 
 #[test]
@@ -39,63 +68,73 @@ fn starting_reads_what_every_screen_shows() {
 }
 
 #[test]
-fn keys_go_to_the_screen_on_top() {
-    // On the wall, q quits; in the console, it is typed.
-    let mut tui = Tui::new(SIZE, Opening::Wall);
-    assert_eq!(tui.press(Key::Char('q')), vec![Out::Quit]);
+fn opened_on_the_runs_the_one_that_needs_you_opens_once_they_are_read() {
     let mut tui = Tui::new(SIZE, Opening::Runs);
-    assert_eq!(tui.press(Key::Char('q')), Vec::new());
-    assert!(tui.wall_frame(UnixMillis::from_millis(0)).is_none());
+    let _ = tui.start();
+    assert!(on_wall(&tui), "the wall until runs are read");
+    let _ = tui.apply(Input::Runs(Ok(vec![run(1, idle(1)), run(2, asking(2))])));
+    assert_eq!(tui.shown_run(), Some(run_id(2)));
+    // Only once: going back to the wall stays there.
+    let _ = send(&mut tui, "/wall");
+    let _ = tui.apply(Input::Runs(Ok(vec![run(1, idle(1)), run(2, asking(2))])));
+    assert!(on_wall(&tui));
 }
 
 #[test]
-fn r_opens_the_console_over_the_wall_and_slash_wall_goes_back() {
+fn alt_arrows_move_between_the_wall_and_each_live_run() {
     let mut tui = Tui::new(SIZE, Opening::Wall);
-    let _ = tui.apply(Input::Runs(Ok(vec![idle_run()])));
-    let _ = tui.press(Key::Char('r'));
-    assert!(tui.wall_frame(UnixMillis::from_millis(0)).is_none());
-    let _ = typed(&mut tui, "/wall");
-    let outs = tui.press(Key::Enter);
-    assert!(tui.wall_frame(UnixMillis::from_millis(0)).is_some());
-    assert!(outs.contains(&Out::Read(Read::Snapshot)), "{outs:?}");
-    // Back on the wall, keys are the wall's again.
-    assert_eq!(tui.press(Key::Char('q')), vec![Out::Quit]);
+    let _ = tui.apply(Input::Runs(Ok(vec![run(1, idle(1)), run(2, asking(2))])));
+    // The wall, then what needs you first.
+    let _ = tui.press(Key::AltRight);
+    assert_eq!(tui.shown_run(), Some(run_id(2)));
+    let _ = tui.press(Key::AltRight);
+    assert_eq!(tui.shown_run(), Some(run_id(1)));
+    let _ = tui.press(Key::AltRight);
+    assert!(on_wall(&tui));
+    let _ = tui.press(Key::AltLeft);
+    assert_eq!(tui.shown_run(), Some(run_id(1)));
 }
 
 #[test]
-fn slash_wall_from_the_console_opens_a_wall_over_it() {
-    let mut tui = Tui::new(SIZE, Opening::Runs);
-    let _ = typed(&mut tui, "/wall");
-    let _ = tui.press(Key::Enter);
-    assert!(tui.wall_frame(UnixMillis::from_millis(0)).is_some());
-}
-
-#[test]
-fn the_help_lists_the_keys_of_the_screen_under_it_and_closes() {
+fn esc_on_an_idle_run_goes_back_to_the_wall_and_slash_commands_work_everywhere() {
     let mut tui = Tui::new(SIZE, Opening::Wall);
-    let _ = tui.press(Key::Char('?'));
+    let _ = tui.apply(Input::Runs(Ok(vec![run(1, idle(1))])));
+    let _ = tui.press(Key::AltRight);
+    assert_eq!(tui.shown_run(), Some(run_id(1)));
+    let _ = tui.press(Key::Esc);
+    assert!(on_wall(&tui));
+    // From the wall, a command typed in its message box.
+    let outs = send(&mut tui, "/theme");
+    assert_eq!(outs, vec![Out::CycleTheme]);
+}
+
+#[test]
+fn letters_are_typed_everywhere_and_ctrl_c_clears_then_quits() {
+    for opening in [Opening::Wall, Opening::Runs] {
+        let mut tui = Tui::new(SIZE, opening);
+        assert_eq!(tui.press(Key::Char('q')), Vec::new());
+        assert_eq!(tui.press(Key::Interrupt), Vec::new());
+        assert_eq!(tui.press(Key::Interrupt), vec![Out::Quit]);
+    }
+}
+
+#[test]
+fn the_help_lists_the_keys_and_commands_of_the_screen_under_it() {
+    let mut tui = Tui::new(SIZE, Opening::Wall);
+    let _ = send(&mut tui, "/help");
     assert!(tui.help_shown());
     // It takes no other key.
     assert_eq!(tui.press(Key::Char('p')), Vec::new());
     assert_eq!(tui.press(Key::Char('t')), vec![Out::CycleTheme]);
     let _ = tui.press(Key::Esc);
     assert!(!tui.help_shown());
-
-    let mut tui = Tui::new(SIZE, Opening::Runs);
-    let _ = typed(&mut tui, "/help");
-    let _ = tui.press(Key::Enter);
-    assert!(tui.help_shown());
-    let _ = tui.press(Key::Char('?'));
-    assert!(!tui.help_shown());
+    assert!(on_wall(&tui));
 }
 
 #[test]
-fn runs_reach_both_the_wall_and_the_console() {
+fn runs_reach_the_wall_and_the_places_line() {
     let mut tui = Tui::new(SIZE, Opening::Wall);
-    let _ = tui.apply(Input::Runs(Ok(vec![idle_run()])));
+    let _ = tui.apply(Input::Runs(Ok(vec![run(1, idle(1))])));
     let frame = tui.wall_frame(UnixMillis::from_millis(0)).unwrap();
     assert_eq!(frame.status.runs.map(|runs| runs.live), Some(1));
-    let _ = tui.press(Key::Char('r'));
-    let _ = tui.press(Key::AltRight);
-    assert_eq!(tui.shown_run(), Some(idle_run().run));
 }
