@@ -352,7 +352,7 @@ mod tests {
 
     #[test]
     fn its_models_read_as_pi_lists_them() {
-        let arguments = ren_harness::drive::pi::PiModels::arguments();
+        let arguments = ren_harness::pi::PiModels::arguments();
         let mut agent = PiScript::new(Run(7), &arguments).unwrap();
         let models = listed(ren_harness::Harness::Pi, |message| {
             sent(&agent.receive(message))

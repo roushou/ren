@@ -52,23 +52,7 @@ pub(crate) struct HeaderReading<'a> {
 }
 
 impl<'a> HeaderReading<'a> {
-    const PI_SESSION: &'static str = "x-ren-pi-session-id";
-    const PI_TURN: &'static str = "x-ren-pi-turn-id";
     const OPENCODE_SESSION: &'static str = "x-opencode-session-id";
-
-    /// Pi's extension headers, on any route.
-    fn pi(&mut self) -> Option<Claim> {
-        if !self.headers.contains_key(Self::PI_SESSION) && !self.headers.contains_key(Self::PI_TURN)
-        {
-            return None;
-        }
-        Some(Claim {
-            source: Some(HintSource::PiExtensionHeaders),
-            session: self.uuid(Self::PI_SESSION),
-            turn: self.uuid(Self::PI_TURN),
-            thread: None,
-        })
-    }
 
     /// opencode's session header, on any route. opencode names no turn; a
     /// subagent's call names its own child session, as opencode does.

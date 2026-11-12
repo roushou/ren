@@ -48,7 +48,7 @@ pub struct PiCache {
 }
 
 impl PiCache {
-    pub const SOURCE: &'static str = include_str!("../pi/ren.mjs");
+    pub const SOURCE: &'static str = include_str!("../../pi/ren.mjs");
     /// Shown in dry runs instead of the cache path.
     pub const PLACEHOLDER: &'static str = "<Ren-managed Pi extension>";
 

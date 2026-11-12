@@ -14,11 +14,10 @@
 //! with. Dialogs an extension opens (`extension_ui_request`) are cancelled:
 //! Ren provides no interface for them.
 
-use super::{
-    CommandRefused, DriveCommand, DriveEvent, DriveItem, Effort, Framed, ItemId, ItemKind,
-    ItemPhase, ItemRead, ItemStatus, Line, Opening, Prompt, RawLine, Received, RequestKind, Retry,
-    TurnEnd, Unreadable,
-    model::{DefaultChoice, Listing, Model, ModelId, ModelListing},
+use crate::drive::{
+    CommandRefused, DefaultChoice, DriveCommand, DriveEvent, DriveItem, Effort, Framed, ItemId,
+    ItemKind, ItemPhase, ItemRead, ItemStatus, Line, Listing, Model, ModelId, ModelListing,
+    Opening, Prompt, RawLine, Received, RequestKind, Retry, TurnEnd, Unreadable,
 };
 use ren_protocol::native::{NativeThreadId, NativeTurnId};
 use serde_json::{Value, json};

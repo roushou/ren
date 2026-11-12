@@ -9,7 +9,6 @@
 
 mod lines;
 mod model;
-pub mod pi;
 mod settings;
 
 pub use lines::{Framed, Line, LineLimit, Lines};
@@ -18,8 +17,8 @@ pub use settings::{ApprovalPolicy, Effort, RunSettings};
 
 use crate::claude_code::ClaudeStreamJson;
 use crate::codex::CodexAppServer;
+use crate::pi::PiRpc;
 use crate::{Harness, launch::NotDrivable};
-use pi::PiRpc;
 
 use ren_protocol::native::{NativeThreadId, NativeTurnId};
 use serde_with::{DeserializeFromStr, SerializeDisplay};

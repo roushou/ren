@@ -10,6 +10,7 @@
 use crate::Harness;
 use crate::claude_code::ClaudeCodeTool;
 use crate::codex::CodexTool;
+use crate::pi::PiTool;
 use ren_protocol::activity::{
     ActivityLimitation, Reading, RequestActivity, ResultStatus, ToolInput, ToolResult, ToolUse,
 };
@@ -52,20 +53,6 @@ pub enum CallPurpose {
     /// Claude Code's check of the account's quota as it starts: one token
     /// asked for, and only the response's status and headers read.
     QuotaProbe,
-}
-
-/// Pi's built-in tools.
-#[derive(Display, EnumString, IntoStaticStr, VariantArray)]
-#[strum(serialize_all = "snake_case")]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SerializeDisplay, DeserializeFromStr)]
-pub enum PiTool {
-    Read,
-    Write,
-    Edit,
-    Bash,
-    Grep,
-    Find,
-    Ls,
 }
 
 /// opencode's built-in tools (opencode 2.x).
@@ -172,20 +159,6 @@ impl UserContext {
             })
             .collect();
         (!own.is_empty()).then(|| own.join("\n\n"))
-    }
-}
-
-impl PiTool {
-    pub(crate) fn effects(tool: &ToolUse) -> Vec<ToolEffect> {
-        let effect = |kind, name| ToolEffect::of(kind, tool, name);
-        match Self::from_label(&tool.name) {
-            Some(Self::Read) => effect(EffectKind::ReadFile, "path"),
-            Some(Self::Write | Self::Edit) => effect(EffectKind::WriteFile, "path"),
-            Some(Self::Bash) => effect(EffectKind::RunCommand, "command"),
-            Some(Self::Grep | Self::Find) => effect(EffectKind::Search, "pattern"),
-            Some(Self::Ls) => effect(EffectKind::ReadFile, "path"),
-            None => Vec::new(),
-        }
     }
 }
 
