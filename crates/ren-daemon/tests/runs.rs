@@ -257,6 +257,32 @@ async fn a_run_is_started_prompted_approved_and_stopped_through_the_control_api(
     .await
     .expect("the stored run");
     assert_eq!(stored["harness"], "codex");
+    // Its conversation is stored whole: the prompt, the file change, and
+    // the reply, in turn order.
+    let conversation: Value = serde_json::from_slice(
+        &control
+            .http
+            .get(format!("{}/api/runs/{run}/conversation", gateway.base()))
+            .send()
+            .await
+            .unwrap()
+            .bytes()
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    let kinds: Vec<&str> = conversation["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|entry| entry["event"]["kind"].as_str().unwrap())
+        .collect();
+    assert_eq!(kinds.first(), Some(&"turn_started"), "{conversation}");
+    assert_eq!(kinds.last(), Some(&"turn_ended"), "{conversation}");
+    assert!(
+        conversation.to_string().contains("Edited."),
+        "{conversation}"
+    );
     assert_eq!(stored["workdir"], "/work/acme");
     assert_eq!(stored["thread"], support::agent::THREAD);
     let listed = control

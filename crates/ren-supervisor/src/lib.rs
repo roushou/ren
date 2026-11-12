@@ -9,6 +9,7 @@
 //! the supervisor starts the official program and never handles credentials.
 
 pub mod client;
+mod entries;
 pub mod host;
 pub mod project;
 #[cfg(test)]

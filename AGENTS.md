@@ -205,7 +205,8 @@ dependencies under "Crates" below. Read the code for current module ownership.
 - `crates/ren-recorder`: the bounded capture queue between forwarding and
   storage, with `Recorder` as its primary type. `CallTap` (and `ChannelTap` for a
   WebSocket's end) is the forwarding side, `RunTap` records an agent run's
-  start, opening, and end, and `HistorySlot` an operator's archive or delete
+  start, opening, end, and each entry of its conversation (`RunEntry`, whole,
+  admitted against the queue's byte budget), and `HistorySlot` an operator's archive or delete
   of a session or run (`HistoryEdit`); `RecorderTask` (run by the daemon on
   its observation thread) is the shell around the pure `RecorderCore`
   (`recording`: records in queue order in, a batch of operations out, with
@@ -232,7 +233,9 @@ dependencies under "Crates" below. Read the code for current module ownership.
   online backup, which holds the `SweepGate`. `ren.sqlite3` holds the
   observation log and query tables; `blobs.sqlite3` holds deduplicated,
   content-defined body chunks, in the format `chunk` defines (hash, codec,
-  encoding). It contains typed query parameters and read views, turn and call
+  encoding). Each driven run's conversation is in `run_entries`, whole, and
+  `Reader::conversation` reads it across the runs on one client thread. It
+  contains typed query parameters and read views, turn and call
   activity assembled from the calls' stored digests (`activity`, with the
   session context and cost report in `activity::report`), the full-text search
   and exposure listings (`search`, `Reader::search` and `Reader::exposures`) over
@@ -257,8 +260,10 @@ dependencies under "Crates" below. Read the code for current module ownership.
   scripted in-memory agents. `SupervisorTask` is the shell: one task reads every
   agent's stdout, writes its stdin, and waits for its exit, records each run
   through the recorder's `RunTap` (a run without room to be recorded does not
-  start), and drains every run when the last handle is dropped. `src/purity.rs` keeps `run` and
-  `workdir` free of runtime and I/O. The daemon constructs it when `[runs]`
+  start), with every event of its conversation as `entries` keeps it (no
+  streamed pieces; a reply cut off kept as far as it came), and drains every
+  run when the last handle is dropped. `src/purity.rs` keeps `run`,
+  `workdir`, `project`, and `entries` free of runtime and I/O. The daemon constructs it when `[runs]`
   roots are configured, with `ProcessHost`; the gateway's control API serves it.
 - `crates/ren-tui`: Ren in the terminal, with `Tui` as its primary type: one
   app over one gateway for watching and driving agent sessions. `Tui` is
@@ -272,15 +277,16 @@ dependencies under "Crates" below. Read the code for current module ownership.
     snapshots, as `ren_store::view` types, turn and call activity, progress
     on streaming calls, failed reads, the active sessions, the traffic, and
     what to read to show a session), the daemon's runs (`desk`: what needs
-    you first, `Attention`), each run's live conversation and how a
-    finished turn gives way to its record (`transcript`), projects, and how
+    you first, `Attention`), each run's conversation, read whole from what
+    the daemon stored and kept current by the run feed, the two merged by
+    what each entry is (`transcript`), projects, and how
     a call ended (`call`, `CallEnd`). `Model::apply` answers with reads,
     prompts kept for a run that now waits for one, and news.
   - `screen`: `enum Screen { Main, NewRun, Actions, Help }`. `main` is the session
     list (`list`: runs grouped by their folder, the folders that need you
     first, then sessions watched; or by what each needs, `Grouping`) beside the selected session (`detail`: a lit
-    header, the Conversation, Activity, Files, and Calls tabs, a run's turns
-    folded to a line each, the approval card), with a top bar for the
+    header, the Conversation, Activity, Files, and Calls tabs, a run's whole
+    conversation as one scroll, the approval card), with a top bar for the
     traffic and a key bar; `watched` reads a session Ren did not start (its
     phase, alerts, and conversation). Keys act in normal mode; `message`
     (with `composer`, the one editor every prompt is written in: wrapped

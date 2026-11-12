@@ -40,9 +40,9 @@ the bar at the bottom.
 - The selected session shows its conversation, its activity (each command,
   edit, and tool step), the files it wrote and read, and its model calls
   through the gateway (time, model, how each ended, tokens); Tab moves between
-  them. A run's turns fold to one line each (prompt, duration, tools,
-  failures), the newest open; Enter (or `l`) moves into the session, where
-  `j` and `k` move between turns and Enter opens or folds one.
+  them. A run's conversation is shown whole, every turn open, as one scroll;
+  Enter (or `→`) moves into the session, where ↑ and ↓ (or `j` and `k`)
+  scroll it a line at a time and PgUp and PgDn a page.
 - Keys come in three layers, so few letters do anything: moving (the arrows
   or `j`/`k`/`h`/`l`, Enter and Esc, Tab, digits, `/`), a few verbs (`i`
   write, `n` new run, Space for the action menu, `?` keys, `q` quit), and the
@@ -76,9 +76,10 @@ the bar at the bottom.
 - `?` lists every key, by layer, and `q` quits, leaving runs running; Ctrl-C quits only when pressed twice in a
   row, so a stray press does not.
 
-A turn's live copy gives way to its recorded copy once the turn is recorded.
-Live updates are not stored, so a run selected mid-turn shows that turn
-once it is recorded.
+A run's conversation is what the daemon stored of it, whole, read once when
+the run is selected, with what streams in over the run feed merged on top:
+the same events, so nothing shows twice and nothing is cut. A reply still
+streaming when its turn ends is stored as far as it came.
 
 Runs (see [runs](#runs)) also have their own commands, through the control API:
 
@@ -353,6 +354,7 @@ the body was stored whole; otherwise `not_found`. At most two run at once
 | `GET /api/turns/{turn-id}`                                             | One turn's [activity](#activity)                                                                                                                                                                                |
 | `GET /api/calls/{call-id}/activity`                                    | One call's [activity](#activity)                                                                                                                                                                                |
 | `GET /api/runs?limit=100`                                              | Recorded [runs](#runs), newest first: harness, folder, the client's `thread` and the `session` it names, `started_at`, and once ended `ended_at`, `end`, and `exit`; `shelf=archived` lists archived ended runs |
+| `GET /api/runs/{run-id}/conversation`                                  | A run's [conversation](#run-conversation), whole: its own entries and those of the runs before it on its thread, oldest first                                                                                   |
 | `GET /api/runs/{run-id}`                                               | One recorded run                                                                                                                                                                                                |
 | `GET /api/live?after={seq}`                                            | Server-sent events as observations commit                                                                                                                                                                       |
 
@@ -430,6 +432,25 @@ A malformed body or a value out of range is `400` `invalid_request`, and a
 malformed session ID is `404` `not_found`. A command the recorder cannot record
 is not made: `503` `unrecorded` when the recorder has no room now (try again),
 `500` `unrecordable` when its record cannot be written.
+
+### Run conversation
+
+The daemon stores each driven run's conversation as it happens, whole: every
+event the client reports (a turn starting and ending, each item: the
+operator's prompt, a reply, reasoning, a command with its output, a file
+change, a tool call; approvals, errors, and refusals), in the order it came.
+An item reported again (a command that finished, a reply that completed)
+replaces its entry in place. Streamed pieces are not stored; the item they
+make is, and a reply still streaming when its turn ends is stored as far as
+it came. Entries are written through the recorder like bodies, never
+blocking forwarding: without queue room an entry is counted as omitted.
+
+`GET /api/runs/{run-id}/conversation` answers `{api_version, entries,
+earlier}`. Each entry is `{run, seq, at, turn, event}`, where `event` is the
+event as the run feed sends it. The conversation includes the runs before
+this one on the same client thread (a resumed conversation reads as one), up
+to the newest 20,000 entries; `earlier` says older ones were left out.
+Deleting a run deletes its conversation.
 
 ### Archiving and deleting
 

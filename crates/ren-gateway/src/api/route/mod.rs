@@ -21,7 +21,7 @@ pub struct ApiRead(pub ReadRequest);
 
 impl ApiRead {
     /// The routes reads are served on, in the router's path syntax.
-    pub(crate) const ROUTES: [&str; 13] = [
+    pub(crate) const ROUTES: [&str; 14] = [
         "/api/calls",
         "/api/calls/{id}",
         "/api/calls/{id}/activity",
@@ -35,6 +35,7 @@ impl ApiRead {
         "/api/exposures",
         "/api/runs",
         "/api/runs/{id}",
+        "/api/runs/{id}/conversation",
     ];
 
     /// The path and query string that ask for this read.
@@ -99,6 +100,10 @@ impl ApiRead {
                     .shelf(*shelf),
             ),
             ReadRequest::Run(run) => (format!("/api/runs/{run}"), QueryParams::default()),
+            ReadRequest::Conversation(run) => (
+                format!("/api/runs/{run}/conversation"),
+                QueryParams::default(),
+            ),
         };
         match serde_urlencoded::to_string(&query.0) {
             Ok(query) if !query.is_empty() => format!("{path}?{query}"),
@@ -155,6 +160,7 @@ impl ApiRead {
                 ReadRequest::Runs { limit, shelf }
             }
             ["runs", run] => ReadRequest::Run(Self::id(run)?),
+            ["runs", run, "conversation"] => ReadRequest::Conversation(Self::id(run)?),
             _ => return Err(ApiError::NotFound),
         };
         Ok(Self(request))

@@ -17,11 +17,11 @@ use crate::{
     time::{Moment, UnixMillis},
 };
 use bytes::Bytes;
-use ren_harness::{Harness, attribution::Attribution};
+use ren_harness::{Harness, attribution::Attribution, drive::DriveEvent};
 use ren_protocol::{
     direction::Direction,
     encoding::{ResponseEncoding, ResponseFormat},
-    native::NativeThreadId,
+    native::{NativeThreadId, NativeTurnId},
     route::{Endpoint, Method, Provider, Transport, Wire},
     websocket::Payload,
 };
@@ -96,6 +96,7 @@ impl Batch {
                     | Op::CloseChannel(_)
                     | Op::Operator(_)
                     | Op::Run(_)
+                    | Op::RunEntry(_)
                     | Op::History(_) => true,
                 })
                 .collect(),
@@ -188,6 +189,9 @@ pub enum Op {
     CloseChannel(CloseChannel),
     Operator(OperatorAction),
     Run(RunRecord),
+    /// One entry of a run's conversation. It is stored, not logged: the
+    /// run feed carries it live.
+    RunEntry(RunEntry),
     History(HistoryEdit),
     /// What a finished call's bodies showed, derived as they were recorded
     /// or again from storage. It replaces any earlier digest of the call.
@@ -220,6 +224,19 @@ pub struct OperatorAction {
     /// The state the command made, stored as the current snapshot.
     #[serde(skip)]
     pub state: Recorded,
+}
+
+/// One entry of a run's conversation, whole, as its client reported it:
+/// what the run's transcript is read from. An item reported again (a
+/// command that finished, a reply that completed) replaces the entry it
+/// had. Streamed pieces are not entries; the item they make is.
+#[derive(Debug, Clone)]
+pub struct RunEntry {
+    pub at: Moment,
+    pub run: RunId,
+    /// The turn it belongs to, once the client started one.
+    pub turn: Option<NativeTurnId>,
+    pub event: DriveEvent,
 }
 
 /// The operator archived, unarchived, or deleted what was recorded of a

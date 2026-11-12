@@ -7,8 +7,8 @@ use crate::caller::Caller;
 use crate::{
     batch::{
         AttemptBody, BodyEnd, CloseChannel, HistoryChange, HistoryEdit, HistorySubject,
-        MessageMark, OpenCall, OperatorAction, Recorded, ResponseHead, RunFact, RunRecord, Stamp,
-        StartAttempt, Unattributed,
+        MessageMark, OpenCall, OperatorAction, Recorded, ResponseHead, RunEntry, RunFact,
+        RunRecord, Stamp, StartAttempt, Unattributed,
     },
     capture::{
         BodyEnding, CallRejection, ChannelEnd, Omission, ProcessExit, RunEnd, TerminalRecord,
@@ -17,11 +17,11 @@ use crate::{
     routing::{ConfigRevision, OperatorRevision, UpstreamId},
 };
 use bytes::Bytes;
-use ren_harness::{Harness, attribution::Attribution};
+use ren_harness::{Harness, attribution::Attribution, drive::DriveEvent};
 use ren_protocol::{
     direction::Direction,
     encoding::{ResponseEncoding, ResponseFormat},
-    native::NativeThreadId,
+    native::{NativeThreadId, NativeTurnId},
     route::{Api, Endpoint, Method, Provider, Transport},
     websocket::Payload,
 };
@@ -695,6 +695,21 @@ impl RunTap {
         match self.shared.reserve_close() {
             Some(slot) => self.send(slot, RunFact::Opened { thread }),
             None => self.shared.counters.omit(Omission::Unrecorded, 1),
+        }
+    }
+
+    /// Record one entry of the run's conversation, in `turn`. Never blocks:
+    /// without room for its bytes it is counted as omitted, by reason.
+    pub fn entry(&self, turn: Option<NativeTurnId>, event: DriveEvent) {
+        let len = serde_json::to_vec(&event).map_or(0, |bytes| bytes.len());
+        match self.shared.admit(len) {
+            Ok(admission) => admission.send_entry(RunEntry {
+                at: self.shared.clock.now(),
+                run: self.run,
+                turn,
+                event,
+            }),
+            Err(omission) => self.shared.counters.omit(omission, 1),
         }
     }
 

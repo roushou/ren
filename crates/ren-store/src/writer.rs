@@ -7,6 +7,7 @@ use crate::{
     view::{DiskUsage, FileUsage},
 };
 use bytes::Bytes;
+use ren_harness::drive::DriveEvent;
 use ren_protocol::{
     direction::Direction,
     label::{Labeled, Stored},
@@ -19,7 +20,7 @@ use ren_recorder::{
     batch::{
         AttemptBody, Batch, BodyEnd, BodyKey, CloseChannel, FinishAttempt, FinishCall,
         HistoryChange, HistoryEdit, HistorySubject, MessageMark, ObservationKind, Op, OpenCall,
-        OperatorAction, ResponseHead, RunFact, RunRecord, Segment, Stamp, StartAttempt,
+        OperatorAction, ResponseHead, RunEntry, RunFact, RunRecord, Segment, Stamp, StartAttempt,
     },
     inspection::InspectionRecord,
     retention::RetentionPolicy,
@@ -634,6 +635,7 @@ impl MetadataTx<'_> {
             Op::Operator(action) => self.operator(action).await.map(Some),
             Op::Run(record) => self.run(record).await.map(Some),
             Op::History(edit) => self.history(edit).await.map(Some),
+            Op::RunEntry(entry) => self.run_entry(entry).await.map(|()| None),
             Op::Digest { call, digest } => self.digest(*call, digest).await.map(|()| None),
         }
     }
@@ -783,6 +785,44 @@ impl MetadataTx<'_> {
         .await
     }
 
+    /// Store one entry of a run's conversation: appended, or, for an item
+    /// already stored, in its place.
+    async fn run_entry(&mut self, entry: &RunEntry) -> Result<(), StoreError> {
+        let run = entry.run.to_string();
+        let item = match &entry.event {
+            DriveEvent::Item { item, .. } => Some(item.id.as_str().to_owned()),
+            DriveEvent::Ready { .. }
+            | DriveEvent::TurnStarted { .. }
+            | DriveEvent::Delta { .. }
+            | DriveEvent::Approval { .. }
+            | DriveEvent::ApprovalResolved { .. }
+            | DriveEvent::TurnEnded { .. }
+            | DriveEvent::Error { .. }
+            | DriveEvent::Refused { .. }
+            | DriveEvent::Unsupported { .. }
+            | DriveEvent::Unknown { .. }
+            | DriveEvent::Unreadable { .. } => None,
+        };
+        let event = serde_json::to_value(&entry.event)?;
+        let kind = event
+            .get("kind")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default()
+            .to_owned();
+        sqlx::query(
+            "INSERT INTO run_entries(run, seq, at, turn, item, kind, event) VALUES (?1, (SELECT COALESCE(MAX(seq), 0) + 1 FROM run_entries WHERE run = ?1), ?2, ?3, ?4, ?5, ?6) ON CONFLICT(run, item) WHERE item IS NOT NULL DO UPDATE SET at = excluded.at, kind = excluded.kind, event = excluded.event",
+        )
+        .bind(&run)
+        .bind(i64::try_from(entry.at.wall.as_millis()).unwrap_or(i64::MAX))
+        .bind(entry.turn.map(|turn| turn.to_string()))
+        .bind(item)
+        .bind(kind)
+        .bind(event.to_string())
+        .execute(&mut *self.tx)
+        .await?;
+        Ok(())
+    }
+
     /// Archive, unarchive, or delete a session or a run. A run's edit
     /// applies to the sessions its client recorded under its thread too, and
     /// a session's to the runs that worked in it, so the two never disagree.
@@ -831,6 +871,10 @@ impl MetadataTx<'_> {
                             .await?
                             .rows_affected();
                     if ended > 0 {
+                        sqlx::query("DELETE FROM run_entries WHERE run = ?")
+                            .bind(run)
+                            .execute(&mut *self.tx)
+                            .await?;
                         sqlx::query("DELETE FROM observations WHERE call IS NULL AND kind IN (?, ?, ?, ?) AND json_extract(payload, '$.run') = ?")
                             .bind(ObservationKind::RunStarted.label())
                             .bind(ObservationKind::RunOpened.label())

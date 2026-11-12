@@ -12,8 +12,8 @@ use super::{metrics::Counters, options::CaptureOptions};
 pub(super) use crate::recording::{Piece, Record, Track};
 use crate::{
     batch::{
-        BodyEnd, CloseChannel, HistoryEdit, OpenCall, OperatorAction, ResponseHead, RunRecord,
-        Stamp, StartAttempt,
+        BodyEnd, CloseChannel, HistoryEdit, OpenCall, OperatorAction, ResponseHead, RunEntry,
+        RunRecord, Stamp, StartAttempt,
     },
     capture::{CallRejection, Omission, TerminalRecord},
     id::{AttemptId, IdSource},
@@ -79,6 +79,13 @@ pub(super) enum Item {
         /// Released when dequeued.
         _slot: OwnedSemaphorePermit,
     },
+    RunEntry {
+        entry: Box<RunEntry>,
+        /// Released when dequeued: frees a data slot.
+        slot: OwnedSemaphorePermit,
+        /// Released after commit: its bytes stay accounted until persisted.
+        budget: OwnedSemaphorePermit,
+    },
 }
 
 impl Item {
@@ -142,6 +149,14 @@ impl Item {
             Self::Operator { action, _slot } => (Record::Operator(action), None),
             Self::Run { record, _slot } => (Record::Run(record), None),
             Self::History { edit, _slot } => (Record::History(edit), None),
+            Self::RunEntry {
+                entry,
+                slot,
+                budget,
+            } => {
+                drop(slot);
+                (Record::RunEntry(entry), Some(budget))
+            }
         }
     }
 }
@@ -186,6 +201,14 @@ impl Admission {
     pub fn send(self, piece: Piece) {
         self.permit.send(Item::Data {
             piece,
+            slot: self.slot,
+            budget: self.budget,
+        });
+    }
+
+    pub fn send_entry(self, entry: RunEntry) {
+        self.permit.send(Item::RunEntry {
+            entry: Box::new(entry),
             slot: self.slot,
             budget: self.budget,
         });

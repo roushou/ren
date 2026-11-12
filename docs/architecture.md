@@ -772,9 +772,11 @@ state; it is logged, not recorded in `operator_actions`.
   model server) cannot be configured.
 - The UI's only control actions are runs (start, prompt, answer, interrupt,
   stop) and archiving or deleting a run or session, and only when its server
-  is given the control token file. A run's
-  live events are not stored: a page opened mid-turn shows the turn's recorded
-  calls once they finish, not what streamed before it opened.
+  is given the control token file.
+- A run's conversation is stored whole, but a reply's streamed pieces are not:
+  a page opened mid-reply shows the reply from when it opened, and whole once
+  the reply completes. Sessions Ren did not start are still shown from their
+  calls' digests, whose replies are excerpts.
 - Pi runs are read against Pi's documented RPC protocol (1.5.2) and a fake Pi,
   not yet against the real program. Pi asks no approvals, so a Pi run's tools
   run without the operator's say, and its bash commands report no exit code.

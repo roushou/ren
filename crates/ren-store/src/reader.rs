@@ -12,8 +12,9 @@ use crate::{
     query::{CallQuery, Cursor, KindFilter, PageLimit, Shelf, StatusFilter, TimeRange, ToolFilter},
     view::{
         AttemptView, BodyPrefix, BodyView, CallDetail, CallPage, CallView, ChannelView, Columns,
-        DiskUsage, HistoryTarget, MessageView, ModelUsage, OperatorActionView, RunView,
-        SessionView, StorageView, TokenTotals, UsageBucket, UsageCounts, UsageView, UserUsage,
+        ConversationView, DiskUsage, HistoryTarget, MessageView, ModelUsage, OperatorActionView,
+        RunEntryView, RunView, SessionView, StorageView, TokenTotals, UsageBucket, UsageCounts,
+        UsageView, UserUsage,
     },
     writer::BlobAccess,
 };
@@ -927,6 +928,52 @@ impl Reader {
     }
 
     /// `NotFound` unless the store has `session`.
+    /// The newest `limit` entries of `run`'s conversation, oldest first:
+    /// its own, and those of the runs before it on the same client thread
+    /// (a conversation resumed in a new run reads as one). `None` when the
+    /// run was never recorded.
+    pub async fn conversation(
+        &self,
+        run: RunId,
+        limit: u32,
+    ) -> Result<Option<ConversationView>, StoreError> {
+        let id = run.to_string();
+        let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM runs WHERE id = ?)")
+            .bind(&id)
+            .fetch_one(&self.pool)
+            .await?;
+        if !exists {
+            return Ok(None);
+        }
+        // The runs that make the conversation, in the order they started.
+        let chain = "SELECT r.id, r.started_at FROM runs r, runs this WHERE this.id = ?1 AND (r.id = this.id OR (this.thread IS NOT NULL AND r.thread = this.thread AND r.started_at <= this.started_at))";
+        let rows = sqlx::query(AssertSqlSafe(format!(
+            "SELECT * FROM (SELECT e.run, e.seq, e.at, e.turn, e.event, chain.started_at FROM run_entries e JOIN ({chain}) chain ON chain.id = e.run ORDER BY chain.started_at DESC, e.run DESC, e.seq DESC LIMIT ?2) ORDER BY started_at, run, seq"
+        )))
+        .bind(&id)
+        .bind(i64::from(limit) + 1)
+        .fetch_all(&self.pool)
+        .await?;
+        let earlier = rows.len() > usize::try_from(limit).unwrap_or(usize::MAX);
+        let entries = rows
+            .iter()
+            .skip(usize::from(earlier))
+            .map(|row| {
+                let columns = Columns(row);
+                let event: String = row.try_get("event")?;
+                Ok(RunEntryView {
+                    run: columns.id("run")?,
+                    seq: columns.count("seq")?,
+                    at: columns.time("at")?,
+                    turn: columns.text("turn")?,
+                    event: serde_json::from_str(&event)
+                        .map_err(|_| StoreError::Corrupt("run entry"))?,
+                })
+            })
+            .collect::<Result<_, StoreError>>()?;
+        Ok(Some(ConversationView { entries, earlier }))
+    }
+
     /// What an edit of `subject` would touch, or `None` when it was never
     /// recorded: the open calls of its sessions and its runs still running.
     /// A session's runs are those whose thread it is; a run's sessions those

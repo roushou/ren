@@ -6,6 +6,7 @@
 use crate::{StoreError, query::Cursor};
 use ren_harness::Harness;
 use ren_harness::attribution::{HintIssue, HintSource};
+use ren_harness::drive::DriveEvent;
 use ren_harness::tools::CallPurpose;
 use ren_protocol::{
     direction::Direction,
@@ -559,6 +560,28 @@ impl OperatorActionView {
             command: document("command")?,
         })
     }
+}
+
+/// A run's conversation, whole: its entries, and those of the runs before
+/// it that continued the same client conversation, oldest first.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ConversationView {
+    pub entries: Vec<RunEntryView>,
+    /// Older entries were left out: the conversation holds more than one
+    /// read returns.
+    pub earlier: bool,
+}
+
+/// One entry of a run's conversation: an event as its client reported it,
+/// in the order it came.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RunEntryView {
+    pub run: RunId,
+    pub seq: u64,
+    pub at: UnixMillis,
+    /// The client's turn it belongs to, once one started.
+    pub turn: Option<String>,
+    pub event: DriveEvent,
 }
 
 /// What an archive or delete would touch, read before it is asked for.

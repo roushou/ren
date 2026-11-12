@@ -8,6 +8,7 @@
 //!
 //! [`Supervisor`]: crate::Supervisor
 
+use crate::entries::Entries;
 use crate::{
     CommandError, Conversation, Request, RunSnapshot, RunUpdate, Start, StartError,
     client::{Client, ClientStatus},
@@ -65,6 +66,8 @@ struct Live {
     tap: Option<RunTap>,
     /// The first prompt, sent once the conversation opens.
     first: Option<Prompt>,
+    /// What the run's conversation keeps of its client's events.
+    entries: Entries,
 }
 
 type Outputs = SelectAll<BoxStream<'static, (RunId, Vec<Framed>)>>;
@@ -235,6 +238,7 @@ impl<H: AgentHost> SupervisorTask<H> {
                         kill: None,
                         tap: None,
                         first: None,
+                        entries: Entries::default(),
                     },
                 );
                 return Err(StartError::Spawn { run, source });
@@ -255,6 +259,7 @@ impl<H: AgentHost> SupervisorTask<H> {
             kill: Some(kill),
             tap: Some(tap),
             first,
+            entries: Entries::default(),
         };
         self.publish(RunUpdate::State {
             run,
@@ -314,6 +319,11 @@ impl<H: AgentHost> SupervisorTask<H> {
             if let (DriveEvent::Ready { thread }, Some(tap)) = (&event, live.tap.as_ref()) {
                 tap.opened(*thread);
             }
+            if let Some(tap) = live.tap.as_ref() {
+                for (turn, entry) in live.entries.take(&event) {
+                    tap.entry(turn, entry);
+                }
+            }
             self.publish(RunUpdate::Event {
                 run,
                 event: event.clone(),
@@ -364,6 +374,9 @@ impl<H: AgentHost> SupervisorTask<H> {
         if let RunState::Ended { end, exit } = &state
             && let Some(tap) = live.tap.take()
         {
+            for (turn, entry) in live.entries.finish() {
+                tap.entry(turn, entry);
+            }
             tap.end(*end, *exit);
         }
         if state != live.state {

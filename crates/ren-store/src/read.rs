@@ -7,7 +7,7 @@ use crate::activity::report::SessionReport;
 use crate::activity::{ActivityBudget, CallActivity, TurnActivity, TurnSummary};
 use crate::query::{CallQuery, Cursor, PageLimit, Shelf, TimeRange};
 use crate::search::{ExposureQuery, ExposureView, SearchPage, SearchQuery};
-use crate::view::{CallDetail, CallPage, RunView, SessionView, UsageView};
+use crate::view::{CallDetail, CallPage, ConversationView, RunView, SessionView, UsageView};
 use crate::{Reader, StoreError};
 use ren_recorder::id::{CallId, RunId, SessionId, TurnId};
 use serde::Serialize;
@@ -45,6 +45,8 @@ pub enum ReadRequest {
         shelf: Shelf,
     },
     Run(RunId),
+    /// A run's conversation, whole, with the runs before it on its thread.
+    Conversation(RunId),
 }
 
 /// What a [`ReadRequest`] returns. Serialized, each is the API's JSON body
@@ -64,9 +66,13 @@ pub enum ReadResponse {
     Exposures { exposures: Vec<ExposureView> },
     Runs { runs: Vec<RunView> },
     Run(Box<RunView>),
+    Conversation(ConversationView),
 }
 
 impl Reader {
+    /// Entries a conversation read returns at most: long runs stay whole.
+    pub const CONVERSATION: u32 = 20_000;
+
     /// Answer one read.
     pub async fn serve(&self, request: &ReadRequest) -> Result<ReadResponse, StoreError> {
         Ok(match request {
@@ -103,6 +109,11 @@ impl Reader {
             ReadRequest::Run(run) => {
                 ReadResponse::Run(Box::new(self.run(*run).await?.ok_or(StoreError::NotFound)?))
             }
+            ReadRequest::Conversation(run) => ReadResponse::Conversation(
+                self.conversation(*run, Self::CONVERSATION)
+                    .await?
+                    .ok_or(StoreError::NotFound)?,
+            ),
         })
     }
 }

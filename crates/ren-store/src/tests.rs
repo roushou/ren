@@ -1817,3 +1817,209 @@ mod history {
         assert!(fixture.runs(Shelf::Current).await.is_empty());
     }
 }
+
+mod conversation {
+    use super::Fixture;
+    use ren_harness::drive::{
+        DriveEvent, DriveItem, ItemKind, ItemPhase, ItemRead, ItemStatus, TurnEnd,
+    };
+    use ren_protocol::native::{NativeThreadId, NativeTurnId};
+    use ren_recorder::{
+        batch::{Batch, Op, RunEntry, RunFact, RunRecord},
+        capture::RunEnd,
+        id::RunId,
+        time::Clock,
+    };
+    use uuid::Uuid;
+
+    fn item(id: &str, phase: ItemPhase, read: ItemRead) -> DriveEvent {
+        serde_json::from_value(serde_json::json!({
+            "kind": "item",
+            "phase": phase,
+            "item": DriveItem {
+                id: serde_json::from_value(serde_json::json!(id)).unwrap(),
+                kind: ItemKind::AgentMessage,
+                read,
+                body: serde_json::Value::Null,
+            },
+        }))
+        .unwrap()
+    }
+
+    impl Fixture {
+        /// A run on `thread` that saw `events` in one turn, then ended.
+        async fn conversed(&mut self, thread: u128, events: Vec<DriveEvent>) -> RunId {
+            let run = RunId::generate(self.ids.as_ref());
+            let turn = NativeTurnId::new(Uuid::from_u128(thread + 100)).unwrap();
+            let mut batch = Batch::default();
+            for fact in [
+                RunFact::Started {
+                    harness: ren_harness::Harness::ClaudeCode,
+                    workdir: "/work/acme".into(),
+                },
+                RunFact::Opened {
+                    thread: NativeThreadId::new(Uuid::from_u128(thread)).unwrap(),
+                },
+            ] {
+                batch.push(Op::Run(RunRecord {
+                    at: self.clock.now(),
+                    run,
+                    fact,
+                }));
+            }
+            for event in events {
+                batch.push(Op::RunEntry(RunEntry {
+                    at: self.clock.now(),
+                    run,
+                    turn: Some(turn),
+                    event,
+                }));
+            }
+            batch.push(Op::Run(RunRecord {
+                at: self.clock.now(),
+                run,
+                fact: RunFact::Ended {
+                    end: RunEnd::Stopped,
+                    exit: None,
+                },
+            }));
+            self.store.commit(&batch).await.unwrap();
+            self.clock.advance(std::time::Duration::from_millis(10));
+            run
+        }
+    }
+
+    #[tokio::test]
+    async fn a_conversation_is_kept_whole_and_reads_on_across_resumed_runs() {
+        let mut fixture = Fixture::new().await;
+        let long = "word ".repeat(5_000);
+        let turn = NativeTurnId::new(Uuid::from_u128(103)).unwrap();
+        let first = fixture
+            .conversed(
+                3,
+                vec![
+                    item(
+                        "cmd_1",
+                        ItemPhase::Started,
+                        ItemRead::Command {
+                            command: "cargo test".into(),
+                            status: ItemStatus::InProgress,
+                            output: None,
+                            exit_code: None,
+                        },
+                    ),
+                    item(
+                        "msg_1",
+                        ItemPhase::Completed,
+                        ItemRead::Reply { text: long.clone() },
+                    ),
+                    // Reported again, finished: it keeps its place.
+                    item(
+                        "cmd_1",
+                        ItemPhase::Completed,
+                        ItemRead::Command {
+                            command: "cargo test".into(),
+                            status: ItemStatus::Completed,
+                            output: Some("ok".into()),
+                            exit_code: Some(0),
+                        },
+                    ),
+                    DriveEvent::TurnEnded {
+                        turn,
+                        end: TurnEnd::Completed,
+                    },
+                ],
+            )
+            .await;
+        // A later run resumed the same conversation; another did not.
+        let resumed = fixture
+            .conversed(
+                3,
+                vec![item(
+                    "msg_2",
+                    ItemPhase::Completed,
+                    ItemRead::Reply {
+                        text: "and then".into(),
+                    },
+                )],
+            )
+            .await;
+        let _other = fixture
+            .conversed(
+                4,
+                vec![item(
+                    "msg_9",
+                    ItemPhase::Completed,
+                    ItemRead::Reply {
+                        text: "elsewhere".into(),
+                    },
+                )],
+            )
+            .await;
+
+        let read = fixture
+            .reader
+            .conversation(resumed, 100)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(!read.earlier);
+        let shown: Vec<(RunId, String)> = read
+            .entries
+            .iter()
+            .map(|entry| {
+                let what = if let DriveEvent::Item { phase, item } = &entry.event {
+                    format!("{} {phase:?}", item.id.as_str())
+                } else {
+                    serde_json::to_value(&entry.event).unwrap()["kind"]
+                        .as_str()
+                        .unwrap()
+                        .to_owned()
+                };
+                (entry.run, what)
+            })
+            .collect();
+        assert_eq!(
+            shown,
+            [
+                (first, "cmd_1 Completed".to_owned()),
+                (first, "msg_1 Completed".to_owned()),
+                (first, "turn_ended".to_owned()),
+                (resumed, "msg_2 Completed".to_owned()),
+            ]
+        );
+        // The reply is whole: nothing is cut for being long.
+        let DriveEvent::Item { item, .. } = &read.entries[1].event else {
+            panic!("a reply");
+        };
+        assert_eq!(item.read, ItemRead::Reply { text: long });
+        // The first run reads only up to itself; a short read says more is earlier.
+        assert_eq!(
+            fixture
+                .reader
+                .conversation(first, 100)
+                .await
+                .unwrap()
+                .unwrap()
+                .entries
+                .len(),
+            3
+        );
+        let short = fixture
+            .reader
+            .conversation(resumed, 2)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(short.earlier);
+        assert_eq!(short.entries.len(), 2);
+        assert!(
+            fixture
+                .reader
+                .conversation(RunId::restore(Uuid::from_u128(99)), 10)
+                .await
+                .unwrap()
+                .is_none()
+        );
+    }
+}
