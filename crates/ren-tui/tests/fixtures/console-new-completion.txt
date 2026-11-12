@@ -20,5 +20,5 @@
    › acme-api  /dev/acme-api  main
      acme-web  /dev/acme-web  feat/upload
 ──────────────────────────────────────────────────────────────────────────────────────────
- › /new ac
+ › /new acme-api
  1–4 answers · esc interrupts                                        /help │ 00:00:00 UTC

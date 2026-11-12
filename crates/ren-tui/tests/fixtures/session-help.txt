@@ -3,7 +3,7 @@
 │ 1–4       answer an approval: allow, allow for the run, deny, deny and stop │▀
 │ enter     send; while a turn runs, it waits for the turn to end             │
 │ ctrl-j    a new line                                                        │
-│ tab       complete a /command                                               │
+│ tab  →    take the /command completion filled in after the cursor           │
 │ esc       interrupt the turn; with none running, back to the wall           │
 │ alt-←     the place before: the wall, then each live run                    │
 │ alt-→     the next place                                                    │

@@ -30,6 +30,8 @@ pub(crate) struct Frame {
     popup: Vec<(Suggestion, bool)>,
     composer: Vec<String>,
     cursor: (usize, usize),
+    /// The rest of the chosen completion, after the cursor.
+    ghost: Option<String>,
     placeholder: Option<String>,
     status: Line,
     status_right: Line,
@@ -65,6 +67,7 @@ impl Frame {
             popup: look.message.popup(look.model.projects()),
             composer,
             cursor,
+            ghost: look.message.ghost(look.model.projects()),
             placeholder: look.message.is_empty().then(|| placeholder.to_owned()),
             status: match look.notice {
                 Some(notice) => Line::of(
@@ -274,10 +277,21 @@ impl Frame {
                     used += Text(&ch.to_string()).width();
                     before.push(ch);
                 }
+                // At the end: the cursor, and what the chosen completion
+                // would fill in, under it and after it.
+                let ghost = self.ghost.as_deref().unwrap_or_default();
+                let mut rest = ghost.chars();
+                let under = rest.next().map_or_else(|| " ".to_owned(), String::from);
+                let under_ink = if ghost.is_empty() {
+                    Ink::Text
+                } else {
+                    Ink::Muted
+                };
                 Line::new(vec![
                     lead,
                     Span::new(before, Ink::Text),
-                    Span::new(" ", Ink::Text).with(Emphasis::Reversed),
+                    Span::new(under, under_ink).with(Emphasis::Reversed),
+                    Span::new(rest.as_str(), Ink::Muted),
                 ])
             })
             .collect();

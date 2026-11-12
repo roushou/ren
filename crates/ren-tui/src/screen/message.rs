@@ -63,6 +63,23 @@ impl MessageBox {
             .collect()
     }
 
+    /// The rest of the chosen completion, filled in after the cursor: only
+    /// while the cursor is at the end and the completion carries on what is
+    /// typed.
+    pub fn ghost(&self, projects: &[Project]) -> Option<String> {
+        if !self.composer.at_end() {
+            return None;
+        }
+        let text = self.composer.text();
+        let suggestions = self.suggestions(projects);
+        let chosen = suggestions.get(self.choice.min(suggestions.len().saturating_sub(1)))?;
+        chosen
+            .replacement
+            .strip_prefix(&text)
+            .filter(|rest| !rest.is_empty())
+            .map(str::to_owned)
+    }
+
     /// Its lines, and where the cursor is in them: a line and a column.
     pub fn lines(&self) -> (Vec<String>, (usize, usize)) {
         let text = self.composer.text();
@@ -89,10 +106,12 @@ impl MessageBox {
                     return Typed::Took;
                 }
                 Key::Tab => {
-                    if let Some(chosen) = suggestions.get(self.choice) {
-                        self.composer.set(&chosen.replacement);
-                        self.choice = 0;
-                    }
+                    self.accept(&suggestions);
+                    return Typed::Took;
+                }
+                // At the end, → takes the filled-in rest, as in a shell.
+                Key::Right if self.ghost(projects).is_some() => {
+                    self.accept(&suggestions);
                     return Typed::Took;
                 }
                 Key::Esc => {
@@ -145,9 +164,63 @@ impl MessageBox {
         Typed::Took
     }
 
+    /// The chosen completion, in place of what is typed.
+    fn accept(&mut self, suggestions: &[Suggestion]) {
+        if let Some(chosen) = suggestions.get(self.choice) {
+            self.composer.set(&chosen.replacement);
+            self.choice = 0;
+        }
+    }
+
     fn typed(&mut self, edit: impl FnOnce(&mut Composer)) {
         edit(&mut self.composer);
         self.dismissed = false;
         self.choice = 0;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{MessageBox, Typed};
+    use crate::Key;
+    use ren_supervisor::{Project, ProjectGit};
+
+    fn typed(text: &str, projects: &[Project]) -> MessageBox {
+        let mut message = MessageBox::default();
+        for ch in text.chars() {
+            assert_eq!(message.press(Key::Char(ch), projects), Typed::Took);
+        }
+        message
+    }
+
+    #[test]
+    fn the_chosen_completion_is_filled_in_and_right_takes_it() {
+        let projects = vec![Project {
+            path: "/dev/acme-api".into(),
+            name: "acme-api".into(),
+            git: ProjectGit::None,
+        }];
+        let mut message = typed("/re", &projects);
+        assert_eq!(message.ghost(&projects).as_deref(), Some("sume "));
+        let _ = message.press(Key::Right, &projects);
+        assert_eq!(message.text(), "/resume ");
+        assert_eq!(message.ghost(&projects), None);
+
+        // A project is filled in once its name carries on what is typed.
+        let mut message = typed("/new ac", &projects);
+        assert_eq!(message.ghost(&projects).as_deref(), Some("me-api "));
+        let _ = message.press(Key::Tab, &projects);
+        assert_eq!(message.text(), "/new acme-api ");
+
+        // Matched inside the name: offered, but nothing to fill in.
+        let message = typed("/new api", &projects);
+        assert_eq!(message.ghost(&projects), None);
+
+        // Away from the end, → moves the cursor.
+        let mut message = typed("/re", &projects);
+        let _ = message.press(Key::Left, &projects);
+        assert_eq!(message.ghost(&projects), None);
+        let _ = message.press(Key::Right, &projects);
+        assert_eq!(message.text(), "/re");
     }
 }

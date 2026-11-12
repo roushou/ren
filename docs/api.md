@@ -30,7 +30,9 @@ with the `tui` feature. Every screen sits in one frame:
   others). Alt-← and Alt-→ move between them. A run that needs you is lit
   there wherever you are.
 - At the bottom, a message box and a status line. Typing always goes to the
-  box; slash commands, completed with Tab, work from every screen:
+  box; slash commands work from every screen. While one is typed, the
+  chosen completion is filled in after the cursor: Tab, or → at the end,
+  takes it, and ↑ and ↓ choose another. The commands:
   `/new <project> [claude|codex] <prompt>` starts a run in one of the
   daemon's projects with its first prompt (the client named last is the
   default), `/resume [search]` lists every run, what needs you first, with

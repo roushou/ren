@@ -22,6 +22,11 @@ impl Composer {
         self.cursor
     }
 
+    /// Whether the cursor is after the last character.
+    pub fn at_end(&self) -> bool {
+        self.cursor == self.chars.len()
+    }
+
     pub fn insert(&mut self, ch: char) {
         self.chars.insert(self.cursor, ch);
         self.cursor += 1;

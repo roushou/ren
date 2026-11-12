@@ -88,8 +88,8 @@ impl SessionKey {
         },
         Bind {
             keys: &[Key::Tab],
-            label: "tab",
-            does: "complete a /command",
+            label: "tab  →",
+            does: "take the /command completion filled in after the cursor",
             command: Self::Complete,
         },
         Bind {
