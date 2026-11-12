@@ -96,6 +96,34 @@ impl AgentScript {
                 "params": { "threadId": self.thread_id(), "turnId": turn, "item": item } })
     }
 
+    /// The models it lists: invented, one the default.
+    const MODELS: [(&'static str, &'static str, &'static str, bool); 4] = [
+        (
+            "dev-swift",
+            "Dev Swift",
+            "Fast and light, for everyday edits.",
+            true,
+        ),
+        (
+            "dev-sage",
+            "Dev Sage",
+            "Slower and more thorough, for hard problems.",
+            false,
+        ),
+        (
+            "dev-scout",
+            "Dev Scout",
+            "Reads widely before it changes anything.",
+            false,
+        ),
+        (
+            "dev-spark",
+            "Dev Spark",
+            "The smallest, for quick answers.",
+            false,
+        ),
+    ];
+
     /// Read one message from Ren.
     pub fn receive(&mut self, message: &Value) -> Vec<Out> {
         let id = message.get("id").cloned();
@@ -116,6 +144,11 @@ impl AgentScript {
                 self.thread = Some(resumed.unwrap_or((self.own, Self::THREAD)));
                 self.opened(id)
             }
+            (Some("model/list"), Some(id)) => vec![Out::Send(json!({ "id": id, "result": {
+                "data": Self::MODELS.map(|(model, name, description, default)| json!({
+                    "id": model, "model": model, "displayName": name, "description": description,
+                    "isDefault": default, "hidden": false })),
+                "nextCursor": null } }))],
             (Some("turn/start"), Some(id)) => self.start(id, &params),
             (Some("turn/interrupt"), Some(id)) => {
                 let mut out = vec![Out::Send(json!({ "id": id, "result": {} }))];
@@ -452,5 +485,39 @@ mod tests {
         assert_eq!((session.0, numbers.0), (4, 1));
         // Turn ids come from this process's number, so they differ from run 4's own.
         assert_ne!(numbers.1, AgentScript::new(Run(4)).turn_number(1));
+    }
+
+    /// Ren's own listing codec reads every line this fake answers with.
+    fn listed(
+        harness: ren_harness::Harness,
+        mut answer: impl FnMut(&Value) -> Vec<Value>,
+    ) -> Vec<ren_harness::drive::Model> {
+        use ren_harness::drive::{Framed, Listing, ModelListing};
+        let (mut listing, mut lines) = ModelListing::open(harness, "0.1.0").unwrap();
+        for _ in 0..8 {
+            let mut next = Vec::new();
+            for line in &lines {
+                let message: Value = serde_json::from_slice(line.as_bytes()).unwrap();
+                for reply in answer(&message) {
+                    match listing.receive(Framed::Line(reply.to_string().into_bytes())) {
+                        Listing::Waiting(more) => next.extend(more),
+                        Listing::Listed(models) => return models,
+                        Listing::Failed(why) => panic!("{why}"),
+                    }
+                }
+            }
+            lines = next;
+        }
+        panic!("never listed");
+    }
+
+    #[test]
+    fn its_models_read_as_codex_lists_them() {
+        let mut agent = AgentScript::new(Run(7));
+        let models = listed(ren_harness::Harness::Codex, |message| {
+            sent(&agent.receive(message))
+        });
+        assert_eq!(models.len(), 4);
+        assert_eq!(models[0].choice, ren_harness::drive::DefaultChoice::Default);
     }
 }

@@ -61,7 +61,14 @@ impl PiScript {
         let session = arguments
             .windows(2)
             .find(|pair| pair[0] == "--session-id")
-            .map(|pair| pair[1].clone())?;
+            .map(|pair| pair[1].clone())
+            // A listing of models keeps no session.
+            .or_else(|| {
+                arguments
+                    .iter()
+                    .any(|argument| argument == "--no-session")
+                    .then(String::new)
+            })?;
         Some(Self {
             own,
             session,
@@ -69,6 +76,16 @@ impl PiScript {
             turn: None,
         })
     }
+
+    /// The models it lists, by provider: invented.
+    const MODELS: [(&'static str, &'static str, &'static str); 6] = [
+        ("anthropic", "dev-large-1", "Dev Large"),
+        ("anthropic", "dev-small-1", "Dev Small"),
+        ("openai", "dev-swift", "Dev Swift"),
+        ("openai", "dev-sage", "Dev Sage"),
+        ("openrouter", "dev-open-70b", "Dev Open 70B"),
+        ("openrouter", "dev-open-8b", "Dev Open 8B"),
+    ];
 
     fn response(id: &Value, command: &str, data: Value) -> Out {
         Out::Send(
@@ -85,7 +102,14 @@ impl PiScript {
                 id,
                 "get_state",
                 json!({ "sessionId": self.session, "isStreaming": self.turn.is_some(),
-                        "messageCount": self.turns * 2 }),
+                        "messageCount": self.turns * 2,
+                        "model": { "provider": "anthropic", "id": "dev-large-1" } }),
+            )],
+            Some("get_available_models") => vec![Self::response(
+                id,
+                "get_available_models",
+                json!({ "models": Self::MODELS.map(|(provider, id, name)| json!({
+                    "provider": provider, "id": id, "name": name })) }),
             )],
             Some("prompt") => self.prompted(id, message["message"].as_str().unwrap_or_default()),
             Some("abort") => {
@@ -298,5 +322,41 @@ mod tests {
         assert_eq!(types(&out), ["agent_end", "agent_settled", "response"]);
         assert_eq!(sent(&out)[1]["aborted"], true);
         assert!(agent.replied(Ok("late".into())).is_empty());
+    }
+
+    /// Ren's own listing codec reads every line this fake answers with.
+    fn listed(
+        harness: ren_harness::Harness,
+        mut answer: impl FnMut(&Value) -> Vec<Value>,
+    ) -> Vec<ren_harness::drive::Model> {
+        use ren_harness::drive::{Framed, Listing, ModelListing};
+        let (mut listing, mut lines) = ModelListing::open(harness, "0.1.0").unwrap();
+        for _ in 0..8 {
+            let mut next = Vec::new();
+            for line in &lines {
+                let message: Value = serde_json::from_slice(line.as_bytes()).unwrap();
+                for reply in answer(&message) {
+                    match listing.receive(Framed::Line(reply.to_string().into_bytes())) {
+                        Listing::Waiting(more) => next.extend(more),
+                        Listing::Listed(models) => return models,
+                        Listing::Failed(why) => panic!("{why}"),
+                    }
+                }
+            }
+            lines = next;
+        }
+        panic!("never listed");
+    }
+
+    #[test]
+    fn its_models_read_as_pi_lists_them() {
+        let arguments = ren_harness::drive::pi::PiModels::arguments();
+        let mut agent = PiScript::new(Run(7), &arguments).unwrap();
+        let models = listed(ren_harness::Harness::Pi, |message| {
+            sent(&agent.receive(message))
+        });
+        assert_eq!(models.len(), 6);
+        assert_eq!(models[0].id.as_str(), "anthropic/dev-large-1");
+        assert_eq!(models[0].choice, ren_harness::drive::DefaultChoice::Default);
     }
 }

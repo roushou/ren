@@ -79,7 +79,14 @@ impl ClaudeScript {
         let session = arguments
             .windows(2)
             .find(|pair| matches!(pair[0].as_str(), "--session-id" | "--resume"))
-            .map(|pair| pair[1].clone())?;
+            .map(|pair| pair[1].clone())
+            // A listing of models keeps no session.
+            .or_else(|| {
+                arguments
+                    .iter()
+                    .any(|argument| argument == "--no-session-persistence")
+                    .then(String::new)
+            })?;
         Some(Self {
             own,
             session,
@@ -102,12 +109,34 @@ impl ClaudeScript {
     }
 
     /// Read one line from Ren.
+    /// The models its `initialize` answer lists: invented, with the entry
+    /// that stands for no choice first, as the real client lists it.
+    fn models() -> Value {
+        json!([
+            { "value": "default", "resolvedModel": "dev-large-1",
+              "displayName": "Default (recommended)", "description": "Dev Large · for most work" },
+            { "value": "large", "resolvedModel": "dev-large-1", "displayName": "Dev Large",
+              "description": "For most work" },
+            { "value": "huge", "resolvedModel": "dev-huge-1", "displayName": "Dev Huge",
+              "description": "For the hardest, longest tasks" },
+            { "value": "small", "resolvedModel": "dev-small-1", "displayName": "Dev Small",
+              "description": "Fastest, for quick answers" },
+            { "value": "dev-large-0", "resolvedModel": "dev-large-0", "displayName": "Dev Large 0",
+              "description": "The previous large model" },
+        ])
+    }
+
     pub fn receive(&mut self, message: &Value) -> Vec<Out> {
         match message["type"].as_str() {
             Some("control_request") => {
                 let id = message["request_id"].clone();
+                let answer = if message["request"]["subtype"] == "initialize" {
+                    json!({ "models": Self::models() })
+                } else {
+                    json!({})
+                };
                 let mut out = vec![Out::Send(json!({ "type": "control_response", "response": {
-                    "subtype": "success", "request_id": id, "response": {} } }))];
+                    "subtype": "success", "request_id": id, "response": answer } }))];
                 if message["request"]["subtype"] == "interrupt" {
                     out.extend(self.end(Some("aborted_streaming")));
                 }
@@ -420,5 +449,41 @@ mod tests {
         let out = sent(&out);
         assert_eq!(out[0]["type"], "control_response");
         assert_eq!(out[1]["terminal_reason"], "aborted_streaming");
+    }
+
+    /// Ren's own listing codec reads every line this fake answers with.
+    fn listed(
+        harness: ren_harness::Harness,
+        mut answer: impl FnMut(&Value) -> Vec<Value>,
+    ) -> Vec<ren_harness::drive::Model> {
+        use ren_harness::drive::{Framed, Listing, ModelListing};
+        let (mut listing, mut lines) = ModelListing::open(harness, "0.1.0").unwrap();
+        for _ in 0..8 {
+            let mut next = Vec::new();
+            for line in &lines {
+                let message: Value = serde_json::from_slice(line.as_bytes()).unwrap();
+                for reply in answer(&message) {
+                    match listing.receive(Framed::Line(reply.to_string().into_bytes())) {
+                        Listing::Waiting(more) => next.extend(more),
+                        Listing::Listed(models) => return models,
+                        Listing::Failed(why) => panic!("{why}"),
+                    }
+                }
+            }
+            lines = next;
+        }
+        panic!("never listed");
+    }
+
+    #[test]
+    fn its_models_read_as_claude_code_lists_them() {
+        let arguments = ren_harness::drive::claude::ClaudeModels::arguments();
+        let mut agent = ClaudeScript::new(Run(7), &arguments, "/work".into()).unwrap();
+        let models = listed(ren_harness::Harness::ClaudeCode, |message| {
+            sent(&agent.receive(message))
+        });
+        let names: Vec<&str> = models.iter().map(|model| model.name.as_str()).collect();
+        assert_eq!(names, ["Dev Large", "Dev Huge", "Dev Small", "Dev Large 0"]);
+        assert_eq!(models[0].choice, ren_harness::drive::DefaultChoice::Default);
     }
 }
