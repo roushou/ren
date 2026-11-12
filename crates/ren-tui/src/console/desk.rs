@@ -1,7 +1,7 @@
 //! Every run the console knows of, live or recorded, and the order they are
 //! visited in: what needs you first.
 
-use crate::transcript::Transcript;
+use crate::console::transcript::Transcript;
 use ren_harness::{
     Harness,
     drive::{ApprovalAsk, ApprovalId, Prompt},

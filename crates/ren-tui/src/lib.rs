@@ -9,6 +9,7 @@
 //! host's storage.
 
 mod call;
+pub mod console;
 mod draw;
 mod grid;
 mod keys;

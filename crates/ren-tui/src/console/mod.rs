@@ -6,14 +6,12 @@
 //! [`Console`] is sans-IO: it takes what was read ([`Input`]) and key
 //! presses, and answers with [`Out`]s, the reads it needs and the commands
 //! to send through the control API. [`Console::frame`] is what to draw;
-//! `draw` renders it with `ren-tui`'s `Screen`, the one part that touches
-//! the terminal.
+//! `draw` renders it into a ratatui buffer, and the crate's `Screen` puts
+//! it on the terminal.
 
 mod composer;
 mod desk;
 mod draw;
-#[cfg(test)]
-mod purity;
 mod slash;
 #[cfg(test)]
 mod tests;
@@ -24,6 +22,7 @@ pub use slash::Suggestion;
 pub use transcript::Entry;
 pub use view::{Frame, Styled};
 
+use crate::{Key, Size};
 use composer::Composer;
 use desk::{Attention, Desk, Run};
 use ren_harness::{
@@ -35,7 +34,6 @@ use ren_protocol::native::NativeThreadId;
 use ren_recorder::id::{RunId, SessionId};
 use ren_store::{activity::TurnActivity, view::RunView};
 use ren_supervisor::{Project, RunSnapshot, RunState, RunUpdate};
-use ren_tui::{Key, Size};
 use slash::{Slash, Unresolved};
 
 /// The console for one gateway's runs.

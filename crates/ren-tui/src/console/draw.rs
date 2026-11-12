@@ -2,9 +2,9 @@
 //! anchored to the bottom, completions over it, the message box, and the
 //! hint line.
 
-use crate::view::{Frame, Line};
+use crate::console::view::{Frame, Line};
+use crate::{Drawn, Ink, Theme};
 use ratatui::{buffer::Buffer, layout::Rect, style::Modifier};
-use ren_tui::{Drawn, Ink, Theme};
 
 impl Drawn for Frame {
     fn render(&self, theme: &Theme, area: Rect, buf: &mut Buffer) {
@@ -163,11 +163,11 @@ impl Frame {
                 ("  ", Ink::Text)
             };
             let line = vec![
-                crate::Styled {
+                crate::console::Styled {
                     text: format!(" {mark}{:<label_width$}  ", suggestion.label),
                     ink,
                 },
-                crate::Styled {
+                crate::console::Styled {
                     text: suggestion.detail.clone(),
                     ink: Ink::Muted,
                 },

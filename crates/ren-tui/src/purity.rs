@@ -12,6 +12,15 @@ fn the_core_stays_free_of_runtime_and_io_dependencies() {
         ("keys.rs", include_str!("keys.rs")),
         ("runs.rs", include_str!("runs.rs")),
         ("session.rs", include_str!("session.rs")),
+        ("console/mod.rs", include_str!("console/mod.rs")),
+        ("console/composer.rs", include_str!("console/composer.rs")),
+        ("console/desk.rs", include_str!("console/desk.rs")),
+        ("console/slash.rs", include_str!("console/slash.rs")),
+        (
+            "console/transcript.rs",
+            include_str!("console/transcript.rs"),
+        ),
+        ("console/view.rs", include_str!("console/view.rs")),
     ];
     let forbidden = [
         "tokio",

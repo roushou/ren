@@ -1,7 +1,8 @@
 //! The console with synthetic runs, events, and recorded turns: no daemon,
 //! no terminal. Screens are pinned as text in `tests/fixtures`.
 
-use crate::{Answered, Command, Console, Input, Out, Read};
+use crate::console::{Answered, Command, Console, Input, Out, Read};
+use crate::{Drawn, Key, Size, Theme};
 use ratatui::{buffer::Buffer, layout::Rect};
 use ren_harness::{
     Harness,
@@ -11,7 +12,6 @@ use ren_protocol::native::{NativeThreadId, NativeTurnId};
 use ren_recorder::id::{RunId, SessionId};
 use ren_store::{activity::TurnActivity, view::RunView};
 use ren_supervisor::{Approvals, Project, ProjectGit, RunSnapshot, RunState, RunUpdate};
-use ren_tui::{Drawn, Key, Size, Theme};
 use serde_json::json;
 
 const SIZE: Size = Size {
@@ -500,13 +500,13 @@ fn screens_draw_as_pinned() {
     });
     assert_eq!(
         drawn(&console),
-        include_str!("../tests/fixtures/run-asking.txt")
+        include_str!("../../tests/fixtures/console-run-asking.txt")
     );
 
     type_text(&mut console, "/new ac");
     assert_eq!(
         drawn(&console),
-        include_str!("../tests/fixtures/new-completion.txt")
+        include_str!("../../tests/fixtures/console-new-completion.txt")
     );
     let _ = console.press(Key::Interrupt);
 
@@ -514,7 +514,7 @@ fn screens_draw_as_pinned() {
     let _ = console.press(Key::Enter);
     assert_eq!(
         drawn(&console),
-        include_str!("../tests/fixtures/resume.txt")
+        include_str!("../../tests/fixtures/console-resume.txt")
     );
 
     let mut quiet = Console::new(SIZE);
@@ -523,7 +523,10 @@ fn screens_draw_as_pinned() {
         snapshot(1, Harness::Codex, "/dev/acme-api", working(1)),
         snapshot(3, Harness::ClaudeCode, "/dev/acme-web", idle(3)),
     ])));
-    assert_eq!(drawn(&quiet), include_str!("../tests/fixtures/home.txt"));
+    assert_eq!(
+        drawn(&quiet),
+        include_str!("../../tests/fixtures/console-home.txt")
+    );
 }
 
 #[test]

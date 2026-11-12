@@ -2,7 +2,8 @@
 //! header, the conversation, the approval card, the message box, and the
 //! hint under it. Pure: `draw` puts a [`Frame`] on the terminal.
 
-use crate::{
+use crate::Ink;
+use crate::console::{
     Console, Control, Projects, Screen, Tone,
     desk::{Attention, Run},
     slash::Suggestion,
@@ -11,7 +12,6 @@ use crate::{
 use ren_harness::drive::{ApprovalAsk, ItemStatus, TurnEnd};
 use ren_protocol::activity::ResultStatus;
 use ren_store::activity::TurnActivity;
-use ren_tui::Ink;
 use unicode_width::UnicodeWidthChar;
 
 /// A run of text in one style.
