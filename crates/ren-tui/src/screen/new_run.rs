@@ -1,12 +1,15 @@
-//! Starting a run: a full-screen composer. The prompt owns the screen, as
-//! long as it needs to be; the project and client are one header line,
-//! defaulting to what was used last, each opened as a list under it when
-//! changed. Below the prompt a line is kept for the files a prompt carries,
-//! which Ren cannot add yet.
+//! Starting a run: a full-screen composer. It opens on where the run will
+//! work: the folder is always chosen, never assumed, from a list with the
+//! folders recent runs worked in first. Then the prompt owns the screen, as
+//! long as it needs to be. The folder and the client are one header line,
+//! each naming the key that changes it, which works while typing: Ctrl-O the
+//! folder, Ctrl-L the client (the last one used, until changed). Below the
+//! prompt a line is kept for the files a prompt carries, which Ren cannot add
+//! yet.
 //!
-//! The prompt has the keys first: typing, pasting, and moving through its
-//! wrapped rows; Enter starts the run, Ctrl-J adds a line, Ctrl-E opens it
-//! in the operator's editor. Tab moves to the header and back.
+//! The prompt takes typing, pasting, and moving through its wrapped rows;
+//! Enter starts the run (or, with no folder yet, opens the folder list),
+//! Ctrl-J adds a line, Ctrl-E opens the prompt in the operator's editor.
 
 use super::composer::Composer;
 use super::{Action, Ctx, Look, Notice};
@@ -34,8 +37,6 @@ pub(crate) struct NewRun {
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Focus {
     Prompt,
-    /// A setting in the header, its list closed.
-    Setting(Setting),
     /// A setting's list, open under the header.
     Picking(Picker),
 }
@@ -54,30 +55,30 @@ struct Picker {
     at: usize,
 }
 
-impl Setting {
-    fn other(self) -> Self {
-        match self {
-            Self::Project => Self::Client,
-            Self::Client => Self::Project,
-        }
-    }
-}
-
 impl NewRun {
     /// Rows a setting's list shows at once.
     const LISTED: usize = 10;
     /// The rows around the prompt: header, rules, files, and key bar.
     const CHROME: u16 = 6;
-    /// Where the header's first setting starts.
-    const SETTINGS_AT: u16 = 11;
+    /// Where a setting's list opens under the header.
+    const LIST_AT: u16 = 2;
 
+    /// The composer, open on choosing where the run works.
     pub fn new(model: &Model) -> Self {
         Self {
             prompt: Composer::default(),
-            project: model.project.clone(),
+            project: None,
             client: model.client,
-            focus: Focus::Prompt,
+            focus: Self::picking(Setting::Project),
         }
+    }
+
+    fn picking(setting: Setting) -> Focus {
+        Focus::Picking(Picker {
+            setting,
+            search: String::new(),
+            at: 0,
+        })
     }
 
     pub fn shown(&mut self) -> Vec<Action> {
@@ -93,25 +94,46 @@ impl NewRun {
         usize::from(height.saturating_sub(Self::CHROME)).max(1)
     }
 
-    /// The project a run would start in: the one chosen, if offered, else
-    /// the first offered.
+    /// The folder chosen, while it is offered.
     fn project<'a>(&self, projects: &'a [Project]) -> Option<&'a Project> {
         self.project
             .as_ref()
             .and_then(|path| projects.iter().find(|project| &project.path == path))
-            .or_else(|| projects.first())
     }
 
-    /// Projects whose name or path holds `search`, ignoring case.
-    fn matching<'a>(search: &str, projects: &'a [Project]) -> Vec<&'a Project> {
+    /// The folders whose name or path holds `search`, ignoring case: those
+    /// recent runs worked in first, newest first, then the rest; and how
+    /// many are recent.
+    fn choices<'a>(search: &str, model: &'a Model) -> (Vec<&'a Project>, usize) {
         let search = search.to_lowercase();
-        projects
+        let matching: Vec<&Project> = model
+            .projects()
             .iter()
             .filter(|project| {
                 project.name.to_lowercase().contains(&search)
                     || project.path.to_lowercase().contains(&search)
             })
-            .collect()
+            .collect();
+        let mut chosen: Vec<&Project> = model
+            .desk
+            .recent_folders()
+            .into_iter()
+            .filter_map(|folder| {
+                matching
+                    .iter()
+                    .copied()
+                    .find(|project| project.path == folder)
+            })
+            .take(5)
+            .collect();
+        let recent = chosen.len();
+        chosen.extend(
+            matching
+                .into_iter()
+                .filter(|project| !chosen.iter().any(|seen| seen.path == project.path))
+                .collect::<Vec<_>>(),
+        );
+        (chosen, recent)
     }
 
     pub fn paste(&mut self, text: &str) -> Vec<Action> {
@@ -119,10 +141,7 @@ impl NewRun {
             Focus::Picking(picker) => picker
                 .search
                 .push_str(text.lines().next().unwrap_or_default()),
-            Focus::Prompt | Focus::Setting(_) => {
-                self.focus = Focus::Prompt;
-                self.prompt.paste(text);
-            }
+            Focus::Prompt => self.prompt.paste(text),
         }
         Vec::new()
     }
@@ -137,7 +156,6 @@ impl NewRun {
     pub fn press(&mut self, key: Key, ctx: &mut Ctx<'_>) -> Vec<Action> {
         match self.focus.clone() {
             Focus::Prompt => self.write(key, ctx),
-            Focus::Setting(setting) => self.setting(setting, key),
             Focus::Picking(picker) => self.pick(picker, key, ctx),
         }
     }
@@ -147,8 +165,8 @@ impl NewRun {
         match key {
             Key::Enter => return self.start(ctx),
             Key::Esc | Key::Interrupt => return vec![Action::Pop],
-            Key::Tab => self.focus = Focus::Setting(Setting::Project),
-            Key::BackTab => self.focus = Focus::Setting(Setting::Client),
+            Key::Folder | Key::Tab => self.focus = Self::picking(Setting::Project),
+            Key::Client | Key::BackTab => self.focus = Self::picking(Setting::Client),
             Key::Editor => return vec![Action::Edit(self.prompt.text())],
             Key::Char(ch) => self.prompt.insert(ch),
             Key::Newline => self.prompt.insert('\n'),
@@ -174,46 +192,9 @@ impl NewRun {
         Vec::new()
     }
 
-    fn setting(&mut self, setting: Setting, key: Key) -> Vec<Action> {
-        match key {
-            Key::Left | Key::Right => self.focus = Focus::Setting(setting.other()),
-            Key::Enter | Key::Down | Key::Char(' ') => {
-                self.focus = Focus::Picking(Picker {
-                    setting,
-                    search: String::new(),
-                    at: 0,
-                });
-            }
-            Key::Char(ch) if setting == Setting::Project => {
-                // Typing on the project searches it at once.
-                self.focus = Focus::Picking(Picker {
-                    setting,
-                    search: ch.to_string(),
-                    at: 0,
-                });
-            }
-            Key::Tab | Key::BackTab | Key::Esc | Key::Up => self.focus = Focus::Prompt,
-            Key::Interrupt => return vec![Action::Pop],
-            Key::Char(_)
-            | Key::Backspace
-            | Key::Delete
-            | Key::Home
-            | Key::End
-            | Key::PageUp
-            | Key::PageDown
-            | Key::AltLeft
-            | Key::AltRight
-            | Key::Newline
-            | Key::Older
-            | Key::Newer
-            | Key::Editor => {}
-        }
-        Vec::new()
-    }
-
     fn pick(&mut self, mut picker: Picker, key: Key, ctx: &mut Ctx<'_>) -> Vec<Action> {
         let count = match picker.setting {
-            Setting::Project => Self::matching(&picker.search, ctx.model.projects()).len(),
+            Setting::Project => Self::choices(&picker.search, ctx.model).0.len(),
             Setting::Client => ctx.model.clients().len(),
         };
         match key {
@@ -228,9 +209,24 @@ impl NewRun {
                 picker.at = 0;
             }
             Key::Enter | Key::Tab => return self.choose(&picker, ctx.model),
+            // Back to the prompt, as it was: no folder is assumed.
             Key::Esc => {
-                self.focus = Focus::Setting(picker.setting);
+                self.focus = Focus::Prompt;
                 return Vec::new();
+            }
+            Key::Folder => {
+                picker = Picker {
+                    setting: Setting::Project,
+                    search: String::new(),
+                    at: 0,
+                }
+            }
+            Key::Client => {
+                picker = Picker {
+                    setting: Setting::Client,
+                    search: String::new(),
+                    at: 0,
+                }
             }
             Key::Interrupt => return vec![Action::Pop],
             Key::Char(_)
@@ -258,9 +254,7 @@ impl NewRun {
     fn choose(&mut self, picker: &Picker, model: &Model) -> Vec<Action> {
         match picker.setting {
             Setting::Project => {
-                if let Some(project) =
-                    Self::matching(&picker.search, model.projects()).get(picker.at)
-                {
+                if let Some(project) = Self::choices(&picker.search, model).0.get(picker.at) {
                     self.project = Some(project.path.clone());
                 }
             }
@@ -284,15 +278,17 @@ impl NewRun {
 
     fn start(&mut self, ctx: &mut Ctx<'_>) -> Vec<Action> {
         let Some(project) = self.project(ctx.model.projects()) else {
-            self.focus = Focus::Setting(Setting::Project);
-            return vec![Action::Say(Notice::refusal("choose a project first"))];
+            self.focus = Self::picking(Setting::Project);
+            return vec![Action::Say(Notice::info(
+                "choose the folder the run works in, then enter starts it",
+            ))];
         };
         let ready =
             ctx.model.clients().iter().any(|client| {
                 client.harness == self.client && client.status == ClientStatus::Ready
             });
         if !ready {
-            self.focus = Focus::Setting(Setting::Client);
+            self.focus = Self::picking(Setting::Client);
             return vec![Action::Say(Notice::refusal(format!(
                 "{} is not installed on the daemon's host",
                 Self::name(self.client)
@@ -301,7 +297,6 @@ impl NewRun {
         let dir = project.path.clone();
         let prompt = Prompt::parse(self.prompt.text()).ok();
         ctx.model.client = self.client;
-        ctx.model.project = Some(dir.clone());
         let command = ctx.model.start(self.client, dir, None, prompt);
         vec![Action::Pop, Action::Send(command)]
     }
@@ -375,7 +370,7 @@ impl NewRun {
                     screen,
                     View::Framed {
                         title: match picker.setting {
-                            Setting::Project => " project ".to_owned(),
+                            Setting::Project => " folder ".to_owned(),
                             Setting::Client => " client ".to_owned(),
                         },
                         ink: Ink::Bar,
@@ -383,23 +378,14 @@ impl NewRun {
                     },
                     Place::Under {
                         top: 1,
-                        inset: match picker.setting {
-                            Setting::Project => Self::SETTINGS_AT,
-                            Setting::Client => self.client_at(look.model),
-                        },
+                        inset: Self::LIST_AT,
                         width: u16::try_from(widest + 4).unwrap_or(u16::MAX),
                         height: u16::try_from(tall + 2).unwrap_or(u16::MAX),
                     },
                 )
             }
-            Focus::Prompt | Focus::Setting(_) => screen,
+            Focus::Prompt => screen,
         }
-    }
-
-    /// Where the client's setting starts in the header.
-    fn client_at(&self, model: &Model) -> u16 {
-        let before = Text(&self.project_label(model)).width() + 2 + 4;
-        Self::SETTINGS_AT + u16::try_from(before).unwrap_or(u16::MAX)
     }
 
     fn project_label(&self, model: &Model) -> String {
@@ -410,44 +396,49 @@ impl NewRun {
                 project.path,
                 Self::branch(&project.git)
             ),
-            None => "choose a project".to_owned(),
+            None => "none yet".to_owned(),
         }
     }
 
-    /// The header: the screen's name, then each setting, the one with the
-    /// keys marked.
+    /// The header: the screen's name, then each setting with the key that
+    /// changes it; the one being changed is marked, and a folder not yet
+    /// chosen says so.
     fn header(&self, model: &Model) -> Bar {
-        let marked = |setting: Setting| match &self.focus {
-            Focus::Setting(at) => *at == setting,
-            Focus::Picking(picker) => picker.setting == setting,
-            Focus::Prompt => false,
+        let open = match &self.focus {
+            Focus::Picking(picker) => Some(picker.setting),
+            Focus::Prompt => None,
         };
-        let value = |setting: Setting, text: String| {
-            let span = Span::new(format!(" {text} "), Ink::Text);
-            if marked(setting) {
+        let value = |setting: Setting, text: String, ink: Ink| {
+            let span = Span::new(format!(" {text} "), ink);
+            if open == Some(setting) {
                 span.with(Emphasis::Reversed)
             } else {
                 span
             }
         };
+        let folder_ink = if self.project(model.projects()).is_some() {
+            Ink::Text
+        } else {
+            Ink::Error
+        };
         let left = Line::new(vec![
             Span::new(" new run ", Ink::LiveTitle).with(Emphasis::Bold),
-            Span::plain(" "),
-            Span::new("▸", Ink::Muted),
-            value(Setting::Project, self.project_label(model)),
             Span::plain("   "),
-            Span::new("▸", Ink::Muted),
-            value(Setting::Client, Self::name(self.client).to_owned()),
+            Span::new("ctrl-o", Ink::Tool),
+            Span::new(" folder", Ink::Muted),
+            value(Setting::Project, self.project_label(model), folder_ink),
+            Span::plain("   "),
+            Span::new("ctrl-l", Ink::Tool),
+            Span::new(" client", Ink::Muted),
+            value(
+                Setting::Client,
+                Self::name(self.client).to_owned(),
+                Ink::Text,
+            ),
         ]);
         Bar {
             left,
-            right: Line::of(
-                match self.focus {
-                    Focus::Prompt => "tab settings ",
-                    Focus::Setting(_) | Focus::Picking(_) => "tab back to the prompt ",
-                },
-                Ink::Muted,
-            ),
+            right: Line::default(),
             fill: Ink::Bar,
             keep: Keep::Left,
         }
@@ -472,7 +463,7 @@ impl NewRun {
         };
         match picker.setting {
             Setting::Project => {
-                let projects = Self::matching(&picker.search, model.projects());
+                let (projects, recent) = Self::choices(&picker.search, model);
                 let name = projects
                     .iter()
                     .map(|project| Text(&project.name).width())
@@ -489,6 +480,12 @@ impl NewRun {
                 ])];
                 let first = picker.at.saturating_sub(Self::LISTED - 1);
                 for (index, project) in projects.iter().enumerate().skip(first).take(Self::LISTED) {
+                    if index == 0 && recent > 0 {
+                        lines.push(Line::of(" recent", Ink::Muted));
+                    }
+                    if index == recent && recent > 0 {
+                        lines.push(Line::of(" all folders", Ink::Muted));
+                    }
                     lines.push(mark(
                         index,
                         vec![
@@ -499,7 +496,7 @@ impl NewRun {
                     ));
                 }
                 if projects.is_empty() {
-                    lines.push(Line::of("   no project matches", Ink::Muted));
+                    lines.push(Line::of("   no folder matches", Ink::Muted));
                 }
                 lines
             }
@@ -537,16 +534,13 @@ impl NewRun {
             None => Line::of(
                 match &self.focus {
                     Focus::Prompt => {
-                        " enter start · ctrl-j new line · ctrl-e your editor · tab settings · esc cancel"
-                    }
-                    Focus::Setting(_) => {
-                        " ←→ project or client · enter change it · tab back to the prompt"
+                        " enter start · ctrl-o folder · ctrl-l client · ctrl-j new line · ctrl-e your editor · esc cancel"
                     }
                     Focus::Picking(picker) => match picker.setting {
                         Setting::Project => {
-                            " type to search · ↑↓ choose · enter take it · esc close"
+                            " where should the run work? type to search · ↑↓ choose · enter take it · esc back to the prompt"
                         }
-                        Setting::Client => " ↑↓ choose · enter take it · esc close",
+                        Setting::Client => " ↑↓ choose · enter take it · esc back to the prompt",
                     },
                 },
                 Ink::Muted,

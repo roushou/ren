@@ -201,6 +201,8 @@ impl TerminalEvent {
             KeyCode::Char('p') if control => Some(Key::Older),
             KeyCode::Char('n') if control => Some(Key::Newer),
             KeyCode::Char('e') if control => Some(Key::Editor),
+            KeyCode::Char('o') if control => Some(Key::Folder),
+            KeyCode::Char('l') if control => Some(Key::Client),
             KeyCode::Char(_) if control => None,
             // macOS terminals send Option-← and Option-→ as Alt-b and Alt-f.
             KeyCode::Char('b') if alt => Some(Key::AltLeft),
@@ -255,6 +257,22 @@ mod tests {
         assert_eq!(
             of(press(KeyCode::Char('q'), KeyModifiers::NONE)),
             Some(TerminalEvent::Key(Key::Char('q')))
+        );
+        for (ch, key) in [
+            ('e', Key::Editor),
+            ('o', Key::Folder),
+            ('l', Key::Client),
+            ('j', Key::Newline),
+        ] {
+            assert_eq!(
+                of(press(KeyCode::Char(ch), KeyModifiers::CONTROL)),
+                Some(TerminalEvent::Key(key))
+            );
+        }
+        // A paste is one block, its line breaks kept.
+        assert_eq!(
+            of(Event::Paste("one\ntwo".into())),
+            Some(TerminalEvent::Paste("one\ntwo".into()))
         );
         assert_eq!(of(press(KeyCode::Char('x'), KeyModifiers::CONTROL)), None);
         assert_eq!(of(press(KeyCode::F(1), KeyModifiers::NONE)), None);

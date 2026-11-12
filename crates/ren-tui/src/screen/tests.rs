@@ -386,12 +386,29 @@ fn keys_move_through_the_list_and_the_action_menu_interrupts() {
 }
 
 #[test]
-fn n_opens_the_composer_where_a_long_prompt_is_written_and_started() {
+fn n_opens_the_composer_on_where_the_run_works_then_the_prompt() {
     let mut console = desk();
     let _ = console.press(Key::Char('n'));
     assert!(console.tui.overlaid());
-    // The prompt has the keys: typed, and pasted with its line breaks.
+    // It opens on the folder: nothing is assumed, recent runs' folders first.
+    let list = drawn(&console);
+    assert!(list.contains("where should the run work?"), "{list}");
+    assert!(list.contains("folder none yet"), "{list}");
+    // Both folders had runs here: the newest run's first.
+    let recent = list.find(" recent").unwrap();
+    let web = list.find("acme-web  /dev/acme-web").unwrap();
+    let api = list.find("acme-api  /dev/acme-api").unwrap();
+    assert!(recent < web && web < api, "{list}");
+    // Esc goes to the prompt with no folder; enter then asks for one.
+    let _ = console.press(Key::Esc);
     type_text(&mut console, "add the upload form");
+    let out = console.press(Key::Enter);
+    assert!(sent(&out).is_empty());
+    assert!(drawn(&console).contains("choose the folder the run works in"));
+    // The list is open again: type to search, enter takes it.
+    type_text(&mut console, "web");
+    let _ = console.press(Key::Enter);
+    // Back in the prompt, it takes typing and pastes with their line breaks.
     let _ = console.press(Key::Newline);
     assert!(
         console
@@ -399,15 +416,8 @@ fn n_opens_the_composer_where_a_long_prompt_is_written_and_started() {
             .paste("with a progress bar\nand a retry button")
             .is_empty()
     );
-    // The project defaults to the first offered; tab, then type, searches it.
-    let _ = console.press(Key::Tab);
-    type_text(&mut console, "web");
-    assert!(drawn(&console).contains("/dev/acme-web"));
-    let _ = console.press(Key::Enter);
-    // The client's list opens under the header; ↓ picks Codex.
-    let _ = console.press(Key::Tab);
-    let _ = console.press(Key::Right);
-    let _ = console.press(Key::Enter);
+    // Ctrl-L opens the client's list while writing; ↓ picks Codex.
+    let _ = console.press(Key::Client);
     let _ = console.press(Key::Down);
     let _ = console.press(Key::Enter);
     let out = console.press(Key::Enter);
@@ -430,15 +440,13 @@ fn n_opens_the_composer_where_a_long_prompt_is_written_and_started() {
     let out = console.apply(Input::Answered(Ok(Answered::Started(run_id(9)))));
     assert!(out.contains(&Out::Read(Read::Runs)));
     assert_eq!(console.current(), Some(run_id(9)));
-    // The next composer starts where the last run did, with its client.
+    // The next composer keeps the client, and still asks where.
     let _ = console.press(Key::Char('n'));
     let shown = drawn(&console);
-    assert!(
-        shown.contains("acme-web  /dev/acme-web · feat/upload"),
-        "{shown}"
-    );
-    assert!(shown.contains("Codex"), "{shown}");
+    assert!(shown.contains("folder none yet"), "{shown}");
+    assert!(shown.contains("client Codex"), "{shown}");
     // Ctrl-E hands the prompt to the editor; what it saves comes back.
+    let _ = console.press(Key::Esc);
     type_text(&mut console, "draft");
     assert_eq!(console.press(Key::Editor), [Out::Edit("draft".into())]);
     let _ = console.tui.edited(Ok("the whole plan\n"));
@@ -478,8 +486,7 @@ fn the_composer_offers_the_clients_installed_on_the_daemons_host() {
     let mut console = desk();
     let _ = console.apply(Input::Clients(Ok(clients())));
     let _ = console.press(Key::Char('n'));
-    let _ = console.press(Key::BackTab);
-    let _ = console.press(Key::Enter);
+    let _ = console.press(Key::Client);
     let list = drawn(&console);
     assert!(list.contains("Pi  not installed"), "{list}");
     assert!(!list.contains("OpenCode"));
@@ -489,8 +496,8 @@ fn the_composer_offers_the_clients_installed_on_the_daemons_host() {
     assert!(sent(&console.press(Key::Enter)).is_empty());
     assert!(drawn(&console).contains("Pi is not installed on the daemon's host"));
     // Should the chosen client be gone from the host, starting says why.
-    let _ = console.press(Key::Esc);
-    let _ = console.press(Key::Tab);
+    let _ = console.press(Key::Folder);
+    let _ = console.press(Key::Enter);
     let _ = console.apply(Input::Clients(Ok(vec![ren_supervisor::Client {
         harness: Harness::ClaudeCode,
         status: ren_supervisor::ClientStatus::NotInstalled,
@@ -637,7 +644,14 @@ fn screens_draw_as_pinned() {
         include_str!("../../tests/fixtures/app-run-asking.txt")
     );
     let _ = console.apply(Input::Clients(Ok(clients())));
+    // The composer opens on where the run works.
     let _ = console.press(Key::Char('n'));
+    type_text(&mut console, "ac");
+    assert_eq!(
+        drawn(&console),
+        include_str!("../../tests/fixtures/app-new-run-project.txt")
+    );
+    let _ = console.press(Key::Enter);
     let _ = console.tui.paste(
         "The upload test is flaky on CI: it fails about one run in ten with a lease timeout. \
          Look at how the worker renews its lease in src/upload/worker.rs, and why the retry \
@@ -649,14 +663,6 @@ fn screens_draw_as_pinned() {
         drawn(&console),
         include_str!("../../tests/fixtures/app-new-run.txt")
     );
-    let _ = console.press(Key::Tab);
-    type_text(&mut console, "ac");
-    assert_eq!(
-        drawn(&console),
-        include_str!("../../tests/fixtures/app-new-run-project.txt")
-    );
-    let _ = console.press(Key::Esc);
-    let _ = console.press(Key::Esc);
     let _ = console.press(Key::Esc);
     let _ = console.press(Key::Tab);
     assert_eq!(

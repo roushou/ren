@@ -33,6 +33,10 @@ pub enum Key {
     Newer,
     /// Ctrl-E: edit what is written in the operator's own editor.
     Editor,
+    /// Ctrl-O: choose the folder a run works in.
+    Folder,
+    /// Ctrl-L: choose the client a run starts with.
+    Client,
 }
 
 /// A terminal's size in cells.

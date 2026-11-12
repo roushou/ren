@@ -116,7 +116,9 @@ impl MessageBox {
             | Key::PageDown
             | Key::AltLeft
             | Key::AltRight
-            | Key::Editor => return Typed::Left(key),
+            | Key::Editor
+            | Key::Folder
+            | Key::Client => return Typed::Left(key),
         }
         Typed::Took
     }

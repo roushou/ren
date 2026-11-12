@@ -270,6 +270,19 @@ impl Desk {
         live
     }
 
+    /// The folders runs worked in, newest first, each once.
+    pub fn recent_folders(&self) -> Vec<&str> {
+        let mut runs: Vec<&Run> = self.runs.iter().collect();
+        runs.sort_by(|a, b| b.started_at.cmp(&a.started_at).then(b.seen.cmp(&a.seen)));
+        let mut folders: Vec<&str> = Vec::new();
+        for run in runs {
+            if !folders.contains(&run.workdir.as_str()) {
+                folders.push(&run.workdir);
+            }
+        }
+        folders
+    }
+
     /// Every run: what needs you first, then the newest ended ones.
     pub fn all(&self) -> Vec<&Run> {
         const ENDED: usize = 20;

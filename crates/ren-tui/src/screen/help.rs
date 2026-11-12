@@ -42,7 +42,9 @@ impl Help {
             | Key::Newline
             | Key::Older
             | Key::Newer
-            | Key::Editor => Vec::new(),
+            | Key::Editor
+            | Key::Folder
+            | Key::Client => Vec::new(),
         }
     }
 

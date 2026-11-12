@@ -66,13 +66,17 @@ the bar at the bottom.
   menu also denies it and stops the turn; writing instead denies it and sends
   your words next. Answering one moves
   on to the next run that needs you.
-- `n` opens the new-run composer, full screen: the prompt has the whole
+- `n` opens the new-run composer, full screen, on where the run works: the
+  folder is always chosen, never assumed, from a list (type to search) with
+  the folders recent runs worked in first. Then the prompt has the whole
   body, as long as it needs to be, with the same editing keys as writing to
   a run (Ctrl-E for your editor, pasting with line breaks); Enter starts the
-  run. The project and the client are one header line, defaulting to what the
-  last run used; Tab moves to it, ←→ picks one, and Enter opens its list
-  under the header (type to search projects). A line under the prompt is
-  kept for the files a prompt carries; Ren cannot add files yet.
+  run, or, with no folder chosen, opens the folder list. The header shows the
+  folder and the client with the key that changes each, which works while
+  typing: Ctrl-O the folder, Ctrl-L the client (the last one used until
+  changed). A line under the prompt is kept for the files a prompt carries;
+  Ren cannot add files yet. The web UI's new-run form follows the same rule:
+  no folder is assumed, and Start without one opens its picker.
 - `?` lists every key, by layer, and `q` quits, leaving runs running; Ctrl-C quits only when pressed twice in a
   row, so a stray press does not.
 

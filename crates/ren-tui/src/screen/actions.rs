@@ -95,7 +95,9 @@ impl Actions {
                 | Key::Newline
                 | Key::Older
                 | Key::Newer
-                | Key::Editor => {
+                | Key::Editor
+                | Key::Folder
+                | Key::Client => {
                     self.confirming = None;
                     Vec::new()
                 }
@@ -135,7 +137,9 @@ impl Actions {
             | Key::Newline
             | Key::Older
             | Key::Newer
-            | Key::Editor => Vec::new(),
+            | Key::Editor
+            | Key::Folder
+            | Key::Client => Vec::new(),
         }
     }
 

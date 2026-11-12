@@ -1,10 +1,10 @@
- new run  ▸ acme-api  /dev/acme-api · main    ▸ Claude Code                                      tab back to the prompt
-───────────┌ project ────────────────────────────────┐──────────────────────────────────────────────────────────────────
- The upload│  search  ac▏                            │n in ten with a lease timeout. Look at how the worker renews its
- lease in s│  › acme-api  /dev/acme-api  main        │ter can be bumped after the lease check.
-           │    acme-web  /dev/acme-web  feat/upload │
- Fix it, ad└─────────────────────────────────────────┘e, and push a branch named fix/upload-lease. Leave the public
- API as it is.
+ new run    ctrl-o folder none yet    ctrl-l client Claude Code
+──┌ folder ─────────────────────────────────┐───────────────────────────────────────────────────────────────────────────
+ W│  search  ac▏                            │ it; ctrl-e opens your editor.
+  │  recent                                 │
+  │  › acme-web  /dev/acme-web  feat/upload │
+  │    acme-api  /dev/acme-api  main        │
+  └─────────────────────────────────────────┘
 
 
 
@@ -27,4 +27,4 @@
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
  files   none
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
- type to search · ↑↓ choose · enter take it · esc close                                             3 lines · 341 chars
+ where should the run work? type to search · ↑↓ choose · enter take it · esc back to the prompt        1 line · 0 chars

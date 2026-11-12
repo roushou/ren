@@ -713,7 +713,9 @@ impl Main {
             | Key::Newline
             | Key::Older
             | Key::Newer
-            | Key::Editor => {}
+            | Key::Editor
+            | Key::Folder
+            | Key::Client => {}
         }
         // The selection stays on a match.
         self.changed(ctx, &[])
