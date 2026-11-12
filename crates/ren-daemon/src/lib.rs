@@ -304,7 +304,7 @@ impl Daemon {
         };
         Ok(Some(Supervisor::new(
             options,
-            ProcessHost,
+            ProcessHost::new(config.pi_cache().cloned()),
             ids.clone(),
             recorder.clone(),
         )?))

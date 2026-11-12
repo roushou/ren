@@ -204,7 +204,8 @@ impl<H: AgentHost> SupervisorTask<H> {
             .drive(&self.gateway, &opening)
             .map_err(StartError::NotDrivable)?;
         let (codec, opening_lines) =
-            Driver::open(harness, opening, &self.version).map_err(StartError::NotDrivable)?;
+            Driver::open(harness, opening, &self.version, self.ids.next_uuid())
+                .map_err(StartError::NotDrivable)?;
         let run = RunId::generate(self.ids.as_ref());
         // Every run is recorded: without room, it does not start.
         let tap = self

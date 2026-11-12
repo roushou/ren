@@ -7,7 +7,7 @@ use ren_gateway::{
     policy::{EntryUsers, Policy, PolicyConfig},
     user::{UserConfig, Users},
 };
-use ren_harness::host::HostEnv;
+use ren_harness::{host::HostEnv, pi::PiCache};
 use ren_protocol::route::{Api, Provider, UnsupportedWire, Wire};
 use ren_recorder::retention::RetentionPolicy;
 use ren_recorder::{
@@ -321,6 +321,10 @@ impl Config {
             buffer: self.buffer,
             control: self.control.clone(),
             runs: self.runs.clone(),
+            pi_cache: match keys {
+                Keys::Env(env) => PiCache::locate(env).ok(),
+                Keys::Unchecked => None,
+            },
             revision: self.revision()?,
         })
     }
@@ -424,6 +428,9 @@ pub struct RuntimeConfig {
     buffer: BufferOptions,
     control: ControlOptions,
     runs: RunsOptions,
+    /// Where driven Pi processes find Ren's extension, when the host
+    /// environment names a cache.
+    pi_cache: Option<PiCache>,
     revision: String,
 }
 
@@ -442,6 +449,9 @@ impl RuntimeConfig {
     }
     pub fn runs(&self) -> &RunsOptions {
         &self.runs
+    }
+    pub fn pi_cache(&self) -> Option<&PiCache> {
+        self.pi_cache.as_ref()
     }
     /// The gateway's settings from this snapshot.
     pub fn gateway(&self) -> GatewayConfig {

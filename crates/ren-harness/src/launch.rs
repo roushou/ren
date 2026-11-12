@@ -1,7 +1,7 @@
 //! Session-only client overrides. Authentication remains owned by the client.
 use crate::{
     Harness,
-    drive::{Opening, claude::ClaudeStreamJson},
+    drive::{Opening, claude::ClaudeStreamJson, pi::PiRpc},
     endpoint::{GatewayEndpoint, UserToken},
     host::HostEnv,
     pi::{PiCache, PiCacheError},
@@ -186,13 +186,14 @@ impl Harness {
         match self {
             Self::Codex => Ok("codex"),
             Self::ClaudeCode => Ok("claude"),
-            Self::Pi | Self::OpenCode => Err(NotDrivable(self)),
+            Self::Pi => Ok("pi"),
+            Self::OpenCode => Err(NotDrivable(self)),
         }
     }
 
     /// How to start this harness in its structured mode, driven by Ren
     /// through `drive`, with its model traffic sent to `gateway`. The client
-    /// keeps its own sign-in. Codex and Claude Code can be driven so far.
+    /// keeps its own sign-in. Codex, Claude Code, and Pi can be driven so far.
     pub fn drive(
         self,
         gateway: &GatewayEndpoint,
@@ -220,7 +221,17 @@ impl Harness {
                     .collect();
                 Ok(plan)
             }
-            Self::Pi | Self::OpenCode => Err(NotDrivable(self)),
+            Self::Pi => {
+                // The same extension and gateway as a launched session.
+                let mut plan = self.launch(gateway);
+                plan.arguments.extend(
+                    PiRpc::arguments(opening)
+                        .into_iter()
+                        .map(LaunchArg::Literal),
+                );
+                Ok(plan)
+            }
+            Self::OpenCode => Err(NotDrivable(self)),
         }
     }
 
@@ -265,6 +276,14 @@ impl LaunchPlan {
 
     /// Claude Code's extra request headers, one `Name: Value` per line.
     const CUSTOM_HEADERS: &'static str = "ANTHROPIC_CUSTOM_HEADERS";
+
+    /// Whether the client loads Ren's Pi extension, whose path the command
+    /// then needs.
+    pub fn loads_pi_extension(&self) -> bool {
+        self.arguments
+            .iter()
+            .any(|argument| matches!(argument, LaunchArg::PiExtension))
+    }
 
     /// Build the client command. `extension` replaces the Pi extension
     /// placeholder; without it the placeholder text is passed literally.
@@ -361,12 +380,47 @@ mod tests {
         let overrides: Vec<_> = interactive.get_args().skip(1).collect();
         assert_eq!(arguments[3..], overrides[..]);
         assert_eq!(command.get_envs().count(), 0);
-        for harness in [Harness::Pi, Harness::OpenCode] {
-            assert_eq!(
-                harness.drive(&gateway, &opening()).err(),
-                Some(super::NotDrivable(harness))
-            );
-        }
+        assert_eq!(
+            Harness::OpenCode.drive(&gateway, &opening()).err(),
+            Some(super::NotDrivable(Harness::OpenCode))
+        );
+        assert_eq!(
+            Harness::OpenCode.driven_program(),
+            Err(super::NotDrivable(Harness::OpenCode))
+        );
+    }
+
+    #[test]
+    fn drives_pi_in_rpc_mode_with_rens_extension_through_the_gateway() {
+        let gateway = GatewayEndpoint::parse("http://127.0.0.1:8787").unwrap();
+        let driven = Harness::Pi.drive(&gateway, &opening()).unwrap();
+        assert_eq!(Harness::Pi.driven_program(), Ok("pi"));
+        assert!(driven.loads_pi_extension());
+        assert!(
+            !Harness::Codex
+                .drive(&gateway, &opening())
+                .unwrap()
+                .loads_pi_extension()
+        );
+        let command = driven.command(Some(Path::new("/cache/ren.ts")), &[]);
+        assert_eq!(command.get_program(), "pi");
+        assert_eq!(
+            command.get_args().collect::<Vec<_>>(),
+            [
+                "--extension",
+                "/cache/ren.ts",
+                "--mode",
+                "rpc",
+                "--session-id",
+                SESSION
+            ]
+        );
+        // The same environment as a launched session.
+        let launched = Harness::Pi.launch(&gateway).command(None, &[]);
+        assert_eq!(
+            command.get_envs().collect::<Vec<_>>(),
+            launched.get_envs().collect::<Vec<_>>()
+        );
     }
 
     #[test]

@@ -418,15 +418,25 @@ is not made: `503` `unrecorded` when the recorder has no room now (try again),
 
 `/control/v1/runs` starts and drives agent runs: the official client, started
 by the daemon in a folder under a `[runs]` root and driven through its
-structured mode: Codex's `codex app-server`, or Claude Code's print mode with
+structured mode: Codex's `codex app-server`, Claude Code's print mode with
 streaming JSON (`claude -p --input-format stream-json --output-format
-stream-json`). The client keeps its own sign-in, and its model traffic goes
-through this gateway like any session. Ren names a new Claude Code
-conversation itself (`--session-id`), so a run's `thread` is the session the
-recorded calls carry; Claude Code's permission prompts are its approvals, and
-Ren answers no other request (hooks, MCP, elicitation). Claude Code reports no
-live turn id matching its recorded prompt id, so a driven turn's `turn` is its
-prompt's message id, not the recorded turn's `native_id`.
+stream-json`), or Pi's RPC mode (`pi --mode rpc`, with Ren's extension). The
+client keeps its own sign-in, and its model traffic goes through this gateway
+like any session. Ren names a new Claude Code conversation or Pi session
+itself (`--session-id`), so a run's `thread` is the session the recorded calls
+carry; Claude Code's permission prompts are its approvals, and Ren answers no
+other request (hooks, MCP, elicitation). Claude Code reports no live turn id
+matching its recorded prompt id, so a driven turn's `turn` is its prompt's
+message id, not the recorded turn's `native_id`.
+
+Pi asks for no approvals: it runs its tools as it decides, so a Pi run never
+waits on the operator mid-turn. Its turn lasts from the prompt until Pi
+settles (`agent_settled`), after any retries or compaction; Pi names no turns,
+so the daemon mints each driven turn's id, which is not the recorded turn's
+`native_id`. A Pi run resumes the session of that id in the run's own folder.
+Dialogs an extension opens are cancelled. The daemon publishes Ren's Pi
+extension to `$XDG_CACHE_HOME/ren/pi` (else `~/.cache/ren/pi`) before starting
+Pi, so the daemon's environment needs one of them.
 
 Driving Claude Code with a Claude subscription is the operator signing in to
 the unmodified `claude` program on their own machine, which Anthropic's

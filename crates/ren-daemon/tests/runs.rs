@@ -132,7 +132,7 @@ async fn a_run_is_started_prompted_approved_and_stopped_through_the_control_api(
     );
 
     // The clients a run can start with here: the scripted host has every
-    // program; Pi and OpenCode cannot be driven yet.
+    // program; OpenCode cannot be driven yet.
     let clients: serde_json::Value = serde_json::from_slice(
         &control
             .http
@@ -151,7 +151,7 @@ async fn a_run_is_started_prompted_approved_and_stopped_through_the_control_api(
         json!([
             { "harness": "claude_code", "status": "ready" },
             { "harness": "codex", "status": "ready" },
-            { "harness": "pi", "status": "not_drivable" },
+            { "harness": "pi", "status": "ready" },
             { "harness": "opencode", "status": "not_drivable" },
         ])
     );
@@ -288,7 +288,7 @@ async fn runs_refuse_bad_requests_browsers_and_missing_tokens() {
             "invalid_directory",
         ),
         (
-            json!({ "harness": "pi", "dir": "/work/a" }),
+            json!({ "harness": "opencode", "dir": "/work/a" }),
             StatusCode::BAD_REQUEST,
             "not_drivable",
         ),

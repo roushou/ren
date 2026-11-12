@@ -189,7 +189,7 @@ dependencies under "Crates" below. Read the code for current module ownership.
 - `crates/ren-harness`: the harnesses, with `Harness` (`ClaudeCode`, `Codex`, `Pi`, `OpenCode`)
   as its primary type: attribution (`attribution`, with its private `headers`
   parser implementing `Harness::attribution`), session launch plans
-  (`Harness::launch`, and `Harness::drive` for Codex's and Claude Code's structured modes), the bundled Pi extension cache (`pi`), the gateway URL a
+  (`Harness::launch`, and `Harness::drive` for Codex's, Claude Code's, and Pi's structured modes), the bundled Pi extension cache (`pi`), the gateway URL a
   harness is pointed at and the `UserToken` it presents there (`endpoint`),
   `HostEnv` (`host`), the host environment
   that launching and configuration read, and what each harness's tools and
@@ -200,7 +200,7 @@ dependencies under "Crates" below. Read the code for current module ownership.
   `DriveCommand` and `DriveEvent` vocabulary, with `ItemRead`, what Ren reads
   of each item for every client, and the `Driver` over each client's codec:
   `CodexAppServer` for `codex app-server`, `ClaudeStreamJson` for `claude -p`
-  in stream-json). It performs filesystem and process I/O
+  in stream-json, `PiRpc` for `pi --mode rpc`). It performs filesystem and process I/O
   but has no async runtime, HTTP, database, or CLI dependency.
 - `crates/ren-recorder`: the bounded capture queue between forwarding and
   storage, with `Recorder` as its primary type. `CallTap` (and `ChannelTap` for a
@@ -244,7 +244,7 @@ dependencies under "Crates" below. Read the code for current module ownership.
   `tests/recorder.rs`, the recorder against the real store.
 - `crates/ren-supervisor`: runs, with `Supervisor` as its primary type: agent
   processes started in a folder inside the configured roots and driven through
-  their client's structured mode (Codex and Claude Code). `RunState` (`run`) is the
+  their client's structured mode (Codex, Claude Code, and Pi). `RunState` (`run`) is the
   pure lifecycle machine (starting, idle, working with its waiting approvals,
   stopping, ended with a `RunEnd`); `Workdir` (`workdir`) keeps runs inside
   `Roots`, resolved by the host so links cannot escape; `project` finds the

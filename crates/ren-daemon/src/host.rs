@@ -6,7 +6,7 @@
 //! random identities. Components receive them as values; nothing else calls
 //! `SystemTime::now`, `Instant::now`, or `Uuid::new_v4`.
 
-use ren_harness::launch::LaunchPlan;
+use ren_harness::{launch::LaunchPlan, pi::PiCache};
 use ren_recorder::{
     id::IdSource,
     time::{Clock, Moment, Monotonic, UnixMillis},
@@ -126,10 +126,17 @@ impl<T: Send + 'static> ObservationThread<T> {
 /// Starts agent processes on this host: the production [`AgentHost`]. Each
 /// process works in its run's directory with piped stdin and stdout; stderr
 /// is discarded, and a process whose exit future is dropped is killed.
-#[derive(Debug, Default, Clone, Copy)]
-pub struct ProcessHost;
+/// Pi loads Ren's extension, published to `pi` before each start.
+#[derive(Debug, Default, Clone)]
+pub struct ProcessHost {
+    pi: Option<PiCache>,
+}
 
 impl ProcessHost {
+    pub fn new(pi: Option<PiCache>) -> Self {
+        Self { pi }
+    }
+
     fn start(mut command: std::process::Command, workdir: &Path) -> io::Result<AgentProcess> {
         command
             .current_dir(workdir)
@@ -248,7 +255,15 @@ impl AgentHost for ProcessHost {
     }
 
     fn spawn(&self, plan: &LaunchPlan, workdir: &Workdir) -> io::Result<AgentProcess> {
-        Self::start(plan.command(None, &[]), workdir.as_path())
+        let extension = if plan.loads_pi_extension() {
+            let cache = self.pi.as_ref().ok_or_else(|| {
+                io::Error::other("set XDG_CACHE_HOME or HOME for the Pi extension cache")
+            })?;
+            Some(cache.materialize().map_err(io::Error::other)?)
+        } else {
+            None
+        };
+        Self::start(plan.command(extension.as_deref(), &[]), workdir.as_path())
     }
 }
 

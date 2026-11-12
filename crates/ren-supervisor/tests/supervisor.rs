@@ -57,6 +57,9 @@ enum Script {
     /// A well-behaved Claude Code in stream-json print mode: echoes each
     /// prompt, asks to run one command, and ends the turn once answered.
     Claude,
+    /// A well-behaved Pi in RPC mode: reports its session, runs each prompt
+    /// to a reply, and settles.
+    Pi,
 }
 
 /// The arguments and working directory of one spawned agent.
@@ -113,20 +116,29 @@ impl AgentHost for FakeHost {
             return Err(io::Error::from(io::ErrorKind::NotFound));
         }
         let command = plan.command(None, &[]);
-        let arguments = command
+        let arguments: Vec<String> = command
             .get_args()
             .map(|argument| argument.to_string_lossy().into_owned())
             .collect();
         self.spawned
             .lock()
             .unwrap()
-            .push((arguments, workdir.as_path().to_path_buf()));
+            .push((arguments.clone(), workdir.as_path().to_path_buf()));
         let (stdin, agent_in) = tokio::io::duplex(64 * 1024);
         let (agent_out, stdout) = tokio::io::duplex(64 * 1024);
         let (exit_tx, exit_rx) = oneshot::channel();
         let (kill, signal) = KillSwitch::pair();
         match self.script {
             Script::Claude => tokio::spawn(claude(agent_in, agent_out, signal, exit_tx)),
+            Script::Pi => {
+                let session = arguments
+                    .iter()
+                    .position(|argument| argument == "--session-id")
+                    .and_then(|at| arguments.get(at + 1))
+                    .cloned()
+                    .unwrap_or_default();
+                tokio::spawn(pi(session, agent_in, agent_out, signal, exit_tx))
+            }
             Script::Codex | Script::RefusesOpening | Script::ExitsEarly => {
                 tokio::spawn(agent(self.script, agent_in, agent_out, signal, exit_tx))
             }
@@ -284,6 +296,59 @@ async fn claude(
                                 "result": "Tests pass." }),
                     )
                     .await;
+                }
+                Some(_) | None => {}
+            }
+        }
+        ProcessExit::Code(0)
+    };
+    let status = tokio::select! {
+        status = serve => status,
+        () = kill.fired() => ProcessExit::Signal(9),
+    };
+    let _ = exit.send(status);
+}
+
+/// A scripted Pi in RPC mode, on the session `session`.
+async fn pi(
+    session: String,
+    input: DuplexStream,
+    mut out: DuplexStream,
+    kill: KillSignal,
+    exit: oneshot::Sender<ProcessExit>,
+) {
+    let mut lines = BufReader::new(input).lines();
+    let serve = async {
+        while let Ok(Some(line)) = lines.next_line().await {
+            let message: Value = serde_json::from_str(&line).unwrap();
+            let id = message["id"].clone();
+            match message["type"].as_str() {
+                Some("get_state") => {
+                    send(
+                        &mut out,
+                        json!({ "id": id, "type": "response", "command": "get_state",
+                                "success": true, "data": { "sessionId": session } }),
+                    )
+                    .await;
+                }
+                Some("prompt") => {
+                    let text = message["message"].clone();
+                    for line in [
+                        json!({ "id": id, "type": "response", "command": "prompt",
+                                "success": true, "data": { "disposition": "started" } }),
+                        json!({ "type": "agent_start" }),
+                        json!({ "type": "message_start",
+                                "message": { "role": "user", "content": text, "timestamp": 1 } }),
+                        json!({ "type": "message_start",
+                                "message": { "role": "assistant", "content": [] } }),
+                        json!({ "type": "message_end", "message": { "role": "assistant",
+                                "stopReason": "stop",
+                                "content": [{ "type": "text", "text": "Tests pass." }] } }),
+                        json!({ "type": "agent_end", "messages": [] }),
+                        json!({ "type": "agent_settled", "aborted": false }),
+                    ] {
+                        send(&mut out, line).await;
+                    }
                 }
                 Some(_) | None => {}
             }
@@ -474,7 +539,7 @@ async fn refuses_directories_outside_the_roots_and_undrivable_clients() {
     }
     assert!(matches!(
         supervisor
-            .start(Harness::Pi, "/work/acme", Conversation::New, None)
+            .start(Harness::OpenCode, "/work/acme", Conversation::New, None)
             .await,
         Err(StartError::NotDrivable(_))
     ));
@@ -668,6 +733,50 @@ async fn drives_claude_code_through_a_turn_in_the_conversation_ren_names() {
 }
 
 #[tokio::test]
+async fn drives_pi_through_a_turn_in_the_session_ren_names() {
+    let host = FakeHost::new(Script::Pi);
+    let spawned = host.spawned.clone();
+    let supervised = supervise(host).await;
+    let supervisor = &supervised.supervisor;
+    let mut updates = supervisor.subscribe();
+
+    let run = supervisor
+        .start(Harness::Pi, "/work/acme", Conversation::New, None)
+        .await
+        .unwrap();
+    let (arguments, workdir) = spawned.lock().unwrap()[0].clone();
+    assert_eq!(workdir, PathBuf::from("/work/acme"));
+    assert!(arguments.windows(2).any(|pair| pair == ["--mode", "rpc"]));
+    let named = arguments
+        .iter()
+        .position(|argument| argument == "--session-id")
+        .map(|at| arguments[at + 1].clone())
+        .expect("Ren names the session");
+    let RunState::Idle { thread } =
+        state(&mut updates, |s| matches!(s, RunState::Idle { .. })).await
+    else {
+        unreachable!()
+    };
+    assert_eq!(thread.to_string(), named);
+
+    supervisor.command(run, prompt()).await.unwrap();
+    state(&mut updates, |s| {
+        matches!(s, RunState::Working { turn: Some(_), .. })
+    })
+    .await;
+    state(&mut updates, |s| matches!(s, RunState::Idle { .. })).await;
+    supervisor.command(run, RunCommand::Stop).await.unwrap();
+    state(&mut updates, RunState::is_ended).await;
+
+    let (stored, _dir) = supervised.stored().await;
+    let [stored] = stored.as_slice() else {
+        panic!("one run is stored: {stored:?}");
+    };
+    assert_eq!(stored.harness, Stored::Known(Harness::Pi));
+    assert_eq!(stored.thread.as_deref(), Some(named.as_str()));
+}
+
+#[tokio::test]
 async fn a_first_prompt_goes_out_once_the_conversation_opens() {
     let supervised = supervise(FakeHost::new(Script::Claude)).await;
     let supervisor = &supervised.supervisor;
@@ -716,7 +825,7 @@ async fn clients_say_whether_a_run_can_start_with_them_here() {
         status(Harness::ClaudeCode),
         Some(ClientStatus::NotInstalled)
     );
-    assert_eq!(status(Harness::Pi), Some(ClientStatus::NotDrivable));
+    assert_eq!(status(Harness::Pi), Some(ClientStatus::NotInstalled));
     assert_eq!(status(Harness::OpenCode), Some(ClientStatus::NotDrivable));
 }
 

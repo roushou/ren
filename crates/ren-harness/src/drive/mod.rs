@@ -10,12 +10,14 @@
 pub mod claude;
 pub mod codex;
 mod lines;
+pub mod pi;
 
 pub use lines::{Framed, Line, LineLimit, Lines};
 
 use crate::{Harness, launch::NotDrivable};
 use claude::ClaudeStreamJson;
 use codex::CodexAppServer;
+use pi::PiRpc;
 
 use ren_protocol::native::{NativeThreadId, NativeTurnId};
 use serde_with::{DeserializeFromStr, SerializeDisplay};
@@ -25,7 +27,7 @@ use strum::{Display, EnumString, IntoStaticStr, VariantArray};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Opening {
     /// A new conversation in this working directory. `id` is the id Ren
-    /// gives it where the client lets Ren choose (Claude Code); Codex
+    /// gives it where the client lets Ren choose (Claude Code, Pi); Codex
     /// chooses its own and reports it.
     New { cwd: String, id: NativeThreadId },
     /// An existing conversation, continued in this working directory.
@@ -46,15 +48,18 @@ pub struct Received {
 pub enum Driver {
     Codex(CodexAppServer),
     ClaudeCode(ClaudeStreamJson),
+    Pi(PiRpc),
 }
 
 impl Driver {
     /// The codec for a freshly started `harness` process, and the lines to
-    /// send it first. `version` is Ren's own version.
+    /// send it first. `version` is Ren's own version; `seed` is a fresh id
+    /// that a client which names no turns (Pi) has its turn ids minted from.
     pub fn open(
         harness: Harness,
         opening: Opening,
         version: &str,
+        seed: uuid::Uuid,
     ) -> Result<(Self, Vec<Line>), NotDrivable> {
         match harness {
             Harness::Codex => {
@@ -65,7 +70,11 @@ impl Driver {
                 let (codec, first) = ClaudeStreamJson::open(&opening);
                 Ok((Self::ClaudeCode(codec), vec![first]))
             }
-            Harness::Pi | Harness::OpenCode => Err(NotDrivable(harness)),
+            Harness::Pi => {
+                let (codec, first) = PiRpc::open(&opening, seed);
+                Ok((Self::Pi(codec), vec![first]))
+            }
+            Harness::OpenCode => Err(NotDrivable(harness)),
         }
     }
 
@@ -74,6 +83,7 @@ impl Driver {
         match self {
             Self::Codex(codec) => codec.command(command),
             Self::ClaudeCode(codec) => codec.command(command),
+            Self::Pi(codec) => codec.command(command),
         }
     }
 
@@ -82,6 +92,7 @@ impl Driver {
         match self {
             Self::Codex(codec) => codec.receive(frame),
             Self::ClaudeCode(codec) => codec.receive(frame),
+            Self::Pi(codec) => codec.receive(frame),
         }
     }
 }
