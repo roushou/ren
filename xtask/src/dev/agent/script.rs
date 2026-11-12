@@ -156,6 +156,15 @@ impl AgentScript {
                 "nextCursor": null } }))],
             (Some("turn/start"), Some(id)) => self.start(id, &params),
             (Some("turn/steer"), Some(id)) => self.steer(id, &params),
+            (Some("skills/list"), Some(id)) => vec![Out::Send(json!({ "id": id, "result": {
+                "data": [{ "cwd": self.cwd, "errors": [], "skills": [
+                    { "name": "release-notes", "description": "Draft release notes from the log",
+                      "enabled": true, "scope": "repo",
+                      "path": format!("{}/.codex/skills/release-notes/SKILL.md", self.cwd) },
+                    { "name": "acme-style", "description": "Follow the acme style guide",
+                      "enabled": true, "scope": "user",
+                      "path": "/home/dev/.codex/skills/acme-style/SKILL.md" },
+                ] }] } }))],
             (Some("turn/interrupt"), Some(id)) => {
                 let mut out = vec![Out::Send(json!({ "id": id, "result": {} }))];
                 out.extend(self.end("interrupted"));

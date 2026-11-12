@@ -113,6 +113,17 @@ impl PiScript {
                     "provider": provider, "id": id, "name": name,
                     "reasoning": !id.ends_with("8b") })) }),
             )],
+            Some("get_commands") => vec![Self::response(
+                id,
+                "get_commands",
+                json!({ "commands": [
+                    { "name": "fix-tests", "description": "Fix the failing tests",
+                      "source": "prompt" },
+                    { "name": "skill:changelog", "description": "Keep the changelog current",
+                      "source": "skill" },
+                    { "name": "todo", "description": "List the open todos", "source": "extension" },
+                ] }),
+            )],
             Some("prompt") => self.prompted(id, message["message"].as_str().unwrap_or_default()),
             Some("abort") => {
                 let mut out = self.settle(None, true);

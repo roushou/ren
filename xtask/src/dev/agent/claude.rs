@@ -128,12 +128,26 @@ impl ClaudeScript {
         ])
     }
 
+    /// The commands its `initialize` answer lists: invented.
+    fn commands() -> Value {
+        json!([
+            { "name": "review", "description": "Review the working tree's changes",
+              "argumentHint": "<path or PR>" },
+            { "name": "release-notes", "description": "Draft release notes from the log",
+              "argumentHint": "" },
+            { "name": "acme:deploy-check", "description": "(acme) Check a deploy before it ships",
+              "argumentHint": "<service>" },
+            { "name": "summarize", "description": "Summarize the conversation so far",
+              "argumentHint": "", "builtin": true },
+        ])
+    }
+
     pub fn receive(&mut self, message: &Value) -> Vec<Out> {
         match message["type"].as_str() {
             Some("control_request") => {
                 let id = message["request_id"].clone();
                 let answer = if message["request"]["subtype"] == "initialize" {
-                    json!({ "models": Self::models() })
+                    json!({ "models": Self::models(), "commands": Self::commands() })
                 } else {
                     json!({})
                 };
