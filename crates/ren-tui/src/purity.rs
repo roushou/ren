@@ -1,32 +1,36 @@
-//! The views' cores stay sans-IO: no runtime, no I/O, no terminal. It
-//! depends on `ren-store` for its views, and that crate depends on Tokio
-//! and SQLx, so this is checked on the sources rather than by the
-//! manifest.
+//! Everything but the renderer (`ui/draw.rs`), the theme, and the terminal
+//! stays sans-IO: no runtime, no I/O, no terminal. The crate depends on
+//! `ren-store` for its views, and that crate depends on Tokio and SQLx, so
+//! this is checked on the sources rather than by the manifest.
 
 #[test]
 fn the_core_stays_free_of_runtime_and_io_dependencies() {
     let sources = [
-        ("lib.rs", include_str!("lib.rs")),
         ("event.rs", include_str!("event.rs")),
+        ("keys.rs", include_str!("keys.rs")),
+        ("lib.rs", include_str!("lib.rs")),
+        ("model/call.rs", include_str!("model/call.rs")),
+        ("model/desk.rs", include_str!("model/desk.rs")),
+        ("model/mod.rs", include_str!("model/mod.rs")),
+        ("model/sessions.rs", include_str!("model/sessions.rs")),
+        ("model/transcript.rs", include_str!("model/transcript.rs")),
+        ("screen/chrome.rs", include_str!("screen/chrome.rs")),
+        ("screen/composer.rs", include_str!("screen/composer.rs")),
+        ("screen/help.rs", include_str!("screen/help.rs")),
+        ("screen/home.rs", include_str!("screen/home.rs")),
+        ("screen/message.rs", include_str!("screen/message.rs")),
+        ("screen/mod.rs", include_str!("screen/mod.rs")),
+        ("screen/resume.rs", include_str!("screen/resume.rs")),
+        ("screen/run.rs", include_str!("screen/run.rs")),
+        ("screen/slash.rs", include_str!("screen/slash.rs")),
+        ("screen/wall/grid.rs", include_str!("screen/wall/grid.rs")),
+        ("screen/wall/keys.rs", include_str!("screen/wall/keys.rs")),
+        ("screen/wall/mod.rs", include_str!("screen/wall/mod.rs")),
+        ("screen/wall/pane.rs", include_str!("screen/wall/pane.rs")),
+        ("screen/wall/runs.rs", include_str!("screen/wall/runs.rs")),
+        ("screen/wall/view.rs", include_str!("screen/wall/view.rs")),
         ("ui/mod.rs", include_str!("ui/mod.rs")),
         ("ui/text.rs", include_str!("ui/text.rs")),
-        ("wall/draw.rs", include_str!("wall/draw.rs")),
-        ("console/draw.rs", include_str!("console/draw.rs")),
-        ("wall/mod.rs", include_str!("wall/mod.rs")),
-        ("wall/call.rs", include_str!("wall/call.rs")),
-        ("wall/grid.rs", include_str!("wall/grid.rs")),
-        ("wall/keys.rs", include_str!("wall/keys.rs")),
-        ("wall/runs.rs", include_str!("wall/runs.rs")),
-        ("wall/session.rs", include_str!("wall/session.rs")),
-        ("console/mod.rs", include_str!("console/mod.rs")),
-        ("console/composer.rs", include_str!("console/composer.rs")),
-        ("console/desk.rs", include_str!("console/desk.rs")),
-        ("console/slash.rs", include_str!("console/slash.rs")),
-        (
-            "console/transcript.rs",
-            include_str!("console/transcript.rs"),
-        ),
-        ("console/view.rs", include_str!("console/view.rs")),
     ];
     let forbidden = [
         "tokio",

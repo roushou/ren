@@ -2,34 +2,27 @@
 //! conversation, and a state line; the status line under them; the help
 //! over them. Pure: the crate's one renderer draws it.
 
-use super::keys::Command;
+use super::pane::{CallFacts, Elapsed, Line as PaneLine, Phase, ResultMark, SessionPane, ToolLine};
 use super::runs::RunPhase;
-use super::session::{
-    CallFacts, Line as PaneLine, Phase, ResultMark, SessionPane, Span as Elapsed, ToolLine,
-};
-use super::{Frame, Help, Pane, Reading, View as Layout};
+use super::{Frame, Layout, Pane};
+use crate::model::Reading;
 use crate::ui::Tone;
-use crate::ui::{
-    Anchor, Bar, Emphasis, Grid, Ink, Keep, Line, Place, Rule, Size, Span, Text, View,
-};
+use crate::ui::{Anchor, Bar, Emphasis, Grid, Ink, Keep, Line, Rule, Size, Span, Text, View};
 use ren_harness::Harness;
 use ren_harness::drive::ApprovalAsk;
 use ren_protocol::activity::ResultStatus;
 use ren_recorder::time::UnixMillis;
 
 impl Frame {
-    /// What to draw, `width` by `height` cells.
-    pub fn view(&self, width: u16, height: u16) -> View {
+    /// What to draw.
+    pub fn view(&self) -> View {
+        let (width, height) = (self.size.width, self.size.height);
         let panes = self.panes(width, height.saturating_sub(1));
         let status = View::Bar(self.status_bar(width));
-        let wall = View::fill(
+        View::fill(
             Ink::Ground,
             View::Rows(vec![(Size::Fill, panes), (Size::Exact(1), status)]),
-        );
-        match self.help {
-            Help::Hidden => wall,
-            Help::Shown => Self::help(wall),
-        }
+        )
     }
 
     fn panes(&self, width: u16, height: u16) -> View {
@@ -44,7 +37,7 @@ impl Frame {
             .iter()
             .enumerate()
             .map(|(index, pane)| {
-                let (place, focused) = match self.view {
+                let (place, focused) = match self.layout {
                     Layout::Panes { focus } => (Some(index), focus == index),
                     Layout::Zoomed => (None, false),
                 };
@@ -586,44 +579,6 @@ impl Frame {
                 GLYPHS[usize::try_from(level - 1).unwrap_or(0).min(7)]
             })
             .collect()
-    }
-
-    /// The keys, in a box over the wall.
-    fn help(wall: View) -> View {
-        let rows: Vec<(&str, &str)> = Command::ALL
-            .iter()
-            .map(|command| (command.keys(), command.describe()))
-            .collect();
-        let keys_width = rows
-            .iter()
-            .map(|(keys, _)| Text(keys).width())
-            .max()
-            .unwrap_or(0);
-        let text_width = rows
-            .iter()
-            .map(|(_, text)| Text(text).width())
-            .max()
-            .unwrap_or(0);
-        let lines = rows
-            .iter()
-            .map(|(keys, text)| {
-                Line::new(vec![
-                    Span::new(format!("{keys:<keys_width$}   "), Ink::Tool),
-                    Span::plain(*text),
-                ])
-            })
-            .collect();
-        let width = u16::try_from(keys_width + 3 + text_width + 4).unwrap_or(u16::MAX);
-        let height = u16::try_from(rows.len() + 2).unwrap_or(u16::MAX);
-        View::layer(
-            wall,
-            View::Framed {
-                title: " keys ".to_owned(),
-                ink: Ink::Bar,
-                body: Box::new(View::lines(lines, Anchor::Top)),
-            },
-            Place::Center { width, height },
-        )
     }
 }
 

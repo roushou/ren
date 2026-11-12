@@ -1,10 +1,67 @@
-//! The view against reads shaped as the management API sends them.
+//! The wall against reads shaped as the management API sends them, run
+//! as the terminal runs it: a [`Tui`] opened on the wall.
 
+use super::pane::{Line, Phase, ResultMark, Tally};
+use super::runs::RunPhase;
 use super::*;
-use crate::ThemeName;
+use crate::model::CallEnd;
+use crate::model::{Input, Read, Snapshot, SnapshotQuery};
+use crate::ui::Tone;
+use crate::{Opening, Out, ThemeName, Tui};
 use ren_harness::Harness;
-use ren_recorder::id::RunId;
+use ren_recorder::Observation;
+use ren_recorder::id::{CallId, RunId, TurnId};
+use ren_recorder::progress::Progress;
+use ren_store::query::{KindFilter, PageLimit, StatusFilter};
+use ren_store::view::CallPage;
 use serde_json::{Value, json};
+
+/// The wall as the terminal runs it.
+struct Wall {
+    tui: Tui,
+}
+
+impl Wall {
+    const OUTPUT_BINS: usize = Sessions::OUTPUT_BINS;
+
+    fn new(size: Size) -> Self {
+        let mut tui = Tui::new(size, Opening::Wall);
+        let _ = tui.start();
+        Self { tui }
+    }
+
+    fn snapshot_query(now: UnixMillis) -> SnapshotQuery {
+        Tui::snapshot_query(now)
+    }
+
+    /// What `input` asks to read.
+    fn apply(&mut self, input: Input) -> Vec<Read> {
+        self.tui
+            .apply(input)
+            .into_iter()
+            .filter_map(|out| match out {
+                Out::Read(read) => Some(read),
+                Out::Send(_) | Out::CycleTheme | Out::Quit => None,
+            })
+            .collect()
+    }
+
+    fn press(&mut self, key: Key) -> Vec<Out> {
+        self.tui.press(key)
+    }
+
+    fn frame(&self, now: UnixMillis) -> Frame {
+        self.tui.wall_frame(now).expect("the wall is shown")
+    }
+
+    fn view(&self, now: UnixMillis) -> crate::ui::View {
+        self.tui.view(now)
+    }
+
+    fn help_shown(&self) -> bool {
+        self.tui.help_shown()
+    }
+}
 
 const T0: u64 = 1_800_000_000_000;
 
@@ -878,11 +935,11 @@ fn busy(size: Size) -> Wall {
 
 /// The wall drawn into a buffer, as text: one line per row, trailing
 /// spaces trimmed.
-fn drawn(wall: &Frame, size: Size) -> String {
+fn drawn(wall: &Wall, now: UnixMillis, size: Size) -> String {
     use ratatui::{buffer::Buffer, layout::Rect};
     let area = Rect::new(0, 0, size.width, size.height);
     let mut buffer = Buffer::empty(area);
-    wall.view(size.width, size.height)
+    wall.view(now)
         .render(&crate::Theme::default(), area, &mut buffer);
     (0..size.height)
         .map(|y| {
@@ -905,7 +962,7 @@ fn the_wall_draws_the_same_at_each_size() {
                 width: 80,
                 height: 24,
             },
-            include_str!("../../tests/fixtures/wall-80x24.txt"),
+            include_str!("../../../tests/fixtures/wall-80x24.txt"),
         ),
         (
             "wall-120x32.txt",
@@ -913,7 +970,7 @@ fn the_wall_draws_the_same_at_each_size() {
                 width: 120,
                 height: 32,
             },
-            include_str!("../../tests/fixtures/wall-120x32.txt"),
+            include_str!("../../../tests/fixtures/wall-120x32.txt"),
         ),
         (
             "wall-180x42.txt",
@@ -921,12 +978,12 @@ fn the_wall_draws_the_same_at_each_size() {
                 width: 180,
                 height: 42,
             },
-            include_str!("../../tests/fixtures/wall-180x42.txt"),
+            include_str!("../../../tests/fixtures/wall-180x42.txt"),
         ),
     ];
     for (name, size, pinned) in sizes {
         let tui = busy(size);
-        assert_eq!(drawn(&tui.frame(at(300)), size), pinned, "{name}");
+        assert_eq!(drawn(&tui, at(300), size), pinned, "{name}");
     }
 }
 
@@ -937,15 +994,15 @@ fn zoom_and_help_draw_over_the_wall() {
         height: 24,
     };
     let mut tui = busy(size);
-    assert_eq!(tui.press(Key::Enter), Pressed::Continue(vec![]));
+    assert_eq!(tui.press(Key::Enter), vec![]);
     assert_eq!(
-        drawn(&tui.frame(at(300)), size),
-        include_str!("../../tests/fixtures/wall-zoomed.txt")
+        drawn(&tui, at(300), size),
+        include_str!("../../../tests/fixtures/wall-zoomed.txt")
     );
-    assert_eq!(tui.press(Key::Char('?')), Pressed::Continue(vec![]));
+    assert_eq!(tui.press(Key::Char('?')), vec![]);
     assert_eq!(
-        drawn(&tui.frame(at(300)), size),
-        include_str!("../../tests/fixtures/wall-help.txt")
+        drawn(&tui, at(300), size),
+        include_str!("../../../tests/fixtures/wall-help.txt")
     );
 }
 
@@ -956,9 +1013,9 @@ fn the_focused_pane_moves_with_the_keys_and_stays_in_the_grid() {
         width: 2 * Grid::PANE_WIDTH,
         height: 2 * Grid::PANE_HEIGHT + Grid::STATUS_LINES,
     });
-    let focus = |tui: &Wall| match tui.frame(at(300)).view {
-        View::Panes { focus } => focus,
-        View::Zoomed => panic!("zoomed"),
+    let focus = |tui: &Wall| match tui.frame(at(300)).layout {
+        Layout::Panes { focus } => focus,
+        Layout::Zoomed => panic!("zoomed"),
     };
     assert_eq!(focus(&tui), 0);
     for (key, expected) in [
@@ -983,8 +1040,8 @@ fn the_focused_pane_moves_with_the_keys_and_stays_in_the_grid() {
         height: Grid::PANE_HEIGHT + Grid::STATUS_LINES,
     }));
     assert_eq!(focus(&tui), 0);
-    assert_eq!(tui.press(Key::Char('q')), Pressed::Quit);
-    assert_eq!(tui.press(Key::Interrupt), Pressed::Quit);
+    assert_eq!(tui.press(Key::Char('q')), vec![Out::Quit]);
+    assert_eq!(tui.press(Key::Interrupt), vec![Out::Quit]);
 }
 
 #[test]
@@ -995,7 +1052,7 @@ fn zoom_follows_sessions_and_leaves_with_them() {
     });
     let zoomed = |tui: &Wall| {
         let wall = tui.frame(at(300));
-        assert_eq!(wall.view, View::Zoomed);
+        assert_eq!(wall.layout, Layout::Zoomed);
         assert_eq!(
             wall.grid,
             Grid {
@@ -1015,7 +1072,7 @@ fn zoom_follows_sessions_and_leaves_with_them() {
     let _ = tui.press(Key::BackTab);
     assert_ne!(zoomed(&tui), second);
     let _ = tui.press(Key::Esc);
-    assert!(matches!(tui.frame(at(300)).view, View::Panes { .. }));
+    assert!(matches!(tui.frame(at(300)).layout, Layout::Panes { .. }));
 
     // A zoomed session that leaves the wall leaves the zoom.
     let _ = tui.press(Key::Enter);
@@ -1024,7 +1081,7 @@ fn zoom_follows_sessions_and_leaves_with_them() {
         vec![session(9, "pi_extension_headers", 1000)],
         vec![],
     ));
-    assert!(matches!(tui.frame(at(1000)).view, View::Panes { .. }));
+    assert!(matches!(tui.frame(at(1000)).layout, Layout::Panes { .. }));
 }
 
 #[test]
@@ -1050,16 +1107,16 @@ fn a_pinned_session_stays_when_quiet_and_the_help_takes_no_other_key() {
     assert_eq!(wall.status.sessions, 1);
 
     let _ = tui.press(Key::Char('?'));
-    assert_eq!(tui.frame(at(2000)).help, Help::Shown);
+    assert!(tui.help_shown());
     let _ = tui.press(Key::Char('p'));
     assert!(
         pane(&tui.frame(at(2000)), 0).pinned,
         "the help took the pin key"
     );
     let _ = tui.press(Key::Esc);
-    assert_eq!(tui.frame(at(2000)).help, Help::Hidden);
+    assert!(!tui.help_shown());
     // Unpinned, it leaves as any quiet session does.
-    assert_eq!(tui.press(Key::Char('p')), Pressed::Continue(vec![]));
+    assert_eq!(tui.press(Key::Char('p')), vec![]);
     assert_eq!(tui.frame(at(2000)).panes, [Pane::Free]);
 }
 
@@ -1075,11 +1132,8 @@ fn tiny_terminals_draw_without_panicking() {
             }
             let area = Rect::new(0, 0, width, height);
             let mut buffer = Buffer::empty(area);
-            tui.frame(at(300)).view(width, height).render(
-                &crate::Theme::default(),
-                area,
-                &mut buffer,
-            );
+            tui.view(at(300))
+                .render(&crate::Theme::default(), area, &mut buffer);
         }
     }
 }
@@ -1094,8 +1148,7 @@ fn dark_title_bars_keep_the_original_palette() {
     let area = Rect::new(0, 0, size.width, size.height);
     let mut buffer = Buffer::empty(area);
     busy(size)
-        .frame(at(300))
-        .view(area.width, area.height)
+        .view(at(300))
         .render(&crate::ThemeName::Dark.theme(), area, &mut buffer);
     // Three sessions, three panes across. Responding: green. Stopped on
     // an error: red. The body: the pane's ground.
@@ -1143,7 +1196,7 @@ fn switching_themes_resets_every_cell_in_panes_zoom_and_help() {
             for key in keys {
                 let _ = tui.press(*key);
             }
-            let wall = tui.frame(at(300));
+            let wall = tui.view(at(300));
             let mut reused = Buffer::empty(area);
             // Model styles left by a previous custom theme, including modifiers.
             reused.set_style(
@@ -1158,16 +1211,13 @@ fn switching_themes_resets_every_cell_in_panes_zoom_and_help() {
             for _ in 0..7 {
                 let theme = name.theme();
                 let mut fresh = Buffer::empty(area);
-                wall.view(area.width, area.height)
-                    .render(&theme, area, &mut fresh);
-                wall.view(area.width, area.height)
-                    .render(&theme, area, &mut reused);
+                wall.render(&theme, area, &mut fresh);
+                wall.render(&theme, area, &mut reused);
                 assert_eq!(reused, fresh, "stale styles in {name}");
                 terminal
                     .draw(|frame| {
                         let area = frame.area();
-                        wall.view(area.width, area.height)
-                            .render(&theme, area, frame.buffer_mut());
+                        wall.render(&theme, area, frame.buffer_mut());
                     })
                     .unwrap();
                 terminal.backend().assert_buffer(&fresh);
@@ -1189,8 +1239,7 @@ fn switching_themes_resets_every_cell_in_panes_zoom_and_help() {
                 name = name.next();
             }
             let mono = Theme::monochrome();
-            wall.view(area.width, area.height)
-                .render(&mono, area, &mut reused);
+            wall.render(&mono, area, &mut reused);
             assert!(
                 reused
                     .content
@@ -1218,7 +1267,7 @@ fn theme_key_leaves_the_conversation_and_help_unchanged() {
             let _ = tui.press(*key);
         }
         let before = tui.frame(at(300));
-        assert_eq!(tui.press(Key::Char('t')), Pressed::CycleTheme);
+        assert_eq!(tui.press(Key::Char('t')), vec![Out::CycleTheme]);
         assert_eq!(tui.frame(at(300)), before);
     }
 }
@@ -1241,7 +1290,11 @@ fn a_failed_read_is_shown_until_a_snapshot_succeeds() {
     );
     // What was read before stays on the wall.
     assert!(matches!(wall.panes[0], Pane::Session(_)));
-    let status = drawn(&wall, size).lines().last().unwrap().to_owned();
+    let status = drawn(&tui, at(300), size)
+        .lines()
+        .last()
+        .unwrap()
+        .to_owned();
     assert!(
         status.starts_with(" ren  ! stale: cannot reach the gateway "),
         "{status}"
@@ -1375,9 +1428,7 @@ fn a_plain_title_has_a_rule_under_it() {
     let area = Rect::new(0, 0, 60, 12);
     let mut buffer = Buffer::empty(area);
     let theme = ThemeName::Dark.theme();
-    tui.frame(at(100))
-        .view(area.width, area.height)
-        .render(&theme, area, &mut buffer);
+    tui.view(at(100)).render(&theme, area, &mut buffer);
     assert_eq!(buffer[(0, 0)].bg, Color::Rgb(0x0e, 0x12, 0x17));
     assert_eq!(buffer[(0, 1)].symbol(), "─");
     assert_eq!(buffer[(59, 1)].fg, Color::Rgb(0x2a, 0x30, 0x38));
@@ -1395,7 +1446,7 @@ fn run_session(n: u128, seconds: u64) -> SessionView {
 
 /// The daemon's runs, with one live run in `state`.
 fn runs(state: Value) -> Input {
-    Input::Runs(Runs::Read(vec![
+    Input::Runs(Ok(vec![
         serde_json::from_value(json!({
             "run": RUN, "harness": "codex", "workdir": "/work/acme", "state": state
         }))
@@ -1453,10 +1504,16 @@ fn a_live_runs_session_keeps_a_pane_with_the_runs_mark() {
 #[test]
 fn r_opens_the_focused_sessions_run() {
     let mut wall = with_run(asking());
-    assert_eq!(wall.press(Key::Char('r')), Pressed::Runs(Some(run_id())));
+    let _ = wall.press(Key::Char('r'));
+    assert_eq!(wall.tui.shown_run(), Some(run_id()));
     // A pane with no run opens the console as it was.
     let mut quiet = tui();
-    assert_eq!(quiet.press(Key::Char('r')), Pressed::Runs(None));
+    let _ = quiet.press(Key::Char('r'));
+    assert_eq!(quiet.tui.shown_run(), None);
+    assert!(
+        quiet.tui.wall_frame(at(0)).is_none(),
+        "the console is shown"
+    );
 }
 
 #[test]
@@ -1483,7 +1540,7 @@ fn a_waiting_run_draws_as_pinned() {
     let _ = tui.apply(snapshot(600, vec![run_session(7, 10)], vec![]));
     let _ = tui.apply(runs(asking()));
     assert_eq!(
-        drawn(&tui.frame(at(600)), size),
-        include_str!("../../tests/fixtures/wall-run.txt")
+        drawn(&tui, at(600), size),
+        include_str!("../../../tests/fixtures/wall-run.txt")
     );
 }

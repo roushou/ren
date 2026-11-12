@@ -1,7 +1,7 @@
 //! The terminal itself: the one part of the view that performs I/O. Opening
-//! a [`Screen`] puts the terminal in raw mode on its alternate screen;
+//! a [`Terminal`] puts the terminal in raw mode on its alternate screen;
 //! dropping it puts the terminal back, whether the view ended, failed, or
-//! panicked. [`ScreenEvents`] turns the terminal's events into the keys and
+//! panicked. [`TerminalEvents`] turns the terminal's events into the keys and
 //! sizes the view reads.
 
 use crate::ui::View;
@@ -9,20 +9,20 @@ use crate::{Key, Size, Theme};
 use crossterm::event::{Event, EventStream, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use crossterm::{cursor, execute, terminal};
 use futures_util::StreamExt;
-use ratatui::Terminal;
+use ratatui::Terminal as Ratatui;
 use ratatui::backend::CrosstermBackend;
 use std::io::{self, Stdout};
 
 /// The terminal, taken over until dropped.
-#[must_use = "dropping the screen puts the terminal back"]
-pub struct Screen {
-    terminal: Terminal<CrosstermBackend<Stdout>>,
+#[must_use = "dropping it puts the terminal back"]
+pub struct Terminal {
+    terminal: Ratatui<CrosstermBackend<Stdout>>,
     theme: Theme,
 }
 
 /// Why the terminal could not be used.
 #[derive(Debug, thiserror::Error)]
-pub enum ScreenError {
+pub enum TerminalError {
     #[error("cannot take over the terminal")]
     Open(#[source] io::Error),
     #[error("cannot draw to the terminal")]
@@ -33,42 +33,42 @@ pub enum ScreenError {
 
 /// What the terminal reports that the view reads.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ScreenEvent {
+pub enum TerminalEvent {
     Key(Key),
     Resize(Size),
 }
 
 /// The terminal's events, as the view reads them.
-pub struct ScreenEvents {
+pub struct TerminalEvents {
     stream: EventStream,
 }
 
-impl Screen {
+impl Terminal {
     /// Raw mode, the alternate screen, and a hidden cursor.
-    pub fn open() -> Result<Self, ScreenError> {
+    pub fn open() -> Result<Self, TerminalError> {
         // The caller resolves color policy (including NO_COLOR). Let the
         // backend emit that theme, including resets and explicit overrides.
         crossterm::style::force_color_output(true);
-        terminal::enable_raw_mode().map_err(ScreenError::Open)?;
+        terminal::enable_raw_mode().map_err(TerminalError::Open)?;
         let mut stdout = io::stdout();
         if let Err(error) = execute!(stdout, terminal::EnterAlternateScreen, cursor::Hide) {
             Self::restore();
-            return Err(ScreenError::Open(error));
+            return Err(TerminalError::Open(error));
         }
-        match Terminal::new(CrosstermBackend::new(stdout)) {
+        match Ratatui::new(CrosstermBackend::new(stdout)) {
             Ok(terminal) => Ok(Self {
                 terminal,
                 theme: Theme::default(),
             }),
             Err(error) => {
                 Self::restore();
-                Err(ScreenError::Open(error))
+                Err(TerminalError::Open(error))
             }
         }
     }
 
-    pub fn size(&self) -> Result<Size, ScreenError> {
-        let size = self.terminal.size().map_err(ScreenError::Draw)?;
+    pub fn size(&self) -> Result<Size, TerminalError> {
+        let size = self.terminal.size().map_err(TerminalError::Draw)?;
         Ok(Size {
             width: size.width,
             height: size.height,
@@ -76,7 +76,7 @@ impl Screen {
     }
 
     /// Draws the view `view` builds for the terminal's size.
-    pub fn draw(&mut self, view: impl FnOnce(Size) -> View) -> Result<(), ScreenError> {
+    pub fn draw(&mut self, view: impl FnOnce(Size) -> View) -> Result<(), TerminalError> {
         let theme = &self.theme;
         self.terminal
             .draw(|frame| {
@@ -88,7 +88,7 @@ impl Screen {
                 .render(theme, area, frame.buffer_mut());
             })
             .map(|_| ())
-            .map_err(ScreenError::Draw)
+            .map_err(TerminalError::Draw)
     }
 
     /// Used on the next draw; the root style resets the previous theme.
@@ -96,8 +96,8 @@ impl Screen {
         self.theme = theme;
     }
 
-    pub fn events(&self) -> ScreenEvents {
-        ScreenEvents {
+    pub fn events(&self) -> TerminalEvents {
+        TerminalEvents {
             stream: EventStream::new(),
         }
     }
@@ -110,29 +110,29 @@ impl Screen {
     }
 }
 
-impl Drop for Screen {
+impl Drop for Terminal {
     fn drop(&mut self) {
         Self::restore();
     }
 }
 
-impl ScreenEvents {
+impl TerminalEvents {
     /// The next key or size change; `None` when the terminal's events end.
     /// Other events (mouse, focus, paste, key releases) are skipped.
-    pub async fn next(&mut self) -> Option<Result<ScreenEvent, ScreenError>> {
+    pub async fn next(&mut self) -> Option<Result<TerminalEvent, TerminalError>> {
         loop {
             let event = match self.stream.next().await? {
                 Ok(event) => event,
-                Err(error) => return Some(Err(ScreenError::Events(error))),
+                Err(error) => return Some(Err(TerminalError::Events(error))),
             };
-            if let Some(event) = ScreenEvent::of(&event) {
+            if let Some(event) = TerminalEvent::of(&event) {
                 return Some(Ok(event));
             }
         }
     }
 }
 
-impl ScreenEvent {
+impl TerminalEvent {
     fn of(event: &Event) -> Option<Self> {
         match event {
             Event::Key(key) => Self::key(key).map(Self::Key),
@@ -192,21 +192,21 @@ impl ScreenEvent {
 
 #[cfg(test)]
 mod tests {
-    use super::ScreenEvent;
+    use super::TerminalEvent;
     use crate::{Key, Size};
     use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
     #[test]
     fn terminal_events_become_keys_and_sizes() {
         let press = |code, modifiers| Event::Key(KeyEvent::new(code, modifiers));
-        let of = |event: Event| ScreenEvent::of(&event);
+        let of = |event: Event| TerminalEvent::of(&event);
         assert_eq!(
             of(press(KeyCode::Char('c'), KeyModifiers::CONTROL)),
-            Some(ScreenEvent::Key(Key::Interrupt))
+            Some(TerminalEvent::Key(Key::Interrupt))
         );
         assert_eq!(
             of(press(KeyCode::Char('q'), KeyModifiers::NONE)),
-            Some(ScreenEvent::Key(Key::Char('q')))
+            Some(TerminalEvent::Key(Key::Char('q')))
         );
         assert_eq!(of(press(KeyCode::Char('x'), KeyModifiers::CONTROL)), None);
         assert_eq!(of(press(KeyCode::F(1), KeyModifiers::NONE)), None);
@@ -215,7 +215,7 @@ mod tests {
         assert_eq!(of(Event::Key(release)), None);
         assert_eq!(
             of(Event::Resize(120, 40)),
-            Some(ScreenEvent::Resize(Size {
+            Some(TerminalEvent::Resize(Size {
                 width: 120,
                 height: 40
             }))

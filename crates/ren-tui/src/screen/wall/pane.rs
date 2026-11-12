@@ -2,7 +2,7 @@
 //! replies and tool calls, and what in it needs a look. The same readings
 //! as the web UI's Live wall, so the two never disagree about a session.
 
-use super::call::CallEnd;
+use crate::model::CallEnd;
 use crate::ui::Tone;
 use ren_harness::Harness;
 use ren_harness::tools::EffectKind;
@@ -574,7 +574,7 @@ impl SessionPane {
                 alerts.push(Alert {
                     tone: Tone::Warning,
                     label: "no response head".to_owned(),
-                    detail: format!("waiting {}", Span(waited)),
+                    detail: format!("waiting {}", Elapsed(waited)),
                     at: since,
                 });
             }
@@ -696,9 +696,9 @@ impl Run {
 
 /// A duration as a pane writes it: `12 s`, `4 min`, `1 h 5 min`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Span(pub u64);
+pub struct Elapsed(pub u64);
 
-impl std::fmt::Display for Span {
+impl std::fmt::Display for Elapsed {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let seconds = self.0.saturating_add(500) / 1000;
         if seconds < 60 {
@@ -799,15 +799,15 @@ impl Workdir {
 
 #[cfg(test)]
 mod tests {
-    use super::{ChangeDirectory, Span};
+    use super::{ChangeDirectory, Elapsed};
 
     #[test]
     fn spans_read_like_the_web_ui() {
-        assert_eq!(Span(0).to_string(), "0 s");
-        assert_eq!(Span(59_400).to_string(), "59 s");
-        assert_eq!(Span(90_000).to_string(), "2 min");
-        assert_eq!(Span(3_600_000).to_string(), "1 h");
-        assert_eq!(Span(3_900_000).to_string(), "1 h 5 min");
+        assert_eq!(Elapsed(0).to_string(), "0 s");
+        assert_eq!(Elapsed(59_400).to_string(), "59 s");
+        assert_eq!(Elapsed(90_000).to_string(), "2 min");
+        assert_eq!(Elapsed(3_600_000).to_string(), "1 h");
+        assert_eq!(Elapsed(3_900_000).to_string(), "1 h 5 min");
     }
 
     #[test]

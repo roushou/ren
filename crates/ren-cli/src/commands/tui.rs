@@ -32,9 +32,10 @@ use ren_store::query::PageLimit;
 use ren_store::read::ReadRequest;
 use ren_store::view::RunView;
 use ren_supervisor::{Project, RunSnapshot, RunUpdate};
-use ren_tui::console::{self, Answered};
-use ren_tui::wall::{self, Snapshot, Wall};
-use ren_tui::{Input, Out, Route, Screen, ScreenEvent, Theme, ThemeName, Tui};
+use ren_tui::{
+    Answered, Command, Input, Opening, Out, Read, Snapshot, Terminal, TerminalEvent, Theme,
+    ThemeName, Tui,
+};
 use reqwest::Method;
 use std::collections::HashMap;
 use std::future::Future;
@@ -61,7 +62,7 @@ enum Done {
     Turn(TurnId, Result<TurnActivity, ManagementError>),
     Call(CallId, Result<CallActivity, ManagementError>),
     Runs(Result<Vec<RunSnapshot>, String>),
-    Console(Box<console::Input>),
+    Other(Box<Input>),
 }
 
 type Pending<'a> = FuturesUnordered<Pin<Box<dyn Future<Output = Done> + 'a>>>;
@@ -124,7 +125,7 @@ impl TuiCmd {
             println!("Saved TUI theme {theme} to {}", path.display());
             return Ok(ExitCode::SUCCESS);
         }
-        Self::open(&self.target, self.theme, ctx, Route::Wall).await
+        Self::open(&self.target, self.theme, ctx, Opening::Wall).await
     }
 
     /// Opens the terminal on `route`.
@@ -132,7 +133,7 @@ impl TuiCmd {
         target: &TargetArgs,
         theme: Option<ThemeName>,
         ctx: &Context,
-        route: Route,
+        opening: Opening,
     ) -> Result<ExitCode> {
         let selected = TuiSettings::select(theme, &ctx.env)?;
         let gateway = target.gateway(ctx)?;
@@ -148,10 +149,10 @@ impl TuiCmd {
             Self::recorded(&gateway),
         )?;
 
-        let mut screen = Screen::open()?;
+        let mut screen = Terminal::open()?;
         screen.set_theme(Self::theme(selected, &ctx.env));
         let mut events = screen.events();
-        let mut tui = Tui::new(screen.size()?, route);
+        let mut tui = Tui::new(screen.size()?, opening);
         let mut shell = Shell {
             gateway: &gateway,
             control: control.as_ref().map_err(Clone::clone),
@@ -167,9 +168,14 @@ impl TuiCmd {
             later: HashMap::new(),
             theme: selected.unwrap_or_default(),
         };
-        let mut outs = tui.apply(Input::Wall(wall::Input::Snapshot(first)));
-        outs.extend(tui.apply(Input::Console(console::Input::Recorded(recorded))));
-        outs.extend(tui.start());
+        let mut outs = tui.apply(Input::Snapshot(first));
+        outs.extend(tui.apply(Input::Recorded(recorded)));
+        // Snapshots and recorded runs were just read: not again at once.
+        outs.extend(
+            tui.start()
+                .into_iter()
+                .filter(|out| !matches!(out, Out::Read(Read::Snapshot | Read::Recorded))),
+        );
         let mut feed = Self::connect(&gateway, &clock).await;
         let mut runs_feed = shell.connect_runs().await;
         if let Flow::Quit = shell.act(outs, &mut screen) {
@@ -177,15 +183,15 @@ impl TuiCmd {
         }
         let mut ticker = tokio::time::interval(Self::TICK);
         ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-        screen.draw(|size| tui.frame(clock.now().wall).view(size))?;
+        screen.draw(|_| tui.view(clock.now().wall))?;
 
         loop {
             let outs = tokio::select! {
                 event = events.next() => match event {
                     None => break,
                     Some(event) => match event? {
-                        ScreenEvent::Key(key) => tui.press(key),
-                        ScreenEvent::Resize(size) => tui.apply(Input::Resize(size)),
+                        TerminalEvent::Key(key) => tui.press(key),
+                        TerminalEvent::Resize(size) => tui.apply(Input::Resize(size)),
                     },
                 },
                 Some(done) = shell.pending.next(), if !shell.pending.is_empty() => {
@@ -197,7 +203,7 @@ impl TuiCmd {
                 inputs = Shell::next_runs(&mut runs_feed) => match inputs {
                     Some(inputs) => inputs
                         .into_iter()
-                        .flat_map(|input| tui.apply(Input::Console(input)))
+                        .flat_map(|input| tui.apply(input))
                         .collect(),
                     None => {
                         runs_feed = RunFeed::Waiting { since: clock.now().monotonic };
@@ -218,11 +224,11 @@ impl TuiCmd {
                         runs_feed = shell.connect_runs().await;
                         // What changed while the run feed was down.
                         if let RunFeed::Connected { .. } = runs_feed {
-                            outs.push(Out::Console(console::Read::Runs));
+                            outs.push(Out::Read(Read::Runs));
                         }
                     }
                     if now.saturating_since(shell.in_flight.asked) >= Self::SNAPSHOT_EVERY {
-                        outs.extend([Out::Wall(wall::Read::Snapshot), Out::Wall(wall::Read::Runs)]);
+                        outs.extend([Out::Read(Read::Snapshot), Out::Read(Read::Runs)]);
                     }
                     outs
                 }
@@ -230,7 +236,7 @@ impl TuiCmd {
             if let Flow::Quit = shell.act(outs, &mut screen) {
                 break;
             }
-            screen.draw(|size| tui.frame(clock.now().wall).view(size))?;
+            screen.draw(|_| tui.view(clock.now().wall))?;
         }
         drop(events);
         drop(screen);
@@ -252,7 +258,7 @@ impl TuiCmd {
         clock: &SystemClock,
     ) -> Result<Snapshot, ManagementError> {
         let read_at = clock.now().wall;
-        let query = Wall::snapshot_query(read_at);
+        let query = Tui::snapshot_query(read_at);
         let (sessions, open, recent) = futures_util::try_join!(
             gateway.sessions(query.sessions),
             gateway.calls(&query.open),
@@ -316,7 +322,7 @@ impl TuiCmd {
                 *feed = Feed::Waiting {
                     since: clock.now().monotonic,
                 };
-                return vec![Out::Wall(wall::Read::Snapshot)];
+                return vec![Out::Read(Read::Snapshot)];
             }
         };
         let Feed::Connected { decoder, .. } = feed else {
@@ -327,17 +333,15 @@ impl TuiCmd {
         let mut outs = Vec::new();
         for event in events {
             let input = match event {
-                LiveEvent::Observation(observation) => wall::Input::Observation(observation),
-                LiveEvent::Progress(progress) => wall::Input::Progress(progress),
+                LiveEvent::Observation(observation) => Input::Observation(observation),
+                LiveEvent::Progress(progress) => Input::Progress(progress),
                 // Behind or pruned: a snapshot reads the present again.
                 LiveEvent::Lagged { .. } | LiveEvent::Gone { .. } => {
-                    outs.push(Out::Wall(wall::Read::Snapshot));
+                    outs.push(Out::Read(Read::Snapshot));
                     continue;
                 }
                 LiveEvent::Failed(reason) => {
-                    outs.extend(tui.apply(Input::Wall(wall::Input::ReadFailed(format!(
-                        "live feed: {reason}"
-                    )))));
+                    outs.extend(tui.apply(Input::ReadFailed(format!("live feed: {reason}"))));
                     *feed = Feed::Waiting {
                         since: clock.now().monotonic,
                     };
@@ -345,7 +349,7 @@ impl TuiCmd {
                 }
                 LiveEvent::Unrecognized { .. } => continue,
             };
-            outs.extend(tui.apply(Input::Wall(input)));
+            outs.extend(tui.apply(input));
         }
         outs
     }
@@ -367,7 +371,7 @@ struct Shell<'a> {
 
 impl<'a> Shell<'a> {
     /// Starts what the routes asked for.
-    fn act(&mut self, outs: Vec<Out>, screen: &mut Screen) -> Flow {
+    fn act(&mut self, outs: Vec<Out>, screen: &mut Terminal) -> Flow {
         for out in outs {
             match out {
                 Out::Quit => return Flow::Quit,
@@ -375,19 +379,19 @@ impl<'a> Shell<'a> {
                     self.theme = self.theme.next();
                     screen.set_theme(self.theme.theme());
                 }
-                Out::Wall(wall::Read::Runs) | Out::Console(console::Read::Runs) => self.runs(),
-                Out::Wall(read) => self.wall(read),
-                Out::Console(read) => self.console(read),
+                Out::Read(read) => self.read(read),
                 Out::Send(command) => self.send(command),
             }
         }
         Flow::Go
     }
 
-    fn wall(&mut self, read: wall::Read) {
+    fn read(&mut self, read: Read) {
         let gateway = self.gateway;
+        let control = self.control.clone();
+        let done = |input: Input| Done::Other(Box::new(input));
         match read {
-            wall::Read::Snapshot if !self.in_flight.snapshot => {
+            Read::Snapshot if !self.in_flight.snapshot => {
                 self.in_flight.snapshot = true;
                 self.in_flight.asked = self.clock.now().monotonic;
                 let clock = self.clock;
@@ -395,24 +399,59 @@ impl<'a> Shell<'a> {
                     Done::Snapshot(TuiCmd::snapshot(gateway, clock).await)
                 }));
             }
-            wall::Read::Turn(turn) if !self.in_flight.turns.contains(&turn) => {
+            Read::Turn(turn) if !self.in_flight.turns.contains(&turn) => {
                 self.in_flight.turns.push(turn);
                 self.pending.push(Box::pin(async move {
                     Done::Turn(turn, gateway.turn(turn).await)
                 }));
             }
-            wall::Read::Call(call) if !self.in_flight.calls.contains(&call) => {
+            Read::Call(call) if !self.in_flight.calls.contains(&call) => {
                 self.in_flight.calls.push(call);
                 self.pending.push(Box::pin(async move {
                     Done::Call(call, gateway.call_activity(call).await)
                 }));
             }
-            wall::Read::Snapshot | wall::Read::Turn(_) | wall::Read::Call(_) => {}
-            wall::Read::Runs => self.runs(),
+            Read::Snapshot | Read::Turn(_) | Read::Call(_) => {}
+            Read::Runs => self.runs(),
+            Read::Recorded => self.pending.push(Box::pin(async move {
+                // Recorded runs are a convenience; live ones still work.
+                done(Input::Recorded(
+                    TuiCmd::recorded(gateway).await.unwrap_or_default(),
+                ))
+            })),
+            Read::Projects => self.pending.push(Box::pin(async move {
+                done(Input::Projects(match control {
+                    Ok(control) => Self::projects(control).await,
+                    Err(why) => Err(why),
+                }))
+            })),
+            Read::History { run, session } => {
+                self.later.remove(&run);
+                self.pending.push(Box::pin(async move {
+                    done(Input::History {
+                        run,
+                        turns: Self::turns(gateway, session).await,
+                    })
+                }));
+            }
+            Read::HistoryLater { run, session } => {
+                // 0.5 s, then twice as long each time: a turn's record lands
+                // shortly after its calls finish.
+                let tries = self.later.entry(run).or_insert(0);
+                let pause = Duration::from_millis(500) * 2u32.saturating_pow(*tries);
+                *tries += 1;
+                self.pending.push(Box::pin(async move {
+                    tokio::time::sleep(pause).await;
+                    done(Input::History {
+                        run,
+                        turns: Self::turns(gateway, session).await,
+                    })
+                }));
+            }
         }
     }
 
-    /// The daemon's live runs, for both routes.
+    /// The daemon's live runs.
     fn runs(&mut self) {
         if self.in_flight.runs {
             return;
@@ -427,64 +466,20 @@ impl<'a> Shell<'a> {
         }));
     }
 
-    fn console(&mut self, read: console::Read) {
-        let gateway = self.gateway;
-        let control = self.control.clone();
-        let done = |input: console::Input| Done::Console(Box::new(input));
-        match read {
-            console::Read::Runs => self.runs(),
-            console::Read::Recorded => self.pending.push(Box::pin(async move {
-                // Recorded runs are a convenience; live ones still work.
-                done(console::Input::Recorded(
-                    TuiCmd::recorded(gateway).await.unwrap_or_default(),
-                ))
-            })),
-            console::Read::Projects => self.pending.push(Box::pin(async move {
-                done(console::Input::Projects(match control {
-                    Ok(control) => Self::projects(control).await,
-                    Err(why) => Err(why),
-                }))
-            })),
-            console::Read::History { run, session } => {
-                self.later.remove(&run);
-                self.pending.push(Box::pin(async move {
-                    done(console::Input::History {
-                        run,
-                        turns: Self::turns(gateway, session).await,
-                    })
-                }));
-            }
-            console::Read::HistoryLater { run, session } => {
-                // 0.5 s, then twice as long each time: a turn's record lands
-                // shortly after its calls finish.
-                let tries = self.later.entry(run).or_insert(0);
-                let pause = Duration::from_millis(500) * 2u32.saturating_pow(*tries);
-                *tries += 1;
-                self.pending.push(Box::pin(async move {
-                    tokio::time::sleep(pause).await;
-                    done(console::Input::History {
-                        run,
-                        turns: Self::turns(gateway, session).await,
-                    })
-                }));
-            }
-        }
-    }
-
-    fn send(&mut self, command: console::Command) {
+    fn send(&mut self, command: Command) {
         let control = match &self.control {
             Ok(control) => *control,
             Err(why) => {
                 let why = why.clone();
                 self.pending.push(Box::pin(async move {
-                    Done::Console(Box::new(console::Input::Answered(Err(why))))
+                    Done::Other(Box::new(Input::Answered(Err(why))))
                 }));
                 return;
             }
         };
-        let starts = matches!(command, console::Command::Start { .. });
+        let starts = matches!(command, Command::Start { .. });
         let (path, body) = match command {
-            console::Command::Start {
+            Command::Start {
                 harness,
                 dir,
                 resume,
@@ -499,11 +494,11 @@ impl<'a> Shell<'a> {
                 }
                 ("runs".to_owned(), Some(body))
             }
-            console::Command::Prompt { run, prompt } => (
+            Command::Prompt { run, prompt } => (
                 format!("runs/{run}/prompt"),
                 Some(serde_json::json!({ "text": prompt.as_str() })),
             ),
-            console::Command::Answer {
+            Command::Answer {
                 run,
                 approval,
                 decision,
@@ -511,8 +506,8 @@ impl<'a> Shell<'a> {
                 format!("runs/{run}/approvals/{approval}"),
                 Some(serde_json::json!({ "decision": decision })),
             ),
-            console::Command::Interrupt(run) => (format!("runs/{run}/interrupt"), None),
-            console::Command::Stop(run) => (format!("runs/{run}/stop"), None),
+            Command::Interrupt(run) => (format!("runs/{run}/interrupt"), None),
+            Command::Stop(run) => (format!("runs/{run}/stop"), None),
         };
         self.pending.push(Box::pin(async move {
             let answer = match control.send(Method::POST, &path, body).await {
@@ -529,7 +524,7 @@ impl<'a> Shell<'a> {
                     .to_owned()),
                 Err(error) => Err(error.to_string()),
             };
-            Done::Console(Box::new(console::Input::Answered(answer)))
+            Done::Other(Box::new(Input::Answered(answer)))
         }));
     }
 
@@ -538,25 +533,25 @@ impl<'a> Shell<'a> {
         let input = match done {
             Done::Snapshot(result) => {
                 self.in_flight.snapshot = false;
-                result.map(|snapshot| Input::Wall(wall::Input::Snapshot(snapshot)))
+                result.map(Input::Snapshot)
             }
             Done::Turn(turn, result) => {
                 self.in_flight.turns.retain(|running| *running != turn);
-                result.map(|activity| Input::Wall(wall::Input::Turn(Box::new(activity))))
+                result.map(|activity| Input::Turn(Box::new(activity)))
             }
             Done::Call(call, result) => {
                 self.in_flight.calls.retain(|running| *running != call);
-                result.map(|activity| Input::Wall(wall::Input::Call(Box::new(activity))))
+                result.map(|activity| Input::Call(Box::new(activity)))
             }
             Done::Runs(runs) => {
                 self.in_flight.runs = false;
                 Ok(Input::Runs(runs))
             }
-            Done::Console(input) => Ok(Input::Console(*input)),
+            Done::Other(input) => Ok(*input),
         };
         match input {
             Ok(input) => tui.apply(input),
-            Err(error) => tui.apply(Input::Wall(wall::Input::ReadFailed(error.to_string()))),
+            Err(error) => tui.apply(Input::ReadFailed(error.to_string())),
         }
     }
 
@@ -645,7 +640,7 @@ impl<'a> Shell<'a> {
 
     /// The run feed's next updates; `None` once it ends. Never resolves while
     /// waiting to reconnect.
-    async fn next_runs(feed: &mut RunFeed) -> Option<Vec<console::Input>> {
+    async fn next_runs(feed: &mut RunFeed) -> Option<Vec<Input>> {
         let RunFeed::Connected { response, framer } = feed else {
             return std::future::pending().await;
         };
@@ -659,13 +654,13 @@ impl<'a> Shell<'a> {
                 // An update this console cannot read (from a newer daemon)
                 // is skipped; the next listing catches up.
                 if let Ok(update) = serde_json::from_slice::<RunUpdate>(data) {
-                    inputs.push(console::Input::Update(update));
+                    inputs.push(Input::Update(update));
                 }
             }
             SseOutput::Event {
                 name: EventName::Present("lagged"),
                 ..
-            } => inputs.push(console::Input::Lagged),
+            } => inputs.push(Input::Lagged),
             SseOutput::Event { .. } | SseOutput::Discarded(_) => {}
         });
         Some(inputs)

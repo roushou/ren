@@ -1,8 +1,9 @@
-//! The console with synthetic runs, events, and recorded turns: no daemon,
-//! no terminal. Screens are pinned as text in `tests/fixtures`.
+//! The console's screens (home, run, `/resume`) with synthetic runs,
+//! events, and recorded turns, run as the terminal runs them: a [`Tui`]
+//! opened on the runs. No daemon, no terminal. Screens are pinned as text
+//! in `tests/fixtures`.
 
-use crate::console::{Answered, Command, Console, Input, Out, Read};
-use crate::{Key, Size, Theme};
+use crate::{Answered, Command, Input, Key, Opening, Out, Read, Size, Theme, Tui};
 use ratatui::{buffer::Buffer, layout::Rect};
 use ren_harness::{
     Harness,
@@ -10,6 +11,7 @@ use ren_harness::{
 };
 use ren_protocol::native::{NativeThreadId, NativeTurnId};
 use ren_recorder::id::{RunId, SessionId};
+use ren_recorder::time::UnixMillis;
 use ren_store::{activity::TurnActivity, view::RunView};
 use ren_supervisor::{Approvals, Project, ProjectGit, RunSnapshot, RunState, RunUpdate};
 use serde_json::json;
@@ -18,6 +20,40 @@ const SIZE: Size = Size {
     width: 90,
     height: 24,
 };
+
+/// The console as the terminal runs it.
+struct Console {
+    tui: Tui,
+}
+
+impl Console {
+    fn new(size: Size) -> Self {
+        Self {
+            tui: Tui::new(size, Opening::Runs),
+        }
+    }
+
+    fn start(&mut self) -> Vec<Out> {
+        self.tui.start()
+    }
+
+    fn apply(&mut self, input: Input) -> Vec<Out> {
+        self.tui.apply(input)
+    }
+
+    fn press(&mut self, key: Key) -> Vec<Out> {
+        self.tui.press(key)
+    }
+
+    fn current(&self) -> Option<RunId> {
+        self.tui.shown_run()
+    }
+
+    /// The completions offered, by label.
+    fn completions(&self) -> Vec<String> {
+        self.tui.completions()
+    }
+}
 
 fn run_id(n: u128) -> RunId {
     RunId::restore(uuid::Uuid::from_u128(n))
@@ -176,7 +212,7 @@ fn sent(out: &[Out]) -> Vec<Command> {
     out.iter()
         .filter_map(|out| match out {
             Out::Send(command) => Some(command.clone()),
-            Out::Read(_) | Out::Wall | Out::Quit => None,
+            Out::Read(_) | Out::CycleTheme | Out::Quit => None,
         })
         .collect()
 }
@@ -195,10 +231,12 @@ fn desk() -> Console {
 
 /// The frame as text, one line per row, trailing spaces trimmed.
 fn drawn(console: &Console) -> String {
-    let frame = console.frame();
     let area = Rect::new(0, 0, SIZE.width, SIZE.height);
     let mut buf = Buffer::empty(area);
-    frame.view().render(&Theme::default(), area, &mut buf);
+    console
+        .tui
+        .view(UnixMillis::from_millis(0))
+        .render(&Theme::default(), area, &mut buf);
     let mut text = String::new();
     for y in 0..area.height {
         let mut line = String::new();
@@ -214,14 +252,10 @@ fn drawn(console: &Console) -> String {
 #[test]
 fn the_run_that_needs_you_opens_first() {
     let mut console = Console::new(SIZE);
-    assert_eq!(
-        console.start(),
-        [
-            Out::Read(Read::Runs),
-            Out::Read(Read::Recorded),
-            Out::Read(Read::Projects)
-        ]
-    );
+    let start = console.start();
+    for read in [Read::Runs, Read::Recorded, Read::Projects] {
+        assert!(start.contains(&Out::Read(read)), "{start:?}");
+    }
     let out = console.apply(Input::Runs(Ok(vec![
         snapshot(1, Harness::Codex, "/dev/acme-api", working(1)),
         snapshot(2, Harness::ClaudeCode, "/srv/ren", asking(2, push())),
@@ -349,9 +383,7 @@ fn esc_interrupts_and_alt_arrows_follow_what_needs_you() {
 fn new_completes_projects_and_clients_and_starts_with_the_prompt() {
     let mut console = desk();
     type_text(&mut console, "/new acme");
-    let frame = console.frame();
-    let labels: Vec<&str> = frame.popup.iter().map(|(s, _)| s.label.as_str()).collect();
-    assert_eq!(labels, ["acme-api", "acme-web"]);
+    assert_eq!(console.completions(), ["acme-api", "acme-web"]);
     let _ = console.press(Key::Down);
     let _ = console.press(Key::Tab);
     type_text(&mut console, "co");

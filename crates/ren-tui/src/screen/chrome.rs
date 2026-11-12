@@ -1,11 +1,124 @@
-//! The console as a view: the title line, the conversation anchored to the
-//! bottom (beside `/resume`'s list), completions over it, the message box,
-//! and the hint line. Pure: the crate's one renderer draws it.
+//! What the console's screens share around their body: the title line with
+//! a mark for every live run, a rule, the body (beside a list, for
+//! `/resume`), completions over it, the message box, and the hint line.
 
-use crate::console::view::Frame;
+use super::{Look, NoticeTone, Suggestion};
+use crate::model::desk::Attention;
+use crate::model::{Control, Projects};
 use crate::ui::{Anchor, Emphasis, Ink, Keep, Line, Lines, Place, Rule, Size, Span, Text, View};
+use ren_recorder::id::RunId;
 
-impl Frame {
+/// One console screen, laid out.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Chrome {
+    pub width: u16,
+    pub height: u16,
+    /// The top line: what is open, left; the runs and their counts, right.
+    pub title: Line,
+    pub strip: Line,
+    /// The conversation or list, oldest first; the newest lines show.
+    pub body: Vec<Line>,
+    /// Lines scrolled up from the newest.
+    pub scroll: usize,
+    /// `/resume`'s list, beside the preview.
+    pub side: Option<Vec<Line>>,
+    /// Completions over the message box, the chosen one marked.
+    pub popup: Vec<(Suggestion, bool)>,
+    /// The message box's lines, and where the cursor is in them.
+    pub composer: Vec<String>,
+    pub cursor: (usize, usize),
+    pub placeholder: Option<String>,
+    /// Under the message box: a notice, or what the keys do now.
+    pub hint: Line,
+    pub hint_right: Line,
+}
+
+impl Chrome {
+    /// A console screen showing `body` under `title`, with `current` the
+    /// run it shows; `placeholder` fills an empty message box and `keys`
+    /// says what the keys do, unless a notice or a problem says more.
+    pub fn new(
+        look: &Look<'_>,
+        title: Line,
+        body: Vec<Line>,
+        current: Option<RunId>,
+        placeholder: String,
+        keys: Line,
+    ) -> Self {
+        let message = look.message;
+        let (composer, cursor) = message.lines();
+        Self {
+            width: look.size.width,
+            height: look.size.height,
+            title,
+            strip: Self::strip(look, current),
+            body,
+            scroll: 0,
+            side: None,
+            popup: message.popup(look.model.projects()),
+            composer,
+            cursor,
+            placeholder: message.is_empty().then_some(placeholder),
+            hint: Self::hint(look, keys),
+            hint_right: Line::of("alt-←→ runs · /resume · /wall · /help ", Ink::Muted),
+        }
+    }
+
+    /// One mark per live run, what needs you first: `◆` is the open one,
+    /// `◇` one that waits for you, `▪` the rest.
+    fn strip(look: &Look<'_>, current: Option<RunId>) -> Line {
+        let desk = &look.model.desk;
+        let order = desk.ordered();
+        let mut line = Line::default();
+        for run in &order {
+            let needs = run.attention() == Attention::NeedsYou;
+            let (mark, ink) = match (Some(run.id) == current, needs) {
+                (true, true) => ("◆ ", Ink::Warning),
+                (true, false) => ("◆ ", Ink::Focus),
+                (false, true) => ("◇ ", Ink::Warning),
+                (false, false) => ("▪ ", Ink::Muted),
+            };
+            line.push(Span::new(mark, ink));
+        }
+        let needing = desk.needing();
+        let counts = match needing {
+            0 => format!("  {} live ", order.len()),
+            1 => format!("  1 needs you · {} live ", order.len()),
+            n => format!("  {n} need you · {} live ", order.len()),
+        };
+        line.push(Span::new(
+            counts,
+            if needing > 0 {
+                Ink::Warning
+            } else {
+                Ink::Muted
+            },
+        ));
+        line
+    }
+
+    /// The hint line: a notice, then a reason runs cannot be driven, then
+    /// what the keys do.
+    fn hint(look: &Look<'_>, keys: Line) -> Line {
+        if let Some(notice) = look.notice {
+            let ink = match notice.tone {
+                NoticeTone::Info => Ink::Muted,
+                NoticeTone::Refusal => Ink::Error,
+            };
+            return Line::of(format!(" {}", notice.text), ink);
+        }
+        if let Control::Unavailable(why) = &look.model.control {
+            return Line::of(
+                format!(" runs cannot be driven from here: {why}"),
+                Ink::Error,
+            );
+        }
+        if let Projects::Failed(why) = &look.model.projects {
+            return Line::of(format!(" cannot list projects: {why}"), Ink::Error);
+        }
+        keys
+    }
+
     /// What to draw.
     pub fn view(&self) -> View {
         if self.width < 4 || self.height < 5 {
@@ -13,11 +126,8 @@ impl Frame {
         }
         // The message box: up to six lines, then the hint under it.
         let typed = u16::try_from(self.composer.len().clamp(1, 6)).unwrap_or(1);
-        let lines = |lines: &[Vec<Span>]| -> Vec<Line> {
-            lines.iter().map(|line| Line::new(line.clone())).collect()
-        };
         let conversation = View::Lines(Lines {
-            lines: lines(&self.body),
+            lines: self.body.clone(),
             anchor: Anchor::Newest,
             scroll: self.scroll,
         });
@@ -28,7 +138,7 @@ impl Frame {
                     (Size::Fill, conversation),
                     (
                         Size::Exact(side_width),
-                        View::pad(1, 0, View::lines(lines(side), Anchor::Top)),
+                        View::pad(1, 0, View::lines(side.clone(), Anchor::Top)),
                     ),
                 ])
             }
@@ -40,8 +150,8 @@ impl Frame {
                 (
                     Size::Exact(1),
                     View::bar(
-                        Line::new(self.title.clone()),
-                        Line::new(self.strip.clone()),
+                        self.title.clone(),
+                        self.strip.clone(),
                         Ink::Ground,
                         Keep::Left,
                     ),
@@ -53,8 +163,8 @@ impl Frame {
                 (
                     Size::Exact(1),
                     View::bar(
-                        Line::new(self.hint.clone()),
-                        Line::new(self.hint_right.clone()),
+                        self.hint.clone(),
+                        self.hint_right.clone(),
                         Ink::Ground,
                         Keep::Left,
                     ),
@@ -115,10 +225,7 @@ impl Frame {
         let blank = Span::plain("   ");
         if let Some(placeholder) = &self.placeholder {
             let mut chars = placeholder.chars();
-            let first = chars
-                .next()
-                .map(String::from)
-                .unwrap_or_else(|| " ".to_owned());
+            let first = chars.next().map_or_else(|| " ".to_owned(), String::from);
             return View::lines(
                 vec![Line::new(vec![
                     prompt,
@@ -148,13 +255,12 @@ impl Frame {
                 let mut before = String::new();
                 let mut used = 0;
                 let mut chars = text.chars();
-                for ch in chars.by_ref() {
+                while let Some(ch) = chars.next() {
                     if used >= self.cursor.1 {
-                        let under = ch.to_string();
                         return Line::new(vec![
                             lead,
                             Span::new(before, Ink::Text),
-                            Span::new(under, Ink::Text).with(Emphasis::Reversed),
+                            Span::new(ch.to_string(), Ink::Text).with(Emphasis::Reversed),
                             Span::new(chars.as_str(), Ink::Text),
                         ]);
                     }

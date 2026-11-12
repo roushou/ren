@@ -1,7 +1,11 @@
 //! Slash commands, the console's way to act: typed in the message box,
-//! completed with tab. Parsing and completion are pure.
+//! completed with tab, and carried out the same from any console screen.
 
-use ren_harness::Harness;
+use super::{Action, Ctx, Notice, Resume, Screen};
+use crate::model::Read;
+use crate::model::desk::Attention;
+use ren_harness::{Harness, drive::Prompt};
+use ren_recorder::id::RunId;
 use ren_supervisor::{Project, ProjectGit};
 
 /// A command typed in the message box.
@@ -101,6 +105,66 @@ impl Slash {
         }
     }
 
+    /// Carry the command out, from a screen showing `current`.
+    pub(crate) fn act(self, ctx: &mut Ctx<'_>, current: Option<RunId>) -> Vec<Action> {
+        match self {
+            Self::New {
+                project,
+                client,
+                prompt,
+            } => {
+                let found =
+                    Self::resolve(&project, ctx.model.projects()).map(|found| found.path.clone());
+                let dir = match found {
+                    Ok(dir) => dir,
+                    Err(Unresolved::Missing) => {
+                        return vec![
+                            Action::Say(Notice::info(
+                                "name a project: /new <project> [claude|codex] <prompt>",
+                            )),
+                            Action::Read(Read::Projects),
+                        ];
+                    }
+                    Err(Unresolved::NoMatch(_)) if project.starts_with('/') => project,
+                    Err(Unresolved::NoMatch(name)) => {
+                        return vec![
+                            Action::Say(Notice::refusal(format!("no project matches {name}"))),
+                            Action::Read(Read::Projects),
+                        ];
+                    }
+                    Err(Unresolved::Ambiguous(names)) => {
+                        return vec![Action::Say(Notice::refusal(format!(
+                            "which one: {}",
+                            names.join(", ")
+                        )))];
+                    }
+                };
+                let harness = client.unwrap_or(ctx.model.client);
+                ctx.model.client = harness;
+                let prompt = prompt.and_then(|prompt| Prompt::parse(prompt).ok());
+                vec![Action::Send(ctx.model.start(harness, dir, None, prompt))]
+            }
+            Self::Resume { search } => vec![Action::Push(Screen::Resume(Resume::new(search)))],
+            Self::Stop => match current.and_then(|run| ctx.model.desk.get(run)) {
+                Some(run) if run.attention() != Attention::Ended => {
+                    vec![Action::Send(crate::model::Command::Stop(run.id))]
+                }
+                Some(_) | None => vec![Action::Say(Notice::info("no live run here to stop"))],
+            },
+            Self::Help => vec![Action::Help],
+            Self::Wall => vec![Action::Wall],
+            Self::Quit => vec![Action::Quit],
+            Self::Unknown(name) => vec![Action::Say(Notice::refusal(format!(
+                "no command /{name}: /help lists them"
+            )))],
+        }
+    }
+
+    /// Every command with what it does, for the help.
+    pub(crate) fn commands() -> impl Iterator<Item = (&'static str, &'static str)> {
+        COMMANDS.into_iter()
+    }
+
     /// What completes `text`, the message box's whole text.
     pub fn complete(text: &str, projects: &[Project]) -> Vec<Suggestion> {
         let Some(rest) = text.strip_prefix('/') else {
@@ -188,18 +252,6 @@ impl Slash {
             ProjectGit::Unreadable => "git".to_owned(),
             ProjectGit::None => "no git".to_owned(),
         }
-    }
-
-    /// Every command with what it does, for `/help`.
-    pub fn help() -> Vec<Suggestion> {
-        COMMANDS
-            .iter()
-            .map(|(command, detail)| Suggestion {
-                label: format!("/{command}"),
-                detail: (*detail).to_owned(),
-                replacement: format!("/{command} "),
-            })
-            .collect()
     }
 }
 

@@ -1,12 +1,14 @@
 //! Every run the console knows of, live or recorded, and the order they are
 //! visited in: what needs you first.
 
-use crate::console::transcript::Transcript;
+use super::transcript::Transcript;
+use crate::ui::Text;
 use ren_harness::{
     Harness,
     drive::{ApprovalAsk, ApprovalId, Prompt},
 };
 use ren_protocol::label::Stored;
+use ren_protocol::native::NativeThreadId;
 use ren_recorder::{id::RunId, time::UnixMillis};
 use ren_store::{activity::TurnActivity, view::RunView};
 use ren_supervisor::{RunSnapshot, RunState, Waiting};
@@ -139,7 +141,7 @@ impl Run {
             .or_else(|| self.transcript.first_prompt())
             .or_else(|| self.queued.as_ref().map(Prompt::as_str));
         match (first, self.started_at) {
-            (Some(text), _) => Self::shorten(text.lines().next().unwrap_or(text), 32),
+            (Some(text), _) => Text(text.lines().next().unwrap_or(text)).summary(32),
             (None, Some(started)) => {
                 // Hours and minutes, UTC: a run named by when it started.
                 let minutes = started.as_millis() / 60_000;
@@ -154,16 +156,6 @@ impl Run {
         }
     }
 
-    pub fn shorten(text: &str, chars: usize) -> String {
-        let text = text.trim();
-        if text.chars().count() <= chars {
-            return text.to_owned();
-        }
-        let mut short: String = text.chars().take(chars.saturating_sub(1)).collect();
-        short.push('…');
-        short
-    }
-
     /// The thread to resume its conversation with, once it has one.
     pub fn thread(&self) -> Option<&str> {
         match &self.live {
@@ -173,6 +165,32 @@ impl Run {
                 .recorded
                 .as_ref()
                 .and_then(|recorded| recorded.thread.as_deref()),
+        }
+    }
+
+    /// The thread a live run holds now.
+    pub fn thread_now(&self) -> Option<&NativeThreadId> {
+        match &self.live {
+            Some(RunState::Idle { thread } | RunState::Working { thread, .. }) => Some(thread),
+            Some(RunState::Starting | RunState::Stopping { .. } | RunState::Ended { .. })
+            | None => None,
+        }
+    }
+
+    /// What an approval asks, in a few words.
+    pub fn asked(ask: Option<&ApprovalAsk>) -> String {
+        match ask {
+            Some(ApprovalAsk::Command {
+                command: Some(command),
+                ..
+            }) => command.clone(),
+            Some(ApprovalAsk::Command { command: None, .. }) => "a command".to_owned(),
+            Some(ApprovalAsk::FileChange { reason }) => reason.clone().map_or_else(
+                || "a file change".to_owned(),
+                |reason| format!("changing {reason}"),
+            ),
+            Some(ApprovalAsk::Tool { tool, .. }) => tool.clone(),
+            None => "its request".to_owned(),
         }
     }
 
@@ -311,5 +329,22 @@ impl Desk {
 
     pub fn live_count(&self) -> usize {
         self.ordered().len()
+    }
+
+    /// The live run driving the session whose client names its
+    /// conversation `native`: a run's thread id.
+    pub fn driving(&self, native: &str) -> Option<&Run> {
+        self.runs.iter().find(|run| {
+            run.thread_now()
+                .is_some_and(|thread| thread.to_string() == native)
+        })
+    }
+
+    /// The threads live runs hold: their sessions keep a pane.
+    pub fn threads(&self) -> Vec<String> {
+        self.runs
+            .iter()
+            .filter_map(|run| run.thread_now().map(ToString::to_string))
+            .collect()
     }
 }
