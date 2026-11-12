@@ -32,10 +32,10 @@ the bar at the bottom.
   many), each listing its runs by what they need, then the newest, under
   what each was asked, with its three newest ended runs. Sessions started
   outside Ren follow, under "started
-  elsewhere": Ren does not know their folder. `g` groups the list by what
-  each needs instead (needs you, working, your turn, watched, ended). `j` and
-  `k` (or the arrows) move through it, a digit jumps to an entry, and `/`
-  searches it by folder, project, or prompt. Until you choose, the selection
+  elsewhere": Ren does not know their folder. It can be grouped by what each
+  needs instead (needs you, working, your turn, watched, ended), from the
+  action menu. The arrows (or `j` and `k`) move through it, a digit jumps to
+  an entry, and `/` searches it by folder, project, or prompt. Until you choose, the selection
   follows the top of the list: what needs you first.
 - The selected session shows its conversation, its activity (each command,
   edit, and tool step), the files it wrote and read, and its model calls
@@ -43,21 +43,29 @@ the bar at the bottom.
   them. A run's turns fold to one line each (prompt, duration, tools,
   failures), the newest open; Enter (or `l`) moves into the session, where
   `j` and `k` move between turns and Enter opens or folds one.
-- Keys act; they do not type. `i` writes to the selected run: Enter sends,
+- Keys come in three layers, so few letters do anything: moving (the arrows
+  or `j`/`k`/`h`/`l`, Enter and Esc, Tab, digits, `/`), a few verbs (`i`
+  write, `n` new run, Space for the action menu, `?` keys, `q` quit), and the
+  answers to an approval, which act only while one waits. Everything else is
+  in the action menu (Space): it lists only what applies to the selection
+  (interrupt or stop a live run; archive or delete an ended run or a
+  watched session; group the list; preview the next theme), each with a letter
+  that works inside the menu only. A delete asks once more there.
+- `i` writes to the selected run: Enter sends,
   Ctrl-J starts a new line, Ctrl-P and Ctrl-N (or ↑ and ↓ with nothing
   typed) bring back what you sent, and Esc closes the box, keeping a draft.
   Written while a turn runs, a message waits and is sent when the turn ends;
   written to a run that ended, it continues that conversation in a new run;
   a session Ren did not start takes nothing.
-- An approval shows as a card in the conversation: `y` allows it once, `a`
-  for the rest of the run, `d` denies it, `D` denies it and stops the turn;
-  writing instead denies it and sends your words next. Answering one moves
+- An approval shows as a card in the conversation: while it waits, `y`
+  allows it once, `a` for the rest of the run, and `d` denies it; the action
+  menu also denies it and stops the turn; writing instead denies it and sends
+  your words next. Answering one moves
   on to the next run that needs you.
 - `n` opens the new-run form: type to find a project, pick the client, write
-  the first prompt, and Enter starts it. `x` interrupts a turn, `S` stops a
-  run's process, `t` previews the next theme, `?` lists every key, and `q`
-  quits, leaving runs running; Ctrl-C quits only when pressed twice in a row,
-  so a stray press does not.
+  the first prompt, and Enter starts it. `?` lists every key, by layer, and
+  `q` quits, leaving runs running; Ctrl-C quits only when pressed twice in a
+  row, so a stray press does not.
 
 A turn's live copy gives way to its recorded copy once the turn is recorded.
 Live updates are not stored, so a run selected mid-turn shows that turn
@@ -152,8 +160,8 @@ theme = "light"
 ```
 
 `--theme` overrides the saved preference; without either, the theme is
-`terminal`. Press `t` to cycle terminal → dark → light while viewing panes,
-a zoomed session, or help. This preview lasts for the current run and does
+`terminal`. Choose the next theme in the action menu (Space, then `t`), or
+press `t` in the help, to cycle terminal → dark → light. This preview lasts for the current run and does
 not save. A non-empty `NO_COLOR` selects monochrome when there is no explicit
 flag or saved preference; an explicit choice, including `t`, enables that
 theme. Labels and focus emphasis remain available without color.

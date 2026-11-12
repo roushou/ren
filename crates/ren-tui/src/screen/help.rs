@@ -4,7 +4,7 @@
 use super::Action;
 use crate::Key;
 use crate::keys::HelpRow;
-use crate::ui::{Anchor, Ink, Line, Place, Span, Text, View};
+use crate::ui::{Anchor, Emphasis, Ink, Line, Place, Span, Text, View};
 
 /// The keys of the screen it was opened over.
 #[derive(Debug)]
@@ -47,30 +47,34 @@ impl Help {
 
     /// The box over `under`.
     pub fn over(&self, under: View) -> View {
-        let label_width = self
-            .rows
-            .iter()
-            .map(|row| Text(&row.label).width())
-            .max()
-            .unwrap_or(0);
-        let text_width = self
-            .rows
-            .iter()
-            .map(|row| Text(&row.does).width())
-            .max()
-            .unwrap_or(0);
-        let lines = self
-            .rows
-            .iter()
-            .map(|row| {
-                Line::new(vec![
-                    Span::new(format!("{:<label_width$}   ", row.label), Ink::Tool),
-                    Span::plain(row.does.clone()),
-                ])
+        let keys = || {
+            self.rows.iter().filter_map(|row| match row {
+                HelpRow::Key { label, does } => Some((label, does)),
+                HelpRow::Heading(_) => None,
             })
-            .collect();
-        let width = u16::try_from(label_width + 3 + text_width + 4).unwrap_or(u16::MAX);
-        let height = u16::try_from(self.rows.len() + 2).unwrap_or(u16::MAX);
+        };
+        let label_width = keys()
+            .map(|(label, _)| Text(label).width())
+            .max()
+            .unwrap_or(0);
+        let text_width = keys()
+            .map(|(_, does)| Text(does).width())
+            .max()
+            .unwrap_or(0);
+        let mut lines = Vec::new();
+        for row in &self.rows {
+            match row {
+                HelpRow::Heading(text) => lines.push(Line::new(vec![
+                    Span::new(format!(" {text}"), Ink::Text).with(Emphasis::Bold),
+                ])),
+                HelpRow::Key { label, does } => lines.push(Line::new(vec![
+                    Span::new(format!(" {label:<label_width$}   "), Ink::Tool),
+                    Span::plain(does.clone()),
+                ])),
+            }
+        }
+        let width = u16::try_from(label_width + 4 + text_width + 4).unwrap_or(u16::MAX);
+        let height = u16::try_from(lines.len() + 2).unwrap_or(u16::MAX);
         View::layer(
             under,
             View::Framed {

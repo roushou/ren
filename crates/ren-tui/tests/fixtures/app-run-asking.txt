@@ -13,7 +13,7 @@
                               │   │ git push origin fix/upload-lease                                                  │
                               │   │ Push the fix so CI runs it                                                        │
                               │   │                                                                                   │
-                              │   │ y allow once   a allow for this run   d deny   D deny and stop the turn           │
+                              │   │ y allow once   a allow for this run   d deny   space more                         │
                               │   └───────────────────────────────────────────────────────────────────────────────────┘
                               │
                               │
@@ -27,4 +27,4 @@
                               │
                               │
 ──────────────────────────────┴─────────────────────────────────────────────────────────────────────────────────────────
- y allow · a allow for the run · d deny · D deny and stop · i reply instead                       ? keys │ 00:00:00 UTC
+ y allow · a allow for the run · d deny · space more · i reply instead                            ? keys │ 00:00:00 UTC

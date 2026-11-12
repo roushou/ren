@@ -366,20 +366,27 @@ fn writing_while_an_approval_waits_denies_it_and_sends_the_words_next() {
 }
 
 #[test]
-fn keys_move_through_the_list_and_x_interrupts() {
+fn keys_move_through_the_list_and_the_action_menu_interrupts() {
     let mut console = desk();
     let _ = console.press(Key::Char('j'));
     assert_eq!(console.current(), Some(run_id(1)));
+    // A letter alone does nothing; the menu lists what applies.
+    assert!(console.press(Key::Char('x')).is_empty());
+    let _ = console.press(Key::Char(' '));
+    assert!(console.tui.overlaid());
     assert_eq!(
         sent(&console.press(Key::Char('x'))),
         [Command::Interrupt(run_id(1))]
     );
+    assert!(!console.tui.overlaid());
     let _ = console.press(Key::Down);
     assert_eq!(console.current(), Some(run_id(3)));
-    assert!(
-        sent(&console.press(Key::Char('x'))).is_empty(),
-        "nothing runs"
-    );
+    // Nothing runs there: the menu has no interrupt, and stays open.
+    let _ = console.press(Key::Char(' '));
+    assert!(sent(&console.press(Key::Char('x'))).is_empty());
+    assert!(console.tui.overlaid());
+    let _ = console.press(Key::Esc);
+    assert!(!console.tui.overlaid());
     let _ = console.press(Key::Char('k'));
     let _ = console.press(Key::Up);
     assert_eq!(console.current(), Some(run_id(2)));
@@ -624,6 +631,7 @@ fn runs_are_grouped_by_folder_or_by_what_they_need() {
     );
     assert!(shown.contains(" 2 ○ new Codex run  your turn"), "{shown}");
     // By what each needs: needs you, working, your turn.
+    let _ = console.press(Key::Char(' '));
     let _ = console.press(Key::Char('g'));
     let _ = console.press(Key::Char('1'));
     assert_eq!(console.current(), Some(run_id(3)));
@@ -664,6 +672,12 @@ fn screens_draw_as_pinned() {
     assert_eq!(
         drawn(&console),
         include_str!("../../tests/fixtures/app-help.txt")
+    );
+    let _ = console.press(Key::Esc);
+    let _ = console.press(Key::Char(' '));
+    assert_eq!(
+        drawn(&console),
+        include_str!("../../tests/fixtures/app-actions.txt")
     );
 }
 
@@ -726,36 +740,69 @@ fn an_ended_run_is_archived_or_deleted_with_a_second_press_and_leaves_the_list()
         "/dev/acme-api",
         idle(1),
     )])));
-    // A live run is not archived away.
+    // A live run's menu has no archive: its `a` is not one.
     let _ = console.press(Key::Char('1'));
-    let out = console.press(Key::Char('e'));
-    assert!(sent(&out).is_empty());
-    assert!(drawn(&console).contains("stop the run first"));
+    let _ = console.press(Key::Char(' '));
+    assert!(!drawn(&console).contains("archive"));
+    let _ = console.press(Key::Esc);
 
     let _ = console.press(Key::Char('2'));
     assert_eq!(console.current(), Some(run_id(5)));
     let subject = HistorySubject::Run(run_id(5));
+    let _ = console.press(Key::Char(' '));
     assert_eq!(
-        sent(&console.press(Key::Char('e'))),
+        sent(&console.press(Key::Char('a'))),
         [Command::Edit {
             subject,
             change: HistoryChange::Archive,
         }]
     );
-    // # asks once more; another key in between keeps it.
-    assert!(sent(&console.press(Key::Char('#'))).is_empty());
-    assert!(drawn(&console).contains("press # again"));
-    let _ = console.press(Key::Char('j'));
-    assert!(sent(&console.press(Key::Char('#'))).is_empty());
+    // Delete asks once more inside the menu; another key keeps it.
+    let _ = console.press(Key::Char(' '));
+    assert!(sent(&console.press(Key::Char('d'))).is_empty());
+    assert!(drawn(&console).contains("for good? enter does it"));
+    assert!(sent(&console.press(Key::Char('j'))).is_empty());
+    assert!(console.tui.overlaid(), "kept, the menu stays");
+    let _ = console.press(Key::Char('d'));
     assert_eq!(
-        sent(&console.press(Key::Char('#'))),
+        sent(&console.press(Key::Enter)),
         [Command::Edit {
             subject,
             change: HistoryChange::Delete,
         }]
     );
+    assert!(!console.tui.overlaid());
     // Once history no longer lists it, the ended run leaves the desk.
     assert!(drawn(&console).contains("/srv/ren"));
     let _ = console.apply(Input::Recorded(vec![]));
     assert!(!drawn(&console).contains("srv/ren"));
+}
+
+#[test]
+fn the_action_menu_lists_only_what_applies_to_the_selection() {
+    let mut console = desk();
+    let menu = |console: &mut Console| -> Vec<char> {
+        let _ = console.press(Key::Char(' '));
+        let keys = match console.tui.top_actions() {
+            Some(actions) => actions.entries().iter().map(|entry| entry.key).collect(),
+            None => Vec::new(),
+        };
+        let _ = console.press(Key::Esc);
+        keys
+    };
+    // Asking: the answers first, then the run.
+    let _ = console.press(Key::Char('1'));
+    assert_eq!(console.current(), Some(run_id(2)));
+    assert_eq!(
+        menu(&mut console),
+        ['y', 'a', 'd', 'D', 'i', 'x', 's', 'n', '/', 'g', 't']
+    );
+    // Working: interrupt and stop.
+    let _ = console.press(Key::Char('2'));
+    assert_eq!(menu(&mut console), ['i', 'x', 's', 'n', '/', 'g', 't']);
+    // Its turn is over: nothing to interrupt.
+    let _ = console.press(Key::Char('3'));
+    assert_eq!(menu(&mut console), ['i', 's', 'n', '/', 'g', 't']);
+    // y answers only while a run asks; elsewhere it does nothing.
+    assert!(console.press(Key::Char('y')).is_empty());
 }

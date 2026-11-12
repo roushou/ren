@@ -19,11 +19,25 @@ pub struct Bind<C: 'static> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Keymap<C: 'static>(pub &'static [Bind<C>]);
 
-/// One row of the help.
+/// One row of the help: a key and what it does, or a heading over the
+/// keys of one layer.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct HelpRow {
-    pub label: String,
-    pub does: String,
+pub enum HelpRow {
+    Key { label: String, does: String },
+    Heading(String),
+}
+
+impl HelpRow {
+    pub fn key(label: &str, does: &str) -> Self {
+        Self::Key {
+            label: label.to_owned(),
+            does: does.to_owned(),
+        }
+    }
+
+    pub fn heading(text: &str) -> Self {
+        Self::Heading(text.to_owned())
+    }
 }
 
 impl<C: Copy> Keymap<C> {
@@ -35,14 +49,12 @@ impl<C: Copy> Keymap<C> {
             .map(|bind| bind.command)
     }
 
-    /// The help's rows.
+    /// The help's rows; a bind without words shares the row before.
     pub fn help(self) -> Vec<HelpRow> {
         self.0
             .iter()
-            .map(|bind| HelpRow {
-                label: bind.label.to_owned(),
-                does: bind.does.to_owned(),
-            })
+            .filter(|bind| !bind.does.is_empty())
+            .map(|bind| HelpRow::key(bind.label, bind.does))
             .collect()
     }
 }

@@ -13,7 +13,7 @@
                │      acme-web  /dev/acme-web  feat/upload                                              │             │
                │                                                                                        │             │
                │  client    ◉ Claude Code   ○ Codex   ○ Pi (not installed)                              │             │
-               │                                                                                        │rn           │
+               │                                                                                        │             │
                │  prompt                                                                                │─────────────┘
                │                                                                                        │
                │                                                                                        │
@@ -27,4 +27,4 @@
                               │
                               │
 ──────────────────────────────┴─────────────────────────────────────────────────────────────────────────────────────────
- y allow · a allow for the run · d deny · D deny and stop · i reply instead                       ? keys │ 00:00:00 UTC
+ y allow · a allow for the run · d deny · space more · i reply instead                            ? keys │ 00:00:00 UTC

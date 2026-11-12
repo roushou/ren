@@ -196,6 +196,16 @@ impl Tui {
                     let rows = self.top().keys();
                     self.over.push(Screen::Help(Help::new(rows)));
                 }
+                Action::Verb(verb) => {
+                    let mut ctx = Ctx {
+                        model: &mut self.model,
+                        message: &mut self.message,
+                        size: self.size,
+                    };
+                    if let Screen::Main(main) = &mut self.main {
+                        pending.extend(main.verb(verb, &mut ctx));
+                    }
+                }
             }
         }
         outs
@@ -205,7 +215,9 @@ impl Tui {
     fn main(&self) -> &Main {
         match &self.main {
             Screen::Main(main) => main,
-            Screen::NewRun(_) | Screen::Help(_) => unreachable!("the main screen is Main"),
+            Screen::NewRun(_) | Screen::Actions(_) | Screen::Help(_) => {
+                unreachable!("the main screen is Main")
+            }
         }
     }
 
@@ -224,6 +236,15 @@ impl Tui {
     #[cfg(test)]
     pub(crate) fn mode(&self) -> screen::main::Mode {
         self.main().mode()
+    }
+
+    /// The action menu, when it is on top.
+    #[cfg(test)]
+    pub(crate) fn top_actions(&self) -> Option<&screen::Actions> {
+        match self.over.last() {
+            Some(Screen::Actions(actions)) => Some(actions),
+            Some(Screen::Main(_) | Screen::NewRun(_) | Screen::Help(_)) | None => None,
+        }
     }
 
     /// Whether a screen is open over the main one: the form or the help.

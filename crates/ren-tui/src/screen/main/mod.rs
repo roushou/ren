@@ -1,12 +1,15 @@
 //! The one screen: the session list on the left, the selected session on
 //! the right, a top bar with the traffic, and a key bar at the bottom.
 //!
-//! Keys act; they do not type. j and k (or the arrows) move through the
-//! list, or through a session's turns once the session has the focus; a
-//! digit jumps to an entry; tab changes what the session shows. `i` opens
-//! the message box to write to a run, `n` starts one, and an approval is
-//! answered with `y`, `a`, `d`, or `D`. Only the message box, the search,
-//! and the new-run form take typed text, and Esc leaves each of them.
+//! Keys come in three layers, so few letters do anything and none surprises.
+//! Moving: j and k (or the arrows) through the list, or a session's turns
+//! once it has the focus, a digit to jump, tab for what the session shows,
+//! and / to search. A few verbs: `i` writes to the run, `n` starts one, `?`
+//! lists the keys, `q` quits. Everything else is in the action menu (space),
+//! which lists only what applies to the selection. While a run asks for
+//! approval, and only then, `y`, `a`, and `d` answer it. Only the message
+//! box, the search, and the new-run form take typed text, and Esc leaves
+//! each of them.
 
 mod detail;
 mod list;
@@ -16,6 +19,7 @@ mod watched_tests;
 
 pub(crate) use list::{Grouping, Item, Listing};
 
+use super::actions::{Actions, Entry, Section};
 use super::message::Typed;
 use super::new_run::NewRun;
 use super::{Action, Ctx, Look, News, Notice, Screen};
@@ -56,17 +60,8 @@ pub(crate) struct Main {
     /// Whether the operator chose the selection; until then it follows
     /// the top of the list, what needs you first.
     chosen: bool,
-    /// A key pressed once that acts when pressed again, right away.
-    armed: Option<Armed>,
-}
-
-/// What a second press of the same key does.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Armed {
-    /// Ctrl-C: quit.
-    Quit,
-    /// `#`: delete this, for good.
-    Delete(HistorySubject),
+    /// Ctrl-C was pressed once: pressed again, right away, it quits.
+    leaving: bool,
 }
 
 /// Which side has the keys.
@@ -108,21 +103,12 @@ enum Act {
     IntoList,
     NextTab,
     PreviousTab,
-    Write,
-    NewRun,
-    Allow,
-    AllowForRun,
-    Deny,
-    DenyAndStop,
-    Interrupt,
-    Stop,
-    Archive,
-    Delete,
-    Search,
-    Group,
     PageUp,
     PageDown,
-    Theme,
+    Search,
+    Write,
+    NewRun,
+    Actions,
     Help,
     Quit,
     /// Ctrl-C: quits when pressed twice in a row, so a stray press does not.
@@ -130,28 +116,29 @@ enum Act {
 }
 
 impl Act {
-    const KEYS: Keymap<Self> = Keymap(&[
+    /// Moving around: the keys every list and pager has.
+    const MOVE: Keymap<Self> = Keymap(&[
         Bind {
             keys: &[Key::Char('j'), Key::Down],
-            label: "j ↓",
+            label: "↓ j",
             does: "next session, or next turn in a session",
             command: Self::Down,
         },
         Bind {
             keys: &[Key::Char('k'), Key::Up],
-            label: "k ↑",
+            label: "↑ k",
             does: "previous session, or previous turn",
             command: Self::Up,
         },
         Bind {
-            keys: &[Key::Char('l'), Key::Right, Key::Enter],
-            label: "l → enter",
+            keys: &[Key::Right, Key::Enter, Key::Char('l')],
+            label: "→ enter",
             does: "into the session; on a turn, open or fold it",
             command: Self::IntoSession,
         },
         Bind {
-            keys: &[Key::Char('h'), Key::Left, Key::Esc],
-            label: "h ← esc",
+            keys: &[Key::Left, Key::Esc, Key::Char('h')],
+            label: "← esc",
             does: "back to the list",
             command: Self::IntoList,
         },
@@ -164,9 +151,31 @@ impl Act {
         Bind {
             keys: &[Key::BackTab],
             label: "shift-tab",
-            does: "the tab before",
+            does: "the view before",
             command: Self::PreviousTab,
         },
+        Bind {
+            keys: &[Key::PageUp],
+            label: "pgup pgdn",
+            does: "scroll the session",
+            command: Self::PageUp,
+        },
+        Bind {
+            keys: &[Key::PageDown],
+            label: "",
+            does: "",
+            command: Self::PageDown,
+        },
+        Bind {
+            keys: &[Key::Char('/')],
+            label: "/",
+            does: "search the list (esc clears)",
+            command: Self::Search,
+        },
+    ]);
+
+    /// The verbs: few, and named for what they do.
+    const DO: Keymap<Self> = Keymap(&[
         Bind {
             keys: &[Key::Char('i')],
             label: "i",
@@ -180,82 +189,10 @@ impl Act {
             command: Self::NewRun,
         },
         Bind {
-            keys: &[Key::Char('y')],
-            label: "y",
-            does: "allow what the run asks, once",
-            command: Self::Allow,
-        },
-        Bind {
-            keys: &[Key::Char('a')],
-            label: "a",
-            does: "allow it for the rest of the run",
-            command: Self::AllowForRun,
-        },
-        Bind {
-            keys: &[Key::Char('d')],
-            label: "d",
-            does: "deny it",
-            command: Self::Deny,
-        },
-        Bind {
-            keys: &[Key::Char('D')],
-            label: "D",
-            does: "deny it and stop the turn",
-            command: Self::DenyAndStop,
-        },
-        Bind {
-            keys: &[Key::Char('x')],
-            label: "x",
-            does: "interrupt the turn",
-            command: Self::Interrupt,
-        },
-        Bind {
-            keys: &[Key::Char('S')],
-            label: "S",
-            does: "stop the run's process",
-            command: Self::Stop,
-        },
-        Bind {
-            keys: &[Key::Char('e')],
-            label: "e",
-            does: "archive it, an ended run or a session",
-            command: Self::Archive,
-        },
-        Bind {
-            keys: &[Key::Char('#')],
-            label: "# ×2",
-            does: "delete its recorded calls, pressed twice",
-            command: Self::Delete,
-        },
-        Bind {
-            keys: &[Key::Char('/')],
-            label: "/",
-            does: "search the sessions (esc clears)",
-            command: Self::Search,
-        },
-        Bind {
-            keys: &[Key::Char('g')],
-            label: "g",
-            does: "group the list by folder, or by what each needs",
-            command: Self::Group,
-        },
-        Bind {
-            keys: &[Key::PageUp],
-            label: "pgup",
-            does: "scroll the session up",
-            command: Self::PageUp,
-        },
-        Bind {
-            keys: &[Key::PageDown],
-            label: "pgdn",
-            does: "scroll it down",
-            command: Self::PageDown,
-        },
-        Bind {
-            keys: &[Key::Char('t')],
-            label: "t",
-            does: "next theme: terminal, dark, light (not saved)",
-            command: Self::Theme,
+            keys: &[Key::Char(' ')],
+            label: "space",
+            does: "actions: interrupt, stop, archive, delete, group, theme",
+            command: Self::Actions,
         },
         Bind {
             keys: &[Key::Char('?')],
@@ -276,25 +213,89 @@ impl Act {
             command: Self::Leave,
         },
     ]);
+
+    fn find(key: Key) -> Option<Self> {
+        Self::MOVE.find(key).or_else(|| Self::DO.find(key))
+    }
+}
+
+/// An answer to the approval the selected run waits for: these keys act
+/// only while it waits.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Answer(Decision);
+
+impl Answer {
+    const KEYS: Keymap<Self> = Keymap(&[
+        Bind {
+            keys: &[Key::Char('y')],
+            label: "y",
+            does: "allow it, once",
+            command: Self(Decision::Accept),
+        },
+        Bind {
+            keys: &[Key::Char('a')],
+            label: "a",
+            does: "allow it for the rest of the run",
+            command: Self(Decision::AcceptForSession),
+        },
+        Bind {
+            keys: &[Key::Char('d')],
+            label: "d",
+            does: "deny it (space also has: deny and stop the turn)",
+            command: Self(Decision::Decline),
+        },
+    ]);
+}
+
+/// What can be done with the selection, from the action menu.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Verb {
+    Write,
+    Answer(Decision),
+    Interrupt,
+    Stop,
+    Archive,
+    Delete,
+    NewRun,
+    Search,
+    Group,
+    Theme,
+}
+
+impl Verb {
+    /// Whether the menu asks once more before it acts: what cannot be undone.
+    pub fn asks_first(self) -> bool {
+        match self {
+            Self::Delete => true,
+            Self::Write
+            | Self::Answer(_)
+            | Self::Interrupt
+            | Self::Stop
+            | Self::Archive
+            | Self::NewRun
+            | Self::Search
+            | Self::Group
+            | Self::Theme => false,
+        }
+    }
 }
 
 impl Main {
-    /// The keys, for the help: the key table, then the digits and the
-    /// message box.
+    /// The keys, for the help, by layer: moving, the verbs (with the action
+    /// menu, where everything else is), and the answers to an approval.
     pub fn keys() -> Vec<HelpRow> {
-        let mut rows = Act::KEYS.help();
-        for (label, does) in [
-            ("1–9", "jump to that session in the list"),
-            (
-                "ctrl-p/n",
-                "while writing: the messages sent before and after",
-            ),
-        ] {
-            rows.push(HelpRow {
-                label: label.to_owned(),
-                does: does.to_owned(),
-            });
-        }
+        let mut rows = vec![HelpRow::heading("move")];
+        rows.extend(Act::MOVE.help());
+        rows.push(HelpRow::key("1–9", "jump to that entry of the list"));
+        rows.push(HelpRow::heading("do"));
+        rows.extend(Act::DO.help());
+        rows.push(HelpRow::heading("while a run asks"));
+        rows.extend(Answer::KEYS.help());
+        rows.push(HelpRow::heading("while writing"));
+        rows.push(HelpRow::key(
+            "ctrl-p/n",
+            "the messages sent before and after",
+        ));
         rows
     }
 
@@ -398,28 +399,16 @@ impl Main {
     }
 
     pub fn press(&mut self, key: Key, ctx: &mut Ctx<'_>) -> Vec<Action> {
-        // Ctrl-C quits, and # deletes, only when pressed again right away.
-        let armed = self.armed.take();
-        if self.mode == Mode::Normal {
-            match (key, armed) {
-                (Key::Interrupt, Some(Armed::Quit)) => return vec![Action::Quit],
-                (Key::Interrupt, _) => {
-                    self.armed = Some(Armed::Quit);
-                    return vec![Action::Say(Notice::info(
-                        "press ctrl-c again to quit · runs keep going",
-                    ))];
-                }
-                (Key::Char('#'), Some(Armed::Delete(subject))) => {
-                    return vec![
-                        Action::Send(Command::Edit {
-                            subject,
-                            change: HistoryChange::Delete,
-                        }),
-                        Action::Say(Notice::info("deleting…")),
-                    ];
-                }
-                _ => {}
+        // Ctrl-C quits only when pressed again right away.
+        let leaving = std::mem::take(&mut self.leaving);
+        if key == Key::Interrupt && self.mode == Mode::Normal {
+            if leaving {
+                return vec![Action::Quit];
             }
+            self.leaving = true;
+            return vec![Action::Say(Notice::info(
+                "press ctrl-c again to quit · runs keep going",
+            ))];
         }
         match self.mode {
             Mode::Writing => self.write(key, ctx),
@@ -436,7 +425,13 @@ impl Main {
                     }
                     return Vec::new();
                 }
-                match Act::KEYS.find(key) {
+                // While the run asks, its answers come first.
+                if self.waiting(ctx.model).is_some()
+                    && let Some(Answer(decision)) = Answer::KEYS.find(key)
+                {
+                    return self.answer(ctx, decision, None);
+                }
+                match Act::find(key) {
                     Some(act) => self.act(act, ctx),
                     None => Vec::new(),
                 }
@@ -461,56 +456,142 @@ impl Main {
             Act::IntoList => self.focus = Focus::List,
             Act::NextTab => self.tab = self.tab.next(),
             Act::PreviousTab => self.tab = self.tab.previous(),
-            Act::Write => return self.open_writing(ctx.model),
-            Act::NewRun => {
-                return vec![Action::Push(Screen::NewRun(NewRun::new(ctx.model.client)))];
-            }
-            Act::Allow => return self.answer(ctx, Decision::Accept, None),
-            Act::AllowForRun => return self.answer(ctx, Decision::AcceptForSession, None),
-            Act::Deny => return self.answer(ctx, Decision::Decline, None),
-            Act::DenyAndStop => return self.answer(ctx, Decision::Cancel, None),
-            Act::Interrupt => return self.interrupt(ctx.model),
-            Act::Stop => {
-                return match self.live_run(ctx.model) {
-                    Some(run) => vec![Action::Send(Command::Stop(run))],
-                    None => vec![Action::Say(Notice::info("no live run selected to stop"))],
-                };
-            }
-            Act::Archive => return self.archive(ctx.model),
-            Act::Delete => {
-                return match self.subject(ctx.model) {
-                    Ok(subject) => {
-                        self.armed = Some(Armed::Delete(subject));
-                        vec![Action::Say(Notice::refusal(
-                            "press # again to delete its recorded calls for good · any other key keeps them",
-                        ))]
-                    }
-                    Err(why) => vec![Action::Say(Notice::info(why))],
-                };
-            }
-            Act::Search => {
-                self.mode = Mode::Searching;
-                self.focus = Focus::List;
-            }
-            Act::Group => {
-                self.grouping = match self.grouping {
-                    Grouping::Folder => Grouping::State,
-                    Grouping::State => Grouping::Folder,
-                };
-                return vec![Action::Say(Notice::info(match self.grouping {
-                    Grouping::Folder => "grouped by folder · g groups by what each needs",
-                    Grouping::State => "grouped by what each needs · g groups by folder",
-                }))];
-            }
+            Act::Write => return self.verb(Verb::Write, ctx),
+            Act::NewRun => return self.verb(Verb::NewRun, ctx),
+            Act::Search => return self.verb(Verb::Search, ctx),
+            Act::Actions => return vec![Action::Push(Screen::Actions(self.menu(ctx.model)))],
             Act::PageUp => self.scroll = self.scroll.saturating_add(page),
             Act::PageDown => self.scroll = self.scroll.saturating_sub(page),
-            Act::Theme => return vec![Action::CycleTheme],
             Act::Help => return vec![Action::Help],
             Act::Quit => return vec![Action::Quit],
             // Taken in `press`, before any key is acted on.
             Act::Leave => {}
         }
         Vec::new()
+    }
+
+    /// Do `verb` to the selection: from a key, or from the action menu.
+    pub fn verb(&mut self, verb: Verb, ctx: &mut Ctx<'_>) -> Vec<Action> {
+        match verb {
+            Verb::Write => self.open_writing(ctx.model),
+            Verb::NewRun => vec![Action::Push(Screen::NewRun(NewRun::new(ctx.model.client)))],
+            Verb::Answer(decision) => self.answer(ctx, decision, None),
+            Verb::Interrupt => self.interrupt(ctx.model),
+            Verb::Stop => match self.live_run(ctx.model) {
+                Some(run) => vec![Action::Send(Command::Stop(run))],
+                None => vec![Action::Say(Notice::info("no live run selected to stop"))],
+            },
+            Verb::Archive | Verb::Delete => self.edit(ctx.model, verb),
+            Verb::Search => {
+                self.mode = Mode::Searching;
+                self.focus = Focus::List;
+                Vec::new()
+            }
+            Verb::Group => {
+                self.grouping = self.grouping.other();
+                vec![Action::Say(Notice::info(match self.grouping {
+                    Grouping::Folder => "grouped by folder",
+                    Grouping::State => "grouped by what each needs",
+                }))]
+            }
+            Verb::Theme => vec![Action::CycleTheme],
+        }
+    }
+
+    /// The action menu for the selection: only what applies to it now.
+    fn menu(&self, model: &Model) -> Actions {
+        let entry = |key, label: &str, verb, section| Entry {
+            key,
+            label: label.to_owned(),
+            verb,
+            section,
+        };
+        let mut entries = Vec::new();
+        let title = match self.selected {
+            Some(Item::Run(id)) => match model.desk.get(id) {
+                Some(run) => {
+                    if self.waiting(model).is_some() {
+                        entries.extend([
+                            entry(
+                                'y',
+                                "allow it, once",
+                                Verb::Answer(Decision::Accept),
+                                Section::Answer,
+                            ),
+                            entry(
+                                'a',
+                                "allow it for the rest of the run",
+                                Verb::Answer(Decision::AcceptForSession),
+                                Section::Answer,
+                            ),
+                            entry(
+                                'd',
+                                "deny it",
+                                Verb::Answer(Decision::Decline),
+                                Section::Answer,
+                            ),
+                            entry(
+                                'D',
+                                "deny it and stop the turn",
+                                Verb::Answer(Decision::Cancel),
+                                Section::Answer,
+                            ),
+                        ]);
+                    }
+                    match run.attention() {
+                        Attention::Working | Attention::NeedsYou => entries.extend([
+                            entry('i', "write to the run", Verb::Write, Section::Run),
+                            entry('x', "interrupt the turn", Verb::Interrupt, Section::Run),
+                            entry('s', "stop the run", Verb::Stop, Section::Run),
+                        ]),
+                        Attention::YourTurn | Attention::Starting => entries.extend([
+                            entry('i', "write to the run", Verb::Write, Section::Run),
+                            entry('s', "stop the run", Verb::Stop, Section::Run),
+                        ]),
+                        Attention::Ended => entries.extend([
+                            entry('i', "write to continue it", Verb::Write, Section::Run),
+                            entry('a', "archive", Verb::Archive, Section::History),
+                            entry(
+                                'd',
+                                "delete its recorded calls",
+                                Verb::Delete,
+                                Section::History,
+                            ),
+                        ]),
+                    }
+                    format!("{} · {}", Listing::run_name(model, run), run.client())
+                }
+                None => "nothing selected".to_owned(),
+            },
+            Some(Item::Watched(_)) => {
+                entries.extend([
+                    entry('a', "archive", Verb::Archive, Section::History),
+                    entry(
+                        'd',
+                        "delete its recorded calls",
+                        Verb::Delete,
+                        Section::History,
+                    ),
+                ]);
+                "watched session".to_owned()
+            }
+            None => "ren".to_owned(),
+        };
+        entries.extend([
+            entry('n', "start a run", Verb::NewRun, Section::View),
+            entry('/', "search the list", Verb::Search, Section::View),
+            entry(
+                'g',
+                match self.grouping {
+                    Grouping::Folder => "group by what each needs",
+                    Grouping::State => "group by folder",
+                },
+                Verb::Group,
+                Section::View,
+            ),
+            entry('t', "next theme (not saved)", Verb::Theme, Section::View),
+        ]);
+        Actions::new(title, entries)
     }
 
     /// What an archive or delete of the selection applies to: an ended
@@ -527,16 +608,25 @@ impl Main {
         }
     }
 
-    /// Archive the selection, or unarchive it if it was. The list drops it
-    /// once the daemon has.
-    fn archive(&self, model: &Model) -> Vec<Action> {
+    /// Archive or delete the selection. The list drops it once the daemon
+    /// has.
+    fn edit(&self, model: &Model, verb: Verb) -> Vec<Action> {
+        let (change, said) = match verb {
+            Verb::Delete => (HistoryChange::Delete, "deleting its recorded calls…"),
+            Verb::Archive
+            | Verb::Write
+            | Verb::Answer(_)
+            | Verb::Interrupt
+            | Verb::Stop
+            | Verb::NewRun
+            | Verb::Search
+            | Verb::Group
+            | Verb::Theme => (HistoryChange::Archive, "archived · it leaves the list"),
+        };
         match self.subject(model) {
             Ok(subject) => vec![
-                Action::Send(Command::Edit {
-                    subject,
-                    change: HistoryChange::Archive,
-                }),
-                Action::Say(Notice::info("archived · it leaves the list")),
+                Action::Send(Command::Edit { subject, change }),
+                Action::Say(Notice::info(said)),
             ],
             Err(why) => vec![Action::Say(Notice::info(why))],
         }
@@ -889,16 +979,14 @@ impl Main {
             }
             Mode::Searching => "type to search · enter keeps it · esc clears",
             Mode::Normal => match self.waiting(model) {
-                Some(_) => {
-                    "y allow · a allow for the run · d deny · D deny and stop · i reply instead"
-                }
+                Some(_) => "y allow · a allow for the run · d deny · space more · i reply instead",
                 None => match (self.focus, self.selected) {
-                    (_, None) => "n start a run · ? keys",
+                    (_, None) => "n start a run",
                     (Focus::List, Some(_)) => {
-                        "j/k sessions · enter open · i write · n new run · / search · g group"
+                        "↑↓ select · enter open · i write · space actions · n new run"
                     }
                     (Focus::Session, Some(_)) => {
-                        "j/k turns · enter open or fold · tab views · i write · esc list"
+                        "↑↓ turns · enter fold · tab views · i write · space actions · esc list"
                     }
                 },
             },

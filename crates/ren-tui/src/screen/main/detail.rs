@@ -612,7 +612,7 @@ impl Main {
             }
         }
         lines.push(row("", Ink::Text));
-        let choices = "y allow once   a allow for this run   d deny   D deny and stop the turn";
+        let choices = "y allow once   a allow for this run   d deny   space more";
         for text in Self::wrap(choices, inner) {
             lines.push(row(&text, Ink::Focus));
         }

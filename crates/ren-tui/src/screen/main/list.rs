@@ -43,6 +43,16 @@ pub(crate) enum Grouping {
     State,
 }
 
+impl Grouping {
+    /// The other grouping.
+    pub fn other(self) -> Self {
+        match self {
+            Self::Folder => Self::State,
+            Self::State => Self::Folder,
+        }
+    }
+}
+
 /// The heading a row is listed under.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Heading {

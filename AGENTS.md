@@ -276,7 +276,7 @@ dependencies under "Crates" below. Read the code for current module ownership.
     finished turn gives way to its record (`transcript`), projects, and how
     a call ended (`call`, `CallEnd`). `Model::apply` answers with reads,
     prompts kept for a run that now waits for one, and news.
-  - `screen`: `enum Screen { Main, NewRun, Help }`. `main` is the session
+  - `screen`: `enum Screen { Main, NewRun, Actions, Help }`. `main` is the session
     list (`list`: runs grouped by their folder, the folders that need you
     first, then sessions watched; or by what each needs, `Grouping`) beside the selected session (`detail`: a lit
     header, the Conversation, Activity, Files, and Calls tabs, a run's turns
@@ -284,8 +284,12 @@ dependencies under "Crates" below. Read the code for current module ownership.
     traffic and a key bar; `watched` reads a session Ren did not start (its
     phase, alerts, and conversation). Keys act in normal mode; `message`
     (with `composer`) takes text only while writing to a run, and `new_run`
-    is the form for starting one. Each screen's keys are a `Keymap`
-    (`keys`), which both looking a key up and the help (`help`) read.
+    is the form for starting one. Keys come in layers: moving and a few
+    verbs are `main`'s `Keymap`s, an approval's answers act only while it
+    waits, and everything else is a `Verb` in the action menu (`actions`),
+    which lists only what applies to the selection. Each screen's keys are a
+    `Keymap` (`keys`), which both looking a key up and the help (`help`,
+    by layer) read.
   - `conversation`: a conversation read once (from recorded calls in
     `read`, or a run's live events) and laid out compact or roomy, so every
     view draws it the same way.

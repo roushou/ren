@@ -1,0 +1,30 @@
+ ren   0 sessions · 0 streaming · 0 waiting                                                         1 needs you  3 live
+──────────────────────────────┬─────────────────────────────────────────────────────────────────────────────────────────
+ ren ◆1  /srv/                │ ren · Claude Code · needs you                                                  /srv/ren
+ 1 ◆ fix the flaky upl…  wants│  Conversation   Activity   Files   Calls
+                              │▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+ acme-api  /dev/              │
+ 2 ● new Codex run  working   │ › fix ┌ ren · Claude Code ──────────────────────┐
+                              │ ● Bash│  it asks                                │
+ acme-web  /dev/              │       │   y  allow it, once                     │
+ 3 ○ new Claude Code r…  your │       │   a  allow it for the rest of the run   │
+                              │       │   d  deny it                            │
+                              │       │   D  deny it and stop the turn          │
+                              │       │  run                                    │
+                              │       │   i  write to the run                   │
+                              │       │   x  interrupt the turn                 │
+                              │       │   s  stop the run                       │
+                              │       │  view                                   │
+                              │       │   n  start a run                        │
+                              │       │   /  search the list                    │
+                              │       │   g  group by what each needs           │
+                              │       │   t  next theme (not saved)             │
+                              │       │                                         │
+                              │       │  a letter, or ↑↓ and enter · esc closes │
+                              │       └─────────────────────────────────────────┘
+                              │
+                              │
+                              │
+                              │
+──────────────────────────────┴─────────────────────────────────────────────────────────────────────────────────────────
+ y allow · a allow for the run · d deny · space more · i reply instead                            ? keys │ 00:00:00 UTC
