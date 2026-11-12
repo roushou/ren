@@ -271,6 +271,7 @@ impl TestGateway {
                         places: Vec::new(),
                         scratch: Some(std::path::PathBuf::from("/scratch")),
                         home: Some(std::path::PathBuf::from("/work")),
+                        warmup: ren_supervisor::Warmup::WhenAsked,
                         gateway: GatewayEndpoint::parse(&format!("http://{address}")).unwrap(),
                         version: "0.0.0-test".into(),
                         line_limit: LineLimit::DEFAULT,

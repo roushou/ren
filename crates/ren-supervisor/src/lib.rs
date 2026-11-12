@@ -56,6 +56,8 @@ pub struct SupervisorOptions {
     pub scratch: Option<PathBuf>,
     /// The operator's home, for showing paths as `~/…`.
     pub home: Option<PathBuf>,
+    /// When each client's models are first listed.
+    pub warmup: Warmup,
     /// Where driven clients send their model traffic.
     pub gateway: GatewayEndpoint,
     /// Ren's version, reported to clients as theirs.
@@ -77,6 +79,16 @@ pub struct Supervisor {
 pub enum RunUpdate {
     State { run: RunId, state: RunState },
     Event { run: RunId, event: DriveEvent },
+}
+
+/// When each client's models are first listed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Warmup {
+    /// As the task starts, for every client installed here, so the first
+    /// form that offers them has them at once.
+    AtStart,
+    /// The first time they are asked for.
+    WhenAsked,
 }
 
 /// Where a new run works.
@@ -263,6 +275,7 @@ impl Supervisor {
             recorder,
             bounds,
             gateway: options.gateway,
+            warmup: options.warmup,
             version: options.version,
             line_limit: options.line_limit,
         };

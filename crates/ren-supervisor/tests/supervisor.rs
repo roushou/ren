@@ -280,6 +280,7 @@ fn options() -> SupervisorOptions {
         places: vec![PathBuf::from("/home/op/.config")],
         scratch: Some(PathBuf::from("/scratch")),
         home: Some(PathBuf::from("/home/op")),
+        warmup: ren_supervisor::Warmup::WhenAsked,
         gateway: GatewayEndpoint::parse("http://127.0.0.1:8787").unwrap(),
         version: "0.1.0".into(),
         line_limit: LineLimit::DEFAULT,
@@ -404,6 +405,10 @@ struct Supervised {
 }
 
 async fn supervise(host: FakeHost) -> Supervised {
+    supervise_with(host, options()).await
+}
+
+async fn supervise_with(host: FakeHost, options: SupervisorOptions) -> Supervised {
     let dir = tempfile::tempdir().unwrap();
     let clock = Arc::new(ManualClock::at(UnixMillis::from_millis(1_000)));
     let ids = Arc::new(SequentialIds::default());
@@ -419,7 +424,7 @@ async fn supervise(host: FakeHost) -> Supervised {
     };
     let (recorder, recording) =
         Recorder::new(store, recovery.calls, setup, clock, ids.clone()).unwrap();
-    let (supervisor, task) = Supervisor::new(options(), host, ids, recorder).unwrap();
+    let (supervisor, task) = Supervisor::new(options, host, ids, recorder).unwrap();
     Supervised {
         supervisor,
         task: tokio::spawn(task.run()),
@@ -924,6 +929,27 @@ async fn a_clients_models_are_listed_once_and_kept() {
         supervisor.models(Harness::OpenCode).await,
         Err(ren_supervisor::ModelsError::NotDrivable(_))
     ));
+}
+
+#[tokio::test]
+async fn warmed_at_start_the_models_are_listed_before_anyone_asks() {
+    let host = FakeHost::new(Script::Codex);
+    let spawned = host.spawned.clone();
+    let mut options = options();
+    options.warmup = ren_supervisor::Warmup::AtStart;
+    let supervised = supervise_with(host, options).await;
+    // Only Codex is installed here: its listing starts with the task, before
+    // anything asks for it.
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while spawned.lock().unwrap().is_empty() {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("the listing started on its own");
+    let models = supervised.supervisor.models(Harness::Codex).await.unwrap();
+    assert_eq!(models[0].id.as_str(), "gpt-fast");
+    assert_eq!(spawned.lock().unwrap().len(), 1);
 }
 
 #[tokio::test]

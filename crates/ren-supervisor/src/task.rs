@@ -12,7 +12,7 @@ use crate::entries::Entries;
 use crate::models::{Listings, ModelProbe, ModelsError, ModelsReply};
 use crate::{
     CommandError, Conversation, Places, Request, RunSnapshot, RunUpdate, Start, StartError,
-    StartPlace,
+    StartPlace, Warmup,
     client::{Client, ClientStatus},
     host::{AgentHost, AgentProcess, KillSwitch},
     project::Search,
@@ -55,6 +55,7 @@ pub struct SupervisorTask<H> {
     pub(crate) recorder: Recorder,
     pub(crate) bounds: Bounds,
     pub(crate) gateway: GatewayEndpoint,
+    pub(crate) warmup: Warmup,
     pub(crate) version: String,
     pub(crate) line_limit: LineLimit,
 }
@@ -85,6 +86,10 @@ impl<H: AgentHost> SupervisorTask<H> {
         let mut outputs: Outputs = SelectAll::new();
         let mut exits: Exits = FuturesUnordered::new();
         let mut listings = Listings::default();
+        match self.warmup {
+            Warmup::AtStart => self.warm(&mut listings),
+            Warmup::WhenAsked => {}
+        }
         let mut accepting = true;
         loop {
             tokio::select! {
@@ -324,6 +329,22 @@ impl<H: AgentHost> SupervisorTask<H> {
         exits.push(exit.map(move |exit| (run, exit)).boxed());
         runs.insert(run, live);
         Ok(run)
+    }
+
+    /// List the models of every client installed here, with no one waiting.
+    fn warm(&self, listings: &mut Listings) {
+        for harness in Harness::ALL {
+            let installed = harness
+                .driven_program()
+                .is_ok_and(|program| self.host.finds(program));
+            if !installed {
+                continue;
+            }
+            match self.probe(*harness) {
+                Ok(listing) => listings.warm(*harness, listing),
+                Err(error) => tracing::debug!(%harness, %error, "cannot list a client's models"),
+            }
+        }
     }
 
     /// Answer from the listings, or start the client briefly in the first

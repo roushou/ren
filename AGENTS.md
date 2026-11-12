@@ -424,7 +424,10 @@ dependencies under "Crates" below. Read the code for current module ownership.
   file on each request, never sent to the browser, and, with
   `REN_CONTROL_LOGINS` set, only for those Tailscale logins; `src/lib/runs.ts`
   is the view's pure core (run states, the live transcript, the run list by
-  folder, projects by place, and the clients a run can start with).
+  folder, projects by place, and the clients a run can start with), and
+  `src/lib/server/runsStart.ts` makes the Runs page's first reads on the UI
+  server, with the browser's Tailscale login and never its cookies, so the
+  page renders as it will stay.
   The dev slot's: with `REN_DEV_TRAFFIC_URL` set (loopback only), `/dev/traffic`
   forwards the dev toolbar's three JSON requests to the slot's fake traffic
   generator, never to the daemon.

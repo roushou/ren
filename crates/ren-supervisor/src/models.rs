@@ -77,6 +77,18 @@ impl Listings {
             .push(listing.map(move |outcome| (harness, outcome)).boxed());
     }
 
+    /// Run `listing` for `harness` with no one waiting yet; whoever asks
+    /// meanwhile joins it.
+    pub(crate) fn warm(
+        &mut self,
+        harness: Harness,
+        listing: BoxFuture<'static, Result<Vec<Model>, ModelsError>>,
+    ) {
+        self.waiting.insert(harness, Vec::new());
+        self.running
+            .push(listing.map(move |outcome| (harness, outcome)).boxed());
+    }
+
     /// A listing ended. A client that lists nothing (not signed in yet) is
     /// asked again next time.
     pub(crate) fn finish(&mut self, harness: Harness, outcome: Result<Vec<Model>, ModelsError>) {

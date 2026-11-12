@@ -25,7 +25,7 @@ use ren_recorder::secrets::SecretScanner;
 use ren_recorder::{Recorder, RecorderSetup, id::IdSource, time::Clock};
 use ren_store::StoreError;
 use ren_store::{Reader, Store, backup::Backup};
-use ren_supervisor::{Supervisor, SupervisorError, SupervisorOptions, SupervisorTask};
+use ren_supervisor::{Supervisor, SupervisorError, SupervisorOptions, SupervisorTask, Warmup};
 use std::{io, net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
 use tokio::{net::TcpListener, task::JoinHandle};
 
@@ -301,6 +301,8 @@ impl Daemon {
             places: config.run_places().places.clone(),
             scratch: config.run_places().scratch.clone(),
             home: config.run_places().home.clone(),
+            // The new-run form then offers each client's models at once.
+            warmup: Warmup::AtStart,
             gateway: GatewayEndpoint::parse(&format!("http://{address}"))?,
             version: env!("CARGO_PKG_VERSION").to_owned(),
             line_limit: LineLimit::DEFAULT,
