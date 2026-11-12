@@ -17,6 +17,7 @@
     type DeskRun,
     type Entry,
     type StartRequest,
+    Setup,
     type RunClient,
     type RunProject,
     type HistoryChange,
@@ -622,7 +623,8 @@
           {runs}
           {busy}
           listModels={(harness) => client.models(harness)}
-          onstart={(harness, dir, prompt, model) => void start({ harness, dir, prompt, model })}
+          onstart={(harness, dir, prompt, settings) =>
+            void start({ harness, dir, prompt, ...settings })}
         />
         {#if notice}<div class="notice danger" role="alert">
             <Icon name="alert" size={14} /><span>{notice}</span>
@@ -649,7 +651,13 @@
           ><span class="phase-dot tone-{mark.tone}"></span>{mark.label}</span
         >
         {#if exitText(current)}<span class="muted mono">{exitText(current)}</span>{/if}
-        <span class="muted">{harnessLabel(current.harness)} · run {short(current.run)}</span>
+        <span class="muted"
+          >{[
+            harnessLabel(current.harness),
+            ...Setup.words(current.settings),
+            `run ${short(current.run)}`,
+          ].join(' · ')}</span
+        >
         <span class="run-actions">
           {#if current.recorded?.session}<a
               class="text-button"
@@ -702,6 +710,7 @@
                   harness: resumable.harness,
                   dir: resumable.workdir,
                   resume: resumable.thread,
+                  ...Setup.known(current.settings),
                 })}
               title="Start a new run that continues this conversation">Resume</button
             >{/if}

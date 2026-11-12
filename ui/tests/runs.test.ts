@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   Desk,
   Models,
+  Setup,
   RunCommandError,
   Runs,
   RunsClient,
@@ -253,6 +254,9 @@ test('the sidebar groups runs by folder, waiting and live ones first', () => {
       end: 'stopped',
       exit: { kind: 'signal', value: 9 },
       archived_at: null,
+      model: null,
+      effort: null,
+      approvals: null,
     },
     {
       id: run as never,
@@ -265,6 +269,9 @@ test('the sidebar groups runs by folder, waiting and live ones first', () => {
       end: null,
       exit: null,
       archived_at: null,
+      model: null,
+      effort: null,
+      approvals: null,
     },
   ];
   const live: RunSnapshot[] = [
@@ -278,6 +285,7 @@ test('the sidebar groups runs by folder, waiting and live ones first', () => {
         turn: null,
         approvals: [{ approval: 'a' as never, ask: { kind: 'file_change', reason: null } }],
       },
+      settings: { model: null, effort: null, approvals: null },
     },
   ];
   const projects = Desk.projects(live, recorded);
@@ -412,10 +420,10 @@ test('clients say whether a run can start with each, keeping newer statuses', as
     Response.json({
       api_version: 1,
       clients: [
-        { harness: 'codex', status: 'ready' },
-        { harness: 'claude_code', status: 'not_installed' },
-        { harness: 'pi', status: 'not_drivable' },
-        { harness: 'opencode', status: 'paused' },
+        { harness: 'codex', status: 'ready', approvals: ['ask', 'edits', 'auto'] },
+        { harness: 'claude_code', status: 'not_installed', approvals: ['ask', 'later'] },
+        { harness: 'pi', status: 'not_drivable', approvals: [] },
+        { harness: 'opencode', status: 'paused', approvals: [] },
       ],
     })) as unknown as typeof fetch);
   const clients = await client.clients();
@@ -423,6 +431,8 @@ test('clients say whether a run can start with each, keeping newer statuses', as
     clients.map((entry) => Runs.unavailable(entry.status)),
     [null, 'not installed on the daemon’s host', 'Ren cannot drive it yet', 'paused'],
   );
+  // A policy a newer daemon names is kept as it was sent.
+  assert.deepEqual(clients[1]?.approvals, ['ask', 'later']);
 });
 
 test('projects are grouped by the folder they are in, and the newest runs name the recent ones', () => {
@@ -452,6 +462,7 @@ test('projects are grouped by the folder they are in, and the newest runs name t
     started_at: started_at as never,
     state: null,
     recorded: null,
+    settings: { model: null, effort: null, approvals: null },
   });
   const runs = [desk('/dev/web', 3), desk('/srv/ren', 5), desk('/dev/web', 9), desk('/gone', 10)];
   assert.deepEqual(
@@ -466,6 +477,7 @@ test('a folder lists its runs that have not ended before those that have', () =>
     harness: 'codex',
     workdir: '/work/acme',
     state: { phase: 'idle', thread: thread as never },
+    settings: { model: null, effort: null, approvals: null },
   };
   const ended: RecordedRun = {
     id: other as never,
@@ -478,6 +490,9 @@ test('a folder lists its runs that have not ended before those that have', () =>
     end: 'stopped',
     exit: null,
     archived_at: null,
+    model: null,
+    effort: null,
+    approvals: null,
   };
   const [project] = Desk.projects([live], [ended]);
   const { open, ended: gone } = Desk.split(project!);
@@ -511,6 +526,9 @@ test('history edits and the archived shelf map to their routes and words', async
               end: 'stopped',
               exit: null,
               archived_at: 3,
+              model: 'gpt-deep',
+              effort: 'high',
+              approvals: null,
             },
           ],
         })
@@ -520,6 +538,10 @@ test('history edits and the archived shelf map to their routes and words', async
   await client.edit({ kind: 'session', id: thread as never }, 'unarchive');
   const [shelved] = await client.recorded(5, 'archived');
   assert.equal(shelved?.archived_at, 3);
+  assert.deepEqual(
+    [shelved?.model, shelved?.effort, shelved?.approvals],
+    ['gpt-deep', 'high', null],
+  );
   await assert.rejects(
     client.edit({ kind: 'run', id: run as never }, 'delete'),
     (error: unknown) =>
@@ -539,12 +561,14 @@ test('an archived run the daemon still lists as ended is left out, a running one
     harness: 'codex',
     workdir: '/work/acme',
     state: { phase: 'ended', end: 'stopped', exit: null },
+    settings: { model: null, effort: null, approvals: null },
   };
   const running: RunSnapshot = {
     run: other as never,
     harness: 'codex',
     workdir: '/work/acme',
     state: { phase: 'idle', thread: thread as never },
+    settings: { model: null, effort: null, approvals: null },
   };
   const hidden = new Set([run, other] as never[]);
   const [project] = Desk.projects([ended, running], [], hidden);
@@ -567,6 +591,8 @@ test('a client’s models read as listed, grouped by provider, the default known
           description: null,
           provider: 'anthropic',
           choice: 'other',
+          efforts: ['low', 'medium', 'high'],
+          effort: 'medium',
         },
         {
           id: 'openai/fast',
@@ -574,6 +600,8 @@ test('a client’s models read as listed, grouped by provider, the default known
           description: 'Quick.',
           provider: 'openai',
           choice: 'default',
+          efforts: [],
+          effort: null,
         },
         {
           id: 'anthropic/small',
@@ -581,6 +609,8 @@ test('a client’s models read as listed, grouped by provider, the default known
           description: null,
           provider: 'anthropic',
           choice: 'later',
+          efforts: [],
+          effort: null,
         },
       ],
     });
@@ -599,4 +629,22 @@ test('a client’s models read as listed, grouped by provider, the default known
   assert.equal(Models.keep(models, 'anthropic/big'), 'anthropic/big');
   assert.equal(Models.keep(models, 'gone/model'), null);
   assert.equal(Models.keep(models, null), null);
+  // The efforts a choice takes: the default's are its model's.
+  assert.deepEqual(Setup.efforts(models, 'anthropic/big' as ModelId)?.efforts, [
+    'low',
+    'medium',
+    'high',
+  ]);
+  assert.equal(Setup.efforts(models, null)?.id, 'openai/fast');
+  assert.deepEqual(
+    Setup.words({ model: 'openai/fast' as ModelId, effort: 'high', approvals: 'edits' }),
+    ['openai/fast', 'high effort', 'edits alone'],
+  );
+  assert.deepEqual(Setup.words({ model: null, effort: null, approvals: null }), []);
+  // Starting again, a label this UI does not know is left to the client.
+  assert.deepEqual(Setup.known({ model: null, effort: 'ludicrous' as never, approvals: 'auto' }), {
+    model: null,
+    effort: null,
+    approvals: 'auto',
+  });
 });

@@ -9,14 +9,20 @@
 <script lang="ts">
   import { harnessLabel } from '#lib/activity.ts';
   import Picker, { type PickerGroup } from '#lib/Picker.svelte';
+  import Icon from '#lib/Icon.svelte';
   import {
     DRIVABLE,
     Desk,
+    APPROVAL_POLICIES,
+    EFFORTS,
     Models,
     RunCommandError,
+    Setup,
     Runs,
     type DeskRun,
     type Drivable,
+    type ApprovalPolicy,
+    type Effort,
     type ModelId,
     type RunClient,
     type RunModel,
@@ -36,32 +42,48 @@
     runs: readonly DeskRun[];
     busy: boolean;
     listModels: (harness: Drivable) => Promise<RunModel[]>;
-    onstart: (harness: Drivable, dir: string, prompt: string | null, model: ModelId | null) => void;
+    onstart: (
+      harness: Drivable,
+      dir: string,
+      prompt: string | null,
+      settings: { model: ModelId | null; effort: Effort | null; approvals: ApprovalPolicy | null },
+    ) => void;
   } = $props();
 
-  /** The client the last run started with, and the model last chosen for
-   * each client: a per-viewer convenience. */
-  type Saved = { harness: Drivable; models: Partial<Record<Drivable, string>> };
+  /** The client the last run started with, and the settings last chosen
+   * for each client: a per-viewer convenience, checked again on use. */
+  type Kept = { model?: string; effort?: string; approvals?: string };
+  type Saved = { harness: Drivable; settings: Partial<Record<Drivable, Kept>> };
   const remembered = 'ren.runs.last';
   function recall(): Saved {
     try {
       const saved = JSON.parse(localStorage.getItem(remembered) ?? 'null') as {
         harness?: unknown;
-        models?: unknown;
+        settings?: unknown;
       } | null;
-      const models: Partial<Record<Drivable, string>> = {};
-      if (saved?.models && typeof saved.models === 'object') {
+      const settings: Partial<Record<Drivable, Kept>> = {};
+      const stored = saved?.settings;
+      if (stored && typeof stored === 'object') {
         for (const drivable of DRIVABLE) {
-          const id = (saved.models as Record<string, unknown>)[drivable];
-          if (typeof id === 'string') models[drivable] = id;
+          const kept = (stored as Record<string, unknown>)[drivable];
+          if (!kept || typeof kept !== 'object') continue;
+          const text = (key: string) => {
+            const value = (kept as Record<string, unknown>)[key];
+            return typeof value === 'string' ? value : undefined;
+          };
+          settings[drivable] = {
+            model: text('model'),
+            effort: text('effort'),
+            approvals: text('approvals'),
+          };
         }
       }
       return {
         harness: DRIVABLE.find((drivable) => drivable === saved?.harness) ?? 'codex',
-        models,
+        settings,
       };
     } catch {
-      return { harness: 'codex', models: {} };
+      return { harness: 'codex', settings: {} };
     }
   }
   const saved = recall();
@@ -77,6 +99,9 @@
   let dir = $state<string | null>(null);
   let harness = $state<Drivable>(saved.harness);
   let listings = $state<Partial<Record<Drivable, Listing>>>({});
+  /** The chosen effort and approval policy; none is the client's own. */
+  let effort = $state<Effort | null>(null);
+  let approvals = $state<ApprovalPolicy | null>(null);
   /** The chosen model; none is the client's own default. */
   let model = $state<ModelId | null>(null);
   let field = $state<HTMLTextAreaElement>();
@@ -169,7 +194,7 @@
     listModels(asked).then(
       (models) => {
         listings[asked] = { state: 'listed', models };
-        if (asked === harness) model = Models.keep(models, saved.models[asked] ?? null);
+        if (asked === harness) restore(asked, models);
       },
       (error: unknown) => {
         listings[asked] = {
@@ -182,6 +207,68 @@
       },
     );
   });
+
+  /** The approval policies the chosen client runs under; none for Pi. */
+  const policies = $derived<ApprovalPolicy[]>(
+    APPROVAL_POLICIES.filter((policy) =>
+      (
+        clients.find((client) => client.harness === harness)?.approvals ??
+        (harness === 'pi' ? [] : APPROVAL_POLICIES)
+      ).includes(policy),
+    ),
+  );
+  /** The model the run gets, chosen or the default, and the efforts it takes. */
+  const effective = $derived(Setup.efforts(listed, model));
+  const efforts = $derived<Effort[]>(EFFORTS.filter((level) => effective?.efforts.includes(level)));
+  const effortGroups = $derived<PickerGroup[]>([
+    {
+      label: null,
+      options: [
+        {
+          value: DEFAULT,
+          label: 'Default',
+          detail: effective ? `${effective.name}’s own` : `${harnessLabel(harness)}’s own`,
+          hint: effective?.effort ?? undefined,
+        },
+        ...efforts.map((level) => ({
+          value: level,
+          label: level === 'xhigh' ? 'Extra high' : level[0]!.toUpperCase() + level.slice(1),
+          badge: level === effective?.effort ? 'default' : null,
+        })),
+      ],
+    },
+  ]);
+  const policyGroups = $derived<PickerGroup[]>([
+    {
+      label: null,
+      options: [
+        {
+          value: DEFAULT,
+          label: 'Default',
+          detail: `As ${harnessLabel(harness)} is set up on the daemon’s host`,
+        },
+        ...policies.map((policy) => ({
+          value: policy,
+          label: Setup.policy(policy),
+          detail: Setup.explain(policy),
+        })),
+      ],
+    },
+  ]);
+
+  /** The settings last started with on `drivable`, where they still apply. */
+  function restore(drivable: Drivable, models: readonly RunModel[] | null) {
+    const kept = saved.settings[drivable] ?? {};
+    approvals = APPROVAL_POLICIES.find((policy) => policy === kept.approvals) ?? null;
+    if (!models) {
+      model = null;
+      effort = null;
+      return;
+    }
+    model = Models.keep(models, kept.model ?? null);
+    const takes = Setup.efforts(models, model)?.efforts ?? [];
+    effort = EFFORTS.find((level) => level === kept.effort && takes.includes(level)) ?? null;
+  }
 
   const chosenProject = $derived(offered.find((project) => project.path === dir));
   const ready = $derived(!busy);
@@ -196,15 +283,18 @@
       folders?.open();
       return;
     }
-    if (model) saved.models[harness] = model;
-    else delete saved.models[harness];
+    saved.settings[harness] = {
+      model: model ?? undefined,
+      effort: effort ?? undefined,
+      approvals: approvals ?? undefined,
+    };
     saved.harness = harness;
     try {
       localStorage.setItem(remembered, JSON.stringify(saved));
     } catch {
       // Remembering is a convenience.
     }
-    onstart(harness, dir, prompt.trim() || null, model);
+    onstart(harness, dir, prompt.trim() || null, { model, effort, approvals });
     prompt = '';
   }
 
@@ -236,16 +326,6 @@
       aria-label="First prompt"></textarea>
     <div class="row">
       <Picker
-        bind:this={folders}
-        label="Folder"
-        icon="file"
-        groups={projectGroups}
-        value={dir}
-        placeholder="Choose a folder"
-        free={(typed) => typed.startsWith('/')}
-        onchange={(value) => (dir = value)}
-      />
-      <Picker
         label="Client"
         icon="terminal"
         groups={clientGroups}
@@ -256,12 +336,9 @@
           const next = DRIVABLE.find((drivable) => drivable === value) ?? harness;
           if (next === harness) return;
           harness = next;
-          // Another client's models are its own.
+          // Another client's settings are its own.
           const known = listings[next];
-          model =
-            known?.state === 'listed'
-              ? Models.keep(known.models, saved.models[next] ?? null)
-              : null;
+          restore(next, known?.state === 'listed' ? known.models : null);
         }}
       />
       <Picker
@@ -272,7 +349,50 @@
         placeholder="Default"
         search={listed.length > 8}
         note={modelNote}
-        onchange={(value) => (model = Models.keep(listed, value))}
+        onchange={(value) => {
+          model = Models.keep(listed, value);
+          // An effort the new model does not take goes back to its own.
+          const takes = Setup.efforts(listed, model)?.efforts ?? [];
+          if (effort && !takes.includes(effort)) effort = null;
+        }}
+      />
+      {#if efforts.length}
+        <Picker
+          label="Effort"
+          icon="thought"
+          groups={effortGroups}
+          value={effort ?? DEFAULT}
+          placeholder="Default"
+          search={false}
+          onchange={(value) => (effort = efforts.find((level) => level === value) ?? null)}
+        />
+      {/if}
+      {#if policies.length}
+        <Picker
+          label="Approvals"
+          icon="shield"
+          groups={policyGroups}
+          value={approvals ?? DEFAULT}
+          placeholder="Default"
+          search={false}
+          onchange={(value) => (approvals = policies.find((policy) => policy === value) ?? null)}
+        />
+      {:else}
+        <span class="never muted" title="{harnessLabel(harness)} runs every tool itself"
+          ><Icon name="shield" size={12} />Never asks</span
+        >
+      {/if}
+    </div>
+    <div class="row">
+      <Picker
+        bind:this={folders}
+        label="Folder"
+        icon="file"
+        groups={projectGroups}
+        value={dir}
+        placeholder="Choose a folder"
+        free={(typed) => typed.startsWith('/')}
+        onchange={(value) => (dir = value)}
       />
       <button class="button primary" disabled={!ready}
         >{!dir ? 'Choose a folder' : prompt.trim() ? 'Start' : 'Start without a prompt'}</button
@@ -336,6 +456,7 @@
   }
   .row {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     gap: 8px;
     padding: 8px;
@@ -343,6 +464,12 @@
   }
   .row .button {
     margin-left: auto;
+  }
+  .never {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
   }
   .dot {
     margin: 0 6px;

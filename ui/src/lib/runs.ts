@@ -52,6 +52,24 @@ export type RunEnd = (typeof runEnds)[number];
 const stopCauses = ['operator', 'shutdown', 'open_refused'] as const;
 export type StopCause = (typeof stopCauses)[number];
 const decisions = ['accept', 'accept_for_session', 'decline', 'cancel'] as const;
+/** How much a model reasons, from none to the most. */
+export const EFFORTS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const;
+export type Effort = (typeof EFFORTS)[number];
+/** What a driven client may do without asking. */
+export const APPROVAL_POLICIES = ['ask', 'edits', 'auto'] as const;
+export type ApprovalPolicy = (typeof APPROVAL_POLICIES)[number];
+
+/** A run's settings; each null is the client's own. */
+export interface RunSettings {
+  model: ModelId | null;
+  effort: Stored<Effort> | null;
+  approvals: Stored<ApprovalPolicy> | null;
+}
+const runSettings = object<RunSettings>({
+  model: nullable(branded<'ModelId'>()),
+  effort: nullable(label(EFFORTS)),
+  approvals: nullable(label(APPROVAL_POLICIES)),
+});
 export type Decision = (typeof decisions)[number];
 
 /** How a run's process exited. */
@@ -90,6 +108,7 @@ export interface RunSnapshot {
   harness: Stored<Harness>;
   workdir: string;
   state: RunState;
+  settings: RunSettings;
 }
 
 /** Where an item's action stands; a status a newer daemon names is kept as text. */
@@ -158,6 +177,10 @@ export interface RecordedRun {
   exit: ProcessExit | null;
   /** When the operator archived it; null when it is not. */
   archived_at: UnixMillis | null;
+  /** Its settings as started; null is the client's own (or not recorded then). */
+  model: ModelId | null;
+  effort: Stored<Effort> | null;
+  approvals: Stored<ApprovalPolicy> | null;
 }
 
 /** Which part of a listing: what is current, or what was archived. */
@@ -279,6 +302,7 @@ const runSnapshot = object<RunSnapshot>({
   harness: label(harnesses),
   workdir: string,
   state: runState,
+  settings: runSettings,
 });
 
 const turnEnd: Decoder<TurnEnd> = (value, path) => {
@@ -383,6 +407,9 @@ const recordedRun = object<RecordedRun>({
   end: nullable(label(runEnds)),
   exit: nullable(processExit),
   archived_at: nullable(brandedCount<'UnixMillis'>()),
+  model: nullable(branded<'ModelId'>()),
+  effort: nullable(label(EFFORTS)),
+  approvals: nullable(label(APPROVAL_POLICIES)),
 });
 
 const liveRuns = versioned(object<{ runs: RunSnapshot[] }>({ runs: array(runSnapshot) }));
@@ -428,11 +455,19 @@ export type ClientStatus = (typeof clientStatuses)[number];
 export interface RunClient {
   harness: Stored<Harness>;
   status: Stored<ClientStatus>;
+  /** The approval policies it can run under; none for a client that never asks. */
+  approvals: Stored<ApprovalPolicy>[];
 }
 
 const runClients = versioned(
   object<{ clients: RunClient[] }>({
-    clients: array(object<RunClient>({ harness: label(harnesses), status: label(clientStatuses) })),
+    clients: array(
+      object<RunClient>({
+        harness: label(harnesses),
+        status: label(clientStatuses),
+        approvals: array(label(APPROVAL_POLICIES)),
+      }),
+    ),
   }),
 );
 /** A model, named as its client names it (`--model`, or Pi's `provider/id`). */
@@ -448,6 +483,10 @@ export interface RunModel {
   provider: string | null;
   /** Whether a run gets it when no model is chosen. */
   choice: Stored<(typeof modelChoices)[number]>;
+  /** The efforts it takes, least first; empty when it offers no choice. */
+  efforts: Stored<Effort>[];
+  /** The effort it runs at when none is chosen, when the client says. */
+  effort: Stored<Effort> | null;
 }
 
 const runModels = versioned(
@@ -459,6 +498,8 @@ const runModels = versioned(
         description: nullable(string),
         provider: nullable(string),
         choice: label(modelChoices),
+        efforts: array(label(EFFORTS)),
+        effort: nullable(label(EFFORTS)),
       }),
     ),
   }),
@@ -473,6 +514,8 @@ export interface StartRequest {
   prompt?: string | null;
   /** With none, the client's own default. */
   model?: ModelId | null;
+  effort?: Effort | null;
+  approvals?: ApprovalPolicy | null;
 }
 
 const started = versioned(object<{ run: RunId }>({ run: RunId.decode }));
@@ -514,6 +557,8 @@ export class RunCommandError extends Error {
         return 'Ren cannot drive that client yet.';
       case 'spawn_failed':
         return 'The client could not be started; is it installed on the daemon’s host?';
+      case 'no_approvals':
+        return 'That client asks for nothing, so it takes no approval policy.';
       case 'models_unavailable':
         return 'The client could not list its models.';
       case 'unrecorded':
@@ -581,13 +626,23 @@ export class RunsClient {
     const path = `/control/runs/clients/${harness}/models`;
     return (await this.#send('GET', path, undefined, runModels, signal, 30_000)).models;
   }
-  async start({ harness, dir, resume, prompt, model }: StartRequest): Promise<RunId> {
+  async start({
+    harness,
+    dir,
+    resume,
+    prompt,
+    model,
+    effort,
+    approvals,
+  }: StartRequest): Promise<RunId> {
     const body = {
       harness,
       dir,
       ...(resume ? { resume } : {}),
       ...(prompt ? { prompt } : {}),
       ...(model ? { model } : {}),
+      ...(effort ? { effort } : {}),
+      ...(approvals ? { approvals } : {}),
     };
     return (await this.#send('POST', '/control/runs', body, started)).run;
   }
@@ -1143,6 +1198,8 @@ export interface DeskRun {
   /** The live state, while the daemon holds the run. */
   state: RunState | null;
   recorded: RecordedRun | null;
+  /** What it was started with: as the daemon holds it, or as recorded. */
+  settings: RunSettings;
 }
 
 /** Runs grouped by folder, the folder with the newest run first. */
@@ -1173,6 +1230,7 @@ export class Desk {
         started_at: run.started_at,
         state: null,
         recorded: run,
+        settings: { model: run.model, effort: run.effort, approvals: run.approvals },
       });
     }
     for (const run of live) {
@@ -1185,6 +1243,7 @@ export class Desk {
         started_at: known?.started_at ?? null,
         state: run.state,
         recorded: known?.recorded ?? null,
+        settings: run.settings,
       });
     }
     const groups = new Map<string, DeskRun[]>();
@@ -1271,5 +1330,66 @@ export class Models {
   /** `wanted` when the client still lists it; otherwise no choice. */
   static keep(models: readonly RunModel[], wanted: string | null): ModelId | null {
     return models.find((model) => model.id === wanted)?.id ?? null;
+  }
+}
+
+/** A run's settings as people read them. */
+export class Setup {
+  /** An approval policy in a few words. */
+  static policy(policy: Stored<ApprovalPolicy>): string {
+    switch (policy) {
+      case 'ask':
+        return 'Ask first';
+      case 'edits':
+        return 'Edits alone';
+      case 'auto':
+        return 'Auto';
+      default:
+        return policy;
+    }
+  }
+
+  /** What each policy lets the client do, in a sentence. */
+  static explain(policy: ApprovalPolicy): string {
+    switch (policy) {
+      case 'ask':
+        return 'Every edit and command waits for you.';
+      case 'edits':
+        return 'Edits in the folder go ahead; commands wait for you.';
+      case 'auto':
+        return 'The client decides what is safe and asks only beyond that.';
+      default:
+        return assertNever(policy);
+    }
+  }
+
+  /** The settings that are not the client's own, as short words. */
+  static words(settings: RunSettings): string[] {
+    return [
+      settings.model,
+      settings.effort ? `${settings.effort} effort` : null,
+      settings.approvals ? Setup.policy(settings.approvals).toLowerCase() : null,
+    ].filter((word): word is string => word !== null);
+  }
+
+  /** The settings to start again with: labels this UI does not know are
+   * left to the client. */
+  static known(settings: RunSettings): {
+    model: ModelId | null;
+    effort: Effort | null;
+    approvals: ApprovalPolicy | null;
+  } {
+    return {
+      model: settings.model,
+      effort: EFFORTS.find((level) => level === settings.effort) ?? null,
+      approvals: APPROVAL_POLICIES.find((policy) => policy === settings.approvals) ?? null,
+    };
+  }
+
+  /** The efforts the chosen model takes: the default's are its model's. */
+  static efforts(models: readonly RunModel[], model: ModelId | null): RunModel | null {
+    return (
+      (model ? models.find((offered) => offered.id === model) : Models.fallback(models)) ?? null
+    );
   }
 }
