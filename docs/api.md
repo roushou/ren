@@ -23,45 +23,39 @@ ren tui
 ```
 
 `ren tui` and `ren runs` (with no subcommand) open the same terminal app, built
-with the `tui` feature. Every screen sits in one frame:
+with the `tui` feature: the session list on the left, the selected session on
+the right, the gateway's traffic in the top bar, and the keys that matter now in
+the bar at the bottom.
 
-- The top line lists the places: the wall of live sessions, then each live
-  [run](#runs), what needs you first (`◇` one waiting for an answer, `▪` the
-  others). Alt-← and Alt-→ move between them. A run that needs you is lit
-  there wherever you are.
-- At the bottom, a message box and a status line. Typing always goes to the
-  box; slash commands work from every screen. While one is typed, the
-  chosen completion is filled in after the cursor: Tab, or → at the end,
-  takes it, and ↑ and ↓ choose another. `/new` completes projects and
-  clients, and `/resume` every run by its title or project. Ctrl-P and
-  Ctrl-N bring back what was sent before and after (in a session, ↑ and ↓
-  too, with nothing typed); sent messages are kept while the app runs. The
-  commands:
-  `/new <project> [claude|codex] <prompt>` starts a run in one of the
-  daemon's projects with its first prompt (the client named last is the
-  default), `/resume [search]` lists every run, what needs you first, with
-  the chosen one previewed, `/stop` ends the open run's process, `/wall` goes
-  back to the wall, `/pin` keeps the wall's focused session on it, `/theme`
-  previews the next theme, `/help` lists the keys and commands, and `/quit`
-  (or Ctrl-C with nothing typed) leaves runs running.
-
-`ren tui` opens on the wall; `ren runs` opens on the run that needs you, else
-the newest live one. On the wall, while nothing is typed, Tab and the arrows
-move between panes and Enter opens the focused session full screen. A session
-full screen reads the same whether Ren drives it or not:
-
-- A run Ren drives takes what you type. An approval shows as a card in the
-  conversation: `1` allows it once, `2` for the rest of the run, `3` denies
-  it, `4` denies it and stops the turn; typing instead denies it and sends
-  your words next. Answering one moves on to the next run that waits.
-- Enter sends a prompt; Ctrl-J starts a new line. Typed while a turn runs, a
-  message waits and is sent when the turn ends. Esc interrupts the turn, or
-  with none running goes back to the wall. Typed into a run that ended, a
-  message continues that conversation in a new run.
-- A session started outside Ren is watched: its box takes only commands.
+- The list groups every session worth a look by what it needs from you:
+  runs that need you, runs working, runs waiting for your next prompt,
+  sessions started outside Ren (watched), and the runs that ended last. `j`
+  and `k` (or the arrows) move through it, a digit jumps to an entry, and `/`
+  searches it by name, project, or prompt. Until you choose, the selection
+  follows the top of the list: what needs you first.
+- The selected session shows its conversation, its activity (each command,
+  edit, and tool step), the files it wrote and read, and its model calls
+  through the gateway (time, model, how each ended, tokens); Tab moves between
+  them. A run's turns fold to one line each (prompt, duration, tools,
+  failures), the newest open; Enter (or `l`) moves into the session, where
+  `j` and `k` move between turns and Enter opens or folds one.
+- Keys act; they do not type. `i` writes to the selected run: Enter sends,
+  Ctrl-J starts a new line, Ctrl-P and Ctrl-N (or ↑ and ↓ with nothing
+  typed) bring back what you sent, and Esc closes the box, keeping a draft.
+  Written while a turn runs, a message waits and is sent when the turn ends;
+  written to a run that ended, it continues that conversation in a new run;
+  a session Ren did not start takes nothing.
+- An approval shows as a card in the conversation: `y` allows it once, `a`
+  for the rest of the run, `d` denies it, `D` denies it and stops the turn;
+  writing instead denies it and sends your words next. Answering one moves
+  on to the next run that needs you.
+- `n` opens the new-run form: type to find a project, pick the client, write
+  the first prompt, and Enter starts it. `x` interrupts a turn, `S` stops a
+  run's process, `t` previews the next theme, `?` lists every key, and `q`
+  (or Ctrl-C) quits, leaving runs running.
 
 A turn's live copy gives way to its recorded copy once the turn is recorded.
-Live updates are not stored, so a run opened mid-turn shows that turn
+Live updates are not stored, so a run selected mid-turn shows that turn
 once it is recorded.
 
 Runs (see [runs](#runs)) also have their own commands, through the control API:
@@ -113,40 +107,26 @@ ends, for example on a daemon restart, it reconnects every two seconds from the
 last observation it printed, so nothing in between is skipped. It stops on
 interrupt, or if the first connection fails.
 
-`ren tui`, in a CLI built with `--features tui`, shows the same daemon's live
-sessions in the terminal: one pane per active session (seen in the last five
-minutes, or with a call open), in a grid sized to them, as many as the
-terminal has room for; one session fills the screen. Each pane reads as a
-conversation, kept to the bottom as it streams: the newest turn and the one
-before it (for a client that sends no turns, such as OpenCode, its newest
-four calls), call by call, with the user's prompt (`›`), the tool results the
-request carried back (`⎿`), the reply (code blocks drawn behind a rule), and
-the tool calls the model asked for (`●`), then a streaming call's reply and
-tools so far. Its title uses green while a response streams, and amber
-or red when the newest call needs a look (a slow response head, a 429, a
+A watched session reads as the web UI's Live wall reads it: the newest turn
+and the one before it (for a client that sends no turns, such as OpenCode, its
+newest four calls), call by call, with the user's prompt (`›`), the tool
+results the request carried back (`⎿`), the reply (code blocks drawn behind a
+rule), and the tool calls the model asked for (`●`), then a streaming call's
+reply and tools so far. Its header is lit green while a response streams, and
+amber or red when the newest call needs a look (a slow response head, a 429, a
 failed, interrupted, or unknown ending, a secret sent, repeated tool
-failures); an earlier failure the session has moved past is not shown again.
-Under the conversation, what the session is doing (waiting for the first
-byte, streaming, complete with the client running tools or waiting for you,
-inferred from how the last call ended, or how it stopped), and the newest
-call's model, input with its cached share, output, reasoning, and stop
-reason. The status line counts sessions and open calls, and shows each
-client's output tokens over the last four minutes, counted when calls end:
-not a live rate. It reads a snapshot of sessions and calls every two seconds
-and whenever the feed says a call opened or ended, and asks for
-[progress events](#live-feed). A read that fails is shown as `stale` until
-one succeeds. Keys: tab and the arrows move between panes, enter zooms into a
-session full screen, and `/pin` keeps the focused session on the wall even
-when quiet. It needs a running daemon; a gateway that cannot be
-reached is reported before the screen is taken over.
-
-With control access (this host's control token, or an allowed Tailscale login
-through a gateway) and `[runs]` roots on the daemon, `ren tui` also shows
-[runs](#runs): a live run's session keeps its pane, marked `run · idle`,
-`working`, or `asks`, and a run waiting for an answer lights its title amber
-and says under the conversation what it asks (`? run `cargo test` in
-/work/acme  enter to answer`). Enter opens that run full screen, where it is
-driven, as it is from the web UI or the `ren runs` subcommands.
+failures); under its conversation, what the session is doing (waiting for the
+first byte, streaming, complete with the client running tools or waiting for
+you, inferred from how the last call ended, or how it stopped). The top bar
+counts sessions and open calls and shows each client's output tokens over the
+last four minutes, counted when calls end: not a live rate. The app reads a
+snapshot of sessions and calls every two seconds and whenever the feed says a
+call opened or ended, and asks for [progress events](#live-feed). A read that
+fails is shown as `stale` until one succeeds. It needs a running daemon; a
+gateway that cannot be reached is reported before the screen is taken over.
+Runs need control access (this host's control token, or an allowed Tailscale
+login through a gateway) and `[runs]` roots on the daemon; without them the
+app still shows every session, and says why runs cannot be driven.
 
 The default `terminal` theme uses the terminal's foreground, background, and
 ANSI palette. `dark` and `light` use fixed RGB palettes and need a true-color

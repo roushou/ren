@@ -1,4 +1,4 @@
-//! One session as a pane shows it: what it is doing now, the newest turn's
+//! One session as it is watched: what it is doing now, the newest turn's
 //! replies and tool calls, and what in it needs a look. The same readings
 //! as the web UI's Live wall, so the two never disagree about a session.
 
@@ -6,7 +6,7 @@ use crate::conversation::{Block, Conversation, ToolLine};
 use crate::model::CallEnd;
 use crate::model::Model;
 use crate::model::sessions::Sessions;
-use crate::ui::Tone;
+use crate::ui::{Ink, Line, Span, Tone};
 use ren_harness::Harness;
 use ren_protocol::label::Stored;
 use ren_protocol::route::Provider;
@@ -116,8 +116,6 @@ pub struct SessionPane {
     pub alerts: Vec<Alert>,
     /// Kept ahead of other sessions by the viewer.
     pub pinned: bool,
-    /// The live run driving this session, when Ren started it.
-    pub run: Option<super::runs::RunMark>,
 }
 
 /// A session's calls and its newest turn, as read.
@@ -151,7 +149,7 @@ impl SessionPane {
             .iter()
             .filter_map(|call| model.sessions.activity(call.id))
             .collect();
-        let mut pane = Self::read(&SessionRead {
+        Self::read(&SessionRead {
             activities: &activities,
             session,
             calls: &calls,
@@ -159,12 +157,7 @@ impl SessionPane {
             turn,
             progress: model.sessions.progress(),
             now,
-        });
-        pane.run = model
-            .desk
-            .driving(&session.native_id)
-            .and_then(super::runs::RunMark::of);
-        pane
+        })
     }
 
     /// The conversation it shows, with what a streaming call has said so
@@ -286,7 +279,6 @@ impl SessionPane {
             }),
             alerts: Vec::new(),
             pinned: false,
-            run: None,
             lines,
             phase,
         };
@@ -477,6 +469,160 @@ impl std::fmt::Display for Elapsed {
             (hours, 0) => write!(f, "{hours} h"),
             (hours, rest) => write!(f, "{hours} h {rest} min"),
         }
+    }
+}
+
+impl SessionPane {
+    /// `! alert · state · detail`, as the mockup words it.
+    /// A lit header's ink: live while a response streams, warning or error
+    /// when the newest call needs a look; `None` when it is plain.
+    pub(crate) fn lit(&self) -> Option<Ink> {
+        match self.alerts.first().map(|alert| alert.tone) {
+            Some(Tone::Error) => Some(Ink::ErrorTitle),
+            Some(Tone::Warning) => Some(Ink::WarningTitle),
+            Some(Tone::Live | Tone::Success | Tone::Neutral) | None => match self.phase {
+                Phase::Responding { .. } => Some(Ink::LiveTitle),
+                Phase::Awaiting { .. }
+                | Phase::ClientsTurn { .. }
+                | Phase::YourTurn { .. }
+                | Phase::Stopped { .. }
+                | Phase::Idle { .. } => None,
+            },
+        }
+    }
+
+    pub(crate) fn state_line(&self, now: UnixMillis) -> Line {
+        let mut line = Line::default();
+        if let Some(alert) = self.alerts.first() {
+            let more = match self.alerts.len() {
+                1 => String::new(),
+                count => format!(" (+{})", count - 1),
+            };
+            let text = match alert.detail.as_str() {
+                "" => format!("! {}{more}", alert.label),
+                detail => format!("! {} · {detail}{more}", alert.label),
+            };
+            line.push(Span::new(text, Ink::of(alert.tone)));
+            line.push(Span::new(" · ", Ink::Muted));
+        }
+        let since = |at: UnixMillis| Elapsed(now.as_millis().saturating_sub(at.as_millis()));
+        let (label, tone, detail) = match &self.phase {
+            Phase::Awaiting { since: at } => {
+                let waited = now.as_millis().saturating_sub(at.as_millis());
+                let slow =
+                    waited >= u64::try_from(SessionPane::SLOW_HEAD.as_millis()).unwrap_or(u64::MAX);
+                (
+                    "waiting for first byte".to_owned(),
+                    if slow { Tone::Warning } else { Tone::Live },
+                    since(*at).to_string(),
+                )
+            }
+            Phase::Responding { since: at } => {
+                ("streaming".to_owned(), Tone::Live, since(*at).to_string())
+            }
+            Phase::ClientsTurn { since: at } => (
+                "complete".to_owned(),
+                Tone::Success,
+                format!("client running tools · {}", since(*at)),
+            ),
+            Phase::YourTurn { since: at } => (
+                "complete".to_owned(),
+                Tone::Success,
+                format!("waiting for you · {}", since(*at)),
+            ),
+            Phase::Stopped { end, status, .. } => (end.label(*status), end.tone(), String::new()),
+            Phase::Idle { since: Some(at) } => {
+                ("idle".to_owned(), Tone::Neutral, since(*at).to_string())
+            }
+            Phase::Idle { since: None } => ("idle".to_owned(), Tone::Neutral, String::new()),
+        };
+        // A stopped call's alert already says how it ended.
+        if matches!(self.phase, Phase::Stopped { .. }) && !self.alerts.is_empty() {
+            line.spans.pop();
+            return line;
+        }
+        line.push(Span::new(label, Ink::of(tone)));
+        if !detail.is_empty() {
+            line.push(Span::new(format!(" · {detail}"), Ink::Muted));
+        }
+        line
+    }
+
+    /// `model · in 36.0k (93% cached) · out 122 · reasoning 63 · end_turn`
+    pub(crate) fn facts_text(facts: &CallFacts) -> String {
+        let mut parts = Vec::new();
+        if let Some(model) = &facts.model {
+            parts.push(model.clone());
+        }
+        parts.push(match (facts.input, facts.cached) {
+            (Some(input), Some(cached)) => format!("in {} ({cached}% cached)", Kilo(input)),
+            (Some(input), None) => format!("in {}", Kilo(input)),
+            (None, Some(_) | None) => "in —".to_owned(),
+        });
+        if let Some(output) = facts.output {
+            parts.push(format!("out {}", Grouped(output)));
+        }
+        if let Some(reasoning) = facts.reasoning.filter(|tokens| *tokens > 0) {
+            parts.push(format!("reasoning {}", Grouped(reasoning)));
+        }
+        if let Some(stop) = &facts.stop_reason {
+            parts.push(stop.clone());
+        }
+        parts.join(" · ")
+    }
+    /// Bins as block glyphs on a shared scale; an empty bin is a space.
+    pub(crate) fn spark(bins: &[u64], peak: u64) -> String {
+        const GLYPHS: [char; 8] = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
+        bins.iter()
+            .map(|value| {
+                if *value == 0 || peak == 0 {
+                    return ' ';
+                }
+                let level = (value.saturating_mul(8).div_ceil(peak)).clamp(1, 8);
+                GLYPHS[usize::try_from(level - 1).unwrap_or(0).min(7)]
+            })
+            .collect()
+    }
+
+    pub(crate) fn short(harness: Harness) -> &'static str {
+        match harness {
+            Harness::ClaudeCode => "cc",
+            Harness::Codex => "codex",
+            Harness::Pi => "pi",
+            Harness::OpenCode => "oc",
+        }
+    }
+}
+
+/// A token count, short: `950`, `36.0k`, `148k`, `1.3M`.
+pub(crate) struct Kilo(pub u64);
+
+impl std::fmt::Display for Kilo {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let n = self.0;
+        match n {
+            0..1_000 => write!(f, "{n}"),
+            1_000..100_000 => write!(f, "{}.{}k", n / 1000, n % 1000 / 100),
+            100_000..1_000_000 => write!(f, "{}k", n / 1000),
+            _ => write!(f, "{}.{}M", n / 1_000_000, n % 1_000_000 / 100_000),
+        }
+    }
+}
+
+/// A count with thousands grouped: `2,426`.
+pub(crate) struct Grouped(pub u64);
+
+impl std::fmt::Display for Grouped {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let digits = self.0.to_string();
+        let mut out = String::new();
+        for (index, ch) in digits.chars().enumerate() {
+            if index > 0 && (digits.len() - index).is_multiple_of(3) {
+                out.push(',');
+            }
+            out.push(ch);
+        }
+        f.write_str(&out)
     }
 }
 

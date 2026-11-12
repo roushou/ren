@@ -225,7 +225,7 @@ impl RunsCmd {
 
     #[cfg(feature = "tui")]
     async fn console(target: &TargetArgs, ctx: &Context) -> Result<ExitCode> {
-        super::tui::TuiCmd::open(target, None, ctx, ren_tui::Opening::Runs).await
+        super::tui::TuiCmd::open(target, None, ctx).await
     }
 
     #[cfg(not(feature = "tui"))]

@@ -1,9 +1,11 @@
-//! The console's screens (home, run, `/resume`) with synthetic runs,
-//! events, and recorded turns, run as the terminal runs them: a [`Tui`]
-//! opened on the runs. No daemon, no terminal. Screens are pinned as text
-//! in `tests/fixtures`.
+//! Runs in the app: selecting them, answering, writing, starting, and how
+//! a live turn gives way to its record, with synthetic runs, events, and
+//! recorded turns, run as the terminal runs them: a [`Tui`]. No daemon, no
+//! terminal. Screens are pinned as text in `tests/fixtures`.
 
-use crate::{Answered, Command, Input, Key, Opening, Out, Read, Size, Theme, Tui};
+use super::main::Item;
+use super::main::Mode;
+use crate::{Answered, Command, Input, Key, Out, Read, Size, Theme, Tui};
 use ratatui::{buffer::Buffer, layout::Rect};
 use ren_harness::{
     Harness,
@@ -17,8 +19,8 @@ use ren_supervisor::{Approvals, Project, ProjectGit, RunSnapshot, RunState, RunU
 use serde_json::json;
 
 const SIZE: Size = Size {
-    width: 90,
-    height: 24,
+    width: 120,
+    height: 30,
 };
 
 /// The console as the terminal runs it.
@@ -29,7 +31,7 @@ struct Console {
 impl Console {
     fn new(size: Size) -> Self {
         Self {
-            tui: Tui::new(size, Opening::Runs),
+            tui: Tui::new(size),
         }
     }
 
@@ -49,9 +51,11 @@ impl Console {
         self.tui.shown_run()
     }
 
-    /// The completions offered, by label.
-    fn completions(&self) -> Vec<String> {
-        self.tui.completions()
+    /// Writes `text` to the selected run and sends it.
+    fn write(&mut self, text: &str) -> Vec<Out> {
+        let _ = self.press(Key::Char('i'));
+        type_text(self, text);
+        self.press(Key::Enter)
     }
 }
 
@@ -250,7 +254,7 @@ fn drawn(console: &Console) -> String {
 }
 
 #[test]
-fn the_run_that_needs_you_opens_first() {
+fn the_run_that_needs_you_is_selected_first() {
     let mut console = Console::new(SIZE);
     let start = console.start();
     for read in [Read::Runs, Read::Recorded, Read::Projects] {
@@ -260,9 +264,9 @@ fn the_run_that_needs_you_opens_first() {
         snapshot(1, Harness::Codex, "/dev/acme-api", working(1)),
         snapshot(2, Harness::ClaudeCode, "/srv/ren", asking(2, push())),
     ])));
+    assert_eq!(console.current(), Some(run_id(2)));
     // Its session is not known yet: the recorded runs are read first.
     assert_eq!(out, [Out::Read(Read::Recorded)]);
-    assert_eq!(console.current(), Some(run_id(2)));
     let out = console.apply(Input::Recorded(vec![recorded(
         2,
         "/srv/ren",
@@ -278,10 +282,9 @@ fn the_run_that_needs_you_opens_first() {
 }
 
 #[test]
-fn a_digit_answers_and_moves_on_to_the_next_run_that_needs_you() {
+fn a_key_answers_and_moves_on_to_the_next_run_that_needs_you() {
     let mut console = desk();
     assert_eq!(console.current(), Some(run_id(2)));
-    // Another run starts asking: the open one stays open.
     let _ = console.apply(state(
         1,
         asking(
@@ -291,8 +294,8 @@ fn a_digit_answers_and_moves_on_to_the_next_run_that_needs_you() {
             },
         ),
     ));
-    assert_eq!(console.current(), Some(run_id(2)));
-    let out = console.press(Key::Char('2'));
+    assert_eq!(console.current(), Some(run_id(2)), "the selection stays");
+    let out = console.press(Key::Char('a'));
     assert_eq!(
         sent(&out),
         [Command::Answer {
@@ -304,7 +307,7 @@ fn a_digit_answers_and_moves_on_to_the_next_run_that_needs_you() {
     assert_eq!(
         console.current(),
         Some(run_id(1)),
-        "moved on to the other asking run"
+        "on to the other asking run"
     );
     let shown = drawn(&console);
     assert!(shown.contains("↳ from ren"), "{shown}");
@@ -313,17 +316,23 @@ fn a_digit_answers_and_moves_on_to_the_next_run_that_needs_you() {
         "{shown}"
     );
     assert!(shown.contains("Codex wants to change files"), "{shown}");
+    // Nothing waits on a run that does not ask.
+    let _ = console.press(Key::Char('j'));
+    assert!(sent(&console.press(Key::Char('y'))).is_empty());
 }
 
 #[test]
-fn typing_during_a_turn_waits_for_its_end() {
+fn writing_during_a_turn_waits_for_its_end() {
     let mut console = desk();
-    let _ = console.press(Key::AltRight);
-    let _ = console.press(Key::AltRight);
-    assert_eq!(console.current(), Some(run_id(1)), "the working run");
-    type_text(&mut console, "also check the dead-letter path");
-    assert!(sent(&console.press(Key::Enter)).is_empty());
-    assert!(drawn(&console).contains("queued: also check the dead-letter path"));
+    // The list: needs you (2), working (1), your turn (3).
+    let _ = console.press(Key::Char('j'));
+    assert_eq!(console.current(), Some(run_id(1)));
+    assert!(sent(&console.write("also check the dead-letter path")).is_empty());
+    assert_eq!(console.tui.mode(), Mode::Normal);
+    assert!(
+        drawn(&console).contains("queued: also check the dead-letter path")
+            || drawn(&console).contains("kept: it is sent when this turn ends")
+    );
     let out = console.apply(state(1, idle(1)));
     assert_eq!(
         sent(&out),
@@ -335,11 +344,9 @@ fn typing_during_a_turn_waits_for_its_end() {
 }
 
 #[test]
-fn typing_while_an_approval_waits_denies_it_and_sends_the_words_next() {
+fn writing_while_an_approval_waits_denies_it_and_sends_the_words_next() {
     let mut console = desk();
-    assert_eq!(console.current(), Some(run_id(2)));
-    type_text(&mut console, "no, push to a branch first");
-    let out = console.press(Key::Enter);
+    let out = console.write("no, push to a branch first");
     assert_eq!(
         sent(&out),
         [Command::Answer {
@@ -359,34 +366,42 @@ fn typing_while_an_approval_waits_denies_it_and_sends_the_words_next() {
 }
 
 #[test]
-fn esc_interrupts_and_alt_arrows_follow_what_needs_you() {
+fn keys_move_through_the_list_and_x_interrupts() {
     let mut console = desk();
-    // Order: asking (2), your turn (3), working (1).
-    assert_eq!(console.current(), Some(run_id(2)));
-    let _ = console.press(Key::AltRight);
-    assert_eq!(console.current(), Some(run_id(3)));
-    let _ = console.press(Key::AltRight);
+    let _ = console.press(Key::Char('j'));
     assert_eq!(console.current(), Some(run_id(1)));
     assert_eq!(
-        sent(&console.press(Key::Esc)),
+        sent(&console.press(Key::Char('x'))),
         [Command::Interrupt(run_id(1))]
     );
-    let _ = console.press(Key::AltLeft);
+    let _ = console.press(Key::Down);
     assert_eq!(console.current(), Some(run_id(3)));
     assert!(
-        sent(&console.press(Key::Esc)).is_empty(),
-        "nothing runs to interrupt"
+        sent(&console.press(Key::Char('x'))).is_empty(),
+        "nothing runs"
     );
+    let _ = console.press(Key::Char('k'));
+    let _ = console.press(Key::Up);
+    assert_eq!(console.current(), Some(run_id(2)));
+    // A digit jumps to its entry.
+    let _ = console.press(Key::Char('3'));
+    assert_eq!(console.current(), Some(run_id(3)));
+    // A search narrows the list; enter keeps it.
+    let _ = console.press(Key::Char('/'));
+    type_text(&mut console, "api");
+    let _ = console.press(Key::Enter);
+    assert_eq!(console.current(), Some(run_id(1)));
+    assert_eq!(console.tui.selected(), Some(Item::Run(run_id(1))));
 }
 
 #[test]
-fn new_completes_projects_and_clients_and_starts_with_the_prompt() {
+fn n_opens_the_new_run_form_and_starts_with_the_prompt() {
     let mut console = desk();
-    type_text(&mut console, "/new acme");
-    assert_eq!(console.completions(), ["acme-api", "acme-web"]);
-    let _ = console.press(Key::Down);
+    let _ = console.press(Key::Char('n'));
+    assert!(console.tui.overlaid());
+    type_text(&mut console, "web");
     let _ = console.press(Key::Tab);
-    type_text(&mut console, "co");
+    let _ = console.press(Key::Char(' '));
     let _ = console.press(Key::Tab);
     type_text(&mut console, "add the upload form");
     let out = console.press(Key::Enter);
@@ -399,21 +414,15 @@ fn new_completes_projects_and_clients_and_starts_with_the_prompt() {
             prompt: Some(Prompt::parse("add the upload form".into()).unwrap()),
         }]
     );
-    // The client named last is the default for the next.
-    type_text(&mut console, "/new ren tidy the docs");
-    assert!(matches!(
-        sent(&console.press(Key::Enter)).as_slice(),
-        [Command::Start { harness: Harness::Codex, dir, .. }] if dir == "/srv/ren"
-    ));
-    // Started: it opens.
+    assert!(!console.tui.overlaid());
+    // Started: it is selected.
     let out = console.apply(Input::Answered(Ok(Answered::Started(run_id(9)))));
     assert!(out.contains(&Out::Read(Read::Runs)));
     assert_eq!(console.current(), Some(run_id(9)));
-
-    type_text(&mut console, "/new acme fix");
+    // Esc leaves the form without starting anything.
+    let _ = console.press(Key::Char('n'));
     let _ = console.press(Key::Esc);
-    assert!(sent(&console.press(Key::Enter)).is_empty());
-    assert!(drawn(&console).contains("which one: acme-api, acme-web"));
+    assert!(!console.tui.overlaid());
 }
 
 #[test]
@@ -424,14 +433,13 @@ fn a_live_turn_gives_way_to_its_record() {
         "/dev/acme-web",
         Some(SESSION),
     )]));
-    let _ = console.press(Key::AltRight);
+    let _ = console.press(Key::Char('3'));
     assert_eq!(console.current(), Some(run_id(3)));
     let _ = console.apply(Input::History {
         run: run_id(3),
         turns: vec![recorded_turn("old", "earlier work", "Done earlier.")],
     });
-    type_text(&mut console, "fix the flaky upload test");
-    assert_eq!(sent(&console.press(Key::Enter)).len(), 1);
+    assert_eq!(sent(&console.write("fix the flaky upload test")).len(), 1);
     let _ = console.apply(state(3, working(3)));
     let _ = console.apply(event(3, json!({ "kind": "turn_started", "turn": turn(3) })));
     let _ = console.apply(event(
@@ -454,7 +462,6 @@ fn a_live_turn_gives_way_to_its_record() {
             session: session(),
         })]
     );
-    // Not recorded yet: asked again later.
     let out = console.apply(Input::History {
         run: run_id(3),
         turns: vec![recorded_turn("old", "earlier work", "Done earlier.")],
@@ -484,19 +491,15 @@ fn a_live_turn_gives_way_to_its_record() {
 }
 
 #[test]
-fn a_message_to_an_ended_run_continues_its_conversation() {
+fn writing_to_an_ended_run_continues_its_conversation() {
     let mut console = Console::new(SIZE);
     let mut ended = recorded(5, "/srv/ren", None);
-    ended.ended_at = Some(ren_recorder::time::UnixMillis::from_millis(2000));
+    ended.ended_at = Some(UnixMillis::from_millis(2000));
     let _ = console.apply(Input::Recorded(vec![ended]));
     let _ = console.apply(Input::Runs(Ok(vec![])));
-    type_text(&mut console, "/resume");
-    let _ = console.press(Key::Enter);
-    let _ = console.press(Key::Enter);
     assert_eq!(console.current(), Some(run_id(5)));
-    type_text(&mut console, "pick it back up");
     assert_eq!(
-        sent(&console.press(Key::Enter)),
+        sent(&console.write("pick it back up")),
         [Command::Start {
             harness: Harness::ClaudeCode,
             dir: "/srv/ren".into(),
@@ -507,16 +510,43 @@ fn a_message_to_an_ended_run_continues_its_conversation() {
 }
 
 #[test]
-fn refusals_read_in_words_and_quitting_leaves_runs_alone() {
+fn refusals_read_in_words_and_esc_and_ctrl_c_leave_writing() {
     let mut console = desk();
     let _ = console.apply(Input::Answered(Err("invalid_directory".into())));
     assert!(drawn(&console).contains("that folder is not under one of the daemon's run roots"));
+    let _ = console.press(Key::Char('i'));
+    assert_eq!(console.tui.mode(), Mode::Writing);
     type_text(&mut console, "half typed");
-    assert!(
-        console.press(Key::Interrupt).is_empty(),
-        "ctrl-c clears first"
-    );
-    assert_eq!(console.press(Key::Interrupt), [Out::Quit]);
+    // Keys type while writing: q is a letter.
+    assert!(console.press(Key::Char('q')).is_empty());
+    let _ = console.press(Key::Esc);
+    assert_eq!(console.tui.mode(), Mode::Normal);
+    assert!(drawn(&console).contains("half typedq"), "the draft stays");
+    let _ = console.press(Key::Char('i'));
+    let _ = console.press(Key::Interrupt);
+    let _ = console.press(Key::Interrupt);
+    assert_eq!(console.tui.mode(), Mode::Normal);
+    assert_eq!(console.press(Key::Char('q')), [Out::Quit]);
+}
+
+#[test]
+fn earlier_turns_fold_and_open_from_the_session() {
+    let mut console = desk();
+    let _ = console.apply(Input::History {
+        run: run_id(2),
+        turns: vec![
+            recorded_turn("t1", "first ask", "First answer."),
+            recorded_turn("t2", "second ask", "Second answer."),
+        ],
+    });
+    let shown = drawn(&console);
+    assert!(!shown.contains("First answer."), "{shown}");
+    assert!(shown.contains("Second answer."), "{shown}");
+    // Into the session, up to the earlier turn, and open it.
+    let _ = console.press(Key::Enter);
+    let _ = console.press(Key::Char('k'));
+    let _ = console.press(Key::Enter);
+    assert!(drawn(&console).contains("First answer."));
 }
 
 #[test]
@@ -532,32 +562,24 @@ fn screens_draw_as_pinned() {
     });
     assert_eq!(
         drawn(&console),
-        include_str!("../../tests/fixtures/console-run-asking.txt")
+        include_str!("../../tests/fixtures/app-run-asking.txt")
     );
-
-    type_text(&mut console, "/new ac");
+    let _ = console.press(Key::Char('n'));
+    type_text(&mut console, "ac");
     assert_eq!(
         drawn(&console),
-        include_str!("../../tests/fixtures/console-new-completion.txt")
+        include_str!("../../tests/fixtures/app-new-run.txt")
     );
-    let _ = console.press(Key::Interrupt);
-
-    type_text(&mut console, "/resume");
-    let _ = console.press(Key::Enter);
+    let _ = console.press(Key::Esc);
+    let _ = console.press(Key::Tab);
     assert_eq!(
         drawn(&console),
-        include_str!("../../tests/fixtures/console-resume.txt")
+        include_str!("../../tests/fixtures/app-activity.txt")
     );
-
-    let mut quiet = Console::new(SIZE);
-    let _ = quiet.apply(Input::Projects(Ok(projects())));
-    let _ = quiet.apply(Input::Runs(Ok(vec![
-        snapshot(1, Harness::Codex, "/dev/acme-api", working(1)),
-        snapshot(3, Harness::ClaudeCode, "/dev/acme-web", idle(3)),
-    ])));
+    let _ = console.press(Key::Char('?'));
     assert_eq!(
-        drawn(&quiet),
-        include_str!("../../tests/fixtures/console-newest-run.txt")
+        drawn(&console),
+        include_str!("../../tests/fixtures/app-help.txt")
     );
 }
 
@@ -572,9 +594,8 @@ fn a_new_runs_first_turn_gives_way_to_its_record_by_prompt() {
     )])));
     // Started here: recorded, with no call yet.
     let _ = console.apply(Input::Recorded(vec![recorded(4, "/srv/ren", None)]));
-    let _ = console.press(Key::AltRight);
-    type_text(&mut console, "run the tests");
-    let _ = console.press(Key::Enter);
+    assert_eq!(console.current(), Some(run_id(4)));
+    let _ = console.write("run the tests");
     let _ = console.apply(event(4, json!({ "kind": "turn_started", "turn": turn(4) })));
     let _ = console.apply(event(
         4,
@@ -602,5 +623,8 @@ fn a_new_runs_first_turn_gives_way_to_its_record_by_prompt() {
         run: run_id(4),
         turns: vec![recorded_turn("prompt-id", "run the tests", "All pass.")],
     });
-    assert_eq!(drawn(&console).matches("run the tests").count(), 1);
+    // Once in the conversation (the list names the run by it too).
+    let shown = drawn(&console);
+    assert_eq!(shown.matches("run the tests  1 s").count(), 1, "{shown}");
+    assert_eq!(shown.matches("All pass.").count(), 1, "{shown}");
 }

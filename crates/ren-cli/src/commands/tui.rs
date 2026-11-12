@@ -33,8 +33,7 @@ use ren_store::read::ReadRequest;
 use ren_store::view::RunView;
 use ren_supervisor::{Project, RunSnapshot, RunUpdate};
 use ren_tui::{
-    Answered, Command, Input, Opening, Out, Read, Snapshot, Terminal, TerminalEvent, Theme,
-    ThemeName, Tui,
+    Answered, Command, Input, Out, Read, Snapshot, Terminal, TerminalEvent, Theme, ThemeName, Tui,
 };
 use reqwest::Method;
 use std::collections::HashMap;
@@ -43,7 +42,7 @@ use std::pin::Pin;
 use std::process::ExitCode;
 use std::time::Duration;
 
-/// Watch live sessions in the terminal, one pane per session.
+/// Watch and drive agent sessions in the terminal.
 #[derive(Args)]
 pub struct TuiCmd {
     #[command(flatten)]
@@ -125,15 +124,14 @@ impl TuiCmd {
             println!("Saved TUI theme {theme} to {}", path.display());
             return Ok(ExitCode::SUCCESS);
         }
-        Self::open(&self.target, self.theme, ctx, Opening::Wall).await
+        Self::open(&self.target, self.theme, ctx).await
     }
 
-    /// Opens the terminal on `route`.
+    /// Opens the app in the terminal.
     pub(crate) async fn open(
         target: &TargetArgs,
         theme: Option<ThemeName>,
         ctx: &Context,
-        opening: Opening,
     ) -> Result<ExitCode> {
         let selected = TuiSettings::select(theme, &ctx.env)?;
         let gateway = target.gateway(ctx)?;
@@ -152,7 +150,7 @@ impl TuiCmd {
         let mut screen = Terminal::open()?;
         screen.set_theme(Self::theme(selected, &ctx.env));
         let mut events = screen.events();
-        let mut tui = Tui::new(screen.size()?, opening);
+        let mut tui = Tui::new(screen.size()?);
         let mut shell = Shell {
             gateway: &gateway,
             control: control.as_ref().map_err(Clone::clone),

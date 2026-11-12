@@ -13,7 +13,7 @@ pub(crate) mod sessions;
 pub(crate) mod transcript;
 
 pub use call::CallEnd;
-pub use sessions::{Reading, Snapshot, SnapshotQuery};
+pub use sessions::{Snapshot, SnapshotQuery};
 
 use crate::Size;
 use desk::{Attention, Desk, Run};

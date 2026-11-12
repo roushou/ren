@@ -1,0 +1,30 @@
+ ren   0 sessions · 0 streaming · 0 waiting                                                         1 needs you  3 live
+ NEEDS YOU                    │ ren · Claude Code · needs you                                                  /srv/ren
+ 1 ◆ ren  wants git push origi│  Conversation   Activity   Files   Calls
+                              │▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+ WORKING                      │
+ 2 ● acme-api  working        │ › fix the flaky upload test
+                              │ ● Bash cargo test -p upload
+ YOUR TURN                    │
+ 3 ○ acme-web  new Claude Code│
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+ y allow · a allow for the run · d deny · D deny and stop · i reply instead                       ? keys │ 00:00:00 UTC

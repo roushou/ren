@@ -1,140 +1,151 @@
-//! The screens as one app: the wall under everything, the places Alt-← and
-//! Alt-→ move between, slash commands everywhere, and the help over each.
+//! The app as a whole: what it reads first, the list's selection across
+//! runs and watched sessions, the help over it, and drawing at any size and
+//! in any theme.
 
-use crate::{Input, Key, Opening, Out, Read, Size, Tui};
+use crate::screen::main::Item;
+use crate::{Input, Key, Out, Read, Size, Snapshot, Theme, ThemeName, Tui};
+use ratatui::{buffer::Buffer, layout::Rect, style::Color};
 use ren_harness::Harness;
-use ren_harness::drive::ApprovalAsk;
 use ren_protocol::native::NativeThreadId;
 use ren_recorder::id::RunId;
 use ren_recorder::time::UnixMillis;
-use ren_supervisor::{Approvals, RunSnapshot, RunState};
+use ren_store::view::{CallPage, SessionView};
+use ren_supervisor::{RunSnapshot, RunState};
+use serde_json::json;
 
 const SIZE: Size = Size {
-    width: 90,
+    width: 100,
     height: 24,
 };
 
-fn run_id(n: u128) -> RunId {
-    RunId::restore(uuid::Uuid::from_u128(n))
-}
-
-fn run(n: u128, state: RunState) -> RunSnapshot {
+fn idle_run() -> RunSnapshot {
     RunSnapshot {
-        run: run_id(n),
+        run: RunId::restore(uuid::Uuid::from_u128(1)),
         harness: Harness::Codex,
-        workdir: format!("/dev/acme-{n}").into(),
-        state,
+        workdir: "/dev/acme".into(),
+        state: RunState::Idle {
+            thread: NativeThreadId::new(uuid::Uuid::from_u128(0x77)).unwrap(),
+        },
     }
 }
 
-fn idle(n: u128) -> RunState {
-    RunState::Idle {
-        thread: NativeThreadId::new(uuid::Uuid::from_u128(0x7700 + n)).unwrap(),
-    }
+/// A snapshot with one session seen just now, from a client Ren did not
+/// start.
+fn watched() -> Input {
+    let session: SessionView = serde_json::from_value(json!({
+        "id": "00000000-0000-0000-0000-0000000000a1", "provider": "anthropic",
+        "source": "claude_code_headers", "native_id": "native-a1",
+        "first_seen": 1_000, "last_seen": 1_000, "call_count": 1, "turn_count": 0,
+        "error_count": 0,
+        "tokens": { "input": null, "output": null, "cache_read": null }
+    }))
+    .unwrap();
+    Input::Snapshot(Snapshot {
+        read_at: UnixMillis::from_millis(1_000),
+        sessions: vec![session],
+        open: CallPage {
+            calls: Vec::new(),
+            next: None,
+        },
+        recent: CallPage {
+            calls: Vec::new(),
+            next: None,
+        },
+    })
 }
 
-fn asking(n: u128) -> RunState {
-    let mut approvals = Approvals::default();
-    approvals.insert(
-        "ap-1".parse().unwrap(),
-        ApprovalAsk::FileChange { reason: None },
-    );
-    RunState::Working {
-        thread: NativeThreadId::new(uuid::Uuid::from_u128(0x7700 + n)).unwrap(),
-        turn: None,
-        approvals,
-    }
-}
-
-fn send(tui: &mut Tui, text: &str) -> Vec<Out> {
-    let mut outs: Vec<Out> = text
-        .chars()
-        .flat_map(|ch| tui.press(Key::Char(ch)))
-        .collect();
-    outs.extend(tui.press(Key::Enter));
-    outs
-}
-
-fn on_wall(tui: &Tui) -> bool {
-    tui.wall_frame(UnixMillis::from_millis(0)).is_some()
+fn drawn(tui: &Tui, size: Size, theme: &Theme) -> Buffer {
+    let area = Rect::new(0, 0, size.width, size.height);
+    let mut buffer = Buffer::empty(area);
+    tui.view(UnixMillis::from_millis(1_000))
+        .render(theme, area, &mut buffer);
+    buffer
 }
 
 #[test]
-fn starting_reads_what_every_screen_shows() {
-    let outs = Tui::new(SIZE, Opening::Wall).start();
+fn starting_reads_what_the_app_shows() {
+    let outs = Tui::new(SIZE).start();
     for read in [Read::Snapshot, Read::Runs, Read::Recorded, Read::Projects] {
         assert!(outs.contains(&Out::Read(read)), "{outs:?}");
     }
 }
 
 #[test]
-fn opened_on_the_runs_the_one_that_needs_you_opens_once_they_are_read() {
-    let mut tui = Tui::new(SIZE, Opening::Runs);
-    let _ = tui.start();
-    assert!(on_wall(&tui), "the wall until runs are read");
-    let _ = tui.apply(Input::Runs(Ok(vec![run(1, idle(1)), run(2, asking(2))])));
-    assert_eq!(tui.shown_run(), Some(run_id(2)));
-    // Only once: going back to the wall stays there.
-    let _ = send(&mut tui, "/wall");
-    let _ = tui.apply(Input::Runs(Ok(vec![run(1, idle(1)), run(2, asking(2))])));
-    assert!(on_wall(&tui));
+fn runs_come_first_and_the_selection_follows_the_top_until_chosen() {
+    let mut tui = Tui::new(SIZE);
+    let _ = tui.apply(watched());
+    assert!(matches!(tui.selected(), Some(Item::Watched(_))));
+    // Until it is chosen, the selection follows the top: the run.
+    let _ = tui.apply(Input::Runs(Ok(vec![idle_run()])));
+    assert_eq!(tui.shown_run(), Some(idle_run().run));
+    let _ = tui.press(Key::Char('j'));
+    assert!(matches!(tui.selected(), Some(Item::Watched(_))));
+    // Chosen, it stays.
+    let _ = tui.apply(Input::Runs(Ok(vec![idle_run()])));
+    assert!(matches!(tui.selected(), Some(Item::Watched(_))));
+    // A watched session takes no writing.
+    let _ = tui.press(Key::Char('i'));
+    assert_eq!(tui.mode(), crate::screen::main::Mode::Normal);
 }
 
 #[test]
-fn alt_arrows_move_between_the_wall_and_each_live_run() {
-    let mut tui = Tui::new(SIZE, Opening::Wall);
-    let _ = tui.apply(Input::Runs(Ok(vec![run(1, idle(1)), run(2, asking(2))])));
-    // The wall, then what needs you first.
-    let _ = tui.press(Key::AltRight);
-    assert_eq!(tui.shown_run(), Some(run_id(2)));
-    let _ = tui.press(Key::AltRight);
-    assert_eq!(tui.shown_run(), Some(run_id(1)));
-    let _ = tui.press(Key::AltRight);
-    assert!(on_wall(&tui));
-    let _ = tui.press(Key::AltLeft);
-    assert_eq!(tui.shown_run(), Some(run_id(1)));
-}
-
-#[test]
-fn esc_on_an_idle_run_goes_back_to_the_wall_and_slash_commands_work_everywhere() {
-    let mut tui = Tui::new(SIZE, Opening::Wall);
-    let _ = tui.apply(Input::Runs(Ok(vec![run(1, idle(1))])));
-    let _ = tui.press(Key::AltRight);
-    assert_eq!(tui.shown_run(), Some(run_id(1)));
+fn the_help_lists_the_keys_and_closes() {
+    let mut tui = Tui::new(SIZE);
+    let _ = tui.press(Key::Char('?'));
+    assert!(tui.overlaid());
+    assert_eq!(
+        tui.press(Key::Char('j')),
+        Vec::new(),
+        "it takes no other key"
+    );
+    assert_eq!(tui.press(Key::Char('t')), vec![Out::CycleTheme]);
     let _ = tui.press(Key::Esc);
-    assert!(on_wall(&tui));
-    // From the wall, a command typed in its message box.
-    let outs = send(&mut tui, "/theme");
-    assert_eq!(outs, vec![Out::CycleTheme]);
+    assert!(!tui.overlaid());
+    assert_eq!(tui.press(Key::Char('q')), vec![Out::Quit]);
 }
 
 #[test]
-fn letters_are_typed_everywhere_and_ctrl_c_clears_then_quits() {
-    for opening in [Opening::Wall, Opening::Runs] {
-        let mut tui = Tui::new(SIZE, opening);
-        assert_eq!(tui.press(Key::Char('q')), Vec::new());
-        assert_eq!(tui.press(Key::Interrupt), Vec::new());
-        assert_eq!(tui.press(Key::Interrupt), vec![Out::Quit]);
+fn tiny_terminals_draw_without_panicking() {
+    for (width, height) in [(0, 0), (1, 1), (2, 1), (10, 3), (20, 2), (57, 11), (40, 30)] {
+        let size = Size { width, height };
+        let mut tui = Tui::new(size);
+        let _ = tui.apply(watched());
+        let _ = tui.apply(Input::Runs(Ok(vec![idle_run()])));
+        for key in [Key::Tab, Key::Char('n'), Key::Esc, Key::Char('?')] {
+            let _ = tui.press(key);
+            let _ = drawn(&tui, size, &Theme::default());
+        }
     }
 }
 
 #[test]
-fn the_help_lists_the_keys_and_commands_of_the_screen_under_it() {
-    let mut tui = Tui::new(SIZE, Opening::Wall);
-    let _ = send(&mut tui, "/help");
-    assert!(tui.help_shown());
-    // It takes no other key.
-    assert_eq!(tui.press(Key::Char('p')), Vec::new());
-    assert_eq!(tui.press(Key::Char('t')), vec![Out::CycleTheme]);
-    let _ = tui.press(Key::Esc);
-    assert!(!tui.help_shown());
-    assert!(on_wall(&tui));
-}
-
-#[test]
-fn runs_reach_the_wall_and_the_places_line() {
-    let mut tui = Tui::new(SIZE, Opening::Wall);
-    let _ = tui.apply(Input::Runs(Ok(vec![run(1, idle(1))])));
-    let frame = tui.wall_frame(UnixMillis::from_millis(0)).unwrap();
-    assert_eq!(frame.status.runs.map(|runs| runs.live), Some(1));
+fn every_theme_draws_the_same_content_and_terminal_colors_stay_symbolic() {
+    let mut tui = Tui::new(SIZE);
+    let _ = tui.apply(watched());
+    let _ = tui.apply(Input::Runs(Ok(vec![idle_run()])));
+    let symbols = |buffer: &Buffer| -> Vec<String> {
+        buffer
+            .content
+            .iter()
+            .map(|cell| cell.symbol().to_owned())
+            .collect()
+    };
+    let plain = drawn(&tui, SIZE, &ThemeName::Terminal.theme());
+    for cell in &plain.content {
+        assert_eq!(cell.bg, Color::Reset);
+        assert!(!matches!(cell.fg, Color::Rgb(..) | Color::Indexed(_)));
+    }
+    for name in [ThemeName::Dark, ThemeName::Light] {
+        assert_eq!(
+            symbols(&drawn(&tui, SIZE, &name.theme())),
+            symbols(&plain),
+            "{name}"
+        );
+    }
+    let mono = drawn(&tui, SIZE, &Theme::monochrome());
+    assert!(
+        mono.content
+            .iter()
+            .all(|cell| cell.fg == Color::Reset && cell.bg == Color::Reset)
+    );
 }

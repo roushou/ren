@@ -57,6 +57,22 @@ pub struct Spark {
     pub bins: Vec<u64>,
 }
 
+/// The traffic, in a few numbers, for the top bar.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Traffic {
+    /// Sessions active in the window.
+    pub sessions: usize,
+    /// Calls with a response streaming, and calls waiting for its head.
+    pub responding: usize,
+    pub awaiting: usize,
+    /// Output tokens of finished calls, per client, over the last few
+    /// minutes. Measured when each call ends: not a live rate.
+    pub output: Vec<Spark>,
+    pub reading: Reading,
+    /// Why the last read failed: what is shown is from an earlier one.
+    pub failure: Option<String>,
+}
+
 /// Sessions and calls as read.
 #[derive(Debug, Default)]
 pub(crate) struct Sessions {
@@ -128,10 +144,6 @@ impl Sessions {
         self.revision
     }
 
-    pub fn failure(&self) -> Option<&str> {
-        self.failure.as_deref()
-    }
-
     pub fn reading(&self) -> Reading {
         match &self.snapshot {
             None => Reading::Pending,
@@ -174,6 +186,59 @@ impl Sessions {
 
     pub fn progress(&self) -> &HashMap<CallId, Progress> {
         &self.progress
+    }
+
+    /// Sessions active in the window, or with a call open, or that a live
+    /// run drives (by its thread): open ones first, then the most recently
+    /// seen.
+    pub fn active(&self, threads: &[String]) -> Vec<&SessionView> {
+        let Some(now) = self.read_at() else {
+            return Vec::new();
+        };
+        let calls = self.calls();
+        let open = |session: &SessionView| {
+            calls.iter().any(|call| {
+                call.session == Some(session.id) && call.state.known() == Some(CallState::Open)
+            })
+        };
+        let window = Self::millis(Self::WINDOW);
+        let mut active: Vec<(&SessionView, bool)> = self
+            .sessions()
+            .iter()
+            .map(|session| (session, open(session)))
+            .filter(|(session, open)| {
+                *open
+                    || threads.contains(&session.native_id)
+                    || now
+                        .as_millis()
+                        .saturating_sub(session.last_seen.as_millis())
+                        <= window
+            })
+            .collect();
+        active.sort_by(|(a, a_open), (b, b_open)| {
+            b_open
+                .cmp(a_open)
+                .then(b.last_seen.cmp(&a.last_seen))
+                .then(a.id.cmp(&b.id))
+        });
+        active.into_iter().map(|(session, _)| session).collect()
+    }
+
+    /// The traffic at `now`.
+    pub fn traffic(&self, now: UnixMillis) -> Traffic {
+        let open = self
+            .calls()
+            .iter()
+            .filter(|call| call.state.known() == Some(CallState::Open));
+        let responding = open.clone().filter(|call| call.status.is_some()).count();
+        Traffic {
+            sessions: self.active(&[]).len(),
+            responding,
+            awaiting: open.count() - responding,
+            output: self.output(now),
+            reading: self.reading(),
+            failure: self.failure.clone(),
+        }
     }
 
     /// What to read to show `session`: its newest two turns where they

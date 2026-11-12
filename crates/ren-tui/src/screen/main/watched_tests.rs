@@ -1,32 +1,58 @@
-//! The wall against reads shaped as the management API sends them, run
-//! as the terminal runs it: a [`Tui`] opened on the wall.
+//! How a watched session is read, against reads shaped as the management
+//! API sends them, run as the terminal runs it: a [`Tui`], its list
+//! selecting the first session.
 
-use super::pane::{Phase, Tally};
-use super::runs::RunPhase;
-use super::*;
+use super::list::{Item, Listing};
+use super::watched::{Phase, SessionPane, Tally};
 use crate::conversation::{Block, ResultMark};
-use crate::model::CallEnd;
-use crate::model::{Input, Read, Snapshot, SnapshotQuery};
+use crate::model::sessions::{Reading, Sessions, Spark};
+use crate::model::{CallEnd, Input, Read, Snapshot, SnapshotQuery};
 use crate::ui::Tone;
-use crate::{Opening, Out, ThemeName, Tui};
+use crate::{Out, Size, Tui};
 use ren_harness::Harness;
 use ren_recorder::Observation;
-use ren_recorder::id::{CallId, RunId, TurnId};
+use ren_recorder::capture::CallState;
+use ren_recorder::id::{CallId, SessionId, TurnId};
 use ren_recorder::progress::Progress;
+use ren_recorder::time::UnixMillis;
 use ren_store::query::{KindFilter, PageLimit, StatusFilter};
-use ren_store::view::CallPage;
+use ren_store::view::{CallPage, CallView, SessionView};
 use serde_json::{Value, json};
 
-/// The wall as the terminal runs it.
+/// The app, as these tests read it.
 struct Wall {
     tui: Tui,
+}
+
+/// What the tests read of the watched sessions.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Frame {
+    panes: Vec<Pane>,
+    status: Status,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Pane {
+    Free,
+    Session(Box<SessionPane>),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Status {
+    sessions: usize,
+    responding: usize,
+    awaiting: usize,
+    attention: usize,
+    output: Vec<Spark>,
+    reading: Reading,
+    failure: Option<String>,
 }
 
 impl Wall {
     const OUTPUT_BINS: usize = Sessions::OUTPUT_BINS;
 
     fn new(size: Size) -> Self {
-        let mut tui = Tui::new(size, Opening::Wall);
+        let mut tui = Tui::new(size);
         let _ = tui.start();
         Self { tui }
     }
@@ -47,28 +73,43 @@ impl Wall {
             .collect()
     }
 
-    fn press(&mut self, key: Key) -> Vec<Out> {
-        self.tui.press(key)
-    }
-
-    fn frame(&self, now: UnixMillis) -> Panes {
-        self.tui.wall_frame(now).expect("the wall is shown")
-    }
-
-    fn view(&self, now: UnixMillis) -> crate::ui::View {
-        self.tui.view(now)
-    }
-
-    fn help_shown(&self) -> bool {
-        self.tui.help_shown()
-    }
-
-    /// Types `text` and sends it.
-    fn send(&mut self, text: &str) -> Vec<Out> {
-        for ch in text.chars() {
-            let _ = self.tui.press(Key::Char(ch));
+    /// The watched sessions, in the list's order, at `now`.
+    fn frame(&self, now: UnixMillis) -> Frame {
+        let model = &self.tui.model;
+        let panes: Vec<Pane> = Listing::of(model, "")
+            .items()
+            .into_iter()
+            .filter_map(|item| match item {
+                Item::Watched(session) => model
+                    .sessions
+                    .sessions()
+                    .iter()
+                    .find(|view| view.id == session)
+                    .map(|view| Pane::Session(Box::new(SessionPane::of(model, view, now)))),
+                Item::Run(_) => None,
+            })
+            .collect();
+        let traffic = model.sessions.traffic(now);
+        let attention = panes
+            .iter()
+            .filter(|pane| matches!(pane, Pane::Session(session) if !session.alerts.is_empty()))
+            .count();
+        Frame {
+            panes: if panes.is_empty() {
+                vec![Pane::Free]
+            } else {
+                panes
+            },
+            status: Status {
+                sessions: traffic.sessions,
+                responding: traffic.responding,
+                awaiting: traffic.awaiting,
+                attention,
+                output: traffic.output,
+                reading: traffic.reading,
+                failure: traffic.failure,
+            },
         }
-        self.tui.press(Key::Enter)
     }
 }
 
@@ -180,14 +221,14 @@ fn snapshot(seconds: u64, sessions: Vec<SessionView>, calls: Vec<CallView>) -> I
 /// A wide terminal: three panes across, one down.
 fn tui() -> Wall {
     Wall::new(Size {
-        width: 3 * Grid::PANE_WIDTH,
-        height: Grid::PANE_HEIGHT + Frame::ROWS,
+        width: 168,
+        height: 40,
     })
 }
 
-fn pane(wall: &Panes, index: usize) -> &SessionPane {
+fn pane(wall: &Frame, index: usize) -> &SessionPane {
     match &wall.panes[index] {
-        Pane::Session(pane) => pane,
+        Pane::Session(pane) => pane.as_ref(),
         Pane::Free => panic!("pane {index} is free"),
     }
 }
@@ -263,7 +304,7 @@ fn a_snapshot_reads_the_open_calls_and_the_window() {
 }
 
 #[test]
-fn sessions_with_open_calls_come_first_and_keep_their_panes() {
+fn sessions_with_open_calls_come_first_then_the_most_recently_seen() {
     let mut tui = tui();
     let sessions = vec![
         session(1, "claude_code_headers", 100),
@@ -274,81 +315,26 @@ fn sessions_with_open_calls_come_first_and_keep_their_panes() {
     let calls = vec![open(31, 3, None, 40, true)];
     let _ = tui.apply(snapshot(300, sessions.clone(), calls));
     let wall = tui.frame(at(300));
-    let shown: Vec<SessionId> = (0..3).map(|index| pane(&wall, index).session).collect();
-    // Open first, then the most recently seen; one is left out.
-    assert_eq!(shown, [session_id(3), session_id(4), session_id(2)]);
-    assert_eq!(wall.status.hidden, 1);
+    let shown: Vec<SessionId> = (0..wall.panes.len())
+        .map(|index| pane(&wall, index).session)
+        .collect();
+    assert_eq!(
+        shown,
+        [session_id(3), session_id(4), session_id(2), session_id(1)]
+    );
     assert_eq!(wall.status.sessions, 4);
 
-    // Session 3's call ends and it goes quiet: 4 and 2 stay where they are.
+    // Session 3's call ends, long ago: it leaves the list.
     let _ = tui.apply(snapshot(
         400,
         sessions,
         vec![call(31, 3, None, 40, 41, json!({}))],
     ));
     let wall = tui.frame(at(400));
-    assert_eq!(pane(&wall, 0).session, session_id(1));
-    assert_eq!(pane(&wall, 1).session, session_id(4));
-    assert_eq!(pane(&wall, 2).session, session_id(2));
-    assert_eq!(wall.status.hidden, 0);
-}
-
-#[test]
-fn the_grid_is_sized_to_the_active_sessions() {
-    let mut tui = tui();
-    let _ = tui.apply(snapshot(
-        1000,
-        vec![
-            session(1, "claude_code_headers", 990),
-            session(2, "codex_headers", 10),
-        ],
-        vec![],
-    ));
-    // One active session fills the screen, however wide the terminal.
-    let wall = tui.frame(at(1000));
-    assert_eq!(
-        wall.grid,
-        Grid {
-            columns: 1,
-            rows: 1
-        }
-    );
-    assert_eq!(pane(&wall, 0).session, session_id(1));
-    // None: one pane, free.
-    let _ = tui.apply(snapshot(
-        5000,
-        vec![session(1, "claude_code_headers", 990)],
-        vec![],
-    ));
-    let wall = tui.frame(at(5000));
-    assert_eq!(wall.panes, [Pane::Free]);
-}
-
-#[test]
-fn a_grid_leaves_as_few_panes_empty_as_it_can() {
-    let size = Size {
-        width: 240,
-        height: 61,
-    };
-    let shapes: Vec<(u16, u16)> = [1, 2, 3, 4, 5, 6, 9, 40]
-        .map(|sessions| {
-            let grid = Grid::for_sessions(size, sessions);
-            (grid.columns, grid.rows)
-        })
-        .into();
-    assert_eq!(
-        shapes,
-        [
-            (1, 1),
-            (2, 1),
-            (3, 1),
-            (2, 2),
-            (3, 2),
-            (3, 2),
-            (3, 3),
-            (4, 4)
-        ]
-    );
+    let shown: Vec<SessionId> = (0..wall.panes.len())
+        .map(|index| pane(&wall, index).session)
+        .collect();
+    assert_eq!(shown, [session_id(4), session_id(2), session_id(1)]);
 }
 
 #[test]
@@ -778,42 +764,6 @@ fn pane_of(tui: &Wall, seconds: u64) -> SessionPane {
 }
 
 #[test]
-fn a_resize_places_waiting_sessions_and_asks_for_their_turns() {
-    let mut tui = Wall::new(Size {
-        width: Grid::PANE_WIDTH,
-        height: Grid::PANE_HEIGHT + Frame::ROWS,
-    });
-    let sessions = vec![
-        session(1, "claude_code_headers", 100),
-        session(2, "codex_headers", 90),
-    ];
-    let calls = vec![
-        call(11, 1, Some(5), 10, 20, json!({})),
-        call(21, 2, Some(6), 10, 20, json!({})),
-    ];
-    assert_eq!(
-        tui.apply(snapshot(100, sessions, calls)),
-        [Read::Turn(turn_id(5))]
-    );
-    assert_eq!(tui.frame(at(100)).status.hidden, 1);
-    let reads = tui.apply(Input::Resize(Size {
-        width: 2 * Grid::PANE_WIDTH,
-        height: Grid::PANE_HEIGHT + Frame::ROWS,
-    }));
-    assert_eq!(reads, [Read::Turn(turn_id(5)), Read::Turn(turn_id(6))]);
-    let wall = tui.frame(at(100));
-    assert_eq!(
-        wall.grid,
-        Grid {
-            columns: 2,
-            rows: 1
-        }
-    );
-    assert_eq!(pane(&wall, 1).session, session_id(2));
-    assert_eq!(wall.status.hidden, 0);
-}
-
-#[test]
 fn output_is_binned_per_client_when_calls_end() {
     let mut tui = tui();
     let usage = |output: u64| {
@@ -875,405 +825,14 @@ fn a_full_page_of_calls_is_said_to_leave_some_out() {
     assert_eq!(tui.frame(at(100)).status.reading, Reading::Capped);
 }
 
-/// Three sessions: Claude Code mid-turn with a call streaming, Codex
-/// stopped on a 529, and OpenCode streaming with no turns.
-fn busy(size: Size) -> Wall {
-    let mut tui = Wall::new(size);
-    let usage = json!({ "usage": {
-        "accounting": "excludes_cache", "input_tokens": 1_200, "output_tokens": 1_234,
-        "cache_read_tokens": 60_000, "cache_creation_tokens": 0, "reasoning_tokens": null
-    }});
-    let codex = json!({
-        "attribution": {
-            "hint": { "source": "codex_headers", "session": "s", "turn": null, "thread": null },
-            "issues": []
-        },
-        "provider": "openai", "endpoint": "responses", "model": "model-b",
-        "status": 529, "outcome": null
-    });
-    let mut opencode = open(31, 3, None, 280, true);
-    opencode.attribution.hint = None;
-    let _ = tui.apply(snapshot(
-        300,
-        vec![
-            session(1, "claude_code_headers", 300),
-            session(2, "codex_headers", 290),
-            session(3, "opencode_headers", 300),
-        ],
-        vec![
-            call(11, 1, Some(5), 200, 230, usage),
-            open(12, 1, Some(5), 290, true),
-            call(21, 2, Some(6), 280, 285, codex),
-            opencode,
-        ],
-    ));
-    let _ = tui.apply(turn(
-        5,
-        1,
-        &["cd /w/app && cargo test"],
-        vec![
-            prompted(
-                "Why does the parser drop the last field?",
-                activity_call(
-                    11,
-                    Some("I'll run the tests first, then look at the failure in the parser."),
-                    vec![
-                        tool(
-                            "a",
-                            "Read",
-                            Some(("read_file", "/w/app/src/lib.rs")),
-                            Some("succeeded"),
-                        ),
-                        tool(
-                            "b",
-                            "Bash",
-                            Some(("run_command", "cd /w/app && cargo test")),
-                            Some("failed"),
-                        ),
-                    ],
-                    &[],
-                ),
-            ),
-            activity_call(12, None, vec![], &["not_yet_derived"]),
-        ],
-    ));
-    let _ = tui.apply(Input::Progress(Progress {
-        call: call_id(12),
-        reply: "The parser drops the last field when".to_owned(),
-        cut: false,
-        tools: vec!["Edit".to_owned()],
-        thinking: false,
-    }));
-    let _ = tui.apply(Input::Progress(Progress {
-        call: call_id(31),
-        reply: String::new(),
-        cut: false,
-        tools: Vec::new(),
-        thinking: true,
-    }));
-    tui
-}
-
-/// The wall drawn into a buffer, as text: one line per row, trailing
-/// spaces trimmed.
-fn drawn(wall: &Wall, now: UnixMillis, size: Size) -> String {
-    use ratatui::{buffer::Buffer, layout::Rect};
-    let area = Rect::new(0, 0, size.width, size.height);
-    let mut buffer = Buffer::empty(area);
-    wall.view(now)
-        .render(&crate::Theme::default(), area, &mut buffer);
-    (0..size.height)
-        .map(|y| {
-            let row: String = (0..size.width)
-                .map(|x| buffer[(x, y)].symbol().to_owned())
-                .collect();
-            row.trim_end().to_owned()
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
-        + "\n"
-}
-
-#[test]
-fn the_wall_draws_the_same_at_each_size() {
-    let sizes = [
-        (
-            "wall-80x24.txt",
-            Size {
-                width: 80,
-                height: 24,
-            },
-            include_str!("../../../tests/fixtures/wall-80x24.txt"),
-        ),
-        (
-            "wall-120x32.txt",
-            Size {
-                width: 120,
-                height: 32,
-            },
-            include_str!("../../../tests/fixtures/wall-120x32.txt"),
-        ),
-        (
-            "wall-180x42.txt",
-            Size {
-                width: 180,
-                height: 42,
-            },
-            include_str!("../../../tests/fixtures/wall-180x42.txt"),
-        ),
-    ];
-    for (name, size, pinned) in sizes {
-        let tui = busy(size);
-        assert_eq!(drawn(&tui, at(300), size), pinned, "{name}");
-    }
-}
-
-#[test]
-fn a_session_opens_full_screen_and_the_help_over_it() {
-    let size = Size {
-        width: 80,
-        height: 24,
-    };
-    let mut tui = busy(size);
-    let _ = tui.press(Key::Enter);
-    assert_eq!(
-        drawn(&tui, at(300), size),
-        include_str!("../../../tests/fixtures/session-watched.txt")
-    );
-    let _ = tui.send("/help");
-    assert_eq!(
-        drawn(&tui, at(300), size),
-        include_str!("../../../tests/fixtures/session-help.txt")
-    );
-}
-
-#[test]
-fn the_focused_pane_moves_with_the_keys_and_stays_in_the_grid() {
-    // Two across, two down.
-    let mut tui = busy(Size {
-        width: 2 * Grid::PANE_WIDTH,
-        height: 2 * Grid::PANE_HEIGHT + Frame::ROWS,
-    });
-    let focus = |tui: &Wall| tui.frame(at(300)).focus;
-    assert_eq!(focus(&tui), 0);
-    for (key, expected) in [
-        (Key::Left, 0),
-        (Key::Up, 0),
-        (Key::Right, 1),
-        (Key::Right, 1),
-        (Key::Down, 3),
-        (Key::Down, 3),
-        (Key::Left, 2),
-        (Key::Tab, 3),
-        (Key::Tab, 0),
-        (Key::BackTab, 3),
-    ] {
-        let _ = tui.press(key);
-        assert_eq!(focus(&tui), expected, "{key:?}");
-    }
-    // A smaller terminal keeps the focus inside the grid.
-    let _ = tui.apply(Input::Resize(Size {
-        width: Grid::PANE_WIDTH,
-        height: Grid::PANE_HEIGHT + Frame::ROWS,
-    }));
-    assert_eq!(focus(&tui), 0);
-    // Letters are typed, not keys: ctrl-c clears them, then quits.
-    assert_eq!(tui.press(Key::Char('q')), vec![]);
-    assert_eq!(tui.press(Key::Interrupt), vec![]);
-    assert_eq!(tui.press(Key::Interrupt), vec![Out::Quit]);
-}
-
-#[test]
-fn enter_opens_the_focused_session_and_esc_comes_back() {
-    let mut tui = busy(Size {
-        width: 3 * Grid::PANE_WIDTH,
-        height: Grid::PANE_HEIGHT + Frame::ROWS,
-    });
-    let second = pane(&tui.frame(at(300)), 1).session;
-    let _ = tui.press(Key::Tab);
-    let _ = tui.press(Key::Enter);
-    assert_eq!(tui.tui.watching(), Some(second));
-    assert!(tui.tui.wall_frame(at(300)).is_none());
-    let _ = tui.press(Key::Esc);
-    assert_eq!(tui.tui.watching(), None);
-    assert_eq!(tui.frame(at(300)).focus, 1, "the wall kept its focus");
-}
-
-#[test]
-fn a_pinned_session_stays_when_quiet_and_the_help_takes_no_other_key() {
-    let mut tui = Wall::new(Size {
-        width: Grid::PANE_WIDTH,
-        height: Grid::PANE_HEIGHT + Frame::ROWS,
-    });
-    let sessions = || {
-        vec![
-            session(1, "claude_code_headers", 300),
-            session(2, "codex_headers", 200),
-        ]
-    };
-    let _ = tui.apply(snapshot(300, sessions(), vec![]));
-    assert_eq!(pane(&tui.frame(at(300)), 0).session, session_id(1));
-    let _ = tui.send("/pin");
-    assert!(pane(&tui.frame(at(300)), 0).pinned);
-    // Long after both went quiet, the pinned one is still on the wall.
-    let _ = tui.apply(snapshot(2000, sessions(), vec![]));
-    let wall = tui.frame(at(2000));
-    assert_eq!(pane(&wall, 0).session, session_id(1));
-    assert_eq!(wall.status.sessions, 1);
-
-    let _ = tui.send("/help");
-    assert!(tui.help_shown());
-    let _ = tui.press(Key::Char('p'));
-    let _ = tui.press(Key::Enter);
-    assert!(tui.help_shown(), "the help takes no other key");
-    let _ = tui.press(Key::Esc);
-    assert!(!tui.help_shown());
-    // Unpinned, it leaves as any quiet session does.
-    let _ = tui.send("/pin");
-    assert_eq!(tui.frame(at(2000)).panes, [Pane::Free]);
-}
-
-#[test]
-fn tiny_terminals_draw_without_panicking() {
-    use ratatui::{buffer::Buffer, layout::Rect};
-    for (width, height) in [(0, 0), (1, 1), (2, 1), (10, 3), (20, 2), (57, 11), (40, 30)] {
-        let size = Size { width, height };
-        let mut tui = busy(size);
-        for keys in [&[][..], &[Key::Enter][..], &[Key::Char('?')][..]] {
-            for key in keys {
-                let _ = tui.press(*key);
-            }
-            let area = Rect::new(0, 0, width, height);
-            let mut buffer = Buffer::empty(area);
-            tui.view(at(300))
-                .render(&crate::Theme::default(), area, &mut buffer);
-        }
-    }
-}
-
-#[test]
-fn dark_title_bars_keep_the_original_palette() {
-    use ratatui::{buffer::Buffer, layout::Rect, style::Color};
-    let size = Size {
-        width: 180,
-        height: 42,
-    };
-    let area = Rect::new(0, 0, size.width, size.height);
-    let mut buffer = Buffer::empty(area);
-    busy(size)
-        .view(at(300))
-        .render(&crate::ThemeName::Dark.theme(), area, &mut buffer);
-    // Three sessions, three panes across. Responding: green. Stopped on
-    // an error: red. The body: the pane's ground.
-    assert_eq!(
-        busy(size).frame(at(300)).grid,
-        Grid {
-            columns: 3,
-            rows: 1
-        }
-    );
-    // The frame's places line takes the top row.
-    assert_eq!(buffer[(5, 1)].bg, Color::Rgb(0x7e, 0xe7, 0x87));
-    assert_eq!(buffer[(125, 1)].bg, Color::Rgb(0xff, 0x7b, 0x72));
-    assert_eq!(buffer[(5, 11)].bg, Color::Rgb(0x0e, 0x12, 0x17));
-    // A lit bar runs the pane's whole width, and its edge below it too.
-    assert_eq!(buffer[(179, 1)].bg, Color::Rgb(0xff, 0x7b, 0x72));
-    assert_eq!(buffer[(179, 2)].symbol(), "▀");
-    assert_eq!(buffer[(179, 2)].fg, Color::Rgb(0xff, 0x7b, 0x72));
-}
-
-#[test]
-fn switching_themes_resets_every_cell_in_panes_zoom_and_help() {
-    use crate::{Theme, ThemeName};
-    use ratatui::{
-        Terminal,
-        backend::TestBackend,
-        buffer::Buffer,
-        layout::Rect,
-        style::{Color, Modifier, Style},
-    };
-
-    for size in [
-        Size {
-            width: 80,
-            height: 24,
-        },
-        Size {
-            width: 180,
-            height: 42,
-        },
-    ] {
-        let mut tui = busy(size);
-        let area = Rect::new(0, 0, size.width, size.height);
-        let mut terminal = Terminal::new(TestBackend::new(size.width, size.height)).unwrap();
-        for keys in [&[][..], &[Key::Enter][..], &[Key::Char('?')][..]] {
-            for key in keys {
-                let _ = tui.press(*key);
-            }
-            let wall = tui.view(at(300));
-            let mut reused = Buffer::empty(area);
-            // Model styles left by a previous custom theme, including modifiers.
-            reused.set_style(
-                area,
-                Style::new()
-                    .fg(Color::Rgb(1, 2, 3))
-                    .bg(Color::Rgb(4, 5, 6))
-                    .add_modifier(Modifier::ITALIC | Modifier::REVERSED),
-            );
-            let mut name = ThemeName::Terminal;
-            let mut symbols = None;
-            for _ in 0..7 {
-                let theme = name.theme();
-                let mut fresh = Buffer::empty(area);
-                wall.render(&theme, area, &mut fresh);
-                wall.render(&theme, area, &mut reused);
-                assert_eq!(reused, fresh, "stale styles in {name}");
-                terminal
-                    .draw(|frame| {
-                        let area = frame.area();
-                        wall.render(&theme, area, frame.buffer_mut());
-                    })
-                    .unwrap();
-                terminal.backend().assert_buffer(&fresh);
-                let shown: Vec<_> = fresh
-                    .content
-                    .iter()
-                    .map(|cell| cell.symbol().to_owned())
-                    .collect();
-                match &symbols {
-                    Some(previous) => assert_eq!(&shown, previous, "theme changed the content"),
-                    None => symbols = Some(shown),
-                }
-                if name == ThemeName::Terminal {
-                    for cell in &fresh.content {
-                        assert_eq!(cell.bg, Color::Reset);
-                        assert!(!matches!(cell.fg, Color::Rgb(..) | Color::Indexed(_)));
-                    }
-                }
-                name = name.next();
-            }
-            let mono = Theme::monochrome();
-            wall.render(&mono, area, &mut reused);
-            assert!(
-                reused
-                    .content
-                    .iter()
-                    .all(|cell| cell.fg == Color::Reset && cell.bg == Color::Reset)
-            );
-            assert!(
-                reused
-                    .content
-                    .iter()
-                    .any(|cell| cell.modifier.contains(Modifier::BOLD))
-            );
-        }
-    }
-}
-
-#[test]
-fn the_theme_command_leaves_what_is_shown_unchanged() {
-    let mut tui = busy(Size {
-        width: 80,
-        height: 24,
-    });
-    for keys in [&[][..], &[Key::Enter][..]] {
-        for key in keys {
-            let _ = tui.press(*key);
-        }
-        let before = tui.view(at(300));
-        let outs = tui.send("/theme");
-        assert!(outs.contains(&Out::CycleTheme), "{outs:?}");
-        assert_eq!(tui.view(at(300)), before);
-    }
-}
-
 #[test]
 fn a_failed_read_is_shown_until_a_snapshot_succeeds() {
-    let size = Size {
-        width: 120,
-        height: 24,
-    };
-    let mut tui = busy(size);
+    let mut tui = tui();
+    let _ = tui.apply(snapshot(
+        300,
+        vec![session(1, "claude_code_headers", 300)],
+        vec![],
+    ));
     assert_eq!(
         tui.apply(Input::ReadFailed("cannot reach the gateway".to_owned())),
         []
@@ -1285,15 +844,6 @@ fn a_failed_read_is_shown_until_a_snapshot_succeeds() {
     );
     // What was read before stays on the wall.
     assert!(matches!(wall.panes[0], Pane::Session(_)));
-    let status = drawn(&tui, at(300), size)
-        .lines()
-        .last()
-        .unwrap()
-        .to_owned();
-    assert!(
-        status.starts_with(" ! stale: cannot reach the gateway "),
-        "{status}"
-    );
     let _ = tui.apply(snapshot(
         302,
         vec![session(1, "claude_code_headers", 302)],
@@ -1412,100 +962,6 @@ fn a_session_without_turns_reads_its_newest_calls() {
 }
 
 #[test]
-fn a_plain_title_has_a_rule_under_it() {
-    use ratatui::{buffer::Buffer, layout::Rect, style::Color};
-    let mut tui = tui();
-    let _ = tui.apply(snapshot(
-        100,
-        vec![session(1, "claude_code_headers", 100)],
-        vec![call(11, 1, None, 10, 20, json!({}))],
-    ));
-    let area = Rect::new(0, 0, 60, 12);
-    let mut buffer = Buffer::empty(area);
-    let theme = ThemeName::Dark.theme();
-    tui.view(at(100)).render(&theme, area, &mut buffer);
-    // Under the frame's places line.
-    assert_eq!(buffer[(0, 1)].bg, Color::Rgb(0x0e, 0x12, 0x17));
-    assert_eq!(buffer[(0, 2)].symbol(), "─");
-    assert_eq!(buffer[(59, 2)].fg, Color::Rgb(0x2a, 0x30, 0x38));
-}
-
-const THREAD: &str = "0190f3a0-0000-7000-8000-0000000000aa";
-const RUN: &str = "0190f3a0-0000-7000-8000-0000000000cc";
-
-/// A Codex session whose native id is the run's thread.
-fn run_session(n: u128, seconds: u64) -> SessionView {
-    let mut view = session(n, "codex_headers", seconds);
-    view.native_id = THREAD.to_owned();
-    view
-}
-
-/// The daemon's runs, with one live run in `state`.
-fn runs(state: Value) -> Input {
-    Input::Runs(Ok(vec![
-        serde_json::from_value(json!({
-            "run": RUN, "harness": "codex", "workdir": "/work/acme", "state": state
-        }))
-        .unwrap(),
-    ]))
-}
-
-fn asking() -> Value {
-    json!({
-        "phase": "working", "thread": THREAD, "turn": null,
-        "approvals": [
-            { "approval": "ap-1", "ask": { "kind": "command", "command": "cargo test",
-                                           "cwd": "/work/acme", "reason": null } },
-            { "approval": "ap-2", "ask": { "kind": "file_change", "reason": null } }
-        ]
-    })
-}
-
-fn run_id() -> RunId {
-    RUN.parse().unwrap()
-}
-
-/// A wall with the run's session in the only pane, and quiet otherwise.
-fn with_run(state: Value) -> Wall {
-    let mut tui = tui();
-    // Seen long ago: only the run keeps the session on the wall.
-    let _ = tui.apply(snapshot(600, vec![run_session(7, 10)], vec![]));
-    assert!(
-        tui.frame(at(600))
-            .panes
-            .iter()
-            .all(|pane| *pane == Pane::Free)
-    );
-    let _ = tui.apply(runs(state));
-    tui
-}
-
-#[test]
-fn a_live_runs_session_keeps_a_pane_with_the_runs_mark() {
-    let tui = with_run(asking());
-    let wall = tui.frame(at(600));
-    let pane = pane(&wall, 0);
-    let mark = pane.run.as_ref().expect("the run's mark");
-    assert_eq!(mark.run, run_id());
-    assert!(matches!(&mark.phase, RunPhase::Waiting { more: 1, .. }));
-    assert_eq!(
-        wall.status.runs,
-        Some(RunCounts {
-            live: 1,
-            waiting: 1
-        })
-    );
-}
-
-#[test]
-fn enter_on_a_runs_pane_opens_the_run() {
-    let mut wall = with_run(asking());
-    let _ = wall.press(Key::Enter);
-    assert_eq!(wall.tui.shown_run(), Some(run_id()));
-    assert_eq!(wall.tui.watching(), None);
-}
-
-#[test]
 fn run_observations_ask_for_the_runs() {
     let mut tui = tui();
     let observation: Observation = serde_json::from_value(json!({
@@ -1516,20 +972,5 @@ fn run_observations_ask_for_the_runs() {
     assert_eq!(
         tui.apply(Input::Observation(observation)),
         [Read::Runs, Read::Snapshot]
-    );
-}
-
-#[test]
-fn a_waiting_run_draws_as_pinned() {
-    let size = Size {
-        width: 80,
-        height: 12,
-    };
-    let mut tui = Wall::new(size);
-    let _ = tui.apply(snapshot(600, vec![run_session(7, 10)], vec![]));
-    let _ = tui.apply(runs(asking()));
-    assert_eq!(
-        drawn(&tui, at(600), size),
-        include_str!("../../../tests/fixtures/wall-run.txt")
     );
 }
