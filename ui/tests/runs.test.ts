@@ -178,7 +178,7 @@ test('the transcript streams a reply, then commands and file changes as items up
   }
   assert.equal(transcript.turn, 'turn-1');
   assert.deepEqual(transcript.entries, [
-    { kind: 'prompt', text: 'fix the failing test' },
+    { kind: 'prompt', item: 'u1', text: 'fix the failing test' },
     {
       kind: 'command',
       item: 'c1',
@@ -189,7 +189,7 @@ test('the transcript streams a reply, then commands and file changes as items up
     },
     { kind: 'file_change', item: 'f1', paths: ['src/lib.rs'], status: 'completed' },
     { kind: 'message', item: 'm1', text: 'Fixed it.', done: false },
-    { kind: 'turn_end', end: { kind: 'completed' } },
+    { kind: 'turn_end', turn: 'turn-1', end: { kind: 'completed' } },
   ]);
   // The completed message keeps the streamed text when the client sends none.
   const done = transcript.apply(
@@ -210,22 +210,14 @@ test('a prompt shows once, whether the echo or the local copy comes first', () =
   });
   const ended = event({ kind: 'turn_ended', turn: 't1', end: { kind: 'completed' } });
   assert.deepEqual(new Transcript().apply(echo).prompted('go').entries, [
-    { kind: 'prompt', text: 'go' },
+    { kind: 'prompt', item: 'u1', text: 'go' },
   ]);
   assert.deepEqual(new Transcript().prompted('go').apply(echo).entries, [
-    { kind: 'prompt', text: 'go' },
+    { kind: 'prompt', item: 'u1', text: 'go' },
   ]);
   // The same words in a later turn are a new prompt.
   const again = new Transcript().prompted('go').apply(ended).prompted('go');
   assert.equal(again.entries.filter((entry) => entry.kind === 'prompt').length, 2);
-  assert.equal(again.ended('t1' as never), false);
-  assert.equal(
-    new Transcript()
-      .prompted('go')
-      .apply(ended)
-      .ended('t1' as never),
-    true,
-  );
 });
 
 test('a transcript joined mid-turn learns the turn when it ends', () => {
@@ -327,46 +319,52 @@ test('the client sends commands as JSON and reports refusals by their code', asy
   ]);
 });
 
-test('a turn is matched to its record by id, or by its prompt where the ids differ', () => {
-  const ended = (turn: string, prompt: string, known: string[] = []) =>
-    new Transcript()
-      .prompted(prompt)
-      .apply(event({ kind: 'turn_started', turn }))
-      .knowing(known)
-      .apply(event({ kind: 'turn_ended', turn, end: { kind: 'completed' } }));
-  const excerpt = (text: string, omitted_chars = 0) => ({ text, omitted_chars });
-  // Codex: the live turn id is the recorded one.
-  assert.equal(
-    ended('t1', 'go').recordedIn([{ native_id: 't1', prompt: excerpt('something else') }]),
-    true,
+test('the stored conversation and the live feed merge into one, nothing cut', () => {
+  const long = 'a very long reply '.repeat(500);
+  const reply = (id: string, text: string) =>
+    event({
+      kind: 'item',
+      phase: 'completed',
+      item: { id, kind: 'agent_message', read: { as: 'reply', text } },
+    });
+  const prompt = (id: string, text: string) =>
+    event({
+      kind: 'item',
+      phase: 'completed',
+      item: { id, kind: 'user_message', read: { as: 'prompt', text } },
+    });
+  // Live, before the read lands: a prompt sent from here, its echo, and the
+  // next reply streaming.
+  const live = new Transcript()
+    .prompted('and the docs')
+    .apply(prompt('u2', 'and the docs'))
+    .apply(event({ kind: 'delta', item: 'm2', text: 'Upd' }));
+  const loaded = live.load({
+    entries: [
+      prompt('u1', 'fix the test'),
+      reply('m1', long),
+      event({ kind: 'turn_ended', turn: 't1', end: { kind: 'completed' } }),
+      prompt('u2', 'and the docs'),
+    ].map((event, index) => ({ run: run as never, seq: index + 1, event })),
+    earlier: false,
+  });
+  assert.equal(loaded.read, true);
+  assert.deepEqual(
+    loaded.entries.map((entry) => entry.kind),
+    ['prompt', 'message', 'turn_end', 'prompt', 'message'],
   );
-  // Claude Code: a new recorded turn carrying the prompt.
-  const claude = ended('live-1', 'fix the build', ['old']);
-  assert.equal(claude.recordedIn([{ native_id: 'old', prompt: excerpt('fix the build') }]), false);
-  assert.equal(
-    claude.recordedIn([
-      { native_id: 'old', prompt: excerpt('fix the build') },
-      { native_id: 'new', prompt: excerpt('fix the', 6) },
-    ]),
-    true,
+  assert.deepEqual(loaded.entries[1], { kind: 'message', item: 'm1', text: long, done: true });
+  // It goes on streaming and completes in place.
+  const done = loaded
+    .apply(event({ kind: 'delta', item: 'm2', text: 'ated.' }))
+    .apply(reply('m2', 'Updated.'));
+  assert.equal(done.entries.length, 5);
+  assert.equal(done.firstPrompt(), 'fix the test');
+  // Turns start at their prompts, all of them kept.
+  assert.deepEqual(
+    Runs.turns(done.entries).map((turn) => turn.length),
+    [3, 2],
   );
-  assert.equal(claude.recordedIn([{ native_id: 'new', prompt: excerpt('other') }]), false);
-  // A page that joined mid-turn, after the prompt: any turn new since it read.
-  const joined = new Transcript([], null, ['old']).apply(
-    event({ kind: 'turn_ended', turn: 'live-2', end: { kind: 'completed' } }),
-  );
-  assert.equal(joined.recordedIn([{ native_id: 'old', prompt: excerpt('x') }]), false);
-  assert.equal(joined.recordedIn([{ native_id: 'new', prompt: excerpt('x') }]), true);
-  // Nothing read yet: only an id can match.
-  const unread = new Transcript().apply(
-    event({ kind: 'turn_ended', turn: 'live-3', end: { kind: 'completed' } }),
-  );
-  assert.equal(unread.recordedIn([{ native_id: 'new', prompt: excerpt('x') }]), false);
-  // A turn still running is not replaced by its record.
-  const running = new Transcript()
-    .prompted('go')
-    .apply(event({ kind: 'turn_started', turn: 't2' }));
-  assert.equal(running.recordedIn([{ native_id: 't2', prompt: excerpt('go') }]), false);
 });
 
 test('an approval to use another tool says which, and only drivable clients resume', () => {

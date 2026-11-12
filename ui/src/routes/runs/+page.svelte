@@ -2,10 +2,9 @@
   import { onMount, tick } from 'svelte';
   import { SvelteMap } from 'svelte/reactivity';
   import { goto } from '$app/navigation';
-  import { ManagementApi, clock, short, type CallView, type TurnActivity } from '#lib/api.ts';
-  import { effectLabel, harnessLabel, resultBadge } from '#lib/activity.ts';
-  import { Board } from '#lib/board.ts';
-  import { callStatus, date, statusBadge, tokenSummary } from '#lib/display.ts';
+  import { ManagementApi, clock, short, type CallView } from '#lib/api.ts';
+  import { harnessLabel } from '#lib/activity.ts';
+  import { callStatus, statusBadge, tokenSummary } from '#lib/display.ts';
   import { getWorkbench } from '#lib/workbench.svelte.ts';
   import {
     Desk,
@@ -16,6 +15,7 @@
     runUpdate,
     type Decision,
     type DeskRun,
+    type Entry,
     type Drivable,
     type RunClient,
     type RunProject,
@@ -67,10 +67,8 @@
   const liveCount = $derived(live.filter((run) => run.state.phase !== 'ended').length);
 
   /** The selected run's recorded turns, oldest first, and the session they belong to. */
-  let history = $state.raw<{ run: RunId; session: string | null; turns: TurnActivity[] } | null>(
-    null,
-  );
-  let historyError = $state<string | null>(null);
+  /** Why the selected run's conversation could not be read. */
+  let readError = $state<string | null>(null);
 
   /** The projects the daemon offers to start a run in. */
   let offered = $state.raw<RunProject[]>([]);
@@ -140,14 +138,9 @@
     }
   }
 
-  /** What a run was asked first, when known here: its first recorded or live prompt. */
+  /** What a run was asked first, when its conversation is known here. */
   function title(run: DeskRun): string | null {
-    const recordedPrompt =
-      history?.run === run.run
-        ? (history.turns.find((turn) => turn.prompt)?.prompt?.text ?? null)
-        : null;
-    const live = transcripts.get(run.run)?.entries.find((entry) => entry.kind === 'prompt');
-    const text = recordedPrompt ?? (live?.kind === 'prompt' ? live.text : null);
+    const text = transcripts.get(run.run)?.firstPrompt() ?? null;
     return text ? text.split('\n')[0]!.trim() || null : null;
   }
 
@@ -189,48 +182,24 @@
   }
 
   /**
-   * Read the selected run's session turns, newest ten, oldest first. Returns
-   * whether the run's live turn, once ended, is now among them.
+   * Read the run's conversation, whole, as the daemon stored it, keeping
+   * what streamed in meanwhile; and its record, for its session.
    */
-  async function readHistory(run: RunId): Promise<boolean> {
+  async function readConversation(run: RunId) {
     try {
-      const stored = await client.recordedRun(run).catch(() => null);
-      const session = stored?.session ?? null;
+      const [stored, conversation] = await Promise.all([
+        client.recordedRun(run).catch(() => null),
+        client.conversation(run),
+      ]);
       if (stored) {
         recorded = recorded.some((entry) => entry.id === run)
           ? recorded.map((entry) => (entry.id === run ? stored : entry))
           : [stored, ...recorded];
       }
-      if (!session) {
-        if (selected === run) history = { run, session: null, turns: [] };
-        return false;
-      }
-      const listed = await api.turns(session as never, 10);
-      const turns = await Promise.all(listed.turns.map((turn) => api.turn(turn.turn)));
-      turns.reverse();
-      const live = transcripts.get(run);
-      const landed = live?.recordedIn(turns) ?? false;
-      if (selected !== run) return landed;
-      history = { run, session, turns };
-      historyError = null;
-      // A turn now recorded no longer needs its live copy.
-      if (landed) transcripts.set(run, new Transcript());
-      return landed;
+      transcripts.set(run, (transcripts.get(run) ?? new Transcript()).load(conversation));
+      if (selected === run) readError = null;
     } catch (error) {
-      if (selected === run) historyError = message(error);
-      return false;
-    }
-  }
-
-  /**
-   * A turn's record lands shortly after its calls finish: read the history
-   * again until it holds `turn`, for up to about fifteen seconds.
-   */
-  async function awaitRecorded(run: RunId) {
-    for (const delay of [500, 1000, 2000, 4000, 8000]) {
-      await new Promise((resolve) => setTimeout(resolve, delay));
-      if (selected !== run) return;
-      if (await readHistory(run)) return;
+      if (selected === run) readError = message(error);
     }
   }
 
@@ -344,25 +313,23 @@
   $effect(() => {
     // Keep the newest entry in view as the conversation grows.
     void transcript?.entries;
-    void history;
     if (!following || !conversation) return;
     void tick().then(() => conversation?.scrollTo({ top: conversation.scrollHeight }));
   });
 
   $effect(() => {
     const run = selected;
-    history = null;
-    historyError = null;
+    readError = null;
     calls = null;
     confirming = null;
     tab = 'conversation';
     following = true;
-    if (run) void readHistory(run);
+    if (run) void readConversation(run);
   });
 
   $effect(() => {
     // The Calls tab reads its session's calls when it opens.
-    const session = history?.session ?? null;
+    const session = current?.recorded?.session ?? null;
     if (tab === 'calls' && session && calls?.session !== session) void readCalls(session);
   });
 
@@ -404,16 +371,10 @@
         if (update.state.phase === 'ended' || update.state.phase === 'idle') void readRecorded();
         return;
       }
-      // What was recorded before this turn, to tell its record apart.
-      const read =
-        history?.run === update.run ? history.turns.map((turn) => turn.native_id as string) : null;
-      const before = transcripts.get(update.run) ?? new Transcript([], null, read);
-      let after = before.apply(update.event);
-      if (update.event.kind === 'turn_started' && read !== null) after = after.knowing(read);
-      transcripts.set(update.run, after);
-      if (update.event.kind === 'turn_ended' && update.run === selected) {
-        void awaitRecorded(update.run);
-      }
+      transcripts.set(
+        update.run,
+        (transcripts.get(update.run) ?? new Transcript()).apply(update.event),
+      );
     });
     return () => {
       source.close();
@@ -504,117 +465,99 @@
   </div>
 {/snippet}
 
-{#snippet recordedTurn(turn: TurnActivity)}
-  {@const workdir = Board.workdir(turn)}
-  <section class="turn">
-    {#if turn.prompt}<div class="entry prompt"><p>{turn.prompt.text}</p></div>{/if}
-    {#each turn.calls as call (call.call)}
-      {#each call.tool_calls as tool, index (tool.id ?? index)}
-        {@const badge = resultBadge(tool.result)}
-        <div class="entry tool">
-          <Icon name="tool" size={12} />
-          <span class="tool-name">{tool.name}</span>
-          <span class="tool-target mono"
-            >{#if tool.effects.length}{#each tool.effects as effect, effectIndex (effectIndex)}<span
-                  ><span class="muted">{effectLabel(effect.kind)}</span>
-                  {Board.shorten(effect.target, workdir)}</span
-                >{/each}{:else}{tool.input.text.split('\n')[0]}{/if}</span
-          >
-          <span class="chip {badge.tone}">{badge.label}</span>
-        </div>
-      {/each}
-      {#if call.reply?.text}<div class="entry reply"><Markdown text={call.reply.text} /></div>{/if}
-    {/each}
-    <div class="turn-foot">
-      <span>{turn.started_at ? `${date(turn.started_at)} ${clock(turn.started_at)}` : 'Turn'}</span>
-      <a href="/turns/{turn.turn}">Turn details <Icon name="arrow" size={11} /></a>
+{#snippet entryView(entry: Entry)}
+  {#if entry.kind === 'prompt'}
+    <div class="entry prompt"><p>{entry.text}</p></div>
+  {:else if entry.kind === 'message'}
+    <div class="entry reply" class:streaming={!entry.done}>
+      <Markdown text={entry.text} />
     </div>
-  </section>
-{/snippet}
-
-{#snippet activity()}
-  {@const steps = (history?.turns ?? []).map((turn) => ({
-    turn,
-    tools: turn.calls.flatMap((call) => call.tool_calls),
-  }))}
-  {#each steps as { turn, tools } (turn.turn)}
-    {#if tools.length}
-      <div class="band">{turn.prompt?.text.split('\n')[0] ?? 'Turn'}</div>
-      {#each tools as tool, index (tool.id ?? index)}
-        {@const badge = resultBadge(tool.result)}
-        <div class="entry tool">
-          <Icon name="tool" size={12} />
-          <span class="tool-name">{tool.name}</span>
-          <span class="tool-target mono"
-            >{#if tool.effects.length}{#each tool.effects as effect, effectIndex (effectIndex)}<span
-                  ><span class="muted">{effectLabel(effect.kind)}</span>
-                  {Board.shorten(effect.target, Board.workdir(turn))}</span
-                >{/each}{:else}{tool.input.text.split('\n')[0]}{/if}</span
-          >
-          <span class="chip {badge.tone}">{badge.label}</span>
-        </div>
-      {/each}
-    {/if}
-  {/each}
-  {#if transcript?.entries.some((entry) => entry.kind === 'command' || entry.kind === 'file_change' || entry.kind === 'tool')}
-    <div class="band">This turn</div>
-  {/if}
-  {#each transcript?.entries ?? [] as entry, index (index)}
-    {#if entry.kind === 'command'}
-      <div class="entry tool">
-        <Icon name="terminal" size={12} /><span class="tool-target mono">{entry.command}</span>
-        <span class="chip neutral"
+  {:else if entry.kind === 'reasoning'}
+    {#if !entry.done}<div class="entry tool muted">
+        <Icon name="thought" size={12} /> Thinking…
+      </div>{/if}
+  {:else if entry.kind === 'command'}
+    <details class="entry tool command">
+      <summary>
+        <Icon name="terminal" size={12} />
+        <span class="tool-target mono">{entry.command}</span>
+        <span
+          class="chip {entry.status === 'completed' && (entry.exit === 0 || entry.exit === null)
+            ? 'success'
+            : entry.status === 'in_progress'
+              ? 'live'
+              : entry.status === 'declined'
+                ? 'neutral'
+                : 'error'}"
           >{entry.status === 'in_progress'
             ? 'running'
             : entry.exit !== null
               ? `exit ${entry.exit}`
               : entry.status}</span
         >
-      </div>
-    {:else if entry.kind === 'file_change'}
-      <div class="entry tool">
-        <Icon name="pencil" size={12} /><span class="tool-target mono"
-          >{entry.paths.join(', ') || 'files'}</span
-        >
-      </div>
-    {:else if entry.kind === 'tool'}
-      <div class="entry tool">
-        <Icon name="tool" size={12} /><span class="tool-name">{entry.name}</span>
-      </div>
-    {/if}
-  {/each}
-  {#if !history?.turns.some( (turn) => turn.calls.some((call) => call.tool_calls.length) ) && !transcript?.entries.some((entry) => entry.kind === 'command' || entry.kind === 'file_change' || entry.kind === 'tool')}
-    <p class="quiet-empty">No steps yet.</p>
+      </summary>
+      {#if entry.output}<pre class="activity-pre">{entry.output}</pre>{/if}
+    </details>
+  {:else if entry.kind === 'file_change'}
+    <div class="entry tool">
+      <Icon name="pencil" size={12} />
+      <span class="tool-target mono">{entry.paths.join(', ') || 'files'}</span>
+      <span class="chip {entry.status === 'completed' ? 'success' : 'neutral'}"
+        >{entry.status === 'in_progress' ? 'editing' : entry.status}</span
+      >
+    </div>
+  {:else if entry.kind === 'tool'}
+    <div class="entry tool">
+      <Icon name="tool" size={12} /><span class="tool-name">{entry.name}</span>
+      {#if !entry.done}<span class="chip live">running</span>{/if}
+    </div>
+  {:else if entry.kind === 'turn_end'}
+    {#if entry.end.kind !== 'completed'}<p
+        class="entry notice-entry {entry.end.kind === 'interrupted' ? 'warn' : 'danger'}"
+      >
+        Turn {entry.end.kind === 'interrupted'
+          ? 'interrupted'
+          : entry.end.kind === 'failed'
+            ? `failed${entry.end.message ? `: ${entry.end.message}` : ''}`
+            : `ended: ${entry.end.status}`}
+      </p>{/if}
+  {:else if entry.kind === 'notice'}
+    <p class="entry notice-entry {entry.tone}">{entry.text}</p>
   {/if}
+{/snippet}
+
+{#snippet activity()}
+  {@const steps = Runs.turns(transcript?.entries ?? []).map((turn) => ({
+    prompt: turn[0]?.kind === 'prompt' ? turn[0].text : 'Turn',
+    steps: turn.filter(
+      (entry) => entry.kind === 'command' || entry.kind === 'file_change' || entry.kind === 'tool',
+    ),
+  }))}
+  {#each steps.filter((turn) => turn.steps.length) as turn, index (index)}
+    <div class="band">{turn.prompt.split('\n')[0]}</div>
+    {#each turn.steps as entry, step (step)}{@render entryView(entry)}{/each}
+  {:else}
+    <p class="quiet-empty">No steps yet.</p>
+  {/each}
 {/snippet}
 
 {#snippet files()}
   {@const written = [
-    ...new Set([
-      ...(history?.turns ?? []).flatMap((turn) => turn.files_written),
-      ...(transcript?.entries ?? []).flatMap((entry) =>
+    ...new Set(
+      (transcript?.entries ?? []).flatMap((entry) =>
         entry.kind === 'file_change' ? entry.paths : [],
       ),
-    ]),
+    ),
   ]}
-  {@const read = [...new Set((history?.turns ?? []).flatMap((turn) => turn.files_read))].filter(
-    (path) => !written.includes(path),
-  )}
   <div class="band">Written <span class="count">{written.length}</span></div>
   {#each written as path (path)}<div class="entry tool mono">
       <Icon name="pencil" size={11} />
       {path}
     </div>{:else}<p class="quiet-empty">Nothing written yet.</p>{/each}
-  <div class="band">Read <span class="count">{read.length}</span></div>
-  {#each read as path (path)}<div class="entry tool mono muted">{path}</div>{:else}<p
-      class="quiet-empty"
-    >
-      Nothing read yet.
-    </p>{/each}
 {/snippet}
 
 {#snippet callList()}
-  {#if !history?.session}
+  {#if !current?.recorded?.session}
     <p class="quiet-empty">No calls recorded yet.</p>
   {:else if !calls}
     <p class="quiet-empty">Reading calls…</p>
@@ -643,7 +586,7 @@
         {/each}
       </tbody>
     </table>
-    <a class="foot-link" href="/sessions/{history.session}"
+    <a class="foot-link" href="/sessions/{current.recorded.session}"
       >Open the session <Icon name="arrow" size={11} /></a
     >
   {/if}
@@ -712,8 +655,9 @@
         {#if exitText(current)}<span class="muted mono">{exitText(current)}</span>{/if}
         <span class="muted">{harnessLabel(current.harness)} · run {short(current.run)}</span>
         <span class="run-actions">
-          {#if history?.session}<a class="text-button" href="/sessions/{history.session}"
-              >Calls <Icon name="arrow" size={11} /></a
+          {#if current.recorded?.session}<a
+              class="text-button"
+              href="/sessions/{current.recorded.session}">Calls <Icon name="arrow" size={11} /></a
             >{/if}
           {#if data.runsControl && controls.interrupt}<button
               class="button small"
@@ -777,79 +721,22 @@
 
       {#if tab === 'conversation'}
         <div class="conversation" bind:this={conversation} onscroll={onScroll}>
-          {#if historyError}<p class="entry notice-entry danger">{historyError}</p>{/if}
-          {#each history?.turns ?? [] as turn (turn.turn)}{@render recordedTurn(turn)}{/each}
-          {#if transcript?.entries.length || runState.phase === 'working'}<section class="turn">
-              {#each transcript?.entries ?? [] as entry, index (index)}
-                {#if entry.kind === 'prompt'}
-                  <div class="entry prompt"><p>{entry.text}</p></div>
-                {:else if entry.kind === 'message'}
-                  <div class="entry reply" class:streaming={!entry.done}>
-                    <Markdown text={entry.text} />
-                  </div>
-                {:else if entry.kind === 'reasoning'}
-                  {#if !entry.done}<div class="entry tool muted">
-                      <Icon name="thought" size={12} /> Thinking…
-                    </div>{/if}
-                {:else if entry.kind === 'command'}
-                  <details class="entry tool command">
-                    <summary>
-                      <Icon name="terminal" size={12} />
-                      <span class="tool-target mono">{entry.command}</span>
-                      <span
-                        class="chip {entry.status === 'completed' &&
-                        (entry.exit === 0 || entry.exit === null)
-                          ? 'success'
-                          : entry.status === 'in_progress'
-                            ? 'live'
-                            : entry.status === 'declined'
-                              ? 'neutral'
-                              : 'error'}"
-                        >{entry.status === 'in_progress'
-                          ? 'running'
-                          : entry.exit !== null
-                            ? `exit ${entry.exit}`
-                            : entry.status}</span
-                      >
-                    </summary>
-                    {#if entry.output}<pre class="activity-pre">{entry.output}</pre>{/if}
-                  </details>
-                {:else if entry.kind === 'file_change'}
-                  <div class="entry tool">
-                    <Icon name="pencil" size={12} />
-                    <span class="tool-target mono">{entry.paths.join(', ') || 'files'}</span>
-                    <span class="chip {entry.status === 'completed' ? 'success' : 'neutral'}"
-                      >{entry.status === 'in_progress' ? 'editing' : entry.status}</span
-                    >
-                  </div>
-                {:else if entry.kind === 'tool'}
-                  <div class="entry tool">
-                    <Icon name="tool" size={12} /><span class="tool-name">{entry.name}</span>
-                    {#if !entry.done}<span class="chip live">running</span>{/if}
-                  </div>
-                {:else if entry.kind === 'turn_end'}
-                  {#if entry.end.kind !== 'completed'}<p
-                      class="entry notice-entry {entry.end.kind === 'interrupted'
-                        ? 'warn'
-                        : 'danger'}"
-                    >
-                      Turn {entry.end.kind === 'interrupted'
-                        ? 'interrupted'
-                        : entry.end.kind === 'failed'
-                          ? `failed${entry.end.message ? `: ${entry.end.message}` : ''}`
-                          : `ended: ${entry.end.status}`}
-                    </p>{/if}
-                {:else if entry.kind === 'notice'}
-                  <p class="entry notice-entry {entry.tone}">{entry.text}</p>
-                {/if}
-              {/each}
-              {#if runState.phase === 'working' && !controls.approvals.length}<div
-                  class="entry tool muted working"
-                >
-                  <span class="phase-dot tone-live"></span> Working…
-                </div>{/if}
-            </section>{/if}
-          {#if !history?.turns.length && !transcript?.entries.length && runState.phase === 'idle'}
+          {#if readError}<p class="entry notice-entry danger">{readError}</p>{/if}
+          {#if transcript?.earlier}<p class="quiet-empty">
+              Earlier turns are not shown: the conversation is longer than one read.
+            </p>{/if}
+          <!-- The whole conversation, every turn open, as one scroll. -->
+          {#each Runs.turns(transcript?.entries ?? []) as turn, index (index)}
+            <section class="turn">
+              {#each turn as entry, at (at)}{@render entryView(entry)}{/each}
+            </section>
+          {/each}
+          {#if runState.phase === 'working' && !controls.approvals.length}<div
+              class="entry tool muted working"
+            >
+              <span class="phase-dot tone-live"></span> Working…
+            </div>{/if}
+          {#if transcript?.read && !transcript.entries.length && runState.phase === 'idle'}
             <p class="quiet-empty">The conversation is open. Say what to do.</p>
           {/if}
         </div>
@@ -1121,25 +1008,6 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-  }
-  .tool-target > span + span::before {
-    content: ' · ';
-    color: var(--muted);
-  }
-  .turn-foot {
-    display: flex;
-    justify-content: space-between;
-    padding: 6px 16px;
-    border-top: 1px solid var(--line-subtle);
-    background: var(--sidebar);
-    font-size: 11px;
-    color: var(--muted);
-  }
-  .turn-foot a {
-    color: var(--muted);
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
   }
   .notice-entry {
     margin: 0;

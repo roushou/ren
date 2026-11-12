@@ -7,7 +7,6 @@ import {
   API_VERSION,
   SessionId,
   versioned,
-  type Excerpt,
   type Harness,
   type NativeThreadId,
   type NativeTurnId,
@@ -17,8 +16,10 @@ import {
   Uuid,
   array,
   assertNever,
+  boolean,
   branded,
   brandedCount,
+  count,
   isRecord,
   label,
   nullable,
@@ -436,6 +437,18 @@ const runClients = versioned(
 );
 const started = versioned(object<{ run: RunId }>({ run: RunId.decode }));
 const versionedRecordedRun = versioned(recordedRun);
+const storedConversation = versioned(
+  object<StoredConversation>({
+    entries: array(
+      object<StoredConversation['entries'][number]>({
+        run: RunId.decode,
+        seq: count,
+        event: (value, path) => driveEvent(value, path),
+      }),
+    ),
+    earlier: boolean,
+  }),
+);
 
 /** Why the daemon or this UI server refused a run command, by its error code. */
 export class RunCommandError extends Error {
@@ -563,6 +576,16 @@ export class RunsClient {
       await this.#send('GET', `/api/runs?limit=${limit}${query}`, undefined, recordedRuns, signal)
     ).runs;
   }
+  /** A run's conversation, whole, as the daemon stored it. */
+  async conversation(run: RunId, signal?: AbortSignal): Promise<StoredConversation> {
+    return this.#send(
+      'GET',
+      `/api/runs/${run}/conversation`,
+      undefined,
+      storedConversation,
+      signal,
+    );
+  }
   async recordedRun(run: RunId, signal?: AbortSignal): Promise<RecordedRun> {
     return this.#send('GET', `/api/runs/${run}`, undefined, versionedRecordedRun, signal);
   }
@@ -605,9 +628,9 @@ export class RunsClient {
   }
 }
 
-/** One entry of a run's live conversation, built from its events. */
+/** One entry of a run's conversation, built from its events. */
 export type Entry =
-  | { kind: 'prompt'; text: string }
+  | { kind: 'prompt'; item: ItemId | null; text: string }
   | { kind: 'message'; item: ItemId; text: string; done: boolean }
   | { kind: 'reasoning'; item: ItemId; done: boolean }
   | {
@@ -620,137 +643,127 @@ export type Entry =
     }
   | { kind: 'file_change'; item: ItemId; paths: string[]; status: string }
   | { kind: 'tool'; item: ItemId; name: string; done: boolean }
-  | { kind: 'turn_end'; end: TurnEnd }
+  | { kind: 'turn_end'; turn: NativeTurnId; end: TurnEnd }
   | { kind: 'notice'; tone: 'warn' | 'danger'; text: string };
 
-/** The newest entries a conversation keeps; older ones are in the recorded history. */
-const KEPT_ENTRIES = 400;
+/** A run's conversation as the daemon stored it (`/api/runs/{id}/conversation`). */
+export interface StoredConversation {
+  entries: { run: RunId; seq: number; event: DriveEvent }[];
+  /** Older entries were left out of the read. */
+  earlier: boolean;
+}
 
 /**
- * A run's conversation as it happens, since this page started following it.
- * The recorded turns are the durable record; this is what streams in between.
+ * A run's conversation, whole: read once from what the daemon stored of it
+ * (every turn of the run, and of the runs before it on its thread), then kept
+ * current by the run feed. Both say the same events, so they merge by what
+ * each entry is: an item by its id, a turn's end by its turn, anything else by
+ * what it says. Nothing is cut, and nothing gives way to a shorter copy.
  */
 export class Transcript {
   readonly entries: Entry[];
-  /** The turn the newest entries belong to, once the agent named it. */
+  /** The turn the newest entries belong to, once the client named it. */
   readonly turn: NativeTurnId | null;
-  /**
-   * Recorded turns already read when this turn started, by native id; null
-   * when the page has not read them.
-   */
-  readonly known: readonly string[] | null;
+  /** Whether what the daemon stored has been read. */
+  readonly read: boolean;
+  /** Older entries were left out of the read. */
+  readonly earlier: boolean;
 
   constructor(
     entries: Entry[] = [],
     turn: NativeTurnId | null = null,
-    known: readonly string[] | null = null,
+    read = false,
+    earlier = false,
   ) {
     this.entries = entries;
     this.turn = turn;
-    this.known = known;
+    this.read = read;
+    this.earlier = earlier;
   }
 
-  /** The recorded turns read when the current turn started. */
-  knowing(known: readonly string[]): Transcript {
-    return new Transcript(this.entries, this.turn, known);
+  /** What the daemon stored, with what streamed in meanwhile kept. */
+  load(stored: StoredConversation): Transcript {
+    let loaded = new Transcript();
+    for (const entry of stored.entries) loaded = loaded.apply(entry.event);
+    const entries = loaded.entries.slice();
+    for (const live of this.entries) {
+      const at = entries.findIndex((entry) => Transcript.same(entry, live));
+      if (at === -1) entries.push(live);
+      else if (Transcript.done(live) && !Transcript.done(entries[at]!)) entries[at] = live;
+    }
+    return new Transcript(entries, this.turn ?? loaded.turn, true, stored.earlier);
   }
 
-  /**
-   * Whether the turn that just ended is now among `turns`, the recorded
-   * ones: by its id where the client names its turns the same live and on
-   * the wire (Codex), or else (Claude Code) as a recorded turn that was not
-   * there when it started and carries its prompt, or any such turn when this
-   * page joined after the prompt was sent.
-   */
-  recordedIn(turns: readonly { native_id: string; prompt: Excerpt | null }[]): boolean {
-    const turn = this.turn;
-    if (turn === null || !this.ended(turn)) return false;
-    if (turns.some((recorded) => recorded.native_id === turn)) return true;
-    const known = this.known;
-    if (known === null) return false;
-    const prompt = this.#endedPrompt();
-    return turns.some(
-      (recorded) =>
-        !known.includes(recorded.native_id) &&
-        (prompt === null ||
-          (recorded.prompt !== null &&
-            (recorded.prompt.omitted_chars > 0
-              ? prompt.startsWith(recorded.prompt.text)
-              : prompt === recorded.prompt.text))),
-    );
+  /** The prompt the operator just sent; the client's echo of it is the same prompt. */
+  prompted(text: string): Transcript {
+    return this.#push({ kind: 'prompt', item: null, text });
   }
 
-  /** The prompt of the turn the transcript ends with. */
-  #endedPrompt(): string | null {
-    const last = this.entries.length - 1;
-    const previous = this.entries.findLastIndex(
-      (entry, index) => index < last && entry.kind === 'turn_end',
-    );
-    const prompt = this.entries
-      .slice(previous + 1, last)
-      .findLast((entry) => entry.kind === 'prompt');
+  /** The first prompt shown, to name the run by. */
+  firstPrompt(): string | null {
+    const prompt = this.entries.find((entry) => entry.kind === 'prompt');
     return prompt?.kind === 'prompt' ? prompt.text : null;
   }
 
-  /**
-   * The prompt the operator just sent. The agent's echo of it may arrive
-   * first, over the update feed, so the current turn shows it once.
-   */
-  prompted(text: string): Transcript {
-    if (this.#prompts().includes(text)) return this;
-    return this.#with([...this.entries, { kind: 'prompt', text }], this.turn);
+  static #itemOf(entry: Entry): ItemId | null {
+    return 'item' in entry ? entry.item : null;
   }
 
-  /** The prompts shown since the last turn ended. */
-  #prompts(): string[] {
-    const start = this.entries.findLastIndex((entry) => entry.kind === 'turn_end') + 1;
-    return this.entries
-      .slice(start)
-      .flatMap((entry) => (entry.kind === 'prompt' ? [entry.text] : []));
+  static done(entry: Entry): boolean {
+    switch (entry.kind) {
+      case 'message':
+      case 'reasoning':
+      case 'tool':
+        return entry.done;
+      case 'command':
+      case 'file_change':
+        return entry.status !== 'in_progress';
+      case 'prompt':
+      case 'turn_end':
+      case 'notice':
+        return true;
+      default:
+        return assertNever(entry);
+    }
   }
 
-  /** Whether `turn` ended in this transcript. */
-  ended(turn: NativeTurnId): boolean {
-    return this.turn === turn && this.entries.at(-1)?.kind === 'turn_end';
+  /** Whether `one` and `two` are the same entry, said twice. */
+  static same(one: Entry, two: Entry): boolean {
+    const [first, second] = [Transcript.#itemOf(one), Transcript.#itemOf(two)];
+    if (first !== null && second !== null) return first === second;
+    if (one.kind === 'turn_end' && two.kind === 'turn_end') return one.turn === two.turn;
+    if (one.kind === 'prompt' && two.kind === 'prompt') return one.text === two.text;
+    return JSON.stringify(one) === JSON.stringify(two);
   }
 
   apply(event: DriveEvent): Transcript {
     switch (event.kind) {
       case 'turn_started':
-        return new Transcript(this.entries, event.turn, this.known);
+        return new Transcript(this.entries, event.turn, this.read, this.earlier);
       case 'delta': {
         const index = this.#find(event.item);
         const entry = index === -1 ? undefined : this.entries[index];
         if (entry?.kind === 'message') {
           return this.#replace(index, { ...entry, text: entry.text + event.text });
         }
-        return this.#with(
-          [...this.entries, { kind: 'message', item: event.item, text: event.text, done: false }],
-          this.turn,
-        );
+        return this.#push({ kind: 'message', item: event.item, text: event.text, done: false });
       }
       case 'item':
         return this.#item(event.item, event.phase === 'completed');
       case 'turn_ended':
-        // A page opened mid-turn learns the turn here.
-        return this.#with([...this.entries, { kind: 'turn_end', end: event.end }], event.turn);
+        return new Transcript(this.entries, event.turn, this.read, this.earlier).#push({
+          kind: 'turn_end',
+          turn: event.turn,
+          end: event.end,
+        });
       case 'error':
-        return this.#with(
-          [
-            ...this.entries,
-            {
-              kind: 'notice',
-              tone: event.retry === 'will_retry' ? 'warn' : 'danger',
-              text: event.retry === 'will_retry' ? `${event.message} (retrying)` : event.message,
-            },
-          ],
-          this.turn,
-        );
+        return this.#append({
+          kind: 'notice',
+          tone: event.retry === 'will_retry' ? 'warn' : 'danger',
+          text: event.retry === 'will_retry' ? `${event.message} (retrying)` : event.message,
+        });
       case 'refused':
-        return this.#with(
-          [...this.entries, { kind: 'notice', tone: 'danger', text: event.message }],
-          this.turn,
-        );
+        return this.#append({ kind: 'notice', tone: 'danger', text: event.message });
       case 'ready':
       case 'approval':
       case 'approval_resolved':
@@ -768,11 +781,7 @@ export class Transcript {
     let entry: Entry | null;
     switch (read.as) {
       case 'prompt':
-        // The operator's prompt, which `prompted` usually showed already.
-        entry =
-          read.text === '' || this.#prompts().includes(read.text)
-            ? null
-            : { kind: 'prompt', text: read.text };
+        entry = read.text === '' ? null : { kind: 'prompt', item: item.id, text: read.text };
         break;
       case 'reply': {
         const index = this.#find(item.id);
@@ -809,25 +818,42 @@ export class Transcript {
       default:
         return assertNever(read);
     }
-    if (entry === null) return this;
-    const index = this.#find(item.id);
-    return index === -1
-      ? this.#with([...this.entries, entry], this.turn)
-      : this.#replace(index, entry);
+    return entry === null ? this : this.#push(entry);
   }
 
   #find(item: ItemId): number {
-    return this.entries.findLastIndex((entry) => 'item' in entry && entry.item === item);
+    return this.entries.findLastIndex((entry) => Transcript.#itemOf(entry) === item);
   }
 
   #replace(index: number, entry: Entry): Transcript {
     const entries = this.entries.slice();
     entries[index] = entry;
-    return new Transcript(entries, this.turn, this.known);
+    return new Transcript(entries, this.turn, this.read, this.earlier);
   }
 
-  #with(entries: Entry[], turn: NativeTurnId | null): Transcript {
-    return new Transcript(entries.slice(-KEPT_ENTRIES), turn, this.known);
+  #append(entry: Entry): Transcript {
+    return new Transcript([...this.entries, entry], this.turn, this.read, this.earlier);
+  }
+
+  /**
+   * Add `entry`, or put it in the place of the same entry said before. A
+   * prompt sent from here and echoed by the client is one prompt, in the
+   * current turn.
+   */
+  #push(entry: Entry): Transcript {
+    const start =
+      entry.kind === 'prompt'
+        ? this.entries.findLastIndex((shown) => shown.kind === 'turn_end') + 1
+        : 0;
+    const at = this.entries.findLastIndex(
+      (shown, index) => index >= start && Transcript.same(shown, entry),
+    );
+    if (at === -1) return this.#append(entry);
+    const shown = this.entries[at]!;
+    // A prompt sent from here is named by the client's echo, not replaced by a resend.
+    if (entry.kind === 'prompt' && entry.item === null) return this;
+    if (shown.kind === 'prompt' && entry.kind === 'prompt' && entry.item === null) return this;
+    return this.#replace(at, entry);
   }
 }
 
@@ -847,6 +873,16 @@ export interface PhaseMark {
 }
 
 export class Runs {
+  /** A conversation's turns: each starts at its prompt. */
+  static turns(entries: readonly Entry[]): Entry[][] {
+    const turns: Entry[][] = [];
+    for (const entry of entries) {
+      if (entry.kind === 'prompt' || turns.length === 0) turns.push([]);
+      turns.at(-1)!.push(entry);
+    }
+    return turns;
+  }
+
   static controls(state: RunState): RunControls {
     switch (state.phase) {
       case 'idle':
