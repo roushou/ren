@@ -12,7 +12,7 @@ use ren_protocol::label::Stored;
 use ren_protocol::native::NativeThreadId;
 use ren_recorder::{
     capture::{ProcessExit, RunEnd},
-    id::RunId,
+    id::{RunId, SessionId},
     time::UnixMillis,
 };
 use ren_store::view::RunView;
@@ -35,6 +35,8 @@ pub enum Attention {
 #[derive(Debug, Clone)]
 pub struct Run {
     pub id: RunId,
+    /// The session the run serves, once the daemon said.
+    pub session: Option<SessionId>,
     pub harness: Stored<Harness>,
     pub workdir: String,
     /// When it was seen first: for a stable order among equals.
@@ -54,6 +56,7 @@ impl Run {
     pub fn new(id: RunId, harness: Stored<Harness>, workdir: String, seen: u64) -> Self {
         Self {
             id,
+            session: None,
             harness,
             workdir,
             seen,
@@ -365,6 +368,7 @@ impl Desk {
             run.workdir = snapshot.workdir.to_string_lossy().into_owned();
             run.live = Some(snapshot.state.clone());
             run.settings = Some(snapshot.settings.clone());
+            run.session = Some(snapshot.session);
         }
     }
 
@@ -379,6 +383,9 @@ impl Desk {
                 Run::new(view.id, view.harness.clone(), view.workdir.clone(), seen)
             });
             run.started_at = Some(view.started_at);
+            if let Some(session) = view.operator_session {
+                run.session = Some(session);
+            }
             run.recorded = Some(view);
         }
     }
@@ -407,10 +414,38 @@ impl Desk {
         folders
     }
 
-    /// Every run: what needs you first, then the newest ended ones.
+    /// Whether a newer run serves `run`'s session: the session is shown by
+    /// its newest run, whose conversation holds the earlier ones'.
+    pub fn superseded(&self, run: &Run) -> bool {
+        self.newest(run).is_some_and(|newest| newest != run.id)
+    }
+
+    /// The newest run of `run`'s session: one still running, else the one
+    /// that started last.
+    pub fn newest(&self, run: &Run) -> Option<RunId> {
+        let session = run.session?;
+        self.runs
+            .iter()
+            .filter(|other| other.session == Some(session))
+            .max_by(|a, b| {
+                let running = |run: &Run| run.attention() != Attention::Ended;
+                running(a)
+                    .cmp(&running(b))
+                    .then(a.started_at.cmp(&b.started_at))
+                    .then(a.seen.cmp(&b.seen))
+            })
+            .map(|newest| newest.id)
+    }
+
+    /// Every session, by its newest run: what needs you first, then the
+    /// newest ended ones.
     pub fn all(&self) -> Vec<&Run> {
         const ENDED: usize = 20;
-        let mut all: Vec<&Run> = self.runs.iter().collect();
+        let mut all: Vec<&Run> = self
+            .runs
+            .iter()
+            .filter(|run| !self.superseded(run))
+            .collect();
         all.sort_by(|a, b| {
             a.attention()
                 .cmp(&b.attention())

@@ -3,8 +3,8 @@
 //! recorded turns, run as the terminal runs them: a [`Tui`]. No daemon, no
 //! terminal. Screens are pinned as text in `tests/fixtures`.
 
-use super::main::Item;
 use super::main::Mode;
+use super::main::{Grouping, Item, Listing};
 use crate::{Answered, Command, Input, Key, Out, Read, Size, Theme, Tui};
 use ratatui::{buffer::Buffer, layout::Rect};
 use ren_harness::{
@@ -905,6 +905,33 @@ fn writing_to_an_ended_run_continues_its_conversation() {
             settings: ren_harness::settings::RunSettings::default(),
         }]
     );
+}
+
+#[test]
+fn writing_to_a_session_whose_client_stopped_continues_the_session() {
+    let mut console = Console::new(SIZE);
+    let session = ren_recorder::id::SessionId::restore(uuid::Uuid::from_u128(0x5505));
+    let mut ended = recorded(5, "/srv/ren", None);
+    ended.ended_at = Some(UnixMillis::from_millis(2000));
+    ended.operator_session = Some(session);
+    let _ = console.apply(Input::Recorded(vec![ended]));
+    let _ = console.apply(Input::Runs(Ok(vec![])));
+    assert_eq!(console.current(), Some(run_id(5)));
+    assert_eq!(
+        sent(&console.write("pick it back up")),
+        [Command::Continue {
+            session,
+            prompt: Prompt::parse("pick it back up".into()).unwrap(),
+        }]
+    );
+    // Its new client is the session's newest run: the list shows the
+    // session once, by it, and the selection follows.
+    let mut resumed = snapshot(6, Harness::ClaudeCode, "/srv/ren", working(6));
+    resumed.session = session;
+    let _ = console.apply(Input::Runs(Ok(vec![resumed])));
+    assert_eq!(console.current(), Some(run_id(6)));
+    let listed = Listing::of(&console.tui.model, "", Grouping::Folder).items();
+    assert_eq!(listed, [Item::Run(run_id(6))]);
 }
 
 #[test]

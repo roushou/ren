@@ -608,6 +608,9 @@ pub struct RunView {
     /// The session whose calls name the run's thread as their session: the
     /// run's model traffic, once a call was recorded.
     pub session: Option<RecordingId>,
+    /// The operator session the run served; `None` for a run recorded
+    /// before sessions were, until the migration gave it one.
+    pub operator_session: Option<SessionId>,
     pub ended_at: Option<UnixMillis>,
     /// How the run ended; `None` while it runs.
     pub end: Option<Stored<RunEnd>>,
@@ -623,7 +626,7 @@ pub struct RunView {
 }
 
 impl RunView {
-    pub(super) const SELECT: &'static str = "SELECT id, harness, workdir, started_at, thread, ended_at, run_end, exit_kind, exit_value, archived_at, model, effort, approvals, (SELECT sessions.id FROM sessions WHERE sessions.native_id = runs.thread ORDER BY sessions.first_seen, sessions.id LIMIT 1) AS session FROM runs";
+    pub(super) const SELECT: &'static str = "SELECT id, operator_session, harness, workdir, started_at, thread, ended_at, run_end, exit_kind, exit_value, archived_at, model, effort, approvals, (SELECT sessions.id FROM sessions WHERE sessions.native_id = runs.thread ORDER BY sessions.first_seen, sessions.id LIMIT 1) AS session FROM runs";
 
     pub(super) fn from_row(row: &SqliteRow) -> Result<Self, StoreError> {
         let row = Columns(row);
@@ -642,6 +645,7 @@ impl RunView {
             started_at: row.time("started_at")?,
             thread: row.text("thread")?,
             session: row.optional_id("session")?,
+            operator_session: row.optional_id("operator_session")?,
             ended_at: row.optional_time("ended_at")?,
             end: row.optional_label("run_end")?,
             exit,

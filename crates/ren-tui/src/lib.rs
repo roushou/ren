@@ -38,7 +38,7 @@ use ui::View;
 /// The app over one gateway.
 #[derive(Debug)]
 pub struct Tui {
-    model: Model,
+    pub(crate) model: Model,
     /// The main screen.
     main: Screen,
     /// Screens open over it, the newest last.

@@ -320,6 +320,17 @@ impl Main {
             self.select(Item::Run(*run));
             self.focus = Focus::Session;
         }
+        // A session that got a new run is shown by it: the selection follows.
+        if let Some(Item::Run(run)) = self.selected
+            && let Some(newest) = ctx
+                .model
+                .desk
+                .get(run)
+                .and_then(|run| ctx.model.desk.newest(run))
+            && newest != run
+        {
+            self.select(Item::Run(newest));
+        }
         let listing = Listing::of(ctx.model, &self.filter, self.grouping);
         let lost = self
             .selected
@@ -972,6 +983,7 @@ impl Main {
             (Some(_) | None, Some(_) | None) => None,
         };
         let queued = run.queued().map(|queued| queued.as_str().to_owned());
+        let session = run.session;
         let steers = run
             .harness()
             .is_some_and(|harness| Midway::offered(harness).contains(&Midway::Steer));
@@ -1013,15 +1025,17 @@ impl Main {
                     ]
                 }
             },
-            Attention::Ended => match resume {
-                Some((harness, dir, resume)) => vec![Action::Send(ctx.model.start(
+            // The same session goes on: its client starts again and resumes.
+            Attention::Ended => match (session, resume) {
+                (Some(session), _) => vec![Action::Send(Command::Continue { session, prompt })],
+                (None, Some((harness, dir, resume))) => vec![Action::Send(ctx.model.start(
                     harness,
                     Some(dir),
                     resume,
                     Some(prompt),
                     settings,
                 ))],
-                None => vec![Action::Say(Notice::info(
+                (None, None) => vec![Action::Say(Notice::info(
                     "this run ended before it opened a conversation: n starts another",
                 ))],
             },

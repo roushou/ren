@@ -552,6 +552,10 @@ impl<'a> Shell<'a> {
                 format!("runs/{run}/prompt"),
                 Some(serde_json::json!({ "text": prompt.as_str(), "delivery": delivery })),
             ),
+            Command::Continue { session, prompt } => (
+                format!("sessions/{session}/prompt"),
+                Some(serde_json::json!({ "text": prompt.as_str(), "delivery": "start" })),
+            ),
             Command::Unqueue(run) => (format!("runs/{run}/unqueue"), None),
             Command::Answer {
                 run,

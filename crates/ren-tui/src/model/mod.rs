@@ -28,7 +28,7 @@ use ren_protocol::label::{Labeled, Stored};
 use ren_protocol::native::NativeThreadId;
 use ren_recorder::Observation;
 use ren_recorder::batch::{HistoryChange, HistorySubject};
-use ren_recorder::id::{CallId, RunId, TurnId};
+use ren_recorder::id::{CallId, RunId, SessionId, TurnId};
 use ren_recorder::progress::Progress;
 use ren_store::activity::{CallActivity, TurnActivity};
 use ren_store::view::{ConversationView, RunView};
@@ -140,6 +140,12 @@ pub enum Command {
         prompt: Prompt,
         /// Start a turn, queue it for after the running one, or steer it.
         delivery: Delivery,
+    },
+    /// Write to a session whose client no longer runs: the daemon starts
+    /// one that resumes its conversation, in the same session.
+    Continue {
+        session: SessionId,
+        prompt: Prompt,
     },
     /// Take back the prompt queued for after the running turn.
     Unqueue(RunId),
