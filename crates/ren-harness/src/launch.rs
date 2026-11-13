@@ -5,6 +5,7 @@ use crate::{
     drive::Opening,
     endpoint::{GatewayEndpoint, UserToken},
     host::HostEnv,
+    opencode::{OpenCodeAcp, OpenCodeModels},
     pi::{PiCache, PiCacheError, PiModels, PiRpc},
 };
 use serde::Serialize;
@@ -129,13 +130,13 @@ impl Harness {
             Self::Codex => Ok("codex"),
             Self::ClaudeCode => Ok("claude"),
             Self::Pi => Ok("pi"),
-            Self::OpenCode => Err(NotDrivable(self)),
+            Self::OpenCode => Ok("opencode"),
         }
     }
 
     /// How to start this harness in its structured mode, driven by Ren
     /// through `drive`, with its model traffic sent to `gateway`. The client
-    /// keeps its own sign-in. Codex, Claude Code, and Pi can be driven so far.
+    /// keeps its own sign-in. OpenCode is driven through its ACP mode.
     pub fn drive(
         self,
         gateway: &GatewayEndpoint,
@@ -190,7 +191,16 @@ impl Harness {
                     .extend(arguments.into_iter().map(LaunchArg::Literal));
                 Ok(plan)
             }
-            Self::OpenCode => Err(NotDrivable(self)),
+            Self::OpenCode => Ok(match mode {
+                Structured::Conversation(opening) => LaunchPlan::opencode_driven(
+                    gateway,
+                    opening.settings().approvals,
+                    OpenCodeAcp::arguments(),
+                ),
+                Structured::Listing => {
+                    LaunchPlan::opencode_driven(gateway, None, OpenCodeModels::arguments())
+                }
+            }),
         }
     }
 
@@ -325,6 +335,46 @@ mod tests {
         }
     }
 
+    /// opencode is driven in its ACP mode through the same provider
+    /// override as a launched session, which also carries the run's approval
+    /// policy as permission rules.
+    #[test]
+    fn drives_opencode_over_acp_with_its_policy_as_permission_rules() {
+        let gateway = GatewayEndpoint::parse("http://127.0.0.1:8787").unwrap();
+        let config = |plan: &super::LaunchPlan| -> serde_json::Value {
+            serde_json::from_str(plan.environment[super::LaunchPlan::OPENCODE_CONFIG].expose())
+                .unwrap()
+        };
+        let driven = Harness::OpenCode.drive(&gateway, &opening()).unwrap();
+        let command = driven.command(None, &[]);
+        assert_eq!(command.get_program(), "opencode");
+        assert_eq!(command.get_args().collect::<Vec<_>>(), ["acp"]);
+        // Without a policy: the launched session's override, nothing more.
+        assert_eq!(config(&driven), config(&Harness::OpenCode.launch(&gateway)));
+        let asking = Opening::New {
+            cwd: "/work/acme".into(),
+            id: NativeThreadId::new(uuid::Uuid::parse_str(SESSION).unwrap()).unwrap(),
+            settings: crate::settings::RunSettings {
+                approvals: Some(crate::settings::ApprovalPolicy::Edits),
+                ..crate::settings::RunSettings::default()
+            },
+        };
+        let driven = config(&Harness::OpenCode.drive(&gateway, &asking).unwrap());
+        assert_eq!(
+            driven["permissions"],
+            serde_json::json!([{ "action": "shell", "resource": "*", "effect": "ask" }])
+        );
+        assert_eq!(
+            driven["provider"]["anthropic"]["options"]["baseURL"],
+            "http://127.0.0.1:8787/anthropic/v1"
+        );
+        let listing = Harness::OpenCode.list_models(&gateway).unwrap();
+        assert_eq!(
+            listing.command(None, &[]).get_args().collect::<Vec<_>>(),
+            ["acp"]
+        );
+    }
+
     #[test]
     fn drives_codex_app_server_over_stdio_through_the_gateway() {
         let gateway = GatewayEndpoint::parse("http://127.0.0.1:8787").unwrap();
@@ -340,14 +390,7 @@ mod tests {
         let overrides: Vec<_> = interactive.get_args().skip(1).collect();
         assert_eq!(arguments[3..], overrides[..]);
         assert_eq!(command.get_envs().count(), 0);
-        assert_eq!(
-            Harness::OpenCode.drive(&gateway, &opening()).err(),
-            Some(super::NotDrivable(Harness::OpenCode))
-        );
-        assert_eq!(
-            Harness::OpenCode.driven_program(),
-            Err(super::NotDrivable(Harness::OpenCode))
-        );
+        assert_eq!(Harness::OpenCode.driven_program(), Ok("opencode"));
     }
 
     #[test]

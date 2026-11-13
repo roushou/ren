@@ -1,10 +1,15 @@
 //! opencode: what Ren knows of it, in one place. How it is launched through
-//! the gateway (`launch`); the attribution its requests carry (`headers`);
-//! and its tools (`tools`). Ren cannot drive it through a structured mode
-//! yet. The rest of Ren reads opencode through the shared types these fill.
+//! the gateway (`launch`); the attribution its requests carry (`headers`)
+//! and the session identifier they name (`session`); driving it through its
+//! Agent Client Protocol mode and listing its models (`acp`); and its tools
+//! (`tools`). The rest of Ren reads opencode through the shared types these
+//! fill.
 
+mod acp;
 mod headers;
 mod launch;
+mod session;
 mod tools;
 
+pub use acp::{OpenCodeAcp, OpenCodeModels};
 pub use tools::OpenCodeTool;

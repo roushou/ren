@@ -192,8 +192,8 @@ dependencies under "Crates" below. Read the code for current module ownership.
   and its model listing, its launch plan, its headers, and `CodexTool`),
   `claude_code` (`ClaudeStreamJson` for `claude -p` in stream-json, and the
   same parts), `pi` (`PiRpc` for `pi --mode rpc`, the bundled extension's
-  `PiCache`, and the same parts), and `opencode` (launch, headers, tools; no
-  structured mode yet). Each fills the shared types the rest of Ren reads,
+  `PiCache`, and the same parts), and `opencode` (`OpenCodeAcp` for
+  `opencode acp`, the Agent Client Protocol, and the same parts). Each fills the shared types the rest of Ren reads,
   and `Harness` dispatches to them by `match`; there is no per-client trait.
   The shared types: attribution (`attribution`: `Attribution` and the hint
   types, with `HeaderReading`, which each client's headers extend, behind
@@ -267,7 +267,7 @@ dependencies under "Crates" below. Read the code for current module ownership.
   `tests/recorder.rs`, the recorder against the real store.
 - `crates/ren-supervisor`: runs, with `Supervisor` as its primary type: agent
   processes started in a folder and driven through their client's
-  structured mode (Codex, Claude Code, and Pi), each serving an operator
+  structured mode (Codex, Claude Code, Pi, and OpenCode), each serving an operator
   session (`SessionState` in `session`: a draft until its first prompt,
   active after, archived on the shelf; see `docs/architecture.md`,
   "Sessions, runs, and recordings"). The

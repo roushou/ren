@@ -1,5 +1,5 @@
 //! `ren runs`: sessions and their runs through a daemon's control API. A
-//! session is a client (Codex, Claude Code, or Pi) working in a folder under
+//! session is a client (Codex, Claude Code, Pi, or OpenCode) working in a folder under
 //! the daemon's `[runs]` roots, driven through the client's structured mode;
 //! each run is one process of its client serving it. On this host the
 //! daemon's control token is read from its data directory; through a gateway,
@@ -65,6 +65,7 @@ enum Client {
     /// Claude Code.
     Claude,
     Pi,
+    Opencode,
 }
 
 impl From<Client> for Harness {
@@ -73,6 +74,7 @@ impl From<Client> for Harness {
             Client::Codex => Self::Codex,
             Client::Claude => Self::ClaudeCode,
             Client::Pi => Self::Pi,
+            Client::Opencode => Self::OpenCode,
         }
     }
 }

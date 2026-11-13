@@ -60,12 +60,16 @@ impl OpenCodeTool {
     }
 
     /// opencode ends a command's output with `Exited with code N` (never 0),
-    /// `Killed by SIGNAL`, or `Timed out before completion`.
+    /// `Killed by SIGNAL`, or `Timed out before completion`; from 2.2.7, with
+    /// `Exit code: N` whatever N is.
     pub(crate) fn failed(output: &str) -> bool {
         let Some(last) = output.lines().map(str::trim).rfind(|line| !line.is_empty()) else {
             return false;
         };
-        if let Some(code) = last.strip_prefix("Exited with code ") {
+        if let Some(code) = last
+            .strip_prefix("Exited with code ")
+            .or_else(|| last.strip_prefix("Exit code: "))
+        {
             return code.parse::<i64>().is_ok_and(|code| code != 0);
         }
         last == "Timed out before completion"

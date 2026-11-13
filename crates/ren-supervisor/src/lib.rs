@@ -235,7 +235,7 @@ pub enum StartError {
     Scratch(#[source] io::Error),
     #[error(transparent)]
     NotDrivable(NotDrivable),
-    #[error("{0} asks for no approvals, so it takes no approval policy")]
+    #[error("{0} does not take that approval policy")]
     NoApprovals(Harness),
     #[error("the recorder has no room to record the run")]
     Unrecorded(RunUnrecorded),

@@ -11,6 +11,7 @@ use crate::claude_code::ClaudeStreamJson;
 use crate::codex::CodexAppServer;
 use crate::commands::ClientCommand;
 use crate::lines::{Framed, Line};
+use crate::opencode::OpenCodeAcp;
 use crate::pi::PiRpc;
 use crate::settings::{Midway, RunSettings};
 use crate::{Harness, launch::NotDrivable};
@@ -38,6 +39,15 @@ pub enum Opening {
     },
 }
 
+impl Opening {
+    /// The settings the conversation opens with.
+    pub fn settings(&self) -> &RunSettings {
+        match self {
+            Self::New { settings, .. } | Self::Resume { settings, .. } => settings,
+        }
+    }
+}
+
 /// What one line from a driven client produced.
 #[derive(Debug, Default)]
 #[must_use]
@@ -53,12 +63,14 @@ pub enum Driver {
     Codex(CodexAppServer),
     ClaudeCode(ClaudeStreamJson),
     Pi(PiRpc),
+    OpenCode(OpenCodeAcp),
 }
 
 impl Driver {
     /// The codec for a freshly started `harness` process, and the lines to
     /// send it first. `version` is Ren's own version; `seed` is a fresh id
-    /// that a client which names no turns (Pi) has its turn ids minted from.
+    /// that a client which names no turns (Pi, OpenCode) has its turn ids
+    /// minted from.
     pub fn open(
         harness: Harness,
         opening: Opening,
@@ -78,7 +90,10 @@ impl Driver {
                 let (codec, first) = PiRpc::open(&opening, seed);
                 Ok((Self::Pi(codec), vec![first]))
             }
-            Harness::OpenCode => Err(NotDrivable(harness)),
+            Harness::OpenCode => {
+                let (codec, first) = OpenCodeAcp::open(&opening, version, seed);
+                Ok((Self::OpenCode(codec), vec![first]))
+            }
         }
     }
 
@@ -89,6 +104,7 @@ impl Driver {
             Self::Codex(codec) => codec.command(command),
             Self::ClaudeCode(codec) => codec.command(command),
             Self::Pi(codec) => codec.command(command),
+            Self::OpenCode(codec) => codec.command(command),
         }
     }
 
@@ -99,6 +115,7 @@ impl Driver {
             Self::Codex(codec) => codec.commands(),
             Self::ClaudeCode(codec) => codec.commands(),
             Self::Pi(codec) => codec.commands(),
+            Self::OpenCode(codec) => codec.commands(),
         }
     }
 
@@ -108,6 +125,7 @@ impl Driver {
             Self::Codex(codec) => codec.receive(frame),
             Self::ClaudeCode(codec) => codec.receive(frame),
             Self::Pi(codec) => codec.receive(frame),
+            Self::OpenCode(codec) => codec.receive(frame),
         }
     }
 }

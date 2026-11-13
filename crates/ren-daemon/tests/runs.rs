@@ -185,7 +185,7 @@ async fn a_session_is_started_prompted_approved_and_stopped_through_the_control_
     );
 
     // The clients a run can start with here: the scripted host has every
-    // program; OpenCode cannot be driven yet.
+    // program.
     let clients: serde_json::Value = serde_json::from_slice(
         &control
             .http
@@ -207,7 +207,8 @@ async fn a_session_is_started_prompted_approved_and_stopped_through_the_control_
             { "harness": "codex", "status": "ready", "approvals": ["ask", "edits", "auto"],
               "midway": ["steer", "model", "effort", "approvals"] },
             { "harness": "pi", "status": "ready", "approvals": [], "midway": ["steer", "model", "effort"] },
-            { "harness": "opencode", "status": "not_drivable", "approvals": [], "midway": [] },
+            { "harness": "opencode", "status": "ready", "approvals": ["ask", "edits"],
+              "midway": ["steer", "model", "effort"] },
         ])
     );
 
@@ -466,11 +467,6 @@ async fn sessions_refuse_bad_requests_browsers_and_missing_tokens() {
             json!({ "harness": "codex", "dir": "/work/../etc" }),
             StatusCode::BAD_REQUEST,
             "invalid_directory",
-        ),
-        (
-            json!({ "harness": "opencode", "dir": "/work/a" }),
-            StatusCode::BAD_REQUEST,
-            "not_drivable",
         ),
         (
             json!({ "dir": "/work/acme" }),

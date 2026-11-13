@@ -6,6 +6,7 @@
 use crate::claude_code::ClaudeModels;
 use crate::codex::CodexModels;
 use crate::lines::{Framed, Line};
+use crate::opencode::OpenCodeModels;
 use crate::pi::PiModels;
 use crate::settings::Effort;
 use crate::{Harness, launch::NotDrivable};
@@ -101,12 +102,19 @@ pub enum ModelListing {
     Codex(CodexModels),
     ClaudeCode(ClaudeModels),
     Pi(PiModels),
+    OpenCode(OpenCodeModels),
 }
 
 impl ModelListing {
     /// The codec for a freshly started listing process of `harness`, and the
-    /// lines to send it first. `version` is Ren's own version.
-    pub fn open(harness: Harness, version: &str) -> Result<(Self, Vec<Line>), NotDrivable> {
+    /// lines to send it first. `version` is Ren's own version; `folder` is
+    /// the absolute folder the process runs in (OpenCode opens a throwaway
+    /// session there to read its models).
+    pub fn open(
+        harness: Harness,
+        version: &str,
+        folder: &str,
+    ) -> Result<(Self, Vec<Line>), NotDrivable> {
         match harness {
             Harness::Codex => {
                 let (codec, first) = CodexModels::open(version);
@@ -120,7 +128,10 @@ impl ModelListing {
                 let (codec, first) = PiModels::open();
                 Ok((Self::Pi(codec), vec![first]))
             }
-            Harness::OpenCode => Err(NotDrivable(harness)),
+            Harness::OpenCode => {
+                let (codec, first) = OpenCodeModels::open(version, folder);
+                Ok((Self::OpenCode(codec), vec![first]))
+            }
         }
     }
 
@@ -136,6 +147,7 @@ impl ModelListing {
             Self::Codex(codec) => codec.receive(&message),
             Self::ClaudeCode(codec) => codec.receive(&message),
             Self::Pi(codec) => codec.receive(&message),
+            Self::OpenCode(codec) => codec.receive(&message),
         }
     }
 }
@@ -214,7 +226,7 @@ mod tests {
 
     #[test]
     fn codex_lists_its_visible_models_page_by_page() {
-        let (mut listing, first) = ModelListing::open(Harness::Codex, "0.1.0").unwrap();
+        let (mut listing, first) = ModelListing::open(Harness::Codex, "0.1.0", "/work").unwrap();
         assert_eq!(sent(&first[0])["method"], "initialize");
         let Listing::Waiting(lines) = feed(&mut listing, json!({ "id": 0, "result": {} })) else {
             panic!("waiting for the list");
@@ -265,7 +277,7 @@ mod tests {
 
     #[test]
     fn codex_refusing_the_list_fails_it() {
-        let (mut listing, _) = ModelListing::open(Harness::Codex, "0.1.0").unwrap();
+        let (mut listing, _) = ModelListing::open(Harness::Codex, "0.1.0", "/work").unwrap();
         let _ = feed(&mut listing, json!({ "id": 0, "result": {} }));
         assert_eq!(
             feed(
@@ -278,7 +290,8 @@ mod tests {
 
     #[test]
     fn claude_code_lists_the_models_its_initialize_answer_names() {
-        let (mut listing, first) = ModelListing::open(Harness::ClaudeCode, "0.1.0").unwrap();
+        let (mut listing, first) =
+            ModelListing::open(Harness::ClaudeCode, "0.1.0", "/work").unwrap();
         assert_eq!(sent(&first[0])["request"]["subtype"], "initialize");
         let id = sent(&first[0])["request_id"].clone();
         assert_eq!(
@@ -313,7 +326,7 @@ mod tests {
 
     #[test]
     fn pi_lists_models_by_provider_and_marks_the_one_it_starts_on() {
-        let (mut listing, first) = ModelListing::open(Harness::Pi, "0.1.0").unwrap();
+        let (mut listing, first) = ModelListing::open(Harness::Pi, "0.1.0", "/work").unwrap();
         assert_eq!(sent(&first[0])["type"], "get_available_models");
         let Listing::Waiting(state) = feed(
             &mut listing,
@@ -350,9 +363,65 @@ mod tests {
         );
     }
 
+    /// opencode lists its models as the options of a session it opens in
+    /// the listing's folder; the session is deleted before the listing ends.
     #[test]
-    fn opencode_cannot_list() {
-        assert!(ModelListing::open(Harness::OpenCode, "0.1.0").is_err());
+    fn lists_opencodes_models_from_a_throwaway_session() {
+        let (mut listing, first) = ModelListing::open(Harness::OpenCode, "0.1.0", "/work").unwrap();
+        assert_eq!(sent(&first[0])["method"], "initialize");
+        let Listing::Waiting(open) = feed(
+            &mut listing,
+            json!({ "jsonrpc": "2.0", "id": 0, "result": { "protocolVersion": 1 } }),
+        ) else {
+            panic!("asks for a session");
+        };
+        let open = sent(&open[0]);
+        assert_eq!(open["method"], "session/new");
+        assert_eq!(open["params"]["cwd"], "/work");
+        let Listing::Waiting(delete) = feed(
+            &mut listing,
+            json!({ "jsonrpc": "2.0", "id": 1, "result": {
+                "sessionId": "ses_abc",
+                "configOptions": [
+                    { "id": "model", "currentValue": "opencode/big-pickle", "options": [
+                        { "value": "opencode/beam-free", "name": "opencode/Beam Free" },
+                        { "value": "opencode/big-pickle", "name": "opencode/Big Pickle" },
+                    ]},
+                    { "id": "effort", "currentValue": "default", "options": [
+                        { "value": "low" }, { "value": "high" }, { "value": "default" },
+                    ]},
+                    { "id": "mode", "currentValue": "build", "options": [] },
+                ],
+            }}),
+        ) else {
+            panic!("deletes the session");
+        };
+        let delete = sent(&delete[0]);
+        assert_eq!(delete["method"], "session/delete");
+        assert_eq!(delete["params"]["sessionId"], "ses_abc");
+        let mut pickle = model(
+            "opencode/big-pickle",
+            "Big Pickle",
+            Some("opencode"),
+            DefaultChoice::Default,
+        );
+        pickle.efforts = vec![Effort::Low, Effort::High];
+        // Listed even when opencode could not delete it.
+        assert_eq!(
+            feed(
+                &mut listing,
+                json!({ "jsonrpc": "2.0", "id": 2, "error": { "code": 1, "message": "busy" } }),
+            ),
+            Listing::Listed(vec![
+                model(
+                    "opencode/beam-free",
+                    "Beam Free",
+                    Some("opencode"),
+                    DefaultChoice::Other
+                ),
+                pickle,
+            ])
+        );
     }
 
     fn opening(model: Option<&str>) -> Opening {
@@ -416,7 +485,7 @@ mod tests {
 
     #[test]
     fn listed_models_say_which_efforts_they_take() {
-        let (mut listing, _) = ModelListing::open(Harness::Codex, "0.1.0").unwrap();
+        let (mut listing, _) = ModelListing::open(Harness::Codex, "0.1.0", "/work").unwrap();
         let _ = feed(&mut listing, json!({ "id": 0, "result": {} }));
         let Listing::Listed(codex) = feed(
             &mut listing,
@@ -437,7 +506,8 @@ mod tests {
         );
         assert_eq!(codex[0].effort, Some(Effort::Medium));
 
-        let (mut listing, first) = ModelListing::open(Harness::ClaudeCode, "0.1.0").unwrap();
+        let (mut listing, first) =
+            ModelListing::open(Harness::ClaudeCode, "0.1.0", "/work").unwrap();
         let Listing::Listed(claude) = feed(
             &mut listing,
             json!({ "type": "control_response", "response": {
@@ -453,7 +523,7 @@ mod tests {
         assert_eq!(claude[0].efforts.len(), 5);
         assert!(claude[1].efforts.is_empty());
 
-        let (mut listing, _) = ModelListing::open(Harness::Pi, "0.1.0").unwrap();
+        let (mut listing, _) = ModelListing::open(Harness::Pi, "0.1.0", "/work").unwrap();
         let _ = feed(
             &mut listing,
             json!({ "id": "ren-models", "type": "response", "success": true, "data": { "models": [

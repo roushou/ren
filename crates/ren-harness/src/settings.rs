@@ -40,11 +40,13 @@ pub enum ApprovalPolicy {
 
 impl ApprovalPolicy {
     /// The policies `harness` can be run under. Pi asks for nothing, so it
-    /// offers none.
+    /// offers none; OpenCode allows everything unless told to ask, so it
+    /// offers asking first and letting edits go ahead, as permission rules.
     pub fn offered(harness: Harness) -> &'static [Self] {
         match harness {
             Harness::Codex | Harness::ClaudeCode => Self::VARIANTS,
-            Harness::Pi | Harness::OpenCode => &[],
+            Harness::OpenCode => &[Self::Ask, Self::Edits],
+            Harness::Pi => &[],
         }
     }
 }
@@ -67,14 +69,14 @@ pub enum Midway {
 impl Midway {
     /// What `harness` takes mid-run: Codex sets each turn's model, effort,
     /// and approvals and takes steering; Claude Code switches model and
-    /// permission mode; Pi switches model and thinking level and takes
-    /// steering.
+    /// permission mode; Pi and OpenCode switch model and thinking level and
+    /// take steering.
     pub fn offered(harness: Harness) -> &'static [Self] {
         match harness {
             Harness::Codex => Self::VARIANTS,
             Harness::ClaudeCode => &[Self::Model, Self::Approvals],
             Harness::Pi => &[Self::Steer, Self::Model, Self::Effort],
-            Harness::OpenCode => &[],
+            Harness::OpenCode => &[Self::Steer, Self::Model, Self::Effort],
         }
     }
 }

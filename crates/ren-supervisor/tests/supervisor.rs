@@ -616,7 +616,7 @@ async fn runs_a_turn_through_an_approval_and_stops() {
 }
 
 #[tokio::test]
-async fn refuses_directories_outside_the_roots_and_undrivable_clients() {
+async fn refuses_directories_outside_the_roots() {
     let supervised = supervise(FakeHost::new(Script::Codex)).await;
     let supervisor = &supervised.supervisor;
     let refused = [
@@ -636,17 +636,6 @@ async fn refuses_directories_outside_the_roots_and_undrivable_clients() {
             "{dir}: {error:?}"
         );
     }
-    assert!(matches!(
-        supervisor
-            .start(starting(
-                Harness::OpenCode,
-                "/work/acme",
-                Conversation::New,
-                None
-            ))
-            .await,
-        Err(StartError::NotDrivable(_))
-    ));
     assert!(supervisor.runs().await.unwrap().is_empty());
 }
 
@@ -1006,7 +995,7 @@ async fn clients_say_whether_a_run_can_start_with_them_here() {
         Some(ClientStatus::NotInstalled)
     );
     assert_eq!(status(Harness::Pi), Some(ClientStatus::NotInstalled));
-    assert_eq!(status(Harness::OpenCode), Some(ClientStatus::NotDrivable));
+    assert_eq!(status(Harness::OpenCode), Some(ClientStatus::NotInstalled));
 }
 
 #[tokio::test]
@@ -1030,10 +1019,6 @@ async fn a_clients_models_are_listed_once_and_kept() {
     let spawned = spawned.lock().unwrap().clone();
     assert_eq!(spawned.len(), 1);
     assert_eq!(spawned[0].1, PathBuf::from("/work"));
-    assert!(matches!(
-        supervisor.models(Harness::OpenCode).await,
-        Err(ren_supervisor::ModelsError::NotDrivable(_))
-    ));
 }
 
 #[tokio::test]

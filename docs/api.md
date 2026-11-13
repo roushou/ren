@@ -424,7 +424,8 @@ a process with none running are `409` `no_process`; an unknown session is
 by the daemon in a folder under a `[runs]` root and driven through its
 structured mode: Codex's `codex app-server`, Claude Code's print mode with
 streaming JSON (`claude -p --input-format stream-json --output-format
-stream-json`), or Pi's RPC mode (`pi --mode rpc`, with Ren's extension). The
+stream-json`), Pi's RPC mode (`pi --mode rpc`, with Ren's extension), or
+OpenCode's Agent Client Protocol mode (`opencode acp`). The
 client keeps its own sign-in, and its model traffic goes through this gateway
 like any other client's. Ren names a new Claude Code conversation or Pi session
 itself (`--session-id`), so a run's `thread` is the session the recorded calls
@@ -442,16 +443,33 @@ Dialogs an extension opens are cancelled. The daemon publishes Ren's Pi
 extension to `$XDG_CACHE_HOME/ren/pi` (else `~/.cache/ren/pi`) before starting
 Pi, so the daemon's environment needs one of them.
 
+OpenCode (2.x) is driven over ACP, JSON-RPC on stdio, with the same
+`OPENCODE_CONFIG_CONTENT` override as `ren run opencode`. OpenCode names its own
+sessions (`ses_…`), so a run's `thread` is the UUID derived from that name, the
+same one its recorded calls carry in `x-opencode-session-id`. To continue a
+conversation, the daemon lists the folder's sessions (`session/list`) and
+reopens the one whose name derives the thread (`session/resume`, which replays
+nothing). OpenCode does not echo a prompt while its turn runs, so the run's
+conversation shows the prompt the daemon sent. A turn lasts until OpenCode
+answers its `session/prompt`; OpenCode names no turns, so the daemon mints each
+turn's id. Its `session/request_permission` requests are the run's approvals;
+Ren gives OpenCode no file system or terminal of its own and answers any other
+request with an error. Models on OpenCode's own `opencode` provider, including
+its free models, reach OpenCode's service directly, not through this gateway,
+so their calls are not recorded.
+
 A run starts on the model chosen for it, or on the client's own default. The
 models offered are the ones the client itself lists: the daemon starts it
 briefly in the same structured mode, in the first root, with no conversation
 (Codex's `model/list`, without the models Codex hides; the models in Claude
 Code's `initialize` answer, with `--no-session-persistence`; Pi's
 `get_available_models` with `--no-session`, marked with the model `get_state`
-names), then stops it. Each model also says which efforts it takes, least
+names; the `model` option of a session OpenCode opens in the first root, marked
+with its current value, which the daemon then deletes), then stops it. Each model also says which efforts it takes, least
 first, and the one it runs at when none is chosen, where the client says
 (Codex does; Claude Code lists only the levels; Pi's reasoning models take
-`off` to `high`, and the one it starts on runs at its current thinking level).
+`off` to `high`, and the one it starts on runs at its current thinking level;
+OpenCode lists the efforts of its default model only).
 
 A run's settings are its `model`, its `effort` (`off`, `minimal`, `low`,
 `medium`, `high`, `xhigh`, or `max`), and its `approvals`, what the client may
@@ -460,13 +478,14 @@ the folder go ahead, commands wait), or `auto` (the client decides what is
 safe and asks beyond that). Each left out is the client's own configuration.
 They go to the client the way it takes them:
 
-| Setting     | Codex                                                                                                                                                                   | Claude Code                                             | Pi                        |
-| ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------- | ------------------------- |
-| `model`     | `thread/start` or `thread/resume` `model`                                                                                                                               | `--model`                                               | `--model provider/id`     |
-| `effort`    | each `turn/start`'s `effort`                                                                                                                                            | `--effort`                                              | `--thinking`              |
-| `approvals` | `approvalPolicy` and `sandbox` at `thread/start` or `thread/resume`: `untrusted` and `read-only`; `untrusted` and `workspace-write`; `on-request` and `workspace-write` | `--permission-mode` `default`, `acceptEdits`, or `auto` | none: Pi asks for nothing |
+| Setting     | Codex                                                                                                                                                                   | Claude Code                                             | Pi                        | OpenCode                                                                                                           |
+| ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------- | ------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| `model`     | `thread/start` or `thread/resume` `model`                                                                                                                               | `--model`                                               | `--model provider/id`     | `session/set_config_option` `model` (`provider/id`)                                                                |
+| `effort`    | each `turn/start`'s `effort`                                                                                                                                            | `--effort`                                              | `--thinking`              | `session/set_config_option` `effort` (the model's variant)                                                         |
+| `approvals` | `approvalPolicy` and `sandbox` at `thread/start` or `thread/resume`: `untrusted` and `read-only`; `untrusted` and `workspace-write`; `on-request` and `workspace-write` | `--permission-mode` `default`, `acceptEdits`, or `auto` | none: Pi asks for nothing | `permissions` rules in its configuration: `ask` makes `shell` and `edit` ask, `edits` makes `shell` ask; no `auto` |
 
-A start with `approvals` for Pi answers `400` `no_approvals`. A run's settings
+A start with `approvals` a client does not take (any for Pi, `auto` for
+OpenCode) answers `400` `no_approvals`. A run's settings
 are recorded with it and with its session, shown on the run, and kept when its
 session's client starts again.
 
@@ -500,7 +519,7 @@ places = ["~/.config", "~/dotfiles"]
 | ----------------------------------------------- | ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `GET /control/v1/runs`                          | none | `{api_version, runs}`: each `{run, session, harness, workdir, state, settings}`, `session` the operator session the run serves (each run starts one of its own for now)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | `GET /control/v1/runs/projects`                 | none | `{api_version, projects, scratch}`: every place a run can start in, each `{path, name, shown, kind, git}`. `kind` `project`: the git repositories under the run roots (not looked inside, three levels down at most, hidden, `node_modules`, `target`, `vendor`, `dist`, and `build` folders skipped), and each root's folders with none below them; `other`: each `[runs] places` folder's own folders, hidden ones included, or the place itself when it is a repository; `scratch`: the folders earlier scratch runs worked in. `shown` is the path under the home as `~/…`; `git` one of `{"kind": "branch", name}`, `detached` with its `commit`, `unreadable`, or `none`. `scratch` is the folder scratch runs get theirs in, or `null` |
-| `GET /control/v1/runs/clients`                  | none | `{api_version, clients}`: every client, each `{harness, status, approvals, midway}`, `approvals` the policies it can run under (none for Pi), `midway` what a running conversation takes: `steer` (a message into the running turn: Codex, Pi) and the settings that change from the next turn (`model`, `effort`, `approvals`: Codex all three, Claude Code `model` and `approvals`, Pi `model` and `effort`), `status` one of `ready` (Ren drives it and its program is on the daemon's path), `not_installed`, or `not_drivable` (Ren cannot drive it yet)                                                                                                                                                                                 |
+| `GET /control/v1/runs/clients`                  | none | `{api_version, clients}`: every client, each `{harness, status, approvals, midway}`, `approvals` the policies it can run under (none for Pi), `midway` what a running conversation takes: `steer` (a message into the running turn: Codex, Pi, OpenCode) and the settings that change from the next turn (`model`, `effort`, `approvals`: Codex all three, Claude Code `model` and `approvals`, Pi and OpenCode `model` and `effort`), `status` one of `ready` (Ren drives it and its program is on the daemon's path), `not_installed`, or `not_drivable` (Ren cannot drive it; every client it knows is drivable now)                                                                                                                       |
 | `GET /control/v1/runs/clients/{harness}/models` | none | `{api_version, harness, models}`: the models the client itself lists on the daemon's host, in its order, each `{id, name, description, provider, choice, efforts, effort}`; `provider` is set where the client offers several (Pi), and `choice` is `default` for the one a run gets when none is chosen, else `other`. The daemon lists every installed client's models as it starts, so the first ask is answered at once; the first non-empty answer is kept while the daemon runs; an empty list (a client not signed in) is asked again next time. `502` `models_unavailable`, with a `message`, when the client refused, exited, or took over 20 seconds                                                                                |
 | `GET /control/v1/runs/events`                   | none | server-sent `run` events from now on; `lagged` when some were skipped                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 

@@ -5,9 +5,13 @@ attributes their traffic to recordings and turns.
 
 Live subscription traffic has been exercised with Claude Code and Codex. Pi has
 been validated against local mock providers; live Pi subscription access is
-unvalidated. OpenCode support follows OpenCode 2.2.6's documentation and source
-and is covered by unit tests with synthetic headers; it has not been run against
-Ren.
+unvalidated. OpenCode runs driven by the daemon have been exercised with
+OpenCode 2.2.7 on its free `opencode/big-pickle` model: a turn with tools and
+edits, an approval, an interrupt, and resuming in a new process. Those calls do
+not pass through the gateway, so `ren run opencode` and OpenCode's `anthropic`
+and `openai` traffic through Ren follow OpenCode's documentation and source and
+are covered by unit tests with synthetic headers; they have not been run
+against Ren.
 
 ## Diagnose and launch
 
@@ -375,11 +379,21 @@ parent session) are forwarded unchanged and not recorded.
 Tool calls are read by OpenCode 2.x's names: `shell`, `read`, `write`, `edit`,
 `patch` (the same envelope as Codex's `apply_patch`), `glob`, `grep`,
 `subagent`, `webfetch`, and `websearch`. OpenCode reports a failed command by
-ending its output with `Exited with code N`, `Killed by SIGNAL`, or
-`Timed out before completion`; a successful command says nothing, so its status
-stays unreported. Its notices of finished background commands, subagents, and
+ending its output with `Exited with code N` (from 2.2.7, `Exit code: N`),
+`Killed by SIGNAL`, or `Timed out before completion`; before 2.2.7 a successful
+command says nothing, so its status stays unreported. Its notices of finished background commands, subagents, and
 commands the user ran (`<shell …>`, `<subagent …>`) are not counted as the
 user's prompt.
+
+Sessions can also drive OpenCode from the web UI or `ren runs`: the daemon runs
+`opencode acp` with the same override, so its `anthropic` and `openai` calls
+are recorded. OpenCode's own `opencode` provider, including the free models it
+offers without sign-in (such as `opencode/big-pickle`), reaches OpenCode's
+service directly, so those calls are not recorded; the run's conversation still
+is. With the override, OpenCode counts its `anthropic` and `openai` providers as
+set up and may pick one of their models as its default, which fails without a
+key; choose the model in the session's draft. See [runs](api.md#runs) for how
+its settings and approvals apply.
 
 ## Recordings and turns
 

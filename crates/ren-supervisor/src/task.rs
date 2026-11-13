@@ -910,8 +910,6 @@ impl<H: AgentHost> SupervisorTask<H> {
         let plan = harness
             .list_models(&self.gateway)
             .map_err(ModelsError::NotDrivable)?;
-        let (listing, first) =
-            ModelListing::open(harness, &self.version).map_err(ModelsError::NotDrivable)?;
         let root = self
             .bounds
             .roots()
@@ -920,6 +918,9 @@ impl<H: AgentHost> SupervisorTask<H> {
             .ok_or(ModelsError::NoRoot)?;
         let workdir =
             Workdir::confirm(&self.bounds, root.to_path_buf()).map_err(|_| ModelsError::NoRoot)?;
+        let (listing, first) =
+            ModelListing::open(harness, &self.version, &workdir.as_path().to_string_lossy())
+                .map_err(ModelsError::NotDrivable)?;
         let process = self.host.spawn(&plan, &workdir).map_err(|error| {
             tracing::debug!(%harness, %error, "cannot start a client to list its models");
             ModelsError::Spawn

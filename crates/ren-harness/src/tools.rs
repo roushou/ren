@@ -610,6 +610,9 @@ mod tests {
             ("error: x\n\nExited with code 101", ResultStatus::Failed),
             ("partial\nKilled by SIGTERM\n", ResultStatus::Failed),
             ("Timed out before completion", ResultStatus::Failed),
+            // opencode 2.2.7 names every exit code.
+            ("error: x\nExit code: 2", ResultStatus::Failed),
+            ("ok\nExit code: 0", ResultStatus::Unreported),
             // Success is silent, so it stays unreported.
             ("test result: ok", ResultStatus::Unreported),
             ("Exited with code 0", ResultStatus::Unreported),
