@@ -148,6 +148,41 @@ test('a prompt’s commands and file search map to their routes, forwarding only
   ]);
 });
 
+test('sessions map to their control routes, and a recording block is not proxied', async () => {
+  const seen: string[] = [];
+  const daemon = host((url, init) => {
+    seen.push(`${init.method} ${url.pathname}${url.search}`);
+    return Response.json({ api_version: 1 });
+  });
+  const proxy = new RunsProxy(on, 'http://daemon.test', daemon);
+  const get = (path: string) =>
+    proxy.respond(
+      new Request(`http://ui.test${path}`, { headers: { 'sec-fetch-site': 'same-origin' } }),
+    );
+  await proxy.respond(post('/control/sessions', { harness: 'codex' }));
+  await get('/control/sessions?shelf=archived&limit=5&x=1');
+  await get(`/control/sessions/${run}`);
+  await get(`/control/sessions/${run}/commands`);
+  await get(`/control/sessions/${run}/files?q=src`);
+  await proxy.respond(post(`/control/sessions/${run}/prompt`, { text: 'go' }));
+  await proxy.respond(post(`/control/sessions/${run}/client`, { harness: 'pi' }));
+  await proxy.respond(post(`/control/sessions/${run}/archive`, {}));
+  await proxy.respond(post(`/control/sessions/${run}/approvals/ap-1`, { decision: 'accept' }));
+  const blocked = await proxy.respond(post(`/control/sessions/${run}/block`, {}));
+  assert.equal(blocked.status, 404);
+  assert.deepEqual(seen, [
+    'POST /control/v1/sessions',
+    'GET /control/v1/sessions?shelf=archived&limit=5',
+    `GET /control/v1/sessions/${run}`,
+    `GET /control/v1/sessions/${run}/commands`,
+    `GET /control/v1/sessions/${run}/files?q=src`,
+    `POST /control/v1/sessions/${run}/prompt`,
+    `POST /control/v1/sessions/${run}/client`,
+    `POST /control/v1/sessions/${run}/archive`,
+    `POST /control/v1/sessions/${run}/approvals/ap-1`,
+  ]);
+});
+
 test('cross-site, non-JSON, unknown, and unlisted requests never reach the daemon', async () => {
   const proxy = new RunsProxy(on, 'http://daemon.test', host(never));
   const cases: [Request, number][] = [

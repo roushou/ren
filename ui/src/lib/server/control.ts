@@ -83,6 +83,31 @@ const routes: { pattern: RegExp; route: Route }[] = [
     pattern: /^\/control\/runs\/clients\/(claude_code|codex|pi|opencode)\/models$/,
     route: { method: 'GET', feed: false },
   },
+  // Sessions: their listing and feed, one session, and what it is offered.
+  {
+    pattern: /^\/control\/sessions$/,
+    route: { method: 'GET', feed: false, query: ['shelf', 'limit'] },
+  },
+  { pattern: /^\/control\/sessions\/events$/, route: { method: 'GET', feed: true } },
+  { pattern: new RegExp(`^/control/sessions/${runId}$`), route: { method: 'GET', feed: false } },
+  {
+    pattern: new RegExp(`^/control/sessions/${runId}/commands$`),
+    route: { method: 'GET', feed: false },
+  },
+  {
+    pattern: new RegExp(`^/control/sessions/${runId}/files$`),
+    route: { method: 'GET', feed: false, query: ['q', 'limit'] },
+  },
+  {
+    pattern: new RegExp(
+      `^/control/sessions/${runId}/(?:prompt|unqueue|settings|client|interrupt|stop|archive|unarchive)$`,
+    ),
+    route: { method: 'POST', feed: false },
+  },
+  {
+    pattern: new RegExp(`^/control/sessions/${runId}/approvals/${approvalId}$`),
+    route: { method: 'POST', feed: false },
+  },
   {
     pattern: new RegExp(`^/control/runs/${runId}/commands$`),
     route: { method: 'GET', feed: false },
@@ -108,6 +133,8 @@ const routes: { pattern: RegExp; route: Route }[] = [
 ];
 /** Starting a run is the one POST to the listing's own path. */
 const startPath = '/control/runs';
+/** Creating a session is the one POST to the session listing's own path. */
+const sessionsPath = '/control/sessions';
 const maxBody = 256 * 1024;
 const headers = { 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' };
 /** Sent first on the feed, so EventSource reports it open at once (see management.ts). */
@@ -196,6 +223,7 @@ export class RunsProxy {
 
   static #route(path: string, method: string): Route | 'method' | null {
     if (path === startPath && method === 'POST') return { method: 'POST', feed: false };
+    if (path === sessionsPath && method === 'POST') return { method: 'POST', feed: false };
     const found = routes.find(({ pattern }) => pattern.test(path));
     if (!found) return null;
     return found.route.method === method ? found.route : 'method';
