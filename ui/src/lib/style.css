@@ -3024,17 +3024,7 @@ td.zero {
   background: var(--harness);
 }
 
-/* Redline: the page beside its panel, and the status line's toggle. */
-.workspace-row {
-  flex: 1;
-  min-height: 0;
-  display: flex;
-}
-@media (max-width: 760px) {
-  .workspace-row {
-    flex-direction: column;
-  }
-}
+/* Redline: the status line's toggle. */
 .statusline.redlining {
   border-top-color: var(--redline);
 }

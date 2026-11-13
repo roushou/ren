@@ -191,10 +191,11 @@
 {/if}
 
 <style>
+  /* Redline's marks and note sit over everything but its own pane. */
   .outline,
   .marked {
     position: fixed;
-    z-index: 60;
+    z-index: 2147483644;
     pointer-events: none;
   }
   .outline {
@@ -226,7 +227,7 @@
   }
   .pin {
     position: fixed;
-    z-index: 61;
+    z-index: 2147483645;
     width: 18px;
     height: 18px;
     display: grid;
@@ -242,7 +243,7 @@
   }
   .note {
     position: fixed;
-    z-index: 62;
+    z-index: 2147483646;
     display: grid;
     background: var(--popover);
     border: 1px solid var(--popover-border);

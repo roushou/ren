@@ -156,8 +156,9 @@ With the control token, every page has Redline (the status line's Redline
 button, or `m`): mark what's wrong on the page for an agent to fix. While it is
 on, the element under the pointer is outlined and named, a click marks it
 instead of reaching the page, and you write a note in place; `Esc` leaves, and
-the marks stay. The panel beside the page shows the brief exactly as the agent
-gets it: each note with the element's selector (from the nearest labelled
+the marks stay. A pane floating over everything (drag it by its header, or move
+it with the arrow keys there; this browser keeps where you left it) shows the
+brief exactly as the agent gets it: each note with the element's selector (from the nearest labelled
 region), its text and size, and its source file and line when the UI runs as a
 development build (`bun run dev`; a production build has none). Send makes a
 session in the folder you choose, on the client you choose, with the brief as

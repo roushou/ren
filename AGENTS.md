@@ -402,7 +402,7 @@ dependencies under "Crates" below. Read the code for current module ownership.
   `src/lib/mention.ts` the composer's offers (the client's commands after
   `/` or `$`, the folder's files after `@`), `src/lib/redline.ts` Redline's
   pure core (what a mark points at, and the brief an agent gets; the layer
-  and panel are `RedlineLayer.svelte` and `RedlinePanel.svelte`, sending
+  and its floating pane are `RedlineLayer.svelte` and `RedlinePanel.svelte`, sending
   through the same session routes), and
   `src/lib/server/runsStart.ts` makes the Sessions page's first reads on the UI
   server, with the browser's Tailscale login and never its cookies, so the

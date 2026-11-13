@@ -358,12 +358,9 @@
       role="progressbar"
       aria-label="Loading view"
     ></div>{/if}
-  <div class="workspace-row">
-    <main class="workspace" class:navigating={!!navigating.to} aria-busy={!!navigating.to}>
-      {@render children()}
-    </main>
-    {#if page.data.runsControl && redline.open}<RedlinePanel desk={redline} />{/if}
-  </div>
+  <main class="workspace" class:navigating={!!navigating.to} aria-busy={!!navigating.to}>
+    {@render children()}
+  </main>
   <footer class="statusline" class:redlining={redline.open} aria-label="Gateway status">
     <span
       class="read-only"
@@ -426,5 +423,7 @@
       >{/if}
   </footer>
   {#if development && page.data.devTraffic}<DevToolbar />{/if}
-  {#if page.data.runsControl}<RedlineLayer desk={redline} />{/if}
+  {#if page.data.runsControl}<RedlineLayer desk={redline} />{#if redline.open}<RedlinePanel
+        desk={redline}
+      />{/if}{/if}
 </div>
