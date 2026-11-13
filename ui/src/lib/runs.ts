@@ -685,20 +685,6 @@ const fileMatches = versioned(
   }),
 );
 
-/** What a run starts with. */
-export interface StartRequest {
-  harness: Drivable;
-  /** Null: a new scratch folder of the run's own. */
-  dir: string | null;
-  /** The client's thread to continue, instead of a new conversation. */
-  resume?: NativeThreadId | null;
-  prompt?: string | null;
-  /** With none, the client's own default. */
-  model?: ModelId | null;
-  effort?: Effort | null;
-  approvals?: ApprovalPolicy | null;
-}
-
 const versionedRecordedRun = versioned(recordedRun);
 const storedConversation = versioned(
   object<StoredConversation>({
@@ -798,8 +784,6 @@ export interface RunsStart {
   archived: Read<RecordedRun[]>;
   sessions: Read<SessionBody[]>;
   archivedSessions: Read<SessionBody[]>;
-  /** The models of the client the form opens on, when they came in time. */
-  models: { harness: Drivable; read: Read<RunModel[]> } | null;
 }
 
 /** Run commands and reads through a capability-supplied `fetch`. */
@@ -816,7 +800,7 @@ export class RunsClient {
    * Everything the Sessions page starts with, read at once; each read that
    * fails says why, and the others stand.
    */
-  async opening(harness: Drivable | null = null, wait = 1_500): Promise<RunsStart> {
+  async opening(): Promise<RunsStart> {
     const read = async <T>(reading: Promise<T>): Promise<Read<T>> => {
       try {
         return { state: 'read', value: await reading };
@@ -827,12 +811,7 @@ export class RunsClient {
         };
       }
     };
-    // The daemon keeps each client's models, so this is quick; a client
-    // still listing is not waited for: the form asks again.
-    const models = harness
-      ? read(this.models(harness, AbortSignal.timeout(wait))).then((read) => ({ harness, read }))
-      : Promise.resolve(null);
-    const [live, places, clients, recorded, archived, sessions, archivedSessions, listed] =
+    const [live, places, clients, recorded, archived, sessions, archivedSessions] =
       await Promise.all([
         read(this.live()),
         read(this.projects()),
@@ -841,7 +820,6 @@ export class RunsClient {
         read(this.recorded(100, 'archived')),
         read(this.sessions()),
         read(this.sessions('archived')),
-        models,
       ]);
     return {
       live,
@@ -851,7 +829,6 @@ export class RunsClient {
       archived,
       sessions,
       archivedSessions,
-      models: listed,
     };
   }
   /** Where runs can start, and the scratch folder. */
@@ -1904,25 +1881,23 @@ export class Setup {
   }
 }
 
-/** The settings a client last started a run with, as kept for the viewer. */
+/** The settings last chosen for a client, as kept for the viewer. */
 export interface Kept {
   model?: string;
-  /** The model's name, shown before the client lists its models again. */
-  modelName?: string;
   effort?: string;
   approvals?: string;
 }
 
-/** The client the last run started with, and each client's last settings. */
+/** The client last chosen for a session, and each client's last settings. */
 export interface Remembered {
   harness: Drivable;
   settings: Partial<Record<Drivable, Kept>>;
 }
 
 /**
- * What the new-run form remembers for this viewer, kept in a cookie so the
- * server renders the form as it will stay. Only labels and names: never a
- * prompt, a path, or anything secret. Read as untrusted text.
+ * What the Sessions page remembers for this viewer, so a new session starts
+ * as the last one was set: kept in a cookie. Only labels: never a prompt, a
+ * path, or anything secret. Read as untrusted text.
  */
 export class Memory {
   static readonly COOKIE = 'ren_runs';
@@ -1950,7 +1925,6 @@ export class Memory {
         };
         settings[drivable] = {
           model: text('model'),
-          modelName: text('modelName'),
           effort: text('effort'),
           approvals: text('approvals'),
         };
@@ -1965,7 +1939,53 @@ export class Memory {
   /** The cookie that keeps `remembered` for a year, for the Sessions page only. */
   static cookie(remembered: Remembered): string {
     const value = encodeURIComponent(JSON.stringify(remembered));
-    return `${Memory.COOKIE}=${value}; Path=/runs; Max-Age=31536000; SameSite=Lax`;
+    return `${Memory.COOKIE}=${value}; Path=/sessions; Max-Age=31536000; SameSite=Lax`;
+  }
+
+  /** `remembered`, with `harness` the client last chosen. */
+  static chose(remembered: Remembered, harness: Drivable): Remembered {
+    return { ...remembered, harness };
+  }
+
+  /** `remembered`, with `settings` the last chosen for `harness`; none is the client's own. */
+  static set(
+    remembered: Remembered,
+    harness: Drivable,
+    settings: { model: ModelId | null; effort: Effort | null; approvals: ApprovalPolicy | null },
+  ): Remembered {
+    return {
+      ...remembered,
+      settings: {
+        ...remembered.settings,
+        [harness]: {
+          model: settings.model ?? undefined,
+          effort: settings.effort ?? undefined,
+          approvals: settings.approvals ?? undefined,
+        },
+      },
+    };
+  }
+
+  /** The settings a new session on `harness` starts with: those kept for it
+   * that still apply, the model one it lists, the effort one that model
+   * takes, and the approval policy one it runs under. */
+  static settings(
+    remembered: Remembered,
+    harness: Drivable,
+    models: readonly RunModel[],
+    policies: readonly Stored<ApprovalPolicy>[],
+  ): { model: ModelId | null; effort: Effort | null; approvals: ApprovalPolicy | null } {
+    const kept = remembered.settings[harness] ?? {};
+    const model = Models.keep(models, kept.model ?? null);
+    const takes = Setup.efforts(models, model)?.efforts ?? [];
+    return {
+      model,
+      effort: EFFORTS.find((level) => level === kept.effort && takes.includes(level)) ?? null,
+      approvals:
+        APPROVAL_POLICIES.find(
+          (policy) => policy === kept.approvals && policies.includes(policy),
+        ) ?? null,
+    };
   }
 }
 

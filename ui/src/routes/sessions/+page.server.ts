@@ -10,9 +10,7 @@ export const load: PageServerLoad = async ({ request, parent, cookies }) => {
   /** The choices last started with, as this browser kept them. */
   const remembered = cookies.get(Memory.COOKIE) ?? null;
   return {
-    initial: runsControl
-      ? await RunsStartRead.read(request, Memory.parse(remembered).harness)
-      : null,
+    initial: runsControl ? await RunsStartRead.read(request) : null,
     remembered,
   };
 };

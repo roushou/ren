@@ -2,14 +2,13 @@
 // them: through the same control proxy and management surface the browser
 // uses, with the browser's Tailscale login, and never its cookies.
 import { REN_GATEWAY_URL } from '$app/env/private';
-import { RunsClient, type Drivable, type RunsStart } from '#lib/runs.ts';
+import { RunsClient, type RunsStart } from '#lib/runs.ts';
 import { managementResponse } from './management.ts';
 import { proxy } from './runsProxy.ts';
 
 export class RunsStartRead {
-  /** The reads for `request`, the page's own request, with the models of
-   * `harness`, the client the form opens on. */
-  static async read(request: Request, harness: Drivable): Promise<RunsStart> {
+  /** The reads for `request`, the page's own request. */
+  static async read(request: Request): Promise<RunsStart> {
     const login = request.headers.get('tailscale-user-login');
     const client = new RunsClient((async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = new URL(String(input), request.url);
@@ -23,6 +22,6 @@ export class RunsStartRead {
         ? proxy.respond(inner)
         : managementResponse(REN_GATEWAY_URL, inner);
     }) as typeof fetch);
-    return client.opening(harness);
+    return client.opening();
   }
 }

@@ -361,7 +361,8 @@
       class="read-only"
       title={page.data.runsControl
         ? 'History is read-only; this UI starts and drives sessions'
-        : undefined}>{page.data.runsControl ? 'READ ONLY · SESSIONS' : 'READ ONLY'}</span
+        : 'This UI only reads: give it the control token to drive sessions'}
+      >{page.data.runsControl ? 'DRIVES SESSIONS' : 'READ ONLY'}</span
     >
     <span
       class="connection-state"

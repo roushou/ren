@@ -13,6 +13,7 @@ import {
   runUpdate,
   type ModelId,
   type RunModel,
+  type Effort,
   type DriveEvent,
   type RecordedRun,
   type RunSnapshot,
@@ -719,15 +720,16 @@ test('scratch runs share one group, whatever folder each got', () => {
 test('the remembered settings read back from their cookie, and junk is the default', () => {
   const remembered = {
     harness: 'claude_code' as const,
-    settings: { claude_code: { model: 'opus', modelName: 'Opus', effort: 'high' } },
+    settings: { claude_code: { model: 'opus', effort: 'high' } },
   };
   const cookie = Memory.cookie(remembered);
-  assert.match(cookie, /^ren_runs=[^;]+; Path=\/runs; Max-Age=31536000; SameSite=Lax$/);
+  // The Sessions page's own path, so the server reads it for that page.
+  assert.match(cookie, /^ren_runs=[^;]+; Path=\/sessions; Max-Age=31536000; SameSite=Lax$/);
   const value = decodeURIComponent(cookie.slice('ren_runs='.length, cookie.indexOf(';')));
   assert.deepEqual(Memory.parse(value), {
     harness: 'claude_code',
     settings: {
-      claude_code: { model: 'opus', modelName: 'Opus', effort: 'high', approvals: undefined },
+      claude_code: { model: 'opus', effort: 'high', approvals: undefined },
     },
   });
   for (const junk of [null, '', '{', '[]', '{"harness":"gpt"}']) {
@@ -739,10 +741,48 @@ test('the remembered settings read back from their cookie, and junk is the defau
     {
       harness: 'pi',
       settings: {
-        pi: { model: undefined, modelName: undefined, effort: undefined, approvals: undefined },
+        pi: { model: undefined, effort: undefined, approvals: undefined },
       },
     },
   );
+});
+
+test('a new session starts with the settings kept for its client, where they still apply', () => {
+  const listed = (id: string, efforts: Effort[], choice = 'other'): RunModel => ({
+    id: id as ModelId,
+    name: id,
+    description: null,
+    provider: null,
+    choice: choice as RunModel['choice'],
+    efforts,
+    effort: null,
+  });
+  const models = [listed('fast', [], 'default'), listed('deep', ['low', 'high'])];
+  let remembered = Memory.chose(Memory.NONE, 'claude_code');
+  remembered = Memory.set(remembered, 'claude_code', {
+    model: 'deep' as ModelId,
+    effort: 'high',
+    approvals: 'ask',
+  });
+  assert.equal(remembered.harness, 'claude_code');
+  assert.deepEqual(Memory.settings(remembered, 'claude_code', models, ['ask', 'auto']), {
+    model: 'deep',
+    effort: 'high',
+    approvals: 'ask',
+  });
+  // A model no longer listed is the client's own, and so is an effort the
+  // default does not take; a policy the client does not run under is dropped.
+  assert.deepEqual(Memory.settings(remembered, 'claude_code', [models[0]!], []), {
+    model: null,
+    effort: null,
+    approvals: null,
+  });
+  // Another client's settings are its own.
+  assert.deepEqual(Memory.settings(remembered, 'codex', models, ['ask']), {
+    model: null,
+    effort: null,
+    approvals: null,
+  });
 });
 
 test('the page’s opening reads each stand on their own', async () => {
@@ -757,14 +797,11 @@ test('the page’s opening reads each stand on their own', async () => {
     }
     return Response.json({ api_version: 1, runs: [] });
   }) as typeof fetch);
-  const opening = await client.opening('codex');
+  const opening = await client.opening();
   assert.deepEqual(opening.live, { state: 'read', value: [] });
   assert.deepEqual(opening.places, { state: 'read', value: { projects: [], scratch: '/s' } });
   assert.equal(opening.clients.state, 'failed');
   assert.equal(opening.recorded.state, 'read');
-  // The opening client's models come with them.
-  assert.deepEqual(opening.models, { harness: 'codex', read: { state: 'read', value: [] } });
-  assert.equal((await client.opening()).models, null);
 });
 
 test('how a run ended reads in words; the process’s exit is a detail', () => {

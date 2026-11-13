@@ -17,7 +17,7 @@
     type Decision,
     type DeskRun,
     type Entry,
-    type StartRequest,
+    type Remembered,
     Compose,
     Setup,
     type RunClient,
@@ -44,7 +44,7 @@
   import Markdown from '#lib/Markdown.svelte';
   import ActionMenu, { type ActionItem } from '#lib/ActionMenu.svelte';
   import { assertNever } from '#lib/decode.ts';
-  import NewRun from './NewRun.svelte';
+  import NewSession from './NewSession.svelte';
   import RunSettingsBar from './RunSettingsBar.svelte';
   import SessionList from './SessionList.svelte';
   import type { PageProps } from './$types';
@@ -144,7 +144,7 @@
   let calls = $state.raw<{ session: string; calls: CallView[] } | null>(null);
   /** Now, for how long ago runs started; moves every half minute. */
   let now = $state(Date.now());
-  let newRun = $state<ReturnType<typeof NewRun>>();
+  let newSession = $state<ReturnType<typeof NewSession>>();
   let busy = $state(false);
   let notice = $state<string | null>(null);
   let conversation = $state<HTMLElement>();
@@ -276,25 +276,28 @@
     void goto(next ? `/sessions?session=${next}` : '/sessions');
   }
 
-  /** A session made with the form: in its place, on its client, its first prompt sent. */
-  async function start(request: StartRequest) {
-    await act(async () => {
-      const made = await client.createSession(request.harness, request.dir, request);
-      if (request.prompt) {
-        await client.toSession(made, { kind: 'prompt', text: request.prompt, delivery: 'start' });
-      }
-      await Promise.all([readSessions(), readLive()]);
-      select(made);
-    });
+  /** The client and settings last chosen here: a new session starts with them. */
+  let remembered = $state<Remembered>(untrack(() => Memory.parse(data.remembered)));
+
+  function remember(next: Remembered) {
+    remembered = next;
+    // Remembering is a convenience: a refused cookie changes nothing else.
+    document.cookie = Memory.cookie(next);
   }
 
-  /** The client a `+` makes a session with: the one last started with here. */
-  const lastClient = $derived(Memory.parse(data.remembered).harness);
-
-  /** A session in `dir` at once (null: a scratch folder of its own), opened. */
+  /** A session in `dir` at once (null: a scratch folder of its own), opened:
+   * on the client last chosen, with the settings kept for it that still apply. */
   async function create(dir: string | null) {
     await act(async () => {
-      const made = await client.createSession(lastClient, dir);
+      const harness = remembered.harness;
+      // The daemon keeps each client's models; without them, the client's own.
+      const models = await client.models(harness).catch(() => []);
+      const policies = clients.find((entry) => entry.harness === harness)?.approvals ?? [];
+      const made = await client.createSession(
+        harness,
+        dir,
+        Memory.settings(remembered, harness, models, policies),
+      );
       await Promise.all([readSessions(), readLive()]);
       select(made);
     });
@@ -316,7 +319,7 @@
       case 'n':
         event.preventDefault();
         select(null);
-        void tick().then(() => newRun?.focus());
+        void tick().then(() => newSession?.open());
         break;
       case 'j':
       case 'k': {
@@ -961,7 +964,7 @@
       oncreate={(dir) => void create(dir)}
       onnew={() => {
         select(null);
-        void tick().then(() => newRun?.focus());
+        void tick().then(() => newSession?.open());
       }}
     />
   </aside>
@@ -972,13 +975,10 @@
         {#if chosen && !session}<p class="lost muted">
             This session is not listed. Start another below.
           </p>{/if}
-        <NewRun
-          bind:this={newRun}
+        <NewSession
+          bind:this={newSession}
           {offered}
           {scratch}
-          remembered={data.remembered}
-          models={initial?.models ?? null}
-          {clients}
           runs={folders.flatMap((folder) =>
             folder.sessions.map((entry) => ({
               workdir: entry.workdir,
@@ -986,9 +986,7 @@
             })),
           )}
           {busy}
-          listModels={(harness) => client.models(harness)}
-          onstart={(harness, dir, prompt, settings) =>
-            void start({ harness, dir, prompt, ...settings })}
+          oncreate={(dir) => void create(dir)}
         />
         {#if notice}<div class="notice danger" role="alert">
             <Icon name="alert" size={14} /><span>{notice}</span>
@@ -1189,12 +1187,15 @@
                 approvals={client_.approvals}
                 listModels={(harness) => client.models(harness)}
                 {busy}
-                onchange={(settings) =>
-                  chosen &&
-                  void act(async () => {
-                    await client.toSession(chosen, { kind: 'settings', ...settings });
-                    await Promise.all([readSessions(), readLive()]);
-                  })}
+                onchange={(settings) => {
+                  const harness = Runs.drivable(current.harness);
+                  if (harness) remember(Memory.set(remembered, harness, settings));
+                  if (chosen)
+                    void act(async () => {
+                      await client.toSession(chosen, { kind: 'settings', ...settings });
+                      await Promise.all([readSessions(), readLive()]);
+                    });
+                }}
                 choice={session.phase === 'draft'
                   ? {
                       clients: DRIVABLE.filter((harness) =>
@@ -1202,12 +1203,14 @@
                           (entry) => entry.harness === harness && entry.status === 'ready',
                         ),
                       ),
-                      onclient: (harness) =>
-                        chosen &&
-                        void act(async () => {
-                          await client.toSession(chosen, { kind: 'client', harness });
-                          await Promise.all([readSessions(), readLive()]);
-                        }),
+                      onclient: (harness) => {
+                        remember(Memory.chose(remembered, harness));
+                        if (chosen)
+                          void act(async () => {
+                            await client.toSession(chosen, { kind: 'client', harness });
+                            await Promise.all([readSessions(), readLive()]);
+                          });
+                      },
                     }
                   : null}
               />
