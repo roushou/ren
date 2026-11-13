@@ -6,7 +6,7 @@ and exposing it, using the operator's own Anthropic and OpenAI subscriptions. On
 a laptop and a VPS reached through Tailscale.
 
 [`docs/architecture.md`](docs/architecture.md) describes how Ren is built and
-lists its known limitations. Section 4 below maps the nine crates and the `xtask` package.
+lists its known limitations. Section 4 below maps the eight crates and the `xtask` package.
 
 - All code follows the principles (section 2) and the workspace lints.
 - Never describe unbuilt functionality as working. Read the source before assuming
@@ -165,7 +165,7 @@ saturation, and persistence recovery.
 
 ## 4. Workspace map
 
-This map describes the code as it is: the nine crates, listed with their
+This map describes the code as it is: the eight crates, listed with their
 dependencies under "Crates" below. Read the code for current module ownership.
 
 - `docs/architecture.md`: how Ren is built, and its known limitations. The other
@@ -307,55 +307,6 @@ dependencies under "Crates" below. Read the code for current module ownership.
   run when the last handle is dropped. `src/purity.rs` keeps `run`,
   `workdir`, `project`, `entries`, and `files` free of runtime and I/O. The daemon constructs it when `[runs]`
   roots are configured, with `ProcessHost`; the gateway's control API serves it.
-- `crates/ren-tui`: Ren in the terminal, with `Tui` as its primary type: one
-  app over one gateway for watching recordings and driving agent runs. `Tui` is
-  sans-IO: it holds the model and its screens, hands key presses (`Key`) to
-  the screen on top and what was read (`Input`) to the model and then the
-  main screen, and answers with `Out`s: the reads to make (`Read`) and the
-  `Command`s the shell sends through the control API. `Tui::view` is what to
-  draw. `ren tui` and `ren runs` open the same app.
-  - `model`: everything read from the gateway, in the one place every
-    screen reads it from: recordings and their model calls (`recordings`:
-    snapshots, as `ren_store::view` types, turn and call activity, progress
-    on streaming calls, failed reads, the active recordings, the traffic, and
-    what to read to show a recording), the daemon's runs (`desk`: what needs
-    you first, `Attention`), each run's conversation, read whole from what
-    the daemon stored and kept current by the run feed, the two merged by
-    what each entry is (`transcript`), projects, and how
-    a call ended (`call`, `CallEnd`). `Model::apply` answers with reads,
-    prompts kept for a run that now waits for one, and news.
-  - `screen`: `enum Screen { Main, NewRun, Actions, Help }`. `main` is the
-    list (`list`: runs grouped by their folder, the folders that need you
-    first, then recordings; or by what each needs, `Grouping`) beside the
-    selected run or recording (`detail`: a lit header, the Conversation,
-    Activity, Files, and Calls tabs, a run's whole conversation as one
-    scroll, the approval card), with a top bar for the traffic and a key
-    bar; `recording` (`RecordingPane`) reads a recording, the traffic of a
-    client Ren did not start (its phase, alerts, and conversation). Keys act in normal mode; `message`
-    (with `composer`, the one editor every prompt is written in: wrapped
-    rows, a cursor that moves through them, and pastes, and `offer`, what
-    the word at the cursor is offered: the client's commands after `/` or
-    `$`, the folder's files after `@`) takes text only
-    while writing to a run, and `new_run` is the full-screen composer for
-    starting one, its project and client in a header. Keys come in layers: moving and a few
-    verbs are `main`'s `Keymap`s, an approval's answers act only while it
-    waits, and everything else is a `Verb` in the action menu (`actions`),
-    which lists only what applies to the selection. Each screen's keys are a
-    `Keymap` (`keys`), which both looking a key up and the help (`help`,
-    by layer) read.
-  - `conversation`: a conversation read once (from recorded calls in
-    `read`, or a run's live events) and laid out compact or roomy, so every
-    view draws it the same way.
-  - `ui`: what every screen draws with: `Span` and `Line` in an `Ink` (what
-    text is for; the `theme` resolves it), `Text` for measuring and
-    wrapping in cells, and `View`, a small layout tree that one renderer
-    (`ui/draw.rs`) puts on a ratatui buffer. Screens are pinned as text in
-    `tests/fixtures`.
-  - `Terminal` (`terminal`) is the only part that touches the terminal: raw
-    mode, the alternate screen, and bracketed paste until dropped (or
-    suspended while the operator's editor has the terminal), and its events
-    as keys, pastes, and sizes (`event`). `src/purity.rs` keeps every other module but the theme
-    free of runtime, I/O, and terminal dependencies.
 - `crates/ren-gateway`: Ren's HTTP interface, with `Gateway` as its primary type.
   It owns forwarding, management, and control routes on one listener, assembled
   by `Gateway::router` or `Gateway::into_ingress`. Forwarding uses a declarative
@@ -424,15 +375,7 @@ dependencies under "Crates" below. Read the code for current module ownership.
   control APIs, printing the same JSON either way (`History` serves a
   `ReadRequest` from either). `tail` is the pure core of
   `ren tail`: the live feed decoded through the protocol crate's SSE framer, and
-  its lines (and progress events, which `ren tui` asks for). With the `tui`
-  feature (off by default), `commands::tui` is `ren tui` and `ren runs` with
-  no subcommand: the shell around `ren-tui`'s `Tui`, reading snapshots, turns, runs, projects, and recorded turns
-  through the gateway's APIs alongside one another, following the live and
-  run feeds, sending the console's commands through `ControlTarget`, and
-  drawing to its `Terminal`; its `editor` hands a prompt to the operator's
-  `$VISUAL` or `$EDITOR` on a temporary file and takes back what it saves.
-  `tui_settings` owns its local theme preference in `tui.toml`; the CLI resolves
-  flags, saved preferences, and `NO_COLOR`, and passes styles to `Screen`.
+  its lines.
   `mcp` is the pure core of `ren mcp` (a source test keeps it free
   of runtime and I/O): JSON-RPC over stdio in both MCP eras, and the read-only
   tools, whose arguments parse into `ren_store::query` types. `style` decides once, per stream,
@@ -497,18 +440,17 @@ dependencies under "Crates" below. Read the code for current module ownership.
 "Depends on" names the nearest crates below; a crate may also use lower ones
 directly.
 
-| Crate                                      | Primary type                                        | Depends on            |
-| ------------------------------------------ | --------------------------------------------------- | --------------------- |
-| `ren-protocol`                             | `CallInspector`                                     | none of ours          |
-| `ren-harness`                              | `Harness` (`ClaudeCode`, `Codex`, `Pi`, `OpenCode`) | protocol              |
-| `ren-recorder`                             | `Recorder`, with its `RecordSink` port              | protocol, harness     |
-| `ren-store`                                | `Store`, which implements `RecordSink`              | recorder              |
-| `ren-supervisor`                           | `Supervisor`, with its `AgentHost` port             | recorder, harness     |
-| `ren-tui`                                  | `Tui`                                               | supervisor, store     |
-| `ren-gateway`                              | `Gateway`                                           | supervisor, store     |
-| `ren-daemon`                               | `Daemon`                                            | gateway, store        |
-| `ren-cli` (package `ren-rs`, binary `ren`) | `Cli`                                               | daemon; tui (feature) |
-| `xtask` (unpublished)                      | `Xtask`                                             | daemon                |
+| Crate                                      | Primary type                                        | Depends on        |
+| ------------------------------------------ | --------------------------------------------------- | ----------------- |
+| `ren-protocol`                             | `CallInspector`                                     | none of ours      |
+| `ren-harness`                              | `Harness` (`ClaudeCode`, `Codex`, `Pi`, `OpenCode`) | protocol          |
+| `ren-recorder`                             | `Recorder`, with its `RecordSink` port              | protocol, harness |
+| `ren-store`                                | `Store`, which implements `RecordSink`              | recorder          |
+| `ren-supervisor`                           | `Supervisor`, with its `AgentHost` port             | recorder, harness |
+| `ren-gateway`                              | `Gateway`                                           | supervisor, store |
+| `ren-daemon`                               | `Daemon`                                            | gateway, store    |
+| `ren-cli` (package `ren-rs`, binary `ren`) | `Cli`                                               | daemon            |
+| `xtask` (unpublished)                      | `Xtask`                                             | daemon            |
 
 `docs/architecture.md` lists what each crate owns. These rules apply to every
 crate:

@@ -53,9 +53,6 @@ With the Rust toolchain pinned in `rust-toolchain.toml`:
 cargo install --path crates/ren-cli --locked
 ```
 
-Add `--features tui` for `ren tui`: every recording and the agent runs you
-drive, in one terminal app.
-
 ## Run
 
 ```sh
@@ -90,7 +87,6 @@ ren sessions
 ren history --limit 10
 ren inspect <call-id>
 ren tail
-ren tui          # built with --features tui
 ```
 
 With a saved gateway, these read the remote daemon.

@@ -319,13 +319,13 @@ impl LiveRun {
         };
         match (&self.session, client, &self.state.thread) {
             (Some(session), _, _) => format!(
-                "write to its session to go on: from the Sessions page, `ren tui`, or `ren runs say {session} <prompt>`"
+                "write to its session to go on: from the Sessions page or `ren runs say {session} <prompt>`"
             ),
             (None, Some(client), Some(thread)) => format!(
-                "continue it from the Sessions page, `ren tui`, or `ren runs start {client} {} --resume {thread}`",
+                "continue it from the Sessions page or `ren runs start {client} {} --resume {thread}`",
                 self.workdir
             ),
-            (None, None, Some(_)) => "continue it from the Sessions page or `ren tui`".to_owned(),
+            (None, None, Some(_)) => "continue it from the Sessions page".to_owned(),
             (None, Some(_) | None, None) => "its conversation had not opened".to_owned(),
         }
     }
@@ -609,11 +609,11 @@ mod tests {
         assert_eq!(
             ending,
             [
-                "codex run 0193e0f1-0000-7000-8000-000000000001 in /home/op/acme-1: idle; continue it from the Sessions page, `ren tui`, or `ren runs start codex /home/op/acme-1 --resume 0193e0f1-0000-7000-9000-000000000001`",
-                "claude_code run 0193e0f1-0000-7000-8000-000000000002 in /home/op/acme-2: idle; continue it from the Sessions page, `ren tui`, or `ren runs start claude /home/op/acme-2 --resume 0193e0f1-0000-7000-9000-000000000002`",
-                "opencode run 0193e0f1-0000-7000-8000-000000000003 in /home/op/acme-3: idle; continue it from the Sessions page or `ren tui`",
+                "codex run 0193e0f1-0000-7000-8000-000000000001 in /home/op/acme-1: idle; continue it from the Sessions page or `ren runs start codex /home/op/acme-1 --resume 0193e0f1-0000-7000-9000-000000000001`",
+                "claude_code run 0193e0f1-0000-7000-8000-000000000002 in /home/op/acme-2: idle; continue it from the Sessions page or `ren runs start claude /home/op/acme-2 --resume 0193e0f1-0000-7000-9000-000000000002`",
+                "opencode run 0193e0f1-0000-7000-8000-000000000003 in /home/op/acme-3: idle; continue it from the Sessions page",
                 "codex run 0193e0f1-0000-7000-8000-000000000004 in /home/op/acme-4: starting; its conversation had not opened",
-                "pi run 0193e0f1-0000-7000-8000-000000000006 in /home/op/acme-6: idle; write to its session to go on: from the Sessions page, `ren tui`, or `ren runs say 0193e0f1-0000-7000-a000-000000000006 <prompt>`",
+                "pi run 0193e0f1-0000-7000-8000-000000000006 in /home/op/acme-6: idle; write to its session to go on: from the Sessions page or `ren runs say 0193e0f1-0000-7000-a000-000000000006 <prompt>`",
             ]
         );
     }

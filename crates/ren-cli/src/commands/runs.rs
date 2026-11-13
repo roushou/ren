@@ -21,12 +21,11 @@ use reqwest::Method;
 use std::{path::PathBuf, process::ExitCode};
 use uuid::Uuid;
 
-/// Agent runs on the daemon. Without a subcommand, the console: one run's
-/// conversation at a time, what needs you first.
+/// Sessions and their runs on the daemon.
 #[derive(Args)]
 pub struct RunsCmd {
     #[command(subcommand)]
-    action: Option<RunsAction>,
+    action: RunsAction,
     #[command(flatten)]
     target: TargetArgs,
 }
@@ -158,10 +157,7 @@ struct HistoryArgs {
 
 impl RunsCmd {
     pub async fn run(self, ctx: &Context) -> Result<ExitCode> {
-        let Some(action) = self.action else {
-            return Self::console(&self.target, ctx).await;
-        };
-        let (method, path, body) = match action {
+        let (method, path, body) = match self.action {
             RunsAction::History(args) => {
                 let answer = self
                     .target
@@ -256,18 +252,6 @@ impl RunsCmd {
             Some(dir) => Ok(dir.to_owned()),
             None => bail!("the folder's path is not valid UTF-8"),
         }
-    }
-
-    #[cfg(feature = "tui")]
-    async fn console(target: &TargetArgs, ctx: &Context) -> Result<ExitCode> {
-        super::tui::TuiCmd::open(target, None, ctx).await
-    }
-
-    #[cfg(not(feature = "tui"))]
-    async fn console(_target: &TargetArgs, _ctx: &Context) -> Result<ExitCode> {
-        anyhow::bail!(
-            "this ren was built without the console; use `ren runs --help` for its subcommands, or install with --features tui"
-        )
     }
 
     async fn watch(

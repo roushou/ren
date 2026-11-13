@@ -404,13 +404,12 @@ impl InstallVps {
         Ok(tree)
     }
 
-    /// The release binary, with `ren tui`: the installed `ren` is the
-    /// operator's own, on the host they drive runs from.
+    /// The release binary: the installed `ren` is the operator's own, on the
+    /// host they drive sessions from.
     fn build(layout: &Layout) -> Result<PathBuf, InstallError> {
         Self::step("Building the release binary");
         Invocation::new(&layout.cargo)
             .args(["build", "--release", "--locked", "--package", "ren-rs"])
-            .args(["--features", "tui"])
             .args(["--bin", "ren", "--manifest-path"])
             .arg(layout.repo.join("Cargo.toml"))
             .run()?;

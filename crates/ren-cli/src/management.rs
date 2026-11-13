@@ -9,7 +9,6 @@
 //! in `control.tailscale_logins`.
 
 use crate::client::{ClientError, GatewayChoice};
-use crate::tail::LiveUpdates;
 use ren_gateway::ApiRead;
 use ren_harness::{endpoint::GatewayEndpoint, host::HostEnv};
 use ren_protocol::direction::Direction;
@@ -262,21 +261,11 @@ impl Management {
 
     /// `GET /api/live`: the response that streams the live feed, from after
     /// `after` when given, else from now. Read it with [`Self::chunk`].
-    pub async fn live(
-        &self,
-        after: Option<u64>,
-        updates: LiveUpdates,
-    ) -> Result<reqwest::Response, ManagementError> {
+    pub async fn live(&self, after: Option<u64>) -> Result<reqwest::Response, ManagementError> {
         let mut url = self.endpoint.url("/api/live");
         if let Some(after) = after {
             url.query_pairs_mut()
                 .append_pair("after", &after.to_string());
-        }
-        match updates {
-            LiveUpdates::Observations => {}
-            LiveUpdates::WithProgress => {
-                url.query_pairs_mut().append_pair("progress", "true");
-            }
         }
         let response = self
             .send(self.http.get(url).header("accept", "text/event-stream"))
@@ -602,21 +591,17 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_live_feed_asks_for_progress_only_when_told() {
+    async fn a_live_feed_starts_after_the_position_given() {
         let queries = against_gateway(|gateway| async move {
             let mut queries = Vec::new();
-            for (after, updates) in [
-                (None, LiveUpdates::Observations),
-                (Some(7), LiveUpdates::Observations),
-                (Some(7), LiveUpdates::WithProgress),
-            ] {
-                let response = gateway.live(after, updates).await.unwrap();
+            for after in [None, Some(7)] {
+                let response = gateway.live(after).await.unwrap();
                 queries.push(response.text().await.unwrap());
             }
             queries
         })
         .await;
-        assert_eq!(queries, ["", "after=7", "after=7&progress=true"]);
+        assert_eq!(queries, ["", "after=7"]);
     }
 
     #[tokio::test]

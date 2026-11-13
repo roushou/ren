@@ -19,87 +19,9 @@ ren inspect <call-id>
 ren inspect <call-id> --body response --output response.bin
 ren tail
 ren tail --json
-ren tui
 ```
 
-`ren tui` and `ren runs` (with no subcommand) open the same terminal app, built
-with the `tui` feature: the list of runs and recordings on the left, the
-selected one on the right, the gateway's traffic in the top bar, and the keys that matter now in
-the bar at the bottom.
-
-- The list groups every run and recording worth a look by the folder each run works
-  in: the folders with a run that needs you first (marked `◆` with how
-  many), each listing its runs by what they need, then the newest, under
-  what each was asked, with its three newest ended runs. Recordings of clients started
-  outside Ren follow, under "started
-  elsewhere": Ren does not know their folder. It can be grouped by what each
-  needs instead (needs you, working, your turn, watched, ended), from the
-  action menu. The arrows (or `j` and `k`) move through it, a digit jumps to
-  an entry, and `/` searches it by folder, project, or prompt. Until you choose, the selection
-  follows the top of the list: what needs you first.
-- The selected run or recording shows its conversation, its activity (each command,
-  edit, and tool step), the files it wrote and read, and its model calls
-  through the gateway (time, model, how each ended, tokens); Tab moves between
-  them. A run's conversation is shown whole, every turn open, as one scroll;
-  Enter (or `→`) moves into the selection, where ↑ and ↓ (or `j` and `k`)
-  scroll it a line at a time and PgUp and PgDn a page.
-- Keys come in three layers, so few letters do anything: moving (the arrows
-  or `j`/`k`/`h`/`l`, Enter and Esc, Tab, digits, `/`), a few verbs (`i`
-  write, `n` new run, Space for the action menu, `?` keys, `q` quit), and the
-  answers to an approval, which act only while one waits. Everything else is
-  in the action menu (Space): it lists only what applies to the selection
-  (interrupt or stop a live run; archive or delete an ended run or a
-  recording; group the list; preview the next theme), each with a letter
-  that works inside the menu only. A delete asks once more there.
-- `i` writes to the selected run: Enter sends, Ctrl-J starts a new line,
-  ↑ and ↓ move through the wrapped rows, Ctrl-E opens the text in your editor
-  (`$VISUAL`, then `$EDITOR`, then `vi`) and takes back what it saves,
-  Ctrl-P and Ctrl-N (or ↑ and ↓ with nothing typed) bring back what you sent,
-  and Esc closes the box, keeping a draft. The box grows with the text, up to
-  half the screen, then scrolls. Pasted text keeps its line breaks (bracketed
-  paste), so an Enter inside a paste does not send it.
-  Written while a turn runs, a message waits and is sent when the turn ends;
-  written to a run whose client stopped, it continues its session: the
-  daemon starts the client again and resumes the conversation, and the list
-  shows the session once, by its newest run;
-  a recording takes nothing: Ren did not start its client.
-- An approval shows as a card in the conversation: while it waits, `y`
-  allows it once, `a` for the rest of the run, and `d` denies it; the action
-  menu also denies it and stops the turn; writing instead denies it and sends
-  your words next. Answering one moves
-  on to the next run that needs you.
-- `n` opens the new-run composer, full screen, on where the run works: a
-  list (type to search) with scratch first, a new folder of the run's own,
-  then the folders recent runs worked in, then the projects under the run
-  roots, each shown as `~/…`; Tab shows or hides the other places
-  (`[runs] places`, such as `~/.config`). Then the prompt has the whole body,
-  as long as it needs to be, with the same editing keys as writing to a run
-  (Ctrl-E for your editor, pasting with line breaks); Enter starts the run in
-  the folder chosen, or in scratch when none is. Scratch runs are listed
-  together, under Scratch. The header shows the
-  folder, the client, and the model with the key that changes each, which
-  works while typing: Ctrl-O the folder, Ctrl-L the client (the last one used
-  until changed), Ctrl-K the model, Shift-Tab the approvals. The models are
-  the ones the client itself lists on the daemon's host (type to search;
-  Pi's by provider), each with its description and the client's default
-  marked; ← and → choose the effort of the one highlighted. Shift-Tab cycles
-  ask first, edits alone, and auto, back to the client's own; Pi never asks.
-  `default` leaves each to the client, and the settings last started with
-  on each client are kept while the app runs. A run's header names its
-  settings where they are not the client's own. A line under the prompt is kept for the files a prompt
-  carries; Ren cannot add files yet. The web UI's new-run form follows the
-  same rules: scratch unless a folder is chosen, other places behind a
-  switch at the foot of the folder list, and its model, effort (where the model takes one), and approvals pickers sit
-  beside the client's.
-- `?` lists every key, by layer, and `q` quits, leaving runs running; Ctrl-C quits only when pressed twice in a
-  row, so a stray press does not.
-
-A run's conversation is what the daemon stored of it, whole, read once when
-the run is selected, with what streams in over the run feed merged on top:
-the same events, so nothing shows twice and nothing is cut. A reply still
-streaming when its turn ends is stored as far as it came.
-
-Runs (see [runs](#runs)) also have their own commands, through the control API:
+Runs (see [runs](#runs)) have their own commands, through the control API:
 
 ```sh
 ren runs start codex ~/dev/acme                     # prints the new session
@@ -149,52 +71,6 @@ observation instead, one JSON object per line. It starts from now. When the feed
 ends, for example on a daemon restart, it reconnects every two seconds from the
 last observation it printed, so nothing in between is skipped. It stops on
 interrupt, or if the first connection fails.
-
-A recording reads as the web UI's Live wall reads it: the newest turn
-and the one before it (for a client that sends no turns, such as OpenCode, its
-newest four calls), call by call, with the user's prompt (`›`), the tool
-results the request carried back (`⎿`), the reply (code blocks drawn behind a
-rule), and the tool calls the model asked for (`●`), then a streaming call's
-reply and tools so far. Its header is lit green while a response streams, and
-amber or red when the newest call needs a look (a slow response head, a 429, a
-failed, interrupted, or unknown ending, a secret sent, repeated tool
-failures); under its conversation, what the recording is doing (waiting for the
-first byte, streaming, complete with the client running tools or waiting for
-you, inferred from how the last call ended, or how it stopped). The top bar
-counts recordings and open calls and shows each client's output tokens over the
-last four minutes, counted when calls end: not a live rate. The app reads a
-snapshot of recordings and calls every two seconds and whenever the feed says a
-call opened or ended, and asks for [progress events](#live-feed). A read that
-fails is shown as `stale` until one succeeds. It needs a running daemon; a
-gateway that cannot be reached is reported before the screen is taken over.
-Runs need control access (this host's control token, or an allowed Tailscale
-login through a gateway) and `[runs]` roots on the daemon; without them the
-app still shows every recording, and says why runs cannot be driven.
-
-The default `terminal` theme uses the terminal's foreground, background, and
-ANSI palette. `dark` and `light` use fixed RGB palettes and need a true-color
-terminal. Choose a theme for one run, or save this machine's preference:
-
-```sh
-ren tui --theme dark
-ren tui --save-theme light
-ren tui --save-theme terminal
-```
-
-`--save-theme` saves and exits without connecting to a daemon. The preference
-lives in `$XDG_CONFIG_HOME/ren/tui.toml` (or `~/.config/ren/tui.toml`), separate
-from gateway and daemon settings:
-
-```toml
-theme = "light"
-```
-
-`--theme` overrides the saved preference; without either, the theme is
-`terminal`. Choose the next theme in the action menu (Space, then `t`), or
-press `t` in the help, to cycle terminal → dark → light. This preview lasts for the current run and does
-not save. A non-empty `NO_COLOR` selects monochrome when there is no explicit
-flag or saved preference; an explicit choice, including `t`, enables that
-theme. Labels and focus emphasis remain available without color.
 
 ## Activity
 
@@ -652,22 +528,20 @@ model traffic is recorded like any other client's.
 
 The web UI's Sessions view drives [sessions](#sessions) through this API when
 its server is given the control token file (see the
-[UI's README](../ui/README.md#sessions)), and the terminal app (`ren tui`,
-`ren runs`) drives runs and their sessions from a terminal.
+[UI's README](../ui/README.md#sessions)), and `ren runs` drives them from the
+command line.
 
 A client sitting idle between turns for ten minutes is stopped: its run ends
 `idled` (shown as Resting), and its session goes on, its next prompt starting
 the client again to resume the conversation.
 
-In both, what is written while a turn runs is queued for after it (Enter),
+In the web UI, what is written while a turn runs is queued for after it (Enter),
 shown under the conversation, and can be taken back to edit; it can instead go
-into the running turn (Alt+Enter in the terminal, Ctrl+Enter or Send now in the
-browser) where the client takes that. Typing `/` at the start of a prompt
+into the running turn (Ctrl+Enter or Send now) where the client takes that. Typing `/` at the start of a prompt
 offers the client's own commands and skills (`$` offers Codex's skills
 anywhere), and `@` the run's folder's files; ↑ and ↓ choose, Tab or Enter
-inserts, Esc closes. Each session keeps its own draft, ↑ and ↓ (Ctrl+P and
-Ctrl+N in the terminal) recall its earlier prompts, and writing to one whose
-client stopped continues it. In the browser the model, effort, and approvals
+inserts, Esc closes. Each session keeps its own draft, ↑ and ↓ recall its earlier prompts, and writing to one whose
+client stopped continues it. The model, effort, and approvals
 change from the next turn, and a draft (no prompt sent yet) can change its
 client; a folder's `+` makes a session there at once.
 
@@ -707,7 +581,7 @@ response so far ends inside a thinking block or reasoning item, whose text is
 not sent. They
 have no `id`: they are never stored, never replayed on resume, and a feed that
 falls behind skips some. The finished call's activity is the record. The UI asks
-for them, to show replies on Live cards as they stream, and so does `ren tui`;
+for them, to show replies on Live cards as they stream;
 `ren tail` does not.
 
 ## Call search

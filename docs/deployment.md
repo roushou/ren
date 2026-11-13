@@ -170,7 +170,7 @@ deploy to upgrade. After a successful run it saves its publishing flags
 `~/.config/ren/install-vps.toml`, so later runs need no flags:
 `cargo xtask install-vps`. Giving any publishing flag replaces the saved set. It refuses a checkout whose tracked files differ from the
 commit (`--allow-dirty` installs a `-dirty` build) and warns when the commit is on
-no remote branch. It builds the release binary (with `ren tui`) while the old daemon keeps
+no remote branch. It builds the release binary while the old daemon keeps
 serving, creates `~/.config/ren/ren.toml` only if missing, and checks the
 configuration with Ren's own parser before stopping anything.
 
@@ -183,7 +183,7 @@ and their processes end with the daemon; running calls are still waited for. It 
 admission so new calls get `503` with `retry-after: 10` and clients wait (a run
 prompted between the check and the pause is waited for too). Idle runs end with
 the old daemon: before stopping it, it lists each with how to continue it.
-Writing to its session (from the UI's Sessions page, `ren tui`, or
+Writing to its session (from the UI's Sessions page or
 `ren runs say <session> <prompt>`) starts its client again, which resumes the
 conversation where it left off; a run from a daemon without sessions is
 resumed with `ren runs start <client> <dir> --resume <thread>`. It runs `ren control backup`, stops the service, keeps the old
