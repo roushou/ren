@@ -97,6 +97,8 @@ pub enum StopCause {
     Shutdown,
     /// The client refused to open the conversation.
     OpenRefused,
+    /// The client sat idle between turns.
+    Idle,
 }
 
 impl StopCause {
@@ -105,6 +107,7 @@ impl StopCause {
             Self::Operator => RunEnd::Stopped,
             Self::Shutdown => RunEnd::Drained,
             Self::OpenRefused => RunEnd::OpenRefused,
+            Self::Idle => RunEnd::Idled,
         }
     }
 }
@@ -175,6 +178,8 @@ pub enum RunEvent {
     Exited(ProcessExit),
     /// The daemon is shutting down.
     Shutdown,
+    /// The run sat idle for as long as its idle stop allows.
+    IdleTimeout,
 }
 
 /// What the shell must do after a transition.
@@ -228,6 +233,14 @@ impl RunState {
                 }
                 Self::Stopping { .. } | Self::Ended { .. } => self.stay(),
             }),
+            // Only an idle run is stopped: a turn running, or one starting,
+            // is not idle, whatever the timer says.
+            RunEvent::IdleTimeout => match self {
+                Self::Idle { .. } => Ok(Self::stop(StopCause::Idle)),
+                Self::Starting | Self::Working { .. } => Err(RunRefused::Busy),
+                Self::Stopping { .. } => Err(RunRefused::Stopping),
+                Self::Ended { .. } => Err(RunRefused::Ended),
+            },
         }
     }
 

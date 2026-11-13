@@ -12,9 +12,9 @@
 use crate::entries::Entries;
 use crate::models::{Listings, ModelProbe, ModelsError, ModelsReply};
 use crate::{
-    CommandError, ComposeError, Conversation, Create, Places, Request, RunSnapshot, RunUpdate,
-    SessionAnswer, SessionError, SessionRequest, SessionSeed, SessionSnapshot, Start, StartError,
-    StartPlace, Warmup,
+    CommandError, ComposeError, Conversation, Create, IdleStop, Places, Request, RunSnapshot,
+    RunUpdate, SessionAnswer, SessionError, SessionRequest, SessionSeed, SessionSnapshot, Start,
+    StartError, StartPlace, Warmup,
     client::{Client, ClientStatus},
     files::FileListing,
     host::{AgentHost, AgentProcess, KillSwitch},
@@ -64,6 +64,7 @@ pub struct SupervisorTask<H> {
     pub(crate) warmup: Warmup,
     pub(crate) version: String,
     pub(crate) line_limit: LineLimit,
+    pub(crate) idle: IdleStop,
 }
 
 /// One run the task knows of.
@@ -83,6 +84,11 @@ struct Live {
     first: Option<Prompt>,
     /// What the run's conversation keeps of its client's events.
     entries: Entries,
+    /// How many times the run became idle: a timer set for an earlier time
+    /// is stale.
+    rested: u64,
+    /// It became idle and its timer is not set yet.
+    arm: bool,
 }
 
 /// One session the task serves.
@@ -138,6 +144,8 @@ struct Served {
     runs: BTreeMap<RunId, Live>,
     outputs: Outputs,
     exits: Exits,
+    /// Idle timers: the run, and which time it became idle.
+    idles: FuturesUnordered<BoxFuture<'static, (RunId, u64)>>,
 }
 
 impl Served {
@@ -186,6 +194,13 @@ impl<H: AgentHost> SupervisorTask<H> {
                 Some((harness, outcome)) = listings.running.next(), if !listings.running.is_empty() => {
                     listings.finish(harness, outcome);
                 }
+                Some((run, rested)) = served.idles.next(), if !served.idles.is_empty() => {
+                    if let Some(live) = served.runs.get_mut(&run)
+                        && live.rested == rested
+                    {
+                        self.apply(run, live, RunEvent::IdleTimeout).await;
+                    }
+                }
                 Some((run, exit)) = served.exits.next(), if !served.exits.is_empty() => {
                     if let Some(live) = served.runs.get_mut(&run) {
                         live.stdin = None;
@@ -195,8 +210,26 @@ impl<H: AgentHost> SupervisorTask<H> {
                 }
                 else => break,
             }
+            self.arm(&mut served);
             if !accepting && served.exits.is_empty() {
                 break;
+            }
+        }
+    }
+
+    /// Set the timer of each run that became idle.
+    fn arm(&self, served: &mut Served) {
+        let IdleStop::After(after) = self.idle else {
+            return;
+        };
+        for (run, live) in &mut served.runs {
+            if std::mem::take(&mut live.arm) {
+                let (run, rested) = (*run, live.rested);
+                served.idles.push(
+                    tokio::time::sleep(after)
+                        .map(move |()| (run, rested))
+                        .boxed(),
+                );
             }
         }
     }
@@ -460,6 +493,8 @@ impl<H: AgentHost> SupervisorTask<H> {
                         tap: None,
                         first: None,
                         entries: Entries::default(),
+                        rested: 0,
+                        arm: false,
                     },
                 );
                 return Err(StartError::Spawn { run, source });
@@ -483,6 +518,8 @@ impl<H: AgentHost> SupervisorTask<H> {
             tap: Some(tap),
             first,
             entries: Entries::default(),
+            rested: 0,
+            arm: false,
         };
         self.publish(RunUpdate::State {
             run,
@@ -1054,6 +1091,13 @@ impl<H: AgentHost> SupervisorTask<H> {
     }
 
     fn settle(&self, run: RunId, live: &mut Live, state: RunState) {
+        // Idle now, not before: its idle timer starts.
+        if let (RunState::Idle { .. }, false) =
+            (&state, matches!(live.state, RunState::Idle { .. }))
+        {
+            live.rested += 1;
+            live.arm = true;
+        }
         if let RunState::Ended { end, exit } = &state
             && let Some(tap) = live.tap.take()
         {

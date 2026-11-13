@@ -307,6 +307,8 @@ impl Run {
             Some(RunEnd::Stopped) => "Stopped",
             Some(RunEnd::Drained) => "Stopped when Ren shut down",
             Some(RunEnd::Recovered) => "Lost when Ren restarted",
+            // Its session goes on: writing starts the client again.
+            Some(RunEnd::Idled) => "Resting",
             None => "Ended",
         }
     }

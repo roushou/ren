@@ -275,6 +275,7 @@ impl TestGateway {
                         gateway: GatewayEndpoint::parse(&format!("http://{address}")).unwrap(),
                         version: "0.0.0-test".into(),
                         line_limit: LineLimit::DEFAULT,
+                        idle: ren_supervisor::IdleStop::Never,
                     },
                     host,
                     ids,

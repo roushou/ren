@@ -313,6 +313,7 @@ fn options() -> SupervisorOptions {
         gateway: GatewayEndpoint::parse("http://127.0.0.1:8787").unwrap(),
         version: "0.1.0".into(),
         line_limit: LineLimit::DEFAULT,
+        idle: ren_supervisor::IdleStop::Never,
     }
 }
 
@@ -1350,4 +1351,52 @@ async fn a_draft_changes_client_and_a_stored_session_is_adopted() {
         unreachable!()
     };
     assert_eq!(thread.to_string(), THREAD);
+}
+
+#[tokio::test]
+async fn an_idle_client_is_stopped_and_its_session_goes_on() {
+    use ren_supervisor::{IdleStop, SessionPhase, SessionState};
+    let supervised = supervise_with(
+        FakeHost::new(Script::Codex),
+        SupervisorOptions {
+            idle: IdleStop::After(Duration::from_millis(50)),
+            ..options()
+        },
+    )
+    .await;
+    let supervisor = &supervised.supervisor;
+    let mut updates = supervisor.subscribe();
+    let session = supervisor
+        .create(create(Harness::Codex, "/work/acme"))
+        .await
+        .unwrap();
+    // Opened and idle, it is stopped once its timer runs out.
+    state(&mut updates, |s| matches!(s, RunState::Idle { .. })).await;
+    let ended = state(&mut updates, |s| matches!(s, RunState::Ended { .. })).await;
+    assert!(
+        matches!(
+            ended,
+            RunState::Ended {
+                end: ren_recorder::capture::RunEnd::Idled,
+                ..
+            }
+        ),
+        "{ended:?}"
+    );
+    // The session goes on: a prompt starts its client again.
+    assert_eq!(
+        only_session(supervisor).await.state,
+        SessionState::Open(SessionPhase::Draft)
+    );
+    supervisor
+        .send(session, RunCommand::Prompt(prompt_text("go on")))
+        .await
+        .unwrap();
+    // Working (waiting on its approval), it is not idle and is not stopped.
+    state(&mut updates, working).await;
+    tokio::time::sleep(Duration::from_millis(150)).await;
+    let run = only_session(supervisor).await.process.unwrap();
+    let runs = supervisor.runs().await.unwrap();
+    let held = runs.iter().find(|snapshot| snapshot.run == run).unwrap();
+    assert!(working(&held.state), "{:?}", held.state);
 }

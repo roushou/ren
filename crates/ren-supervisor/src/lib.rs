@@ -70,6 +70,22 @@ pub struct SupervisorOptions {
     /// Ren's version, reported to clients as theirs.
     pub version: String,
     pub line_limit: LineLimit,
+    /// When a client sitting idle between turns is stopped.
+    pub idle: IdleStop,
+}
+
+/// When a client sitting idle between turns is stopped. Its session goes
+/// on: the next prompt starts a client that resumes the conversation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IdleStop {
+    Never,
+    After(std::time::Duration),
+}
+
+impl IdleStop {
+    /// Ten minutes: a client held for a turn soon after, and given back
+    /// when the operator has moved on.
+    pub const DEFAULT: Self = Self::After(std::time::Duration::from_secs(600));
 }
 
 /// The handle to every run: start one, command it, list them, and watch them.
@@ -403,6 +419,7 @@ impl Supervisor {
             warmup: options.warmup,
             version: options.version,
             line_limit: options.line_limit,
+            idle: options.idle,
         };
         Ok((
             Self {

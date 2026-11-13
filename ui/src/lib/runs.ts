@@ -50,9 +50,10 @@ const runEnds = [
   'stopped',
   'drained',
   'recovered',
+  'idled',
 ] as const;
 export type RunEnd = (typeof runEnds)[number];
-const stopCauses = ['operator', 'shutdown', 'open_refused'] as const;
+const stopCauses = ['operator', 'shutdown', 'open_refused', 'idle'] as const;
 export type StopCause = (typeof stopCauses)[number];
 const decisions = ['accept', 'accept_for_session', 'decline', 'cancel'] as const;
 /** How much a model reasons, from none to the most. */
@@ -1420,6 +1421,8 @@ export class Runs {
         return 'Stopped when Ren shut down';
       case 'recovered':
         return 'Lost when Ren restarted';
+      case 'idled':
+        return 'Resting';
       default:
         return unrecognised(end);
     }
@@ -1428,6 +1431,7 @@ export class Runs {
   static endTone(end: Stored<RunEnd>, exit: ProcessExit | null = null): PhaseMark['tone'] {
     switch (end) {
       case 'stopped':
+      case 'idled':
         return 'neutral';
       case 'exited':
         return exit?.kind === 'code' && exit.value === 0 ? 'neutral' : 'warn';

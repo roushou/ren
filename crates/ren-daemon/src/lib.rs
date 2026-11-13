@@ -306,6 +306,7 @@ impl Daemon {
             gateway: GatewayEndpoint::parse(&format!("http://{address}"))?,
             version: env!("CARGO_PKG_VERSION").to_owned(),
             line_limit: LineLimit::DEFAULT,
+            idle: ren_supervisor::IdleStop::DEFAULT,
         };
         Ok(Some(Supervisor::new(
             options,

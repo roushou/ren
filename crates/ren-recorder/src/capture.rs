@@ -270,4 +270,7 @@ pub enum RunEnd {
     /// The daemon stopped before the run's end was recorded. Written only by
     /// storage recovery; the outcome is unknown.
     Recovered,
+    /// The client sat idle, so Ren stopped it; its session goes on, and the
+    /// next prompt starts one again.
+    Idled,
 }
