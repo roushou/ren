@@ -1,6 +1,6 @@
 # Plan: sessions you work in
 
-Status: in progress, on `agent-runs`. Step 1 is done; step 2 is next. This file is
+Status: in progress, on `agent-runs`. Steps 1 and 2 are done; step 3 is next. This file is
 the plan of record: each step lands as its own commits, every commit
 passes the full checks, and any change to the plan is written under
 [Deviations](#deviations) with its reason. Once the work is done, what
@@ -144,5 +144,24 @@ and `ren --help` and `ren --version` output against the commit before.
   `HistorySubject::Session` (a stored label), the attribution hints of
   the client's own session (`SessionHint`, `TurnWithoutSession`), and the
   dev seed's `sessions` scenario (a `cargo xtask dev seed` value).
+- **2 stores operator sessions in `operator_sessions`**, not `sessions`,
+  which holds recordings and keeps its name by the rules. A run names its
+  session in `runs.operator_session`: `runs.session` would read as the
+  run's recording, which the read API already returns as `session`.
+- **2 records one session fact, `Created`** (with `RunSession` on a run's
+  start). Settings changed mid-run update the session with its run
+  (`RunFact::Configured`), and while each session has one run, archiving
+  or deleting the run archives or deletes its session. `Configured`,
+  `Archived`, and `Unarchived` facts of the session itself arrive in step 4,
+  with the commands that make them. Drafts stay in each interface until
+  step 5 decides whether the daemon keeps them.
+- **2 backfills each earlier run's session under the run's own id.** SQL
+  cannot mint ids, and the two are different identities that may share a
+  value.
+- **2 reads sessions through `Reader::sessions` and `Reader::session`
+  only.** `ReadRequest` and the read API gain them in step 4, beside the
+  control routes.
+- **2 adds `session` to the runs the control API lists** (`RunSnapshot`),
+  additively, so the interfaces can group by it in step 5.
 - **1a kept the terminal app's `Focus::Session` and `IntoSession`**: they
   name the detail pane, which shows the operator's sessions after step 5.

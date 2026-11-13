@@ -29,7 +29,7 @@ use ren_recorder::{
         AttemptPhase, AttemptTerminal, BodyEnding, CallRejection, CallState, ChannelEnd,
         ProcessExit, RunEnd, TerminalCause,
     },
-    id::{AttemptId, CallId, ChannelId, RecordingId, RunId, TurnId},
+    id::{AttemptId, CallId, ChannelId, RecordingId, RunId, SessionId, TurnId},
     time::UnixMillis,
 };
 use serde::{Deserialize, Serialize};
@@ -649,6 +649,43 @@ impl RunView {
             model: row.text("model")?,
             effort: row.optional_label("effort")?,
             approvals: row.optional_label("approvals")?,
+        })
+    }
+}
+
+/// One session an operator works in, as recorded, with the runs (client
+/// processes) that served it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SessionView {
+    pub id: SessionId,
+    pub harness: Stored<Harness>,
+    pub workdir: String,
+    pub created_at: UnixMillis,
+    /// The settings its next turn runs on; `None` is the client's own.
+    pub model: Option<String>,
+    pub effort: Option<Stored<Effort>>,
+    pub approvals: Option<Stored<ApprovalPolicy>>,
+    pub archived_at: Option<UnixMillis>,
+    /// Its runs, newest first.
+    pub runs: Vec<RunView>,
+}
+
+impl SessionView {
+    pub(super) const SELECT: &'static str = "SELECT id, harness, workdir, created_at, model, effort, approvals, archived_at FROM operator_sessions";
+
+    /// The session in `row`, with `runs`.
+    pub(super) fn from_row(row: &SqliteRow, runs: Vec<RunView>) -> Result<Self, StoreError> {
+        let row = Columns(row);
+        Ok(Self {
+            id: row.id("id")?,
+            harness: row.label("harness")?,
+            workdir: row.text("workdir")?.ok_or(StoreError::Corrupt("session"))?,
+            created_at: row.time("created_at")?,
+            model: row.text("model")?,
+            effort: row.optional_label("effort")?,
+            approvals: row.optional_label("approvals")?,
+            archived_at: row.optional_time("archived_at")?,
+            runs,
         })
     }
 }

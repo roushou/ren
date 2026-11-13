@@ -1568,9 +1568,12 @@ mod history {
     use crate::{StoreError, query::PageLimit, query::Shelf};
     use ren_protocol::native::NativeThreadId;
     use ren_recorder::{
-        batch::{Actor, Batch, HistoryChange, HistoryEdit, HistorySubject, Op, RunFact, RunRecord},
+        batch::{
+            Actor, Batch, HistoryChange, HistoryEdit, HistorySubject, Op, RunFact, RunRecord,
+            SessionFact, SessionRecord,
+        },
         capture::RunEnd,
-        id::{RecordingId, RunId},
+        id::{RecordingId, RunId, SessionId},
         time::Clock,
     };
     use std::time::Duration;
@@ -1613,8 +1616,20 @@ mod history {
         /// or still running.
         async fn run(&mut self, native: u128, ended: bool) -> RunId {
             let run = RunId::generate(self.ids.as_ref());
+            let session = SessionId::generate(self.ids.as_ref());
+            let mut batch = Batch::default();
+            batch.push(Op::Session(SessionRecord {
+                at: self.clock.now(),
+                session,
+                fact: SessionFact::Created {
+                    harness: ren_harness::Harness::Codex,
+                    workdir: "/work/acme".into(),
+                    settings: ren_harness::settings::RunSettings::default(),
+                },
+            }));
             let mut facts = vec![
                 RunFact::Started {
+                    session,
                     harness: ren_harness::Harness::Codex,
                     workdir: "/work/acme".into(),
                     settings: ren_harness::settings::RunSettings::default(),
@@ -1629,7 +1644,6 @@ mod history {
                     exit: None,
                 });
             }
-            let mut batch = Batch::default();
             for fact in facts {
                 batch.push(Op::Run(RunRecord {
                     at: self.clock.now(),
@@ -1704,6 +1718,45 @@ mod history {
             .await;
         assert_eq!(fixture.runs(Shelf::Current).await, [run]);
         assert!(fixture.runs(Shelf::Archived).await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_runs_operator_session_is_archived_and_deleted_with_it() {
+        let mut fixture = Fixture::new().await;
+        let run = fixture.run(5, true).await;
+        let sessions = |fixture: &Fixture, shelf| {
+            let reader = fixture.reader.clone();
+            async move {
+                reader
+                    .sessions(PageLimit::DEFAULT, shelf)
+                    .await
+                    .unwrap()
+                    .iter()
+                    .map(|session| session.runs.iter().map(|run| run.id).collect::<Vec<_>>())
+                    .collect::<Vec<_>>()
+            }
+        };
+        assert_eq!(sessions(&fixture, Shelf::Current).await, [[run]]);
+        fixture
+            .edit(HistorySubject::Run(run), HistoryChange::Archive)
+            .await;
+        assert!(sessions(&fixture, Shelf::Current).await.is_empty());
+        assert_eq!(sessions(&fixture, Shelf::Archived).await, [[run]]);
+        fixture
+            .edit(HistorySubject::Run(run), HistoryChange::Unarchive)
+            .await;
+        assert_eq!(sessions(&fixture, Shelf::Current).await, [[run]]);
+        fixture
+            .edit(HistorySubject::Run(run), HistoryChange::Delete)
+            .await;
+        assert!(sessions(&fixture, Shelf::Current).await.is_empty());
+        assert!(sessions(&fixture, Shelf::Archived).await.is_empty());
+        // A running run keeps its session current, archived or not.
+        let running = fixture.run(6, false).await;
+        fixture
+            .edit(HistorySubject::Run(running), HistoryChange::Archive)
+            .await;
+        assert_eq!(sessions(&fixture, Shelf::Current).await, [[running]]);
     }
 
     #[tokio::test]
@@ -1853,8 +1906,10 @@ mod conversation {
             let run = RunId::generate(self.ids.as_ref());
             let turn = NativeTurnId::new(Uuid::from_u128(thread + 100)).unwrap();
             let mut batch = Batch::default();
+            let session = ren_recorder::id::SessionId::generate(self.ids.as_ref());
             for fact in [
                 RunFact::Started {
+                    session,
                     harness: ren_harness::Harness::ClaudeCode,
                     workdir: "/work/acme".into(),
                     settings: ren_harness::settings::RunSettings::default(),

@@ -20,7 +20,8 @@ use ren_recorder::{
     batch::{
         AttemptBody, Batch, BodyEnd, BodyKey, CloseChannel, FinishAttempt, FinishCall,
         HistoryChange, HistoryEdit, HistorySubject, MessageMark, ObservationKind, Op, OpenCall,
-        OperatorAction, ResponseHead, RunEntry, RunFact, RunRecord, Segment, Stamp, StartAttempt,
+        OperatorAction, ResponseHead, RunEntry, RunFact, RunRecord, Segment, SessionFact,
+        SessionRecord, Stamp, StartAttempt,
     },
     inspection::InspectionRecord,
     retention::RetentionPolicy,
@@ -633,6 +634,7 @@ impl MetadataTx<'_> {
             Op::FinishCall(finish) => self.finish_call(finish).await.map(Some),
             Op::CloseChannel(close) => self.close_channel(close).await.map(Some),
             Op::Operator(action) => self.operator(action).await.map(Some),
+            Op::Session(record) => self.session(record).await.map(Some),
             Op::Run(record) => self.run(record).await.map(Some),
             Op::History(edit) => self.history(edit).await.map(Some),
             Op::RunEntry(entry) => self.run_entry(entry).await.map(|()| None),
@@ -732,19 +734,55 @@ impl MetadataTx<'_> {
         .await
     }
 
-    async fn run(&mut self, record: &RunRecord) -> Result<Observation, StoreError> {
-        let id = record.run.to_string();
+    async fn session(&mut self, record: &SessionRecord) -> Result<Observation, StoreError> {
         let at = i64::try_from(record.at.wall.as_millis()).unwrap_or(i64::MAX);
         match &record.fact {
-            RunFact::Started {
+            SessionFact::Created {
                 harness,
                 workdir,
                 settings,
             } => {
                 sqlx::query(
-                    "INSERT INTO runs(id, harness, workdir, started_at, model, effort, approvals) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    "INSERT INTO operator_sessions(id, harness, workdir, created_at, model, effort, approvals) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                )
+                .bind(record.session.to_string())
+                .bind(harness.label())
+                .bind(workdir)
+                .bind(at)
+                .bind(settings.model.as_ref().map(ModelId::as_str))
+                .bind(settings.effort.map(Labeled::label))
+                .bind(settings.approvals.map(Labeled::label))
+                .execute(&mut *self.tx)
+                .await?;
+            }
+        }
+        // Sessions share the nil channel, which has no row, as runs do.
+        self.log(
+            record.at,
+            ChannelId::restore(uuid::Uuid::nil()),
+            None,
+            None,
+            record.fact.kind(),
+            record,
+        )
+        .await
+    }
+
+    async fn run(&mut self, record: &RunRecord) -> Result<Observation, StoreError> {
+        let id = record.run.to_string();
+        let at = i64::try_from(record.at.wall.as_millis()).unwrap_or(i64::MAX);
+        match &record.fact {
+            RunFact::Started {
+                session,
+                harness,
+                workdir,
+                settings,
+            } => {
+                sqlx::query(
+                    "INSERT INTO runs(id, operator_session, harness, workdir, started_at, model, effort, approvals) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                 )
                 .bind(&id)
+                .bind(session.to_string())
                 .bind(harness.label())
                 .bind(workdir)
                 .bind(at)
@@ -755,13 +793,22 @@ impl MetadataTx<'_> {
                 .await?;
             }
             RunFact::Configured { settings } => {
-                sqlx::query("UPDATE runs SET model = ?, effort = ?, approvals = ? WHERE id = ?")
+                // The session's settings are its newest, as its next turn runs.
+                for table in ["runs", "operator_sessions"] {
+                    let target = match table {
+                        "runs" => "id = ?",
+                        _ => "id = (SELECT operator_session FROM runs WHERE id = ?)",
+                    };
+                    sqlx::query(AssertSqlSafe(format!(
+                        "UPDATE {table} SET model = ?, effort = ?, approvals = ? WHERE {target}"
+                    )))
                     .bind(settings.model.as_ref().map(ModelId::as_str))
                     .bind(settings.effort.map(Labeled::label))
                     .bind(settings.approvals.map(Labeled::label))
                     .bind(&id)
                     .execute(&mut *self.tx)
                     .await?;
+                }
             }
             RunFact::Opened { thread } => {
                 sqlx::query("UPDATE runs SET thread = ? WHERE id = ?")
@@ -862,6 +909,14 @@ impl MetadataTx<'_> {
                         .await?;
                     }
                 }
+                // While each session has one run, it is archived with it.
+                for run in &runs {
+                    sqlx::query("UPDATE operator_sessions SET archived_at = ? WHERE id = (SELECT operator_session FROM runs WHERE id = ?)")
+                        .bind(at)
+                        .bind(run)
+                        .execute(&mut *self.tx)
+                        .await?;
+                }
             }
             HistoryChange::Delete => {
                 for session in &sessions {
@@ -879,6 +934,12 @@ impl MetadataTx<'_> {
                     }
                 }
                 for run in &runs {
+                    let session: Option<String> =
+                        sqlx::query_scalar("SELECT operator_session FROM runs WHERE id = ?")
+                            .bind(run)
+                            .fetch_optional(&mut *self.tx)
+                            .await?
+                            .flatten();
                     // A running run stays, with its log rows.
                     let ended =
                         sqlx::query("DELETE FROM runs WHERE id = ? AND ended_at IS NOT NULL")
@@ -900,6 +961,21 @@ impl MetadataTx<'_> {
                             .bind(run)
                             .execute(&mut *self.tx)
                             .await?;
+                        // A session goes with its last run.
+                        if let Some(session) = &session {
+                            let gone = sqlx::query("DELETE FROM operator_sessions WHERE id = ?1 AND NOT EXISTS (SELECT 1 FROM runs WHERE operator_session = ?1)")
+                                .bind(session)
+                                .execute(&mut *self.tx)
+                                .await?
+                                .rows_affected();
+                            if gone > 0 {
+                                sqlx::query("DELETE FROM observations WHERE call IS NULL AND kind = ? AND json_extract(payload, '$.session') = ?")
+                                    .bind(ObservationKind::SessionCreated.label())
+                                    .bind(session)
+                                    .execute(&mut *self.tx)
+                                    .await?;
+                            }
+                        }
                     }
                 }
             }

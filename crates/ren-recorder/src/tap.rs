@@ -8,12 +8,12 @@ use crate::{
     batch::{
         AttemptBody, BodyEnd, CloseChannel, HistoryChange, HistoryEdit, HistorySubject,
         MessageMark, OpenCall, OperatorAction, Recorded, ResponseHead, RunEntry, RunFact,
-        RunRecord, Stamp, StartAttempt, Unattributed,
+        RunRecord, SessionFact, SessionRecord, Stamp, StartAttempt, Unattributed,
     },
     capture::{
         BodyEnding, CallRejection, ChannelEnd, Omission, ProcessExit, RunEnd, TerminalRecord,
     },
-    id::{AttemptId, CallId, ChannelId, RunId},
+    id::{AttemptId, CallId, ChannelId, RunId, SessionId},
     routing::{ConfigRevision, OperatorRevision, UpstreamId},
 };
 use bytes::Bytes;
@@ -658,6 +658,23 @@ impl Drop for ChannelTap {
 #[error("the recorder has no room to record a run")]
 pub struct RunUnrecorded;
 
+/// The session a run serves.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RunSession {
+    /// A session created with the run, recorded before it.
+    New(SessionId),
+    /// A session already recorded.
+    Existing(SessionId),
+}
+
+impl RunSession {
+    pub fn id(self) -> SessionId {
+        match self {
+            Self::New(session) | Self::Existing(session) => session,
+        }
+    }
+}
+
 /// Capture of one run's lifecycle. Its start is recorded when it is made, and
 /// its end's slot is reserved until [`RunTap::end`]. Dropping it without an
 /// end records nothing more: the next startup marks the run recovered.
@@ -671,12 +688,32 @@ impl RunTap {
     pub(super) fn start(
         shared: Arc<Shared>,
         run: RunId,
+        session: RunSession,
         harness: Harness,
         workdir: String,
         settings: RunSettings,
     ) -> Result<Self, RunUnrecorded> {
+        // Every slot first: a run starts recorded whole, or not at all.
+        let created = match session {
+            RunSession::New(_) => Some(shared.reserve_close().ok_or(RunUnrecorded)?),
+            RunSession::Existing(_) => None,
+        };
         let start = shared.reserve_close().ok_or(RunUnrecorded)?;
         let end = shared.reserve_close().ok_or(RunUnrecorded)?;
+        if let Some((slot, permit)) = created {
+            slot.send(Item::Session {
+                record: SessionRecord {
+                    at: shared.clock.now(),
+                    session: session.id(),
+                    fact: SessionFact::Created {
+                        harness,
+                        workdir: workdir.clone(),
+                        settings: settings.clone(),
+                    },
+                },
+                _slot: permit,
+            });
+        }
         let tap = Self {
             shared,
             run,
@@ -685,6 +722,7 @@ impl RunTap {
         tap.send(
             start,
             RunFact::Started {
+                session: session.id(),
                 harness,
                 workdir,
                 settings,

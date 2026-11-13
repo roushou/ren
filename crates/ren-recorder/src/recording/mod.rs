@@ -9,7 +9,7 @@ use crate::{
     batch::{
         AttemptBody, Batch, BodyEnd, BodyKey, CloseChannel, FinishAttempt, FinishCall, HistoryEdit,
         MessageMark, Op, OpenCall, OperatorAction, ResponseHead, RunEntry, RunRecord, Segment,
-        Stamp, StartAttempt,
+        SessionRecord, Stamp, StartAttempt,
     },
     capture::{CallRejection, TerminalRecord},
     chunk::Chunker,
@@ -59,6 +59,7 @@ pub(crate) enum Record {
         rejection: Option<CallRejection>,
     },
     Operator(OperatorAction),
+    Session(SessionRecord),
     Run(RunRecord),
     RunEntry(Box<RunEntry>),
     History(HistoryEdit),
@@ -77,6 +78,7 @@ impl Record {
                 stamp.at.monotonic
             }
             Self::Operator(action) => action.at.monotonic,
+            Self::Session(record) => record.at.monotonic,
             Self::Run(record) => record.at.monotonic,
             Self::History(edit) => edit.at.monotonic,
             Self::RunEntry(entry) => entry.at.monotonic,
@@ -296,6 +298,7 @@ impl RecorderCore {
             Record::Data(piece) => self.data(piece),
             Record::Close(close) => self.batch.push(Op::CloseChannel(close)),
             Record::Operator(action) => self.batch.push(Op::Operator(action)),
+            Record::Session(record) => self.batch.push(Op::Session(record)),
             Record::Run(record) => self.batch.push(Op::Run(record)),
             Record::History(edit) => self.batch.push(Op::History(edit)),
             Record::RunEntry(entry) => self.batch.push(Op::RunEntry(*entry)),

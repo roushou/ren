@@ -74,6 +74,7 @@ fn turn(n: u128) -> NativeTurnId {
 fn snapshot(n: u128, harness: Harness, workdir: &str, state: RunState) -> RunSnapshot {
     RunSnapshot {
         run: run_id(n),
+        session: ren_recorder::id::SessionId::restore(uuid::Uuid::from_u128(0x5500 + n)),
         harness,
         workdir: workdir.into(),
         state,

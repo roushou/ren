@@ -12,7 +12,7 @@ use crate::caller::Caller;
 use crate::digest::CallDigest;
 use crate::{
     capture::{BodyEnding, CallRejection, ChannelEnd, ProcessExit, RunEnd, TerminalRecord},
-    id::{AttemptId, CallId, ChannelId, RecordingId, RunId},
+    id::{AttemptId, CallId, ChannelId, RecordingId, RunId, SessionId},
     routing::{ConfigRevision, OperatorRevision, UpstreamId},
     time::{Moment, UnixMillis},
 };
@@ -95,6 +95,7 @@ impl Batch {
                     | Op::FinishCall(_)
                     | Op::CloseChannel(_)
                     | Op::Operator(_)
+                    | Op::Session(_)
                     | Op::Run(_)
                     | Op::RunEntry(_)
                     | Op::History(_) => true,
@@ -188,6 +189,7 @@ pub enum Op {
     FinishCall(FinishCall),
     CloseChannel(CloseChannel),
     Operator(OperatorAction),
+    Session(SessionRecord),
     Run(RunRecord),
     /// One entry of a run's conversation. It is stored, not logged: the
     /// run feed carries it live.
@@ -273,6 +275,37 @@ pub enum HistoryChange {
     Delete,
 }
 
+/// A fact about a session, when it happened. Not tied to a channel or call.
+#[derive(Debug, Clone, Serialize)]
+pub struct SessionRecord {
+    #[serde(skip)]
+    pub at: Moment,
+    pub session: SessionId,
+    #[serde(flatten)]
+    pub fact: SessionFact,
+}
+
+/// What happened to a session.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "snake_case", tag = "fact")]
+pub enum SessionFact {
+    /// The operator created it: `harness` working in `workdir`, on these
+    /// settings (each left out is the client's own).
+    Created {
+        harness: Harness,
+        workdir: String,
+        settings: RunSettings,
+    },
+}
+
+impl SessionFact {
+    pub fn kind(&self) -> ObservationKind {
+        match self {
+            Self::Created { .. } => ObservationKind::SessionCreated,
+        }
+    }
+}
+
 /// A fact about a run, when it happened. Not tied to a channel or call.
 #[derive(Debug, Clone, Serialize)]
 pub struct RunRecord {
@@ -288,6 +321,8 @@ pub struct RunRecord {
 #[serde(rename_all = "snake_case", tag = "fact")]
 pub enum RunFact {
     Started {
+        /// The session the run serves.
+        session: SessionId,
         harness: Harness,
         workdir: String,
         /// The settings it started with; each left out is the client's own.
@@ -372,6 +407,8 @@ pub enum ObservationKind {
     HistoryEdited,
     /// A run moved to other settings mid-run.
     RunConfigured,
+    /// The operator created a session. Not tied to a call.
+    SessionCreated,
 }
 
 /// Where an operation belongs and when it happened. Every observation has it.

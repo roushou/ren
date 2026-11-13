@@ -17,6 +17,7 @@ pub mod project;
 #[cfg(test)]
 mod purity;
 pub mod run;
+pub mod session;
 mod task;
 pub mod workdir;
 
@@ -26,6 +27,7 @@ pub use host::{AgentHost, AgentProcess, KillSignal, KillSwitch};
 pub use models::ModelsError;
 pub use project::{Look, PlaceKind, Project, ProjectGit, Search};
 pub use run::{Approvals, Delivery, ProcessExit, RunCommand, RunRefused, RunState, Waiting};
+pub use session::{SessionAction, SessionInput, SessionPhase, SessionRefused, SessionState};
 pub use task::SupervisorTask;
 pub use workdir::{Bounds, Roots, Workdir, WorkdirError};
 
@@ -42,7 +44,7 @@ use ren_harness::{
 use ren_protocol::native::NativeThreadId;
 use ren_recorder::{
     Recorder, RunUnrecorded,
-    id::{IdSource, RunId},
+    id::{IdSource, RunId, SessionId},
 };
 use std::{io, path::PathBuf, sync::Arc};
 use tokio::sync::{broadcast, mpsc, oneshot};
@@ -125,6 +127,8 @@ pub enum Conversation {
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct RunSnapshot {
     pub run: RunId,
+    /// The session the run serves.
+    pub session: SessionId,
     pub harness: Harness,
     pub workdir: PathBuf,
     pub state: RunState,

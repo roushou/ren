@@ -36,9 +36,9 @@ use ren_harness::{
 use ren_protocol::label::Labeled;
 use ren_protocol::native::NativeThreadId;
 use ren_recorder::{
-    Recorder, RunTap,
+    Recorder, RunSession, RunTap,
     capture::RunEnd,
-    id::{IdSource, RunId},
+    id::{IdSource, RunId, SessionId},
 };
 use std::{collections::BTreeMap, sync::Arc};
 use tokio::{
@@ -63,6 +63,8 @@ pub struct SupervisorTask<H> {
 
 /// One run the task knows of.
 struct Live {
+    /// The session the run serves.
+    session: SessionId,
     harness: Harness,
     workdir: Workdir,
     settings: RunSettings,
@@ -220,6 +222,7 @@ impl<H: AgentHost> SupervisorTask<H> {
                     runs.iter()
                         .map(|(run, live)| RunSnapshot {
                             run: *run,
+                            session: live.session,
                             harness: live.harness,
                             workdir: live.workdir.as_path().to_path_buf(),
                             state: live.state.clone(),
@@ -304,10 +307,19 @@ impl<H: AgentHost> SupervisorTask<H> {
             Driver::open(harness, opening, &self.version, self.ids.next_uuid())
                 .map_err(StartError::NotDrivable)?;
         let run = RunId::generate(self.ids.as_ref());
+        // Each run serves a session of its own, created with it, until
+        // sessions outlive their processes.
+        let session = SessionId::generate(self.ids.as_ref());
         // Every run is recorded: without room, it does not start.
         let tap = self
             .recorder
-            .run(run, harness, workdir.as_str().to_owned(), settings.clone())
+            .run(
+                run,
+                RunSession::New(session),
+                harness,
+                workdir.as_str().to_owned(),
+                settings.clone(),
+            )
             .map_err(StartError::Unrecorded)?;
         let process = match self.host.spawn(&plan, &workdir) {
             Ok(process) => process,
@@ -324,6 +336,7 @@ impl<H: AgentHost> SupervisorTask<H> {
                 runs.insert(
                     run,
                     Live {
+                        session,
                         harness,
                         workdir,
                         settings,
@@ -347,6 +360,7 @@ impl<H: AgentHost> SupervisorTask<H> {
             kill,
         } = process;
         let mut live = Live {
+            session,
             harness,
             workdir,
             settings,

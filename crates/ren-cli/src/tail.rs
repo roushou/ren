@@ -155,7 +155,8 @@ impl Shown {
                 | ObservationKind::RunOpened
                 | ObservationKind::RunConfigured
                 | ObservationKind::RunEnded
-                | ObservationKind::RunRecovered,
+                | ObservationKind::RunRecovered
+                | ObservationKind::SessionCreated,
                 _,
             ) => Self::Hidden,
         })

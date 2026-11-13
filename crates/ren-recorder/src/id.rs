@@ -123,6 +123,13 @@ identity!(
     TurnId as "turn"
 );
 identity!(
+    /// One session an operator works in: a folder and a client, with its
+    /// conversation across every process that serves it. Not a recording:
+    /// a session's calls are recorded, and grouped as their client names
+    /// them.
+    SessionId as "operator_session"
+);
+identity!(
     /// One agent process Ren started and drove through its client's
     /// structured mode, from start to end. A run's calls may belong to a
     /// session; the run is not the session.

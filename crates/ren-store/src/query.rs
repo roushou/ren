@@ -172,6 +172,19 @@ impl Shelf {
         }
     }
 
+    /// The SQL condition an operator session meets on this shelf: one with
+    /// a run still running is always current.
+    pub(crate) fn sessions(self) -> &'static str {
+        match self {
+            Self::Current => {
+                "(archived_at IS NULL OR EXISTS (SELECT 1 FROM runs WHERE runs.operator_session = operator_sessions.id AND runs.ended_at IS NULL))"
+            }
+            Self::Archived => {
+                "(archived_at IS NOT NULL AND NOT EXISTS (SELECT 1 FROM runs WHERE runs.operator_session = operator_sessions.id AND runs.ended_at IS NULL))"
+            }
+        }
+    }
+
     /// The SQL condition a run meets on this shelf: a running run is always
     /// current.
     pub(crate) fn runs(self) -> &'static str {

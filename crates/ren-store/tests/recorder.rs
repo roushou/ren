@@ -721,10 +721,12 @@ async fn a_runs_lifecycle_is_recorded_and_read_back() {
     let harness = Harness::new(CaptureOptions::default(), 8).await;
     let ids = SequentialIds::starting_at(100);
     let run = RunId::generate(&ids);
+    let session = ren_recorder::id::SessionId::generate(&ids);
     let tap = harness
         .recorder
         .run(
             run,
+            ren_recorder::RunSession::New(session),
             ren_harness::Harness::Codex,
             "/work/acme".into(),
             ren_harness::settings::RunSettings {
@@ -768,6 +770,7 @@ async fn a_runs_lifecycle_is_recorded_and_read_back() {
         .recorder
         .run(
             unfinished,
+            ren_recorder::RunSession::Existing(session),
             ren_harness::Harness::Codex,
             "/work/b".into(),
             ren_harness::settings::RunSettings::default(),
@@ -798,9 +801,12 @@ async fn a_runs_lifecycle_is_recorded_and_read_back() {
         Some(Stored::Known(ren_harness::settings::ApprovalPolicy::Edits))
     );
     assert_eq!(ended.thread, Some(thread.to_string()));
-    let session = reader.call(call_id).await.unwrap().call.session;
-    assert!(session.is_some());
-    assert_eq!(ended.session, session, "the run's session is its thread's");
+    let recording = reader.call(call_id).await.unwrap().call.session;
+    assert!(recording.is_some());
+    assert_eq!(
+        ended.session, recording,
+        "the run's recording is its thread's"
+    );
     assert_eq!(ended.end, Some(Stored::Known(RunEnd::Stopped)));
     assert_eq!(ended.exit, Some(ProcessExit::Signal(9)));
     let open = reader.run(unfinished).await.unwrap().unwrap();
@@ -820,12 +826,38 @@ async fn a_runs_lifecycle_is_recorded_and_read_back() {
     assert_eq!(
         kinds,
         [
+            ObservationKind::SessionCreated,
             ObservationKind::RunStarted,
             ObservationKind::RunOpened,
             ObservationKind::RunEnded,
             ObservationKind::RunStarted,
         ]
         .map(Stored::Known)
+    );
+    // Both runs served the one session, created with the first: newest run
+    // first, and the session's settings are those it was created with.
+    let sessions = reader
+        .sessions(
+            ren_store::query::PageLimit::DEFAULT,
+            ren_store::query::Shelf::Current,
+        )
+        .await
+        .unwrap();
+    assert_eq!(sessions.len(), 1);
+    assert_eq!(sessions[0].id, session);
+    assert_eq!(sessions[0].workdir, "/work/acme");
+    assert_eq!(sessions[0].model.as_deref(), Some("gpt-deep"));
+    assert_eq!(
+        sessions[0]
+            .runs
+            .iter()
+            .map(|run| run.id)
+            .collect::<Vec<_>>(),
+        [unfinished, run]
+    );
+    assert_eq!(
+        reader.session(session).await.unwrap(),
+        Some(sessions[0].clone())
     );
     reader.close().await;
 

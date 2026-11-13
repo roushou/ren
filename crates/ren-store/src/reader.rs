@@ -13,8 +13,8 @@ use crate::{
     view::{
         AttemptView, BodyPrefix, BodyView, CallDetail, CallPage, CallView, ChannelView, Columns,
         ConversationView, DiskUsage, HistoryTarget, MessageView, ModelUsage, OperatorActionView,
-        RecordingView, RunEntryView, RunView, StorageView, TokenTotals, UsageBucket, UsageCounts,
-        UsageView, UserUsage,
+        RecordingView, RunEntryView, RunView, SessionView, StorageView, TokenTotals, UsageBucket,
+        UsageCounts, UsageView, UserUsage,
     },
     writer::BlobAccess,
 };
@@ -34,7 +34,7 @@ use ren_recorder::digest::CallDigest;
 use ren_recorder::{
     capture::{AttemptTerminal, BodyEnding, CallState, TerminalClass},
     digest::{Captured, StoredBody, StoredExchange, StoredResponse},
-    id::{CallId, RecordingId, RunId, TurnId},
+    id::{CallId, RecordingId, RunId, SessionId, TurnId},
 };
 use sqlx::{
     AssertSqlSafe, QueryBuilder, Row, Sqlite, SqlitePool,
@@ -303,6 +303,59 @@ impl Reader {
             shelf.runs(),
         )))
         .bind(i64::from(limit.get()))
+        .fetch_all(&self.pool)
+        .await?
+        .iter()
+        .map(RunView::from_row)
+        .collect()
+    }
+
+    /// Operator sessions on `shelf`, most recently active first (by their
+    /// newest run, else their creation), each with its runs.
+    pub async fn sessions(
+        &self,
+        limit: PageLimit,
+        shelf: Shelf,
+    ) -> Result<Vec<SessionView>, StoreError> {
+        let rows = sqlx::query(AssertSqlSafe(format!(
+            "{} WHERE {} ORDER BY COALESCE((SELECT MAX(started_at) FROM runs WHERE runs.operator_session = operator_sessions.id), created_at) DESC, id DESC LIMIT ?",
+            SessionView::SELECT,
+            shelf.sessions(),
+        )))
+        .bind(i64::from(limit.get()))
+        .fetch_all(&self.pool)
+        .await?;
+        let mut sessions = Vec::with_capacity(rows.len());
+        for row in &rows {
+            let id: String = row.try_get("id")?;
+            sessions.push(SessionView::from_row(row, self.session_runs(&id).await?)?);
+        }
+        Ok(sessions)
+    }
+
+    /// One operator session, with its runs, if it was recorded.
+    pub async fn session(&self, id: SessionId) -> Result<Option<SessionView>, StoreError> {
+        let id = id.to_string();
+        let Some(row) = sqlx::query(AssertSqlSafe(format!(
+            "{} WHERE id = ?",
+            SessionView::SELECT
+        )))
+        .bind(&id)
+        .fetch_optional(&self.pool)
+        .await?
+        else {
+            return Ok(None);
+        };
+        SessionView::from_row(&row, self.session_runs(&id).await?).map(Some)
+    }
+
+    /// A session's runs, newest first.
+    async fn session_runs(&self, session: &str) -> Result<Vec<RunView>, StoreError> {
+        sqlx::query(AssertSqlSafe(format!(
+            "{} WHERE operator_session = ? ORDER BY started_at DESC, id DESC",
+            RunView::SELECT,
+        )))
+        .bind(session)
         .fetch_all(&self.pool)
         .await?
         .iter()

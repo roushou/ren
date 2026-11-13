@@ -220,7 +220,8 @@ dependencies under "Crates" below. Read the code for current module ownership.
 - `crates/ren-recorder`: the bounded capture queue between forwarding and
   storage, with `Recorder` as its primary type. `CallTap` (and `ChannelTap` for a
   WebSocket's end) is the forwarding side, `RunTap` records an agent run's
-  start, opening, settings changed mid-run, end, and each entry of its conversation (`RunEntry`, whole,
+  start (with the operator session it serves, `RunSession`, a new one recorded
+  first as `SessionRecord`), opening, settings changed mid-run, end, and each entry of its conversation (`RunEntry`, whole,
   admitted against the queue's byte budget), and `HistorySlot` an operator's archive or delete
   of a recording or run (`HistoryEdit`); `RecorderTask` (run by the daemon on
   its observation thread) is the shell around the pure `RecorderCore`
@@ -248,7 +249,10 @@ dependencies under "Crates" below. Read the code for current module ownership.
   online backup, which holds the `SweepGate`. `ren.sqlite3` holds the
   observation log and query tables; `blobs.sqlite3` holds deduplicated,
   content-defined body chunks, in the format `chunk` defines (hash, codec,
-  encoding). Each driven run's conversation is in `run_entries`, whole, and
+  encoding). Each operator session is in `operator_sessions` (not
+  `sessions`, which holds recordings), and each run names the session it
+  serves (`runs.operator_session`); `Reader::sessions` and `Reader::session`
+  read them with their runs (`SessionView`). Each driven run's conversation is in `run_entries`, whole, and
   `Reader::conversation` reads it across the runs on one client thread. It
   contains typed query parameters and read views, turn and call
   activity assembled from the calls' stored digests (`activity`, with the
@@ -263,7 +267,10 @@ dependencies under "Crates" below. Read the code for current module ownership.
   `tests/recorder.rs`, the recorder against the real store.
 - `crates/ren-supervisor`: runs, with `Supervisor` as its primary type: agent
   processes started in a folder and driven through their client's
-  structured mode (Codex, Claude Code, and Pi). `RunState` (`run`) is the
+  structured mode (Codex, Claude Code, and Pi), each serving an operator
+  session (`SessionState` in `session`: a draft until its first prompt,
+  active after, archived on the shelf; today every run starts a session of
+  its own, see `docs/plans/sessions.md`). `RunState` (`run`) is the
   pure lifecycle machine (starting, idle, working with its waiting approvals and the prompt queued
   for after the turn (a `Delivery`: start, queue, or steer),
   stopping, ended with a `RunEnd`); `Workdir` (`workdir`) keeps runs inside

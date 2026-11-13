@@ -21,6 +21,7 @@ const SIZE: Size = Size {
 fn idle_run() -> RunSnapshot {
     RunSnapshot {
         run: RunId::restore(uuid::Uuid::from_u128(1)),
+        session: ren_recorder::id::SessionId::restore(uuid::Uuid::from_u128(0x55)),
         harness: Harness::Codex,
         workdir: "/dev/acme".into(),
         state: RunState::Idle {
