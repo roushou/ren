@@ -318,6 +318,24 @@ impl Scenario {
         }
     }
 
+    /// An opencode turn's model call in the session it names (`ses_…`), as
+    /// opencode sends it on its `openai` provider: the dev slot's fake
+    /// `opencode`.
+    pub(in crate::dev) fn opencode_turn_call(session: &str, prompt: &str) -> Call {
+        let mut headers = Caller::Unidentified.headers();
+        headers.extend([
+            ("x-opencode-session-id".into(), session.to_owned()),
+            ("content-type".into(), "application/json".into()),
+        ]);
+        let body = Self::responses("gpt-5.5", prompt, Client::OpenCode.toolset(), session, 0);
+        Call {
+            label: format!("opencode: {}", Self::short(prompt)),
+            path: "/openai/v1/responses".into(),
+            headers,
+            body: body.to_string(),
+        }
+    }
+
     /// Claude Code's side call `side` in session `session`: its session's
     /// headers, but no turn.
     pub(in crate::dev) fn side_call(

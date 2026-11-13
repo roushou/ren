@@ -28,5 +28,8 @@ tokio = { workspace = true, features = ["macros", "net", "rt-multi-thread", "tim
 tokio-tungstenite.workspace = true
 toml.workspace = true
 
+[dev-dependencies]
+uuid.workspace = true
+
 [lints]
 workspace = true

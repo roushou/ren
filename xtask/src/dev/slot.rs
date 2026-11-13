@@ -306,6 +306,7 @@ impl Slot {
             ("codex", "codex", "Codex"),
             ("claude", "claude", "Claude Code"),
             ("pi", "pi", "Pi"),
+            ("opencode", "opencode", "OpenCode"),
         ] {
             let script = format!(
                 "#!/bin/sh\n# The dev slot's fake {name} (`cargo xtask dev agent`); never the real one.\nexec {} dev agent --client {client} --data-dir {} \"$@\"\n",

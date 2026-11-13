@@ -1,14 +1,16 @@
-//! `cargo xtask dev agent`: a fake `codex app-server`, `claude -p`, or
-//! `pi --mode rpc` for the dev slot's runs. The slot puts a `codex`, a
-//! `claude`, and a `pi` that run it first on the dev daemon's PATH, so the
-//! daemon starts and drives them as it would the real clients. Each speaks
-//! its client's protocol on stdio ([`script`] for Codex, [`claude`] for
-//! Claude Code, [`pi`] for Pi) and sends each turn's
+//! `cargo xtask dev agent`: a fake `codex app-server`, `claude -p`,
+//! `pi --mode rpc`, or `opencode acp` for the dev slot's runs. The slot puts
+//! a `codex`, a `claude`, a `pi`, and an `opencode` that run it first on the
+//! dev daemon's PATH, so the daemon starts and drives them as it would the
+//! real clients. Each speaks its client's protocol on stdio ([`script`] for
+//! Codex, [`claude`] for Claude Code, [`pi`] for Pi, [`opencode`] for
+//! OpenCode) and sends each turn's
 //! model call through the dev gateway to the fake provider, as the client
 //! would, so the run's traffic is recorded under its session. It never reads
 //! a real client's configuration or credentials.
 
 mod claude;
+mod opencode;
 mod pi;
 mod script;
 
@@ -23,7 +25,7 @@ use std::{io::BufRead as _, path::Path};
 #[derive(Debug, thiserror::Error)]
 pub enum AgentError {
     #[error(
-        "no gateway: expected a model_providers base_url argument (codex), ANTHROPIC_BASE_URL (claude), or REN_PI_GATEWAY (pi)"
+        "no gateway: expected a model_providers base_url argument (codex), ANTHROPIC_BASE_URL (claude), REN_PI_GATEWAY (pi), or OPENCODE_CONFIG_CONTENT (opencode)"
     )]
     NoGateway,
     #[error("no conversation: expected --session-id (or --resume for claude)")]
@@ -42,6 +44,8 @@ pub enum Played {
     Codex,
     Claude,
     Pi,
+    #[value(name = "opencode")]
+    OpenCode,
 }
 
 /// One client's script.
@@ -49,18 +53,26 @@ enum Script {
     Codex(script::AgentScript),
     Claude(claude::ClaudeScript),
     Pi(pi::PiScript),
+    OpenCode(opencode::OpenCodeScript),
 }
 
 /// What a script asks of the shell, whichever client it plays.
 enum Step {
     Send(Value),
     Call(Call),
+    /// Keep a session of a folder for later processes (the fake opencode's).
+    Remember {
+        cwd: String,
+        session: String,
+    },
 }
 
 pub struct FakeAgent {
     /// The gateway's root, from where the daemon pointed the client.
     gateway: String,
     script: Script,
+    /// Where the fake opencode keeps the sessions it made, by folder.
+    sessions: std::path::PathBuf,
 }
 
 impl FakeAgent {
@@ -72,6 +84,7 @@ impl FakeAgent {
         arguments: &[String],
     ) -> Result<Self, AgentError> {
         let own = Run(Seeder::next_run(data_dir)?);
+        let sessions = data_dir.join("opencode-sessions.tsv");
         match played {
             Played::Codex => {
                 let base = arguments
@@ -84,6 +97,7 @@ impl FakeAgent {
                 Ok(Self {
                     gateway: Self::root(&base, "/codex"),
                     script: Script::Codex(script::AgentScript::new(own)),
+                    sessions,
                 })
             }
             Played::Claude => {
@@ -96,6 +110,7 @@ impl FakeAgent {
                 Ok(Self {
                     gateway: Self::root(base, "/anthropic"),
                     script: Script::Claude(script),
+                    sessions,
                 })
             }
             Played::Pi => {
@@ -104,6 +119,36 @@ impl FakeAgent {
                 Ok(Self {
                     gateway: base.trim_end_matches('/').to_owned(),
                     script: Script::Pi(script),
+                    sessions,
+                })
+            }
+            Played::OpenCode => {
+                let config = env
+                    .get("OPENCODE_CONFIG_CONTENT")
+                    .ok_or(AgentError::NoGateway)?;
+                let base = serde_json::from_str::<Value>(config)
+                    .ok()
+                    .and_then(|config| {
+                        config["provider"]["openai"]["options"]["baseURL"]
+                            .as_str()
+                            .map(str::to_owned)
+                    })
+                    .ok_or(AgentError::NoGateway)?;
+                // The folder's sessions earlier processes made: one per line.
+                let known = std::fs::read_to_string(&sessions)
+                    .unwrap_or_default()
+                    .lines()
+                    .filter_map(|line| line.split_once('\t'))
+                    .map(|(cwd, session)| (cwd.to_owned(), session.to_owned()))
+                    .collect();
+                Ok(Self {
+                    gateway: Self::root(&base, "/openai/v1"),
+                    script: Script::OpenCode(opencode::OpenCodeScript::new(
+                        own,
+                        known,
+                        Some(config),
+                    )),
+                    sessions,
                 })
             }
         }
@@ -137,6 +182,7 @@ impl FakeAgent {
                 for step in pending {
                     match step {
                         Step::Send(value) => Self::write(&mut stdout, &value)?,
+                        Step::Remember { cwd, session } => self.remember(&cwd, &session)?,
                         Step::Call(call) => {
                             let reply = runtime.block_on(self.call(&http, &mut stdout, call));
                             next.extend(self.replied(reply));
@@ -166,6 +212,11 @@ impl FakeAgent {
                 .into_iter()
                 .map(Self::pi_step)
                 .collect(),
+            Script::OpenCode(script) => script
+                .receive(message)
+                .into_iter()
+                .map(Self::opencode_step)
+                .collect(),
         }
     }
 
@@ -186,7 +237,23 @@ impl FakeAgent {
                 .into_iter()
                 .map(Self::pi_step)
                 .collect(),
+            Script::OpenCode(script) => script
+                .replied(reply)
+                .into_iter()
+                .map(Self::opencode_step)
+                .collect(),
         }
+    }
+
+    /// Keep a session the fake opencode made, for later processes.
+    fn remember(&self, cwd: &str, session: &str) -> Result<(), AgentError> {
+        use std::io::Write as _;
+        std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&self.sessions)
+            .and_then(|mut file| writeln!(file, "{cwd}\t{session}"))
+            .map_err(AgentError::Stdio)
     }
 
     fn codex_step(out: script::Out) -> Step {
@@ -222,6 +289,14 @@ impl FakeAgent {
         }
     }
 
+    fn opencode_step(out: opencode::Out) -> Step {
+        match out {
+            opencode::Out::Send(value) => Step::Send(value),
+            opencode::Out::Call(call) => Step::Call(call),
+            opencode::Out::Remember { cwd, session } => Step::Remember { cwd, session },
+        }
+    }
+
     fn write(stdout: &mut impl std::io::Write, value: &Value) -> Result<(), AgentError> {
         let mut line = value.to_string();
         line.push('\n');
@@ -234,11 +309,13 @@ impl FakeAgent {
     /// The text a reply's SSE event adds, in the wire the client speaks.
     fn text(&self, kind: &str, event: &Value) -> Option<String> {
         let text = match (&self.script, kind) {
-            (Script::Codex(_), "response.output_text.delta") => event["delta"].as_str(),
+            (Script::Codex(_) | Script::OpenCode(_), "response.output_text.delta") => {
+                event["delta"].as_str()
+            }
             (Script::Claude(_) | Script::Pi(_), "content_block_delta") => {
                 event["delta"]["text"].as_str()
             }
-            (Script::Codex(_) | Script::Claude(_) | Script::Pi(_), _) => None,
+            (Script::Codex(_) | Script::Claude(_) | Script::Pi(_) | Script::OpenCode(_), _) => None,
         };
         text.map(str::to_owned)
     }
@@ -248,6 +325,7 @@ impl FakeAgent {
             Script::Codex(script) => script.delta(text),
             Script::Claude(script) => script.delta(text),
             Script::Pi(script) => script.delta(text),
+            Script::OpenCode(script) => script.delta(text),
         }
     }
 
