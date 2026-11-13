@@ -195,9 +195,10 @@
     }
   }
 
-  /** What a session was asked first, when its conversation is known here. */
-  function title(entry: { run: RunId | null }): string | null {
-    const text = entry.run ? (transcripts.get(entry.run)?.firstPrompt() ?? null) : null;
+  /** What a session was asked first: as stored, else from its conversation here. */
+  function title(entry: { run: RunId | null; asked?: string | null }): string | null {
+    const text =
+      entry.asked ?? (entry.run ? (transcripts.get(entry.run)?.firstPrompt() ?? null) : null);
     return text ? text.split('\n')[0]!.trim() || null : null;
   }
 
@@ -286,8 +287,15 @@
   }
 
   /** A session in `dir` at once (null: a scratch folder of its own), opened:
-   * on the client last chosen, with the settings kept for it that still apply. */
+   * on the client last chosen, with the settings kept for it that still
+   * apply; or the draft there that was never asked anything. */
   async function create(dir: string | null) {
+    // A draft there that was never asked anything is opened instead.
+    const unused = Sessions.unused(sessions, live, scratch, dir);
+    if (unused) {
+      select(unused);
+      return;
+    }
     await act(async () => {
       const harness = remembered.harness;
       // The daemon keeps each client's models; without them, the client's own.
@@ -850,7 +858,10 @@
   {:else if entry.kind === 'file_change'}
     <div class="entry tool">
       <Icon name="pencil" size={12} />
-      <span class="tool-target mono">{entry.paths.join(', ') || 'files'}</span>
+      <span class="tool-target mono" title={entry.paths.join('\n') || undefined}
+        >{entry.paths.map((path) => Runs.within(path, session?.workdir ?? null)).join(', ') ||
+          'files'}</span
+      >
       <span class="chip {entry.status === 'completed' ? 'success' : 'neutral'}"
         >{entry.status === 'in_progress' ? 'editing' : entry.status}</span
       >
@@ -899,9 +910,9 @@
     ),
   ]}
   <div class="band">Written <span class="count">{written.length}</span></div>
-  {#each written as path (path)}<div class="entry tool mono">
+  {#each written as path (path)}<div class="entry tool mono" title={path}>
       <Icon name="pencil" size={11} />
-      {path}
+      {Runs.within(path, session?.workdir ?? null)}
     </div>{:else}<p class="quiet-empty">Nothing written yet.</p>{/each}
 {/snippet}
 
@@ -1007,7 +1018,8 @@
       <header class="run-head">
         <div class="run-heading">
           <h2 class="run-title" title={firstPrompt(current) ?? undefined}>
-            {title(current) ?? `New ${harnessLabel(current.harness)} session`}
+            {title({ run: current.run, asked: session?.asked }) ??
+              `New ${harnessLabel(current.harness)} session`}
           </h2>
           <p class="run-facts">
             {#if headerMark}<span class="state tone-{headerMark.tone}"
@@ -1455,6 +1467,7 @@
   .entry.reply {
     padding-top: 10px;
     padding-bottom: 10px;
+    box-shadow: inset 2px 0 var(--role-assistant);
   }
   .entry.reply.streaming :global(.markdown > :last-child::after) {
     content: '▍';
@@ -1484,6 +1497,12 @@
   }
   .tool-name {
     color: var(--role-tool);
+  }
+  /* A step's state sits at the row's end, however long its target. */
+  .entry.tool > .chip,
+  .entry.tool.command summary > .chip {
+    flex: none;
+    margin-left: auto;
   }
   .tool-target {
     min-width: 0;

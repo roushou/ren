@@ -717,6 +717,15 @@ test('scratch runs share one group, whatever folder each got', () => {
   ]);
 });
 
+test('a written path reads from inside its session’s folder', () => {
+  assert.equal(Runs.within('/work/acme/src/lib.rs', '/work/acme'), 'src/lib.rs');
+  assert.equal(Runs.within('/work/acme/src/lib.rs', '/work/acme/'), 'src/lib.rs');
+  // Outside the folder, or a sibling sharing its prefix, stays whole.
+  assert.equal(Runs.within('/work/acme-api/x.rs', '/work/acme'), '/work/acme-api/x.rs');
+  assert.equal(Runs.within('/etc/hosts', '/work/acme'), '/etc/hosts');
+  assert.equal(Runs.within('src/lib.rs', null), 'src/lib.rs');
+});
+
 test('the remembered settings read back from their cookie, and junk is the default', () => {
   const remembered = {
     harness: 'claude_code' as const,

@@ -61,6 +61,7 @@
 {#snippet row(session: DeskSession)}
   {@const mark = Sessions.mark(session, harnessLabel(session.harness))}
   {@const asked = title(session)}
+  {@const unused = !asked && session.phase === 'draft'}
   <button
     class="run-row"
     class:selected={session.session === selected}
@@ -68,9 +69,19 @@
     aria-current={session.session === selected ? 'true' : undefined}
     onclick={() => onselect(session.session)}
   >
-    <span class="phase-dot tone-{mark.tone}"></span>
-    <span class="run-name">{asked ?? `New ${harnessLabel(session.harness)} session`}</span>
-    <span class="run-state tone-{mark.tone}">{mark.label}</span>
+    <span
+      class="phase-dot tone-{mark.tone}"
+      class:draft={session.phase === 'draft'}
+      class:resting={!Sessions.running(session) && mark.tone === 'neutral'}
+    ></span>
+    <span class="run-name" class:unused
+      >{asked ?? (unused ? 'New session' : `${harnessLabel(session.harness)} session`)}</span
+    >
+    <span class="run-state tone-{mark.tone}"
+      >{unused || mark.label === 'Draft'
+        ? `Draft · ${harnessLabel(session.harness)}`
+        : mark.label}</span
+    >
     <span class="run-when muted">{session.activeAt ? ago(session.activeAt, now) : 'now'}</span>
   </button>
 {/snippet}
@@ -333,6 +344,7 @@
   }
   .phase-dot {
     grid-row: 1 / span 2;
+    box-sizing: border-box;
     width: 7px;
     height: 7px;
     border-radius: 50%;
@@ -349,5 +361,31 @@
   }
   .tone-danger.phase-dot {
     background: var(--error);
+  }
+  /* Nothing running: a ring, so the sessions that are live stand out. */
+  .phase-dot.resting {
+    background: none;
+    box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--muted) 65%, transparent);
+  }
+  .phase-dot.resting.draft {
+    box-shadow: none;
+    border: 1.5px dashed color-mix(in srgb, var(--muted) 65%, transparent);
+  }
+  .tone-live.phase-dot {
+    animation: working 1.6s ease-in-out infinite;
+  }
+  @keyframes working {
+    50% {
+      box-shadow: 0 0 0 3px color-mix(in srgb, var(--live) 30%, transparent);
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .tone-live.phase-dot {
+      animation: none;
+    }
+  }
+  .run-name.unused {
+    color: var(--muted);
+    font-style: italic;
   }
 </style>

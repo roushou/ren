@@ -321,17 +321,18 @@
     max-height: 340px;
     display: flex;
     flex-direction: column;
-    border: 1px solid var(--line);
-    background: var(--surface);
-    box-shadow: 0 8px 24px rgb(0 0 0 / 0.25);
+    border: 1px solid var(--popover-border);
+    border-top: 2px solid var(--accent);
+    background: var(--popover);
+    box-shadow: var(--popover-shadow);
     outline: none;
   }
   .search {
     margin: 0;
     padding: 8px 10px;
     border: 0;
-    border-bottom: 1px solid var(--line);
-    background: var(--surface);
+    border-bottom: 1px solid var(--popover-border);
+    background: var(--popover);
     color: var(--ink);
     font-size: 12px;
     outline: none;
@@ -356,7 +357,8 @@
     white-space: nowrap;
   }
   li.active {
-    background: var(--row-hover);
+    background: var(--popover-hover);
+    box-shadow: inset 2px 0 0 var(--accent);
   }
   li.chosen .name {
     font-weight: 600;
@@ -385,7 +387,7 @@
   }
   .badge {
     padding: 0 5px;
-    border: 1px solid var(--line);
+    border: 1px solid var(--popover-border);
     color: var(--muted);
     font-size: 10px;
     font-weight: 400;
@@ -395,7 +397,7 @@
   .note {
     margin: 0;
     padding: 8px 10px;
-    border-top: 1px solid var(--line);
+    border-top: 1px solid var(--popover-border);
     font-size: 11px;
   }
   li.unavailable {
@@ -409,6 +411,6 @@
   }
   .toggle {
     padding: 8px 10px;
-    border-top: 1px solid var(--line);
+    border-top: 1px solid var(--popover-border);
   }
 </style>

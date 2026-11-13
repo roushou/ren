@@ -51,6 +51,7 @@ const listing = {
         approvals: null,
         archived_at: null,
         first_turn_at: 120,
+        first_prompt: 'fix the order list sorting',
         runs: [recorded(runA2, 300, false), recorded(runA1, 100, true)],
       },
       served: null,
@@ -67,6 +68,7 @@ const listing = {
         approvals: null,
         archived_at: null,
         first_turn_at: null,
+        first_prompt: null,
         runs: [recorded(runB, 50, true)],
       },
       served: null,
@@ -133,6 +135,35 @@ test('sessions read as stored and served, and group by folder with the busiest f
   assert.equal(fresh.run, null);
   assert.equal(fresh.state, null);
   assert.equal(fresh.activeAt, null);
+});
+
+test('a session is named by what it was first asked, as stored', async () => {
+  const bodies = await sessions();
+  const [a, b] = [sessionA, sessionB].map((id) =>
+    Sessions.desk(
+      (bodies as SessionBody[]).find((body) => body.session === id)!,
+      [],
+    ),
+  );
+  assert.equal(a!.asked, 'fix the order list sorting');
+  assert.equal(b!.asked, null);
+});
+
+test('a new session reuses the draft in its folder that was never asked anything', async () => {
+  const bodies = await sessions();
+  // acme's draft (never prompted) is reused; scratch's served draft too.
+  assert.equal(Sessions.unused(bodies, [], '/scratch', '/work/acme'), sessionB);
+  assert.equal(Sessions.unused(bodies, [], '/scratch', null), sessionC);
+  // Another folder has none, and without scratch no scratch draft is offered.
+  assert.equal(Sessions.unused(bodies, [], '/scratch', '/work/other'), null);
+  assert.equal(Sessions.unused(bodies, [], null, null), null);
+  // An archived draft is not reused.
+  const archived = bodies.map((body) =>
+    body.session === sessionB && body.stored
+      ? { ...body, stored: { ...body.stored, archived_at: 1 as never } }
+      : body,
+  );
+  assert.equal(Sessions.unused(archived, [], '/scratch', '/work/acme'), null);
 });
 
 test('a run leads to its session', async () => {

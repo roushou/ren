@@ -462,6 +462,8 @@ export interface StoredSession {
   archived_at: UnixMillis | null;
   /** When its first turn started; null while it is a draft. */
   first_turn_at: UnixMillis | null;
+  /** The first line of its first prompt, cut short; null until one is recorded. */
+  first_prompt: string | null;
   runs: RecordedRun[];
 }
 
@@ -491,6 +493,7 @@ const storedSession = object<StoredSession>({
   approvals: nullable(label(APPROVAL_POLICIES)),
   archived_at: nullable(brandedCount<'UnixMillis'>()),
   first_turn_at: nullable(brandedCount<'UnixMillis'>()),
+  first_prompt: nullable(string),
   runs: array(recordedRun),
 });
 
@@ -1498,6 +1501,13 @@ export class Runs {
   }
 
   /** The folder's last component, as the sidebar names a project. */
+  /** `path` as read from inside `workdir`: relative there, else as it is. */
+  static within(path: string, workdir: string | null): string {
+    if (!workdir) return path;
+    const root = workdir.endsWith('/') ? workdir : `${workdir}/`;
+    return path.startsWith(root) && path.length > root.length ? path.slice(root.length) : path;
+  }
+
   static folder(workdir: string): string {
     const parts = workdir.split('/').filter((part) => part !== '');
     return parts.at(-1) ?? workdir;
@@ -1670,6 +1680,8 @@ export interface DeskSession {
   activeAt: number | null;
   phase: Stored<SessionPhase>;
   shelf: Stored<'open' | 'archived'>;
+  /** What it was first asked, as stored; null until a prompt is recorded. */
+  asked: string | null;
   /** What its next turn runs on. */
   settings: RunSettings;
   /** Its newest process, once one started. */
@@ -1712,6 +1724,7 @@ export class Sessions {
       activeAt: stored ? (stored.runs[0]?.started_at ?? stored.created_at) : null,
       phase: served?.state.phase ?? (stored?.first_turn_at ? 'active' : 'draft'),
       shelf: served?.state.shelf ?? (stored?.archived_at ? 'archived' : 'open'),
+      asked: stored?.first_prompt ?? null,
       settings: served?.settings ?? {
         model: stored?.model ?? null,
         effort: stored?.effort ?? null,
@@ -1783,6 +1796,33 @@ export class Sessions {
     return session.phase === 'draft'
       ? { label: 'Draft', tone: 'neutral' }
       : { label: client, tone: 'neutral' };
+  }
+
+  /**
+   * A draft in `dir` (null: any scratch folder) that was never asked
+   * anything, the newest, for a new session there to reuse instead of
+   * making another; null when there is none.
+   */
+  static unused(
+    bodies: readonly SessionBody[],
+    live: readonly RunSnapshot[],
+    scratch: string | null,
+    dir: string | null,
+  ): SessionId | null {
+    const here = (workdir: string) =>
+      dir === null ? scratch !== null && workdir.startsWith(`${scratch}/`) : workdir === dir;
+    const drafts = bodies
+      .map((body) => Sessions.desk(body, live))
+      .filter(
+        (session): session is DeskSession =>
+          session !== null &&
+          session.phase === 'draft' &&
+          session.shelf === 'open' &&
+          session.asked === null &&
+          here(session.workdir),
+      );
+    const newest = (session: DeskSession) => session.activeAt ?? Number.MAX_SAFE_INTEGER;
+    return drafts.toSorted((a, b) => newest(b) - newest(a))[0]?.session ?? null;
   }
 
   /** The session one of whose runs is `run`, for links to a run. */

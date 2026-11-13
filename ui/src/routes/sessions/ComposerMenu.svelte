@@ -85,16 +85,16 @@
     display: flex;
     flex-direction: column;
     max-height: min(320px, 45vh);
-    border-top: 1px solid var(--line);
-    background: var(--surface);
-    box-shadow: 0 -6px 16px rgb(0 0 0 / 0.06);
+    border-top: 2px solid var(--accent);
+    background: var(--popover);
+    box-shadow: var(--popover-shadow);
   }
   .menu-head {
     display: flex;
     justify-content: space-between;
     gap: 12px;
     padding: 6px 16px;
-    border-bottom: 1px solid var(--line);
+    border-bottom: 1px solid var(--popover-border);
     background: var(--sidebar);
     color: var(--muted);
     font-size: 11px;
@@ -114,12 +114,12 @@
     align-items: baseline;
     gap: 10px;
     padding: 6px 16px;
-    border-bottom: 1px solid var(--line-subtle);
+    border-bottom: 1px solid var(--popover-border);
     font-size: 12px;
     cursor: pointer;
   }
   li.active {
-    background: var(--row-selected);
+    background: var(--popover-hover);
     box-shadow: inset 2px 0 var(--accent);
   }
   .name {
