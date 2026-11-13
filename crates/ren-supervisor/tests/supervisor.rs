@@ -61,6 +61,9 @@ enum Script {
     /// A well-behaved Pi in RPC mode: reports its session, runs each prompt
     /// to a reply, and settles.
     Pi,
+    /// OpenCode in ACP mode: opens a session whose default model is a free
+    /// one, and answers every other request.
+    OpenCode,
 }
 
 /// The arguments and working directory of one spawned agent.
@@ -178,6 +181,7 @@ impl AgentHost for FakeHost {
                     .unwrap_or_default();
                 tokio::spawn(pi(session, agent_in, agent_out, signal, exit_tx))
             }
+            Script::OpenCode => tokio::spawn(opencode(agent_in, agent_out, signal, exit_tx)),
             Script::Codex | Script::RefusesOpening | Script::ExitsEarly => {
                 tokio::spawn(agent(self.script, agent_in, agent_out, signal, exit_tx))
             }
@@ -417,6 +421,44 @@ async fn pi(
                 }
                 Some(_) | None => {}
             }
+        }
+        ProcessExit::Code(0)
+    };
+    let status = tokio::select! {
+        status = serve => status,
+        () = kill.fired() => ProcessExit::Signal(9),
+    };
+    let _ = exit.send(status);
+}
+
+async fn opencode(
+    input: DuplexStream,
+    mut out: DuplexStream,
+    kill: KillSignal,
+    exit: oneshot::Sender<ProcessExit>,
+) {
+    let mut lines = BufReader::new(input).lines();
+    let serve = async {
+        while let Ok(Some(line)) = lines.next_line().await {
+            let message: Value = serde_json::from_str(&line).unwrap();
+            let id = message["id"].clone();
+            if id.is_null() {
+                continue;
+            }
+            let result = match message["method"].as_str() {
+                Some("session/new") => json!({ "sessionId": "ses_free1", "configOptions": [
+                    { "id": "model", "currentValue": "opencode/free", "options": [
+                        { "value": "opencode/free", "name": "opencode/Free" },
+                        { "value": "opencode/other", "name": "opencode/Other" },
+                    ] },
+                ] }),
+                Some(_) | None => json!({}),
+            };
+            send(
+                &mut out,
+                json!({ "jsonrpc": "2.0", "id": id, "result": result }),
+            )
+            .await;
         }
         ProcessExit::Code(0)
     };
@@ -1040,6 +1082,46 @@ async fn warmed_at_start_the_models_are_listed_before_anyone_asks() {
     let models = supervised.supervisor.models(Harness::Codex).await.unwrap();
     assert_eq!(models[0].id.as_str(), "gpt-fast");
     assert_eq!(spawned.lock().unwrap().len(), 1);
+}
+
+/// OpenCode under Ren's override would take a model of a provider it has no
+/// key for, so a session that chose none starts on the default it listed on
+/// its own, by name.
+#[tokio::test]
+async fn opencode_starts_on_the_default_it_listed_when_none_is_chosen() {
+    let supervised = supervise(FakeHost::new(Script::OpenCode)).await;
+    let supervisor = &supervised.supervisor;
+    let models = supervisor.models(Harness::OpenCode).await.unwrap();
+    assert_eq!(models[0].id.as_str(), "opencode/free");
+    assert_eq!(
+        models[0].choice,
+        ren_harness::models::DefaultChoice::Default
+    );
+    let run = supervisor
+        .start(starting(
+            Harness::OpenCode,
+            "/work/acme",
+            Conversation::New,
+            None,
+        ))
+        .await
+        .unwrap();
+    let runs = supervisor.runs().await.unwrap();
+    let started = runs.iter().find(|entry| entry.run == run).unwrap();
+    assert_eq!(
+        started.settings.model.as_ref().map(|model| model.as_str()),
+        Some("opencode/free")
+    );
+    // A model chosen is kept.
+    let mut chosen = starting(Harness::OpenCode, "/work/acme", Conversation::New, None);
+    chosen.settings.model = Some("opencode/other".parse().unwrap());
+    let run = supervisor.start(chosen).await.unwrap();
+    let runs = supervisor.runs().await.unwrap();
+    let started = runs.iter().find(|entry| entry.run == run).unwrap();
+    assert_eq!(
+        started.settings.model.as_ref().map(|model| model.as_str()),
+        Some("opencode/other")
+    );
 }
 
 #[tokio::test]

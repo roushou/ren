@@ -197,10 +197,32 @@ impl Harness {
                     opening.settings().approvals,
                     OpenCodeAcp::arguments(),
                 ),
-                Structured::Listing => {
-                    LaunchPlan::opencode_driven(gateway, None, OpenCodeModels::arguments())
-                }
+                // Without the override: the models OpenCode can use as it is
+                // set up, and the default it takes on its own. No model call
+                // is made while listing.
+                Structured::Listing => LaunchPlan {
+                    harness: self,
+                    executable: "opencode",
+                    arguments: OpenCodeModels::arguments()
+                        .into_iter()
+                        .map(Into::into)
+                        .collect(),
+                    environment: BTreeMap::new(),
+                },
             }),
+        }
+    }
+
+    /// Whether a driven run names the client's own default model when none
+    /// is chosen. Ren's override names OpenCode's `anthropic` and `openai`
+    /// providers, which OpenCode then counts as set up whether or not it has
+    /// a key for them, and with no model chosen it takes the first of their
+    /// models; its listing, made without the override, names the default it
+    /// would take on its own.
+    pub fn names_its_default(self) -> bool {
+        match self {
+            Self::OpenCode => true,
+            Self::ClaudeCode | Self::Codex | Self::Pi => false,
         }
     }
 
@@ -368,11 +390,13 @@ mod tests {
             driven["provider"]["anthropic"]["options"]["baseURL"],
             "http://127.0.0.1:8787/anthropic/v1"
         );
+        // Listed as OpenCode is set up on its own, without the override.
         let listing = Harness::OpenCode.list_models(&gateway).unwrap();
-        assert_eq!(
-            listing.command(None, &[]).get_args().collect::<Vec<_>>(),
-            ["acp"]
-        );
+        let listing = listing.command(None, &[]);
+        assert_eq!(listing.get_args().collect::<Vec<_>>(), ["acp"]);
+        assert_eq!(listing.get_envs().count(), 0);
+        assert!(Harness::OpenCode.names_its_default());
+        assert!(!Harness::Codex.names_its_default());
     }
 
     #[test]

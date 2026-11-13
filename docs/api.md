@@ -464,8 +464,11 @@ briefly in the same structured mode, in the first root, with no conversation
 (Codex's `model/list`, without the models Codex hides; the models in Claude
 Code's `initialize` answer, with `--no-session-persistence`; Pi's
 `get_available_models` with `--no-session`, marked with the model `get_state`
-names; the `model` option of a session OpenCode opens in the first root, marked
-with its current value, which the daemon then deletes), then stops it. Each model also says which efforts it takes, least
+names; the `model` option of a session OpenCode opens in the first root,
+without Ren's provider override, marked with its current value, which the
+daemon then deletes), then stops it. An OpenCode session that chose no model
+starts on the model OpenCode listed as its default, since under the override
+OpenCode would take a model of a provider it may have no key for. Each model also says which efforts it takes, least
 first, and the one it runs at when none is chosen, where the client says
 (Codex does; Claude Code lists only the levels; Pi's reasoning models take
 `off` to `high`, and the one it starts on runs at its current thinking level;

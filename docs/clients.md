@@ -391,8 +391,10 @@ are recorded. OpenCode's own `opencode` provider, including the free models it
 offers without sign-in (such as `opencode/big-pickle`), reaches OpenCode's
 service directly, so those calls are not recorded; the run's conversation still
 is. With the override, OpenCode counts its `anthropic` and `openai` providers as
-set up and may pick one of their models as its default, which fails without a
-key; choose the model in the session's draft. See [runs](api.md#runs) for how
+set up whether or not it has a key for them, and would pick one of their models
+as its default. So the daemon lists OpenCode's models without the override (the
+models it can use as it is set up, and its own default), and a session that
+chose no model starts on that listed default, by name. See [runs](api.md#runs) for how
 its settings and approvals apply.
 
 ## Recordings and turns

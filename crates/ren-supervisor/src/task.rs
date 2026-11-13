@@ -33,7 +33,7 @@ use ren_harness::{
     drive::{DriveEvent, Driver, Opening, Prompt},
     endpoint::GatewayEndpoint,
     lines::{Framed, Line, LineLimit, Lines},
-    models::ModelListing,
+    models::{DefaultChoice, ModelId, ModelListing},
     settings::{ApprovalPolicy, Midway, RunSettings},
 };
 use ren_protocol::label::Labeled;
@@ -44,7 +44,10 @@ use ren_recorder::{
     capture::RunEnd,
     id::{IdSource, RunId, SessionId},
 };
-use std::{collections::BTreeMap, sync::Arc};
+use std::{
+    collections::{BTreeMap, HashMap},
+    sync::Arc,
+};
 use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
     sync::{broadcast, mpsc},
@@ -146,6 +149,9 @@ struct Served {
     exits: Exits,
     /// Idle timers: the run, and which time it became idle.
     idles: FuturesUnordered<BoxFuture<'static, (RunId, u64)>>,
+    /// The default model each client listed, for a client that is started
+    /// on it by name when none is chosen.
+    defaults: HashMap<Harness, ModelId>,
 }
 
 impl Served {
@@ -192,6 +198,13 @@ impl<H: AgentHost> SupervisorTask<H> {
                     }
                 }
                 Some((harness, outcome)) = listings.running.next(), if !listings.running.is_empty() => {
+                    if let Ok(models) = &outcome
+                        && let Some(listed) = models
+                            .iter()
+                            .find(|model| model.choice == DefaultChoice::Default)
+                    {
+                        served.defaults.insert(harness, listed.id.clone());
+                    }
                     listings.finish(harness, outcome);
                 }
                 Some((run, rested)) = served.idles.next(), if !served.idles.is_empty() => {
@@ -410,6 +423,14 @@ impl<H: AgentHost> SupervisorTask<H> {
         served: &mut Served,
     ) -> Result<RunId, StartError> {
         let harness = held.harness;
+        // A client whose launch changes its own default starts on the one it
+        // listed, by name, when the session chose none.
+        if held.settings.model.is_none()
+            && harness.names_its_default()
+            && let Some(listed) = served.defaults.get(&harness)
+        {
+            held.settings.model = Some(listed.clone());
+        }
         let settings = held.settings.clone();
         let workdir = held.workdir.clone();
         let opening = match held.thread {
