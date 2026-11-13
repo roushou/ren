@@ -23,25 +23,25 @@ ren tui
 ```
 
 `ren tui` and `ren runs` (with no subcommand) open the same terminal app, built
-with the `tui` feature: the session list on the left, the selected session on
-the right, the gateway's traffic in the top bar, and the keys that matter now in
+with the `tui` feature: the list of runs and recordings on the left, the
+selected one on the right, the gateway's traffic in the top bar, and the keys that matter now in
 the bar at the bottom.
 
-- The list groups every session worth a look by the folder each run works
+- The list groups every run and recording worth a look by the folder each run works
   in: the folders with a run that needs you first (marked `◆` with how
   many), each listing its runs by what they need, then the newest, under
-  what each was asked, with its three newest ended runs. Sessions started
+  what each was asked, with its three newest ended runs. Recordings of clients started
   outside Ren follow, under "started
   elsewhere": Ren does not know their folder. It can be grouped by what each
   needs instead (needs you, working, your turn, watched, ended), from the
   action menu. The arrows (or `j` and `k`) move through it, a digit jumps to
   an entry, and `/` searches it by folder, project, or prompt. Until you choose, the selection
   follows the top of the list: what needs you first.
-- The selected session shows its conversation, its activity (each command,
+- The selected run or recording shows its conversation, its activity (each command,
   edit, and tool step), the files it wrote and read, and its model calls
   through the gateway (time, model, how each ended, tokens); Tab moves between
   them. A run's conversation is shown whole, every turn open, as one scroll;
-  Enter (or `→`) moves into the session, where ↑ and ↓ (or `j` and `k`)
+  Enter (or `→`) moves into the selection, where ↑ and ↓ (or `j` and `k`)
   scroll it a line at a time and PgUp and PgDn a page.
 - Keys come in three layers, so few letters do anything: moving (the arrows
   or `j`/`k`/`h`/`l`, Enter and Esc, Tab, digits, `/`), a few verbs (`i`
@@ -49,7 +49,7 @@ the bar at the bottom.
   answers to an approval, which act only while one waits. Everything else is
   in the action menu (Space): it lists only what applies to the selection
   (interrupt or stop a live run; archive or delete an ended run or a
-  watched session; group the list; preview the next theme), each with a letter
+  recording; group the list; preview the next theme), each with a letter
   that works inside the menu only. A delete asks once more there.
 - `i` writes to the selected run: Enter sends, Ctrl-J starts a new line,
   ↑ and ↓ move through the wrapped rows, Ctrl-E opens the text in your editor
@@ -60,7 +60,7 @@ the bar at the bottom.
   paste), so an Enter inside a paste does not send it.
   Written while a turn runs, a message waits and is sent when the turn ends;
   written to a run that ended, it continues that conversation in a new run;
-  a session Ren did not start takes nothing.
+  a recording takes nothing: Ren did not start its client.
 - An approval shows as a card in the conversation: while it waits, `y`
   allows it once, `a` for the rest of the run, and `d` denies it; the action
   menu also denies it and stops the turn; writing instead denies it and sends
@@ -119,9 +119,9 @@ JSON line. `history` reads recorded runs like the other history commands.
 
 Commands emit the same JSON the read API answers (without `api_version`),
 whether they read this host's storage or a gateway: `history` and `timeline` a
-page `{calls, next}`, `sessions` `{sessions}`, `turns` `{turns}` for a session,
+page `{calls, next}`, `sessions` `{sessions}`, `turns` `{turns}` for a recording,
 `exposures` `{exposures}`, `report` a
-session's [context and cost report](#session-report), `turn` and
+recording's [context and cost report](#recording-report), `turn` and
 `activity` what a turn or a call did (see [activity](#activity)), `search`
 matching prompts, replies, and tool calls (see [search](#search)), and `inspect`
 one call with its attempts and observation log. Body exports write the exact captured bytes to a new file, refuse
@@ -146,7 +146,7 @@ ends, for example on a daemon restart, it reconnects every two seconds from the
 last observation it printed, so nothing in between is skipped. It stops on
 interrupt, or if the first connection fails.
 
-A watched session reads as the web UI's Live wall reads it: the newest turn
+A recording reads as the web UI's Live wall reads it: the newest turn
 and the one before it (for a client that sends no turns, such as OpenCode, its
 newest four calls), call by call, with the user's prompt (`›`), the tool
 results the request carried back (`⎿`), the reply (code blocks drawn behind a
@@ -154,18 +154,18 @@ rule), and the tool calls the model asked for (`●`), then a streaming call's
 reply and tools so far. Its header is lit green while a response streams, and
 amber or red when the newest call needs a look (a slow response head, a 429, a
 failed, interrupted, or unknown ending, a secret sent, repeated tool
-failures); under its conversation, what the session is doing (waiting for the
+failures); under its conversation, what the recording is doing (waiting for the
 first byte, streaming, complete with the client running tools or waiting for
 you, inferred from how the last call ended, or how it stopped). The top bar
-counts sessions and open calls and shows each client's output tokens over the
+counts recordings and open calls and shows each client's output tokens over the
 last four minutes, counted when calls end: not a live rate. The app reads a
-snapshot of sessions and calls every two seconds and whenever the feed says a
+snapshot of recordings and calls every two seconds and whenever the feed says a
 call opened or ended, and asks for [progress events](#live-feed). A read that
 fails is shown as `stale` until one succeeds. It needs a running daemon; a
 gateway that cannot be reached is reported before the screen is taken over.
 Runs need control access (this host's control token, or an allowed Tailscale
 login through a gateway) and `[runs]` roots on the daemon; without them the
-app still shows every session, and says why runs cannot be driven.
+app still shows every recording, and says why runs cannot be driven.
 
 The default `terminal` theme uses the terminal's foreground, background, and
 ANSI palette. `dark` and `light` use fixed RGB palettes and need a true-color
@@ -209,7 +209,7 @@ its calls' activity, derived when the call finished:
 - `files_read`, `files_written`, `commands`, and counts of tool calls, failed
   ones, and unanswered ones;
 - each call's `metrics` (context, cache read and written, and output tokens,
-  request bytes, duration), as in the [session report](#session-report);
+  request bytes, duration), as in the [recording report](#recording-report);
 - `findings`: `large_tool_output` (a tool result of at least 20,000 characters,
   which every later call carries) and `repeated_failure` (one tool failing on
   one target at least 3 times in the turn).
@@ -229,7 +229,7 @@ daemon is deriving again from its stored bodies. Text is
 excerpted; `omitted_chars` says how much was left out, and the full text stays in
 the body. Retention removes activity with its call.
 
-`ren turns <session-id>` lists a session's turns newest first (`--limit`, up to
+`ren turns <session-id>` lists a recording's turns newest first (`--limit`, up to
 1000; no paging), each with its call and error counts, tokens, and the start of
 its prompt, with secrets redacted. A
 turn's `ended_at` is `null` while any of its calls is still running.
@@ -244,7 +244,7 @@ and commands it names, and its input), and tool output. All words must match;
 `*` are searched for as text. Filter with `--session`, `--client`, and `--field`
 (`prompt`, `reply`, `tool_input`, `tool_output`); `--limit` defaults to 20.
 
-Results are newest call first: each names the call, session, turn, client,
+Results are newest call first: each names the call, recording (`session`), turn, client,
 field, and a snippet with matches marked `«like this»`. `indexed_calls` says how
 much history is searchable: every finished call, once its activity is derived
 (see above). Calls retention removes leave the index too.
@@ -266,21 +266,21 @@ The secret itself is never stored or shown: an exposure keeps its `kind`, the
 `sk-ant-…a1b2`), a `fingerprint` (16 hex characters of its BLAKE3 hash, equal for
 repeats of one secret), and how often it appeared. Activity and search keep
 text with each secret replaced by `«redacted: kind»`; captured bodies are kept as
-recorded. Session reports and `ren turn` list exposures as `secret_exposure`
+recorded. Recording reports and `ren turn` list exposures as `secret_exposure`
 findings, and the Overview lists the last day's first under Needs attention. A secret sent to
 a provider should be rotated: Ren cannot recall it. The scan covers the newest
 input of each call, not the system prompt or older history a client resends.
 
-## Session report
+## Recording report
 
-`ren report <session-id>` shows where a session's context and prompt-cache
+`ren report <session-id>` shows where a recording's context and prompt-cache
 tokens went, from its call records alone (no body is read, so it is fast):
 
 - `turns`: for each turn, its calls, the idle time before it (since the
-  session's previous call ended), context tokens at its first and last call,
+  recording's previous call ended), context tokens at its first and last call,
   the cache hit percent (cache reads over context), tokens written to the cache,
   and output tokens;
-- `totals` over the session's calls that reported usage, including the peak
+- `totals` over the recording's calls that reported usage, including the peak
   context;
 - `findings`, in call order:
   - `cache_rebuild`: a call read less than half of the earlier peak context from
@@ -288,12 +288,12 @@ tokens went, from its call records alone (no body is read, so it is fast):
     reports `idle_before_ms`; a provider's cache entries expire, but Ren cannot
     see its cache, so the cause is not stated.
   - `context_growth`: the 5 largest steps of at least 10,000 tokens past the
-    session's earlier peak.
+    recording's earlier peak.
 
 Context is new input plus cache reads and writes for Anthropic, and input for
 OpenAI, whose input already counts cached tokens. Findings need an earlier peak
-of at least 10,000 tokens, so a session's start is not reported. Peaks are
-session-wide, so a subagent's smaller context is neither a rebuild nor growth.
+of at least 10,000 tokens, so a recording's start is not reported. Peaks are
+recording-wide, so a subagent's smaller context is neither a rebuild nor growth.
 Token counts are provider-reported, not cost or subscription allowance. A report
 reads at most 5,000 calls (`omitted_calls` counts the rest).
 
@@ -310,20 +310,20 @@ codex mcp add ren -- ren mcp
 
 Its tools are read-only:
 
-| Tool                | Returns                                                                                                           |
-| ------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| `search_calls`      | Calls, newest first, filtered as in [call search](#call-search) (`session_id` names the session); `{calls, next}` |
-| `list_sessions`     | Recent sessions with their counts and token totals                                                                |
-| `session_calls`     | One session's calls, oldest first; `{calls, next}`                                                                |
-| `search_history`    | [Full-text search](#search), as `ren search` returns it                                                           |
-| `list_exposures`    | [Exposed secrets](#exposed-secrets), as `ren exposures` lists them                                                |
-| `session_report`    | A session's context and cost report, as `ren report` shows it                                                     |
-| `list_turns`        | A session's turns, newest first, as `ren turns` lists them                                                        |
-| `get_turn`          | What one turn did, as `ren turn` shows it: prompt, tool calls with effects and results, files, commands           |
-| `get_call_activity` | One call's activity, as `ren activity` shows it                                                                   |
-| `get_call`          | One call with its attempts, inspection, and observation log, as `ren inspect` prints it                           |
-| `get_body`          | An excerpt of a [body preview](#body-previews): decoded text (or raw bytes), at most `max_chars` (default 20,000) |
-| `usage`             | Calls, errors, and tokens, as [`/api/usage`](#usage)                                                              |
+| Tool                | Returns                                                                                                             |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `search_calls`      | Calls, newest first, filtered as in [call search](#call-search) (`session_id` names the recording); `{calls, next}` |
+| `list_sessions`     | Recent recordings with their counts and token totals                                                                |
+| `session_calls`     | One recording's calls, oldest first; `{calls, next}`                                                                |
+| `search_history`    | [Full-text search](#search), as `ren search` returns it                                                             |
+| `list_exposures`    | [Exposed secrets](#exposed-secrets), as `ren exposures` lists them                                                  |
+| `session_report`    | A recording's context and cost report, as `ren report` shows it                                                     |
+| `list_turns`        | A recording's turns, newest first, as `ren turns` lists them                                                        |
+| `get_turn`          | What one turn did, as `ren turn` shows it: prompt, tool calls with effects and results, files, commands             |
+| `get_call_activity` | One call's activity, as `ren activity` shows it                                                                     |
+| `get_call`          | One call with its attempts, inspection, and observation log, as `ren inspect` prints it                             |
+| `get_body`          | An excerpt of a [body preview](#body-previews): decoded text (or raw bytes), at most `max_chars` (default 20,000)   |
+| `usage`             | Calls, errors, and tokens, as [`/api/usage`](#usage)                                                                |
 
 Listings return at most 100 rows. Invalid arguments, unknown IDs, and an
 unreachable daemon are tool errors that the agent reads and can correct.
@@ -340,6 +340,8 @@ stderr.
 
 ## Endpoints
 
+The API still calls recordings sessions, in its routes (`/api/sessions`),
+parameters, and JSON fields (`session`, `sessions`), as do the CLI and the MCP tools.
 Every JSON body carries `"api_version": 1`; errors are `{api_version, error}` with
 `error` one of `not_found`, `invalid_query`, `busy`, `unavailable`, or
 `identity_refused` (`401`, from `/api/caller` only). An identifier that is not one
@@ -360,13 +362,13 @@ the body was stored whole; otherwise `not_found`. At most two run at once
 | `GET /api/calls/{call-id}`                                             | One call with its attempts, inspection, and observation log                                                                                                                                                                                                                                          |
 | `GET /api/calls/{call-id}/body/{request\|response}`                    | Bounded body preview                                                                                                                                                                                                                                                                                 |
 | `GET /api/calls/{call-id}/body/{request\|response}/export`             | The complete captured body as raw bytes, as `ren inspect --body` exports it                                                                                                                                                                                                                          |
-| `GET /api/sessions?limit=100`                                          | Recent sessions with call, turn, and error counts and token totals; `shelf=archived` lists the [archived](#archiving-and-deleting) ones instead                                                                                                                                                      |
+| `GET /api/sessions?limit=100`                                          | Recent recordings with call, turn, and error counts and token totals; `shelf=archived` lists the [archived](#archiving-and-deleting) ones instead                                                                                                                                                    |
 | `GET /api/usage?from_ms=&until_ms=`                                    | Calls, errors, and tokens in total, by UTC hour, by model, and by user (see [usage](#usage))                                                                                                                                                                                                         |
-| `GET /api/sessions/{session-id}/calls?limit=100`                       | One session's calls, oldest first                                                                                                                                                                                                                                                                    |
-| `GET /api/sessions/{session-id}/turns?limit=100`                       | A session's turns, newest first, with prompt excerpts (see [activity](#activity))                                                                                                                                                                                                                    |
+| `GET /api/sessions/{session-id}/calls?limit=100`                       | One recording's calls, oldest first                                                                                                                                                                                                                                                                  |
+| `GET /api/sessions/{session-id}/turns?limit=100`                       | A recording's turns, newest first, with prompt excerpts (see [activity](#activity))                                                                                                                                                                                                                  |
 | `GET /api/search?q=&field=&session=&client=&from_ms=&until_ms=&limit=` | [Full-text search](#search), newest call first                                                                                                                                                                                                                                                       |
 | `GET /api/exposures?session=&from_ms=&until_ms=&limit=`                | [Exposed secrets](#exposed-secrets), newest call first                                                                                                                                                                                                                                               |
-| `GET /api/sessions/{session-id}/report`                                | A session's [context and cost report](#session-report)                                                                                                                                                                                                                                               |
+| `GET /api/sessions/{session-id}/report`                                | A recording's [context and cost report](#recording-report)                                                                                                                                                                                                                                           |
 | `GET /api/turns/{turn-id}`                                             | One turn's [activity](#activity)                                                                                                                                                                                                                                                                     |
 | `GET /api/calls/{call-id}/activity`                                    | One call's [activity](#activity)                                                                                                                                                                                                                                                                     |
 | `GET /api/runs?limit=100`                                              | Recorded [runs](#runs), newest first: harness, folder, the client's `thread` and the `session` it names, `started_at`, the `model`, `effort`, and `approvals` it started with (`null` is the client's own), and once ended `ended_at`, `end`, and `exit`; `shelf=archived` lists archived ended runs |
@@ -384,9 +386,9 @@ return `503` without blocking forwarding. Management responses carry
 listener's loopback/Tailscale access boundary and has no separate login or
 cross-origin browser access enabled.
 
-### Session totals
+### Recording totals
 
-Each session in `/api/sessions` carries `error_count`, the model calls (`kind=model`)
+Each recording in `/api/sessions` carries `error_count`, the model calls (`kind=model`)
 the `errors` status filter would find, and `tokens: {input, output, cache_read}`, summed from provider-reported
 usage. Input includes cached context whichever way each call's provider accounts
 for it; a total is `null` when no call reported usage. Token counts are not
@@ -401,8 +403,8 @@ them into local days), and `models` (each provider and reported model, most inpu
 first; `model` is `null` when no response reported one), and `users` (each named
 user, most input first; `user` is `null` for calls no named user made: unlisted
 and unidentified callers, and calls stored without a caller). Each carries `calls`,
-`errors` (model calls the `errors` status filter finds, as in session totals), and `tokens: {input, output,
-cache_read}`, with input including cached context as in session totals. Unknown
+`errors` (model calls the `errors` status filter finds, as in recording totals), and `tokens: {input, output,
+cache_read}`, with input including cached context as in recording totals. Unknown
 parameters and a reversed range are rejected.
 
 ### Builds
@@ -472,15 +474,15 @@ Deleting a run deletes its conversation.
 
 `POST /control/v1/history/sessions/{session}/{change}` and
 `POST /control/v1/history/runs/{run}/{change}` archive, unarchive, or delete
-what was recorded. `{session}` is Ren's session ID (as `/api/sessions` lists
-it, not the client's), and `{change}` is `archive`, `unarchive`, or `delete`.
-A run's change applies to the sessions its client recorded under the run's
-thread too, and a session's to the runs that worked in it. The CLI is
+what was recorded. `{session}` is a recording's ID (as `/api/sessions` lists
+it, not the client's session ID), and `{change}` is `archive`, `unarchive`, or `delete`.
+A run's change applies to the recordings its client made under the run's
+thread too, and a recording's to the runs that worked in it. The CLI is
 `ren control archive|unarchive session|run <id>` and
 `ren control delete session|run <id> --yes`.
 
 - **Archive** hides it from `/api/sessions` and `/api/runs`, which list it
-  with `shelf=archived` instead, with its `archived_at`. A session with traffic
+  with `shelf=archived` instead, with its `archived_at`. A recording with traffic
   newer than its archiving is listed again by itself; a run still running is
   always listed.
 - **Delete** removes its finished calls with their bodies, attempts, log rows,
@@ -488,7 +490,7 @@ thread too, and a session's to the runs that worked in it. The CLI is
   still running are kept, so a delete is refused while there are any: `409`
   `call_open` or `409` `run_running`. The next retention pass frees the chunks
   only those calls referenced. It cannot be undone; a client that keeps
-  calling starts a new Ren session.
+  calling starts a new recording.
 
 Each edit is recorded (a `history_edited` observation with the actor) and
 applied by the recorder after what it was recording; the answer is `202`
@@ -503,7 +505,7 @@ structured mode: Codex's `codex app-server`, Claude Code's print mode with
 streaming JSON (`claude -p --input-format stream-json --output-format
 stream-json`), or Pi's RPC mode (`pi --mode rpc`, with Ren's extension). The
 client keeps its own sign-in, and its model traffic goes through this gateway
-like any session. Ren names a new Claude Code conversation or Pi session
+like any other client's. Ren names a new Claude Code conversation or Pi session
 itself (`--session-id`), so a run's `thread` is the session the recorded calls
 carry; Claude Code's permission prompts are its approvals, and Ren answers no
 other request (hooks, MCP, elicitation). Claude Code reports no live turn id
@@ -609,7 +611,7 @@ the same way for every client: `{"as": "prompt"|"reply"|"plan", text}`,
 `{"as": "reasoning"}`, or `{"as": "unread"}`; and its `body` as the client
 described it), `approval` requests, `turn_started` and `turn_ended`, and
 `error`s. Events are not stored; the run's start, opening, and end are, and its
-model traffic is recorded as any session's.
+model traffic is recorded like any other client's.
 
 The web UI's Runs view drives runs through this API when its server is given
 the control token file (see the [UI's README](../ui/README.md#runs)), and the
@@ -667,7 +669,7 @@ for them, to show replies on Live cards as they stream, and so does `ren tui`;
 ## Call search
 
 `GET /api/calls` filters all retained calls and returns `{calls, next}` newest
-first. Parameters: `q`, `session` (a Ren session ID), `client` (`claude_code`,
+first. Parameters: `q`, `session` (a recording ID), `client` (`claude_code`,
 `codex`, `pi`, `opencode`), `user` (a [named user](policy.md#named-users)), `kind` (`model`, `other`), `provider` (`anthropic`, `openai`,
 `codex`, `deepseek`), `model`, `tool`, `has_tools`, `status` (`active`, `finished`, `errors`,
 `interrupted`), `from_ms`, `until_ms` (inclusive), `limit` (1–1000), and `after`.

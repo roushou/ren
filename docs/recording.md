@@ -30,7 +30,7 @@ backed up, and pruned.
   the recorder retries without body data so lifecycle records survive. A healthy
   response alone does not establish complete capture.
 - Credential headers, arbitrary transport headers, and request URLs are not stored.
-  Allowlisted correlation UUIDs are recorded (see [Clients](clients.md#sessions-and-turns)).
+  Allowlisted correlation UUIDs are recorded (see [Clients](clients.md#recordings-and-turns)).
   Captured bodies are private content and may themselves contain secrets from
   prompts or tool results. Set `capture.body_limit_bytes = 0` for metadata-only
   recording.
@@ -202,7 +202,7 @@ call start, and either count or storage pressure can remove younger calls.
 The recorder removes the oldest finished calls in transactions of at most 16, then
 deletes chunks no remaining body references. Maintenance runs at startup and every
 60 seconds; full batches schedule another pass sooner. A call, its attempts, bodies,
-and observations are deleted together; session counts and orphan turns/sessions are
+and observations are deleted together; recording counts and orphan turns/recordings are
 updated in the same transaction. Open calls are protected; recovered calls are
 eligible. Recording never waits for pruning.
 
@@ -218,11 +218,11 @@ allocated and in-use bytes. There is no automatic `VACUUM`, secure-erasure
 guarantee, or backup cleanup. Monitor actual filesystem space too.
 
 Retention changes history: old links can return `404`, and the live feed reports
-`gone`; a pagination cursor stays valid and continues after the pruned calls. Refresh from the start. Session counts
-describe retained calls, and a resumed client whose entire session expired receives
-a new Ren session ID. Raw captures cannot be recovered through Ren after pruning.
+`gone`; a pagination cursor stays valid and continues after the pruned calls. Refresh from the start. Recording counts
+describe retained calls, and a resumed client whose entire recording expired receives
+a new Ren recording ID. Raw captures cannot be recovered through Ren after pruning.
 
-The operator can also delete a session or a run's recorded calls on demand
+The operator can also delete a recording or a run's recorded calls on demand
 (`ren control delete`, or Delete in the UI; see
 [archiving and deleting](api.md#archiving-and-deleting)). The same per-call
 removal applies, as one recorded edit; the following retention pass sweeps

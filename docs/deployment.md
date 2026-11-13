@@ -288,7 +288,7 @@ a command for prompts that mention testing, running, or building and changes
 files for ones that mention fixing, editing, changing, adding, or writing
 (Codex and Claude Code ask first; Pi asks for no approvals), and sends each
 turn's model call through the dev gateway to the fake provider, so a run's
-turns are recorded under its session. `dev up` restarts the daemon as
+turns are recorded under its recording. `dev up` restarts the daemon as
 `install-vps` does for runs: it waits for every run starting, working, or stopping
 (up to `--idle-timeout`, 300 seconds by default; `--drain-runs` does not wait), and
 names the idle runs that end with the restart, which can be continued. It does not

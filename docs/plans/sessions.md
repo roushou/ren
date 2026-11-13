@@ -1,6 +1,6 @@
 # Plan: sessions you work in
 
-Status: in progress, on `agent-runs`. Step 1a is done; 1b is next. This file is
+Status: in progress, on `agent-runs`. Step 1 is done; step 2 is next. This file is
 the plan of record: each step lands as its own commits, every commit
 passes the full checks, and any change to the plan is written under
 [Deviations](#deviations) with its reason. Once the work is done, what

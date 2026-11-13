@@ -88,9 +88,9 @@ it's unavailable, the Ren-specific rules below still apply.
 
 Ren-specific applications:
 
-- **Identities:** channels, calls, attempts, sessions, turns, and tool calls each get
+- **Identities:** channels, calls, attempts, recordings, turns, and tool calls each get
   their own type (`ren_recorder::id`). Provider-native identifiers keep separate types
-  (`NativeSessionId` is not `SessionId`).
+  (`NativeSessionId` is not `RecordingId`).
 - **Vocabularies:** a closed set of labels is an enum deriving `strum`'s
   `Display`, `EnumString`, `IntoStaticStr`, and `VariantArray` with
   `serialize_all = "snake_case"`, plus `serde_with`'s `SerializeDisplay` and
@@ -222,7 +222,7 @@ dependencies under "Crates" below. Read the code for current module ownership.
   WebSocket's end) is the forwarding side, `RunTap` records an agent run's
   start, opening, settings changed mid-run, end, and each entry of its conversation (`RunEntry`, whole,
   admitted against the queue's byte budget), and `HistorySlot` an operator's archive or delete
-  of a session or run (`HistoryEdit`); `RecorderTask` (run by the daemon on
+  of a recording or run (`HistoryEdit`); `RecorderTask` (run by the daemon on
   its observation thread) is the shell around the pure `RecorderCore`
   (`recording`: records in queue order in, a batch of operations out, with
   chunking, inspection, and digests), and runs group commits, retention,
@@ -252,7 +252,7 @@ dependencies under "Crates" below. Read the code for current module ownership.
   `Reader::conversation` reads it across the runs on one client thread. It
   contains typed query parameters and read views, turn and call
   activity assembled from the calls' stored digests (`activity`, with the
-  session context and cost report in `activity::report`), the full-text search
+  recording context and cost report in `activity::report`), the full-text search
   and exposure listings (`search`, `Reader::search` and `Reader::exposures`) over
   the digests the recorder derives for each finished call (`call_digests`,
   `call_exposures`, and `search_texts` with its FTS5 index, in `ren.sqlite3`;
@@ -290,29 +290,30 @@ dependencies under "Crates" below. Read the code for current module ownership.
   `workdir`, `project`, `entries`, and `files` free of runtime and I/O. The daemon constructs it when `[runs]`
   roots are configured, with `ProcessHost`; the gateway's control API serves it.
 - `crates/ren-tui`: Ren in the terminal, with `Tui` as its primary type: one
-  app over one gateway for watching and driving agent sessions. `Tui` is
+  app over one gateway for watching recordings and driving agent runs. `Tui` is
   sans-IO: it holds the model and its screens, hands key presses (`Key`) to
   the screen on top and what was read (`Input`) to the model and then the
   main screen, and answers with `Out`s: the reads to make (`Read`) and the
   `Command`s the shell sends through the control API. `Tui::view` is what to
   draw. `ren tui` and `ren runs` open the same app.
   - `model`: everything read from the gateway, in the one place every
-    screen reads it from: sessions and their model calls (`sessions`:
+    screen reads it from: recordings and their model calls (`recordings`:
     snapshots, as `ren_store::view` types, turn and call activity, progress
-    on streaming calls, failed reads, the active sessions, the traffic, and
-    what to read to show a session), the daemon's runs (`desk`: what needs
+    on streaming calls, failed reads, the active recordings, the traffic, and
+    what to read to show a recording), the daemon's runs (`desk`: what needs
     you first, `Attention`), each run's conversation, read whole from what
     the daemon stored and kept current by the run feed, the two merged by
     what each entry is (`transcript`), projects, and how
     a call ended (`call`, `CallEnd`). `Model::apply` answers with reads,
     prompts kept for a run that now waits for one, and news.
-  - `screen`: `enum Screen { Main, NewRun, Actions, Help }`. `main` is the session
+  - `screen`: `enum Screen { Main, NewRun, Actions, Help }`. `main` is the
     list (`list`: runs grouped by their folder, the folders that need you
-    first, then sessions watched; or by what each needs, `Grouping`) beside the selected session (`detail`: a lit
-    header, the Conversation, Activity, Files, and Calls tabs, a run's whole
-    conversation as one scroll, the approval card), with a top bar for the
-    traffic and a key bar; `watched` reads a session Ren did not start (its
-    phase, alerts, and conversation). Keys act in normal mode; `message`
+    first, then recordings; or by what each needs, `Grouping`) beside the
+    selected run or recording (`detail`: a lit header, the Conversation,
+    Activity, Files, and Calls tabs, a run's whole conversation as one
+    scroll, the approval card), with a top bar for the traffic and a key
+    bar; `recording` (`RecordingPane`) reads a recording, the traffic of a
+    client Ren did not start (its phase, alerts, and conversation). Keys act in normal mode; `message`
     (with `composer`, the one editor every prompt is written in: wrapped
     rows, a cursor that moves through them, and pastes, and `offer`, what
     the word at the cursor is offered: the client's commands after `/` or
@@ -376,7 +377,7 @@ dependencies under "Crates" below. Read the code for current module ownership.
     Its `runs` module serves `/control/v1/runs`: starting, prompting, answering,
     interrupting, and stopping runs through the `ren_supervisor::Supervisor` in
     `ManagementSetup`, and their updates as SSE. Its `history` module serves
-    `/control/v1/history`: archiving, unarchiving, and deleting a session or
+    `/control/v1/history`: archiving, unarchiving, and deleting a recording or
     run, checked against the `Reader` and recorded through the recorder.
 - `crates/ren-daemon`: configuration, resource wiring, and lifecycle, with
   `Daemon` as its primary type (`lib.rs`). It opens storage, binds the listener,
