@@ -135,51 +135,67 @@
   }
   .panel {
     position: absolute;
-    top: calc(100% + 4px);
+    top: calc(100% + 6px);
     right: 0;
     z-index: 20;
-    min-width: 220px;
-    max-width: 360px;
+    min-width: 240px;
+    max-width: 380px;
     display: flex;
     flex-direction: column;
-    border: 1px solid var(--line);
-    background: var(--surface);
-    box-shadow: 0 8px 24px rgb(0 0 0 / 0.25);
+    padding: 4px 0;
+    border: 1px solid var(--popover-border);
+    border-top: 2px solid var(--accent);
+    background: var(--popover);
+    box-shadow: var(--popover-shadow);
     outline: none;
   }
   .panel button {
-    padding: 7px 12px;
+    padding: 8px 14px;
     border: 0;
     background: none;
     color: var(--ink);
     font: inherit;
-    font-size: 12px;
+    font-size: 13px;
+    font-weight: 500;
     text-align: left;
     cursor: pointer;
   }
   .panel button:hover,
   .panel button:focus-visible {
-    background: var(--row-hover);
+    background: var(--popover-hover);
     outline: none;
+  }
+  .panel button:focus-visible {
+    box-shadow: inset 2px 0 0 var(--accent);
   }
   .panel button.danger {
     color: var(--error);
   }
+  .panel button.danger:hover,
+  .panel button.danger:focus-visible {
+    background: var(--error-soft);
+  }
   .details {
-    padding: 7px 12px;
-    border-top: 1px solid var(--line);
-    border-bottom: 1px solid var(--line);
+    margin: 4px 0;
+    padding: 8px 14px;
+    border-top: 1px solid var(--popover-border);
+    border-bottom: 1px solid var(--popover-border);
+    background: var(--surface-inset);
     color: var(--muted);
+    font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', monospace;
     font-size: 11px;
+    line-height: 1.5;
   }
   .details p {
     margin: 0;
     overflow-wrap: anywhere;
   }
-  .details p + p {
-    margin-top: 2px;
+  .details:first-child {
+    margin-top: -4px;
+    border-top: 0;
   }
   .details:last-child {
+    margin-bottom: -4px;
     border-bottom: 0;
   }
 </style>

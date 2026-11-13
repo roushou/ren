@@ -21,6 +21,11 @@
   --accent-count: #ecd4c6;
   --row-hover: #faf6f3;
   --row-selected: #f6eae4;
+  /* A menu over the page: raised above it, with a firmer edge. */
+  --popover: #ffffff;
+  --popover-hover: #f0f1f6;
+  --popover-border: #cfd3dc;
+  --popover-shadow: 0 2px 6px rgb(16 18 27 / 0.08), 0 14px 36px rgb(16 18 27 / 0.18);
   --success: #22805e;
   --error: #c44444;
   --error-soft: #fdf0ef;
@@ -75,6 +80,10 @@
   --accent-count: #343b49;
   --row-hover: #343b49;
   --row-selected: #3b4252;
+  --popover: #3b4252;
+  --popover-hover: #48526a;
+  --popover-border: #5e6a82;
+  --popover-shadow: 0 2px 6px rgb(0 0 0 / 0.35), 0 16px 40px rgb(0 0 0 / 0.55);
   --success: #a3be8c;
   --error: #d3979e;
   --error-soft: #402f35;
