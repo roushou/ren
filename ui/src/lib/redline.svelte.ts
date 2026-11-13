@@ -4,6 +4,20 @@
  * the panel, and the status line's toggle read it.
  */
 import { Redline, type Mark, type Target } from './redline.ts';
+import { DRIVABLE, RunCommandError, RunsClient, type Drivable, type RunProject } from './runs.ts';
+
+/** Where a brief can go: the folders runs start in, and the clients ready here. */
+export interface Destinations {
+  projects: RunProject[];
+  ready: Drivable[];
+}
+
+/** Reading the destinations: not yet, under way, read, or failed. */
+export type Reading =
+  | { state: 'idle' }
+  | { state: 'reading' }
+  | { state: 'read'; value: Destinations }
+  | { state: 'failed'; reason: string };
 
 /** A mark, with the element it points at while that element is on the page. */
 export interface Placed extends Mark {
@@ -15,10 +29,40 @@ export class RedlineDesk {
   marks = $state<Placed[]>([]);
   /** The mark whose note is being written. */
   editing = $state<number | null>(null);
+  /** Where a brief can go, read once per page view. */
+  destinations = $state.raw<Reading>({ state: 'idle' });
   #next = 1;
+
+  /** Read where a brief can go, once: started as the pointer nears the
+   * toggle, so the pane usually opens with them. */
+  prepare() {
+    if (this.destinations.state === 'reading' || this.destinations.state === 'read') return;
+    this.destinations = { state: 'reading' };
+    const client = new RunsClient();
+    Promise.all([client.projects(), client.clients()]).then(
+      ([places, clients]) => {
+        this.destinations = {
+          state: 'read',
+          value: {
+            projects: places.projects,
+            ready: DRIVABLE.filter((drivable) =>
+              clients.some((entry) => entry.harness === drivable && entry.status === 'ready'),
+            ),
+          },
+        };
+      },
+      (failure: unknown) => {
+        this.destinations = {
+          state: 'failed',
+          reason: failure instanceof RunCommandError ? failure.message : 'Cannot read the folders.',
+        };
+      },
+    );
+  }
 
   toggle() {
     this.open = !this.open;
+    if (this.open) this.prepare();
     if (!this.open) this.drop(this.editing);
   }
 

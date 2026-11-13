@@ -415,6 +415,8 @@
         class:on={redline.open}
         data-redline
         aria-pressed={redline.open}
+        onpointerenter={() => redline.prepare()}
+        onfocus={() => redline.prepare()}
         onclick={() => redline.toggle()}
         title="Mark what's wrong on this page for an agent to fix (m)"
         ><Icon name="pencil" size={12} />Redline{#if redline.marks.length}<span

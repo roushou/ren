@@ -7,6 +7,7 @@
   to, and where the pane was left, are remembered in this browser only.
 -->
 <script lang="ts">
+  import { untrack } from 'svelte';
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
   import { harnessLabel } from './activity.ts';
@@ -27,14 +28,26 @@
   const client = new RunsClient();
   const KEEP = 'ren.redline';
 
-  let projects = $state.raw<RunProject[]>([]);
-  let ready = $state.raw<Drivable[]>([]);
   let folder = $state<string | null>(null);
   let harness = $state<Drivable>('claude_code');
   let others = $state(false);
-  let loading = $state<string | null>('Reading the folders and clients…');
   let error = $state<string | null>(null);
   let sending = $state(false);
+
+  /** What was read of where a brief can go; until then the pane keeps its
+   * shape, with every client and the folder waiting. */
+  const read = $derived(desk.destinations.state === 'read' ? desk.destinations.value : null);
+  const projects = $derived(read?.projects ?? []);
+  const ready = $derived(read?.ready ?? []);
+  /** The clients shown: those ready once read, every one while reading. */
+  const shown = $derived(read ? read.ready : DRIVABLE);
+  const waiting = $derived(
+    desk.destinations.state === 'failed'
+      ? desk.destinations.reason
+      : read
+        ? null
+        : 'Reading the folders and clients…',
+  );
 
   /** Where the pane sits: its top-left corner, in viewport pixels. */
   const PLACE = 'ren.redline.pane';
@@ -126,27 +139,18 @@
     }
   }
 
+  // Start reading, if the toggle's hover has not; then, once read, the
+  // folder and client this browser last sent to.
+  untrack(() => desk.prepare());
+  let recalled = false;
   $effect(() => {
-    const abort = new AbortController();
-    Promise.all([client.projects(abort.signal), client.clients(abort.signal)]).then(
-      ([places, clients]) => {
-        projects = places.projects;
-        ready = DRIVABLE.filter((drivable) =>
-          clients.some((entry) => entry.harness === drivable && entry.status === 'ready'),
-        );
-        const kept = recall();
-        folder = places.projects.some((project) => project.path === kept.folder)
-          ? (kept.folder ?? null)
-          : null;
-        harness = ready.find((drivable) => drivable === kept.harness) ?? ready[0] ?? harness;
-        loading = null;
-      },
-      (failure: unknown) => {
-        if (abort.signal.aborted) return;
-        loading = failure instanceof RunCommandError ? failure.message : 'Cannot read the folders.';
-      },
-    );
-    return () => abort.abort();
+    if (!read || recalled) return;
+    recalled = true;
+    const kept = recall();
+    folder = read.projects.some((project) => project.path === kept.folder)
+      ? (kept.folder ?? null)
+      : null;
+    harness = read.ready.find((drivable) => drivable === kept.harness) ?? read.ready[0] ?? harness;
   });
 
   const context = $derived.by((): PageContext => {
@@ -261,41 +265,50 @@
 
   <section>
     <h3>Send to</h3>
-    {#if loading}
-      <p class="hint">{loading}</p>
+    <!-- One shape throughout: while reading, every client and the folder
+         wait in place, so nothing moves when they arrive. -->
+    {#if shown.length}
+      <div
+        class="segmented"
+        class:waiting={!read}
+        role="group"
+        aria-label="Client"
+        aria-busy={!read}
+      >
+        {#each shown as drivable (drivable)}
+          <button
+            aria-pressed={!!read && harness === drivable}
+            disabled={!read}
+            onclick={() => (harness = drivable)}>{harnessLabel(drivable)}</button
+          >
+        {/each}
+      </div>
     {:else}
-      {#if ready.length}
-        <div class="segmented" role="group" aria-label="Client">
-          {#each ready as drivable (drivable)}
-            <button aria-pressed={harness === drivable} onclick={() => (harness = drivable)}
-              >{harnessLabel(drivable)}</button
-            >
-          {/each}
-        </div>
-      {:else}
-        <p class="hint">No client can start here. Install one on the daemon's host.</p>
-      {/if}
-      <Picker
-        label="Folder"
-        icon="file"
-        {groups}
-        value={folder}
-        placeholder="Choose a folder"
-        free={(typed) => typed.startsWith('/')}
-        toggle={projects.some((place) => place.kind === 'other')
-          ? { label: 'Show other places', on: others, onchange: (on) => (others = on) }
-          : null}
-        onchange={(value) => (folder = value)}
-      />
-      <p class="hint">
-        The agent is asked to work on a new branch in a git worktree, and not to install anything.
-      </p>
+      <p class="hint one-line">No client can start here. Install one on the daemon's host.</p>
     {/if}
+    <Picker
+      label="Folder"
+      icon="file"
+      {groups}
+      value={folder}
+      placeholder="Choose a folder"
+      free={(typed) => typed.startsWith('/')}
+      disabled={read ? null : (waiting ?? 'Reading the folders…')}
+      toggle={projects.some((place) => place.kind === 'other')
+        ? { label: 'Show other places', on: others, onchange: (on) => (others = on) }
+        : null}
+      onchange={(value) => (folder = value)}
+    />
+    <p class="hint" aria-live="polite">
+      {desk.destinations.state === 'failed'
+        ? waiting
+        : 'The agent is asked to work on a new branch in a git worktree, and not to install anything.'}
+    </p>
     {#if error}<p class="error" role="alert">{error}</p>{/if}
     <div class="actions">
       <button
         class="button primary redline-send"
-        disabled={sending || !!loading || !ready.length}
+        disabled={sending || !read || !ready.length}
         onclick={() => void send()}
         >{sending ? 'Sending…' : `Send to ${harnessLabel(harness)}`}</button
       >
@@ -480,6 +493,14 @@
   }
   .segmented button:last-child {
     border-right: 0;
+  }
+  /* Waiting: the same buttons, quiet, until the clients are read. */
+  .segmented.waiting button {
+    color: var(--muted);
+    cursor: progress;
+  }
+  .one-line {
+    min-height: 24px;
   }
   .segmented button[aria-pressed='true'] {
     background: var(--accent-soft);
