@@ -407,9 +407,10 @@ state's and take a client's own session ID, not a session's.
 
 A session body is `{session, stored, served}`. `stored` is the session as the
 store holds it: `{id, harness, workdir, created_at, model, effort, approvals,
-archived_at, first_turn_at, runs}`, its runs newest first (each as
-`GET /api/runs` lists runs), or `null` for a moment after it is made, until the
-recorder commits it. `served` is the session as this daemon serves it now:
+archived_at, first_turn_at, first_prompt, runs}`, `first_prompt` the first
+line of its first prompt as its client echoed it (at most 200 characters, `null`
+until one is recorded), its runs newest first (each as `GET /api/runs` lists
+runs), or `null` for a moment after it is made, until the recorder commits it. `served` is the session as this daemon serves it now:
 `{session, harness, workdir, settings, state, process}`, `state` `{"shelf":
 "open"|"archived", "phase": "draft"|"active"}` and `process` its newest run, or
 `null` while the daemon has not served it since it started. A session the store

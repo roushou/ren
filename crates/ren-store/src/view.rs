@@ -673,12 +673,18 @@ pub struct SessionView {
     /// When its first turn started; `None` while it is a draft (no prompt
     /// has gone out).
     pub first_turn_at: Option<UnixMillis>,
+    /// The first line of its first prompt, as its client echoed it, cut to
+    /// [`SessionView::FIRST_PROMPT_CHARS`]; `None` until one is recorded.
+    pub first_prompt: Option<String>,
     /// Its runs, newest first.
     pub runs: Vec<RunView>,
 }
 
 impl SessionView {
-    pub(super) const SELECT: &'static str = "SELECT id, harness, workdir, created_at, model, effort, approvals, archived_at, (SELECT MIN(e.at) FROM run_entries e JOIN runs r ON r.id = e.run WHERE r.operator_session = operator_sessions.id AND e.kind = 'turn_started') AS first_turn_at FROM operator_sessions";
+    pub(super) const SELECT: &'static str = "SELECT id, harness, workdir, created_at, model, effort, approvals, archived_at, (SELECT MIN(e.at) FROM run_entries e JOIN runs r ON r.id = e.run WHERE r.operator_session = operator_sessions.id AND e.kind = 'turn_started') AS first_turn_at, (SELECT json_extract(e.event, '$.item.read.text') FROM run_entries e JOIN runs r ON r.id = e.run WHERE r.operator_session = operator_sessions.id AND e.kind = 'item' AND json_extract(e.event, '$.item.read.as') = 'prompt' ORDER BY e.at, r.started_at, e.seq LIMIT 1) AS first_prompt FROM operator_sessions";
+
+    /// The most of a first prompt a session view carries.
+    pub const FIRST_PROMPT_CHARS: usize = 200;
 
     /// The session in `row`, with `runs`.
     pub(super) fn from_row(row: &SqliteRow, runs: Vec<RunView>) -> Result<Self, StoreError> {
@@ -693,8 +699,18 @@ impl SessionView {
             approvals: row.optional_label("approvals")?,
             archived_at: row.optional_time("archived_at")?,
             first_turn_at: row.optional_time("first_turn_at")?,
+            first_prompt: row
+                .text("first_prompt")?
+                .and_then(|text| Self::headline(&text)),
             runs,
         })
+    }
+
+    /// A prompt's first line with text, cut to its first
+    /// [`Self::FIRST_PROMPT_CHARS`] characters; `None` when it has none.
+    fn headline(text: &str) -> Option<String> {
+        let line = text.lines().map(str::trim).find(|line| !line.is_empty())?;
+        Some(line.chars().take(Self::FIRST_PROMPT_CHARS).collect())
     }
 }
 

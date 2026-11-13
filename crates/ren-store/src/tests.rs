@@ -2012,6 +2012,118 @@ mod conversation {
     }
 
     #[tokio::test]
+    async fn a_session_is_named_by_the_first_line_of_its_first_prompt() {
+        use ren_recorder::{
+            batch::{SessionFact, SessionRecord},
+            id::SessionId,
+        };
+        let mut fixture = Fixture::new().await;
+        let session = SessionId::generate(fixture.ids.as_ref());
+        let run = RunId::generate(fixture.ids.as_ref());
+        let mut batch = Batch::default();
+        batch.push(Op::Session(SessionRecord {
+            at: fixture.clock.now(),
+            session,
+            fact: SessionFact::Created {
+                harness: ren_harness::Harness::Codex,
+                workdir: "/work/acme".into(),
+                settings: ren_harness::settings::RunSettings::default(),
+            },
+        }));
+        batch.push(Op::Run(RunRecord {
+            at: fixture.clock.now(),
+            run,
+            fact: RunFact::Started {
+                session,
+                harness: ren_harness::Harness::Codex,
+                workdir: "/work/acme".into(),
+                settings: ren_harness::settings::RunSettings::default(),
+            },
+        }));
+        fixture.store.commit(&batch).await.unwrap();
+        let read = |fixture: &Fixture| {
+            let reader = fixture.reader.clone();
+            async move { reader.session(session).await.unwrap().unwrap().first_prompt }
+        };
+        // A draft: nothing asked yet.
+        assert_eq!(read(&fixture).await, None);
+
+        let mut batch = Batch::default();
+        for (id, text) in [
+            (
+                "prompt_1",
+                format!(
+                    "\n  fix the order list sorting  \nwith details\n{}",
+                    "x".repeat(10)
+                ),
+            ),
+            ("prompt_2", "run the tests".to_owned()),
+        ] {
+            fixture.clock.advance(std::time::Duration::from_millis(10));
+            batch.push(Op::RunEntry(RunEntry {
+                at: fixture.clock.now(),
+                run,
+                turn: None,
+                event: item(id, ItemPhase::Completed, ItemRead::Prompt { text }),
+            }));
+        }
+        fixture.store.commit(&batch).await.unwrap();
+        assert_eq!(
+            read(&fixture).await.as_deref(),
+            Some("fix the order list sorting")
+        );
+
+        // A long first line is cut.
+        let mut batch = Batch::default();
+        let other = RunId::generate(fixture.ids.as_ref());
+        let long = SessionId::generate(fixture.ids.as_ref());
+        batch.push(Op::Session(SessionRecord {
+            at: fixture.clock.now(),
+            session: long,
+            fact: SessionFact::Created {
+                harness: ren_harness::Harness::Codex,
+                workdir: "/work/acme".into(),
+                settings: ren_harness::settings::RunSettings::default(),
+            },
+        }));
+        batch.push(Op::Run(RunRecord {
+            at: fixture.clock.now(),
+            run: other,
+            fact: RunFact::Started {
+                session: long,
+                harness: ren_harness::Harness::Codex,
+                workdir: "/work/acme".into(),
+                settings: ren_harness::settings::RunSettings::default(),
+            },
+        }));
+        batch.push(Op::RunEntry(RunEntry {
+            at: fixture.clock.now(),
+            run: other,
+            turn: None,
+            event: item(
+                "prompt_3",
+                ItemPhase::Completed,
+                ItemRead::Prompt {
+                    text: "é".repeat(500),
+                },
+            ),
+        }));
+        fixture.store.commit(&batch).await.unwrap();
+        let cut = fixture
+            .reader
+            .session(long)
+            .await
+            .unwrap()
+            .unwrap()
+            .first_prompt
+            .unwrap();
+        assert_eq!(
+            cut.chars().count(),
+            crate::view::SessionView::FIRST_PROMPT_CHARS
+        );
+    }
+
+    #[tokio::test]
     async fn a_conversation_is_kept_whole_and_reads_on_across_resumed_runs() {
         let mut fixture = Fixture::new().await;
         let long = "word ".repeat(5_000);
