@@ -269,7 +269,8 @@ dependencies under "Crates" below. Read the code for current module ownership.
   processes started in a folder and driven through their client's
   structured mode (Codex, Claude Code, and Pi), each serving an operator
   session (`SessionState` in `session`: a draft until its first prompt,
-  active after, archived on the shelf, see `docs/plans/sessions.md`). The
+  active after, archived on the shelf; see `docs/architecture.md`,
+  "Sessions, runs, and recordings"). The
   task holds sessions and their processes together: `Supervisor::create`
   starts a session's client at once, `send` carries a command through its
   process or, for a prompt with none running, through a new one that resumes

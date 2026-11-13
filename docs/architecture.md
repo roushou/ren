@@ -175,9 +175,36 @@ Sources:
 Identities: `ChannelId`, `CallId`, `AttemptId`, `RecordingId`, `TurnId`, and
 `UpstreamId`, plus a separate type for each provider-native identifier.
 
-A **run** is one agent process Ren starts and drives through its client's
-structured mode. `RunId` names it, `RunEnd` says how it ended, and `ProcessExit` how its process exited. The
-control API starts and drives runs (`/control/v1/runs`) when `[runs]` roots are configured.
+### Sessions, runs, and recordings
+
+With `[runs]` roots configured, Ren drives clients as well as recording them.
+Three concepts keep that apart, each with one job:
+
+- A **session** (`SessionId`) is what the operator works in, and the only thing
+  the interfaces drive. It owns its folder; its client, fixed once its first
+  prompt goes out (a _draft_ until then); its settings, which change from the
+  next turn; its conversation across every process; and its shelf (current or
+  archived). Creating one starts its client at once, so its commands are listed
+  before the first prompt (no client writes its own history merely by opening a
+  conversation). A prompt with no client running starts one that resumes the
+  session's conversation, so continuing is the same session. Its pure machine is
+  `SessionState`; its facts (`session_created`, `session_configured`,
+  `session_client_chosen`, `session_archived`, `session_unarchived`) are stored
+  in `operator_sessions`, and the control API drives it (`/control/v1/sessions`).
+- A **run** (`RunId`) is one process of a session's client, driven through the
+  client's structured mode: started when one is needed, stopped when idle
+  between turns (`IdleStop`, ten minutes; it ends `idled`), and never an entry
+  of its own in the interfaces, which show it as the session's state. Its pure
+  machine is `RunState`, with explicit interrupted and unknown ends; `RunEnd`
+  says how it ended and `ProcessExit` how its process exited. Each run names the
+  session it serves (`runs.operator_session`); the control API lists live runs
+  and their events (`/control/v1/runs`).
+- A **recording** (`RecordingId`) is what Ren observed on the wire, grouped by
+  the client conversation each call was attributed to: read-only, for any
+  client, driven by Ren or not. A session links to its recordings and never
+  reuses their views. The read API, CLI, and MCP still call recordings
+  sessions (`/api/v1/sessions`, `ren sessions`, `list_sessions`), as do the
+  stored labels and the operator state's session blocks.
 
 ---
 
@@ -770,9 +797,13 @@ state; it is logged, not recorded in `operator_actions`.
 - Chat Completions is reached only through operator-key entries with direct
   routes: no provider route speaks it, and an upstream that needs no key (a local
   model server) cannot be configured.
-- The UI's only control actions are runs (start, prompt, answer, interrupt,
-  stop) and archiving or deleting a run or recording, and only when its server
-  is given the control token file.
+- The UI's only control actions are sessions (create, prompt, answer,
+  configure, interrupt, stop its client, archive, delete) and archiving or
+  deleting a recording, and only when its server is given the control token
+  file.
+- The idle stop is fixed at ten minutes; no configuration changes it.
+- The read API, the CLI's history commands, and MCP still call recordings
+  sessions; renaming them would change their routes and output.
 - A run's conversation is stored whole, but a reply's streamed pieces are not:
   a page opened mid-reply shows the reply from when it opened, and whole once
   the reply completes. Recordings of clients Ren did not start are still shown from their
