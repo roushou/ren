@@ -44,9 +44,9 @@
           ? 'recorder'
           : page.route.id === '/usage'
             ? 'usage'
-            : page.route.id === '/sessions'
+            : page.route.id === '/recordings'
               ? 'sessions'
-              : page.route.id === '/sessions/[id]/report'
+              : page.route.id === '/recordings/[id]/report'
                 ? 'report'
                 : page.route.id === '/turns/[id]'
                   ? 'turn'
@@ -56,9 +56,11 @@
                       ? 'runs'
                       : 'traffic',
   );
-  /** A session page's ID; reports and turns belong under Sessions too. */
-  const sessionId = $derived(page.route.id === '/sessions/[id]' ? (page.params.id ?? null) : null);
-  const underSessions = $derived(
+  /** A session page's ID; reports and turns belong under Recordings too. */
+  const sessionId = $derived(
+    page.route.id === '/recordings/[id]' ? (page.params.id ?? null) : null,
+  );
+  const underRecordings = $derived(
     view === 'sessions' || view === 'report' || view === 'turn' || !!sessionId,
   );
   /** When the scope does not fit on one line it folds behind a button. */
@@ -107,9 +109,9 @@
             : view === 'usage'
               ? 'Usage'
               : view === 'sessions'
-                ? 'Sessions'
+                ? 'Recordings'
                 : view === 'report'
-                  ? 'Session report'
+                  ? 'Recording report'
                   : view === 'turn'
                     ? 'Turn'
                     : view === 'search'
@@ -117,7 +119,7 @@
                       : view === 'runs'
                         ? 'Runs'
                         : sessionId
-                          ? 'Session activity'
+                          ? 'Recording activity'
                           : 'Traffic',
   );
   const gatewayOrigin = $derived(page.data.gatewayUrl);
@@ -180,11 +182,11 @@
       '/',
       '/live',
       '/traffic',
-      '/sessions',
+      '/recordings',
       '/usage',
       '/recorder',
-      '/sessions/[id]',
-      '/sessions/[id]/report',
+      '/recordings/[id]',
+      '/recordings/[id]/report',
       '/turns/[id]',
       '/search',
       '/runs',
@@ -249,11 +251,11 @@
         ><Icon name="logs" size={14} />Traffic</a
       >
       <a
-        href="/sessions"
+        href="/recordings"
         data-sveltekit-preload-data="hover"
-        class:active={underSessions}
-        aria-current={underSessions ? 'page' : undefined}
-        ><Icon name="sessions" size={14} />Sessions</a
+        class:active={underRecordings}
+        aria-current={underRecordings ? 'page' : undefined}
+        ><Icon name="sessions" size={14} />Recordings</a
       >
       <a
         href="/search"
@@ -391,7 +393,7 @@
         : view === 'recorder'
           ? `${num(storage?.usage.calls)} calls retained`
           : view === 'sessions'
-            ? `${sessionCount}${sessionCount === 100 ? '+' : ''} sessions loaded`
+            ? `${sessionCount}${sessionCount === 100 ? '+' : ''} recordings loaded`
             : view === 'traffic'
               ? `${workbench.callCount} calls on page · ${workbench.activeCount} in progress`
               : `${num(storage?.usage.calls)} calls retained`}</span

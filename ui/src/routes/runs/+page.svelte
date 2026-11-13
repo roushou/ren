@@ -681,7 +681,7 @@
     }
     const session = current.recorded?.session;
     if (session)
-      items.push({ label: 'Open its calls', onselect: () => void goto(`/sessions/${session}`) });
+      items.push({ label: 'Open its calls', onselect: () => void goto(`/recordings/${session}`) });
     if (data.runsControl && runState?.phase === 'ended') {
       const archivedAt = current.recorded?.archived_at;
       items.push({
@@ -887,8 +887,8 @@
         {/each}
       </tbody>
     </table>
-    <a class="foot-link" href="/sessions/{current.recorded.session}"
-      >Open the session <Icon name="arrow" size={11} /></a
+    <a class="foot-link" href="/recordings/{current.recorded.session}"
+      >Open its recording <Icon name="arrow" size={11} /></a
     >
   {/if}
 {/snippet}

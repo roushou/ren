@@ -120,19 +120,19 @@ impl Act {
         Bind {
             keys: &[Key::Char('j'), Key::Down],
             label: "↓ j",
-            does: "next session, or next turn in a session",
+            does: "next in the list, or next turn in the selection",
             command: Self::Down,
         },
         Bind {
             keys: &[Key::Char('k'), Key::Up],
             label: "↑ k",
-            does: "previous session, or previous turn",
+            does: "previous in the list, or previous turn",
             command: Self::Up,
         },
         Bind {
             keys: &[Key::Right, Key::Enter, Key::Char('l')],
             label: "→ enter",
-            does: "into the session; on a turn, open or fold it",
+            does: "into the selection; on a turn, open or fold it",
             command: Self::IntoSession,
         },
         Bind {
@@ -156,7 +156,7 @@ impl Act {
         Bind {
             keys: &[Key::PageUp],
             label: "pgup pgdn",
-            does: "scroll the session",
+            does: "scroll the selection",
             command: Self::PageUp,
         },
         Bind {
@@ -581,7 +581,7 @@ impl Main {
                         Section::History,
                     ),
                 ]);
-                "watched session".to_owned()
+                "recording".to_owned()
             }
             None => "ren".to_owned(),
         };
@@ -724,7 +724,7 @@ impl Main {
                 Vec::new()
             }
             Some(Item::Recording(_)) => vec![Action::Say(Notice::info(
-                "Ren did not start this session, so it cannot write to it · n starts a run",
+                "a recording: Ren did not start its client, so it cannot write to it · n starts a run",
             ))],
             None => vec![Action::Say(Notice::info("n starts a run"))],
         }
@@ -1179,7 +1179,7 @@ impl Main {
         let mut left = Line::new(vec![
             Span::new(" ren ", Ink::LiveTitle).with(crate::ui::Emphasis::Bold),
             Span::plain(format!(
-                "  {} session{} · {} streaming · {} waiting",
+                "  {} recording{} · {} streaming · {} waiting",
                 traffic.recordings,
                 if traffic.recordings == 1 { "" } else { "s" },
                 traffic.responding,

@@ -221,7 +221,7 @@ impl Listing {
 
     fn client(source: Option<HintSource>) -> String {
         source.map_or_else(
-            || "session".to_owned(),
+            || "recording".to_owned(),
             |source| source.harness().label().replace('_', "-"),
         )
     }
@@ -371,7 +371,7 @@ impl Listing {
                     .iter()
                     .find(|view| view.id == id);
                 let Some(session) = session else {
-                    return ('·', "session".to_owned(), String::new(), Tone::Neutral);
+                    return ('·', "recording".to_owned(), String::new(), Tone::Neutral);
                 };
                 let pane = RecordingPane::of(model, session, now);
                 let short: String = id.to_string().chars().take(6).collect();

@@ -7,7 +7,7 @@
     type BodyView,
     type CallDetail,
     type CallView,
-    type SessionId,
+    type RecordingId,
   } from './api.ts';
   import { num, short, title, bytes, clock, providerName, providerMark } from './api.ts';
   import {
@@ -36,7 +36,7 @@
   }: {
     call: CallView;
     close: () => void;
-    onsession: (id: SessionId) => void;
+    onsession: (id: RecordingId) => void;
     onupdate: (record: CallView) => void;
   } = $props();
   /** The daemon's per-body capture limit, to tell a trimmed body from lost bytes. */
@@ -142,10 +142,8 @@
   {#if current.session}{@const session = current.session}<button
       class="inspector-session text-button"
       onclick={() => onsession(session)}
-      >Session <span class="mono">{short(current.attribution.hint?.session ?? session)}</span><Icon
-        name="arrow"
-        size={12}
-      /></button
+      >Recording <span class="mono">{short(current.attribution.hint?.session ?? session)}</span
+      ><Icon name="arrow" size={12} /></button
     >{:else}<p class="inspector-session muted">No reported session</p>{/if}
   <div class="chip-row drawer-chips" aria-label="Call state">
     {#each [modelChip(current), streamChip(current), captureChip(current, bodyLimit)] as chip}<span
@@ -381,7 +379,7 @@
           <dd>{current.channel}</dd>
           <dt>Caller</dt>
           <dd>{callerShown(current.caller).title}</dd>
-          <dt>Ren session</dt>
+          <dt>Recording</dt>
           <dd>{current.session ?? 'Unassigned'}</dd>
           <dt>Ren turn</dt>
           <dd>{current.turn ?? 'Unassigned'}</dd>

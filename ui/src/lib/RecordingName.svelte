@@ -4,17 +4,17 @@
   reported while the prompt has not been read.
 -->
 <script lang="ts">
-  import { short, type SessionView } from './api.ts';
+  import { short, type RecordingView } from './api.ts';
   import { Board } from './board.ts';
-  import type { SessionDetail } from './sessions.ts';
+  import type { RecordingDetail } from './recordings.ts';
 
   let {
     session,
     detail,
     client = true,
   }: {
-    session: SessionView;
-    detail: SessionDetail | null | undefined;
+    session: RecordingView;
+    detail: RecordingDetail | null | undefined;
     /** Show the client's name, not only its colour. */
     client?: boolean;
   } = $props();

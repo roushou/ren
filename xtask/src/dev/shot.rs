@@ -21,19 +21,19 @@ pub enum Page {
     Overview,
     Live,
     Traffic,
-    Sessions,
-    /// The newest session, with its turns.
-    Session,
+    Recordings,
+    /// The newest recording, with its turns.
+    Recording,
     Usage,
     Search,
     /// The newest run, with its conversation.
     Runs,
 }
 
-/// The newest session and run, which some pages show.
+/// The newest recording and run, which some pages show.
 #[derive(Debug, Default)]
 struct Newest {
-    session: Option<String>,
+    recording: Option<String>,
     run: Option<String>,
 }
 
@@ -42,8 +42,8 @@ impl Page {
         Self::Overview,
         Self::Live,
         Self::Traffic,
-        Self::Sessions,
-        Self::Session,
+        Self::Recordings,
+        Self::Recording,
         Self::Usage,
         Self::Search,
         Self::Runs,
@@ -54,23 +54,26 @@ impl Page {
             Self::Overview => "overview",
             Self::Live => "live",
             Self::Traffic => "traffic",
-            Self::Sessions => "sessions",
-            Self::Session => "session",
+            Self::Recordings => "recordings",
+            Self::Recording => "recording",
             Self::Usage => "usage",
             Self::Search => "search",
             Self::Runs => "runs",
         }
     }
 
-    /// The page's path: the newest session for `Session`, the newest run
+    /// The page's path: the newest recording for `Recording`, the newest run
     /// (if any) for `Runs`.
     fn path(self, newest: &Newest) -> Option<String> {
         match self {
             Self::Overview => Some("/".into()),
             Self::Live => Some("/live".into()),
             Self::Traffic => Some("/traffic".into()),
-            Self::Sessions => Some("/sessions".into()),
-            Self::Session => newest.session.as_ref().map(|id| format!("/sessions/{id}")),
+            Self::Recordings => Some("/recordings".into()),
+            Self::Recording => newest
+                .recording
+                .as_ref()
+                .map(|id| format!("/recordings/{id}")),
             Self::Usage => Some("/usage".into()),
             Self::Search => Some("/search?q=retry".into()),
             Self::Runs => Some(
@@ -165,13 +168,14 @@ impl Camera {
     ) -> Result<Vec<PathBuf>, DevError> {
         fs::create_dir_all(&self.out).map_err(InstallError::file(&self.out))?;
         let newest = Newest {
-            session: self.newest("sessions"),
+            // The read API still lists recordings as `sessions`.
+            recording: self.newest("sessions"),
             run: self.newest("runs"),
         };
         let mut written = Vec::new();
         for page in pages {
             let Some(path) = page.path(&newest) else {
-                println!("skipped {}: no session yet", page.name());
+                println!("skipped {}: no recording yet", page.name());
                 continue;
             };
             let file = self.out.join(format!("{}.png", page.name()));
@@ -204,17 +208,17 @@ mod tests {
     use super::{Newest, Page};
 
     #[test]
-    fn every_page_has_a_path_and_the_session_needs_one() {
+    fn every_page_has_a_path_and_the_recording_needs_one() {
         let none = Newest::default();
         let some = Newest {
-            session: Some("s1".into()),
+            recording: Some("s1".into()),
             run: Some("r1".into()),
         };
         for page in Page::ALL {
             match page {
-                Page::Session => {
+                Page::Recording => {
                     assert_eq!(page.path(&none), None);
-                    assert_eq!(page.path(&some).as_deref(), Some("/sessions/s1"));
+                    assert_eq!(page.path(&some).as_deref(), Some("/recordings/s1"));
                 }
                 Page::Runs => {
                     assert_eq!(page.path(&none).as_deref(), Some("/runs"));
@@ -223,7 +227,7 @@ mod tests {
                 Page::Overview
                 | Page::Live
                 | Page::Traffic
-                | Page::Sessions
+                | Page::Recordings
                 | Page::Usage
                 | Page::Search => assert!(page.path(&none).is_some_and(|p| p.starts_with('/'))),
             }

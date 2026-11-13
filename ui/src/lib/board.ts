@@ -10,12 +10,12 @@ import type {
   Finding,
   Harness,
   HintSource,
-  SessionView,
+  RecordingView,
   ToolCallActivity,
   TurnActivity,
   TurnId,
 } from './api.ts';
-import { clock, HARNESSES, providerName, SessionId } from './api.ts';
+import { clock, HARNESSES, providerName, RecordingId } from './api.ts';
 import { findingLine, harnessLabel, resultBadge } from './activity.ts';
 import { assertNever, unrecognised, type Stored } from './decode.ts';
 import { callStatus, sessionTone, span, statusBadge, type Tone } from './display.ts';
@@ -26,7 +26,7 @@ import { callStatus, sessionTone, span, statusBadge, type Tone } from './display
  * the last call asking for tools, `yours` from the last call finishing its
  * turn without asking for any, and `idle` only means no call is open.
  */
-export type SessionPhase =
+export type RecordingPhase =
   /** A call was sent and no response head has arrived. */
   | { kind: 'awaiting'; call: CallView; since: number }
   /** The response head arrived; the body is still streaming. */
@@ -129,10 +129,10 @@ export interface LaneMark {
 }
 
 export interface Tile {
-  session: SessionView;
+  session: RecordingView;
   harness: Stored<Harness> | null;
   tone: number;
-  phase: SessionPhase;
+  phase: RecordingPhase;
   /** Model calls open at once in this session (subagents run in parallel). */
   open: number;
   /** The newest model call, for its model and usage. */
@@ -170,7 +170,7 @@ export interface Tile {
 
 export interface Alert {
   key: string;
-  session: SessionId;
+  session: RecordingId;
   tone: Exclude<Tone, 'live' | 'success'>;
   label: string;
   detail: string;
@@ -181,7 +181,7 @@ export interface Alert {
 
 /** What the board reads: the loader's snapshot, plus the clock. */
 export interface BoardInput {
-  sessions: SessionView[];
+  sessions: RecordingView[];
   /** Model calls in the window and every open one, any order. */
   calls: CallView[];
   turns: Map<TurnId, TurnActivity>;
@@ -189,9 +189,9 @@ export interface BoardInput {
   /** How far back a session counts as active. */
   windowMs: number;
   /** The session expanded on the wall, if any. */
-  focus: SessionId | null;
-  /** Sessions kept on the wall while they are active, however quiet. */
-  pins: SessionId[];
+  focus: RecordingId | null;
+  /** Recordings kept on the wall while they are active, however quiet. */
+  pins: RecordingId[];
   /** Only sessions in these band series, when the viewer picked one. */
   only: { by: BandBy; keys: string[] } | null;
 }
@@ -210,8 +210,8 @@ export class Board {
 
   readonly tiles: Tile[];
   /** The expanded session, when it is on the board; its tile comes first. */
-  readonly focus: SessionId | null;
-  /** Sessions active in the window that did not fit. */
+  readonly focus: RecordingId | null;
+  /** Recordings active in the window that did not fit. */
   readonly overflow: number;
   readonly alerts: Alert[];
   /** The Now strip: what happened lately, newest first. */
@@ -220,11 +220,11 @@ export class Board {
 
   constructor(input: BoardInput) {
     this.now = input.now;
-    const bySession = Board.bySession(input.calls);
+    const byRecording = Board.byRecording(input.calls);
     const only = input.only;
-    const active = Board.activeSessions(
+    const active = Board.activeRecordings(
       input.sessions,
-      bySession,
+      byRecording,
       input.now,
       input.windowMs,
     ).filter(
@@ -234,21 +234,21 @@ export class Board {
           Band.sessionKey(
             only.by,
             session,
-            (bySession.get(session.id) ?? []).findLast((call) => call.model !== null)?.model ??
+            (byRecording.get(session.id) ?? []).findLast((call) => call.model !== null)?.model ??
               null,
           ),
         ),
     );
     this.focus = active.some((session) => session.id === input.focus) ? input.focus : null;
     const pins = new Set(input.pins);
-    const shown = Board.shown(active, bySession, this.focus, pins);
+    const shown = Board.shown(active, byRecording, this.focus, pins);
     this.overflow = active.length - shown.length;
     this.tiles = shown.map((session) => ({
-      ...Board.tile(session, bySession.get(session.id) ?? [], input.turns, input.now),
+      ...Board.tile(session, byRecording.get(session.id) ?? [], input.turns, input.now),
       pinned: pins.has(session.id),
     }));
     this.alerts = this.tiles
-      .flatMap((tile) => Board.alerts(tile, bySession.get(tile.session.id) ?? [], input.now))
+      .flatMap((tile) => Board.alerts(tile, byRecording.get(tile.session.id) ?? [], input.now))
       .sort((a, b) => b.at - a.at);
     this.feed = new Feed(input, this.alerts).items;
   }
@@ -259,7 +259,7 @@ export class Board {
   }
 
   /** The worst thing to look at in a session, for its tile's top rule. */
-  attention(session: SessionId): 'error' | 'warning' | null {
+  attention(session: RecordingId): 'error' | 'warning' | null {
     const tones = this.alerts.filter((alert) => alert.session === session).map((a) => a.tone);
     return tones.includes('error') ? 'error' : tones.length ? 'warning' : null;
   }
@@ -270,8 +270,8 @@ export class Board {
   }
 
   /** Calls grouped by session, each list oldest first. Unattributed calls are left out. */
-  static bySession(calls: CallView[]): Map<SessionId, CallView[]> {
-    const groups = new Map<SessionId, CallView[]>();
+  static byRecording(calls: CallView[]): Map<RecordingId, CallView[]> {
+    const groups = new Map<RecordingId, CallView[]>();
     for (const call of calls) {
       if (!call.session) continue;
       const list = groups.get(call.session) ?? [];
@@ -284,7 +284,7 @@ export class Board {
 
   /** Turns worth reading for these sessions: each one's newest. */
   static turnsToRead(
-    sessions: SessionId[],
+    sessions: RecordingId[],
     calls: CallView[],
   ): { turn: TurnId; signature: string }[] {
     return sessions.flatMap((session) => {
@@ -303,15 +303,15 @@ export class Board {
   }
 
   /**
-   * Sessions with an open call or a call in the window, in the order they
+   * Recordings with an open call or a call in the window, in the order they
    * first appeared, so tiles never trade places as activity moves.
    */
-  static activeSessions(
-    sessions: SessionView[],
-    calls: Map<SessionId, CallView[]>,
+  static activeRecordings(
+    sessions: RecordingView[],
+    calls: Map<RecordingId, CallView[]>,
     now: number,
     windowMs: number,
-  ): SessionView[] {
+  ): RecordingView[] {
     return sessions
       .filter(
         (session) =>
@@ -329,12 +329,12 @@ export class Board {
    * others after it.
    */
   static shown(
-    active: SessionView[],
-    calls: Map<SessionId, CallView[]>,
-    focus: SessionId | null = null,
-    pins: ReadonlySet<SessionId> = new Set(),
-  ): SessionView[] {
-    const busy = (session: SessionView) =>
+    active: RecordingView[],
+    calls: Map<RecordingId, CallView[]>,
+    focus: RecordingId | null = null,
+    pins: ReadonlySet<RecordingId> = new Set(),
+  ): RecordingView[] {
+    const busy = (session: RecordingView) =>
       (pins.has(session.id) ? 2 : 0) +
       ((calls.get(session.id) ?? []).some((call) => call.state === 'open') ? 1 : 0);
     const focused = active.find((session) => session.id === focus);
@@ -374,7 +374,7 @@ export class Board {
     }
   }
 
-  static phase(calls: CallView[], now: number): SessionPhase {
+  static phase(calls: CallView[], now: number): RecordingPhase {
     const open = calls.filter((call) => call.state === 'open');
     const current = open.at(-1);
     if (current) {
@@ -408,7 +408,7 @@ export class Board {
 
   /** The phase as a short label, tone, and mark, for the tile's state chip and edge. */
   static phaseChip(
-    phase: SessionPhase,
+    phase: RecordingPhase,
     now: number,
   ): { label: string; tone: Tone; title: string; mark: StateMark } {
     switch (phase.kind) {
@@ -640,7 +640,7 @@ export class Board {
   }
 
   static tile(
-    session: SessionView,
+    session: RecordingView,
     calls: CallView[],
     turns: Map<TurnId, TurnActivity>,
     now: number,
@@ -707,7 +707,7 @@ export class Board {
   static alerts(tile: Tile, calls: CallView[], now: number): Alert[] {
     const session = tile.session.id;
     const callHref = (call: CallView) =>
-      `/sessions/${encodeURIComponent(session)}?call=${encodeURIComponent(call.id)}`;
+      `/recordings/${encodeURIComponent(session)}?call=${encodeURIComponent(call.id)}`;
     const alerts: Alert[] = [];
     if (tile.phase.kind === 'awaiting' && now - tile.phase.since >= Board.slowHeadMs) {
       alerts.push({
@@ -803,7 +803,7 @@ export class Board {
 export interface FeedItem {
   /** Stable while the item lasts, so an update never animates it in again. */
   key: string;
-  session: SessionView | null;
+  session: RecordingView | null;
   tone: 'neutral' | 'success' | 'warning' | 'error';
   text: string;
   detail: string | null;
@@ -834,10 +834,10 @@ export class Feed {
   constructor(input: BoardInput, alerts: Alert[]) {
     const { now } = input;
     const sessions = new Map(input.sessions.map((session) => [session.id, session]));
-    const of = (id: SessionId | null) => (id ? (sessions.get(id) ?? null) : null);
+    const of = (id: RecordingId | null) => (id ? (sessions.get(id) ?? null) : null);
     const callHref = (call: CallView) =>
       call.session
-        ? `/sessions/${encodeURIComponent(call.session)}?call=${encodeURIComponent(call.id)}`
+        ? `/recordings/${encodeURIComponent(call.session)}?call=${encodeURIComponent(call.id)}`
         : null;
     const calm = (at: number) => at <= now && now - at <= Feed.calmMs;
     const items: FeedItem[] = [];
@@ -849,11 +849,11 @@ export class Feed {
         key: `${session.id}:new`,
         session,
         tone: 'neutral',
-        text: 'new session',
+        text: 'new recording',
         detail: `${Board.clientName(harness)} → ${providerName(session.provider)}`,
         at: session.first_seen,
         pinned: false,
-        href: `/sessions/${encodeURIComponent(session.id)}`,
+        href: `/recordings/${encodeURIComponent(session.id)}`,
       });
     }
 
@@ -984,9 +984,9 @@ export interface LiveView {
   band: BandStyle;
   window: LiveWindow;
   /** The session whose card is expanded. */
-  focus: SessionId | null;
-  /** Sessions kept on the wall, in the order they were pinned. */
-  pins: SessionId[];
+  focus: RecordingId | null;
+  /** Recordings kept on the wall, in the order they were pinned. */
+  pins: RecordingId[];
   /** What the band groups by. */
   by: BandBy;
   /** The band series the wall is narrowed to, by its key. */
@@ -1023,8 +1023,8 @@ export class LivePlace {
       density: params.get('density') === 'compact' ? 'compact' : 'comfortable',
       band: params.get('band') === 'area' ? 'area' : 'ribbon',
       window: LivePlace.isWindow(window) ? window : LivePlace.defaultWindow,
-      focus: SessionId.parse(params.get('focus')),
-      pins: [...new Set(params.getAll('pin').flatMap((raw) => SessionId.parse(raw) ?? []))].slice(
+      focus: RecordingId.parse(params.get('focus')),
+      pins: [...new Set(params.getAll('pin').flatMap((raw) => RecordingId.parse(raw) ?? []))].slice(
         0,
         Board.maxTiles,
       ),
@@ -1062,7 +1062,7 @@ export class LivePlace {
   }
 
   /** The view with this session pinned, or unpinned if it was. */
-  static togglePin(view: LiveView, session: SessionId): LiveView {
+  static togglePin(view: LiveView, session: RecordingId): LiveView {
     return {
       ...view,
       pins: view.pins.includes(session)
@@ -1137,13 +1137,13 @@ export class Band {
 
   /** `complete`: every call started from then on was read. */
   constructor(
-    sessions: SessionView[],
+    sessions: RecordingView[],
     calls: CallView[],
     now: number,
     by: BandBy = 'client',
     complete = -Infinity,
   ) {
-    const bySession = new Map(sessions.map((session) => [session.id, session]));
+    const byRecording = new Map(sessions.map((session) => [session.id, session]));
     const from = now - Band.spanMs;
     this.unread = Math.min(1, Math.max(0, (complete - from) / Band.spanMs));
     // Slots of the clock, the first one cut by the left edge: one more bin
@@ -1157,7 +1157,7 @@ export class Band {
     >();
     for (const call of calls) {
       if (call.ended_at === null || call.ended_at < from || call.ended_at > now) continue;
-      const key = Band.callKey(by, call, bySession);
+      const key = Band.callKey(by, call, byRecording);
       const group = groups.get(key) ?? {
         bins: Array.from({ length: count }, () => 0),
         recent: 0,
@@ -1216,7 +1216,7 @@ export class Band {
   }
 
   /** What a call counts toward, grouped `by`. */
-  static callKey(by: BandBy, call: CallView, sessions: Map<SessionId, SessionView>): string {
+  static callKey(by: BandBy, call: CallView, sessions: Map<RecordingId, RecordingView>): string {
     switch (by) {
       case 'client':
         return Band.harnessOf(call, sessions) ?? 'unknown';
@@ -1230,7 +1230,7 @@ export class Band {
   }
 
   /** What a session counts toward, grouped `by`: its client, provider, or newest model. */
-  static sessionKey(by: BandBy, session: SessionView, model: string | null): string {
+  static sessionKey(by: BandBy, session: RecordingView, model: string | null): string {
     switch (by) {
       case 'client':
         return Board.harness(session.source) ?? 'unknown';
@@ -1274,7 +1274,7 @@ export class Band {
   }
 
   /** The harness a call came from: its own hint, else its session's. */
-  static harnessOf(call: CallView, sessions: Map<SessionId, SessionView>): Harness | null {
+  static harnessOf(call: CallView, sessions: Map<RecordingId, RecordingView>): Harness | null {
     const source =
       call.attribution.hint?.source ??
       (call.session ? sessions.get(call.session)?.source : undefined);

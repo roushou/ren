@@ -1,13 +1,13 @@
- ren   0 sessions · 0 streaming · 0 waiting                                                         1 needs you  3 live
+ ren   0 recordings · 0 streaming · 0 waiting                                                       1 needs you  3 live
 ────────────────────────┌ keys ────────────────────────────────────────────────────────────────┐────────────────────────
  ren ◆1  /srv/          │  move                                                                │ Claude Code · /srv/ren
- 1 ◆ fix the flaky upl… │  ↓ j         next session, or next turn in a session                 │
-                        │  ↑ k         previous session, or previous turn                      │────────────────────────
- acme-api  /dev/        │  → enter     into the session; on a turn, open or fold it            │
+ 1 ◆ fix the flaky upl… │  ↓ j         next in the list, or next turn in the selection         │
+                        │  ↑ k         previous in the list, or previous turn                  │────────────────────────
+ acme-api  /dev/        │  → enter     into the selection; on a turn, open or fold it          │
  2 ● new Codex run  work│  ← esc       back to the list                                        │
                         │  tab         conversation, activity, files, calls                    │
  acme-web  /dev/        │  shift-tab   the view before                                         │
- 3 ○ new Claude Code r… │  pgup pgdn   scroll the session                                      │
+ 3 ○ new Claude Code r… │  pgup pgdn   scroll the selection                                    │
                         │  /           search the list (esc clears)                            │
                         │  1–9         jump to that entry of the list                          │
                         │  do                                                                  │

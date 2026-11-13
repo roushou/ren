@@ -4,13 +4,13 @@ import { readSnapshot, retainSnapshot } from '../src/lib/snapshots.ts';
 import {
   gatewaySnapshot,
   recorderSnapshot,
-  SessionDetails,
-  SessionsReader,
+  RecordingDetails,
+  RecordingsReader,
   offPageSelection,
   searchSnapshot,
   trafficSnapshot,
 } from '../src/lib/loaders.ts';
-import { ApiVersionError, ManagementApi, SessionId } from '../src/lib/api.ts';
+import { ApiVersionError, ManagementApi, RecordingId } from '../src/lib/api.ts';
 import {
   callFixture,
   callId,
@@ -39,7 +39,7 @@ test('background failure retains only the matching snapshot and recovery clears 
   assert.equal(retained.updated, previous.updated);
   assert.equal(retained.error?.kind, 'unreachable');
   assert.match(retained.error?.message ?? '', /Cannot reach Ren/);
-  assert.equal(retainSnapshot(previous, { ...failed, key: '/sessions/other' }).value, null);
+  assert.equal(retainSnapshot(previous, { ...failed, key: '/recordings/other' }).value, null);
   const recovered = await readSnapshot('/traffic', async () => ['new']);
   assert.equal(retainSnapshot(previous, recovered).error, null);
   assert.deepEqual(retainSnapshot(previous, recovered).value, ['new']);
@@ -102,7 +102,7 @@ test('responses are parsed at the boundary: labels keep unknown text, shapes are
   assert.equal(metrics.value?.metrics.storage.disk.blobs.page_size, 4096);
   // The usage read failed to parse (this fake answers every path alike): no oldest call, no failure.
   assert.equal(metrics.value?.oldest, null);
-  const sessions = await new SessionsReader(new SessionDetails()).read(async (input) => {
+  const sessions = await new RecordingsReader(new RecordingDetails()).read(async (input) => {
     if (path(input).startsWith('/api/calls')) return versioned({ calls: [], next: null });
     if (path(input).endsWith('/turns?limit=5')) return versioned({ turns: [] });
     assert.equal(path(input), '/api/sessions?limit=100');
@@ -172,7 +172,7 @@ test('the listing ignores the selection, and off-page selections load on their o
 });
 
 test('session pages read the session listing with only a cursor', async () => {
-  const session = SessionId.parse(uuid(3));
+  const session = RecordingId.parse(uuid(3));
   assert.ok(session);
   const requested: string[] = [];
   const page = await trafficSnapshot(
@@ -190,7 +190,7 @@ test('session pages read the session listing with only a cursor', async () => {
     `/api/sessions/${session}/calls?limit=100&after=1%3Aabc`,
   ]);
   assert.equal(page.value?.next, '5:cursor');
-  assert.equal(SessionId.parse('../evil'), null);
+  assert.equal(RecordingId.parse('../evil'), null);
 });
 
 test('search reads nothing without a query and keeps only a known field', async () => {
@@ -246,7 +246,7 @@ function sessionRow(n: number, lastSeen: number, calls = 3, turns = 1) {
 }
 
 test('sessions are read in detail once per activity, and single-call ones not at all', async () => {
-  const reader = new SessionsReader(new SessionDetails());
+  const reader = new RecordingsReader(new RecordingDetails());
   const turnReads: string[] = [];
   let lastSeen = 2;
   const fetcher = async (input: RequestInfo | URL) => {
@@ -285,7 +285,7 @@ test('sessions are read a few at a time', async () => {
       sessions: Array.from({ length: 20 }, (_, n) => sessionRow(20 + n, 2)),
     });
   };
-  const result = await new SessionsReader(new SessionDetails()).read(fetcher);
+  const result = await new RecordingsReader(new RecordingDetails()).read(fetcher);
   assert.equal(result.value?.details.size, 20);
-  assert.equal(most, SessionDetails.parallel);
+  assert.equal(most, RecordingDetails.parallel);
 });

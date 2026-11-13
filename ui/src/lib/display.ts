@@ -647,7 +647,7 @@ export function span(ms: number): string {
   return minutes % 60 ? `${hours} h ${minutes % 60} min` : `${hours} h`;
 }
 
-/** Sessions get one of eight colors, the same for an ID everywhere. A class,
+/** Recordings get one of eight colors, the same for an ID everywhere. A class,
  * not an inline style, so the CSP stays strict. */
 export const SESSION_TONES = 8;
 export function sessionTone(id: string): number {

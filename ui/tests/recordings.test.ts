@@ -1,22 +1,26 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { SessionList, type SessionListInput } from '../src/lib/sessions.ts';
+import { RecordingList, type RecordingListInput } from '../src/lib/recordings.ts';
 import { Board } from '../src/lib/board.ts';
-import type { SessionId, SessionView, UnixMillis } from '../src/lib/api.ts';
+import type { RecordingId, RecordingView, UnixMillis } from '../src/lib/api.ts';
 import { callFixture, callId, uuid } from './fixtures.ts';
 
 const DAY = 86_400_000;
 const NOW = 100 * DAY + 12 * 3_600_000;
 // Days start at UTC midnight here, so the test does not depend on the zone.
 const dayStart = (ms: number) => Math.floor(ms / DAY) * DAY;
-const sid = (n: number) => uuid(300 + n) as SessionId;
+const sid = (n: number) => uuid(300 + n) as RecordingId;
 
-function session(n: number, lastSeen: number, overrides: Partial<SessionView> = {}): SessionView {
+function session(
+  n: number,
+  lastSeen: number,
+  overrides: Partial<RecordingView> = {},
+): RecordingView {
   return {
     id: sid(n),
     provider: 'anthropic',
     source: 'claude_code_headers',
-    native_id: `native-${n}` as SessionView['native_id'],
+    native_id: `native-${n}` as RecordingView['native_id'],
     first_seen: (lastSeen - 60_000) as UnixMillis,
     last_seen: lastSeen as UnixMillis,
     call_count: 10 * n,
@@ -27,7 +31,7 @@ function session(n: number, lastSeen: number, overrides: Partial<SessionView> = 
     ...overrides,
   };
 }
-const input = (overrides: Partial<SessionListInput>): SessionListInput => ({
+const input = (overrides: Partial<RecordingListInput>): RecordingListInput => ({
   sessions: [],
   details: new Map(),
   open: [],
@@ -38,7 +42,7 @@ const input = (overrides: Partial<SessionListInput>): SessionListInput => ({
 });
 
 test('sessions group by the day they were last seen, newest first, and checks fold away', () => {
-  const list = new SessionList(
+  const list = new RecordingList(
     input({
       sessions: [
         session(1, NOW - 2 * DAY),
@@ -55,7 +59,7 @@ test('sessions group by the day they were last seen, newest first, and checks fo
     [
       ['Today', [sid(3), sid(4)]],
       ['Yesterday', [sid(2)]],
-      [SessionList.dayLabel(dayStart(NOW - 2 * DAY), NOW, dayStart), [sid(1)]],
+      [RecordingList.dayLabel(dayStart(NOW - 2 * DAY), NOW, dayStart), [sid(1)]],
     ],
   );
   assert.deepEqual(
@@ -68,7 +72,7 @@ test('sessions group by the day they were last seen, newest first, and checks fo
 });
 
 test('a row says who it is, what it is about, and what it does now', () => {
-  const list = new SessionList(
+  const list = new RecordingList(
     input({
       sessions: [session(1, NOW - 60_000), session(2, NOW - 3_600_000), session(3, NOW - 5_000)],
       details: new Map([
@@ -100,7 +104,7 @@ test('search reads the prompt and folder as well as the IDs', () => {
   const sessions = [session(1, NOW - 60_000), session(2, NOW - 60_000)];
   const details = new Map([[sid(2), { prompt: null, workdir: '/srv/ren' }]]);
   const ids = (query: string) =>
-    new SessionList(input({ sessions, details, query })).groups
+    new RecordingList(input({ sessions, details, query })).groups
       .flatMap((group) => group.rows)
       .map((row) => row.session.id);
   assert.deepEqual(ids('ren'), [sid(2)]);

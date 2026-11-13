@@ -84,9 +84,9 @@ export function healthLine(
   }
   if (operator.blocked_sessions)
     items.push({
-      label: `${operator.blocked_sessions} session${operator.blocked_sessions === 1 ? '' : 's'} blocked`,
+      label: `${operator.blocked_sessions} recording${operator.blocked_sessions === 1 ? '' : 's'} blocked`,
       tone: 'warning',
-      title: 'Calls from blocked sessions get 403; `ren control unblock` lifts a block',
+      title: 'Calls from blocked recordings get 403; `ren control unblock` lifts a block',
     });
   if (storage) {
     const used =
@@ -207,11 +207,11 @@ export class Attention {
         key: 'secrets',
         severity: 'error',
         title: `${Attention.count(found)} secret${found.length === 1 ? '' : 's'} exposed`,
-        detail: `${kinds.join(', ')} in ${fields.join(', ').toLowerCase()} · ${sessions.size} session${sessions.size === 1 ? '' : 's'} · rotate ${found.length === 1 ? 'it' : 'them'}`,
+        detail: `${kinds.join(', ')} in ${fields.join(', ').toLowerCase()} · ${sessions.size} recording${sessions.size === 1 ? '' : 's'} · rotate ${found.length === 1 ? 'it' : 'them'}`,
         at: newest.started_at,
         marks: found.map((exposure) => Attention.along(exposure.started_at, input.now)),
         href: only
-          ? `/sessions/${encodeURIComponent(only)}/report`
+          ? `/recordings/${encodeURIComponent(only)}/report`
           : `/traffic?call=${encodeURIComponent(newest.call)}`,
       },
     ];
@@ -479,7 +479,7 @@ export interface VerdictInput {
   health: Health | null;
   items: HealthItem[];
   attention: Attention | null;
-  /** Sessions active in the last 15 minutes. */
+  /** Recordings active in the last 15 minutes. */
   active: number;
   /** Model calls in flight. */
   inFlight: number;
@@ -513,8 +513,8 @@ export class Verdict {
     this.headline = Verdict.headline(input.health);
     this.facts = [
       input.active
-        ? `${input.active} session${input.active === 1 ? '' : 's'} active`
-        : 'no session active',
+        ? `${input.active} recording${input.active === 1 ? '' : 's'} active`
+        : 'no recording active',
       input.inFlight
         ? `${input.inFlight} in flight`
         : `nothing in flight${input.lastCall ? `, last call ${ago(input.lastCall, input.now)}` : ''}`,

@@ -9,8 +9,8 @@ import type {
   SearchField,
   SearchHit,
   SecretKind,
-  SessionId,
-  SessionReport,
+  RecordingId,
+  RecordingReport,
   ToolResultView,
   TurnId,
   TurnMetrics,
@@ -145,7 +145,7 @@ export interface TurnRow {
 }
 
 /** Report rows, newest first, joined with the turn listing by turn ID. */
-export function turnRows(report: SessionReport, summaries: TurnSummary[]): TurnRow[] {
+export function turnRows(report: RecordingReport, summaries: TurnSummary[]): TurnRow[] {
   const byTurn = new Map(summaries.map((summary) => [summary.turn, summary]));
   const lines = report.findings.map(findingLine);
   return [...report.turns]
@@ -303,8 +303,8 @@ export function harnessLabel(harness: Stored<Harness>): string {
 }
 
 /** A call, selected in its session's traffic. */
-export function callHref(session: SessionId, call: CallId): string {
-  return `/sessions/${encodeURIComponent(session)}?call=${encodeURIComponent(call)}`;
+export function callHref(session: RecordingId, call: CallId): string {
+  return `/recordings/${encodeURIComponent(session)}?call=${encodeURIComponent(call)}`;
 }
 
 /** What one turn did. */
@@ -332,7 +332,7 @@ export interface FindingLink {
  */
 export function findingLink(
   line: FindingLine,
-  session: SessionId,
+  session: RecordingId,
   page: 'session' | 'turn',
 ): FindingLink | null {
   if (page === 'session' && line.turn) return { href: turnHref(line.turn), label: 'Open turn' };

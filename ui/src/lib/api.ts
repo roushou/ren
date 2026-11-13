@@ -26,7 +26,7 @@ export const API_VERSION = 1;
 export type CallId = Brand<string, 'CallId'>;
 export type AttemptId = Brand<string, 'AttemptId'>;
 export type ChannelId = Brand<string, 'ChannelId'>;
-export type SessionId = Brand<string, 'SessionId'>;
+export type RecordingId = Brand<string, 'RecordingId'>;
 export type TurnId = Brand<string, 'TurnId'>;
 export type NativeSessionId = Brand<string, 'NativeSessionId'>;
 export type NativeTurnId = Brand<string, 'NativeTurnId'>;
@@ -41,7 +41,7 @@ export type UnixMillis = Brand<number, 'UnixMillis'>;
 export const CallId = new Uuid<'CallId'>();
 export const AttemptId = new Uuid<'AttemptId'>();
 export const ChannelId = new Uuid<'ChannelId'>();
-export const SessionId = new Uuid<'SessionId'>();
+export const RecordingId = new Uuid<'RecordingId'>();
 export const TurnId = new Uuid<'TurnId'>();
 
 // Vocabularies (the daemon's label enums). Unrecognised text is kept.
@@ -279,7 +279,7 @@ export interface CallView {
   endpoint: Stored<Endpoint>;
   method: Stored<Method>;
   config_revision: string;
-  session: SessionId | null;
+  session: RecordingId | null;
   turn: TurnId | null;
   attribution: Attribution;
   state: Stored<CallState>;
@@ -382,8 +382,8 @@ export interface CallPage {
   calls: CallView[];
   next: PageCursor | null;
 }
-export interface SessionView {
-  id: SessionId;
+export interface RecordingView {
+  id: RecordingId;
   provider: Stored<Provider>;
   source: Stored<HintSource>;
   native_id: NativeSessionId;
@@ -520,8 +520,8 @@ export interface CaptureLimits {
   /** Bytes stored per body; past this, the rest is left out by design. */
   body_limit_bytes: number;
 }
-export interface Sessions {
-  sessions: SessionView[];
+export interface Recordings {
+  sessions: RecordingView[];
 }
 /** A bounded preview of a stored body (`crates/ren-daemon/src/api/preview.rs`). */
 export interface BodyPreview {
@@ -564,7 +564,7 @@ const callView = object<CallView>({
   endpoint: label(endpoints),
   method: label(methods),
   config_revision: string,
-  session: nullable(SessionId.decode),
+  session: nullable(RecordingId.decode),
   turn: nullable(TurnId.decode),
   attribution: object<Attribution>({
     hint: nullable(
@@ -690,10 +690,10 @@ function tokenTotals(value: unknown, path: string): TokenTotals {
     cache_read: nullable(count),
   })(value, path);
 }
-const sessions = object<Sessions>({
+const sessions = object<Recordings>({
   sessions: array(
-    object<SessionView>({
-      id: SessionId.decode,
+    object<RecordingView>({
+      id: RecordingId.decode,
       provider: label(providers),
       source: label(hintSources),
       native_id: branded<'NativeSessionId'>(),
@@ -1009,7 +1009,7 @@ export type Finding =
   | { kind: 'unrecognized'; text: string };
 export interface TurnActivity {
   turn: TurnId;
-  session: SessionId;
+  session: RecordingId;
   native_id: NativeTurnId;
   client: Stored<Harness> | null;
   started_at: UnixMillis | null;
@@ -1060,8 +1060,8 @@ export interface ReportTotals {
   output_tokens: number;
   cache_hit_percent: number | null;
 }
-export interface SessionReport {
-  session: SessionId;
+export interface RecordingReport {
+  session: RecordingId;
   totals: ReportTotals;
   turns: TurnMetrics[];
   findings: Finding[];
@@ -1155,7 +1155,7 @@ const finding: Decoder<Finding> = (value, path) => {
 };
 const turnActivity = object<TurnActivity>({
   turn: TurnId.decode,
-  session: SessionId.decode,
+  session: RecordingId.decode,
   native_id: branded<'NativeTurnId'>(),
   client: nullable(label(harnesses)),
   started_at: nullable(millis),
@@ -1194,7 +1194,7 @@ export function parseSearchField(text: string | null): SearchField | null {
 }
 export interface SearchHit {
   call: CallId;
-  session: SessionId | null;
+  session: RecordingId | null;
   turn: TurnId | null;
   client: Stored<Harness> | null;
   started_at: UnixMillis;
@@ -1211,7 +1211,7 @@ const searchPage = object<SearchPage>({
   hits: array(
     object<SearchHit>({
       call: CallId.decode,
-      session: nullable(SessionId.decode),
+      session: nullable(RecordingId.decode),
       turn: nullable(TurnId.decode),
       client: nullable(label(harnesses)),
       started_at: millis,
@@ -1224,7 +1224,7 @@ const searchPage = object<SearchPage>({
 /** A credential one call carried: never the secret itself. */
 export interface ExposureView {
   call: CallId;
-  session: SessionId | null;
+  session: RecordingId | null;
   turn: TurnId | null;
   client: Stored<Harness> | null;
   started_at: UnixMillis;
@@ -1241,7 +1241,7 @@ const exposures = object<Exposures>({
   exposures: array(
     object<ExposureView>({
       call: CallId.decode,
-      session: nullable(SessionId.decode),
+      session: nullable(RecordingId.decode),
       turn: nullable(TurnId.decode),
       client: nullable(label(harnesses)),
       started_at: millis,
@@ -1253,8 +1253,8 @@ const exposures = object<Exposures>({
     }),
   ),
 });
-const sessionReport = object<SessionReport>({
-  session: SessionId.decode,
+const sessionReport = object<RecordingReport>({
+  session: RecordingId.decode,
   totals: object<ReportTotals>({
     calls: count,
     calls_with_usage: count,
@@ -1334,23 +1334,23 @@ export class ManagementApi {
     limit = 100,
     signal?: AbortSignal,
     shelf: 'current' | 'archived' = 'current',
-  ): Promise<Sessions> {
+  ): Promise<Recordings> {
     const query = shelf === 'archived' ? '&shelf=archived' : '';
     return this.#read(`/api/sessions?limit=${limit}${query}`, sessions, signal);
   }
   /** Oldest first. Only `after` is accepted besides the limit. */
-  sessionCalls(id: SessionId, after: string | null, signal?: AbortSignal): Promise<CallPage> {
+  sessionCalls(id: RecordingId, after: string | null, signal?: AbortSignal): Promise<CallPage> {
     const query = new URLSearchParams();
     if (after) query.set('after', after);
     return this.#read(`/api/sessions/${id}/calls?${ManagementApi.#page(query)}`, callPage, signal);
   }
 
   /** A session's turns, newest first, with the start of each prompt. */
-  turns(id: SessionId, limit = 100, signal?: AbortSignal): Promise<Turns> {
+  turns(id: RecordingId, limit = 100, signal?: AbortSignal): Promise<Turns> {
     return this.#read(`/api/sessions/${id}/turns?limit=${limit}`, turns, signal);
   }
   /** Where a session's context and cache tokens went, from its call records. */
-  report(id: SessionId, signal?: AbortSignal): Promise<SessionReport> {
+  report(id: RecordingId, signal?: AbortSignal): Promise<RecordingReport> {
     return this.#read(`/api/sessions/${id}/report`, sessionReport, signal);
   }
   /** What one turn did, read from its calls' bodies. */

@@ -6,7 +6,7 @@ import {
   ManagementApi,
   type CallActivity,
   type CallView,
-  type SessionView,
+  type RecordingView,
   type TurnActivity,
   type TurnId,
   type UnixMillis,
@@ -14,17 +14,17 @@ import {
 import { callFixture, callId, finishedFixture, uuid, versioned } from './fixtures.ts';
 
 const ms = (value: number) => value as UnixMillis;
-const sid = (n: number) => uuid(100 + n) as SessionView['id'];
+const sid = (n: number) => uuid(100 + n) as RecordingView['id'];
 const tid = (n: number) => uuid(200 + n) as TurnId;
 const NOW = 10_000_000;
 const WINDOW = LivePlace.windows['15m'].ms;
 
-function session(n: number, overrides: Partial<SessionView> = {}): SessionView {
+function session(n: number, overrides: Partial<RecordingView> = {}): RecordingView {
   return {
     id: sid(n),
     provider: 'anthropic',
     source: 'claude_code_headers',
-    native_id: `native-${n}` as SessionView['native_id'],
+    native_id: `native-${n}` as RecordingView['native_id'],
     first_seen: ms(NOW - 60_000 + n),
     last_seen: ms(NOW - 1000),
     call_count: 1,
@@ -360,7 +360,7 @@ test('the window decides which sessions count as active', () => {
     session(2, { last_seen: ms(NOW - 2 * 60 * 60_000) }),
   ];
   const active = (window: '5m' | '15m' | '1h' | '4h') =>
-    Board.activeSessions(sessions, new Map(), NOW, LivePlace.windows[window].ms).map((s) => s.id);
+    Board.activeRecordings(sessions, new Map(), NOW, LivePlace.windows[window].ms).map((s) => s.id);
   assert.deepEqual(active('5m'), []);
   assert.deepEqual(active('15m'), [sid(1)]);
   assert.deepEqual(active('4h'), [sid(1), sid(2)]);
@@ -746,13 +746,13 @@ test('the feed tells what happened lately, ongoing waits first, newest next', ()
   const lines = feed.map((item) => item.text);
   assert.equal(lines[0], 'no response head after 6 s');
   assert.equal(feed[0]?.pinned, true);
-  assert.ok(lines.includes('new session'));
+  assert.ok(lines.includes('new recording'));
   assert.ok(lines.includes('you: “Fix the flaky test”'));
   assert.ok(lines.includes('asked for Edit'));
   assert.ok(lines.includes('turn finished'));
   assert.ok(lines.includes('Edit src/relay.rs failed'));
   assert.ok(lines.includes('Anthropic: 2 rate limits (429)'));
-  assert.equal(lines.filter((line) => line === 'new session').length, 1);
+  assert.equal(lines.filter((line) => line === 'new recording').length, 1);
   assert.equal(feed.filter((item) => item.text.startsWith('no response head')).length, 1);
   // After the pinned wait, newest first.
   const times = feed.slice(1).map((item) => item.at);

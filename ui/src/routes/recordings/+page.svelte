@@ -7,7 +7,7 @@
   import { compactOrDash, span } from '#lib/display.ts';
   import { localDayStart } from '#lib/usage.ts';
   import { ago } from '#lib/overview.ts';
-  import { SessionList, type SessionRow } from '#lib/sessions.ts';
+  import { RecordingList, type RecordingRow } from '#lib/recordings.ts';
   import { Board } from '#lib/board.ts';
   import Icon from '#lib/Icon.svelte';
   import StateGlyph from '#lib/StateGlyph.svelte';
@@ -26,7 +26,7 @@
     return () => clearInterval(timer);
   });
   const list = $derived(
-    new SessionList({
+    new RecordingList({
       sessions,
       details: current?.details ?? new Map(),
       open: current?.open ?? [],
@@ -36,8 +36,8 @@
     }),
   );
   const shown = $derived(list.groups.reduce((sum, group) => sum + group.rows.length, 0));
-  const sessionHref = (id: string) => `/sessions/${encodeURIComponent(id)}`;
-  function open(event: MouseEvent, row: SessionRow) {
+  const sessionHref = (id: string) => `/recordings/${encodeURIComponent(id)}`;
+  function open(event: MouseEvent, row: RecordingRow) {
     if (event.target instanceof Element && event.target.closest('a,button,summary')) return;
     if (window.getSelection()?.toString()) return;
     void goto(sessionHref(row.session.id));
@@ -48,18 +48,21 @@
   <div class="scope-group">
     <strong>{sessions.length}{sessions.length === 100 ? '+' : ''}</strong>
     <span class="muted"
-      >{data.shelf === 'archived' ? 'archived sessions' : 'sessions'} · grouped by the IDs clients report</span
+      >{data.shelf === 'archived' ? 'archived recordings' : 'recordings'} · grouped by the IDs clients
+      report</span
     >
   </div>
-  <div class="scope-group segmented" role="group" aria-label="Which sessions">
-    <a class="button small" class:chosen={data.shelf === 'current'} href="/sessions">Current</a>
-    <a class="button small" class:chosen={data.shelf === 'archived'} href="/sessions?shelf=archived"
-      >Archived</a
+  <div class="scope-group segmented" role="group" aria-label="Which recordings">
+    <a class="button small" class:chosen={data.shelf === 'current'} href="/recordings">Current</a>
+    <a
+      class="button small"
+      class:chosen={data.shelf === 'archived'}
+      href="/recordings?shelf=archived">Archived</a
     >
   </div>
   <label class="scope-group end search-input scope-search"
     ><Icon name="search" /><input
-      aria-label="Filter sessions"
+      aria-label="Filter recordings"
       placeholder="Search prompt, folder, client, or ID…"
       bind:value={query}
     /></label
@@ -80,7 +83,7 @@
   >
 {/snippet}
 
-{#snippet row(row: SessionRow)}
+{#snippet row(row: RecordingRow)}
   {@const session = row.session}
   <tr class="call-row session-row" onclick={(event) => open(event, row)}>
     <!-- The edge sits on the cell: on a row, its ::before would become a cell of its own. -->
@@ -135,7 +138,7 @@
           {@render columns()}
           <thead
             ><tr
-              ><th>Session</th><th>Now</th><th class="numeric">Requests</th><th class="numeric"
+              ><th>Recording</th><th>Now</th><th class="numeric">Requests</th><th class="numeric"
                 >Turns</th
               ><th class="numeric">Tokens in · out</th><th class="numeric">Active for</th></tr
             ></thead
@@ -154,7 +157,7 @@
       {#if list.folded.length}
         <details class="sessions-folded">
           <summary
-            >{list.folded.length} single-call session{list.folded.length === 1 ? '' : 's'} with no turns<span
+            >{list.folded.length} single-call recording{list.folded.length === 1 ? '' : 's'} with no turns<span
               class="muted"
             >
               · a client's own checks, most often; select to list them</span
@@ -175,15 +178,15 @@
           Archive a session from its page, or a run from Runs. A session with new traffic is listed
           with the current ones again.
         </p>
-        <a class="button" href="/sessions">Current sessions <Icon name="arrow" size={14} /></a>
+        <a class="button" href="/recordings">Current recordings <Icon name="arrow" size={14} /></a>
       </div>
     {:else}<div class="empty-state">
         <div class="empty-icon"><Icon name="sessions" size={25} /></div>
-        <h2>{query ? 'No matching sessions' : 'No reported sessions'}</h2>
+        <h2>{query ? 'No matching recordings' : 'No recordings yet'}</h2>
         <p>
           {query
             ? 'Try a different prompt, folder, client, or session ID.'
-            : 'Sessions appear when clients send session identifiers through Ren.'}
+            : 'Recordings appear when clients send session identifiers through Ren.'}
         </p>
         {#if query}<button class="button" onclick={() => (query = '')}>Clear search</button
           >{:else}<button class="button" onclick={() => goto('/traffic')}

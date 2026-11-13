@@ -60,9 +60,9 @@ impl Main {
         let Some(item) = self.selected else {
             return View::lines(
                 vec![
-                    Line::of("No sessions yet.", Ink::Text),
+                    Line::of("Nothing yet.", Ink::Text),
                     Line::of(
-                        "n starts a run · sessions started elsewhere appear when their client calls",
+                        "n starts a run · recordings appear when a client calls through Ren",
                         Ink::Muted,
                     ),
                 ],

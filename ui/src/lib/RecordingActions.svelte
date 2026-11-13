@@ -6,10 +6,10 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
-  import { ManagementApi, type SessionId } from './api.ts';
+  import { ManagementApi, type RecordingId } from './api.ts';
   import { RunCommandError, RunsClient, type HistoryChange } from './runs.ts';
 
-  let { session }: { session: SessionId } = $props();
+  let { session }: { session: RecordingId } = $props();
 
   const client = new RunsClient();
   /** Whether it is archived; null until read. */
@@ -34,7 +34,7 @@
     try {
       await client.edit({ kind: 'session', id: session }, change);
       if (change === 'delete') {
-        await goto('/sessions');
+        await goto('/recordings');
         return;
       }
       archived = change === 'archive';
@@ -51,7 +51,7 @@
 <span class="session-actions">
   {#if notice}<span class="danger-text">{notice}</span>{/if}
   {#if confirming}
-    <span class="danger-text">Delete this session’s recorded calls for good?</span>
+    <span class="danger-text">Delete this recording’s calls for good?</span>
     <button class="button small danger confirm" disabled={busy} onclick={() => edit('delete')}
       >Delete</button
     >
@@ -62,8 +62,8 @@
       disabled={busy}
       onclick={() => edit(archived ? 'unarchive' : 'archive')}
       title={archived
-        ? 'List it with the current sessions again'
-        : 'Hide it from the sessions list until it has new traffic'}
+        ? 'List it with the current recordings again'
+        : 'Hide it from the recordings list until it has new traffic'}
       >{archived ? 'Unarchive' : 'Archive'}</button
     >
     <button class="button small danger" disabled={busy} onclick={() => (confirming = true)}

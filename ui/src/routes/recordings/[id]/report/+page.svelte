@@ -4,7 +4,7 @@
   import { num, short, clock } from '#lib/api.ts';
   import { compact, compactOrDash, date, percentOrDash, span, sessionTone } from '#lib/display.ts';
   import { ContextChart, findingLine, rowPrompt, turnHref, turnRows } from '#lib/activity.ts';
-  import SessionName from '#lib/SessionName.svelte';
+  import RecordingName from '#lib/RecordingName.svelte';
   import FindingList from '#lib/FindingList.svelte';
   import Icon from '#lib/Icon.svelte';
   import type { PageProps } from './$types';
@@ -23,7 +23,7 @@
 
 {#snippet scope()}
   <div class="scope-group scope-identity">
-    {#if session}<SessionName {session} detail={current?.detail} />{:else}<span
+    {#if session}<RecordingName {session} detail={current?.detail} />{:else}<span
         class="session-dot tone-{sessionTone(data.sessionId)}"
       ></span><strong class="mono">{short(data.sessionId)}</strong>{/if}
     <span class="muted">Context and cache report</span>
@@ -34,9 +34,9 @@
     ><Icon name="info" size={12} /> Provider-reported tokens</span
   >
   <div class="scope-group end">
-    <a class="text-button" href={`/sessions/${encodeURIComponent(data.sessionId)}`}
-      >Session calls <Icon name="arrow" size={12} /></a
-    ><a class="text-button" href="/sessions">All sessions <Icon name="arrow" size={12} /></a>
+    <a class="text-button" href={`/recordings/${encodeURIComponent(data.sessionId)}`}
+      >Recording calls <Icon name="arrow" size={12} /></a
+    ><a class="text-button" href="/recordings">All recordings <Icon name="arrow" size={12} /></a>
   </div>
 {/snippet}
 
@@ -131,7 +131,7 @@
         {#if findings.length}
           <FindingList {findings} session={data.sessionId} page="session" />
         {:else}
-          <p class="quiet-empty">No cache rebuilds or large context steps in this session.</p>
+          <p class="quiet-empty">No cache rebuilds or large context steps in this recording.</p>
         {/if}
       </section>
 
