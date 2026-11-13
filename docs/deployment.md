@@ -183,7 +183,7 @@ and their processes end with the daemon; running calls are still waited for. It 
 admission so new calls get `503` with `retry-after: 10` and clients wait (a run
 prompted between the check and the pause is waited for too). Idle runs end with
 the old daemon: before stopping it, it lists each with how to continue
-its conversation (from the UI's Runs page, `ren tui`, or
+its conversation (from the UI's Sessions page, `ren tui`, or
 `ren runs start <client> <dir> --resume <thread>`), which a new run resumes where
 it left off. It runs `ren control backup`, stops the service, keeps the old
 binary as `~/.local/bin/ren.previous`, installs the new one, rewrites the unit
@@ -361,7 +361,7 @@ See the [UI service instructions](../ui/README.md#vps-service) for installation.
 To drive [runs](api.md#runs) from the UI, also add
 `REN_CONTROL_TOKEN_FILE=<data dir>/control.token` and
 `REN_CONTROL_LOGINS=<your Tailscale login>` to `~/.config/ren/ui.env` and restart
-`ren-ui.service` (see [the UI's runs](../ui/README.md#runs)); `install-vps` keeps
+`ren-ui.service` (see [the UI's sessions](../ui/README.md#sessions)); `install-vps` keeps
 an existing `ui.env` as it is.
 The UI may instead run on your laptop with `REN_GATEWAY_URL` set to the daemon's
 Tailscale URL; no UI process is required on the VPS.

@@ -1,6 +1,6 @@
 # Plan: sessions you work in
 
-Status: in progress, on `agent-runs`. Steps 1 to 4 are done; step 5 is next. This file is
+Status: in progress, on `agent-runs`. Steps 1 to 5 are done; step 6 is next. This file is
 the plan of record: each step lands as its own commits, every commit
 passes the full checks, and any change to the plan is written under
 [Deviations](#deviations) with its reason. Once the work is done, what
@@ -124,10 +124,11 @@ and `ren --help` and `ren --version` output against the commit before.
 
 - Recording vocabulary on the read API, CLI, and MCP: keep "session"
   there, or rename with a version bump. Decided after step 6.
-- When a draft session's client starts: on opening the session, or on
-  first focus of its prompt if a client writes its own history entry
-  merely by opening a conversation. Checked against each client in
-  step 3.
+- ~~When a draft session's client starts.~~ Answered in step 5: opening a
+  conversation without a prompt writes no history entry in Claude Code
+  2.1.321 (no transcript for the session id), Codex 0.162.1 (no session
+  file after `thread/start`), or Pi 1.5.2 (no session file after
+  `get_state`), so a session's client starts when the session is made.
 
 ## Deviations
 
@@ -171,9 +172,9 @@ and `ren --help` and `ren --version` output against the commit before.
   own history entry merely by opening a conversation is still to check
   (Open questions); if one does, its start moves to the prompt's first
   focus in step 5.
-- **3 leaves stopping idle processes to step 5.** Until the interfaces show
-  sessions, an idle stop would end runs they still show as runs, with no
-  way back but the old continue.
+- **3 leaves stopping idle processes to step 5**, which stops a client idle
+  for ten minutes (`IdleStop::DEFAULT`, not configurable yet) once both
+  interfaces continue a session instead of starting a new run.
 - **3 sends session changes on their own broadcast**
   (`Supervisor::subscribe_sessions`), not the run feed: the interfaces
   refuse feed updates they do not know. The control API's session feed
@@ -189,5 +190,16 @@ and `ren --help` and `ren --version` output against the commit before.
 - **4 answers a session as `{session, stored, served}`**: the store's view
   (with its runs) and the supervisor's, each possibly missing, rather than
   one merged view, so what was recorded and what is live stay apart.
+- **5 keeps the web UI's new-session form** (New session, `n`) beside each
+  folder's `+`: it reaches places no session worked in yet, and other
+  clients and settings. It makes a session and sends its first prompt.
+- **5 moves the terminal app to sessions by the least change**: it lists
+  each session once, by its newest run (`Desk::newest`), continues a
+  session whose client stopped (`Command::Continue`) instead of starting a
+  run, and follows the selection to the new run. It still lists
+  recordings beside sessions and still starts sessions through the run
+  routes; a separate recordings view and the session routes are step 6.
+- **5 adds `operator_session` to the read API's runs** (`RunView`),
+  additively, so the terminal app knows each recorded run's session.
 - **1a kept the terminal app's `Focus::Session` and `IntoSession`**: they
   name the detail pane, which shows the operator's sessions after step 5.

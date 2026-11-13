@@ -278,7 +278,9 @@ dependencies under "Crates" below. Read the code for current module ownership.
   store holds, and `session_commands` and `session_files` serve its composer
   (the folder's listing is the session's, kept until a turn ends). Session
   changes go to `subscribe_sessions`. A run started through `start` is a
-  session and its first process. `RunState` (`run`) is the
+  session and its first process. A client idle between turns is stopped
+  after `IdleStop` (ten minutes in the daemon; its run ends `idled`), and its
+  session goes on. `RunState` (`run`) is the
   pure lifecycle machine (starting, idle, working with its waiting approvals and the prompt queued
   for after the turn (a `Delivery`: start, queue, or steer),
   stopping, ended with a `RunEnd`); `Workdir` (`workdir`) keeps runs inside
@@ -447,15 +449,15 @@ dependencies under "Crates" below. Read the code for current module ownership.
   Runs: with `REN_CONTROL_TOKEN_FILE` set, `/control/runs*`,
   `/control/sessions*` (not the operator state's session blocks), and
   `/control/history/*` (`src/lib/server/control.ts`, `RunsProxy`) forward the
-  Runs view's same-origin JSON requests to the daemon's `/control/v1/runs*`,
+  Sessions view's same-origin JSON requests to the daemon's `/control/v1/runs*`,
   `/control/v1/sessions*`, and its archive, unarchive, and delete routes only, with the control token read from that
   file on each request, never sent to the browser, and, with
   `REN_CONTROL_LOGINS` set, only for those Tailscale logins; `src/lib/runs.ts`
-  is the view's pure core (run states, the live transcript, the run list by
-  folder, projects by place, and the clients a run can start with),
+  is the view's pure core (run states, the live transcript, the sessions by
+  folder (`Sessions`), projects by place, and the clients a run can start with),
   `src/lib/mention.ts` the composer's offers (the client's commands after
   `/` or `$`, the folder's files after `@`), and
-  `src/lib/server/runsStart.ts` makes the Runs page's first reads on the UI
+  `src/lib/server/runsStart.ts` makes the Sessions page's first reads on the UI
   server, with the browser's Tailscale login and never its cookies, so the
   page renders as it will stay.
   The dev slot's: with `REN_DEV_TRAFFIC_URL` set (loopback only), `/dev/traffic`

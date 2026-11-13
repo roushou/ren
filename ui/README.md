@@ -124,12 +124,13 @@ management requests to the daemon. It forwards no browser cookies or credentials
 and doesn't follow redirects. The UI has no authentication of its own: keep it on
 loopback or behind private Tailscale access, like the daemon.
 
-## Runs
+## Sessions
 
-The Runs view starts and drives agent runs (Codex or Claude Code in a folder under the daemon's
-`[runs]` roots; see [runs](../docs/api.md#runs)): a sidebar of folders and their
-runs, the conversation (the run's recorded turns, then what streams in), its
-approvals with what each asks, and a prompt box. History stays read-only; runs
+The Sessions view (`/sessions`) starts and drives sessions (Codex, Claude Code, or Pi in a folder
+under the daemon's `[runs]` roots; see [sessions](../docs/api.md#sessions)): a sidebar of
+folders and their sessions, each folder's `+` making one there at once, the conversation (its
+recorded turns, then what streams in), its approvals with what each asks, and a prompt box whose
+bar holds its settings (and, for a draft, its client). `/runs` links lead here. History stays read-only; runs
 are the one thing the UI changes, and only when the UI server is given the
 daemon's control token file:
 
