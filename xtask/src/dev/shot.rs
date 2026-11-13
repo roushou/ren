@@ -26,8 +26,8 @@ pub enum Page {
     Recording,
     Usage,
     Search,
-    /// The newest run, with its conversation.
-    Runs,
+    /// The newest run's session, with its conversation.
+    Sessions,
 }
 
 /// The newest recording and run, which some pages show.
@@ -46,7 +46,7 @@ impl Page {
         Self::Recording,
         Self::Usage,
         Self::Search,
-        Self::Runs,
+        Self::Sessions,
     ];
 
     fn name(self) -> &'static str {
@@ -58,12 +58,12 @@ impl Page {
             Self::Recording => "recording",
             Self::Usage => "usage",
             Self::Search => "search",
-            Self::Runs => "runs",
+            Self::Sessions => "sessions",
         }
     }
 
-    /// The page's path: the newest recording for `Recording`, the newest run
-    /// (if any) for `Runs`.
+    /// The page's path: the newest recording for `Recording`, the newest
+    /// run's session (if any) for `Sessions`.
     fn path(self, newest: &Newest) -> Option<String> {
         match self {
             Self::Overview => Some("/".into()),
@@ -76,11 +76,11 @@ impl Page {
                 .map(|id| format!("/recordings/{id}")),
             Self::Usage => Some("/usage".into()),
             Self::Search => Some("/search?q=retry".into()),
-            Self::Runs => Some(
+            Self::Sessions => Some(
                 newest
                     .run
                     .as_ref()
-                    .map_or_else(|| "/runs".into(), |id| format!("/runs?run={id}")),
+                    .map_or_else(|| "/sessions".into(), |id| format!("/sessions?run={id}")),
             ),
         }
     }
@@ -220,9 +220,9 @@ mod tests {
                     assert_eq!(page.path(&none), None);
                     assert_eq!(page.path(&some).as_deref(), Some("/recordings/s1"));
                 }
-                Page::Runs => {
-                    assert_eq!(page.path(&none).as_deref(), Some("/runs"));
-                    assert_eq!(page.path(&some).as_deref(), Some("/runs?run=r1"));
+                Page::Sessions => {
+                    assert_eq!(page.path(&none).as_deref(), Some("/sessions"));
+                    assert_eq!(page.path(&some).as_deref(), Some("/sessions?run=r1"));
                 }
                 Page::Overview
                 | Page::Live

@@ -9,6 +9,7 @@
 <script lang="ts">
   import { untrack } from 'svelte';
   import { harnessLabel } from '#lib/activity.ts';
+  import type { UnixMillis } from '#lib/api.ts';
   import Picker, { type PickerGroup } from '#lib/Picker.svelte';
   import Icon from '#lib/Icon.svelte';
   import {
@@ -21,7 +22,6 @@
     RunCommandError,
     Setup,
     Runs,
-    type DeskRun,
     type Drivable,
     type ApprovalPolicy,
     type Effort,
@@ -52,7 +52,7 @@
     /** The opening client's models, when the server read them in time. */
     models: { harness: Drivable; read: Read<RunModel[]> } | null;
     clients: readonly RunClient[];
-    runs: readonly DeskRun[];
+    runs: readonly { workdir: string; started_at: UnixMillis | null }[];
     busy: boolean;
     listModels: (harness: Drivable) => Promise<RunModel[]>;
     onstart: (
@@ -456,8 +456,9 @@
     </p>
   {/if}
   <p class="about muted">
-    A run is Codex, Claude Code, or Pi working in one of your folders, driven from here. Each keeps
-    its own sign-in; its model traffic is recorded like any session’s.
+    A session is Codex, Claude Code, or Pi working in one of your folders, driven from here. Each
+    client keeps its own sign-in; its model traffic is recorded. A folder’s + in the list starts one
+    there at once.
   </p>
 </div>
 

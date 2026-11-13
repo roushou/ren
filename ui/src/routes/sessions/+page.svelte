@@ -24,11 +24,17 @@
     type RunProject,
     type HistoryChange,
     type Read,
-    type RecordedRun,
     type RunId,
     type Shelf,
     type RunSnapshot,
     type Waiting,
+    Sessions,
+    Memory,
+    MIDWAY,
+    DRIVABLE,
+    type DeskSession,
+    type SessionBody,
+    type SessionId,
     type ClientCommand,
     type FileMatch,
   } from '#lib/runs.ts';
@@ -40,7 +46,7 @@
   import { assertNever } from '#lib/decode.ts';
   import NewRun from './NewRun.svelte';
   import RunSettingsBar from './RunSettingsBar.svelte';
-  import RunList from './RunList.svelte';
+  import SessionList from './SessionList.svelte';
   import type { PageProps } from './$types';
 
   let { data }: PageProps = $props();
@@ -54,13 +60,13 @@
   const first = <T,>(read: Read<T> | undefined, none: T): T =>
     read?.state === 'read' ? read.value : none;
   let live = $state.raw<RunSnapshot[]>(first(initial?.live, []));
-  let recorded = $state.raw<RecordedRun[]>(first(initial?.recorded, []));
-  /** Ended runs the operator archived. */
-  let archived = $state.raw<RecordedRun[]>(first(initial?.archived, []));
-  /** Which runs the list shows. */
+  /** The sessions, current and archived, as stored and served. */
+  let sessions = $state.raw<SessionBody[]>(first(initial?.sessions, []));
+  let archivedSessions = $state.raw<SessionBody[]>(first(initial?.archivedSessions, []));
+  /** Which sessions the list shows. */
   let shelf = $state<Shelf>('current');
-  /** The run whose delete waits for a second click. */
-  let confirming = $state<RunId | null>(null);
+  /** The session whose delete waits for a second click. */
+  let confirming = $state<SessionId | null>(null);
   /** Why runs cannot be listed or driven, when they cannot. */
   let unavailable = $state<string | null>(
     initial?.live.state === 'failed' ? initial.live.reason : null,
@@ -74,21 +80,48 @@
       transcripts.set(data.conversation.run, new Transcript().load(data.conversation.conversation));
     }
   });
-  const selected = $derived(data.selected);
-  /** The folder scratch runs get theirs in; null when there is none. */
+  /** The session the page shows, from the URL. */
+  const chosen = $derived(data.session);
+  /** The folder scratch sessions get theirs in; null when there is none. */
   let scratch = $state<string | null>(first(initial?.places, null)?.scratch ?? null);
-  const projects = $derived(
-    shelf === 'current'
-      ? Desk.projects(live, recorded, new Set(archived.map((run) => run.id)), scratch)
-      : Desk.projects([], archived, new Set(), scratch),
+  const folders = $derived(
+    Sessions.folders(shelf === 'current' ? sessions : archivedSessions, live, scratch),
   );
-  const runs = $derived(projects.flatMap((project) => project.runs));
-  const current = $derived<DeskRun | null>(runs.find((run) => run.run === selected) ?? null);
+  const session = $derived.by((): DeskSession | null => {
+    const body = [...sessions, ...archivedSessions].find((entry) => entry.session === chosen);
+    return body ? Sessions.desk(body, live) : null;
+  });
+  /** The run the page shows: the session's newest process. */
+  const selected = $derived(session?.run ?? null);
+  const current = $derived.by((): DeskRun | null => {
+    if (!session?.run) return null;
+    const run = session.run;
+    const record = session.runs.find((entry) => entry.id === run) ?? null;
+    return {
+      run,
+      harness: session.harness,
+      workdir: session.workdir,
+      started_at: record?.started_at ?? null,
+      state: live.find((entry) => entry.run === run)?.state ?? null,
+      recorded: record,
+      settings: session.settings,
+    };
+  });
   const runState = $derived(current ? Desk.state(current) : null);
   const controls = $derived(runState ? Runs.controls(runState) : null);
   const mark = $derived(runState ? Runs.mark(runState) : null);
+  /**
+   * How the session stands, in its header: while its client runs, when it
+   * could not start, or that it is a draft. Resting, it says nothing: the
+   * next prompt starts its client again.
+   */
+  const headerMark = $derived.by(() => {
+    if (!session) return null;
+    const marked = Sessions.mark(session, '');
+    return marked.label === '' ? null : marked;
+  });
   const transcript = $derived(selected ? (transcripts.get(selected) ?? new Transcript()) : null);
-  const waiting = $derived(projects.reduce((sum, project) => sum + project.waiting, 0));
+  const waiting = $derived(folders.reduce((sum, folder) => sum + folder.waiting, 0));
   const liveCount = $derived(live.filter((run) => run.state.phase !== 'ended').length);
 
   /** The selected run's recorded turns, oldest first, and the session they belong to. */
@@ -162,43 +195,51 @@
     }
   }
 
-  /** What a run was asked first, when its conversation is known here. */
-  function title(run: DeskRun): string | null {
-    const text = transcripts.get(run.run)?.firstPrompt() ?? null;
+  /** What a session was asked first, when its conversation is known here. */
+  function title(entry: { run: RunId | null }): string | null {
+    const text = entry.run ? (transcripts.get(entry.run)?.firstPrompt() ?? null) : null;
     return text ? text.split('\n')[0]!.trim() || null : null;
   }
 
-  async function readRecorded() {
+  async function readSessions() {
+    if (!data.runsControl) return;
     try {
-      [recorded, archived] = await Promise.all([
-        client.recorded(100),
-        client.recorded(100, 'archived'),
+      [sessions, archivedSessions] = await Promise.all([
+        client.sessions(),
+        client.sessions('archived'),
       ]);
     } catch {
-      // The recorded list is a convenience here; live runs still work.
+      // The list stays as it was; the feed brings changes.
     }
   }
 
   /**
-   * Archive, unarchive, or delete the selected run with its session. The
-   * daemon applies it after what it is recording, so the lists are read
-   * again until the run has moved.
+   * Archive, unarchive, or delete the selected session. Archiving stops its
+   * process; deleting removes its ended runs with their recorded calls, and
+   * the session goes with its last run. The daemon applies each after what
+   * it is recording, so the lists are read again until the session moved.
    */
   async function edit(change: HistoryChange) {
-    const run = selected;
-    if (!run) return;
+    const target = chosen;
+    const runs = session?.runs ?? [];
+    if (!target) return;
     confirming = null;
     await act(async () => {
-      await client.edit({ kind: 'run', id: run }, change);
+      if (change === 'delete') {
+        for (const run of runs) await client.edit({ kind: 'run', id: run.id }, 'delete');
+      } else {
+        await client.toSession(target, { kind: change });
+      }
       for (const delay of [150, 400, 1000, 2000]) {
         await new Promise((resolve) => setTimeout(resolve, delay));
-        await readRecorded();
+        await readSessions();
+        const listed = (bodies: SessionBody[]) => bodies.some((entry) => entry.session === target);
         const moved =
           change === 'archive'
-            ? archived.some((entry) => entry.id === run)
+            ? listed(archivedSessions)
             : change === 'unarchive'
-              ? recorded.some((entry) => entry.id === run)
-              : ![...recorded, ...archived].some((entry) => entry.id === run);
+              ? listed(sessions)
+              : !listed(sessions) && !listed(archivedSessions);
         if (moved) break;
       }
       if (change !== 'unarchive') select(null);
@@ -211,15 +252,7 @@
    */
   async function readConversation(run: RunId) {
     try {
-      const [stored, conversation] = await Promise.all([
-        client.recordedRun(run).catch(() => null),
-        client.conversation(run),
-      ]);
-      if (stored) {
-        recorded = recorded.some((entry) => entry.id === run)
-          ? recorded.map((entry) => (entry.id === run ? stored : entry))
-          : [stored, ...recorded];
-      }
+      const conversation = await client.conversation(run);
       transcripts.set(run, (transcripts.get(run) ?? new Transcript()).load(conversation));
       if (selected === run) readError = null;
     } catch (error) {
@@ -239,26 +272,36 @@
     }
   }
 
-  function select(run: RunId | null) {
-    void goto(run ? `/runs?run=${run}` : '/runs');
+  function select(next: SessionId | null) {
+    void goto(next ? `/sessions?session=${next}` : '/sessions');
   }
 
+  /** A session made with the form: in its place, on its client, its first prompt sent. */
   async function start(request: StartRequest) {
     await act(async () => {
-      const run = await client.start(request);
-      if (request.prompt) transcripts.set(run, new Transcript().prompted(request.prompt));
-      await readLive();
-      select(run);
+      const made = await client.createSession(request.harness, request.dir, request);
+      if (request.prompt) {
+        await client.toSession(made, { kind: 'prompt', text: request.prompt, delivery: 'start' });
+      }
+      await Promise.all([readSessions(), readLive()]);
+      select(made);
     });
   }
 
-  /** The runs in the list's order, for j and k. */
-  const order = $derived(
-    projects.flatMap((project) => {
-      const { open, ended } = Desk.split(project);
-      return [...open, ...ended];
-    }),
-  );
+  /** The client a `+` makes a session with: the one last started with here. */
+  const lastClient = $derived(Memory.parse(data.remembered).harness);
+
+  /** A session in `dir` at once (null: a scratch folder of its own), opened. */
+  async function create(dir: string | null) {
+    await act(async () => {
+      const made = await client.createSession(lastClient, dir);
+      await Promise.all([readSessions(), readLive()]);
+      select(made);
+    });
+  }
+
+  /** The sessions in the list's order, for j and k. */
+  const order = $derived(folders.flatMap((folder) => folder.sessions));
 
   function typing(target: EventTarget | null): boolean {
     return (
@@ -279,9 +322,9 @@
       case 'k': {
         if (!order.length) return;
         event.preventDefault();
-        const at = order.findIndex((run) => run.run === selected);
+        const at = order.findIndex((entry) => entry.session === chosen);
         const next = event.key === 'j' ? Math.min(at + 1, order.length - 1) : Math.max(at - 1, 0);
-        select(order[at === -1 ? 0 : next]!.run);
+        select(order[at === -1 ? 0 : next]!.session);
         break;
       }
       case 'y':
@@ -302,15 +345,15 @@
   /** The key that sends into a running turn, as this platform names it. */
   const navigatorKey =
     typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform) ? '⌘' : 'Ctrl';
-  /** Each run's draft, kept while the page is open. */
-  const drafts = new SvelteMap<RunId, string>();
+  /** Each session's draft, kept while the page is open. */
+  const drafts = new SvelteMap<SessionId, string>();
   /** How far back ↑ has recalled the run's prompts; null: not recalling. */
   let recalling = $state<number | null>(null);
   /** What was written before recalling, for ↓ to come back to. */
   let beforeRecall = '';
-  const draft = $derived(selected ? (drafts.get(selected) ?? '') : '');
+  const draft = $derived(chosen ? (drafts.get(chosen) ?? '') : '');
   function write(text: string) {
-    if (selected) drafts.set(selected, text);
+    if (chosen) drafts.set(chosen, text);
   }
   /** Where the caret is in the prompt, for what the word there asks to be offered. */
   let caret = $state(0);
@@ -323,7 +366,7 @@
   const commandLists = new SvelteMap<RunId, ClientCommand[]>();
   let commandsNote = $state<string | null>(null);
   /** The newest file search's answer, with what it searched for. */
-  let found = $state<{ run: RunId; query: string; files: FileMatch[] } | null>(null);
+  let found = $state<{ session: SessionId; query: string; files: FileMatch[] } | null>(null);
   let filesNote = $state<string | null>(null);
   let active = $state(0);
   const menuId = 'composer-offers';
@@ -332,13 +375,14 @@
     // The run's commands, read when a word first asks for them; asked again
     // while the client has listed none, as it lists them once it opens.
     const run = selected;
+    const target = chosen;
     const asking = offering?.kind === 'command' ? offering.start : null;
-    if (!run || asking === null) return;
+    if (!run || !target || asking === null) return;
     if ((untrack(() => commandLists.get(run))?.length ?? 0) > 0) return;
     commandsNote = 'Reading the commands…';
     const abort = new AbortController();
     client
-      .commands(run, abort.signal)
+      .sessionCommands(target, abort.signal)
       .then((commands) => {
         commandLists.set(run, commands);
         commandsNote =
@@ -354,15 +398,15 @@
 
   $effect(() => {
     // A short pause after typing, then the folder is searched.
-    const run = selected;
+    const target = chosen;
     const query = offering?.kind === 'file' ? offering.query : null;
-    if (!run || query === null) return;
+    if (!target || query === null) return;
     const abort = new AbortController();
     const timer = setTimeout(() => {
       client
-        .files(run, query, 20, abort.signal)
+        .sessionFiles(target, query, 20, abort.signal)
         .then((files) => {
-          found = { run, query, files };
+          found = { session: target, query, files };
           filesNote = files.length > 0 ? null : 'No file matches.';
         })
         .catch((error: unknown) => {
@@ -381,7 +425,7 @@
       : [],
   );
   const offeredFiles = $derived(
-    offering?.kind === 'file' && found && found.run === selected ? found.files : [],
+    offering?.kind === 'file' && found && found.session === chosen ? found.files : [],
   );
   const entries = $derived.by((): MenuEntry[] => {
     if (offering?.kind === 'command') {
@@ -438,38 +482,39 @@
   }
 
   /** What the selected run's client takes mid-run. */
-  const client_ = $derived(clients.find((entry) => entry.harness === current?.harness) ?? null);
+  const client_ = $derived(clients.find((entry) => entry.harness === session?.harness) ?? null);
 
-  /** Send what is written: start a turn, queue it or steer the running one, or continue an ended run. */
+  /**
+   * Send what is written to the session: it starts a turn (starting or
+   * resuming its client when none runs), or, while a turn runs, is queued
+   * for after it or steers it.
+   */
   async function send(delivery: 'queue' | 'steer' = 'queue') {
     const text = draft.trim();
+    const target = chosen;
     const run = selected;
-    if (!run || !text || !compose) return;
+    if (!target || !text || !compose) return;
+    // Shown at once where its process runs; a new process reads it back.
+    const shown = (sent: string) => {
+      if (run && session && Sessions.running(session)) {
+        transcripts.set(run, (transcripts.get(run) ?? new Transcript()).prompted(sent));
+      }
+    };
     await act(async () => {
       switch (compose.kind) {
         case 'start':
-          await client.prompt(run, text, 'start');
-          transcripts.set(run, (transcripts.get(run) ?? new Transcript()).prompted(text));
+        case 'continue':
+          await client.toSession(target, { kind: 'prompt', text, delivery: 'start' });
+          shown(text);
           break;
         case 'during':
           if (delivery === 'steer' && compose.steer) {
-            await client.prompt(run, text, 'steer');
-            transcripts.set(run, (transcripts.get(run) ?? new Transcript()).prompted(text));
+            await client.toSession(target, { kind: 'prompt', text, delivery: 'steer' });
+            shown(text);
           } else {
             // Queued after what was queued before: one message, in order.
             const next = compose.queued ? `${compose.queued}\n\n${text}` : text;
-            await client.prompt(run, next, 'queue');
-          }
-          break;
-        case 'continue':
-          if (resumable && current) {
-            await start({
-              harness: resumable.harness,
-              dir: resumable.workdir,
-              resume: resumable.thread,
-              prompt: text,
-              ...Setup.known(current.settings),
-            });
+            await client.toSession(target, { kind: 'prompt', text: next, delivery: 'queue' });
           }
           break;
         case 'closed':
@@ -477,24 +522,27 @@
         default:
           return assertNever(compose);
       }
-      drafts.delete(run);
+      await Promise.all([readSessions(), readLive()]);
+      drafts.delete(target);
       recalling = null;
       following = true;
     });
   }
 
   function answer(waiting: Waiting, decision: Decision) {
-    const run = selected;
-    if (!run) return;
-    void act(() => client.answer(run, waiting.approval, decision));
+    const target = chosen;
+    if (!target) return;
+    void act(() =>
+      client.toSession(target, { kind: 'answer', approval: waiting.approval, decision }),
+    );
   }
 
   /** Take the queued prompt back into the composer to change it. */
   async function editQueued(queued: string) {
-    const run = selected;
-    if (!run) return;
+    const target = chosen;
+    if (!target) return;
     await act(async () => {
-      await client.unqueue(run);
+      await client.toSession(target, { kind: 'unqueue' });
       write(draft ? `${queued}\n\n${draft}` : queued);
       composer?.focus();
     });
@@ -601,8 +649,8 @@
     // read is asked for again. Live runs are read once the feed opens.
     if (initial?.places.state !== 'read') void readProjects();
     if (initial?.clients.state !== 'read') void readClients();
-    if (initial?.recorded.state !== 'read' || initial.archived.state !== 'read')
-      void readRecorded();
+    if (initial?.sessions.state !== 'read' || initial.archivedSessions.state !== 'read')
+      void readSessions();
     if (!initial) void readLive();
     if (!data.runsControl) return () => clearInterval(ticking);
     const source = new EventSource('/control/runs/events');
@@ -615,6 +663,11 @@
       feed = source.readyState === EventSource.CLOSED ? 'closed' : 'connecting';
     });
     source.addEventListener('lagged', () => void readLive());
+    // Sessions change as they are made, configured, archived, or get a new
+    // process: each change reads the list again.
+    const sessionFeed = new EventSource('/control/sessions/events');
+    sessionFeed.addEventListener('session', () => void readSessions());
+    sessionFeed.addEventListener('lagged', () => void readSessions());
     source.addEventListener('run', (event) => {
       let update;
       try {
@@ -628,7 +681,7 @@
         } else {
           live = Runs.update(live, update);
         }
-        if (update.state.phase === 'ended' || update.state.phase === 'idle') void readRecorded();
+        if (update.state.phase === 'ended' || update.state.phase === 'idle') void readSessions();
         return;
       }
       transcripts.set(
@@ -638,6 +691,7 @@
     });
     return () => {
       source.close();
+      sessionFeed.close();
       clearInterval(ticking);
     };
   });
@@ -647,22 +701,23 @@
     return transcripts.get(run.run)?.firstPrompt()?.trim() || null;
   }
 
-  /** The run's facts after its state: client and settings, place, and when. */
+  /** The session's facts after its state: client and settings, place, and when. */
   const facts = $derived(
-    current
+    session
       ? [
-          [harnessLabel(current.harness), ...Setup.words(current.settings)].join(' · '),
-          Runs.place(current.workdir, scratch, offered),
-          ...(current.started_at ? [ago(current.started_at, now)] : []),
+          [harnessLabel(session.harness), ...Setup.words(session.settings)].join(' · '),
+          Runs.place(session.workdir, scratch, offered),
+          ...(session.activeAt ? [ago(session.activeAt, now)] : []),
         ]
       : [],
   );
 
   /** What the run's menu says of it: the details the header leaves out. */
   const details = $derived(
-    current
+    session && current
       ? [
-          `Run ${short(current.run)}`,
+          `Session ${short(session.session)}`,
+          `Process ${short(current.run)}`,
           current.workdir,
           ...(runState?.phase === 'ended'
             ? [Runs.exitDetail(runState.exit)].filter((d) => d !== null)
@@ -673,52 +728,42 @@
 
   /** The run's other actions, least risky first; destructive ones last. */
   const menu = $derived.by((): ActionItem[] => {
-    if (!current || !controls) return [];
+    if (!current || !controls || !session) return [];
     const items: ActionItem[] = [];
-    const run = current.run;
+    const target = session.session;
     if (data.runsControl && controls.stop) {
-      items.push({ label: 'Stop run', onselect: () => void act(() => client.stop(run)) });
-    }
-    const session = current.recorded?.session;
-    if (session)
-      items.push({ label: 'Open its calls', onselect: () => void goto(`/recordings/${session}`) });
-    if (data.runsControl && runState?.phase === 'ended') {
-      const archivedAt = current.recorded?.archived_at;
       items.push({
-        label: archivedAt ? 'Unarchive' : 'Archive',
-        onselect: () => void edit(archivedAt ? 'unarchive' : 'archive'),
+        label: 'Stop its client',
+        onselect: () => void act(() => client.toSession(target, { kind: 'stop' })),
       });
-      items.push({ label: 'Delete…', danger: true, onselect: () => (confirming = run) });
+    }
+    const recording = current.recorded?.session;
+    if (recording)
+      items.push({
+        label: 'Open its calls',
+        onselect: () => void goto(`/recordings/${recording}`),
+      });
+    if (data.runsControl) {
+      const archived_ = session.shelf === 'archived';
+      items.push({
+        label: archived_ ? 'Unarchive' : 'Archive',
+        onselect: () => void edit(archived_ ? 'unarchive' : 'archive'),
+      });
+      if (!Sessions.running(session)) {
+        items.push({ label: 'Delete…', danger: true, onselect: () => (confirming = target) });
+      }
     }
     return items;
   });
 
-  const resumable = $derived(
-    current &&
-      runState?.phase === 'ended' &&
-      current.recorded?.thread &&
-      Runs.drivable(current.harness) &&
-      !live.some(
-        (run) =>
-          run.workdir === current.workdir &&
-          run.state.phase !== 'ended' &&
-          Runs.thread(run.state) === current.recorded?.thread,
-      )
-      ? {
-          harness: Runs.drivable(current.harness) ?? 'codex',
-          workdir: current.workdir,
-          thread: current.recorded.thread,
-        }
-      : null,
-  );
   const compose = $derived(
-    current && runState ? Compose.mode(runState, client_?.midway ?? [], resumable !== null) : null,
+    session ? Compose.session(current ? runState : null, client_?.midway ?? []) : null,
   );
 </script>
 
 {#snippet scope()}
   <div class="scope-group scope-identity">
-    <span class="scope-title">Runs</span>
+    <span class="scope-title">Sessions</span>
     <span class="muted"
       >{liveCount} running{waiting ? ` · ${waiting} waiting for you` : ''}{data.runsControl &&
       feed !== 'open'
@@ -898,19 +943,22 @@
 <div class="runs-page">
   <aside class="runs-sidebar" aria-label="Runs">
     {#if unavailable}<p class="sidebar-note danger">{unavailable}</p>{/if}
-    <RunList
-      {projects}
-      {selected}
+    <SessionList
+      {folders}
+      selected={chosen}
       {now}
       {title}
       place={(workdir) => Runs.place(workdir, scratch, offered)}
+      {scratch}
       {shelf}
-      archivedCount={archived.length}
+      archivedCount={archivedSessions.length}
+      {busy}
       onshelf={(next) => {
         shelf = next;
         select(null);
       }}
-      onselect={(run) => select(run)}
+      onselect={(next) => select(next)}
+      oncreate={(dir) => void create(dir)}
       onnew={() => {
         select(null);
         void tick().then(() => newRun?.focus());
@@ -921,7 +969,9 @@
   <section class="run-main" aria-label="Run">
     {#if !current || !runState || !mark || !controls}
       {#if data.runsControl}
-        {#if selected}<p class="lost muted">This run is not listed. Start another below.</p>{/if}
+        {#if chosen && !session}<p class="lost muted">
+            This session is not listed. Start another below.
+          </p>{/if}
         <NewRun
           bind:this={newRun}
           {offered}
@@ -929,7 +979,12 @@
           remembered={data.remembered}
           models={initial?.models ?? null}
           {clients}
-          {runs}
+          runs={folders.flatMap((folder) =>
+            folder.sessions.map((entry) => ({
+              workdir: entry.workdir,
+              started_at: entry.runs[0]?.started_at ?? null,
+            })),
+          )}
           {busy}
           listModels={(harness) => client.models(harness)}
           onstart={(harness, dir, prompt, settings) =>
@@ -954,18 +1009,21 @@
       <header class="run-head">
         <div class="run-heading">
           <h2 class="run-title" title={firstPrompt(current) ?? undefined}>
-            {title(current) ?? `${harnessLabel(current.harness)} run`}
+            {title(current) ?? `New ${harnessLabel(current.harness)} session`}
           </h2>
           <p class="run-facts">
-            <span class="state tone-{mark.tone}"><span class="dot"></span>{mark.label}</span>
-            {#each facts as fact (fact)}<span class="sep" aria-hidden="true">·</span><span
-                >{fact}</span
-              >{/each}
+            {#if headerMark}<span class="state tone-{headerMark.tone}"
+                ><span class="dot"></span>{headerMark.label}</span
+              >{/if}
+            {#each facts as fact, index (fact)}{#if headerMark || index > 0}<span
+                  class="sep"
+                  aria-hidden="true">·</span
+                >{/if}<span>{fact}</span>{/each}
           </p>
         </div>
-        {#if confirming === current.run}
+        {#if confirming === chosen}
           <span class="run-actions confirming" role="alert">
-            <span class="confirm-text">Delete this run and its recorded calls for good?</span>
+            <span class="confirm-text">Delete this session and its recorded calls for good?</span>
             <button
               class="button small danger confirm"
               disabled={busy}
@@ -978,14 +1036,11 @@
             {#if data.runsControl && controls.interrupt}<button
                 class="button small"
                 disabled={busy}
-                onclick={() => selected && void act(() => client.interrupt(selected))}
+                onclick={() =>
+                  chosen && void act(() => client.toSession(chosen, { kind: 'interrupt' }))}
                 >Interrupt</button
-              >{:else if data.runsControl && resumable}<button
-                class="button small"
-                onclick={() => composer?.focus()}
-                title="Write to continue this conversation in a new run">Continue</button
               >{/if}
-            <ActionMenu label="Run actions" items={menu} {details} disabled={busy} />
+            <ActionMenu label="Session actions" items={menu} {details} disabled={busy} />
           </span>
         {/if}
       </header>
@@ -1060,7 +1115,9 @@
             <button
               class="text-button"
               disabled={busy}
-              onclick={() => selected && void act(() => client.unqueue(selected))}>Remove</button
+              onclick={() =>
+                chosen && void act(() => client.toSession(chosen, { kind: 'unqueue' }))}
+              >Remove</button
             >
           </div>
         {/if}
@@ -1120,24 +1177,39 @@
                   ? `Enter queues for after this turn; ${navigatorKey}+Enter sends it into the turn now.`
                   : `Enter queues for after this turn; ${harnessLabel(current.harness)} reads it then.`
                 : compose.kind === 'continue'
-                  ? 'Write to continue this conversation in a new run, with the same settings.'
+                  ? `Write to ${harnessLabel(current.harness)} to go on.`
                   : compose.reason}
             aria-label="Prompt"></textarea>
           <div class="composer-bar">
-            {#if Runs.drivable(current.harness) && client_ && runState.phase !== 'ended'}
+            {#if Runs.drivable(current.harness) && client_ && session}
               <RunSettingsBar
                 harness={Runs.drivable(current.harness) ?? 'codex'}
-                settings={current.settings}
-                midway={client_.midway}
+                settings={session.settings}
+                midway={Sessions.running(session) ? client_.midway : MIDWAY}
                 approvals={client_.approvals}
                 listModels={(harness) => client.models(harness)}
                 {busy}
                 onchange={(settings) =>
-                  selected &&
+                  chosen &&
                   void act(async () => {
-                    await client.settings(selected, settings);
-                    await readLive();
+                    await client.toSession(chosen, { kind: 'settings', ...settings });
+                    await Promise.all([readSessions(), readLive()]);
                   })}
+                choice={session.phase === 'draft'
+                  ? {
+                      clients: DRIVABLE.filter((harness) =>
+                        clients.some(
+                          (entry) => entry.harness === harness && entry.status === 'ready',
+                        ),
+                      ),
+                      onclient: (harness) =>
+                        chosen &&
+                        void act(async () => {
+                          await client.toSession(chosen, { kind: 'client', harness });
+                          await Promise.all([readSessions(), readLive()]);
+                        }),
+                    }
+                  : null}
               />
             {/if}
             <span class="composer-actions">

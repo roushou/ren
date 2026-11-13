@@ -45,15 +45,15 @@
           : page.route.id === '/usage'
             ? 'usage'
             : page.route.id === '/recordings'
-              ? 'sessions'
+              ? 'recordings'
               : page.route.id === '/recordings/[id]/report'
                 ? 'report'
                 : page.route.id === '/turns/[id]'
                   ? 'turn'
                   : page.route.id === '/search'
                     ? 'search'
-                    : page.route.id === '/runs'
-                      ? 'runs'
+                    : page.route.id === '/sessions'
+                      ? 'sessions'
                       : 'traffic',
   );
   /** A session page's ID; reports and turns belong under Recordings too. */
@@ -61,7 +61,7 @@
     page.route.id === '/recordings/[id]' ? (page.params.id ?? null) : null,
   );
   const underRecordings = $derived(
-    view === 'sessions' || view === 'report' || view === 'turn' || !!sessionId,
+    view === 'recordings' || view === 'report' || view === 'turn' || !!sessionId,
   );
   /** When the scope does not fit on one line it folds behind a button. */
   let scopeOpen = $state(false);
@@ -108,7 +108,7 @@
             ? 'Recorder & storage'
             : view === 'usage'
               ? 'Usage'
-              : view === 'sessions'
+              : view === 'recordings'
                 ? 'Recordings'
                 : view === 'report'
                   ? 'Recording report'
@@ -116,8 +116,8 @@
                     ? 'Turn'
                     : view === 'search'
                       ? 'Search'
-                      : view === 'runs'
-                        ? 'Runs'
+                      : view === 'sessions'
+                        ? 'Sessions'
                         : sessionId
                           ? 'Recording activity'
                           : 'Traffic',
@@ -189,7 +189,7 @@
       '/recordings/[id]/report',
       '/turns/[id]',
       '/search',
-      '/runs',
+      '/sessions',
     ] as const)
       void preloadCode(route);
   });
@@ -239,9 +239,10 @@
         aria-current={view === 'live' ? 'page' : undefined}><Icon name="pulse" size={14} />Live</a
       >
       <a
-        href="/runs"
-        class:active={view === 'runs'}
-        aria-current={view === 'runs' ? 'page' : undefined}><Icon name="spark" size={14} />Runs</a
+        href="/sessions"
+        class:active={view === 'sessions'}
+        aria-current={view === 'sessions' ? 'page' : undefined}
+        ><Icon name="spark" size={14} />Sessions</a
       >
       <a
         href="/traffic"
@@ -359,8 +360,8 @@
     <span
       class="read-only"
       title={page.data.runsControl
-        ? 'History is read-only; this UI starts and drives agent runs'
-        : undefined}>{page.data.runsControl ? 'READ ONLY · RUNS' : 'READ ONLY'}</span
+        ? 'History is read-only; this UI starts and drives sessions'
+        : undefined}>{page.data.runsControl ? 'READ ONLY · SESSIONS' : 'READ ONLY'}</span
     >
     <span
       class="connection-state"
@@ -392,7 +393,7 @@
         ? `${short(selected.id)} · ${captureState(selected, gateway.current.value?.storage.capture?.body_limit_bytes ?? null).toLowerCase()}`
         : view === 'recorder'
           ? `${num(storage?.usage.calls)} calls retained`
-          : view === 'sessions'
+          : view === 'recordings'
             ? `${sessionCount}${sessionCount === 100 ? '+' : ''} recordings loaded`
             : view === 'traffic'
               ? `${workbench.callCount} calls on page · ${workbench.activeCount} in progress`

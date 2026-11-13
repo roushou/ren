@@ -1,7 +1,8 @@
 <!--
-  A running conversation's settings, changed from its next turn on: model,
-  effort, and approvals, each offered only where the client takes it
-  mid-run, and otherwise kept in place, greyed out, saying why.
+  A session's settings, changed from its next turn on: model, effort, and
+  approvals, each offered only where the client takes it mid-run, and
+  otherwise kept in place, greyed out, saying why. A draft also offers its
+  client, until its first prompt fixes it.
 -->
 <script lang="ts">
   import { harnessLabel } from '#lib/activity.ts';
@@ -29,6 +30,7 @@
     listModels,
     busy,
     onchange,
+    choice = null,
   }: {
     harness: Drivable;
     settings: RunSettings;
@@ -43,6 +45,8 @@
       effort: Effort | null;
       approvals: ApprovalPolicy | null;
     }) => void;
+    /** The clients a draft can change to, and what to do with the one chosen. */
+    choice?: { clients: readonly Drivable[]; onclient: (harness: Drivable) => void } | null;
   } = $props();
 
   /** The picker's value for "the client's own": never a model's or label's text. */
@@ -122,6 +126,29 @@
 </script>
 
 <span class="settings">
+  {#if choice}
+    <Picker
+      label="Client for this session"
+      icon="spark"
+      groups={[
+        {
+          label: null,
+          options: choice.clients.map((offered) => ({
+            value: offered,
+            label: harnessLabel(offered),
+          })),
+        },
+      ]}
+      value={harness}
+      placeholder={harnessLabel(harness)}
+      search={false}
+      disabled={busy ? 'Waiting for the last change' : null}
+      onchange={(value) => {
+        const chosen = choice.clients.find((offered) => offered === value);
+        if (chosen && chosen !== harness) choice.onclient(chosen);
+      }}
+    />
+  {/if}
   <Picker
     label="Model for the next turn"
     icon="cpu"

@@ -1,105 +1,149 @@
 <!--
-  The runs, grouped by the folder each works in: folders with a run that
-  needs you first. Each run is named by what it was asked, when that is
-  known here, and says how it stands and how long ago it started; ended
-  runs fold under their folder. The archived runs are a shelf of their own,
-  switched to at the bottom.
+  The sessions, grouped by the folder each works in: folders with a session
+  that needs you first. Each folder's `+` makes a session there at once, on
+  the last client used; New session opens the form for any other place. A
+  session is named by what it was asked, when that is known here, and says
+  how it stands. The archived sessions are a shelf of their own.
 -->
 <script lang="ts">
   import { SvelteSet } from 'svelte/reactivity';
   import { harnessLabel } from '#lib/activity.ts';
   import Icon from '#lib/Icon.svelte';
   import { ago } from '#lib/overview.ts';
-  import { Desk, Runs, type DeskRun, type Project, type RunId, type Shelf } from '#lib/runs.ts';
+  import {
+    Sessions,
+    type DeskSession,
+    type SessionFolder,
+    type SessionId,
+    type Shelf,
+  } from '#lib/runs.ts';
 
   let {
-    projects,
+    folders,
     selected,
     now,
     title,
     place,
+    scratch,
     shelf,
     archivedCount,
+    busy,
     onshelf,
     onselect,
+    oncreate,
     onnew,
   }: {
-    projects: readonly Project[];
-    selected: RunId | null;
+    folders: readonly SessionFolder[];
+    selected: SessionId | null;
     now: number;
-    /** What a run was asked, when known here. */
-    title: (run: DeskRun) => string | null;
+    /** What a session was asked, when known here. */
+    title: (session: DeskSession) => string | null;
     /** A folder as the operator reads it: Scratch, or `~/…`. */
     place: (workdir: string) => string;
-    /** Which runs are listed: current, or archived. */
+    /** The folder scratch sessions get theirs in; null: no scratch. */
+    scratch: string | null;
     shelf: Shelf;
     archivedCount: number;
+    busy: boolean;
     onshelf: (shelf: Shelf) => void;
-    onselect: (run: RunId) => void;
+    onselect: (session: SessionId) => void;
+    /** A session in `workdir` at once; null: a scratch folder of its own. */
+    oncreate: (workdir: string | null) => void;
     onnew: () => void;
   } = $props();
 
-  /** Folders whose ended runs are shown. */
+  /** How many of a folder's sessions show before the rest fold. */
+  const SHOWN = 5;
+  /** Folders whose every session is shown. */
   const unfolded = new SvelteSet<string>();
 </script>
 
-{#snippet row(run: DeskRun)}
-  {@const mark = Runs.mark(Desk.state(run))}
-  {@const asked = title(run)}
+{#snippet row(session: DeskSession)}
+  {@const mark = Sessions.mark(session, harnessLabel(session.harness))}
+  {@const asked = title(session)}
   <button
     class="run-row"
-    class:selected={run.run === selected}
+    class:selected={session.session === selected}
     class:needs={mark.tone === 'warn'}
-    aria-current={run.run === selected ? 'true' : undefined}
-    onclick={() => onselect(run.run)}
+    aria-current={session.session === selected ? 'true' : undefined}
+    onclick={() => onselect(session.session)}
   >
     <span class="phase-dot tone-{mark.tone}"></span>
-    <span class="run-name">{asked ?? `${harnessLabel(run.harness)} run`}</span>
+    <span class="run-name">{asked ?? `New ${harnessLabel(session.harness)} session`}</span>
     <span class="run-state tone-{mark.tone}">{mark.label}</span>
-    <span class="run-when muted">{run.started_at ? ago(run.started_at, now) : ''}</span>
+    <span class="run-when muted">{session.activeAt ? ago(session.activeAt, now) : 'now'}</span>
   </button>
 {/snippet}
 
-<nav class="run-list" aria-label="Runs by folder">
+<nav class="run-list" aria-label="Sessions by folder">
   {#if shelf === 'archived'}
     <button class="new-run" onclick={() => onshelf('current')}>
-      <Icon name="archive" size={13} /> Archived runs
-      <span class="muted back">Back to runs</span>
+      <Icon name="archive" size={13} /> Archived sessions
+      <span class="muted back">Back to sessions</span>
     </button>
   {:else}
     <button class="new-run" onclick={onnew}>
-      <Icon name="spark" size={13} /> New run <kbd>n</kbd>
+      <Icon name="spark" size={13} /> New session <kbd>n</kbd>
     </button>
   {/if}
-  {#each projects as project (project.workdir)}
-    {@const { open, ended } = Desk.split(project)}
-    {@const shown = place(project.workdir)}
+  {#each folders as folder (folder.workdir)}
+    {@const shown = place(folder.workdir)}
+    {@const all = unfolded.has(folder.workdir) || shelf === 'archived'}
+    {@const visible = all
+      ? folder.sessions
+      : folder.sessions.filter(
+          (session, index) =>
+            index < SHOWN || session.session === selected || Sessions.running(session),
+        )}
     <section class="folder">
-      <header title={project.workdir}>
+      <header title={folder.workdir}>
         <Icon name="file" size={12} />
-        <strong>{project.name}</strong>
-        {#if project.waiting}<span class="chip warning">{project.waiting} needs you</span>{/if}
+        <strong>{folder.name}</strong>
+        {#if folder.waiting}<span class="chip warning">{folder.waiting} needs you</span>{/if}
         {#if shown.includes('/')}<span class="muted mono parent"
             ><bdi>{shown.slice(0, shown.lastIndexOf('/') + 1)}</bdi></span
           >{/if}
+        {#if shelf === 'current'}<button
+            class="add"
+            disabled={busy}
+            title={folder.workdir === scratch
+              ? 'New session in a scratch folder of its own'
+              : `New session in ${shown}`}
+            aria-label="New session in {folder.name}"
+            onclick={() => oncreate(folder.workdir === scratch ? null : folder.workdir)}
+            ><Icon name="plus" size={12} /></button
+          >{/if}
       </header>
-      {#each open as run (run.run)}{@render row(run)}{/each}
-      {#if ended.length}
-        {#if shelf === 'archived' || unfolded.has(project.workdir) || ended.some((run) => run.run === selected)}
-          {#each ended as run (run.run)}{@render row(run)}{/each}
-        {:else}
-          <button class="fold" onclick={() => unfolded.add(project.workdir)}>
-            <Icon name="chevron" size={10} />
-            {ended.length} ended
-          </button>
-        {/if}
+      {#each visible as session (session.session)}{@render row(session)}{/each}
+      {#if visible.length < folder.sessions.length}
+        <button class="fold" onclick={() => unfolded.add(folder.workdir)}>
+          <Icon name="chevron" size={10} />
+          {folder.sessions.length - visible.length} more
+        </button>
       {/if}
     </section>
   {:else}
     <p class="note">
-      {shelf === 'archived' ? 'Nothing is archived.' : 'No runs yet. Start one with New run.'}
+      {shelf === 'archived'
+        ? 'Nothing is archived.'
+        : 'No sessions yet. Start one with New session.'}
     </p>
   {/each}
+  {#if shelf === 'current' && scratch && !folders.some((folder) => folder.workdir === scratch)}
+    <section class="folder">
+      <header>
+        <Icon name="file" size={12} />
+        <strong>Scratch</strong>
+        <button
+          class="add"
+          disabled={busy}
+          title="New session in a scratch folder of its own"
+          aria-label="New session in Scratch"
+          onclick={() => oncreate(null)}><Icon name="plus" size={12} /></button
+        >
+      </header>
+    </section>
+  {/if}
   {#if shelf === 'current' && archivedCount}
     <button class="shelf" onclick={() => onshelf('archived')}>
       <Icon name="archive" size={12} /> Archived <span class="muted">{archivedCount}</span>
@@ -164,6 +208,34 @@
     direction: rtl;
     text-align: left;
   }
+  /* A quiet control: rounded as controls are, square everything else. */
+  .add {
+    display: grid;
+    place-items: center;
+    flex: none;
+    width: 20px;
+    height: 20px;
+    margin-left: auto;
+    padding: 0;
+    border: 1px solid transparent;
+    border-radius: 3px;
+    background: none;
+    color: var(--muted);
+    cursor: pointer;
+  }
+  .folder header .parent + .add {
+    margin-left: 0;
+  }
+  .add:hover,
+  .add:focus-visible {
+    border-color: var(--control-border);
+    background: var(--surface);
+    color: var(--ink);
+  }
+  .add:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
   .run-row {
     display: grid;
     grid-template-columns: 7px minmax(0, 1fr) auto;
@@ -205,6 +277,9 @@
   }
   .run-state.tone-live {
     color: var(--live);
+  }
+  .run-state.tone-danger {
+    color: var(--error);
   }
   .run-when {
     grid-column: 3;

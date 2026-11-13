@@ -35,6 +35,9 @@ import {
 export type RunId = Brand<string, 'RunId'>;
 export const RunId = new Uuid<'RunId'>();
 /** The client's own id for a request waiting on the operator. */
+/** A session an operator works in: not a recording. */
+export type SessionId = Brand<string, 'SessionId'>;
+export const SessionId = new Uuid<'SessionId'>();
 export type ApprovalId = Brand<string, 'ApprovalId'>;
 /** A turn item, named as the client named it. */
 export type ItemId = Brand<string, 'ItemId'>;
@@ -422,6 +425,86 @@ const recordedRun = object<RecordedRun>({
 });
 
 const liveRuns = versioned(object<{ runs: RunSnapshot[] }>({ runs: array(runSnapshot) }));
+
+/** Whether a prompt has gone out in a session: a draft's client can still change. */
+export const SESSION_PHASES = ['draft', 'active'] as const;
+export type SessionPhase = (typeof SESSION_PHASES)[number];
+const shelves = ['open', 'archived'] as const;
+
+/** Where a session stands: on the open list or the archived one, and in what phase. */
+export interface SessionState {
+  shelf: Stored<(typeof shelves)[number]>;
+  phase: Stored<SessionPhase>;
+}
+
+/** A session as the daemon serves it now. */
+export interface ServedSession {
+  session: SessionId;
+  harness: Stored<Harness>;
+  workdir: string;
+  /** What its next turn runs on. */
+  settings: RunSettings;
+  state: SessionState;
+  /** Its newest process, whose state the run feed carries. */
+  process: RunId | null;
+}
+
+/** A session as the store holds it, with its runs newest first. */
+export interface StoredSession {
+  id: SessionId;
+  harness: Stored<Harness>;
+  workdir: string;
+  created_at: UnixMillis;
+  model: ModelId | null;
+  effort: Stored<Effort> | null;
+  approvals: Stored<ApprovalPolicy> | null;
+  archived_at: UnixMillis | null;
+  /** When its first turn started; null while it is a draft. */
+  first_turn_at: UnixMillis | null;
+  runs: RecordedRun[];
+}
+
+/** One session: as stored and as served; either may be missing for a moment. */
+export interface SessionBody {
+  session: SessionId;
+  stored: StoredSession | null;
+  served: ServedSession | null;
+}
+
+const servedSession = object<ServedSession>({
+  session: SessionId.decode,
+  harness: label(harnesses),
+  workdir: string,
+  settings: runSettings,
+  state: object<SessionState>({ shelf: label(shelves), phase: label(SESSION_PHASES) }),
+  process: nullable(RunId.decode),
+});
+
+const storedSession = object<StoredSession>({
+  id: SessionId.decode,
+  harness: label(harnesses),
+  workdir: string,
+  created_at: brandedCount<'UnixMillis'>(),
+  model: nullable(branded<'ModelId'>()),
+  effort: nullable(label(EFFORTS)),
+  approvals: nullable(label(APPROVAL_POLICIES)),
+  archived_at: nullable(brandedCount<'UnixMillis'>()),
+  first_turn_at: nullable(brandedCount<'UnixMillis'>()),
+  runs: array(recordedRun),
+});
+
+const sessionBody = object<SessionBody>({
+  session: SessionId.decode,
+  stored: nullable(storedSession),
+  served: nullable(servedSession),
+});
+const sessionList = versioned(
+  object<{ sessions: SessionBody[] }>({ sessions: array(sessionBody) }),
+);
+const oneSession = versioned(object<{ session: SessionBody }>({ session: sessionBody }));
+const createdSession = versioned(object<{ session: SessionId }>({ session: SessionId.decode }));
+/** One change on the session feed: the session as served. */
+export const sessionUpdate: Decoder<ServedSession> = servedSession;
 /** A project's repository, as its `HEAD` reads. */
 export type ProjectGit =
   | { kind: 'branch'; name: string }
@@ -713,6 +796,8 @@ export interface RunsStart {
   clients: Read<RunClient[]>;
   recorded: Read<RecordedRun[]>;
   archived: Read<RecordedRun[]>;
+  sessions: Read<SessionBody[]>;
+  archivedSessions: Read<SessionBody[]>;
   /** The models of the client the form opens on, when they came in time. */
   models: { harness: Drivable; read: Read<RunModel[]> } | null;
 }
@@ -747,15 +832,27 @@ export class RunsClient {
     const models = harness
       ? read(this.models(harness, AbortSignal.timeout(wait))).then((read) => ({ harness, read }))
       : Promise.resolve(null);
-    const [live, places, clients, recorded, archived, listed] = await Promise.all([
-      read(this.live()),
-      read(this.projects()),
-      read(this.clients()),
-      read(this.recorded(100)),
-      read(this.recorded(100, 'archived')),
-      models,
-    ]);
-    return { live, places, clients, recorded, archived, models: listed };
+    const [live, places, clients, recorded, archived, sessions, archivedSessions, listed] =
+      await Promise.all([
+        read(this.live()),
+        read(this.projects()),
+        read(this.clients()),
+        read(this.recorded(100)),
+        read(this.recorded(100, 'archived')),
+        read(this.sessions()),
+        read(this.sessions('archived')),
+        models,
+      ]);
+    return {
+      live,
+      places,
+      clients,
+      recorded,
+      archived,
+      sessions,
+      archivedSessions,
+      models: listed,
+    };
   }
   /** Where runs can start, and the scratch folder. */
   async projects(signal?: AbortSignal): Promise<RunPlaces> {
@@ -819,6 +916,97 @@ export class RunsClient {
   async answer(run: RunId, approval: ApprovalId, decision: Decision): Promise<void> {
     const path = `/control/runs/${run}/approvals/${encodeURIComponent(approval)}`;
     await this.#send('POST', path, { decision }, null);
+  }
+  /** Sessions on `shelf`, most recently active first. */
+  async sessions(shelf: Shelf = 'current', signal?: AbortSignal): Promise<SessionBody[]> {
+    const path = `/control/sessions?shelf=${shelf}`;
+    return (await this.#send('GET', path, undefined, sessionList, signal)).sessions;
+  }
+  async session(session: SessionId, signal?: AbortSignal): Promise<SessionBody> {
+    const path = `/control/sessions/${session}`;
+    return (await this.#send('GET', path, undefined, oneSession, signal)).session;
+  }
+  /** A new session in `dir` (null: a scratch folder of its own); its client starts at once. */
+  async createSession(
+    harness: Drivable,
+    dir: string | null,
+    settings: {
+      model?: ModelId | null;
+      effort?: Effort | null;
+      approvals?: ApprovalPolicy | null;
+    } = {},
+  ): Promise<SessionId> {
+    const body = {
+      harness,
+      ...(dir ? { dir } : {}),
+      ...(settings.model ? { model: settings.model } : {}),
+      ...(settings.effort ? { effort: settings.effort } : {}),
+      ...(settings.approvals ? { approvals: settings.approvals } : {}),
+    };
+    return (await this.#send('POST', '/control/sessions', body, createdSession)).session;
+  }
+  /** One command to a session: through its process, or a new one for a prompt. */
+  async toSession(
+    session: SessionId,
+    command:
+      | { kind: 'prompt'; text: string; delivery: Delivery }
+      | {
+          kind: 'settings';
+          model: ModelId | null;
+          effort: Effort | null;
+          approvals: ApprovalPolicy | null;
+        }
+      | { kind: 'client'; harness: Drivable }
+      | { kind: 'answer'; approval: ApprovalId; decision: Decision }
+      | { kind: 'unqueue' | 'interrupt' | 'stop' | 'archive' | 'unarchive' },
+  ): Promise<void> {
+    const base = `/control/sessions/${session}`;
+    switch (command.kind) {
+      case 'prompt':
+        return this.#send(
+          'POST',
+          `${base}/prompt`,
+          { text: command.text, delivery: command.delivery },
+          null,
+        );
+      case 'settings': {
+        const { model, effort, approvals } = command;
+        return this.#send('POST', `${base}/settings`, { model, effort, approvals }, null);
+      }
+      case 'client':
+        return this.#send('POST', `${base}/client`, { harness: command.harness }, null);
+      case 'answer':
+        return this.#send(
+          'POST',
+          `${base}/approvals/${encodeURIComponent(command.approval)}`,
+          { decision: command.decision },
+          null,
+        );
+      case 'unqueue':
+      case 'interrupt':
+      case 'stop':
+      case 'archive':
+      case 'unarchive':
+        return this.#send('POST', `${base}/${command.kind}`, {}, null);
+      default:
+        return assertNever(command);
+    }
+  }
+  /** What the session's client offers a prompt. */
+  async sessionCommands(session: SessionId, signal?: AbortSignal): Promise<ClientCommand[]> {
+    const path = `/control/sessions/${session}/commands`;
+    return (await this.#send('GET', path, undefined, clientCommands, signal)).commands;
+  }
+  /** The paths of the session's folder that best match `query`. */
+  async sessionFiles(
+    session: SessionId,
+    query: string,
+    limit = 20,
+    signal?: AbortSignal,
+  ): Promise<FileMatch[]> {
+    const search = new URLSearchParams({ q: query, limit: String(limit) });
+    const path = `/control/sessions/${session}/files?${search}`;
+    return (await this.#send('GET', path, undefined, fileMatches, signal)).files;
   }
   async interrupt(run: RunId): Promise<void> {
     await this.#send('POST', `/control/runs/${run}/interrupt`, {}, null);
@@ -1512,7 +1700,11 @@ export class Desk {
   }
 
   /** The projects runs worked in, most recently started first, at most `count`. */
-  static recent(runs: readonly DeskRun[], offered: readonly RunProject[], count = 3): RunProject[] {
+  static recent(
+    runs: readonly { workdir: string; started_at: UnixMillis | null }[],
+    offered: readonly RunProject[],
+    count = 3,
+  ): RunProject[] {
     const newest = runs
       .filter((run) => run.started_at !== null)
       .toSorted((a, b) => (b.started_at ?? 0) - (a.started_at ?? 0));
@@ -1541,6 +1733,141 @@ export class Desk {
     if (recorded?.end) return { phase: 'ended', end: recorded.end, exit: recorded.exit };
     // Recorded as started but not held by the daemon: it ended without a record yet.
     return { phase: 'unrecognized', text: 'not running' };
+  }
+}
+
+/** A session in the sidebar, with the state of its newest process. */
+export interface DeskSession {
+  session: SessionId;
+  harness: Stored<Harness>;
+  workdir: string;
+  /** When it was last active: its newest run's start, else its creation; null until stored. */
+  activeAt: number | null;
+  phase: Stored<SessionPhase>;
+  shelf: Stored<'open' | 'archived'>;
+  /** What its next turn runs on. */
+  settings: RunSettings;
+  /** Its newest process, once one started. */
+  run: RunId | null;
+  /** That process's state: live while the daemon holds it, else its recorded end. */
+  state: RunState | null;
+  /** Its runs as recorded, newest first. */
+  runs: RecordedRun[];
+}
+
+/** Sessions grouped by folder, folders that need you first. */
+export interface SessionFolder {
+  workdir: string;
+  name: string;
+  sessions: DeskSession[];
+  /** Approvals waiting across the folder's sessions. */
+  waiting: number;
+}
+
+export class Sessions {
+  /** One session from what the store holds and what the daemon serves. */
+  static desk(body: SessionBody, live: readonly RunSnapshot[]): DeskSession | null {
+    const { stored, served } = body;
+    const first = served ?? stored;
+    if (!first) return null;
+    const run = served?.process ?? stored?.runs[0]?.id ?? null;
+    const held = run ? live.find((entry) => entry.run === run) : undefined;
+    const recordedRun = run ? stored?.runs.find((entry) => entry.id === run) : undefined;
+    const state: RunState | null = held
+      ? held.state
+      : recordedRun?.end
+        ? { phase: 'ended', end: recordedRun.end, exit: recordedRun.exit }
+        : run
+          ? { phase: 'unrecognized', text: 'not running' }
+          : null;
+    return {
+      session: body.session,
+      harness: first.harness,
+      workdir: first.workdir,
+      activeAt: stored ? (stored.runs[0]?.started_at ?? stored.created_at) : null,
+      phase: served?.state.phase ?? (stored?.first_turn_at ? 'active' : 'draft'),
+      shelf: served?.state.shelf ?? (stored?.archived_at ? 'archived' : 'open'),
+      settings: served?.settings ?? {
+        model: stored?.model ?? null,
+        effort: stored?.effort ?? null,
+        approvals: stored?.approvals ?? null,
+      },
+      run,
+      state,
+      runs: stored?.runs ?? [],
+    };
+  }
+
+  /** Whether the session's process is running now. */
+  static running(session: DeskSession): boolean {
+    return session.state !== null && !['ended', 'unrecognized'].includes(session.state.phase);
+  }
+
+  /**
+   * The sessions grouped by folder: scratch sessions share one group.
+   * Folders with an approval waiting come first, then those with a process
+   * running, then the most recently active; the same within a folder.
+   */
+  static folders(
+    bodies: readonly SessionBody[],
+    live: readonly RunSnapshot[],
+    scratch: string | null = null,
+  ): SessionFolder[] {
+    const group = (workdir: string) =>
+      scratch && workdir.startsWith(`${scratch}/`) ? scratch : workdir;
+    const groups = new Map<string, DeskSession[]>();
+    for (const body of bodies) {
+      const session = Sessions.desk(body, live);
+      if (!session) continue;
+      const sessions = groups.get(group(session.workdir)) ?? [];
+      sessions.push(session);
+      groups.set(group(session.workdir), sessions);
+    }
+    const waiting = (session: DeskSession) =>
+      session.state ? Runs.controls(session.state).approvals.length : 0;
+    // A session not stored yet was just made: it is the newest.
+    const newest = (session: DeskSession) => session.activeAt ?? Number.MAX_SAFE_INTEGER;
+    const running = (session: DeskSession) => (Sessions.running(session) ? 1 : 0);
+    const order = (a: DeskSession, b: DeskSession) =>
+      waiting(b) - waiting(a) || running(b) - running(a) || newest(b) - newest(a);
+    const folders = [...groups].map(([workdir, sessions]) => ({
+      workdir,
+      name: workdir === scratch ? 'Scratch' : Runs.folder(workdir),
+      sessions: sessions.toSorted(order),
+      waiting: sessions.reduce((sum, session) => sum + waiting(session), 0),
+    }));
+    return folders.toSorted((a, b) => order(a.sessions[0]!, b.sessions[0]!));
+  }
+
+  /**
+   * How a session stands in a word: its process's state while one runs (a
+   * draft's idle one says Draft); with none running, a client that could
+   * not start says so, a draft says Draft, and any other names its client
+   * quietly, as writing to it starts one again.
+   */
+  static mark(session: DeskSession, client: string): PhaseMark {
+    const state = session.state;
+    if (state && Sessions.running(session)) {
+      return state.phase === 'idle' && session.phase === 'draft'
+        ? { label: 'Draft', tone: 'neutral' }
+        : Runs.mark(state);
+    }
+    if (state?.phase === 'ended' && Runs.endTone(state.end, state.exit) === 'danger') {
+      return Runs.mark(state);
+    }
+    return session.phase === 'draft'
+      ? { label: 'Draft', tone: 'neutral' }
+      : { label: client, tone: 'neutral' };
+  }
+
+  /** The session one of whose runs is `run`, for links to a run. */
+  static of(bodies: readonly SessionBody[], run: RunId): SessionId | null {
+    return (
+      bodies.find(
+        (body) =>
+          body.served?.process === run || body.stored?.runs.some((entry) => entry.id === run),
+      )?.session ?? null
+    );
   }
 }
 
@@ -1733,6 +2060,28 @@ export class Compose {
    * far back the composer is now (null: not recalling). Null when there is
    * nothing further that way, `at` null again when back past the newest.
    */
+  /**
+   * How a session's composer works: a prompt always goes, starting or
+   * resuming its process when none runs, or into or after a running turn;
+   * only while its process stops does it wait.
+   */
+  static session(state: RunState | null, midway: readonly Stored<Midway>[]): ComposeMode {
+    if (!state) return { kind: 'start' };
+    switch (state.phase) {
+      case 'working':
+        return { kind: 'during', steer: midway.includes('steer'), queued: state.queued };
+      case 'stopping':
+        return { kind: 'closed', reason: 'Its client is stopping; write again in a moment.' };
+      case 'idle':
+      case 'starting':
+      case 'ended':
+      case 'unrecognized':
+        return { kind: 'start' };
+      default:
+        return assertNever(state);
+    }
+  }
+
   static recall(
     prompts: readonly string[],
     at: number | null,
