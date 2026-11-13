@@ -18,7 +18,7 @@ use ren_store::Reader;
 use ren_store::activity::{ActivityBudget, CallActivity, TurnActivity};
 use ren_store::query::{CallQuery, PageLimit, Shelf};
 use ren_store::read::ReadRequest;
-use ren_store::view::{CallPage, SessionView};
+use ren_store::view::{CallPage, RecordingView};
 use reqwest::{Method, StatusCode};
 use serde::{Deserialize, de::DeserializeOwned};
 use serde_json::{Map, Value};
@@ -56,11 +56,14 @@ impl History {
         }
     }
 
-    /// Sessions, most recently seen first.
-    pub async fn sessions(&self, limit: PageLimit) -> Result<Vec<SessionView>, ManagementError> {
+    /// Recordings, most recently seen first.
+    pub async fn recordings(
+        &self,
+        limit: PageLimit,
+    ) -> Result<Vec<RecordingView>, ManagementError> {
         match self {
-            Self::Local(reader) => Ok(reader.sessions(limit, Shelf::Current).await?),
-            Self::Remote(gateway) => gateway.sessions(limit).await,
+            Self::Local(reader) => Ok(reader.recordings(limit, Shelf::Current).await?),
+            Self::Remote(gateway) => gateway.recordings(limit).await,
         }
     }
 
@@ -372,14 +375,17 @@ impl Management {
         self.read_as(&ReadRequest::Calls(query.clone())).await
     }
 
-    /// Sessions, most recently seen first.
-    pub async fn sessions(&self, limit: PageLimit) -> Result<Vec<SessionView>, ManagementError> {
-        /// The read API's body for a session listing.
+    /// Recordings, most recently seen first.
+    pub async fn recordings(
+        &self,
+        limit: PageLimit,
+    ) -> Result<Vec<RecordingView>, ManagementError> {
+        /// The read API's body for a recording listing.
         #[derive(Deserialize)]
-        struct Sessions {
-            sessions: Vec<SessionView>,
+        struct Recordings {
+            sessions: Vec<RecordingView>,
         }
-        self.read_as::<Sessions>(&ReadRequest::Sessions {
+        self.read_as::<Recordings>(&ReadRequest::Recordings {
             limit,
             shelf: Shelf::Current,
         })
@@ -577,7 +583,10 @@ mod tests {
     async fn a_gateway_answers_reads_as_views() {
         let (sessions, calls, turn) = against_gateway(|gateway| async move {
             let history = History::Remote(gateway);
-            let sessions = history.sessions(PageLimit::new(10).unwrap()).await.unwrap();
+            let sessions = history
+                .recordings(PageLimit::new(10).unwrap())
+                .await
+                .unwrap();
             let calls = history.calls(&CallQuery::default()).await.unwrap();
             let turn = history
                 .turn("00000000-0000-0000-0000-000000000004".parse().unwrap())
@@ -615,7 +624,7 @@ mod tests {
         // A session listing read as a page of calls.
         let wrong = against_gateway(|gateway| async move {
             gateway
-                .read_as::<CallPage>(&ReadRequest::Sessions {
+                .read_as::<CallPage>(&ReadRequest::Recordings {
                     limit: PageLimit::new(10).unwrap(),
                     shelf: Shelf::Current,
                 })

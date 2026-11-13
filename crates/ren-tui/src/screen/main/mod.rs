@@ -13,9 +13,9 @@
 
 mod detail;
 mod list;
-pub(crate) mod watched;
+pub(crate) mod recording;
 #[cfg(test)]
-mod watched_tests;
+mod recording_tests;
 
 pub(crate) use list::{Grouping, Item, Listing};
 
@@ -339,7 +339,7 @@ impl Main {
         let Some(item) = self.selected else {
             return Vec::new();
         };
-        let revision = model.sessions.revision();
+        let revision = model.recordings.revision();
         match item {
             Item::Run(run) => {
                 // Read once a run is chosen: the feed keeps it current.
@@ -349,13 +349,13 @@ impl Main {
                 self.read = Some((item, revision, true));
                 vec![Action::Read(Read::Conversation(run))]
             }
-            Item::Watched(session) => {
+            Item::Recording(session) => {
                 if self.read == Some((item, revision, true)) {
                     return Vec::new();
                 }
                 self.read = Some((item, revision, true));
                 model
-                    .sessions
+                    .recordings
                     .reads_for(session)
                     .into_iter()
                     .map(Action::Read)
@@ -382,7 +382,7 @@ impl Main {
     pub fn run(&self) -> Option<RunId> {
         match self.selected {
             Some(Item::Run(run)) => Some(run),
-            Some(Item::Watched(_)) | None => None,
+            Some(Item::Recording(_)) | None => None,
         }
     }
 
@@ -571,7 +571,7 @@ impl Main {
                 }
                 None => "nothing selected".to_owned(),
             },
-            Some(Item::Watched(_)) => {
+            Some(Item::Recording(_)) => {
                 entries.extend([
                     entry('a', "archive", Verb::Archive, Section::History),
                     entry(
@@ -611,7 +611,7 @@ impl Main {
                 Some(_) => Err("stop the run first: only ended runs are archived or deleted"),
                 None => Err("nothing selected"),
             },
-            Some(Item::Watched(session)) => Ok(HistorySubject::Session(session)),
+            Some(Item::Recording(session)) => Ok(HistorySubject::Session(session)),
             None => Err("nothing selected"),
         }
     }
@@ -723,7 +723,7 @@ impl Main {
                 self.focus = Focus::Session;
                 Vec::new()
             }
-            Some(Item::Watched(_)) => vec![Action::Say(Notice::info(
+            Some(Item::Recording(_)) => vec![Action::Say(Notice::info(
                 "Ren did not start this session, so it cannot write to it · n starts a run",
             ))],
             None => vec![Action::Say(Notice::info("n starts a run"))],
@@ -1175,13 +1175,13 @@ impl Main {
 
     /// The top bar: Ren, the gateway's traffic, and how many runs need you.
     fn top_bar(&self, look: &Look<'_>) -> crate::ui::Bar {
-        let traffic = look.model.sessions.traffic(look.now);
+        let traffic = look.model.recordings.traffic(look.now);
         let mut left = Line::new(vec![
             Span::new(" ren ", Ink::LiveTitle).with(crate::ui::Emphasis::Bold),
             Span::plain(format!(
                 "  {} session{} · {} streaming · {} waiting",
-                traffic.sessions,
-                if traffic.sessions == 1 { "" } else { "s" },
+                traffic.recordings,
+                if traffic.recordings == 1 { "" } else { "s" },
                 traffic.responding,
                 traffic.awaiting,
             )),
@@ -1209,9 +1209,9 @@ impl Main {
             left.push(Span::new(
                 format!(
                     "  {} {} {} tok",
-                    watched::SessionPane::short(*harness),
-                    watched::SessionPane::spark(bins, peak),
-                    watched::Kilo(total)
+                    recording::RecordingPane::short(*harness),
+                    recording::RecordingPane::spark(bins, peak),
+                    recording::Kilo(total)
                 ),
                 Ink::Client(Some(*harness)),
             ));

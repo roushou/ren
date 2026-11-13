@@ -1,6 +1,6 @@
 # Plan: sessions you work in
 
-Status: in progress, on `agent-runs`. Step 1 is under way. This file is
+Status: in progress, on `agent-runs`. Step 1a is done; 1b is next. This file is
 the plan of record: each step lands as its own commits, every commit
 passes the full checks, and any change to the plan is written under
 [Deviations](#deviations) with its reason. Once the work is done, what
@@ -131,4 +131,18 @@ and `ren --help` and `ren --version` output against the commit before.
 
 ## Deviations
 
-None yet.
+- **1a left local variables and plain struct fields named `session`**
+  where they hold a `RecordingId`, outside the terminal app (whose model
+  was renamed whole). Most such fields are serialized (views, queries,
+  API bodies) and keep their names by the rules; the rest are local to a
+  function and typed `RecordingId`, so the type says what they are. They
+  are renamed when that code is next changed.
+- **1a kept these serialized or client-owned names:** the operator's
+  session blocks (`BlockSession`, `SessionBlocked`, `blocked_sessions`:
+  control API and stored labels), MCP tool names (`SessionCalls`,
+  `SessionReport`), the `ren history sessions` command (`SessionsCmd`),
+  `HistorySubject::Session` (a stored label), the attribution hints of
+  the client's own session (`SessionHint`, `TurnWithoutSession`), and the
+  dev seed's `sessions` scenario (a `cargo xtask dev seed` value).
+- **1a kept the terminal app's `Focus::Session` and `IntoSession`**: they
+  name the detail pane, which shows the operator's sessions after step 5.

@@ -915,7 +915,7 @@ async fn pi_attribution_is_local_and_scoped_by_provider_and_client_source() {
     gateway.stop().await;
     let reader = Reader::open(data.path(), 1).await.unwrap();
     let sessions = reader
-        .sessions(
+        .recordings(
             PageLimit::new(10).unwrap(),
             ren_store::query::Shelf::Current,
         )

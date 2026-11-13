@@ -9,14 +9,15 @@
 
 pub(crate) mod call;
 pub(crate) mod desk;
-pub(crate) mod sessions;
+pub(crate) mod recordings;
 pub(crate) mod transcript;
 
 pub use call::CallEnd;
-pub use sessions::{Snapshot, SnapshotQuery};
+pub use recordings::{Snapshot, SnapshotQuery};
 
 use crate::Size;
 use desk::{Desk, Run};
+use recordings::Recordings;
 use ren_harness::{
     Harness,
     commands::ClientCommand,
@@ -34,7 +35,6 @@ use ren_store::view::{ConversationView, RunView};
 use ren_supervisor::{
     Client, ClientStatus, Delivery, FileMatch, Places, Project, RunSnapshot, RunState, RunUpdate,
 };
-use sessions::Sessions;
 use std::collections::HashMap;
 
 /// What was read, or what happened.
@@ -213,7 +213,7 @@ struct Starting {
 /// What was read, kept for every screen.
 #[derive(Debug)]
 pub(crate) struct Model {
-    pub sessions: Sessions,
+    pub recordings: Recordings,
     pub desk: Desk,
     pub projects: Projects,
     /// The clients as the daemon has them; empty until read.
@@ -238,7 +238,7 @@ pub(crate) struct Model {
 impl Model {
     pub fn new() -> Self {
         Self {
-            sessions: Sessions::default(),
+            recordings: Recordings::default(),
             desk: Desk::default(),
             projects: Projects::Unread,
             clients: Vec::new(),
@@ -255,7 +255,7 @@ impl Model {
 
     /// The reads for a snapshot at `now`.
     pub fn snapshot_query(now: ren_recorder::time::UnixMillis) -> SnapshotQuery {
-        Sessions::query(now)
+        Recordings::query(now)
     }
 
     pub fn projects(&self) -> &[Project] {
@@ -338,24 +338,24 @@ impl Model {
         let reads = |reads: Vec<Read>| reads.into_iter().map(Effect::Read).collect();
         match input {
             Input::Snapshot(snapshot) => {
-                self.sessions.take(snapshot);
+                self.recordings.take(snapshot);
                 Vec::new()
             }
             Input::Turn(activity) => {
-                self.sessions.take_turn(*activity);
+                self.recordings.take_turn(*activity);
                 Vec::new()
             }
             Input::Call(activity) => {
-                self.sessions.take_call(*activity);
+                self.recordings.take_call(*activity);
                 Vec::new()
             }
             Input::Progress(progress) => {
-                self.sessions.take_progress(progress);
+                self.recordings.take_progress(progress);
                 Vec::new()
             }
-            Input::Observation(observation) => reads(self.sessions.observe(&observation)),
+            Input::Observation(observation) => reads(self.recordings.observe(&observation)),
             Input::ReadFailed(why) => {
-                self.sessions.failed(why);
+                self.recordings.failed(why);
                 Vec::new()
             }
             Input::Runs(Ok(snapshots)) => {

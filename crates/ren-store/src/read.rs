@@ -3,13 +3,13 @@
 //! they answer with the same values: a response serializes to the API's
 //! JSON body.
 
-use crate::activity::report::SessionReport;
+use crate::activity::report::RecordingReport;
 use crate::activity::{ActivityBudget, CallActivity, TurnActivity, TurnSummary};
 use crate::query::{CallQuery, Cursor, PageLimit, Shelf, TimeRange};
 use crate::search::{ExposureQuery, ExposureView, SearchPage, SearchQuery};
-use crate::view::{CallDetail, CallPage, ConversationView, RunView, SessionView, UsageView};
+use crate::view::{CallDetail, CallPage, ConversationView, RecordingView, RunView, UsageView};
 use crate::{Reader, StoreError};
-use ren_recorder::id::{CallId, RunId, SessionId, TurnId};
+use ren_recorder::id::{CallId, RecordingId, RunId, TurnId};
 use serde::Serialize;
 
 /// A read of recorded history.
@@ -18,24 +18,24 @@ pub enum ReadRequest {
     /// Calls, newest first, narrowed by the query's filters.
     Calls(CallQuery),
     Call(CallId),
-    /// Sessions, most recently active first.
-    Sessions {
+    /// Recordings, most recently active first.
+    Recordings {
         limit: PageLimit,
         shelf: Shelf,
     },
-    /// A session's calls, oldest first, a page at a time.
-    SessionCalls {
-        session: SessionId,
+    /// A recording's calls, oldest first, a page at a time.
+    RecordingCalls {
+        recording: RecordingId,
         limit: PageLimit,
         after: Option<Cursor>,
     },
     Turns {
-        session: SessionId,
+        recording: RecordingId,
         limit: PageLimit,
     },
     Turn(TurnId),
     CallActivity(CallId),
-    Report(SessionId),
+    Report(RecordingId),
     Usage(TimeRange),
     Search(SearchQuery),
     Exposures(ExposureQuery),
@@ -56,15 +56,24 @@ pub enum ReadRequest {
 pub enum ReadResponse {
     Calls(CallPage),
     Call(Box<CallDetail>),
-    Sessions { sessions: Vec<SessionView> },
-    Turns { turns: Vec<TurnSummary> },
+    /// Serialized as the read API's `sessions`.
+    Recordings {
+        sessions: Vec<RecordingView>,
+    },
+    Turns {
+        turns: Vec<TurnSummary>,
+    },
     Turn(Box<TurnActivity>),
     CallActivity(Box<CallActivity>),
-    Report(Box<SessionReport>),
+    Report(Box<RecordingReport>),
     Usage(UsageView),
     Search(SearchPage),
-    Exposures { exposures: Vec<ExposureView> },
-    Runs { runs: Vec<RunView> },
+    Exposures {
+        exposures: Vec<ExposureView>,
+    },
+    Runs {
+        runs: Vec<RunView>,
+    },
     Run(Box<RunView>),
     Conversation(ConversationView),
 }
@@ -78,16 +87,16 @@ impl Reader {
         Ok(match request {
             ReadRequest::Calls(query) => ReadResponse::Calls(self.calls(query).await?),
             ReadRequest::Call(call) => ReadResponse::Call(Box::new(self.call(*call).await?)),
-            ReadRequest::Sessions { limit, shelf } => ReadResponse::Sessions {
-                sessions: self.sessions(*limit, *shelf).await?,
+            ReadRequest::Recordings { limit, shelf } => ReadResponse::Recordings {
+                sessions: self.recordings(*limit, *shelf).await?,
             },
-            ReadRequest::SessionCalls {
-                session,
+            ReadRequest::RecordingCalls {
+                recording,
                 limit,
                 after,
-            } => ReadResponse::Calls(self.session_calls(*session, *limit, *after).await?),
-            ReadRequest::Turns { session, limit } => ReadResponse::Turns {
-                turns: self.session_turns(*session, *limit).await?,
+            } => ReadResponse::Calls(self.recording_calls(*recording, *limit, *after).await?),
+            ReadRequest::Turns { recording, limit } => ReadResponse::Turns {
+                turns: self.recording_turns(*recording, *limit).await?,
             },
             ReadRequest::Turn(turn) => ReadResponse::Turn(Box::new(
                 self.turn_activity(*turn, ActivityBudget::DEFAULT).await?,
@@ -95,8 +104,8 @@ impl Reader {
             ReadRequest::CallActivity(call) => ReadResponse::CallActivity(Box::new(
                 self.call_activity(*call, ActivityBudget::DEFAULT).await?,
             )),
-            ReadRequest::Report(session) => {
-                ReadResponse::Report(Box::new(self.session_report(*session).await?))
+            ReadRequest::Report(recording) => {
+                ReadResponse::Report(Box::new(self.recording_report(*recording).await?))
             }
             ReadRequest::Usage(range) => ReadResponse::Usage(self.usage(*range).await?),
             ReadRequest::Search(query) => ReadResponse::Search(self.search(query).await?),

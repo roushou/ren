@@ -329,15 +329,15 @@ impl ToolCall {
             }
             ToolName::ListSessions => {
                 let args: PageArgs = Self::arguments(arguments)?;
-                ReadRequest::Sessions {
+                ReadRequest::Recordings {
                     limit: Field("limit").limit(args.limit, Self::DEFAULT_ROWS)?,
                     shelf: Shelf::Current,
                 }
             }
             ToolName::SessionCalls => {
                 let args: SessionArgs = Self::arguments(arguments)?;
-                ReadRequest::SessionCalls {
-                    session: Field("session_id").id(&args.session_id)?,
+                ReadRequest::RecordingCalls {
+                    recording: Field("session_id").id(&args.session_id)?,
                     limit: Field("limit").limit(args.limit, Self::MAX_ROWS)?,
                     after: Field("after").cursor(args.after)?,
                 }
@@ -349,7 +349,7 @@ impl ToolCall {
             ToolName::ListTurns => {
                 let args: TurnsArgs = Self::arguments(arguments)?;
                 ReadRequest::Turns {
-                    session: Field("session_id").id(&args.session_id)?,
+                    recording: Field("session_id").id(&args.session_id)?,
                     limit: Field("limit").limit(args.limit, Self::DEFAULT_ROWS)?,
                 }
             }

@@ -58,13 +58,13 @@ impl HistoryApi {
         Router::new()
             .route(
                 "/control/v1/history/sessions/{session}/{change}",
-                post(Self::session),
+                post(Self::recording),
             )
             .route("/control/v1/history/runs/{run}/{change}", post(Self::run))
             .with_state(Arc::new(self))
     }
 
-    async fn session(
+    async fn recording(
         State(api): State<Arc<Self>>,
         Path((session, change)): Path<(String, String)>,
         headers: HeaderMap,

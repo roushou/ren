@@ -2,7 +2,7 @@ use super::*;
 use ren_harness::Harness;
 use ren_protocol::route::Provider;
 use ren_recorder::caller::UserId;
-use ren_recorder::id::{CallId, RunId, SessionId, TurnId};
+use ren_recorder::id::{CallId, RecordingId, RunId, TurnId};
 use ren_recorder::time::UnixMillis;
 use ren_store::query::{
     CallFilter, KindFilter, PageLimit, SearchText, Shelf, StatusFilter, ToolFilter,
@@ -12,7 +12,7 @@ use uuid::Uuid;
 
 fn every_read() -> Vec<ReadRequest> {
     let call = CallId::restore(Uuid::from_u128(1));
-    let session = SessionId::restore(Uuid::from_u128(2));
+    let session = RecordingId::restore(Uuid::from_u128(2));
     let turn = TurnId::restore(Uuid::from_u128(3));
     let limit = PageLimit::new(7).unwrap();
     let time = TimeRange::new(
@@ -42,20 +42,23 @@ fn every_read() -> Vec<ReadRequest> {
         ReadRequest::Calls(filtered),
         ReadRequest::Call(call),
         ReadRequest::CallActivity(call),
-        ReadRequest::Sessions {
+        ReadRequest::Recordings {
             limit,
             shelf: Shelf::Current,
         },
-        ReadRequest::Sessions {
+        ReadRequest::Recordings {
             limit,
             shelf: Shelf::Archived,
         },
-        ReadRequest::SessionCalls {
-            session,
+        ReadRequest::RecordingCalls {
+            recording: session,
             limit,
             after: None,
         },
-        ReadRequest::Turns { session, limit },
+        ReadRequest::Turns {
+            recording: session,
+            limit,
+        },
         ReadRequest::Report(session),
         ReadRequest::Turn(turn),
         ReadRequest::Runs {

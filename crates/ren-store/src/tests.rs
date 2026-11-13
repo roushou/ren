@@ -319,7 +319,7 @@ async fn a_recorded_call_reads_back_with_its_log_bodies_and_inspection() {
     assert!(prefix.truncated && !prefix.gap);
     let sessions = fixture
         .reader
-        .sessions(PageLimit::DEFAULT, crate::query::Shelf::Current)
+        .recordings(PageLimit::DEFAULT, crate::query::Shelf::Current)
         .await
         .unwrap();
     assert_eq!(
@@ -332,7 +332,7 @@ async fn a_recorded_call_reads_back_with_its_log_bodies_and_inspection() {
     );
     let timeline = fixture
         .reader
-        .session_calls(sessions[0].id, PageLimit::DEFAULT, None)
+        .recording_calls(sessions[0].id, PageLimit::DEFAULT, None)
         .await
         .unwrap();
     assert_eq!(timeline.calls[0].id, call);
@@ -600,7 +600,7 @@ async fn retention_removes_oldest_calls_and_sweeps_only_unreferenced_chunks() {
     assert!(
         fixture
             .reader
-            .sessions(PageLimit::DEFAULT, crate::query::Shelf::Current)
+            .recordings(PageLimit::DEFAULT, crate::query::Shelf::Current)
             .await
             .unwrap()
             .is_empty()
@@ -1013,7 +1013,7 @@ async fn sessions_total_their_errors_and_tokens_including_cached_input() {
         .await;
     let sessions = fixture
         .reader
-        .sessions(PageLimit::DEFAULT, crate::query::Shelf::Current)
+        .recordings(PageLimit::DEFAULT, crate::query::Shelf::Current)
         .await
         .unwrap();
     let totals: Vec<_> = sessions
@@ -1344,7 +1344,7 @@ mod digests {
             let reader = reader.clone();
             async move {
                 reader
-                    .sessions(PageLimit::DEFAULT, crate::query::Shelf::Current)
+                    .recordings(PageLimit::DEFAULT, crate::query::Shelf::Current)
                     .await
                     .unwrap()[0]
                     .error_count
@@ -1535,7 +1535,7 @@ mod digests {
             .unwrap();
         let listed = fixture
             .reader
-            .session_turns(session, PageLimit::new(10).unwrap())
+            .recording_turns(session, PageLimit::new(10).unwrap())
             .await
             .unwrap();
         // Not derived yet: no prompt is claimed.
@@ -1552,7 +1552,7 @@ mod digests {
             .await;
         let listed = fixture
             .reader
-            .session_turns(session, PageLimit::new(10).unwrap())
+            .recording_turns(session, PageLimit::new(10).unwrap())
             .await
             .unwrap();
         let prompt = listed[0].prompt.as_ref().unwrap();
@@ -1570,7 +1570,7 @@ mod history {
     use ren_recorder::{
         batch::{Actor, Batch, HistoryChange, HistoryEdit, HistorySubject, Op, RunFact, RunRecord},
         capture::RunEnd,
-        id::{RunId, SessionId},
+        id::{RecordingId, RunId},
         time::Clock,
     };
     use std::time::Duration;
@@ -1589,9 +1589,9 @@ mod history {
             self.clock.advance(Duration::from_millis(10));
         }
 
-        async fn shelf(&self, shelf: Shelf) -> Vec<SessionId> {
+        async fn shelf(&self, shelf: Shelf) -> Vec<RecordingId> {
             self.reader
-                .sessions(PageLimit::DEFAULT, shelf)
+                .recordings(PageLimit::DEFAULT, shelf)
                 .await
                 .unwrap()
                 .iter()
@@ -1666,7 +1666,7 @@ mod history {
         assert_eq!(fixture.shelf(Shelf::Archived).await, [archived]);
         let listed = fixture
             .reader
-            .sessions(PageLimit::DEFAULT, Shelf::Archived)
+            .recordings(PageLimit::DEFAULT, Shelf::Archived)
             .await
             .unwrap();
         assert!(listed[0].archived_at.is_some());

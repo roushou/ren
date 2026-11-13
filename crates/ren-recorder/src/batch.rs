@@ -12,7 +12,7 @@ use crate::caller::Caller;
 use crate::digest::CallDigest;
 use crate::{
     capture::{BodyEnding, CallRejection, ChannelEnd, ProcessExit, RunEnd, TerminalRecord},
-    id::{AttemptId, CallId, ChannelId, RunId, SessionId},
+    id::{AttemptId, CallId, ChannelId, RecordingId, RunId},
     routing::{ConfigRevision, OperatorRevision, UpstreamId},
     time::{Moment, UnixMillis},
 };
@@ -255,7 +255,7 @@ pub struct HistoryEdit {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case", tag = "kind", content = "id")]
 pub enum HistorySubject {
-    Session(SessionId),
+    Session(RecordingId),
     Run(RunId),
 }
 

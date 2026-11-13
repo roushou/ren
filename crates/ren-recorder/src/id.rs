@@ -116,7 +116,7 @@ identity!(
 );
 identity!(
     /// Ren's grouping of calls that a client attributed to one session.
-    SessionId as "session"
+    RecordingId as "session"
 );
 identity!(
     /// Ren's grouping of calls that a client attributed to one turn of a session.

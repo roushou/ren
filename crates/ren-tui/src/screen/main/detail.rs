@@ -4,7 +4,7 @@
 //! watched is shown as it is read from its calls.
 
 use super::list::{Item, Listing};
-use super::watched::{Elapsed, Kilo, SessionPane};
+use super::recording::{Elapsed, Kilo, RecordingPane};
 use super::{Focus, Main, Mode, Tab};
 use crate::conversation::{Block, Conversation, Density};
 use crate::model::desk::{Attention, Run};
@@ -13,7 +13,7 @@ use crate::screen::Look;
 use crate::screen::offer::{Asks, Offering};
 use crate::ui::{Anchor, Bar, Ink, Keep, Line, Lines, Rule, Size, Span, Text, View};
 use ren_harness::drive::ApprovalAsk;
-use ren_recorder::id::SessionId;
+use ren_recorder::id::RecordingId;
 use ren_recorder::time::UnixMillis;
 use ren_store::activity::report::CallMetrics;
 
@@ -276,14 +276,14 @@ impl Main {
                     lit,
                 )
             }
-            Item::Watched(session) => {
+            Item::Recording(session) => {
                 let (_, name, _, _) = Listing::describe(model, item, now);
                 let pane = Self::pane(model, session, now);
-                let lit = pane.as_ref().and_then(SessionPane::lit);
+                let lit = pane.as_ref().and_then(RecordingPane::lit);
                 let right = pane
                     .as_ref()
                     .and_then(|pane| pane.facts.as_ref())
-                    .map_or_else(String::new, SessionPane::facts_text);
+                    .map_or_else(String::new, RecordingPane::facts_text);
                 (
                     Line::from(Span::plain(format!(" {name} · watched"))),
                     Line::from(Span::plain(format!("{right} "))),
@@ -293,13 +293,13 @@ impl Main {
         }
     }
 
-    fn pane(model: &Model, session: SessionId, now: UnixMillis) -> Option<SessionPane> {
+    fn pane(model: &Model, session: RecordingId, now: UnixMillis) -> Option<RecordingPane> {
         model
-            .sessions
-            .sessions()
+            .recordings
+            .recordings()
             .iter()
             .find(|view| view.id == session)
-            .map(|view| SessionPane::of(model, view, now))
+            .map(|view| RecordingPane::of(model, view, now))
     }
 
     /// A run's turns, oldest first, from its whole conversation: each
@@ -341,7 +341,7 @@ impl Main {
     fn conversation(&self, model: &Model, item: Item, width: usize, now: UnixMillis) -> Vec<Line> {
         let run = match item {
             Item::Run(id) => model.desk.get(id),
-            Item::Watched(session) => {
+            Item::Recording(session) => {
                 return Self::pane(model, session, now).map_or_else(Vec::new, |pane| {
                     let mut lines = pane.conversation().lines(width, Density::Page);
                     lines.push(Line::default());
@@ -397,7 +397,7 @@ impl Main {
                     .map(|turn| (turn.prompt, turn.blocks))
                     .collect()
             }),
-            Item::Watched(session) => Self::pane(model, session, now)
+            Item::Recording(session) => Self::pane(model, session, now)
                 .map_or_else(Vec::new, |pane| {
                     vec![(String::new(), pane.conversation().blocks)]
                 }),
@@ -440,11 +440,11 @@ impl Main {
                     .map(|turn| turn.files)
                     .collect()
             }),
-            Item::Watched(session) => {
-                let calls = model.sessions.session_calls(session);
-                crate::model::sessions::Sessions::recent_turns(&calls)
+            Item::Recording(session) => {
+                let calls = model.recordings.recording_calls(session);
+                crate::model::recordings::Recordings::recent_turns(&calls)
                     .into_iter()
-                    .filter_map(|turn| model.sessions.turn(turn))
+                    .filter_map(|turn| model.recordings.turn(turn))
                     .map(|turn| Files {
                         written: turn.files_written.clone(),
                         read: turn.files_read.clone(),
@@ -490,7 +490,7 @@ impl Main {
     /// The session's model calls through the gateway, newest last.
     fn calls(&self, model: &Model, item: Item) -> Vec<Line> {
         let session = match item {
-            Item::Watched(session) => Some(session),
+            Item::Recording(session) => Some(session),
             Item::Run(id) => model
                 .desk
                 .get(id)
@@ -500,7 +500,7 @@ impl Main {
         let Some(session) = session else {
             return vec![Line::of("no calls recorded yet", Ink::Muted)];
         };
-        let calls = model.sessions.session_calls(session);
+        let calls = model.recordings.recording_calls(session);
         if calls.is_empty() {
             return vec![Line::of("no calls in the last few minutes", Ink::Muted)];
         }

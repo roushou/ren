@@ -8,12 +8,12 @@ use ren_protocol::label::{Labeled, Stored};
 use ren_recorder::Observation;
 use ren_recorder::batch::ObservationKind;
 use ren_recorder::capture::CallState;
-use ren_recorder::id::{CallId, SessionId, TurnId};
+use ren_recorder::id::{CallId, RecordingId, TurnId};
 use ren_recorder::progress::Progress;
 use ren_recorder::time::UnixMillis;
 use ren_store::activity::{CallActivity, TurnActivity};
 use ren_store::query::{CallFilter, CallQuery, KindFilter, PageLimit, StatusFilter, TimeRange};
-use ren_store::view::{CallPage, CallView, SessionView};
+use ren_store::view::{CallPage, CallView, RecordingView};
 use std::collections::HashMap;
 use std::time::Duration;
 
@@ -24,7 +24,7 @@ use super::Read;
 pub struct Snapshot {
     /// When the reads were made.
     pub read_at: UnixMillis,
-    pub sessions: Vec<SessionView>,
+    pub recordings: Vec<RecordingView>,
     /// Model calls still open.
     pub open: CallPage,
     /// Model calls started in the window, newest first.
@@ -34,7 +34,7 @@ pub struct Snapshot {
 /// The reads that make a [`Snapshot`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SnapshotQuery {
-    pub sessions: PageLimit,
+    pub recordings: PageLimit,
     pub open: CallQuery,
     pub recent: CallQuery,
 }
@@ -49,8 +49,8 @@ pub struct Spark {
 /// The traffic, in a few numbers, for the top bar.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Traffic {
-    /// Sessions active in the window.
-    pub sessions: usize,
+    /// Recordings active in the window.
+    pub recordings: usize,
     /// Calls with a response streaming, and calls waiting for its head.
     pub responding: usize,
     pub awaiting: usize,
@@ -61,9 +61,9 @@ pub struct Traffic {
     pub failure: Option<String>,
 }
 
-/// Sessions and calls as read.
+/// Recordings and calls as read.
 #[derive(Debug, Default)]
-pub(crate) struct Sessions {
+pub(crate) struct Recordings {
     snapshot: Option<Held>,
     turns: HashMap<TurnId, HeldTurn>,
     /// Call activity for sessions whose client sends no turns.
@@ -90,8 +90,8 @@ struct HeldTurn {
     activity: TurnActivity,
 }
 
-impl Sessions {
-    /// Sessions seen this recently are active.
+impl Recordings {
+    /// Recordings seen this recently are active.
     pub const WINDOW: Duration = Duration::from_secs(5 * 60);
     /// How far back the status line's output reaches, and in how many bins.
     pub const OUTPUT_SPAN: Duration = Duration::from_secs(4 * 60);
@@ -107,7 +107,7 @@ impl Sessions {
         let from =
             UnixMillis::from_millis(now.as_millis().saturating_sub(Self::millis(Self::WINDOW)));
         SnapshotQuery {
-            sessions: PageLimit::DEFAULT,
+            recordings: PageLimit::DEFAULT,
             open: CallQuery {
                 filter: CallFilter {
                     status: Some(StatusFilter::Active),
@@ -137,10 +137,10 @@ impl Sessions {
         self.snapshot.as_ref().map(|held| held.snapshot.read_at)
     }
 
-    pub fn sessions(&self) -> &[SessionView] {
+    pub fn recordings(&self) -> &[RecordingView] {
         self.snapshot
             .as_ref()
-            .map_or(&[], |held| held.snapshot.sessions.as_slice())
+            .map_or(&[], |held| held.snapshot.recordings.as_slice())
     }
 
     /// Open and recent calls, oldest first.
@@ -149,7 +149,7 @@ impl Sessions {
     }
 
     /// A session's calls, oldest first.
-    pub fn session_calls(&self, session: SessionId) -> Vec<&CallView> {
+    pub fn recording_calls(&self, session: RecordingId) -> Vec<&CallView> {
         self.calls()
             .iter()
             .filter(|call| call.session == Some(session))
@@ -168,22 +168,22 @@ impl Sessions {
         &self.progress
     }
 
-    /// Sessions active in the window, or with a call open, or that a live
+    /// Recordings active in the window, or with a call open, or that a live
     /// run drives (by its thread): open ones first, then the most recently
     /// seen.
-    pub fn active(&self, threads: &[String]) -> Vec<&SessionView> {
+    pub fn active(&self, threads: &[String]) -> Vec<&RecordingView> {
         let Some(now) = self.read_at() else {
             return Vec::new();
         };
         let calls = self.calls();
-        let open = |session: &SessionView| {
+        let open = |session: &RecordingView| {
             calls.iter().any(|call| {
                 call.session == Some(session.id) && call.state.known() == Some(CallState::Open)
             })
         };
         let window = Self::millis(Self::WINDOW);
-        let mut active: Vec<(&SessionView, bool)> = self
-            .sessions()
+        let mut active: Vec<(&RecordingView, bool)> = self
+            .recordings()
             .iter()
             .map(|session| (session, open(session)))
             .filter(|(session, open)| {
@@ -212,7 +212,7 @@ impl Sessions {
             .filter(|call| call.state.known() == Some(CallState::Open));
         let responding = open.clone().filter(|call| call.status.is_some()).count();
         Traffic {
-            sessions: self.active(&[]).len(),
+            recordings: self.active(&[]).len(),
             responding,
             awaiting: open.count() - responding,
             output: self.output(now),
@@ -223,10 +223,10 @@ impl Sessions {
     /// What to read to show `session`: its newest two turns where they
     /// changed since they were read or are still being derived, or, for a
     /// client that sends no turns, its newest finished calls.
-    pub fn reads_for(&self, session: SessionId) -> Vec<Read> {
+    pub fn reads_for(&self, session: RecordingId) -> Vec<Read> {
         /// How many of a turnless session's newest calls are read.
         const TURNLESS_CALLS: usize = 4;
-        let calls = self.session_calls(session);
+        let calls = self.recording_calls(session);
         let turns = Self::recent_turns(&calls);
         let mut reads = Vec::new();
         if turns.is_empty() {

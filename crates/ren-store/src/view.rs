@@ -29,7 +29,7 @@ use ren_recorder::{
         AttemptPhase, AttemptTerminal, BodyEnding, CallRejection, CallState, ChannelEnd,
         ProcessExit, RunEnd, TerminalCause,
     },
-    id::{AttemptId, CallId, ChannelId, RunId, SessionId, TurnId},
+    id::{AttemptId, CallId, ChannelId, RecordingId, RunId, TurnId},
     time::UnixMillis,
 };
 use serde::{Deserialize, Serialize};
@@ -199,7 +199,7 @@ pub struct CallView {
     pub endpoint: Stored<Endpoint>,
     pub method: Stored<Method>,
     pub config_revision: String,
-    pub session: Option<SessionId>,
+    pub session: Option<RecordingId>,
     pub turn: Option<TurnId>,
     pub attribution: AttributionView,
     /// Who made the call; absent for calls recorded before callers were.
@@ -414,8 +414,8 @@ pub struct CallPage {
 
 /// A group of calls a client attributed to one session.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SessionView {
-    pub id: SessionId,
+pub struct RecordingView {
+    pub id: RecordingId,
     pub provider: Stored<Provider>,
     pub source: Stored<HintSource>,
     pub native_id: String,
@@ -513,7 +513,7 @@ pub struct UserUsage {
     pub usage: UsageCounts,
 }
 
-impl SessionView {
+impl RecordingView {
     pub(super) fn from_row(row: &SqliteRow) -> Result<Self, StoreError> {
         let row = Columns(row);
         Ok(Self {
@@ -607,7 +607,7 @@ pub struct RunView {
     pub thread: Option<String>,
     /// The session whose calls name the run's thread as their session: the
     /// run's model traffic, once a call was recorded.
-    pub session: Option<SessionId>,
+    pub session: Option<RecordingId>,
     pub ended_at: Option<UnixMillis>,
     /// How the run ended; `None` while it runs.
     pub end: Option<Stored<RunEnd>>,
@@ -723,7 +723,7 @@ pub struct StorageView {
 
 #[cfg(test)]
 mod tests {
-    use super::{CallPage, SessionView};
+    use super::{CallPage, RecordingView};
     use serde_json::{Value, json};
 
     /// What the read API sends for a call listing, every optional field
@@ -802,7 +802,7 @@ mod tests {
             "error_count": 1,
             "tokens": { "input": 10, "output": null, "cache_read": 5 }
         });
-        let session: SessionView = serde_json::from_value(sent.clone()).unwrap();
+        let session: RecordingView = serde_json::from_value(sent.clone()).unwrap();
         assert_eq!(session.source.known(), None);
         assert_eq!(serde_json::to_value(&session).unwrap(), sent);
     }

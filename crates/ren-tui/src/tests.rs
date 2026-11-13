@@ -9,7 +9,7 @@ use ren_harness::Harness;
 use ren_protocol::native::NativeThreadId;
 use ren_recorder::id::RunId;
 use ren_recorder::time::UnixMillis;
-use ren_store::view::{CallPage, SessionView};
+use ren_store::view::{CallPage, RecordingView};
 use ren_supervisor::{RunSnapshot, RunState};
 use serde_json::json;
 
@@ -33,7 +33,7 @@ fn idle_run() -> RunSnapshot {
 /// A snapshot with one session seen just now, from a client Ren did not
 /// start.
 fn watched() -> Input {
-    let session: SessionView = serde_json::from_value(json!({
+    let session: RecordingView = serde_json::from_value(json!({
         "id": "00000000-0000-0000-0000-0000000000a1", "provider": "anthropic",
         "source": "claude_code_headers", "native_id": "native-a1",
         "first_seen": 1_000, "last_seen": 1_000, "call_count": 1, "turn_count": 0,
@@ -43,7 +43,7 @@ fn watched() -> Input {
     .unwrap();
     Input::Snapshot(Snapshot {
         read_at: UnixMillis::from_millis(1_000),
-        sessions: vec![session],
+        recordings: vec![session],
         open: CallPage {
             calls: Vec::new(),
             next: None,
@@ -67,15 +67,15 @@ fn drawn(tui: &Tui, size: Size, theme: &Theme) -> Buffer {
 fn runs_come_first_and_the_selection_follows_the_top_until_chosen() {
     let mut tui = Tui::new(SIZE);
     let _ = tui.apply(watched());
-    assert!(matches!(tui.selected(), Some(Item::Watched(_))));
+    assert!(matches!(tui.selected(), Some(Item::Recording(_))));
     // Until it is chosen, the selection follows the top: the run.
     let _ = tui.apply(Input::Runs(Ok(vec![idle_run()])));
     assert_eq!(tui.shown_run(), Some(idle_run().run));
     let _ = tui.press(Key::Char('j'));
-    assert!(matches!(tui.selected(), Some(Item::Watched(_))));
+    assert!(matches!(tui.selected(), Some(Item::Recording(_))));
     // Chosen, it stays.
     let _ = tui.apply(Input::Runs(Ok(vec![idle_run()])));
-    assert!(matches!(tui.selected(), Some(Item::Watched(_))));
+    assert!(matches!(tui.selected(), Some(Item::Recording(_))));
     // A watched session takes no writing.
     let _ = tui.press(Key::Char('i'));
     assert_eq!(tui.mode(), crate::screen::main::Mode::Normal);

@@ -6,7 +6,7 @@ use ren_harness::Harness;
 use ren_protocol::label::Stored;
 use ren_recorder::secrets::SecretKind;
 use ren_recorder::{
-    id::{CallId, SessionId, TurnId},
+    id::{CallId, RecordingId, TurnId},
     time::UnixMillis,
 };
 use serde::Serialize;
@@ -79,7 +79,7 @@ impl fmt::Display for SearchTerms {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SearchQuery {
     pub terms: SearchTerms,
-    pub session: Option<SessionId>,
+    pub session: Option<RecordingId>,
     pub client: Option<Harness>,
     pub field: Option<SearchField>,
     pub time: TimeRange,
@@ -89,7 +89,7 @@ pub struct SearchQuery {
 /// Which exposures to list.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExposureQuery {
-    pub session: Option<SessionId>,
+    pub session: Option<RecordingId>,
     pub time: TimeRange,
     pub limit: PageLimit,
 }
@@ -98,7 +98,7 @@ pub struct ExposureQuery {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ExposureView {
     pub call: CallId,
-    pub session: Option<SessionId>,
+    pub session: Option<RecordingId>,
     pub turn: Option<TurnId>,
     pub client: Option<Stored<Harness>>,
     pub started_at: UnixMillis,
@@ -113,7 +113,7 @@ pub struct ExposureView {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct SearchHit {
     pub call: CallId,
-    pub session: Option<SessionId>,
+    pub session: Option<RecordingId>,
     pub turn: Option<TurnId>,
     pub client: Option<Stored<Harness>>,
     pub started_at: UnixMillis,

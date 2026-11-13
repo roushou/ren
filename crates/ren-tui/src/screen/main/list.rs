@@ -5,13 +5,13 @@
 //! Ren does not know, follow. By state: runs that need you, working, your
 //! turn, then sessions watched, then the newest runs that ended.
 
-use super::watched::SessionPane;
+use super::recording::RecordingPane;
 use crate::model::Model;
 use crate::model::desk::{Attention, Run};
 use crate::ui::{Ink, Line, Span, Text, Tone};
 use ren_harness::attribution::HintSource;
 use ren_protocol::label::Labeled;
-use ren_recorder::id::{RunId, SessionId};
+use ren_recorder::id::{RecordingId, RunId};
 use ren_recorder::time::UnixMillis;
 
 /// One entry of the list.
@@ -20,7 +20,7 @@ pub(crate) enum Item {
     /// A run Ren drives, live or ended.
     Run(RunId),
     /// A session started outside Ren, watched.
-    Watched(SessionId),
+    Recording(RecordingId),
 }
 
 /// A group of the list.
@@ -59,7 +59,7 @@ pub(crate) enum Heading {
     State(Group),
     /// A folder runs work in, by its path.
     Folder(String),
-    /// Sessions started outside Ren: their folder is not known.
+    /// Recordings started outside Ren: their folder is not known.
     Elsewhere,
 }
 
@@ -134,7 +134,7 @@ impl Listing {
         }
         let threads = model.desk.threads();
         let watched: Vec<Item> = model
-            .sessions
+            .recordings
             .active(&threads)
             .into_iter()
             // A session a run drives is listed as the run.
@@ -145,7 +145,7 @@ impl Listing {
                     &Self::client(session.source.known()),
                 ])
             })
-            .map(|session| Item::Watched(session.id))
+            .map(|session| Item::Recording(session.id))
             .collect();
         let mut rows: Vec<(Heading, Item)> = match by {
             Grouping::State => {
@@ -364,12 +364,16 @@ impl Listing {
                 };
                 (mark, name, doing, tone)
             }
-            Item::Watched(id) => {
-                let session = model.sessions.sessions().iter().find(|view| view.id == id);
+            Item::Recording(id) => {
+                let session = model
+                    .recordings
+                    .recordings()
+                    .iter()
+                    .find(|view| view.id == id);
                 let Some(session) = session else {
                     return ('·', "session".to_owned(), String::new(), Tone::Neutral);
                 };
-                let pane = SessionPane::of(model, session, now);
+                let pane = RecordingPane::of(model, session, now);
                 let short: String = id.to_string().chars().take(6).collect();
                 let name = format!("{} {short}", Self::client(session.source.known()));
                 let state = pane.state_line(now).text();

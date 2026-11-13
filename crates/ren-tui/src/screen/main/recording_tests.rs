@@ -3,19 +3,19 @@
 //! selecting the first session.
 
 use super::list::{Grouping, Item, Listing};
-use super::watched::{Phase, SessionPane, Tally};
+use super::recording::{Phase, RecordingPane, Tally};
 use crate::conversation::{Block, ResultMark};
-use crate::model::sessions::{Sessions, Spark};
+use crate::model::recordings::{Recordings, Spark};
 use crate::model::{CallEnd, Input, Read, Snapshot};
 use crate::ui::Tone;
 use crate::{Out, Size, Tui};
 use ren_harness::Harness;
 use ren_recorder::Observation;
 use ren_recorder::capture::CallState;
-use ren_recorder::id::{CallId, SessionId, TurnId};
+use ren_recorder::id::{CallId, RecordingId, TurnId};
 use ren_recorder::progress::Progress;
 use ren_recorder::time::UnixMillis;
-use ren_store::view::{CallPage, CallView, SessionView};
+use ren_store::view::{CallPage, CallView, RecordingView};
 use serde_json::{Value, json};
 
 /// The app, as these tests read it.
@@ -26,13 +26,13 @@ struct Wall {
 /// What the tests read of the watched sessions.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Frame {
-    panes: Vec<SessionPane>,
+    panes: Vec<RecordingPane>,
     status: Status,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Status {
-    sessions: usize,
+    recordings: usize,
     responding: usize,
     awaiting: usize,
     output: Vec<Spark>,
@@ -40,7 +40,7 @@ struct Status {
 }
 
 impl Wall {
-    const OUTPUT_BINS: usize = Sessions::OUTPUT_BINS;
+    const OUTPUT_BINS: usize = Recordings::OUTPUT_BINS;
 
     fn new(size: Size) -> Self {
         let mut tui = Tui::new(size);
@@ -63,24 +63,24 @@ impl Wall {
     /// The watched sessions, in the list's order, at `now`.
     fn frame(&self, now: UnixMillis) -> Frame {
         let model = &self.tui.model;
-        let panes: Vec<SessionPane> = Listing::of(model, "", Grouping::Folder)
+        let panes: Vec<RecordingPane> = Listing::of(model, "", Grouping::Folder)
             .items()
             .into_iter()
             .filter_map(|item| match item {
-                Item::Watched(session) => model
-                    .sessions
-                    .sessions()
+                Item::Recording(session) => model
+                    .recordings
+                    .recordings()
                     .iter()
                     .find(|view| view.id == session)
-                    .map(|view| SessionPane::of(model, view, now)),
+                    .map(|view| RecordingPane::of(model, view, now)),
                 Item::Run(_) => None,
             })
             .collect();
-        let traffic = model.sessions.traffic(now);
+        let traffic = model.recordings.traffic(now);
         Frame {
             panes,
             status: Status {
-                sessions: traffic.sessions,
+                recordings: traffic.recordings,
                 responding: traffic.responding,
                 awaiting: traffic.awaiting,
                 output: traffic.output,
@@ -102,7 +102,7 @@ fn uuid(n: u128) -> String {
     uuid::Uuid::from_u128((n << 96) | n).to_string()
 }
 
-fn session_id(n: u128) -> SessionId {
+fn session_id(n: u128) -> RecordingId {
     uuid(n).parse().unwrap()
 }
 
@@ -115,7 +115,7 @@ fn call_id(n: u128) -> CallId {
 }
 
 /// A session, `source` naming its client, last seen at `seconds`.
-fn session(n: u128, source: &str, seconds: u64) -> SessionView {
+fn session(n: u128, source: &str, seconds: u64) -> RecordingView {
     serde_json::from_value(json!({
         "id": uuid(n),
         "provider": if source.starts_with("codex") { "openai" } else { "anthropic" },
@@ -183,13 +183,13 @@ fn page(calls: Vec<CallView>) -> CallPage {
     CallPage { calls, next: None }
 }
 
-fn snapshot(seconds: u64, sessions: Vec<SessionView>, calls: Vec<CallView>) -> Input {
+fn snapshot(seconds: u64, recordings: Vec<RecordingView>, calls: Vec<CallView>) -> Input {
     let (open, recent): (Vec<_>, Vec<_>) = calls
         .into_iter()
         .partition(|call| call.state.known() == Some(CallState::Open));
     Input::Snapshot(Snapshot {
         read_at: at(seconds),
-        sessions,
+        recordings,
         open: page(open),
         recent: page(recent),
     })
@@ -203,7 +203,7 @@ fn tui() -> Wall {
     })
 }
 
-fn pane(wall: &Frame, index: usize) -> &SessionPane {
+fn pane(wall: &Frame, index: usize) -> &RecordingPane {
     &wall.panes[index]
 }
 
@@ -264,23 +264,23 @@ fn turn(t: u128, s: u128, commands: &[&str], calls: Vec<Value>) -> Input {
 #[test]
 fn sessions_with_open_calls_come_first_then_the_most_recently_seen() {
     let mut tui = tui();
-    let sessions = vec![
+    let recordings = vec![
         session(1, "claude_code_headers", 100),
         session(2, "codex_headers", 200),
         session(3, "pi_extension_headers", 50),
         session(4, "opencode_headers", 300),
     ];
     let calls = vec![open(31, 3, None, 40, true)];
-    let _ = tui.apply(snapshot(300, sessions.clone(), calls));
+    let _ = tui.apply(snapshot(300, recordings.clone(), calls));
     let wall = tui.frame(at(300));
-    let shown: Vec<SessionId> = (0..wall.panes.len())
+    let shown: Vec<RecordingId> = (0..wall.panes.len())
         .map(|index| pane(&wall, index).session)
         .collect();
     assert_eq!(
         shown,
         [session_id(3), session_id(4), session_id(2), session_id(1)]
     );
-    assert_eq!(wall.status.sessions, 4);
+    assert_eq!(wall.status.recordings, 4);
 
     // Session 3's call ends, long ago: it leaves the list.
     assert_eq!(
@@ -289,11 +289,11 @@ fn sessions_with_open_calls_come_first_then_the_most_recently_seen() {
     );
     let _ = tui.apply(snapshot(
         400,
-        sessions,
+        recordings,
         vec![call(31, 3, None, 40, 41, json!({}))],
     ));
     let wall = tui.frame(at(400));
-    let shown: Vec<SessionId> = (0..wall.panes.len())
+    let shown: Vec<RecordingId> = (0..wall.panes.len())
         .map(|index| pane(&wall, index).session)
         .collect();
     assert_eq!(shown, [session_id(4), session_id(2), session_id(1)]);
@@ -443,7 +443,7 @@ fn only_how_the_newest_call_went_is_an_alert() {
 #[test]
 fn a_turn_is_read_once_and_again_only_when_it_changes() {
     let mut tui = tui();
-    let sessions = vec![session(1, "claude_code_headers", 100)];
+    let recordings = vec![session(1, "claude_code_headers", 100)];
     let first = vec![call(
         11,
         1,
@@ -453,7 +453,7 @@ fn a_turn_is_read_once_and_again_only_when_it_changes() {
         json!({ "tool_names": ["Read"] }),
     )];
     assert_eq!(
-        tui.apply(snapshot(100, sessions.clone(), first.clone())),
+        tui.apply(snapshot(100, recordings.clone(), first.clone())),
         [Read::Turn(turn_id(5))]
     );
     let _ = tui.apply(turn(
@@ -463,7 +463,7 @@ fn a_turn_is_read_once_and_again_only_when_it_changes() {
         vec![activity_call(11, Some("Looking."), vec![], &[])],
     ));
     assert_eq!(
-        tui.apply(snapshot(102, sessions.clone(), first.clone())),
+        tui.apply(snapshot(102, recordings.clone(), first.clone())),
         []
     );
 
@@ -471,7 +471,7 @@ fn a_turn_is_read_once_and_again_only_when_it_changes() {
     let mut second = first;
     second.push(open(12, 1, Some(5), 30, true));
     assert_eq!(
-        tui.apply(snapshot(104, sessions.clone(), second.clone())),
+        tui.apply(snapshot(104, recordings.clone(), second.clone())),
         [Read::Turn(turn_id(5))]
     );
     // Read while the new call's text is still being derived: read again.
@@ -485,7 +485,7 @@ fn a_turn_is_read_once_and_again_only_when_it_changes() {
         ],
     ));
     assert_eq!(
-        tui.apply(snapshot(106, sessions, second)),
+        tui.apply(snapshot(106, recordings, second)),
         [Read::Turn(turn_id(5))]
     );
 }
@@ -673,12 +673,12 @@ fn a_tool_call_no_later_request_answered_is_missing() {
 #[test]
 fn progress_streams_into_the_pane_until_its_call_ends() {
     let mut tui = tui();
-    let sessions = vec![session(1, "opencode_headers", 100)];
+    let recordings = vec![session(1, "opencode_headers", 100)];
     // OpenCode sends no turn: the pane has no lines and asks for no turn.
     assert_eq!(
         tui.apply(snapshot(
             100,
-            sessions.clone(),
+            recordings.clone(),
             vec![open(11, 1, None, 90, true)]
         )),
         []
@@ -714,14 +714,14 @@ fn progress_streams_into_the_pane_until_its_call_ends() {
     // A late update on a call already read as ended is dropped.
     let _ = tui.apply(snapshot(
         101,
-        sessions,
+        recordings,
         vec![call(11, 1, None, 90, 100, json!({}))],
     ));
     let _ = tui.apply(Input::Progress(progress));
     assert!(pane_of(&tui, 101).streaming.is_none());
 }
 
-fn pane_of(tui: &Wall, seconds: u64) -> SessionPane {
+fn pane_of(tui: &Wall, seconds: u64) -> RecordingPane {
     pane(&tui.frame(at(seconds)), 0).clone()
 }
 
@@ -801,13 +801,13 @@ fn a_failed_read_is_shown_until_a_snapshot_succeeds() {
 #[test]
 fn a_pane_shows_the_turn_before_the_newest_one() {
     let mut tui = tui();
-    let sessions = vec![session(1, "claude_code_headers", 100)];
+    let recordings = vec![session(1, "claude_code_headers", 100)];
     let calls = vec![
         call(11, 1, Some(4), 10, 20, json!({})),
         call(12, 1, Some(5), 60, 70, json!({})),
     ];
     assert_eq!(
-        tui.apply(snapshot(100, sessions, calls)),
+        tui.apply(snapshot(100, recordings, calls)),
         [Read::Turn(turn_id(4)), Read::Turn(turn_id(5))]
     );
     let _ = tui.apply(turn(
@@ -845,7 +845,7 @@ fn a_pane_shows_the_turn_before_the_newest_one() {
 #[test]
 fn a_session_without_turns_reads_its_newest_calls() {
     let mut tui = tui();
-    let sessions = vec![session(1, "opencode_headers", 100)];
+    let recordings = vec![session(1, "opencode_headers", 100)];
     let calls: Vec<CallView> = (0..6)
         .map(|n| {
             call(
@@ -861,7 +861,7 @@ fn a_session_without_turns_reads_its_newest_calls() {
         .collect();
     // The newest four finished calls, newest first; the open one streams.
     assert_eq!(
-        tui.apply(snapshot(100, sessions.clone(), calls.clone())),
+        tui.apply(snapshot(100, recordings.clone(), calls.clone())),
         [
             Read::Call(call_id(16)),
             Read::Call(call_id(15)),
@@ -902,7 +902,7 @@ fn a_session_without_turns_reads_its_newest_calls() {
     assert!(matches!(pane.lines[5], Block::Result(_)));
     // Read, those two are not asked for again.
     assert_eq!(
-        tui.apply(snapshot(101, sessions, calls)),
+        tui.apply(snapshot(101, recordings, calls)),
         [Read::Call(call_id(14)), Read::Call(call_id(13))]
     );
 }

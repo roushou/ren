@@ -5,17 +5,17 @@
 use crate::conversation::{Block, Conversation, ToolLine};
 use crate::model::CallEnd;
 use crate::model::Model;
-use crate::model::sessions::Sessions;
+use crate::model::recordings::Recordings;
 use crate::ui::{Ink, Line, Span, Tone};
 use ren_harness::Harness;
 use ren_protocol::label::Stored;
 use ren_protocol::route::Provider;
-use ren_recorder::id::{CallId, SessionId, TurnId};
+use ren_recorder::id::{CallId, RecordingId, TurnId};
 use ren_recorder::progress::Progress;
 use ren_recorder::time::UnixMillis;
 use ren_store::activity::report::{CallMetrics, Finding, RawFinding};
 use ren_store::activity::{CallActivity, TurnActivity};
-use ren_store::view::{CallView, SessionView};
+use ren_store::view::{CallView, RecordingView};
 use std::collections::HashMap;
 use std::time::Duration;
 
@@ -91,8 +91,8 @@ pub struct Alert {
 
 /// One session, read for its pane.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SessionPane {
-    pub session: SessionId,
+pub struct RecordingPane {
+    pub session: RecordingId,
     pub harness: Option<Stored<Harness>>,
     pub provider: Stored<Provider>,
     pub phase: Phase,
@@ -119,8 +119,8 @@ pub struct SessionPane {
 }
 
 /// A session's calls and its newest turn, as read.
-pub(crate) struct SessionRead<'a> {
-    pub session: &'a SessionView,
+pub(crate) struct RecordingRead<'a> {
+    pub session: &'a RecordingView,
     /// Its calls in the window and its open ones, oldest first.
     pub calls: &'a [&'a CallView],
     pub turn: Option<&'a TurnActivity>,
@@ -134,12 +134,12 @@ pub(crate) struct SessionRead<'a> {
     pub now: UnixMillis,
 }
 
-impl SessionPane {
+impl RecordingPane {
     /// `session` as read now, with what the model holds of it.
-    pub(crate) fn of(model: &Model, session: &SessionView, now: UnixMillis) -> Self {
-        let calls = model.sessions.session_calls(session.id);
-        let recent = Sessions::recent_turns(&calls);
-        let held = |turn| model.sessions.turn(turn);
+    pub(crate) fn of(model: &Model, session: &RecordingView, now: UnixMillis) -> Self {
+        let calls = model.recordings.recording_calls(session.id);
+        let recent = Recordings::recent_turns(&calls);
+        let held = |turn| model.recordings.turn(turn);
         let (earlier, turn) = match recent.as_slice() {
             [earlier, newest] => (held(*earlier), held(*newest)),
             [newest] => (None, held(*newest)),
@@ -147,15 +147,15 @@ impl SessionPane {
         };
         let activities: Vec<&CallActivity> = calls
             .iter()
-            .filter_map(|call| model.sessions.activity(call.id))
+            .filter_map(|call| model.recordings.activity(call.id))
             .collect();
-        Self::read(&SessionRead {
+        Self::read(&RecordingRead {
             activities: &activities,
             session,
             calls: &calls,
             earlier,
             turn,
-            progress: model.sessions.progress(),
+            progress: model.recordings.progress(),
             now,
         })
     }
@@ -186,7 +186,7 @@ impl SessionPane {
     /// Waiting this long for a response head is worth a look.
     pub const SLOW_HEAD: Duration = Duration::from_secs(30);
 
-    pub(crate) fn read(read: &SessionRead<'_>) -> Self {
+    pub(crate) fn read(read: &RecordingRead<'_>) -> Self {
         let calls = read.calls;
         let turn_id = Self::newest_turn(calls);
         let turn_calls: Vec<&CallView> = calls
@@ -472,7 +472,7 @@ impl std::fmt::Display for Elapsed {
     }
 }
 
-impl SessionPane {
+impl RecordingPane {
     /// `! alert · state · detail`, as the mockup words it.
     /// A lit header's ink: live while a response streams, warning or error
     /// when the newest call needs a look; `None` when it is plain.
@@ -509,8 +509,8 @@ impl SessionPane {
         let (label, tone, detail) = match &self.phase {
             Phase::Awaiting { since: at } => {
                 let waited = now.as_millis().saturating_sub(at.as_millis());
-                let slow =
-                    waited >= u64::try_from(SessionPane::SLOW_HEAD.as_millis()).unwrap_or(u64::MAX);
+                let slow = waited
+                    >= u64::try_from(RecordingPane::SLOW_HEAD.as_millis()).unwrap_or(u64::MAX);
                 (
                     "waiting for first byte".to_owned(),
                     if slow { Tone::Warning } else { Tone::Live },

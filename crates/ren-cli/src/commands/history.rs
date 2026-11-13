@@ -9,7 +9,7 @@ use ren_harness::Harness;
 use ren_harness::endpoint::GatewayEndpoint;
 use ren_protocol::direction::Direction;
 use ren_recorder::caller::UserId;
-use ren_recorder::id::{CallId, SessionId, TurnId};
+use ren_recorder::id::{CallId, RecordingId, TurnId};
 use ren_store::query::{CallFilter, CallQuery, Cursor, PageLimit, Shelf, TimeRange};
 use ren_store::read::ReadRequest;
 use ren_store::search::{ExposureQuery, SearchField, SearchQuery, SearchTerms};
@@ -109,7 +109,7 @@ impl SessionsCmd {
         self.target
             .print(
                 ctx,
-                ReadRequest::Sessions {
+                ReadRequest::Recordings {
                     limit: self.limit,
                     shelf: self.shelf,
                 },
@@ -121,7 +121,7 @@ impl SessionsCmd {
 /// List a session's calls chronologically, with optional pagination.
 #[derive(Args)]
 pub struct TimelineCmd {
-    id: SessionId,
+    id: RecordingId,
     #[arg(long, default_value = "100")]
     limit: PageLimit,
     /// The `next` cursor of the previous page.
@@ -132,8 +132,8 @@ pub struct TimelineCmd {
 }
 impl TimelineCmd {
     pub async fn run(self, ctx: &Context) -> Result<ExitCode> {
-        let request = ReadRequest::SessionCalls {
-            session: self.id,
+        let request = ReadRequest::RecordingCalls {
+            recording: self.id,
             limit: self.limit,
             after: self.after,
         };
@@ -144,7 +144,7 @@ impl TimelineCmd {
 /// List a session's turns, newest first, each with the start of its prompt.
 #[derive(Args)]
 pub struct TurnsCmd {
-    id: SessionId,
+    id: RecordingId,
     #[arg(long, default_value = "20")]
     limit: PageLimit,
     #[command(flatten)]
@@ -153,7 +153,7 @@ pub struct TurnsCmd {
 impl TurnsCmd {
     pub async fn run(self, ctx: &Context) -> Result<ExitCode> {
         let request = ReadRequest::Turns {
-            session: self.id,
+            recording: self.id,
             limit: self.limit,
         };
         self.target.print(ctx, request).await
@@ -170,7 +170,7 @@ pub struct SearchCmd {
     text: Vec<String>,
     /// Only this Ren session.
     #[arg(long)]
-    session: Option<SessionId>,
+    session: Option<RecordingId>,
     /// Only calls from this client.
     #[arg(long)]
     client: Option<Harness>,
@@ -203,7 +203,7 @@ impl SearchCmd {
 pub struct ExposuresCmd {
     /// Only this Ren session.
     #[arg(long)]
-    session: Option<SessionId>,
+    session: Option<RecordingId>,
     #[arg(long, default_value = "50")]
     limit: PageLimit,
     #[command(flatten)]
@@ -225,7 +225,7 @@ impl ExposuresCmd {
 /// largest context growth. Token counts are provider-reported, not cost.
 #[derive(Args)]
 pub struct ReportCmd {
-    id: SessionId,
+    id: RecordingId,
     #[command(flatten)]
     target: TargetArgs,
 }

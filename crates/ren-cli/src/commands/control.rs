@@ -11,7 +11,7 @@ use ren_gateway::ControlToken;
 use ren_protocol::native::NativeSessionId;
 use ren_recorder::{
     caller::UserId,
-    id::{CallId, RunId, SessionId},
+    id::{CallId, RecordingId, RunId},
 };
 use reqwest::Method;
 use std::process::ExitCode;
@@ -36,7 +36,7 @@ enum ControlAction {
     Resume,
     /// Refuse a client session's calls (non-retryable 403).
     Block(BlockArgs),
-    Unblock(SessionArg),
+    Unblock(RecordingArg),
     /// Refuse a named user's new calls (non-retryable 403), effective at
     /// once; running calls continue.
     BlockUser(BlockUserArgs),
@@ -67,7 +67,7 @@ enum ControlAction {
 #[derive(Subcommand, Clone, Copy)]
 enum Subject {
     /// A session, by Ren's session id (`ren sessions` lists them).
-    Session { session: SessionId },
+    Session { session: RecordingId },
     /// A run, by its run id, with the session its client recorded.
     Run { run: RunId },
 }
@@ -98,16 +98,16 @@ struct PauseArgs {
 }
 
 #[derive(Args)]
-struct SessionArg {
+struct RecordingArg {
     /// The client's native session id (a UUID).
-    #[arg(value_parser = SessionArg::parse)]
+    #[arg(value_parser = RecordingArg::parse)]
     session: NativeSessionId,
 }
 
 #[derive(Args)]
 struct BlockArgs {
     #[command(flatten)]
-    session: SessionArg,
+    session: RecordingArg,
     /// Block for this many seconds; without it, until unblocked.
     #[arg(long = "for")]
     duration: Option<u64>,
@@ -136,7 +136,7 @@ struct CancelArgs {
     block_session: Option<u64>,
 }
 
-impl SessionArg {
+impl RecordingArg {
     fn parse(text: &str) -> Result<NativeSessionId, String> {
         Uuid::try_parse(text)
             .ok()

@@ -27,7 +27,7 @@ use ren_recorder::{
 };
 use ren_recorder::{
     capture::{BodyEnding, CallState, ChannelEnd, ProcessExit, RunEnd},
-    id::{CallId, ChannelId, IdSource, RunId, SessionId, TurnId},
+    id::{CallId, ChannelId, IdSource, RecordingId, RunId, TurnId},
     routing::OperatorRevision,
     time::{Clock, Moment, UnixMillis},
 };
@@ -994,7 +994,7 @@ impl MetadataTx<'_> {
             None => (None, None),
             Some(hint) => {
                 let session: String = sqlx::query_scalar("INSERT INTO sessions(id, provider, source, native_id, first_seen, last_seen) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(provider, source, native_id) DO UPDATE SET first_seen = MIN(first_seen, excluded.first_seen), last_seen = MAX(last_seen, excluded.last_seen) RETURNING id")
-                    .bind(SessionId::generate(self.ids).to_string())
+                    .bind(RecordingId::generate(self.ids).to_string())
                     .bind(open.provider.label())
                     .bind(hint.source.label())
                     .bind(hint.session.to_string())

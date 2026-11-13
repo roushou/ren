@@ -47,14 +47,14 @@ impl ApiRead {
                 format!("/api/calls/{call}/activity"),
                 QueryParams::default(),
             ),
-            ReadRequest::Sessions { limit, shelf } => (
+            ReadRequest::Recordings { limit, shelf } => (
                 "/api/sessions".to_owned(),
                 QueryParams::default()
                     .with("limit", limit.get())
                     .shelf(*shelf),
             ),
-            ReadRequest::SessionCalls {
-                session,
+            ReadRequest::RecordingCalls {
+                recording: session,
                 limit,
                 after,
             } => (
@@ -63,7 +63,10 @@ impl ApiRead {
                     .with("limit", limit.get())
                     .opt("after", after.as_ref()),
             ),
-            ReadRequest::Turns { session, limit } => (
+            ReadRequest::Turns {
+                recording: session,
+                limit,
+            } => (
                 format!("/api/sessions/{session}/turns"),
                 QueryParams::default().with("limit", limit.get()),
             ),
@@ -128,12 +131,12 @@ impl ApiRead {
             ["calls", call, "activity"] => ReadRequest::CallActivity(Self::id(call)?),
             ["sessions"] => {
                 let (limit, shelf) = Self::query::<RawShelfQuery>(uri)?.parse()?;
-                ReadRequest::Sessions { limit, shelf }
+                ReadRequest::Recordings { limit, shelf }
             }
             ["sessions", session, "calls"] => {
                 let page = Self::query::<RawPageQuery>(uri)?;
-                ReadRequest::SessionCalls {
-                    session: Self::id(session)?,
+                ReadRequest::RecordingCalls {
+                    recording: Self::id(session)?,
                     limit: page.limit()?,
                     after: page.after()?,
                 }
@@ -144,7 +147,7 @@ impl ApiRead {
                     return Err(QueryError::Cursor.into());
                 }
                 ReadRequest::Turns {
-                    session: Self::id(session)?,
+                    recording: Self::id(session)?,
                     limit: page.limit()?,
                 }
             }

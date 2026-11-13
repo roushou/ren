@@ -276,14 +276,14 @@ impl TuiCmd {
     ) -> Result<Snapshot, ManagementError> {
         let read_at = clock.now().wall;
         let query = Tui::snapshot_query(read_at);
-        let (sessions, open, recent) = futures_util::try_join!(
-            gateway.sessions(query.sessions),
+        let (recordings, open, recent) = futures_util::try_join!(
+            gateway.recordings(query.recordings),
             gateway.calls(&query.open),
             gateway.calls(&query.recent),
         )?;
         Ok(Snapshot {
             read_at,
-            sessions,
+            recordings,
             open,
             recent,
         })

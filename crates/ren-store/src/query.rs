@@ -5,7 +5,7 @@ use ren_harness::Harness;
 use ren_protocol::route::Provider;
 use ren_recorder::{
     caller::UserId,
-    id::{CallId, SessionId},
+    id::{CallId, RecordingId},
     time::UnixMillis,
 };
 use serde_with::{DeserializeFromStr, SerializeDisplay};
@@ -164,8 +164,8 @@ pub enum Shelf {
 }
 
 impl Shelf {
-    /// The SQL condition a session `s` meets on this shelf.
-    pub(crate) fn sessions(self) -> &'static str {
+    /// The SQL condition a recording `s` meets on this shelf.
+    pub(crate) fn recordings(self) -> &'static str {
         match self {
             Self::Current => "(s.archived_at IS NULL OR s.archived_at < s.last_seen)",
             Self::Archived => "(s.archived_at IS NOT NULL AND s.archived_at >= s.last_seen)",
@@ -221,7 +221,7 @@ impl TimeRange {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct CallFilter {
     /// Calls Ren grouped into this session.
-    pub session: Option<SessionId>,
+    pub session: Option<RecordingId>,
     /// Calls attributed to this harness by its own headers or metadata.
     pub client: Option<Harness>,
     /// Calls a named user made.
