@@ -22,7 +22,8 @@ pub enum SessionPhase {
 }
 
 /// Where a session stands.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "shelf", content = "phase", rename_all = "snake_case")]
 pub enum SessionState {
     /// Listed with the current sessions.
     Open(SessionPhase),
@@ -39,6 +40,22 @@ pub enum SessionInput {
     Prompted,
     Archive,
     Unarchive,
+}
+
+/// The operator shelving a session, or taking it back.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Shelving {
+    Archive,
+    Unarchive,
+}
+
+impl Shelving {
+    pub fn input(self) -> SessionInput {
+        match self {
+            Self::Archive => SessionInput::Archive,
+            Self::Unarchive => SessionInput::Unarchive,
+        }
+    }
 }
 
 /// What the supervisor does for a transition.

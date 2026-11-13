@@ -465,6 +465,28 @@ async fn supervise_with(host: FakeHost, options: SupervisorOptions) -> Supervise
 impl Supervised {
     /// Drop the supervisor, let its runs drain and the recorder commit, and
     /// read what was stored.
+    async fn stored_sessions(self) -> Vec<ren_store::view::SessionView> {
+        drop(self.supervisor);
+        tokio::time::timeout(Duration::from_secs(5), self.task)
+            .await
+            .expect("the supervisor drains")
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(5), self.recorder)
+            .await
+            .expect("the recorder drains")
+            .unwrap();
+        let reader = Reader::open(self.dir.path(), 1).await.unwrap();
+        let mut sessions = Vec::new();
+        for shelf in [
+            ren_store::query::Shelf::Current,
+            ren_store::query::Shelf::Archived,
+        ] {
+            sessions.extend(reader.sessions(PageLimit::DEFAULT, shelf).await.unwrap());
+        }
+        reader.close().await;
+        sessions
+    }
+
     async fn stored(self) -> (Vec<RunView>, tempfile::TempDir) {
         drop(self.supervisor);
         tokio::time::timeout(Duration::from_secs(5), self.task)
@@ -1141,4 +1163,191 @@ fn starting(
         settings: ren_harness::settings::RunSettings::default(),
         first,
     }
+}
+
+fn create(harness: Harness, dir: &str) -> ren_supervisor::Create {
+    ren_supervisor::Create {
+        harness,
+        place: ren_supervisor::StartPlace::Folder(dir.into()),
+        settings: ren_harness::settings::RunSettings::default(),
+    }
+}
+
+async fn only_session(supervisor: &Supervisor) -> ren_supervisor::SessionSnapshot {
+    let mut sessions = supervisor.sessions().await.unwrap();
+    assert_eq!(sessions.len(), 1, "{sessions:?}");
+    sessions.remove(0)
+}
+
+fn working(state: &RunState) -> bool {
+    matches!(state, RunState::Working { approvals, .. } if !approvals.is_empty())
+}
+
+#[tokio::test]
+async fn a_session_goes_on_across_its_processes() {
+    use ren_supervisor::{
+        FileQuery, SessionError, SessionPhase, SessionRefused, SessionState, Shelving,
+    };
+    let supervised = supervise(FakeHost::new(Script::Codex)).await;
+    let supervisor = &supervised.supervisor;
+    let mut updates = supervisor.subscribe();
+    let mut changes = supervisor.subscribe_sessions();
+    let session = supervisor
+        .create(create(Harness::Codex, "/work/acme"))
+        .await
+        .unwrap();
+    // Its client starts at once: a draft with a process, open, before any prompt.
+    state(&mut updates, |s| matches!(s, RunState::Idle { .. })).await;
+    let draft = only_session(supervisor).await;
+    assert_eq!(draft.state, SessionState::Open(SessionPhase::Draft));
+    let first = draft.process.unwrap();
+    assert_eq!(changes.recv().await.unwrap().session, session);
+    let commands = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let commands = supervisor.session_commands(session).await.unwrap();
+            if !commands.is_empty() {
+                return commands;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the skills are listed before the first prompt");
+    assert_eq!(commands[0].invocation(), "$release-notes");
+
+    // The first prompt goes to that process, and fixes the client.
+    supervisor
+        .send(session, RunCommand::Prompt(prompt_text("edit src")))
+        .await
+        .unwrap();
+    state(&mut updates, working).await;
+    let active = only_session(supervisor).await;
+    assert_eq!(active.state, SessionState::Open(SessionPhase::Active));
+    assert_eq!(active.process, Some(first));
+    assert!(matches!(
+        supervisor.choose_client(session, Harness::Pi).await,
+        Err(SessionError::Refused(SessionRefused::ClientFixed))
+    ));
+
+    // Its process stops; the session goes on, and its folder is searched
+    // without one.
+    supervisor.send(session, RunCommand::Stop).await.unwrap();
+    state(&mut updates, |s| matches!(s, RunState::Ended { .. })).await;
+    assert!(matches!(
+        supervisor.send(session, RunCommand::Interrupt).await,
+        Err(SessionError::NoProcess)
+    ));
+    let found = supervisor
+        .session_files(session, FileQuery::parse("lease"), 5)
+        .await
+        .unwrap();
+    assert_eq!(found[0].path, "src/lease.rs");
+
+    // The next prompt starts a process that resumes its conversation.
+    supervisor
+        .send(session, RunCommand::Prompt(prompt_text("and the docs")))
+        .await
+        .unwrap();
+    let resumed = state(&mut updates, working).await;
+    let RunState::Working { thread, .. } = resumed else {
+        unreachable!()
+    };
+    assert_eq!(thread.to_string(), THREAD);
+    let second = only_session(supervisor).await.process.unwrap();
+    assert_ne!(second, first);
+
+    // Archived, its process stops; written to, it comes back.
+    supervisor.shelve(session, Shelving::Archive).await.unwrap();
+    state(&mut updates, |s| matches!(s, RunState::Ended { .. })).await;
+    assert_eq!(
+        only_session(supervisor).await.state,
+        SessionState::Archived(SessionPhase::Active)
+    );
+    assert!(matches!(
+        supervisor.shelve(session, Shelving::Archive).await,
+        Err(SessionError::Refused(SessionRefused::Archived))
+    ));
+    supervisor
+        .shelve(session, Shelving::Unarchive)
+        .await
+        .unwrap();
+    supervisor.shelve(session, Shelving::Archive).await.unwrap();
+
+    // One session, both processes its runs, archived.
+    let stored = supervised.stored_sessions().await;
+    assert_eq!(stored.len(), 1);
+    assert_eq!(stored[0].id, session);
+    assert_eq!(
+        stored[0].runs.iter().map(|run| run.id).collect::<Vec<_>>(),
+        [second, first]
+    );
+    assert!(stored[0].archived_at.is_some());
+}
+
+#[tokio::test]
+async fn a_draft_changes_client_and_a_stored_session_is_adopted() {
+    use ren_harness::settings::{Effort, RunSettings};
+    use ren_supervisor::{SessionPhase, SessionSeed, SessionState};
+    let host = FakeHost::new(Script::Codex);
+    let spawned = host.spawned.clone();
+    let supervised = supervise(host).await;
+    let supervisor = &supervised.supervisor;
+    let mut updates = supervisor.subscribe();
+    let session = supervisor
+        .create(ren_supervisor::Create {
+            settings: RunSettings {
+                model: None,
+                effort: Some(Effort::High),
+                approvals: None,
+            },
+            ..create(Harness::Codex, "/work/acme")
+        })
+        .await
+        .unwrap();
+    state(&mut updates, |s| matches!(s, RunState::Idle { .. })).await;
+    let first = only_session(supervisor).await.process.unwrap();
+    supervisor
+        .choose_client(session, Harness::Pi)
+        .await
+        .unwrap();
+    let chosen = only_session(supervisor).await;
+    assert_eq!(chosen.harness, Harness::Pi);
+    assert_eq!(
+        chosen.settings,
+        RunSettings::default(),
+        "its settings were Codex's"
+    );
+    assert_eq!(chosen.state, SessionState::Open(SessionPhase::Draft));
+    assert_ne!(chosen.process, Some(first));
+    assert_eq!(spawned.lock().unwrap().len(), 2);
+
+    // A session the store holds is served again, resuming its thread.
+    let stored = ren_recorder::id::SessionId::restore(uuid::Uuid::from_u128(0x77));
+    let seed = |workdir: &str| SessionSeed {
+        session: stored,
+        harness: Harness::Codex,
+        workdir: workdir.into(),
+        settings: RunSettings::default(),
+        thread: Some(
+            ren_protocol::native::NativeThreadId::new(uuid::Uuid::parse_str(THREAD).unwrap())
+                .unwrap(),
+        ),
+        state: SessionState::Open(SessionPhase::Active),
+    };
+    assert!(
+        supervisor.adopt(seed("/etc")).await.is_err(),
+        "outside the bounds"
+    );
+    supervisor.adopt(seed("/work/acme")).await.unwrap();
+    supervisor.adopt(seed("/work/acme")).await.unwrap();
+    assert_eq!(supervisor.sessions().await.unwrap().len(), 2);
+    supervisor
+        .send(stored, RunCommand::Prompt(prompt_text("go on")))
+        .await
+        .unwrap();
+    let resumed = state(&mut updates, working).await;
+    let RunState::Working { thread, .. } = resumed else {
+        unreachable!()
+    };
+    assert_eq!(thread.to_string(), THREAD);
 }

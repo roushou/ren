@@ -269,8 +269,16 @@ dependencies under "Crates" below. Read the code for current module ownership.
   processes started in a folder and driven through their client's
   structured mode (Codex, Claude Code, and Pi), each serving an operator
   session (`SessionState` in `session`: a draft until its first prompt,
-  active after, archived on the shelf; today every run starts a session of
-  its own, see `docs/plans/sessions.md`). `RunState` (`run`) is the
+  active after, archived on the shelf, see `docs/plans/sessions.md`). The
+  task holds sessions and their processes together: `Supervisor::create`
+  starts a session's client at once, `send` carries a command through its
+  process or, for a prompt with none running, through a new one that resumes
+  its conversation, `choose_client` replaces a draft's client, `shelve`
+  archives (stopping its process) or unarchives, `adopt` serves a session the
+  store holds, and `session_commands` and `session_files` serve its composer
+  (the folder's listing is the session's, kept until a turn ends). Session
+  changes go to `subscribe_sessions`. A run started through `start` is a
+  session and its first process. `RunState` (`run`) is the
   pure lifecycle machine (starting, idle, working with its waiting approvals and the prompt queued
   for after the turn (a `Delivery`: start, queue, or steer),
   stopping, ended with a `RunEnd`); `Workdir` (`workdir`) keeps runs inside

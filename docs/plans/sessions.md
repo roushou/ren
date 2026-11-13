@@ -1,6 +1,6 @@
 # Plan: sessions you work in
 
-Status: in progress, on `agent-runs`. Steps 1 and 2 are done; step 3 is next. This file is
+Status: in progress, on `agent-runs`. Steps 1 to 3 are done; step 4 is next. This file is
 the plan of record: each step lands as its own commits, every commit
 passes the full checks, and any change to the plan is written under
 [Deviations](#deviations) with its reason. Once the work is done, what
@@ -163,5 +163,21 @@ and `ren --help` and `ren --version` output against the commit before.
   control routes.
 - **2 adds `session` to the runs the control API lists** (`RunSnapshot`),
   additively, so the interfaces can group by it in step 5.
+- **3 starts a new session's client when the session is created**, so its
+  commands are there before the first prompt. Whether a client writes its
+  own history entry merely by opening a conversation is still to check
+  (Open questions); if one does, its start moves to the prompt's first
+  focus in step 5.
+- **3 leaves stopping idle processes to step 5.** Until the interfaces show
+  sessions, an idle stop would end runs they still show as runs, with no
+  way back but the old continue.
+- **3 sends session changes on their own broadcast**
+  (`Supervisor::subscribe_sessions`), not the run feed: the interfaces
+  refuse feed updates they do not know. The control API's session feed
+  (step 4) carries them.
+- **3 resets a session's settings when its client changes**: a model, an
+  effort, and an approval policy belong to the client that offered them.
+- **3 holds a prompt sent while the session's process is still opening**,
+  as that process's first prompt, instead of refusing it.
 - **1a kept the terminal app's `Focus::Session` and `IntoSession`**: they
   name the detail pane, which shows the operator's sessions after step 5.

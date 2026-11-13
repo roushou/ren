@@ -27,7 +27,9 @@ pub use host::{AgentHost, AgentProcess, KillSignal, KillSwitch};
 pub use models::ModelsError;
 pub use project::{Look, PlaceKind, Project, ProjectGit, Search};
 pub use run::{Approvals, Delivery, ProcessExit, RunCommand, RunRefused, RunState, Waiting};
-pub use session::{SessionAction, SessionInput, SessionPhase, SessionRefused, SessionState};
+pub use session::{
+    SessionAction, SessionInput, SessionPhase, SessionRefused, SessionState, Shelving,
+};
 pub use task::SupervisorTask;
 pub use workdir::{Bounds, Roots, Workdir, WorkdirError};
 
@@ -76,6 +78,60 @@ pub struct SupervisorOptions {
 pub struct Supervisor {
     requests: mpsc::Sender<Request>,
     updates: broadcast::Sender<RunUpdate>,
+    sessions: broadcast::Sender<SessionSnapshot>,
+}
+
+/// A session as the supervisor serves it: what it is, where it stands,
+/// and its newest process, whose state the run feed carries.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct SessionSnapshot {
+    pub session: SessionId,
+    pub harness: Harness,
+    pub workdir: PathBuf,
+    /// What its next turn runs on; each left out is the client's own.
+    pub settings: RunSettings,
+    pub state: SessionState,
+    pub process: Option<RunId>,
+}
+
+/// A new session: its client, where it works, and its settings. Its client
+/// starts at once, so its commands are there before the first prompt.
+pub struct Create {
+    pub harness: Harness,
+    pub place: StartPlace,
+    pub settings: RunSettings,
+}
+
+/// A session the store holds that this supervisor has not served since it
+/// started, to serve it again.
+pub struct SessionSeed {
+    pub session: SessionId,
+    pub harness: Harness,
+    pub workdir: String,
+    pub settings: RunSettings,
+    /// The client's conversation, when one was opened: its next process
+    /// resumes it.
+    pub thread: Option<NativeThreadId>,
+    pub state: SessionState,
+}
+
+/// Why a session request was not carried out.
+#[derive(Debug, thiserror::Error)]
+pub enum SessionError {
+    #[error("no session {0}")]
+    NoSuchSession(SessionId),
+    #[error(transparent)]
+    Refused(SessionRefused),
+    #[error("no process serves the session")]
+    NoProcess,
+    #[error("the recorder has no room to record the session")]
+    Unrecorded,
+    #[error(transparent)]
+    Start(StartError),
+    #[error(transparent)]
+    Command(CommandError),
+    #[error("the supervisor has stopped")]
+    Gone,
 }
 
 /// A change to a run, as it happens.
@@ -188,6 +244,40 @@ pub enum CommandError {
     Gone,
 }
 
+/// What is asked of the sessions.
+pub(crate) enum SessionRequest {
+    Create(Create),
+    Adopt(SessionSeed),
+    Send {
+        session: SessionId,
+        command: RunCommand,
+    },
+    ChooseClient {
+        session: SessionId,
+        harness: Harness,
+    },
+    Shelve {
+        session: SessionId,
+        shelving: Shelving,
+    },
+    List,
+    Commands(SessionId),
+    Files {
+        session: SessionId,
+        query: FileQuery,
+        limit: usize,
+    },
+}
+
+/// What a session request answers.
+pub(crate) enum SessionAnswer {
+    Created(SessionId),
+    Done,
+    Listed(Vec<SessionSnapshot>),
+    Commands(Vec<ClientCommand>),
+    Files(Vec<FileMatch>),
+}
+
 /// Why what a composer offers a run's prompt (its client's commands, its
 /// folder's files) could not be read.
 #[derive(Debug, thiserror::Error)]
@@ -244,6 +334,10 @@ pub(crate) enum Request {
         run: RunId,
         reply: oneshot::Sender<Result<Vec<ClientCommand>, ComposeError>>,
     },
+    Session {
+        request: SessionRequest,
+        reply: oneshot::Sender<Result<SessionAnswer, SessionError>>,
+    },
     Files {
         run: RunId,
         query: FileQuery,
@@ -296,9 +390,11 @@ impl Supervisor {
             Bounds::new(roots, places, scratch, options.home).map_err(SupervisorError::Roots)?;
         let (requests, receiver) = mpsc::channel(Self::QUEUE);
         let (updates, _) = broadcast::channel(Self::UPDATES);
+        let (sessions, _) = broadcast::channel(Self::UPDATES);
         let task = SupervisorTask {
             requests: receiver,
             updates: updates.clone(),
+            sessions: sessions.clone(),
             host,
             ids,
             recorder,
@@ -308,7 +404,14 @@ impl Supervisor {
             version: options.version,
             line_limit: options.line_limit,
         };
-        Ok((Self { requests, updates }, task))
+        Ok((
+            Self {
+                requests,
+                updates,
+                sessions,
+            },
+            task,
+        ))
     }
 
     /// Start a run.
@@ -408,6 +511,114 @@ impl Supervisor {
             .await
             .map_err(|_| ComposeError::Gone)?;
         answer.await.map_err(|_| ComposeError::Gone)?
+    }
+
+    async fn session(&self, request: SessionRequest) -> Result<SessionAnswer, SessionError> {
+        let (reply, answer) = oneshot::channel();
+        self.requests
+            .send(Request::Session { request, reply })
+            .await
+            .map_err(|_| SessionError::Gone)?;
+        answer.await.map_err(|_| SessionError::Gone)?
+    }
+
+    /// A new session, its client started in it.
+    pub async fn create(&self, create: Create) -> Result<SessionId, SessionError> {
+        match self.session(SessionRequest::Create(create)).await? {
+            SessionAnswer::Created(session) => Ok(session),
+            SessionAnswer::Done
+            | SessionAnswer::Listed(_)
+            | SessionAnswer::Commands(_)
+            | SessionAnswer::Files(_) => Err(SessionError::Gone),
+        }
+    }
+
+    /// Serve a session the store holds; nothing when it is served already.
+    pub async fn adopt(&self, seed: SessionSeed) -> Result<(), SessionError> {
+        self.session(SessionRequest::Adopt(seed)).await.map(|_| ())
+    }
+
+    /// Carry out `command` in `session`: through its process, or, for a
+    /// prompt with none running, through a new one that resumes its
+    /// conversation; settings with none running apply to the next.
+    pub async fn send(&self, session: SessionId, command: RunCommand) -> Result<(), SessionError> {
+        self.session(SessionRequest::Send { session, command })
+            .await
+            .map(|_| ())
+    }
+
+    /// Work with `harness` instead, while the session is a draft: its
+    /// process is replaced, and its settings go back to the client's own.
+    pub async fn choose_client(
+        &self,
+        session: SessionId,
+        harness: Harness,
+    ) -> Result<(), SessionError> {
+        self.session(SessionRequest::ChooseClient { session, harness })
+            .await
+            .map(|_| ())
+    }
+
+    /// Archive a session (which stops its process) or unarchive it.
+    pub async fn shelve(&self, session: SessionId, shelving: Shelving) -> Result<(), SessionError> {
+        self.session(SessionRequest::Shelve { session, shelving })
+            .await
+            .map(|_| ())
+    }
+
+    /// Every session served since the supervisor started.
+    pub async fn sessions(&self) -> Result<Vec<SessionSnapshot>, SessionError> {
+        match self.session(SessionRequest::List).await? {
+            SessionAnswer::Listed(sessions) => Ok(sessions),
+            SessionAnswer::Created(_)
+            | SessionAnswer::Done
+            | SessionAnswer::Commands(_)
+            | SessionAnswer::Files(_) => Err(SessionError::Gone),
+        }
+    }
+
+    /// What the session's client offers a prompt: none while no process
+    /// has opened its conversation.
+    pub async fn session_commands(
+        &self,
+        session: SessionId,
+    ) -> Result<Vec<ClientCommand>, SessionError> {
+        match self.session(SessionRequest::Commands(session)).await? {
+            SessionAnswer::Commands(commands) => Ok(commands),
+            SessionAnswer::Created(_)
+            | SessionAnswer::Done
+            | SessionAnswer::Listed(_)
+            | SessionAnswer::Files(_) => Err(SessionError::Gone),
+        }
+    }
+
+    /// The `limit` paths of the session's folder that best match `query`,
+    /// with or without a process.
+    pub async fn session_files(
+        &self,
+        session: SessionId,
+        query: FileQuery,
+        limit: usize,
+    ) -> Result<Vec<FileMatch>, SessionError> {
+        match self
+            .session(SessionRequest::Files {
+                session,
+                query,
+                limit,
+            })
+            .await?
+        {
+            SessionAnswer::Files(files) => Ok(files),
+            SessionAnswer::Created(_)
+            | SessionAnswer::Done
+            | SessionAnswer::Listed(_)
+            | SessionAnswer::Commands(_) => Err(SessionError::Gone),
+        }
+    }
+
+    /// Session changes from now on.
+    pub fn subscribe_sessions(&self) -> broadcast::Receiver<SessionSnapshot> {
+        self.sessions.subscribe()
     }
 
     /// Updates from now on.
