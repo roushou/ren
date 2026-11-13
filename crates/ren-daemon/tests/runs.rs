@@ -80,6 +80,41 @@ impl Control {
             .unwrap()
     }
 
+    /// `run`'s state once `wanted` holds for it.
+    async fn until_run(&self, run: &str, wanted: impl Fn(&Value) -> bool) -> Value {
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let runs = self.runs().await;
+                if let Some(state) = runs["runs"]
+                    .as_array()
+                    .and_then(|runs| runs.iter().find(|entry| entry["run"] == run))
+                    .map(|entry| entry["state"].clone())
+                    && wanted(&state)
+                {
+                    return state;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("the run reached the wanted state")
+    }
+
+    /// `session` as the control API answers it, once `wanted` holds.
+    async fn until_session(&self, session: &str, wanted: impl Fn(&Value) -> bool) -> Value {
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let (_, body) = self.get(&format!("/sessions/{session}")).await;
+                if wanted(&body["session"]) {
+                    return body["session"].clone();
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("the session reached the wanted state")
+    }
+
     /// The run's state once `wanted` holds for it.
     async fn until(&self, wanted: impl Fn(&Value) -> bool) -> Value {
         tokio::time::timeout(Duration::from_secs(5), async {
@@ -609,6 +644,184 @@ async fn a_prompt_queued_during_a_turn_goes_out_as_it_ends() {
                 && state.get("queued").is_none()
                 && state["approvals"].as_array().is_some_and(|a| !a.is_empty())
         })
+        .await;
+    gateway.stop().await;
+}
+
+#[tokio::test]
+async fn a_session_is_created_driven_continued_archived_and_served_again_after_a_restart() {
+    let upstream = mock(Router::new()).await;
+    let dir = tempfile::tempdir().unwrap();
+    let gateway = TestGateway::with_runs(
+        &config(&upstream),
+        dir.path(),
+        vec![PathBuf::from("/work")],
+        ScriptedHost,
+    )
+    .await;
+    let control = Control::new(&gateway);
+    let (status, body) = control
+        .post(
+            "/sessions",
+            json!({ "harness": "codex", "dir": "/work/acme" }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    let session = body["session"].as_str().unwrap().to_owned();
+
+    // Its client starts at once; the store records it a moment later.
+    let made = control
+        .until_session(&session, |s| {
+            !s["stored"].is_null() && !s["served"]["process"].is_null()
+        })
+        .await;
+    assert_eq!(
+        made["served"]["state"],
+        json!({ "shelf": "open", "phase": "draft" })
+    );
+    assert_eq!(made["stored"]["workdir"], "/work/acme");
+    let first = made["served"]["process"].as_str().unwrap().to_owned();
+    control
+        .until_run(&first, |state| state["phase"] == "idle")
+        .await;
+    let (status, body) = control
+        .get(&format!("/sessions/{session}/files?q=upl"))
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["files"][0]["path"], "src/upload.rs");
+    let (status, body) = control.get(&format!("/sessions/{session}/commands")).await;
+    assert_eq!(
+        (status, body["commands"].clone()),
+        (StatusCode::OK, json!([]))
+    );
+
+    // A prompt goes through its process and fixes its client.
+    let (status, body) = control
+        .post(
+            &format!("/sessions/{session}/prompt"),
+            json!({ "text": "first" }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+    control
+        .until_run(&first, |state| {
+            state["phase"] == "working"
+                && state["approvals"].as_array().is_some_and(|a| !a.is_empty())
+        })
+        .await;
+    let (status, body) = control
+        .post(
+            &format!("/sessions/{session}/client"),
+            json!({ "harness": "pi" }),
+        )
+        .await;
+    assert_eq!(
+        (status, body["error"].clone()),
+        (StatusCode::CONFLICT, json!("client_fixed"))
+    );
+
+    // Its process stops; the next prompt continues the same session.
+    let (status, _) = control
+        .post(&format!("/sessions/{session}/stop"), json!({}))
+        .await;
+    assert_eq!(status, StatusCode::ACCEPTED);
+    control
+        .until_run(&first, |state| state["phase"] == "ended")
+        .await;
+    let (status, body) = control
+        .post(&format!("/sessions/{session}/interrupt"), json!({}))
+        .await;
+    assert_eq!(
+        (status, body["error"].clone()),
+        (StatusCode::CONFLICT, json!("no_process"))
+    );
+    let (status, _) = control
+        .post(
+            &format!("/sessions/{session}/prompt"),
+            json!({ "text": "second" }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::ACCEPTED);
+    let continued = control
+        .until_session(&session, |s| {
+            s["stored"]["runs"]
+                .as_array()
+                .is_some_and(|runs| runs.len() == 2)
+        })
+        .await;
+    let second = continued["served"]["process"].as_str().unwrap().to_owned();
+    assert_ne!(second, first);
+    assert_eq!(continued["served"]["state"]["phase"], "active");
+    let state = control
+        .until_run(&second, |state| state["phase"] == "working")
+        .await;
+    assert_eq!(
+        state["thread"],
+        support::agent::THREAD,
+        "it resumed the conversation"
+    );
+
+    // Archived, its process stops and it leaves the current list.
+    let (status, _) = control
+        .post(&format!("/sessions/{session}/archive"), json!({}))
+        .await;
+    assert_eq!(status, StatusCode::ACCEPTED);
+    control
+        .until_run(&second, |state| state["phase"] == "ended")
+        .await;
+    control
+        .until_session(&session, |s| !s["stored"]["archived_at"].is_null())
+        .await;
+    let (_, current) = control.get("/sessions").await;
+    assert!(
+        current["sessions"].as_array().unwrap().is_empty(),
+        "{current}"
+    );
+    let (_, archived) = control.get("/sessions?shelf=archived").await;
+    assert_eq!(archived["sessions"][0]["session"], session);
+    let (status, _) = control
+        .get("/sessions/00000000-0000-0000-0000-000000000063")
+        .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    gateway.stop().await;
+
+    // After a restart, the stored session is served again on its first
+    // request: written to, it resumes its conversation, current again.
+    let gateway = TestGateway::with_runs(
+        &config(&upstream),
+        dir.path(),
+        vec![PathBuf::from("/work")],
+        ScriptedHost,
+    )
+    .await;
+    let control = Control::new(&gateway);
+    let (_, before) = control.get(&format!("/sessions/{session}")).await;
+    assert!(before["session"]["served"].is_null(), "{before}");
+    let (status, body) = control
+        .post(
+            &format!("/sessions/{session}/prompt"),
+            json!({ "text": "third" }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+    let back = control
+        .until_session(&session, |s| {
+            s["stored"]["runs"]
+                .as_array()
+                .is_some_and(|runs| runs.len() == 3)
+        })
+        .await;
+    assert_eq!(
+        back["served"]["state"],
+        json!({ "shelf": "open", "phase": "active" })
+    );
+    let third = back["served"]["process"].as_str().unwrap().to_owned();
+    let state = control
+        .until_run(&third, |state| state["phase"] == "working")
+        .await;
+    assert_eq!(state["thread"], support::agent::THREAD);
+    control
+        .until_session(&session, |s| s["stored"]["archived_at"].is_null())
         .await;
     gateway.stop().await;
 }

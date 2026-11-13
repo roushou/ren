@@ -112,6 +112,14 @@ async fn serve(
                     )
                     .await;
                 }
+                Some("thread/resume") => {
+                    let thread = message["params"]["threadId"].clone();
+                    send(
+                        &mut out,
+                        json!({ "id": id, "result": { "thread": { "id": thread } } }),
+                    )
+                    .await;
+                }
                 Some("thread/start") => {
                     send(
                         &mut out,

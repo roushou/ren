@@ -497,6 +497,46 @@ applied by the recorder after what it was recording; the answer is `202`
 `{api_version, subject, change}` once it is queued. `404` `not_found` is an
 unknown subject or change.
 
+### Sessions
+
+A session is what an operator works in: a folder, a client, its settings, and
+its conversation across every client process (run) that serves it. It is a
+draft until its first prompt goes out, active after, and archived when the
+operator shelves it. These routes need runs enabled (`[runs]` roots, see
+[runs](#runs)) and the control API's access.
+`/control/v1/sessions/{session}/block` and `/unblock` above are the operator
+state's and take a client's own session ID, not a session's.
+
+| Endpoint                                             | Body                                                                                                                                        | Answer                                                                                                                                                                                   |
+| ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /control/v1/sessions`                           | query `shelf` (`current`, the default, or `archived`) and `limit` (1–1000, default 100)                                                     | `{api_version, sessions}`, most recently active first, each a session body (below)                                                                                                       |
+| `POST /control/v1/sessions`                          | `{"harness": …}`, optional `"dir"` (left out: a new scratch folder of its own), `"model"`, `"effort"`, `"approvals"`, as for starting a run | `201` `{api_version, session}`. Its client starts at once, so its commands are listed before the first prompt                                                                            |
+| `GET /control/v1/sessions/{session}`                 | none                                                                                                                                        | `{api_version, session}`, a session body                                                                                                                                                 |
+| `POST /control/v1/sessions/{session}/prompt`         | `{"text", "delivery"}`, as for a run                                                                                                        | `202`. With no process running, a new one starts and resumes the session's conversation, then takes the prompt; a prompt to an archived session makes it current again                   |
+| `POST /control/v1/sessions/{session}/settings`       | `{"model", "effort", "approvals"}`                                                                                                          | `202`; through its process as for a run, or, with none running, for the next one                                                                                                         |
+| `POST /control/v1/sessions/{session}/client`         | `{"harness": …}`                                                                                                                            | `202`; while it is a draft: its process is replaced and its settings go back to the client's own. `409` `client_fixed` once a prompt went out                                            |
+| `POST /control/v1/sessions/{session}/unqueue`        | none                                                                                                                                        | `202`, through its process                                                                                                                                                               |
+| `POST /control/v1/sessions/{session}/approvals/{id}` | `{"decision": …}`                                                                                                                           | `202`, through its process                                                                                                                                                               |
+| `POST /control/v1/sessions/{session}/interrupt`      | none                                                                                                                                        | `202`, through its process                                                                                                                                                               |
+| `POST /control/v1/sessions/{session}/stop`           | none                                                                                                                                        | `202`: stops its process; the session goes on                                                                                                                                            |
+| `POST /control/v1/sessions/{session}/archive`        | none                                                                                                                                        | `202`; stops its process. `409` `archived` when it is already                                                                                                                            |
+| `POST /control/v1/sessions/{session}/unarchive`      | none                                                                                                                                        | `202`. `409` `not_archived`                                                                                                                                                              |
+| `GET /control/v1/sessions/{session}/commands`        | none                                                                                                                                        | `{api_version, commands}`, as for a run: none until a process has opened its conversation                                                                                                |
+| `GET /control/v1/sessions/{session}/files`           | query `q` and `limit`, as for a run                                                                                                         | `{api_version, files}`, from the session's folder, with or without a process                                                                                                             |
+| `GET /control/v1/sessions/events`                    | none                                                                                                                                        | server-sent `session` events, each the session as served (below), from now on; `lagged` when the feed fell behind (list them again). Each process's state and events are on the run feed |
+
+A session body is `{session, stored, served}`. `stored` is the session as the
+store holds it: `{id, harness, workdir, created_at, model, effort, approvals,
+archived_at, first_turn_at, runs}`, its runs newest first (each as
+`GET /api/runs` lists runs), or `null` for a moment after it is made, until the
+recorder commits it. `served` is the session as this daemon serves it now:
+`{session, harness, workdir, settings, state, process}`, `state` `{"shelf":
+"open"|"archived", "phase": "draft"|"active"}` and `process` its newest run, or
+`null` while the daemon has not served it since it started. A session the store
+holds is served again on its first command, read, or prompt. Commands that need
+a process with none running are `409` `no_process`; an unknown session is
+`404` `not_found`; the other refusals are a run's.
+
 ### Runs
 
 `/control/v1/runs` starts and drives agent runs: the official client, started

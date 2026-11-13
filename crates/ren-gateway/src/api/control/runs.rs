@@ -23,6 +23,7 @@ use axum::{
 use http::{HeaderMap, StatusCode};
 use ren_harness::{
     Harness,
+    commands::ClientCommand,
     drive::{ApprovalId, CommandRefused, Decision, Prompt},
     models::ModelId,
     settings::{ApprovalPolicy, Effort, RunSettings},
@@ -41,16 +42,16 @@ use tokio_util::sync::CancellationToken;
 /// typed after `@`, and how many to answer.
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
-struct FilesRequest {
+pub(super) struct FilesRequest {
     #[serde(default)]
-    q: String,
+    pub(super) q: String,
     #[serde(default)]
-    limit: Option<usize>,
+    pub(super) limit: Option<usize>,
 }
 
 impl FilesRequest {
-    const LIMIT: usize = 20;
-    const MOST: usize = 100;
+    pub(super) const LIMIT: usize = 20;
+    pub(super) const MOST: usize = 100;
 }
 
 #[derive(serde::Deserialize)]
@@ -81,12 +82,28 @@ struct StartRequest {
 
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
-struct PromptRequest {
-    text: String,
+pub(super) struct PromptRequest {
+    pub(super) text: String,
     /// How it goes: start a turn (the default), queue it for after the
     /// running turn, or steer the running turn with it.
     #[serde(default = "PromptRequest::start")]
-    delivery: Delivery,
+    pub(super) delivery: Delivery,
+}
+
+impl SettingsRequest {
+    /// The settings asked for: a model must be one a client could name.
+    pub(super) fn settings(self) -> Result<RunSettings, Denied> {
+        let model = self
+            .model
+            .map(|model| model.parse::<ModelId>())
+            .transpose()
+            .map_err(|_| Denied::Control(Refusal::Invalid))?;
+        Ok(RunSettings {
+            model,
+            effort: self.effort,
+            approvals: self.approvals,
+        })
+    }
 }
 
 impl PromptRequest {
@@ -98,19 +115,19 @@ impl PromptRequest {
 /// The settings a run moves to; each left out is the client's own.
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
-struct SettingsRequest {
+pub(super) struct SettingsRequest {
     #[serde(default)]
-    model: Option<String>,
+    pub(super) model: Option<String>,
     #[serde(default)]
-    effort: Option<Effort>,
+    pub(super) effort: Option<Effort>,
     #[serde(default)]
-    approvals: Option<ApprovalPolicy>,
+    pub(super) approvals: Option<ApprovalPolicy>,
 }
 
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
-struct AnswerRequest {
-    decision: Decision,
+pub(super) struct AnswerRequest {
+    pub(super) decision: Decision,
 }
 
 #[derive(serde::Serialize)]
@@ -127,7 +144,7 @@ struct Runs {
 
 /// A refused request: the control API's access check or a run refusal.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Denied {
+pub(super) enum Denied {
     Control(Refusal),
     Run(RunRefusal),
 }
@@ -143,7 +160,7 @@ impl IntoResponse for Denied {
 
 /// Why a run request was refused, with the label clients match on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum RunRefusal {
+pub(super) enum RunRefusal {
     Disabled,
     InvalidDirectory,
     DirectoryNotFound,
@@ -276,7 +293,7 @@ impl RunsApi {
         text.parse().map_err(|_| Denied::Run(RunRefusal::NotFound))
     }
 
-    fn body<T>(body: Result<Json<T>, JsonRejection>) -> Result<T, Denied> {
+    pub(super) fn body<T>(body: Result<Json<T>, JsonRejection>) -> Result<T, Denied> {
         body.map(|Json(body)| body)
             .map_err(|_| Denied::Control(Refusal::Invalid))
     }
@@ -460,6 +477,11 @@ impl RunsApi {
             .commands(Self::run(&run)?)
             .await
             .map_err(Self::composed)?;
+        Ok(Self::commands_body(commands))
+    }
+
+    /// The answer listing `commands`, each with what a prompt writes to run it.
+    pub(super) fn commands_body(commands: Vec<ClientCommand>) -> Response {
         let commands: Vec<serde_json::Value> = commands
             .into_iter()
             .map(|command| {
@@ -471,11 +493,11 @@ impl RunsApi {
                 value
             })
             .collect();
-        Ok(Json(serde_json::json!({
+        Json(serde_json::json!({
             "api_version": ControlApi::API_VERSION,
             "commands": commands,
         }))
-        .into_response())
+        .into_response()
     }
 
     /// The paths of the run's folder that best match what was typed.

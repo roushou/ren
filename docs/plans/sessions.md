@@ -1,6 +1,6 @@
 # Plan: sessions you work in
 
-Status: in progress, on `agent-runs`. Steps 1 to 3 are done; step 4 is next. This file is
+Status: in progress, on `agent-runs`. Steps 1 to 4 are done; step 5 is next. This file is
 the plan of record: each step lands as its own commits, every commit
 passes the full checks, and any change to the plan is written under
 [Deviations](#deviations) with its reason. Once the work is done, what
@@ -159,8 +159,11 @@ and `ren --help` and `ren --version` output against the commit before.
   cannot mint ids, and the two are different identities that may share a
   value.
 - **2 reads sessions through `Reader::sessions` and `Reader::session`
-  only.** `ReadRequest` and the read API gain them in step 4, beside the
-  control routes.
+  only**, and **4 serves them through the control API**
+  (`GET /control/v1/sessions`), not the read API: a session is the
+  operator's and is driven through the same routes, and `/api/v1/sessions`
+  already names recordings. `ReadRequest`, the CLI, and MCP do not read
+  sessions.
 - **2 adds `session` to the runs the control API lists** (`RunSnapshot`),
   additively, so the interfaces can group by it in step 5.
 - **3 starts a new session's client when the session is created**, so its
@@ -179,5 +182,12 @@ and `ren --help` and `ren --version` output against the commit before.
   effort, and an approval policy belong to the client that offered them.
 - **3 holds a prompt sent while the session's process is still opening**,
   as that process's first prompt, instead of refusing it.
+- **4 shares `/control/v1/sessions/{id}` with the operator state's
+  `/block` and `/unblock`**, which take a client's own session id and keep
+  their routes (the CLI's `ren control block` uses them). The UI server
+  forwards the session routes and not those.
+- **4 answers a session as `{session, stored, served}`**: the store's view
+  (with its runs) and the supervisor's, each possibly missing, rather than
+  one merged view, so what was recorded and what is live stay apart.
 - **1a kept the terminal app's `Focus::Session` and `IntoSession`**: they
   name the detail pane, which shows the operator's sessions after step 5.

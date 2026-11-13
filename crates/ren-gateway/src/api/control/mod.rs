@@ -13,6 +13,7 @@
 
 mod history;
 mod runs;
+mod sessions;
 
 use crate::control::{ControlError, Controls, RunningCall};
 use crate::operator::{OperatorCommand, OperatorState, RetryAfter};
@@ -224,6 +225,13 @@ impl ControlApi {
         shutdown: CancellationToken,
     ) -> Router {
         let control = Arc::new(self);
+        let session_routes = sessions::SessionsApi {
+            control: control.clone(),
+            supervisor: supervisor.clone(),
+            reader: reader.clone(),
+            shutdown: shutdown.clone(),
+        }
+        .router();
         let runs = RunsApi {
             control: control.clone(),
             supervisor,
@@ -250,6 +258,7 @@ impl ControlApi {
             .route("/control/v1/backup", post(Self::backup))
             .with_state(control)
             .merge(run_routes)
+            .merge(session_routes)
             .merge(history_routes)
             .layer(axum::middleware::map_response(Self::private))
     }

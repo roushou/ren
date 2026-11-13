@@ -389,7 +389,11 @@ dependencies under "Crates" below. Read the code for current module ownership.
     `Controls` (token or Tailscale identity; browsers refused), and its
     `[control]` configuration (`ControlOptions`) and `ControlToken`. Handler state
     stays crate-private; configuration and token types are exported at the root.
-    Its `runs` module serves `/control/v1/runs`: starting, prompting, answering,
+    Its `sessions` module serves `/control/v1/sessions`: creating a session,
+    prompting, configuring, choosing its client while a draft, archiving,
+    its composer's commands and files, and session changes as SSE, through
+    the `Supervisor`, loading a session the store holds (`Reader::session`)
+    on its first request. Its `runs` module serves `/control/v1/runs`: starting, prompting, answering,
     interrupting, and stopping runs through the `ren_supervisor::Supervisor` in
     `ManagementSetup`, and their updates as SSE. Its `history` module serves
     `/control/v1/history`: archiving, unarchiving, and deleting a recording or
@@ -440,10 +444,11 @@ dependencies under "Crates" below. Read the code for current module ownership.
   reads the daemon only through the management API and forwards only allowlisted
   read-only endpoints. It never forwards browser cookies or credentials, never reads
   storage directly, and never proxies inference. There are two exceptions.
-  Runs: with `REN_CONTROL_TOKEN_FILE` set, `/control/runs*` and
+  Runs: with `REN_CONTROL_TOKEN_FILE` set, `/control/runs*`,
+  `/control/sessions*` (not the operator state's session blocks), and
   `/control/history/*` (`src/lib/server/control.ts`, `RunsProxy`) forward the
-  Runs view's same-origin JSON requests to the daemon's `/control/v1/runs*`
-  and its archive, unarchive, and delete routes only, with the control token read from that
+  Runs view's same-origin JSON requests to the daemon's `/control/v1/runs*`,
+  `/control/v1/sessions*`, and its archive, unarchive, and delete routes only, with the control token read from that
   file on each request, never sent to the browser, and, with
   `REN_CONTROL_LOGINS` set, only for those Tailscale logins; `src/lib/runs.ts`
   is the view's pure core (run states, the live transcript, the run list by

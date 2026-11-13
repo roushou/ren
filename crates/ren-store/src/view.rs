@@ -666,12 +666,15 @@ pub struct SessionView {
     pub effort: Option<Stored<Effort>>,
     pub approvals: Option<Stored<ApprovalPolicy>>,
     pub archived_at: Option<UnixMillis>,
+    /// When its first turn started; `None` while it is a draft (no prompt
+    /// has gone out).
+    pub first_turn_at: Option<UnixMillis>,
     /// Its runs, newest first.
     pub runs: Vec<RunView>,
 }
 
 impl SessionView {
-    pub(super) const SELECT: &'static str = "SELECT id, harness, workdir, created_at, model, effort, approvals, archived_at FROM operator_sessions";
+    pub(super) const SELECT: &'static str = "SELECT id, harness, workdir, created_at, model, effort, approvals, archived_at, (SELECT MIN(e.at) FROM run_entries e JOIN runs r ON r.id = e.run WHERE r.operator_session = operator_sessions.id AND e.kind = 'turn_started') AS first_turn_at FROM operator_sessions";
 
     /// The session in `row`, with `runs`.
     pub(super) fn from_row(row: &SqliteRow, runs: Vec<RunView>) -> Result<Self, StoreError> {
@@ -685,6 +688,7 @@ impl SessionView {
             effort: row.optional_label("effort")?,
             approvals: row.optional_label("approvals")?,
             archived_at: row.optional_time("archived_at")?,
+            first_turn_at: row.optional_time("first_turn_at")?,
             runs,
         })
     }
