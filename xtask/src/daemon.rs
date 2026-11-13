@@ -204,6 +204,9 @@ pub enum RunsError {
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct LiveRun {
     run: RunId,
+    /// The session it serves; an older daemon names none.
+    #[serde(default)]
+    session: Option<String>,
     harness: Stored<Harness>,
     workdir: String,
     state: LiveState,
@@ -304,20 +307,26 @@ impl Runs {
 }
 
 impl LiveRun {
-    /// How to continue its conversation after the restart.
+    /// How to continue its conversation after the restart: by writing to
+    /// its session, which starts the client again and resumes it; from an
+    /// older daemon, which names no session, by resuming its thread.
     pub fn continuation(&self) -> String {
         let client = match self.harness.known() {
             Some(Harness::Codex) => Some("codex"),
             Some(Harness::ClaudeCode) => Some("claude"),
-            Some(Harness::Pi | Harness::OpenCode) | None => None,
+            Some(Harness::Pi) => Some("pi"),
+            Some(Harness::OpenCode) | None => None,
         };
-        match (client, &self.state.thread) {
-            (Some(client), Some(thread)) => format!(
-                "continue it from the Runs page, `ren tui`, or `ren runs start {client} {} --resume {thread}`",
+        match (&self.session, client, &self.state.thread) {
+            (Some(session), _, _) => format!(
+                "write to its session to go on: from the Sessions page, `ren tui`, or `ren runs say {session} <prompt>`"
+            ),
+            (None, Some(client), Some(thread)) => format!(
+                "continue it from the Sessions page, `ren tui`, or `ren runs start {client} {} --resume {thread}`",
                 self.workdir
             ),
-            (None, Some(_)) => "continue it from the Runs page or `ren tui`".to_owned(),
-            (Some(_) | None, None) => "its conversation had not opened".to_owned(),
+            (None, None, Some(_)) => "continue it from the Sessions page or `ren tui`".to_owned(),
+            (None, Some(_) | None, None) => "its conversation had not opened".to_owned(),
         }
     }
 }
@@ -582,9 +591,15 @@ mod tests {
         let listed = runs(&[
             run(1, "codex", "idle"),
             run(2, "claude_code", "idle"),
-            run(3, "pi", "idle"),
+            run(3, "opencode", "idle"),
             run(4, "codex", "starting"),
             run(5, "codex", "ended"),
+            // A daemon with sessions names each run's.
+            {
+                let mut served = run(6, "pi", "idle");
+                served["session"] = "0193e0f1-0000-7000-a000-000000000006".into();
+                served
+            },
         ]);
         let ending: Vec<_> = listed
             .ending()
@@ -594,10 +609,11 @@ mod tests {
         assert_eq!(
             ending,
             [
-                "codex run 0193e0f1-0000-7000-8000-000000000001 in /home/op/acme-1: idle; continue it from the Runs page, `ren tui`, or `ren runs start codex /home/op/acme-1 --resume 0193e0f1-0000-7000-9000-000000000001`",
-                "claude_code run 0193e0f1-0000-7000-8000-000000000002 in /home/op/acme-2: idle; continue it from the Runs page, `ren tui`, or `ren runs start claude /home/op/acme-2 --resume 0193e0f1-0000-7000-9000-000000000002`",
-                "pi run 0193e0f1-0000-7000-8000-000000000003 in /home/op/acme-3: idle; continue it from the Runs page or `ren tui`",
+                "codex run 0193e0f1-0000-7000-8000-000000000001 in /home/op/acme-1: idle; continue it from the Sessions page, `ren tui`, or `ren runs start codex /home/op/acme-1 --resume 0193e0f1-0000-7000-9000-000000000001`",
+                "claude_code run 0193e0f1-0000-7000-8000-000000000002 in /home/op/acme-2: idle; continue it from the Sessions page, `ren tui`, or `ren runs start claude /home/op/acme-2 --resume 0193e0f1-0000-7000-9000-000000000002`",
+                "opencode run 0193e0f1-0000-7000-8000-000000000003 in /home/op/acme-3: idle; continue it from the Sessions page or `ren tui`",
                 "codex run 0193e0f1-0000-7000-8000-000000000004 in /home/op/acme-4: starting; its conversation had not opened",
+                "pi run 0193e0f1-0000-7000-8000-000000000006 in /home/op/acme-6: idle; write to its session to go on: from the Sessions page, `ren tui`, or `ren runs say 0193e0f1-0000-7000-a000-000000000006 <prompt>`",
             ]
         );
     }

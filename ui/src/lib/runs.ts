@@ -789,7 +789,7 @@ export type Drivable = (typeof DRIVABLE)[number];
 /** One read the page starts with: what was read, or why it was not. */
 export type Read<T> = { state: 'read'; value: T } | { state: 'failed'; reason: string };
 
-/** Everything the Runs page shows before it starts following the feed. */
+/** Everything the Sessions page shows before it starts following the feed. */
 export interface RunsStart {
   live: Read<RunSnapshot[]>;
   places: Read<RunPlaces>;
@@ -813,7 +813,7 @@ export class RunsClient {
     return (await this.#send('GET', '/control/runs', undefined, liveRuns, signal)).runs;
   }
   /**
-   * Everything the Runs page starts with, read at once; each read that
+   * Everything the Sessions page starts with, read at once; each read that
    * fails says why, and the others stand.
    */
   async opening(harness: Drivable | null = null, wait = 1_500): Promise<RunsStart> {
@@ -1962,7 +1962,7 @@ export class Memory {
     };
   }
 
-  /** The cookie that keeps `remembered` for a year, for the Runs page only. */
+  /** The cookie that keeps `remembered` for a year, for the Sessions page only. */
   static cookie(remembered: Remembered): string {
     const value = encodeURIComponent(JSON.stringify(remembered));
     return `${Memory.COOKIE}=${value}; Path=/runs; Max-Age=31536000; SameSite=Lax`;

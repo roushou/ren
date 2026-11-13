@@ -182,10 +182,11 @@ anything). `--drain-runs` restarts without waiting for runs: their turns are los
 and their processes end with the daemon; running calls are still waited for. It then pauses
 admission so new calls get `503` with `retry-after: 10` and clients wait (a run
 prompted between the check and the pause is waited for too). Idle runs end with
-the old daemon: before stopping it, it lists each with how to continue
-its conversation (from the UI's Sessions page, `ren tui`, or
-`ren runs start <client> <dir> --resume <thread>`), which a new run resumes where
-it left off. It runs `ren control backup`, stops the service, keeps the old
+the old daemon: before stopping it, it lists each with how to continue it.
+Writing to its session (from the UI's Sessions page, `ren tui`, or
+`ren runs say <session> <prompt>`) starts its client again, which resumes the
+conversation where it left off; a run from a daemon without sessions is
+resumed with `ren runs start <client> <dir> --resume <thread>`. It runs `ren control backup`, stops the service, keeps the old
 binary as `~/.local/bin/ren.previous`, installs the new one, rewrites the unit
 only if it changed, starts the service, enables lingering, and runs `ren doctor`.
 It requires doctor's build check to confirm the daemon runs the build just

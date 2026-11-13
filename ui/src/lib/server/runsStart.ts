@@ -1,4 +1,4 @@
-// The Runs page's first reads, made on this server so the page renders with
+// The Sessions page's first reads, made on this server so the page renders with
 // them: through the same control proxy and management surface the browser
 // uses, with the browser's Tailscale login, and never its cookies.
 import { REN_GATEWAY_URL } from '$app/env/private';
