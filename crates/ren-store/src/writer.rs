@@ -941,7 +941,15 @@ impl MetadataTx<'_> {
                         .await?;
                     }
                 }
-                // While each session has one run, it is archived with it.
+                // An operator session's own shelf; otherwise, while each
+                // session has one run, it is archived with it.
+                if let HistorySubject::OperatorSession(session) = edit.subject {
+                    sqlx::query("UPDATE operator_sessions SET archived_at = ? WHERE id = ?")
+                        .bind(at)
+                        .bind(session.to_string())
+                        .execute(&mut *self.tx)
+                        .await?;
+                }
                 for run in &runs {
                     sqlx::query("UPDATE operator_sessions SET archived_at = ? WHERE id = (SELECT operator_session FROM runs WHERE id = ?)")
                         .bind(at)
@@ -995,24 +1003,13 @@ impl MetadataTx<'_> {
                             .await?;
                         // A session goes with its last run.
                         if let Some(session) = &session {
-                            let gone = sqlx::query("DELETE FROM operator_sessions WHERE id = ?1 AND NOT EXISTS (SELECT 1 FROM runs WHERE operator_session = ?1)")
-                                .bind(session)
-                                .execute(&mut *self.tx)
-                                .await?
-                                .rows_affected();
-                            if gone > 0 {
-                                sqlx::query("DELETE FROM observations WHERE call IS NULL AND kind IN (?, ?, ?, ?, ?) AND json_extract(payload, '$.session') = ?")
-                                    .bind(ObservationKind::SessionCreated.label())
-                                    .bind(ObservationKind::SessionConfigured.label())
-                                    .bind(ObservationKind::SessionClientChosen.label())
-                                    .bind(ObservationKind::SessionArchived.label())
-                                    .bind(ObservationKind::SessionUnarchived.label())
-                                    .bind(session)
-                                    .execute(&mut *self.tx)
-                                    .await?;
-                            }
+                            self.drop_session(session).await?;
                         }
                     }
+                }
+                // An operator session goes even with no run to take it.
+                if let HistorySubject::OperatorSession(session) = edit.subject {
+                    self.drop_session(&session.to_string()).await?;
                 }
             }
         }
@@ -1028,9 +1025,31 @@ impl MetadataTx<'_> {
         .await
     }
 
-    /// The sessions and runs an edit of `subject` applies to: a session and
-    /// the runs whose thread it is, or a run and the sessions its thread
-    /// names.
+    /// Delete operator session `session` and its own facts, once no run
+    /// of it is left.
+    async fn drop_session(&mut self, session: &str) -> Result<(), StoreError> {
+        let gone = sqlx::query("DELETE FROM operator_sessions WHERE id = ?1 AND NOT EXISTS (SELECT 1 FROM runs WHERE operator_session = ?1)")
+            .bind(session)
+            .execute(&mut *self.tx)
+            .await?
+            .rows_affected();
+        if gone > 0 {
+            sqlx::query("DELETE FROM observations WHERE call IS NULL AND kind IN (?, ?, ?, ?, ?) AND json_extract(payload, '$.session') = ?")
+                .bind(ObservationKind::SessionCreated.label())
+                .bind(ObservationKind::SessionConfigured.label())
+                .bind(ObservationKind::SessionClientChosen.label())
+                .bind(ObservationKind::SessionArchived.label())
+                .bind(ObservationKind::SessionUnarchived.label())
+                .bind(session)
+                .execute(&mut *self.tx)
+                .await?;
+        }
+        Ok(())
+    }
+
+    /// The sessions and runs an edit of `subject` applies to: a recording
+    /// and the runs whose thread it is, a run and the recordings its thread
+    /// names, or an operator session's runs and the recordings they name.
     async fn subjects(
         &mut self,
         subject: HistorySubject,
@@ -1045,6 +1064,11 @@ impl MetadataTx<'_> {
                 run.to_string(),
                 "SELECT id FROM sessions WHERE native_id = (SELECT thread FROM runs WHERE id = ?1)",
                 "SELECT id FROM runs WHERE id = ?1",
+            ),
+            HistorySubject::OperatorSession(session) => (
+                session.to_string(),
+                "SELECT id FROM sessions WHERE native_id IN (SELECT thread FROM runs WHERE operator_session = ?1)",
+                "SELECT id FROM runs WHERE operator_session = ?1",
             ),
         };
         let sessions = sqlx::query_scalar(sessions)

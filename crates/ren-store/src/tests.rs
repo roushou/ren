@@ -1709,6 +1709,83 @@ mod history {
         assert!(fixture.shelf(Shelf::Archived).await.is_empty());
     }
 
+    /// An operator session is deleted with its ended runs and what they
+    /// recorded, and goes even with no run at all.
+    #[tokio::test]
+    async fn an_operator_session_is_deleted_with_its_runs_or_none() {
+        let mut fixture = Fixture::new().await;
+        // A session with no run: its client never started.
+        let lone = SessionId::generate(fixture.ids.as_ref());
+        let mut batch = Batch::default();
+        batch.push(Op::Session(SessionRecord {
+            at: fixture.clock.now(),
+            session: lone,
+            fact: SessionFact::Created {
+                harness: ren_harness::Harness::OpenCode,
+                workdir: "/work/acme".into(),
+                settings: ren_harness::settings::RunSettings::default(),
+            },
+        }));
+        fixture.store.commit(&batch).await.unwrap();
+        let subject = HistorySubject::OperatorSession(lone);
+        assert_eq!(
+            fixture.reader.history_target(subject).await.unwrap(),
+            Some(crate::view::HistoryTarget {
+                open_calls: 0,
+                running_runs: 0,
+            })
+        );
+        fixture.edit(subject, HistoryChange::Delete).await;
+        assert!(fixture.reader.session(lone).await.unwrap().is_none());
+
+        // A session whose ended run recorded calls.
+        fixture
+            .record(CallSpec {
+                session: Some(9),
+                ..CallSpec::default()
+            })
+            .await;
+        let run = fixture.run(9, true).await;
+        let session = fixture
+            .reader
+            .run(run)
+            .await
+            .unwrap()
+            .unwrap()
+            .operator_session
+            .unwrap();
+        let running = fixture.run(10, false).await;
+        let busy = fixture
+            .reader
+            .run(running)
+            .await
+            .unwrap()
+            .unwrap()
+            .operator_session
+            .unwrap();
+        assert_eq!(
+            fixture
+                .reader
+                .history_target(HistorySubject::OperatorSession(busy))
+                .await
+                .unwrap()
+                .map(|target| target.running_runs),
+            Some(1)
+        );
+        assert_eq!(fixture.shelf(Shelf::Current).await.len(), 1);
+        fixture
+            .edit(
+                HistorySubject::OperatorSession(session),
+                HistoryChange::Delete,
+            )
+            .await;
+        assert!(fixture.reader.run(run).await.unwrap().is_none());
+        assert!(fixture.reader.session(session).await.unwrap().is_none());
+        // Its recording went with it; the running session's run stays.
+        assert!(fixture.shelf(Shelf::Current).await.is_empty());
+        assert_eq!(fixture.runs(Shelf::Current).await, [running]);
+    }
+
     #[tokio::test]
     async fn a_running_run_is_never_archived_away() {
         let mut fixture = Fixture::new().await;

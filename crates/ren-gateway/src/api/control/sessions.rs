@@ -37,7 +37,10 @@ use ren_harness::{
 };
 use ren_protocol::label::Stored;
 use ren_protocol::native::NativeThreadId;
-use ren_recorder::id::SessionId;
+use ren_recorder::{
+    batch::{HistoryChange, HistorySubject},
+    id::SessionId,
+};
 use ren_store::{
     Reader,
     query::{PageLimit, Shelf},
@@ -142,6 +145,7 @@ impl SessionsApi {
                 "/control/v1/sessions/{session}/unarchive",
                 post(Self::unarchive),
             )
+            .route("/control/v1/sessions/{session}/delete", post(Self::delete))
             .route(
                 "/control/v1/sessions/{session}/commands",
                 get(Self::commands),
@@ -173,6 +177,7 @@ impl SessionsApi {
                 RunRefusal::Refused("not_archived")
             }
             SessionError::NoProcess => RunRefusal::Refused("no_process"),
+            SessionError::Running => RunRefusal::Refused("run_running"),
             SessionError::Unreadable(_) => RunRefusal::Refused("unreadable"),
             SessionError::Unrecorded => RunRefusal::Unrecorded,
             SessionError::Start(error) => error.into(),
@@ -505,6 +510,46 @@ impl SessionsApi {
         Path(session): Path<String>,
     ) -> Result<Response, Denied> {
         api.shelve(&headers, &session, Shelving::Unarchive).await
+    }
+
+    /// Delete a session for good: its ended runs, what they recorded, and
+    /// the session, even one with no run. Refused while a process serves it
+    /// or one of its calls is open. The supervisor stops serving it at once;
+    /// the store deletes it when the recorder reaches the edit.
+    async fn delete(
+        State(api): Api,
+        headers: HeaderMap,
+        Path(session): Path<String>,
+    ) -> Result<Response, Denied> {
+        let actor = api.control.authorize(&headers).map_err(Denied::Control)?;
+        let supervisor = api.admit(&headers)?;
+        let session = Self::session(&session)?;
+        let subject = HistorySubject::OperatorSession(session);
+        // None: not stored yet, a session made a moment ago.
+        let target = api
+            .reader
+            .history_target(subject)
+            .await
+            .map_err(|_| Denied::Run(RunRefusal::Unavailable))?;
+        if let Some(target) = target {
+            if target.running_runs > 0 {
+                return Err(Denied::Run(RunRefusal::Refused("run_running")));
+            }
+            if target.open_calls > 0 {
+                return Err(Denied::Run(RunRefusal::Refused("call_open")));
+            }
+        }
+        let slot = api
+            .control
+            .recorder
+            .history_slot()
+            .ok_or(Denied::Run(RunRefusal::Unrecorded))?;
+        let served = supervisor.forget(session).await.map_err(Self::refused)?;
+        if target.is_none() && !served {
+            return Err(Denied::Run(RunRefusal::NotFound));
+        }
+        slot.record(actor, subject, HistoryChange::Delete);
+        Ok(Self::done())
     }
 
     /// What the session's client offers a prompt; none until a process

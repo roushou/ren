@@ -692,6 +692,84 @@ async fn a_prompt_queued_during_a_turn_goes_out_as_it_ends() {
     gateway.stop().await;
 }
 
+/// A session is deleted whole once its process has stopped: refused while
+/// it runs, then gone from both the store and the supervisor, so no list
+/// shows it again.
+#[tokio::test]
+async fn a_session_is_deleted_once_its_process_has_stopped() {
+    let upstream = mock(Router::new()).await;
+    let dir = tempfile::tempdir().unwrap();
+    let gateway = TestGateway::with_runs(
+        &config(&upstream),
+        dir.path(),
+        vec![PathBuf::from("/work")],
+        ScriptedHost,
+    )
+    .await;
+    let control = Control::new(&gateway);
+    let (status, body) = control
+        .post(
+            "/sessions",
+            json!({ "harness": "codex", "dir": "/work/acme" }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    let session = body["session"].as_str().unwrap().to_owned();
+    let made = control
+        .until_session(&session, |s| {
+            !s["stored"].is_null() && !s["served"]["process"].is_null()
+        })
+        .await;
+    let process = made["served"]["process"].as_str().unwrap().to_owned();
+    control
+        .until_run(&process, |state| state["phase"] == "idle")
+        .await;
+
+    let (status, body) = control
+        .post(&format!("/sessions/{session}/delete"), json!({}))
+        .await;
+    assert_eq!(
+        (status, body["error"].clone()),
+        (StatusCode::CONFLICT, json!("run_running"))
+    );
+    let (status, _) = control
+        .post(&format!("/sessions/{session}/stop"), json!({}))
+        .await;
+    assert_eq!(status, StatusCode::ACCEPTED);
+    control
+        .until_run(&process, |state| state["phase"] == "ended")
+        .await;
+    control
+        .until_session(&session, |s| s["stored"]["runs"][0]["ended_at"].is_number())
+        .await;
+    let (status, body) = control
+        .post(&format!("/sessions/{session}/delete"), json!({}))
+        .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+    // Gone from the store once the recorder reaches the edit, and from the
+    // supervisor at once.
+    let mut listed = true;
+    for _ in 0..200 {
+        let (_, body) = control.get("/sessions").await;
+        listed = body["sessions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|entry| entry["session"] == session.as_str());
+        if !listed {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    assert!(!listed, "the deleted session is still listed");
+    let (status, _) = control.get(&format!("/sessions/{session}")).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let (status, _) = control
+        .post(&format!("/sessions/{session}/delete"), json!({}))
+        .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
 #[tokio::test]
 async fn a_session_is_created_driven_continued_archived_and_served_again_after_a_restart() {
     let upstream = mock(Router::new()).await;

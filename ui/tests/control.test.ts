@@ -109,6 +109,7 @@ test('starting, listing, projects, models, answering, history edits, and the fee
   await proxy.respond(post(`/control/sessions/${run}/stop`, {}));
   await proxy.respond(post(`/control/sessions/${run}/unqueue`, {}));
   await proxy.respond(post(`/control/sessions/${run}/settings`, { effort: 'high' }));
+  await proxy.respond(post(`/control/sessions/${run}/delete`, {}));
   await proxy.respond(post(`/control/history/sessions/${run}/archive`, {}));
   await proxy.respond(post(`/control/history/runs/${run}/delete`, {}));
   const feed = await proxy.respond(new Request('http://ui.test/control/runs/events'));
@@ -123,6 +124,7 @@ test('starting, listing, projects, models, answering, history edits, and the fee
     `POST /control/v1/sessions/${run}/stop`,
     `POST /control/v1/sessions/${run}/unqueue`,
     `POST /control/v1/sessions/${run}/settings`,
+    `POST /control/v1/sessions/${run}/delete`,
     `POST /control/v1/history/sessions/${run}/archive`,
     `POST /control/v1/history/runs/${run}/delete`,
     'GET /control/v1/runs/events',
@@ -203,7 +205,7 @@ test('cross-site, non-JSON, unknown, and unlisted requests never reach the daemo
       403,
     ],
     [post('/control/sessions/not-a-session/stop', {}), 404],
-    [post(`/control/sessions/${run}/delete`, {}), 404],
+    [post(`/control/sessions/${run}/shred`, {}), 404],
     [post(`/control/history/sessions/${run}/shred`, {}), 404],
     [post(`/control/history/calls/${run}/delete`, {}), 404],
     [new Request('http://ui.test/control/runs/clients/hermes/models'), 404],

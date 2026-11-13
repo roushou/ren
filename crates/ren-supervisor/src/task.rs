@@ -578,6 +578,17 @@ impl<H: AgentHost> SupervisorTask<H> {
             SessionRequest::Shelve { session, shelving } => {
                 self.shelve(session, shelving, served).await
             }
+            SessionRequest::Forget(session) => {
+                if !served.sessions.contains_key(&session) {
+                    return Err(SessionError::NoSuchSession(session));
+                }
+                if served.process(session).is_some() {
+                    return Err(SessionError::Running);
+                }
+                served.sessions.remove(&session);
+                served.runs.retain(|_, live| live.session != session);
+                Ok(SessionAnswer::Done)
+            }
             SessionRequest::List => Ok(SessionAnswer::Listed(
                 served
                     .sessions

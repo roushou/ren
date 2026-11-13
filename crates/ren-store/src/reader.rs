@@ -1038,16 +1038,25 @@ impl Reader {
         &self,
         subject: HistorySubject,
     ) -> Result<Option<HistoryTarget>, StoreError> {
-        let (id, exists, thread) = match subject {
+        // The recordings a subject names (by their native ids), and its runs.
+        let (id, exists, threads, runs) = match subject {
             HistorySubject::Session(session) => (
                 session.to_string(),
                 "SELECT EXISTS(SELECT 1 FROM sessions WHERE id = ?1)",
                 "(SELECT native_id FROM sessions WHERE id = ?1)",
+                "id = ?1 OR thread = (SELECT native_id FROM sessions WHERE id = ?1)",
             ),
             HistorySubject::Run(run) => (
                 run.to_string(),
                 "SELECT EXISTS(SELECT 1 FROM runs WHERE id = ?1)",
                 "(SELECT thread FROM runs WHERE id = ?1)",
+                "id = ?1 OR thread = (SELECT thread FROM runs WHERE id = ?1)",
+            ),
+            HistorySubject::OperatorSession(session) => (
+                session.to_string(),
+                "SELECT EXISTS(SELECT 1 FROM operator_sessions WHERE id = ?1)",
+                "(SELECT thread FROM runs WHERE operator_session = ?1)",
+                "operator_session = ?1",
             ),
         };
         let exists: bool = sqlx::query_scalar(AssertSqlSafe(exists))
@@ -1058,7 +1067,7 @@ impl Reader {
             return Ok(None);
         }
         let counts = sqlx::query(AssertSqlSafe(format!(
-            "SELECT (SELECT COUNT(*) FROM calls WHERE state = ?2 AND session IN (SELECT id FROM sessions WHERE native_id = {thread})) AS open_calls, (SELECT COUNT(*) FROM runs WHERE ended_at IS NULL AND (id = ?1 OR thread = {thread})) AS running_runs"
+            "SELECT (SELECT COUNT(*) FROM calls WHERE state = ?2 AND session IN (SELECT id FROM sessions WHERE native_id IN {threads})) AS open_calls, (SELECT COUNT(*) FROM runs WHERE ended_at IS NULL AND ({runs})) AS running_runs"
         )))
         .bind(&id)
         .bind(CallState::Open.label())

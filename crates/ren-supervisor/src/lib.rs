@@ -143,6 +143,8 @@ pub enum SessionError {
     Refused(SessionRefused),
     #[error("no process serves the session")]
     NoProcess,
+    #[error("a process still serves the session")]
+    Running,
     #[error("cannot read the session's folder: {0}")]
     Unreadable(io::Error),
     #[error("the recorder has no room to record the session")]
@@ -281,6 +283,8 @@ pub(crate) enum SessionRequest {
         session: SessionId,
         shelving: Shelving,
     },
+    /// Stop serving a session that is being deleted.
+    Forget(SessionId),
     List,
     Commands(SessionId),
     Files {
@@ -530,6 +534,16 @@ impl Supervisor {
         self.session(SessionRequest::Shelve { session, shelving })
             .await
             .map(|_| ())
+    }
+
+    /// Stop serving `session`, which is being deleted, with its ended runs:
+    /// refused while a process serves it. Whether it was served.
+    pub async fn forget(&self, session: SessionId) -> Result<bool, SessionError> {
+        match self.session(SessionRequest::Forget(session)).await {
+            Ok(_) => Ok(true),
+            Err(SessionError::NoSuchSession(_)) => Ok(false),
+            Err(error) => Err(error),
+        }
     }
 
     /// Every session served since the supervisor started.

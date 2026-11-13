@@ -102,7 +102,7 @@ const routes: { pattern: RegExp; route: Route }[] = [
   },
   {
     pattern: new RegExp(
-      `^/control/sessions/${runId}/(?:prompt|unqueue|settings|client|interrupt|stop|archive|unarchive)$`,
+      `^/control/sessions/${runId}/(?:prompt|unqueue|settings|client|interrupt|stop|archive|unarchive|delete)$`,
     ),
     route: { method: 'POST', feed: false },
   },

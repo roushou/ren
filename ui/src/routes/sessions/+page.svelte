@@ -216,21 +216,17 @@
 
   /**
    * Archive, unarchive, or delete the selected session. Archiving stops its
-   * process; deleting removes its ended runs with their recorded calls, and
-   * the session goes with its last run. The daemon applies each after what
-   * it is recording, so the lists are read again until the session moved.
+   * process; deleting removes the session with its ended runs and their
+   * recorded calls, even one whose client never ran. The daemon applies each
+   * after what it is recording, so the lists are read again until the
+   * session moved.
    */
   async function edit(change: HistoryChange) {
     const target = chosen;
-    const runs = session?.runs ?? [];
     if (!target) return;
     confirming = null;
     await act(async () => {
-      if (change === 'delete') {
-        for (const run of runs) await client.edit({ kind: 'run', id: run.id }, 'delete');
-      } else {
-        await client.toSession(target, { kind: change });
-      }
+      await client.toSession(target, { kind: change });
       for (const delay of [150, 400, 1000, 2000]) {
         await new Promise((resolve) => setTimeout(resolve, delay));
         await readSessions();

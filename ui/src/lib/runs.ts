@@ -894,7 +894,7 @@ export class RunsClient {
         }
       | { kind: 'client'; harness: Drivable }
       | { kind: 'answer'; approval: ApprovalId; decision: Decision }
-      | { kind: 'unqueue' | 'interrupt' | 'stop' | 'archive' | 'unarchive' },
+      | { kind: 'unqueue' | 'interrupt' | 'stop' | 'archive' | 'unarchive' | 'delete' },
   ): Promise<void> {
     const base = `/control/sessions/${session}`;
     switch (command.kind) {
@@ -923,6 +923,7 @@ export class RunsClient {
       case 'stop':
       case 'archive':
       case 'unarchive':
+      case 'delete':
         return this.#send('POST', `${base}/${command.kind}`, {}, null);
       default:
         return assertNever(command);

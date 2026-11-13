@@ -183,10 +183,12 @@ test('session commands go to their routes', async () => {
   await client.toSession(sessionA, { kind: 'prompt', text: 'go', delivery: 'queue' });
   await client.toSession(sessionA, { kind: 'client', harness: 'pi' });
   await client.toSession(sessionA, { kind: 'archive' });
+  await client.toSession(sessionA, { kind: 'delete' });
   assert.deepEqual(seen, [
     'POST /control/sessions {"harness":"codex","dir":"/work/acme","effort":"high"}',
     `POST /control/sessions/${sessionA}/prompt {"text":"go","delivery":"queue"}`,
     `POST /control/sessions/${sessionA}/client {"harness":"pi"}`,
     `POST /control/sessions/${sessionA}/archive {}`,
+    `POST /control/sessions/${sessionA}/delete {}`,
   ]);
 });
