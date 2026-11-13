@@ -402,7 +402,8 @@ test('an approval to use another tool says which, and only drivable clients resu
   assert.equal(Runs.drivable('claude_code'), 'claude_code');
   assert.equal(Runs.drivable('codex'), 'codex');
   assert.equal(Runs.drivable('pi'), 'pi');
-  assert.equal(Runs.drivable('opencode'), null);
+  assert.equal(Runs.drivable('opencode'), 'opencode');
+  assert.equal(Runs.drivable('gpt' as never), null);
 });
 
 test('projects narrow as a name or path is typed, and say their branch', () => {
@@ -746,7 +747,7 @@ test('the remembered settings read back from their cookie, and junk is the defau
   }
   // A client this UI does not drive, or a value that is not text, is left out.
   assert.deepEqual(
-    Memory.parse('{"harness":"pi","settings":{"opencode":{"model":"x"},"pi":{"model":7}}}'),
+    Memory.parse('{"harness":"pi","settings":{"gpt":{"model":"x"},"pi":{"model":7}}}'),
     {
       harness: 'pi',
       settings: {

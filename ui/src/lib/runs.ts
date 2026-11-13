@@ -771,8 +771,13 @@ export class RunCommandError extends Error {
   }
 }
 
-/** The clients the daemon can drive, as the new-run form offers them. */
-export const DRIVABLE = ['codex', 'claude_code', 'pi'] as const satisfies readonly Harness[];
+/** The clients the daemon can drive, in the order a draft offers them. */
+export const DRIVABLE = [
+  'codex',
+  'claude_code',
+  'pi',
+  'opencode',
+] as const satisfies readonly Harness[];
 export type Drivable = (typeof DRIVABLE)[number];
 
 /** One read the page starts with: what was read, or why it was not. */
