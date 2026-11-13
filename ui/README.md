@@ -150,6 +150,22 @@ reaches the UI can drive runs: leave it unset only for a UI on loopback. Without
 `REN_CONTROL_TOKEN_FILE`, the view lists recorded runs and explains how to turn
 it on.
 
+### Redline
+
+With the control token, every page has Redline (the status line's Redline
+button, or `m`): mark what's wrong on the page for an agent to fix. While it is
+on, the element under the pointer is outlined and named, a click marks it
+instead of reaching the page, and you write a note in place; `Esc` leaves, and
+the marks stay. The panel beside the page shows the brief exactly as the agent
+gets it: each note with the element's selector (from the nearest labelled
+region), its text and size, and its source file and line when the UI runs as a
+development build (`bun run dev`; a production build has none). Send makes a
+session in the folder you choose, on the client you choose, with the brief as
+its first prompt, and opens it. The brief asks the agent to work on a new
+`redline/…` branch in a git worktree and not to install anything; nothing
+enforces that yet beyond the agent following it and the client's approvals.
+The folder and client last sent to are kept in this browser only.
+
 ## Payload previews
 
 Payloads are rendered inert. Message text is formatted as Markdown (headings, lists,

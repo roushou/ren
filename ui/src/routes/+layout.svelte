@@ -17,10 +17,15 @@
   import { RecorderReport } from '#lib/recorder.ts';
   import CopyButton from '#lib/CopyButton.svelte';
   import DevToolbar from '#lib/DevToolbar.svelte';
+  import RedlineLayer from '#lib/RedlineLayer.svelte';
+  import RedlinePanel from '#lib/RedlinePanel.svelte';
+  import { RedlineDesk } from '#lib/redline.svelte.ts';
   import '#lib/style.css';
   import type { LayoutProps } from './$types';
   let { data, children }: LayoutProps = $props();
   const workbench = setWorkbench(new Workbench());
+  /** Marking what's wrong on a page, for an agent to fix: needs the control token. */
+  const redline = new RedlineDesk();
   // The scope bar renders the current page's snippet, but the page owns its
   // state. Leaving for another page, the snippet is dropped before that
   // page's data arrives, or it would render the old page against new data.
@@ -353,10 +358,13 @@
       role="progressbar"
       aria-label="Loading view"
     ></div>{/if}
-  <main class="workspace" class:navigating={!!navigating.to} aria-busy={!!navigating.to}>
-    {@render children()}
-  </main>
-  <footer class="statusline" aria-label="Gateway status">
+  <div class="workspace-row">
+    <main class="workspace" class:navigating={!!navigating.to} aria-busy={!!navigating.to}>
+      {@render children()}
+    </main>
+    {#if page.data.runsControl && redline.open}<RedlinePanel desk={redline} />{/if}
+  </div>
+  <footer class="statusline" class:redlining={redline.open} aria-label="Gateway status">
     <span
       class="read-only"
       title={page.data.runsControl
@@ -405,6 +413,18 @@
       title={updated ? new Date(updated).toLocaleString() : undefined}
       >{loading ? 'Refreshing…' : updated ? `Snapshot ${clock(updated)}` : 'No snapshot'}</span
     >
+    {#if page.data.runsControl}<button
+        class="redline-toggle"
+        class:on={redline.open}
+        data-redline
+        aria-pressed={redline.open}
+        onclick={() => redline.toggle()}
+        title="Mark what's wrong on this page for an agent to fix (m)"
+        ><Icon name="pencil" size={12} />Redline{#if redline.marks.length}<span
+            class="redline-count">{redline.marks.length}</span
+          >{/if}</button
+      >{/if}
   </footer>
   {#if development && page.data.devTraffic}<DevToolbar />{/if}
+  {#if page.data.runsControl}<RedlineLayer desk={redline} />{/if}
 </div>
