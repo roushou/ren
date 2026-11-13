@@ -231,18 +231,6 @@ impl Run {
         }
     }
 
-    /// The thread to resume its conversation with, once it has one.
-    pub fn thread(&self) -> Option<&str> {
-        match &self.live {
-            Some(RunState::Idle { .. } | RunState::Working { .. }) => None,
-            Some(RunState::Starting | RunState::Stopping { .. } | RunState::Ended { .. })
-            | None => self
-                .recorded
-                .as_ref()
-                .and_then(|recorded| recorded.thread.as_deref()),
-        }
-    }
-
     /// The thread a live run holds now.
     pub fn thread_now(&self) -> Option<&NativeThreadId> {
         match &self.live {

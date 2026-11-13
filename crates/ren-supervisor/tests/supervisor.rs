@@ -27,9 +27,9 @@ use ren_recorder::{
 };
 use ren_store::{Reader, Store, query::PageLimit, view::RunView};
 use ren_supervisor::{
-    AgentHost, AgentProcess, CommandError, ComposeError, Conversation, FileQuery, FoundPath,
-    KillSignal, KillSwitch, Look, PathKind, ProcessExit, RunCommand, RunRefused, RunState,
-    RunUpdate, StartError, Supervisor, SupervisorOptions, WalkLimits, Workdir,
+    AgentHost, AgentProcess, CommandError, Conversation, FileQuery, FoundPath, KillSignal,
+    KillSwitch, Look, PathKind, ProcessExit, RunCommand, RunRefused, RunState, RunUpdate,
+    StartError, Supervisor, SupervisorOptions, WalkLimits, Workdir,
 };
 use serde_json::{Value, json};
 use std::{
@@ -923,62 +923,38 @@ async fn a_first_prompt_goes_out_once_the_conversation_opens() {
 }
 
 #[tokio::test]
-async fn a_prompt_is_offered_the_clients_commands_and_the_folders_files() {
+async fn a_sessions_folder_is_walked_once_until_a_turn_ends() {
+    use ren_supervisor::SessionError;
     let host = FakeHost::new(Script::Codex);
     let walked = host.walked.clone();
     let supervised = supervise(host).await;
     let supervisor = &supervised.supervisor;
     let mut updates = supervisor.subscribe();
-    let run = supervisor
-        .start(starting(
-            Harness::Codex,
-            "/work/acme",
-            Conversation::New,
-            None,
-        ))
+    let session = supervisor
+        .create(create(Harness::Codex, "/work/acme"))
         .await
         .unwrap();
     state(&mut updates, |s| matches!(s, RunState::Idle { .. })).await;
-    // Listed by the client once its thread opened.
-    let commands = tokio::time::timeout(Duration::from_secs(5), async {
-        loop {
-            let commands = supervisor.commands(run).await.unwrap();
-            if !commands.is_empty() {
-                return commands;
-            }
-            tokio::task::yield_now().await;
-        }
-    })
-    .await
-    .expect("the skills are listed");
-    assert_eq!(
-        commands.iter().map(|c| c.invocation()).collect::<Vec<_>>(),
-        ["$release-notes"]
-    );
     let found = supervisor
-        .files(run, FileQuery::parse("lease"), 5)
+        .session_files(session, FileQuery::parse("lease"), 5)
         .await
         .unwrap();
     assert_eq!(found[0].path, "src/lease.rs");
     let _ = supervisor
-        .files(run, FileQuery::parse(""), 5)
+        .session_files(session, FileQuery::parse(""), 5)
         .await
         .unwrap();
     assert_eq!(*walked.lock().unwrap(), [PathBuf::from("/work/acme")]);
     // A turn changes files: the folder is walked again after it.
-    supervisor.command(run, prompt()).await.unwrap();
-    let waiting = state(
-        &mut updates,
-        |s| matches!(s, RunState::Working { approvals, .. } if !approvals.is_empty()),
-    )
-    .await;
+    supervisor.send(session, prompt()).await.unwrap();
+    let waiting = state(&mut updates, working).await;
     let RunState::Working { approvals, .. } = waiting else {
         unreachable!()
     };
     let approval = approvals.iter().next().unwrap().approval.clone();
     supervisor
-        .command(
-            run,
+        .send(
+            session,
             RunCommand::Answer {
                 approval,
                 decision: ren_harness::drive::Decision::Accept,
@@ -988,14 +964,14 @@ async fn a_prompt_is_offered_the_clients_commands_and_the_folders_files() {
         .unwrap();
     state(&mut updates, |s| matches!(s, RunState::Idle { .. })).await;
     let _ = supervisor
-        .files(run, FileQuery::parse("up"), 5)
+        .session_files(session, FileQuery::parse("up"), 5)
         .await
         .unwrap();
     assert_eq!(walked.lock().unwrap().len(), 2);
-    let unknown = ren_recorder::id::RunId::restore(uuid::Uuid::from_u128(99));
+    let unknown = ren_recorder::id::SessionId::restore(uuid::Uuid::from_u128(99));
     assert!(matches!(
-        supervisor.commands(unknown).await,
-        Err(ComposeError::NoSuchRun(_))
+        supervisor.session_commands(unknown).await,
+        Err(SessionError::NoSuchSession(_))
     ));
 }
 
@@ -1171,6 +1147,7 @@ fn create(harness: Harness, dir: &str) -> ren_supervisor::Create {
         harness,
         place: ren_supervisor::StartPlace::Folder(dir.into()),
         settings: ren_harness::settings::RunSettings::default(),
+        resume: None,
     }
 }
 

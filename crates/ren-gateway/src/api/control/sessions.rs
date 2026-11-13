@@ -77,6 +77,9 @@ struct CreateRequest {
     effort: Option<Effort>,
     #[serde(default)]
     approvals: Option<ApprovalPolicy>,
+    /// A client conversation to go on with, begun elsewhere.
+    #[serde(default)]
+    resume: Option<uuid::Uuid>,
 }
 
 #[derive(serde::Deserialize)]
@@ -170,6 +173,7 @@ impl SessionsApi {
                 RunRefusal::Refused("not_archived")
             }
             SessionError::NoProcess => RunRefusal::Refused("no_process"),
+            SessionError::Unreadable(_) => RunRefusal::Refused("unreadable"),
             SessionError::Unrecorded => RunRefusal::Unrecorded,
             SessionError::Start(error) => error.into(),
             SessionError::Command(error) => error.into(),
@@ -375,6 +379,7 @@ impl SessionsApi {
                     None => StartPlace::Scratch,
                 },
                 settings,
+                resume: request.resume.and_then(NativeThreadId::new),
             })
             .await
             .map_err(Self::refused)?;

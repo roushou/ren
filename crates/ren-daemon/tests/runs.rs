@@ -1,6 +1,6 @@
-//! Runs through the control API end to end: start a scripted Codex agent in
-//! a root, prompt it, answer its approval, follow its updates, and stop it;
-//! what the store kept afterwards. Assembled with `TestGateway`; the agent is
+//! Runs through the control API end to end: create a session with a scripted
+//! Codex agent in a root, prompt it, answer its approval, follow its
+//! process's updates, and stop it; what the store kept afterwards. Assembled with `TestGateway`; the agent is
 //! in memory, so no client, provider, or credentials are involved.
 #![allow(
     clippy::unwrap_used,
@@ -137,7 +137,7 @@ impl Control {
 }
 
 #[tokio::test]
-async fn a_run_is_started_prompted_approved_and_stopped_through_the_control_api() {
+async fn a_session_is_started_prompted_approved_and_stopped_through_the_control_api() {
     let upstream = mock(Router::new()).await;
     let dir = tempfile::tempdir().unwrap();
     let gateway = TestGateway::with_runs(
@@ -235,14 +235,20 @@ async fn a_run_is_started_prompted_approved_and_stopped_through_the_control_api(
 
     let (status, body) = control
         .post(
-            "/runs",
+            "/sessions",
             json!({ "harness": "codex", "dir": "/work/acme", "model": "gpt-fast",
                     "effort": "high", "approvals": "edits" }),
         )
         .await;
     assert_eq!(status, StatusCode::CREATED, "{body}");
-    let run = body["run"].as_str().unwrap().to_owned();
-    control.until(|state| state["phase"] == "idle").await;
+    let session = body["session"].as_str().unwrap().to_owned();
+    let made = control
+        .until_session(&session, |s| !s["served"]["process"].is_null())
+        .await;
+    let run = made["served"]["process"].as_str().unwrap().to_owned();
+    control
+        .until_run(&run, |state| state["phase"] == "idle")
+        .await;
     // A running run is not deleted (once its start is recorded, it is found).
     let refused = tokio::time::timeout(Duration::from_secs(5), async {
         loop {
@@ -264,20 +270,25 @@ async fn a_run_is_started_prompted_approved_and_stopped_through_the_control_api(
 
     let (status, _) = control
         .post(
-            &format!("/runs/{run}/prompt"),
+            &format!("/sessions/{session}/prompt"),
             json!({ "text": "edit src" }),
         )
         .await;
     assert_eq!(status, StatusCode::ACCEPTED);
     let (status, body) = control
-        .post(&format!("/runs/{run}/prompt"), json!({ "text": "again" }))
+        .post(
+            &format!("/sessions/{session}/prompt"),
+            json!({ "text": "again" }),
+        )
         .await;
     assert_eq!(
         (status, &body["error"]),
         (StatusCode::CONFLICT, &json!("busy"))
     );
     let waiting = control
-        .until(|state| state["approvals"].as_array().is_some_and(|a| !a.is_empty()))
+        .until_run(&run, |state| {
+            state["approvals"].as_array().is_some_and(|a| !a.is_empty())
+        })
         .await;
     assert_eq!(waiting["phase"], "working");
     assert_eq!(
@@ -287,16 +298,22 @@ async fn a_run_is_started_prompted_approved_and_stopped_through_the_control_api(
 
     let (status, _) = control
         .post(
-            &format!("/runs/{run}/approvals/ap-1"),
+            &format!("/sessions/{session}/approvals/ap-1"),
             json!({ "decision": "accept" }),
         )
         .await;
     assert_eq!(status, StatusCode::ACCEPTED);
-    control.until(|state| state["phase"] == "idle").await;
+    control
+        .until_run(&run, |state| state["phase"] == "idle")
+        .await;
 
-    let (status, _) = control.post(&format!("/runs/{run}/stop"), json!({})).await;
+    let (status, _) = control
+        .post(&format!("/sessions/{session}/stop"), json!({}))
+        .await;
     assert_eq!(status, StatusCode::ACCEPTED);
-    let ended = control.until(|state| state["phase"] == "ended").await;
+    let ended = control
+        .until_run(&run, |state| state["phase"] == "ended")
+        .await;
     assert_eq!(ended["end"], "stopped");
     assert_eq!(ended["exit"], json!({ "kind": "signal", "value": 9 }));
 
@@ -428,7 +445,7 @@ async fn a_run_is_started_prompted_approved_and_stopped_through_the_control_api(
 }
 
 #[tokio::test]
-async fn runs_refuse_bad_requests_browsers_and_missing_tokens() {
+async fn sessions_refuse_bad_requests_browsers_and_missing_tokens() {
     let upstream = mock(Router::new()).await;
     let dir = tempfile::tempdir().unwrap();
     let gateway = TestGateway::with_runs(
@@ -462,7 +479,7 @@ async fn runs_refuse_bad_requests_browsers_and_missing_tokens() {
         ),
     ];
     for (body, status, error) in cases {
-        let (answered, answer) = control.post("/runs", body.clone()).await;
+        let (answered, answer) = control.post("/sessions", body.clone()).await;
         assert_eq!(
             (answered, answer["error"].as_str()),
             (status, Some(error)),
@@ -470,17 +487,20 @@ async fn runs_refuse_bad_requests_browsers_and_missing_tokens() {
         );
     }
     let unknown = "00000000-0000-0000-0000-00000000ffff";
-    let (status, body) = control
-        .post(&format!("/runs/{unknown}/stop"), json!({}))
-        .await;
-    assert_eq!(
-        (status, body["error"].as_str()),
-        (StatusCode::NOT_FOUND, Some("not_found"))
-    );
+    for session in [unknown, "not-a-session"] {
+        let (status, body) = control
+            .post(&format!("/sessions/{session}/stop"), json!({}))
+            .await;
+        assert_eq!(
+            (status, body["error"].as_str()),
+            (StatusCode::NOT_FOUND, Some("not_found")),
+            "{session}"
+        );
+    }
 
     let anonymous = control
         .http
-        .post(format!("{}/runs", control.base))
+        .post(format!("{}/sessions", control.base))
         .header("content-type", "application/json")
         .body(json!({ "harness": "codex", "dir": "/work/a" }).to_string())
         .send()
@@ -489,7 +509,7 @@ async fn runs_refuse_bad_requests_browsers_and_missing_tokens() {
     assert_eq!(anonymous.status(), StatusCode::UNAUTHORIZED);
     let browser = control
         .http
-        .post(format!("{}/runs", control.base))
+        .post(format!("{}/sessions", control.base))
         .bearer_auth(TestGateway::CONTROL_TOKEN)
         .header("origin", "https://evil.example")
         .header("content-type", "application/json")
@@ -499,6 +519,12 @@ async fn runs_refuse_bad_requests_browsers_and_missing_tokens() {
         .unwrap();
     assert_eq!(browser.status(), StatusCode::FORBIDDEN);
     assert!(control.runs().await["runs"].as_array().unwrap().is_empty());
+    let (status, sessions) = control.get("/sessions").await;
+    assert_eq!(status, StatusCode::OK, "{sessions}");
+    assert!(
+        sessions["sessions"].as_array().unwrap().is_empty(),
+        "{sessions}"
+    );
     gateway.stop().await;
 }
 
@@ -509,7 +535,7 @@ async fn without_roots_runs_are_disabled() {
     let gateway = TestGateway::start(&config(&upstream), dir.path()).await;
     let control = Control::new(&gateway);
     let (status, body) = control
-        .post("/runs", json!({ "harness": "codex", "dir": "/work/a" }))
+        .post("/sessions", json!({ "harness": "codex", "dir": "/work/a" }))
         .await;
     assert_eq!(
         (status, body["error"].as_str()),
@@ -519,7 +545,7 @@ async fn without_roots_runs_are_disabled() {
 }
 
 #[tokio::test]
-async fn a_run_without_a_folder_starts_in_a_scratch_folder_of_its_own() {
+async fn a_session_without_a_folder_starts_in_a_scratch_folder_of_its_own() {
     let upstream = mock(Router::new()).await;
     let dir = tempfile::tempdir().unwrap();
     let gateway = TestGateway::with_runs(
@@ -530,10 +556,23 @@ async fn a_run_without_a_folder_starts_in_a_scratch_folder_of_its_own() {
     )
     .await;
     let control = Control::new(&gateway);
-    let (status, body) = control.post("/runs", json!({ "harness": "codex" })).await;
+    let (status, body) = control
+        .post("/sessions", json!({ "harness": "codex" }))
+        .await;
     assert_eq!(status, StatusCode::CREATED, "{body}");
+    let session = body["session"].as_str().unwrap().to_owned();
+    let made = control
+        .until_session(&session, |s| !s["served"]["process"].is_null())
+        .await;
+    let run = made["served"]["process"].as_str().unwrap();
     let runs = control.runs().await;
-    let workdir = runs["runs"][0]["workdir"].as_str().unwrap().to_owned();
+    let workdir = runs["runs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| entry["run"] == run)
+        .map(|entry| entry["workdir"].as_str().unwrap().to_owned())
+        .unwrap();
     assert!(workdir.starts_with("/scratch/scratch-"), "{workdir}");
     gateway.stop().await;
 }
@@ -552,12 +591,19 @@ async fn a_prompt_queued_during_a_turn_goes_out_as_it_ends() {
     let control = Control::new(&gateway);
     let (status, body) = control
         .post(
-            "/runs",
-            json!({ "harness": "codex", "dir": "/work/acme", "prompt": "first" }),
+            "/sessions",
+            json!({ "harness": "codex", "dir": "/work/acme" }),
         )
         .await;
     assert_eq!(status, StatusCode::CREATED, "{body}");
-    let run = body["run"].as_str().unwrap().to_owned();
+    let session = body["session"].as_str().unwrap().to_owned();
+    let (status, body) = control
+        .post(
+            &format!("/sessions/{session}/prompt"),
+            json!({ "text": "first" }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{body}");
     control
         .until(|state| {
             state["phase"] == "working"
@@ -567,11 +613,11 @@ async fn a_prompt_queued_during_a_turn_goes_out_as_it_ends() {
 
     // What a prompt is offered: the client's commands (this scripted
     // Codex lists none) and the folder's files.
-    let (status, body) = control.get(&format!("/runs/{run}/commands")).await;
+    let (status, body) = control.get(&format!("/sessions/{session}/commands")).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["commands"], json!([]));
     let (status, body) = control
-        .get(&format!("/runs/{run}/files?q=upl&limit=5"))
+        .get(&format!("/sessions/{session}/files?q=upl&limit=5"))
         .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(
@@ -579,16 +625,18 @@ async fn a_prompt_queued_during_a_turn_goes_out_as_it_ends() {
         json!([{ "path": "src/upload.rs", "kind": "file", "positions": [4, 5, 6] }])
     );
     let (status, _) = control
-        .get("/runs/00000000-0000-0000-0000-000000000063/files?q=x")
+        .get("/sessions/00000000-0000-0000-0000-000000000063/files?q=x")
         .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
-    let (status, _) = control.get(&format!("/runs/{run}/files?nope=1")).await;
+    let (status, _) = control
+        .get(&format!("/sessions/{session}/files?nope=1"))
+        .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
 
     // Mid-turn: queued for after it, a steer into it, and new settings.
     let (status, body) = control
         .post(
-            &format!("/runs/{run}/prompt"),
+            &format!("/sessions/{session}/prompt"),
             json!({ "text": "second", "delivery": "queue" }),
         )
         .await;
@@ -597,14 +645,14 @@ async fn a_prompt_queued_during_a_turn_goes_out_as_it_ends() {
     assert_eq!(state["phase"], "working");
     let (status, body) = control
         .post(
-            &format!("/runs/{run}/prompt"),
+            &format!("/sessions/{session}/prompt"),
             json!({ "text": "and tests", "delivery": "steer" }),
         )
         .await;
     assert_eq!(status, StatusCode::ACCEPTED, "{body}");
     let (status, body) = control
         .post(
-            &format!("/runs/{run}/settings"),
+            &format!("/sessions/{session}/settings"),
             json!({ "effort": "high" }),
         )
         .await;
@@ -613,11 +661,11 @@ async fn a_prompt_queued_during_a_turn_goes_out_as_it_ends() {
     assert_eq!(runs["runs"][0]["settings"]["effort"], "high");
     // Nothing queued twice is taken back once.
     let (status, _) = control
-        .post(&format!("/runs/{run}/unqueue"), json!({}))
+        .post(&format!("/sessions/{session}/unqueue"), json!({}))
         .await;
     assert_eq!(status, StatusCode::ACCEPTED);
     let (status, body) = control
-        .post(&format!("/runs/{run}/unqueue"), json!({}))
+        .post(&format!("/sessions/{session}/unqueue"), json!({}))
         .await;
     assert_eq!(
         (status, body["error"].as_str()),
@@ -626,14 +674,14 @@ async fn a_prompt_queued_during_a_turn_goes_out_as_it_ends() {
     // Queued again, it goes out as the turn ends: the next turn asks again.
     let _ = control
         .post(
-            &format!("/runs/{run}/prompt"),
+            &format!("/sessions/{session}/prompt"),
             json!({ "text": "second", "delivery": "queue" }),
         )
         .await;
     control.until(|state| state["queued"] == "second").await;
     let (status, _) = control
         .post(
-            &format!("/runs/{run}/approvals/ap-1"),
+            &format!("/sessions/{session}/approvals/ap-1"),
             json!({ "decision": "accept" }),
         )
         .await;

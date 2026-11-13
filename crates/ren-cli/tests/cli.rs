@@ -587,6 +587,9 @@ async fn runs_on_this_host_use_the_control_token_and_report_refusals() {
     let output = host(&["ls"]);
     success(&output);
     assert_eq!(json(&output)["runs"], serde_json::json!([]));
+    let output = host(&["sessions"]);
+    success(&output);
+    assert_eq!(json(&output)["sessions"], serde_json::json!([]));
     // A folder outside the roots is refused, and the refusal is printed.
     let outside = temp.path().to_str().unwrap();
     let output = host(&["start", "codex", outside]);
@@ -623,9 +626,13 @@ async fn runs_through_a_gateway_send_the_control_requests() {
                 let body = serde_json::from_slice(&body).unwrap_or(Value::Null);
                 seen.lock().unwrap().push((method.clone(), path.clone(), body));
                 match (method.as_str(), path.as_str()) {
-                    ("POST", "/control/v1/runs") => (
+                    ("POST", "/control/v1/sessions") => (
                         StatusCode::CREATED,
-                        Json(serde_json::json!({ "api_version": 1, "run": "11111111-1111-4111-8111-111111111111" })),
+                        Json(serde_json::json!({ "api_version": 1, "session": "11111111-1111-4111-8111-111111111111" })),
+                    ),
+                    ("GET", "/control/v1/sessions") => (
+                        StatusCode::OK,
+                        Json(serde_json::json!({ "api_version": 1, "sessions": [] })),
                     ),
                     ("GET", "/control/v1/runs") => (
                         StatusCode::OK,
@@ -640,7 +647,7 @@ async fn runs_through_a_gateway_send_the_control_requests() {
     let gateway = format!("http://{}", listener.local_addr().unwrap());
     let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
     let home = tempfile::tempdir().unwrap();
-    let run = "11111111-1111-4111-8111-111111111111";
+    let session = "11111111-1111-4111-8111-111111111111";
     let remote = |args: &[&str]| {
         isolated(
             home.path(),
@@ -658,47 +665,59 @@ async fn runs_through_a_gateway_send_the_control_requests() {
         "fix the failing test",
     ]);
     success(&output);
-    assert_eq!(json(&output)["run"], run);
+    assert_eq!(json(&output)["session"], session);
     // Through a gateway, a relative folder would name this host's: refused
     // before anything is sent.
     let output = remote(&["start", "codex", "acme"]);
     assert!(!output.status.success());
-    success(&remote(&["say", run, "fix", "the", "build"]));
-    success(&remote(&["answer", run, "ap-1"]));
-    success(&remote(&["answer", run, "ap-2", "decline"]));
-    success(&remote(&["interrupt", run]));
-    success(&remote(&["stop", run]));
+    success(&remote(&["say", session, "fix", "the", "build"]));
+    success(&remote(&["answer", session, "ap-1"]));
+    success(&remote(&["answer", session, "ap-2", "decline"]));
+    success(&remote(&["interrupt", session]));
+    success(&remote(&["stop", session]));
     success(&remote(&["ls"]));
+    success(&remote(&["sessions"]));
 
     let seen = seen.lock().unwrap().clone();
     let expected = [
         (
             "POST",
-            "/control/v1/runs".to_owned(),
-            serde_json::json!({ "harness": "codex", "dir": "/srv/acme", "resume": "22222222-2222-4222-8222-222222222222", "prompt": "fix the failing test" }),
+            "/control/v1/sessions".to_owned(),
+            serde_json::json!({ "harness": "codex", "dir": "/srv/acme", "resume": "22222222-2222-4222-8222-222222222222" }),
+        ),
+        // The first prompt goes to the session made.
+        (
+            "POST",
+            format!("/control/v1/sessions/{session}/prompt"),
+            serde_json::json!({ "text": "fix the failing test" }),
         ),
         (
             "POST",
-            format!("/control/v1/runs/{run}/prompt"),
+            format!("/control/v1/sessions/{session}/prompt"),
             serde_json::json!({ "text": "fix the build" }),
         ),
         (
             "POST",
-            format!("/control/v1/runs/{run}/approvals/ap-1"),
+            format!("/control/v1/sessions/{session}/approvals/ap-1"),
             serde_json::json!({ "decision": "accept" }),
         ),
         (
             "POST",
-            format!("/control/v1/runs/{run}/approvals/ap-2"),
+            format!("/control/v1/sessions/{session}/approvals/ap-2"),
             serde_json::json!({ "decision": "decline" }),
         ),
         (
             "POST",
-            format!("/control/v1/runs/{run}/interrupt"),
+            format!("/control/v1/sessions/{session}/interrupt"),
             Value::Null,
         ),
-        ("POST", format!("/control/v1/runs/{run}/stop"), Value::Null),
+        (
+            "POST",
+            format!("/control/v1/sessions/{session}/stop"),
+            Value::Null,
+        ),
         ("GET", "/control/v1/runs".to_owned(), Value::Null),
+        ("GET", "/control/v1/sessions".to_owned(), Value::Null),
     ];
     assert_eq!(seen.len(), expected.len(), "{seen:?}");
     for ((method, path, body), (want_method, want_path, want_body)) in seen.iter().zip(expected) {

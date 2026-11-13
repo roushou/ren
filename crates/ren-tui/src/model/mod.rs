@@ -16,7 +16,7 @@ pub use call::CallEnd;
 pub use recordings::{Snapshot, SnapshotQuery};
 
 use crate::Size;
-use desk::{Desk, Run};
+use desk::{Attention, Desk, Run};
 use recordings::Recordings;
 use ren_harness::{
     Harness,
@@ -135,27 +135,24 @@ pub enum Command {
         /// Each left out is the client's own.
         settings: RunSettings,
     },
+    /// A prompt to a session: it starts a turn (its client started again,
+    /// resuming its conversation, when none runs), or is queued for after
+    /// the running turn, or steers it.
     Prompt {
-        run: RunId,
-        prompt: Prompt,
-        /// Start a turn, queue it for after the running one, or steer it.
-        delivery: Delivery,
-    },
-    /// Write to a session whose client no longer runs: the daemon starts
-    /// one that resumes its conversation, in the same session.
-    Continue {
         session: SessionId,
         prompt: Prompt,
+        delivery: Delivery,
     },
-    /// Take back the prompt queued for after the running turn.
-    Unqueue(RunId),
+    /// Take back the prompt queued for after the session's running turn.
+    Unqueue(SessionId),
     Answer {
-        run: RunId,
+        session: SessionId,
         approval: ApprovalId,
         decision: Decision,
     },
-    Interrupt(RunId),
-    Stop(RunId),
+    Interrupt(SessionId),
+    /// Stop the session's client; the session goes on.
+    Stop(SessionId),
     /// Archive, unarchive, or delete what was recorded of a session or run.
     Edit {
         subject: HistorySubject,
@@ -480,19 +477,26 @@ impl Model {
         }
     }
 
-    /// Send `prompt` to `run` as `delivery` says; what starts a turn or
-    /// goes into one shows in its conversation at once.
-    pub fn prompt(&mut self, run: RunId, prompt: Prompt, delivery: Delivery) -> Command {
-        match delivery {
-            Delivery::Start | Delivery::Steer => {
-                if let Some(held) = self.desk.get_mut(run) {
+    /// Send `prompt` to the session `run` serves, as `delivery` says; what
+    /// goes into its running client shows in `run`'s conversation at once.
+    pub fn prompt(
+        &mut self,
+        run: RunId,
+        session: SessionId,
+        prompt: Prompt,
+        delivery: Delivery,
+    ) -> Command {
+        if let Some(held) = self.desk.get_mut(run) {
+            let running = held.attention() != Attention::Ended;
+            match delivery {
+                Delivery::Start | Delivery::Steer if running => {
                     held.transcript.prompted(prompt.as_str());
                 }
+                Delivery::Start | Delivery::Steer | Delivery::Queue => {}
             }
-            Delivery::Queue => {}
         }
         Command::Prompt {
-            run,
+            session,
             prompt,
             delivery,
         }

@@ -12,9 +12,9 @@
 use crate::entries::Entries;
 use crate::models::{Listings, ModelProbe, ModelsError, ModelsReply};
 use crate::{
-    CommandError, ComposeError, Conversation, Create, IdleStop, Places, Request, RunSnapshot,
-    RunUpdate, SessionAnswer, SessionError, SessionRequest, SessionSeed, SessionSnapshot, Start,
-    StartError, StartPlace, Warmup,
+    CommandError, Conversation, Create, IdleStop, Places, Request, RunSnapshot, RunUpdate,
+    SessionAnswer, SessionError, SessionRequest, SessionSeed, SessionSnapshot, Start, StartError,
+    StartPlace, Warmup,
     client::{Client, ClientStatus},
     files::FileListing,
     host::{AgentHost, AgentProcess, KillSwitch},
@@ -286,30 +286,6 @@ impl<H: AgentHost> SupervisorTask<H> {
                     .collect();
                 let _ = reply.send(clients);
             }
-            Request::Commands { run, reply } => {
-                let _ = reply.send(match served.runs.get(&run) {
-                    Some(live) => Ok(live
-                        .codec
-                        .as_ref()
-                        .map(|codec| codec.commands().to_vec())
-                        .unwrap_or_default()),
-                    None => Err(ComposeError::NoSuchRun(run)),
-                });
-            }
-            Request::Files {
-                run,
-                query,
-                limit,
-                reply,
-            } => {
-                let session = served.runs.get(&run).map(|live| live.session);
-                let _ = reply.send(
-                    match session.and_then(|session| served.sessions.get_mut(&session)) {
-                        Some(held) => self.files(held).map(|files| files.search(&query, limit)),
-                        None => Err(ComposeError::NoSuchRun(run)),
-                    },
-                );
-            }
             Request::Models { harness, reply } => {
                 // Answered by the loop, which holds the listings.
                 let _ = reply.send(Err(ModelsError::Gone));
@@ -336,15 +312,15 @@ impl<H: AgentHost> SupervisorTask<H> {
 
     /// The session's folder as last walked, walked now when it is not
     /// kept. Bounded by `FileListing::LIMITS`, so a walk is short.
-    fn files<'a>(&self, held: &'a mut Held) -> Result<&'a FileListing, ComposeError> {
+    fn files<'a>(&self, held: &'a mut Held) -> Result<&'a FileListing, SessionError> {
         if held.files.is_none() {
             let found = self
                 .host
                 .files(held.workdir.as_path(), FileListing::LIMITS)
-                .map_err(ComposeError::Unreadable)?;
+                .map_err(SessionError::Unreadable)?;
             held.files = Some(FileListing::new(found));
         }
-        held.files.as_ref().ok_or(ComposeError::Gone)
+        held.files.as_ref().ok_or(SessionError::Gone)
     }
 
     /// The folder a session works in: a folder inside the bounds, or a new
@@ -610,12 +586,7 @@ impl<H: AgentHost> SupervisorTask<H> {
                     .sessions
                     .get_mut(&session)
                     .ok_or(SessionError::NoSuchSession(session))?;
-                let files = self.files(held).map_err(|error| match error {
-                    ComposeError::Unreadable(error) => {
-                        SessionError::Start(StartError::Resolve(error))
-                    }
-                    ComposeError::NoSuchRun(_) | ComposeError::Gone => SessionError::Gone,
-                })?;
+                let files = self.files(held)?;
                 Ok(SessionAnswer::Files(files.search(&query, limit)))
             }
         }
@@ -627,6 +598,7 @@ impl<H: AgentHost> SupervisorTask<H> {
             harness,
             place,
             settings,
+            resume,
         }: Create,
         served: &mut Served,
     ) -> Result<SessionAnswer, SessionError> {
@@ -642,6 +614,7 @@ impl<H: AgentHost> SupervisorTask<H> {
             },
         )?;
         let mut held = Held::new(harness, workdir, settings);
+        held.thread = resume;
         // Its client starts now, so its commands are there before the first
         // prompt. One that cannot start is kept, ended, as its process.
         if let Err(error) = self

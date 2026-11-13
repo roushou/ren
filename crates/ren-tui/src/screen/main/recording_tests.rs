@@ -2,7 +2,7 @@
 //! API sends them, run as the terminal runs it: a [`Tui`], its list
 //! selecting the first session.
 
-use super::list::{Grouping, Item, Listing};
+use super::list::{Item, ListView, Listing};
 use super::recording::{Phase, RecordingPane, Tally};
 use crate::conversation::{Block, ResultMark};
 use crate::model::recordings::{Recordings, Spark};
@@ -45,6 +45,9 @@ impl Wall {
     fn new(size: Size) -> Self {
         let mut tui = Tui::new(size);
         let _ = tui.start();
+        // Recordings are listed apart from the sessions.
+        let _ = tui.press(crate::Key::Char(' '));
+        let _ = tui.press(crate::Key::Char('r'));
         Self { tui }
     }
 
@@ -63,7 +66,7 @@ impl Wall {
     /// The watched sessions, in the list's order, at `now`.
     fn frame(&self, now: UnixMillis) -> Frame {
         let model = &self.tui.model;
-        let panes: Vec<RecordingPane> = Listing::of(model, "", Grouping::Folder)
+        let panes: Vec<RecordingPane> = Listing::of(model, "", ListView::Recordings)
             .items()
             .into_iter()
             .filter_map(|item| match item {

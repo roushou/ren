@@ -513,7 +513,6 @@ impl<'a> Shell<'a> {
                 return;
             }
         };
-        let starts = matches!(command, Command::Start { .. });
         let (path, body) = match command {
             Command::Start {
                 harness,
@@ -523,7 +522,7 @@ impl<'a> Shell<'a> {
                 settings,
             } => {
                 let mut body = serde_json::json!({ "harness": harness });
-                // Without a folder, the run gets a scratch folder of its own.
+                // Without a folder, the session gets a scratch folder of its own.
                 if let Some(dir) = dir {
                     body["dir"] = dir.into();
                 }
@@ -539,34 +538,31 @@ impl<'a> Shell<'a> {
                 if let Some(resume) = resume {
                     body["resume"] = resume.to_string().into();
                 }
-                if let Some(prompt) = prompt {
-                    body["prompt"] = prompt.as_str().into();
-                }
-                ("runs".to_owned(), Some(body))
+                self.pending.push(Box::pin(async move {
+                    let answer = Self::create(control, body, prompt).await;
+                    Done::Other(Box::new(Input::Answered(answer)))
+                }));
+                return;
             }
             Command::Prompt {
-                run,
+                session,
                 prompt,
                 delivery,
             } => (
-                format!("runs/{run}/prompt"),
+                format!("sessions/{session}/prompt"),
                 Some(serde_json::json!({ "text": prompt.as_str(), "delivery": delivery })),
             ),
-            Command::Continue { session, prompt } => (
-                format!("sessions/{session}/prompt"),
-                Some(serde_json::json!({ "text": prompt.as_str(), "delivery": "start" })),
-            ),
-            Command::Unqueue(run) => (format!("runs/{run}/unqueue"), None),
+            Command::Unqueue(session) => (format!("sessions/{session}/unqueue"), None),
             Command::Answer {
-                run,
+                session,
                 approval,
                 decision,
             } => (
-                format!("runs/{run}/approvals/{approval}"),
+                format!("sessions/{session}/approvals/{approval}"),
                 Some(serde_json::json!({ "decision": decision })),
             ),
-            Command::Interrupt(run) => (format!("runs/{run}/interrupt"), None),
-            Command::Stop(run) => (format!("runs/{run}/stop"), None),
+            Command::Interrupt(session) => (format!("sessions/{session}/interrupt"), None),
+            Command::Stop(session) => (format!("sessions/{session}/stop"), None),
             Command::Edit { subject, change } => (
                 match subject {
                     ren_recorder::batch::HistorySubject::Session(session) => {
@@ -581,21 +577,62 @@ impl<'a> Shell<'a> {
         };
         self.pending.push(Box::pin(async move {
             let answer = match control.send(Method::POST, &path, body).await {
-                Ok((status, body)) if status.is_success() => match body["run"]
-                    .as_str()
-                    .and_then(|run| run.parse::<uuid::Uuid>().ok())
-                {
-                    Some(run) if starts => Ok(Answered::Started(RunId::restore(run))),
-                    Some(_) | None => Ok(Answered::Sent),
-                },
-                Ok((_, body)) => Err(body["error"]
-                    .as_str()
-                    .unwrap_or("the daemon refused")
-                    .to_owned()),
+                Ok((status, _)) if status.is_success() => Ok(Answered::Sent),
+                Ok((_, body)) => Err(Self::refusal(&body)),
                 Err(error) => Err(error.to_string()),
             };
             Done::Other(Box::new(Input::Answered(answer)))
         }));
+    }
+
+    /// Why the daemon refused, as it said.
+    fn refusal(body: &serde_json::Value) -> String {
+        body["error"]
+            .as_str()
+            .unwrap_or("the daemon refused")
+            .to_owned()
+    }
+
+    /// Make a session, then send its first prompt: answered with the run
+    /// its client started as, which the console then shows.
+    async fn create(
+        control: &ControlTarget,
+        body: serde_json::Value,
+        prompt: Option<ren_harness::drive::Prompt>,
+    ) -> Result<Answered, String> {
+        let made = match control.send(Method::POST, "sessions", Some(body)).await {
+            Ok((status, made)) if status.is_success() => made,
+            Ok((_, refused)) => return Err(Self::refusal(&refused)),
+            Err(error) => return Err(error.to_string()),
+        };
+        let session = made["session"]
+            .as_str()
+            .ok_or_else(|| "the daemon did not name the session".to_owned())?;
+        if let Some(prompt) = prompt {
+            match control
+                .send(
+                    Method::POST,
+                    &format!("sessions/{session}/prompt"),
+                    Some(serde_json::json!({ "text": prompt.as_str() })),
+                )
+                .await
+            {
+                Ok((status, _)) if status.is_success() => {}
+                Ok((_, refused)) => return Err(Self::refusal(&refused)),
+                Err(error) => return Err(error.to_string()),
+            }
+        }
+        match control
+            .send(Method::GET, &format!("sessions/{session}"), None)
+            .await
+        {
+            Ok((status, read)) if status.is_success() => Ok(read["session"]["served"]["process"]
+                .as_str()
+                .and_then(|run| run.parse::<uuid::Uuid>().ok())
+                .map_or(Answered::Sent, |run| Answered::Started(RunId::restore(run)))),
+            Ok((_, refused)) => Err(Self::refusal(&refused)),
+            Err(error) => Err(error.to_string()),
+        }
     }
 
     /// Hands a finished read to the routes; returns what they ask for next.

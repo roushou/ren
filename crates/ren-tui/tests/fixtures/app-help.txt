@@ -12,7 +12,7 @@
                         │  1–9         jump to that entry of the list                          │
                         │  do                                                                  │
                         │  i           write to the run (enter sends, esc keeps a draft)       │
-                        │  n           start a run                                             │
+                        │  n           start a session                                         │
                         │  space       actions: interrupt, stop, archive, delete, group, theme │
                         │  ?           these keys                                              │
                         │  q           quit (runs keep going)                                  │

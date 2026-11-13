@@ -65,16 +65,17 @@ fn drawn(tui: &Tui, size: Size, theme: &Theme) -> Buffer {
 }
 
 #[test]
-fn runs_come_first_and_the_selection_follows_the_top_until_chosen() {
+fn sessions_and_recordings_are_listed_apart() {
     let mut tui = Tui::new(SIZE);
     let _ = tui.apply(watched());
-    assert!(matches!(tui.selected(), Some(Item::Recording(_))));
-    // Until it is chosen, the selection follows the top: the run.
+    // The list shows sessions: a recording is not among them.
+    assert_eq!(tui.selected(), None);
     let _ = tui.apply(Input::Runs(Ok(vec![idle_run()])));
     assert_eq!(tui.shown_run(), Some(idle_run().run));
-    let _ = tui.press(Key::Char('j'));
+    // The recordings are their own list, from the action menu.
+    let _ = tui.press(Key::Char(' '));
+    let _ = tui.press(Key::Char('r'));
     assert!(matches!(tui.selected(), Some(Item::Recording(_))));
-    // Chosen, it stays.
     let _ = tui.apply(Input::Runs(Ok(vec![idle_run()])));
     assert!(matches!(tui.selected(), Some(Item::Recording(_))));
     // A watched session takes no writing.

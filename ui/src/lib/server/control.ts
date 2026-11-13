@@ -1,13 +1,15 @@
 /**
- * Agent runs through the UI server: the one place the UI changes something
+ * Sessions through the UI server: the one place the UI changes something
  * on the daemon. It is off unless the operator names the daemon's control
  * token file (`REN_CONTROL_TOKEN_FILE`), and it reaches only the daemon's
- * `/control/v1/runs` routes (listing, starting, prompting, answering,
- * interrupting, and stopping runs, their update feed, the projects a run
- * can start in, and the clients it can start with) and its
- * `/control/v1/history` routes (archiving, unarchiving, and deleting a
- * session or a run). Never inference, reads of history, or the rest of the
- * control API.
+ * `/control/v1/sessions` routes (listing, creating, prompting, answering,
+ * configuring, interrupting, stopping, and archiving sessions, their
+ * composer's commands and files, and their update feed), its
+ * `/control/v1/runs` reads (the live runs and their feed, the projects a
+ * session can start in, and the clients and models it can start with), and
+ * its `/control/v1/history` routes (archiving, unarchiving, and deleting a
+ * recording or a run). Never inference, reads of history, the operator
+ * state's session blocks, or the rest of the control API.
  *
  * The browser never sees the token: this server reads it from the file on
  * each request (the daemon writes a new one when it starts) and sends it as
@@ -109,30 +111,12 @@ const routes: { pattern: RegExp; route: Route }[] = [
     route: { method: 'POST', feed: false },
   },
   {
-    pattern: new RegExp(`^/control/runs/${runId}/commands$`),
-    route: { method: 'GET', feed: false },
-  },
-  {
-    pattern: new RegExp(`^/control/runs/${runId}/files$`),
-    route: { method: 'GET', feed: false, query: ['q', 'limit'] },
-  },
-  {
-    pattern: new RegExp(`^/control/runs/${runId}/(?:prompt|interrupt|stop|unqueue|settings)$`),
-    route: { method: 'POST', feed: false },
-  },
-  {
-    pattern: new RegExp(`^/control/runs/${runId}/approvals/${approvalId}$`),
-    route: { method: 'POST', feed: false },
-  },
-  {
     pattern: new RegExp(
       `^/control/history/(?:sessions|runs)/${runId}/(?:archive|unarchive|delete)$`,
     ),
     route: { method: 'POST', feed: false },
   },
 ];
-/** Starting a run is the one POST to the listing's own path. */
-const startPath = '/control/runs';
 /** Creating a session is the one POST to the session listing's own path. */
 const sessionsPath = '/control/sessions';
 const maxBody = 256 * 1024;
@@ -222,7 +206,6 @@ export class RunsProxy {
   }
 
   static #route(path: string, method: string): Route | 'method' | null {
-    if (path === startPath && method === 'POST') return { method: 'POST', feed: false };
     if (path === sessionsPath && method === 'POST') return { method: 'POST', feed: false };
     const found = routes.find(({ pattern }) => pattern.test(path));
     if (!found) return null;

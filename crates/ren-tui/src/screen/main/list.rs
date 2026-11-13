@@ -43,6 +43,14 @@ pub(crate) enum Grouping {
     State,
 }
 
+/// What the list shows: sessions, grouped one way or the other, or the
+/// recordings of clients Ren did not start, read-only.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ListView {
+    Sessions(Grouping),
+    Recordings,
+}
+
 impl Grouping {
     /// The other grouping.
     pub fn other(self) -> Self {
@@ -108,9 +116,13 @@ impl Listing {
     /// How many of them a folder shows.
     const ENDED_PER_FOLDER: usize = 3;
 
-    /// Every entry, filtered by `filter` (by name, project, or title),
-    /// grouped `by` folder or state.
-    pub fn of(model: &Model, filter: &str, by: Grouping) -> Self {
+    /// Every entry `view` shows, filtered by `filter` (by name, project, or
+    /// title): sessions grouped by folder or state, or recordings.
+    pub fn of(model: &Model, filter: &str, view: ListView) -> Self {
+        let by = match view {
+            ListView::Sessions(by) => by,
+            ListView::Recordings => Grouping::Folder,
+        };
         let filter = filter.to_lowercase();
         let matches = |words: &[&str]| {
             filter.is_empty()
@@ -147,6 +159,11 @@ impl Listing {
             })
             .map(|session| Item::Recording(session.id))
             .collect();
+        // Recordings are read-only, and listed apart from the sessions.
+        let (runs, watched) = match view {
+            ListView::Sessions(_) => (runs, Vec::new()),
+            ListView::Recordings => (Vec::new(), watched),
+        };
         let mut rows: Vec<(Heading, Item)> = match by {
             Grouping::State => {
                 let mut rows: Vec<(Heading, Item)> = runs
@@ -296,7 +313,7 @@ impl Listing {
     fn heading(model: &Model, heading: &Heading, width: usize) -> Line {
         match heading {
             Heading::State(group) => Line::of(format!(" {}", group.heading()), Ink::Muted),
-            Heading::Elsewhere => Line::of(" STARTED ELSEWHERE", Ink::Muted),
+            Heading::Elsewhere => Line::of(" RECORDINGS", Ink::Muted),
             Heading::Folder(path) => {
                 let scratch = model.scratch.as_deref();
                 let name = if scratch == Some(path.as_str()) {

@@ -17,7 +17,7 @@ pub(crate) mod recording;
 #[cfg(test)]
 mod recording_tests;
 
-pub(crate) use list::{Grouping, Item, Listing};
+pub(crate) use list::{Grouping, Item, ListView, Listing};
 
 use super::actions::{Actions, Entry, Section};
 use super::message::Typed;
@@ -31,7 +31,6 @@ use crate::model::{Command, Control, Model, Read};
 use crate::ui::{Anchor, Ink, Joint, Keep, Line, Lines, Rule, Size, Span, View};
 use ren_harness::drive::{ApprovalId, Decision, Prompt};
 use ren_harness::settings::Midway;
-use ren_protocol::native::NativeThreadId;
 use ren_recorder::batch::{HistoryChange, HistorySubject};
 use ren_recorder::id::RunId;
 use ren_supervisor::{Delivery, RunState};
@@ -47,6 +46,8 @@ pub(crate) struct Main {
     filter: String,
     /// How the list is grouped.
     grouping: Grouping,
+    /// Whether the list shows sessions or recordings.
+    recordings: Shown,
     /// Lines scrolled up from the newest.
     scroll: usize,
     /// What happened to the run just left, shown atop the next.
@@ -61,6 +62,14 @@ pub(crate) struct Main {
     leaving: bool,
     /// What the message box offers for the word at its cursor.
     offering: Offering,
+}
+
+/// What the list shows.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) enum Shown {
+    #[default]
+    Sessions,
+    Recordings,
 }
 
 /// Which side has the keys.
@@ -184,7 +193,7 @@ impl Act {
         Bind {
             keys: &[Key::Char('n')],
             label: "n",
-            does: "start a run",
+            does: "start a session",
             command: Self::NewRun,
         },
         Bind {
@@ -260,6 +269,8 @@ pub(crate) enum Verb {
     NewRun,
     Search,
     Group,
+    /// Show the recordings instead of the sessions, or back.
+    Recordings,
     Theme,
 }
 
@@ -277,6 +288,7 @@ impl Verb {
             | Self::NewRun
             | Self::Search
             | Self::Group
+            | Self::Recordings
             | Self::Theme => false,
         }
     }
@@ -331,7 +343,7 @@ impl Main {
         {
             self.select(Item::Run(newest));
         }
-        let listing = Listing::of(ctx.model, &self.filter, self.grouping);
+        let listing = Listing::of(ctx.model, &self.filter, self.list_view());
         let lost = self
             .selected
             .is_none_or(|item| listing.position(item).is_none());
@@ -389,6 +401,14 @@ impl Main {
         self.handoff = None;
     }
 
+    /// What the list shows now.
+    fn list_view(&self) -> ListView {
+        match self.recordings {
+            Shown::Sessions => ListView::Sessions(self.grouping),
+            Shown::Recordings => ListView::Recordings,
+        }
+    }
+
     /// The selected run, if a run is selected.
     pub fn run(&self) -> Option<RunId> {
         match self.selected {
@@ -425,7 +445,7 @@ impl Main {
             Mode::Normal => {
                 if let Key::Char(digit @ '1'..='9') = key {
                     let index = usize::from(u8::try_from(digit).unwrap_or(b'1') - b'1');
-                    if let Some(item) = Listing::of(ctx.model, &self.filter, self.grouping)
+                    if let Some(item) = Listing::of(ctx.model, &self.filter, self.list_view())
                         .items()
                         .get(index)
                     {
@@ -486,8 +506,12 @@ impl Main {
             Verb::NewRun => vec![Action::Push(Screen::NewRun(NewRun::new(ctx.model)))],
             Verb::Answer(decision) => self.answer(ctx, decision, None),
             Verb::Interrupt => self.interrupt(ctx.model),
-            Verb::Stop => match self.live_run(ctx.model) {
-                Some(run) => vec![Action::Send(Command::Stop(run))],
+            Verb::Stop => match self
+                .live_run(ctx.model)
+                .and_then(|run| ctx.model.desk.get(run))
+                .and_then(|run| run.session)
+            {
+                Some(session) => vec![Action::Send(Command::Stop(session))],
                 None => vec![Action::Say(Notice::info("no live run selected to stop"))],
             },
             Verb::Archive | Verb::Delete => self.edit(ctx.model, verb),
@@ -502,6 +526,19 @@ impl Main {
                     Grouping::Folder => "grouped by folder",
                     Grouping::State => "grouped by what each needs",
                 }))]
+            }
+            Verb::Recordings => {
+                self.recordings = match self.recordings {
+                    Shown::Sessions => Shown::Recordings,
+                    Shown::Recordings => Shown::Sessions,
+                };
+                self.focus = Focus::List;
+                let mut actions = self.changed(ctx, &[]);
+                actions.push(Action::Say(Notice::info(match self.recordings {
+                    Shown::Sessions => "sessions",
+                    Shown::Recordings => "recordings: clients Ren did not start, read-only",
+                })));
+                actions
             }
             Verb::Theme => vec![Action::CycleTheme],
         }
@@ -549,7 +586,12 @@ impl Main {
                     }
                     match run.attention() {
                         Attention::Working | Attention::NeedsYou => {
-                            entries.push(entry('i', "write to the run", Verb::Write, Section::Run));
+                            entries.push(entry(
+                                'i',
+                                "write to the session",
+                                Verb::Write,
+                                Section::Run,
+                            ));
                             if run.queued().is_some() {
                                 entries.push(entry(
                                     'e',
@@ -560,15 +602,15 @@ impl Main {
                             }
                             entries.extend([
                                 entry('x', "interrupt the turn", Verb::Interrupt, Section::Run),
-                                entry('s', "stop the run", Verb::Stop, Section::Run),
+                                entry('s', "stop its client", Verb::Stop, Section::Run),
                             ]);
                         }
                         Attention::YourTurn | Attention::Starting => entries.extend([
-                            entry('i', "write to the run", Verb::Write, Section::Run),
-                            entry('s', "stop the run", Verb::Stop, Section::Run),
+                            entry('i', "write to the session", Verb::Write, Section::Run),
+                            entry('s', "stop its client", Verb::Stop, Section::Run),
                         ]),
                         Attention::Ended => entries.extend([
-                            entry('i', "write to continue it", Verb::Write, Section::Run),
+                            entry('i', "write to go on", Verb::Write, Section::Run),
                             entry('a', "archive", Verb::Archive, Section::History),
                             entry(
                                 'd',
@@ -597,7 +639,7 @@ impl Main {
             None => "ren".to_owned(),
         };
         entries.extend([
-            entry('n', "start a run", Verb::NewRun, Section::View),
+            entry('n', "start a session", Verb::NewRun, Section::View),
             entry('/', "search the list", Verb::Search, Section::View),
             entry(
                 'g',
@@ -606,6 +648,15 @@ impl Main {
                     Grouping::State => "group by folder",
                 },
                 Verb::Group,
+                Section::View,
+            ),
+            entry(
+                'r',
+                match self.recordings {
+                    Shown::Sessions => "show recordings",
+                    Shown::Recordings => "show sessions",
+                },
+                Verb::Recordings,
                 Section::View,
             ),
             entry('t', "next theme (not saved)", Verb::Theme, Section::View),
@@ -641,6 +692,7 @@ impl Main {
             | Verb::NewRun
             | Verb::Search
             | Verb::Group
+            | Verb::Recordings
             | Verb::Theme => (HistoryChange::Archive, "archived · it leaves the list"),
         };
         match self.subject(model) {
@@ -654,7 +706,7 @@ impl Main {
 
     /// The next (or previous) entry of the list.
     fn step(&mut self, model: &Model, forward: bool) -> Vec<Action> {
-        let items = Listing::of(model, &self.filter, self.grouping).items();
+        let items = Listing::of(model, &self.filter, self.list_view()).items();
         if items.is_empty() {
             return Vec::new();
         }
@@ -686,11 +738,16 @@ impl Main {
 
     fn interrupt(&self, model: &Model) -> Vec<Action> {
         match self.run().and_then(|run| model.desk.get(run)) {
-            Some(run) => match run.attention() {
-                Attention::Working | Attention::NeedsYou => {
-                    vec![Action::Send(Command::Interrupt(run.id))]
+            Some(run) => match (run.attention(), run.session) {
+                (Attention::Working | Attention::NeedsYou, Some(session)) => {
+                    vec![Action::Send(Command::Interrupt(session))]
                 }
-                Attention::YourTurn | Attention::Starting | Attention::Ended => {
+                (Attention::Working | Attention::NeedsYou, None) => {
+                    vec![Action::Say(Notice::info(
+                        "this run's session is not known yet",
+                    ))]
+                }
+                (Attention::YourTurn | Attention::Starting | Attention::Ended, _) => {
                     vec![Action::Say(Notice::info("no turn is running"))]
                 }
             },
@@ -708,6 +765,11 @@ impl Main {
             return vec![Action::Say(Notice::info("nothing is queued"))];
         };
         let id = run.id;
+        let Some(session) = run.session else {
+            return vec![Action::Say(Notice::info(
+                "this run's session is not known yet",
+            ))];
+        };
         let opened = self.open_writing(ctx.model);
         if self.mode != Mode::Writing {
             return opened;
@@ -719,7 +781,7 @@ impl Main {
         } else {
             format!("{queued}\n\n{draft}")
         });
-        vec![Action::Send(Command::Unqueue(id))]
+        vec![Action::Send(Command::Unqueue(session))]
     }
 
     fn open_writing(&mut self, model: &Model) -> Vec<Action> {
@@ -967,23 +1029,14 @@ impl Main {
         let Ok(prompt) = Prompt::parse(ctx.message.text().trim().to_owned()) else {
             return Vec::new();
         };
+        let Some(session) = run.session else {
+            return vec![Action::Say(Notice::info(
+                "this run's session is not known yet",
+            ))];
+        };
         let approval = run.approval();
         let attention = run.attention();
-        // A conversation continues with the settings it had.
-        let settings = run.settings();
-        let resume = match (run.harness(), run.thread()) {
-            (Some(harness), Some(thread)) => Some((
-                harness,
-                run.workdir.clone(),
-                thread
-                    .parse::<uuid::Uuid>()
-                    .ok()
-                    .and_then(NativeThreadId::new),
-            )),
-            (Some(_) | None, Some(_) | None) => None,
-        };
         let queued = run.queued().map(|queued| queued.as_str().to_owned());
-        let session = run.session;
         let steers = run
             .harness()
             .is_some_and(|harness| Midway::offered(harness).contains(&Midway::Steer));
@@ -994,16 +1047,18 @@ impl Main {
             return self.answer(ctx, Decision::Decline, Some(prompt));
         }
         match attention {
-            Attention::YourTurn => {
-                vec![Action::Send(ctx.model.prompt(id, prompt, Delivery::Start))]
-            }
-            Attention::Starting => vec![Action::Say(Notice::info(
-                "the run is still opening its conversation: write again once it is your turn",
-            ))],
+            // A client still opening takes it once open; one that stopped
+            // starts again and resumes the session's conversation.
+            Attention::YourTurn | Attention::Starting | Attention::Ended => vec![Action::Send(
+                ctx.model.prompt(id, session, prompt, Delivery::Start),
+            )],
             Attention::Working | Attention::NeedsYou => match delivery {
-                Delivery::Steer if steers => {
-                    vec![Action::Send(ctx.model.prompt(id, prompt, Delivery::Steer))]
-                }
+                Delivery::Steer if steers => vec![Action::Send(ctx.model.prompt(
+                    id,
+                    session,
+                    prompt,
+                    Delivery::Steer,
+                ))],
                 Delivery::Steer | Delivery::Start | Delivery::Queue => {
                     // After what was queued before: one message, in order.
                     let prompt = match queued {
@@ -1012,7 +1067,7 @@ impl Main {
                         None => prompt,
                     };
                     vec![
-                        Action::Send(ctx.model.prompt(id, prompt, Delivery::Queue)),
+                        Action::Send(ctx.model.prompt(id, session, prompt, Delivery::Queue)),
                         Action::Say(Notice::info(match delivery {
                             Delivery::Steer => {
                                 "this client cannot take a message mid-turn: queued for after it"
@@ -1024,20 +1079,6 @@ impl Main {
                         })),
                     ]
                 }
-            },
-            // The same session goes on: its client starts again and resumes.
-            Attention::Ended => match (session, resume) {
-                (Some(session), _) => vec![Action::Send(Command::Continue { session, prompt })],
-                (None, Some((harness, dir, resume))) => vec![Action::Send(ctx.model.start(
-                    harness,
-                    Some(dir),
-                    resume,
-                    Some(prompt),
-                    settings,
-                ))],
-                (None, None) => vec![Action::Say(Notice::info(
-                    "this run ended before it opened a conversation: n starts another",
-                ))],
             },
         }
     }
@@ -1064,14 +1105,24 @@ impl Main {
             Some(RunState::Working { approvals, .. }) => approvals.len() > 1,
             Some(_) | None => false,
         };
+        let Some(session) = run.session else {
+            return vec![Action::Say(Notice::info(
+                "this run's session is not known yet",
+            ))];
+        };
         let mut actions = vec![Action::Send(Command::Answer {
-            run: id,
+            session,
             approval,
             decision,
         })];
         // The words written instead go as the turn ends.
         if let Some(prompt) = then {
-            actions.push(Action::Send(ctx.model.prompt(id, prompt, Delivery::Queue)));
+            actions.push(Action::Send(ctx.model.prompt(
+                id,
+                session,
+                prompt,
+                Delivery::Queue,
+            )));
         }
         if !more && let Some(next) = ctx.model.desk.next_needing(Some(id)) {
             let verb = match decision {
@@ -1096,7 +1147,7 @@ impl Main {
     pub fn view(&self, look: &Look<'_>) -> View {
         let width = look.size.width;
         let side = Self::side(width);
-        let listing = Listing::of(look.model, &self.filter, self.grouping);
+        let listing = Listing::of(look.model, &self.filter, self.list_view());
         let mut list = listing.lines(look.model, self.selected, usize::from(side), look.now);
         if self.mode == Mode::Searching || !self.filter.is_empty() {
             list.insert(

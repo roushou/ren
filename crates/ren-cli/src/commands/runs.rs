@@ -1,6 +1,7 @@
-//! `ren runs`: agent runs through a daemon's control API. A run is a client
-//! (Codex so far) that the daemon starts in a folder under its `[runs]` roots
-//! and drives through the client's structured mode. On this host the
+//! `ren runs`: sessions and their runs through a daemon's control API. A
+//! session is a client (Codex, Claude Code, or Pi) working in a folder under
+//! the daemon's `[runs]` roots, driven through the client's structured mode;
+//! each run is one process of its client serving it. On this host the
 //! daemon's control token is read from its data directory; through a gateway,
 //! the daemon authorizes the Tailscale identity that Serve adds.
 use crate::commands::{control::ControlTarget, history::TargetArgs};
@@ -11,7 +12,7 @@ use anyhow::{Result, bail};
 use clap::{Args, Subcommand, ValueEnum};
 use ren_harness::Harness;
 use ren_protocol::sse::{EventName, SseFramer, SseLimits, SseOutput};
-use ren_recorder::id::RunId;
+use ren_recorder::id::{RunId, SessionId};
 use ren_store::{
     query::{PageLimit, Shelf},
     read::ReadRequest,
@@ -32,21 +33,26 @@ pub struct RunsCmd {
 
 #[derive(Subcommand)]
 enum RunsAction {
-    /// List the daemon's runs and their states.
+    /// List the daemon's runs (each a session's client process) and their
+    /// states.
     Ls,
-    /// The projects a run can start in: the git repositories under the run
-    /// roots, and each root's folders with none below them.
+    /// List the daemon's sessions: each as stored, with its runs, and as
+    /// served now.
+    Sessions,
+    /// The projects a session can start in: the git repositories under the
+    /// run roots, and each root's folders with none below them.
     Projects,
-    /// Start a client in a folder under the daemon's run roots.
+    /// Start a session: a client in a folder under the daemon's run roots.
     Start(StartArgs),
-    /// Send a prompt: start a turn.
+    /// Send a prompt to a session: start a turn, starting its client again
+    /// when none runs.
     Say(SayArgs),
-    /// Answer an approval the run is waiting for.
+    /// Answer an approval the session's client is waiting for.
     Answer(AnswerArgs),
-    /// Interrupt the running turn.
-    Interrupt(RunArg),
-    /// Stop the run's process.
-    Stop(RunArg),
+    /// Interrupt the session's running turn.
+    Interrupt(SessionArg),
+    /// Stop the session's client; the session goes on.
+    Stop(SessionArg),
     /// Print run updates as JSON lines as they happen (Ctrl-C to stop).
     Watch(WatchArgs),
     /// Recorded runs, newest first, from history.
@@ -59,6 +65,7 @@ enum Client {
     Codex,
     /// Claude Code.
     Claude,
+    Pi,
 }
 
 impl From<Client> for Harness {
@@ -66,6 +73,7 @@ impl From<Client> for Harness {
         match client {
             Client::Codex => Self::Codex,
             Client::Claude => Self::ClaudeCode,
+            Client::Pi => Self::Pi,
         }
     }
 }
@@ -77,23 +85,23 @@ struct StartArgs {
     /// The folder to work in (default: the current one). Relative paths
     /// are resolved here, so they name this host's folders only.
     dir: Option<PathBuf>,
-    /// Continue the client's conversation with this thread id instead of
-    /// starting a new one.
+    /// Go on with the client's conversation of this thread id (one begun
+    /// elsewhere) instead of starting a new one.
     #[arg(long)]
     resume: Option<Uuid>,
-    /// The first prompt, sent once the conversation opens.
+    /// The first prompt, sent once the session is made.
     #[arg(long)]
     prompt: Option<String>,
 }
 
 #[derive(Args)]
-struct RunArg {
-    run: RunId,
+struct SessionArg {
+    session: SessionId,
 }
 
 #[derive(Args)]
 struct SayArgs {
-    run: RunId,
+    session: SessionId,
     /// The prompt; several words are joined with spaces.
     #[arg(required = true, num_args = 1..)]
     text: Vec<String>,
@@ -125,7 +133,7 @@ impl Answer {
 
 #[derive(Args)]
 struct AnswerArgs {
-    run: RunId,
+    session: SessionId,
     /// The approval id, as `ren runs ls` shows it.
     approval: String,
     #[arg(value_enum, default_value_t = Answer::Accept)]
@@ -172,46 +180,64 @@ impl RunsCmd {
                 return Self::watch(ctx, &control, args.run).await;
             }
             RunsAction::Ls => (Method::GET, "runs".to_owned(), None),
+            RunsAction::Sessions => (Method::GET, "sessions".to_owned(), None),
             RunsAction::Projects => (Method::GET, "runs/projects".to_owned(), None),
             RunsAction::Start(args) => {
                 let local = matches!(self.target.select(ctx)?, Target::Local);
-                let dir = Self::dir(args.dir, local)?;
-                (
-                    Method::POST,
-                    "runs".to_owned(),
-                    Some({
-                        let mut body = serde_json::json!({
-                            "harness": Harness::from(args.client),
-                            "dir": dir,
-                        });
-                        if let Some(resume) = args.resume {
-                            body["resume"] = resume.to_string().into();
-                        }
-                        if let Some(prompt) = args.prompt {
-                            body["prompt"] = prompt.into();
-                        }
-                        body
-                    }),
-                )
+                let dir = Self::dir(args.dir.clone(), local)?;
+                let control = ControlTarget::select(&self.target, ctx)?;
+                return Self::start(&control, args, dir).await;
             }
             RunsAction::Say(args) => (
                 Method::POST,
-                format!("runs/{}/prompt", args.run),
+                format!("sessions/{}/prompt", args.session),
                 Some(serde_json::json!({ "text": args.text.join(" ") })),
             ),
             RunsAction::Answer(args) => (
                 Method::POST,
-                format!("runs/{}/approvals/{}", args.run, args.approval),
+                format!("sessions/{}/approvals/{}", args.session, args.approval),
                 Some(serde_json::json!({ "decision": args.decision.label() })),
             ),
-            RunsAction::Interrupt(args) => {
-                (Method::POST, format!("runs/{}/interrupt", args.run), None)
-            }
-            RunsAction::Stop(args) => (Method::POST, format!("runs/{}/stop", args.run), None),
+            RunsAction::Interrupt(args) => (
+                Method::POST,
+                format!("sessions/{}/interrupt", args.session),
+                None,
+            ),
+            RunsAction::Stop(args) => (
+                Method::POST,
+                format!("sessions/{}/stop", args.session),
+                None,
+            ),
         };
         let control = ControlTarget::select(&self.target, ctx)?;
         let (status, body) = control.send(method, &path, body).await?;
         ControlTarget::report(status, &body)
+    }
+
+    /// Make a session in `dir`, then send its first prompt, if one is given;
+    /// prints the session made.
+    async fn start(control: &ControlTarget, args: StartArgs, dir: String) -> Result<ExitCode> {
+        let mut body = serde_json::json!({ "harness": Harness::from(args.client), "dir": dir });
+        if let Some(resume) = args.resume {
+            body["resume"] = resume.to_string().into();
+        }
+        let (status, made) = control.send(Method::POST, "sessions", Some(body)).await?;
+        if !status.is_success() {
+            return ControlTarget::report(status, &made);
+        }
+        if let (Some(prompt), Some(session)) = (args.prompt, made["session"].as_str()) {
+            let (status, answer) = control
+                .send(
+                    Method::POST,
+                    &format!("sessions/{session}/prompt"),
+                    Some(serde_json::json!({ "text": prompt })),
+                )
+                .await?;
+            if !status.is_success() {
+                return ControlTarget::report(status, &answer);
+            }
+        }
+        ControlTarget::report(status, &made)
     }
 
     /// The folder as the daemon must read it: absolute. A relative one is

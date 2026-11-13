@@ -4,7 +4,7 @@
 //! terminal. Screens are pinned as text in `tests/fixtures`.
 
 use super::main::Mode;
-use super::main::{Grouping, Item, Listing};
+use super::main::{Grouping, Item, ListView, Listing};
 use crate::{Answered, Command, Input, Key, Out, Read, Size, Theme, Tui};
 use ratatui::{buffer::Buffer, layout::Rect};
 use ren_harness::{
@@ -63,6 +63,11 @@ fn run_id(n: u128) -> RunId {
     RunId::restore(uuid::Uuid::from_u128(n))
 }
 
+/// The session run `n` serves in these tests.
+fn session_id(n: u128) -> ren_recorder::id::SessionId {
+    ren_recorder::id::SessionId::restore(uuid::Uuid::from_u128(0x5500 + n))
+}
+
 fn thread(n: u128) -> NativeThreadId {
     NativeThreadId::new(uuid::Uuid::from_u128(0x7700 + n)).unwrap()
 }
@@ -74,7 +79,7 @@ fn turn(n: u128) -> NativeTurnId {
 fn snapshot(n: u128, harness: Harness, workdir: &str, state: RunState) -> RunSnapshot {
     RunSnapshot {
         run: run_id(n),
-        session: ren_recorder::id::SessionId::restore(uuid::Uuid::from_u128(0x5500 + n)),
+        session: session_id(n),
         harness,
         workdir: workdir.into(),
         state,
@@ -292,7 +297,7 @@ fn a_key_answers_and_moves_on_to_the_next_run_that_needs_you() {
     assert_eq!(
         sent(&out),
         [Command::Answer {
-            run: run_id(2),
+            session: session_id(2),
             approval: "ap-2".parse().unwrap(),
             decision: Decision::AcceptForSession,
         }]
@@ -332,7 +337,7 @@ fn writing_during_a_turn_queues_it_for_after_the_turn() {
     assert_eq!(
         sent(&console.write("also check the dead-letter path")),
         [Command::Prompt {
-            run: run_id(1),
+            session: session_id(1),
             prompt: Prompt::parse("also check the dead-letter path".into()).unwrap(),
             delivery: Delivery::Queue,
         }]
@@ -349,7 +354,7 @@ fn writing_during_a_turn_queues_it_for_after_the_turn() {
     assert_eq!(
         sent(&console.write("and the retry path")),
         [Command::Prompt {
-            run: run_id(1),
+            session: session_id(1),
             prompt: Prompt::parse("also check the dead-letter path\n\nand the retry path".into())
                 .unwrap(),
             delivery: Delivery::Queue,
@@ -428,7 +433,7 @@ fn a_slash_offers_the_clients_commands_and_an_at_sign_the_folders_files() {
     assert_eq!(
         sent(&console.press(Key::Enter)),
         [Command::Prompt {
-            run: run_id(1),
+            session: session_id(1),
             prompt: Prompt::parse("/review the parser, see @src/lease.rs".into()).unwrap(),
             delivery: Delivery::Queue,
         }]
@@ -462,7 +467,7 @@ fn alt_enter_sends_into_the_running_turn() {
     assert_eq!(
         sent(&console.press(Key::SendNow)),
         [Command::Prompt {
-            run: run_id(1),
+            session: session_id(1),
             prompt: Prompt::parse("skip the flaky test".into()).unwrap(),
             delivery: Delivery::Steer,
         }]
@@ -477,7 +482,7 @@ fn the_queued_message_is_taken_back_to_edit() {
     let _ = console.press(Key::Char(' '));
     assert_eq!(
         sent(&console.press(Key::Char('e'))),
-        [Command::Unqueue(run_id(1))]
+        [Command::Unqueue(session_id(1))]
     );
     assert_eq!(console.tui.mode(), Mode::Writing);
     let _ = console.apply(state(1, working(1)));
@@ -508,7 +513,7 @@ fn writing_while_an_approval_waits_denies_it_and_sends_the_words_next() {
     assert_eq!(
         sent(&out)[..1],
         [Command::Answer {
-            run: run_id(2),
+            session: session_id(2),
             approval: "ap-2".parse().unwrap(),
             decision: Decision::Decline,
         }]
@@ -517,7 +522,7 @@ fn writing_while_an_approval_waits_denies_it_and_sends_the_words_next() {
     assert_eq!(
         sent(&out)[1..],
         [Command::Prompt {
-            run: run_id(2),
+            session: session_id(2),
             prompt: Prompt::parse("no, push to a branch first".into()).unwrap(),
             delivery: Delivery::Queue,
         }]
@@ -535,7 +540,7 @@ fn keys_move_through_the_list_and_the_action_menu_interrupts() {
     assert!(console.tui.overlaid());
     assert_eq!(
         sent(&console.press(Key::Char('x'))),
-        [Command::Interrupt(run_id(1))]
+        [Command::Interrupt(session_id(1))]
     );
     assert!(!console.tui.overlaid());
     let _ = console.press(Key::Down);
@@ -888,26 +893,6 @@ fn a_run_shows_its_whole_conversation_and_what_streams_on_top() {
 }
 
 #[test]
-fn writing_to_an_ended_run_continues_its_conversation() {
-    let mut console = Console::new(SIZE);
-    let mut ended = recorded(5, "/srv/ren", None);
-    ended.ended_at = Some(UnixMillis::from_millis(2000));
-    let _ = console.apply(Input::Recorded(vec![ended]));
-    let _ = console.apply(Input::Runs(Ok(vec![])));
-    assert_eq!(console.current(), Some(run_id(5)));
-    assert_eq!(
-        sent(&console.write("pick it back up")),
-        [Command::Start {
-            harness: Harness::ClaudeCode,
-            dir: Some("/srv/ren".into()),
-            resume: Some(thread(5)),
-            prompt: Some(Prompt::parse("pick it back up".into()).unwrap()),
-            settings: ren_harness::settings::RunSettings::default(),
-        }]
-    );
-}
-
-#[test]
 fn writing_to_a_session_whose_client_stopped_continues_the_session() {
     let mut console = Console::new(SIZE);
     let session = ren_recorder::id::SessionId::restore(uuid::Uuid::from_u128(0x5505));
@@ -919,9 +904,10 @@ fn writing_to_a_session_whose_client_stopped_continues_the_session() {
     assert_eq!(console.current(), Some(run_id(5)));
     assert_eq!(
         sent(&console.write("pick it back up")),
-        [Command::Continue {
+        [Command::Prompt {
             session,
             prompt: Prompt::parse("pick it back up".into()).unwrap(),
+            delivery: Delivery::Start,
         }]
     );
     // Its new client is the session's newest run: the list shows the
@@ -930,7 +916,7 @@ fn writing_to_a_session_whose_client_stopped_continues_the_session() {
     resumed.session = session;
     let _ = console.apply(Input::Runs(Ok(vec![resumed])));
     assert_eq!(console.current(), Some(run_id(6)));
-    let listed = Listing::of(&console.tui.model, "", Grouping::Folder).items();
+    let listed = Listing::of(&console.tui.model, "", ListView::Sessions(Grouping::Folder)).items();
     assert_eq!(listed, [Item::Run(run_id(6))]);
 }
 
@@ -1168,14 +1154,14 @@ fn the_action_menu_lists_only_what_applies_to_the_selection() {
     assert_eq!(console.current(), Some(run_id(2)));
     assert_eq!(
         menu(&mut console),
-        ['y', 'a', 'd', 'D', 'i', 'x', 's', 'n', '/', 'g', 't']
+        ['y', 'a', 'd', 'D', 'i', 'x', 's', 'n', '/', 'g', 'r', 't']
     );
     // Working: interrupt and stop.
     let _ = console.press(Key::Char('2'));
-    assert_eq!(menu(&mut console), ['i', 'x', 's', 'n', '/', 'g', 't']);
+    assert_eq!(menu(&mut console), ['i', 'x', 's', 'n', '/', 'g', 'r', 't']);
     // Its turn is over: nothing to interrupt.
     let _ = console.press(Key::Char('3'));
-    assert_eq!(menu(&mut console), ['i', 's', 'n', '/', 'g', 't']);
+    assert_eq!(menu(&mut console), ['i', 's', 'n', '/', 'g', 'r', 't']);
     // y answers only while a run asks; elsewhere it does nothing.
     assert!(console.press(Key::Char('y')).is_empty());
 }

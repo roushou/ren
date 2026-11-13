@@ -1,7 +1,9 @@
-//! Runs under `/control/v1/runs`: start an agent in a folder, prompt it,
-//! answer its approvals, interrupt or stop it, list the live runs, and follow
-//! their updates as server-sent events. Access is the control API's; with no
-//! run roots configured, every route answers `runs_disabled`.
+//! Runs under `/control/v1/runs`: the client processes serving sessions,
+//! listed live and followed as server-sent events, and what a session can
+//! start with (the projects, the clients, and each client's models). A run
+//! is driven through its session (`sessions`), whose routes share the
+//! requests and refusals here. Access is the control API's; with no run
+//! roots configured, every route answers `runs_disabled`.
 //!
 //! Live updates carry what the agent reported (its reply as it streams, its
 //! commands, and its approvals). They are not stored: the run's facts and
@@ -10,29 +12,24 @@
 use super::{ControlApi, Refusal};
 use axum::{
     Json, Router,
-    extract::{
-        Path, Query, State,
-        rejection::{JsonRejection, QueryRejection},
-    },
+    extract::{Path, State, rejection::JsonRejection},
     response::{
         IntoResponse, Response,
         sse::{Event, KeepAlive, Sse},
     },
-    routing::{get, post},
+    routing::get,
 };
 use http::{HeaderMap, StatusCode};
 use ren_harness::{
     Harness,
     commands::ClientCommand,
-    drive::{ApprovalId, CommandRefused, Decision, Prompt},
+    drive::{CommandRefused, Decision},
     models::ModelId,
     settings::{ApprovalPolicy, Effort, RunSettings},
 };
-use ren_protocol::native::NativeThreadId;
-use ren_recorder::id::RunId;
 use ren_supervisor::{
-    CommandError, ComposeError, Conversation, Delivery, FileQuery, ModelsError, RunCommand,
-    RunRefused, RunSnapshot, Start, StartError, StartPlace, Supervisor, WorkdirError,
+    CommandError, Delivery, ModelsError, RunRefused, RunSnapshot, StartError, Supervisor,
+    WorkdirError,
 };
 use std::{convert::Infallible, sync::Arc, time::Duration};
 use tokio::sync::broadcast::error::RecvError;
@@ -52,32 +49,6 @@ pub(super) struct FilesRequest {
 impl FilesRequest {
     pub(super) const LIMIT: usize = 20;
     pub(super) const MOST: usize = 100;
-}
-
-#[derive(serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-struct StartRequest {
-    harness: Harness,
-    /// The folder, inside a root or another place; left out, the run gets
-    /// a new folder of its own in scratch.
-    #[serde(default)]
-    dir: Option<String>,
-    /// The client's thread to continue, instead of a new conversation.
-    #[serde(default)]
-    resume: Option<uuid::Uuid>,
-    /// The first prompt, sent once the conversation opens.
-    #[serde(default)]
-    prompt: Option<String>,
-    /// The model, as the client's listing names it; with none, the client's
-    /// own default.
-    #[serde(default)]
-    model: Option<String>,
-    /// With none, the client's own.
-    #[serde(default)]
-    effort: Option<Effort>,
-    /// With none, the client's own.
-    #[serde(default)]
-    approvals: Option<ApprovalPolicy>,
 }
 
 #[derive(serde::Deserialize)]
@@ -128,12 +99,6 @@ pub(super) struct SettingsRequest {
 #[serde(deny_unknown_fields)]
 pub(super) struct AnswerRequest {
     pub(super) decision: Decision,
-}
-
-#[derive(serde::Serialize)]
-struct Started {
-    api_version: u32,
-    run: RunId,
 }
 
 #[derive(serde::Serialize)]
@@ -259,7 +224,7 @@ type Api = State<Arc<RunsApi>>;
 impl RunsApi {
     pub(super) fn router(self) -> Router {
         Router::new()
-            .route("/control/v1/runs", get(Self::list).post(Self::start))
+            .route("/control/v1/runs", get(Self::list))
             .route("/control/v1/runs/events", get(Self::events))
             .route("/control/v1/runs/projects", get(Self::projects))
             .route("/control/v1/runs/clients", get(Self::clients))
@@ -267,17 +232,6 @@ impl RunsApi {
                 "/control/v1/runs/clients/{harness}/models",
                 get(Self::models),
             )
-            .route("/control/v1/runs/{run}/prompt", post(Self::prompt))
-            .route("/control/v1/runs/{run}/unqueue", post(Self::unqueue))
-            .route("/control/v1/runs/{run}/commands", get(Self::commands))
-            .route("/control/v1/runs/{run}/files", get(Self::files))
-            .route("/control/v1/runs/{run}/settings", post(Self::settings))
-            .route(
-                "/control/v1/runs/{run}/approvals/{approval}",
-                post(Self::answer),
-            )
-            .route("/control/v1/runs/{run}/interrupt", post(Self::interrupt))
-            .route("/control/v1/runs/{run}/stop", post(Self::stop))
             .with_state(Arc::new(self))
     }
 
@@ -289,30 +243,9 @@ impl RunsApi {
             .ok_or(Denied::Run(RunRefusal::Disabled))
     }
 
-    fn run(text: &str) -> Result<RunId, Denied> {
-        text.parse().map_err(|_| Denied::Run(RunRefusal::NotFound))
-    }
-
     pub(super) fn body<T>(body: Result<Json<T>, JsonRejection>) -> Result<T, Denied> {
         body.map(|Json(body)| body)
             .map_err(|_| Denied::Control(Refusal::Invalid))
-    }
-
-    async fn command(
-        supervisor: &Supervisor,
-        run: RunId,
-        command: RunCommand,
-    ) -> Result<Response, Denied> {
-        supervisor
-            .command(run, command)
-            .await
-            .map_err(|error| Denied::Run(error.into()))?;
-        // Sent to the agent; its reply arrives as run updates.
-        Ok((
-            StatusCode::ACCEPTED,
-            Json(serde_json::json!({ "api_version": ControlApi::API_VERSION })),
-        )
-            .into_response())
     }
 
     async fn list(State(api): Api, headers: HeaderMap) -> Result<Response, Denied> {
@@ -394,92 +327,6 @@ impl RunsApi {
         })
     }
 
-    async fn start(
-        State(api): Api,
-        headers: HeaderMap,
-        body: Result<Json<StartRequest>, JsonRejection>,
-    ) -> Result<Response, Denied> {
-        let supervisor = api.admit(&headers)?;
-        let request = Self::body(body)?;
-        let conversation = match request.resume {
-            None => Conversation::New,
-            Some(thread) => Conversation::Resume(
-                NativeThreadId::new(thread).ok_or(Denied::Control(Refusal::Invalid))?,
-            ),
-        };
-        let first = request
-            .prompt
-            .map(Prompt::parse)
-            .transpose()
-            .map_err(|_| Denied::Control(Refusal::Invalid))?;
-        let model = request
-            .model
-            .map(|model| model.parse::<ModelId>())
-            .transpose()
-            .map_err(|_| Denied::Control(Refusal::Invalid))?;
-        let run = supervisor
-            .start(Start {
-                harness: request.harness,
-                place: match request.dir {
-                    Some(dir) => StartPlace::Folder(dir),
-                    None => StartPlace::Scratch,
-                },
-                conversation,
-                settings: RunSettings {
-                    model,
-                    effort: request.effort,
-                    approvals: request.approvals,
-                },
-                first,
-            })
-            .await
-            .map_err(|error| Denied::Run(error.into()))?;
-        Ok((
-            StatusCode::CREATED,
-            Json(Started {
-                api_version: ControlApi::API_VERSION,
-                run,
-            }),
-        )
-            .into_response())
-    }
-
-    async fn prompt(
-        State(api): Api,
-        headers: HeaderMap,
-        Path(run): Path<String>,
-        body: Result<Json<PromptRequest>, JsonRejection>,
-    ) -> Result<Response, Denied> {
-        let supervisor = api.admit(&headers)?;
-        let run = Self::run(&run)?;
-        let request = Self::body(body)?;
-        let prompt = Prompt::parse(request.text).map_err(|_| Denied::Control(Refusal::Invalid))?;
-        Self::command(supervisor, run, request.delivery.command(prompt)).await
-    }
-
-    fn composed(error: ComposeError) -> Denied {
-        Denied::Run(match error {
-            ComposeError::NoSuchRun(_) => RunRefusal::NotFound,
-            ComposeError::Unreadable(_) => RunRefusal::Refused("unreadable"),
-            ComposeError::Gone => RunRefusal::Unavailable,
-        })
-    }
-
-    /// What the run's client offers a prompt: its commands, skills, and
-    /// templates, as it listed them.
-    async fn commands(
-        State(api): Api,
-        headers: HeaderMap,
-        Path(run): Path<String>,
-    ) -> Result<Response, Denied> {
-        let supervisor = api.admit(&headers)?;
-        let commands = supervisor
-            .commands(Self::run(&run)?)
-            .await
-            .map_err(Self::composed)?;
-        Ok(Self::commands_body(commands))
-    }
-
     /// The answer listing `commands`, each with what a prompt writes to run it.
     pub(super) fn commands_body(commands: Vec<ClientCommand>) -> Response {
         let commands: Vec<serde_json::Value> = commands
@@ -498,95 +345,6 @@ impl RunsApi {
             "commands": commands,
         }))
         .into_response()
-    }
-
-    /// The paths of the run's folder that best match what was typed.
-    async fn files(
-        State(api): Api,
-        headers: HeaderMap,
-        Path(run): Path<String>,
-        query: Result<Query<FilesRequest>, QueryRejection>,
-    ) -> Result<Response, Denied> {
-        let supervisor = api.admit(&headers)?;
-        let run = Self::run(&run)?;
-        let Query(request) = query.map_err(|_| Denied::Control(Refusal::Invalid))?;
-        let limit = request
-            .limit
-            .unwrap_or(FilesRequest::LIMIT)
-            .clamp(1, FilesRequest::MOST);
-        let files = supervisor
-            .files(run, FileQuery::parse(&request.q), limit)
-            .await
-            .map_err(Self::composed)?;
-        Ok(Json(serde_json::json!({
-            "api_version": ControlApi::API_VERSION,
-            "files": files,
-        }))
-        .into_response())
-    }
-
-    async fn unqueue(
-        State(api): Api,
-        headers: HeaderMap,
-        Path(run): Path<String>,
-    ) -> Result<Response, Denied> {
-        let supervisor = api.admit(&headers)?;
-        Self::command(supervisor, Self::run(&run)?, RunCommand::Unqueue).await
-    }
-
-    async fn settings(
-        State(api): Api,
-        headers: HeaderMap,
-        Path(run): Path<String>,
-        body: Result<Json<SettingsRequest>, JsonRejection>,
-    ) -> Result<Response, Denied> {
-        let supervisor = api.admit(&headers)?;
-        let run = Self::run(&run)?;
-        let request = Self::body(body)?;
-        let model = request
-            .model
-            .map(|model| model.parse::<ModelId>())
-            .transpose()
-            .map_err(|_| Denied::Control(Refusal::Invalid))?;
-        let settings = RunSettings {
-            model,
-            effort: request.effort,
-            approvals: request.approvals,
-        };
-        Self::command(supervisor, run, RunCommand::Configure(settings)).await
-    }
-
-    async fn answer(
-        State(api): Api,
-        headers: HeaderMap,
-        Path((run, approval)): Path<(String, String)>,
-        body: Result<Json<AnswerRequest>, JsonRejection>,
-    ) -> Result<Response, Denied> {
-        let supervisor = api.admit(&headers)?;
-        let run = Self::run(&run)?;
-        let approval = approval
-            .parse::<ApprovalId>()
-            .map_err(|_| Denied::Run(RunRefusal::NotFound))?;
-        let decision = Self::body(body)?.decision;
-        Self::command(supervisor, run, RunCommand::Answer { approval, decision }).await
-    }
-
-    async fn interrupt(
-        State(api): Api,
-        headers: HeaderMap,
-        Path(run): Path<String>,
-    ) -> Result<Response, Denied> {
-        let supervisor = api.admit(&headers)?;
-        Self::command(supervisor, Self::run(&run)?, RunCommand::Interrupt).await
-    }
-
-    async fn stop(
-        State(api): Api,
-        headers: HeaderMap,
-        Path(run): Path<String>,
-    ) -> Result<Response, Denied> {
-        let supervisor = api.admit(&headers)?;
-        Self::command(supervisor, Self::run(&run)?, RunCommand::Stop).await
     }
 
     /// Updates from now on, as `run` events; `lagged` when the feed fell

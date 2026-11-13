@@ -315,33 +315,32 @@ test('the client sends commands as JSON and reports refusals by their code', asy
   const client = new RunsClient((async (url: string, init?: RequestInit) => {
     sent.push(`${init?.method} ${url} ${init?.body ?? ''}`);
     if (url.endsWith('/stop')) return Response.json({ error: 'ended' }, { status: 409 });
-    if (url === '/control/runs' && init?.method === 'POST') {
-      return Response.json({ api_version: 1, run }, { status: 201 });
+    if (url === '/control/sessions' && init?.method === 'POST') {
+      return Response.json({ api_version: 1, session: run }, { status: 201 });
     }
     return Response.json({ api_version: 1 }, { status: 202 });
   }) as typeof fetch);
-  assert.equal(await client.start({ harness: 'codex', dir: '/work/acme' }), run);
+  assert.equal(await client.createSession('codex', '/work/acme'), run);
   assert.equal(
-    await client.start({
-      harness: 'claude_code',
-      dir: '/work/web',
-      prompt: 'fix it',
-      model: 'small' as ModelId,
-    }),
+    await client.createSession('claude_code', '/work/web', { model: 'small' as ModelId }),
     run,
   );
-  await client.answer(run as never, 'ap/1' as never, 'accept_for_session');
-  await assert.rejects(client.stop(run as never), (error: unknown) => {
+  await client.toSession(run as never, {
+    kind: 'answer',
+    approval: 'ap/1' as never,
+    decision: 'accept_for_session',
+  });
+  await assert.rejects(client.toSession(run as never, { kind: 'stop' }), (error: unknown) => {
     assert.ok(error instanceof RunCommandError);
     assert.equal(error.code, 'ended');
     assert.equal(error.message, 'The run is stopping or has ended.');
     return true;
   });
   assert.deepEqual(sent, [
-    'POST /control/runs {"harness":"codex","dir":"/work/acme"}',
-    'POST /control/runs {"harness":"claude_code","dir":"/work/web","prompt":"fix it","model":"small"}',
-    `POST /control/runs/${run}/approvals/ap%2F1 {"decision":"accept_for_session"}`,
-    `POST /control/runs/${run}/stop {}`,
+    'POST /control/sessions {"harness":"codex","dir":"/work/acme"}',
+    'POST /control/sessions {"harness":"claude_code","dir":"/work/web","model":"small"}',
+    `POST /control/sessions/${run}/approvals/ap%2F1 {"decision":"accept_for_session"}`,
+    `POST /control/sessions/${run}/stop {}`,
   ]);
 });
 
@@ -855,12 +854,17 @@ test('a prompt goes with how to deliver it; the queue and settings have their ow
     sent.push(`${url} ${init?.body ?? ''}`);
     return Response.json({ api_version: 1 }, { status: 202 });
   }) as typeof fetch);
-  await client.prompt(run as never, 'go', 'steer');
-  await client.unqueue(run as never);
-  await client.settings(run as never, { model: null, effort: 'high', approvals: null });
+  await client.toSession(run as never, { kind: 'prompt', text: 'go', delivery: 'steer' });
+  await client.toSession(run as never, { kind: 'unqueue' });
+  await client.toSession(run as never, {
+    kind: 'settings',
+    model: null,
+    effort: 'high',
+    approvals: null,
+  });
   assert.deepEqual(sent, [
-    `/control/runs/${run}/prompt {"text":"go","delivery":"steer"}`,
-    `/control/runs/${run}/unqueue {}`,
-    `/control/runs/${run}/settings {"model":null,"effort":"high","approvals":null}`,
+    `/control/sessions/${run}/prompt {"text":"go","delivery":"steer"}`,
+    `/control/sessions/${run}/unqueue {}`,
+    `/control/sessions/${run}/settings {"model":null,"effort":"high","approvals":null}`,
   ]);
 });

@@ -699,7 +699,6 @@ export interface StartRequest {
   approvals?: ApprovalPolicy | null;
 }
 
-const started = versioned(object<{ run: RunId }>({ run: RunId.decode }));
 const versionedRecordedRun = versioned(recordedRun);
 const storedConversation = versioned(
   object<StoredConversation>({
@@ -869,55 +868,6 @@ export class RunsClient {
     const path = `/control/runs/clients/${harness}/models`;
     return (await this.#send('GET', path, undefined, runModels, signal, 30_000)).models;
   }
-  async start({
-    harness,
-    dir,
-    resume,
-    prompt,
-    model,
-    effort,
-    approvals,
-  }: StartRequest): Promise<RunId> {
-    const body = {
-      harness,
-      ...(dir ? { dir } : {}),
-      ...(resume ? { resume } : {}),
-      ...(prompt ? { prompt } : {}),
-      ...(model ? { model } : {}),
-      ...(effort ? { effort } : {}),
-      ...(approvals ? { approvals } : {}),
-    };
-    return (await this.#send('POST', '/control/runs', body, started)).run;
-  }
-  async prompt(run: RunId, text: string, delivery: Delivery = 'start'): Promise<void> {
-    await this.#send('POST', `/control/runs/${run}/prompt`, { text, delivery }, null);
-  }
-  /** Take back the prompt queued for after the running turn. */
-  /** What the run's client offers a prompt: its commands, skills, and templates. */
-  async commands(run: RunId, signal?: AbortSignal): Promise<ClientCommand[]> {
-    const path = `/control/runs/${run}/commands`;
-    return (await this.#send('GET', path, undefined, clientCommands, signal)).commands;
-  }
-  /** The paths of the run's folder that best match `query`, best first. */
-  async files(run: RunId, query: string, limit = 20, signal?: AbortSignal): Promise<FileMatch[]> {
-    const search = new URLSearchParams({ q: query, limit: String(limit) });
-    const path = `/control/runs/${run}/files?${search}`;
-    return (await this.#send('GET', path, undefined, fileMatches, signal)).files;
-  }
-  async unqueue(run: RunId): Promise<void> {
-    await this.#send('POST', `/control/runs/${run}/unqueue`, {}, null);
-  }
-  /** Run on these settings from the next turn on. */
-  async settings(
-    run: RunId,
-    settings: { model: ModelId | null; effort: Effort | null; approvals: ApprovalPolicy | null },
-  ): Promise<void> {
-    await this.#send('POST', `/control/runs/${run}/settings`, settings, null);
-  }
-  async answer(run: RunId, approval: ApprovalId, decision: Decision): Promise<void> {
-    const path = `/control/runs/${run}/approvals/${encodeURIComponent(approval)}`;
-    await this.#send('POST', path, { decision }, null);
-  }
   /** Sessions on `shelf`, most recently active first. */
   async sessions(shelf: Shelf = 'current', signal?: AbortSignal): Promise<SessionBody[]> {
     const path = `/control/sessions?shelf=${shelf}`;
@@ -1008,12 +958,6 @@ export class RunsClient {
     const search = new URLSearchParams({ q: query, limit: String(limit) });
     const path = `/control/sessions/${session}/files?${search}`;
     return (await this.#send('GET', path, undefined, fileMatches, signal)).files;
-  }
-  async interrupt(run: RunId): Promise<void> {
-    await this.#send('POST', `/control/runs/${run}/interrupt`, {}, null);
-  }
-  async stop(run: RunId): Promise<void> {
-    await this.#send('POST', `/control/runs/${run}/stop`, {}, null);
   }
   /**
    * Archive, unarchive, or delete what was recorded of a session or a run.

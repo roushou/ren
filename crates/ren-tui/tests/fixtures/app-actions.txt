@@ -3,21 +3,21 @@
  ren ◆1  /srv/                │ ren  Needs you                                                   Claude Code · /srv/ren
  1 ◆ fix the flaky upl…  wants│  Conversation   Activity   Files   Calls
                               │─────────────────────────────────────────────────────────────────────────────────────────
- acme-api  /dev/              │
- 2 ● new Codex run  working   │ › fix ┌ ren · Claude Code ──────────────────────┐
-                              │ ● Bash│  it asks                                │
- acme-web  /dev/              │       │   y  allow it, once                     │
- 3 ○ new Claude Code r…  your │       │   a  allow it for the rest of the run   │
-                              │       │   d  deny it                            │
+ acme-api  /dev/              │       ┌ ren · Claude Code ──────────────────────┐
+ 2 ● new Codex run  working   │ › fix │  it asks                                │
+                              │ ● Bash│   y  allow it, once                     │
+ acme-web  /dev/              │       │   a  allow it for the rest of the run   │
+ 3 ○ new Claude Code r…  your │       │   d  deny it                            │
                               │       │   D  deny it and stop the turn          │
                               │       │  run                                    │
-                              │       │   i  write to the run                   │
+                              │       │   i  write to the session               │
                               │       │   x  interrupt the turn                 │
-                              │       │   s  stop the run                       │
+                              │       │   s  stop its client                    │
                               │       │  view                                   │
-                              │       │   n  start a run                        │
+                              │       │   n  start a session                    │
                               │       │   /  search the list                    │
                               │       │   g  group by what each needs           │
+                              │       │   r  show recordings                    │
                               │       │   t  next theme (not saved)             │
                               │       │                                         │
                               │       │  a letter, or ↑↓ and enter · esc closes │
