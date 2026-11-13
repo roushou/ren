@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { SessionId } from './api.ts';
+  import type { RecordingId } from './api.ts';
   import { findingLink, type FindingLine } from './activity.ts';
   import Icon from './Icon.svelte';
   let {
@@ -9,7 +9,7 @@
   }: {
     findings: FindingLine[];
     /** The session the findings' calls belong to. */
-    session: SessionId;
+    session: RecordingId;
     /** The page showing them, which decides where each finding links. */
     page: 'session' | 'turn';
   } = $props();

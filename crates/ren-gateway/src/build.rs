@@ -194,16 +194,12 @@ mod tests {
     }
 
     #[test]
-    fn revisions_round_trip_through_their_text() {
+    fn revisions_round_trip_through_their_text_and_malformed_ones_are_refused() {
         for text in [A.to_owned(), format!("{A}-dirty"), "unknown".to_owned()] {
             assert_eq!(text.parse::<Revision>().unwrap().to_string(), text);
         }
         let sha256 = "a".repeat(64);
         assert_eq!(sha256.parse::<Revision>().unwrap().to_string(), sha256);
-    }
-
-    #[test]
-    fn malformed_revisions_are_refused() {
         for text in [
             "",
             "-dirty",

@@ -1,7 +1,7 @@
 # Ren UI
 
 An optional SvelteKit 3, Svelte 5, and TypeScript dashboard for browsing traffic,
-sessions, request/response payloads, and recorder health. It reads only the
+recordings, request/response payloads, and recorder health. It reads only the
 daemon's read-only management API. It never reads SQLite or provider credentials,
 and it never proxies inference: Claude Code, Codex, Pi, and OpenCode connect
 directly to the Rust daemon. The daemon stays fully functional with the UI stopped.
@@ -14,40 +14,40 @@ Browser ──> optional SvelteKit server ──> Rust management API
 Pages: Overview (`/`: one line that says how it stands, edged by the worst thing in it;
 what needs attention in the last day, worst first, with repeats folded into a count:
 exposed secrets, recording trouble, failed and cut-off model calls, then failed
-bookkeeping such as quota probes, which is not the agents' work; the sessions active in
+bookkeeping such as quota probes, which is not the agents' work; the recordings active in
 the last 15 minutes in the Live page's state colours; the day's calls (against the day
 before), failed work calls, input tokens cached and fresh, and output tokens; and input
 per hour with failed and cut-off calls ticked along the same hours, filling the rest of
 the window; with nothing recorded in the last day it leads with how to connect a client), Live
-(`/live`: the sessions active in the last 15 minutes as they work (or 5 minutes, an
+(`/live`: the recordings active in the last 15 minutes as they work (or 5 minutes, an
 hour, or four hours, chosen beside the active count; a window holding more than the page
 reads at once is marked partial), on a four-by-two board
-of cards or as rows: each session's client and provider, its state (shown by a coloured edge down the card and
+of cards or as rows: each recording's client and provider, its state (shown by a coloured edge down the card and
 a glyph of its own: responding, waiting for a response, the client's turn, your turn when
 a call finished its turn without asking for tools, idle, failed, warning, or unknown), and its current
 turn's prompt, replies, and tool calls (each with what it touched, its result, and the
 first line it returned; like calls in a row merge into one line with a count, and commands
 drop the `cd` into the turn's directory), with what the turn read, wrote, and ran. A
-card's header links to its session; hovering it shows the card's actions: open the turn,
-open the current call, pin the card so it stays on the board while its session is active
+card's header links to its recording; hovering it shows the card's actions: open the turn,
+open the current call, pin the card so it stays on the board while its recording is active
 (`?pin=`), and expand it (`?focus=`) over four slots with every call of the turn and its
 tools' input and output (`Escape` closes it). This is below a band of
 output tokens over the last 10 minutes, grouped by client, provider, or model (`?by=`):
 one chart of fixed height that draws only what had output, the biggest four on their own
 and the rest merged, stacked so its top edge is the total (**Ribbon**, the default) or
 each in its own lane (**Area**). Its legend sits inside the chart; hovering a series
-outlines its cards, and selecting it shows only its sessions (`?series=`). Then comes a **Now** strip of what happened
-lately, newest first: new sessions, prompts, finished calls, failed tools, bad endings,
-and rate limits, with calls still waiting for a response head kept first. Pinned sessions, then those with a call open, then the most recent, get
+outlines its cards, and selecting it shows only its recordings (`?series=`). Then comes a **Now** strip of what happened
+lately, newest first: new recordings, prompts, finished calls, failed tools, bad endings,
+and rate limits, with calls still waiting for a response head kept first. Pinned recordings, then those with a call open, then the most recent, get
 the eight cards; quiet ones dim. While a call streams, its card shows the end of its
 reply so far, the tools it has begun, and whether the model is thinking (never stored); a
 client that reports no turns shows only that. The full text appears once the call finishes
 and its activity is derived),
-Traffic (`/traffic`; wherever a session appears, there and on a session's page, in Search,
-and in Usage, it is named by its client, its newest prompt, and its folder), Sessions (`/sessions`: each session's client, its newest prompt, and its folder, what it
-is doing now, and its size against the rest, grouped by day, with single-call sessions
-that have no turn folded away; `/sessions/:id`, each session's context and
-cache report at `/sessions/:id/report` (with each turn's context drawn oldest to newest,
+Traffic (`/traffic`; wherever a recording appears, there and on a recording's page, in Search,
+and in Usage, it is named by its client, its newest prompt, and its folder), Recordings (`/recordings`: each recording's client, its newest prompt, and its folder, what it
+is doing now, and its size against the rest, grouped by day, with single-call recordings
+that have no turn folded away; `/recordings/:id`, each recording's context and
+cache report at `/recordings/:id/report` (with each turn's context drawn oldest to newest,
 from where it started to where it ended), and what a turn did at `/turns/:id`: its prompt,
 tool calls with their effects and reported results, files, commands (one row each,
 opening to the whole command), and findings, with paths shown relative to the folder the
@@ -55,7 +55,7 @@ turn works in), Search
 (`/search`: full-text search over prompts, replies, and tool input and output), Usage
 (`/usage`: calls, failed work calls (with failed bookkeeping counted apart), and tokens
 over the last day by hour, the last week, or all retained calls by local day, by model,
-and the busiest sessions), and Recorder
+and the busiest recordings), and Recorder
 (`/recorder`: whether recording is healthy, how close storage, calls, and history are to
 their retention limits with the nearest marked as the one pruned for first, and only the
 loss and error counters that are not zero; bytes past the capture policy are noted as
@@ -64,10 +64,10 @@ left out by design, never as loss, here, in the Recorder tab, and in the footer)
 than its address, and opens each client's `ren run` command, ready to copy. Addresses
 there show with their identifying part masked (a tailnet's name, a public domain)
 until the eye button reveals them for the page; copying always copies the real one. The bar under the tabs shows each page's scope and the controls that
-change it, such as Traffic's client, session, time, and model-calls-only narrowing;
+change it, such as Traffic's client, recording, time, and model-calls-only narrowing;
 when they don't fit on one line they fold behind a **Scope** button. Traffic shows
 model calls only by default, hiding token counts, model listings, and WebSocket
-handshakes until that switch is off. On Traffic and a session page, `j` and `k` select
+handshakes until that switch is off. On Traffic and a recording page, `j` and `k` select
 the next and previous call, `/` focuses search, and `Escape` closes the inspector. The selected call (`?call=`) and the filters live in the URL,
 so links, reloads, and Back/Forward work. With **Live updates** on, the UI follows the
 daemon's `/api/live` feed and refreshes when calls change. The UI requires management
@@ -102,6 +102,8 @@ produces `build/`. Cargo never builds or embeds the UI.
 | `REN_GATEWAY_URL`        | `http://127.0.0.1:8787`          | Daemon origin reached by the UI server                                          |
 | `REN_PUBLIC_GATEWAY_URL` | Same as `REN_GATEWAY_URL`        | Daemon origin displayed in the header and copied client commands                |
 | `REN_DEV_TRAFFIC_URL`    | Unset                            | Dev slot only: loopback origin of its traffic controls, for the dev toolbar     |
+| `REN_CONTROL_TOKEN_FILE` | Unset (read-only)                | The daemon's `control.token` (absolute path); set, the Runs view drives runs    |
+| `REN_CONTROL_LOGINS`     | Unset (anyone reaching the UI)   | Comma-separated Tailscale logins allowed to drive runs; set it behind Serve     |
 | `HOST`                   | `127.0.0.1` with `bun run start` | UI listener address                                                             |
 | `PORT`                   | `3000` with `bun run start`      | UI listener port                                                                |
 | `ORIGIN`                 | Inferred from incoming request   | Set to the UI's external origin behind Tailscale Serve or another reverse proxy |
@@ -121,6 +123,32 @@ The browser talks only to the UI origin. The UI server relays allowlisted GET/HE
 management requests to the daemon. It forwards no browser cookies or credentials
 and doesn't follow redirects. The UI has no authentication of its own: keep it on
 loopback or behind private Tailscale access, like the daemon.
+
+## Sessions
+
+The Sessions view (`/sessions`) starts and drives sessions (Codex, Claude Code, or Pi in a folder
+under the daemon's `[runs]` roots; see [sessions](../docs/api.md#sessions)): a sidebar of
+folders and their sessions, each folder's `+` making one there at once, the conversation (its
+recorded turns, then what streams in), its approvals with what each asks, and a prompt box whose
+bar holds its settings (and, for a draft, its client). `/runs` links lead here. History stays read-only; runs
+are the one thing the UI changes, and only when the UI server is given the
+daemon's control token file:
+
+```ini
+REN_CONTROL_TOKEN_FILE=/home/you/.local/state/ren/control.token
+REN_CONTROL_LOGINS=you@example.com
+```
+
+The UI server reads the token from the file on each request (the daemon writes a
+new one when it starts), so it never reaches the browser, and it forwards only
+`/control/runs*` to the daemon's `/control/v1/runs*`: list, start, prompt,
+answer, interrupt, stop, and the update feed. A request must come from the UI's
+own pages (`Sec-Fetch-Site: same-origin`, or an `Origin` naming this host, and a
+JSON body), and with `REN_CONTROL_LOGINS` set, carry one of those logins in the
+`Tailscale-User-Login` header Tailscale Serve adds. Without it, anyone who
+reaches the UI can drive runs: leave it unset only for a UI on loopback. Without
+`REN_CONTROL_TOKEN_FILE`, the view lists recorded runs and explains how to turn
+it on.
 
 ## Payload previews
 

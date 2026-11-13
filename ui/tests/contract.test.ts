@@ -5,7 +5,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { CallId, ManagementApi, SessionId, TurnId } from '../src/lib/api.ts';
+import { CallId, ManagementApi, RecordingId, TurnId } from '../src/lib/api.ts';
 
 const fixture = (name: string): unknown =>
   JSON.parse(readFileSync(new URL(`./fixtures/api/${name}.json`, import.meta.url), 'utf8'));
@@ -43,7 +43,7 @@ test('every read the UI makes decodes the daemon’s pinned answers', async () =
   assert.equal(detail.call.id, first.id);
 
   const sessions = await api.sessions();
-  const sessionId = SessionId.parse(sessions.sessions[0].id);
+  const sessionId = RecordingId.parse(sessions.sessions[0].id);
   assert.ok(sessionId);
   assert.equal((await api.sessionCalls(sessionId, null)).calls.length, 2);
   const turns = await api.turns(sessionId);

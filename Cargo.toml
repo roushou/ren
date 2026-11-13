@@ -7,7 +7,7 @@ members = [
   "crates/ren-protocol",
   "crates/ren-recorder",
   "crates/ren-store",
-  "crates/ren-tui",
+  "crates/ren-supervisor",
   "xtask",
 ]
 # xtask (repository tasks) builds only when asked for.
@@ -19,7 +19,7 @@ default-members = [
   "crates/ren-protocol",
   "crates/ren-recorder",
   "crates/ren-store",
-  "crates/ren-tui",
+  "crates/ren-supervisor",
 ]
 resolver = "3"
 
@@ -54,7 +54,7 @@ ren-harness = { path = "crates/ren-harness", version = "0.1.0" }
 ren-protocol = { path = "crates/ren-protocol", version = "0.1.0" }
 ren-recorder = { path = "crates/ren-recorder", version = "0.1.0" }
 ren-store = { path = "crates/ren-store", version = "0.1.0" }
-ren-tui = { path = "crates/ren-tui", version = "0.1.0" }
+ren-supervisor = { path = "crates/ren-supervisor", version = "0.1.0" }
 reqwest = { version = "0.13", default-features = false, features = ["rustls", "stream", "http2"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1.0", features = ["preserve_order", "raw_value"] }

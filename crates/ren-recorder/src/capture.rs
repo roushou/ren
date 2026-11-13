@@ -238,3 +238,39 @@ pub enum ChannelEnd {
     /// only by storage recovery; the outcome is unknown.
     Recovered,
 }
+
+/// How an agent process exited, as the host reported it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case", tag = "kind", content = "value")]
+pub enum ProcessExit {
+    Code(i32),
+    Signal(i32),
+    /// The host could not say how the process exited.
+    Unknown,
+}
+
+/// How a run, one agent process Ren started and drove, ended. The process's
+/// exit status, when there is one, is recorded beside the label; neither says
+/// whether the agent's work succeeded.
+#[derive(Display, EnumString, IntoStaticStr, VariantArray)]
+#[strum(serialize_all = "snake_case")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SerializeDisplay, DeserializeFromStr)]
+pub enum RunEnd {
+    /// The process could not be started; the agent never ran.
+    SpawnFailed,
+    /// The process started, but the client refused to open the
+    /// conversation, so Ren stopped it.
+    OpenRefused,
+    /// The process exited without Ren asking it to.
+    Exited,
+    /// The operator stopped the run, and the process then ended.
+    Stopped,
+    /// Shutdown stopped the run, and the process then ended.
+    Drained,
+    /// The daemon stopped before the run's end was recorded. Written only by
+    /// storage recovery; the outcome is unknown.
+    Recovered,
+    /// The client sat idle, so Ren stopped it; its session goes on, and the
+    /// next prompt starts one again.
+    Idled,
+}

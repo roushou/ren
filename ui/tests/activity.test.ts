@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
   CallId,
   ManagementApi,
-  SessionId,
+  RecordingId,
   TurnId,
   parseSearchField,
   type SearchHit,
@@ -88,7 +88,7 @@ const reportBody = {
 };
 
 test('a session report decodes, keeps unknown findings, and reads as measurements', async () => {
-  const id = SessionId.parse(session);
+  const id = RecordingId.parse(session);
   assert.ok(id);
   const report = await new ManagementApi(
     answering(`/api/sessions/${session}/report`, reportBody),
@@ -267,11 +267,11 @@ test('a search field parses from its label and nothing else', () => {
 });
 
 test('links to calls, turns, hits, and findings encode their IDs', () => {
-  const sessionId = SessionId.parse(session);
+  const sessionId = RecordingId.parse(session);
   const turnId = TurnId.parse(turn);
   const callId = CallId.parse(call);
   assert.ok(sessionId && turnId && callId);
-  assert.equal(callHref(sessionId, callId), `/sessions/${session}?call=${call}`);
+  assert.equal(callHref(sessionId, callId), `/recordings/${session}?call=${call}`);
   assert.equal(turnHref(turnId), `/turns/${turn}`);
 
   const hit = (overrides: Partial<SearchHit>): SearchHit => ({
@@ -285,7 +285,7 @@ test('links to calls, turns, hits, and findings encode their IDs', () => {
     ...overrides,
   });
   assert.equal(searchHitHref(hit({})), `/turns/${turn}`);
-  assert.equal(searchHitHref(hit({ turn: null })), `/sessions/${session}?call=${call}`);
+  assert.equal(searchHitHref(hit({ turn: null })), `/recordings/${session}?call=${call}`);
   assert.equal(searchHitHref(hit({ turn: null, session: null })), `/traffic?call=${call}`);
 
   const line = (overrides: Partial<FindingLine>): FindingLine => ({
@@ -302,11 +302,11 @@ test('links to calls, turns, hits, and findings encode their IDs', () => {
     label: 'Open turn',
   });
   assert.deepEqual(findingLink(line({ turn: null }), sessionId, 'session'), {
-    href: `/sessions/${session}?call=${call}`,
+    href: `/recordings/${session}?call=${call}`,
     label: 'Open call',
   });
   assert.deepEqual(findingLink(line({}), sessionId, 'turn'), {
-    href: `/sessions/${session}?call=${call}`,
+    href: `/recordings/${session}?call=${call}`,
     label: 'Open call',
   });
   assert.equal(findingLink(line({ call: null, turn: null }), sessionId, 'session'), null);

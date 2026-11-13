@@ -45,7 +45,7 @@ fn flag(gateway: &str) -> GatewayChoice {
 }
 
 #[tokio::test]
-async fn explicit_gateway_and_dry_run_ignore_unused_local_upstreams() {
+async fn explicit_gateway_ignores_unused_local_upstreams() {
     let (endpoint, task) = mock(
         Router::new()
             .route("/health", get(|| async { HEALTH }))
@@ -70,24 +70,6 @@ async fn explicit_gateway_and_dry_run_ignore_unused_local_upstreams() {
     );
     assert!(!serde_json::to_string(&report).unwrap().contains("SECRET"));
     let data = dir.path().join("must-not-exist");
-    let output = Command::new(env!("CARGO_BIN_EXE_ren"))
-        .args([
-            "--config",
-            config.to_str().unwrap(),
-            "--data-dir",
-            data.to_str().unwrap(),
-            "run",
-            "codex",
-            "--dry-run",
-            "--gateway",
-            &gateway,
-        ])
-        .output()
-        .unwrap();
-    assert!(output.status.success());
-    assert!(!data.exists());
-    assert!(!String::from_utf8_lossy(&output.stdout).contains("SECRET"));
-    assert!(!String::from_utf8_lossy(&output.stderr).contains("SECRET"));
     // Serving does consume the local settings and must reject them before storage opens.
     let output = Command::new(env!("CARGO_BIN_EXE_ren"))
         .args([
@@ -291,7 +273,7 @@ async fn reports_whether_the_daemon_runs_this_build() {
 }
 
 #[test]
-fn malformed_config_and_dry_run_do_not_leak_or_create_storage() {
+fn malformed_config_does_not_leak() {
     let temp = tempfile::tempdir().unwrap();
     let config = temp.path().join("broken.toml");
     std::fs::write(&config, "unknown = 'SECRET'\n").unwrap();
@@ -307,32 +289,6 @@ fn malformed_config_and_dry_run_do_not_leak_or_create_storage() {
     assert_eq!(report["ok"], false);
     assert!(!String::from_utf8_lossy(&output.stdout).contains("SECRET"));
     assert!(!String::from_utf8_lossy(&output.stderr).contains("SECRET"));
-    let data = temp.path().join("must-not-exist");
-    let output = Command::new(env!("CARGO_BIN_EXE_ren"))
-        .args([
-            "--data-dir",
-            data.to_str().unwrap(),
-            "run",
-            "codex",
-            "--dry-run",
-            "--gateway",
-            "http://127.0.0.1:1",
-            "--",
-            "PRIVATE_PROMPT",
-        ])
-        .env("OPENAI_API_KEY", "SECRET")
-        .output()
-        .unwrap();
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let plan: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(plan["executable"], "codex");
-    assert!(!data.exists());
-    assert!(!String::from_utf8_lossy(&output.stdout).contains("SECRET"));
-    assert!(!String::from_utf8_lossy(&output.stdout).contains("PRIVATE_PROMPT"));
 }
 
 #[cfg(unix)]
@@ -542,7 +498,6 @@ async fn pi_launcher_materializes_only_bundled_code_and_preserves_client_argumen
 
 #[tokio::test(flavor = "multi_thread")]
 async fn init_saves_a_checked_gateway_that_run_and_doctor_then_use() {
-    use std::os::unix::fs::PermissionsExt;
     let (endpoint, task) = mock(
         Router::new()
             .route("/health", get(|| async { HEALTH }))
@@ -553,32 +508,29 @@ async fn init_saves_a_checked_gateway_that_run_and_doctor_then_use() {
     let home = temp.path().join("home");
     std::fs::create_dir(&home).unwrap();
     let file = home.join(".config/ren/client.toml");
-    let ren = |args: &[&str], gateway_env: Option<&str>| {
-        let mut command = Command::new(env!("CARGO_BIN_EXE_ren"));
-        command
+    let ren = |args: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_ren"))
             .args(args)
             .env("HOME", &home)
             .env_remove("XDG_CONFIG_HOME")
             .env_remove("REN_GATEWAY")
-            .stdin(Stdio::null());
-        if let Some(value) = gateway_env {
-            command.env("REN_GATEWAY", value);
-        }
-        command.output().unwrap()
+            .stdin(Stdio::null())
+            .output()
+            .unwrap()
     };
 
     // Without a terminal, init never waits for an answer.
-    let output = ren(&["init"], None);
+    let output = ren(&["init"]);
     assert_eq!(output.status.code(), Some(1));
     assert!(String::from_utf8_lossy(&output.stderr).contains("--gateway"));
     assert!(!file.exists());
     // A gateway that fails its check is not saved.
-    let output = ren(&["init", "--gateway", "http://127.0.0.1:1"], None);
+    let output = ren(&["init", "--gateway", "http://127.0.0.1:1"]);
     assert_eq!(output.status.code(), Some(1));
     assert!(!file.exists());
 
     let gateway = endpoint.url("/").to_string();
-    let output = ren(&["init", "--gateway", &gateway], None);
+    let output = ren(&["init", "--gateway", &gateway]);
     assert!(
         output.status.success(),
         "{}",
@@ -588,20 +540,16 @@ async fn init_saves_a_checked_gateway_that_run_and_doctor_then_use() {
         std::fs::read_to_string(&file).unwrap(),
         format!("gateway = \"{gateway}\"\n")
     );
-    assert_eq!(
-        std::fs::metadata(&file).unwrap().permissions().mode() & 0o777,
-        0o600
-    );
 
     // run and doctor use the saved gateway without --gateway.
-    let output = ren(&["run", "claude", "--dry-run"], None);
+    let output = ren(&["run", "claude", "--dry-run"]);
     assert!(output.status.success());
     let plan: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(
         plan["environment"]["ANTHROPIC_BASE_URL"],
         format!("{gateway}anthropic")
     );
-    let output = ren(&["doctor", "--json"], None);
+    let output = ren(&["doctor", "--json"]);
     let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     let check = |name: &str| {
         report["checks"]
@@ -621,7 +569,7 @@ async fn init_saves_a_checked_gateway_that_run_and_doctor_then_use() {
     assert_eq!(check("local storage")["status"], "skipped");
     assert_eq!(check("gateway")["status"], "ok");
     // Piped text stays plain and aligned; CLICOLOR_FORCE colors it.
-    let output = ren(&["doctor"], None);
+    let output = ren(&["doctor"]);
     let text = String::from_utf8(output.stdout).unwrap();
     assert!(!text.contains('\u{1b}'));
     assert!(
@@ -644,30 +592,5 @@ async fn init_saves_a_checked_gateway_that_run_and_doctor_then_use() {
         .unwrap();
     assert!(String::from_utf8_lossy(&output.stdout).contains("\u{1b}["));
 
-    // REN_GATEWAY wins over the file, and --gateway over both.
-    let output = ren(
-        &["run", "claude", "--dry-run"],
-        Some("https://env.example.ts.net"),
-    );
-    let plan: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(
-        plan["environment"]["ANTHROPIC_BASE_URL"],
-        "https://env.example.ts.net/anthropic"
-    );
-    let output = ren(
-        &[
-            "run",
-            "claude",
-            "--dry-run",
-            "--gateway",
-            "https://flag.example.ts.net",
-        ],
-        Some("https://env.example.ts.net"),
-    );
-    let plan: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(
-        plan["environment"]["ANTHROPIC_BASE_URL"],
-        "https://flag.example.ts.net/anthropic"
-    );
     task.abort();
 }

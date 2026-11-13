@@ -12,7 +12,7 @@
   } from '#lib/usage.ts';
   import UsageChart from '#lib/UsageChart.svelte';
   import Icon from '#lib/Icon.svelte';
-  import SessionName from '#lib/SessionName.svelte';
+  import RecordingName from '#lib/RecordingName.svelte';
   import Segmented, { type SegmentedOption } from '#lib/Segmented.svelte';
   import type { PageProps } from './$types';
   let { data }: PageProps = $props();
@@ -51,7 +51,7 @@
   // Shown once a named user made calls in the range; all callers are listed then.
   const users = $derived(current?.usage.users ?? []);
   const named = $derived(users.some((u) => u.user !== null));
-  // Sessions active in the range, most input first.
+  // Recordings active in the range, most input first.
   const sessions = $derived(
     (current?.sessions ?? [])
       .filter(
@@ -176,24 +176,23 @@
 
         <section class="panel usage-panel" aria-labelledby="usage-sessions-title">
           <header class="panel-heading">
-            <h2 id="usage-sessions-title">Busiest sessions</h2>
-            <span class="subtle-label">Totals over each session's whole life</span>
+            <h2 id="usage-sessions-title">Busiest recordings</h2>
+            <span class="subtle-label">Totals over each recording's whole life</span>
           </header>
           {#if sessions.length}
             <table class="usage-list">
               <thead
                 ><tr
-                  ><th>Session</th><th class="numeric">Calls</th><th class="numeric">Errors</th><th
-                    class="numeric">Tokens in</th
-                  ><th class="numeric">Out</th></tr
+                  ><th>Recording</th><th class="numeric">Calls</th><th class="numeric">Errors</th
+                  ><th class="numeric">Tokens in</th><th class="numeric">Out</th></tr
                 ></thead
               >
               <tbody>
                 {#each sessions as session (session.id)}
                   <tr>
                     <td
-                      ><a class="row-link" href={`/sessions/${encodeURIComponent(session.id)}`}
-                        ><SessionName {session} detail={details.get(session.id)} /></a
+                      ><a class="row-link" href={`/recordings/${encodeURIComponent(session.id)}`}
+                        ><RecordingName {session} detail={details.get(session.id)} /></a
                       ></td
                     >
                     <td class="mono numeric">{num(session.call_count)}</td>
@@ -208,7 +207,7 @@
                 {/each}
               </tbody>
             </table>
-          {:else}<p class="quiet-empty">No sessions were active in this range.</p>{/if}
+          {:else}<p class="quiet-empty">No recordings were active in this range.</p>{/if}
         </section>
 
         {#if named}<section class="panel usage-panel" aria-labelledby="usage-users-title">

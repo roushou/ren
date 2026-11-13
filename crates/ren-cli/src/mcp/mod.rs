@@ -581,7 +581,7 @@ mod tests {
             ),
         );
         assert!(
-            matches!(pending.tool, ToolCall::Read(ren_store::read::ReadRequest::Sessions(limit)) if limit.get() == 5)
+            matches!(pending.tool, ToolCall::Read(ren_store::read::ReadRequest::Recordings { limit, .. }) if limit.get() == 5)
         );
         let answer = pending.answer(ToolOutcome::Data(json!([{ "id": "s" }])));
         assert_eq!(answer["id"], 7);

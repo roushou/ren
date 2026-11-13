@@ -65,19 +65,28 @@ pub struct Plan {
 
 /// Identifiers for one seed run: each run gets its own sessions, so runs
 /// add history instead of piling onto the same sessions.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Run(pub u32);
 
 impl Run {
     /// A UUID whose short form (its first eight digits) differs per
     /// session, as real ones do.
-    fn uuid(self, n: u32) -> String {
+    pub(in crate::dev) fn uuid(self, n: u32) -> String {
         format!(
             "{:04x}{:04x}-0000-4000-8000-{:012x}",
             n & 0xffff,
             self.0 & 0xffff,
             u64::from(self.0) * 0x1_0000 + u64::from(n)
         )
+    }
+
+    /// The run and number a [`Run::uuid`] was made from, if `text` is one.
+    pub(in crate::dev) fn parse_uuid(text: &str) -> Option<(Self, u32)> {
+        let last = text.strip_prefix(text.get(..24)?)?;
+        let value = u64::from_str_radix(last, 16).ok()?;
+        let run = Self(u32::try_from(value >> 16).ok()?);
+        let n = u32::try_from(value & 0xffff).ok()?;
+        (run.uuid(n) == text).then_some((run, n))
     }
 }
 
@@ -256,6 +265,72 @@ impl Scenario {
         Call {
             label: format!("{name}: {}{step}", Self::short(prompt)),
             path: path.into(),
+            headers,
+            body: body.to_string(),
+        }
+    }
+
+    /// A Claude Code turn's model call in a session the caller names: the
+    /// dev slot's fake `claude`, whose session Ren chose.
+    pub(in crate::dev) fn claude_turn_call(session: &str, prompt_id: &str, prompt: &str) -> Call {
+        let mut headers = Caller::Unidentified.headers();
+        headers.extend(Self::claude_code_headers(
+            session.to_owned(),
+            Some(prompt_id.to_owned()),
+        ));
+        headers.push(("content-type".into(), "application/json".into()));
+        let body = Self::messages(
+            "claude-sonnet-5-5",
+            prompt,
+            Client::ClaudeCode.toolset(),
+            session,
+            0,
+        );
+        Call {
+            label: format!("claude code: {}", Self::short(prompt)),
+            path: "/anthropic/v1/messages".into(),
+            headers,
+            body: body.to_string(),
+        }
+    }
+
+    /// A Pi turn's model call in a session the caller names, with the
+    /// headers Ren's extension sends: the dev slot's fake `pi`.
+    pub(in crate::dev) fn pi_turn_call(session: &str, turn: &str, prompt: &str) -> Call {
+        let mut headers = Caller::Unidentified.headers();
+        headers.extend([
+            ("x-ren-pi-session-id".into(), session.to_owned()),
+            ("x-ren-pi-turn-id".into(), turn.to_owned()),
+            ("content-type".into(), "application/json".into()),
+        ]);
+        let body = Self::messages(
+            "claude-sonnet-5-5",
+            prompt,
+            Client::Pi.toolset(),
+            session,
+            0,
+        );
+        Call {
+            label: format!("pi: {}", Self::short(prompt)),
+            path: "/anthropic/v1/messages".into(),
+            headers,
+            body: body.to_string(),
+        }
+    }
+
+    /// An opencode turn's model call in the session it names (`ses_…`), as
+    /// opencode sends it on its `openai` provider: the dev slot's fake
+    /// `opencode`.
+    pub(in crate::dev) fn opencode_turn_call(session: &str, prompt: &str) -> Call {
+        let mut headers = Caller::Unidentified.headers();
+        headers.extend([
+            ("x-opencode-session-id".into(), session.to_owned()),
+            ("content-type".into(), "application/json".into()),
+        ]);
+        let body = Self::responses("gpt-5.5", prompt, Client::OpenCode.toolset(), session, 0);
+        Call {
+            label: format!("opencode: {}", Self::short(prompt)),
+            path: "/openai/v1/responses".into(),
             headers,
             body: body.to_string(),
         }

@@ -305,7 +305,7 @@ test('a body cut at the capture limit is trimmed by design; any other cut is par
     ['Trimmed at limit', 'neutral'],
   );
   assert.equal(captureState(trimmed, limit), 'Trimmed at the capture limit');
-  // Without the limit (an older daemon) it cannot be told apart, so it stays partial.
+  // Without the limit (storage not read yet) it cannot be told apart, so it stays partial.
   assert.equal(captureChip(trimmed, null).tone, 'warning');
   // Bytes missing short of the limit are loss.
   const lost = finishedFixture(callId(2), {

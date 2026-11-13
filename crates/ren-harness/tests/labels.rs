@@ -53,17 +53,27 @@ macro_rules! table {
 
 #[test]
 fn every_label_is_pinned() {
-    use ren_harness::{attribution, tools};
+    use ren_harness::{
+        attribution, claude_code, codex, commands, drive, models, opencode, pi, settings, tools,
+    };
     let table = table![
         ren_harness::Harness,
         attribution::HintSource,
         attribution::HintIssue,
         tools::EffectKind,
         tools::CallPurpose,
-        tools::ClaudeCodeTool,
-        tools::CodexTool,
-        tools::PiTool,
-        tools::OpenCodeTool,
+        claude_code::ClaudeCodeTool,
+        codex::CodexTool,
+        pi::PiTool,
+        opencode::OpenCodeTool,
+        drive::Decision,
+        models::DefaultChoice,
+        settings::Effort,
+        settings::ApprovalPolicy,
+        settings::Midway,
+        drive::RequestKind,
+        commands::CommandKind,
+        commands::Sigil,
     ];
     let pinned = include_str!("fixtures/labels.txt");
     assert!(

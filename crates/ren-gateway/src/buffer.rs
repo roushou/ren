@@ -452,25 +452,6 @@ mod tests {
         assert_eq!(result.unwrap_err(), BufferRefusal::UploadFailed);
     }
 
-    #[test]
-    fn options_validate() {
-        assert!(BufferOptions::default().validate().is_ok());
-        let tiny = BufferOptions {
-            request_limits: RequestLimits {
-                codex: 10,
-                ..RequestLimits::default()
-            },
-            ..BufferOptions::default()
-        };
-        assert!(tiny.validate().is_err());
-        let over = BufferOptions {
-            request_limits: RequestLimits::all(2048),
-            budget_bytes: 1024,
-            ..BufferOptions::default()
-        };
-        assert!(over.validate().is_err());
-    }
-
     #[tokio::test]
     async fn each_provider_has_its_own_limit() {
         let buffer = RequestBuffer::new(BufferOptions {
@@ -496,7 +477,22 @@ mod tests {
     }
 
     #[test]
-    fn buffer_options_read_with_defaults() {
+    fn buffer_options_read_with_defaults_and_validate() {
+        assert!(BufferOptions::default().validate().is_ok());
+        let tiny = BufferOptions {
+            request_limits: RequestLimits {
+                codex: 10,
+                ..RequestLimits::default()
+            },
+            ..BufferOptions::default()
+        };
+        assert!(tiny.validate().is_err());
+        let over = BufferOptions {
+            request_limits: RequestLimits::all(2048),
+            budget_bytes: 1024,
+            ..BufferOptions::default()
+        };
+        assert!(over.validate().is_err());
         let read = |toml_text: &str| toml::from_str::<BufferOptions>(toml_text);
         assert_eq!(read("").unwrap(), BufferOptions::default());
         assert!(read("request_limit_bytes = 2048").is_err());

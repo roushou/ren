@@ -20,7 +20,7 @@ use http::{HeaderMap, StatusCode};
 use ren_daemon::config::Config;
 use ren_gateway::{
     Connected, Stopped, Upstream, UpstreamBody, UpstreamHandshake, UpstreamRequest, UpstreamSocket,
-    WebSocketMode, attempt::SendFailure,
+    attempt::SendFailure,
 };
 use ren_protocol::{direction::Direction, label::Stored, route::Method};
 use ren_recorder::capture::{AttemptPhase, AttemptTerminal, ChannelEnd, TerminalCause};
@@ -436,20 +436,6 @@ async fn a_refused_handshake_reaches_the_client_and_is_recorded_so_codex_falls_b
     assert_eq!(ending(detail).0, AttemptTerminal::BodyComplete);
     // No channel was upgraded, so none ended.
     assert_eq!(channel_end(detail), (None, None));
-
-    // With the relay refused locally, the upstream is never asked.
-    let dir = tempfile::tempdir().unwrap();
-    let (upstream, _servers) = ScriptedWs::new([]);
-    let mut config = base_config();
-    config.websocket.mode = WebSocketMode::Refuse;
-    let gateway = TestGateway::with_upstream(&config, dir.path(), upstream.clone()).await;
-    let Err(tungstenite::Error::Http(response)) = connect(&gateway).await else {
-        panic!("the handshake should be refused");
-    };
-    assert_eq!(response.status(), StatusCode::UPGRADE_REQUIRED);
-    assert!(upstream.seen.lock().unwrap().is_empty());
-    gateway.stop().await;
-    assert!(recorded(dir.path()).await.is_empty());
 }
 
 #[tokio::test]

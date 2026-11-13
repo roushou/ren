@@ -4,11 +4,13 @@
 //! round-trip test keeps the two directions one table.
 
 use super::ApiError;
-use super::params::{RawCallQuery, RawExposureQuery, RawPageQuery, RawSearchQuery, RawUsageQuery};
+use super::params::{
+    RawCallQuery, RawExposureQuery, RawPageQuery, RawSearchQuery, RawShelfQuery, RawUsageQuery,
+};
 use axum::extract::Query;
 use http::Uri;
 use ren_protocol::label::Labeled;
-use ren_store::query::{CallQuery, QueryError, TimeRange};
+use ren_store::query::{CallQuery, QueryError, Shelf, TimeRange};
 use ren_store::read::ReadRequest;
 use serde::de::DeserializeOwned;
 use std::fmt::Display;
@@ -19,7 +21,7 @@ pub struct ApiRead(pub ReadRequest);
 
 impl ApiRead {
     /// The routes reads are served on, in the router's path syntax.
-    pub(crate) const ROUTES: [&str; 11] = [
+    pub(crate) const ROUTES: [&str; 14] = [
         "/api/calls",
         "/api/calls/{id}",
         "/api/calls/{id}/activity",
@@ -31,6 +33,9 @@ impl ApiRead {
         "/api/usage",
         "/api/search",
         "/api/exposures",
+        "/api/runs",
+        "/api/runs/{id}",
+        "/api/runs/{id}/conversation",
     ];
 
     /// The path and query string that ask for this read.
@@ -42,12 +47,14 @@ impl ApiRead {
                 format!("/api/calls/{call}/activity"),
                 QueryParams::default(),
             ),
-            ReadRequest::Sessions(limit) => (
+            ReadRequest::Recordings { limit, shelf } => (
                 "/api/sessions".to_owned(),
-                QueryParams::default().with("limit", limit.get()),
+                QueryParams::default()
+                    .with("limit", limit.get())
+                    .shelf(*shelf),
             ),
-            ReadRequest::SessionCalls {
-                session,
+            ReadRequest::RecordingCalls {
+                recording: session,
                 limit,
                 after,
             } => (
@@ -56,7 +63,10 @@ impl ApiRead {
                     .with("limit", limit.get())
                     .opt("after", after.as_ref()),
             ),
-            ReadRequest::Turns { session, limit } => (
+            ReadRequest::Turns {
+                recording: session,
+                limit,
+            } => (
                 format!("/api/sessions/{session}/turns"),
                 QueryParams::default().with("limit", limit.get()),
             ),
@@ -86,6 +96,17 @@ impl ApiRead {
                     .opt("session", query.session)
                     .range(query.time),
             ),
+            ReadRequest::Runs { limit, shelf } => (
+                "/api/runs".to_owned(),
+                QueryParams::default()
+                    .with("limit", limit.get())
+                    .shelf(*shelf),
+            ),
+            ReadRequest::Run(run) => (format!("/api/runs/{run}"), QueryParams::default()),
+            ReadRequest::Conversation(run) => (
+                format!("/api/runs/{run}/conversation"),
+                QueryParams::default(),
+            ),
         };
         match serde_urlencoded::to_string(&query.0) {
             Ok(query) if !query.is_empty() => format!("{path}?{query}"),
@@ -109,16 +130,13 @@ impl ApiRead {
             ["calls", call] => ReadRequest::Call(Self::id(call)?),
             ["calls", call, "activity"] => ReadRequest::CallActivity(Self::id(call)?),
             ["sessions"] => {
-                let page = Self::query::<RawPageQuery>(uri)?;
-                if page.after.is_some() {
-                    return Err(QueryError::Cursor.into());
-                }
-                ReadRequest::Sessions(page.limit()?)
+                let (limit, shelf) = Self::query::<RawShelfQuery>(uri)?.parse()?;
+                ReadRequest::Recordings { limit, shelf }
             }
             ["sessions", session, "calls"] => {
                 let page = Self::query::<RawPageQuery>(uri)?;
-                ReadRequest::SessionCalls {
-                    session: Self::id(session)?,
+                ReadRequest::RecordingCalls {
+                    recording: Self::id(session)?,
                     limit: page.limit()?,
                     after: page.after()?,
                 }
@@ -129,7 +147,7 @@ impl ApiRead {
                     return Err(QueryError::Cursor.into());
                 }
                 ReadRequest::Turns {
-                    session: Self::id(session)?,
+                    recording: Self::id(session)?,
                     limit: page.limit()?,
                 }
             }
@@ -140,6 +158,12 @@ impl ApiRead {
             }
             ["search"] => ReadRequest::Search(Self::query::<RawSearchQuery>(uri)?.parse()?),
             ["exposures"] => ReadRequest::Exposures(Self::query::<RawExposureQuery>(uri)?.parse()?),
+            ["runs"] => {
+                let (limit, shelf) = Self::query::<RawShelfQuery>(uri)?.parse()?;
+                ReadRequest::Runs { limit, shelf }
+            }
+            ["runs", run] => ReadRequest::Run(Self::id(run)?),
+            ["runs", run, "conversation"] => ReadRequest::Conversation(Self::id(run)?),
             _ => return Err(ApiError::NotFound),
         };
         Ok(Self(request))
@@ -193,6 +217,14 @@ impl QueryParams {
     }
 
     /// `from_ms` and `until_ms`, for the ends `range` has.
+    /// The shelf, left out when it is the current one.
+    fn shelf(self, shelf: Shelf) -> Self {
+        match shelf {
+            Shelf::Current => self,
+            Shelf::Archived => self.with("shelf", shelf),
+        }
+    }
+
     fn range(self, range: TimeRange) -> Self {
         self.opt("from_ms", range.from().map(|time| time.as_millis()))
             .opt("until_ms", range.until().map(|time| time.as_millis()))

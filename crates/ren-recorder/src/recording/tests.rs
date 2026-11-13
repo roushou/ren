@@ -192,6 +192,10 @@ fn lifecycle(batch: &Batch) -> Vec<ObservationKind> {
             | Op::Message { .. }
             | Op::CloseChannel(_)
             | Op::Operator(_)
+            | Op::Session(_)
+            | Op::Run(_)
+            | Op::History(_)
+            | Op::RunEntry(_)
             | Op::Digest { .. } => None,
         })
         .collect()
@@ -208,7 +212,11 @@ fn digest(batch: &Batch) -> Option<&CallDigest> {
         | Op::FinishAttempt(_)
         | Op::FinishCall(_)
         | Op::CloseChannel(_)
-        | Op::Operator(_) => None,
+        | Op::Operator(_)
+        | Op::Session(_)
+        | Op::Run(_)
+        | Op::History(_)
+        | Op::RunEntry(_) => None,
     })
 }
 
@@ -223,6 +231,10 @@ fn inspection(batch: &Batch) -> Option<&InspectionRecord> {
         | Op::FinishCall(_)
         | Op::CloseChannel(_)
         | Op::Operator(_)
+        | Op::Session(_)
+        | Op::Run(_)
+        | Op::History(_)
+        | Op::RunEntry(_)
         | Op::Digest { .. } => None,
     })
 }

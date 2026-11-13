@@ -218,7 +218,7 @@
       ? `\n… ${excerpt.omitted_chars.toLocaleString('en')} more characters`
       : '';
 
-  const sessionHref = (id: string) => `/sessions/${encodeURIComponent(id)}`;
+  const sessionHref = (id: string) => `/recordings/${encodeURIComponent(id)}`;
   const percent = (share: number | null) => (share === null ? '—' : `${Math.round(share * 100)}%`);
   const harnessClass = (tile: Tile) => `harness-${tile.harness ?? 'unknown'}`;
   /** The tile's facts line: model, cached share, output. The context is in the header. */
@@ -257,7 +257,7 @@
     <div class="scope-group live-pulse" aria-label="Right now">
       <span class="live-active">
         <span class="chip">{board.tiles.length + board.overflow} active</span><Select
-          label="How far back a session counts as active"
+          label="How far back a recording counts as active"
           size="compact"
           options={windowOptions}
           value={view.window}
@@ -269,14 +269,14 @@
       >
       {#if board.overflow}<a
           class="chip"
-          href="/sessions"
-          title="Active sessions without a tile: the board keeps the busiest and most recent {Board.maxTiles}"
+          href="/recordings"
+          title="Active recordings without a tile: the board keeps the busiest and most recent {Board.maxTiles}"
           >{board.overflow} not shown</a
         >{/if}
       {#if only}<a
           class="chip live-only"
           href={LivePlace.href({ ...view, series: null })}
-          title="The wall shows only sessions in this series; select to show every session"
+          title="The wall shows only recordings in this series; select to show every recording"
           >only {only.label} <Icon name="close" size={11} /></a
         >{/if}
       {#if current && (current.truncated.calls || current.truncated.sessions)}<span
@@ -447,10 +447,10 @@
               class:chosen={view.series === series.key}
               href={seriesHref(series.key)}
               title={series.members.length > 1
-                ? `${series.members.map((key) => Band.label(view.by, key)).join(', ')}: select to show only their sessions`
+                ? `${series.members.map((key) => Band.label(view.by, key)).join(', ')}: select to show only their recordings`
                 : view.series === series.key
-                  ? 'Show every session'
-                  : `Show only ${series.label} sessions`}
+                  ? 'Show every recording'
+                  : `Show only ${series.label} recordings`}
               onpointerenter={() => (hoveredSeries = series.key)}
               onpointerleave={() => (hoveredSeries = null)}
               onfocus={() => (hoveredSeries = series.key)}
@@ -515,8 +515,8 @@
     {#if !board.tiles.length}
       <div class="empty-state">
         <div class="empty-icon"><Icon name="pulse" size={26} /></div>
-        <h2>No session active in the {LivePlace.windows[view.window].label}</h2>
-        <p>Sessions appear here as soon as a client sends a call through Ren.</p>
+        <h2>No recording active in the {LivePlace.windows[view.window].label}</h2>
+        <p>Recordings appear here as soon as a client sends a call through Ren.</p>
         {#if longer}<a class="button" href={LivePlace.href({ ...view, window: longer })}
             >Look back {LivePlace.windows[longer].label.replace('last ', '')}</a
           >{/if}
@@ -526,7 +526,7 @@
         <table class="live-rows">
           <thead>
             <tr>
-              <th>Session</th>
+              <th>Recording</th>
               <th>Now</th>
               <th class="lane-column">Last {span(Board.laneMs)}</th>
               <th>Latest</th>
@@ -588,7 +588,7 @@
                 >{/if}
               {#if tile.pinned}<span
                   class="live-pinned"
-                  title="Pinned: stays on the wall while the session is active"
+                  title="Pinned: stays on the wall while the recording is active"
                   ><Icon name="pin" size={12} /></span
                 >{/if}
               <span
@@ -608,7 +608,7 @@
                     class="icon-button"
                     href={toCall}
                     aria-label="Open the call"
-                    title="Open this call in its session, with the inspector"
+                    title="Open this call in its recording, with the inspector"
                     ><Icon name="pulse" size={13} /></a
                   >{/if}
                 <a
@@ -617,8 +617,8 @@
                   href={pinHref(tile)}
                   aria-label={tile.pinned ? 'Unpin this card' : 'Pin this card'}
                   title={tile.pinned
-                    ? 'Unpin: busier sessions may take its place'
-                    : 'Pin: keep it on the wall while the session is active'}
+                    ? 'Unpin: busier recordings may take its place'
+                    : 'Pin: keep it on the wall while the recording is active'}
                   ><Icon name="pin" size={13} /></a
                 >
                 <a

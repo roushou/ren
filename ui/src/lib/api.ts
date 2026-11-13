@@ -26,7 +26,7 @@ export const API_VERSION = 1;
 export type CallId = Brand<string, 'CallId'>;
 export type AttemptId = Brand<string, 'AttemptId'>;
 export type ChannelId = Brand<string, 'ChannelId'>;
-export type SessionId = Brand<string, 'SessionId'>;
+export type RecordingId = Brand<string, 'RecordingId'>;
 export type TurnId = Brand<string, 'TurnId'>;
 export type NativeSessionId = Brand<string, 'NativeSessionId'>;
 export type NativeTurnId = Brand<string, 'NativeTurnId'>;
@@ -41,7 +41,7 @@ export type UnixMillis = Brand<number, 'UnixMillis'>;
 export const CallId = new Uuid<'CallId'>();
 export const AttemptId = new Uuid<'AttemptId'>();
 export const ChannelId = new Uuid<'ChannelId'>();
-export const SessionId = new Uuid<'SessionId'>();
+export const RecordingId = new Uuid<'RecordingId'>();
 export const TurnId = new Uuid<'TurnId'>();
 
 // Vocabularies (the daemon's label enums). Unrecognised text is kept.
@@ -279,7 +279,7 @@ export interface CallView {
   endpoint: Stored<Endpoint>;
   method: Stored<Method>;
   config_revision: string;
-  session: SessionId | null;
+  session: RecordingId | null;
   turn: TurnId | null;
   attribution: Attribution;
   state: Stored<CallState>;
@@ -298,9 +298,9 @@ export interface CallView {
   rejection: Stored<CallRejection> | null;
   /** The operator state revision the call was planned against. */
   operator_revision: number | null;
-  /** Why the client sent it, once derived; null before then, or from an older daemon. */
+  /** Why the client sent it, once derived; null before then */
   purpose: Stored<CallPurpose> | null;
-  /** Null for calls recorded before callers were, or from an older daemon. */
+  /** Null for calls recorded before callers were */
   caller: CallerView | null;
 }
 export interface ToolCallRecord {
@@ -382,8 +382,8 @@ export interface CallPage {
   calls: CallView[];
   next: PageCursor | null;
 }
-export interface SessionView {
-  id: SessionId;
+export interface RecordingView {
+  id: RecordingId;
   provider: Stored<Provider>;
   source: Stored<HintSource>;
   native_id: NativeSessionId;
@@ -395,6 +395,8 @@ export interface SessionView {
   error_count: number | null;
   /** Input includes cached context; null when no call reported usage. */
   tokens: TokenTotals;
+  /** When the operator archived it, while it has no newer traffic. */
+  archived_at: UnixMillis | null;
 }
 /** Provider-reported tokens summed over calls; null when none reported them. */
 export interface TokenTotals {
@@ -427,7 +429,6 @@ export interface UsageView {
   /** Hours with calls, oldest first. */
   hours: UsageBucket[];
   models: ModelUsage[];
-  /** Empty from daemons older than named users. */
   users: UserUsage[];
 }
 export interface FileUsage {
@@ -512,15 +513,15 @@ export interface Metrics {
 export interface Storage {
   policy: RetentionPolicy;
   usage: StorageView;
-  /** What capture keeps of each body; null from a daemon that does not say. */
-  capture: CaptureLimits | null;
+  /** What capture keeps of each body. */
+  capture: CaptureLimits;
 }
 export interface CaptureLimits {
   /** Bytes stored per body; past this, the rest is left out by design. */
   body_limit_bytes: number;
 }
-export interface Sessions {
-  sessions: SessionView[];
+export interface Recordings {
+  sessions: RecordingView[];
 }
 /** A bounded preview of a stored body (`crates/ren-daemon/src/api/preview.rs`). */
 export interface BodyPreview {
@@ -563,7 +564,7 @@ const callView = object<CallView>({
   endpoint: label(endpoints),
   method: label(methods),
   config_revision: string,
-  session: nullable(SessionId.decode),
+  session: nullable(RecordingId.decode),
   turn: nullable(TurnId.decode),
   attribution: object<Attribution>({
     hint: nullable(
@@ -589,18 +590,14 @@ const callView = object<CallView>({
   response: nullable(bodyView),
   rejection: nullable(label(callRejections)),
   operator_revision: nullable(count),
-  // Absent from daemons older than the field: read as not derived.
-  purpose: (value, path) =>
-    value === undefined || value === null ? null : label(callPurposes)(value, path),
-  // Absent from daemons older than the field: an unknown caller.
-  caller: (value, path) =>
-    value === undefined || value === null
-      ? null
-      : object<CallerView>({
-          kind: label(callerKinds),
-          user: nullable(string),
-          login: nullable(string),
-        })(value, path),
+  purpose: nullable(label(callPurposes)),
+  caller: nullable(
+    object<CallerView>({
+      kind: label(callerKinds),
+      user: nullable(string),
+      login: nullable(string),
+    }),
+  ),
 });
 const inspection = object<InspectionRecord>({
   coverage: label(coverages),
@@ -693,10 +690,10 @@ function tokenTotals(value: unknown, path: string): TokenTotals {
     cache_read: nullable(count),
   })(value, path);
 }
-const sessions = object<Sessions>({
+const sessions = object<Recordings>({
   sessions: array(
-    object<SessionView>({
-      id: SessionId.decode,
+    object<RecordingView>({
+      id: RecordingId.decode,
       provider: label(providers),
       source: label(hintSources),
       native_id: branded<'NativeSessionId'>(),
@@ -706,6 +703,7 @@ const sessions = object<Sessions>({
       turn_count: count,
       error_count: count,
       tokens: tokenTotals,
+      archived_at: nullable(millis),
     }),
   ),
 });
@@ -724,10 +722,7 @@ const usageView = object<UsageView>({
       ...usageCounts,
     }),
   ),
-  users: (value, path) =>
-    value === undefined
-      ? []
-      : array(object<UserUsage>({ user: nullable(string), ...usageCounts }))(value, path),
+  users: array(object<UserUsage>({ user: nullable(string), ...usageCounts })),
 });
 const fileUsage = object<FileUsage>({ page_size: count, page_count: count, freelist_count: count });
 const storageView = object<StorageView>({
@@ -797,10 +792,7 @@ const operatorSummary = object<OperatorSummary>({ pause, blocked_sessions: count
 const health = object<Health>({
   status: label(healthStatuses),
   build,
-  instance: (value, path) =>
-    value === undefined
-      ? { environment: 'production' }
-      : object<Health['instance']>({ environment: label(environments) })(value, path),
+  instance: object<Health['instance']>({ environment: label(environments) }),
   operator: operatorSummary,
   recorder: recorderMetrics,
 });
@@ -813,11 +805,7 @@ const storage = object<Storage>({
     max_storage_bytes: count,
   }),
   usage: storageView,
-  // Absent from daemons older than the field: read as not reported.
-  capture: (value, path) =>
-    value === undefined || value === null
-      ? null
-      : object<CaptureLimits>({ body_limit_bytes: count })(value, path),
+  capture: object<CaptureLimits>({ body_limit_bytes: count }),
 });
 const bodyPreview = object<BodyPreview>({
   observed_bytes: nullable(count),
@@ -1021,7 +1009,7 @@ export type Finding =
   | { kind: 'unrecognized'; text: string };
 export interface TurnActivity {
   turn: TurnId;
-  session: SessionId;
+  session: RecordingId;
   native_id: NativeTurnId;
   client: Stored<Harness> | null;
   started_at: UnixMillis | null;
@@ -1072,8 +1060,8 @@ export interface ReportTotals {
   output_tokens: number;
   cache_hit_percent: number | null;
 }
-export interface SessionReport {
-  session: SessionId;
+export interface RecordingReport {
+  session: RecordingId;
   totals: ReportTotals;
   turns: TurnMetrics[];
   findings: Finding[];
@@ -1167,7 +1155,7 @@ const finding: Decoder<Finding> = (value, path) => {
 };
 const turnActivity = object<TurnActivity>({
   turn: TurnId.decode,
-  session: SessionId.decode,
+  session: RecordingId.decode,
   native_id: branded<'NativeTurnId'>(),
   client: nullable(label(harnesses)),
   started_at: nullable(millis),
@@ -1206,7 +1194,7 @@ export function parseSearchField(text: string | null): SearchField | null {
 }
 export interface SearchHit {
   call: CallId;
-  session: SessionId | null;
+  session: RecordingId | null;
   turn: TurnId | null;
   client: Stored<Harness> | null;
   started_at: UnixMillis;
@@ -1223,7 +1211,7 @@ const searchPage = object<SearchPage>({
   hits: array(
     object<SearchHit>({
       call: CallId.decode,
-      session: nullable(SessionId.decode),
+      session: nullable(RecordingId.decode),
       turn: nullable(TurnId.decode),
       client: nullable(label(harnesses)),
       started_at: millis,
@@ -1236,7 +1224,7 @@ const searchPage = object<SearchPage>({
 /** A credential one call carried: never the secret itself. */
 export interface ExposureView {
   call: CallId;
-  session: SessionId | null;
+  session: RecordingId | null;
   turn: TurnId | null;
   client: Stored<Harness> | null;
   started_at: UnixMillis;
@@ -1253,7 +1241,7 @@ const exposures = object<Exposures>({
   exposures: array(
     object<ExposureView>({
       call: CallId.decode,
-      session: nullable(SessionId.decode),
+      session: nullable(RecordingId.decode),
       turn: nullable(TurnId.decode),
       client: nullable(label(harnesses)),
       started_at: millis,
@@ -1265,8 +1253,8 @@ const exposures = object<Exposures>({
     }),
   ),
 });
-const sessionReport = object<SessionReport>({
-  session: SessionId.decode,
+const sessionReport = object<RecordingReport>({
+  session: RecordingId.decode,
   totals: object<ReportTotals>({
     calls: count,
     calls_with_usage: count,
@@ -1296,7 +1284,7 @@ const sessionReport = object<SessionReport>({
 });
 
 /** Check the version envelope, then decode the fields beside it. */
-const versioned =
+export const versioned =
   <T>(decode: Decoder<T>): Decoder<T> =>
   (value, path) => {
     const found = isRecord(value) ? value.api_version : undefined;
@@ -1341,22 +1329,28 @@ export class ManagementApi {
     const suffix = query.size ? `?${query}` : '';
     return this.#read(`/api/usage${suffix}`, usageView, signal);
   }
-  sessions(limit = 100, signal?: AbortSignal): Promise<Sessions> {
-    return this.#read(`/api/sessions?limit=${limit}`, sessions, signal);
+  /** The most recently active sessions; `archived` lists those archived instead. */
+  sessions(
+    limit = 100,
+    signal?: AbortSignal,
+    shelf: 'current' | 'archived' = 'current',
+  ): Promise<Recordings> {
+    const query = shelf === 'archived' ? '&shelf=archived' : '';
+    return this.#read(`/api/sessions?limit=${limit}${query}`, sessions, signal);
   }
   /** Oldest first. Only `after` is accepted besides the limit. */
-  sessionCalls(id: SessionId, after: string | null, signal?: AbortSignal): Promise<CallPage> {
+  sessionCalls(id: RecordingId, after: string | null, signal?: AbortSignal): Promise<CallPage> {
     const query = new URLSearchParams();
     if (after) query.set('after', after);
     return this.#read(`/api/sessions/${id}/calls?${ManagementApi.#page(query)}`, callPage, signal);
   }
 
   /** A session's turns, newest first, with the start of each prompt. */
-  turns(id: SessionId, limit = 100, signal?: AbortSignal): Promise<Turns> {
+  turns(id: RecordingId, limit = 100, signal?: AbortSignal): Promise<Turns> {
     return this.#read(`/api/sessions/${id}/turns?limit=${limit}`, turns, signal);
   }
   /** Where a session's context and cache tokens went, from its call records. */
-  report(id: SessionId, signal?: AbortSignal): Promise<SessionReport> {
+  report(id: RecordingId, signal?: AbortSignal): Promise<RecordingReport> {
     return this.#read(`/api/sessions/${id}/report`, sessionReport, signal);
   }
   /** What one turn did, read from its calls' bodies. */

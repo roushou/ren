@@ -4,13 +4,13 @@ import { readSnapshot, retainSnapshot } from '../src/lib/snapshots.ts';
 import {
   gatewaySnapshot,
   recorderSnapshot,
-  SessionDetails,
-  SessionsReader,
+  RecordingDetails,
+  RecordingsReader,
   offPageSelection,
   searchSnapshot,
   trafficSnapshot,
 } from '../src/lib/loaders.ts';
-import { ApiVersionError, ManagementApi, SessionId } from '../src/lib/api.ts';
+import { ApiVersionError, ManagementApi, RecordingId } from '../src/lib/api.ts';
 import {
   callFixture,
   callId,
@@ -39,7 +39,7 @@ test('background failure retains only the matching snapshot and recovery clears 
   assert.equal(retained.updated, previous.updated);
   assert.equal(retained.error?.kind, 'unreachable');
   assert.match(retained.error?.message ?? '', /Cannot reach Ren/);
-  assert.equal(retainSnapshot(previous, { ...failed, key: '/sessions/other' }).value, null);
+  assert.equal(retainSnapshot(previous, { ...failed, key: '/recordings/other' }).value, null);
   const recovered = await readSnapshot('/traffic', async () => ['new']);
   assert.equal(retainSnapshot(previous, recovered).error, null);
   assert.deepEqual(retainSnapshot(previous, recovered).value, ['new']);
@@ -60,16 +60,13 @@ test('gateway reads health and storage together and accept degraded recorder hea
   assert.equal(result.value.storage.policy.max_calls, 100);
 });
 
-test('the gateway names its environment, and an older one reads as production', async () => {
+test('the gateway names its environment', async () => {
   const read = (body: object) =>
     gatewaySnapshot(async (input) =>
       path(input) === '/health' ? versioned(body) : versioned(storageFixture()),
     );
   const development = await read({ ...healthBody(), instance: { environment: 'development' } });
   assert.equal(development.value?.health.instance.environment, 'development');
-  const { instance: _, ...older } = healthBody();
-  const production = await read(older);
-  assert.equal(production.value?.health.instance.environment, 'production');
 });
 
 test('every response is version-checked and a mismatch is reported distinctly', async () => {
@@ -94,12 +91,8 @@ test('every response is version-checked and a mismatch is reported distinctly', 
     new ManagementApi(async () => versioned(storageFixture(), undefined, 7)).storage(),
     ApiVersionError,
   );
-  // A daemon older than the capture limit reports none, and that is not an error.
-  const { capture: _capture, ...older } = storageFixture();
-  const storage = await new ManagementApi(async () => versioned(older)).storage();
-  assert.equal(storage.capture, null);
   const current = await new ManagementApi(async () => versioned(storageFixture())).storage();
-  assert.equal(current.capture?.body_limit_bytes, 4096);
+  assert.equal(current.capture.body_limit_bytes, 4096);
 });
 
 test('responses are parsed at the boundary: labels keep unknown text, shapes are enforced', async () => {
@@ -109,7 +102,7 @@ test('responses are parsed at the boundary: labels keep unknown text, shapes are
   assert.equal(metrics.value?.metrics.storage.disk.blobs.page_size, 4096);
   // The usage read failed to parse (this fake answers every path alike): no oldest call, no failure.
   assert.equal(metrics.value?.oldest, null);
-  const sessions = await new SessionsReader(new SessionDetails()).read(async (input) => {
+  const sessions = await new RecordingsReader(new RecordingDetails()).read(async (input) => {
     if (path(input).startsWith('/api/calls')) return versioned({ calls: [], next: null });
     if (path(input).endsWith('/turns?limit=5')) return versioned({ turns: [] });
     assert.equal(path(input), '/api/sessions?limit=100');
@@ -179,7 +172,7 @@ test('the listing ignores the selection, and off-page selections load on their o
 });
 
 test('session pages read the session listing with only a cursor', async () => {
-  const session = SessionId.parse(uuid(3));
+  const session = RecordingId.parse(uuid(3));
   assert.ok(session);
   const requested: string[] = [];
   const page = await trafficSnapshot(
@@ -197,7 +190,7 @@ test('session pages read the session listing with only a cursor', async () => {
     `/api/sessions/${session}/calls?limit=100&after=1%3Aabc`,
   ]);
   assert.equal(page.value?.next, '5:cursor');
-  assert.equal(SessionId.parse('../evil'), null);
+  assert.equal(RecordingId.parse('../evil'), null);
 });
 
 test('search reads nothing without a query and keeps only a known field', async () => {
@@ -248,11 +241,12 @@ function sessionRow(n: number, lastSeen: number, calls = 3, turns = 1) {
     turn_count: turns,
     error_count: 0,
     tokens: { input: null, output: null, cache_read: null },
+    archived_at: null,
   };
 }
 
 test('sessions are read in detail once per activity, and single-call ones not at all', async () => {
-  const reader = new SessionsReader(new SessionDetails());
+  const reader = new RecordingsReader(new RecordingDetails());
   const turnReads: string[] = [];
   let lastSeen = 2;
   const fetcher = async (input: RequestInfo | URL) => {
@@ -291,15 +285,7 @@ test('sessions are read a few at a time', async () => {
       sessions: Array.from({ length: 20 }, (_, n) => sessionRow(20 + n, 2)),
     });
   };
-  const result = await new SessionsReader(new SessionDetails()).read(fetcher);
+  const result = await new RecordingsReader(new RecordingDetails()).read(fetcher);
   assert.equal(result.value?.details.size, 20);
-  assert.equal(most, SessionDetails.parallel);
-});
-
-test('a call from a daemon older than purpose reads as not derived', async () => {
-  const { purpose: _purpose, ...older } = callFixture();
-  const page = await new ManagementApi(async () => versioned({ calls: [older], next: null })).calls(
-    new URLSearchParams(),
-  );
-  assert.equal(page.calls[0]?.purpose, null);
+  assert.equal(most, RecordingDetails.parallel);
 });

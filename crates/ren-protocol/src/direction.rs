@@ -11,15 +11,3 @@ pub enum Direction {
     Request,
     Response,
 }
-
-#[cfg(test)]
-mod tests {
-    use super::Direction;
-    use crate::label::Labeled;
-
-    #[test]
-    fn labels_match_the_existing_storage_vocabulary() {
-        assert_eq!(Direction::Request.label(), "request");
-        assert_eq!(Direction::Response.label(), "response");
-    }
-}

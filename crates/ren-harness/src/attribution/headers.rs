@@ -6,16 +6,9 @@ use crate::Harness;
 use crate::attribution::{Attribution, HintIssue, HintSource, SessionHint};
 use http::HeaderMap;
 use ren_protocol::native::{NativeSessionId, NativeThreadId, NativeTurnId};
-use serde::Deserialize;
-use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 impl Harness {
-    const PI_SESSION: &'static str = "x-ren-pi-session-id";
-    const PI_TURN: &'static str = "x-ren-pi-turn-id";
-    const OPENCODE_SESSION: &'static str = "x-opencode-session-id";
-    const MAX_TURN_METADATA: usize = 8192;
-
     /// What `headers` say about attribution, on a route that expects `route`'s
     /// headers (`None`: a route no harness owns, such as the public OpenAI API).
     /// Pi's extension headers, then opencode's session header, are recognised
@@ -24,40 +17,17 @@ impl Harness {
     /// no grouping; every discarded hint leaves an issue.
     pub fn attribution(route: Option<Self>, headers: &HeaderMap) -> Attribution {
         let mut reading = HeaderReading::new(headers);
-        let claim = if headers.contains_key(Self::PI_SESSION) || headers.contains_key(Self::PI_TURN)
-        {
-            Claim {
-                source: Some(HintSource::PiExtensionHeaders),
-                session: reading.uuid(Self::PI_SESSION),
-                turn: reading.uuid(Self::PI_TURN),
-                thread: None,
-            }
-        } else if headers.contains_key(Self::OPENCODE_SESSION) {
-            // opencode names no turn; a subagent's call names its own child
-            // session, as opencode does.
-            Claim {
-                source: Some(HintSource::OpenCodeHeaders),
-                session: reading.opencode_session(),
-                turn: None,
-                thread: None,
-            }
+        let claim = if let Some(claim) = reading.pi() {
+            claim
+        } else if let Some(claim) = reading.opencode() {
+            claim
         } else {
             match route {
                 // Public Responses headers do not establish a Codex client
                 // identity, Pi has no headers but its extension's, and
                 // opencode's were read above.
                 None | Some(Self::Pi | Self::OpenCode) => Claim::default(),
-                Some(Self::ClaudeCode) => {
-                    let session = reading.uuid("x-claude-code-session-id");
-                    let turn = reading.uuid("x-claude-code-prompt-id");
-                    Claim {
-                        source: (session.is_some() || turn.is_some())
-                            .then_some(HintSource::ClaudeCodeHeaders),
-                        session,
-                        turn,
-                        thread: None,
-                    }
-                }
+                Some(Self::ClaudeCode) => reading.claude_code(),
                 Some(Self::Codex) => reading.codex(),
             }
         };
@@ -67,16 +37,16 @@ impl Harness {
 
 /// Identifiers read so far, before a turn is checked against its session.
 #[derive(Default)]
-struct Claim {
-    source: Option<HintSource>,
-    session: Option<Uuid>,
-    turn: Option<Uuid>,
-    thread: Option<Uuid>,
+pub(crate) struct Claim {
+    pub(crate) source: Option<HintSource>,
+    pub(crate) session: Option<Uuid>,
+    pub(crate) turn: Option<Uuid>,
+    pub(crate) thread: Option<Uuid>,
 }
 
 /// One pass over a request's headers, collecting issues as it reads.
-struct HeaderReading<'a> {
-    headers: &'a HeaderMap,
+pub(crate) struct HeaderReading<'a> {
+    pub(crate) headers: &'a HeaderMap,
     issues: Vec<HintIssue>,
 }
 
@@ -86,46 +56,6 @@ impl<'a> HeaderReading<'a> {
             headers,
             issues: Vec::new(),
         }
-    }
-
-    fn codex(&mut self) -> Claim {
-        let mut session = self.uuid("session-id");
-        let mut thread = self.uuid("thread-id");
-        let mut turn = None;
-        if let Some(raw) = self.header("x-codex-turn-metadata", Harness::MAX_TURN_METADATA) {
-            match serde_json::from_str::<TurnMetadata>(raw) {
-                Ok(metadata) => {
-                    turn = self.metadata_id(metadata.turn_id);
-                    let claimed_session = self.metadata_id(metadata.session_id);
-                    let claimed_thread = self.metadata_id(metadata.thread_id);
-                    // Do not silently prefer one source when identifiers disagree.
-                    if Self::conflicts(session, claimed_session)
-                        || Self::conflicts(thread, claimed_thread)
-                    {
-                        self.issue(HintIssue::ConflictingIdentifiers);
-                        session = None;
-                        thread = None;
-                        turn = None;
-                    }
-                }
-                Err(_) => self.issue(HintIssue::InvalidTurnMetadata),
-            }
-        }
-        Claim {
-            source: session.is_some().then_some(HintSource::CodexHeaders),
-            session,
-            turn,
-            thread,
-        }
-    }
-
-    fn opencode_session(&mut self) -> Option<Uuid> {
-        let value = self.header(Harness::OPENCODE_SESSION, OpenCodeSessionId::MAX_LEN)?;
-        let id = OpenCodeSessionId::parse(value).map(OpenCodeSessionId::uuid);
-        if id.is_none() {
-            self.issue(HintIssue::InvalidOrDuplicateHeader);
-        }
-        id
     }
 
     fn finish(mut self, claim: Claim) -> Attribution {
@@ -147,13 +77,13 @@ impl<'a> HeaderReading<'a> {
         }
     }
 
-    fn issue(&mut self, issue: HintIssue) {
+    pub(crate) fn issue(&mut self, issue: HintIssue) {
         if !self.issues.contains(&issue) {
             self.issues.push(issue);
         }
     }
 
-    fn header(&mut self, name: &str, max: usize) -> Option<&'a str> {
+    pub(crate) fn header(&mut self, name: &str, max: usize) -> Option<&'a str> {
         let mut values = self.headers.get_all(name).iter();
         let value = values.next()?;
         if values.next().is_some() || value.as_bytes().len() > max {
@@ -169,7 +99,7 @@ impl<'a> HeaderReading<'a> {
         }
     }
 
-    fn uuid(&mut self, name: &str) -> Option<Uuid> {
+    pub(crate) fn uuid(&mut self, name: &str) -> Option<Uuid> {
         let value = self.header(name, 36)?;
         let id = Self::identifier(value);
         if id.is_none() {
@@ -178,7 +108,7 @@ impl<'a> HeaderReading<'a> {
         id
     }
 
-    fn metadata_id(&mut self, value: Option<String>) -> Option<Uuid> {
+    pub(crate) fn metadata_id(&mut self, value: Option<String>) -> Option<Uuid> {
         let id = Self::identifier(&value?);
         if id.is_none() {
             self.issue(HintIssue::InvalidTurnMetadata);
@@ -194,49 +124,9 @@ impl<'a> HeaderReading<'a> {
         Uuid::parse_str(value).ok().filter(|id| !id.is_nil())
     }
 
-    fn conflicts(left: Option<Uuid>, right: Option<Uuid>) -> bool {
+    pub(crate) fn conflicts(left: Option<Uuid>, right: Option<Uuid>) -> bool {
         matches!((left, right), (Some(a), Some(b)) if a != b)
     }
-}
-
-/// opencode's own session identifier: `ses_`, then ASCII letters and digits
-/// (opencode 2.x writes 26). It is not a UUID, and Ren's native session
-/// identifiers are, so the hint carries a UUID derived from it; the original
-/// is never stored.
-struct OpenCodeSessionId<'a>(&'a str);
-
-impl<'a> OpenCodeSessionId<'a> {
-    const PREFIX: &'static str = "ses_";
-    const MAX_LEN: usize = 132;
-    const NAMESPACE: &'static [u8] = b"ren:opencode-session:";
-
-    fn parse(value: &'a str) -> Option<Self> {
-        let rest = value.strip_prefix(Self::PREFIX)?;
-        (!rest.is_empty() && rest.bytes().all(|byte| byte.is_ascii_alphanumeric()))
-            .then_some(Self(value))
-    }
-
-    /// A version 8 UUID from the namespaced SHA-256 of the identifier: the
-    /// same session always gives the same UUID, and different sessions
-    /// collide only as SHA-256 does.
-    fn uuid(self) -> Uuid {
-        let digest = Sha256::new()
-            .chain_update(Self::NAMESPACE)
-            .chain_update(self.0.as_bytes())
-            .finalize();
-        let mut bytes = [0; 16];
-        bytes.copy_from_slice(&digest[..16]);
-        uuid::Builder::from_custom_bytes(bytes).into_uuid()
-    }
-}
-
-// Serde rejects duplicate known fields. Ignore all other fields: account,
-// installation, machine, tool policy, and user-defined names never enter storage.
-#[derive(Deserialize)]
-struct TurnMetadata {
-    turn_id: Option<String>,
-    session_id: Option<String>,
-    thread_id: Option<String>,
 }
 
 #[cfg(test)]

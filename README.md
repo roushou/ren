@@ -28,10 +28,10 @@ from another one on your tailnet.
 
 ## What you get
 
-- **Live traffic:** every call as it streams, grouped by session and turn.
+- **Live traffic:** every call as it streams, grouped by recording and turn.
 - **Full inspection:** readable or raw requests and responses, complete bodies to
   export.
-- **Usage:** calls, errors, and tokens by hour, day, model, and session.
+- **Usage:** calls, errors, and tokens by hour, day, model, and recording.
 - **Truthful outcomes:** interrupted and unknown endings never count as success.
 - **Faithful forwarding:** payloads pass through unchanged unless you configure a
   transform, which is recorded; capture loss is counted.
@@ -52,8 +52,6 @@ With the Rust toolchain pinned in `rust-toolchain.toml`:
 ```sh
 cargo install --path crates/ren-cli --locked
 ```
-
-Add `--features tui` for `ren tui`, a terminal view of live sessions.
 
 ## Run
 
@@ -89,7 +87,6 @@ ren sessions
 ren history --limit 10
 ren inspect <call-id>
 ren tail
-ren tui          # built with --features tui
 ```
 
 With a saved gateway, these read the remote daemon.
@@ -134,9 +131,9 @@ listener.
 </details>
 
 <details>
-<summary>Sessions</summary>
+<summary>Recordings</summary>
 
-<img width="1470" height="838" alt="Sessions" src="https://github.com/user-attachments/assets/ca3eede3-7045-415a-bd64-61d3fe778b32" />
+<img width="1470" height="838" alt="Recordings" src="https://github.com/user-attachments/assets/ca3eede3-7045-415a-bd64-61d3fe778b32" />
 </details>
 
 ## Documentation

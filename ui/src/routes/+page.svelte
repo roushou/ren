@@ -86,7 +86,7 @@
     }),
   );
 
-  const sessionHref = (id: string) => `/sessions/${encodeURIComponent(id)}`;
+  const sessionHref = (id: string) => `/recordings/${encodeURIComponent(id)}`;
   const spark = (values: number[]) => Day.spark(values, 22);
   const CHART = 120;
   /** Nothing recorded in the last day: the page leads with how to connect a client. */
@@ -217,7 +217,7 @@
             {:else}
               <div class="ov-clear ov-start">
                 <span class="muted"
-                  >No session active in the last 15 minutes{lastCall
+                  >No recording active in the last 15 minutes{lastCall
                     ? `; the last call was ${ago(lastCall, now)}`
                     : ''}.</span
                 >

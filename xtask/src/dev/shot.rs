@@ -21,22 +21,32 @@ pub enum Page {
     Overview,
     Live,
     Traffic,
-    Sessions,
-    /// The newest session, with its turns.
-    Session,
+    Recordings,
+    /// The newest recording, with its turns.
+    Recording,
     Usage,
     Search,
+    /// The newest run's session, with its conversation.
+    Sessions,
+}
+
+/// The newest recording and run, which some pages show.
+#[derive(Debug, Default)]
+struct Newest {
+    recording: Option<String>,
+    run: Option<String>,
 }
 
 impl Page {
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 8] = [
         Self::Overview,
         Self::Live,
         Self::Traffic,
-        Self::Sessions,
-        Self::Session,
+        Self::Recordings,
+        Self::Recording,
         Self::Usage,
         Self::Search,
+        Self::Sessions,
     ];
 
     fn name(self) -> &'static str {
@@ -44,23 +54,34 @@ impl Page {
             Self::Overview => "overview",
             Self::Live => "live",
             Self::Traffic => "traffic",
-            Self::Sessions => "sessions",
-            Self::Session => "session",
+            Self::Recordings => "recordings",
+            Self::Recording => "recording",
             Self::Usage => "usage",
             Self::Search => "search",
+            Self::Sessions => "sessions",
         }
     }
 
-    /// The page's path; `newest` is the newest session, for `Session`.
-    fn path(self, newest: Option<&str>) -> Option<String> {
+    /// The page's path: the newest recording for `Recording`, the newest
+    /// run's session (if any) for `Sessions`.
+    fn path(self, newest: &Newest) -> Option<String> {
         match self {
             Self::Overview => Some("/".into()),
             Self::Live => Some("/live".into()),
             Self::Traffic => Some("/traffic".into()),
-            Self::Sessions => Some("/sessions".into()),
-            Self::Session => newest.map(|id| format!("/sessions/{id}")),
+            Self::Recordings => Some("/recordings".into()),
+            Self::Recording => newest
+                .recording
+                .as_ref()
+                .map(|id| format!("/recordings/{id}")),
             Self::Usage => Some("/usage".into()),
             Self::Search => Some("/search?q=retry".into()),
+            Self::Sessions => Some(
+                newest
+                    .run
+                    .as_ref()
+                    .map_or_else(|| "/sessions".into(), |id| format!("/sessions?run={id}")),
+            ),
         }
     }
 }
@@ -127,15 +148,16 @@ impl Camera {
         shells.pop()
     }
 
-    /// The newest session's id, from the dev gateway's API.
-    fn newest_session(&self) -> Option<String> {
+    /// The newest item's id in a listing of the dev gateway's API, such as
+    /// `sessions` or `runs`.
+    fn newest(&self, listing: &str) -> Option<String> {
         let answer = Invocation::new("curl")
             .args(["--silent", "--fail", "--max-time", "5"])
-            .arg(format!("http://{}/api/sessions?limit=1", self.gateway))
+            .arg(format!("http://{}/api/{listing}?limit=1", self.gateway))
             .capture()
             .ok()?;
         let answer: serde_json::Value = serde_json::from_str(&answer).ok()?;
-        answer["sessions"][0]["id"].as_str().map(str::to_owned)
+        answer[listing][0]["id"].as_str().map(str::to_owned)
     }
 
     /// Capture `pages` at `width`×`height`; returns the files written.
@@ -145,11 +167,15 @@ impl Camera {
         (width, height): (u16, u16),
     ) -> Result<Vec<PathBuf>, DevError> {
         fs::create_dir_all(&self.out).map_err(InstallError::file(&self.out))?;
-        let newest = self.newest_session();
+        let newest = Newest {
+            // The read API still lists recordings as `sessions`.
+            recording: self.newest("sessions"),
+            run: self.newest("runs"),
+        };
         let mut written = Vec::new();
         for page in pages {
-            let Some(path) = page.path(newest.as_deref()) else {
-                println!("skipped {}: no session yet", page.name());
+            let Some(path) = page.path(&newest) else {
+                println!("skipped {}: no recording yet", page.name());
                 continue;
             };
             let file = self.out.join(format!("{}.png", page.name()));
@@ -179,22 +205,31 @@ impl Camera {
 
 #[cfg(test)]
 mod tests {
-    use super::Page;
+    use super::{Newest, Page};
 
     #[test]
-    fn every_page_has_a_path_and_the_session_needs_one() {
+    fn every_page_has_a_path_and_the_recording_needs_one() {
+        let none = Newest::default();
+        let some = Newest {
+            recording: Some("s1".into()),
+            run: Some("r1".into()),
+        };
         for page in Page::ALL {
             match page {
-                Page::Session => {
-                    assert_eq!(page.path(None), None);
-                    assert_eq!(page.path(Some("s1")).as_deref(), Some("/sessions/s1"));
+                Page::Recording => {
+                    assert_eq!(page.path(&none), None);
+                    assert_eq!(page.path(&some).as_deref(), Some("/recordings/s1"));
+                }
+                Page::Sessions => {
+                    assert_eq!(page.path(&none).as_deref(), Some("/sessions"));
+                    assert_eq!(page.path(&some).as_deref(), Some("/sessions?run=r1"));
                 }
                 Page::Overview
                 | Page::Live
                 | Page::Traffic
-                | Page::Sessions
+                | Page::Recordings
                 | Page::Usage
-                | Page::Search => assert!(page.path(None).is_some_and(|p| p.starts_with('/'))),
+                | Page::Search => assert!(page.path(&none).is_some_and(|p| p.starts_with('/'))),
             }
         }
     }

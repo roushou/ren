@@ -13,7 +13,7 @@ use ren_protocol::inspect::InputAccounting;
 use ren_protocol::label::Stored;
 use ren_recorder::secrets::SecretKind;
 use ren_recorder::{
-    id::{CallId, SessionId, TurnId},
+    id::{CallId, RecordingId, TurnId},
     time::UnixMillis,
 };
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error as _};
@@ -283,8 +283,8 @@ pub struct ReportTotals {
 
 /// A session's context and cost measurements, from its call records alone.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct SessionReport {
-    pub session: SessionId,
+pub struct RecordingReport {
+    pub session: RecordingId,
     pub totals: ReportTotals,
     pub turns: Vec<TurnMetrics>,
     pub findings: Vec<Finding>,
@@ -357,7 +357,7 @@ impl TurnRow {
     }
 }
 
-impl SessionReport {
+impl RecordingReport {
     /// Add the secrets the session's calls carried, from their digests'
     /// exposures, as findings in call order.
     pub fn add_exposures(&mut self, exposures: Vec<ExposureView>) {
@@ -384,7 +384,7 @@ impl SessionReport {
     }
 
     /// The report over `calls`, a session's calls in start order.
-    pub fn build(session: SessionId, calls: &[CallView], omitted_calls: u64) -> Self {
+    pub fn build(session: RecordingId, calls: &[CallView], omitted_calls: u64) -> Self {
         let mut totals = ReportTotals::default();
         let mut rows: Vec<TurnRow> = Vec::new();
         let mut timed: Vec<(UnixMillis, Finding)> = Vec::new();

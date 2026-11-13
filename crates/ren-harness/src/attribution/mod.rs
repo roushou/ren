@@ -3,10 +3,10 @@
 //!
 //! These are hints, never authentication or proof of client identity. They are
 //! kept as the client sent them and never inferred from timing or content.
-//! Native identifiers have their own types, separate from Ren's `SessionId`
+//! Native identifiers have their own types, separate from Ren's `RecordingId`
 //! and `TurnId`.
 
-mod headers;
+pub(crate) mod headers;
 
 use crate::Harness;
 use ren_protocol::native::{MessageHints, NativeSessionId, NativeThreadId, NativeTurnId};

@@ -554,9 +554,6 @@ mod tests {
     }
 
     #[test]
-    fn vocabularies_have_unique_labels() {}
-
-    #[test]
     fn unavailable_reports_carry_their_reason_only() {
         let report =
             Inspector::unavailable(FormatSource::Declared, Limitation::UnsupportedEncoding);

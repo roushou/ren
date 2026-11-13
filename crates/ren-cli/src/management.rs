@@ -9,16 +9,15 @@
 //! in `control.tailscale_logins`.
 
 use crate::client::{ClientError, GatewayChoice};
-use crate::tail::LiveUpdates;
 use ren_gateway::ApiRead;
 use ren_harness::{endpoint::GatewayEndpoint, host::HostEnv};
 use ren_protocol::direction::Direction;
 use ren_recorder::id::{CallId, TurnId};
 use ren_store::Reader;
 use ren_store::activity::{ActivityBudget, CallActivity, TurnActivity};
-use ren_store::query::{CallQuery, PageLimit};
+use ren_store::query::{CallQuery, PageLimit, Shelf};
 use ren_store::read::ReadRequest;
-use ren_store::view::{CallPage, SessionView};
+use ren_store::view::{CallPage, RecordingView};
 use reqwest::{Method, StatusCode};
 use serde::{Deserialize, de::DeserializeOwned};
 use serde_json::{Map, Value};
@@ -56,11 +55,14 @@ impl History {
         }
     }
 
-    /// Sessions, most recently seen first.
-    pub async fn sessions(&self, limit: PageLimit) -> Result<Vec<SessionView>, ManagementError> {
+    /// Recordings, most recently seen first.
+    pub async fn recordings(
+        &self,
+        limit: PageLimit,
+    ) -> Result<Vec<RecordingView>, ManagementError> {
         match self {
-            Self::Local(reader) => Ok(reader.sessions(limit).await?),
-            Self::Remote(gateway) => gateway.sessions(limit).await,
+            Self::Local(reader) => Ok(reader.recordings(limit, Shelf::Current).await?),
+            Self::Remote(gateway) => gateway.recordings(limit).await,
         }
     }
 
@@ -259,21 +261,11 @@ impl Management {
 
     /// `GET /api/live`: the response that streams the live feed, from after
     /// `after` when given, else from now. Read it with [`Self::chunk`].
-    pub async fn live(
-        &self,
-        after: Option<u64>,
-        updates: LiveUpdates,
-    ) -> Result<reqwest::Response, ManagementError> {
+    pub async fn live(&self, after: Option<u64>) -> Result<reqwest::Response, ManagementError> {
         let mut url = self.endpoint.url("/api/live");
         if let Some(after) = after {
             url.query_pairs_mut()
                 .append_pair("after", &after.to_string());
-        }
-        match updates {
-            LiveUpdates::Observations => {}
-            LiveUpdates::WithProgress => {
-                url.query_pairs_mut().append_pair("progress", "true");
-            }
         }
         let response = self
             .send(self.http.get(url).header("accept", "text/event-stream"))
@@ -344,6 +336,22 @@ impl Management {
         }
     }
 
+    /// A streamed control response (server-sent events) through the
+    /// gateway, without a token. Read it with [`Self::chunk`].
+    pub async fn control_stream(&self, path: &str) -> Result<reqwest::Response, ManagementError> {
+        let url = self.endpoint.url(&format!("/control/v1/{path}"));
+        let response = self
+            .send(self.http.get(url).header("accept", "text/event-stream"))
+            .await?;
+        let status = response.status();
+        if status.is_success() {
+            Ok(response)
+        } else {
+            let body = self.bytes(response).await?;
+            Err(Self::error(status, &body))
+        }
+    }
+
     /// One history read, through the read API: its JSON body.
     pub async fn serve(&self, request: &ReadRequest) -> Result<Value, ManagementError> {
         Ok(Value::Object(
@@ -356,16 +364,22 @@ impl Management {
         self.read_as(&ReadRequest::Calls(query.clone())).await
     }
 
-    /// Sessions, most recently seen first.
-    pub async fn sessions(&self, limit: PageLimit) -> Result<Vec<SessionView>, ManagementError> {
-        /// The read API's body for a session listing.
+    /// Recordings, most recently seen first.
+    pub async fn recordings(
+        &self,
+        limit: PageLimit,
+    ) -> Result<Vec<RecordingView>, ManagementError> {
+        /// The read API's body for a recording listing.
         #[derive(Deserialize)]
-        struct Sessions {
-            sessions: Vec<SessionView>,
+        struct Recordings {
+            sessions: Vec<RecordingView>,
         }
-        self.read_as::<Sessions>(&ReadRequest::Sessions(limit))
-            .await
-            .map(|page| page.sessions)
+        self.read_as::<Recordings>(&ReadRequest::Recordings {
+            limit,
+            shelf: Shelf::Current,
+        })
+        .await
+        .map(|page| page.sessions)
     }
 
     /// One turn's activity, as much of it as the read API shows.
@@ -558,7 +572,10 @@ mod tests {
     async fn a_gateway_answers_reads_as_views() {
         let (sessions, calls, turn) = against_gateway(|gateway| async move {
             let history = History::Remote(gateway);
-            let sessions = history.sessions(PageLimit::new(10).unwrap()).await.unwrap();
+            let sessions = history
+                .recordings(PageLimit::new(10).unwrap())
+                .await
+                .unwrap();
             let calls = history.calls(&CallQuery::default()).await.unwrap();
             let turn = history
                 .turn("00000000-0000-0000-0000-000000000004".parse().unwrap())
@@ -574,21 +591,17 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_live_feed_asks_for_progress_only_when_told() {
+    async fn a_live_feed_starts_after_the_position_given() {
         let queries = against_gateway(|gateway| async move {
             let mut queries = Vec::new();
-            for (after, updates) in [
-                (None, LiveUpdates::Observations),
-                (Some(7), LiveUpdates::Observations),
-                (Some(7), LiveUpdates::WithProgress),
-            ] {
-                let response = gateway.live(after, updates).await.unwrap();
+            for after in [None, Some(7)] {
+                let response = gateway.live(after).await.unwrap();
                 queries.push(response.text().await.unwrap());
             }
             queries
         })
         .await;
-        assert_eq!(queries, ["", "after=7", "after=7&progress=true"]);
+        assert_eq!(queries, ["", "after=7"]);
     }
 
     #[tokio::test]
@@ -596,7 +609,10 @@ mod tests {
         // A session listing read as a page of calls.
         let wrong = against_gateway(|gateway| async move {
             gateway
-                .read_as::<CallPage>(&ReadRequest::Sessions(PageLimit::new(10).unwrap()))
+                .read_as::<CallPage>(&ReadRequest::Recordings {
+                    limit: PageLimit::new(10).unwrap(),
+                    shelf: Shelf::Current,
+                })
                 .await
         })
         .await;

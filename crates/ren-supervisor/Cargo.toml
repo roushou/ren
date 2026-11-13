@@ -1,0 +1,33 @@
+[package]
+name = "ren-supervisor"
+version.workspace = true
+edition.workspace = true
+homepage.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Agent runs for the Ren LLM gateway: clients started in a folder and driven through their structured mode."
+
+# Runs and their task. Never add an HTTP client or server, database driver, or
+# CLI parser (docs/architecture.md); starting processes is the AgentHost port.
+[dependencies]
+futures-util.workspace = true
+ren-harness.workspace = true
+ren-protocol.workspace = true
+ren-recorder.workspace = true
+serde.workspace = true
+serde_with.workspace = true
+strum.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["io-util", "macros", "sync", "time"] }
+tracing.workspace = true
+
+[dev-dependencies]
+ren-store.workspace = true
+serde_json.workspace = true
+tempfile.workspace = true
+tokio = { workspace = true, features = ["io-util", "macros", "rt", "sync", "time"] }
+uuid.workspace = true
+
+[lints]
+workspace = true

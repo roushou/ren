@@ -1,13 +1,17 @@
 # Clients
 
 How to point Claude Code, Codex, Pi, and OpenCode at Ren, and how Ren
-attributes their traffic to sessions and turns.
+attributes their traffic to recordings and turns.
 
 Live subscription traffic has been exercised with Claude Code and Codex. Pi has
 been validated against local mock providers; live Pi subscription access is
-unvalidated. OpenCode support follows OpenCode 2.2.6's documentation and source
-and is covered by unit tests with synthetic headers; it has not been run against
-Ren.
+unvalidated. OpenCode runs driven by the daemon have been exercised with
+OpenCode 2.2.7 on its free `opencode/big-pickle` model: a turn with tools and
+edits, an approval, an interrupt, and resuming in a new process. Those calls do
+not pass through the gateway, so `ren run opencode` and OpenCode's `anthropic`
+and `openai` traffic through Ren follow OpenCode's documentation and source and
+are covered by unit tests with synthetic headers; they have not been run
+against Ren.
 
 ## Diagnose and launch
 
@@ -201,7 +205,7 @@ Usage is recorded only when the client asks for it in a stream
 (`stream_options.include_usage`); without it the call has no usage, which says
 nothing about how much was used. A stream that ends before `data: [DONE]` is
 recorded without terminal evidence. No harness is attributed, so these calls have
-no session or turn. Local servers that need no key (Ollama, vLLM, llama.cpp, LM
+no recording or turn. Local servers that need no key (Ollama, vLLM, llama.cpp, LM
 Studio) are not supported: every Chat Completions entry holds an operator key.
 
 ## Codex
@@ -303,7 +307,7 @@ have no turn, and requests for another session do not inherit the active run.
 Ren records these hints under `pi_extension_headers`, distinct from Claude Code
 and Codex. The `x-ren-pi-session-id` and `x-ren-pi-turn-id` headers are consumed by
 Ren and stripped before forwarding. Correlation remains scoped by upstream provider,
-so switching providers creates separate Ren session groups for the same Pi UUID.
+so switching providers creates separate recordings for the same Pi UUID.
 
 Verify with the installed Pi CLI without real credentials or inference charges:
 
@@ -366,8 +370,8 @@ Every model request OpenCode 2.x sends carries `x-opencode-session-id`, a
 every route, after Pi's extension headers, and records the hint under
 `opencode_headers`. Native session hints are UUIDs, so the hint holds a version 8
 UUID derived from the identifier (a namespaced SHA-256): one OpenCode session is
-always the same Ren session, and the `ses_…` text itself is never stored.
-OpenCode sends no turn identifier, so its calls have sessions but no turns. A
+always the same recording, and the `ses_…` text itself is never stored.
+OpenCode sends no turn identifier, so its calls have recordings but no turns. A
 subagent runs in a child session of its own, as OpenCode shows it. Its other
 headers (`x-opencode-project`, `x-opencode-client`, `x-session-affinity`, and the
 parent session) are forwarded unchanged and not recorded.
@@ -375,15 +379,27 @@ parent session) are forwarded unchanged and not recorded.
 Tool calls are read by OpenCode 2.x's names: `shell`, `read`, `write`, `edit`,
 `patch` (the same envelope as Codex's `apply_patch`), `glob`, `grep`,
 `subagent`, `webfetch`, and `websearch`. OpenCode reports a failed command by
-ending its output with `Exited with code N`, `Killed by SIGNAL`, or
-`Timed out before completion`; a successful command says nothing, so its status
-stays unreported. Its notices of finished background commands, subagents, and
+ending its output with `Exited with code N` (from 2.2.7, `Exit code: N`),
+`Killed by SIGNAL`, or `Timed out before completion`; before 2.2.7 a successful
+command says nothing, so its status stays unreported. Its notices of finished background commands, subagents, and
 commands the user ran (`<shell …>`, `<subagent …>`) are not counted as the
 user's prompt.
 
-## Sessions and turns
+Sessions can also drive OpenCode from the web UI or `ren runs`: the daemon runs
+`opencode acp` with the same override, so its `anthropic` and `openai` calls
+are recorded. OpenCode's own `opencode` provider, including the free models it
+offers without sign-in (such as `opencode/big-pickle`), reaches OpenCode's
+service directly, so those calls are not recorded; the run's conversation still
+is. With the override, OpenCode counts its `anthropic` and `openai` providers as
+set up whether or not it has a key for them, and would pick one of their models
+as its default. So the daemon lists OpenCode's models without the override (the
+models it can use as it is set up, and its own default), and a session that
+chose no model starts on that listed default, by name. See [runs](api.md#runs) for how
+its settings and approvals apply.
 
-Ren assigns its own typed session and turn IDs while retaining native identifiers
+## Recordings and turns
+
+Ren assigns its own typed recording and turn IDs while retaining native identifiers
 and their source in each call's `attribution`. Claude Code uses
 `x-claude-code-session-id` and `x-claude-code-prompt-id`; the environment flag above
 enables prompt hints for custom gateways. These headers are
@@ -392,8 +408,8 @@ Codex CLI 0.164.0 sends `session-id`, `thread-id`, and a `turn_id` inside
 `x-codex-turn-metadata`; this integration is version-sensitive. OpenCode's
 session header is described [above](#opencode).
 
-Sessions are scoped by provider, metadata source, and native session ID. Turns
-are scoped to their session. Tool follow-up requests carrying the same IDs stay
+Recordings are scoped by provider, metadata source, and native session ID. Turns
+are scoped to their recording. Tool follow-up requests carrying the same IDs stay
 in one turn. Native thread IDs are retained separately for Codex session trees.
 Missing identifiers remain `null`; malformed, duplicate, or conflicting metadata
 is flagged. Ren does not group by prompt text, cache keys, time, account, or request

@@ -8,10 +8,13 @@
 //! is still reported with its name.
 
 use crate::Harness;
+use crate::claude_code::ClaudeCodeTool;
+use crate::codex::CodexTool;
+use crate::opencode::OpenCodeTool;
+use crate::pi::PiTool;
 use ren_protocol::activity::{
     ActivityLimitation, Reading, RequestActivity, ResultStatus, ToolInput, ToolResult, ToolUse,
 };
-use ren_protocol::label::Labeled;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use serde_with::{DeserializeFromStr, SerializeDisplay};
@@ -52,295 +55,23 @@ pub enum CallPurpose {
     QuotaProbe,
 }
 
-/// Claude Code's built-in tools.
-#[derive(Display, EnumString, IntoStaticStr, VariantArray)]
-#[strum(serialize_all = "snake_case")]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SerializeDisplay, DeserializeFromStr)]
-pub enum ClaudeCodeTool {
-    #[strum(to_string = "Read")]
-    Read,
-    #[strum(to_string = "Write")]
-    Write,
-    #[strum(to_string = "Edit")]
-    Edit,
-    #[strum(to_string = "MultiEdit")]
-    MultiEdit,
-    #[strum(to_string = "NotebookEdit")]
-    NotebookEdit,
-    #[strum(to_string = "Bash")]
-    Bash,
-    #[strum(to_string = "Glob")]
-    Glob,
-    #[strum(to_string = "Grep")]
-    Grep,
-    #[strum(to_string = "Task")]
-    Task,
-    #[strum(to_string = "Agent")]
-    Agent,
-    #[strum(to_string = "WebFetch")]
-    WebFetch,
-    #[strum(to_string = "WebSearch")]
-    WebSearch,
-}
+impl ToolEffect {
+    /// The effect of `kind` on what the field `name` of `tool`'s input names;
+    /// none when the input has no such field.
+    pub(crate) fn of(kind: EffectKind, tool: &ToolUse, name: &str) -> Vec<Self> {
+        Self::field(tool, name)
+            .and_then(Self::command_text)
+            .map(|target| Self { kind, target })
+            .into_iter()
+            .collect()
+    }
 
-/// Codex's tools, by function name or by the item type that carries them.
-#[derive(Display, EnumString, IntoStaticStr, VariantArray)]
-#[strum(serialize_all = "snake_case")]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SerializeDisplay, DeserializeFromStr)]
-pub enum CodexTool {
-    Shell,
-    #[strum(to_string = "container.exec")]
-    ContainerExec,
-    ExecCommand,
-    LocalShellCall,
-    ShellCall,
-    ApplyPatch,
-    ApplyPatchCall,
-    ViewImage,
-    ReadFile,
-    WebSearchCall,
-}
-
-/// Pi's built-in tools.
-#[derive(Display, EnumString, IntoStaticStr, VariantArray)]
-#[strum(serialize_all = "snake_case")]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SerializeDisplay, DeserializeFromStr)]
-pub enum PiTool {
-    Read,
-    Write,
-    Edit,
-    Bash,
-    Grep,
-    Find,
-    Ls,
-}
-
-/// opencode's built-in tools (opencode 2.x).
-#[derive(Display, EnumString, IntoStaticStr, VariantArray)]
-#[strum(serialize_all = "snake_case")]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SerializeDisplay, DeserializeFromStr)]
-pub enum OpenCodeTool {
-    Shell,
-    Read,
-    Write,
-    Edit,
-    Patch,
-    Glob,
-    Grep,
-    Subagent,
-    Webfetch,
-    Websearch,
-}
-
-impl Harness {
-    /// Wrappers a client puts around context it adds to user messages.
-    const CLAUDE_CODE_CONTEXT: &[(&str, &str)] = &[("<system-reminder>", "</system-reminder>")];
-    /// Text Claude Code adds to a user message on its own, whole: "Tool
-    /// loaded." follows the result of a deferred tool it loaded.
-    const CLAUDE_CODE_NOTICES: &[&str] = &["Tool loaded."];
-    const CODEX_CONTEXT: &[(&str, &str)] = &[
-        ("<environment_context>", "</environment_context>"),
-        ("<user_instructions>", "</user_instructions>"),
-        ("# AGENTS.md instructions", ""),
-    ];
-    /// opencode's notices of a finished background command or subagent, and
-    /// of a command the user ran themself.
-    const OPENCODE_CONTEXT: &[(&str, &str)] = &[
-        ("<shell ", "</shell>"),
-        ("<subagent ", "</subagent>"),
-        (
-            "The following shell command was executed by the user:",
-            "</shell>",
-        ),
-    ];
-
-    /// What `tool` does, from its name and input. Unknown tools, and inputs
-    /// without the expected fields, have no effects.
-    pub fn effects(self, tool: &ToolUse) -> Vec<ToolEffect> {
-        let field = |name: &str| match &tool.input {
+    /// The field `name` of `tool`'s JSON input.
+    pub(crate) fn field<'a>(tool: &'a ToolUse, name: &str) -> Option<&'a Value> {
+        match &tool.input {
             ToolInput::Json(input) => input.get(name),
             ToolInput::Text(_) => None,
-        };
-        let effect = |kind: EffectKind, name: &str| {
-            field(name)
-                .and_then(Self::command_text)
-                .map(|target| ToolEffect { kind, target })
-                .into_iter()
-                .collect()
-        };
-        match self {
-            Self::ClaudeCode => match ClaudeCodeTool::from_label(&tool.name) {
-                Some(ClaudeCodeTool::Read) => effect(EffectKind::ReadFile, "file_path"),
-                Some(ClaudeCodeTool::Write | ClaudeCodeTool::Edit | ClaudeCodeTool::MultiEdit) => {
-                    effect(EffectKind::WriteFile, "file_path")
-                }
-                Some(ClaudeCodeTool::NotebookEdit) => {
-                    effect(EffectKind::WriteFile, "notebook_path")
-                }
-                Some(ClaudeCodeTool::Bash) => effect(EffectKind::RunCommand, "command"),
-                Some(ClaudeCodeTool::Glob | ClaudeCodeTool::Grep) => {
-                    effect(EffectKind::Search, "pattern")
-                }
-                Some(ClaudeCodeTool::Task | ClaudeCodeTool::Agent) => {
-                    effect(EffectKind::Delegate, "description")
-                }
-                Some(ClaudeCodeTool::WebFetch) => effect(EffectKind::Fetch, "url"),
-                Some(ClaudeCodeTool::WebSearch) => effect(EffectKind::Search, "query"),
-                None => Vec::new(),
-            },
-            Self::Codex => {
-                let tool_kind =
-                    CodexTool::from_label(&tool.name).or_else(|| CodexTool::from_label(&tool.kind));
-                match tool_kind {
-                    Some(
-                        CodexTool::Shell | CodexTool::ContainerExec | CodexTool::LocalShellCall,
-                    ) => effect(EffectKind::RunCommand, "command"),
-                    Some(CodexTool::ExecCommand) => effect(EffectKind::RunCommand, "cmd"),
-                    Some(CodexTool::ShellCall) => effect(EffectKind::RunCommand, "commands"),
-                    Some(CodexTool::ApplyPatch) => match &tool.input {
-                        ToolInput::Text(patch) => Self::patch_files(patch),
-                        ToolInput::Json(input) => input
-                            .get("input")
-                            .and_then(Value::as_str)
-                            .map(Self::patch_files)
-                            .unwrap_or_default(),
-                    },
-                    Some(CodexTool::ApplyPatchCall) => effect(EffectKind::WriteFile, "path"),
-                    Some(CodexTool::ViewImage | CodexTool::ReadFile) => {
-                        effect(EffectKind::ReadFile, "path")
-                    }
-                    Some(CodexTool::WebSearchCall) => effect(EffectKind::Search, "query"),
-                    None => Vec::new(),
-                }
-            }
-            Self::Pi => match PiTool::from_label(&tool.name) {
-                Some(PiTool::Read) => effect(EffectKind::ReadFile, "path"),
-                Some(PiTool::Write | PiTool::Edit) => effect(EffectKind::WriteFile, "path"),
-                Some(PiTool::Bash) => effect(EffectKind::RunCommand, "command"),
-                Some(PiTool::Grep | PiTool::Find) => effect(EffectKind::Search, "pattern"),
-                Some(PiTool::Ls) => effect(EffectKind::ReadFile, "path"),
-                None => Vec::new(),
-            },
-            Self::OpenCode => match OpenCodeTool::from_label(&tool.name) {
-                Some(OpenCodeTool::Shell) => effect(EffectKind::RunCommand, "command"),
-                Some(OpenCodeTool::Read) => effect(EffectKind::ReadFile, "path"),
-                Some(OpenCodeTool::Write | OpenCodeTool::Edit) => {
-                    effect(EffectKind::WriteFile, "path")
-                }
-                Some(OpenCodeTool::Patch) => field("patchText")
-                    .and_then(Value::as_str)
-                    .map(Self::patch_files)
-                    .unwrap_or_default(),
-                Some(OpenCodeTool::Glob | OpenCodeTool::Grep) => {
-                    effect(EffectKind::Search, "pattern")
-                }
-                Some(OpenCodeTool::Subagent) => effect(EffectKind::Delegate, "description"),
-                Some(OpenCodeTool::Webfetch) => effect(EffectKind::Fetch, "url"),
-                Some(OpenCodeTool::Websearch) => effect(EffectKind::Search, "query"),
-                None => Vec::new(),
-            },
         }
-    }
-
-    /// The message Claude Code's quota probe sends, alone.
-    const CLAUDE_CODE_QUOTA_PROBE: &str = "quota";
-
-    /// Why the client sent a request.
-    pub fn purpose(self, request: &RequestActivity) -> CallPurpose {
-        match self {
-            Self::ClaudeCode
-                if request.max_output_tokens == Some(1)
-                    && request.tool_results.is_empty()
-                    && matches!(
-                        request.user_text.as_slice(),
-                        [text] if text == Self::CLAUDE_CODE_QUOTA_PROBE
-                    ) =>
-            {
-                CallPurpose::QuotaProbe
-            }
-            Self::ClaudeCode | Self::Codex | Self::Pi | Self::OpenCode => CallPurpose::Work,
-        }
-    }
-
-    /// The user's own words in a request's newest user text: the client's
-    /// added context removed. `None` when nothing else is left.
-    pub fn prompt(self, user_text: &[String]) -> Option<String> {
-        let (context, notices) = match self {
-            Self::ClaudeCode => (Self::CLAUDE_CODE_CONTEXT, Self::CLAUDE_CODE_NOTICES),
-            Self::Codex => (Self::CODEX_CONTEXT, &[][..]),
-            Self::Pi => (&[][..], &[][..]),
-            Self::OpenCode => (Self::OPENCODE_CONTEXT, &[][..]),
-        };
-        let own: Vec<&str> = user_text
-            .iter()
-            .map(|text| text.trim())
-            .filter(|text| {
-                !text.is_empty()
-                    && !notices.contains(text)
-                    && !context
-                        .iter()
-                        .any(|(open, close)| text.starts_with(open) && text.ends_with(close))
-            })
-            .collect();
-        (!own.is_empty()).then(|| own.join("\n\n"))
-    }
-
-    /// A tool result's status: the protocol's flag, or, for Codex commands,
-    /// the exit code its output reports, or, for opencode commands, the
-    /// failure its output ends with. opencode says nothing when a command
-    /// exits 0, so its silence stays unreported.
-    pub fn result_status(self, result: &ToolResult) -> ResultStatus {
-        match (self, result.status) {
-            (Self::OpenCode, ResultStatus::Unreported) => {
-                if Self::opencode_failure(&result.output) {
-                    ResultStatus::Failed
-                } else {
-                    ResultStatus::Unreported
-                }
-            }
-            (Self::Codex, ResultStatus::Unreported) => {
-                Self::exit_code(&result.output).map_or(ResultStatus::Unreported, |code| {
-                    if code == 0 {
-                        ResultStatus::Succeeded
-                    } else {
-                        ResultStatus::Failed
-                    }
-                })
-            }
-            (Self::ClaudeCode | Self::Codex | Self::Pi | Self::OpenCode, status) => status,
-        }
-    }
-
-    /// opencode ends a command's output with `Exited with code N` (never 0),
-    /// `Killed by SIGNAL`, or `Timed out before completion`.
-    fn opencode_failure(output: &str) -> bool {
-        let Some(last) = output.lines().map(str::trim).rfind(|line| !line.is_empty()) else {
-            return false;
-        };
-        if let Some(code) = last.strip_prefix("Exited with code ") {
-            return code.parse::<i64>().is_ok_and(|code| code != 0);
-        }
-        last == "Timed out before completion"
-            || last
-                .strip_prefix("Killed by ")
-                .is_some_and(|signal| !signal.is_empty())
-    }
-
-    /// Codex reports a command's exit code as a first line `Exit code: N`,
-    /// or as JSON `{"metadata": {"exit_code": N}}`.
-    fn exit_code(output: &str) -> Option<i64> {
-        if let Some(code) = output
-            .lines()
-            .next()
-            .and_then(|line| line.trim().strip_prefix("Exit code:"))
-        {
-            return code.trim().parse().ok();
-        }
-        serde_json::from_str::<Value>(output)
-            .ok()?
-            .get("metadata")?
-            .get("exit_code")?
-            .as_i64()
     }
 
     /// A command as text: a string, or an argument list. A shell invocation
@@ -363,7 +94,7 @@ impl Harness {
     }
 
     /// The files an `apply_patch` envelope adds, updates, moves, or deletes.
-    fn patch_files(patch: &str) -> Vec<ToolEffect> {
+    pub(crate) fn patched(patch: &str) -> Vec<Self> {
         const MARKERS: [&str; 4] = [
             "*** Add File: ",
             "*** Update File: ",
@@ -373,11 +104,103 @@ impl Harness {
         patch
             .lines()
             .filter_map(|line| MARKERS.iter().find_map(|marker| line.strip_prefix(marker)))
-            .map(|path| ToolEffect {
+            .map(|path| Self {
                 kind: EffectKind::WriteFile,
                 target: path.trim().to_owned(),
             })
             .collect()
+    }
+}
+
+/// What a client adds to a user message on its own: wrappers around the
+/// context it adds, and whole notices.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct UserContext {
+    pub(crate) wrappers: &'static [(&'static str, &'static str)],
+    pub(crate) notices: &'static [&'static str],
+}
+
+impl UserContext {
+    pub(crate) const NONE: Self = Self {
+        wrappers: &[],
+        notices: &[],
+    };
+
+    /// The user's own words in `user_text`: the client's additions removed.
+    /// `None` when nothing else is left.
+    fn prompt(self, user_text: &[String]) -> Option<String> {
+        let own: Vec<&str> = user_text
+            .iter()
+            .map(|text| text.trim())
+            .filter(|text| {
+                !text.is_empty()
+                    && !self.notices.contains(text)
+                    && !self
+                        .wrappers
+                        .iter()
+                        .any(|(open, close)| text.starts_with(open) && text.ends_with(close))
+            })
+            .collect();
+        (!own.is_empty()).then(|| own.join("\n\n"))
+    }
+}
+
+impl Harness {
+    /// What `tool` does, from its name and input. Unknown tools, and inputs
+    /// without the expected fields, have no effects.
+    pub fn effects(self, tool: &ToolUse) -> Vec<ToolEffect> {
+        match self {
+            Self::ClaudeCode => ClaudeCodeTool::effects(tool),
+            Self::Codex => CodexTool::effects(tool),
+            Self::Pi => PiTool::effects(tool),
+            Self::OpenCode => OpenCodeTool::effects(tool),
+        }
+    }
+
+    /// Why the client sent a request.
+    pub fn purpose(self, request: &RequestActivity) -> CallPurpose {
+        match self {
+            Self::ClaudeCode if ClaudeCodeTool::quota_probe(request) => CallPurpose::QuotaProbe,
+            Self::ClaudeCode | Self::Codex | Self::Pi | Self::OpenCode => CallPurpose::Work,
+        }
+    }
+
+    /// The user's own words in a request's newest user text: the client's
+    /// added context removed. `None` when nothing else is left.
+    pub fn prompt(self, user_text: &[String]) -> Option<String> {
+        match self {
+            Self::ClaudeCode => ClaudeCodeTool::CONTEXT,
+            Self::Codex => CodexTool::CONTEXT,
+            Self::Pi => UserContext::NONE,
+            Self::OpenCode => OpenCodeTool::CONTEXT,
+        }
+        .prompt(user_text)
+    }
+
+    /// A tool result's status: the protocol's flag, or, for Codex commands,
+    /// the exit code its output reports, or, for opencode commands, the
+    /// failure its output ends with. opencode says nothing when a command
+    /// exits 0, so its silence stays unreported.
+    pub fn result_status(self, result: &ToolResult) -> ResultStatus {
+        match (self, result.status) {
+            (Self::OpenCode, ResultStatus::Unreported) => {
+                if OpenCodeTool::failed(&result.output) {
+                    ResultStatus::Failed
+                } else {
+                    ResultStatus::Unreported
+                }
+            }
+            (Self::Codex, ResultStatus::Unreported) => {
+                CodexTool::exit_code(&result.output).map_or(ResultStatus::Unreported, |code| {
+                    if code == 0 {
+                        ResultStatus::Succeeded
+                    } else {
+                        ResultStatus::Failed
+                    }
+                })
+            }
+            (Self::ClaudeCode | Self::Codex | Self::Pi | Self::OpenCode, status) => status,
+        }
     }
 }
 
@@ -787,6 +610,9 @@ mod tests {
             ("error: x\n\nExited with code 101", ResultStatus::Failed),
             ("partial\nKilled by SIGTERM\n", ResultStatus::Failed),
             ("Timed out before completion", ResultStatus::Failed),
+            // opencode 2.2.7 names every exit code.
+            ("error: x\nExit code: 2", ResultStatus::Failed),
+            ("ok\nExit code: 0", ResultStatus::Unreported),
             // Success is silent, so it stays unreported.
             ("test result: ok", ResultStatus::Unreported),
             ("Exited with code 0", ResultStatus::Unreported),

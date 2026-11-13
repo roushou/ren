@@ -169,66 +169,61 @@ mod tests {
 
     const TARGET: &str = "http://127.0.0.1:8787";
 
-    fn route(json: &str) -> Route {
-        ServeStatus::parse(json).unwrap().route(8443, TARGET)
-    }
-
     #[test]
-    fn unused_serve_leaves_the_port_free() {
-        assert_eq!(route(""), Route::Free);
-        assert_eq!(route("null"), Route::Free);
-        assert_eq!(route("{}"), Route::Free);
-    }
-
-    #[test]
-    fn other_ports_do_not_hold_this_one() {
-        let json = r#"{"TCP":{"443":{"HTTPS":true}},"Web":{"vps.t.ts.net:443":{"Handlers":{"/":{"Proxy":"http://127.0.0.1:3000"}}}}}"#;
-        assert_eq!(route(json), Route::Free);
-    }
-
-    #[test]
-    fn a_proxy_to_the_gateway_is_ours() {
-        let json = r#"{"TCP":{"8443":{"HTTPS":true}},"Web":{"vps.t.ts.net:8443":{"Handlers":{"/":{"Proxy":"http://127.0.0.1:8787/"}}}}}"#;
-        assert_eq!(route(json), Route::Target);
-    }
-
-    #[test]
-    fn another_application_holds_the_port() {
-        let json = r#"{"TCP":{"8443":{"HTTPS":true}},"Web":{"vps.t.ts.net:8443":{"Handlers":{"/":{"Proxy":"http://127.0.0.1:3000"}}}}}"#;
-        assert_eq!(
-            route(json),
-            Route::Other {
-                host_port: "vps.t.ts.net:8443".to_owned(),
-                handlers: r#"{"/":{"Proxy":"http://127.0.0.1:3000"}}"#.to_owned(),
-            }
-        );
-    }
-
-    #[test]
-    fn extra_handlers_or_fields_are_not_ours() {
-        let paths = r#"{"TCP":{"8443":{"HTTPS":true}},"Web":{"vps.t.ts.net:8443":{"Handlers":{"/":{"Proxy":"http://127.0.0.1:8787"},"/ui":{"Proxy":"http://127.0.0.1:3000"}}}}}"#;
-        assert!(matches!(route(paths), Route::Other { .. }));
-        let files = r#"{"TCP":{"8443":{"HTTPS":true}},"Web":{"vps.t.ts.net:8443":{"Handlers":{"/":{"Proxy":"http://127.0.0.1:8787","Path":"/srv"}}}}}"#;
-        assert!(matches!(route(files), Route::Other { .. }));
-    }
-
-    #[test]
-    fn funnel_is_refused_even_to_the_gateway() {
-        let json = r#"{"TCP":{"8443":{"HTTPS":true}},"Web":{"vps.t.ts.net:8443":{"Handlers":{"/":{"Proxy":"http://127.0.0.1:8787"}}}},"AllowFunnel":{"vps.t.ts.net:8443":true}}"#;
-        assert_eq!(
-            route(json),
-            Route::Funnel {
-                host_port: "vps.t.ts.net:8443".to_owned()
-            }
-        );
-    }
-
-    #[test]
-    fn a_tcp_forward_holds_the_port() {
-        assert_eq!(
-            route(r#"{"TCP":{"8443":{"TCPForward":"127.0.0.1:22"}}}"#),
-            Route::TcpForward
-        );
+    fn serve_status_says_how_the_port_is_routed() {
+        let other = |handlers: &str| Route::Other {
+            host_port: "vps.t.ts.net:8443".to_owned(),
+            handlers: handlers.to_owned(),
+        };
+        let cases = [
+            ("serve unused, no output", "", Route::Free),
+            ("serve unused, null", "null", Route::Free),
+            ("serve unused, empty object", "{}", Route::Free),
+            (
+                "other ports do not hold this one",
+                r#"{"TCP":{"443":{"HTTPS":true}},"Web":{"vps.t.ts.net:443":{"Handlers":{"/":{"Proxy":"http://127.0.0.1:3000"}}}}}"#,
+                Route::Free,
+            ),
+            (
+                "a proxy to the gateway is ours",
+                r#"{"TCP":{"8443":{"HTTPS":true}},"Web":{"vps.t.ts.net:8443":{"Handlers":{"/":{"Proxy":"http://127.0.0.1:8787/"}}}}}"#,
+                Route::Target,
+            ),
+            (
+                "another application holds the port",
+                r#"{"TCP":{"8443":{"HTTPS":true}},"Web":{"vps.t.ts.net:8443":{"Handlers":{"/":{"Proxy":"http://127.0.0.1:3000"}}}}}"#,
+                other(r#"{"/":{"Proxy":"http://127.0.0.1:3000"}}"#),
+            ),
+            (
+                "an extra handler is not ours",
+                r#"{"TCP":{"8443":{"HTTPS":true}},"Web":{"vps.t.ts.net:8443":{"Handlers":{"/":{"Proxy":"http://127.0.0.1:8787"},"/ui":{"Proxy":"http://127.0.0.1:3000"}}}}}"#,
+                other(
+                    r#"{"/":{"Proxy":"http://127.0.0.1:8787"},"/ui":{"Proxy":"http://127.0.0.1:3000"}}"#,
+                ),
+            ),
+            (
+                "an extra handler field is not ours",
+                r#"{"TCP":{"8443":{"HTTPS":true}},"Web":{"vps.t.ts.net:8443":{"Handlers":{"/":{"Proxy":"http://127.0.0.1:8787","Path":"/srv"}}}}}"#,
+                other(r#"{"/":{"Proxy":"http://127.0.0.1:8787","Path":"/srv"}}"#),
+            ),
+            (
+                "funnel is refused even to the gateway",
+                r#"{"TCP":{"8443":{"HTTPS":true}},"Web":{"vps.t.ts.net:8443":{"Handlers":{"/":{"Proxy":"http://127.0.0.1:8787"}}}},"AllowFunnel":{"vps.t.ts.net:8443":true}}"#,
+                Route::Funnel {
+                    host_port: "vps.t.ts.net:8443".to_owned(),
+                },
+            ),
+            (
+                "a TCP forward holds the port",
+                r#"{"TCP":{"8443":{"TCPForward":"127.0.0.1:22"}}}"#,
+                Route::TcpForward,
+            ),
+        ];
+        for (case, json, expected) in cases {
+            let status = ServeStatus::parse(json)
+                .unwrap_or_else(|error| panic!("{case}: unparsed: {error}"));
+            assert_eq!(status.route(8443, TARGET), expected, "{case}");
+        }
     }
 
     #[test]

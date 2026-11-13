@@ -417,6 +417,7 @@ impl<U: Upstream> Gateway<U> {
 
     /// All HTTP routes. Tests can drive this same router without a connection.
     pub fn router(self: Arc<Self>, management: ManagementSetup) -> Router {
+        let reader = management.reader.clone();
         let api = ApiState::new(
             ReadSources {
                 reader: management.reader,
@@ -439,9 +440,10 @@ impl<U: Upstream> Gateway<U> {
             self.config.users.clone(),
             management.backup,
         );
+        let feeds_end = self.shutdown.drain_token();
         self.forwarding_router()
             .merge(api.router())
-            .merge(control.router())
+            .merge(control.router(reader, management.runs, feeds_end))
     }
 
     /// The forwarding routes, built from the upstream table's bound routes.

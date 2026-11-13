@@ -5,7 +5,7 @@ use ren_harness::Harness;
 use ren_protocol::route::Provider;
 use ren_recorder::{
     caller::UserId,
-    id::{CallId, SessionId},
+    id::{CallId, RecordingId},
     time::UnixMillis,
 };
 use serde_with::{DeserializeFromStr, SerializeDisplay};
@@ -151,6 +151,50 @@ pub enum KindFilter {
     Other,
 }
 
+/// Which part of a listing: what is current, or what was archived.
+#[derive(Display, EnumString, IntoStaticStr, VariantArray)]
+#[strum(serialize_all = "snake_case")]
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Hash, SerializeDisplay, DeserializeFromStr,
+)]
+pub enum Shelf {
+    #[default]
+    Current,
+    Archived,
+}
+
+impl Shelf {
+    /// The SQL condition a recording `s` meets on this shelf.
+    pub(crate) fn recordings(self) -> &'static str {
+        match self {
+            Self::Current => "(s.archived_at IS NULL OR s.archived_at < s.last_seen)",
+            Self::Archived => "(s.archived_at IS NOT NULL AND s.archived_at >= s.last_seen)",
+        }
+    }
+
+    /// The SQL condition an operator session meets on this shelf: one with
+    /// a run still running is always current.
+    pub(crate) fn sessions(self) -> &'static str {
+        match self {
+            Self::Current => {
+                "(archived_at IS NULL OR EXISTS (SELECT 1 FROM runs WHERE runs.operator_session = operator_sessions.id AND runs.ended_at IS NULL))"
+            }
+            Self::Archived => {
+                "(archived_at IS NOT NULL AND NOT EXISTS (SELECT 1 FROM runs WHERE runs.operator_session = operator_sessions.id AND runs.ended_at IS NULL))"
+            }
+        }
+    }
+
+    /// The SQL condition a run meets on this shelf: a running run is always
+    /// current.
+    pub(crate) fn runs(self) -> &'static str {
+        match self {
+            Self::Current => "(archived_at IS NULL OR ended_at IS NULL)",
+            Self::Archived => "(archived_at IS NOT NULL AND ended_at IS NOT NULL)",
+        }
+    }
+}
+
 /// Whether the model requested tools.
 #[derive(Display, EnumString, IntoStaticStr, VariantArray)]
 #[strum(serialize_all = "snake_case")]
@@ -190,7 +234,7 @@ impl TimeRange {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct CallFilter {
     /// Calls Ren grouped into this session.
-    pub session: Option<SessionId>,
+    pub session: Option<RecordingId>,
     /// Calls attributed to this harness by its own headers or metadata.
     pub client: Option<Harness>,
     /// Calls a named user made.

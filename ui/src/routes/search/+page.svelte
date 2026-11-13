@@ -5,7 +5,7 @@
   import { date, sessionTone } from '#lib/display.ts';
   import { searchFieldLabel, searchHitHref, snippetParts } from '#lib/activity.ts';
   import Icon from '#lib/Icon.svelte';
-  import SessionName from '#lib/SessionName.svelte';
+  import RecordingName from '#lib/RecordingName.svelte';
   import Segmented, { type SegmentedOption } from '#lib/Segmented.svelte';
   import type { PageProps } from './$types';
   let { data }: PageProps = $props();
@@ -111,7 +111,7 @@
             <li>
               <a class="search-hit" href={searchHitHref(hit)}>
                 <span class="search-hit-meta">
-                  {#if hit.session && sessionsById.get(hit.session)}<SessionName
+                  {#if hit.session && sessionsById.get(hit.session)}<RecordingName
                       session={sessionsById.get(hit.session)!}
                       detail={details.get(hit.session)}
                     />{:else if hit.session}<span

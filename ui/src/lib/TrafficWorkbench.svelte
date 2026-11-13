@@ -7,7 +7,7 @@
   import { createSnapshot } from './snapshot.svelte.ts';
   import type { Snapshot } from './snapshots.ts';
   import { offPageSelection, type OffPageSelection, type TrafficData } from './loaders.ts';
-  import { CallId, type CallView, type SessionId } from './api.ts';
+  import { CallId, type CallView, type RecordingId } from './api.ts';
   import { num, short, title, clock, providerName, providerMark } from './api.ts';
   import {
     isActive,
@@ -37,12 +37,13 @@
   } from './traffic.ts';
   import { LiveFollow } from './live.ts';
   import Icon from './Icon.svelte';
+  import RecordingActions from './RecordingActions.svelte';
   import Inspector from './Inspector.svelte';
   import Select, { type SelectOption } from './Select.svelte';
   import Segmented, { type SegmentedOption } from './Segmented.svelte';
   import ConnectClient from './ConnectClient.svelte';
-  import SessionName from './SessionName.svelte';
-  let { snapshot, sessionId }: { snapshot: Snapshot<TrafficData>; sessionId: SessionId | null } =
+  import RecordingName from './RecordingName.svelte';
+  let { snapshot, sessionId }: { snapshot: Snapshot<TrafficData>; sessionId: RecordingId | null } =
     $props();
   const workbench = getWorkbench();
   // The scope bar shows the narrowing controls, or the session itself.
@@ -200,8 +201,8 @@
   function updateCall(record: CallView) {
     observed = record;
   }
-  function showCallSession(id: SessionId) {
-    const url = new URL(`/sessions/${encodeURIComponent(id)}`, page.url.origin);
+  function showCallRecording(id: RecordingId) {
+    const url = new URL(`/recordings/${encodeURIComponent(id)}`, page.url.origin);
     if (selectedId) url.searchParams.set('call', selectedId);
     void goto(url);
   }
@@ -257,7 +258,7 @@
   }
   const sessionChoices = $derived(retained.current.value?.sessions ?? []);
   const sessionOptions = $derived<SelectOption<string>[]>([
-    { value: '', label: 'All sessions' },
+    { value: '', label: 'All recordings' },
     ...sessionChoices.map((choice) => ({
       value: choice.id,
       label: short(choice.native_id),
@@ -297,7 +298,7 @@
     return found ? short(found.native_id) : short(id);
   }
   function chipLabel(key: string, value: string) {
-    if (key === 'session') return `Session: ${sessionName(value)}`;
+    if (key === 'session') return `Recording: ${sessionName(value)}`;
     if (key === 'user') return `User: ${value}`;
     if (key === 'client')
       return `Client: ${clientChoices.find((item) => item.client === value)?.label ?? value}`;
@@ -354,8 +355,8 @@
   {#if sessionId}
     <div class="scope-group scope-identity">
       {#if session}<span class="scope-session"
-          ><SessionName {session} detail={details.get(session.id)} /></span
-        ><small class="mono muted" title={`Ren's own ID for this session: ${session.id}`}
+          ><RecordingName {session} detail={details.get(session.id)} /></span
+        ><small class="mono muted" title={`Ren's own ID for this recording: ${session.id}`}
           >{short(session.native_id)}</small
         >{:else}<strong class="mono">{short(sessionId)}</strong>{/if}
     </div>
@@ -373,11 +374,12 @@
         >
       </div>{/if}
     <div class="scope-group end">
-      <a class="text-button" href={`/sessions/${encodeURIComponent(sessionId)}/report`}
+      {#if page.data.runsControl}<RecordingActions session={sessionId} />{/if}
+      <a class="text-button" href={`/recordings/${encodeURIComponent(sessionId)}/report`}
         >Turns and report <Icon name="arrow" size={12} /></a
       ><a class="text-button" href={`/traffic?session=${encodeURIComponent(sessionId)}`}
         >Narrow in Traffic <Icon name="arrow" size={12} /></a
-      ><a class="text-button" href="/sessions">All sessions <Icon name="arrow" size={12} /></a>
+      ><a class="text-button" href="/recordings">All recordings <Icon name="arrow" size={12} /></a>
     </div>
   {:else}
     <div class="scope-group">
@@ -390,7 +392,7 @@
     </div>
     <div class="scope-group">
       <Select
-        label="Session"
+        label="Recording"
         size="compact"
         options={sessionOptions}
         value={applied.get('session') ?? ''}
@@ -593,7 +595,7 @@
               : filterCount || !!after
                 ? 'Try a broader search or adjust your filters.'
                 : sessionId
-                  ? 'Refresh to check for new activity in this session.'
+                  ? 'Refresh to check for new activity in this recording.'
                   : 'Point a client at Ren or use a launch command below.'}
           </p>
           {#if !loading && (filterCount || !!after)}<button class="button" onclick={resetFilters}
@@ -658,10 +660,10 @@
                           >{#if c.session}{@const session = c.session}<button
                               type="button"
                               class="session-filter"
-                              title="Show only this session's calls"
-                              aria-label={`Show only session ${short(c.attribution.hint?.session ?? session)}`}
+                              title="Show only this recording's calls"
+                              aria-label={`Show only recording ${short(c.attribution.hint?.session ?? session)}`}
                               onclick={() => pick((f) => (f.session = session))}
-                              >{#if sessionsById.get(session) && (!previous || previous.session !== c.session)}<SessionName
+                              >{#if sessionsById.get(session) && (!previous || previous.session !== c.session)}<RecordingName
                                   session={sessionsById.get(session)!}
                                   detail={details.get(session)}
                                   client={false}
@@ -669,8 +671,8 @@
                                 ></span>{#if !previous || previous.session !== c.session}{c
                                     .attribution.hint
                                     ? short(c.attribution.hint.session)
-                                    : 'Session'}{/if}{/if}</button
-                            >{:else if !previous || previous.session !== c.session}No session{/if}{#if c.caller?.user || c.caller?.login}{@const caller =
+                                    : 'Recording'}{/if}{/if}</button
+                            >{:else if !previous || previous.session !== c.session}No recording{/if}{#if c.caller?.user || c.caller?.login}{@const caller =
                               callerShown(c.caller)}<span class="caller-line"
                               >{SEPARATOR}{#if caller.user}{@const user = caller.user}<button
                                   type="button"
@@ -742,7 +744,7 @@
   {#if selected}{#key selected.id}<Inspector
         call={selected}
         close={closeInspector}
-        onsession={showCallSession}
+        onsession={showCallRecording}
         onupdate={updateCall}
       />{/key}{/if}
 </div>

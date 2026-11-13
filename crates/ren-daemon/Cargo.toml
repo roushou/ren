@@ -12,16 +12,18 @@ description = "Configuration, resource wiring, and lifecycle of the Ren LLM gate
 # clock and random IDs and the daemon's task spawns; HTTP handling belongs to
 # ren-gateway (docs/architecture.md).
 [dependencies]
+ignore = "0.4.25"
 ren-gateway.workspace = true
 ren-harness.workspace = true
 ren-protocol.workspace = true
 ren-recorder.workspace = true
 ren-store.workspace = true
+ren-supervisor.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 thiserror.workspace = true
-tokio = { workspace = true, features = ["macros", "net", "rt", "sync", "time"] }
+tokio = { workspace = true, features = ["macros", "net", "process", "rt", "sync", "time"] }
 toml.workspace = true
 tracing.workspace = true
 uuid = { workspace = true, features = ["v4"] }

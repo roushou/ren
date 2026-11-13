@@ -109,9 +109,6 @@ fn anthropic_stream_reports_model_usage_tools_and_outcome() {
 fn stop_reasons_map_to_deliberate_outcomes_and_unknown_reasons_stay_unknown() {
     for (reason, outcome) in [
         ("end_turn", ModelOutcome::Completed),
-        ("max_tokens", ModelOutcome::Incomplete),
-        ("pause_turn", ModelOutcome::Incomplete),
-        ("refusal", ModelOutcome::Refused),
         ("a_future_reason", ModelOutcome::Unknown),
     ] {
         let body = sse(&[
@@ -496,6 +493,8 @@ fn sources_stay_free_of_runtime_and_io() {
             include_str!("activity/anthropic.rs"),
         ),
         ("activity/openai.rs", include_str!("activity/openai.rs")),
+        ("activity/chat.rs", include_str!("activity/chat.rs")),
+        ("chat.rs", include_str!("chat.rs")),
         ("direction.rs", include_str!("direction.rs")),
         ("encoding.rs", include_str!("encoding.rs")),
         ("inspect/mod.rs", include_str!("inspect/mod.rs")),

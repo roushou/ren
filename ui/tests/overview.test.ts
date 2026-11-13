@@ -60,7 +60,7 @@ test('each problem says what is wrong, and where to look', () => {
     ['Daemon reachable', 'success'],
     ['Capture loss', 'warning'],
     ['Paused · retry in 30 s', 'warning'],
-    ['2 sessions blocked', 'warning'],
+    ['2 recordings blocked', 'warning'],
     ['950 B of 1000 B', 'error'],
   ]);
   const failing = healthLine(healthFixture({ storage_errors: 1 }), null, null);
@@ -134,8 +134,8 @@ test('attention ranks secrets, then failed work, then cut-off work, then bookkee
   assert.equal(attention.worst, 'error');
   const [secrets, , , probes] = attention.groups;
   // One session: the secrets link to its report, and say what and where.
-  assert.equal(secrets?.href, `/sessions/${uuid(9)}/report`);
-  assert.match(secrets?.detail ?? '', /OpenAI API key in prompt · 1 session · rotate them/);
+  assert.equal(secrets?.href, `/recordings/${uuid(9)}/report`);
+  assert.match(secrets?.detail ?? '', /OpenAI API key in prompt · 1 recording · rotate them/);
   // Repeats fold into one line, with when each happened along the day.
   assert.deepEqual(
     probes?.marks.map((mark) => Math.round(mark * 24)),
@@ -223,7 +223,7 @@ test('the verdict takes its tone from the worst real problem, never from bookkee
   });
   assert.equal(calm.tone, 'success');
   assert.equal(calm.headline, 'Recording normally');
-  assert.deepEqual(calm.facts, ['2 sessions active', 'nothing in flight, last call 30 s ago']);
+  assert.deepEqual(calm.facts, ['2 recordings active', 'nothing in flight, last call 30 s ago']);
   assert.deepEqual(calm.problems, []);
   const secrets = new Verdict({
     health: healthy,
@@ -235,7 +235,7 @@ test('the verdict takes its tone from the worst real problem, never from bookkee
     now: NOW,
   });
   assert.equal(secrets.tone, 'error');
-  assert.deepEqual(secrets.facts, ['no session active', '3 in flight']);
+  assert.deepEqual(secrets.facts, ['no recording active', '3 in flight']);
   assert.deepEqual(
     secrets.problems.map((problem) => problem.title),
     ['1 secret exposed'],

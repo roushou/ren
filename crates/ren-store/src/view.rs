@@ -4,8 +4,13 @@
 //! verbatim instead of failing the query.
 
 use crate::{StoreError, query::Cursor};
+use ren_harness::Harness;
 use ren_harness::attribution::{HintIssue, HintSource};
 use ren_harness::tools::CallPurpose;
+use ren_harness::{
+    drive::DriveEvent,
+    settings::{ApprovalPolicy, Effort},
+};
 use ren_protocol::{
     direction::Direction,
     encoding::{ResponseEncoding, ResponseFormat},
@@ -22,9 +27,9 @@ use ren_recorder::routing::OperatorRevision;
 use ren_recorder::{
     capture::{
         AttemptPhase, AttemptTerminal, BodyEnding, CallRejection, CallState, ChannelEnd,
-        TerminalCause,
+        ProcessExit, RunEnd, TerminalCause,
     },
-    id::{AttemptId, CallId, ChannelId, SessionId, TurnId},
+    id::{AttemptId, CallId, ChannelId, RecordingId, RunId, SessionId, TurnId},
     time::UnixMillis,
 };
 use serde::{Deserialize, Serialize};
@@ -194,7 +199,7 @@ pub struct CallView {
     pub endpoint: Stored<Endpoint>,
     pub method: Stored<Method>,
     pub config_revision: String,
-    pub session: Option<SessionId>,
+    pub session: Option<RecordingId>,
     pub turn: Option<TurnId>,
     pub attribution: AttributionView,
     /// Who made the call; absent for calls recorded before callers were.
@@ -409,13 +414,15 @@ pub struct CallPage {
 
 /// A group of calls a client attributed to one session.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SessionView {
-    pub id: SessionId,
+pub struct RecordingView {
+    pub id: RecordingId,
     pub provider: Stored<Provider>,
     pub source: Stored<HintSource>,
     pub native_id: String,
     pub first_seen: UnixMillis,
     pub last_seen: UnixMillis,
+    /// When the operator archived it, while it has no newer traffic.
+    pub archived_at: Option<UnixMillis>,
     pub call_count: u64,
     pub turn_count: u64,
     /// Calls with an error status, a failed transport, or a failed model
@@ -506,7 +513,7 @@ pub struct UserUsage {
     pub usage: UsageCounts,
 }
 
-impl SessionView {
+impl RecordingView {
     pub(super) fn from_row(row: &SqliteRow) -> Result<Self, StoreError> {
         let row = Columns(row);
         Ok(Self {
@@ -516,6 +523,7 @@ impl SessionView {
             native_id: row.text("native_id")?.unwrap_or_default(),
             first_seen: row.time("first_seen")?,
             last_seen: row.time("last_seen")?,
+            archived_at: row.optional_time("archived_at")?,
             call_count: row.count("calls")?,
             turn_count: row.count("turn_count")?,
             error_count: row.count("errors")?,
@@ -554,6 +562,155 @@ impl OperatorActionView {
             actor: document("actor")?,
             command: document("command")?,
         })
+    }
+}
+
+/// A run's conversation, whole: its entries, and those of the runs before
+/// it that continued the same client conversation, oldest first.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ConversationView {
+    pub entries: Vec<RunEntryView>,
+    /// Older entries were left out: the conversation holds more than one
+    /// read returns.
+    pub earlier: bool,
+}
+
+/// One entry of a run's conversation: an event as its client reported it,
+/// in the order it came.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RunEntryView {
+    pub run: RunId,
+    pub seq: u64,
+    pub at: UnixMillis,
+    /// The client's turn it belongs to, once one started.
+    pub turn: Option<String>,
+    pub event: DriveEvent,
+}
+
+/// What an archive or delete would touch, read before it is asked for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HistoryTarget {
+    /// Calls of its sessions still open.
+    pub open_calls: u64,
+    /// Its runs that have not ended.
+    pub running_runs: u64,
+}
+
+/// One agent run, as recorded.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RunView {
+    pub id: RunId,
+    pub harness: Stored<Harness>,
+    pub workdir: String,
+    pub started_at: UnixMillis,
+    /// The client's own conversation id, once it opened one.
+    pub thread: Option<String>,
+    /// The session whose calls name the run's thread as their session: the
+    /// run's model traffic, once a call was recorded.
+    pub session: Option<RecordingId>,
+    /// The operator session the run served; `None` for a run recorded
+    /// before sessions were, until the migration gave it one.
+    pub operator_session: Option<SessionId>,
+    pub ended_at: Option<UnixMillis>,
+    /// How the run ended; `None` while it runs.
+    pub end: Option<Stored<RunEnd>>,
+    /// How its process exited, when one did.
+    pub exit: Option<ProcessExit>,
+    /// When the operator archived it; it is listed as archived once ended.
+    pub archived_at: Option<UnixMillis>,
+    /// The model it started on, as its client names it; `None` is the
+    /// client's own (or a run recorded before settings were).
+    pub model: Option<String>,
+    pub effort: Option<Stored<Effort>>,
+    pub approvals: Option<Stored<ApprovalPolicy>>,
+}
+
+impl RunView {
+    pub(super) const SELECT: &'static str = "SELECT id, operator_session, harness, workdir, started_at, thread, ended_at, run_end, exit_kind, exit_value, archived_at, model, effort, approvals, (SELECT sessions.id FROM sessions WHERE sessions.native_id = runs.thread ORDER BY sessions.first_seen, sessions.id LIMIT 1) AS session FROM runs";
+
+    pub(super) fn from_row(row: &SqliteRow) -> Result<Self, StoreError> {
+        let row = Columns(row);
+        let value: Option<i32> = row.0.try_get("exit_value")?;
+        let exit = match (row.text("exit_kind")?.as_deref(), value) {
+            (Some("code"), Some(code)) => Some(ProcessExit::Code(code)),
+            (Some("signal"), Some(signal)) => Some(ProcessExit::Signal(signal)),
+            (Some("unknown"), None) => Some(ProcessExit::Unknown),
+            (None, None) => None,
+            (Some(_), _) | (None, Some(_)) => return Err(StoreError::Corrupt("run exit")),
+        };
+        Ok(Self {
+            id: row.id("id")?,
+            harness: row.label("harness")?,
+            workdir: row.text("workdir")?.ok_or(StoreError::Corrupt("run"))?,
+            started_at: row.time("started_at")?,
+            thread: row.text("thread")?,
+            session: row.optional_id("session")?,
+            operator_session: row.optional_id("operator_session")?,
+            ended_at: row.optional_time("ended_at")?,
+            end: row.optional_label("run_end")?,
+            exit,
+            archived_at: row.optional_time("archived_at")?,
+            model: row.text("model")?,
+            effort: row.optional_label("effort")?,
+            approvals: row.optional_label("approvals")?,
+        })
+    }
+}
+
+/// One session an operator works in, as recorded, with the runs (client
+/// processes) that served it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SessionView {
+    pub id: SessionId,
+    pub harness: Stored<Harness>,
+    pub workdir: String,
+    pub created_at: UnixMillis,
+    /// The settings its next turn runs on; `None` is the client's own.
+    pub model: Option<String>,
+    pub effort: Option<Stored<Effort>>,
+    pub approvals: Option<Stored<ApprovalPolicy>>,
+    pub archived_at: Option<UnixMillis>,
+    /// When its first turn started; `None` while it is a draft (no prompt
+    /// has gone out).
+    pub first_turn_at: Option<UnixMillis>,
+    /// The first line of its first prompt, as its client echoed it, cut to
+    /// [`SessionView::FIRST_PROMPT_CHARS`]; `None` until one is recorded.
+    pub first_prompt: Option<String>,
+    /// Its runs, newest first.
+    pub runs: Vec<RunView>,
+}
+
+impl SessionView {
+    pub(super) const SELECT: &'static str = "SELECT id, harness, workdir, created_at, model, effort, approvals, archived_at, (SELECT MIN(e.at) FROM run_entries e JOIN runs r ON r.id = e.run WHERE r.operator_session = operator_sessions.id AND e.kind = 'turn_started') AS first_turn_at, (SELECT json_extract(e.event, '$.item.read.text') FROM run_entries e JOIN runs r ON r.id = e.run WHERE r.operator_session = operator_sessions.id AND e.kind = 'item' AND json_extract(e.event, '$.item.read.as') = 'prompt' ORDER BY e.at, r.started_at, e.seq LIMIT 1) AS first_prompt FROM operator_sessions";
+
+    /// The most of a first prompt a session view carries.
+    pub const FIRST_PROMPT_CHARS: usize = 200;
+
+    /// The session in `row`, with `runs`.
+    pub(super) fn from_row(row: &SqliteRow, runs: Vec<RunView>) -> Result<Self, StoreError> {
+        let row = Columns(row);
+        Ok(Self {
+            id: row.id("id")?,
+            harness: row.label("harness")?,
+            workdir: row.text("workdir")?.ok_or(StoreError::Corrupt("session"))?,
+            created_at: row.time("created_at")?,
+            model: row.text("model")?,
+            effort: row.optional_label("effort")?,
+            approvals: row.optional_label("approvals")?,
+            archived_at: row.optional_time("archived_at")?,
+            first_turn_at: row.optional_time("first_turn_at")?,
+            first_prompt: row
+                .text("first_prompt")?
+                .and_then(|text| Self::headline(&text)),
+            runs,
+        })
+    }
+
+    /// A prompt's first line with text, cut to its first
+    /// [`Self::FIRST_PROMPT_CHARS`] characters; `None` when it has none.
+    fn headline(text: &str) -> Option<String> {
+        let line = text.lines().map(str::trim).find(|line| !line.is_empty())?;
+        Some(line.chars().take(Self::FIRST_PROMPT_CHARS).collect())
     }
 }
 
@@ -627,7 +784,7 @@ pub struct StorageView {
 
 #[cfg(test)]
 mod tests {
-    use super::{CallPage, SessionView};
+    use super::{CallPage, RecordingView};
     use serde_json::{Value, json};
 
     /// What the read API sends for a call listing, every optional field
@@ -700,12 +857,13 @@ mod tests {
             "native_id": "native",
             "first_seen": 1000,
             "last_seen": 2000,
+            "archived_at": 1500,
             "call_count": 4,
             "turn_count": 2,
             "error_count": 1,
             "tokens": { "input": 10, "output": null, "cache_read": 5 }
         });
-        let session: SessionView = serde_json::from_value(sent.clone()).unwrap();
+        let session: RecordingView = serde_json::from_value(sent.clone()).unwrap();
         assert_eq!(session.source.known(), None);
         assert_eq!(serde_json::to_value(&session).unwrap(), sent);
     }

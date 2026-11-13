@@ -19,14 +19,35 @@ ren inspect <call-id>
 ren inspect <call-id> --body response --output response.bin
 ren tail
 ren tail --json
-ren tui
 ```
+
+Runs (see [runs](#runs)) have their own commands, through the control API:
+
+```sh
+ren runs start codex ~/dev/acme                     # prints the new session
+ren runs start claude ~/dev/acme --prompt "fix the failing test"
+ren runs ls                                         # the runs, live
+ren runs sessions
+ren runs projects                                # where a run can start
+ren runs say <session-id> fix the failing test
+ren runs answer <session-id> <approval-id>      # or: decline, cancel, accept-for-session
+ren runs interrupt <session-id>
+ren runs stop <session-id>                      # its client; the session goes on
+ren runs watch --run <run-id>
+ren runs history
+```
+
+`start` makes a session in the current folder when none is given, with
+`--resume <thread>` to go on with a client conversation begun elsewhere, and
+sends `--prompt` once it is made; through a gateway the folder must be an
+absolute path on the gateway's host. `watch` prints each run update as one
+JSON line. `history` reads recorded runs like the other history commands.
 
 Commands emit the same JSON the read API answers (without `api_version`),
 whether they read this host's storage or a gateway: `history` and `timeline` a
-page `{calls, next}`, `sessions` `{sessions}`, `turns` `{turns}` for a session,
+page `{calls, next}`, `sessions` `{sessions}`, `turns` `{turns}` for a recording,
 `exposures` `{exposures}`, `report` a
-session's [context and cost report](#session-report), `turn` and
+recording's [context and cost report](#recording-report), `turn` and
 `activity` what a turn or a call did (see [activity](#activity)), `search`
 matching prompts, replies, and tool calls (see [search](#search)), and `inspect`
 one call with its attempts and observation log. Body exports write the exact captured bytes to a new file, refuse
@@ -51,58 +72,6 @@ ends, for example on a daemon restart, it reconnects every two seconds from the
 last observation it printed, so nothing in between is skipped. It stops on
 interrupt, or if the first connection fails.
 
-`ren tui`, in a CLI built with `--features tui`, shows the same daemon's live
-sessions in the terminal: one pane per active session (seen in the last five
-minutes, or with a call open), in a grid sized to them, as many as the
-terminal has room for; one session fills the screen. Each pane reads as a
-conversation, kept to the bottom as it streams: the newest turn and the one
-before it (for a client that sends no turns, such as OpenCode, its newest
-four calls), call by call, with the user's prompt (`>`), the tool results the
-request carried back (`⎿`), the reply (code blocks drawn behind a rule), and
-the tool calls the model asked for (`●`), then a streaming call's reply and
-tools so far. Its title uses green while a response streams, and amber
-or red when the newest call needs a look (a slow response head, a 429, a
-failed, interrupted, or unknown ending, a secret sent, repeated tool
-failures); an earlier failure the session has moved past is not shown again.
-Under the conversation, what the session is doing (waiting for the first
-byte, streaming, complete with the client running tools or waiting for you,
-inferred from how the last call ended, or how it stopped), and the newest
-call's model, input with its cached share, output, reasoning, and stop
-reason. The status line counts sessions and open calls, and shows each
-client's output tokens over the last four minutes, counted when calls end:
-not a live rate. It reads a snapshot of sessions and calls every two seconds
-and whenever the feed says a call opened or ended, and asks for
-[progress events](#live-feed). A read that fails is shown as `stale` until
-one succeeds. Keys: tab and the arrows move between panes, enter zooms into a
-session, `p` keeps a session on the wall even when quiet, `?` lists the
-keys, and `q` quits. It needs a running daemon; a gateway that cannot be
-reached is reported before the screen is taken over.
-
-The default `terminal` theme uses the terminal's foreground, background, and
-ANSI palette. `dark` and `light` use fixed RGB palettes and need a true-color
-terminal. Choose a theme for one run, or save this machine's preference:
-
-```sh
-ren tui --theme dark
-ren tui --save-theme light
-ren tui --save-theme terminal
-```
-
-`--save-theme` saves and exits without connecting to a daemon. The preference
-lives in `$XDG_CONFIG_HOME/ren/tui.toml` (or `~/.config/ren/tui.toml`), separate
-from gateway and daemon settings:
-
-```toml
-theme = "light"
-```
-
-`--theme` overrides the saved preference; without either, the theme is
-`terminal`. Press `t` to cycle terminal → dark → light while viewing panes,
-a zoomed session, or help. This preview lasts for the current run and does
-not save. A non-empty `NO_COLOR` selects monochrome when there is no explicit
-flag or saved preference; an explicit choice, including `t`, enables that
-theme. Labels and focus emphasis remain available without color.
-
 ## Activity
 
 `ren turn` shows what an agent did for one user prompt, assembled from each of
@@ -120,7 +89,7 @@ its calls' activity, derived when the call finished:
 - `files_read`, `files_written`, `commands`, and counts of tool calls, failed
   ones, and unanswered ones;
 - each call's `metrics` (context, cache read and written, and output tokens,
-  request bytes, duration), as in the [session report](#session-report);
+  request bytes, duration), as in the [recording report](#recording-report);
 - `findings`: `large_tool_output` (a tool result of at least 20,000 characters,
   which every later call carries) and `repeated_failure` (one tool failing on
   one target at least 3 times in the turn).
@@ -140,7 +109,7 @@ daemon is deriving again from its stored bodies. Text is
 excerpted; `omitted_chars` says how much was left out, and the full text stays in
 the body. Retention removes activity with its call.
 
-`ren turns <session-id>` lists a session's turns newest first (`--limit`, up to
+`ren turns <session-id>` lists a recording's turns newest first (`--limit`, up to
 1000; no paging), each with its call and error counts, tokens, and the start of
 its prompt, with secrets redacted. A
 turn's `ended_at` is `null` while any of its calls is still running.
@@ -155,7 +124,7 @@ and commands it names, and its input), and tool output. All words must match;
 `*` are searched for as text. Filter with `--session`, `--client`, and `--field`
 (`prompt`, `reply`, `tool_input`, `tool_output`); `--limit` defaults to 20.
 
-Results are newest call first: each names the call, session, turn, client,
+Results are newest call first: each names the call, recording (`session`), turn, client,
 field, and a snippet with matches marked `«like this»`. `indexed_calls` says how
 much history is searchable: every finished call, once its activity is derived
 (see above). Calls retention removes leave the index too.
@@ -177,21 +146,21 @@ The secret itself is never stored or shown: an exposure keeps its `kind`, the
 `sk-ant-…a1b2`), a `fingerprint` (16 hex characters of its BLAKE3 hash, equal for
 repeats of one secret), and how often it appeared. Activity and search keep
 text with each secret replaced by `«redacted: kind»`; captured bodies are kept as
-recorded. Session reports and `ren turn` list exposures as `secret_exposure`
+recorded. Recording reports and `ren turn` list exposures as `secret_exposure`
 findings, and the Overview lists the last day's first under Needs attention. A secret sent to
 a provider should be rotated: Ren cannot recall it. The scan covers the newest
 input of each call, not the system prompt or older history a client resends.
 
-## Session report
+## Recording report
 
-`ren report <session-id>` shows where a session's context and prompt-cache
+`ren report <session-id>` shows where a recording's context and prompt-cache
 tokens went, from its call records alone (no body is read, so it is fast):
 
 - `turns`: for each turn, its calls, the idle time before it (since the
-  session's previous call ended), context tokens at its first and last call,
+  recording's previous call ended), context tokens at its first and last call,
   the cache hit percent (cache reads over context), tokens written to the cache,
   and output tokens;
-- `totals` over the session's calls that reported usage, including the peak
+- `totals` over the recording's calls that reported usage, including the peak
   context;
 - `findings`, in call order:
   - `cache_rebuild`: a call read less than half of the earlier peak context from
@@ -199,12 +168,12 @@ tokens went, from its call records alone (no body is read, so it is fast):
     reports `idle_before_ms`; a provider's cache entries expire, but Ren cannot
     see its cache, so the cause is not stated.
   - `context_growth`: the 5 largest steps of at least 10,000 tokens past the
-    session's earlier peak.
+    recording's earlier peak.
 
 Context is new input plus cache reads and writes for Anthropic, and input for
 OpenAI, whose input already counts cached tokens. Findings need an earlier peak
-of at least 10,000 tokens, so a session's start is not reported. Peaks are
-session-wide, so a subagent's smaller context is neither a rebuild nor growth.
+of at least 10,000 tokens, so a recording's start is not reported. Peaks are
+recording-wide, so a subagent's smaller context is neither a rebuild nor growth.
 Token counts are provider-reported, not cost or subscription allowance. A report
 reads at most 5,000 calls (`omitted_calls` counts the rest).
 
@@ -221,20 +190,20 @@ codex mcp add ren -- ren mcp
 
 Its tools are read-only:
 
-| Tool                | Returns                                                                                                           |
-| ------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| `search_calls`      | Calls, newest first, filtered as in [call search](#call-search) (`session_id` names the session); `{calls, next}` |
-| `list_sessions`     | Recent sessions with their counts and token totals                                                                |
-| `session_calls`     | One session's calls, oldest first; `{calls, next}`                                                                |
-| `search_history`    | [Full-text search](#search), as `ren search` returns it                                                           |
-| `list_exposures`    | [Exposed secrets](#exposed-secrets), as `ren exposures` lists them                                                |
-| `session_report`    | A session's context and cost report, as `ren report` shows it                                                     |
-| `list_turns`        | A session's turns, newest first, as `ren turns` lists them                                                        |
-| `get_turn`          | What one turn did, as `ren turn` shows it: prompt, tool calls with effects and results, files, commands           |
-| `get_call_activity` | One call's activity, as `ren activity` shows it                                                                   |
-| `get_call`          | One call with its attempts, inspection, and observation log, as `ren inspect` prints it                           |
-| `get_body`          | An excerpt of a [body preview](#body-previews): decoded text (or raw bytes), at most `max_chars` (default 20,000) |
-| `usage`             | Calls, errors, and tokens, as [`/api/usage`](#usage)                                                              |
+| Tool                | Returns                                                                                                             |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `search_calls`      | Calls, newest first, filtered as in [call search](#call-search) (`session_id` names the recording); `{calls, next}` |
+| `list_sessions`     | Recent recordings with their counts and token totals                                                                |
+| `session_calls`     | One recording's calls, oldest first; `{calls, next}`                                                                |
+| `search_history`    | [Full-text search](#search), as `ren search` returns it                                                             |
+| `list_exposures`    | [Exposed secrets](#exposed-secrets), as `ren exposures` lists them                                                  |
+| `session_report`    | A recording's context and cost report, as `ren report` shows it                                                     |
+| `list_turns`        | A recording's turns, newest first, as `ren turns` lists them                                                        |
+| `get_turn`          | What one turn did, as `ren turn` shows it: prompt, tool calls with effects and results, files, commands             |
+| `get_call_activity` | One call's activity, as `ren activity` shows it                                                                     |
+| `get_call`          | One call with its attempts, inspection, and observation log, as `ren inspect` prints it                             |
+| `get_body`          | An excerpt of a [body preview](#body-previews): decoded text (or raw bytes), at most `max_chars` (default 20,000)   |
+| `usage`             | Calls, errors, and tokens, as [`/api/usage`](#usage)                                                                |
 
 Listings return at most 100 rows. Invalid arguments, unknown IDs, and an
 unreachable daemon are tool errors that the agent reads and can correct.
@@ -251,6 +220,8 @@ stderr.
 
 ## Endpoints
 
+The API still calls recordings sessions, in its routes (`/api/sessions`),
+parameters, and JSON fields (`session`, `sessions`), as do the CLI and the MCP tools.
 Every JSON body carries `"api_version": 1`; errors are `{api_version, error}` with
 `error` one of `not_found`, `invalid_query`, `busy`, `unavailable`, or
 `identity_refused` (`401`, from `/api/caller` only). An identifier that is not one
@@ -261,26 +232,29 @@ A body export answers with the raw bytes (`application/octet-stream`) only when
 the body was stored whole; otherwise `not_found`. At most two run at once
 (`busy`), and the UI does not forward it.
 
-| Endpoint                                                               | Result                                                                                                                                                                                                         |
-| ---------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `GET /health`                                                          | `ok` or `degraded` (HTTP 503), the build, the instance (`environment`: `production` or `development`), a summary of the operator state (pause, and how many sessions and users are blocked), recorder counters |
-| `GET /api/metrics`                                                     | Recorder counters and storage usage                                                                                                                                                                            |
-| `GET /api/caller`                                                      | How the gateway identifies this request's caller (`kind`, `user`, `login`), as it would a forwarded call; `401` `identity_refused` for a refused token or login                                                |
-| `GET /api/storage`                                                     | Active retention policy, disk usage of the database files, calls with derived activity, and the per-body capture limit (`capture.body_limit_bytes`)                                                            |
-| `GET /api/calls?limit=100`                                             | Filtered, paginated calls, newest first (see [search](#call-search))                                                                                                                                           |
-| `GET /api/calls/{call-id}`                                             | One call with its attempts, inspection, and observation log                                                                                                                                                    |
-| `GET /api/calls/{call-id}/body/{request\|response}`                    | Bounded body preview                                                                                                                                                                                           |
-| `GET /api/calls/{call-id}/body/{request\|response}/export`             | The complete captured body as raw bytes, as `ren inspect --body` exports it                                                                                                                                    |
-| `GET /api/sessions?limit=100`                                          | Recent sessions with call, turn, and error counts and token totals                                                                                                                                             |
-| `GET /api/usage?from_ms=&until_ms=`                                    | Calls, errors, and tokens in total, by UTC hour, by model, and by user (see [usage](#usage))                                                                                                                   |
-| `GET /api/sessions/{session-id}/calls?limit=100`                       | One session's calls, oldest first                                                                                                                                                                              |
-| `GET /api/sessions/{session-id}/turns?limit=100`                       | A session's turns, newest first, with prompt excerpts (see [activity](#activity))                                                                                                                              |
-| `GET /api/search?q=&field=&session=&client=&from_ms=&until_ms=&limit=` | [Full-text search](#search), newest call first                                                                                                                                                                 |
-| `GET /api/exposures?session=&from_ms=&until_ms=&limit=`                | [Exposed secrets](#exposed-secrets), newest call first                                                                                                                                                         |
-| `GET /api/sessions/{session-id}/report`                                | A session's [context and cost report](#session-report)                                                                                                                                                         |
-| `GET /api/turns/{turn-id}`                                             | One turn's [activity](#activity)                                                                                                                                                                               |
-| `GET /api/calls/{call-id}/activity`                                    | One call's [activity](#activity)                                                                                                                                                                               |
-| `GET /api/live?after={seq}`                                            | Server-sent events as observations commit                                                                                                                                                                      |
+| Endpoint                                                               | Result                                                                                                                                                                                                                                                                                                                                             |
+| ---------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /health`                                                          | `ok` or `degraded` (HTTP 503), the build, the instance (`environment`: `production` or `development`), a summary of the operator state (pause, and how many sessions and users are blocked), recorder counters                                                                                                                                     |
+| `GET /api/metrics`                                                     | Recorder counters and storage usage                                                                                                                                                                                                                                                                                                                |
+| `GET /api/caller`                                                      | How the gateway identifies this request's caller (`kind`, `user`, `login`), as it would a forwarded call; `401` `identity_refused` for a refused token or login                                                                                                                                                                                    |
+| `GET /api/storage`                                                     | Active retention policy, disk usage of the database files, calls with derived activity, and the per-body capture limit (`capture.body_limit_bytes`)                                                                                                                                                                                                |
+| `GET /api/calls?limit=100`                                             | Filtered, paginated calls, newest first (see [search](#call-search))                                                                                                                                                                                                                                                                               |
+| `GET /api/calls/{call-id}`                                             | One call with its attempts, inspection, and observation log                                                                                                                                                                                                                                                                                        |
+| `GET /api/calls/{call-id}/body/{request\|response}`                    | Bounded body preview                                                                                                                                                                                                                                                                                                                               |
+| `GET /api/calls/{call-id}/body/{request\|response}/export`             | The complete captured body as raw bytes, as `ren inspect --body` exports it                                                                                                                                                                                                                                                                        |
+| `GET /api/sessions?limit=100`                                          | Recent recordings with call, turn, and error counts and token totals; `shelf=archived` lists the [archived](#archiving-and-deleting) ones instead                                                                                                                                                                                                  |
+| `GET /api/usage?from_ms=&until_ms=`                                    | Calls, errors, and tokens in total, by UTC hour, by model, and by user (see [usage](#usage))                                                                                                                                                                                                                                                       |
+| `GET /api/sessions/{session-id}/calls?limit=100`                       | One recording's calls, oldest first                                                                                                                                                                                                                                                                                                                |
+| `GET /api/sessions/{session-id}/turns?limit=100`                       | A recording's turns, newest first, with prompt excerpts (see [activity](#activity))                                                                                                                                                                                                                                                                |
+| `GET /api/search?q=&field=&session=&client=&from_ms=&until_ms=&limit=` | [Full-text search](#search), newest call first                                                                                                                                                                                                                                                                                                     |
+| `GET /api/exposures?session=&from_ms=&until_ms=&limit=`                | [Exposed secrets](#exposed-secrets), newest call first                                                                                                                                                                                                                                                                                             |
+| `GET /api/sessions/{session-id}/report`                                | A recording's [context and cost report](#recording-report)                                                                                                                                                                                                                                                                                         |
+| `GET /api/turns/{turn-id}`                                             | One turn's [activity](#activity)                                                                                                                                                                                                                                                                                                                   |
+| `GET /api/calls/{call-id}/activity`                                    | One call's [activity](#activity)                                                                                                                                                                                                                                                                                                                   |
+| `GET /api/runs?limit=100`                                              | Recorded [runs](#runs), newest first: harness, folder, the `operator_session` it served, the client's `thread` and the `session` (recording) it names, `started_at`, the `model`, `effort`, and `approvals` it started with (`null` is the client's own), and once ended `ended_at`, `end`, and `exit`; `shelf=archived` lists archived ended runs |
+| `GET /api/runs/{run-id}/conversation`                                  | A run's [conversation](#run-conversation), whole: its own entries and those of the runs before it on its thread, oldest first                                                                                                                                                                                                                      |
+| `GET /api/runs/{run-id}`                                               | One recorded run                                                                                                                                                                                                                                                                                                                                   |
+| `GET /api/live?after={seq}`                                            | Server-sent events as observations commit                                                                                                                                                                                                                                                                                                          |
 
 Omit `after` for the first page; pass the returned `next` cursor unchanged for the
 next one. The CLI accepts the same cursor with `timeline --after`. Pages order by
@@ -292,9 +266,9 @@ return `503` without blocking forwarding. Management responses carry
 listener's loopback/Tailscale access boundary and has no separate login or
 cross-origin browser access enabled.
 
-### Session totals
+### Recording totals
 
-Each session in `/api/sessions` carries `error_count`, the model calls (`kind=model`)
+Each recording in `/api/sessions` carries `error_count`, the model calls (`kind=model`)
 the `errors` status filter would find, and `tokens: {input, output, cache_read}`, summed from provider-reported
 usage. Input includes cached context whichever way each call's provider accounts
 for it; a total is `null` when no call reported usage. Token counts are not
@@ -309,8 +283,8 @@ them into local days), and `models` (each provider and reported model, most inpu
 first; `model` is `null` when no response reported one), and `users` (each named
 user, most input first; `user` is `null` for calls no named user made: unlisted
 and unidentified callers, and calls stored without a caller). Each carries `calls`,
-`errors` (model calls the `errors` status filter finds, as in session totals), and `tokens: {input, output,
-cache_read}`, with input including cached context as in session totals. Unknown
+`errors` (model calls the `errors` status filter finds, as in recording totals), and `tokens: {input, output,
+cache_read}`, with input including cached context as in recording totals. Unknown
 parameters and a reversed range are rejected.
 
 ### Builds
@@ -357,11 +331,261 @@ malformed session ID is `404` `not_found`. A command the recorder cannot record
 is not made: `503` `unrecorded` when the recorder has no room now (try again),
 `500` `unrecordable` when its record cannot be written.
 
+### Run conversation
+
+The daemon stores each driven run's conversation as it happens, whole: every
+event the client reports (a turn starting and ending, each item: the
+operator's prompt, a reply, reasoning, a command with its output, a file
+change, a tool call; approvals, errors, and refusals), in the order it came.
+An item reported again (a command that finished, a reply that completed)
+replaces its entry in place. Streamed pieces are not stored; the item they
+make is, and a reply still streaming when its turn ends is stored as far as
+it came. Entries are written through the recorder like bodies, never
+blocking forwarding: without queue room an entry is counted as omitted.
+
+`GET /api/runs/{run-id}/conversation` answers `{api_version, entries,
+earlier}`. Each entry is `{run, seq, at, turn, event}`, where `event` is the
+event as the run feed sends it. The conversation includes the runs before
+this one on the same client thread (a resumed conversation reads as one), up
+to the newest 20,000 entries; `earlier` says older ones were left out.
+Deleting a run deletes its conversation.
+
+### Archiving and deleting
+
+`POST /control/v1/history/sessions/{session}/{change}` and
+`POST /control/v1/history/runs/{run}/{change}` archive, unarchive, or delete
+what was recorded. `{session}` is a recording's ID (as `/api/sessions` lists
+it, not the client's session ID), and `{change}` is `archive`, `unarchive`, or `delete`.
+A run's change applies to the recordings its client made under the run's
+thread too, and a recording's to the runs that worked in it. The CLI is
+`ren control archive|unarchive session|run <id>` and
+`ren control delete session|run <id> --yes`.
+
+- **Archive** hides it from `/api/sessions` and `/api/runs`, which list it
+  with `shelf=archived` instead, with its `archived_at`. A recording with traffic
+  newer than its archiving is listed again by itself; a run still running is
+  always listed.
+- **Delete** removes its finished calls with their bodies, attempts, log rows,
+  digests, and search entries, and its ended runs. Calls still open and runs
+  still running are kept, so a delete is refused while there are any: `409`
+  `call_open` or `409` `run_running`. The next retention pass frees the chunks
+  only those calls referenced. It cannot be undone; a client that keeps
+  calling starts a new recording.
+
+Each edit is recorded (a `history_edited` observation with the actor) and
+applied by the recorder after what it was recording; the answer is `202`
+`{api_version, subject, change}` once it is queued. `404` `not_found` is an
+unknown subject or change.
+
+### Sessions
+
+A session is what an operator works in: a folder, a client, its settings, and
+its conversation across every client process (run) that serves it. It is a
+draft until its first prompt goes out, active after, and archived when the
+operator shelves it. These routes need runs enabled (`[runs]` roots, see
+[runs](#runs)) and the control API's access.
+`/control/v1/sessions/{session}/block` and `/unblock` above are the operator
+state's and take a client's own session ID, not a session's.
+
+| Endpoint                                             | Body                                                                                                                                                                                                                                                                                                                                                                                                                                                            | Answer                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| ---------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /control/v1/sessions`                           | query `shelf` (`current`, the default, or `archived`) and `limit` (1–1000, default 100)                                                                                                                                                                                                                                                                                                                                                                         | `{api_version, sessions}`, most recently active first, each a session body (below)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| `POST /control/v1/sessions`                          | `{"harness": "codex"\|"claude_code"\|"pi"}`, optional `"dir": "/abs/path"`, inside a root or another place (left out, the session gets a new folder of its own in scratch, a git repository; `503` `no_scratch` when the daemon has none), `"resume": "<thread>"`, a client conversation begun elsewhere to go on with, and its settings: `"model"`, a model's `id` from the client's listing, `"effort"`, and `"approvals"`; each left out is the client's own | `201` `{api_version, session}`. Its client starts at once, so its commands are listed before the first prompt                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| `GET /control/v1/sessions/{session}`                 | none                                                                                                                                                                                                                                                                                                                                                                                                                                                            | `{api_version, session}`, a session body                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| `POST /control/v1/sessions/{session}/prompt`         | `{"text": "…"}`, not blank, and optional `"delivery"`: `start` (the default) starts a turn on an idle client; `queue` keeps it for after the running turn (sent as that turn ends, or at once on an idle client; one message waits at a time, so queueing again replaces it); `steer` sends it into the running turn, where the client takes that (`midway` has `steer`)                                                                                        | `202`. With no client running, a new one starts and resumes the session's conversation, then takes the prompt; a prompt to an archived session makes it current again                                                                                                                                                                                                                                                                                                                                                                                                        |
+| `POST /control/v1/sessions/{session}/settings`       | any of `"model"`, `"effort"`, and `"approvals"`, as when creating; each applies from the next turn, where the client takes that change mid-run (`midway`), and to the next client when none runs                                                                                                                                                                                                                                                                | `202`; the settings change once the client has them                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `POST /control/v1/sessions/{session}/client`         | `{"harness": …}`                                                                                                                                                                                                                                                                                                                                                                                                                                                | `202`; while it is a draft: its process is replaced and its settings go back to the client's own. `409` `client_fixed` once a prompt went out                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| `POST /control/v1/sessions/{session}/unqueue`        | none                                                                                                                                                                                                                                                                                                                                                                                                                                                            | `202`, through its process                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `POST /control/v1/sessions/{session}/approvals/{id}` | `{"decision": …}`                                                                                                                                                                                                                                                                                                                                                                                                                                               | `202`; `accept`, `accept_for_session`, `decline`, or `cancel`, through its client                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| `POST /control/v1/sessions/{session}/interrupt`      | none                                                                                                                                                                                                                                                                                                                                                                                                                                                            | `202`, through its process                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `POST /control/v1/sessions/{session}/stop`           | none                                                                                                                                                                                                                                                                                                                                                                                                                                                            | `202`: stops its client, whose run ends once its process exited; the session goes on                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| `POST /control/v1/sessions/{session}/archive`        | none                                                                                                                                                                                                                                                                                                                                                                                                                                                            | `202`; stops its process. `409` `archived` when it is already                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| `POST /control/v1/sessions/{session}/unarchive`      | none                                                                                                                                                                                                                                                                                                                                                                                                                                                            | `202`. `409` `not_archived`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `POST /control/v1/sessions/{session}/delete`         | none                                                                                                                                                                                                                                                                                                                                                                                                                                                            | `202`; deletes the session for good: its ended runs, the recordings and calls they made, and the session itself, even one whose client never ran. The daemon stops serving it at once; the store deletes it when the recorder reaches the edit. `409` `run_running` while a process serves it, `409` `call_open` while one of its calls is open, `404` `not_found`                                                                                                                                                                                                           |
+| `GET /control/v1/sessions/{session}/commands`        | none                                                                                                                                                                                                                                                                                                                                                                                                                                                            | `{api_version, commands}`: what the session's client offers a prompt, as it listed it (none until a client has opened its conversation), each `{name, description, hint, kind, sigil, invocation}`: `kind` is `command`, `skill`, or `template`, `sigil` how a prompt names it (`/`, or `$` for Codex's skills), `invocation` what the prompt writes (`/review`, `$release-notes`). Claude Code's come from its answer to `initialize`, Codex's from `skills/list` for the session's folder (a prompt naming one as `$name` sends the skill along), Pi's from `get_commands` |
+| `GET /control/v1/sessions/{session}/files`           | query `q`, what was typed after `@`, and `limit` (default 20, at most 100)                                                                                                                                                                                                                                                                                                                                                                                      | `{api_version, files}`: the paths of the session's folder, with or without a client running, that best match `q`, best first, each `{path, kind, positions}`: `path` relative to the folder, `kind` `file` or `directory`, `positions` the matched characters. The folder is walked leaving out hidden files and what git ignores, at most 20,000 paths 16 folders deep, and kept until a turn ends. `409` `unreadable` when the folder cannot be walked                                                                                                                     |
+| `GET /control/v1/sessions/events`                    | none                                                                                                                                                                                                                                                                                                                                                                                                                                                            | server-sent `session` events, each the session as served (below), from now on; `lagged` when the feed fell behind (list them again). Each process's state and events are on the run feed                                                                                                                                                                                                                                                                                                                                                                                     |
+
+A session body is `{session, stored, served}`. `stored` is the session as the
+store holds it: `{id, harness, workdir, created_at, model, effort, approvals,
+archived_at, first_turn_at, first_prompt, runs}`, `first_prompt` the first
+line of its first prompt as its client echoed it (at most 200 characters, `null`
+until one is recorded), its runs newest first (each as `GET /api/runs` lists
+runs), or `null` for a moment after it is made, until the recorder commits it. `served` is the session as this daemon serves it now:
+`{session, harness, workdir, settings, state, process}`, `state` `{"shelf":
+"open"|"archived", "phase": "draft"|"active"}` and `process` its newest run, or
+`null` while the daemon has not served it since it started. A session the store
+holds is served again on its first command, read, or prompt. Commands that need
+a process with none running are `409` `no_process`; an unknown session is
+`404` `not_found`; the other refusals are as for [runs](#runs).
+
+### Runs
+
+`/control/v1/runs` starts and drives agent runs: the official client, started
+by the daemon in a folder under a `[runs]` root and driven through its
+structured mode: Codex's `codex app-server`, Claude Code's print mode with
+streaming JSON (`claude -p --input-format stream-json --output-format
+stream-json`), Pi's RPC mode (`pi --mode rpc`, with Ren's extension), or
+OpenCode's Agent Client Protocol mode (`opencode acp`). The
+client keeps its own sign-in, and its model traffic goes through this gateway
+like any other client's. Ren names a new Claude Code conversation or Pi session
+itself (`--session-id`), so a run's `thread` is the session the recorded calls
+carry; Claude Code's permission prompts are its approvals, and Ren answers no
+other request (hooks, MCP, elicitation). Claude Code reports no live turn id
+matching its recorded prompt id, so a driven turn's `turn` is its prompt's
+message id, not the recorded turn's `native_id`.
+
+Pi asks for no approvals: it runs its tools as it decides, so a Pi run never
+waits on the operator mid-turn. Its turn lasts from the prompt until Pi
+settles (`agent_settled`), after any retries or compaction; Pi names no turns,
+so the daemon mints each driven turn's id, which is not the recorded turn's
+`native_id`. A Pi run resumes the session of that id in the run's own folder.
+Dialogs an extension opens are cancelled. The daemon publishes Ren's Pi
+extension to `$XDG_CACHE_HOME/ren/pi` (else `~/.cache/ren/pi`) before starting
+Pi, so the daemon's environment needs one of them.
+
+OpenCode (2.x) is driven over ACP, JSON-RPC on stdio, with the same
+`OPENCODE_CONFIG_CONTENT` override as `ren run opencode`. OpenCode names its own
+sessions (`ses_…`), so a run's `thread` is the UUID derived from that name, the
+same one its recorded calls carry in `x-opencode-session-id`. To continue a
+conversation, the daemon lists the folder's sessions (`session/list`) and
+reopens the one whose name derives the thread (`session/resume`, which replays
+nothing). OpenCode does not echo a prompt while its turn runs, so the run's
+conversation shows the prompt the daemon sent. A turn lasts until OpenCode
+answers its `session/prompt`; OpenCode names no turns, so the daemon mints each
+turn's id. Its `session/request_permission` requests are the run's approvals;
+Ren gives OpenCode no file system or terminal of its own and answers any other
+request with an error. Models on OpenCode's own `opencode` provider, including
+its free models, reach OpenCode's service directly, not through this gateway,
+so their calls are not recorded.
+
+A run starts on the model chosen for it, or on the client's own default. The
+models offered are the ones the client itself lists: the daemon starts it
+briefly in the same structured mode, in the first root, with no conversation
+(Codex's `model/list`, without the models Codex hides; the models in Claude
+Code's `initialize` answer, with `--no-session-persistence`; Pi's
+`get_available_models` with `--no-session`, marked with the model `get_state`
+names; the `model` option of a session OpenCode opens in the first root,
+without Ren's provider override, marked with its current value, which the
+daemon then deletes), then stops it. An OpenCode session that chose no model
+starts on the model OpenCode listed as its default, since under the override
+OpenCode would take a model of a provider it may have no key for. Each model also says which efforts it takes, least
+first, and the one it runs at when none is chosen, where the client says
+(Codex does; Claude Code lists only the levels; Pi's reasoning models take
+`off` to `high`, and the one it starts on runs at its current thinking level;
+OpenCode lists the efforts of its default model only).
+
+A run's settings are its `model`, its `effort` (`off`, `minimal`, `low`,
+`medium`, `high`, `xhigh`, or `max`), and its `approvals`, what the client may
+do without asking: `ask` (edits and commands wait for you), `edits` (edits in
+the folder go ahead, commands wait), or `auto` (the client decides what is
+safe and asks beyond that). Each left out is the client's own configuration.
+They go to the client the way it takes them:
+
+| Setting     | Codex                                                                                                                                                                   | Claude Code                                             | Pi                        | OpenCode                                                                                                           |
+| ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------- | ------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| `model`     | `thread/start` or `thread/resume` `model`                                                                                                                               | `--model`                                               | `--model provider/id`     | `session/set_config_option` `model` (`provider/id`)                                                                |
+| `effort`    | each `turn/start`'s `effort`                                                                                                                                            | `--effort`                                              | `--thinking`              | `session/set_config_option` `effort` (the model's variant)                                                         |
+| `approvals` | `approvalPolicy` and `sandbox` at `thread/start` or `thread/resume`: `untrusted` and `read-only`; `untrusted` and `workspace-write`; `on-request` and `workspace-write` | `--permission-mode` `default`, `acceptEdits`, or `auto` | none: Pi asks for nothing | `permissions` rules in its configuration: `ask` makes `shell` and `edit` ask, `edits` makes `shell` ask; no `auto` |
+
+A start with `approvals` a client does not take (any for Pi, `auto` for
+OpenCode) answers `400` `no_approvals`. A run's settings
+are recorded with it and with its session, shown on the run, and kept when its
+session's client starts again.
+
+Driving Claude Code with a Claude subscription is the operator signing in to
+the unmodified `claude` program on their own machine, which Anthropic's
+[terms for Claude Code](https://code.claude.com/docs/en/legal-and-compliance)
+allow; offering that sign-in or its usage to other people is not. Allow only
+your own Tailscale login to drive runs (`[control]`, and `REN_CONTROL_LOGINS`
+for the web UI), and keep runs to ordinary, individual use: plan limits assume
+it.
+Runs are off while `runs.roots` is empty: every route then answers `404`
+`runs_disabled`. Access is the control API's.
+
+A run works in a folder under a root, in a folder of another place, or in
+scratch. Other places (`[runs] places`, absolute or `~/…`) are folders
+outside the projects, such as `~/.config`, that the UIs offer only when asked.
+Scratch is a folder Ren owns (`[runs] scratch`, by default
+`$XDG_DATA_HOME/ren/scratch`, else `~/.local/share/ren/scratch`): a run
+started without a folder gets a new one of its own there, a git repository,
+kept after the run ends. A root itself, a home, and anything outside these
+are never offered, and a path that resolves outside them is refused.
+
+```toml
+[runs]
+roots = ["/home/op/dev"]
+places = ["~/.config", "~/dotfiles"]
+# scratch = "~/scratch"
+```
+
+| Endpoint                                        | Body | Answer                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| ----------------------------------------------- | ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /control/v1/runs`                          | none | `{api_version, runs}`: each `{run, session, harness, workdir, state, settings}`, `session` the operator session the run serves (each run starts one of its own for now)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `GET /control/v1/runs/projects`                 | none | `{api_version, projects, scratch}`: every place a run can start in, each `{path, name, shown, kind, git}`. `kind` `project`: the git repositories under the run roots (not looked inside, three levels down at most, hidden, `node_modules`, `target`, `vendor`, `dist`, and `build` folders skipped), and each root's folders with none below them; `other`: each `[runs] places` folder's own folders, hidden ones included, or the place itself when it is a repository; `scratch`: the folders earlier scratch runs worked in. `shown` is the path under the home as `~/…`; `git` one of `{"kind": "branch", name}`, `detached` with its `commit`, `unreadable`, or `none`. `scratch` is the folder scratch runs get theirs in, or `null` |
+| `GET /control/v1/runs/clients`                  | none | `{api_version, clients}`: every client, each `{harness, status, approvals, midway}`, `approvals` the policies it can run under (none for Pi), `midway` what a running conversation takes: `steer` (a message into the running turn: Codex, Pi, OpenCode) and the settings that change from the next turn (`model`, `effort`, `approvals`: Codex all three, Claude Code `model` and `approvals`, Pi and OpenCode `model` and `effort`), `status` one of `ready` (Ren drives it and its program is on the daemon's path), `not_installed`, or `not_drivable` (Ren cannot drive it; every client it knows is drivable now)                                                                                                                       |
+| `GET /control/v1/runs/clients/{harness}/models` | none | `{api_version, harness, models}`: the models the client itself lists on the daemon's host, in its order, each `{id, name, description, provider, choice, efforts, effort}`; `provider` is set where the client offers several (Pi), and `choice` is `default` for the one a run gets when none is chosen, else `other`. The daemon lists every installed client's models as it starts, so the first ask is answered at once; the first non-empty answer is kept while the daemon runs; an empty list (a client not signed in) is asked again next time. `502` `models_unavailable`, with a `message`, when the client refused, exited, or took over 20 seconds                                                                                |
+| `GET /control/v1/runs/events`                   | none | server-sent `run` events from now on; `lagged` when some were skipped                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+
+A run is one client process serving a [session](#sessions); it is driven
+through its session, whose commands answer `202` `{api_version}` once sent to
+the agent, and what it does next arrives as run events. A run's `state` has a
+`phase`: `starting`, `idle` (with `thread`, the client's
+conversation ID), `working` (with `turn` once known, `queued`, the message waiting for the
+turn to end, when there is one, and `approvals`, each
+`{approval, ask}` waiting for an answer, oldest first: `ask` is a `command`
+with its `command`, `cwd`, and `reason`, a `file_change` with its
+`reason`, or a `tool` (another of the client's tools) with its `tool` and
+`detail`), `stopping` (with its `cause`), or `ended`
+(with `end`, one of `spawn_failed`, `open_refused`, `exited`, `stopped`,
+`drained`, `recovered`, `idled`, and `exit`, `{"kind": "code"|"signal", "value": n}` or
+`{"kind": "unknown"}`). Run events are `{"kind": "state", run, state}` or
+`{"kind": "event", run, event}`, where `event` is what the agent reported: its
+`delta` text, `item`s (each with its `kind`, its `read`, what Ren read of it
+the same way for every client: `{"as": "prompt"|"reply"|"plan", text}`,
+`{"as": "command", command, status, output, exit_code}`,
+`{"as": "file_change", paths, status}`, `{"as": "tool", name, status}`,
+`{"as": "reasoning"}`, or `{"as": "unread"}`; and its `body` as the client
+described it), `approval` requests, `turn_started` and `turn_ended`, and
+`error`s. Events are not stored; the run's start, opening, and end are, and its
+model traffic is recorded like any other client's.
+
+The web UI's Sessions view drives [sessions](#sessions) through this API when
+its server is given the control token file (see the
+[UI's README](../ui/README.md#sessions)), and `ren runs` drives them from the
+command line.
+
+A client sitting idle between turns for ten minutes is stopped: its run ends
+`idled` (shown as Resting), and its session goes on, its next prompt starting
+the client again to resume the conversation.
+
+In the web UI, what is written while a turn runs is queued for after it (Enter),
+shown under the conversation, and can be taken back to edit; it can instead go
+into the running turn (Ctrl+Enter or Send now) where the client takes that. Typing `/` at the start of a prompt
+offers the client's own commands and skills (`$` offers Codex's skills
+anywhere), and `@` the run's folder's files; ↑ and ↓ choose, Tab or Enter
+inserts, Esc closes. Each session keeps its own draft, ↑ and ↓ recall its earlier prompts, and writing to one whose
+client stopped continues it. The model, effort, and approvals
+change from the next turn, and a draft (no prompt sent yet) can change its
+client; a folder's `+` makes a session there at once.
+
+Refusals: `400` `invalid_directory` (not absolute, contains `..`, or outside
+every root once links are resolved), `400` `directory_not_found`, `400`
+`not_drivable` (a client Ren cannot drive yet), `502` `spawn_failed` (the
+client is not installed; the run is recorded as `spawn_failed`), `503`
+`unrecorded`, `404` `not_found` for an unknown run or approval, and `409` when
+the run's state does not allow the command: `starting`, `busy`, `not_working`,
+`turn_not_started`, `no_such_approval`, `stopping`, `ended`, `nothing_queued`
+(an unqueue with nothing waiting), or `not_offered` (a steer or a settings
+change the client does not take mid-run).
+
 ## Live feed
 
 `GET /api/live` streams `observation` events, one per committed observation
 (`call_opened`, `attempt_started`, `response_head`, `attempt_finished`,
-`call_finished`, `call_recovered`, `channel_closed`, `operator_action`). Each event's `id` is its sequence number. Without
+`call_finished`, `call_recovered`, `channel_closed`, `operator_action`,
+`run_started`, `run_opened`, `run_ended`, `run_recovered`, `history_edited`,
+`run_configured`, `session_created`). Each event's `id` is its sequence number. Without
 `after`, only new observations are sent; with `after` (or a `Last-Event-ID` header,
 which browsers send on reconnect) the feed first replays retained observations after
 that position. A `gone` event (`{"oldest_retained": <seq>}`) means the position was
@@ -381,13 +605,13 @@ response so far ends inside a thinking block or reasoning item, whose text is
 not sent. They
 have no `id`: they are never stored, never replayed on resume, and a feed that
 falls behind skips some. The finished call's activity is the record. The UI asks
-for them, to show replies on Live cards as they stream, and so does `ren tui`;
+for them, to show replies on Live cards as they stream;
 `ren tail` does not.
 
 ## Call search
 
 `GET /api/calls` filters all retained calls and returns `{calls, next}` newest
-first. Parameters: `q`, `session` (a Ren session ID), `client` (`claude_code`,
+first. Parameters: `q`, `session` (a recording ID), `client` (`claude_code`,
 `codex`, `pi`, `opencode`), `user` (a [named user](policy.md#named-users)), `kind` (`model`, `other`), `provider` (`anthropic`, `openai`,
 `codex`, `deepseek`), `model`, `tool`, `has_tools`, `status` (`active`, `finished`, `errors`,
 `interrupted`), `from_ms`, `until_ms` (inclusive), `limit` (1–1000), and `after`.

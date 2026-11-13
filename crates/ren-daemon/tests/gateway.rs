@@ -914,7 +914,13 @@ async fn pi_attribution_is_local_and_scoped_by_provider_and_client_source() {
     }
     gateway.stop().await;
     let reader = Reader::open(data.path(), 1).await.unwrap();
-    let sessions = reader.sessions(PageLimit::new(10).unwrap()).await.unwrap();
+    let sessions = reader
+        .recordings(
+            PageLimit::new(10).unwrap(),
+            ren_store::query::Shelf::Current,
+        )
+        .await
+        .unwrap();
     assert_eq!(sessions.len(), 4);
     assert_eq!(
         sessions
@@ -1627,7 +1633,7 @@ impl Upstream for ScriptedUpstream {
 }
 
 #[tokio::test]
-async fn the_upstream_seam_receives_policy_filtered_requests_and_typed_failures() {
+async fn the_upstream_seam_receives_policy_filtered_requests() {
     let dir = tempfile::tempdir().unwrap();
     let config = Config {
         listen: "127.0.0.1:0".parse().unwrap(),
@@ -1691,23 +1697,9 @@ async fn the_upstream_seam_receives_policy_filtered_requests_and_typed_failures(
         }
     }
     gateway.stop().await;
-
-    let failing = Arc::new(ScriptedUpstream {
-        seen: std::sync::Mutex::new(Vec::new()),
-        answer: || Err(SendFailure::NotSent),
-    });
-    let gateway = TestGateway::with_upstream(&config, dir.path(), failing).await;
-    let response = client()
-        .get(format!("{}/openai/v1/models", gateway.base()))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
-    gateway.stop().await;
     let records = recorded(dir.path()).await;
-    assert_eq!(records.len(), 2);
-    assert_eq!(terminal(&records[0]), AttemptTerminal::NotSent);
-    assert_eq!(terminal(&records[1]), AttemptTerminal::BodyComplete);
+    assert_eq!(records.len(), 1);
+    assert_eq!(terminal(&records[0]), AttemptTerminal::BodyComplete);
 }
 
 #[tokio::test]

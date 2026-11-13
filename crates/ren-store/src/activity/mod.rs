@@ -22,7 +22,7 @@ use ren_protocol::{
 use ren_recorder::digest::CallDigest;
 pub use ren_recorder::digest::Excerpt;
 use ren_recorder::{
-    id::{CallId, SessionId, TurnId},
+    id::{CallId, RecordingId, TurnId},
     time::UnixMillis,
 };
 use report::{CallMetrics, Finding, FindingKind, LargeToolOutput, RepeatedFailure, SecretExposure};
@@ -107,7 +107,7 @@ pub struct CallActivity {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TurnActivity {
     pub turn: TurnId,
-    pub session: SessionId,
+    pub session: RecordingId,
     /// The client's turn identifier.
     pub native_id: String,
     pub client: Option<Stored<Harness>>,
@@ -151,7 +151,7 @@ impl TurnSummary {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TurnHead {
     pub turn: TurnId,
-    pub session: SessionId,
+    pub session: RecordingId,
     pub native_id: String,
 }
 

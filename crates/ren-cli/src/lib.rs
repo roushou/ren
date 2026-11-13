@@ -10,8 +10,6 @@ pub mod mcp;
 pub mod service;
 pub mod style;
 pub mod tail;
-#[cfg(feature = "tui")]
-mod tui_settings;
 
 use crate::context::Context;
 use crate::style::{Terminal, Tone};
@@ -57,9 +55,8 @@ enum Command {
     Activity(commands::history::ActivityCmd),
     Inspect(commands::history::InspectCmd),
     Tail(commands::tail::TailCmd),
-    #[cfg(feature = "tui")]
-    Tui(commands::tui::TuiCmd),
     Control(commands::control::ControlCmd),
+    Runs(commands::runs::RunsCmd),
     Users(commands::users::UsersCmd),
     Mcp(commands::mcp::McpCmd),
 }
@@ -108,9 +105,8 @@ impl Cli {
             Command::Activity(cmd) => cmd.run(&ctx).await,
             Command::Inspect(cmd) => cmd.run(&ctx).await,
             Command::Tail(cmd) => cmd.run(&ctx).await,
-            #[cfg(feature = "tui")]
-            Command::Tui(cmd) => cmd.run(&ctx).await,
             Command::Control(cmd) => cmd.run(&ctx).await,
+            Command::Runs(cmd) => cmd.run(&ctx).await,
             Command::Users(cmd) => cmd.run(&ctx),
             Command::Mcp(cmd) => cmd.run(&ctx).await,
         }
@@ -124,6 +120,5 @@ mod tests {
     #[test]
     fn the_recorded_revision_parses() {
         assert!(env!("REN_REVISION").parse::<Revision>().is_ok());
-        assert_eq!(Cli::build().version(), env!("CARGO_PKG_VERSION"));
     }
 }

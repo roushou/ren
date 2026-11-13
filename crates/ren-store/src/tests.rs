@@ -317,7 +317,11 @@ async fn a_recorded_call_reads_back_with_its_log_bodies_and_inspection() {
         .unwrap();
     assert_eq!(prefix.bytes, request[..1000]);
     assert!(prefix.truncated && !prefix.gap);
-    let sessions = fixture.reader.sessions(PageLimit::DEFAULT).await.unwrap();
+    let sessions = fixture
+        .reader
+        .recordings(PageLimit::DEFAULT, crate::query::Shelf::Current)
+        .await
+        .unwrap();
     assert_eq!(
         (
             sessions.len(),
@@ -328,7 +332,7 @@ async fn a_recorded_call_reads_back_with_its_log_bodies_and_inspection() {
     );
     let timeline = fixture
         .reader
-        .session_calls(sessions[0].id, PageLimit::DEFAULT, None)
+        .recording_calls(sessions[0].id, PageLimit::DEFAULT, None)
         .await
         .unwrap();
     assert_eq!(timeline.calls[0].id, call);
@@ -596,7 +600,7 @@ async fn retention_removes_oldest_calls_and_sweeps_only_unreferenced_chunks() {
     assert!(
         fixture
             .reader
-            .sessions(PageLimit::DEFAULT)
+            .recordings(PageLimit::DEFAULT, crate::query::Shelf::Current)
             .await
             .unwrap()
             .is_empty()
@@ -1007,7 +1011,11 @@ async fn sessions_total_their_errors_and_tokens_including_cached_input() {
             ..CallSpec::default()
         })
         .await;
-    let sessions = fixture.reader.sessions(PageLimit::DEFAULT).await.unwrap();
+    let sessions = fixture
+        .reader
+        .recordings(PageLimit::DEFAULT, crate::query::Shelf::Current)
+        .await
+        .unwrap();
     let totals: Vec<_> = sessions
         .iter()
         .map(|s| (s.call_count, s.error_count, s.tokens.input, s.tokens.output))
@@ -1334,7 +1342,13 @@ mod digests {
         };
         let errors = || {
             let reader = reader.clone();
-            async move { reader.sessions(PageLimit::DEFAULT).await.unwrap()[0].error_count }
+            async move {
+                reader
+                    .recordings(PageLimit::DEFAULT, crate::query::Shelf::Current)
+                    .await
+                    .unwrap()[0]
+                    .error_count
+            }
         };
         // Until its digest is derived, the probe is taken for work.
         assert_eq!(kind(KindFilter::Other).await, []);
@@ -1521,7 +1535,7 @@ mod digests {
             .unwrap();
         let listed = fixture
             .reader
-            .session_turns(session, PageLimit::new(10).unwrap())
+            .recording_turns(session, PageLimit::new(10).unwrap())
             .await
             .unwrap();
         // Not derived yet: no prompt is claimed.
@@ -1538,7 +1552,7 @@ mod digests {
             .await;
         let listed = fixture
             .reader
-            .session_turns(session, PageLimit::new(10).unwrap())
+            .recording_turns(session, PageLimit::new(10).unwrap())
             .await
             .unwrap();
         let prompt = listed[0].prompt.as_ref().unwrap();
@@ -1546,5 +1560,777 @@ mod digests {
         // The user's words, trimmed.
         assert_eq!(prompt.total_chars(), 599);
         assert_eq!(listed[0].call_count, 2);
+    }
+}
+
+mod history {
+    use super::{CallSpec, Fixture};
+    use crate::{StoreError, query::PageLimit, query::Shelf};
+    use ren_protocol::native::NativeThreadId;
+    use ren_recorder::{
+        batch::{
+            Actor, Batch, HistoryChange, HistoryEdit, HistorySubject, Op, RunFact, RunRecord,
+            SessionFact, SessionRecord,
+        },
+        capture::RunEnd,
+        id::{RecordingId, RunId, SessionId},
+        time::Clock,
+    };
+    use std::time::Duration;
+    use uuid::Uuid;
+
+    impl Fixture {
+        async fn edit(&mut self, subject: HistorySubject, change: HistoryChange) {
+            let mut batch = Batch::default();
+            batch.push(Op::History(HistoryEdit {
+                at: self.clock.now(),
+                actor: Actor::Loopback,
+                subject,
+                change,
+            }));
+            self.store.commit(&batch).await.unwrap();
+            self.clock.advance(Duration::from_millis(10));
+        }
+
+        async fn shelf(&self, shelf: Shelf) -> Vec<RecordingId> {
+            self.reader
+                .recordings(PageLimit::DEFAULT, shelf)
+                .await
+                .unwrap()
+                .iter()
+                .map(|session| session.id)
+                .collect()
+        }
+
+        async fn runs(&self, shelf: Shelf) -> Vec<RunId> {
+            self.reader
+                .runs(PageLimit::DEFAULT, shelf)
+                .await
+                .unwrap()
+                .iter()
+                .map(|run| run.id)
+                .collect()
+        }
+
+        /// A run whose client worked in the session `native` names, ended
+        /// or still running.
+        async fn run(&mut self, native: u128, ended: bool) -> RunId {
+            let run = RunId::generate(self.ids.as_ref());
+            let session = SessionId::generate(self.ids.as_ref());
+            let mut batch = Batch::default();
+            batch.push(Op::Session(SessionRecord {
+                at: self.clock.now(),
+                session,
+                fact: SessionFact::Created {
+                    harness: ren_harness::Harness::Codex,
+                    workdir: "/work/acme".into(),
+                    settings: ren_harness::settings::RunSettings::default(),
+                },
+            }));
+            let mut facts = vec![
+                RunFact::Started {
+                    session,
+                    harness: ren_harness::Harness::Codex,
+                    workdir: "/work/acme".into(),
+                    settings: ren_harness::settings::RunSettings::default(),
+                },
+                RunFact::Opened {
+                    thread: NativeThreadId::new(Uuid::from_u128(native)).unwrap(),
+                },
+            ];
+            if ended {
+                facts.push(RunFact::Ended {
+                    end: RunEnd::Stopped,
+                    exit: None,
+                });
+            }
+            for fact in facts {
+                batch.push(Op::Run(RunRecord {
+                    at: self.clock.now(),
+                    run,
+                    fact,
+                }));
+            }
+            self.store.commit(&batch).await.unwrap();
+            run
+        }
+    }
+
+    #[tokio::test]
+    async fn an_archived_session_leaves_the_list_until_unarchived_or_active_again() {
+        let mut fixture = Fixture::new().await;
+        for session in [3, 4] {
+            fixture
+                .record(CallSpec {
+                    session: Some(session),
+                    ..CallSpec::default()
+                })
+                .await;
+        }
+        let run = fixture.run(3, true).await;
+        let current = fixture.shelf(Shelf::Current).await;
+        let [newest, archived] = current.as_slice() else {
+            panic!("two sessions: {current:?}");
+        };
+        let (newest, archived) = (*newest, *archived);
+        fixture
+            .edit(HistorySubject::Session(archived), HistoryChange::Archive)
+            .await;
+        assert_eq!(fixture.shelf(Shelf::Current).await, [newest]);
+        assert_eq!(fixture.shelf(Shelf::Archived).await, [archived]);
+        let listed = fixture
+            .reader
+            .recordings(PageLimit::DEFAULT, Shelf::Archived)
+            .await
+            .unwrap();
+        assert!(listed[0].archived_at.is_some());
+        // The run that worked in it is archived with it.
+        assert!(fixture.runs(Shelf::Current).await.is_empty());
+        assert_eq!(fixture.runs(Shelf::Archived).await, [run]);
+
+        fixture
+            .edit(HistorySubject::Session(archived), HistoryChange::Unarchive)
+            .await;
+        assert_eq!(fixture.shelf(Shelf::Current).await.len(), 2);
+        assert_eq!(fixture.runs(Shelf::Current).await, [run]);
+
+        // Archived again, new traffic brings it back on its own.
+        fixture
+            .edit(HistorySubject::Run(run), HistoryChange::Archive)
+            .await;
+        assert_eq!(fixture.shelf(Shelf::Archived).await, [archived]);
+        fixture
+            .record(CallSpec {
+                session: Some(3),
+                ..CallSpec::default()
+            })
+            .await;
+        assert_eq!(fixture.shelf(Shelf::Current).await, [archived, newest]);
+        assert!(fixture.shelf(Shelf::Archived).await.is_empty());
+    }
+
+    /// An operator session is deleted with its ended runs and what they
+    /// recorded, and goes even with no run at all.
+    #[tokio::test]
+    async fn an_operator_session_is_deleted_with_its_runs_or_none() {
+        let mut fixture = Fixture::new().await;
+        // A session with no run: its client never started.
+        let lone = SessionId::generate(fixture.ids.as_ref());
+        let mut batch = Batch::default();
+        batch.push(Op::Session(SessionRecord {
+            at: fixture.clock.now(),
+            session: lone,
+            fact: SessionFact::Created {
+                harness: ren_harness::Harness::OpenCode,
+                workdir: "/work/acme".into(),
+                settings: ren_harness::settings::RunSettings::default(),
+            },
+        }));
+        fixture.store.commit(&batch).await.unwrap();
+        let subject = HistorySubject::OperatorSession(lone);
+        assert_eq!(
+            fixture.reader.history_target(subject).await.unwrap(),
+            Some(crate::view::HistoryTarget {
+                open_calls: 0,
+                running_runs: 0,
+            })
+        );
+        fixture.edit(subject, HistoryChange::Delete).await;
+        assert!(fixture.reader.session(lone).await.unwrap().is_none());
+
+        // A session whose ended run recorded calls.
+        fixture
+            .record(CallSpec {
+                session: Some(9),
+                ..CallSpec::default()
+            })
+            .await;
+        let run = fixture.run(9, true).await;
+        let session = fixture
+            .reader
+            .run(run)
+            .await
+            .unwrap()
+            .unwrap()
+            .operator_session
+            .unwrap();
+        let running = fixture.run(10, false).await;
+        let busy = fixture
+            .reader
+            .run(running)
+            .await
+            .unwrap()
+            .unwrap()
+            .operator_session
+            .unwrap();
+        assert_eq!(
+            fixture
+                .reader
+                .history_target(HistorySubject::OperatorSession(busy))
+                .await
+                .unwrap()
+                .map(|target| target.running_runs),
+            Some(1)
+        );
+        assert_eq!(fixture.shelf(Shelf::Current).await.len(), 1);
+        fixture
+            .edit(
+                HistorySubject::OperatorSession(session),
+                HistoryChange::Delete,
+            )
+            .await;
+        assert!(fixture.reader.run(run).await.unwrap().is_none());
+        assert!(fixture.reader.session(session).await.unwrap().is_none());
+        // Its recording went with it; the running session's run stays.
+        assert!(fixture.shelf(Shelf::Current).await.is_empty());
+        assert_eq!(fixture.runs(Shelf::Current).await, [running]);
+    }
+
+    #[tokio::test]
+    async fn a_running_run_is_never_archived_away() {
+        let mut fixture = Fixture::new().await;
+        let run = fixture.run(5, false).await;
+        fixture
+            .edit(HistorySubject::Run(run), HistoryChange::Archive)
+            .await;
+        assert_eq!(fixture.runs(Shelf::Current).await, [run]);
+        assert!(fixture.runs(Shelf::Archived).await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_sessions_own_facts_change_it_without_a_run() {
+        let mut fixture = Fixture::new().await;
+        fixture.run(5, true).await;
+        let id = fixture
+            .reader
+            .sessions(PageLimit::DEFAULT, Shelf::Current)
+            .await
+            .unwrap()[0]
+            .id;
+        let mut batch = Batch::default();
+        for fact in [
+            SessionFact::ClientChosen {
+                harness: ren_harness::Harness::Pi,
+            },
+            SessionFact::Configured {
+                settings: ren_harness::settings::RunSettings {
+                    model: Some("pi-large".parse().unwrap()),
+                    effort: None,
+                    approvals: None,
+                },
+            },
+            SessionFact::Archived,
+        ] {
+            batch.push(Op::Session(SessionRecord {
+                at: fixture.clock.now(),
+                session: id,
+                fact,
+            }));
+        }
+        fixture.store.commit(&batch).await.unwrap();
+        let read = fixture.reader.session(id).await.unwrap().unwrap();
+        assert_eq!(
+            read.harness,
+            ren_protocol::label::Stored::Known(ren_harness::Harness::Pi)
+        );
+        assert_eq!(read.model.as_deref(), Some("pi-large"));
+        assert!(read.archived_at.is_some());
+        assert!(
+            fixture
+                .reader
+                .sessions(PageLimit::DEFAULT, Shelf::Current)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        let mut batch = Batch::default();
+        batch.push(Op::Session(SessionRecord {
+            at: fixture.clock.now(),
+            session: id,
+            fact: SessionFact::Unarchived,
+        }));
+        fixture.store.commit(&batch).await.unwrap();
+        assert!(
+            fixture
+                .reader
+                .session(id)
+                .await
+                .unwrap()
+                .unwrap()
+                .archived_at
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn a_runs_operator_session_is_archived_and_deleted_with_it() {
+        let mut fixture = Fixture::new().await;
+        let run = fixture.run(5, true).await;
+        let sessions = |fixture: &Fixture, shelf| {
+            let reader = fixture.reader.clone();
+            async move {
+                reader
+                    .sessions(PageLimit::DEFAULT, shelf)
+                    .await
+                    .unwrap()
+                    .iter()
+                    .map(|session| session.runs.iter().map(|run| run.id).collect::<Vec<_>>())
+                    .collect::<Vec<_>>()
+            }
+        };
+        assert_eq!(sessions(&fixture, Shelf::Current).await, [[run]]);
+        fixture
+            .edit(HistorySubject::Run(run), HistoryChange::Archive)
+            .await;
+        assert!(sessions(&fixture, Shelf::Current).await.is_empty());
+        assert_eq!(sessions(&fixture, Shelf::Archived).await, [[run]]);
+        fixture
+            .edit(HistorySubject::Run(run), HistoryChange::Unarchive)
+            .await;
+        assert_eq!(sessions(&fixture, Shelf::Current).await, [[run]]);
+        fixture
+            .edit(HistorySubject::Run(run), HistoryChange::Delete)
+            .await;
+        assert!(sessions(&fixture, Shelf::Current).await.is_empty());
+        assert!(sessions(&fixture, Shelf::Archived).await.is_empty());
+        // A running run keeps its session current, archived or not.
+        let running = fixture.run(6, false).await;
+        fixture
+            .edit(HistorySubject::Run(running), HistoryChange::Archive)
+            .await;
+        assert_eq!(sessions(&fixture, Shelf::Current).await, [[running]]);
+    }
+
+    #[tokio::test]
+    async fn deleting_a_session_removes_its_finished_calls_runs_and_chunks() {
+        let mut fixture = Fixture::new().await;
+        let gone = fixture
+            .record(CallSpec {
+                request: &super::large(100_000, 21),
+                session: Some(3),
+                ..CallSpec::default()
+            })
+            .await;
+        let kept = fixture
+            .record(CallSpec {
+                session: Some(4),
+                ..CallSpec::default()
+            })
+            .await;
+        // A call of the session still open, and a run still running in it.
+        let (batch, open, _) = fixture.open(&CallSpec {
+            session: Some(3),
+            ..CallSpec::default()
+        });
+        fixture.store.commit(&batch).await.unwrap();
+        let ended = fixture.run(3, true).await;
+        let running = fixture.run(3, false).await;
+        let sessions = fixture.shelf(Shelf::Current).await;
+        let session = sessions[0];
+        let before = fixture.reader.storage().await.unwrap();
+        // What a delete would leave is known before it is asked for.
+        for subject in [HistorySubject::Session(session), HistorySubject::Run(ended)] {
+            assert_eq!(
+                fixture.reader.history_target(subject).await.unwrap(),
+                Some(crate::view::HistoryTarget {
+                    open_calls: 1,
+                    running_runs: 1,
+                }),
+                "{subject:?}"
+            );
+        }
+        assert_eq!(
+            fixture
+                .reader
+                .history_target(HistorySubject::Session(sessions[1]))
+                .await
+                .unwrap(),
+            Some(crate::view::HistoryTarget {
+                open_calls: 0,
+                running_runs: 0,
+            })
+        );
+        assert_eq!(
+            fixture
+                .reader
+                .history_target(HistorySubject::Run(RunId::restore(Uuid::from_u128(77))))
+                .await
+                .unwrap(),
+            None
+        );
+
+        fixture
+            .edit(HistorySubject::Session(session), HistoryChange::Delete)
+            .await;
+        assert!(matches!(
+            fixture.reader.call(gone).await,
+            Err(StoreError::NotFound)
+        ));
+        assert!(fixture.reader.call(kept).await.is_ok());
+        assert!(fixture.reader.call(open.call).await.is_ok());
+        assert_eq!(fixture.runs(Shelf::Current).await, [running]);
+        assert!(fixture.reader.run(ended).await.unwrap().is_none());
+        // The session stays while its open call does.
+        assert_eq!(fixture.shelf(Shelf::Current).await.len(), 2);
+        // The next retention pass frees the deleted bodies' chunks.
+        fixture
+            .store
+            .prune(
+                &ren_recorder::retention::RetentionPolicy::default(),
+                fixture.clock.now().wall,
+            )
+            .await
+            .unwrap();
+        let after = fixture.reader.storage().await.unwrap();
+        assert!(after.chunks < before.chunks, "{before:?} {after:?}");
+        assert_eq!(after.calls, before.calls - 1);
+    }
+
+    #[tokio::test]
+    async fn deleting_a_run_removes_the_session_its_client_recorded() {
+        let mut fixture = Fixture::new().await;
+        let call = fixture
+            .record(CallSpec {
+                session: Some(3),
+                ..CallSpec::default()
+            })
+            .await;
+        let run = fixture.run(3, true).await;
+        fixture
+            .edit(HistorySubject::Run(run), HistoryChange::Delete)
+            .await;
+        assert!(fixture.reader.run(run).await.unwrap().is_none());
+        assert!(fixture.shelf(Shelf::Current).await.is_empty());
+        assert!(matches!(
+            fixture.reader.call(call).await,
+            Err(StoreError::NotFound)
+        ));
+        // A run without traffic is deleted alone.
+        let quiet = fixture.run(9, true).await;
+        fixture
+            .edit(HistorySubject::Run(quiet), HistoryChange::Delete)
+            .await;
+        assert!(fixture.runs(Shelf::Current).await.is_empty());
+    }
+}
+
+mod conversation {
+    use super::Fixture;
+    use ren_harness::drive::{
+        DriveEvent, DriveItem, ItemKind, ItemPhase, ItemRead, ItemStatus, TurnEnd,
+    };
+    use ren_protocol::native::{NativeThreadId, NativeTurnId};
+    use ren_recorder::{
+        batch::{Batch, Op, RunEntry, RunFact, RunRecord},
+        capture::RunEnd,
+        id::RunId,
+        time::Clock,
+    };
+    use uuid::Uuid;
+
+    fn item(id: &str, phase: ItemPhase, read: ItemRead) -> DriveEvent {
+        serde_json::from_value(serde_json::json!({
+            "kind": "item",
+            "phase": phase,
+            "item": DriveItem {
+                id: serde_json::from_value(serde_json::json!(id)).unwrap(),
+                kind: ItemKind::AgentMessage,
+                read,
+                body: serde_json::Value::Null,
+            },
+        }))
+        .unwrap()
+    }
+
+    impl Fixture {
+        /// A run on `thread` that saw `events` in one turn, then ended.
+        async fn conversed(&mut self, thread: u128, events: Vec<DriveEvent>) -> RunId {
+            let run = RunId::generate(self.ids.as_ref());
+            let turn = NativeTurnId::new(Uuid::from_u128(thread + 100)).unwrap();
+            let mut batch = Batch::default();
+            let session = ren_recorder::id::SessionId::generate(self.ids.as_ref());
+            for fact in [
+                RunFact::Started {
+                    session,
+                    harness: ren_harness::Harness::ClaudeCode,
+                    workdir: "/work/acme".into(),
+                    settings: ren_harness::settings::RunSettings::default(),
+                },
+                RunFact::Opened {
+                    thread: NativeThreadId::new(Uuid::from_u128(thread)).unwrap(),
+                },
+            ] {
+                batch.push(Op::Run(RunRecord {
+                    at: self.clock.now(),
+                    run,
+                    fact,
+                }));
+            }
+            for event in events {
+                batch.push(Op::RunEntry(RunEntry {
+                    at: self.clock.now(),
+                    run,
+                    turn: Some(turn),
+                    event,
+                }));
+            }
+            batch.push(Op::Run(RunRecord {
+                at: self.clock.now(),
+                run,
+                fact: RunFact::Ended {
+                    end: RunEnd::Stopped,
+                    exit: None,
+                },
+            }));
+            self.store.commit(&batch).await.unwrap();
+            self.clock.advance(std::time::Duration::from_millis(10));
+            run
+        }
+    }
+
+    #[tokio::test]
+    async fn a_session_is_named_by_the_first_line_of_its_first_prompt() {
+        use ren_recorder::{
+            batch::{SessionFact, SessionRecord},
+            id::SessionId,
+        };
+        let mut fixture = Fixture::new().await;
+        let session = SessionId::generate(fixture.ids.as_ref());
+        let run = RunId::generate(fixture.ids.as_ref());
+        let mut batch = Batch::default();
+        batch.push(Op::Session(SessionRecord {
+            at: fixture.clock.now(),
+            session,
+            fact: SessionFact::Created {
+                harness: ren_harness::Harness::Codex,
+                workdir: "/work/acme".into(),
+                settings: ren_harness::settings::RunSettings::default(),
+            },
+        }));
+        batch.push(Op::Run(RunRecord {
+            at: fixture.clock.now(),
+            run,
+            fact: RunFact::Started {
+                session,
+                harness: ren_harness::Harness::Codex,
+                workdir: "/work/acme".into(),
+                settings: ren_harness::settings::RunSettings::default(),
+            },
+        }));
+        fixture.store.commit(&batch).await.unwrap();
+        let read = |fixture: &Fixture| {
+            let reader = fixture.reader.clone();
+            async move { reader.session(session).await.unwrap().unwrap().first_prompt }
+        };
+        // A draft: nothing asked yet.
+        assert_eq!(read(&fixture).await, None);
+
+        let mut batch = Batch::default();
+        for (id, text) in [
+            (
+                "prompt_1",
+                format!(
+                    "\n  fix the order list sorting  \nwith details\n{}",
+                    "x".repeat(10)
+                ),
+            ),
+            ("prompt_2", "run the tests".to_owned()),
+        ] {
+            fixture.clock.advance(std::time::Duration::from_millis(10));
+            batch.push(Op::RunEntry(RunEntry {
+                at: fixture.clock.now(),
+                run,
+                turn: None,
+                event: item(id, ItemPhase::Completed, ItemRead::Prompt { text }),
+            }));
+        }
+        fixture.store.commit(&batch).await.unwrap();
+        assert_eq!(
+            read(&fixture).await.as_deref(),
+            Some("fix the order list sorting")
+        );
+
+        // A long first line is cut.
+        let mut batch = Batch::default();
+        let other = RunId::generate(fixture.ids.as_ref());
+        let long = SessionId::generate(fixture.ids.as_ref());
+        batch.push(Op::Session(SessionRecord {
+            at: fixture.clock.now(),
+            session: long,
+            fact: SessionFact::Created {
+                harness: ren_harness::Harness::Codex,
+                workdir: "/work/acme".into(),
+                settings: ren_harness::settings::RunSettings::default(),
+            },
+        }));
+        batch.push(Op::Run(RunRecord {
+            at: fixture.clock.now(),
+            run: other,
+            fact: RunFact::Started {
+                session: long,
+                harness: ren_harness::Harness::Codex,
+                workdir: "/work/acme".into(),
+                settings: ren_harness::settings::RunSettings::default(),
+            },
+        }));
+        batch.push(Op::RunEntry(RunEntry {
+            at: fixture.clock.now(),
+            run: other,
+            turn: None,
+            event: item(
+                "prompt_3",
+                ItemPhase::Completed,
+                ItemRead::Prompt {
+                    text: "é".repeat(500),
+                },
+            ),
+        }));
+        fixture.store.commit(&batch).await.unwrap();
+        let cut = fixture
+            .reader
+            .session(long)
+            .await
+            .unwrap()
+            .unwrap()
+            .first_prompt
+            .unwrap();
+        assert_eq!(
+            cut.chars().count(),
+            crate::view::SessionView::FIRST_PROMPT_CHARS
+        );
+    }
+
+    #[tokio::test]
+    async fn a_conversation_is_kept_whole_and_reads_on_across_resumed_runs() {
+        let mut fixture = Fixture::new().await;
+        let long = "word ".repeat(5_000);
+        let turn = NativeTurnId::new(Uuid::from_u128(103)).unwrap();
+        let first = fixture
+            .conversed(
+                3,
+                vec![
+                    item(
+                        "cmd_1",
+                        ItemPhase::Started,
+                        ItemRead::Command {
+                            command: "cargo test".into(),
+                            status: ItemStatus::InProgress,
+                            output: None,
+                            exit_code: None,
+                        },
+                    ),
+                    item(
+                        "msg_1",
+                        ItemPhase::Completed,
+                        ItemRead::Reply { text: long.clone() },
+                    ),
+                    // Reported again, finished: it keeps its place.
+                    item(
+                        "cmd_1",
+                        ItemPhase::Completed,
+                        ItemRead::Command {
+                            command: "cargo test".into(),
+                            status: ItemStatus::Completed,
+                            output: Some("ok".into()),
+                            exit_code: Some(0),
+                        },
+                    ),
+                    DriveEvent::TurnEnded {
+                        turn,
+                        end: TurnEnd::Completed,
+                    },
+                ],
+            )
+            .await;
+        // A later run resumed the same conversation; another did not.
+        let resumed = fixture
+            .conversed(
+                3,
+                vec![item(
+                    "msg_2",
+                    ItemPhase::Completed,
+                    ItemRead::Reply {
+                        text: "and then".into(),
+                    },
+                )],
+            )
+            .await;
+        let _other = fixture
+            .conversed(
+                4,
+                vec![item(
+                    "msg_9",
+                    ItemPhase::Completed,
+                    ItemRead::Reply {
+                        text: "elsewhere".into(),
+                    },
+                )],
+            )
+            .await;
+
+        let read = fixture
+            .reader
+            .conversation(resumed, 100)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(!read.earlier);
+        let shown: Vec<(RunId, String)> = read
+            .entries
+            .iter()
+            .map(|entry| {
+                let what = if let DriveEvent::Item { phase, item } = &entry.event {
+                    format!("{} {phase:?}", item.id.as_str())
+                } else {
+                    serde_json::to_value(&entry.event).unwrap()["kind"]
+                        .as_str()
+                        .unwrap()
+                        .to_owned()
+                };
+                (entry.run, what)
+            })
+            .collect();
+        assert_eq!(
+            shown,
+            [
+                (first, "cmd_1 Completed".to_owned()),
+                (first, "msg_1 Completed".to_owned()),
+                (first, "turn_ended".to_owned()),
+                (resumed, "msg_2 Completed".to_owned()),
+            ]
+        );
+        // The reply is whole: nothing is cut for being long.
+        let DriveEvent::Item { item, .. } = &read.entries[1].event else {
+            panic!("a reply");
+        };
+        assert_eq!(item.read, ItemRead::Reply { text: long });
+        // The first run reads only up to itself; a short read says more is earlier.
+        assert_eq!(
+            fixture
+                .reader
+                .conversation(first, 100)
+                .await
+                .unwrap()
+                .unwrap()
+                .entries
+                .len(),
+            3
+        );
+        let short = fixture
+            .reader
+            .conversation(resumed, 2)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(short.earlier);
+        assert_eq!(short.entries.len(), 2);
+        assert!(
+            fixture
+                .reader
+                .conversation(RunId::restore(Uuid::from_u128(99)), 10)
+                .await
+                .unwrap()
+                .is_none()
+        );
     }
 }

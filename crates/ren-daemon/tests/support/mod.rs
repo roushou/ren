@@ -3,6 +3,8 @@
 //! and read API with test capabilities.
 #![allow(dead_code, reason = "each test binary uses a different subset")]
 
+pub mod agent;
+
 use axum::Router;
 use ren_daemon::config::Config;
 use ren_gateway::build::Revision;
@@ -10,6 +12,7 @@ use ren_gateway::{
     Build, ControlToken, Gateway, Ingress, IngressError, ManagementSetup, ReqwestUpstream,
     Shutdown, Stopped, Upstream, control::Controls,
 };
+use ren_harness::{endpoint::GatewayEndpoint, lines::LineLimit};
 use ren_protocol::{direction::Direction, label::Stored};
 use ren_recorder::{
     Recorder, RecorderSetup,
@@ -23,9 +26,10 @@ use ren_store::{
     query::{CallQuery, PageLimit},
     view::{CallDetail, CallView},
 };
+use ren_supervisor::{AgentHost, Supervisor, SupervisorOptions};
 use std::{
     net::SocketAddr,
-    path::Path,
+    path::{Path, PathBuf},
     sync::{
         Arc,
         atomic::{AtomicU64, Ordering},
@@ -165,6 +169,8 @@ pub struct TestGateway {
     shutdown: Shutdown,
     server: JoinHandle<Result<Stopped, IngressError>>,
     worker: JoinHandle<Result<(), StoreError>>,
+    /// The supervisor's task, when runs are enabled.
+    runs: Option<JoinHandle<()>>,
     clock: Arc<ManualClock>,
 }
 
@@ -199,6 +205,34 @@ impl TestGateway {
 
     /// Forward to a substituted upstream; `config` supplies everything else.
     pub async fn with_upstream<U: Upstream>(config: &Config, dir: &Path, upstream: U) -> Self {
+        Self::assemble(
+            config,
+            dir,
+            upstream,
+            None::<(Vec<PathBuf>, agent::ScriptedHost)>,
+        )
+        .await
+    }
+
+    /// Forward over HTTP, with agent runs in `roots` started by `host`.
+    pub async fn with_runs<H: AgentHost>(
+        config: &Config,
+        dir: &Path,
+        roots: Vec<PathBuf>,
+        host: H,
+    ) -> Self {
+        let runtime = Self::resolve(config);
+        let upstream =
+            ReqwestUpstream::new(runtime.upstreams().clone(), runtime.transport()).unwrap();
+        Self::assemble(config, dir, upstream, Some((roots, host))).await
+    }
+
+    async fn assemble<U: Upstream, H: AgentHost>(
+        config: &Config,
+        dir: &Path,
+        upstream: U,
+        runs: Option<(Vec<PathBuf>, H)>,
+    ) -> Self {
         let runtime = Self::resolve(config);
         let clock = Arc::new(ManualClock::at(UnixMillis::from_millis(1_800_000_000_000)));
         let block = RUNS.fetch_add(1, Ordering::Relaxed);
@@ -223,10 +257,35 @@ impl TestGateway {
                 scanner: std::sync::Arc::new(ren_recorder::secrets::SecretScanner::new().unwrap()),
             },
             clock.clone(),
-            ids,
+            ids.clone(),
         )
         .unwrap();
         let worker = tokio::spawn(task.run());
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let (supervisor, runs) = match runs {
+            Some((roots, host)) => {
+                let (supervisor, task) = Supervisor::new(
+                    SupervisorOptions {
+                        roots,
+                        places: Vec::new(),
+                        scratch: Some(std::path::PathBuf::from("/scratch")),
+                        home: Some(std::path::PathBuf::from("/work")),
+                        warmup: ren_supervisor::Warmup::WhenAsked,
+                        gateway: GatewayEndpoint::parse(&format!("http://{address}")).unwrap(),
+                        version: "0.0.0-test".into(),
+                        line_limit: LineLimit::DEFAULT,
+                        idle: ren_supervisor::IdleStop::Never,
+                    },
+                    host,
+                    ids,
+                    recorder.clone(),
+                )
+                .unwrap();
+                (Some(supervisor), Some(tokio::spawn(task.run())))
+            }
+            None => (None, None),
+        };
         let reader = Reader::open(dir, 2).await.unwrap();
         let shutdown = Shutdown::default();
         let controls = Arc::new(Controls::restore(operator));
@@ -238,8 +297,6 @@ impl TestGateway {
             clock.clone(),
             shutdown.clone(),
         ));
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let address = listener.local_addr().unwrap();
         let router = gateway.router(ManagementSetup {
             reader,
             backup,
@@ -248,6 +305,7 @@ impl TestGateway {
             token: ControlToken::parse(Self::CONTROL_TOKEN).unwrap(),
             build: build(),
             instance: runtime.instance(),
+            runs: supervisor,
         });
         let ingress = Ingress::new(listener, router.clone());
         let server = tokio::spawn(ingress.serve(shutdown.clone(), Self::DRAIN_DEADLINE));
@@ -257,6 +315,7 @@ impl TestGateway {
             shutdown,
             server,
             worker,
+            runs,
             clock,
         }
     }
@@ -301,6 +360,12 @@ impl TestGateway {
             .expect("server failed to stop")
             .unwrap()
             .unwrap();
+        if let Some(runs) = self.runs {
+            timeout(Duration::from_secs(10), runs)
+                .await
+                .expect("runs failed to drain")
+                .unwrap();
+        }
         timeout(Duration::from_secs(10), self.worker)
             .await
             .expect("recorder failed to drain")

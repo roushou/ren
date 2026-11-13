@@ -6,14 +6,15 @@
 
 use super::DevError;
 use crate::{
+    daemon::{Busy, LiveRun, RunPolicy, Runs},
     install::{InstallError, InstallVps, TailscaleCli},
     invocation::{Echo, Invocation},
     tailscale::{Route, ServeStatus},
     ui::UiDeploy,
 };
-use ren_daemon::config::{Config, UpstreamConfig};
+use ren_daemon::config::{Config, RunsOptions, UpstreamConfig};
 use ren_gateway::{
-    EntryIngress, Environment, InstanceOptions,
+    ControlToken, EntryIngress, Environment, InstanceOptions,
     user::{TokenDigest, UserConfig},
 };
 use ren_harness::{endpoint::UserToken, host::HostEnv};
@@ -58,6 +59,17 @@ impl Unit {
         format!("{}.service", self.name())
     }
 
+    /// Which of the unit's processes systemd signals when it stops. The
+    /// daemon is signalled alone, as the installed unit does, so it drains
+    /// its runs itself before the final kill covers what is left; the rest
+    /// stop as a whole.
+    fn kill_mode(self) -> &'static str {
+        match self {
+            Self::Daemon => "mixed",
+            Self::Provider | Self::Ui | Self::Traffic => "control-group",
+        }
+    }
+
     pub fn active(self) -> Result<bool, InstallError> {
         Invocation::new("systemctl")
             .args(["--user", "is-active", "--quiet"])
@@ -91,7 +103,8 @@ impl Unit {
         let mut run = Invocation::new("systemd-run")
             .args(["--user", "--collect", "--quiet"])
             .arg(format!("--unit={}", self.name()))
-            .arg(format!("--description=Ren dev slot: {}", self.name()));
+            .arg(format!("--description=Ren dev slot: {}", self.name()))
+            .arg(format!("--property=KillMode={}", self.kill_mode()));
         if let Some(dir) = dir {
             run = run.arg(format!("--working-directory={}", dir.display()));
         }
@@ -100,6 +113,14 @@ impl Unit {
         }
         run.arg("--").args(command).args(args).run()
     }
+}
+
+/// How `dev up` restarts a dev daemon that drives runs: it waits up to
+/// `timeout` seconds for runs mid-way, unless `policy` drains them.
+#[derive(Debug, Clone, Copy)]
+pub struct RunWait {
+    pub policy: RunPolicy,
+    pub timeout: u64,
 }
 
 /// Where the dev preview is reached.
@@ -121,6 +142,12 @@ pub struct Slot {
     home: PathBuf,
     ui_dir: PathBuf,
     ui_next: PathBuf,
+    /// The dev daemon's run root, with a few fake projects to start runs in.
+    pub work_dir: PathBuf,
+    /// Its other place, with a few fake folders, like `~/.config`.
+    places_dir: PathBuf,
+    /// Where its scratch runs get their folders.
+    scratch_dir: PathBuf,
 }
 
 impl Slot {
@@ -141,6 +168,8 @@ impl Slot {
     /// The operator key the dev config's operator-key entries read: fake.
     const OPERATOR_KEY_ENV: &'static str = "REN_DEV_OPERATOR_KEY";
     const OPERATOR_KEY: &'static str = "fake-dev-operator-key";
+    /// Seconds between checks for runs mid-way.
+    const RUN_POLL: Duration = Duration::from_secs(2);
 
     pub fn new(env: &HostEnv) -> Result<Self, DevError> {
         let home = env
@@ -159,6 +188,9 @@ impl Slot {
             bin_dir: share.join("bin"),
             ui_dir: share.join("ui"),
             ui_next: share.join("ui.next"),
+            work_dir: share.join("work"),
+            places_dir: share.join("config"),
+            scratch_dir: share.join("scratch"),
             home: home.clone(),
         })
     }
@@ -223,6 +255,11 @@ impl Slot {
             instance: InstanceOptions {
                 environment: Environment::Development,
             },
+            runs: RunsOptions {
+                roots: vec![self.work_dir.clone()],
+                places: vec![self.places_dir.clone()],
+                scratch: Some(self.scratch_dir.clone()),
+            },
             ..Config::default()
         })
     }
@@ -245,7 +282,61 @@ impl Slot {
             let contents = fs::read(&built).map_err(InstallError::file(&built))?;
             InstallVps::write_private(&self.bin_dir.join(name), &contents, 0o755)?;
         }
+        self.write_agent()
+    }
+
+    /// The fake projects runs start in.
+    pub const PROJECTS: [&'static str; 2] = ["acme-api", "acme-web"];
+
+    /// The fake folders of its other place.
+    const PLACES: [&'static str; 3] = ["nvim", "acme-cli", ".hidden-tool"];
+
+    /// The folder holding the `codex`, `claude`, and `pi` the dev daemon starts:
+    /// the fake agent.
+    fn agent_dir(&self) -> PathBuf {
+        self.bin_dir.join("agent")
+    }
+
+    /// Put the fake agent first on the dev daemon's PATH as `codex`,
+    /// `claude`, and `pi`, and create the fake projects under the run root.
+    fn write_agent(&self) -> Result<(), DevError> {
+        let dir = self.agent_dir();
+        fs::create_dir_all(&dir).map_err(InstallError::file(&dir))?;
+        for (program, client, name) in [
+            ("codex", "codex", "Codex"),
+            ("claude", "claude", "Claude Code"),
+            ("pi", "pi", "Pi"),
+            ("opencode", "opencode", "OpenCode"),
+        ] {
+            let script = format!(
+                "#!/bin/sh\n# The dev slot's fake {name} (`cargo xtask dev agent`); never the real one.\nexec {} dev agent --client {client} --data-dir {} \"$@\"\n",
+                Self::quote(&self.bin_dir.join("xtask")),
+                Self::quote(&self.data_dir),
+            );
+            InstallVps::write_private(&dir.join(program), script.as_bytes(), 0o755)?;
+        }
+        for place in Self::PLACES {
+            let folder = self.places_dir.join(place);
+            fs::create_dir_all(&folder).map_err(InstallError::file(&folder))?;
+        }
+        for project in Self::PROJECTS {
+            let folder = self.work_dir.join(project);
+            fs::create_dir_all(folder.join("src")).map_err(InstallError::file(&folder))?;
+            let readme = folder.join("README.md");
+            if !readme.exists() {
+                fs::write(
+                    &readme,
+                    format!("# {project}\n\nA fake project for the dev slot's runs.\n"),
+                )
+                .map_err(InstallError::file(&readme))?;
+            }
+        }
         Ok(())
+    }
+
+    /// `path` as one single-quoted shell word.
+    fn quote(path: &Path) -> String {
+        format!("'{}'", path.display().to_string().replace('\'', "'\\''"))
     }
 
     fn write_config(&self) -> Result<(), DevError> {
@@ -293,15 +384,20 @@ impl Slot {
     }
 
     /// Build, configure, and (re)start the provider and daemon.
-    pub fn up(&self) -> Result<(), DevError> {
-        self.start_core()
+    pub fn up(&self, wait: RunWait) -> Result<(), DevError> {
+        self.start_core(wait)
     }
 
     /// Start the core, then build and run the UI and, unless `Preview::Local`,
     /// publish the dev gateway and UI on the tailnet.
-    pub fn up_with_ui(&self, env: &HostEnv, preview: Preview) -> Result<(), DevError> {
+    pub fn up_with_ui(
+        &self,
+        env: &HostEnv,
+        preview: Preview,
+        wait: RunWait,
+    ) -> Result<(), DevError> {
         let ui = UiDeploy::new(env, &self.home, &self.repo)?;
-        self.start_core()?;
+        self.start_core(wait)?;
         ui.build_into(&self.ui_next)?;
         Unit::Ui.stop()?;
         if self.ui_dir.exists() {
@@ -338,6 +434,10 @@ impl Slot {
                 ("REN_PUBLIC_GATEWAY_URL", public_gateway),
                 ("ORIGIN", origin.clone()),
                 ("REN_DEV_TRAFFIC_URL", format!("http://{}", Self::CONTROL)),
+                (
+                    "REN_CONTROL_TOKEN_FILE",
+                    self.data_dir.join(ControlToken::FILE).display().to_string(),
+                ),
             ],
         )?;
         // The UI's /health relays the dev daemon's.
@@ -349,9 +449,11 @@ impl Slot {
         Ok(())
     }
 
-    fn start_core(&self) -> Result<(), DevError> {
+    fn start_core(&self, wait: RunWait) -> Result<(), DevError> {
         self.build()?;
         self.write_config()?;
+        let ending = self.settle_runs(wait)?;
+        InstallVps::announce_ending(&ending);
         for unit in [Unit::Daemon, Unit::Provider] {
             unit.stop()?;
         }
@@ -381,10 +483,52 @@ impl Slot {
                 self.config.display().to_string(),
                 "serve".into(),
             ],
-            &[(Self::OPERATOR_KEY_ENV, Self::OPERATOR_KEY.into())],
+            &[
+                (Self::OPERATOR_KEY_ENV, Self::OPERATOR_KEY.into()),
+                // Runs start the fake agent as `codex`, never a real client.
+                (
+                    "PATH",
+                    format!(
+                        "{}:/usr/local/bin:/usr/bin:/bin",
+                        self.agent_dir().display()
+                    ),
+                ),
+            ],
         )?;
         Self::wait_for(Self::DAEMON, "/health")?;
+        InstallVps::remind_ending(&ending);
         self.start_traffic()
+    }
+
+    /// Waits until the running dev daemon has no run mid-way (calls are not
+    /// waited for: the fake traffic never stops), and returns the runs that
+    /// end with it. Polls are counted rather than timed, so this reads no
+    /// clock.
+    fn settle_runs(&self, wait: RunWait) -> Result<Vec<LiveRun>, DevError> {
+        if !Unit::Daemon.active()? {
+            return Ok(Vec::new());
+        }
+        let ren = || {
+            Invocation::new(self.bin_dir.join("ren"))
+                .arg("--config")
+                .arg(&self.config)
+        };
+        let polls = wait.timeout.div_ceil(Self::RUN_POLL.as_secs()).max(1);
+        let mut reported = None;
+        for _ in 0..polls {
+            let runs = InstallVps::runs(ren())?;
+            let busy = Busy::of_runs(&runs, wait.policy);
+            if busy.is_quiet() {
+                return Ok(runs.ending());
+            }
+            InstallVps::report_wait(&busy, &mut reported, wait.timeout);
+            thread::sleep(Self::RUN_POLL);
+        }
+        Err(InstallError::Busy {
+            busy: reported.unwrap_or_else(|| Busy::of_runs(&Runs::default(), wait.policy)),
+            waited: wait.timeout,
+        }
+        .into())
     }
 
     /// (Re)start the traffic generator, which follows the settings file.
@@ -467,6 +611,7 @@ impl Slot {
         println!("traffic control    http://{}", Self::CONTROL);
         println!("config             {}", self.config.display());
         println!("data               {}", self.data_dir.display());
+        println!("run root           {}", self.work_dir.display());
         println!(
             "history            {} --config {} history",
             self.bin_dir.join("ren").display(),
@@ -512,6 +657,10 @@ mod tests {
                 .all(|upstream| upstream.base_url.starts_with("http://127.0.0.1:18999/"))
         );
         assert!(config.listen.ip().is_loopback());
+        assert_eq!(
+            config.runs.roots,
+            [std::path::Path::new("/home/dev/.local/share/ren-dev/work")]
+        );
         assert_eq!(
             config.instance.environment,
             ren_gateway::Environment::Development

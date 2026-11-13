@@ -71,6 +71,10 @@ These describe what Ren must do. They hold through every refactor.
 - Never spoof client identity. OAuth availability does not prove that every client is
   entitled to a subscription. Check current official provider documentation before
   changing authentication or gateway behavior.
+- Ren starts and drives only the official client programs, under the sign-in the
+  operator gave each one. It never signs in for a client, never reads or copies a
+  client's stored credentials, and never imitates a client (its user agent, system
+  prompt, tool names, or originator) to use a subscription.
 - Listeners default to loopback. Remote access and management controls are explicit,
   with Tailscale as the preferred private path.
 
@@ -84,9 +88,9 @@ it's unavailable, the Ren-specific rules below still apply.
 
 Ren-specific applications:
 
-- **Identities:** channels, calls, attempts, sessions, turns, and tool calls each get
+- **Identities:** channels, calls, attempts, recordings, turns, and tool calls each get
   their own type (`ren_recorder::id`). Provider-native identifiers keep separate types
-  (`NativeSessionId` is not `SessionId`).
+  (`NativeSessionId` is not `RecordingId`).
 - **Vocabularies:** a closed set of labels is an enum deriving `strum`'s
   `Display`, `EnumString`, `IntoStaticStr`, and `VariantArray` with
   `serialize_all = "snake_case"`, plus `serde_with`'s `SerializeDisplay` and
@@ -126,15 +130,16 @@ Ren-specific applications:
 The strict lints are workspace-wide, in root `Cargo.toml` `[workspace.lints.clippy]`.
 They deny, among others, wildcard enum arms and imports, `unwrap`/`expect`/`panic!`
 outside tests, `as` conversions, excessive bools, and the ambient calls listed in
-`clippy.toml` (host clocks, random UUIDs, environment variables, task spawning).
+`clippy.toml` (host clocks, random UUIDs, environment variables, task spawning,
+starting processes).
 Modules carry no lint headers of their own. A module with submodules lives in
 `name/mod.rs`, never `name.rs` beside a `name/` directory
 (`self_named_module_files`).
 
 - The only exemptions are the capability implementations themselves, marked with
   `#[expect(clippy::disallowed_methods, reason = "…")]`: `HostEnv::capture`, the
-  daemon's `SystemClock` and `RandomIds` (`ren_daemon::host`), and the daemon's server
-  task spawn. The recorder runs on `ObservationThread` (`ren_daemon::host`), a
+  daemon's `SystemClock`, `RandomIds`, and `ProcessHost` (`ren_daemon::host`), and
+  the daemon's server task spawn. The recorder runs on `ObservationThread` (`ren_daemon::host`), a
   thread with its own runtime.
 - Integration-test crates (`crates/*/tests/*.rs`) act as a shell: each has one
   crate-level `#![allow(...)]` with a reason, covering helpers outside `#[test]`
@@ -182,19 +187,43 @@ dependencies under "Crates" below. Read the code for current module ownership.
   manifest allows only pure dependencies, and a test keeps its sources free of
   I/O.
 - `crates/ren-harness`: the harnesses, with `Harness` (`ClaudeCode`, `Codex`, `Pi`, `OpenCode`)
-  as its primary type: attribution (`attribution`, with its private `headers`
-  parser implementing `Harness::attribution`), session launch plans
-  (`Harness::launch`), the bundled Pi extension cache (`pi`), the gateway URL a
-  harness is pointed at and the `UserToken` it presents there (`endpoint`),
-  `HostEnv` (`host`), the host environment
-  that launching and configuration read, and what each harness's tools and
-  messages mean for activity (`tools`: effects, prompt text, exit codes, why a
-  client sent a call (`CallPurpose`: work, or Claude Code's quota probe), and
-  `InterpretedCall`, a `Reading` read as its client uses it). It performs filesystem and process I/O
-  but has no async runtime, HTTP, database, or CLI dependency.
+  as its primary type. Each client is one module holding everything Ren
+  knows of it: `codex` (the `CodexAppServer` codec for `codex app-server`
+  and its model listing, its launch plan, its headers, and `CodexTool`),
+  `claude_code` (`ClaudeStreamJson` for `claude -p` in stream-json, and the
+  same parts), `pi` (`PiRpc` for `pi --mode rpc`, the bundled extension's
+  `PiCache`, and the same parts), and `opencode` (`OpenCodeAcp` for
+  `opencode acp`, the Agent Client Protocol, and the same parts). Each fills the shared types the rest of Ren reads,
+  and `Harness` dispatches to them by `match`; there is no per-client trait.
+  The shared types: attribution (`attribution`: `Attribution` and the hint
+  types, with `HeaderReading`, which each client's headers extend, behind
+  `Harness::attribution`); launch plans (`launch`: `LaunchPlan`, each client
+  a named constructor, behind `Harness::launch`, `Harness::drive`, and
+  `Harness::list_models`); what tools and messages mean for activity
+  (`tools`: effects, the user context each client adds, exit codes, why a
+  client sent a call (`CallPurpose`: work, or Claude Code's quota probe),
+  and `InterpretedCall`, a `Reading` read as its client uses it); driving a
+  client through its structured mode (`drive`: the `DriveCommand` and
+  `DriveEvent` vocabulary, with `ItemRead`, what Ren reads of each item for
+  every client, and the `Driver` over each client's codec), its pure line
+  framing (`lines`), the models a client lists (`models`: `Model` by
+  `ModelId`, read by `ModelListing` from a short listing process), and a
+  run's `RunSettings` (`settings`: its model, `Effort`, and
+  `ApprovalPolicy`, and `Midway`, what each client takes mid-run: steering
+  and which settings change from the next turn); the commands a client
+  offers a prompt (`commands`: `ClientCommand`, each codec reading its
+  client's own list); the gateway URL a harness is pointed at and the
+  `UserToken` it presents there (`endpoint`); and `HostEnv` (`host`), the
+  host environment that launching and configuration read. It performs
+  filesystem and process I/O but has no async runtime, HTTP, database, or
+  CLI dependency.
 - `crates/ren-recorder`: the bounded capture queue between forwarding and
   storage, with `Recorder` as its primary type. `CallTap` (and `ChannelTap` for a
-  WebSocket's end) is the forwarding side; `RecorderTask` (run by the daemon on
+  WebSocket's end) is the forwarding side, `RunTap` records an agent run's
+  start (with the operator session it serves, `RunSession`, a new one recorded
+  first as `SessionRecord`), opening, settings changed mid-run, end, and each entry of its conversation (`RunEntry`, whole,
+  admitted against the queue's byte budget), and `HistorySlot` an operator's archive or delete
+  of a recording or run (`HistoryEdit`); `RecorderTask` (run by the daemon on
   its observation thread) is the shell around the pure `RecorderCore`
   (`recording`: records in queue order in, a batch of operations out, with
   chunking, inspection, and digests), and runs group commits, retention,
@@ -220,9 +249,14 @@ dependencies under "Crates" below. Read the code for current module ownership.
   online backup, which holds the `SweepGate`. `ren.sqlite3` holds the
   observation log and query tables; `blobs.sqlite3` holds deduplicated,
   content-defined body chunks, in the format `chunk` defines (hash, codec,
-  encoding). It contains typed query parameters and read views, turn and call
+  encoding). Each operator session is in `operator_sessions` (not
+  `sessions`, which holds recordings), and each run names the session it
+  serves (`runs.operator_session`); `Reader::sessions` and `Reader::session`
+  read them with their runs (`SessionView`). Each driven run's conversation is in `run_entries`, whole, and
+  `Reader::conversation` reads it across the runs on one client thread. It
+  contains typed query parameters and read views, turn and call
   activity assembled from the calls' stored digests (`activity`, with the
-  session context and cost report in `activity::report`), the full-text search
+  recording context and cost report in `activity::report`), the full-text search
   and exposure listings (`search`, `Reader::search` and `Reader::exposures`) over
   the digests the recorder derives for each finished call (`call_digests`,
   `call_exposures`, and `search_texts` with its FTS5 index, in `ren.sqlite3`;
@@ -231,28 +265,48 @@ dependencies under "Crates" below. Read the code for current module ownership.
   shipped. Every history read is a `ReadRequest` that `Reader::serve` answers
   (`read`); the API, the CLI, and MCP all ask through it. Its tests include
   `tests/recorder.rs`, the recorder against the real store.
-- `crates/ren-tui`: the terminal view of a gateway's live sessions, with `Tui`
-  as its primary type. `Tui` is sans-IO: it takes what was read (`Input`:
-  snapshots of sessions and model calls, as `ren_store::view` types, turn
-  activity, progress updates, live observations, the terminal's size, and
-  failed reads, shown until a snapshot succeeds) and key presses (`Tui::press`, with `Key` and the `Command`s keys give in
-  `keys`), and answers with the reads it needs (`Read`);
-  `Tui::snapshot_query` builds the snapshot's queries, and `Tui::wall` is
-  what to draw at a given time: panes (`grid`: sized to the active
-  sessions; a session keeps its pane while it stays active, and a pinned
-  one stays even when quiet), a focused pane or one zoomed session, the
-  help, and a status line. Each pane reads its session as a conversation
-  (`session`: the newest two turns call by call, or a turnless client's
-  newest calls (`Read::Call`), with prompts, the results
-  each request carried back, replies, and merged tool runs; progress on a
-  streaming call; the phase, the newest call's measurements, and alerts on
-  the newest call), and `call` reads how a call ended (`CallEnd`).
-  `draw` renders a `Wall` with a resolved `Theme` (`theme`: terminal colors by
-  default, or dark/light presets named by `ThemeName`) into a ratatui buffer, pinned as text in
-  `tests/fixtures/wall-*.txt`; `Screen` (`screen`) is the only part that
-  touches the terminal: raw mode and the alternate screen until dropped,
-  and its events as keys and sizes. `src/purity.rs` keeps the core's
-  sources free of runtime, I/O, and terminal dependencies.
+- `crates/ren-supervisor`: runs, with `Supervisor` as its primary type: agent
+  processes started in a folder and driven through their client's
+  structured mode (Codex, Claude Code, Pi, and OpenCode), each serving an operator
+  session (`SessionState` in `session`: a draft until its first prompt,
+  active after, archived on the shelf; see `docs/architecture.md`,
+  "Sessions, runs, and recordings"). The
+  task holds sessions and their processes together: `Supervisor::create`
+  starts a session's client at once, `send` carries a command through its
+  process or, for a prompt with none running, through a new one that resumes
+  its conversation, `choose_client` replaces a draft's client, `shelve`
+  archives (stopping its process) or unarchives, `adopt` serves a session the
+  store holds, and `session_commands` and `session_files` serve its composer
+  (the folder's listing is the session's, kept until a turn ends). Session
+  changes go to `subscribe_sessions`. A run started through `start` is a
+  session and its first process. A client idle between turns is stopped
+  after `IdleStop` (ten minutes in the daemon; its run ends `idled`), and its
+  session goes on. `RunState` (`run`) is the
+  pure lifecycle machine (starting, idle, working with its waiting approvals and the prompt queued
+  for after the turn (a `Delivery`: start, queue, or steer),
+  stopping, ended with a `RunEnd`); `Workdir` (`workdir`) keeps runs inside
+  `Bounds`: the configured roots, the other places (`~/.config`), and the
+  scratch folder Ren owns, where a run started without a folder
+  (`StartPlace::Scratch`) gets a new git repository of its own; all resolved
+  by the host so links cannot escape; `files` ranks the paths of a run's folder for a prompt to
+  name (`FileListing`, walked by the host's `AgentHost::files`); `project` finds the places a run can
+  start in, each a `Project` of a `PlaceKind` (git repositories under the
+  roots, not looked inside; other places' folders; earlier scratch
+  folders); `models` lists each client's models through a short listing
+  process and keeps the answer (`Supervisor::models`); `Client` and
+  `ClientStatus` (`client`) say whether a run can start
+  with each client here; `AgentHost` (`host`) is the port for resolving paths,
+  looking in folders, making folders (a scratch run's as a repository),
+  finding programs, and starting processes, which tests
+  fill with
+  scripted in-memory agents. `SupervisorTask` is the shell: one task reads every
+  agent's stdout, writes its stdin, and waits for its exit, records each run
+  through the recorder's `RunTap` (a run without room to be recorded does not
+  start), with every event of its conversation as `entries` keeps it (no
+  streamed pieces; a reply cut off kept as far as it came), and drains every
+  run when the last handle is dropped. `src/purity.rs` keeps `run`,
+  `workdir`, `project`, `entries`, and `files` free of runtime and I/O. The daemon constructs it when `[runs]`
+  roots are configured, with `ProcessHost`; the gateway's control API serves it.
 - `crates/ren-gateway`: Ren's HTTP interface, with `Gateway` as its primary type.
   It owns forwarding, management, and control routes on one listener, assembled
   by `Gateway::router` or `Gateway::into_ingress`. Forwarding uses a declarative
@@ -285,24 +339,34 @@ dependencies under "Crates" below. Read the code for current module ownership.
     (`route`) is where each `ReadRequest` lives in HTTP, in both directions:
     the server parses URIs with it (one handler serves every read) and the
     CLI's client builds them with it.
-  - `src/api/control.rs`: the mutating `/control/v1` API over the gateway's
+  - `src/api/control`: the mutating `/control/v1` API over the gateway's
     `Controls` (token or Tailscale identity; browsers refused), and its
     `[control]` configuration (`ControlOptions`) and `ControlToken`. Handler state
     stays crate-private; configuration and token types are exported at the root.
+    Its `sessions` module serves `/control/v1/sessions`: creating a session,
+    prompting, configuring, choosing its client while a draft, archiving,
+    its composer's commands and files, and session changes as SSE, through
+    the `Supervisor`, loading a session the store holds (`Reader::session`)
+    on its first request. Its `runs` module serves `/control/v1/runs`: starting, prompting, answering,
+    interrupting, and stopping runs through the `ren_supervisor::Supervisor` in
+    `ManagementSetup`, and their updates as SSE. Its `history` module serves
+    `/control/v1/history`: archiving, unarchiving, and deleting a recording or
+    run, checked against the `Reader` and recorded through the recorder.
 - `crates/ren-daemon`: configuration, resource wiring, and lifecycle, with
   `Daemon` as its primary type (`lib.rs`). It opens storage, binds the listener,
   writes the control token, constructs the gateway and recorder, owns the
   server task and the observation thread the recorder runs on, and
   coordinates HTTP shutdown before capture drain. It defines no
   HTTP routes or handlers and has no production Axum dependency. `config` turns
-  `Config` into a `RuntimeConfig`. `host` holds `SystemClock`, `RandomIds`, and
-  `ObservationThread`.
+  `Config` into a `RuntimeConfig`. `host` holds `SystemClock`, `RandomIds`,
+  `ObservationThread`, and `ProcessHost`, the supervisor's `AgentHost`.
   Its integration tests hold `TestGateway` (`tests/support`) and the gateway,
   WebSocket, decision, and full-daemon tests; they use the gateway's complete
   router with test capabilities.
 - `crates/ren-cli`: the `ren` binary, with `Cli` as its primary type
   (`lib.rs`) and a thin `main.rs` that sets up logging and captures `HostEnv`.
-  `commands` holds clap parsing and dispatch: each command is a
+  `commands` holds clap parsing and dispatch (`runs` is `ren runs`, the
+  control API's runs, sent through `ControlTarget` like `ren control`): each command is a
   `#[derive(Args)]` struct with its own execution method, and command groups
   are `#[derive(Subcommand)]` enums. `client` chooses the gateway (`--gateway`,
   `REN_GATEWAY`, `client.toml`, then the local listener) and owns
@@ -311,12 +375,7 @@ dependencies under "Crates" below. Read the code for current module ownership.
   control APIs, printing the same JSON either way (`History` serves a
   `ReadRequest` from either). `tail` is the pure core of
   `ren tail`: the live feed decoded through the protocol crate's SSE framer, and
-  its lines (and progress events, which `ren tui` asks for). With the `tui`
-  feature (off by default), `commands::tui` is `ren tui`: the shell around
-  `ren-tui`'s `Tui`, reading snapshots, turns, and the live feed through
-  the gateway's API alongside one another, and drawing to its `Screen`.
-  `tui_settings` owns its local theme preference in `tui.toml`; the CLI resolves
-  flags, saved preferences, and `NO_COLOR`, and passes styles to `Screen`.
+  its lines.
   `mcp` is the pure core of `ren mcp` (a source test keeps it free
   of runtime and I/O): JSON-RPC over stdio in both MCP eras, and the read-only
   tools, whose arguments parse into `ren_store::query` types. `style` decides once, per stream,
@@ -330,18 +389,32 @@ dependencies under "Crates" below. Read the code for current module ownership.
 - `ui`: an independent SvelteKit, Svelte 5, and TypeScript server (Node adapter). It
   reads the daemon only through the management API and forwards only allowlisted
   read-only endpoints. It never forwards browser cookies or credentials, never reads
-  storage directly, and never proxies inference. The one exception is the dev
-  slot's: with `REN_DEV_TRAFFIC_URL` set (loopback only), `/dev/traffic` forwards
-  the dev toolbar's three JSON requests to the slot's fake traffic generator,
-  never to the daemon.
+  storage directly, and never proxies inference. There are two exceptions.
+  Runs: with `REN_CONTROL_TOKEN_FILE` set, `/control/runs*`,
+  `/control/sessions*` (not the operator state's session blocks), and
+  `/control/history/*` (`src/lib/server/control.ts`, `RunsProxy`) forward the
+  Sessions view's same-origin JSON requests to the daemon's `/control/v1/runs*`,
+  `/control/v1/sessions*`, and its archive, unarchive, and delete routes only, with the control token read from that
+  file on each request, never sent to the browser, and, with
+  `REN_CONTROL_LOGINS` set, only for those Tailscale logins; `src/lib/runs.ts`
+  is the view's pure core (run states, the live transcript, the sessions by
+  folder (`Sessions`), projects by place, and the clients a run can start with),
+  `src/lib/mention.ts` the composer's offers (the client's commands after
+  `/` or `$`, the folder's files after `@`), and
+  `src/lib/server/runsStart.ts` makes the Sessions page's first reads on the UI
+  server, with the browser's Tailscale login and never its cookies, so the
+  page renders as it will stay.
+  The dev slot's: with `REN_DEV_TRAFFIC_URL` set (loopback only), `/dev/traffic`
+  forwards the dev toolbar's three JSON requests to the slot's fake traffic
+  generator, never to the daemon.
 - `crates/ren-harness/pi`: the embedded Pi extension and its dependency-free contract tests.
   Pi owns provider authentication, refresh, payload conversion, and retries.
 - `xtask`: repository tasks run with `cargo xtask` (alias in `.cargo/config.toml`),
   with `Xtask` as its primary type; unpublished and outside `default-members`.
   `cargo xtask install-vps` installs or upgrades Ren from a checkout as a
   systemd user service and can publish it with Tailscale Serve; it restarts a
-  running daemon only between calls, paused, and checks the new build, and with
-  `--ui-https-port` it builds and deploys the UI as `ren-ui.service`. It is a
+  running daemon only between calls and between runs' turns, paused, and
+  checks the new build, and with `--ui-https-port` it builds and deploys the UI as `ren-ui.service`. It is a
   shell: it runs external commands and reads configuration through
   `ren-daemon`'s `Config`. Its parsing of Tailscale status (`tailscale`) and of the
   installed `ren`'s output (`daemon`), its UI unit rendering (`ui`), its saved flags
@@ -351,7 +424,9 @@ dependencies under "Crates" below. Read the code for current module ownership.
   this checkout's build beside the installed service, with its own config,
   data, and ports, against a fake provider (`dev::provider`, whose replies are
   the pure, tested `script`), seeded with fake traffic (`dev::seed`, scenarios
-  as pure data), as `ren-dev-*` transient units, with live traffic whose
+  as pure data), as `ren-dev-*` transient units, runs driven against a fake `codex`, `claude`, and `pi`
+  (`dev::agent`: the shell, and `script`, `claude`, and `pi`, the pure
+  conversations it plays as each client), with live traffic whose
   settings both the generator and the fake provider reread (`dev::traffic`,
   with its loopback control API for the dev UI's toolbar), an optional private
   preview on the tailnet, and
@@ -365,17 +440,17 @@ dependencies under "Crates" below. Read the code for current module ownership.
 "Depends on" names the nearest crates below; a crate may also use lower ones
 directly.
 
-| Crate                                      | Primary type                                        | Depends on               |
-| ------------------------------------------ | --------------------------------------------------- | ------------------------ |
-| `ren-protocol`                             | `CallInspector`                                     | none of ours             |
-| `ren-harness`                              | `Harness` (`ClaudeCode`, `Codex`, `Pi`, `OpenCode`) | protocol                 |
-| `ren-recorder`                             | `Recorder`, with its `RecordSink` port              | protocol, harness        |
-| `ren-store`                                | `Store`, which implements `RecordSink`              | recorder                 |
-| `ren-tui`                                  | `Tui`                                               | store                    |
-| `ren-gateway`                              | `Gateway`                                           | harness, recorder, store |
-| `ren-daemon`                               | `Daemon`                                            | gateway, store           |
-| `ren-cli` (package `ren-rs`, binary `ren`) | `Cli`                                               | daemon; tui (feature)    |
-| `xtask` (unpublished)                      | `Xtask`                                             | daemon                   |
+| Crate                                      | Primary type                                        | Depends on        |
+| ------------------------------------------ | --------------------------------------------------- | ----------------- |
+| `ren-protocol`                             | `CallInspector`                                     | none of ours      |
+| `ren-harness`                              | `Harness` (`ClaudeCode`, `Codex`, `Pi`, `OpenCode`) | protocol          |
+| `ren-recorder`                             | `Recorder`, with its `RecordSink` port              | protocol, harness |
+| `ren-store`                                | `Store`, which implements `RecordSink`              | recorder          |
+| `ren-supervisor`                           | `Supervisor`, with its `AgentHost` port             | recorder, harness |
+| `ren-gateway`                              | `Gateway`                                           | supervisor, store |
+| `ren-daemon`                               | `Daemon`                                            | gateway, store    |
+| `ren-cli` (package `ren-rs`, binary `ren`) | `Cli`                                               | daemon            |
+| `xtask` (unpublished)                      | `Xtask`                                             | daemon            |
 
 `docs/architecture.md` lists what each crate owns. These rules apply to every
 crate:

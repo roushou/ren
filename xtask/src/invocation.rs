@@ -13,6 +13,15 @@ pub enum Echo {
     Hide,
 }
 
+/// What an unsuccessful exit means for a captured command.
+#[derive(Clone, Copy)]
+enum Refusal {
+    /// It failed.
+    Fail,
+    /// What it printed is still its answer.
+    Answer,
+}
+
 /// A program and its arguments, run without a shell.
 #[must_use]
 pub struct Invocation {
@@ -108,11 +117,26 @@ impl Invocation {
     /// Its standard output; fails, with its standard error, unless it exits
     /// successfully.
     pub fn capture(&self) -> Result<String, InstallError> {
+        self.output(Refusal::Fail)
+    }
+
+    /// Its standard output, also when it exits unsuccessfully but printed an
+    /// answer (`ren runs ls` prints a refusal as JSON); fails, with its
+    /// standard error, only when it printed nothing.
+    pub fn answer(&self) -> Result<String, InstallError> {
+        self.output(Refusal::Answer)
+    }
+
+    fn output(&self, refusal: Refusal) -> Result<String, InstallError> {
         let output = self
             .command()
             .output()
             .map_err(|source| self.spawn_error(source))?;
-        if output.status.success() {
+        let answered = match refusal {
+            Refusal::Fail => false,
+            Refusal::Answer => !output.stdout.trim_ascii().is_empty(),
+        };
+        if output.status.success() || answered {
             Ok(String::from_utf8_lossy(&output.stdout).into_owned())
         } else {
             let stderr = String::from_utf8_lossy(&output.stderr);

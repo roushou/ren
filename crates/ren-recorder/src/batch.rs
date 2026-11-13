@@ -11,16 +11,17 @@ use super::inspection::InspectionRecord;
 use crate::caller::Caller;
 use crate::digest::CallDigest;
 use crate::{
-    capture::{BodyEnding, CallRejection, ChannelEnd, TerminalRecord},
-    id::{AttemptId, CallId, ChannelId},
+    capture::{BodyEnding, CallRejection, ChannelEnd, ProcessExit, RunEnd, TerminalRecord},
+    id::{AttemptId, CallId, ChannelId, RecordingId, RunId, SessionId},
     routing::{ConfigRevision, OperatorRevision, UpstreamId},
     time::{Moment, UnixMillis},
 };
 use bytes::Bytes;
-use ren_harness::attribution::Attribution;
+use ren_harness::{Harness, attribution::Attribution, drive::DriveEvent, settings::RunSettings};
 use ren_protocol::{
     direction::Direction,
     encoding::{ResponseEncoding, ResponseFormat},
+    native::{NativeThreadId, NativeTurnId},
     route::{Endpoint, Method, Provider, Transport, Wire},
     websocket::Payload,
 };
@@ -93,7 +94,11 @@ impl Batch {
                     | Op::FinishAttempt(_)
                     | Op::FinishCall(_)
                     | Op::CloseChannel(_)
-                    | Op::Operator(_) => true,
+                    | Op::Operator(_)
+                    | Op::Session(_)
+                    | Op::Run(_)
+                    | Op::RunEntry(_)
+                    | Op::History(_) => true,
                 })
                 .collect(),
         }
@@ -184,6 +189,12 @@ pub enum Op {
     FinishCall(FinishCall),
     CloseChannel(CloseChannel),
     Operator(OperatorAction),
+    Session(SessionRecord),
+    Run(RunRecord),
+    /// One entry of a run's conversation. It is stored, not logged: the
+    /// run feed carries it live.
+    RunEntry(RunEntry),
+    History(HistoryEdit),
     /// What a finished call's bodies showed, derived as they were recorded
     /// or again from storage. It replaces any earlier digest of the call.
     Digest {
@@ -215,6 +226,144 @@ pub struct OperatorAction {
     /// The state the command made, stored as the current snapshot.
     #[serde(skip)]
     pub state: Recorded,
+}
+
+/// One entry of a run's conversation, whole, as its client reported it:
+/// what the run's transcript is read from. An item reported again (a
+/// command that finished, a reply that completed) replaces the entry it
+/// had. Streamed pieces are not entries; the item they make is.
+#[derive(Debug, Clone)]
+pub struct RunEntry {
+    pub at: Moment,
+    pub run: RunId,
+    /// The turn it belongs to, once the client started one.
+    pub turn: Option<NativeTurnId>,
+    pub event: DriveEvent,
+}
+
+/// The operator archived, unarchived, or deleted what was recorded of a
+/// session or a run. Not tied to a channel or call.
+#[derive(Debug, Clone, Serialize)]
+pub struct HistoryEdit {
+    #[serde(skip)]
+    pub at: Moment,
+    pub actor: Actor,
+    pub subject: HistorySubject,
+    pub change: HistoryChange,
+}
+
+/// What a history edit applies to: a recording (its `kind` is `session`, as
+/// the read API names recordings), a run with the recording its client
+/// recorded, when there is one, or an operator session with all its runs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case", tag = "kind", content = "id")]
+pub enum HistorySubject {
+    Session(RecordingId),
+    Run(RunId),
+    OperatorSession(SessionId),
+}
+
+/// What a history edit does.
+#[derive(Display, EnumString, IntoStaticStr, VariantArray)]
+#[strum(serialize_all = "snake_case")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SerializeDisplay, DeserializeFromStr)]
+pub enum HistoryChange {
+    /// Hide it from listings until it is unarchived, or until a session
+    /// has new traffic.
+    Archive,
+    Unarchive,
+    /// Remove its finished calls, their bodies and derived data, and its
+    /// ended runs. Calls still open, and runs still running, stay.
+    Delete,
+}
+
+/// A fact about a session, when it happened. Not tied to a channel or call.
+#[derive(Debug, Clone, Serialize)]
+pub struct SessionRecord {
+    #[serde(skip)]
+    pub at: Moment,
+    pub session: SessionId,
+    #[serde(flatten)]
+    pub fact: SessionFact,
+}
+
+/// What happened to a session.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "snake_case", tag = "fact")]
+pub enum SessionFact {
+    /// The operator created it: `harness` working in `workdir`, on these
+    /// settings (each left out is the client's own).
+    Created {
+        harness: Harness,
+        workdir: String,
+        settings: RunSettings,
+    },
+    /// Its next turn runs on these settings, with no process to take them
+    /// now: the next one starts on them.
+    Configured {
+        settings: RunSettings,
+    },
+    /// The operator chose another client while it was a draft.
+    ClientChosen {
+        harness: Harness,
+    },
+    Archived,
+    Unarchived,
+}
+
+impl SessionFact {
+    pub fn kind(&self) -> ObservationKind {
+        match self {
+            Self::Created { .. } => ObservationKind::SessionCreated,
+            Self::Configured { .. } => ObservationKind::SessionConfigured,
+            Self::ClientChosen { .. } => ObservationKind::SessionClientChosen,
+            Self::Archived => ObservationKind::SessionArchived,
+            Self::Unarchived => ObservationKind::SessionUnarchived,
+        }
+    }
+}
+
+/// A fact about a run, when it happened. Not tied to a channel or call.
+#[derive(Debug, Clone, Serialize)]
+pub struct RunRecord {
+    #[serde(skip)]
+    pub at: Moment,
+    pub run: RunId,
+    #[serde(flatten)]
+    pub fact: RunFact,
+}
+
+/// What happened to a run.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "snake_case", tag = "fact")]
+pub enum RunFact {
+    Started {
+        /// The session the run serves.
+        session: SessionId,
+        harness: Harness,
+        workdir: String,
+        /// The settings it started with; each left out is the client's own.
+        settings: RunSettings,
+    },
+    /// The client opened its conversation, under its own thread id.
+    Opened { thread: NativeThreadId },
+    /// The run moved to these settings, from its next turn on.
+    Configured { settings: RunSettings },
+    Ended {
+        end: RunEnd,
+        exit: Option<ProcessExit>,
+    },
+}
+
+impl RunFact {
+    pub fn kind(&self) -> ObservationKind {
+        match self {
+            Self::Started { .. } => ObservationKind::RunStarted,
+            Self::Opened { .. } => ObservationKind::RunOpened,
+            Self::Configured { .. } => ObservationKind::RunConfigured,
+            Self::Ended { .. } => ObservationKind::RunEnded,
+        }
+    }
 }
 
 /// One WebSocket message inside a body: its bytes are `len` bytes from
@@ -262,6 +411,27 @@ pub enum ObservationKind {
     ChannelClosed,
     /// The operator changed the operator state. Not tied to a call.
     OperatorAction,
+    /// Ren started an agent run. Not tied to a call.
+    RunStarted,
+    /// A run's client opened its conversation.
+    RunOpened,
+    /// A run's process ended.
+    RunEnded,
+    /// Recorded at startup for a run the previous daemon never saw end.
+    RunRecovered,
+    /// The operator archived, unarchived, or deleted recorded history. Not
+    /// tied to a call.
+    HistoryEdited,
+    /// A run moved to other settings mid-run.
+    RunConfigured,
+    /// The operator created a session. Not tied to a call.
+    SessionCreated,
+    /// A session's settings changed while no process served it.
+    SessionConfigured,
+    /// A draft session's client changed.
+    SessionClientChosen,
+    SessionArchived,
+    SessionUnarchived,
 }
 
 /// Where an operation belongs and when it happened. Every observation has it.

@@ -163,8 +163,8 @@ Sources:
 - **Transformed bodies belong to the attempt.** The call holds the client's
   original request body. Each attempt references the body it actually sent, plus
   the rule and reason when it differs.
-- **Sessions and turns** are attribution groupings above calls, built from client
-  hints and never inferred. Sessions are keyed by provider, hint source, and native
+- **Recordings and turns** are attribution groupings above calls, built from client
+  hints and never inferred. Recordings are keyed by provider, hint source, and native
   ID. Several calls can be active in one turn, because Claude Code subagents share a
   session and prompt ID.
 - **On WebSocket**, the handshake is a call of its own (method `GET`, status `101`
@@ -172,8 +172,39 @@ Sources:
   `MESSAGE` on the handshake's channel. Session hints come from the handshake
   headers; turn hints come from each message's `client_metadata` when present.
 
-Identities: `ChannelId`, `CallId`, `AttemptId`, `SessionId`, `TurnId`, and
+Identities: `ChannelId`, `CallId`, `AttemptId`, `RecordingId`, `TurnId`, and
 `UpstreamId`, plus a separate type for each provider-native identifier.
+
+### Sessions, runs, and recordings
+
+With `[runs]` roots configured, Ren drives clients as well as recording them.
+Three concepts keep that apart, each with one job:
+
+- A **session** (`SessionId`) is what the operator works in, and the only thing
+  the interfaces drive. It owns its folder; its client, fixed once its first
+  prompt goes out (a _draft_ until then); its settings, which change from the
+  next turn; its conversation across every process; and its shelf (current or
+  archived). Creating one starts its client at once, so its commands are listed
+  before the first prompt (no client writes its own history merely by opening a
+  conversation). A prompt with no client running starts one that resumes the
+  session's conversation, so continuing is the same session. Its pure machine is
+  `SessionState`; its facts (`session_created`, `session_configured`,
+  `session_client_chosen`, `session_archived`, `session_unarchived`) are stored
+  in `operator_sessions`, and the control API drives it (`/control/v1/sessions`).
+- A **run** (`RunId`) is one process of a session's client, driven through the
+  client's structured mode: started when one is needed, stopped when idle
+  between turns (`IdleStop`, ten minutes; it ends `idled`), and never an entry
+  of its own in the interfaces, which show it as the session's state. Its pure
+  machine is `RunState`, with explicit interrupted and unknown ends; `RunEnd`
+  says how it ended and `ProcessExit` how its process exited. Each run names the
+  session it serves (`runs.operator_session`); the control API lists live runs
+  and their events (`/control/v1/runs`).
+- A **recording** (`RecordingId`) is what Ren observed on the wire, grouped by
+  the client conversation each call was attributed to: read-only, for any
+  client, driven by Ren or not. A session links to its recordings and never
+  reuses their views. The read API, CLI, and MCP still call recordings
+  sessions (`/api/v1/sessions`, `ren sessions`, `list_sessions`), as do the
+  stored labels and the operator state's session blocks.
 
 ---
 
@@ -183,27 +214,27 @@ The workspace has one crate per component. Each exposes one primary type at its
 root, and dependencies run one way; Cargo rejects cycles.
 
 ```text
-ren-cli      ─► ren-daemon, ren-gateway, ren-tui (with the `tui` feature)
-ren-daemon   ─► ren-gateway, ren-store
-ren-gateway  ─► ren-harness, ren-recorder, ren-store
-ren-tui      ─► ren-store, ren-recorder, ren-harness, ren-protocol
+ren-cli      ─► ren-daemon, ren-gateway
+ren-daemon   ─► ren-gateway, ren-store, ren-supervisor
+ren-gateway  ─► ren-harness, ren-recorder, ren-store, ren-supervisor
+ren-supervisor ─► ren-recorder, ren-harness, ren-protocol
 ren-store    ─► ren-recorder
 ren-recorder ─► ren-harness, ren-protocol
 ren-harness  ─► ren-protocol
 xtask        ─► ren-daemon, ren-gateway, ren-recorder, ren-harness, ren-protocol   (repository tasks, unpublished)
 ```
 
-| Crate                                      | Primary type                                                                  | Owns                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
-| ------------------------------------------ | ----------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ren-protocol`                             | `CallInspector`                                                               | `Provider`, `Wire`, `Api` (a provider in one wire format, built by `Provider::speak`), `Endpoint`, `Method`, `Transport`, `Direction`; `Stored<T>` and the label trait; SSE framing; encodings; Anthropic Messages, OpenAI Responses, and OpenAI Chat Completions (`chat`) wire types; WebSocket message classification (`Payload`, `CloseCode`, `ClientMessage`, `UpstreamMessage`, `InterruptOutcome`); the native identifiers and `MessageHints` the wire carries; inspection; the activity reader (`activity`)                                                                                        |
-| `ren-harness`                              | `Harness` enum: `ClaudeCode`, `Codex`, `Pi`, `OpenCode`                       | attribution (`Attribution`, `SessionHint`, hint sources and issues); launch plans; the Pi extension cache; `GatewayEndpoint`, the URL a harness is pointed at, and the `UserToken` it presents there; `HostEnv`; what each harness's tools and messages mean (`tools`)                                                                                                                                                                                                                                                                                                                                    |
-| `ren-recorder`                             | `Recorder`; `RecorderTask` runs it; `RecordSink` is its port                  | `ChannelId`, `CallId`, `AttemptId`, `SessionId`, `TurnId`; `Clock`, `IdSource`, and their test implementations; recorded facts (terminals, causes, phases, rejections, body endings, omissions, `ChannelEnd`, `ConfigRevision`, `UpstreamId`, `OperatorRevision`); who called (`UserId`, `TailscaleLogin`, `Caller`); the stored inspection format; the `Chunker`; batches; `RetentionPolicy`; taps, queue, metrics, live broadcast, and live progress on streaming calls (`progress`)                                                                                                                    |
-| `ren-store`                                | `Store`, which implements `RecordSink`; `Reader` and `Backup` are its handles | SQLite and migrations, the stored chunk format, queries, views, turn and call activity assembled from stored digests (`activity`), full-text search and exposures over the digests (`search`), retention, `Recovery`, the sweep gate, backup                                                                                                                                                                                                                                                                                                                                                              |
-| `ren-tui`                                  | `Tui`, sans-IO; `Wall` is what it draws; `Screen` is the terminal             | the terminal view of live sessions: which reads a view needs (`Read`, `SnapshotQuery`) and what it makes of them (`Input`); keys and the commands they give (`Key`, `Command`); panes, their placement, focus, zoom, and pins (`Grid`, `View`); each session as its pane reads it, the same readings as the UI's Live wall (`SessionPane`, `Phase`, `Line`, `Alert`); how a call ended (`CallEnd`); the status line (`Status`); drawing a wall into a ratatui buffer (`draw`, with a resolved `Theme` and the `ThemeName` presets); the terminal itself, restored when dropped (`Screen`, `ScreenEvents`) |
-| `ren-gateway`                              | `Gateway`                                                                     | all HTTP routes: forwarding, the read API and `/api/live`, and authenticated controls and backup; route table, header policy, request buffering, upstream entries, the `Upstream` seam and Reqwest implementation, `HttpAttempt`, `WsChannel`, retry facts, policy, named users and `Users::identify` with their concurrency limits (`limits`), the instance's environment (`instance`), `Controls`, `OperatorState`, the running-call registry, ingress and the shutdown drain, the `Build` `/health` reports                                                                                            |
-| `ren-daemon`                               | `Daemon`                                                                      | `Config` → `RuntimeConfig`; resource wiring, listener binding, control-token file, and lifecycle; the system clock and random IDs; the server task, and the observation thread (`ObservationThread`), whose own current-thread runtime runs the recorder                                                                                                                                                                                                                                                                                                                                                  |
-| `ren-cli` (package `ren-rs`, binary `ren`) | `Cli`                                                                         | capturing `HostEnv` in `main`, recording the source revision (`build.rs`), commands, gateway choice and `client.toml`, history and controls on this host or through a gateway's APIs (`management`), `ren tail` (`tail`), `ren tui` with the `tui` feature (`commands::tui`) and its local theme preference (`tui_settings`, `tui.toml`), the pure MCP core of `ren mcp` (`mcp`), doctor and its build comparison, service definitions                                                                                                                                                                    |
-| `xtask` (unpublished, `cargo xtask`)       | `Xtask`                                                                       | `install-vps`: installing or upgrading Ren from a checkout as a systemd user service between calls, published with Tailscale Serve, and with `--ui-https-port` the UI as `ren-ui.service`; its publishing flags are saved for later runs; `dev`: the dev slot, a fake provider, seed traffic, live traffic with its loopback control API, and screenshots                                                                                                                                                                                                                                                 |
+| Crate                                      | Primary type                                                                  | Owns                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| ------------------------------------------ | ----------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ren-protocol`                             | `CallInspector`                                                               | `Provider`, `Wire`, `Api` (a provider in one wire format, built by `Provider::speak`), `Endpoint`, `Method`, `Transport`, `Direction`; `Stored<T>` and the label trait; SSE framing; encodings; Anthropic Messages, OpenAI Responses, and OpenAI Chat Completions (`chat`) wire types; WebSocket message classification (`Payload`, `CloseCode`, `ClientMessage`, `UpstreamMessage`, `InterruptOutcome`); the native identifiers and `MessageHints` the wire carries; inspection; the activity reader (`activity`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| `ren-harness`                              | `Harness` enum: `ClaudeCode`, `Codex`, `Pi`, `OpenCode`                       | one module per client holding everything Ren knows of it (`codex`, `claude_code`, `pi`, `opencode`: its structured-mode codec and model listing, launch plan, attribution headers, and tools; Pi's extension cache), dispatched to by `Harness` with `match`; and the shared types they fill: attribution (`Attribution`, `SessionHint`, hint sources and issues); launch plans (`LaunchPlan`, behind `Harness::launch`, `Harness::drive`, and `Harness::list_models`); `GatewayEndpoint`, the URL a harness is pointed at, and the `UserToken` it presents there; `HostEnv`; what tools and messages mean (`tools`); driving a client through its structured mode (`drive`: `DriveCommand` and `DriveEvent` with each item's `ItemRead`, and the `Driver` over the clients' codecs), line framing (`lines`), the models a client lists (`models`: `Model`, `ModelId`, `ModelListing`), and a run's `RunSettings` (`settings`: model, `Effort`, and `ApprovalPolicy`, with `Midway`, what each client takes mid-run); the commands a client offers a prompt (`commands`: `ClientCommand`, `CommandKind`, `Sigil`), each codec reading its client's own list                                                                                                                                                                                                                               |
+| `ren-recorder`                             | `Recorder`; `RecorderTask` runs it; `RecordSink` is its port                  | `ChannelId`, `CallId`, `AttemptId`, `RecordingId`, `TurnId`, `RunId`, `SessionId` (an operator session, not a recording); `Clock`, `IdSource`, and their test implementations; recorded facts (terminals, causes, phases, rejections, body endings, omissions, `ChannelEnd`, `RunEnd`, `ProcessExit`, `ConfigRevision`, `UpstreamId`, `OperatorRevision`); who called (`UserId`, `TailscaleLogin`, `Caller`); the stored inspection format; the `Chunker`; batches; `RetentionPolicy`; taps (`CallTap`, `ChannelTap`, `RunTap` for a run's lifecycle and its settings changed mid-run, and `HistorySlot` for archiving or deleting a recording or run, a `HistoryEdit`), queue, metrics, live broadcast, and live progress on streaming calls (`progress`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| `ren-store`                                | `Store`, which implements `RecordSink`; `Reader` and `Backup` are its handles | SQLite and migrations, operator sessions with their runs (`operator_sessions`, `SessionView`), the stored chunk format, queries, views, turn and call activity assembled from stored digests (`activity`), full-text search and exposures over the digests (`search`), retention and history edits (archived recordings and runs on their own `Shelf`, and deletes), `Recovery`, the sweep gate, backup                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `ren-supervisor`                           | `Supervisor`; `SupervisorTask` runs it; `AgentHost` is its port               | runs: agents started in a folder and driven through their structured mode (Codex, Claude Code, Pi, and OpenCode); the operator sessions it serves, each with its processes over time (started at once, resumed for a prompt with none running, stopped when archived), and their pure `SessionState` machine (`session`: draft, active, archived), the pure `RunState` machine (`run`) and its `RunCommand`, `RunEvent`, and `RunAction`, with the prompt a working run holds for after its turn (`Delivery`: start, queue, or steer); `Bounds` (the run roots, other places, and the scratch folder Ren owns) and `Workdir`, resolved by the host (`workdir`); the places a run can start in, `Project`s of each `PlaceKind`: git repositories under the roots, other places' folders, and earlier scratch folders (`project`); a run without a folder gets a new scratch folder of its own (`StartPlace`); whether a run can start with each client here (`Client`, `ClientStatus`); the paths of a run's folder ranked for a prompt to name (`files`: `FileListing`, `FileQuery`, `FileMatch`), walked by the host; the models each client lists, asked of a short listing process and kept (`models`, `ModelsError`); the `AgentHost` port with `AgentProcess` and `KillSwitch` (`host`); run updates for subscribers (`RunUpdate`). The daemon builds it when `[runs]` roots are set |
+| `ren-gateway`                              | `Gateway`                                                                     | all HTTP routes: forwarding, the read API and `/api/live`, and authenticated controls and backup; route table, header policy, request buffering, upstream entries, the `Upstream` seam and Reqwest implementation, `HttpAttempt`, `WsChannel`, retry facts, policy, named users and `Users::identify` with their concurrency limits (`limits`), the instance's environment (`instance`), `Controls`, `OperatorState`, the running-call registry, ingress and the shutdown drain, the `Build` `/health` reports                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| `ren-daemon`                               | `Daemon`                                                                      | `Config` → `RuntimeConfig`; resource wiring, listener binding, control-token file, and lifecycle; the system clock and random IDs; the server task, and the observation thread (`ObservationThread`), whose own current-thread runtime runs the recorder                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `ren-cli` (package `ren-rs`, binary `ren`) | `Cli`                                                                         | capturing `HostEnv` in `main`, recording the source revision (`build.rs`), commands, gateway choice and `client.toml`, history and controls on this host or through a gateway's APIs (`management`), `ren tail` (`tail`), the pure MCP core of `ren mcp` (`mcp`), doctor and its build comparison, service definitions                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `xtask` (unpublished, `cargo xtask`)       | `Xtask`                                                                       | `install-vps`: installing or upgrading Ren from a checkout as a systemd user service between calls and runs' turns, published with Tailscale Serve, and with `--ui-https-port` the UI as `ren-ui.service`; its publishing flags are saved for later runs; `dev`: the dev slot, a fake provider, a fake `codex` and `claude` for its runs, seed traffic, live traffic with its loopback control API, and screenshots                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 
 - **Purity.** `ren-protocol`'s manifest names only pure dependencies (`serde`,
   `serde_json`, `serde_with`, `strum`, `thiserror`, `uuid`, `http` types, and the
@@ -212,12 +243,12 @@ xtask        ─► ren-daemon, ren-gateway, ren-recorder, ren-harness, ren-prot
   `attempt`, `call`, `channel`, `retry`, `operator`, and `user` free of runtime,
   I/O, storage, and shell-module dependencies; `ren-recorder`'s `src/purity.rs`
   does the same for `recording`, `digest`, `options`, and `progress`,
-  `ren-tui`'s `src/purity.rs` for the view's core (all but `draw`, `theme`, and
-  `screen`), and `ren-cli`'s
+  and `ren-cli`'s
   `mcp/purity.rs` for the MCP core.
 - **Ports point down.** The recorder declares `RecordSink`, `Clock`, and
-  `IdSource`; the store implements `RecordSink`; the daemon implements the system
-  clock and random IDs, which with the daemon's server task spawn carry the only
+  `IdSource`, and the supervisor declares `AgentHost`; the store implements
+  `RecordSink`; the daemon implements the system clock, random IDs, and
+  `ProcessHost`, which with the daemon's server task spawn carry the only
   `disallowed_methods` exemptions besides `HostEnv::capture`.
 - **Operator documents are opaque below the gateway.** The recorder and store carry
   an operator action as a revision, a command label, and serialized JSON documents.
@@ -574,7 +605,7 @@ tool call is requested, not executed; a status is client-reported; what could
 not be read is a limitation, and a call whose digest is not derived yet says so
 (`not_yet_derived`).
 
-The session report (`activity::report`) reads call rows and the exposures table.
+The recording report (`activity::report`) reads call rows and the exposures table.
 Per-call metrics come from the provider-reported usage, by its input
 accounting, and recorded times; findings (`FindingKind`) apply fixed thresholds
 and state measurements, never causes. Turn activity adds the findings that need
@@ -595,7 +626,7 @@ formats with linear-time regular expressions, never by entropy. Sealing a
 digest scans the call's raw newest user input (client context included), reply,
 and each tool input and output, redacts what it finds, and keeps each exposure's
 kind, field, masked hint, and a truncated BLAKE3 fingerprint in
-`call_exposures`, never the secret. Turn activity and session reports show
+`call_exposures`, never the secret. Turn activity and recording reports show
 these as findings.
 
 ### Storage
@@ -609,8 +640,11 @@ these as findings.
   start; `at_wall` is for display only.
 
 **Query tables.** `channels`, `calls`, `attempts`, `sessions`, `turns`,
-`operator_actions` (the newest 10,000), the `operator_state` snapshot, and the
-search columns. Derived from each finished call: `call_digests` (version, purpose,
+`operator_actions` (the newest 10,000), the `operator_state` snapshot, `runs`
+(each agent run's harness, folder, the client's thread once opened, and its end
+and exit; a run's recording is the one its client named with that thread, as
+Codex sends its thread id as its session id; a run whose end was never recorded is marked recovered at startup),
+and the search columns. Derived from each finished call: `call_digests` (version, purpose,
 prompt, and the digest as JSON), `call_exposures`, and `search_texts` with its FTS5 index
 `search` (external content, kept in step by triggers). They reference `calls`
 with `ON DELETE CASCADE`, so retention removes them with their call. The writer updates them directly, in the same transaction as the
@@ -642,8 +676,8 @@ snapshot stops startup rather than starting unpaused.
 ### Retention
 
 1. Delete the oldest finished calls (with their attempts, bodies, and observations)
-   in transactions of at most 16, updating session counts and orphan turns and
-   sessions in the same transaction. Open calls are protected; recovered calls are
+   in transactions of at most 16, updating recording counts and orphan turns and
+   recordings in the same transaction. Open calls are protected; recovered calls are
    eligible.
 2. Mark-and-sweep removes chunks that no segment references, using an index on
    `segments(chunk_hash)`.
@@ -760,7 +794,25 @@ state; it is logged, not recorded in `operator_actions`.
 - Chat Completions is reached only through operator-key entries with direct
   routes: no provider route speaks it, and an upstream that needs no key (a local
   model server) cannot be configured.
-- The UI has no control actions.
+- The UI's only control actions are sessions (create, prompt, answer,
+  configure, interrupt, stop its client, archive, delete) and archiving or
+  deleting a recording, and only when its server is given the control token
+  file.
+- The idle stop is fixed at ten minutes; no configuration changes it.
+- The read API, the CLI's history commands, and MCP still call recordings
+  sessions; renaming them would change their routes and output.
+- A run's conversation is stored whole, but a reply's streamed pieces are not:
+  a page opened mid-reply shows the reply from when it opened, and whole once
+  the reply completes. Recordings of clients Ren did not start are still shown from their
+  calls' digests, whose replies are excerpts.
+- Pi runs are read against Pi's documented RPC protocol (1.5.2) and a fake Pi,
+  not yet against the real program. Pi asks no approvals, so a Pi run's tools
+  run without the operator's say, and its bash commands report no exit code.
+- OpenCode runs are read against OpenCode 2.2.7's ACP mode. Its own `opencode`
+  provider (its free models among them) does not go through the gateway, so
+  those turns' model calls are not recorded; its `anthropic` and `openai`
+  providers do. Its approval policy is set when its process starts, so it
+  changes only from the next process, and it offers no `auto` policy.
 - Named users are limited by concurrency only: no token or spend budgets, and
   history is not scoped per user (anyone who can read the API reads every
   user's calls). Users and their tokens change only with a restart; an operator

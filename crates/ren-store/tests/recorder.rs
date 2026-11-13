@@ -713,3 +713,172 @@ async fn the_recorder_derives_missing_digests_from_stored_bodies() {
     });
     result.unwrap();
 }
+
+#[tokio::test]
+async fn a_runs_lifecycle_is_recorded_and_read_back() {
+    use ren_recorder::capture::{ProcessExit, RunEnd};
+    use ren_recorder::id::RunId;
+    let harness = Harness::new(CaptureOptions::default(), 8).await;
+    let ids = SequentialIds::starting_at(100);
+    let run = RunId::generate(&ids);
+    let session = ren_recorder::id::SessionId::generate(&ids);
+    let tap = harness
+        .recorder
+        .run(
+            run,
+            ren_recorder::RunSession::New(session),
+            ren_harness::Harness::Codex,
+            "/work/acme".into(),
+            ren_harness::settings::RunSettings {
+                model: Some("gpt-deep".parse().unwrap()),
+                effort: Some(ren_harness::settings::Effort::High),
+                approvals: Some(ren_harness::settings::ApprovalPolicy::Edits),
+            },
+        )
+        .unwrap();
+    let thread = ren_protocol::native::NativeThreadId::new(uuid::Uuid::from_u128(7)).unwrap();
+    tap.opened(thread);
+    // The run's model traffic: Codex names its thread as the session.
+    let call = harness.recorder.start(
+        CallStart {
+            transport: Transport::Http,
+            api: Provider::Codex.native_api(),
+            endpoint: Endpoint::Responses,
+            method: Method::Post,
+            config_revision: ConfigRevision::new("rev"),
+            attribution: Attribution {
+                hint: Some(ren_harness::attribution::SessionHint {
+                    source: ren_harness::attribution::HintSource::CodexHeaders,
+                    session: ren_protocol::native::NativeSessionId::new(thread.as_uuid()).unwrap(),
+                    turn: None,
+                    thread: Some(thread),
+                }),
+                issues: Vec::new(),
+            },
+            caller: ren_recorder::caller::Caller::Unidentified,
+            operator_revision: None,
+            plan: None,
+            attempts: 1,
+        },
+        AttemptStart::unchanged(UpstreamId::default_for(Provider::Codex), Provider::Codex),
+    );
+    let call_id = call.call();
+    drop(call);
+    tap.end(RunEnd::Stopped, Some(ProcessExit::Signal(9)));
+    let unfinished = RunId::generate(&ids);
+    let left = harness
+        .recorder
+        .run(
+            unfinished,
+            ren_recorder::RunSession::Existing(session),
+            ren_harness::Harness::Codex,
+            "/work/b".into(),
+            ren_harness::settings::RunSettings::default(),
+        )
+        .unwrap();
+    drop(left);
+    let (dir, _, reader) = harness.drain().await;
+
+    let runs = reader
+        .runs(
+            ren_store::query::PageLimit::DEFAULT,
+            ren_store::query::Shelf::Current,
+        )
+        .await
+        .unwrap();
+    assert_eq!(runs.len(), 2);
+    let ended = reader.run(run).await.unwrap().unwrap();
+    assert_eq!(ended.harness, Stored::Known(ren_harness::Harness::Codex));
+    assert_eq!(ended.workdir, "/work/acme");
+    // Its settings as started; the other run left every one to its client.
+    assert_eq!(ended.model.as_deref(), Some("gpt-deep"));
+    assert_eq!(
+        ended.effort,
+        Some(Stored::Known(ren_harness::settings::Effort::High))
+    );
+    assert_eq!(
+        ended.approvals,
+        Some(Stored::Known(ren_harness::settings::ApprovalPolicy::Edits))
+    );
+    assert_eq!(ended.thread, Some(thread.to_string()));
+    let recording = reader.call(call_id).await.unwrap().call.session;
+    assert!(recording.is_some());
+    assert_eq!(
+        ended.session, recording,
+        "the run's recording is its thread's"
+    );
+    assert_eq!(ended.end, Some(Stored::Known(RunEnd::Stopped)));
+    assert_eq!(ended.exit, Some(ProcessExit::Signal(9)));
+    let open = reader.run(unfinished).await.unwrap().unwrap();
+    assert_eq!((open.end, open.exit), (None, None), "still running");
+    assert_eq!(
+        (open.model, open.effort, open.approvals),
+        (None, None, None)
+    );
+    let kinds: Vec<_> = reader
+        .observations_after(0, ren_store::query::PageLimit::DEFAULT)
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|observation| observation.call.is_none())
+        .map(|observation| observation.kind)
+        .collect();
+    assert_eq!(
+        kinds,
+        [
+            ObservationKind::SessionCreated,
+            ObservationKind::RunStarted,
+            ObservationKind::RunOpened,
+            ObservationKind::RunEnded,
+            ObservationKind::RunStarted,
+        ]
+        .map(Stored::Known)
+    );
+    // Both runs served the one session, created with the first: newest run
+    // first, and the session's settings are those it was created with.
+    let sessions = reader
+        .sessions(
+            ren_store::query::PageLimit::DEFAULT,
+            ren_store::query::Shelf::Current,
+        )
+        .await
+        .unwrap();
+    assert_eq!(sessions.len(), 1);
+    assert_eq!(sessions[0].id, session);
+    assert_eq!(sessions[0].workdir, "/work/acme");
+    assert_eq!(sessions[0].model.as_deref(), Some("gpt-deep"));
+    assert_eq!(
+        sessions[0]
+            .runs
+            .iter()
+            .map(|run| run.id)
+            .collect::<Vec<_>>(),
+        [unfinished, run]
+    );
+    assert_eq!(
+        reader.session(session).await.unwrap(),
+        Some(sessions[0].clone())
+    );
+    reader.close().await;
+
+    // A restart marks the run that never ended as recovered.
+    let clock = ManualClock::at(UnixMillis::from_millis(9_000));
+    let (store, recovery) = Store::open(
+        dir.path(),
+        &clock,
+        Arc::new(SequentialIds::starting_at(500)),
+    )
+    .await
+    .unwrap();
+    assert_eq!(recovery.runs, 1);
+    store.close().await.unwrap();
+    let reader = Reader::open(dir.path(), 1).await.unwrap();
+    let recovered = reader.run(unfinished).await.unwrap().unwrap();
+    assert_eq!(recovered.end, Some(Stored::Known(RunEnd::Recovered)));
+    assert_eq!(recovered.ended_at, Some(UnixMillis::from_millis(9_000)));
+    assert_eq!(recovered.exit, None);
+    assert_eq!(
+        reader.run(run).await.unwrap().unwrap().end,
+        Some(Stored::Known(RunEnd::Stopped))
+    );
+}

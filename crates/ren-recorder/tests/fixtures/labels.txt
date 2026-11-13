@@ -6,7 +6,9 @@ capture::CallRejection: too_large buffer_full upload_timeout upload_failed aband
 capture::BodyEnding: open ended unfinished
 capture::Omission: policy_limit queue_bytes queue_slots unrecorded storage_failure unattributed
 capture::ChannelEnd: client_closed upstream_closed client_failed upstream_failed client_unresponsive upstream_unresponsive upstream_stalled drained aborted dropped recovered
-batch::ObservationKind: call_opened attempt_started response_head attempt_finished call_finished call_recovered channel_closed operator_action
+capture::RunEnd: spawn_failed open_refused exited stopped drained recovered idled
+batch::ObservationKind: call_opened attempt_started response_head attempt_finished call_finished call_recovered channel_closed operator_action run_started run_opened run_ended run_recovered history_edited run_configured session_created session_configured session_client_chosen session_archived session_unarchived
+batch::HistoryChange: archive unarchive delete
 secrets::SecretKind: anthropic_key openai_key github_token aws_access_key google_api_key slack_token stripe_live_key private_key jwt
 digest::SearchField: prompt reply tool_input tool_output
 caller::CallerKind: user_tailscale user_token unlisted unidentified

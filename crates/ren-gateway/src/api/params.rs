@@ -2,7 +2,7 @@
 
 use ren_recorder::time::UnixMillis;
 use ren_store::query::{
-    CallFilter, CallQuery, Cursor, PageLimit, QueryError, SearchText, TimeRange,
+    CallFilter, CallQuery, Cursor, PageLimit, QueryError, SearchText, Shelf, TimeRange,
 };
 use ren_store::search::{ExposureQuery, SearchQuery, SearchTerms};
 use serde::Deserialize;
@@ -49,6 +49,23 @@ pub(super) struct RawCallQuery {
 pub(super) struct RawPageQuery {
     pub limit: Option<u32>,
     pub after: Option<String>,
+}
+
+/// `GET /api/sessions` and `/api/runs` parameters: a page of one shelf.
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub(super) struct RawShelfQuery {
+    limit: Option<u32>,
+    shelf: RawLabel,
+}
+
+impl RawShelfQuery {
+    pub fn parse(self) -> Result<(PageLimit, Shelf), QueryError> {
+        Ok((
+            self.limit.map_or(Ok(PageLimit::DEFAULT), PageLimit::new)?,
+            self.shelf.parse()?.unwrap_or_default(),
+        ))
+    }
 }
 
 /// `GET /api/usage` parameters: an inclusive range of call start times.

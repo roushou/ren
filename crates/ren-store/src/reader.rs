@@ -4,16 +4,17 @@
 use super::chunk::{ChunkHash, Codec, EncodedChunk};
 use crate::activity::{
     ActivityBudget, CallActivity, Excerpt, ReadCall, TurnActivity, TurnHead, TurnSummary,
-    report::SessionReport,
+    report::RecordingReport,
 };
 use crate::search::ExposureQuery;
 use crate::{
     Store, StoreError,
-    query::{CallQuery, Cursor, KindFilter, PageLimit, StatusFilter, TimeRange, ToolFilter},
+    query::{CallQuery, Cursor, KindFilter, PageLimit, Shelf, StatusFilter, TimeRange, ToolFilter},
     view::{
         AttemptView, BodyPrefix, BodyView, CallDetail, CallPage, CallView, ChannelView, Columns,
-        DiskUsage, MessageView, ModelUsage, OperatorActionView, SessionView, StorageView,
-        TokenTotals, UsageBucket, UsageCounts, UsageView, UserUsage,
+        ConversationView, DiskUsage, HistoryTarget, MessageView, ModelUsage, OperatorActionView,
+        RecordingView, RunEntryView, RunView, SessionView, StorageView, TokenTotals, UsageBucket,
+        UsageCounts, UsageView, UserUsage,
     },
     writer::BlobAccess,
 };
@@ -28,12 +29,12 @@ use ren_protocol::{
     route::{Endpoint, Method},
 };
 use ren_recorder::Observation;
-use ren_recorder::batch::BodyKey;
+use ren_recorder::batch::{BodyKey, HistorySubject};
 use ren_recorder::digest::CallDigest;
 use ren_recorder::{
     capture::{AttemptTerminal, BodyEnding, CallState, TerminalClass},
     digest::{Captured, StoredBody, StoredExchange, StoredResponse},
-    id::{CallId, SessionId, TurnId},
+    id::{CallId, RecordingId, RunId, SessionId, TurnId},
 };
 use sqlx::{
     AssertSqlSafe, QueryBuilder, Row, Sqlite, SqlitePool,
@@ -100,13 +101,13 @@ impl Reader {
     }
 
     /// A session's calls in chronological order.
-    pub async fn session_calls(
+    pub async fn recording_calls(
         &self,
-        session: SessionId,
+        session: RecordingId,
         limit: PageLimit,
         after: Option<Cursor>,
     ) -> Result<CallPage, StoreError> {
-        self.require_session(session).await?;
+        self.require_recording(session).await?;
         let (time, call) = after.map_or((-1, String::new()), |cursor| {
             (
                 i64::try_from(cursor.started_at.as_millis()).unwrap_or(i64::MAX),
@@ -192,18 +193,25 @@ impl Reader {
         })
     }
 
-    pub async fn sessions(&self, limit: PageLimit) -> Result<Vec<SessionView>, StoreError> {
+    /// The `limit` most recently active sessions on `shelf`.
+    pub async fn recordings(
+        &self,
+        limit: PageLimit,
+        shelf: Shelf,
+    ) -> Result<Vec<RecordingView>, StoreError> {
         let mut sql = QueryBuilder::<Sqlite>::new(
-            "SELECT s.id, s.provider, s.source, s.native_id, s.first_seen, s.last_seen, (SELECT COUNT(*) FROM turns WHERE session = s.id) AS turn_count, ",
+            "SELECT s.id, s.provider, s.source, s.native_id, s.first_seen, s.last_seen, CASE WHEN s.archived_at >= s.last_seen THEN s.archived_at END AS archived_at, (SELECT COUNT(*) FROM turns WHERE session = s.id) AS turn_count, ",
         );
         CallQuery::push_usage_columns(&mut sql);
-        sql.push(" FROM sessions s LEFT JOIN calls c ON c.session = s.id GROUP BY s.id ORDER BY s.last_seen DESC, s.id DESC LIMIT ")
+        sql.push(" FROM sessions s LEFT JOIN calls c ON c.session = s.id WHERE ")
+            .push(shelf.recordings())
+            .push(" GROUP BY s.id ORDER BY s.last_seen DESC, s.id DESC LIMIT ")
             .push_bind(i64::from(limit.get()));
         sql.build()
             .fetch_all(&self.pool)
             .await?
             .iter()
-            .map(SessionView::from_row)
+            .map(RecordingView::from_row)
             .collect()
     }
 
@@ -285,6 +293,85 @@ impl Reader {
             .iter()
             .map(OperatorActionView::from_row)
             .collect()
+    }
+
+    /// The newest `limit` runs on `shelf`, newest first.
+    pub async fn runs(&self, limit: PageLimit, shelf: Shelf) -> Result<Vec<RunView>, StoreError> {
+        sqlx::query(AssertSqlSafe(format!(
+            "{} WHERE {} ORDER BY started_at DESC, id DESC LIMIT ?",
+            RunView::SELECT,
+            shelf.runs(),
+        )))
+        .bind(i64::from(limit.get()))
+        .fetch_all(&self.pool)
+        .await?
+        .iter()
+        .map(RunView::from_row)
+        .collect()
+    }
+
+    /// Operator sessions on `shelf`, most recently active first (by their
+    /// newest run, else their creation), each with its runs.
+    pub async fn sessions(
+        &self,
+        limit: PageLimit,
+        shelf: Shelf,
+    ) -> Result<Vec<SessionView>, StoreError> {
+        let rows = sqlx::query(AssertSqlSafe(format!(
+            "{} WHERE {} ORDER BY COALESCE((SELECT MAX(started_at) FROM runs WHERE runs.operator_session = operator_sessions.id), created_at) DESC, id DESC LIMIT ?",
+            SessionView::SELECT,
+            shelf.sessions(),
+        )))
+        .bind(i64::from(limit.get()))
+        .fetch_all(&self.pool)
+        .await?;
+        let mut sessions = Vec::with_capacity(rows.len());
+        for row in &rows {
+            let id: String = row.try_get("id")?;
+            sessions.push(SessionView::from_row(row, self.session_runs(&id).await?)?);
+        }
+        Ok(sessions)
+    }
+
+    /// One operator session, with its runs, if it was recorded.
+    pub async fn session(&self, id: SessionId) -> Result<Option<SessionView>, StoreError> {
+        let id = id.to_string();
+        let Some(row) = sqlx::query(AssertSqlSafe(format!(
+            "{} WHERE id = ?",
+            SessionView::SELECT
+        )))
+        .bind(&id)
+        .fetch_optional(&self.pool)
+        .await?
+        else {
+            return Ok(None);
+        };
+        SessionView::from_row(&row, self.session_runs(&id).await?).map(Some)
+    }
+
+    /// A session's runs, newest first.
+    async fn session_runs(&self, session: &str) -> Result<Vec<RunView>, StoreError> {
+        sqlx::query(AssertSqlSafe(format!(
+            "{} WHERE operator_session = ? ORDER BY started_at DESC, id DESC",
+            RunView::SELECT,
+        )))
+        .bind(session)
+        .fetch_all(&self.pool)
+        .await?
+        .iter()
+        .map(RunView::from_row)
+        .collect()
+    }
+
+    /// One run, if it was recorded.
+    pub async fn run(&self, id: RunId) -> Result<Option<RunView>, StoreError> {
+        sqlx::query(AssertSqlSafe(format!("{} WHERE id = ?", RunView::SELECT)))
+            .bind(id.to_string())
+            .fetch_optional(&self.pool)
+            .await?
+            .as_ref()
+            .map(RunView::from_row)
+            .transpose()
     }
 
     /// The body of `call` in `direction`: the request, or the final attempt's response.
@@ -742,12 +829,12 @@ impl Reader {
 
     /// A session's turns, newest first, each with the start of its prompt:
     /// the first one among its calls' digests.
-    pub async fn session_turns(
+    pub async fn recording_turns(
         &self,
-        session: SessionId,
+        session: RecordingId,
         limit: PageLimit,
     ) -> Result<Vec<TurnSummary>, StoreError> {
-        self.require_session(session).await?;
+        self.require_recording(session).await?;
         let mut sql = QueryBuilder::<Sqlite>::new(
             "SELECT t.id, t.native_id, MIN(c.started_at) AS started_at, \
              CASE WHEN COUNT(c.ended_at) = COUNT(*) THEN MAX(c.ended_at) END AS ended_at, ",
@@ -816,8 +903,11 @@ impl Reader {
 
     /// A session's context and cost measurements, from call records alone,
     /// with the secrets its calls carried.
-    pub async fn session_report(&self, session: SessionId) -> Result<SessionReport, StoreError> {
-        self.require_session(session).await?;
+    pub async fn recording_report(
+        &self,
+        session: RecordingId,
+    ) -> Result<RecordingReport, StoreError> {
+        self.require_recording(session).await?;
         let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM calls WHERE session = ?")
             .bind(session.to_string())
             .fetch_one(&self.pool)
@@ -835,7 +925,7 @@ impl Reader {
         .collect::<Result<_, _>>()?;
         let read = i64::try_from(calls.len()).unwrap_or(i64::MAX);
         let omitted = u64::try_from(total.saturating_sub(read)).unwrap_or(0);
-        let mut report = SessionReport::build(session, &calls, omitted);
+        let mut report = RecordingReport::build(session, &calls, omitted);
         report.add_exposures(
             self.exposures(&ExposureQuery {
                 session: Some(session),
@@ -894,7 +984,103 @@ impl Reader {
     }
 
     /// `NotFound` unless the store has `session`.
-    async fn require_session(&self, session: SessionId) -> Result<(), StoreError> {
+    /// The newest `limit` entries of `run`'s conversation, oldest first:
+    /// its own, and those of the runs before it on the same client thread
+    /// (a conversation resumed in a new run reads as one). `None` when the
+    /// run was never recorded.
+    pub async fn conversation(
+        &self,
+        run: RunId,
+        limit: u32,
+    ) -> Result<Option<ConversationView>, StoreError> {
+        let id = run.to_string();
+        let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM runs WHERE id = ?)")
+            .bind(&id)
+            .fetch_one(&self.pool)
+            .await?;
+        if !exists {
+            return Ok(None);
+        }
+        // The runs that make the conversation, in the order they started.
+        let chain = "SELECT r.id, r.started_at FROM runs r, runs this WHERE this.id = ?1 AND (r.id = this.id OR (this.thread IS NOT NULL AND r.thread = this.thread AND r.started_at <= this.started_at))";
+        let rows = sqlx::query(AssertSqlSafe(format!(
+            "SELECT * FROM (SELECT e.run, e.seq, e.at, e.turn, e.event, chain.started_at FROM run_entries e JOIN ({chain}) chain ON chain.id = e.run ORDER BY chain.started_at DESC, e.run DESC, e.seq DESC LIMIT ?2) ORDER BY started_at, run, seq"
+        )))
+        .bind(&id)
+        .bind(i64::from(limit) + 1)
+        .fetch_all(&self.pool)
+        .await?;
+        let earlier = rows.len() > usize::try_from(limit).unwrap_or(usize::MAX);
+        let entries = rows
+            .iter()
+            .skip(usize::from(earlier))
+            .map(|row| {
+                let columns = Columns(row);
+                let event: String = row.try_get("event")?;
+                Ok(RunEntryView {
+                    run: columns.id("run")?,
+                    seq: columns.count("seq")?,
+                    at: columns.time("at")?,
+                    turn: columns.text("turn")?,
+                    event: serde_json::from_str(&event)
+                        .map_err(|_| StoreError::Corrupt("run entry"))?,
+                })
+            })
+            .collect::<Result<_, StoreError>>()?;
+        Ok(Some(ConversationView { entries, earlier }))
+    }
+
+    /// What an edit of `subject` would touch, or `None` when it was never
+    /// recorded: the open calls of its sessions and its runs still running.
+    /// A session's runs are those whose thread it is; a run's sessions those
+    /// its thread names.
+    pub async fn history_target(
+        &self,
+        subject: HistorySubject,
+    ) -> Result<Option<HistoryTarget>, StoreError> {
+        // The recordings a subject names (by their native ids), and its runs.
+        let (id, exists, threads, runs) = match subject {
+            HistorySubject::Session(session) => (
+                session.to_string(),
+                "SELECT EXISTS(SELECT 1 FROM sessions WHERE id = ?1)",
+                "(SELECT native_id FROM sessions WHERE id = ?1)",
+                "id = ?1 OR thread = (SELECT native_id FROM sessions WHERE id = ?1)",
+            ),
+            HistorySubject::Run(run) => (
+                run.to_string(),
+                "SELECT EXISTS(SELECT 1 FROM runs WHERE id = ?1)",
+                "(SELECT thread FROM runs WHERE id = ?1)",
+                "id = ?1 OR thread = (SELECT thread FROM runs WHERE id = ?1)",
+            ),
+            HistorySubject::OperatorSession(session) => (
+                session.to_string(),
+                "SELECT EXISTS(SELECT 1 FROM operator_sessions WHERE id = ?1)",
+                "(SELECT thread FROM runs WHERE operator_session = ?1)",
+                "operator_session = ?1",
+            ),
+        };
+        let exists: bool = sqlx::query_scalar(AssertSqlSafe(exists))
+            .bind(&id)
+            .fetch_one(&self.pool)
+            .await?;
+        if !exists {
+            return Ok(None);
+        }
+        let counts = sqlx::query(AssertSqlSafe(format!(
+            "SELECT (SELECT COUNT(*) FROM calls WHERE state = ?2 AND session IN (SELECT id FROM sessions WHERE native_id IN {threads})) AS open_calls, (SELECT COUNT(*) FROM runs WHERE ended_at IS NULL AND ({runs})) AS running_runs"
+        )))
+        .bind(&id)
+        .bind(CallState::Open.label())
+        .fetch_one(&self.pool)
+        .await?;
+        let columns = Columns(&counts);
+        Ok(Some(HistoryTarget {
+            open_calls: columns.count("open_calls")?,
+            running_runs: columns.count("running_runs")?,
+        }))
+    }
+
+    async fn require_recording(&self, session: RecordingId) -> Result<(), StoreError> {
         let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM sessions WHERE id = ?)")
             .bind(session.to_string())
             .fetch_one(&self.pool)

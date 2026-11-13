@@ -8,6 +8,7 @@
       "native_id": "00000000-0000-4000-8000-0000000000aa",
       "first_seen": 1800000000000,
       "last_seen": 1800000000000,
+      "archived_at": null,
       "call_count": 2,
       "turn_count": 1,
       "error_count": 0,

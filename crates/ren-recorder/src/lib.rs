@@ -41,7 +41,10 @@ pub mod time;
 pub use metrics::RecorderMetrics;
 pub use options::{CaptureOptions, CaptureOptionsError};
 pub use sink::{Committed, Observation, Pruned, RecordSink};
-pub use tap::{AttemptStart, CallStart, CallTap, ChannelTap, OperatorSlot};
+pub use tap::{
+    AttemptStart, CallStart, CallTap, ChannelTap, HistorySlot, OperatorSlot, RunSession, RunTap,
+    RunUnrecorded, SessionSlot,
+};
 pub use task::RecorderTask;
 
 use crate::{
@@ -189,6 +192,39 @@ impl Recorder {
     /// no room.
     pub fn operator_slot(&self) -> Option<OperatorSlot> {
         OperatorSlot::reserve(self.shared.clone())
+    }
+
+    /// A slot to record one history edit, or `None` when the recorder has no
+    /// room.
+    pub fn history_slot(&self) -> Option<HistorySlot> {
+        HistorySlot::reserve(self.shared.clone())
+    }
+
+    /// A slot to record one fact about a session, or `None` when the
+    /// recorder has no room.
+    pub fn session_slot(&self) -> Option<SessionSlot> {
+        SessionSlot::reserve(self.shared.clone())
+    }
+
+    /// Record the start of `run`, serving `session` (recorded first when it
+    /// is new), `harness` working in `workdir`, and reserve its end record.
+    /// Never blocks; without room the run must not start.
+    pub fn run(
+        &self,
+        run: crate::id::RunId,
+        session: RunSession,
+        harness: ren_harness::Harness,
+        workdir: String,
+        settings: ren_harness::settings::RunSettings,
+    ) -> Result<RunTap, RunUnrecorded> {
+        RunTap::start(
+            self.shared.clone(),
+            run,
+            session,
+            harness,
+            workdir,
+            settings,
+        )
     }
 
     /// Reserve the end record of a WebSocket channel whose handshake call

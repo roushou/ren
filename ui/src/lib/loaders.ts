@@ -7,11 +7,11 @@ import {
   type Health,
   type Metrics,
   type PageCursor,
-  type SessionId,
+  type RecordingId,
   type SearchField,
   type SearchPage,
-  type SessionReport,
-  type SessionView,
+  type RecordingReport,
+  type RecordingView,
   type Storage,
   type TurnActivity,
   type TurnId,
@@ -22,7 +22,7 @@ import { localDayStart, parseRange, rangeStart, type UsageRange } from './usage.
 import { listingQuery } from './traffic.ts';
 import { readSnapshot, snapshotError, type Snapshot } from './snapshots.ts';
 import { Band, Board, LivePlace, type LiveWindow } from './board.ts';
-import { SessionList, type SessionDetail } from './sessions.ts';
+import { RecordingList, type RecordingDetail } from './recordings.ts';
 
 export interface GatewayData {
   health: Health;
@@ -34,11 +34,11 @@ export type OffPageSelection =
 export interface TrafficData {
   calls: CallView[];
   next: PageCursor | null;
-  session: SessionView | undefined;
+  session: RecordingView | undefined;
   /** What the listed sessions are about: their newest prompt and folder. */
-  details: Map<SessionId, SessionDetail>;
-  /** Sessions for the picker; empty on a session page. */
-  sessions: SessionView[];
+  details: Map<RecordingId, RecordingDetail>;
+  /** Recordings for the picker; empty on a session page. */
+  sessions: RecordingView[];
   /** How many calls the default "model calls only" hides (at most 100), or null when not hiding. */
   hidden: number | null;
 }
@@ -91,9 +91,9 @@ export interface UsageData {
   now: number;
   usage: UsageView;
   /** The most-used sessions in the window's listing (sessions are not range-filtered). */
-  sessions: SessionView[];
+  sessions: RecordingView[];
   /** What the busiest sessions are about. */
-  details: Map<SessionId, SessionDetail>;
+  details: Map<RecordingId, RecordingDetail>;
   /**
    * Bookkeeping calls that failed in the range (a client's own checks, such
    * as Claude Code's quota probe), which the errors total leaves out; one
@@ -122,10 +122,10 @@ export function usageSnapshot(fetcher: typeof fetch, rawRange: string | null) {
     const busiest = sessions.sessions
       .toSorted((a, b) => (b.tokens.input ?? 0) - (a.tokens.input ?? 0))
       .map((session) => session.id);
-    const details = await SessionDetails.shared.read(
+    const details = await RecordingDetails.shared.read(
       api,
       // The page shows five, after filtering by range: read a few more.
-      SessionDetails.pick(sessions.sessions, busiest, 10),
+      RecordingDetails.pick(sessions.sessions, busiest, 10),
     );
     return { range, now, usage, sessions: sessions.sessions, details, bookkeepingErrors };
   });
@@ -143,7 +143,7 @@ export interface OverviewData {
   stopped: CallView[];
   /** Bookkeeping calls that failed in the last 24 hours: quota probes, token counts. */
   bookkeeping: CallView[];
-  sessions: SessionView[];
+  sessions: RecordingView[];
   /** Credentials found in the last 24 hours; null from a daemon without them. */
   exposures: ExposureView[] | null;
   /** The Live board's last 15 minutes, for the sessions at work; null when unread. */
@@ -189,41 +189,45 @@ export function overviewSnapshot(fetcher: typeof fetch, live: LiveReader) {
   });
 }
 
-export interface SessionsData {
-  sessions: SessionView[];
+export interface RecordingsData {
+  sessions: RecordingView[];
   /** Model calls in flight, for the rows' state. */
   open: CallView[];
   /** Each detailed session's newest turn: its prompt and folder. */
-  details: Map<SessionId, SessionDetail>;
+  details: Map<RecordingId, RecordingDetail>;
 }
 
 /**
- * Reads the Sessions page. A session's newest turn says what it is about,
+ * Reads the Recordings page. A session's newest turn says what it is about,
  * and costs two reads (its summary, then its activity for the folder), so
  * a session is read again only when it has been seen since; sessions of a
  * single call with no turn are not read at all.
  */
-export class SessionsReader {
+export class RecordingsReader {
   /** The newest sessions read in detail; the rest show without a prompt. */
   static readonly detailed = 40;
-  readonly #details: SessionDetails;
+  readonly #details: RecordingDetails;
 
-  constructor(details: SessionDetails = SessionDetails.shared) {
+  constructor(details: RecordingDetails = RecordingDetails.shared) {
     this.#details = details;
   }
 
-  read(fetcher: typeof fetch): Promise<Snapshot<SessionsData>> {
+  /** The sessions on `shelf`: current, or archived. */
+  read(
+    fetcher: typeof fetch,
+    shelf: 'current' | 'archived' = 'current',
+  ): Promise<Snapshot<RecordingsData>> {
     const api = new ManagementApi(fetcher);
-    return readSnapshot('sessions', async (): Promise<SessionsData> => {
+    return readSnapshot('sessions', async (): Promise<RecordingsData> => {
       const [listing, open] = await Promise.all([
-        api.sessions(100),
+        api.sessions(100, undefined, shelf),
         api
           .calls(new URLSearchParams({ status: 'active', kind: 'model', limit: '100' }))
           .then((page) => page.calls),
       ]);
       const wanted = listing.sessions
-        .filter((session) => !SessionList.trivial(session))
-        .slice(0, SessionsReader.detailed);
+        .filter((session) => !RecordingList.trivial(session))
+        .slice(0, RecordingsReader.detailed);
       const details = await this.#details.read(api, wanted);
       return { sessions: listing.sessions, open, details };
     });
@@ -236,8 +240,8 @@ export class SessionsReader {
  * read again only once it has been seen since, so one instance kept in the
  * browser serves every page that names sessions.
  */
-export class SessionDetails {
-  /** Sessions read at once. */
+export class RecordingDetails {
+  /** Recordings read at once. */
   static readonly parallel = 8;
   /** Turns read per session, newest first, to find one with a prompt. */
   static readonly recentTurns = 5;
@@ -246,13 +250,16 @@ export class SessionDetails {
    * so sharing it never shows a stale prompt, and the API it reads is the same
    * for every viewer.
    */
-  static readonly shared = new SessionDetails();
-  readonly #cache = new Map<SessionId, { lastSeen: number; detail: SessionDetail }>();
+  static readonly shared = new RecordingDetails();
+  readonly #cache = new Map<RecordingId, { lastSeen: number; detail: RecordingDetail }>();
 
   /** Details for these sessions; one whose turns cannot be read is left out. */
-  async read(api: ManagementApi, sessions: SessionView[]): Promise<Map<SessionId, SessionDetail>> {
-    const details = new Map<SessionId, SessionDetail>();
-    const readOne = async (session: SessionView) => {
+  async read(
+    api: ManagementApi,
+    sessions: RecordingView[],
+  ): Promise<Map<RecordingId, RecordingDetail>> {
+    const details = new Map<RecordingId, RecordingDetail>();
+    const readOne = async (session: RecordingView) => {
       const cached = this.#cache.get(session.id);
       if (cached?.lastSeen === session.last_seen) {
         details.set(session.id, cached.detail);
@@ -261,7 +268,7 @@ export class SessionDetails {
       try {
         // A turn can carry no prompt of its own (it continues the one before), so
         // the newest few are read and the newest with a prompt names the session.
-        const turns = (await api.turns(session.id, SessionDetails.recentTurns)).turns;
+        const turns = (await api.turns(session.id, RecordingDetails.recentTurns)).turns;
         const newest = turns[0];
         const activity = newest ? await api.turn(newest.turn) : null;
         const detail = {
@@ -276,18 +283,18 @@ export class SessionDetails {
       }
     };
     // A few at a time, so a first load does not send every session's reads at once.
-    for (let index = 0; index < sessions.length; index += SessionDetails.parallel)
-      await Promise.all(sessions.slice(index, index + SessionDetails.parallel).map(readOne));
+    for (let index = 0; index < sessions.length; index += RecordingDetails.parallel)
+      await Promise.all(sessions.slice(index, index + RecordingDetails.parallel).map(readOne));
     return details;
   }
 
   /** The sessions among `listing` that these IDs name, at most `limit`, first named first. */
-  static pick(listing: SessionView[], ids: (SessionId | null)[], limit = 40): SessionView[] {
+  static pick(listing: RecordingView[], ids: (RecordingId | null)[], limit = 40): RecordingView[] {
     const byId = new Map(listing.map((session) => [session.id, session]));
-    const picked = new Map<SessionId, SessionView>();
+    const picked = new Map<RecordingId, RecordingView>();
     for (const id of ids) {
       const session = id ? byId.get(id) : undefined;
-      if (session && !SessionList.trivial(session)) picked.set(session.id, session);
+      if (session && !RecordingList.trivial(session)) picked.set(session.id, session);
       if (picked.size >= limit) break;
     }
     return [...picked.values()];
@@ -297,7 +304,7 @@ export class SessionDetails {
 export async function trafficSnapshot(
   fetcher: typeof fetch,
   url: URL,
-  sessionId: SessionId | null,
+  sessionId: RecordingId | null,
 ) {
   const api = new ManagementApi(fetcher);
   // Read by name: Kit re-runs a load on any URL change once it reads the
@@ -309,7 +316,7 @@ export async function trafficSnapshot(
     const value = url.searchParams.get(key);
     if (value) named.set(key, value);
   }
-  const key = `${sessionId ? `/sessions/${sessionId}` : '/traffic'}?${named}`;
+  const key = `${sessionId ? `/recordings/${sessionId}` : '/traffic'}?${named}`;
   return readSnapshot(key, async (): Promise<TrafficData> => {
     if (sessionId) {
       // A session's own listing accepts only a cursor.
@@ -318,9 +325,9 @@ export async function trafficSnapshot(
         api.sessionCalls(sessionId, named.get('after')),
       ]);
       const session = sessions.sessions.find((item) => item.id === sessionId);
-      const details = await SessionDetails.shared.read(
+      const details = await RecordingDetails.shared.read(
         api,
-        SessionDetails.pick(sessions.sessions, [sessionId]),
+        RecordingDetails.pick(sessions.sessions, [sessionId]),
       );
       return { calls: page.calls, next: page.next, session, sessions: [], hidden: null, details };
     }
@@ -335,9 +342,9 @@ export async function trafficSnapshot(
       api.sessions(100),
       hiding ? api.calls(hiddenQuery).then((other) => other.calls.length) : Promise.resolve(null),
     ]);
-    const details = await SessionDetails.shared.read(
+    const details = await RecordingDetails.shared.read(
       api,
-      SessionDetails.pick(
+      RecordingDetails.pick(
         sessions.sessions,
         page.calls.map((call) => call.session),
       ),
@@ -379,27 +386,27 @@ export async function offPageSelection(
 }
 
 export interface ReportData {
-  report: SessionReport;
+  report: RecordingReport;
   /** The turn listing, for prompts and error counts. */
   turns: TurnSummary[];
-  session: SessionView | undefined;
+  session: RecordingView | undefined;
   /** What the session is about, for its header. */
-  detail: SessionDetail | null;
+  detail: RecordingDetail | null;
 }
 
 /** A session's report, with its turns' prompts and its listing row. */
-export function reportSnapshot(fetcher: typeof fetch, sessionId: SessionId) {
+export function reportSnapshot(fetcher: typeof fetch, sessionId: RecordingId) {
   const api = new ManagementApi(fetcher);
-  return readSnapshot(`/sessions/${sessionId}/report`, async (): Promise<ReportData> => {
+  return readSnapshot(`/recordings/${sessionId}/report`, async (): Promise<ReportData> => {
     const [report, turns, sessions] = await Promise.all([
       api.report(sessionId),
       api.turns(sessionId, 100),
       api.sessions(100),
     ]);
     const session = sessions.sessions.find((item) => item.id === sessionId);
-    const details = await SessionDetails.shared.read(
+    const details = await RecordingDetails.shared.read(
       api,
-      SessionDetails.pick(sessions.sessions, [sessionId]),
+      RecordingDetails.pick(sessions.sessions, [sessionId]),
     );
     return { report, turns: turns.turns, session, detail: details.get(sessionId) ?? null };
   });
@@ -418,8 +425,8 @@ export interface SearchData {
   /** Null before a search. */
   page: SearchPage | null;
   /** What the hits' sessions are about, and the sessions themselves. */
-  details: Map<SessionId, SessionDetail>;
-  sessions: SessionView[];
+  details: Map<RecordingId, RecordingDetail>;
+  sessions: RecordingView[];
 }
 
 /** A search from the page's URL: `?q=` and optionally `?field=`. */
@@ -437,9 +444,9 @@ export function searchSnapshot(fetcher: typeof fetch, url: URL) {
       api.search(query),
       api.sessions(100).catch(() => ({ sessions: [] })),
     ]);
-    const details = await SessionDetails.shared.read(
+    const details = await RecordingDetails.shared.read(
       api,
-      SessionDetails.pick(
+      RecordingDetails.pick(
         listing.sessions,
         page.hits.map((hit) => hit.session),
       ),
@@ -451,7 +458,7 @@ export function searchSnapshot(fetcher: typeof fetch, url: URL) {
 export interface LiveData {
   /** When the snapshot was read: elapsed times count from the page's own clock. */
   read: number;
-  sessions: SessionView[];
+  sessions: RecordingView[];
   /** Model calls started in the board's window, and every call still open. */
   calls: CallView[];
   /** Model calls started in the band's span or the window, whichever is longer, and every call still open. */
@@ -563,10 +570,10 @@ export class LiveReader {
       const calls = recent.filter(
         (call) => call.ended_at === null || call.started_at >= read - spec.ms,
       );
-      const bySession = Board.bySession(calls);
+      const byRecording = Board.byRecording(calls);
       const shown = Board.shown(
-        Board.activeSessions(sessions.sessions, bySession, read, spec.ms),
-        bySession,
+        Board.activeRecordings(sessions.sessions, byRecording, read, spec.ms),
+        byRecording,
       ).map((session) => session.id);
       const turns = new Map<TurnId, TurnActivity>();
       await Promise.all(
@@ -590,7 +597,7 @@ export class LiveReader {
         }),
       );
       for (const turn of this.#turns.keys()) if (!turns.has(turn)) this.#turns.delete(turn);
-      // Sessions come newest first: a full page whose oldest is still in the window may miss some.
+      // Recordings come newest first: a full page whose oldest is still in the window may miss some.
       const oldest = sessions.sessions.at(-1);
       return {
         read,

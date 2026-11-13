@@ -7,7 +7,7 @@ use ren_gateway::{
     policy::{EntryUsers, Policy, PolicyConfig},
     user::{UserConfig, Users},
 };
-use ren_harness::host::HostEnv;
+use ren_harness::{host::HostEnv, pi::PiCache};
 use ren_protocol::route::{Api, Provider, UnsupportedWire, Wire};
 use ren_recorder::retention::RetentionPolicy;
 use ren_recorder::{
@@ -78,6 +78,10 @@ pub enum ConfigError {
     Revision(#[source] serde_json::Error),
     #[error("set --data-dir when HOME is unavailable")]
     NoDataDir,
+    #[error(
+        "runs.roots entries must be absolute paths, and runs.places and runs.scratch absolute or under ~/"
+    )]
+    RunRoot,
 }
 
 /// Where operator keys come from while resolving.
@@ -121,6 +125,68 @@ pub struct Config {
     pub users: Vec<UserConfig>,
     /// Whether this is a production or a development instance.
     pub instance: InstanceOptions,
+    /// Agent runs: off until roots are configured.
+    pub runs: RunsOptions,
+}
+
+/// The `[runs]` section: the folders agent runs may work in. Runs are off
+/// while `roots` is empty.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct RunsOptions {
+    /// Absolute paths. A run may start in a root or any folder under one,
+    /// after links are resolved; the projects offered are found under them.
+    pub roots: Vec<PathBuf>,
+    /// Other places runs may start in, offered only when asked for: each
+    /// one's own folders, hidden ones included (`~/.config`). Absolute, or
+    /// under the home as `~/…`.
+    pub places: Vec<PathBuf>,
+    /// Where scratch runs each get a new folder. Absolute or `~/…`; by
+    /// default `$XDG_DATA_HOME/ren/scratch`, else `~/.local/share/ren/scratch`.
+    pub scratch: Option<PathBuf>,
+}
+
+/// The `[runs]` paths with the home resolved, as the supervisor takes them.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RunPlaces {
+    pub places: Vec<PathBuf>,
+    pub scratch: Option<PathBuf>,
+    pub home: Option<PathBuf>,
+}
+
+impl RunsOptions {
+    pub fn validate(&self) -> Result<(), ConfigError> {
+        let anchored = |path: &PathBuf| path.is_absolute() || path.starts_with("~");
+        if self.roots.iter().all(|root| root.is_absolute())
+            && self.places.iter().chain(&self.scratch).all(anchored)
+        {
+            Ok(())
+        } else {
+            Err(ConfigError::RunRoot)
+        }
+    }
+
+    /// The other places and the scratch folder, `~` read as the home `env`
+    /// names. A path under a home that is not known is left out.
+    pub fn places_in(&self, env: &HostEnv) -> RunPlaces {
+        let home = env.absolute_path("HOME");
+        let anchored = |path: &PathBuf| match path.strip_prefix("~") {
+            Ok(rest) => home.as_ref().map(|home| home.join(rest)),
+            Err(_) => Some(path.clone()),
+        };
+        let scratch = match &self.scratch {
+            Some(scratch) => anchored(scratch),
+            None => env
+                .absolute_path("XDG_DATA_HOME")
+                .or_else(|| home.as_ref().map(|home| home.join(".local/share")))
+                .map(|data| data.join("ren/scratch")),
+        };
+        RunPlaces {
+            places: self.places.iter().filter_map(anchored).collect(),
+            scratch,
+            home,
+        }
+    }
 }
 
 /// An operator-key upstream entry. The key is read from the daemon's
@@ -205,6 +271,7 @@ impl Default for Config {
             control: ControlOptions::default(),
             users: Vec::new(),
             instance: InstanceOptions::default(),
+            runs: RunsOptions::default(),
         }
     }
 }
@@ -295,6 +362,15 @@ impl Config {
             websocket: self.websocket,
             buffer: self.buffer,
             control: self.control.clone(),
+            runs: self.runs.clone(),
+            run_places: match keys {
+                Keys::Env(env) => self.runs.places_in(env),
+                Keys::Unchecked => RunPlaces::default(),
+            },
+            pi_cache: match keys {
+                Keys::Env(env) => PiCache::locate(env).ok(),
+                Keys::Unchecked => None,
+            },
             revision: self.revision()?,
         })
     }
@@ -355,6 +431,7 @@ impl Config {
         self.websocket.validate()?;
         self.buffer.validate()?;
         self.control.validate()?;
+        self.runs.validate()?;
         Ok(())
     }
 
@@ -396,6 +473,12 @@ pub struct RuntimeConfig {
     websocket: WebSocketOptions,
     buffer: BufferOptions,
     control: ControlOptions,
+    runs: RunsOptions,
+    /// The runs' other places and scratch folder, with the home resolved.
+    run_places: RunPlaces,
+    /// Where driven Pi processes find Ren's extension, when the host
+    /// environment names a cache.
+    pi_cache: Option<PiCache>,
     revision: String,
 }
 
@@ -411,6 +494,15 @@ impl RuntimeConfig {
     }
     pub fn instance(&self) -> InstanceOptions {
         self.instance
+    }
+    pub fn runs(&self) -> &RunsOptions {
+        &self.runs
+    }
+    pub fn run_places(&self) -> &RunPlaces {
+        &self.run_places
+    }
+    pub fn pi_cache(&self) -> Option<&PiCache> {
+        self.pi_cache.as_ref()
     }
     /// The gateway's settings from this snapshot.
     pub fn gateway(&self) -> GatewayConfig {
@@ -476,6 +568,49 @@ mod tests {
             ..Config::default()
         };
         assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn run_places_and_scratch_read_the_home() {
+        let config: Config = toml::from_str(
+            "[runs]\nroots = [\"/home/op/dev\"]\nplaces = [\"~/.config\", \"/srv/dotfiles\"]\n",
+        )
+        .unwrap();
+        let env = HostEnv::from_pairs([("HOME", "/home/op")]);
+        let places = config.runs.places_in(&env);
+        assert_eq!(
+            places.places,
+            [
+                PathBuf::from("/home/op/.config"),
+                PathBuf::from("/srv/dotfiles")
+            ]
+        );
+        assert_eq!(
+            places.scratch,
+            Some(PathBuf::from("/home/op/.local/share/ren/scratch"))
+        );
+        let env = HostEnv::from_pairs([("HOME", "/home/op"), ("XDG_DATA_HOME", "/data")]);
+        assert_eq!(
+            config.runs.places_in(&env).scratch,
+            Some(PathBuf::from("/data/ren/scratch"))
+        );
+        // Without a home, a place under it is left out.
+        let homeless = config.runs.places_in(&HostEnv::from_pairs([]));
+        assert_eq!(homeless.places, [PathBuf::from("/srv/dotfiles")]);
+        let relative: Config = toml::from_str("[runs]\nplaces = [\"dotfiles\"]\n").unwrap();
+        assert!(relative.runs.validate().is_err());
+    }
+
+    #[test]
+    fn runs_need_absolute_roots() {
+        let config: Config = toml::from_str("[runs]\nroots = [\"/home/op/dev\"]\n").unwrap();
+        config.resolve().unwrap();
+        let config: Config = toml::from_str("[runs]\nroots = [\"dev\"]\n").unwrap();
+        assert!(matches!(config.validate(), Err(ConfigError::RunRoot)));
+        assert!(
+            Config::default().runs.roots.is_empty(),
+            "runs are off by default"
+        );
     }
 
     #[test]
@@ -609,22 +744,9 @@ mod tests {
         let mut reserved = with_operator_key("");
         reserved.upstreams[0].id = UpstreamId::parse("anthropic").unwrap();
         assert!(reserved.check().is_err());
-        for step in [
-            r#"{ op = "remove_header", name = "authorization" }"#,
-            r#"{ op = "set_header", name = "user-agent", value = "spoof" }"#,
-            r#"{ op = "json_remove", path = "/system" }"#,
-            r#"{ op = "json_set", path = "/metadata/user_id", value = "x" }"#,
-        ] {
-            let policy = format!(
-                "[[transform]]\nid = \"bad\"\nmatch = {{ provider = \"anthropic\" }}\nsteps = [{step}]\nreason = \"fixture\"\n"
-            );
-            assert!(with_operator_key(&policy).check().is_err(), "{step}");
-        }
-        let fallback = "[[fallback]]\nid = \"f\"\nprovider = \"anthropic\"\nto = \"anthropic\"\non_status = [429]\n";
-        assert!(
-            with_operator_key(fallback).check().is_err(),
-            "must target an operator key"
-        );
+        // Loading checks the policy; its rules are tested with the policy.
+        let spoof = "[[transform]]\nid = \"bad\"\nmatch = { provider = \"anthropic\" }\nsteps = [{ op = \"set_header\", name = \"user-agent\", value = \"spoof\" }]\nreason = \"fixture\"\n";
+        assert!(with_operator_key(spoof).check().is_err());
     }
 
     #[test]
@@ -657,7 +779,7 @@ mod tests {
     }
 
     #[test]
-    fn the_wire_key_reads_labels_and_an_omitted_one_is_not_written() {
+    fn optional_upstream_keys_read_labels_and_omitted_ones_are_not_written() {
         let entry = |wire: &str| {
             toml::from_str::<UpstreamConfig>(&format!(
                 "id = \"k\"\nprovider = \"openai\"\n{wire}base_url = \"https://api.openai.com\"\noperator_key_env = \"K\"\n"
@@ -676,22 +798,22 @@ mod tests {
         assert_eq!(omitted.wire, None);
         // A configuration without the key keeps the revision it had.
         assert!(!serde_json::to_string(&omitted).unwrap().contains("wire"));
-    }
-
-    #[test]
-    fn direct_ingress_is_opt_in_and_an_omitted_one_is_not_written() {
-        let entry = |ingress: &str| {
+        let anthropic = |ingress: &str| {
             toml::from_str::<UpstreamConfig>(&format!(
                 "id = \"k\"\nprovider = \"anthropic\"\nbase_url = \"https://api.anthropic.com\"\noperator_key_env = \"K\"\n{ingress}"
             ))
         };
-        let omitted = entry("").unwrap();
-        assert_eq!(omitted.ingress, EntryIngress::FallbackOnly);
-        assert!(!serde_json::to_string(&omitted).unwrap().contains("ingress"));
+        let omitted_ingress = anthropic("").unwrap();
+        assert_eq!(omitted_ingress.ingress, EntryIngress::FallbackOnly);
+        assert!(
+            !serde_json::to_string(&omitted_ingress)
+                .unwrap()
+                .contains("ingress")
+        );
         assert_eq!(
-            entry("ingress = \"direct\"\n").unwrap().ingress,
+            anthropic("ingress = \"direct\"\n").unwrap().ingress,
             EntryIngress::Direct
         );
-        assert!(entry("ingress = \"public\"\n").is_err());
+        assert!(anthropic("ingress = \"public\"\n").is_err());
     }
 }

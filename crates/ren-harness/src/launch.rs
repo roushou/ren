@@ -1,9 +1,12 @@
 //! Session-only client overrides. Authentication remains owned by the client.
 use crate::{
     Harness,
+    claude_code::{ClaudeModels, ClaudeStreamJson},
+    drive::Opening,
     endpoint::{GatewayEndpoint, UserToken},
     host::HostEnv,
-    pi::{PiCache, PiCacheError},
+    opencode::{OpenCodeAcp, OpenCodeModels},
+    pi::{PiCache, PiCacheError, PiModels, PiRpc},
 };
 use serde::Serialize;
 use std::{
@@ -20,6 +23,18 @@ pub enum LaunchError {
     PiExtension(#[from] PiCacheError),
     #[error("cannot launch client; check it is installed on PATH")]
     Spawn(#[source] std::io::Error),
+}
+
+/// A harness Ren cannot drive through a structured mode yet.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[error("{0} cannot be driven by Ren yet")]
+pub struct NotDrivable(pub Harness);
+
+/// What a structured-mode process is started for.
+#[derive(Clone, Copy)]
+enum Structured<'a> {
+    Conversation(&'a Opening),
+    Listing,
 }
 
 /// One launcher argument. The Pi extension path is resolved only when the
@@ -91,7 +106,7 @@ impl From<&str> for EnvValue {
 #[derive(Serialize)]
 pub struct LaunchPlan {
     #[serde(skip)]
-    harness: Harness,
+    pub(crate) harness: Harness,
     pub executable: &'static str,
     pub arguments: Vec<LaunchArg>,
     pub environment: BTreeMap<String, EnvValue>,
@@ -101,74 +116,115 @@ impl Harness {
     /// How to launch this harness through `gateway` for one session, without
     /// editing its files. Authentication stays with the client.
     pub fn launch(self, gateway: &GatewayEndpoint) -> LaunchPlan {
-        let mut plan = LaunchPlan {
-            harness: self,
-            executable: "claude",
-            arguments: vec![],
-            environment: BTreeMap::new(),
-        };
         match self {
-            Self::Pi => {
-                plan.executable = "pi";
-                plan.arguments = vec!["--extension".into(), LaunchArg::PiExtension];
-                plan.environment
-                    .insert("REN_PI_GATEWAY".into(), gateway.url("/").to_string().into());
-            }
-            Self::ClaudeCode => {
-                plan.environment.insert(
-                    "ANTHROPIC_BASE_URL".into(),
-                    gateway.url("/anthropic").to_string().into(),
-                );
-                plan.environment
-                    .insert("CLAUDE_CODE_GATEWAY_HINT_HEADERS".into(), "1".into());
-            }
-            Self::Codex => {
-                plan.executable = "codex";
-                // Replace the entire provider table so an existing entry cannot
-                // accidentally add a bearer token or credential helper.
-                // WebSockets are offered: a daemon that refuses them answers
-                // 426, and Codex falls back to HTTP/SSE for the session. A
-                // user token is sent from the environment, when it is set.
-                let base = toml::Value::String(gateway.url("/codex").to_string());
-                plan.arguments = vec![
-                    "--no-daemon".into(),
-                    "--config".into(),
-                    "model_provider=\"ren_session\"".into(),
-                    "--config".into(),
-                    format!(
-                        "model_providers.ren_session={{name=\"Ren\",base_url={base},wire_api=\"responses\",requires_openai_auth=true,supports_websockets=true,env_http_headers={{\"{header}\"=\"{variable}\"}}}}",
-                        header = UserToken::HEADER,
-                        variable = UserToken::ENV,
-                    )
-                    .into(),
-                ];
-            }
-            Self::OpenCode => {
-                plan.executable = "opencode";
-                // opencode's documented runtime override; it merges over the
-                // global and project files. Only the two providers' base URLs
-                // are set: keys, sign-in, and every other provider stay
-                // opencode's own. Its OpenAI WebSocket is refused with 426, and
-                // opencode keeps the session on HTTP/SSE.
-                let config = serde_json::json!({
-                    "provider": {
-                        "anthropic": {
-                            "options": { "baseURL": gateway.url("/anthropic/v1").as_str() }
-                        },
-                        "openai": {
-                            "options": { "baseURL": gateway.url("/openai/v1").as_str() }
-                        },
-                    }
-                });
-                plan.environment
-                    .insert(Self::OPENCODE_CONFIG.into(), config.to_string().into());
-            }
+            Self::ClaudeCode => LaunchPlan::claude_code(gateway),
+            Self::Codex => LaunchPlan::codex(gateway),
+            Self::Pi => LaunchPlan::pi(gateway),
+            Self::OpenCode => LaunchPlan::opencode(gateway),
         }
-        plan
     }
 
-    /// The environment variable opencode reads inline configuration from.
-    const OPENCODE_CONFIG: &'static str = "OPENCODE_CONFIG_CONTENT";
+    /// The program Ren runs to drive this harness, when it can drive it.
+    pub fn driven_program(self) -> Result<&'static str, NotDrivable> {
+        match self {
+            Self::Codex => Ok("codex"),
+            Self::ClaudeCode => Ok("claude"),
+            Self::Pi => Ok("pi"),
+            Self::OpenCode => Ok("opencode"),
+        }
+    }
+
+    /// How to start this harness in its structured mode, driven by Ren
+    /// through `drive`, with its model traffic sent to `gateway`. The client
+    /// keeps its own sign-in. OpenCode is driven through its ACP mode.
+    pub fn drive(
+        self,
+        gateway: &GatewayEndpoint,
+        opening: &Opening,
+    ) -> Result<LaunchPlan, NotDrivable> {
+        self.structured(gateway, Structured::Conversation(opening))
+    }
+
+    /// How to start this harness only to list its models
+    /// (`models::ModelListing`): its structured mode with no conversation.
+    pub fn list_models(self, gateway: &GatewayEndpoint) -> Result<LaunchPlan, NotDrivable> {
+        self.structured(gateway, Structured::Listing)
+    }
+
+    fn structured(
+        self,
+        gateway: &GatewayEndpoint,
+        mode: Structured<'_>,
+    ) -> Result<LaunchPlan, NotDrivable> {
+        match self {
+            Self::Codex => {
+                // One server speaks both; the listing opens no thread.
+                let mut arguments: Vec<LaunchArg> =
+                    vec!["app-server".into(), "--listen".into(), "stdio://".into()];
+                arguments.extend(LaunchPlan::codex_provider(gateway));
+                Ok(LaunchPlan {
+                    harness: self,
+                    executable: "codex",
+                    arguments,
+                    environment: BTreeMap::new(),
+                })
+            }
+            Self::ClaudeCode => {
+                // The same environment as a launched session: its traffic
+                // goes through the gateway, which reads its hint headers.
+                let mut plan = self.launch(gateway);
+                let arguments = match mode {
+                    Structured::Conversation(opening) => ClaudeStreamJson::arguments(opening),
+                    Structured::Listing => ClaudeModels::arguments(),
+                };
+                plan.arguments = arguments.into_iter().map(LaunchArg::Literal).collect();
+                Ok(plan)
+            }
+            Self::Pi => {
+                // The same extension and gateway as a launched session.
+                let mut plan = self.launch(gateway);
+                let arguments = match mode {
+                    Structured::Conversation(opening) => PiRpc::arguments(opening),
+                    Structured::Listing => PiModels::arguments(),
+                };
+                plan.arguments
+                    .extend(arguments.into_iter().map(LaunchArg::Literal));
+                Ok(plan)
+            }
+            Self::OpenCode => Ok(match mode {
+                Structured::Conversation(opening) => LaunchPlan::opencode_driven(
+                    gateway,
+                    opening.settings().approvals,
+                    OpenCodeAcp::arguments(),
+                ),
+                // Without the override: the models OpenCode can use as it is
+                // set up, and the default it takes on its own. No model call
+                // is made while listing.
+                Structured::Listing => LaunchPlan {
+                    harness: self,
+                    executable: "opencode",
+                    arguments: OpenCodeModels::arguments()
+                        .into_iter()
+                        .map(Into::into)
+                        .collect(),
+                    environment: BTreeMap::new(),
+                },
+            }),
+        }
+    }
+
+    /// Whether a driven run names the client's own default model when none
+    /// is chosen. Ren's override names OpenCode's `anthropic` and `openai`
+    /// providers, which OpenCode then counts as set up whether or not it has
+    /// a key for them, and with no model chosen it takes the first of their
+    /// models; its listing, made without the override, names the default it
+    /// would take on its own.
+    pub fn names_its_default(self) -> bool {
+        match self {
+            Self::OpenCode => true,
+            Self::ClaudeCode | Self::Codex | Self::Pi => false,
+        }
+    }
 
     /// Whether a launched session can send a user token. opencode's header
     /// configuration is not yet confirmed, so it sends none.
@@ -212,6 +268,14 @@ impl LaunchPlan {
     /// Claude Code's extra request headers, one `Name: Value` per line.
     const CUSTOM_HEADERS: &'static str = "ANTHROPIC_CUSTOM_HEADERS";
 
+    /// Whether the client loads Ren's Pi extension, whose path the command
+    /// then needs.
+    pub fn loads_pi_extension(&self) -> bool {
+        self.arguments
+            .iter()
+            .any(|argument| matches!(argument, LaunchArg::PiExtension))
+    }
+
     /// Build the client command. `extension` replaces the Pi extension
     /// placeholder; without it the placeholder text is passed literally.
     pub fn command(&self, extension: Option<&Path>, args: &[OsString]) -> Command {
@@ -242,10 +306,10 @@ impl LaunchPlan {
                 Some(PiCache::locate(env)?.materialize()?)
             }
             Harness::OpenCode => {
-                if env.is_set(Harness::OPENCODE_CONFIG) {
+                if env.is_set(LaunchPlan::OPENCODE_CONFIG) {
                     eprintln!(
                         "Ren replaces {} for this session; keep other settings in opencode.json.",
-                        Harness::OPENCODE_CONFIG
+                        LaunchPlan::OPENCODE_CONFIG
                     );
                 }
                 eprintln!(
@@ -280,7 +344,164 @@ impl LaunchPlan {
 #[cfg(test)]
 mod tests {
     use super::{GatewayEndpoint, Harness, HostEnv, LaunchArg, OsString, Path, PiCache};
-    use crate::endpoint::UserToken;
+    use crate::{drive::Opening, endpoint::UserToken};
+    use ren_protocol::native::NativeThreadId;
+
+    const SESSION: &str = "0190f3a0-0000-7000-8000-00000000000a";
+
+    fn opening() -> Opening {
+        Opening::New {
+            cwd: "/work/acme".into(),
+            id: NativeThreadId::new(uuid::Uuid::parse_str(SESSION).unwrap()).unwrap(),
+            settings: crate::settings::RunSettings::default(),
+        }
+    }
+
+    /// opencode is driven in its ACP mode through the same provider
+    /// override as a launched session, which also carries the run's approval
+    /// policy as permission rules.
+    #[test]
+    fn drives_opencode_over_acp_with_its_policy_as_permission_rules() {
+        let gateway = GatewayEndpoint::parse("http://127.0.0.1:8787").unwrap();
+        let config = |plan: &super::LaunchPlan| -> serde_json::Value {
+            serde_json::from_str(plan.environment[super::LaunchPlan::OPENCODE_CONFIG].expose())
+                .unwrap()
+        };
+        let driven = Harness::OpenCode.drive(&gateway, &opening()).unwrap();
+        let command = driven.command(None, &[]);
+        assert_eq!(command.get_program(), "opencode");
+        assert_eq!(command.get_args().collect::<Vec<_>>(), ["acp"]);
+        // Without a policy: the launched session's override, nothing more.
+        assert_eq!(config(&driven), config(&Harness::OpenCode.launch(&gateway)));
+        let asking = Opening::New {
+            cwd: "/work/acme".into(),
+            id: NativeThreadId::new(uuid::Uuid::parse_str(SESSION).unwrap()).unwrap(),
+            settings: crate::settings::RunSettings {
+                approvals: Some(crate::settings::ApprovalPolicy::Edits),
+                ..crate::settings::RunSettings::default()
+            },
+        };
+        let driven = config(&Harness::OpenCode.drive(&gateway, &asking).unwrap());
+        assert_eq!(
+            driven["permissions"],
+            serde_json::json!([{ "action": "shell", "resource": "*", "effect": "ask" }])
+        );
+        assert_eq!(
+            driven["provider"]["anthropic"]["options"]["baseURL"],
+            "http://127.0.0.1:8787/anthropic/v1"
+        );
+        // Listed as OpenCode is set up on its own, without the override.
+        let listing = Harness::OpenCode.list_models(&gateway).unwrap();
+        let listing = listing.command(None, &[]);
+        assert_eq!(listing.get_args().collect::<Vec<_>>(), ["acp"]);
+        assert_eq!(listing.get_envs().count(), 0);
+        assert!(Harness::OpenCode.names_its_default());
+        assert!(!Harness::Codex.names_its_default());
+    }
+
+    #[test]
+    fn drives_codex_app_server_over_stdio_through_the_gateway() {
+        let gateway = GatewayEndpoint::parse("http://127.0.0.1:8787").unwrap();
+        let driven = Harness::Codex.drive(&gateway, &opening()).unwrap();
+        let launched = Harness::Codex.launch(&gateway);
+        let command = driven.command(None, &[]);
+        assert_eq!(command.get_program(), "codex");
+        assert_eq!(Harness::Codex.driven_program(), Ok("codex"));
+        let arguments: Vec<_> = command.get_args().collect();
+        assert_eq!(arguments[..3], ["app-server", "--listen", "stdio://"]);
+        // The same provider overrides as an interactive session.
+        let interactive = launched.command(None, &[]);
+        let overrides: Vec<_> = interactive.get_args().skip(1).collect();
+        assert_eq!(arguments[3..], overrides[..]);
+        assert_eq!(command.get_envs().count(), 0);
+        assert_eq!(Harness::OpenCode.driven_program(), Ok("opencode"));
+    }
+
+    #[test]
+    fn drives_pi_in_rpc_mode_with_rens_extension_through_the_gateway() {
+        let gateway = GatewayEndpoint::parse("http://127.0.0.1:8787").unwrap();
+        let driven = Harness::Pi.drive(&gateway, &opening()).unwrap();
+        assert_eq!(Harness::Pi.driven_program(), Ok("pi"));
+        assert!(driven.loads_pi_extension());
+        assert!(
+            !Harness::Codex
+                .drive(&gateway, &opening())
+                .unwrap()
+                .loads_pi_extension()
+        );
+        let command = driven.command(Some(Path::new("/cache/ren.ts")), &[]);
+        assert_eq!(command.get_program(), "pi");
+        assert_eq!(
+            command.get_args().collect::<Vec<_>>(),
+            [
+                "--extension",
+                "/cache/ren.ts",
+                "--mode",
+                "rpc",
+                "--session-id",
+                SESSION
+            ]
+        );
+        // The same environment as a launched session.
+        let launched = Harness::Pi.launch(&gateway).command(None, &[]);
+        assert_eq!(
+            command.get_envs().collect::<Vec<_>>(),
+            launched.get_envs().collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn drives_claude_code_in_stream_json_print_mode_through_the_gateway() {
+        let gateway = GatewayEndpoint::parse("http://127.0.0.1:8787").unwrap();
+        let command = Harness::ClaudeCode
+            .drive(&gateway, &opening())
+            .unwrap()
+            .command(None, &[]);
+        assert_eq!(command.get_program(), "claude");
+        assert_eq!(Harness::ClaudeCode.driven_program(), Ok("claude"));
+        let arguments: Vec<_> = command
+            .get_args()
+            .map(|argument| argument.to_str().unwrap())
+            .collect();
+        assert_eq!(
+            arguments,
+            [
+                "-p",
+                "--input-format",
+                "stream-json",
+                "--output-format",
+                "stream-json",
+                "--verbose",
+                "--include-partial-messages",
+                "--replay-user-messages",
+                "--permission-prompt-tool",
+                "stdio",
+                "--session-id",
+                SESSION,
+            ]
+        );
+        // The same environment as an interactive session: the gateway and
+        // its hint headers, and nothing that signs in or names the client.
+        let launched = Harness::ClaudeCode.launch(&gateway).command(None, &[]);
+        assert_eq!(
+            command.get_envs().collect::<Vec<_>>(),
+            launched.get_envs().collect::<Vec<_>>()
+        );
+        let resumed = Harness::ClaudeCode
+            .drive(
+                &gateway,
+                &Opening::Resume {
+                    thread: NativeThreadId::new(uuid::Uuid::parse_str(SESSION).unwrap()).unwrap(),
+                    cwd: "/work/acme".into(),
+                    settings: crate::settings::RunSettings::default(),
+                },
+            )
+            .unwrap()
+            .command(None, &[]);
+        let tail: Vec<_> = resumed.get_args().skip(10).collect();
+        assert_eq!(tail, ["--resume", SESSION]);
+    }
+
     #[test]
     fn keeps_arguments_literal_and_auth_out_of_overrides() {
         let gateway = GatewayEndpoint::parse("http://[::1]:8787").unwrap();

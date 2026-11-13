@@ -4,9 +4,8 @@ pub mod history;
 pub mod init;
 pub mod mcp;
 pub mod run;
+pub mod runs;
 pub mod serve;
 pub mod service;
 pub mod tail;
-#[cfg(feature = "tui")]
-pub mod tui;
 pub mod users;

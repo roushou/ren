@@ -44,20 +44,24 @@
           ? 'recorder'
           : page.route.id === '/usage'
             ? 'usage'
-            : page.route.id === '/sessions'
-              ? 'sessions'
-              : page.route.id === '/sessions/[id]/report'
+            : page.route.id === '/recordings'
+              ? 'recordings'
+              : page.route.id === '/recordings/[id]/report'
                 ? 'report'
                 : page.route.id === '/turns/[id]'
                   ? 'turn'
                   : page.route.id === '/search'
                     ? 'search'
-                    : 'traffic',
+                    : page.route.id === '/sessions'
+                      ? 'sessions'
+                      : 'traffic',
   );
-  /** A session page's ID; reports and turns belong under Sessions too. */
-  const sessionId = $derived(page.route.id === '/sessions/[id]' ? (page.params.id ?? null) : null);
-  const underSessions = $derived(
-    view === 'sessions' || view === 'report' || view === 'turn' || !!sessionId,
+  /** A session page's ID; reports and turns belong under Recordings too. */
+  const sessionId = $derived(
+    page.route.id === '/recordings/[id]' ? (page.params.id ?? null) : null,
+  );
+  const underRecordings = $derived(
+    view === 'recordings' || view === 'report' || view === 'turn' || !!sessionId,
   );
   /** When the scope does not fit on one line it folds behind a button. */
   let scopeOpen = $state(false);
@@ -104,17 +108,19 @@
             ? 'Recorder & storage'
             : view === 'usage'
               ? 'Usage'
-              : view === 'sessions'
-                ? 'Sessions'
+              : view === 'recordings'
+                ? 'Recordings'
                 : view === 'report'
-                  ? 'Session report'
+                  ? 'Recording report'
                   : view === 'turn'
                     ? 'Turn'
                     : view === 'search'
                       ? 'Search'
-                      : sessionId
-                        ? 'Session activity'
-                        : 'Traffic',
+                      : view === 'sessions'
+                        ? 'Sessions'
+                        : sessionId
+                          ? 'Recording activity'
+                          : 'Traffic',
   );
   const gatewayOrigin = $derived(page.data.gatewayUrl);
   // The header names where the gateway runs, not its address.
@@ -176,13 +182,14 @@
       '/',
       '/live',
       '/traffic',
-      '/sessions',
+      '/recordings',
       '/usage',
       '/recorder',
-      '/sessions/[id]',
-      '/sessions/[id]/report',
+      '/recordings/[id]',
+      '/recordings/[id]/report',
       '/turns/[id]',
       '/search',
+      '/sessions',
     ] as const)
       void preloadCode(route);
   });
@@ -232,6 +239,12 @@
         aria-current={view === 'live' ? 'page' : undefined}><Icon name="pulse" size={14} />Live</a
       >
       <a
+        href="/sessions"
+        class:active={view === 'sessions'}
+        aria-current={view === 'sessions' ? 'page' : undefined}
+        ><Icon name="spark" size={14} />Sessions</a
+      >
+      <a
         href="/traffic"
         data-sveltekit-preload-data="hover"
         class:active={view === 'traffic' && !sessionId}
@@ -239,11 +252,11 @@
         ><Icon name="logs" size={14} />Traffic</a
       >
       <a
-        href="/sessions"
+        href="/recordings"
         data-sveltekit-preload-data="hover"
-        class:active={underSessions}
-        aria-current={underSessions ? 'page' : undefined}
-        ><Icon name="sessions" size={14} />Sessions</a
+        class:active={underRecordings}
+        aria-current={underRecordings ? 'page' : undefined}
+        ><Icon name="sessions" size={14} />Recordings</a
       >
       <a
         href="/search"
@@ -344,7 +357,13 @@
     {@render children()}
   </main>
   <footer class="statusline" aria-label="Gateway status">
-    <span class="read-only">READ ONLY</span>
+    <span
+      class="read-only"
+      title={page.data.runsControl
+        ? 'History is read-only; this UI starts and drives sessions'
+        : 'This UI only reads: give it the control token to drive sessions'}
+      >{page.data.runsControl ? 'DRIVES SESSIONS' : 'READ ONLY'}</span
+    >
     <span
       class="connection-state"
       title={error ||
@@ -375,8 +394,8 @@
         ? `${short(selected.id)} · ${captureState(selected, gateway.current.value?.storage.capture?.body_limit_bytes ?? null).toLowerCase()}`
         : view === 'recorder'
           ? `${num(storage?.usage.calls)} calls retained`
-          : view === 'sessions'
-            ? `${sessionCount}${sessionCount === 100 ? '+' : ''} sessions loaded`
+          : view === 'recordings'
+            ? `${sessionCount}${sessionCount === 100 ? '+' : ''} recordings loaded`
             : view === 'traffic'
               ? `${workbench.callCount} calls on page · ${workbench.activeCount} in progress`
               : `${num(storage?.usage.calls)} calls retained`}</span

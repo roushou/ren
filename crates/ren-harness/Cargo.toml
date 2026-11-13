@@ -25,5 +25,8 @@ toml.workspace = true
 url = "2.5"
 uuid.workspace = true
 
+[dev-dependencies]
+proptest.workspace = true
+
 [lints]
 workspace = true
