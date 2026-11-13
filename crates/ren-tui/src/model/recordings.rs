@@ -364,7 +364,11 @@ impl Recordings {
                 | ObservationKind::ChannelClosed
                 | ObservationKind::OperatorAction
                 | ObservationKind::RunRecovered
-                | ObservationKind::SessionCreated,
+                | ObservationKind::SessionCreated
+                | ObservationKind::SessionConfigured
+                | ObservationKind::SessionClientChosen
+                | ObservationKind::SessionArchived
+                | ObservationKind::SessionUnarchived,
             )
             | None => Vec::new(),
             // A run's session appears with its first call; its state is the

@@ -582,6 +582,36 @@ impl HistorySlot {
     }
 }
 
+/// A reserved slot for one fact about a session, recorded when it is used.
+pub struct SessionSlot {
+    shared: Arc<Shared>,
+    slot: OwnedPermit<Item>,
+    permit: OwnedSemaphorePermit,
+}
+
+impl SessionSlot {
+    pub(super) fn reserve(shared: Arc<Shared>) -> Option<Self> {
+        let (slot, permit) = shared.reserve_close()?;
+        Some(Self {
+            shared,
+            slot,
+            permit,
+        })
+    }
+
+    /// Record `fact` about `session`, after everything queued before.
+    pub fn record(self, session: SessionId, fact: SessionFact) {
+        self.slot.send(Item::Session {
+            record: SessionRecord {
+                at: self.shared.clock.now(),
+                session,
+                fact,
+            },
+            _slot: self.permit,
+        });
+    }
+}
+
 /// Capture of one WebSocket channel's end. Dropping it without
 /// [`ChannelTap::close`] records the channel as dropped.
 pub struct ChannelTap {

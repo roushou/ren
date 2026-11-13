@@ -296,12 +296,27 @@ pub enum SessionFact {
         workdir: String,
         settings: RunSettings,
     },
+    /// Its next turn runs on these settings, with no process to take them
+    /// now: the next one starts on them.
+    Configured {
+        settings: RunSettings,
+    },
+    /// The operator chose another client while it was a draft.
+    ClientChosen {
+        harness: Harness,
+    },
+    Archived,
+    Unarchived,
 }
 
 impl SessionFact {
     pub fn kind(&self) -> ObservationKind {
         match self {
             Self::Created { .. } => ObservationKind::SessionCreated,
+            Self::Configured { .. } => ObservationKind::SessionConfigured,
+            Self::ClientChosen { .. } => ObservationKind::SessionClientChosen,
+            Self::Archived => ObservationKind::SessionArchived,
+            Self::Unarchived => ObservationKind::SessionUnarchived,
         }
     }
 }
@@ -409,6 +424,12 @@ pub enum ObservationKind {
     RunConfigured,
     /// The operator created a session. Not tied to a call.
     SessionCreated,
+    /// A session's settings changed while no process served it.
+    SessionConfigured,
+    /// A draft session's client changed.
+    SessionClientChosen,
+    SessionArchived,
+    SessionUnarchived,
 }
 
 /// Where an operation belongs and when it happened. Every observation has it.

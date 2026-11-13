@@ -755,6 +755,38 @@ impl MetadataTx<'_> {
                 .execute(&mut *self.tx)
                 .await?;
             }
+            SessionFact::Configured { settings } => {
+                sqlx::query(
+                    "UPDATE operator_sessions SET model = ?, effort = ?, approvals = ? WHERE id = ?",
+                )
+                .bind(settings.model.as_ref().map(ModelId::as_str))
+                .bind(settings.effort.map(Labeled::label))
+                .bind(settings.approvals.map(Labeled::label))
+                .bind(record.session.to_string())
+                .execute(&mut *self.tx)
+                .await?;
+            }
+            SessionFact::ClientChosen { harness } => {
+                sqlx::query("UPDATE operator_sessions SET harness = ? WHERE id = ?")
+                    .bind(harness.label())
+                    .bind(record.session.to_string())
+                    .execute(&mut *self.tx)
+                    .await?;
+            }
+            SessionFact::Archived | SessionFact::Unarchived => {
+                let archived = match record.fact {
+                    SessionFact::Archived => Some(at),
+                    SessionFact::Unarchived
+                    | SessionFact::Created { .. }
+                    | SessionFact::Configured { .. }
+                    | SessionFact::ClientChosen { .. } => None,
+                };
+                sqlx::query("UPDATE operator_sessions SET archived_at = ? WHERE id = ?")
+                    .bind(archived)
+                    .bind(record.session.to_string())
+                    .execute(&mut *self.tx)
+                    .await?;
+            }
         }
         // Sessions share the nil channel, which has no row, as runs do.
         self.log(
@@ -969,8 +1001,12 @@ impl MetadataTx<'_> {
                                 .await?
                                 .rows_affected();
                             if gone > 0 {
-                                sqlx::query("DELETE FROM observations WHERE call IS NULL AND kind = ? AND json_extract(payload, '$.session') = ?")
+                                sqlx::query("DELETE FROM observations WHERE call IS NULL AND kind IN (?, ?, ?, ?, ?) AND json_extract(payload, '$.session') = ?")
                                     .bind(ObservationKind::SessionCreated.label())
+                                    .bind(ObservationKind::SessionConfigured.label())
+                                    .bind(ObservationKind::SessionClientChosen.label())
+                                    .bind(ObservationKind::SessionArchived.label())
+                                    .bind(ObservationKind::SessionUnarchived.label())
                                     .bind(session)
                                     .execute(&mut *self.tx)
                                     .await?;

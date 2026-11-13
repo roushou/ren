@@ -1721,6 +1721,71 @@ mod history {
     }
 
     #[tokio::test]
+    async fn a_sessions_own_facts_change_it_without_a_run() {
+        let mut fixture = Fixture::new().await;
+        fixture.run(5, true).await;
+        let id = fixture
+            .reader
+            .sessions(PageLimit::DEFAULT, Shelf::Current)
+            .await
+            .unwrap()[0]
+            .id;
+        let mut batch = Batch::default();
+        for fact in [
+            SessionFact::ClientChosen {
+                harness: ren_harness::Harness::Pi,
+            },
+            SessionFact::Configured {
+                settings: ren_harness::settings::RunSettings {
+                    model: Some("pi-large".parse().unwrap()),
+                    effort: None,
+                    approvals: None,
+                },
+            },
+            SessionFact::Archived,
+        ] {
+            batch.push(Op::Session(SessionRecord {
+                at: fixture.clock.now(),
+                session: id,
+                fact,
+            }));
+        }
+        fixture.store.commit(&batch).await.unwrap();
+        let read = fixture.reader.session(id).await.unwrap().unwrap();
+        assert_eq!(
+            read.harness,
+            ren_protocol::label::Stored::Known(ren_harness::Harness::Pi)
+        );
+        assert_eq!(read.model.as_deref(), Some("pi-large"));
+        assert!(read.archived_at.is_some());
+        assert!(
+            fixture
+                .reader
+                .sessions(PageLimit::DEFAULT, Shelf::Current)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        let mut batch = Batch::default();
+        batch.push(Op::Session(SessionRecord {
+            at: fixture.clock.now(),
+            session: id,
+            fact: SessionFact::Unarchived,
+        }));
+        fixture.store.commit(&batch).await.unwrap();
+        assert!(
+            fixture
+                .reader
+                .session(id)
+                .await
+                .unwrap()
+                .unwrap()
+                .archived_at
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
     async fn a_runs_operator_session_is_archived_and_deleted_with_it() {
         let mut fixture = Fixture::new().await;
         let run = fixture.run(5, true).await;

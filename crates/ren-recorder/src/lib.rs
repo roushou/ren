@@ -43,7 +43,7 @@ pub use options::{CaptureOptions, CaptureOptionsError};
 pub use sink::{Committed, Observation, Pruned, RecordSink};
 pub use tap::{
     AttemptStart, CallStart, CallTap, ChannelTap, HistorySlot, OperatorSlot, RunSession, RunTap,
-    RunUnrecorded,
+    RunUnrecorded, SessionSlot,
 };
 pub use task::RecorderTask;
 
@@ -198,6 +198,12 @@ impl Recorder {
     /// room.
     pub fn history_slot(&self) -> Option<HistorySlot> {
         HistorySlot::reserve(self.shared.clone())
+    }
+
+    /// A slot to record one fact about a session, or `None` when the
+    /// recorder has no room.
+    pub fn session_slot(&self) -> Option<SessionSlot> {
+        SessionSlot::reserve(self.shared.clone())
     }
 
     /// Record the start of `run`, serving `session` (recorded first when it
