@@ -28,8 +28,21 @@
   const client = new RunsClient();
   const KEEP = 'ren.redline';
 
-  let folder = $state<string | null>(null);
-  let harness = $state<Drivable>('claude_code');
+  /** What this browser last sent to, read before the first frame so the
+   * pane opens as it will stay: the client, and the folder with its label
+   * and branch as the chip showed them. */
+  interface Kept {
+    folder?: string;
+    harness?: string;
+    label?: string;
+    hint?: string;
+    versioned?: boolean;
+  }
+  const kept: Kept = recall();
+  const remembered = DRIVABLE.find((drivable) => drivable === kept.harness) ?? null;
+  let folder = $state<string | null>(kept.folder ?? null);
+  /** The client picked in this pane; until then, the one last sent to. */
+  let chosen = $state<Drivable | null>(null);
   let others = $state(false);
   let error = $state<string | null>(null);
   let sending = $state(false);
@@ -121,36 +134,50 @@
   });
 
   /** What this browser last sent to: a convenience, so a refusal is ignored. */
-  function recall(): { folder?: string; harness?: string } {
+  function recall(): Kept {
     try {
-      return JSON.parse(localStorage.getItem(KEEP) ?? '{}') as {
-        folder?: string;
-        harness?: string;
-      };
+      const value: unknown = JSON.parse(localStorage.getItem(KEEP) ?? '{}');
+      return value && typeof value === 'object' ? (value as Kept) : {};
     } catch {
       return {};
     }
   }
   function keep() {
+    const project = projects.find((entry) => entry.path === folder);
+    const next: Kept = {
+      folder: folder ?? undefined,
+      harness,
+      label: project?.name,
+      hint: project ? Runs.branch(project.git) : undefined,
+      versioned: project ? Runs.versioned(project.git) : undefined,
+    };
     try {
-      localStorage.setItem(KEEP, JSON.stringify({ folder, harness }));
+      localStorage.setItem(KEEP, JSON.stringify(next));
     } catch {
       // Not kept; the next send asks again.
     }
   }
 
-  // Start reading, if the toggle's hover has not; then, once read, the
-  // folder and client this browser last sent to.
+  /** The client a send goes to: the one picked, else the one last sent to
+   * while it is ready here, else the first ready. Settled before the first
+   * frame from what this browser kept, so it does not change on reading. */
+  const harness = $derived<Drivable>(
+    chosen ??
+      (read
+        ? (read.ready.find((drivable) => drivable === remembered) ??
+          read.ready[0] ??
+          remembered ??
+          DRIVABLE[0])
+        : (remembered ?? DRIVABLE[0])),
+  );
+
+  // Start reading, if the toggle's hover has not; once read, a remembered
+  // folder that is no longer offered is let go.
   untrack(() => desk.prepare());
-  let recalled = false;
   $effect(() => {
-    if (!read || recalled) return;
-    recalled = true;
-    const kept = recall();
-    folder = read.projects.some((project) => project.path === kept.folder)
-      ? (kept.folder ?? null)
-      : null;
-    harness = read.ready.find((drivable) => drivable === kept.harness) ?? read.ready[0] ?? harness;
+    if (read && folder && !read.projects.some((project) => project.path === folder)) {
+      folder = null;
+    }
   });
 
   const context = $derived.by((): PageContext => {
@@ -175,6 +202,22 @@
     hintIcon: Runs.versioned(project.git) ? ('branch' as const) : undefined,
   });
   const groups = $derived<PickerGroup[]>([
+    // While reading, the remembered folder as the chip last showed it.
+    ...(!read && folder && kept.folder === folder && kept.label
+      ? [
+          {
+            label: null,
+            options: [
+              {
+                value: folder,
+                label: kept.label,
+                hint: kept.hint,
+                hintIcon: kept.versioned ? ('branch' as const) : undefined,
+              },
+            ],
+          },
+        ]
+      : []),
     ...Runs.places(projects.filter((place) => place.kind === 'project')).map((place) => ({
       label: place.parent,
       options: place.projects.map(option),
@@ -277,9 +320,9 @@
       >
         {#each shown as drivable (drivable)}
           <button
-            aria-pressed={!!read && harness === drivable}
+            aria-pressed={harness === drivable}
             disabled={!read}
-            onclick={() => (harness = drivable)}>{harnessLabel(drivable)}</button
+            onclick={() => (chosen = drivable)}>{harnessLabel(drivable)}</button
           >
         {/each}
       </div>
