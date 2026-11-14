@@ -25,6 +25,7 @@ const page: PageContext = {
   width: 1400,
   height: 820,
   theme: 'dark',
+  revision: { kind: 'commit', commit: '97aa93b'.padEnd(40, '0'), tree: 'clean' },
 };
 
 function mark(id: number, note: string): Mark {
@@ -79,6 +80,7 @@ test('the brief lists each noted mark with what it points at', () => {
       '',
       'Marked on /sessions?session=s1 (Ren - Sessions), 1400×820, dark theme.',
       "In Ren's UI this page is ui/src/routes/sessions/+page.svelte.",
+      'This page was served by a build of commit 97aa93b00000; the checkout may have moved on since.',
       '',
       '1. Move it to the end.',
       '   Element: [aria-label="Run"] div.entry.tool > span.chip.success "completed"',
@@ -89,4 +91,21 @@ test('the brief lists each noted mark with what it points at', () => {
     ].join('\n'),
   );
   assert.equal(Redline.routeFile('/'), 'ui/src/routes/+page.svelte');
+});
+
+test('the build is named when the daemon says what it was built from', () => {
+  assert.equal(
+    Redline.built({ kind: 'commit', commit: 'a'.repeat(40), tree: 'modified' }),
+    'This page was served by a build of commit aaaaaaaaaaaa with uncommitted changes; the checkout may have moved on since.',
+  );
+  assert.equal(Redline.built({ kind: 'unknown' }), null);
+  assert.equal(Redline.built(null), null);
+});
+
+test('the source checkout is an absolute path, or absent', () => {
+  assert.equal(Redline.checkout(undefined), undefined);
+  assert.equal(Redline.checkout(''), undefined);
+  assert.equal(Redline.checkout('/home/you/ren/'), '/home/you/ren');
+  assert.equal(Redline.checkout('/'), '/');
+  assert.throws(() => Redline.checkout('ren'), /absolute/);
 });

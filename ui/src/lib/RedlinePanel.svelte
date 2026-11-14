@@ -1,66 +1,51 @@
 <!--
   Redline's pane, floating over everything while marking, dragged by its
   header (or moved with the arrow keys there): the marks with their
-  notes, the brief exactly as the agent will get it, and where it goes (the
-  client and the folder it works in). Sending makes a session there with the
-  brief as its first prompt, and opens it. The folder and client last sent
-  to, and where the pane was left, are remembered in this browser only.
+  notes, the brief exactly as the agent will get it, and the client it goes
+  to. It always works in Ren's own source checkout (`REN_SOURCE_DIR`), since
+  the marks are on Ren's pages. Sending makes a session there with the brief
+  as its first prompt, and opens it. The client last sent to, and where the
+  pane was left, are remembered in this browser only.
 -->
 <script lang="ts">
   import { untrack } from 'svelte';
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
   import { harnessLabel } from './activity.ts';
-  import Picker, { type PickerGroup } from './Picker.svelte';
+  import type { Revision } from './api.ts';
   import { Redline, type PageContext } from './redline.ts';
   import type { RedlineDesk } from './redline.svelte.ts';
-  import {
-    DRIVABLE,
-    RunCommandError,
-    Runs,
-    RunsClient,
-    type Drivable,
-    type RunProject,
-  } from './runs.ts';
+  import { DRIVABLE, RunCommandError, RunsClient, type Drivable } from './runs.ts';
 
-  let { desk }: { desk: RedlineDesk } = $props();
+  let {
+    desk,
+    source,
+    revision,
+  }: {
+    desk: RedlineDesk;
+    /** Ren's source checkout, where the agent works; null when unset. */
+    source: string | null;
+    /** What the daemon serving this page was built from, once read. */
+    revision: Revision | null;
+  } = $props();
 
   const client = new RunsClient();
   const KEEP = 'ren.redline';
 
-  /** What this browser last sent to, read before the first frame so the
-   * pane opens as it will stay: the client, and the folder with its label
-   * and branch as the chip showed them. */
-  interface Kept {
-    folder?: string;
-    harness?: string;
-    label?: string;
-    hint?: string;
-    versioned?: boolean;
-  }
-  const kept: Kept = recall();
-  const remembered = DRIVABLE.find((drivable) => drivable === kept.harness) ?? null;
-  let folder = $state<string | null>(kept.folder ?? null);
+  /** The client this browser last sent to, read before the first frame so
+   * the pane opens as it will stay. */
+  const remembered = recall();
   /** The client picked in this pane; until then, the one last sent to. */
   let chosen = $state<Drivable | null>(null);
-  let others = $state(false);
   let error = $state<string | null>(null);
   let sending = $state(false);
 
-  /** What was read of where a brief can go; until then the pane keeps its
-   * shape, with every client and the folder waiting. */
+  /** The clients read; until then the pane keeps its shape, with every
+   * client waiting. */
   const read = $derived(desk.destinations.state === 'read' ? desk.destinations.value : null);
-  const projects = $derived(read?.projects ?? []);
   const ready = $derived(read?.ready ?? []);
   /** The clients shown: those ready once read, every one while reading. */
   const shown = $derived(read ? read.ready : DRIVABLE);
-  const waiting = $derived(
-    desk.destinations.state === 'failed'
-      ? desk.destinations.reason
-      : read
-        ? null
-        : 'Reading the folders and clients…',
-  );
 
   /** Where the pane sits: its top-left corner, in viewport pixels. */
   const PLACE = 'ren.redline.pane';
@@ -135,28 +120,23 @@
     return () => window.removeEventListener('resize', keep);
   });
 
-  /** What this browser last sent to: a convenience, so a refusal is ignored. */
-  function recall(): Kept {
+  /** The client this browser last sent to: a convenience, so a refusal is
+   * ignored. */
+  function recall(): Drivable | null {
     try {
       const value: unknown = JSON.parse(localStorage.getItem(KEEP) ?? '{}');
-      return value && typeof value === 'object' ? (value as Kept) : {};
+      const harness =
+        value && typeof value === 'object' && 'harness' in value ? value.harness : null;
+      return DRIVABLE.find((drivable) => drivable === harness) ?? null;
     } catch {
-      return {};
+      return null;
     }
   }
   function keep() {
-    const project = projects.find((entry) => entry.path === folder);
-    const next: Kept = {
-      folder: folder ?? undefined,
-      harness,
-      label: project?.name,
-      hint: project ? Runs.branch(project.git) : undefined,
-      versioned: project ? Runs.versioned(project.git) : undefined,
-    };
     try {
-      localStorage.setItem(KEEP, JSON.stringify(next));
+      localStorage.setItem(KEEP, JSON.stringify({ harness }));
     } catch {
-      // Not kept; the next send asks again.
+      // Not kept; the pane offers the first ready client next time.
     }
   }
 
@@ -173,14 +153,8 @@
         : (remembered ?? DRIVABLE[0])),
   );
 
-  // Start reading, if the toggle's hover has not; once read, a remembered
-  // folder that is no longer offered is let go.
+  // Start reading, if the toggle's hover has not.
   untrack(() => desk.prepare());
-  $effect(() => {
-    if (read && folder && !read.projects.some((project) => project.path === folder)) {
-      folder = null;
-    }
-  });
 
   const context = $derived.by((): PageContext => {
     const chosen = document.documentElement.dataset.theme;
@@ -192,45 +166,11 @@
       width: window.innerWidth,
       height: window.innerHeight,
       theme: dark ? 'dark' : 'light',
+      revision,
     };
   });
   const noted = $derived(desk.marks.filter((mark) => mark.note));
   const brief = $derived(Redline.brief(context, noted));
-
-  const option = (project: RunProject) => ({
-    value: project.path,
-    label: project.name,
-    hint: Runs.branch(project.git),
-    hintIcon: Runs.versioned(project.git) ? ('branch' as const) : undefined,
-  });
-  const groups = $derived<PickerGroup[]>([
-    // While reading, the remembered folder as the chip last showed it.
-    ...(!read && folder && kept.folder === folder && kept.label
-      ? [
-          {
-            label: null,
-            options: [
-              {
-                value: folder,
-                label: kept.label,
-                hint: kept.hint,
-                hintIcon: kept.versioned ? ('branch' as const) : undefined,
-              },
-            ],
-          },
-        ]
-      : []),
-    ...Runs.places(projects.filter((place) => place.kind === 'project')).map((place) => ({
-      label: place.parent,
-      options: place.projects.map(option),
-    })),
-    ...(others
-      ? Runs.places(projects.filter((place) => place.kind === 'other')).map((place) => ({
-          label: place.parent,
-          options: place.projects.map(option),
-        }))
-      : []),
-  ]);
 
   async function send() {
     error = null;
@@ -238,13 +178,10 @@
       error = 'Mark something and write a note first.';
       return;
     }
-    if (!folder) {
-      error = 'Choose the folder the agent works in.';
-      return;
-    }
+    if (!source) return;
     sending = true;
     try {
-      const made = await client.createSession(harness, folder);
+      const made = await client.createSession(harness, source);
       await client.toSession(made, { kind: 'prompt', text: brief, delivery: 'start' });
       keep();
       desk.clear();
@@ -310,8 +247,8 @@
 
   <section>
     <h3>Send to</h3>
-    <!-- One shape throughout: while reading, every client and the folder
-         wait in place, so nothing moves when they arrive. -->
+    <!-- One shape throughout: while reading, every client waits in place,
+         so nothing moves when they arrive. -->
     {#if shown.length}
       <div
         class="segmented"
@@ -331,29 +268,27 @@
     {:else}
       <p class="hint one-line">No client can start here. Install one on the daemon's host.</p>
     {/if}
-    <Picker
-      label="Folder"
-      icon="file"
-      {groups}
-      value={folder}
-      placeholder="Choose a folder"
-      free={(typed) => typed.startsWith('/')}
-      disabled={read ? null : (waiting ?? 'Reading the folders…')}
-      toggle={projects.some((place) => place.kind === 'other')
-        ? { label: 'Show other places', on: others, onchange: (on) => (others = on) }
-        : null}
-      onchange={(value) => (folder = value)}
-    />
-    <p class="hint" aria-live="polite">
-      {desk.destinations.state === 'failed'
-        ? waiting
-        : 'The agent is asked to work on a new branch in a git worktree, and not to install anything.'}
-    </p>
+    {#if source}
+      <p class="where" title={source}>
+        <span>Works in</span> <code><bdi>{source}</bdi></code>
+      </p>
+      <p class="hint" aria-live="polite">
+        {desk.destinations.state === 'failed'
+          ? desk.destinations.reason
+          : 'Asked to work on a new branch in a git worktree there, and not to install anything.'}
+      </p>
+    {:else}
+      <p class="hint unset">
+        Redline sends to Ren's own source checkout, which this UI server doesn't know. Set
+        <code>REN_SOURCE_DIR</code> in its environment (<code>~/.config/ren/ui.env</code>) to the
+        checkout, a folder under the daemon's <code>[runs]</code> roots, and restart it.
+      </p>
+    {/if}
     {#if error}<p class="error" role="alert">{error}</p>{/if}
     <div class="actions">
       <button
         class="button primary redline-send"
-        disabled={sending || !read || !ready.length}
+        disabled={sending || !source || !read || !ready.length}
         onclick={() => void send()}
         >{sending ? 'Sending…' : `Send to ${harnessLabel(harness)}`}</button
       >
@@ -552,10 +487,31 @@
     color: var(--accent-text);
     font-weight: 600;
   }
-  /* The folder list fits the panel instead of the page. */
-  .redline-panel :global(.picker .panel) {
-    width: 316px;
-    max-width: calc(100vw - 24px);
+  .where {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    min-width: 0;
+    margin: 0;
+    font-size: 12px;
+  }
+  .where span {
+    flex: none;
+    color: var(--muted);
+  }
+  .where code,
+  .unset code {
+    font:
+      11px 'SFMono-Regular',
+      Consolas,
+      monospace;
+  }
+  .where code {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    direction: rtl;
+    text-align: left;
   }
   .error {
     margin: 0;

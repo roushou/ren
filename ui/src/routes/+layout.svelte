@@ -427,5 +427,7 @@
   {#if development && page.data.devTraffic}<DevToolbar />{/if}
   {#if page.data.runsControl}<RedlineLayer desk={redline} />{#if redline.open}<RedlinePanel
         desk={redline}
+        source={page.data.redlineSource}
+        revision={health?.build.revision ?? null}
       />{/if}{/if}
 </div>

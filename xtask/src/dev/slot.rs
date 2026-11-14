@@ -438,6 +438,12 @@ impl Slot {
                     "REN_CONTROL_TOKEN_FILE",
                     self.data_dir.join(ControlToken::FILE).display().to_string(),
                 ),
+                // A fake project stands in for Ren's checkout: the slot's
+                // fake agents never work in the real one.
+                (
+                    "REN_SOURCE_DIR",
+                    self.work_dir.join(Self::PROJECTS[1]).display().to_string(),
+                ),
             ],
         )?;
         // The UI's /health relays the dev daemon's.

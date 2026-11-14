@@ -203,8 +203,8 @@ With `--ui-https-port` (which needs `--https-port`), it also deploys the
 [UI](../ui/README.md#vps-service). It needs Bun and Node on `PATH`. Before
 stopping anything, it builds `ui/` and stages the build with its production
 dependencies in `~/.local/share/ren-ui.next`. After the daemon is upgraded, it
-writes `~/.config/ren/ui.env` only if missing (the daemon on loopback, and both
-Tailscale URLs), stops `ren-ui.service`, keeps the deployed copy as
+writes `~/.config/ren/ui.env` only if missing (the daemon on loopback, both
+Tailscale URLs, and `REN_SOURCE_DIR`, this checkout, for Redline), stops `ren-ui.service`, keeps the deployed copy as
 `ren-ui.previous`, swaps in the new one, installs the unit from
 `deploy/ren-ui.service` with the Node found on `PATH`, starts it, and checks the
 UI's `/health`, which relays the daemon's. It then publishes the UI on that port
@@ -245,7 +245,9 @@ accepts any credentials and stores nothing, so no real credential or prompt
 reaches the slot. It names two users, `alice` (by the Tailscale login
 `alice@example.com`) and `ci` (by a fixed fake token), and two direct
 operator-key entries with a fake key: `team-key` (only `ci`) and `chat-key`
-(Chat Completions). Its replies read like real use: invented engineering answers
+(Chat Completions). Its UI's Redline sends to the fake `acme-web` project
+under the run root, standing in for Ren's checkout, so the slot's fake agents
+never work in the real one. Its replies read like real use: invented engineering answers
 about an invented project, with realistic model names, IDs, and error messages.
 The generated traffic picks a reply kind (tool work, a long or slow reply, a cut
 stream, an error, a rate limit) with an `x-dev-reply` request header, which the
@@ -364,7 +366,8 @@ To drive [runs](api.md#runs) from the UI, also add
 `REN_CONTROL_TOKEN_FILE=<data dir>/control.token` and
 `REN_CONTROL_LOGINS=<your Tailscale login>` to `~/.config/ren/ui.env` and restart
 `ren-ui.service` (see [the UI's sessions](../ui/README.md#sessions)); `install-vps` keeps
-an existing `ui.env` as it is.
+an existing `ui.env` as it is, only adding `REN_SOURCE_DIR` (the checkout it installs
+from, where [Redline](../ui/README.md#redline) sends its briefs) when the file names none.
 The UI may instead run on your laptop with `REN_GATEWAY_URL` set to the daemon's
 Tailscale URL; no UI process is required on the VPS.
 

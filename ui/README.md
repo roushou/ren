@@ -104,6 +104,7 @@ produces `build/`. Cargo never builds or embeds the UI.
 | `REN_DEV_TRAFFIC_URL`    | Unset                            | Dev slot only: loopback origin of its traffic controls, for the dev toolbar     |
 | `REN_CONTROL_TOKEN_FILE` | Unset (read-only)                | The daemon's `control.token` (absolute path); set, the Runs view drives runs    |
 | `REN_CONTROL_LOGINS`     | Unset (anyone reaching the UI)   | Comma-separated Tailscale logins allowed to drive runs; set it behind Serve     |
+| `REN_SOURCE_DIR`         | Unset (Redline cannot send)      | Ren's source checkout (absolute path, under `[runs]` roots), for Redline        |
 | `HOST`                   | `127.0.0.1` with `bun run start` | UI listener address                                                             |
 | `PORT`                   | `3000` with `bun run start`      | UI listener port                                                                |
 | `ORIGIN`                 | Inferred from incoming request   | Set to the UI's external origin behind Tailscale Serve or another reverse proxy |
@@ -160,12 +161,16 @@ the marks stay. A pane floating over everything (drag it by its header, or move
 it with the arrow keys there; this browser keeps where you left it) shows the
 brief exactly as the agent gets it: each note with the element's selector (from the nearest labelled
 region), its text and size, and its source file and line when the UI runs as a
-development build (`bun run dev`; a production build has none). Send makes a
-session in the folder you choose, on the client you choose, with the brief as
-its first prompt, and opens it. The brief asks the agent to work on a new
+development build (`bun run dev`; a production build has none), and the commit
+the daemon serving the page was built from. Send makes a session on the client
+you choose, with the brief as its first prompt, and opens it. The session
+always works in Ren's own source checkout, `REN_SOURCE_DIR`, since the marks
+are on Ren's pages; `cargo xtask install-vps` sets it to the checkout it
+installs from, and without it Redline marks but cannot send. The checkout must
+be under the daemon's `[runs]` roots. The brief asks the agent to work on a new
 `redline/…` branch in a git worktree and not to install anything; nothing
 enforces that yet beyond the agent following it and the client's approvals.
-The folder and client last sent to are kept in this browser only.
+The client last sent to is kept in this browser only.
 
 ## Payload previews
 

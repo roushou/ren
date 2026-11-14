@@ -3,6 +3,7 @@
  * from the marks on a page. The overlay reads the page (`RedlineLayer`);
  * nothing here touches the DOM, so the brief is tested without a browser.
  */
+import type { Revision } from './api.ts';
 
 /** The part of an element a selector is built from: what a DOM element has. */
 export interface ElementLike {
@@ -43,6 +44,8 @@ export interface PageContext {
   width: number;
   height: number;
   theme: 'light' | 'dark';
+  /** What the daemon serving the page was built from, when it says. */
+  revision: Revision | null;
 }
 
 export class Redline {
@@ -83,6 +86,33 @@ export class Redline {
     return line.length > Redline.TEXT ? `${line.slice(0, Redline.TEXT - 1)}…` : line;
   }
 
+  /**
+   * `REN_SOURCE_DIR`: Ren's source checkout, where a brief is sent to be
+   * worked on. Absent, Redline marks but cannot send.
+   */
+  static checkout(value: string | undefined): string | undefined {
+    if (value === undefined || value === '') return undefined;
+    if (!value.startsWith('/')) throw new Error('REN_SOURCE_DIR must be an absolute path.');
+    return value.length > 1 ? value.replace(/\/+$/, '') : value;
+  }
+
+  /** What the brief says of the build the page came from, if anything. */
+  static built(revision: Revision | null): string | null {
+    if (!revision) return null;
+    switch (revision.kind) {
+      case 'commit':
+        return `This page was served by a build of commit ${revision.commit.slice(0, 12)}${revision.tree === 'modified' ? ' with uncommitted changes' : ''}; the checkout may have moved on since.`;
+      case 'unknown':
+        return null;
+      case 'unrecognized':
+        return `This page was served by a build of ${revision.text}; the checkout may have moved on since.`;
+      default: {
+        const never: never = revision;
+        return never;
+      }
+    }
+  }
+
   /** The Svelte file that renders a route of Ren's UI. */
   static routeFile(route: string): string {
     return `ui/src/routes${route === '/' ? '' : route}/+page.svelte`;
@@ -115,6 +145,8 @@ export class Redline {
     if (page.route) {
       lines.push(`In Ren's UI this page is ${Redline.routeFile(page.route)}.`);
     }
+    const built = Redline.built(page.revision);
+    if (built) lines.push(built);
     noted.forEach((mark, index) => {
       const { target } = mark;
       lines.push('', `${index + 1}. ${mark.note.trim()}`);
