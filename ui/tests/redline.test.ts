@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Redline, type ElementLike, type Mark, type PageContext } from '../src/lib/redline.ts';
-import type { SessionBody, SessionId } from '../src/lib/runs.ts';
+import type { RunId, RunSnapshot, SessionBody, SessionId } from '../src/lib/runs.ts';
 
 function element(
   tagName: string,
@@ -131,18 +131,56 @@ function stored(id: string, workdir: string, createdAt: number, archived = false
   };
 }
 
-test('the sessions offered are the open ones in the checkout, newest first', () => {
+test('the sessions offered are those running in the checkout, newest first', () => {
+  const ids = [1, 2, 3, 4, 5].map((n) => `0190f3a0-0000-7000-8000-00000000a00${n}`);
   const bodies = [
-    stored('0190f3a0-0000-7000-8000-00000000a001', '/home/you/ren', 100),
-    stored('0190f3a0-0000-7000-8000-00000000a002', '/home/you/ren', 300),
-    stored('0190f3a0-0000-7000-8000-00000000a003', '/home/you/ren', 400, true),
-    stored('0190f3a0-0000-7000-8000-00000000a004', '/home/you/ren-other', 500),
+    stored(ids[0]!, '/home/you/ren', 100),
+    stored(ids[1]!, '/home/you/ren', 300),
+    stored(ids[2]!, '/home/you/ren', 400, true),
+    stored(ids[3]!, '/home/you/ren-other', 500),
+    // Ended: its client is not running, so it is not offered.
+    stored(ids[4]!, '/home/you/ren', 600),
   ];
+  const live = ids.slice(0, 4).map((id, index) => {
+    const body = bodies[index]!;
+    const run = `0190f3a0-0000-7000-8000-00000000b00${index}` as RunId;
+    body.stored!.runs = [
+      {
+        id: run,
+        harness: 'codex',
+        workdir: body.stored!.workdir,
+        started_at: body.stored!.created_at,
+        thread: null,
+        session: null,
+        operator_session: id,
+        ended_at: null,
+        end: null,
+        exit: null,
+        archived_at: null,
+        model: null,
+        effort: null,
+        approvals: null,
+      } as never,
+    ];
+    return {
+      run,
+      harness: 'codex',
+      workdir: body.stored!.workdir,
+      state: { phase: 'idle', thread: 'thread' as never },
+      settings: { model: null, effort: null, approvals: null },
+    } satisfies RunSnapshot;
+  });
   assert.deepEqual(
-    Redline.offered(bodies, [], '/home/you/ren').map((session) => session.asked),
-    ['asked 0190f3a0-0000-7000-8000-00000000a002', 'asked 0190f3a0-0000-7000-8000-00000000a001'],
+    Redline.offered(bodies, live, '/home/you/ren').map((session) => session.session),
+    [ids[1], ids[0]],
   );
-  assert.deepEqual(Redline.offered(bodies, [], '/nowhere'), []);
+  assert.deepEqual(Redline.offered(bodies, live, '/nowhere'), []);
+});
+
+test("a mark is named by the element's text, else its selector's last step", () => {
+  const target = { selector: '[aria-label="Run"] div.entry > span.chip', width: 1, height: 1 };
+  assert.equal(Redline.name({ ...target, text: 'completed', source: null }), '“completed”');
+  assert.equal(Redline.name({ ...target, text: '', source: null }), 'span.chip');
 });
 
 test('a brief starts a turn, or is queued after the running one', () => {

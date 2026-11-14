@@ -12,7 +12,7 @@ import {
   type SessionBody,
 } from './runs.ts';
 
-/** Where a brief goes: a new session in the checkout, or one open there. */
+/** Where a brief goes: a new session in the checkout, or one running there. */
 export type Destination = { kind: 'new' } | { kind: 'session'; session: DeskSession };
 
 /** How a brief reaches an open session: the prompt to send, or why it waits. */
@@ -94,6 +94,14 @@ export class Redline {
     return classes.length ? `${tag}.${classes.join('.')}` : tag;
   }
 
+  /** What a mark is called in the pane: the element's text, else the last
+   * step of its selector. */
+  static name(target: Target): string {
+    if (target.text) return `“${target.text}”`;
+    const steps = target.selector.split(' > ');
+    return steps[steps.length - 1] ?? target.selector;
+  }
+
   /** An element's text as a target keeps it: one line, cut to `TEXT`. */
   static text(raw: string): string {
     const line = raw.replace(/\s+/g, ' ').trim();
@@ -114,9 +122,10 @@ export class Redline {
   static readonly OFFERED = 4;
 
   /**
-   * The open sessions in `checkout` a brief can go into, as the Sessions
-   * page orders them: one waiting for you first, then one working, then the
-   * most recently active.
+   * The sessions in `checkout` a brief can go into: open, with their client
+   * running now (an ended or never-prompted session is no place to add to),
+   * as the Sessions page orders them: one waiting for you first, then one
+   * working, then the most recently active.
    */
   static offered(
     bodies: readonly SessionBody[],
@@ -125,7 +134,12 @@ export class Redline {
   ): DeskSession[] {
     const open = bodies.filter((body) => {
       const session = Sessions.desk(body, live);
-      return session?.shelf === 'open' && session.workdir === checkout;
+      return (
+        session !== null &&
+        session.shelf === 'open' &&
+        session.workdir === checkout &&
+        Sessions.running(session)
+      );
     });
     return (Sessions.folders(open, live)[0]?.sessions ?? []).slice(0, Redline.OFFERED);
   }

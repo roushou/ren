@@ -102,6 +102,8 @@
   }
 
   const editing = $derived(desk.marks.find((mark) => mark.id === desk.editing) ?? null);
+  /** Marks are numbered by place, so removing one renumbers those after. */
+  const number = $derived(editing ? desk.marks.indexOf(editing) + 1 : 0);
   /** Where the note opens: beside its element, kept on screen. */
   const notePlace = $derived.by(() => {
     if (!editing) return null;
@@ -141,7 +143,7 @@
       <span class="tag" class:below={hovered.box.top < 24}>{hovered.label}</span>
     </div>
   {/if}
-  {#each desk.marks as mark (mark.id)}
+  {#each desk.marks as mark, index (mark.id)}
     {@const box = place(mark.element, frame)}
     {#if box}
       <div
@@ -156,7 +158,7 @@
         class="pin"
         aria-hidden="true"
         style:left="{Math.max(10, box.left)}px"
-        style:top="{Math.max(10, box.top)}px">{mark.id}</span
+        style:top="{Math.max(10, box.top)}px">{index + 1}</span
       >
     {/if}
   {/each}
@@ -165,13 +167,13 @@
       class="note"
       data-redline
       role="dialog"
-      aria-label="Note for mark {editing.id}"
+      aria-label="Note for mark {number}"
       style:left="{notePlace.left}px"
       style:top="{notePlace.top}px"
       style:width="{notePlace.width}px"
     >
       <div class="what" title={editing.target.selector}>
-        {editing.id} · {editing.target.source ?? editing.target.selector}
+        {number} · {editing.target.source ?? Redline.name(editing.target)}
       </div>
       <textarea
         bind:this={field}
