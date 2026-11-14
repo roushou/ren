@@ -2157,3 +2157,87 @@ export class Compose {
     return { at: at - 1, text: prompts[prompts.length - at]! };
   }
 }
+
+/** Where a session's delete was asked: its row in the list, or its header. */
+export type DeleteOrigin = 'list' | 'header';
+
+/**
+ * A session's delete, asked and confirmed before it is sent: one at a time.
+ * Done is not a state of its own: the session leaves the lists, and the
+ * delete with it.
+ */
+export type Deletion =
+  | { phase: 'idle' }
+  | { phase: 'confirming'; session: SessionId; from: DeleteOrigin }
+  | { phase: 'deleting'; session: SessionId; from: DeleteOrigin }
+  | { phase: 'failed'; session: SessionId; from: DeleteOrigin; reason: string };
+
+/** What happens to a delete. */
+export type DeletionEvent =
+  | { kind: 'ask'; session: SessionId; from: DeleteOrigin }
+  | { kind: 'cancel' }
+  | { kind: 'confirm' }
+  | { kind: 'refused'; reason: string }
+  | { kind: 'gone' };
+
+/** A delete event that does not apply in the state it came in. */
+export interface IllegalDeletion {
+  illegal: true;
+  state: Deletion['phase'];
+  event: DeletionEvent['kind'];
+}
+
+export class Deletions {
+  static readonly idle: Deletion = { phase: 'idle' };
+
+  /**
+   * The delete after `event`. Asking again moves the question to another
+   * session, but never while one is being deleted; a refused delete can be
+   * confirmed again; cancelling while it is sent does not unsend it.
+   */
+  static step(state: Deletion, event: DeletionEvent): Deletion | IllegalDeletion {
+    const illegal = (): IllegalDeletion => ({
+      illegal: true,
+      state: state.phase,
+      event: event.kind,
+    });
+    switch (event.kind) {
+      case 'ask':
+        return state.phase === 'deleting'
+          ? illegal()
+          : { phase: 'confirming', session: event.session, from: event.from };
+      case 'cancel':
+        return state.phase === 'confirming' || state.phase === 'failed'
+          ? Deletions.idle
+          : illegal();
+      case 'confirm':
+        return state.phase === 'confirming' || state.phase === 'failed'
+          ? { phase: 'deleting', session: state.session, from: state.from }
+          : illegal();
+      case 'refused':
+        return state.phase === 'deleting'
+          ? { phase: 'failed', session: state.session, from: state.from, reason: event.reason }
+          : illegal();
+      case 'gone':
+        return state.phase === 'idle' ? illegal() : Deletions.idle;
+      default:
+        return assertNever(event);
+    }
+  }
+
+  /** Whether `step` refused the event. */
+  static illegal(next: Deletion | IllegalDeletion): next is IllegalDeletion {
+    return 'illegal' in next;
+  }
+
+  /** The delete of `session` asked from `from`, when there is one. */
+  static of(
+    state: Deletion,
+    session: SessionId,
+    from: DeleteOrigin,
+  ): Exclude<Deletion, { phase: 'idle' }> | null {
+    return state.phase !== 'idle' && state.session === session && state.from === from
+      ? state
+      : null;
+  }
+}

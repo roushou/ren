@@ -71,6 +71,7 @@
     expand: ['M14 4h6v6M10 20H4v-6', 'm20 4-7 7M4 20l7-7'],
     lock: ['M5 11h14v10H5z', 'M8 11V7a4 4 0 0 1 8 0v4'],
     archive: ['M3 4h18v4H3z', 'M5 8v12h14V8M10 12h4'],
+    trash: ['M4 7h16M9 7V4h6v3', 'M6 7l1 13h10l1-13M10 11v6M14 11v6'],
     lan: ['M9 3h6v5H9zM3 16h6v5H3zM15 16h6v5h-6z', 'M12 8v4M6 16v-4h12v4'],
     eye: [
       'M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z',

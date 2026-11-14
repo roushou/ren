@@ -8,6 +8,7 @@
   import { callStatus, statusBadge, tokenSummary } from '#lib/display.ts';
   import { getWorkbench } from '#lib/workbench.svelte.ts';
   import {
+    Deletions,
     Desk,
     RunCommandError,
     Runs,
@@ -23,6 +24,8 @@
     type RunClient,
     type Drivable,
     type RunProject,
+    type Deletion,
+    type DeletionEvent,
     type HistoryChange,
     type Read,
     type RunId,
@@ -68,8 +71,8 @@
   let archivedSessions = $state.raw<SessionBody[]>(first(initial?.archivedSessions, []));
   /** Which sessions the list shows. */
   let shelf = $state<Shelf>('current');
-  /** The session whose delete waits for a second click. */
-  let confirming = $state<SessionId | null>(null);
+  /** A session's delete: asked, confirmed, and sent, one at a time. */
+  let deletion = $state.raw<Deletion>(Deletions.idle);
   /** Why runs cannot be listed or driven, when they cannot. */
   let unavailable = $state<string | null>(
     initial?.live.state === 'failed' ? initial.live.reason : null,
@@ -219,34 +222,84 @@
     }
   }
 
+  /** Whether `session` is on either shelf of the lists as last read. */
+  function listed(session: SessionId, bodies: SessionBody[]): boolean {
+    return bodies.some((entry) => entry.session === session);
+  }
+
   /**
-   * Archive, unarchive, or delete the selected session. Archiving stops its
-   * process; deleting removes the session with its ended runs and their
-   * recorded calls, even one whose client never ran. The daemon applies each
-   * after what it is recording, so the lists are read again until the
-   * session moved.
+   * Read the lists again until `moved` holds: the daemon applies a history
+   * change after what it is recording. Whether it held by the last read.
    */
-  async function edit(change: HistoryChange) {
+  async function until(moved: () => boolean): Promise<boolean> {
+    for (const delay of [150, 400, 1000, 2000]) {
+      await new Promise((resolve) => setTimeout(resolve, delay));
+      await readSessions();
+      if (moved()) return true;
+    }
+    return false;
+  }
+
+  /**
+   * Archive or unarchive the selected session. Archiving stops its process.
+   */
+  async function edit(change: Exclude<HistoryChange, 'delete'>) {
     const target = chosen;
     if (!target) return;
-    confirming = null;
     await act(async () => {
       await client.toSession(target, { kind: change });
-      for (const delay of [150, 400, 1000, 2000]) {
-        await new Promise((resolve) => setTimeout(resolve, delay));
-        await readSessions();
-        const listed = (bodies: SessionBody[]) => bodies.some((entry) => entry.session === target);
-        const moved =
-          change === 'archive'
-            ? listed(archivedSessions)
-            : change === 'unarchive'
-              ? listed(sessions)
-              : !listed(sessions) && !listed(archivedSessions);
-        if (moved) break;
-      }
-      if (change !== 'unarchive') select(null);
+      await until(() => listed(target, change === 'archive' ? archivedSessions : sessions));
+      if (change === 'archive') select(null);
     });
   }
+
+  /** The delete after `event`; an event that does not apply is a fault here. */
+  function deleting(event: DeletionEvent) {
+    const next = Deletions.step(deletion, event);
+    if (Deletions.illegal(next)) {
+      console.warn(`A session delete cannot ${next.event} while ${next.state}.`);
+      return;
+    }
+    deletion = next;
+    if (event.kind === 'confirm' && next.phase === 'deleting') void remove(next.session);
+  }
+
+  /**
+   * Delete a session: it goes with its ended runs and their recorded calls,
+   * even one whose client never ran. It is done when the lists no longer
+   * hold it; a delete the daemon took but has not applied by the last read
+   * says so and can be sent again.
+   */
+  async function remove(target: SessionId) {
+    try {
+      await client.toSession(target, { kind: 'delete' });
+      const gone = await until(
+        () => !listed(target, sessions) && !listed(target, archivedSessions),
+      );
+      if (!gone && deletion.phase === 'deleting' && deletion.session === target) {
+        deleting({
+          kind: 'refused',
+          reason: 'Asked, but still listed: the daemon may apply it shortly.',
+        });
+      }
+    } catch (error) {
+      deleting({ kind: 'refused', reason: message(error) });
+    }
+  }
+
+  /** The delete asked in the header, of the session it shows. */
+  const asking = $derived(chosen ? Deletions.of(deletion, chosen, 'header') : null);
+
+  // A delete is done when its session has left both shelves.
+  $effect(() => {
+    if (deletion.phase === 'idle' || deletion.phase === 'confirming') return;
+    const target = deletion.session;
+    if (listed(target, sessions) || listed(target, archivedSessions)) return;
+    untrack(() => {
+      deleting({ kind: 'gone' });
+      if (chosen === target) select(null);
+    });
+  });
 
   /**
    * Read the run's conversation, whole, as the daemon stored it, keeping
@@ -642,7 +695,14 @@
     const run = selected;
     readError = null;
     calls = null;
-    confirming = null;
+    // A question asked in the header is about the session it showed.
+    untrack(() => {
+      if (
+        (deletion.phase === 'confirming' || deletion.phase === 'failed') &&
+        deletion.from === 'header'
+      )
+        deleting({ kind: 'cancel' });
+    });
     tab = 'conversation';
     following = true;
     if (!run) return;
@@ -777,7 +837,11 @@
         onselect: () => void edit(archived_ ? 'unarchive' : 'archive'),
       });
       if (!Sessions.running(session)) {
-        items.push({ label: 'Delete…', danger: true, onselect: () => (confirming = target) });
+        items.push({
+          label: 'Delete…',
+          danger: true,
+          onselect: () => deleting({ kind: 'ask', session: target, from: 'header' }),
+        });
       }
     }
     return items;
@@ -983,6 +1047,9 @@
       {shelf}
       archivedCount={archivedSessions.length}
       {busy}
+      deletable={data.runsControl}
+      {deletion}
+      ondelete={deleting}
       onshelf={(next) => {
         shelf = next;
         select(null);
@@ -1047,15 +1114,26 @@
                 >{/if}<span>{fact}</span>{/each}
           </p>
         </div>
-        {#if confirming === chosen}
-          <span class="run-actions confirming" role="alert">
-            <span class="confirm-text">Delete this session and its recorded calls for good?</span>
+        {#if asking}
+          <span class="run-actions confirming" role="alert" aria-busy={asking.phase === 'deleting'}>
+            <span class="confirm-text"
+              >{asking.phase === 'deleting'
+                ? 'Deleting this session and its recorded calls…'
+                : asking.phase === 'failed'
+                  ? asking.reason
+                  : 'Delete this session and its recorded calls for good?'}</span
+            >
             <button
               class="button small danger confirm"
-              disabled={busy}
-              onclick={() => edit('delete')}>Delete</button
+              disabled={asking.phase === 'deleting'}
+              onclick={() => deleting({ kind: 'confirm' })}
+              >{asking.phase === 'failed' ? 'Retry' : 'Delete'}</button
             >
-            <button class="button small" onclick={() => (confirming = null)}>Cancel</button>
+            <button
+              class="button small"
+              disabled={asking.phase === 'deleting'}
+              onclick={() => deleting({ kind: 'cancel' })}>Cancel</button
+            >
           </span>
         {:else}
           <span class="run-actions">
