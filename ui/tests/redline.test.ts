@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Redline, type ElementLike, type Mark, type PageContext } from '../src/lib/redline.ts';
+import type { SessionBody, SessionId } from '../src/lib/runs.ts';
 
 function element(
   tagName: string,
@@ -108,4 +109,62 @@ test('the source checkout is an absolute path, or absent', () => {
   assert.equal(Redline.checkout('/home/you/ren/'), '/home/you/ren');
   assert.equal(Redline.checkout('/'), '/');
   assert.throws(() => Redline.checkout('ren'), /absolute/);
+});
+
+function stored(id: string, workdir: string, createdAt: number, archived = false): SessionBody {
+  return {
+    session: id as SessionId,
+    served: null,
+    stored: {
+      id: id as SessionId,
+      harness: 'codex',
+      workdir,
+      created_at: createdAt as never,
+      model: null,
+      effort: null,
+      approvals: null,
+      archived_at: archived ? (createdAt as never) : null,
+      first_turn_at: createdAt as never,
+      first_prompt: `asked ${id}`,
+      runs: [],
+    },
+  };
+}
+
+test('the sessions offered are the open ones in the checkout, newest first', () => {
+  const bodies = [
+    stored('0190f3a0-0000-7000-8000-00000000a001', '/home/you/ren', 100),
+    stored('0190f3a0-0000-7000-8000-00000000a002', '/home/you/ren', 300),
+    stored('0190f3a0-0000-7000-8000-00000000a003', '/home/you/ren', 400, true),
+    stored('0190f3a0-0000-7000-8000-00000000a004', '/home/you/ren-other', 500),
+  ];
+  assert.deepEqual(
+    Redline.offered(bodies, [], '/home/you/ren').map((session) => session.asked),
+    ['asked 0190f3a0-0000-7000-8000-00000000a002', 'asked 0190f3a0-0000-7000-8000-00000000a001'],
+  );
+  assert.deepEqual(Redline.offered(bodies, [], '/nowhere'), []);
+});
+
+test('a brief starts a turn, or is queued after the running one', () => {
+  assert.deepEqual(Redline.handoff({ kind: 'start' }, 'B'), {
+    kind: 'send',
+    delivery: 'start',
+    text: 'B',
+  });
+  assert.deepEqual(Redline.handoff({ kind: 'continue' }, 'B').kind, 'send');
+  // Queued after what was queued before, as one message: a queue replaces.
+  assert.deepEqual(Redline.handoff({ kind: 'during', steer: true, queued: 'A' }, 'B'), {
+    kind: 'send',
+    delivery: 'queue',
+    text: 'A\n\nB',
+  });
+  assert.deepEqual(Redline.handoff({ kind: 'during', steer: false, queued: null }, 'B'), {
+    kind: 'send',
+    delivery: 'queue',
+    text: 'B',
+  });
+  assert.deepEqual(Redline.handoff({ kind: 'closed', reason: 'stopping' }, 'B'), {
+    kind: 'wait',
+    reason: 'stopping',
+  });
 });

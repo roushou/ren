@@ -4,14 +4,16 @@
  * the panel, and the status line's toggle read it.
  */
 import { Redline, type Mark, type Target } from './redline.ts';
-import { DRIVABLE, RunCommandError, RunsClient, type Drivable } from './runs.ts';
+import { DRIVABLE, RunCommandError, RunsClient, type DeskSession, type Drivable } from './runs.ts';
 
-/** Who a brief can go to: the clients ready here. */
+/** Where a brief can go: the clients ready here, for a new session, and the
+ * sessions open in the checkout. */
 export interface Destinations {
   ready: Drivable[];
+  sessions: DeskSession[];
 }
 
-/** Reading the clients: not yet, under way, read, or failed. */
+/** Reading the destinations: not yet, under way, read, or failed. */
 export type Reading =
   | { state: 'idle' }
   | { state: 'reading' }
@@ -28,30 +30,52 @@ export class RedlineDesk {
   marks = $state<Placed[]>([]);
   /** The mark whose note is being written. */
   editing = $state<number | null>(null);
-  /** Who a brief can go to, read once per page view. */
+  /** Where a brief can go, read once per page view. */
   destinations = $state.raw<Reading>({ state: 'idle' });
   #next = 1;
+  /** Ren's source checkout, where briefs go; null when the UI is not told. */
+  readonly #checkout: () => string | null;
+  /** Whether what was read is from an earlier opening, to be read again. */
+  #stale = false;
 
-  /** Read which clients a brief can go to, once: started as the pointer
-   * nears the toggle, so the pane usually opens with them. */
+  constructor(checkout: () => string | null) {
+    this.#checkout = checkout;
+  }
+
+  /** Read where a brief can go: the clients, and the sessions open in the
+   * checkout. Started as the pointer nears the toggle, so the pane usually
+   * opens with them; read again for each opening, keeping the last reading
+   * shown meanwhile, since sessions come and go. */
   prepare() {
-    if (this.destinations.state === 'reading' || this.destinations.state === 'read') return;
-    this.destinations = { state: 'reading' };
-    new RunsClient().clients().then(
-      (clients) => {
+    const { state } = this.destinations;
+    if (state === 'reading' || (state === 'read' && !this.#stale)) return;
+    if (state !== 'read') this.destinations = { state: 'reading' };
+    this.#stale = false;
+    const checkout = this.#checkout();
+    const client = new RunsClient();
+    Promise.all([
+      client.clients(),
+      checkout ? client.sessions() : [],
+      checkout ? client.live() : [],
+    ]).then(
+      ([clients, bodies, live]) => {
         this.destinations = {
           state: 'read',
           value: {
             ready: DRIVABLE.filter((drivable) =>
               clients.some((entry) => entry.harness === drivable && entry.status === 'ready'),
             ),
+            sessions: checkout ? Redline.offered(bodies, live, checkout) : [],
           },
         };
       },
       (failure: unknown) => {
         this.destinations = {
           state: 'failed',
-          reason: failure instanceof RunCommandError ? failure.message : 'Cannot read the clients.',
+          reason:
+            failure instanceof RunCommandError
+              ? failure.message
+              : 'Cannot read the clients and sessions.',
         };
       },
     );
@@ -60,6 +84,7 @@ export class RedlineDesk {
   toggle() {
     this.open = !this.open;
     if (this.open) this.prepare();
+    if (!this.open) this.#stale = true;
     if (!this.open) this.drop(this.editing);
   }
 

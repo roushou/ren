@@ -25,7 +25,7 @@
   let { data, children }: LayoutProps = $props();
   const workbench = setWorkbench(new Workbench());
   /** Marking what's wrong on a page, for an agent to fix: needs the control token. */
-  const redline = new RedlineDesk();
+  const redline = new RedlineDesk(() => page.data.redlineSource);
   // The scope bar renders the current page's snippet, but the page owns its
   // state. Leaving for another page, the snippet is dropped before that
   // page's data arrives, or it would render the old page against new data.

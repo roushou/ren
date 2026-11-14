@@ -1,10 +1,12 @@
 <!--
   Redline's pane, floating over everything while marking, dragged by its
   header (or moved with the arrow keys there): the marks with their
-  notes, the brief exactly as the agent will get it, and the client it goes
-  to. It always works in Ren's own source checkout (`REN_SOURCE_DIR`), since
-  the marks are on Ren's pages. Sending makes a session there with the brief
-  as its first prompt, and opens it. The client last sent to, and where the
+  notes, the brief exactly as the agent will get it, and where it goes: a
+  new session on the client chosen, or a session already open. Either works
+  in Ren's own source checkout (`REN_SOURCE_DIR`), since the marks are on
+  Ren's pages. A new session gets the brief as its first prompt; an open one
+  gets it as its next, queued after its turn while one runs. Sending opens
+  the session. The client and the kind of place last sent to, and where the
   pane was left, are remembered in this browser only.
 -->
 <script lang="ts">
@@ -13,9 +15,18 @@
   import { page } from '$app/state';
   import { harnessLabel } from './activity.ts';
   import type { Revision } from './api.ts';
-  import { Redline, type PageContext } from './redline.ts';
+  import { Redline, type Destination, type PageContext } from './redline.ts';
   import type { RedlineDesk } from './redline.svelte.ts';
-  import { DRIVABLE, RunCommandError, RunsClient, type Drivable } from './runs.ts';
+  import {
+    Compose,
+    DRIVABLE,
+    RunCommandError,
+    RunsClient,
+    Sessions,
+    type DeskSession,
+    type Drivable,
+    type SessionId,
+  } from './runs.ts';
 
   let {
     desk,
@@ -32,11 +43,15 @@
   const client = new RunsClient();
   const KEEP = 'ren.redline';
 
-  /** The client this browser last sent to, read before the first frame so
-   * the pane opens as it will stay. */
+  /** What this browser last sent to, read before the first frame so the
+   * pane opens as it will stay: the client, and whether into an open
+   * session. */
   const remembered = recall();
   /** The client picked in this pane; until then, the one last sent to. */
   let chosen = $state<Drivable | null>(null);
+  /** Where the operator pointed the brief in this pane: a new session, or
+   * an open one; until then, the kind of place last sent to. */
+  let picked = $state<'new' | SessionId | null>(null);
   let error = $state<string | null>(null);
   let sending = $state(false);
 
@@ -44,6 +59,7 @@
    * client waiting. */
   const read = $derived(desk.destinations.state === 'read' ? desk.destinations.value : null);
   const ready = $derived(read?.ready ?? []);
+  const offered = $derived<DeskSession[]>(read?.sessions ?? []);
   /** The clients shown: those ready once read, every one while reading. */
   const shown = $derived(read ? read.ready : DRIVABLE);
 
@@ -120,25 +136,52 @@
     return () => window.removeEventListener('resize', keep);
   });
 
-  /** The client this browser last sent to: a convenience, so a refusal is
+  /** What this browser last sent to: a convenience, so a refusal is
    * ignored. */
-  function recall(): Drivable | null {
+  function recall(): { harness: Drivable | null; into: 'new' | 'session' } {
     try {
       const value: unknown = JSON.parse(localStorage.getItem(KEEP) ?? '{}');
-      const harness =
-        value && typeof value === 'object' && 'harness' in value ? value.harness : null;
-      return DRIVABLE.find((drivable) => drivable === harness) ?? null;
+      const kept = value && typeof value === 'object' ? (value as Record<string, unknown>) : {};
+      return {
+        harness: DRIVABLE.find((drivable) => drivable === kept.harness) ?? null,
+        into: kept.into === 'session' ? 'session' : 'new',
+      };
     } catch {
-      return null;
+      return { harness: null, into: 'new' };
     }
   }
   function keep() {
     try {
-      localStorage.setItem(KEEP, JSON.stringify({ harness }));
+      localStorage.setItem(
+        KEEP,
+        JSON.stringify({ harness, into: destination.kind === 'new' ? 'new' : 'session' }),
+      );
     } catch {
-      // Not kept; the pane offers the first ready client next time.
+      // Not kept; the pane offers a new session on the first ready client next time.
     }
   }
+
+  /** Where a send goes: the place picked, else, when this browser last sent
+   * into an open session, the first one offered (the one waiting for you,
+   * else working, else the latest), else a new session. */
+  const destination = $derived.by((): Destination => {
+    if (picked === 'new') return { kind: 'new' };
+    const session =
+      picked !== null
+        ? offered.find((entry) => entry.session === picked)
+        : remembered.into === 'session'
+          ? offered[0]
+          : undefined;
+    return session ? { kind: 'session', session } : { kind: 'new' };
+  });
+  /** What the send button says. */
+  const action = $derived.by(() => {
+    if (sending) return 'Sending…';
+    if (destination.kind === 'new') return `Send to ${harnessLabel(harness)}`;
+    return destination.session.state?.phase === 'working'
+      ? 'Queue for after its turn'
+      : 'Send to this session';
+  });
 
   /** The client a send goes to: the one picked, else the one last sent to
    * while it is ready here, else the first ready. Settled before the first
@@ -146,11 +189,11 @@
   const harness = $derived<Drivable>(
     chosen ??
       (read
-        ? (read.ready.find((drivable) => drivable === remembered) ??
+        ? (read.ready.find((drivable) => drivable === remembered.harness) ??
           read.ready[0] ??
-          remembered ??
+          remembered.harness ??
           DRIVABLE[0])
-        : (remembered ?? DRIVABLE[0])),
+        : (remembered.harness ?? DRIVABLE[0])),
   );
 
   // Start reading, if the toggle's hover has not.
@@ -172,6 +215,42 @@
   const noted = $derived(desk.marks.filter((mark) => mark.note));
   const brief = $derived(Redline.brief(context, noted));
 
+  /** A new session in `checkout`, with the brief as its first prompt. */
+  async function start(checkout: string): Promise<SessionId> {
+    const made = await client.createSession(harness, checkout);
+    await client.toSession(made, { kind: 'prompt', text: brief, delivery: 'start' });
+    return made;
+  }
+
+  /** The brief into an open session, as it stands now (read again: it may
+   * have moved on since the pane read it); null when it cannot take one. */
+  async function into(session: SessionId): Promise<SessionId | null> {
+    const [bodies, live] = await Promise.all([client.sessions(), client.live()]);
+    const body = bodies.find((entry) => entry.session === session);
+    const now = body ? Sessions.desk(body, live) : null;
+    if (!now || now.shelf !== 'open') {
+      error = 'That session is no longer open.';
+      return null;
+    }
+    const handoff = Redline.handoff(Compose.session(now.state, []), brief);
+    switch (handoff.kind) {
+      case 'send':
+        await client.toSession(session, {
+          kind: 'prompt',
+          text: handoff.text,
+          delivery: handoff.delivery,
+        });
+        return session;
+      case 'wait':
+        error = handoff.reason;
+        return null;
+      default: {
+        const never: never = handoff;
+        return never;
+      }
+    }
+  }
+
   async function send() {
     error = null;
     if (!noted.length) {
@@ -181,12 +260,13 @@
     if (!source) return;
     sending = true;
     try {
-      const made = await client.createSession(harness, source);
-      await client.toSession(made, { kind: 'prompt', text: brief, delivery: 'start' });
+      const target =
+        destination.kind === 'new' ? await start(source) : await into(destination.session.session);
+      if (target === null) return;
       keep();
       desk.clear();
-      desk.open = false;
-      await goto(`/sessions?session=${made}`);
+      desk.toggle();
+      await goto(`/sessions?session=${target}`);
     } catch (failure) {
       error = failure instanceof RunCommandError ? failure.message : 'The brief was not sent.';
     } finally {
@@ -247,26 +327,61 @@
 
   <section>
     <h3>Send to</h3>
-    <!-- One shape throughout: while reading, every client waits in place,
-         so nothing moves when they arrive. -->
-    {#if shown.length}
-      <div
-        class="segmented"
-        class:waiting={!read}
-        role="group"
-        aria-label="Client"
-        aria-busy={!read}
+    <div class="places" role="radiogroup" aria-label="Session">
+      <button
+        class="place"
+        role="radio"
+        aria-checked={destination.kind === 'new'}
+        onclick={() => (picked = 'new')}
       >
-        {#each shown as drivable (drivable)}
-          <button
-            aria-pressed={harness === drivable}
-            disabled={!read}
-            onclick={() => (chosen = drivable)}>{harnessLabel(drivable)}</button
+        <span class="title">New session</span>
+      </button>
+      <!-- One shape throughout: while reading, one quiet row stands where
+           the open sessions arrive. -->
+      {#each offered as session (session.session)}
+        {@const mark = Sessions.mark(session, harnessLabel(session.harness))}
+        <button
+          class="place"
+          role="radio"
+          aria-checked={destination.kind === 'session' &&
+            destination.session.session === session.session}
+          onclick={() => (picked = session.session)}
+        >
+          <span class="title">{session.asked ?? 'New session'}</span>
+          <span class="state tone-{mark.tone}"
+            >{mark.label === harnessLabel(session.harness)
+              ? mark.label
+              : `${mark.label} · ${harnessLabel(session.harness)}`}</span
           >
-        {/each}
-      </div>
-    {:else}
-      <p class="hint one-line">No client can start here. Install one on the daemon's host.</p>
+        </button>
+      {:else}
+        <p class="place quiet">
+          {read ? 'No session open here' : 'Reading the open sessions…'}
+        </p>
+      {/each}
+    </div>
+    {#if destination.kind === 'new'}
+      <!-- One shape throughout: while reading, every client waits in place,
+           so nothing moves when they arrive. -->
+      {#if shown.length}
+        <div
+          class="segmented"
+          class:waiting={!read}
+          role="group"
+          aria-label="Client"
+          aria-busy={!read}
+        >
+          {#each shown as drivable (drivable)}
+            <button
+              aria-pressed={harness === drivable}
+              disabled={!read}
+              onclick={() => (chosen = drivable)}>{harnessLabel(drivable)}</button
+            >
+          {/each}
+        </div>
+      {:else}
+        <p class="hint one-line">No client can start here. Install one on the daemon's host.</p>
+      {/if}
     {/if}
     {#if source}
       <p class="where" title={source}>
@@ -288,9 +403,8 @@
     <div class="actions">
       <button
         class="button primary redline-send"
-        disabled={sending || !source || !read || !ready.length}
-        onclick={() => void send()}
-        >{sending ? 'Sending…' : `Send to ${harnessLabel(harness)}`}</button
+        disabled={sending || !source || !read || (destination.kind === 'new' && !ready.length)}
+        onclick={() => void send()}>{action}</button
       >
       {#if desk.marks.length}
         <button class="button" onclick={() => desk.clear()}>Clear marks</button>
@@ -486,6 +600,62 @@
     background: var(--accent-soft);
     color: var(--accent-text);
     font-weight: 600;
+  }
+  .places {
+    display: grid;
+    border: 1px solid var(--line);
+  }
+  .place {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    min-width: 0;
+    margin: 0;
+    padding: 5px 8px;
+    border: 0;
+    border-top: 1px solid var(--line);
+    background: var(--surface);
+    color: var(--ink);
+    font: inherit;
+    font-size: 12px;
+    text-align: left;
+    cursor: pointer;
+  }
+  .place:first-child {
+    border-top: 0;
+  }
+  .place:hover:not(.quiet) {
+    background: var(--surface-hover);
+  }
+  .place[aria-checked='true'] {
+    background: var(--accent-soft);
+    color: var(--accent-text);
+    box-shadow: inset 2px 0 0 var(--redline);
+  }
+  .place.quiet {
+    color: var(--muted);
+    cursor: default;
+  }
+  .place .title {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .place .state {
+    flex: none;
+    color: var(--muted);
+    font-size: 11px;
+  }
+  .place .state.tone-warn {
+    color: var(--warning);
+  }
+  .place .state.tone-live {
+    color: var(--success);
+  }
+  .place .state.tone-danger {
+    color: var(--danger, var(--redline));
   }
   .where {
     display: flex;

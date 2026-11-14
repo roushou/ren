@@ -162,16 +162,19 @@ it with the arrow keys there; this browser keeps where you left it) shows the
 brief exactly as the agent gets it: each note with the element's selector (from the nearest labelled
 region), its text and size, and its source file and line when the UI runs as a
 development build (`bun run dev`; a production build has none), and the commit
-the daemon serving the page was built from. Send makes a session on the client
-you choose, with the brief as its first prompt, and opens it. The session
-always works in Ren's own source checkout, `REN_SOURCE_DIR`, since the marks
+the daemon serving the page was built from. Send makes a new session on the
+client you choose, with the brief as its first prompt, or gives the brief to a
+session already open there (the pane offers the four most pressing) as its
+next prompt, queued for after its turn while one runs; then it opens the
+session. Either way it works in Ren's own source checkout, `REN_SOURCE_DIR`, since the marks
 are on Ren's pages; `cargo xtask install-vps` sets it to the checkout it
 installs from, and without it Redline marks but cannot send. The checkout must
 be under the daemon's `[runs]` roots. The brief asks the agent to answer
 questions without changing anything, to make any change on a new `redline/…`
 branch in a git worktree, and not to install anything; nothing
 enforces that yet beyond the agent following it and the client's approvals.
-The client last sent to is kept in this browser only.
+The client last sent to, and whether to a new or an open session, are kept in
+this browser only.
 
 ## Payload previews
 

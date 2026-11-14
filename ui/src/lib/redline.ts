@@ -4,6 +4,20 @@
  * nothing here touches the DOM, so the brief is tested without a browser.
  */
 import type { Revision } from './api.ts';
+import {
+  Sessions,
+  type ComposeMode,
+  type DeskSession,
+  type RunSnapshot,
+  type SessionBody,
+} from './runs.ts';
+
+/** Where a brief goes: a new session in the checkout, or one open there. */
+export type Destination = { kind: 'new' } | { kind: 'session'; session: DeskSession };
+
+/** How a brief reaches an open session: the prompt to send, or why it waits. */
+export type Handoff =
+  { kind: 'send'; delivery: 'start' | 'queue'; text: string } | { kind: 'wait'; reason: string };
 
 /** The part of an element a selector is built from: what a DOM element has. */
 export interface ElementLike {
@@ -94,6 +108,51 @@ export class Redline {
     if (value === undefined || value === '') return undefined;
     if (!value.startsWith('/')) throw new Error('REN_SOURCE_DIR must be an absolute path.');
     return value.length > 1 ? value.replace(/\/+$/, '') : value;
+  }
+
+  /** The most sessions the pane offers to send into. */
+  static readonly OFFERED = 4;
+
+  /**
+   * The open sessions in `checkout` a brief can go into, as the Sessions
+   * page orders them: one waiting for you first, then one working, then the
+   * most recently active.
+   */
+  static offered(
+    bodies: readonly SessionBody[],
+    live: readonly RunSnapshot[],
+    checkout: string,
+  ): DeskSession[] {
+    const open = bodies.filter((body) => {
+      const session = Sessions.desk(body, live);
+      return session?.shelf === 'open' && session.workdir === checkout;
+    });
+    return (Sessions.folders(open, live)[0]?.sessions ?? []).slice(0, Redline.OFFERED);
+  }
+
+  /**
+   * How `brief` goes into a session whose composer is in `mode`: it starts
+   * a turn when none runs, or is queued after the running one (after
+   * anything queued before, as one message), never steering it.
+   */
+  static handoff(mode: ComposeMode, brief: string): Handoff {
+    switch (mode.kind) {
+      case 'start':
+      case 'continue':
+        return { kind: 'send', delivery: 'start', text: brief };
+      case 'during':
+        return {
+          kind: 'send',
+          delivery: 'queue',
+          text: mode.queued ? `${mode.queued}\n\n${brief}` : brief,
+        };
+      case 'closed':
+        return { kind: 'wait', reason: mode.reason };
+      default: {
+        const never: never = mode;
+        return never;
+      }
+    }
   }
 
   /** What the brief says of the build the page came from, if anything. */
