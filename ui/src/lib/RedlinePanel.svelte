@@ -20,8 +20,12 @@
   import { Redline, type Destination, type PageContext } from './redline.ts';
   import type { RedlineDesk } from './redline.svelte.ts';
   import {
+    APPROVAL_POLICIES,
     Compose,
     DRIVABLE,
+    EFFORTS,
+    Setup,
+    type ApprovalPolicy,
     RunCommandError,
     Runs,
     RunsClient,
@@ -138,22 +142,25 @@
     return () => window.removeEventListener('resize', keep);
   });
 
-  /** The client this browser last started a session on: a convenience,
-   * so a refusal is ignored. */
-  function recall(): Drivable | null {
+  /** The client and approvals this browser last started a session with: a
+   * convenience, so a refusal is ignored. */
+  function recall(): { harness: Drivable | null; approvals: ApprovalPolicy | null } {
     try {
       const value: unknown = JSON.parse(localStorage.getItem(KEEP) ?? '{}');
       const kept = value && typeof value === 'object' ? (value as Record<string, unknown>) : {};
-      return DRIVABLE.find((drivable) => drivable === kept.harness) ?? null;
+      return {
+        harness: DRIVABLE.find((drivable) => drivable === kept.harness) ?? null,
+        approvals: APPROVAL_POLICIES.find((policy) => policy === kept.approvals) ?? null,
+      };
     } catch {
-      return null;
+      return { harness: null, approvals: null };
     }
   }
   function keep() {
     try {
-      localStorage.setItem(KEEP, JSON.stringify({ harness }));
+      localStorage.setItem(KEEP, JSON.stringify({ harness, approvals }));
     } catch {
-      // Not kept; the pane offers the first ready client next time.
+      // Not kept; the pane offers the first ready client, on its default, next time.
     }
   }
 
@@ -163,11 +170,11 @@
   const harness = $derived<Drivable>(
     chosen ??
       (read
-        ? (read.ready.find((drivable) => drivable === remembered) ??
+        ? (read.ready.find((drivable) => drivable === remembered.harness) ??
           read.ready[0] ??
-          remembered ??
+          remembered.harness ??
           DRIVABLE[0])
-        : (remembered ?? DRIVABLE[0])),
+        : (remembered.harness ?? DRIVABLE[0])),
   );
 
   /** Where a send goes: the place picked, else the session running in the
@@ -179,6 +186,61 @@
       picked !== null ? offered.find((entry) => entry.session === picked) : offered[0];
     return session ? { kind: 'session', session } : { kind: 'new' };
   });
+  /** The client the brief goes to: the new session's, or the running one's. */
+  const target = $derived(
+    read?.clients.find(
+      (entry) =>
+        entry.harness === (destination.kind === 'new' ? harness : destination.session.harness),
+    ) ?? null,
+  );
+  /** The approval policies that client runs under. */
+  const policies = $derived(
+    APPROVAL_POLICIES.filter((policy) => target?.approvals.includes(policy) ?? false),
+  );
+  /** The approvals picked in this pane: a policy, or the client's default. */
+  let pickedApprovals = $state<{ approvals: ApprovalPolicy | null } | null>(null);
+  /** What a send runs under: for a new session, the policy picked, else the
+   * one last started with while the client offers it, else its default; for
+   * a running session, the policy picked, else the one it runs under. */
+  const approvals = $derived.by((): ApprovalPolicy | null => {
+    const wanted =
+      pickedApprovals?.approvals ??
+      (pickedApprovals
+        ? null
+        : destination.kind === 'new'
+          ? remembered.approvals
+          : (APPROVAL_POLICIES.find(
+              (policy) => policy === destination.session.settings.approvals,
+            ) ?? null));
+    return wanted && (!read || policies.includes(wanted)) ? wanted : null;
+  });
+  /** Why the approvals cannot be chosen here, if they cannot. */
+  const fixed = $derived(
+    !read
+      ? 'Reading the clients…'
+      : destination.kind === 'session' && !target?.midway.includes('approvals')
+        ? `${harnessLabel(destination.session.harness)} takes approvals only when it starts`
+        : null,
+  );
+  const DEFAULT = '';
+  const policyGroups = $derived<PickerGroup[]>([
+    {
+      label: destination.kind === 'new' ? 'The new session runs under' : 'From its next turn',
+      options: [
+        {
+          value: DEFAULT,
+          label: 'Default',
+          detail: `${harnessLabel(target?.harness ?? harness)}’s own choice`,
+        },
+        ...policies.map((policy) => ({
+          value: policy,
+          label: Setup.policy(policy),
+          detail: Setup.explain(policy),
+        })),
+      ],
+    },
+  ]);
+
   /** A running session's state, in a word, with its client. */
   const stand = (session: DeskSession) => {
     const client = harnessLabel(session.harness);
@@ -258,7 +320,7 @@
 
   /** A new session in `checkout`, with the brief as its first prompt. */
   async function start(checkout: string): Promise<SessionId> {
-    const made = await client.createSession(harness, checkout);
+    const made = await client.createSession(harness, checkout, { approvals });
     await client.toSession(made, { kind: 'prompt', text: brief, delivery: 'start' });
     return made;
   }
@@ -276,6 +338,22 @@
     const handoff = Redline.handoff(Compose.session(now.state, []), brief);
     switch (handoff.kind) {
       case 'send':
+        // A changed policy first, so the brief's turn runs under it.
+        // Its model and effort stay as they are; one this page does not
+        // know is left unchanged by not sending the change at all.
+        const effort = EFFORTS.find((level) => level === now.settings.effort) ?? null;
+        if (
+          approvals !== now.settings.approvals &&
+          !fixed &&
+          (now.settings.effort === null || effort !== null)
+        ) {
+          await client.toSession(session, {
+            kind: 'settings',
+            model: now.settings.model,
+            effort,
+            approvals,
+          });
+        }
         await client.toSession(session, {
           kind: 'prompt',
           text: handoff.text,
@@ -395,6 +473,21 @@
           note={footing}
           disabled={read ? null : 'Reading where it can go…'}
           onchange={choose}
+        />
+      </div>
+      <div class="send">
+        <Picker
+          label={destination.kind === 'new' ? 'Approvals' : 'Approvals from its next turn'}
+          icon="shield"
+          groups={policyGroups}
+          value={approvals ?? DEFAULT}
+          placeholder="Default"
+          search={false}
+          disabled={fixed ?? (policies.length ? null : 'This client never asks')}
+          onchange={(value) =>
+            (pickedApprovals = {
+              approvals: APPROVAL_POLICIES.find((policy) => policy === value) ?? null,
+            })}
         />
         <button
           class="button primary redline-send"

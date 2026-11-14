@@ -4,12 +4,22 @@
  * the panel, and the status line's toggle read it.
  */
 import { Redline, type Mark, type Target } from './redline.ts';
-import { DRIVABLE, RunCommandError, RunsClient, type DeskSession, type Drivable } from './runs.ts';
+import {
+  DRIVABLE,
+  RunCommandError,
+  RunsClient,
+  type DeskSession,
+  type Drivable,
+  type RunClient,
+} from './runs.ts';
 
 /** Where a brief can go: the clients ready here, for a new session, and the
- * sessions open in the checkout. */
+ * sessions running in the checkout. */
 export interface Destinations {
   ready: Drivable[];
+  /** Each client as the daemon describes it: its approval policies, and
+   * what it takes mid-run. */
+  clients: RunClient[];
   sessions: DeskSession[];
 }
 
@@ -65,6 +75,7 @@ export class RedlineDesk {
             ready: DRIVABLE.filter((drivable) =>
               clients.some((entry) => entry.harness === drivable && entry.status === 'ready'),
             ),
+            clients,
             sessions: checkout ? Redline.offered(bodies, live, checkout) : [],
           },
         };
