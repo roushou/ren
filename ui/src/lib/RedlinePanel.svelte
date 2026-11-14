@@ -462,33 +462,36 @@
       {#if desk.destinations.state === 'failed'}
         <p class="error" role="alert">{desk.destinations.reason}</p>
       {/if}
+      <!-- One row: where the brief goes, what it may do there, and Send. -->
       <div class="send">
-        <Picker
-          label="Where the brief goes"
-          icon="arrow"
-          {groups}
-          value={chosenPlace}
-          placeholder="New session"
-          search={false}
-          note={footing}
-          disabled={read ? null : 'Reading where it can go…'}
-          onchange={choose}
-        />
-      </div>
-      <div class="send">
-        <Picker
-          label={destination.kind === 'new' ? 'Approvals' : 'Approvals from its next turn'}
-          icon="shield"
-          groups={policyGroups}
-          value={approvals ?? DEFAULT}
-          placeholder="Default"
-          search={false}
-          disabled={fixed ?? (policies.length ? null : 'This client never asks')}
-          onchange={(value) =>
-            (pickedApprovals = {
-              approvals: APPROVAL_POLICIES.find((policy) => policy === value) ?? null,
-            })}
-        />
+        <span class="where">
+          <Picker
+            label="Where the brief goes"
+            icon="arrow"
+            {groups}
+            value={chosenPlace}
+            placeholder="New session"
+            search={false}
+            note={footing}
+            disabled={read ? null : 'Reading where it can go…'}
+            onchange={choose}
+          />
+        </span>
+        <span class="policy">
+          <Picker
+            label={destination.kind === 'new' ? 'Approvals' : 'Approvals from its next turn'}
+            icon="shield"
+            groups={policyGroups}
+            value={approvals ?? DEFAULT}
+            placeholder="Default"
+            search={false}
+            disabled={fixed ?? (policies.length ? null : 'This client never asks')}
+            onchange={(value) =>
+              (pickedApprovals = {
+                approvals: APPROVAL_POLICIES.find((policy) => policy === value) ?? null,
+              })}
+          />
+        </span>
         <button
           class="button primary redline-send"
           title={action === 'Queue' ? 'Sent when its current turn ends' : null}
@@ -686,6 +689,7 @@
     font-size: 11px;
   }
   footer {
+    position: relative;
     display: grid;
     gap: 8px;
     padding: 10px 12px;
@@ -698,12 +702,27 @@
     gap: 8px;
     min-width: 0;
   }
-  .send :global(.picker) {
+  .where {
     flex: 1;
+    min-width: 0;
+  }
+  .policy {
+    flex: none;
+    max-width: 45%;
+  }
+  .redline-send {
+    flex: none;
+  }
+  /* The menus open from the footer, not from their chips, so both span
+     the pane's width wherever their chip sits in the row. */
+  .send :global(.picker) {
+    position: static;
+    display: flex;
     min-width: 0;
   }
   .send :global(.picker .chip-button) {
     width: 100%;
+    min-width: 0;
   }
   /* One line: the title cut short, its state kept whole. */
   .send :global(.chip-button > span:not(.hint)) {
@@ -720,6 +739,7 @@
   }
   /* The menu fits the pane instead of the page. */
   .redline-panel :global(.picker .panel) {
+    left: 12px;
     width: 316px;
     max-width: calc(100vw - 24px);
   }
