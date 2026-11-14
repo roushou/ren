@@ -1627,6 +1627,34 @@ tr.selected .row-link {
 .markdown .md-href::after {
   content: ')';
 }
+.markdown li.md-task {
+  list-style: none;
+  margin-left: -18px;
+}
+.markdown li.md-task > input {
+  float: left;
+  margin: 4px 6px 0 0;
+  accent-color: var(--accent);
+}
+.markdown .md-footnote {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 6px;
+  margin: 0 0 6px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.markdown .md-footnote-label,
+.markdown .md-footnote-ref {
+  color: var(--muted);
+  font-size: 0.8em;
+}
+.markdown .md-footnote-ref::before {
+  content: '[';
+}
+.markdown .md-footnote-ref::after {
+  content: ']';
+}
 .markdown .md-image {
   padding: 0 4px;
   border: 1px dashed var(--line);

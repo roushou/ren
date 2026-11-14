@@ -182,9 +182,10 @@ in this browser only.
 
 ## Payload previews
 
-Payloads are rendered inert. Message text is formatted as Markdown (headings, lists,
-code, tables, emphasis) by a small parser in `src/lib/markdown.ts` that builds
-elements, never HTML: raw HTML stays text, links show their address but are not
+Payloads are rendered inert. Message text is formatted as Markdown (CommonMark with
+GitHub's tables, strikethrough, task lists, autolinks, and footnotes), read by
+`mdast-util-from-markdown` into a typed tree (`src/lib/markdown.ts`) that Svelte
+components render as elements, never HTML: raw HTML stays text, links show their address but are not
 clickable, and images are named but never loaded. Agent context wrapped in tags such
 as `<system-reminder>` is folded under its name. Message cards are colored by role
 (user, assistant, thinking, tool call or result, system), and context that repeats on
