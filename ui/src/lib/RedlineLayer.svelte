@@ -286,9 +286,16 @@
   .foot button {
     margin-left: auto;
   }
-  .redline-save {
+  /* Filled in Redline's color, also on hover, where the shared button
+     rule would otherwise clear it. */
+  .redline-save,
+  .redline-save:hover:not(:disabled) {
     background: var(--redline);
     border-color: var(--redline);
     color: var(--on-redline);
+  }
+  .redline-save:hover:not(:disabled) {
+    background: var(--redline-hover);
+    border-color: var(--redline-hover);
   }
 </style>
