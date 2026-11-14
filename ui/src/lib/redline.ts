@@ -174,11 +174,11 @@ export class Redline {
     if (!revision) return null;
     switch (revision.kind) {
       case 'commit':
-        return `This page was served by a build of commit ${revision.commit.slice(0, 12)}${revision.tree === 'modified' ? ' with uncommitted changes' : ''}; the checkout may have moved on since.`;
+        return `This page was served by a build of commit ${Redline.code(revision.commit.slice(0, 12))}${revision.tree === 'modified' ? ' with uncommitted changes' : ''}; the checkout may have moved on since.`;
       case 'unknown':
         return null;
       case 'unrecognized':
-        return `This page was served by a build of ${revision.text}; the checkout may have moved on since.`;
+        return `This page was served by a build of ${Redline.code(revision.text)}; the checkout may have moved on since.`;
       default: {
         const never: never = revision;
         return never;
@@ -203,8 +203,16 @@ export class Redline {
     return `redline/${words.length ? words.join('-') : 'change'}`;
   }
 
-  /** The brief an agent gets: what the first mark asks (a session is
-   * named by its first line), the page, each mark with what it points at,
+  /** `text` as a Markdown code span, fenced past any backticks inside. */
+  static code(text: string): string {
+    const longest = Math.max(0, ...(text.match(/`+/g) ?? []).map((run) => run.length));
+    const fence = '`'.repeat(longest + 1);
+    return longest ? `${fence} ${text} ${fence}` : `${fence}${text}${fence}`;
+  }
+
+  /** The brief an agent gets, in Markdown: what the first mark asks (a
+   * session is named by its first line, so it stays plain), the page, each
+   * mark as a list item with what it points at,
    * and how to work: questions are answered in place, and only a change
    * gets a branch. Marks without a note are left out. */
   static brief(page: PageContext, marks: readonly Mark[]): string {
@@ -214,23 +222,28 @@ export class Redline {
     const lines = [
       `Redline: ${first}${more}`,
       '',
-      `Marked on ${page.path}${page.title ? ` (${page.title})` : ''}, ${page.width}×${page.height}, ${page.theme} theme.`,
+      `Marked on ${Redline.code(page.path)}${page.title ? ` (${page.title})` : ''}, ${page.width}×${page.height}, ${page.theme} theme.`,
     ];
     if (page.route) {
-      lines.push(`In Ren's UI this page is ${Redline.routeFile(page.route)}.`);
+      lines.push(`In Ren's UI this page is ${Redline.code(Redline.routeFile(page.route))}.`);
     }
     const built = Redline.built(page.revision);
     if (built) lines.push(built);
+    lines.push('');
     noted.forEach((mark, index) => {
       const { target } = mark;
-      lines.push('', `${index + 1}. ${mark.note.trim()}`);
-      lines.push(`   Element: ${target.selector}${target.text ? ` "${target.text}"` : ''}`);
-      if (target.source) lines.push(`   Source: ${target.source}`);
-      lines.push(`   Size: ${Math.round(target.width)}×${Math.round(target.height)}`);
+      // A note's later lines are indented, so they stay in its item.
+      const note = mark.note.trim().split('\n').join('\n   ');
+      lines.push(`${index + 1}. ${note}`);
+      lines.push(
+        `   - Element: ${Redline.code(target.selector)}${target.text ? `, “${target.text}”` : ''}`,
+      );
+      if (target.source) lines.push(`   - Source: ${Redline.code(target.source)}`);
+      lines.push(`   - Size: ${Math.round(target.width)}×${Math.round(target.height)}`);
     });
     lines.push(
       '',
-      `Answer what the notes ask without changing anything. If a note asks for a change, make it on a new branch, ${Redline.branch(noted)}, in a git worktree of this repository, not in the checkout itself, and run the project's checks. Don't install or restart anything: I'll review the branch.`,
+      `Answer what the notes ask without changing anything. If a note asks for a change, make it on a new branch, ${Redline.code(Redline.branch(noted))}, in a git worktree of this repository, not in the checkout itself, and run the project's checks. Don't install or restart anything: I'll review the branch.`,
     );
     return lines.join('\n');
   }

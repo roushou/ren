@@ -163,7 +163,8 @@ brief exactly as the agent gets it: each note with the element's selector (from 
 region), its text and size, and its source file and line when the UI runs as a
 development build (`bun run dev`; a production build has none), and the commit
 the daemon serving the page was built from; the pane names each mark by the
-element's text and keeps the brief folded until asked for. One line says where
+element's text and keeps the brief (Markdown, rendered there and in the
+session's conversation, as prompts are) folded until asked for. One line says where
 the brief goes: the session running in Ren's own source checkout, so marks
 follow the work under way, else a new session on the client last used. Its
 menu offers a new session on each client and the other sessions running there

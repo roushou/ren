@@ -79,16 +79,16 @@ test('the brief lists each noted mark with what it points at', () => {
     [
       'Redline: Move it to the end.',
       '',
-      'Marked on /sessions?session=s1 (Ren - Sessions), 1400×820, dark theme.',
-      "In Ren's UI this page is ui/src/routes/sessions/+page.svelte.",
-      'This page was served by a build of commit 97aa93b00000; the checkout may have moved on since.',
+      'Marked on `/sessions?session=s1` (Ren - Sessions), 1400×820, dark theme.',
+      "In Ren's UI this page is `ui/src/routes/sessions/+page.svelte`.",
+      'This page was served by a build of commit `97aa93b00000`; the checkout may have moved on since.',
       '',
       '1. Move it to the end.',
-      '   Element: [aria-label="Run"] div.entry.tool > span.chip.success "completed"',
-      '   Source: src/routes/sessions/+page.svelte:861',
-      '   Size: 62×18',
+      '   - Element: `[aria-label="Run"] div.entry.tool > span.chip.success`, “completed”',
+      '   - Source: `src/routes/sessions/+page.svelte:861`',
+      '   - Size: 62×18',
       '',
-      "Answer what the notes ask without changing anything. If a note asks for a change, make it on a new branch, redline/move-it-to-the-end, in a git worktree of this repository, not in the checkout itself, and run the project's checks. Don't install or restart anything: I'll review the branch.",
+      "Answer what the notes ask without changing anything. If a note asks for a change, make it on a new branch, `redline/move-it-to-the-end`, in a git worktree of this repository, not in the checkout itself, and run the project's checks. Don't install or restart anything: I'll review the branch.",
     ].join('\n'),
   );
   assert.equal(Redline.routeFile('/'), 'ui/src/routes/+page.svelte');
@@ -97,7 +97,7 @@ test('the brief lists each noted mark with what it points at', () => {
 test('the build is named when the daemon says what it was built from', () => {
   assert.equal(
     Redline.built({ kind: 'commit', commit: 'a'.repeat(40), tree: 'modified' }),
-    'This page was served by a build of commit aaaaaaaaaaaa with uncommitted changes; the checkout may have moved on since.',
+    'This page was served by a build of commit `aaaaaaaaaaaa` with uncommitted changes; the checkout may have moved on since.',
   );
   assert.equal(Redline.built({ kind: 'unknown' }), null);
   assert.equal(Redline.built(null), null);
@@ -205,4 +205,13 @@ test('a brief starts a turn, or is queued after the running one', () => {
     kind: 'wait',
     reason: 'stopping',
   });
+});
+
+test("a brief's code spans fence past backticks inside, and a note's lines stay in its item", () => {
+  assert.equal(Redline.code('a.b'), '`a.b`');
+  assert.equal(Redline.code('a `b` c'), '`` a `b` c ``');
+  const brief = Redline.brief({ ...page, route: null, revision: null }, [
+    mark(1, 'First line\nsecond line'),
+  ]);
+  assert.ok(brief.includes('1. First line\n   second line\n   - Element:'));
 });

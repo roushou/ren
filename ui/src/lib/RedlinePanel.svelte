@@ -14,6 +14,7 @@
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
   import { harnessLabel } from './activity.ts';
+  import Markdown from './Markdown.svelte';
   import Picker, { type PickerGroup } from './Picker.svelte';
   import type { Revision } from './api.ts';
   import { Redline, type Destination, type PageContext } from './redline.ts';
@@ -372,7 +373,7 @@
     {#if noted.length}
       <details class="brief-fold">
         <summary>Brief the agent gets</summary>
-        <pre class="brief">{brief}</pre>
+        <div class="brief"><Markdown text={brief} /></div>
       </details>
     {/if}
   </div>
@@ -572,17 +573,24 @@
   }
   .brief {
     margin: 0 12px 10px;
-    max-height: 240px;
+    max-height: 280px;
     overflow-y: auto;
     padding: 8px 10px;
     border: 1px solid var(--line);
     background: var(--surface-subtle);
-    font:
-      11px/1.55 'SFMono-Regular',
-      Consolas,
-      monospace;
+  }
+  /* The brief as the agent reads it, at the pane's size; its line breaks
+     kept, as the agent gets them. */
+  .brief :global(.markdown) {
+    font-size: 12px;
+    line-height: 1.5;
+  }
+  .brief :global(.markdown p) {
     white-space: pre-wrap;
-    overflow-wrap: anywhere;
+  }
+  .brief :global(.markdown code) {
+    padding: 0 3px;
+    font-size: 11px;
   }
   footer {
     display: grid;
