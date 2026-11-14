@@ -87,7 +87,7 @@ test('the brief lists each noted mark with what it points at', () => {
       '   Source: src/routes/sessions/+page.svelte:861',
       '   Size: 62×18',
       '',
-      "Make these changes on a new branch, redline/move-it-to-the-end, in a git worktree of this repository, not in the checkout itself. Run the project's checks. Don't install or restart anything: I'll review the branch.",
+      "Answer what the notes ask without changing anything. If a note asks for a change, make it on a new branch, redline/move-it-to-the-end, in a git worktree of this repository, not in the checkout itself, and run the project's checks. Don't install or restart anything: I'll review the branch.",
     ].join('\n'),
   );
   assert.equal(Redline.routeFile('/'), 'ui/src/routes/+page.svelte');

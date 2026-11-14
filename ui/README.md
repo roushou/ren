@@ -167,8 +167,9 @@ you choose, with the brief as its first prompt, and opens it. The session
 always works in Ren's own source checkout, `REN_SOURCE_DIR`, since the marks
 are on Ren's pages; `cargo xtask install-vps` sets it to the checkout it
 installs from, and without it Redline marks but cannot send. The checkout must
-be under the daemon's `[runs]` roots. The brief asks the agent to work on a new
-`redline/…` branch in a git worktree and not to install anything; nothing
+be under the daemon's `[runs]` roots. The brief asks the agent to answer
+questions without changing anything, to make any change on a new `redline/…`
+branch in a git worktree, and not to install anything; nothing
 enforces that yet beyond the agent following it and the client's approvals.
 The client last sent to is kept in this browser only.
 

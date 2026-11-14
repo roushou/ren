@@ -275,7 +275,7 @@
       <p class="hint" aria-live="polite">
         {desk.destinations.state === 'failed'
           ? desk.destinations.reason
-          : 'Asked to work on a new branch in a git worktree there, and not to install anything.'}
+          : 'Questions are answered there; changes go on a new branch in a git worktree, with nothing installed.'}
       </p>
     {:else}
       <p class="hint unset">

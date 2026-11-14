@@ -132,7 +132,8 @@ export class Redline {
 
   /** The brief an agent gets: what the first mark asks (a session is
    * named by its first line), the page, each mark with what it points at,
-   * and how to work. Marks without a note are left out. */
+   * and how to work: questions are answered in place, and only a change
+   * gets a branch. Marks without a note are left out. */
   static brief(page: PageContext, marks: readonly Mark[]): string {
     const noted = marks.filter((mark) => mark.note.trim());
     const first = noted[0]?.note.trim().split('\n')[0] ?? 'Changes to a page';
@@ -156,7 +157,7 @@ export class Redline {
     });
     lines.push(
       '',
-      `Make these changes on a new branch, ${Redline.branch(noted)}, in a git worktree of this repository, not in the checkout itself. Run the project's checks. Don't install or restart anything: I'll review the branch.`,
+      `Answer what the notes ask without changing anything. If a note asks for a change, make it on a new branch, ${Redline.branch(noted)}, in a git worktree of this repository, not in the checkout itself, and run the project's checks. Don't install or restart anything: I'll review the branch.`,
     );
     return lines.join('\n');
   }
