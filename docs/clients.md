@@ -244,6 +244,35 @@ running close the same way once it ends, or when the drain deadline passes. See
 OpenAI's [gateway authentication guide](https://learn.chatgpt.com/docs/enterprise/connect-to-a-gateway)
 and [configuration reference](https://learn.chatgpt.com/docs/config-file/config-reference).
 
+### Sandbox on Ubuntu
+
+Codex runs its commands in its own sandbox, a user namespace made by its
+built-in bubblewrap, under every approval policy Ren starts it with. Ubuntu
+24.04 and later restrict unprivileged user namespaces through AppArmor
+(`sysctl kernel.apparmor_restrict_unprivileged_userns` reads `1`), so the
+sandbox cannot start: commands fail with
+`bwrap: loopback: Failed RTM_NEWADDR: Operation not permitted`, and Codex asks
+before running each one outside the sandbox, whatever the approval policy.
+`codex sandbox -- /bin/echo ok` shows it.
+
+[`deploy/apparmor/codex`](../deploy/apparmor/codex) allows user namespaces for
+the Codex binary only, as Ubuntu's own profiles do for other sandboxed programs,
+and confines nothing else. It names Codex's standalone install
+(`~/.codex/packages/standalone/releases/<version>/bin/codex`), so upgrades stay
+covered; for another install, add its binary's path (`readlink -f "$(which
+codex)"`) to the profile's attachment. Install and load it as root, then check:
+
+```sh
+sudo install -m 644 deploy/apparmor/codex /etc/apparmor.d/codex
+sudo apparmor_parser -r /etc/apparmor.d/codex
+codex sandbox -- /bin/echo ok
+```
+
+The last command prints `ok`. Running Codex sessions pick it up when their client
+next starts. To undo it, `sudo apparmor_parser -R /etc/apparmor.d/codex` and
+remove the file. Leaving the system-wide restriction on is the point: only this
+binary is let through.
+
 ## Pi
 
 Start Pi with its existing sign-in and model catalog:
