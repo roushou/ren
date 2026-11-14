@@ -283,12 +283,6 @@
       picked = value as SessionId;
     }
   }
-  /** Said at the foot of the menu: where every choice works, and how. */
-  const footing = $derived(
-    source
-      ? `Works in ${source}. Questions are answered there; a change goes on a new redline/… branch in a git worktree, with nothing installed.`
-      : null,
-  );
   /** What the send button says: a brief for a working session waits for
    * its turn to end. */
   const action = $derived(
@@ -472,7 +466,6 @@
             value={chosenPlace}
             placeholder="New session"
             search={false}
-            note={footing}
             disabled={read ? null : 'Reading where it can go…'}
             onchange={choose}
           />
