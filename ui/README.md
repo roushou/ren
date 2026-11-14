@@ -102,8 +102,8 @@ produces `build/`. Cargo never builds or embeds the UI.
 | `REN_GATEWAY_URL`        | `http://127.0.0.1:8787`          | Daemon origin reached by the UI server                                          |
 | `REN_PUBLIC_GATEWAY_URL` | Same as `REN_GATEWAY_URL`        | Daemon origin displayed in the header and copied client commands                |
 | `REN_DEV_TRAFFIC_URL`    | Unset                            | Dev slot only: loopback origin of its traffic controls, for the dev toolbar     |
-| `REN_CONTROL_TOKEN_FILE` | Unset (read-only)                | The daemon's `control.token` (absolute path); set, the Runs view drives runs    |
-| `REN_CONTROL_LOGINS`     | Unset (anyone reaching the UI)   | Comma-separated Tailscale logins allowed to drive runs; set it behind Serve     |
+| `REN_CONTROL_TOKEN_FILE` | Unset (read-only)                | The daemon's `control.token` (absolute path); set, the UI drives sessions       |
+| `REN_CONTROL_LOGINS`     | Unset (anyone reaching the UI)   | Comma-separated Tailscale logins allowed to drive sessions; set it behind Serve |
 | `REN_SOURCE_DIR`         | Unset (Redline cannot send)      | Ren's source checkout (absolute path, under `[runs]` roots), for Redline        |
 | `HOST`                   | `127.0.0.1` with `bun run start` | UI listener address                                                             |
 | `PORT`                   | `3000` with `bun run start`      | UI listener port                                                                |
@@ -127,13 +127,13 @@ loopback or behind private Tailscale access, like the daemon.
 
 ## Sessions
 
-The Sessions view (`/sessions`) starts and drives sessions (Codex, Claude Code, or Pi in a folder
+The Sessions view (`/sessions`) starts and drives sessions (Codex, Claude Code, Pi, or OpenCode in a folder
 under the daemon's `[runs]` roots; see [sessions](../docs/api.md#sessions)): a sidebar of
 folders and their sessions, each folder's `+` making one there at once, the conversation (its
 recorded turns, then what streams in), its approvals with what each asks, and a prompt box whose
-bar holds its settings (and, for a draft, its client). `/runs` links lead here. History stays read-only; runs
-are the one thing the UI changes, and only when the UI server is given the
-daemon's control token file:
+bar holds its settings (and, for a draft, its client). `/runs` links lead here. Sessions, and archiving, unarchiving, and deleting
+recordings and runs, are the only things the UI changes, and only when the UI
+server is given the daemon's control token file:
 
 ```ini
 REN_CONTROL_TOKEN_FILE=/home/you/.local/state/ren/control.token
@@ -142,8 +142,12 @@ REN_CONTROL_LOGINS=you@example.com
 
 The UI server reads the token from the file on each request (the daemon writes a
 new one when it starts), so it never reaches the browser, and it forwards only
-`/control/runs*` to the daemon's `/control/v1/runs*`: list, start, prompt,
-answer, interrupt, stop, and the update feed. A request must come from the UI's
+these to the daemon's control API: `/control/sessions*` to
+`/control/v1/sessions*` (list, create, prompt, answer, configure, choose a
+draft's client, interrupt, stop, archive, unarchive, delete, the composer's
+commands and files, and the update feed), `/control/runs*` to the reads of
+`/control/v1/runs*` (live runs and their feed, places, clients, and models), and
+`/control/history/*` to archiving, unarchiving, and deleting a recording or run. A request must come from the UI's
 own pages (`Sec-Fetch-Site: same-origin`, or an `Origin` naming this host, and a
 JSON body), and with `REN_CONTROL_LOGINS` set, carry one of those logins in the
 `Tailscale-User-Login` header Tailscale Serve adds. Without it, anyone who
@@ -179,7 +183,7 @@ install-vps` sets it to the checkout it installs from, and without it Redline
 marks but cannot send. The checkout must be under the daemon's `[runs]` roots.
 The brief asks the agent to answer questions without changing anything, to make
 any change on a new `redline/…` branch in a git worktree, and not to install
-anything; nothing enforces that yet beyond the agent following it and the
+anything; nothing enforces that beyond the agent following it and the
 client's approvals. The client and approvals last used, and where the pane was
 left, are kept in this browser only.
 

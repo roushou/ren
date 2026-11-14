@@ -6,8 +6,9 @@
 //! roots configured, every route answers `runs_disabled`.
 //!
 //! Live updates carry what the agent reported (its reply as it streams, its
-//! commands, and its approvals). They are not stored: the run's facts and
-//! its model traffic are the record.
+//! commands, and its approvals). The supervisor stores every event but the
+//! streamed pieces as the run's conversation; its model traffic is recorded
+//! like any other client's.
 
 use super::{ControlApi, Refusal};
 use axum::{

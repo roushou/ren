@@ -138,8 +138,9 @@ Modules carry no lint headers of their own. A module with submodules lives in
 
 - The only exemptions are the capability implementations themselves, marked with
   `#[expect(clippy::disallowed_methods, reason = "…")]`: `HostEnv::capture`, the
-  daemon's `SystemClock`, `RandomIds`, and `ProcessHost` (`ren_daemon::host`), and
-  the daemon's server task spawn. The recorder runs on `ObservationThread` (`ren_daemon::host`), a
+  daemon's `SystemClock`, `RandomIds`, and `ProcessHost` (`ren_daemon::host`, its process
+  starts and its program lookup on the agents' `PATH`), and the daemon's server
+  and supervisor task spawns. The recorder runs on `ObservationThread` (`ren_daemon::host`), a
   thread with its own runtime.
 - Integration-test crates (`crates/*/tests/*.rs`) act as a shell: each has one
   crate-level `#![allow(...)]` with a reason, covering helpers outside `#[test]`
@@ -223,7 +224,7 @@ dependencies under "Crates" below. Read the code for current module ownership.
   start (with the operator session it serves, `RunSession`, a new one recorded
   first as `SessionRecord`), opening, settings changed mid-run, end, and each entry of its conversation (`RunEntry`, whole,
   admitted against the queue's byte budget), and `HistorySlot` an operator's archive or delete
-  of a recording or run (`HistoryEdit`); `RecorderTask` (run by the daemon on
+  of a recording, run, or operator session (`HistoryEdit`); `RecorderTask` (run by the daemon on
   its observation thread) is the shell around the pure `RecorderCore`
   (`recording`: records in queue order in, a batch of operations out, with
   chunking, inspection, and digests), and runs group commits, retention,
@@ -276,7 +277,7 @@ dependencies under "Crates" below. Read the code for current module ownership.
   process or, for a prompt with none running, through a new one that resumes
   its conversation, `choose_client` replaces a draft's client, `shelve`
   archives (stopping its process) or unarchives, `adopt` serves a session the
-  store holds, and `session_commands` and `session_files` serve its composer
+  store holds, `forget` stops serving one being deleted, and `session_commands` and `session_files` serve its composer
   (the folder's listing is the session's, kept until a turn ends). Session
   changes go to `subscribe_sessions`. A run started through `start` is a
   session and its first process. A client idle between turns is stopped
@@ -305,7 +306,7 @@ dependencies under "Crates" below. Read the code for current module ownership.
   start), with every event of its conversation as `entries` keeps it (no
   streamed pieces; a reply cut off kept as far as it came), and drains every
   run when the last handle is dropped. `src/purity.rs` keeps `run`,
-  `workdir`, `project`, `entries`, and `files` free of runtime and I/O. The daemon constructs it when `[runs]`
+  `workdir`, `project`, `entries`, `files`, and `session` free of runtime and I/O. The daemon constructs it when `[runs]`
   roots are configured, with `ProcessHost`; the gateway's control API serves it.
 - `crates/ren-gateway`: Ren's HTTP interface, with `Gateway` as its primary type.
   It owns forwarding, management, and control routes on one listener, assembled
@@ -344,12 +345,14 @@ dependencies under "Crates" below. Read the code for current module ownership.
     `[control]` configuration (`ControlOptions`) and `ControlToken`. Handler state
     stays crate-private; configuration and token types are exported at the root.
     Its `sessions` module serves `/control/v1/sessions`: creating a session,
-    prompting, configuring, choosing its client while a draft, archiving,
-    its composer's commands and files, and session changes as SSE, through
+    prompting, unqueueing, answering approvals, configuring, choosing its
+    client while a draft, interrupting, stopping, archiving, unarchiving,
+    deleting, its composer's commands and files, and session changes as SSE, through
     the `Supervisor`, loading a session the store holds (`Reader::session`)
-    on its first request. Its `runs` module serves `/control/v1/runs`: starting, prompting, answering,
-    interrupting, and stopping runs through the `ren_supervisor::Supervisor` in
-    `ManagementSetup`, and their updates as SSE. Its `history` module serves
+    on its first request. Its `runs` module serves `/control/v1/runs`, read only: the live runs
+    of the `ren_supervisor::Supervisor` in `ManagementSetup` and their updates
+    as SSE, and what a session can start with (places, clients, and models); it
+    holds the run refusals the `sessions` routes share. Its `history` module serves
     `/control/v1/history`: archiving, unarchiving, and deleting a recording or
     run, checked against the `Reader` and recorded through the recorder.
 - `crates/ren-daemon`: configuration, resource wiring, and lifecycle, with
@@ -401,9 +404,15 @@ dependencies under "Crates" below. Read the code for current module ownership.
   folder (`Sessions`), projects by place, and the clients a run can start with),
   `src/lib/mention.ts` the composer's offers (the client's commands after
   `/` or `$`, the folder's files after `@`), `src/lib/redline.ts` Redline's
-  pure core (what a mark points at, and the brief an agent gets; the layer
-  and its floating pane are `RedlineLayer.svelte` and `RedlinePanel.svelte`, sending
-  through the same session routes), and
+  pure core (what a mark points at, the brief an agent gets, and the open
+  sessions in Ren's checkout, `REN_SOURCE_DIR`, a brief can go to;
+  `RedlineDesk` in `src/lib/redline.svelte.ts` holds the pane's marks and
+  destinations, and the layer and its floating pane are `RedlineLayer.svelte`
+  and `RedlinePanel.svelte`, sending through the same session routes),
+  `src/lib/markdown.ts` how Markdown is read (`MarkdownTree`: CommonMark with
+  GitHub's extensions, parsed by `mdast-util-from-markdown` into a typed tree
+  with untrusted text made inert, rendered by `Markdown.svelte` without
+  `{@html}`), and
   `src/lib/server/runsStart.ts` makes the Sessions page's first reads on the UI
   server, with the browser's Tailscale login and never its cookies, so the
   page renders as it will stay.
@@ -427,8 +436,8 @@ dependencies under "Crates" below. Read the code for current module ownership.
   this checkout's build beside the installed service, with its own config,
   data, and ports, against a fake provider (`dev::provider`, whose replies are
   the pure, tested `script`), seeded with fake traffic (`dev::seed`, scenarios
-  as pure data), as `ren-dev-*` transient units, runs driven against a fake `codex`, `claude`, and `pi`
-  (`dev::agent`: the shell, and `script`, `claude`, and `pi`, the pure
+  as pure data), as `ren-dev-*` transient units, runs driven against a fake `codex`, `claude`, `pi`, and `opencode`
+  (`dev::agent`: the shell, and `script`, `claude`, `pi`, and `opencode`, the pure
   conversations it plays as each client), with live traffic whose
   settings both the generator and the fake provider reread (`dev::traffic`,
   with its loopback control API for the dev UI's toolbar), an optional private
