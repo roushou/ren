@@ -1,0 +1,22 @@
+# Lets Codex's own sandbox (its built-in bubblewrap) create the user
+# namespace it runs commands in, on hosts whose AppArmor restricts
+# unprivileged user namespaces (kernel.apparmor_restrict_unprivileged_userns
+# = 1, Ubuntu 24.04 and later). Without it every sandboxed command fails
+# ("bwrap: loopback: Failed RTM_NEWADDR: Operation not permitted") and Codex
+# asks to run it outside the sandbox instead.
+#
+# Like Ubuntu's own profiles for sandboxed programs (/etc/apparmor.d/chrome),
+# it confines nothing else: it names the program and allows `userns`, for
+# this binary only. The path is Codex's standalone install, any version, for
+# any user; add other install paths (an npm install's vendored binary) to the
+# attachment as needed. See docs/clients.md#sandbox-on-ubuntu.
+
+abi <abi/4.0>,
+include <tunables/global>
+
+profile codex @{HOME}/.codex/packages/standalone/releases/*/bin/codex flags=(unconfined) {
+  userns,
+
+  # Site-specific additions and overrides. See local/README for details.
+  include if exists <local/codex>
+}

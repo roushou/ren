@@ -436,7 +436,10 @@ dependencies under "Crates" below. Read the code for current module ownership.
   headless screenshots (`dev::shot`).
 - `deploy`: systemd units, and in `deploy/container` the compose file, Podman
   Quadlet files, and Tailscale Serve route for the root `Dockerfile`
-  (`docs/deployment.md#containers`). `scripts`: manual smoke tests for Pi, systemd, and launchd.
+  (`docs/deployment.md#containers`), and in `deploy/apparmor` the profile that
+  lets Codex's sandbox start where AppArmor restricts user namespaces
+  (`docs/clients.md#sandbox-on-ubuntu`). `scripts`: manual smoke tests for Pi,
+  systemd, and launchd.
 
 ### Crates
 
