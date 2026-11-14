@@ -104,6 +104,7 @@ produces `build/`. Cargo never builds or embeds the UI.
 | `REN_DEV_TRAFFIC_URL`    | Unset                            | Dev slot only: loopback origin of its traffic controls, for the dev toolbar     |
 | `REN_CONTROL_TOKEN_FILE` | Unset (read-only)                | The daemon's `control.token` (absolute path); set, the Runs view drives runs    |
 | `REN_CONTROL_LOGINS`     | Unset (anyone reaching the UI)   | Comma-separated Tailscale logins allowed to drive runs; set it behind Serve     |
+| `REN_SOURCE_DIR`         | Unset (Redline cannot send)      | Ren's source checkout (absolute path, under `[runs]` roots), for Redline        |
 | `HOST`                   | `127.0.0.1` with `bun run start` | UI listener address                                                             |
 | `PORT`                   | `3000` with `bun run start`      | UI listener port                                                                |
 | `ORIGIN`                 | Inferred from incoming request   | Set to the UI's external origin behind Tailscale Serve or another reverse proxy |
@@ -150,11 +151,44 @@ reaches the UI can drive runs: leave it unset only for a UI on loopback. Without
 `REN_CONTROL_TOKEN_FILE`, the view lists recorded runs and explains how to turn
 it on.
 
+### Redline
+
+With the control token, every page has Redline (the status line's Redline
+button, or `m`): mark what's wrong on the page for an agent to fix. While it is
+on, the element under the pointer is outlined and named, a click marks it
+instead of reaching the page, and you write a note in place; `Esc` leaves, and
+the marks stay. A pane floating over everything (drag it by its header, or move
+it with the arrow keys there; this browser keeps where you left it) shows the
+brief exactly as the agent gets it: each note with the element's selector (from the nearest labelled
+region), its text and size, and its source file and line when the UI runs as a
+development build (`bun run dev`; a production build has none), and the commit
+the daemon serving the page was built from; the pane names each mark by the
+element's text and keeps the brief (Markdown, rendered there and in the
+session's conversation, as prompts are) folded until asked for. One line says where
+the brief goes: the session running in Ren's own source checkout, so marks
+follow the work under way, else a new session on the client last used. Its
+menu offers a new session on each client and the other sessions running there
+(sessions whose client has stopped are not offered). A running session gets the
+brief as its next prompt, queued after its turn while one runs (the button then
+says Queue); a new one, as its first. Below it, the approvals: the client's
+policies (Ask first, Edits alone, Auto, as each client offers them), which a new
+session starts under, or a running one runs under from its next turn when its
+client takes that mid-run. Send then opens the session. The checkout
+is `REN_SOURCE_DIR`, since the marks are on Ren's pages; `cargo xtask
+install-vps` sets it to the checkout it installs from, and without it Redline
+marks but cannot send. The checkout must be under the daemon's `[runs]` roots.
+The brief asks the agent to answer questions without changing anything, to make
+any change on a new `redline/…` branch in a git worktree, and not to install
+anything; nothing enforces that yet beyond the agent following it and the
+client's approvals. The client and approvals last used, and where the pane was
+left, are kept in this browser only.
+
 ## Payload previews
 
-Payloads are rendered inert. Message text is formatted as Markdown (headings, lists,
-code, tables, emphasis) by a small parser in `src/lib/markdown.ts` that builds
-elements, never HTML: raw HTML stays text, links show their address but are not
+Payloads are rendered inert. Message text is formatted as Markdown (CommonMark with
+GitHub's tables, strikethrough, task lists, autolinks, and footnotes), read by
+`mdast-util-from-markdown` into a typed tree (`src/lib/markdown.ts`) that Svelte
+components render as elements, never HTML: raw HTML stays text, links show their address but are not
 clickable, and images are named but never loaded. Agent context wrapped in tags such
 as `<system-reminder>` is folded under its name. Message cards are colored by role
 (user, assistant, thinking, tool call or result, system), and context that repeats on

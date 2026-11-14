@@ -820,7 +820,7 @@
 
 {#snippet entryView(entry: Entry)}
   {#if entry.kind === 'prompt'}
-    <div class="entry prompt"><p>{entry.text}</p></div>
+    <div class="entry prompt"><Markdown text={entry.text} /></div>
   {:else if entry.kind === 'message'}
     <div class="entry reply" class:streaming={!entry.done}>
       <Markdown text={entry.text} />
@@ -1449,11 +1449,13 @@
     padding: 0 16px;
     font-size: 13px;
   }
-  .entry.prompt p {
-    margin: 0;
+  /* A prompt reads as Markdown, like a reply, with its line breaks kept
+     as written. */
+  .entry.prompt :global(.markdown) {
     padding: 10px 0;
+  }
+  .entry.prompt :global(.markdown p) {
     white-space: pre-wrap;
-    overflow-wrap: anywhere;
   }
   .entry.prompt {
     background: var(--surface-inset);

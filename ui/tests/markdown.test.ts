@@ -1,6 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { parseInline, parseMarkdown, type Block } from '../src/lib/markdown.ts';
+import { MarkdownTree, type Block } from '../src/lib/markdown.ts';
+
+const parseMarkdown = (text: string) => MarkdownTree.parse(text);
+const parseInline = (text: string) => MarkdownTree.inline(text);
 
 const text = (t: string) => ({ kind: 'text', text: t });
 
@@ -26,14 +29,14 @@ test('the blocks models write most often', () => {
     ].join('\n'),
   );
   assert.deepEqual(
-    doc.map((b) => b.kind),
+    doc.map((b: Block) => b.kind),
     ['heading', 'paragraph', 'list', 'list', 'code', 'quote', 'rule'],
   );
   assert.deepEqual(doc[0], { kind: 'heading', level: 2, children: [text('What Doppel is')] });
   const bullets = doc[2] as Extract<Block, { kind: 'list' }>;
   assert.equal(bullets.ordered, false);
   assert.equal(bullets.items.length, 2);
-  assert.deepEqual(bullets.items[0], [
+  assert.deepEqual(bullets.items[0]?.children, [
     {
       kind: 'paragraph',
       children: [
@@ -56,10 +59,12 @@ test('nested lists and lazy continuation lines', () => {
   if (list.kind !== 'list') return;
   assert.equal(list.items.length, 2);
   assert.deepEqual(
-    list.items[0].map((b) => b.kind),
+    list.items[0]!.children.map((b) => b.kind),
     ['paragraph', 'list'],
   );
-  assert.deepEqual(list.items[1], [{ kind: 'paragraph', children: [text('d\ncontinued')] }]);
+  assert.deepEqual(list.items[1]?.children, [
+    { kind: 'paragraph', children: [text('d\ncontinued')] },
+  ]);
 });
 
 test('pipe tables', () => {
@@ -115,13 +120,13 @@ test('tagged context folds under its name, and stray tags stay text', () => {
     '<system-reminder>Codebase notes\n\n# Rules\n</system-reminder>\n\nWhat does this do?',
   );
   assert.deepEqual(
-    doc.map((b) => b.kind),
+    doc.map((b: Block) => b.kind),
     ['tagged', 'paragraph'],
   );
   const tagged = doc[0] as Extract<Block, { kind: 'tagged' }>;
   assert.equal(tagged.name, 'system-reminder');
   assert.deepEqual(
-    tagged.children.map((b) => b.kind),
+    tagged.children.map((b: Block) => b.kind),
     ['paragraph', 'heading'],
   );
   // A tag never closed is just text.
@@ -131,4 +136,68 @@ test('tagged context folds under its name, and stray tags stay text', () => {
   // One-line tags close on their own line.
   const [inline] = parseMarkdown('<command-name>/review</command-name>');
   assert.equal(inline.kind, 'tagged');
+});
+
+test('CommonMark and GitHub extensions the old reader missed', () => {
+  // Task lists, and a table's column alignment.
+  const [tasks] = parseMarkdown('- [x] done\n- [ ] open');
+  assert.equal(tasks?.kind, 'list');
+  if (tasks?.kind !== 'list') return;
+  assert.deepEqual(
+    tasks.items.map((item) => item.checked),
+    [true, false],
+  );
+  const [table] = parseMarkdown('| a | b | c |\n|:--|:-:|--:|\n| 1 | 2 | 3 |');
+  assert.equal(table?.kind, 'table');
+  if (table?.kind !== 'table') return;
+  assert.deepEqual(table.align, ['left', 'center', 'right']);
+  // Reference links resolve, and their definitions are not shown.
+  assert.deepEqual(parseMarkdown('See [the docs][d].\n\n[d]: https://example.com'), [
+    {
+      kind: 'paragraph',
+      children: [
+        text('See '),
+        { kind: 'link', href: 'https://example.com', children: [text('the docs')] },
+        text('.'),
+      ],
+    },
+  ]);
+  // A hard break, and a bare address as a link.
+  assert.deepEqual(parseInline('one  \ntwo'), [text('one'), { kind: 'break' }, text('two')]);
+  assert.deepEqual(parseInline('at https://example.com now'), [
+    text('at '),
+    { kind: 'link', href: 'https://example.com', children: [text('https://example.com')] },
+    text(' now'),
+  ]);
+  // Footnotes: the mark, and the note under its label.
+  const doc = parseMarkdown('Claim.[^1]\n\n[^1]: Source.');
+  assert.deepEqual(doc[0], {
+    kind: 'paragraph',
+    children: [text('Claim.'), { kind: 'footnote', label: '1' }],
+  });
+  assert.equal(doc[1]?.kind, 'footnote');
+});
+
+test('deep lists are bounded too, kept as their text', () => {
+  const deep = Array.from({ length: 20 }, (_, level) => `${'  '.repeat(level)}- ${level}`).join(
+    '\n',
+  );
+  let depth = 0;
+  let block: Block | undefined = parseMarkdown(deep)[0];
+  while (block?.kind === 'list') {
+    depth++;
+    block =
+      block.items[0]?.children.find((child) => child.kind === 'list') ??
+      block.items[0]?.children[0];
+    if (block?.kind !== 'list') break;
+  }
+  assert.ok(depth <= MarkdownTree.DEPTH, `${depth}`);
+});
+
+test('a tag inside a code fence is code, not a fold', () => {
+  const doc = parseMarkdown('```\n<system-reminder>\nx\n</system-reminder>\n```');
+  assert.deepEqual(
+    doc.map((b: Block) => b.kind),
+    ['code'],
+  );
 });

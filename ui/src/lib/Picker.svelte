@@ -65,6 +65,8 @@
 
   const id = $props.id();
   let isOpen = $state(false);
+  /** Whether the list opens below the chip: when there is no room above. */
+  let below = $state(false);
   let typed = $state('');
   let active = $state(0);
   let field = $state<HTMLInputElement>();
@@ -100,6 +102,8 @@
   }
 
   async function show() {
+    const box = chip?.getBoundingClientRect();
+    below = !!box && box.top < 360 && window.innerHeight - box.bottom > box.top;
     isOpen = true;
     typed = '';
     active = Math.max(
@@ -176,7 +180,14 @@
     <Icon name="chevron" size={10} />
   </button>
   {#if isOpen}
-    <div class="panel" bind:this={panel} tabindex="-1" role="presentation" onkeydown={key}>
+    <div
+      class="panel"
+      class:below
+      bind:this={panel}
+      tabindex="-1"
+      role="presentation"
+      onkeydown={key}
+    >
       {#if search}
         <input
           bind:this={field}
@@ -311,6 +322,10 @@
   }
   .chip-button .placeholder {
     color: var(--muted);
+  }
+  .panel.below {
+    top: calc(100% + 4px);
+    bottom: auto;
   }
   .panel {
     position: absolute;

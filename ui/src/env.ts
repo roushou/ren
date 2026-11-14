@@ -1,6 +1,7 @@
 import { defineEnvVars } from '@sveltejs/kit/env';
 import { devTrafficOrigin, gatewayOrigin } from '#lib/server/config.ts';
 import { RunsAccessConfig } from '#lib/server/control.ts';
+import { Redline } from '#lib/redline.ts';
 
 export const variables = defineEnvVars({
   REN_GATEWAY_URL: {
@@ -25,5 +26,10 @@ export const variables = defineEnvVars({
     description:
       'Optional, comma-separated Tailscale logins allowed to drive runs through the UI. Set it whenever the UI is published with Tailscale Serve.',
     schema: (value) => RunsAccessConfig.logins(value),
+  },
+  REN_SOURCE_DIR: {
+    description:
+      "Optional: Ren's source checkout, an absolute path under the daemon's `[runs]` roots. Redline sends its briefs there; unset, it marks but cannot send.",
+    schema: (value) => Redline.checkout(value),
   },
 });

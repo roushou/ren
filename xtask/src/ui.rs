@@ -17,6 +17,8 @@ use std::{
 
 /// Where the UI is built and deployed, and the programs it needs.
 pub struct UiDeploy {
+    /// The checkout being installed, which Redline sends its briefs to.
+    checkout: PathBuf,
     source: PathBuf,
     template: PathBuf,
     staged: PathBuf,
@@ -48,6 +50,7 @@ impl UiDeploy {
     pub fn new(env: &HostEnv, home: &Path, repo: &Path) -> Result<Self, InstallError> {
         let share = home.join(".local/share");
         Ok(Self {
+            checkout: repo.to_path_buf(),
             source: repo.join("ui"),
             template: repo.join("deploy/ren-ui.service"),
             staged: share.join("ren-ui.next"),
@@ -149,21 +152,61 @@ impl UiDeploy {
         self.check()
     }
 
-    /// Keeps an existing `ui.env`, which the operator may have edited.
+    /// Keeps an existing `ui.env`, which the operator may have edited, only
+    /// adding `REN_SOURCE_DIR` (this checkout) when it names none.
     fn write_env(&self, urls: &UiUrls) -> Result<(), InstallError> {
         if self.env_file.exists() {
+            let existing =
+                fs::read_to_string(&self.env_file).map_err(InstallError::file(&self.env_file))?;
+            let Some(contents) = Self::with_source(&existing, &self.checkout) else {
+                InstallVps::step(&format!(
+                    "Keeping existing UI environment {}",
+                    self.env_file.display()
+                ));
+                return Ok(());
+            };
             InstallVps::step(&format!(
-                "Keeping existing UI environment {}",
+                "Adding {}={} to {}",
+                Self::SOURCE_KEY,
+                self.checkout.display(),
                 self.env_file.display()
             ));
-            return Ok(());
+            return InstallVps::write_private(&self.env_file, contents.as_bytes(), 0o600);
         }
         InstallVps::step(&format!("Writing {}", self.env_file.display()));
         let contents = format!(
-            "REN_GATEWAY_URL={}\nREN_PUBLIC_GATEWAY_URL={}\nORIGIN={}\n",
-            urls.gateway, urls.public_gateway, urls.origin
+            "REN_GATEWAY_URL={}\nREN_PUBLIC_GATEWAY_URL={}\nORIGIN={}\n{}={}\n",
+            urls.gateway,
+            urls.public_gateway,
+            urls.origin,
+            Self::SOURCE_KEY,
+            self.checkout.display()
         );
         InstallVps::write_private(&self.env_file, contents.as_bytes(), 0o600)
+    }
+
+    /// The UI's setting for Ren's source checkout (`ui/src/env.ts`).
+    const SOURCE_KEY: &str = "REN_SOURCE_DIR";
+
+    /// `existing` with `REN_SOURCE_DIR=<checkout>` added, or `None` when it
+    /// already sets it (commented out counts: the operator chose).
+    fn with_source(existing: &str, checkout: &Path) -> Option<String> {
+        let named = existing.lines().any(|line| {
+            line.trim_start()
+                .trim_start_matches('#')
+                .trim_start()
+                .strip_prefix(Self::SOURCE_KEY)
+                .is_some_and(|rest| rest.trim_start().starts_with('='))
+        });
+        if named {
+            return None;
+        }
+        let mut contents = existing.to_owned();
+        if !contents.is_empty() && !contents.ends_with('\n') {
+            contents.push('\n');
+        }
+        contents.push_str(&format!("{}={}\n", Self::SOURCE_KEY, checkout.display()));
+        Some(contents)
     }
 
     /// `deploy/ren-ui.service` with this host's Node.
@@ -213,6 +256,7 @@ mod tests {
     fn deploy(template: &Path) -> UiDeploy {
         let none = PathBuf::new();
         UiDeploy {
+            checkout: none.clone(),
             source: none.clone(),
             template: template.to_path_buf(),
             staged: none.clone(),
@@ -238,6 +282,27 @@ mod tests {
         );
         assert!(!rendered.contains("/usr/bin/node"));
         assert!(rendered.contains("Environment=HOST=127.0.0.1 PORT=3000"));
+    }
+
+    #[test]
+    fn adds_the_source_checkout_to_an_env_that_names_none() {
+        let checkout = Path::new("/home/you/ren");
+        assert_eq!(
+            UiDeploy::with_source("REN_GATEWAY_URL=http://127.0.0.1:8787", checkout).as_deref(),
+            Some("REN_GATEWAY_URL=http://127.0.0.1:8787\nREN_SOURCE_DIR=/home/you/ren\n")
+        );
+        assert_eq!(
+            UiDeploy::with_source("", checkout).as_deref(),
+            Some("REN_SOURCE_DIR=/home/you/ren\n")
+        );
+        // Set, or commented out, it is the operator's.
+        for kept in [
+            "ORIGIN=x\nREN_SOURCE_DIR=/srv/ren\n",
+            "# REN_SOURCE_DIR = /srv/ren\n",
+        ] {
+            assert_eq!(UiDeploy::with_source(kept, checkout), None);
+        }
+        assert!(UiDeploy::with_source("REN_SOURCE_DIRS=/x\n", checkout).is_some());
     }
 
     #[test]

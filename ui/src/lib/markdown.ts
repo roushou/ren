@@ -1,14 +1,21 @@
 /**
- * A small Markdown reader for captured model text. It produces a typed tree
- * that components render as elements, never as HTML: raw HTML stays text,
- * links are shown with their address but are not clickable, and images are
- * named, never loaded. Captures are untrusted, so nothing in them can fetch
- * or run anything.
+ * Markdown as the UI renders it: CommonMark with GitHub's extensions
+ * (tables, strikethrough, task lists, autolinks, footnotes), read by the
+ * standard parser (`mdast-util-from-markdown`) and turned here into a closed,
+ * typed tree that components render as elements, never as HTML.
  *
- * Supported: ATX headings, paragraphs, fenced code, block quotes, bullet
- * and numbered lists (nested by indentation), thematic breaks, pipe tables,
- * and inline code, strong, emphasis, strikethrough, links, and images.
+ * The text is untrusted (captured model output, prompts), so this is where
+ * it is made inert: raw HTML becomes text, a link keeps its address but is
+ * not clickable, an image is named but never loaded, and nesting deeper than
+ * `DEPTH` is kept as its source text, which bounds rendering recursion.
+ * Agents wrap injected context in tags on their own lines
+ * (`<system-reminder>`); such a region is read as a `tagged` block, shown
+ * folded under its name.
  */
+import type { AlignType, Definition, Nodes, PhrasingContent, RootContent } from 'mdast';
+import { fromMarkdown } from 'mdast-util-from-markdown';
+import { gfmFromMarkdown } from 'mdast-util-gfm';
+import { gfm } from 'micromark-extension-gfm';
 
 export type Inline =
   | { kind: 'text'; text: string }
@@ -17,286 +24,297 @@ export type Inline =
   | { kind: 'em'; children: Inline[] }
   | { kind: 'strike'; children: Inline[] }
   | { kind: 'link'; children: Inline[]; href: string }
-  | { kind: 'image'; alt: string; href: string };
+  | { kind: 'image'; alt: string; href: string }
+  /** A hard line break. */
+  | { kind: 'break' }
+  /** A footnote's mark in the text. */
+  | { kind: 'footnote'; label: string };
+
+/** A table column's alignment. */
+export type Align = 'left' | 'right' | 'center' | null;
+
+/** One list item; `checked` is set for a task list's items. */
+export interface ListItem {
+  checked: boolean | null;
+  children: Block[];
+}
 
 export type Block =
   | { kind: 'heading'; level: 1 | 2 | 3 | 4 | 5 | 6; children: Inline[] }
   | { kind: 'paragraph'; children: Inline[] }
   | { kind: 'code'; lang: string; text: string }
   | { kind: 'quote'; children: Block[] }
-  | { kind: 'list'; ordered: boolean; start: number; items: Block[][] }
+  | { kind: 'list'; ordered: boolean; start: number; items: ListItem[] }
   | { kind: 'rule' }
-  | { kind: 'table'; header: Inline[][]; rows: Inline[][][] }
+  | { kind: 'table'; align: Align[]; header: Inline[][]; rows: Inline[][][] }
+  /** A footnote's text, under its label. */
+  | { kind: 'footnote'; label: string; children: Block[] }
   /** `<name>…</name>` spanning lines, as agents wrap injected context
    * (`<system-reminder>`). Shown folded, under its name. */
   | { kind: 'tagged'; name: string; children: Block[] };
 
-/** Deeper nesting than this is read as plain text, which bounds recursion. */
-const MAX_DEPTH = 8;
+/** A stretch of the text: Markdown, or a tagged region. */
+type Segment = { kind: 'markdown'; text: string } | { kind: 'tagged'; name: string; text: string };
 
-const fence = /^ {0,3}(`{3,}|~{3,})\s*([^`\s]*)[^`]*$/;
-const heading = /^ {0,3}(#{1,6})(?:[ \t]+(.*?))?(?:[ \t]+#+)?[ \t]*$/;
-const rule = /^ {0,3}([-*_])(?:[ \t]*\1){2,}[ \t]*$/;
-const bullet = /^( *)([-*+])[ \t]+(.*)$/;
-const numbered = /^( *)(\d{1,9})[.)][ \t]+(.*)$/;
-const quote = /^ {0,3}>[ \t]?(.*)$/;
-const tagOpen = /^ {0,3}<([a-z][a-z0-9]*[-_][a-z0-9_-]{0,62})>(.*)$/;
-const tableRule = /^ *\|?(?: *:?-+:? *\|)+ *:?-+:? *\|? *$|^ *\|? *:?-+:? *\| *$/;
+/** An opening tag at a line's start, named as agents name them (a dash or
+ * underscore inside, so HTML's own tags stay HTML, which is text). */
+const TAG_OPEN = /^ {0,3}<([a-z][a-z0-9]*[-_][a-z0-9_-]{0,62})>(.*)$/;
+const FENCE = /^ {0,3}(`{3,}|~{3,})/;
 
-function blank(line: string) {
-  return line.trim() === '';
-}
+export class MarkdownTree {
+  /** Nesting deeper than this is kept as text. */
+  static readonly DEPTH = 8;
 
-function listMarker(line: string) {
-  const m = bullet.exec(line) ?? numbered.exec(line);
-  if (!m) return null;
-  const ordered = /\d/.test(m[2]);
-  return {
-    indent: m[1].length,
-    ordered,
-    start: ordered ? Number(m[2]) : 1,
-    // The content column: continuation lines indented this far belong to the item.
-    column: line.length - m[3].length,
-    text: m[3],
-  };
-}
-
-function cells(line: string): string[] {
-  let row = line.trim();
-  if (row.startsWith('|')) row = row.slice(1);
-  if (row.endsWith('|') && !row.endsWith('\\|')) row = row.slice(0, -1);
-  const out: string[] = [];
-  let cell = '';
-  for (let i = 0; i < row.length; i++) {
-    if (row[i] === '\\' && row[i + 1] === '|') {
-      cell += '|';
-      i++;
-    } else if (row[i] === '|') {
-      out.push(cell.trim());
-      cell = '';
-    } else cell += row[i];
-  }
-  out.push(cell.trim());
-  return out;
-}
-
-/** Whether `line` starts a block other than a paragraph continuation. */
-function interrupts(line: string) {
-  return (
-    fence.test(line) ||
-    heading.test(line) ||
-    rule.test(line) ||
-    quote.test(line) ||
-    listMarker(line) !== null
-  );
-}
-
-export function parseMarkdown(text: string, depth = 0): Block[] {
-  const lines = text.replace(/\r\n?/g, '\n').split('\n');
-  const blocks: Block[] = [];
-  let i = 0;
-  while (i < lines.length) {
-    const line = lines[i];
-    if (blank(line)) {
-      i++;
-      continue;
-    }
-    if (depth >= MAX_DEPTH) {
-      blocks.push({
-        kind: 'paragraph',
-        children: [{ kind: 'text', text: lines.slice(i).join('\n') }],
-      });
-      break;
-    }
-    const tag = tagOpen.exec(line);
-    if (tag) {
-      const close = `</${tag[1]}>`;
-      let end = i;
-      while (end < lines.length && !lines[end].includes(close)) end++;
-      if (end < lines.length) {
-        const inner = [tag[2], ...lines.slice(i + 1, end + 1)].join('\n');
-        const body = inner.slice(0, inner.lastIndexOf(close));
-        const after = lines[end].slice(lines[end].indexOf(close) + close.length);
-        blocks.push({ kind: 'tagged', name: tag[1], children: parseMarkdown(body, depth + 1) });
-        if (after.trim()) lines[end] = after;
-        else end++;
-        i = end;
-        continue;
-      }
-    }
-    const open = fence.exec(line);
-    if (open) {
-      const marker = open[1];
-      const body: string[] = [];
-      i++;
-      while (i < lines.length && !lines[i].trimStart().startsWith(marker)) body.push(lines[i++]);
-      i++; // the closing fence, or past the end
-      blocks.push({ kind: 'code', lang: open[2], text: body.join('\n') });
-      continue;
-    }
-    const h = heading.exec(line);
-    if (h) {
-      blocks.push({
-        kind: 'heading',
-        level: h[1].length as 1 | 2 | 3 | 4 | 5 | 6,
-        children: parseInline(h[2] ?? '', depth),
-      });
-      i++;
-      continue;
-    }
-    if (rule.test(line)) {
-      blocks.push({ kind: 'rule' });
-      i++;
-      continue;
-    }
-    if (quote.test(line)) {
-      const body: string[] = [];
-      while (i < lines.length && !blank(lines[i])) {
-        const q = quote.exec(lines[i]);
-        body.push(q ? q[1] : lines[i]);
-        i++;
-      }
-      blocks.push({ kind: 'quote', children: parseMarkdown(body.join('\n'), depth + 1) });
-      continue;
-    }
-    const marker = listMarker(line);
-    if (marker) {
-      const items: Block[][] = [];
-      while (i < lines.length) {
-        const item = listMarker(lines[i]);
-        if (!item || item.indent !== marker.indent || item.ordered !== marker.ordered) break;
-        const body = [item.text];
-        i++;
-        let gap = false;
-        while (i < lines.length) {
-          const next = lines[i];
-          if (blank(next)) {
-            gap = true;
-            body.push('');
-            i++;
-            continue;
-          }
-          const indent = next.length - next.trimStart().length;
-          const sibling = listMarker(next);
-          if (indent >= item.column || (indent > marker.indent && sibling)) {
-            body.push(next.slice(Math.min(indent, item.column)));
-            gap = false;
-            i++;
-          } else if (!gap && !sibling && !interrupts(next)) {
-            // A lazy continuation of the item's paragraph.
-            body.push(next.trim());
-            i++;
-          } else break;
+  /** `text` as blocks. */
+  static parse(text: string, depth = 0): Block[] {
+    return MarkdownTree.#segments(text).flatMap((segment): Block[] => {
+      switch (segment.kind) {
+        case 'markdown':
+          return new MarkdownTree(segment.text).#blocks(
+            fromMarkdown(segment.text, {
+              extensions: [gfm()],
+              mdastExtensions: [gfmFromMarkdown()],
+            }).children,
+            depth,
+          );
+        case 'tagged':
+          return [
+            {
+              kind: 'tagged',
+              name: segment.name,
+              children:
+                depth + 1 >= MarkdownTree.DEPTH
+                  ? MarkdownTree.#plain(segment.text)
+                  : MarkdownTree.parse(segment.text, depth + 1),
+            },
+          ];
+        default: {
+          const never: never = segment;
+          return never;
         }
-        while (body.length && body.at(-1) === '') body.pop();
-        items.push(parseMarkdown(body.join('\n'), depth + 1));
       }
-      blocks.push({ kind: 'list', ordered: marker.ordered, start: marker.start, items });
-      continue;
-    }
-    if (line.includes('|') && i + 1 < lines.length && tableRule.test(lines[i + 1])) {
-      const header = cells(line);
-      i += 2;
-      const rows: Inline[][][] = [];
-      while (i < lines.length && !blank(lines[i]) && lines[i].includes('|')) {
-        const row = cells(lines[i++]);
-        rows.push(header.map((_, c) => parseInline(row[c] ?? '', depth)));
-      }
-      blocks.push({ kind: 'table', header: header.map((c) => parseInline(c, depth)), rows });
-      continue;
-    }
-    const body = [line];
-    i++;
-    while (i < lines.length && !blank(lines[i]) && !interrupts(lines[i])) body.push(lines[i++]);
-    blocks.push({ kind: 'paragraph', children: parseInline(body.join('\n'), depth) });
+    });
   }
-  return blocks;
-}
 
-/** Inline spans; anything unmatched stays literal text. */
-export function parseInline(text: string, depth = 0): Inline[] {
-  const out: Inline[] = [];
-  let plain = '';
-  const flush = () => {
-    if (plain) out.push({ kind: 'text', text: plain });
-    plain = '';
-  };
-  const nested = (inner: string) =>
-    depth + 1 >= MAX_DEPTH
-      ? [{ kind: 'text' as const, text: inner }]
-      : parseInline(inner, depth + 1);
-  let i = 0;
-  while (i < text.length) {
-    const rest = text.slice(i);
-    const ch = text[i];
-    if (ch === '\\' && i + 1 < text.length && /[\\`*_{}[\]()#+\-.!|~<>]/.test(text[i + 1])) {
-      plain += text[i + 1];
-      i += 2;
-      continue;
-    }
-    if (ch === '`') {
-      const run = /^`+/.exec(rest)![0];
-      const close = text.indexOf(run, i + run.length);
-      if (close !== -1) {
-        flush();
-        const code = text.slice(i + run.length, close);
-        out.push({
-          kind: 'code',
-          text:
-            code.length > 2 && code.startsWith(' ') && code.endsWith(' ')
-              ? code.slice(1, -1)
-              : code,
-        });
-        i = close + run.length;
-        continue;
-      }
-      plain += run;
-      i += run.length;
-      continue;
-    }
-    if (ch === '!' || ch === '[') {
-      const m = /^(!?)\[([^\]\n]*)\]\(([^()\s]*(?:\([^()\s]*\))?[^()\s]*)(?:\s+"[^"]*")?\)/.exec(
-        rest,
-      );
-      if (m) {
-        flush();
-        if (m[1]) out.push({ kind: 'image', alt: m[2], href: m[3] });
-        else out.push({ kind: 'link', children: nested(m[2]), href: m[3] });
-        i += m[0].length;
-        continue;
-      }
-    }
-    const pair = /^(\*\*|__)(?=\S)([\s\S]*?\S)\1/.exec(rest) ?? null;
-    if (pair) {
-      flush();
-      out.push({ kind: 'strong', children: nested(pair[2]) });
-      i += pair[0].length;
-      continue;
-    }
-    const strike = /^~~(?=\S)([\s\S]*?\S)~~/.exec(rest);
-    if (strike) {
-      flush();
-      out.push({ kind: 'strike', children: nested(strike[1]) });
-      i += strike[0].length;
-      continue;
-    }
-    // `_` emphasis only at word boundaries, so snake_case stays text.
-    const before = i === 0 ? ' ' : text[i - 1];
-    const em =
-      ch === '*'
-        ? /^\*(?=[^\s*])([\s\S]*?[^\s*])\*(?!\*)/.exec(rest)
-        : ch === '_' && !/\w/.test(before)
-          ? /^_(?=\S)([\s\S]*?\S)_(?!\w)/.exec(rest)
-          : null;
-    if (em) {
-      flush();
-      out.push({ kind: 'em', children: nested(em[1]) });
-      i += em[0].length;
-      continue;
-    }
-    plain += ch;
-    i++;
+  /** One paragraph's inline spans, for text known to be a single line. */
+  static inline(text: string): Inline[] {
+    const [first] = MarkdownTree.parse(text);
+    return first?.kind === 'paragraph' ? first.children : [];
   }
-  flush();
-  return out;
+
+  /**
+   * The text cut into Markdown and tagged regions: a tag opening a line,
+   * outside a code fence, starts a region that runs to its closing tag; an
+   * unclosed tag stays text.
+   */
+  static #segments(text: string): Segment[] {
+    const lines = text.split('\n');
+    const out: Segment[] = [];
+    let markdown: string[] = [];
+    let fence: string | null = null;
+    const flush = () => {
+      if (markdown.length) out.push({ kind: 'markdown', text: markdown.join('\n') });
+      markdown = [];
+    };
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i] ?? '';
+      const marker = FENCE.exec(line)?.[1] ?? null;
+      if (fence !== null) {
+        if (marker && marker[0] === fence[0] && marker.length >= fence.length) fence = null;
+        markdown.push(line);
+        continue;
+      }
+      if (marker) {
+        fence = marker;
+        markdown.push(line);
+        continue;
+      }
+      const tag = TAG_OPEN.exec(line);
+      const close = tag ? `</${tag[1]}>` : null;
+      const end = close ? lines.findIndex((later, at) => at >= i && later.includes(close)) : -1;
+      if (!tag || !close || end === -1) {
+        markdown.push(line);
+        continue;
+      }
+      // The region's text: the opening line's rest, up to the first closing
+      // tag on the line that holds it; what follows that tag reads on.
+      const rest = tag[2] ?? '';
+      const closing = end === i ? rest : (lines[end] ?? '');
+      const at = closing.indexOf(close);
+      const body =
+        end === i
+          ? rest.slice(0, at)
+          : [rest, ...lines.slice(i + 1, end), closing.slice(0, at)].join('\n');
+      const after = closing.slice(at + close.length);
+      flush();
+      out.push({ kind: 'tagged', name: tag[1] ?? '', text: body });
+      if (after.trim()) lines[end] = after;
+      i = after.trim() ? end - 1 : end;
+    }
+    flush();
+    return out;
+  }
+
+  /** Text kept as it is, as one paragraph. */
+  static #plain(text: string): Block[] {
+    return text.trim() ? [{ kind: 'paragraph', children: [{ kind: 'text', text }] }] : [];
+  }
+
+  readonly #source: string;
+  /** Link and image definitions, by identifier, for references. */
+  readonly #definitions = new Map<string, Definition>();
+
+  private constructor(source: string) {
+    this.#source = source;
+  }
+
+  /** A node's text in the source, for what is kept as text. */
+  #text(node: Nodes): string {
+    const start = node.position?.start.offset;
+    const end = node.position?.end.offset;
+    return start === undefined || end === undefined ? '' : this.#source.slice(start, end);
+  }
+
+  #blocks(nodes: readonly RootContent[], depth: number): Block[] {
+    for (const node of nodes) {
+      if (node.type === 'definition') this.#definitions.set(node.identifier, node);
+    }
+    return nodes.flatMap((node) => this.#block(node, depth));
+  }
+
+  /** Blocks nested one level down, or their text past the depth bound. */
+  #nested(node: Nodes, children: readonly RootContent[], depth: number): Block[] {
+    return depth + 1 >= MarkdownTree.DEPTH
+      ? MarkdownTree.#plain(this.#text(node))
+      : this.#blocks(children, depth + 1);
+  }
+
+  #block(node: RootContent, depth: number): Block[] {
+    switch (node.type) {
+      case 'heading':
+        return [
+          { kind: 'heading', level: node.depth, children: this.#inlines(node.children, depth) },
+        ];
+      case 'paragraph':
+        return [{ kind: 'paragraph', children: this.#inlines(node.children, depth) }];
+      case 'code':
+        return [{ kind: 'code', lang: node.lang ?? '', text: node.value }];
+      case 'blockquote':
+        return [{ kind: 'quote', children: this.#nested(node, node.children, depth) }];
+      case 'list':
+        if (depth + 1 >= MarkdownTree.DEPTH) return MarkdownTree.#plain(this.#text(node));
+        return [
+          {
+            kind: 'list',
+            ordered: node.ordered ?? false,
+            start: node.start ?? 1,
+            items: node.children.map((item) => ({
+              checked: item.checked ?? null,
+              children: this.#blocks(item.children, depth + 1),
+            })),
+          },
+        ];
+      case 'thematicBreak':
+        return [{ kind: 'rule' }];
+      case 'table': {
+        const [head, ...rows] = node.children;
+        const width = head?.children.length ?? 0;
+        // As GFM reads a table: a short row gets empty cells, a long one is cut.
+        const cells = (row: typeof head) =>
+          Array.from({ length: width }, (_, column) =>
+            this.#inlines(row?.children[column]?.children ?? [], depth),
+          );
+        return [
+          {
+            kind: 'table',
+            align: (node.align ?? []).map((align: AlignType) => align ?? null),
+            header: cells(head),
+            rows: rows.map(cells),
+          },
+        ];
+      }
+      case 'footnoteDefinition':
+        return [
+          {
+            kind: 'footnote',
+            label: node.label ?? node.identifier,
+            children: this.#nested(node, node.children, depth),
+          },
+        ];
+      case 'definition':
+        // Read for references; not shown.
+        return [];
+      case 'html':
+        return MarkdownTree.#plain(node.value);
+      default:
+        // Anything else is kept as its source text, never dropped.
+        return MarkdownTree.#plain(this.#text(node));
+    }
+  }
+
+  /** Spans nested one level down, or their text past the depth bound. */
+  #nestedInlines(node: Nodes, children: readonly PhrasingContent[], depth: number): Inline[] {
+    return depth + 1 >= MarkdownTree.DEPTH
+      ? [{ kind: 'text', text: this.#text(node) }]
+      : this.#inlines(children, depth + 1);
+  }
+
+  /** Spans, with neighbouring text joined (raw HTML read as text splits it). */
+  #inlines(nodes: readonly PhrasingContent[], depth: number): Inline[] {
+    const out: Inline[] = [];
+    for (const inline of nodes.flatMap((node) => this.#inline(node, depth))) {
+      const last = out[out.length - 1];
+      if (last?.kind === 'text' && inline.kind === 'text') {
+        out[out.length - 1] = { kind: 'text', text: last.text + inline.text };
+      } else {
+        out.push(inline);
+      }
+    }
+    return out;
+  }
+
+  #inline(node: PhrasingContent, depth: number): Inline[] {
+    switch (node.type) {
+      case 'text':
+        return [{ kind: 'text', text: node.value }];
+      case 'inlineCode':
+        return [{ kind: 'code', text: node.value }];
+      case 'strong':
+        return [{ kind: 'strong', children: this.#nestedInlines(node, node.children, depth) }];
+      case 'emphasis':
+        return [{ kind: 'em', children: this.#nestedInlines(node, node.children, depth) }];
+      case 'delete':
+        return [{ kind: 'strike', children: this.#nestedInlines(node, node.children, depth) }];
+      case 'link':
+        return [
+          {
+            kind: 'link',
+            href: node.url,
+            children: this.#nestedInlines(node, node.children, depth),
+          },
+        ];
+      case 'image':
+        return [{ kind: 'image', alt: node.alt ?? '', href: node.url }];
+      case 'linkReference': {
+        const children = this.#nestedInlines(node, node.children, depth);
+        const target = this.#definitions.get(node.identifier);
+        return target ? [{ kind: 'link', href: target.url, children }] : children;
+      }
+      case 'imageReference': {
+        const target = this.#definitions.get(node.identifier);
+        return target
+          ? [{ kind: 'image', alt: node.alt ?? '', href: target.url }]
+          : [{ kind: 'text', text: this.#text(node) }];
+      }
+      case 'break':
+        return [{ kind: 'break' }];
+      case 'footnoteReference':
+        return [{ kind: 'footnote', label: node.label ?? node.identifier }];
+      case 'html':
+        return [{ kind: 'text', text: node.value }];
+      default:
+        // Anything else is kept as its source text, never dropped.
+        return [{ kind: 'text', text: this.#text(node) }];
+    }
+  }
 }
