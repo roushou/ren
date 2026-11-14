@@ -4,14 +4,25 @@
   the last client used; New session opens the form for any other place. A
   session is named by what it was asked, when that is known here, and says
   how it stands. The archived sessions are a shelf of their own.
+
+  A session with no process running can be deleted from its row: the
+  trash control takes the place of its time on hover or focus, and asks
+  in the row itself before anything is sent. The row says while the delete
+  is under way, keeps a refusal's reason, and folds away once the session
+  has left the list.
 -->
 <script lang="ts">
+  import { tick } from 'svelte';
   import { SvelteSet } from 'svelte/reactivity';
+  import { slide } from 'svelte/transition';
   import { harnessLabel } from '#lib/activity.ts';
   import Icon from '#lib/Icon.svelte';
   import { ago } from '#lib/overview.ts';
   import {
+    Deletions,
     Sessions,
+    type Deletion,
+    type DeletionEvent,
     type DeskSession,
     type SessionFolder,
     type SessionId,
@@ -28,6 +39,9 @@
     shelf,
     archivedCount,
     busy,
+    deletable,
+    deletion,
+    ondelete,
     onshelf,
     onselect,
     oncreate,
@@ -45,6 +59,10 @@
     shelf: Shelf;
     archivedCount: number;
     busy: boolean;
+    /** Whether sessions can be deleted here: control is configured. */
+    deletable: boolean;
+    deletion: Deletion;
+    ondelete: (event: DeletionEvent) => void;
     onshelf: (shelf: Shelf) => void;
     onselect: (session: SessionId) => void;
     /** A session in `workdir` at once; null: a scratch folder of its own. */
@@ -56,12 +74,113 @@
   const SHOWN = 5;
   /** Folders whose every session is shown. */
   const unfolded = new SvelteSet<string>();
+
+  /** No fold for those who asked for less motion. */
+  const still =
+    typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  function nameOf(session: DeskSession): string {
+    const asked = title(session);
+    return (
+      asked ??
+      (session.phase === 'draft' ? 'New session' : `${harnessLabel(session.harness)} session`)
+    );
+  }
+
+  /** Back to the row's trash control, so the keyboard stays where it was. */
+  async function cancel(session: DeskSession) {
+    ondelete({ kind: 'cancel' });
+    await tick();
+    document
+      .querySelector<HTMLButtonElement>(`[data-session="${session.session}"] .remove`)
+      ?.focus();
+  }
+
+  /** The question's safe answer takes the focus when it opens. */
+  function focus(node: HTMLElement) {
+    node.focus();
+  }
 </script>
 
 {#snippet row(session: DeskSession)}
   {@const mark = Sessions.mark(session, harnessLabel(session.harness))}
   {@const asked = title(session)}
   {@const unused = !asked && session.phase === 'draft'}
+  {@const asking = Deletions.of(deletion, session.session, 'list')}
+  <div
+    class="run-item"
+    class:selected={session.session === selected}
+    data-session={session.session}
+    out:slide={{ duration: still ? 0 : 180 }}
+  >
+    {#if asking}
+      {@render confirm(session, asking)}
+    {:else}
+      {@render select(session, mark, asked, unused)}
+      {#if deletable && !Sessions.running(session)}<button
+          class="remove"
+          disabled={deletion.phase === 'deleting'}
+          title="Delete session"
+          aria-label="Delete session {nameOf(session)}"
+          onclick={() => ondelete({ kind: 'ask', session: session.session, from: 'list' })}
+          ><Icon name="trash" size={12} /></button
+        >{/if}
+    {/if}
+  </div>
+{/snippet}
+
+{#snippet confirm(session: DeskSession, asking: Exclude<Deletion, { phase: 'idle' }>)}
+  {@const sending = asking.phase === 'deleting'}
+  <div
+    class="run-confirm"
+    class:sending
+    role="alertdialog"
+    aria-labelledby="delete-{session.session}"
+    aria-describedby="delete-why-{session.session}"
+    aria-busy={sending}
+    tabindex="-1"
+    onkeydown={(event) => {
+      if (event.key !== 'Escape' || sending) return;
+      event.stopPropagation();
+      void cancel(session);
+    }}
+  >
+    <span class="confirm-name" id="delete-{session.session}"
+      >{sending ? 'Deleting' : 'Delete'} <bdi>{nameOf(session)}</bdi>{sending ? '…' : '?'}</span
+    >
+    <span
+      class="confirm-why"
+      class:failed={asking.phase === 'failed'}
+      id="delete-why-{session.session}"
+      >{asking.phase === 'failed'
+        ? asking.reason
+        : sending
+          ? 'Removing it and its recorded calls.'
+          : 'Its runs and recorded calls go too.'}</span
+    >
+    <span class="confirm-actions">
+      <button
+        class="button small danger confirm"
+        disabled={sending}
+        onclick={() => ondelete({ kind: 'confirm' })}
+        >{asking.phase === 'failed' ? 'Retry' : 'Delete'}</button
+      >
+      <button
+        class="button small"
+        disabled={sending}
+        {@attach focus}
+        onclick={() => void cancel(session)}>Cancel</button
+      >
+    </span>
+  </div>
+{/snippet}
+
+{#snippet select(
+  session: DeskSession,
+  mark: ReturnType<typeof Sessions.mark>,
+  asked: string | null,
+  unused: boolean,
+)}
   <button
     class="run-row"
     class:selected={session.session === selected}
@@ -268,6 +387,135 @@
   }
   .run-row.selected {
     background: var(--row-selected);
+  }
+  /* A row and its trash control, which stands where its time does. */
+  .run-item {
+    position: relative;
+  }
+  .remove {
+    position: absolute;
+    top: 50%;
+    right: 10px;
+    display: grid;
+    place-items: center;
+    width: 22px;
+    height: 22px;
+    padding: 0;
+    border: 1px solid transparent;
+    border-radius: 3px;
+    background: none;
+    color: var(--muted);
+    cursor: pointer;
+    opacity: 0;
+    transform: translateY(-50%);
+    transition: opacity 120ms ease;
+  }
+  .run-item:hover .remove,
+  .remove:focus-visible {
+    opacity: 1;
+  }
+  .run-item:has(.remove):hover .run-when,
+  .run-item:has(.remove:focus-visible) .run-when {
+    visibility: hidden;
+  }
+  .remove:hover,
+  .remove:focus-visible {
+    border-color: var(--error);
+    background: var(--error-soft);
+    color: var(--error);
+  }
+  .remove:disabled {
+    opacity: 0;
+    pointer-events: none;
+  }
+  /* Without hover, the selected session's control stays in view. */
+  @media (hover: none) {
+    .run-item.selected .remove:not(:disabled) {
+      opacity: 1;
+    }
+    .run-item.selected:has(.remove:not(:disabled)) .run-when {
+      visibility: hidden;
+    }
+  }
+  /* The question, in the row it is about: ruled in the danger color. */
+  .run-confirm {
+    position: relative;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    column-gap: 8px;
+    row-gap: 1px;
+    align-items: center;
+    padding: 5px 10px 5px 18px;
+    background: var(--error-soft);
+    box-shadow: inset 2px 0 0 var(--error);
+    font-size: 12px;
+    animation: ask 140ms ease-out;
+  }
+  .run-confirm:focus {
+    outline: none;
+  }
+  .confirm-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--ink);
+  }
+  .confirm-why {
+    grid-column: 1;
+    font-size: 11px;
+    color: var(--muted);
+  }
+  .confirm-why.failed {
+    color: var(--error);
+  }
+  .confirm-actions {
+    grid-column: 2;
+    grid-row: 1 / span 2;
+    display: flex;
+    gap: 4px;
+  }
+  .run-confirm.sending .confirm-name {
+    color: var(--muted);
+  }
+  /* Under way: a bar runs along the row's foot until the session is gone. */
+  .run-confirm.sending::after {
+    content: '';
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: 2px;
+    background: linear-gradient(90deg, transparent, var(--error), transparent);
+    background-size: 40% 100%;
+    background-repeat: no-repeat;
+    animation: sending 1s linear infinite;
+  }
+  @keyframes ask {
+    from {
+      background: transparent;
+      box-shadow: inset 0 0 0 var(--error);
+    }
+  }
+  @keyframes sending {
+    from {
+      background-position: -40% 0;
+    }
+    to {
+      background-position: 140% 0;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .remove {
+      transition: none;
+    }
+    .run-confirm {
+      animation: none;
+    }
+    .run-confirm.sending::after {
+      animation: none;
+      background: var(--error);
+      opacity: 0.5;
+    }
   }
   .run-row.needs .run-name {
     font-weight: 600;
