@@ -126,9 +126,11 @@
     at = clamp(at.x + move[0], at.y + move[1]);
     leave();
   }
+  // Kept on screen as the window changes. `at` is read untracked: writing a
+  // new position must not run this again.
   $effect(() => {
-    at = clamp(at.x, at.y);
-    const keep = () => (at = clamp(at.x, at.y));
+    const keep = () => untrack(() => (at = clamp(at.x, at.y)));
+    keep();
     window.addEventListener('resize', keep);
     return () => window.removeEventListener('resize', keep);
   });
