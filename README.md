@@ -104,13 +104,13 @@ The optional UI lives in [`ui`](ui/README.md).
 
 `ren serve` runs in the foreground; for a background service, pick one:
 
-| Where                          | How                                                               | Guide                                                       |
-| ------------------------------ | ----------------------------------------------------------------- | ----------------------------------------------------------- |
-| macOS                          | launchd agent, from `ren service render --manager launchd`        | [launchd](docs/deployment.md#macos-launchd)                 |
-| Linux                          | systemd user service, from `ren service render --manager systemd` | [systemd](docs/deployment.md#linux-systemd)                 |
-| VPS on your tailnet            | `cargo xtask install-vps --https-port 8443`                       | [VPS with Tailscale](docs/deployment.md#vps-with-tailscale) |
-| Docker or Podman               | `docker compose up -d --build` in `deploy/container`              | [Compose](docs/deployment.md#compose)                       |
-| Podman, rootless under systemd | Quadlet files in `deploy/container/quadlet`                       | [Podman Quadlet](docs/deployment.md#podman-quadlet)         |
+| Where                          | How                                                  | Guide                                                       |
+| ------------------------------ | ---------------------------------------------------- | ----------------------------------------------------------- |
+| macOS                          | launchd agent, from `ren service render`             | [launchd](docs/deployment.md#macos-launchd)                 |
+| Linux                          | systemd user service, from `ren service render`      | [systemd](docs/deployment.md#linux-systemd)                 |
+| VPS on your tailnet            | `cargo xtask install-vps --https-port 8443`          | [VPS with Tailscale](docs/deployment.md#vps-with-tailscale) |
+| Docker or Podman               | `docker compose up -d --build` in `deploy/container` | [Compose](docs/deployment.md#compose)                       |
+| Podman, rootless under systemd | Quadlet files in `deploy/container/quadlet`          | [Podman Quadlet](docs/deployment.md#podman-quadlet)         |
 
 The daemon always listens on loopback. Remote clients reach it through
 Tailscale Serve, from the host or from a sidecar container; Ren has no public

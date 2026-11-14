@@ -197,7 +197,9 @@ The control API (`/control/v1`) accepts a request carrying the per-run token fro
 Serve whose `Tailscale-User-Login` is listed in `control.tailscale_logins`.
 Loopback alone is not enough, because Serve forwards tagged devices and Funnel
 traffic to loopback without an identity. Requests with `Origin` or
-`Sec-Fetch-Site` (browsers) are refused. The UI has no control actions. The
+`Sec-Fetch-Site` (browsers) are refused. The UI drives sessions and edits
+history only through its own server, which holds the token
+([UI](../ui/README.md#sessions)). The
 endpoints are listed in the [API reference](api.md#control-api).
 
 `ren control` targets the daemon the history commands target. On the daemon's

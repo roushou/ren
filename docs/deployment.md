@@ -203,8 +203,9 @@ With `--ui-https-port` (which needs `--https-port`), it also deploys the
 [UI](../ui/README.md#vps-service). It needs Bun and Node on `PATH`. Before
 stopping anything, it builds `ui/` and stages the build with its production
 dependencies in `~/.local/share/ren-ui.next`. After the daemon is upgraded, it
-writes `~/.config/ren/ui.env` only if missing (the daemon on loopback, both
-Tailscale URLs, and `REN_SOURCE_DIR`, this checkout, for Redline), stops `ren-ui.service`, keeps the deployed copy as
+writes `~/.config/ren/ui.env` if missing (the daemon on loopback, both
+Tailscale URLs, and `REN_SOURCE_DIR`, this checkout, for Redline) and adds
+`REN_SOURCE_DIR` to an existing one that names none, stops `ren-ui.service`, keeps the deployed copy as
 `ren-ui.previous`, swaps in the new one, installs the unit from
 `deploy/ren-ui.service` with the Node found on `PATH`, starts it, and checks the
 UI's `/health`, which relays the daemon's. It then publishes the UI on that port
