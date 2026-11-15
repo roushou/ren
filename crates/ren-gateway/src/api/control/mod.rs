@@ -13,6 +13,7 @@
 
 mod history;
 mod refusal;
+pub mod request;
 mod runs;
 mod sessions;
 mod sign_in;
@@ -40,6 +41,7 @@ use ren_recorder::{
 };
 use ren_store::backup::{Backup, BackupError};
 use ren_supervisor::Supervisor;
+use request::{BlockRequest, CancelRequest, PauseRequest};
 use runs::RunsApi;
 use std::{sync::Arc, time::Duration};
 use tokio_util::sync::CancellationToken;
@@ -130,27 +132,6 @@ struct StateBody<'a> {
     api_version: u32,
     state: &'a OperatorState,
     running: Vec<RunningCall>,
-}
-
-#[derive(serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-struct PauseRequest {
-    retry_after_seconds: u32,
-}
-
-#[derive(serde::Deserialize, Default)]
-#[serde(default, deny_unknown_fields)]
-struct BlockRequest {
-    /// How long the block lasts; absent means until unblocked.
-    duration_seconds: Option<u64>,
-}
-
-#[derive(serde::Deserialize, Default)]
-#[serde(default, deny_unknown_fields)]
-struct CancelRequest {
-    /// Also block the call's session this long, so its client does not retry
-    /// at once.
-    block_session_seconds: Option<u64>,
 }
 
 impl ControlApi {

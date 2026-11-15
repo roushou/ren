@@ -9,9 +9,12 @@
 //! in `control.tailscale_logins`.
 
 use crate::client::{ClientError, GatewayChoice};
-use ren_gateway::ApiRead;
+use ren_gateway::api::ErrorCode;
+use ren_gateway::api::control::request::{ControlFeed, ControlMethod, ControlRequest};
+use ren_gateway::{ApiRead, ControlRefusal, ControlToken};
 use ren_harness::{endpoint::GatewayEndpoint, host::HostEnv};
 use ren_protocol::direction::Direction;
+use ren_protocol::label::{Labeled, Stored};
 use ren_recorder::id::{CallId, TurnId};
 use ren_store::Reader;
 use ren_store::activity::{ActivityBudget, CallActivity, TurnActivity};
@@ -113,58 +116,49 @@ pub enum ManagementError {
         status: StatusCode,
         refusal: Refusal,
     },
+    #[error("control request failed with {status}")]
+    Failed { status: StatusCode },
     #[error("the export ended after {received} of {expected} bytes")]
     Truncated { received: u64, expected: u64 },
     #[error("cannot write the export")]
     Write(#[source] std::io::Error),
 }
 
-/// An API error code (`{api_version, error}`), parsed once; codes this CLI
-/// does not know are kept.
+/// An API error code (`{api_version, error}`), parsed once into the read
+/// API's or the control API's vocabulary; codes this CLI does not know are
+/// kept.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Refusal {
-    NotFound,
-    Busy,
-    Unavailable,
-    InvalidQuery,
-    /// A control request without a token or a Tailscale identity.
-    Unauthorized,
-    /// A Tailscale login the daemon does not list.
-    Forbidden,
-    Other(String),
-}
-
-impl From<&str> for Refusal {
-    fn from(code: &str) -> Self {
-        match code {
-            "not_found" => Self::NotFound,
-            "busy" => Self::Busy,
-            "unavailable" => Self::Unavailable,
-            "invalid_query" => Self::InvalidQuery,
-            "unauthorized" => Self::Unauthorized,
-            "forbidden" => Self::Forbidden,
-            other => Self::Other(other.to_owned()),
-        }
-    }
+    Read(Stored<ErrorCode>),
+    Control(Stored<ControlRefusal>),
 }
 
 /// What a refusal means to someone running the CLI.
 impl std::fmt::Display for Refusal {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::NotFound => f.write_str("the gateway has no such record, or no complete captured body"),
-            Self::Busy => f.write_str("the gateway is busy; try again"),
-            Self::Unavailable => f.write_str("the gateway's storage is unavailable"),
-            Self::InvalidQuery => f.write_str("the gateway refused the query"),
-            Self::Unauthorized => f.write_str(
+            Self::Read(Stored::Known(ErrorCode::NotFound)) => f.write_str("the gateway has no such record, or no complete captured body"),
+            Self::Read(Stored::Known(ErrorCode::Busy)) => f.write_str("the gateway is busy; try again"),
+            Self::Read(Stored::Known(ErrorCode::Unavailable)) => f.write_str("the gateway's storage is unavailable"),
+            Self::Read(Stored::Known(ErrorCode::InvalidQuery)) => f.write_str("the gateway refused the query"),
+            Self::Read(Stored::Known(ErrorCode::IdentityRefused)) => f.write_str("the gateway refused this caller's identity"),
+            Self::Control(Stored::Known(ControlRefusal::Unauthorized)) => f.write_str(
                 "the gateway refused the control request without a Tailscale identity: reach it through Tailscale Serve, or run on the daemon's host without a gateway",
             ),
-            Self::Forbidden => f.write_str(
+            Self::Control(Stored::Known(ControlRefusal::Forbidden)) => f.write_str(
                 "the gateway refused this Tailscale login: add it to [control] tailscale_logins in the daemon's ren.toml and restart the daemon",
             ),
-            Self::Other(code) => write!(f, "the gateway refused the request: {code}"),
+            Self::Read(Stored::Unknown(code)) => write!(f, "the gateway refused the request: {}", code.as_str()),
+            Self::Control(code) => write!(f, "the daemon refused the request: {code}"),
         }
     }
+}
+
+/// How a control request is authorized: the daemon's token, read on its
+/// host, or the Tailscale identity Serve adds on the way through a gateway.
+pub enum ControlCredential {
+    Token(ControlToken),
+    Tailnet,
 }
 
 /// A control API answer, printed whatever its status.
@@ -173,12 +167,35 @@ pub struct ControlAnswer {
     pub body: Value,
 }
 
+impl ControlAnswer {
+    /// Print the answer; a refusal is an error after it.
+    pub fn report(&self) -> Result<std::process::ExitCode, ManagementError> {
+        println!("{}", serde_json::to_string_pretty(&self.body)?);
+        if self.status.is_success() {
+            Ok(std::process::ExitCode::SUCCESS)
+        } else {
+            Err(ManagementError::Failed {
+                status: self.status,
+            })
+        }
+    }
+}
+
 /// Whether the command line names this host's daemon (`--config` or
 /// `--data-dir`).
 #[derive(Clone, Copy)]
 pub enum HostFlags {
     Named,
     Absent,
+}
+
+impl ControlCredential {
+    fn authorize(&self, request: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+        match self {
+            Self::Token(token) => request.bearer_auth(token.expose()),
+            Self::Tailnet => request,
+        }
+    }
 }
 
 impl Target {
@@ -239,7 +256,7 @@ impl Management {
         let status = response.status();
         if !status.is_success() {
             let body = self.bytes(response).await?;
-            return Err(Self::error(status, &body));
+            return Err(Self::error(status, &body, Refusal::Read));
         }
         let expected = response.content_length();
         let mut received = 0_u64;
@@ -275,7 +292,7 @@ impl Management {
             Ok(response)
         } else {
             let body = self.bytes(response).await?;
-            Err(Self::error(status, &body))
+            Err(Self::error(status, &body, Refusal::Read))
         }
     }
 
@@ -296,59 +313,71 @@ impl Management {
         self.endpoint.root()
     }
 
-    /// Sends a control request through the gateway, without a token.
+    /// Send a control request, authorized by `credential`. Through a
+    /// gateway, a refused identity is an error; every other answer is
+    /// returned to be printed, as the daemon gave it.
     pub async fn control(
         &self,
-        method: Method,
-        path: &str,
-        body: Option<Value>,
+        request: &ControlRequest,
+        credential: &ControlCredential,
     ) -> Result<ControlAnswer, ManagementError> {
-        let mut request = self
-            .http
-            .request(method, self.endpoint.url(&format!("/control/v1/{path}")));
-        if let Some(body) = body {
-            request = request
+        let method = match request.method() {
+            ControlMethod::Get => Method::GET,
+            ControlMethod::Post => Method::POST,
+        };
+        let url = self
+            .endpoint
+            .url(&format!("/control/v1/{}", request.path()));
+        let mut sending = credential.authorize(self.http.request(method, url));
+        if let Some(body) = request.body()? {
+            sending = sending
                 .header("content-type", "application/json")
-                .body(body.to_string());
+                .body(body);
         }
-        let response = self.send(request).await?;
+        let response = self.send(sending).await?;
         let status = response.status();
         let body = self.bytes(response).await?;
         let body: Value =
             serde_json::from_slice(&body).map_err(|_| ManagementError::Shape { status })?;
-        if status.is_success() {
-            return Ok(ControlAnswer { status, body });
-        }
-        // Other refusals (a call not running, a backup in progress) are the
-        // daemon's answer, printed as the local command prints them.
-        match body.get("error").and_then(Value::as_str).map(Refusal::from) {
-            Some(refusal @ (Refusal::Unauthorized | Refusal::Forbidden)) => {
-                Err(ManagementError::Refused { status, refusal })
+        let refusal = body
+            .get("error")
+            .and_then(Value::as_str)
+            .map(Stored::<ControlRefusal>::from_label);
+        match (credential, refusal) {
+            (
+                ControlCredential::Tailnet,
+                Some(
+                    refusal @ Stored::Known(
+                        ControlRefusal::Unauthorized | ControlRefusal::Forbidden,
+                    ),
+                ),
+            ) => Err(ManagementError::Refused {
+                status,
+                refusal: Refusal::Control(refusal),
+            }),
+            (ControlCredential::Tailnet | ControlCredential::Token(_), _) => {
+                Ok(ControlAnswer { status, body })
             }
-            Some(
-                Refusal::NotFound
-                | Refusal::Busy
-                | Refusal::Unavailable
-                | Refusal::InvalidQuery
-                | Refusal::Other(_),
-            )
-            | None => Ok(ControlAnswer { status, body }),
         }
     }
 
-    /// A streamed control response (server-sent events) through the
-    /// gateway, without a token. Read it with [`Self::chunk`].
-    pub async fn control_stream(&self, path: &str) -> Result<reqwest::Response, ManagementError> {
-        let url = self.endpoint.url(&format!("/control/v1/{path}"));
-        let response = self
-            .send(self.http.get(url).header("accept", "text/event-stream"))
-            .await?;
+    /// A control event stream (server-sent events), authorized by
+    /// `credential`. Read it with [`Self::chunk`].
+    pub async fn control_stream(
+        &self,
+        feed: ControlFeed,
+        credential: &ControlCredential,
+    ) -> Result<reqwest::Response, ManagementError> {
+        let url = self.endpoint.url(&format!("/control/v1/{}", feed.path()));
+        let request =
+            credential.authorize(self.http.get(url).header("accept", "text/event-stream"));
+        let response = self.send(request).await?;
         let status = response.status();
         if status.is_success() {
             Ok(response)
         } else {
             let body = self.bytes(response).await?;
-            Err(Self::error(status, &body))
+            Err(Self::error(status, &body, Refusal::Control))
         }
     }
 
@@ -413,7 +442,7 @@ impl Management {
         let status = response.status();
         let body = self.bytes(response).await?;
         if !status.is_success() {
-            return Err(Self::error(status, &body));
+            return Err(Self::error(status, &body, Refusal::Read));
         }
         let Ok(Value::Object(mut map)) = serde_json::from_slice::<Value>(&body) else {
             return Err(ManagementError::Shape { status });
@@ -452,8 +481,13 @@ impl Management {
         }
     }
 
-    /// An error answer: its `error` code, or its status when it has none.
-    fn error(status: StatusCode, body: &[u8]) -> ManagementError {
+    /// An error answer: its `error` code, read in the API's vocabulary, or
+    /// its status when it has none.
+    fn error<T: Labeled>(
+        status: StatusCode,
+        body: &[u8],
+        vocabulary: impl FnOnce(Stored<T>) -> Refusal,
+    ) -> ManagementError {
         match serde_json::from_slice::<Value>(body)
             .ok()
             .as_ref()
@@ -462,7 +496,7 @@ impl Management {
         {
             Some(code) => ManagementError::Refused {
                 status,
-                refusal: Refusal::from(code),
+                refusal: vocabulary(Stored::from_label(code)),
             },
             None => ManagementError::Shape { status },
         }
@@ -474,28 +508,42 @@ mod tests {
     use super::*;
 
     #[test]
-    fn error_answers_keep_their_code() {
+    fn error_answers_keep_their_code_in_their_apis_vocabulary() {
         let refused = Management::error(
             StatusCode::NOT_FOUND,
             br#"{"api_version":1,"error":"not_found"}"#,
+            Refusal::Read,
         );
         assert!(matches!(
             refused,
             ManagementError::Refused {
-                refusal: Refusal::NotFound,
+                refusal: Refusal::Read(Stored::Known(ErrorCode::NotFound)),
+                ..
+            }
+        ));
+        let control = Management::error(
+            StatusCode::CONFLICT,
+            br#"{"api_version":1,"error":"backup_running"}"#,
+            Refusal::Control,
+        );
+        assert!(matches!(
+            control,
+            ManagementError::Refused {
+                refusal: Refusal::Control(Stored::Known(ControlRefusal::BackupRunning)),
                 ..
             }
         ));
         let unknown = Management::error(
             StatusCode::CONFLICT,
-            br#"{"api_version":1,"error":"backup_running"}"#,
+            br#"{"api_version":1,"error":"a_newer_code"}"#,
+            Refusal::Read,
         );
         assert!(matches!(
             unknown,
-            ManagementError::Refused { refusal: Refusal::Other(ref code), .. } if code == "backup_running"
+            ManagementError::Refused { refusal: Refusal::Read(Stored::Unknown(ref code)), .. } if code.as_str() == "a_newer_code"
         ));
         assert!(matches!(
-            Management::error(StatusCode::BAD_GATEWAY, b"<html>"),
+            Management::error(StatusCode::BAD_GATEWAY, b"<html>", Refusal::Read),
             ManagementError::Shape { .. }
         ));
     }

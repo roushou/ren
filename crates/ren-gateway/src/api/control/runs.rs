@@ -25,14 +25,12 @@ use http::{HeaderMap, StatusCode};
 use ren_harness::{
     Harness,
     commands::ClientCommand,
-    drive::{CommandRefused, Decision},
+    drive::CommandRefused,
     models::ModelId,
     settings::{ApprovalPolicy, Effort, RunSettings},
 };
-use ren_recorder::id::AttachmentId;
 use ren_supervisor::{
-    CommandError, Delivery, ModelsError, RunRefused, RunSnapshot, StartError, Supervisor,
-    WorkdirError,
+    CommandError, ModelsError, RunRefused, RunSnapshot, StartError, Supervisor, WorkdirError,
 };
 use std::{convert::Infallible, sync::Arc, time::Duration};
 use tokio::sync::broadcast::error::RecvError;
@@ -54,21 +52,6 @@ impl FilesRequest {
     pub(super) const MOST: usize = 100;
 }
 
-#[derive(serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(super) struct PromptRequest {
-    /// May be blank when attachments go.
-    #[serde(default)]
-    pub(super) text: String,
-    /// The session's attachments to send with it, by id.
-    #[serde(default)]
-    pub(super) attachments: Vec<AttachmentId>,
-    /// How it goes: start a turn (the default), queue it for after the
-    /// running turn, or steer the running turn with it.
-    #[serde(default = "PromptRequest::start")]
-    pub(super) delivery: Delivery,
-}
-
 impl SettingsRequest {
     /// The settings asked for: a model must be one a client could name.
     pub(super) fn settings(self) -> Result<RunSettings, ControlRefusal> {
@@ -85,12 +68,6 @@ impl SettingsRequest {
     }
 }
 
-impl PromptRequest {
-    fn start() -> Delivery {
-        Delivery::Start
-    }
-}
-
 /// The settings a run moves to; each left out is the client's own.
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -101,12 +78,6 @@ pub(super) struct SettingsRequest {
     pub(super) effort: Option<Effort>,
     #[serde(default)]
     pub(super) approvals: Option<ApprovalPolicy>,
-}
-
-#[derive(serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(super) struct AnswerRequest {
-    pub(super) decision: Decision,
 }
 
 #[derive(serde::Serialize)]

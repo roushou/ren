@@ -401,6 +401,10 @@ dependencies under "Crates" below. Read the code for current module ownership.
     `Controls` (token or Tailscale identity; browsers refused), and its
     `[control]` configuration (`ControlOptions`) and `ControlToken`. Handler state
     stays crate-private; configuration and token types are exported at the root.
+    Every refusal is a `ControlRefusal` (`refusal`), one code with one status,
+    pinned in `tests/fixtures/labels.txt`. Its `request` module holds each request
+    the CLI sends as a value (`ControlRequest`: method, path, and the body types
+    the routes parse), and `tests/runs.rs` sends each one to the router.
     Its `tools` module serves `/control/v1/tools` (listing, change, and
     collection) through the `Toolbox` port the gateway declares in `tools`
     (with its views), which the daemon's `HostToolbox` implements.

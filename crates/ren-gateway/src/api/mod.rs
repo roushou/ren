@@ -10,7 +10,7 @@
 use serde_with::{DeserializeFromStr, SerializeDisplay};
 use strum::{Display, EnumString, IntoStaticStr, VariantArray};
 
-mod control;
+pub mod control;
 mod live;
 mod params;
 pub mod preview;

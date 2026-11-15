@@ -13,7 +13,8 @@
 //! `/control/v1/sessions/{id}/block` and `/unblock` are the operator
 //! state's: they take a client's own session id, not one of these.
 
-use super::runs::{AnswerRequest, FilesRequest, PromptRequest, RunsApi, SettingsRequest};
+use super::request::{AnswerRequest, CreateRequest, PromptRequest};
+use super::runs::{FilesRequest, RunsApi, SettingsRequest};
 use super::{ControlApi, ControlRefusal};
 use axum::{
     Json, Router,
@@ -36,7 +37,7 @@ use ren_harness::{
     },
     drive::ApprovalId,
     models::ModelId,
-    settings::{ApprovalPolicy, Effort, RunSettings},
+    settings::RunSettings,
 };
 use ren_protocol::label::Stored;
 use ren_protocol::native::NativeThreadId;
@@ -68,25 +69,6 @@ pub(super) struct SessionsApi {
 }
 
 type Api = State<Arc<SessionsApi>>;
-
-#[derive(serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-struct CreateRequest {
-    harness: Harness,
-    /// The folder, inside a root or another place; left out, the session
-    /// gets a new folder of its own in scratch.
-    #[serde(default)]
-    dir: Option<String>,
-    #[serde(default)]
-    model: Option<String>,
-    #[serde(default)]
-    effort: Option<Effort>,
-    #[serde(default)]
-    approvals: Option<ApprovalPolicy>,
-    /// A client conversation to go on with, begun elsewhere.
-    #[serde(default)]
-    resume: Option<uuid::Uuid>,
-}
 
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]

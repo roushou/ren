@@ -52,7 +52,7 @@ impl RunsApi {
         match error {
             SignInError::Refused(SignInRefused::NotOffered(_)) => ControlRefusal::SignInNotOffered,
             SignInError::Refused(SignInRefused::NoSuchMethod { .. }) => {
-                return ControlRefusal::InvalidRequest;
+                ControlRefusal::InvalidRequest
             }
             SignInError::NotInstalled(_) => ControlRefusal::NotInstalled,
             SignInError::NoRoot => ControlRefusal::RunsDisabled,
