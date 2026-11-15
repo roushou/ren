@@ -1,3 +1,8 @@
+<script lang="ts" module>
+  /** How long a navigation waits before its view's outline is shown, in ms. */
+  const PLACEHOLDER_DELAY = 150;
+</script>
+
 <script lang="ts">
   import { flushSync, onMount, tick } from 'svelte';
   import { goto, onNavigate, preloadCode, refreshAll } from '$app/navigation';
@@ -20,7 +25,8 @@
   import RedlineLayer from '#lib/RedlineLayer.svelte';
   import RedlinePanel from '#lib/RedlinePanel.svelte';
   import { RedlineDesk } from '#lib/redline.svelte.ts';
-  import { Views } from '#lib/view.ts';
+  import { Views, type View } from '#lib/view.ts';
+  import PagePlaceholder from '#lib/PagePlaceholder.svelte';
   import '#lib/style.css';
   import type { LayoutProps } from './$types';
   let { data, children }: LayoutProps = $props();
@@ -51,7 +57,29 @@
       ?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
   });
   const view = $derived(Views.of(page.route.id));
-  const tab = $derived(Views.tab(view));
+  /** The view being navigated to, when it is another one: its tab lights up
+   * at once, and its placeholder follows if the wait is long enough to see. */
+  const target = $derived(
+    navigating.to && navigating.to.route.id !== page.route.id
+      ? Views.of(navigating.to.route.id)
+      : null,
+  );
+  /** The view whose outline stands in for the page while its data loads. */
+  let placeholder = $state<View | null>(null);
+  $effect(() => {
+    const next = target;
+    if (!next) {
+      placeholder = null;
+      return;
+    }
+    // A quick load swaps straight to the page, with no outline flashing by.
+    const timer = setTimeout(() => (placeholder = next), PLACEHOLDER_DELAY);
+    return () => clearTimeout(timer);
+  });
+  const tab = $derived(Views.tab(target ?? view));
+  /** The scope bar's snippet: the page's own, except while another view's
+   * outline stands in for it, when the bar names that view instead. */
+  const scope = $derived(placeholder ? undefined : workbench.scope);
   /** When the scope does not fit on one line it folds behind a button. */
   let scopeOpen = $state(false);
   let folded = $state(false);
@@ -86,7 +114,7 @@
   });
   const sessionCount = $derived(page.data.sessions?.value?.sessions.length ?? 0);
   const selected = $derived(workbench.selected);
-  const pageTitle = $derived(page.error ? 'Page unavailable' : Views.title(view));
+  const pageTitle = $derived(page.error ? 'Page unavailable' : Views.title(placeholder ?? view));
   const gatewayOrigin = $derived(page.data.gatewayUrl);
   // The header names where the gateway runs, not its address.
   const place = $derived(GatewayPlace.parse(gatewayOrigin));
@@ -285,16 +313,14 @@
   <div class="workbench-toolbar" class:folded class:scope-open={scopeOpen} bind:this={toolbar}>
     <!-- The nav tab names the view; the bar shows its scope. -->
     <h1 class="sr-only">{pageTitle}</h1>
-    {#if workbench.scope && folded}<button
+    {#if scope && folded}<button
         class="button small scope-toggle"
         aria-expanded={scopeOpen}
         aria-controls="scope"
         onclick={() => (scopeOpen = !scopeOpen)}><Icon name="filter" size={13} /> Scope</button
       >{/if}
     <div class="scope" id="scope" bind:this={scopeElement}>
-      {#if workbench.scope}{@render workbench.scope()}{:else}<span class="scope-title"
-          >{pageTitle}</span
-        >{/if}
+      {#if scope}{@render scope()}{:else}<span class="scope-title">{pageTitle}</span>{/if}
     </div>
     <div class="page-actions">
       <label class="toggle-control"
@@ -323,8 +349,15 @@
       role="progressbar"
       aria-label="Loading view"
     ></div>{/if}
-  <main class="workspace" class:navigating={!!navigating.to} aria-busy={!!navigating.to}>
-    {@render children()}
+  <main
+    class="workspace"
+    class:navigating={!!navigating.to && !placeholder}
+    aria-busy={!!navigating.to}
+  >
+    {#if placeholder}<PagePlaceholder shape={Views.shape(placeholder)} />{/if}
+    <!-- Kept mounted under the outline, so a navigation that fails or is
+         cancelled leaves the page as it was. -->
+    <div class="page-slot" class:hidden={!!placeholder}>{@render children()}</div>
   </main>
   <footer class="statusline" class:redlining={redline.open} aria-label="Gateway status">
     <span
