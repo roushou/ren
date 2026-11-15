@@ -664,16 +664,7 @@ impl PiRpc {
             ),
             other => (
                 ItemKind::Other(other.to_owned()),
-                ItemRead::Tool {
-                    name: match ["path", "pattern", "url", "query"]
-                        .into_iter()
-                        .find_map(text)
-                    {
-                        Some(detail) => format!("{other} {detail}"),
-                        None => other.to_owned(),
-                    },
-                    status: ItemStatus::InProgress,
-                },
+                ItemRead::tool(crate::Harness::Pi, other, args, ItemStatus::InProgress),
             ),
         }
     }
@@ -712,7 +703,11 @@ impl PiRpc {
                 exit_code: None,
             },
             ItemRead::FileChange { paths, .. } => ItemRead::FileChange { paths, status },
-            ItemRead::Tool { name, .. } => ItemRead::Tool { name, status },
+            ItemRead::Tool { name, effects, .. } => ItemRead::Tool {
+                name,
+                effects,
+                status,
+            },
             other @ (ItemRead::Prompt { .. }
             | ItemRead::Reply { .. }
             | ItemRead::Reasoning
@@ -1183,8 +1178,13 @@ mod tests {
                 (
                     ItemPhase::Started,
                     ItemKind::Other("grep".into()),
+                    // What it does is read, so its name is Pi's alone.
                     ItemRead::Tool {
-                        name: "grep TODO".into(),
+                        name: "grep".into(),
+                        effects: vec![crate::tools::ToolEffect {
+                            kind: crate::tools::EffectKind::Search,
+                            target: "TODO".into(),
+                        }],
                         status: ItemStatus::InProgress,
                     },
                     "call_3".into(),

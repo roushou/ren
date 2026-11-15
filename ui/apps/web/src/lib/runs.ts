@@ -6,10 +6,12 @@
 import {
   API_VERSION,
   RecordingId,
+  toolEffect,
   versioned,
   type Harness,
   type NativeThreadId,
   type NativeTurnId,
+  type ToolEffect,
   type UnixMillis,
 } from './api.ts';
 import {
@@ -164,7 +166,9 @@ export type ItemRead =
       exit_code: number | null;
     }
   | { as: 'file_change'; paths: string[]; status: ItemStatus }
-  | { as: 'tool'; name: string; status: ItemStatus }
+  /** Another tool: its name as the client gave it, and what it does as Ren
+   * reads it (none for items stored before Ren read them). */
+  | { as: 'tool'; name: string; effects: ToolEffect[]; status: ItemStatus }
   /** Nothing read, or a reading a newer daemon gives: shown by the item's kind. */
   | { as: 'unread' };
 
@@ -337,7 +341,12 @@ const itemRead: Decoder<ItemRead> = (value, path) => {
         status: status(),
       };
     case 'tool':
-      return { as: 'tool', name: string(value.name, at('name')), status: status() };
+      return {
+        as: 'tool',
+        name: string(value.name, at('name')),
+        effects: array(toolEffect)(value.effects ?? [], at('effects')),
+        status: status(),
+      };
     default:
       return { as: 'unread' };
   }
@@ -1159,7 +1168,7 @@ export type Entry =
       exit: number | null;
     }
   | { kind: 'file_change'; item: ItemId; paths: string[]; status: string }
-  | { kind: 'tool'; item: ItemId; name: string; done: boolean }
+  | { kind: 'tool'; item: ItemId; name: string; effects: ToolEffect[]; done: boolean }
   | { kind: 'turn_end'; turn: NativeTurnId; end: TurnEnd }
   | { kind: 'notice'; tone: 'warn' | 'danger'; text: string };
 
@@ -1335,10 +1344,10 @@ export class Transcript {
         entry = read.text ? { kind: 'message', item: item.id, text: read.text, done } : null;
         break;
       case 'tool':
-        entry = { kind: 'tool', item: item.id, name: read.name, done };
+        entry = { kind: 'tool', item: item.id, name: read.name, effects: read.effects, done };
         break;
       case 'unread':
-        entry = { kind: 'tool', item: item.id, name: item.kind, done };
+        entry = { kind: 'tool', item: item.id, name: item.kind, effects: [], done };
         break;
       default:
         return assertNever(read);

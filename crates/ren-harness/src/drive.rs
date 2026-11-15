@@ -15,8 +15,10 @@ use crate::lines::{Framed, Line};
 use crate::opencode::OpenCodeAcp;
 use crate::pi::PiRpc;
 use crate::settings::{Midway, RunSettings};
+use crate::tools::ToolEffect;
 use crate::{Harness, launch::NotDrivable};
 use base64::Engine as _;
+use ren_protocol::activity::{ToolInput, ToolUse};
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -562,9 +564,14 @@ pub enum ItemRead {
         paths: Vec<String>,
         status: ItemStatus,
     },
-    /// Any other tool the client used, by the name it gave.
+    /// Any other tool the client used: its name as the client gave it (with
+    /// what its input names, when Ren reads no effect from it), and what it
+    /// does as Ren reads any tool call (`Harness::effects`); none for items
+    /// stored before Ren read them.
     Tool {
         name: String,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        effects: Vec<ToolEffect>,
         status: ItemStatus,
     },
     /// An item Ren reads nothing from; its kind and body say what it is.
@@ -639,6 +646,50 @@ pub enum ItemStatus {
     Declined,
     /// A status Ren does not know, as the client named it.
     Other(String),
+}
+
+impl ItemRead {
+    /// The fields of a tool's input that say what it acts on, in the order
+    /// one is shown after a name Ren reads no effect from.
+    const DETAILS: [&'static str; 6] = [
+        "file_path",
+        "path",
+        "pattern",
+        "url",
+        "query",
+        "description",
+    ];
+
+    /// The tool `name` that `harness` ran with `input`: what it does, read
+    /// as Ren reads the same tool on the wire; with none read, its name
+    /// followed by what its input names.
+    pub(crate) fn tool(
+        harness: Harness,
+        name: &str,
+        input: &serde_json::Value,
+        status: ItemStatus,
+    ) -> Self {
+        let effects = harness.effects(&ToolUse {
+            id: None,
+            kind: "tool_use".to_owned(),
+            name: name.to_owned(),
+            input: ToolInput::Json(input.clone()),
+        });
+        let name = match (
+            effects.is_empty(),
+            Self::DETAILS
+                .into_iter()
+                .find_map(|key| input.get(key).and_then(serde_json::Value::as_str)),
+        ) {
+            (true, Some(detail)) => format!("{name} {detail}"),
+            (true, None) | (false, _) => name.to_owned(),
+        };
+        Self::Tool {
+            name,
+            effects,
+            status,
+        }
+    }
 }
 
 impl ItemStatus {
@@ -873,6 +924,53 @@ mod tests {
             CommandIntent::Unsaid,
             "blank words say nothing"
         );
+    }
+
+    /// A tool reads as what it does, the way Ren reads it on the wire; one
+    /// Ren reads nothing from keeps what its input names in its name, and
+    /// a tool stored before Ren read effects reads with none.
+    #[test]
+    fn a_tool_reads_as_its_effects_or_keeps_its_detail() {
+        use crate::Harness;
+        use crate::tools::{EffectKind, ToolEffect};
+        let read = ItemRead::tool(
+            Harness::ClaudeCode,
+            "Read",
+            &serde_json::json!({ "file_path": "/work/acme/a.rs", "offset": 10 }),
+            ItemStatus::InProgress,
+        );
+        assert_eq!(
+            read,
+            ItemRead::Tool {
+                name: "Read".into(),
+                effects: vec![ToolEffect {
+                    kind: EffectKind::ReadFile,
+                    target: "/work/acme/a.rs".into(),
+                }],
+                status: ItemStatus::InProgress,
+            }
+        );
+        let unknown = ItemRead::tool(
+            Harness::ClaudeCode,
+            "TodoWrite",
+            &serde_json::json!({ "description": "plan the fix" }),
+            ItemStatus::Completed,
+        );
+        assert_eq!(
+            unknown,
+            ItemRead::Tool {
+                name: "TodoWrite plan the fix".into(),
+                effects: Vec::new(),
+                status: ItemStatus::Completed,
+            }
+        );
+        let older: ItemRead = serde_json::from_value(serde_json::json!({
+            "as": "tool", "name": "Read /work/acme/a.rs", "status": "completed"
+        }))
+        .unwrap();
+        assert!(matches!(older, ItemRead::Tool { effects, .. } if effects.is_empty()));
+        let back: ItemRead = serde_json::from_value(serde_json::to_value(&read).unwrap()).unwrap();
+        assert_eq!(back, read);
     }
 
     /// What the daemon sends on its run feed reads back as the same events,

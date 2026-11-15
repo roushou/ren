@@ -648,7 +648,11 @@ impl ClaudeStreamJson {
                     output,
                 },
                 ItemRead::FileChange { paths, .. } => ItemRead::FileChange { paths, status },
-                ItemRead::Tool { name, .. } => ItemRead::Tool { name, status },
+                ItemRead::Tool { name, effects, .. } => ItemRead::Tool {
+                    name,
+                    effects,
+                    status,
+                },
                 other @ (ItemRead::Prompt { .. }
                 | ItemRead::Reply { .. }
                 | ItemRead::Reasoning
@@ -836,29 +840,20 @@ impl ClaudeStreamJson {
                     status: ItemStatus::InProgress,
                 },
             ),
-            "WebSearch" => (
-                ItemKind::WebSearch,
-                ItemRead::Tool {
-                    name: text("query").map_or_else(
-                        || "web search".to_owned(),
-                        |query| format!("search: {query}"),
-                    ),
-                    status: ItemStatus::InProgress,
-                },
-            ),
             other => (
-                if other.starts_with("mcp__") {
+                if other == "WebSearch" {
+                    ItemKind::WebSearch
+                } else if other.starts_with("mcp__") {
                     ItemKind::McpToolCall
                 } else {
                     ItemKind::Other(other.to_owned())
                 },
-                ItemRead::Tool {
-                    name: match Self::detail(input) {
-                        Some(detail) => format!("{other} {detail}"),
-                        None => other.to_owned(),
-                    },
-                    status: ItemStatus::InProgress,
-                },
+                ItemRead::tool(
+                    crate::Harness::ClaudeCode,
+                    other,
+                    input,
+                    ItemStatus::InProgress,
+                ),
             ),
         }
     }

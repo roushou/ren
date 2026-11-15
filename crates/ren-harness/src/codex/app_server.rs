@@ -834,13 +834,18 @@ impl CodexAppServer {
             },
             ItemKind::McpToolCall => ItemRead::Tool {
                 name: text("tool").unwrap_or_else(|| "MCP tool".to_owned()),
+                effects: Vec::new(),
                 status: status(),
             },
             ItemKind::WebSearch => ItemRead::Tool {
-                name: text("query").map_or_else(
-                    || "web search".to_owned(),
-                    |query| format!("search: {query}"),
-                ),
+                name: "web search".to_owned(),
+                effects: text("query")
+                    .map(|target| crate::tools::ToolEffect {
+                        kind: crate::tools::EffectKind::Search,
+                        target,
+                    })
+                    .into_iter()
+                    .collect(),
                 status: status(),
             },
             ItemKind::Other(_) => ItemRead::Unread,

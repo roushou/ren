@@ -1088,14 +1088,16 @@ impl OpenCodeAcp {
             }
             other => (
                 ItemKind::Other(if other.is_empty() { "tool" } else { other }.to_owned()),
-                ItemRead::Tool {
-                    name: if call.name.is_empty() {
+                ItemRead::tool(
+                    crate::Harness::OpenCode,
+                    &if call.name.is_empty() {
                         call.title.clone().unwrap_or_else(|| "tool".into())
                     } else {
                         call.name.clone()
                     },
+                    &call.input,
                     status,
-                },
+                ),
             ),
         }
     }

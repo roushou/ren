@@ -612,7 +612,12 @@ each `{"part": "read", command, path, name}`, `{"part": "list_files", command,
 path}`, `{"part": "search", command, query, path}`, `{"part": "unknown",
 command}`, or `{"part": "unrecognized", raw}`, a kind Ren does not know, as
 Codex sent it),
-`{"as": "file_change", paths, status}`, `{"as": "tool", name, status}`,
+`{"as": "file_change", paths, status}`, `{"as": "tool", name, effects,
+status}` (`effects`, what the tool does as Ren reads any tool call, each
+`{kind, target}` with `kind` one of `read_file`, `write_file`, `run_command`,
+`search`, `delegate`, and `fetch`, left out when none is read; `name` is the
+client's name for the tool, followed by what its input names when no effect
+is read),
 `{"as": "reasoning"}`, or `{"as": "unread"}`; and its `body` as the client
 described it), `approval` requests, `turn_started` and `turn_ended`, and
 `error`s. Every event but the streamed `delta` text is also stored, as the

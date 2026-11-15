@@ -1162,6 +1162,9 @@
   {:else if entry.kind === 'tool'}
     <div class="entry tool">
       <Icon name="tool" size={12} /><span class="tool-name">{entry.name}</span>
+      {#each entry.effects as effect, index (index)}<span class="tool-target mono"
+          >{effect.target}</span
+        >{/each}
       {#if !entry.done}<span class="chip live">running</span>{/if}
     </div>
   {:else if entry.kind === 'turn_end'}
