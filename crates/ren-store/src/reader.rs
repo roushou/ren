@@ -1035,8 +1035,11 @@ impl Reader {
         if !exists {
             return Ok(None);
         }
-        // The runs that make the conversation, in the order they started.
-        let chain = "SELECT r.id, r.started_at FROM runs r, runs this WHERE this.id = ?1 AND (r.id = this.id OR (this.thread IS NOT NULL AND r.thread = this.thread AND r.started_at <= this.started_at))";
+        // The runs that make the conversation, in the order they started:
+        // those before it on its thread, and its session's earlier
+        // processes, which a new one resumes before it says which thread it
+        // opened.
+        let chain = "SELECT r.id, r.started_at FROM runs r, runs this WHERE this.id = ?1 AND (r.id = this.id OR (r.started_at <= this.started_at AND ((this.thread IS NOT NULL AND r.thread = this.thread) OR (this.operator_session IS NOT NULL AND r.operator_session = this.operator_session))))";
         let rows = sqlx::query(AssertSqlSafe(format!(
             "SELECT * FROM (SELECT e.run, e.seq, e.at, e.started_at AS entry_started_at, e.turn, e.event, chain.started_at FROM run_entries e JOIN ({chain}) chain ON chain.id = e.run ORDER BY chain.started_at DESC, e.run DESC, e.seq DESC LIMIT ?2) ORDER BY started_at, run, seq"
         )))

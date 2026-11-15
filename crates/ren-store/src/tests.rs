@@ -2114,10 +2114,40 @@ mod conversation {
     impl Fixture {
         /// A run on `thread` that saw `events` in one turn, then ended.
         async fn conversed(&mut self, thread: u128, events: Vec<DriveEvent>) -> RunId {
+            let session = ren_recorder::id::SessionId::generate(self.ids.as_ref());
+            self.conversed_in(session, thread, events).await
+        }
+
+        /// A process of `session` that has started and not yet said which
+        /// conversation it opened.
+        async fn started_in(&mut self, session: ren_recorder::id::SessionId) -> RunId {
+            let run = RunId::generate(self.ids.as_ref());
+            let mut batch = Batch::default();
+            batch.push(Op::Run(RunRecord {
+                at: self.clock.now(),
+                run,
+                fact: RunFact::Started {
+                    session,
+                    harness: ren_harness::Harness::ClaudeCode,
+                    workdir: "/work/acme".into(),
+                    settings: ren_harness::settings::RunSettings::default(),
+                    toolset: Some(ren_depot::toolset::Generation::NONE),
+                },
+            }));
+            self.store.commit(&batch).await.unwrap();
+            self.clock.advance(std::time::Duration::from_millis(10));
+            run
+        }
+
+        async fn conversed_in(
+            &mut self,
+            session: ren_recorder::id::SessionId,
+            thread: u128,
+            events: Vec<DriveEvent>,
+        ) -> RunId {
             let run = RunId::generate(self.ids.as_ref());
             let turn = NativeTurnId::new(Uuid::from_u128(thread + 100)).unwrap();
             let mut batch = Batch::default();
-            let session = ren_recorder::id::SessionId::generate(self.ids.as_ref());
             for fact in [
                 RunFact::Started {
                     session,
@@ -2278,6 +2308,55 @@ mod conversation {
         assert_eq!(
             cut.chars().count(),
             crate::view::SessionView::FIRST_PROMPT_CHARS
+        );
+    }
+
+    /// A session's new process reads the session's conversation before it
+    /// has said which conversation it opened: the page reads it as soon as
+    /// the process starts.
+    #[tokio::test]
+    async fn a_sessions_new_process_reads_its_conversation_before_it_opens() {
+        let mut fixture = Fixture::new().await;
+        let session = ren_recorder::id::SessionId::generate(fixture.ids.as_ref());
+        let first = fixture
+            .conversed_in(
+                session,
+                5,
+                vec![item(
+                    "msg_1",
+                    ItemPhase::Completed,
+                    ItemRead::Reply {
+                        text: "earlier".into(),
+                    },
+                )],
+            )
+            .await;
+        let _other = fixture
+            .conversed(
+                6,
+                vec![item(
+                    "msg_9",
+                    ItemPhase::Completed,
+                    ItemRead::Reply {
+                        text: "another session".into(),
+                    },
+                )],
+            )
+            .await;
+        let fresh = fixture.started_in(session).await;
+        let read = fixture
+            .reader
+            .conversation(fresh, 100)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            read.entries
+                .iter()
+                .map(|entry| entry.run)
+                .collect::<Vec<_>>(),
+            [first],
+            "the session's earlier process, and no other session's"
         );
     }
 
