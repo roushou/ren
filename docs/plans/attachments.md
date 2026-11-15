@@ -46,7 +46,7 @@ its reason.
   `ByteSize`, its SHA-256 (`ren_depot::source::Sha256`), and its
   `AttachmentName` (the last part of the uploaded name, without control
   characters; never a path, `.`, `..`, empty, or over 255 bytes). It has
-  no id: the store pairs an `AttachmentId` with it (phase 2). Built.
+  no id: the store pairs an `AttachmentId` with it. Built.
 - `AttachmentKind`: `Image(Image)`, an `ImageFormat` and its `Dimensions`
   (never zero on a side); `File` comes in phase 4. `ImageFormat` is a
   vocabulary (`png`, `jpeg`, `gif`, `webp`) with labels pinned in
@@ -110,10 +110,11 @@ its reason.
 - **Scoped by session.** Deleting a session removes its folder (built, in
   `Supervisor::forget`, served or not); archiving keeps it; retention acts
   on a session's folder as a whole (not built: retention does not delete
-  operator sessions yet). A client is
-  given its own session's folder only (as an extra directory it may read,
-  phase 3), never `attachments/`, so one session's agent cannot read
-  another's screenshots.
+  operator sessions yet). Images need no folder access: Codex's app server
+  reads a `localImage` path itself, and the other clients get the bytes.
+  Files (phase 4) give a client its own session's folder only, as an extra
+  directory it may read, never `attachments/`, so one session's agent
+  cannot read another's files.
 - **Metadata** goes in a new `ren.sqlite3` table (`0012_attachments.sql`):
   id, operator session, name, image format, width, height, size, hash, and
   upload time, written from the session facts `Attached` and `Detached`
@@ -128,8 +129,8 @@ its reason.
 - **Secrets.** `SecretScanner` cannot read pixels, and screenshots show
   tokens. Attachments are stored as uploaded, and the UI says so. Phone
   photos carry location in their EXIF data. **Decided:** Ren keeps and
-  sends an image as uploaded, metadata included, and the composer says so
-  (phase 3). Removing metadata means rewriting the image (orientation lives
+  sends an image as uploaded, metadata included, and the composer's attach
+  button says so. Removing metadata means rewriting the image (orientation lives
   there too), and screenshots, the case to serve, carry none.
 
 ## Where it lives
@@ -222,7 +223,7 @@ session's folder only. To confirm per client.
 1. **Vocabulary and parsing.** `AttachmentId`, `Attachment`, `ImageFormat`,
    `Attachment::parse`, `Limits`, `Acceptance` with each client's static
    declaration. Unit tests (with a property test over arbitrary bytes),
-   labels pinned. Built; `Prompt` moved to phase 3 (see Deviations).
+   labels pinned. Built.
 2. **Storage and upload.** The migration, the session folder under
    `AgentHost`, the upload, read, and delete routes, deletion with the
    session, `[attachments]`, and the EXIF decision. Supervisor tests with an
@@ -246,15 +247,12 @@ session's folder only. To confirm per client.
 - **`Attachment` has no id.** `ren-harness` sits below `ren-recorder`, where
   Ren's identities live, so an `Attachment` is what was uploaded and the
   store pairs it with its `AttachmentId`.
-- **`Prompt` is unchanged in phase 1.** What a prompt carries to a codec
-  (an attachment's bytes, or its path) follows from delivery, which phase 3
-  builds; a `Prompt` is stored and published as text, so changing its form
-  before then would change a format for nothing that uses it.
-- **`Limits` had defaults only in phase 1.** `[attachments]` came in phase
-  2, with the upload that uses it.
 - **The per-image byte limit is on the uploaded bytes.** Whether a provider
-  counts an inline image's bytes before or after base64 is to confirm in
-  phase 3, with each client; the prompt limit already counts base64.
+  counts an inline image's bytes before or after base64 is not confirmed;
+  the prompt limit counts base64.
+- **A `Prompt` with images serializes as `{text, images}`**, what each image
+  is and never its bytes, and is not read back; one with text alone is still
+  its text, so stored and published prompts keep their form.
 - **`ByteSize` is the attachment module's.** The daemon's `ByteLimit` is a
   download cap in a crate above it.
 - **The upload names its file in the query** (`?name=`), not a header:
@@ -262,8 +260,8 @@ session's folder only. To confirm per client.
 - **A session's view does not carry its attachments.** `SessionView` is
   listed for every session; the supervisor reads a session's attachments
   apart (`Reader::attachments`) when it serves it from the store.
-- **The table has image columns, not a kind.** Images are the only kind
-  until phase 4, whose migration adds files.
+- **The table has image columns, not a kind.** Images are the only kind;
+  files (phase 4) add a migration.
 - **Models' input kinds are not read.** No client's model listing as Ren
   reads it says which models take images, so a prompt with an image to a
   model that reads none fails at the provider, and that failure shows in

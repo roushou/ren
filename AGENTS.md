@@ -237,8 +237,9 @@ dependencies under "Crates" below. Read the code for current module ownership.
   and which settings change from the next turn); attachments to a prompt
   (`attachment`: `Attachment`, read once from its bytes by
   `Attachment::parse` within `Limits`, never by its name, and what each
-  client takes, `Harness::acceptance`; nothing is sent yet, see
-  `docs/plans/attachments.md`); the commands a client
+  client takes, `Harness::acceptance`, each codec turning a prompt's
+  `PromptImage`s into its client's input; `docs/plans/attachments.md`); the
+  commands a client
   offers a prompt (`commands`: `ClientCommand`, each codec reading its
   client's own list); a client's own sign-in commands (`sign_in`: the
   `SignInMethod`s each offers, each a `SignInPlan`: its command, its

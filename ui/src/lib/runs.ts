@@ -516,7 +516,7 @@ const servedSession = object<ServedSession>({
   settings: runSettings,
   state: object<SessionState>({ shelf: label(shelves), phase: label(SESSION_PHASES) }),
   process: nullable(RunId.decode),
-  // A daemon from before attachments says nothing: it takes none.
+  // A daemon that does not say takes no images.
   images: (value, path) => (value === undefined ? 'never' : label(IMAGE_TAKING)(value, path)),
 });
 
