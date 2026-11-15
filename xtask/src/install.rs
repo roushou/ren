@@ -439,23 +439,19 @@ impl InstallVps {
     }
 
     /// Runs this same command again as the transient user unit
-    /// [`RELAUNCH_UNIT`], outside `ren.service`, and waits for it. Its output
-    /// goes to the journal: this process may be stopped with the service,
-    /// and the install carries on without it.
+    /// [`RELAUNCH_UNIT`], outside `ren.service`, and returns once it has
+    /// started, without waiting for it. Inside the service, this process
+    /// belongs to an agent a run drives, mid-turn: the install waits for
+    /// every run's turn to end, so waiting here for the install would hold
+    /// that turn open and the two would wait on each other until the
+    /// install gave up. Its output goes to the journal.
     fn relaunch(env: &HostEnv, layout: &Layout) -> Result<(), InstallError> {
         let program = std::env::current_exe().map_err(InstallError::file(Path::new("xtask")))?;
         Self::step(&format!(
-            "This runs inside {SERVICE}, which the install restarts; continuing as the unit {RELAUNCH_UNIT}. Follow it with `journalctl --user -u {RELAUNCH_UNIT} -f`"
+            "This runs inside {SERVICE}, which the install restarts; continuing in the background as the unit {RELAUNCH_UNIT}. It restarts the daemon once every run's turn has ended, the one that started it included, so end that turn rather than wait for the install in it. Follow it with `journalctl --user -u {RELAUNCH_UNIT} -f`"
         ));
         let mut relaunch = Invocation::new("systemd-run")
-            .args([
-                "--user",
-                "--unit",
-                RELAUNCH_UNIT,
-                "--collect",
-                "--wait",
-                "--quiet",
-            ])
+            .args(["--user", "--unit", RELAUNCH_UNIT, "--collect", "--quiet"])
             .arg("--working-directory")
             .arg(&layout.repo);
         // What the build and the install read; never the operator's keys.
