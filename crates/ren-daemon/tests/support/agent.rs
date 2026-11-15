@@ -7,7 +7,7 @@
 //! real client, network, or credentials.
 
 use ren_harness::launch::LaunchPlan;
-use ren_supervisor::git::{Entry, Repository};
+use ren_supervisor::git::{Entry, Repository, Scratch};
 use ren_supervisor::{
     AgentHost, AgentProcess, FoundPath, KillSignal, KillSwitch, Look, PathKind, ProcessExit,
     RunTools, WalkLimits, Workdir,
@@ -72,8 +72,8 @@ impl AgentHost for ScriptedHost {
         Ok(())
     }
 
-    fn make_scratch(&self, _dir: &Path) -> io::Result<()> {
-        Ok(())
+    fn make_scratch(&self, _dir: &Path, _tools: &RunTools) -> io::Result<Scratch> {
+        Ok(Scratch::Repository)
     }
 
     /// Attachments are real files, in the test's own data folder.

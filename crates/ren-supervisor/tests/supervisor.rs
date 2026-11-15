@@ -27,7 +27,7 @@ use ren_recorder::{
     time::{ManualClock, UnixMillis},
 };
 use ren_store::{Reader, Store, query::PageLimit, view::RunView};
-use ren_supervisor::git::{Entry, Repository};
+use ren_supervisor::git::{Entry, Repository, Scratch};
 use ren_supervisor::{
     AgentHost, AgentProcess, CommandError, FileQuery, FoundPath, KillSignal, KillSwitch, Look,
     PathKind, ProcessExit, RunCommand, RunRefused, RunState, RunTools, RunUpdate, StartError,
@@ -163,9 +163,9 @@ impl AgentHost for FakeHost {
         Ok(())
     }
 
-    fn make_scratch(&self, dir: &Path) -> io::Result<()> {
+    fn make_scratch(&self, dir: &Path, _tools: &RunTools) -> io::Result<Scratch> {
         self.made.lock().unwrap().push((dir.to_path_buf(), true));
-        Ok(())
+        Ok(Scratch::Repository)
     }
 
     fn place_file(&self, incoming: &Path, target: &Path, bytes: &[u8]) -> io::Result<()> {

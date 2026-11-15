@@ -171,6 +171,10 @@ mod tests {
         ] {
             assert!(depot.package(&id).is_some(), "{id}");
         }
+        assert_eq!(
+            depot.package(&PackageId::GIT).map(|git| git.program()),
+            Some(&crate::package::ProgramName::GIT)
+        );
         let installable: Vec<&str> = depot
             .packages()
             .iter()

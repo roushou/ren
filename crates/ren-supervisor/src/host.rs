@@ -4,6 +4,7 @@
 
 use crate::{
     files::{FoundPath, WalkLimits},
+    git::Scratch,
     project::Look,
     run::ProcessExit,
     workdir::Workdir,
@@ -40,9 +41,11 @@ pub trait AgentHost: Send + Sync + 'static {
     /// Create `dir` and the folders above it, where they are missing.
     fn make_dir(&self, dir: &Path) -> io::Result<()>;
 
-    /// Create `dir`, a new empty folder a scratch run works in, as a git
-    /// repository, so what the run changes can be read as changes.
-    fn make_scratch(&self, dir: &Path) -> io::Result<()>;
+    /// Create `dir`, a new empty folder a scratch run works in, and make
+    /// it a git repository with the git on `tools`' search path, so what
+    /// the run changes can be read as changes. A folder git could not
+    /// make a repository is still made, and says why.
+    fn make_scratch(&self, dir: &Path, tools: &RunTools) -> io::Result<Scratch>;
 
     /// Write `bytes` to `incoming`, a new file, then move it to `target`,
     /// making the folders above each where they are missing: `target`

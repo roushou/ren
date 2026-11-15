@@ -4,6 +4,7 @@
 //! the host says what is at each path (`Entry`), and this module decides
 //! what to read next and what it means.
 
+use crate::run::ProcessExit;
 use std::path::{Path, PathBuf};
 
 /// What the host found at one path, links not followed.
@@ -168,9 +169,61 @@ impl CommitId {
     }
 }
 
+/// What Ren asks git to do. The host's git runs it, with the program
+/// found on the run's search path.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GitCommand {
+    /// Make the folder a new, empty repository.
+    Init,
+}
+
+impl GitCommand {
+    /// Its arguments to `git`.
+    pub fn args(self) -> &'static [&'static str] {
+        match self {
+            Self::Init => &["init", "--quiet"],
+        }
+    }
+}
+
+/// How a scratch folder was made: a repository of its own, or a plain
+/// folder whose changes are not tracked, and why.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[must_use]
+pub enum Scratch {
+    Repository,
+    Untracked(Untracked),
+}
+
+/// Why a scratch folder is not a repository.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Untracked {
+    /// No `git` on the run's search path.
+    NoGit,
+    /// `git` was found but could not be started.
+    NotStarted,
+    /// `git init` ran and failed.
+    InitFailed(ProcessExit),
+}
+
+impl Scratch {
+    /// What a `git init` that exited with `exit` made of the folder.
+    pub fn after_init(exit: ProcessExit) -> Self {
+        match exit {
+            ProcessExit::Code(0) => Self::Repository,
+            ProcessExit::Code(_) | ProcessExit::Signal(_) | ProcessExit::Unknown => {
+                Self::Untracked(Untracked::InitFailed(exit))
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{BranchName, Entry, GitlinkError, Head, HeadError, Repository, Unreadable};
+    use super::{
+        BranchName, Entry, GitlinkError, Head, HeadError, ProcessExit, Repository, Scratch,
+        Unreadable, Untracked,
+    };
     use std::path::Path;
 
     /// A fake disk: what is at each path; anything else is missing.
@@ -292,6 +345,24 @@ mod tests {
             "g123456789abcdef0123456789abcdef01234567",
         ] {
             assert_eq!(Head::parse(text), Err(HeadError::Unrecognized), "{text:?}");
+        }
+    }
+
+    #[test]
+    fn only_a_clean_init_makes_a_scratch_repository() {
+        assert_eq!(
+            Scratch::after_init(ProcessExit::Code(0)),
+            Scratch::Repository
+        );
+        for exit in [
+            ProcessExit::Code(128),
+            ProcessExit::Signal(9),
+            ProcessExit::Unknown,
+        ] {
+            assert_eq!(
+                Scratch::after_init(exit),
+                Scratch::Untracked(Untracked::InitFailed(exit))
+            );
         }
     }
 }

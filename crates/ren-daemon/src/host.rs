@@ -248,13 +248,19 @@ impl ProcessHost {
     fn search_path_with(&self, tools: &RunTools) -> io::Result<Option<std::ffi::OsString>> {
         tools
             .bin()
-            .map(|bin| {
-                std::env::join_paths(
-                    std::iter::once(bin.to_path_buf()).chain(self.search_path.iter().cloned()),
-                )
-                .map_err(io::Error::other)
-            })
+            .map(|_| std::env::join_paths(self.search_dirs(tools)).map_err(io::Error::other))
             .transpose()
+    }
+
+    /// The folders a process with `tools` searches for programs: their
+    /// folder, then the host's.
+    fn search_dirs(&self, tools: &RunTools) -> Vec<PathBuf> {
+        tools
+            .bin()
+            .map(Path::to_path_buf)
+            .into_iter()
+            .chain(self.search_path.iter().cloned())
+            .collect()
     }
 
     fn start(
@@ -535,20 +541,19 @@ impl AgentHost for ProcessHost {
         }
     }
 
-    fn make_scratch(&self, dir: &Path) -> io::Result<()> {
+    fn make_scratch(&self, dir: &Path, tools: &RunTools) -> io::Result<git::Scratch> {
         std::fs::create_dir(dir)?;
-        let mut git = std::process::Command::new("git");
-        git.args(["init", "--quiet"])
-            .current_dir(dir)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null());
-        let status = git.status();
         // Without git the folder still works; its changes are not tracked.
-        if let Err(error) = status {
-            tracing::debug!(%error, "cannot make a scratch folder a repository");
-        }
-        Ok(())
+        Ok(match Git::find(self.search_dirs(tools)) {
+            None => git::Scratch::Untracked(git::Untracked::NoGit),
+            Some(program) => match program.run(dir, git::GitCommand::Init) {
+                Ok(exit) => git::Scratch::after_init(exit),
+                Err(error) => {
+                    tracing::debug!(%error, "cannot start git");
+                    git::Scratch::Untracked(git::Untracked::NotStarted)
+                }
+            },
+        })
     }
 
     fn tools(&self) -> RunTools {
@@ -656,6 +661,33 @@ impl AgentHost for ProcessHost {
                 Err(io::Error::other(format!("it answered {status}")))
             }
         })
+    }
+}
+
+/// The git program a run would use, found on its search path: the one way
+/// Ren runs git.
+#[derive(Debug, Clone)]
+struct Git {
+    program: PathBuf,
+}
+
+impl Git {
+    fn find(search_path: Vec<PathBuf>) -> Option<Self> {
+        HostTools::new(search_path)
+            .locate(&ProgramName::GIT)
+            .map(|program| Self { program })
+    }
+
+    /// Run `command` in `dir`, its output discarded, and wait for it.
+    fn run(&self, dir: &Path, command: git::GitCommand) -> io::Result<ProcessExit> {
+        let mut git = std::process::Command::new(&self.program);
+        git.args(command.args())
+            .current_dir(dir)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        let status = git.status()?;
+        Ok(ProcessHost::exit(status))
     }
 }
 
@@ -818,6 +850,56 @@ mod tests {
         std::os::unix::fs::symlink("generations/9", dir.path().join("tools/current")).unwrap();
         assert_eq!(host.tools(), RunTools::Unreadable);
         assert_eq!(RunTools::Unreadable.generation(), None);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_scratch_folder_is_made_a_repository_by_the_runs_own_git() {
+        use ren_depot::toolset::Generation;
+        use ren_supervisor::{
+            AgentHost, ProcessExit,
+            git::{Scratch, Untracked},
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let (host_bin, tools_bin) = (dir.path().join("host"), dir.path().join("tools"));
+        for bin in [&host_bin, &tools_bin] {
+            std::fs::create_dir(bin).unwrap();
+        }
+        // The host's git fails; the toolset's, first on the run's path, works.
+        script(&host_bin, "git", "exit 3", 0o755);
+        script(
+            &tools_bin,
+            "git",
+            "[ \"$*\" = 'init --quiet' ] && touch made",
+            0o755,
+        );
+        let store = ToolStore::without_downloads(dir.path().join("store"));
+        let host = ProcessHost::new(None, vec![host_bin], store.clone());
+        let toolset = RunTools::Toolset {
+            generation: Generation::NONE,
+            bin: tools_bin,
+        };
+
+        let first = dir.path().join("scratch-1");
+        assert_eq!(
+            host.make_scratch(&first, &toolset).unwrap(),
+            Scratch::Repository
+        );
+        assert!(first.join("made").is_file(), "git ran in the new folder");
+        assert_eq!(
+            host.make_scratch(&dir.path().join("scratch-2"), &RunTools::Empty)
+                .unwrap(),
+            Scratch::Untracked(Untracked::InitFailed(ProcessExit::Code(3)))
+        );
+        let without = ProcessHost::new(None, Vec::new(), store);
+        let third = dir.path().join("scratch-3");
+        assert_eq!(
+            without.make_scratch(&third, &RunTools::Empty).unwrap(),
+            Scratch::Untracked(Untracked::NoGit)
+        );
+        assert!(third.is_dir(), "the folder is made without git");
+        // A folder already there is never reused.
+        assert!(without.make_scratch(&third, &RunTools::Empty).is_err());
     }
 
     #[cfg(unix)]

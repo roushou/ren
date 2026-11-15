@@ -77,6 +77,10 @@ impl fmt::Display for PackageId {
 pub struct ProgramName(Cow<'static, str>);
 
 impl ProgramName {
+    /// The program the built-in catalog's `git` package provides, which
+    /// Ren itself runs; the catalog's tests check they agree.
+    pub const GIT: Self = Self(Cow::Borrowed("git"));
+
     pub fn as_str(&self) -> &str {
         &self.0
     }
