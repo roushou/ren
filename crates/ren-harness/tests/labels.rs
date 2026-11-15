@@ -78,6 +78,12 @@ fn every_label_is_pinned() {
         commands::Sigil,
         attachment::ImageFormat,
         attachment::Delivery,
+        claude_code::ClaudeMessageType,
+        claude_code::ClaudeSystemSubtype,
+        codex::CodexMethod,
+        pi::PiEvent,
+        opencode::AcpMethod,
+        opencode::AcpUpdate,
     ];
     let pinned = include_str!("fixtures/labels.txt");
     assert!(

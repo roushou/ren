@@ -63,6 +63,16 @@ pub struct Received {
     pub replies: Vec<Line>,
 }
 
+impl Received {
+    /// What a line produced: `event`, and no replies.
+    pub(crate) fn event(event: DriveEvent) -> Self {
+        Self {
+            events: vec![event],
+            replies: Vec::new(),
+        }
+    }
+}
+
 /// One driven client's side of its structured mode, chosen by its harness.
 #[derive(Debug)]
 pub enum Driver {
@@ -298,6 +308,22 @@ impl Prompt {
     Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, SerializeDisplay, DeserializeFromStr,
 )]
 pub struct ApprovalId(pub(crate) String);
+
+impl ApprovalId {
+    /// A JSON-RPC request's id as an approval: strings as they are, numbers
+    /// in decimal.
+    pub(crate) fn of_request(id: &serde_json::Value) -> Self {
+        use serde_json::Value;
+        Self(match id {
+            Value::String(text) => text.clone(),
+            other @ (Value::Null
+            | Value::Bool(_)
+            | Value::Number(_)
+            | Value::Array(_)
+            | Value::Object(_)) => other.to_string(),
+        })
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 #[error("an approval identifier cannot be empty")]

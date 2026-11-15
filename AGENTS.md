@@ -259,9 +259,16 @@ dependencies under "Crates" below. Read the code for current module ownership.
   `SignInAnswer` handed back, a secret never shown; each client's in its
   module's `auth`); the gateway URL a harness is pointed at and the
   `UserToken` it presents there (`endpoint`); and `HostEnv` (`host`), the
-  host environment that launching and configuration read. It performs
-  filesystem and process I/O but has no async runtime, HTTP, database, or
-  CLI dependency.
+  host environment that launching and configuration read. The four codecs
+  are composed of shared parts (`codec`: `Envelope`, a line read as JSON;
+  `JsonRpc::classify`; `RequestLedger`, the requests sent and waiting;
+  `ApprovalBook`; `TurnSlot` and `TurnMint`; `EchoQueue`), with no codec
+  trait; each keeps only its client's wire mapping, reads its messages
+  through a typed vocabulary that keeps unknown ones (`ClaudeMessageType`,
+  `CodexMethod`, `PiEvent`, `AcpMethod`, `AcpUpdate`), and holds its
+  opening as a phase enum. `src/purity.rs` keeps the codecs, `drive`,
+  `lines`, and `settings` free of I/O. It performs filesystem and process
+  I/O elsewhere but has no async runtime, HTTP, database, or CLI dependency.
 - `crates/ren-recorder`: the bounded capture queue between forwarding and
   storage, with `Recorder` as its primary type. The forwarding side is a
   typestate per call, `AttemptTap` (awaiting its head), `ResponseTap`

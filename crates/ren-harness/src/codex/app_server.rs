@@ -11,7 +11,7 @@
 //! sign-in, and Ren provides no tools.
 
 use crate::{
-    attachment::Attachment,
+    codec::{ApprovalBook, EchoQueue, Envelope, JsonRpc, RequestLedger, RpcError, TurnSlot},
     commands::{ClientCommand, CommandKind, Sigil},
     drive::{
         ApprovalAsk, ApprovalId, CommandIntent, CommandPart, CommandRefused, Decision,
@@ -22,21 +22,26 @@ use crate::{
     models::{DefaultChoice, Listing, Model, ModelId, ModelListing},
     settings::{ApprovalPolicy, Effort, RunSettings},
 };
-use ren_protocol::native::{NativeThreadId, NativeTurnId};
+use ren_protocol::{
+    label::{Labeled, Stored},
+    native::{NativeThreadId, NativeTurnId},
+};
 use serde::Deserialize;
 use serde_json::{Value, json};
-use std::collections::{BTreeMap, VecDeque};
+use serde_with::{DeserializeFromStr, SerializeDisplay};
+use std::collections::BTreeMap;
+use strum::{Display, EnumString, IntoStaticStr, VariantArray};
 use uuid::Uuid;
 
 /// The client's side of one `codex app-server` process.
 #[derive(Debug)]
 pub struct CodexAppServer {
     phase: Phase,
-    next_request: u64,
-    requests: BTreeMap<u64, RequestKind>,
+    /// Requests Ren sent and waits on, by request id.
+    requests: RequestLedger<u64, RequestKind>,
     turn: TurnSlot,
     /// Approvals waiting for an answer, with the request id to answer.
-    approvals: BTreeMap<ApprovalId, Value>,
+    approvals: ApprovalBook<Value>,
     /// The effort every turn asks for; none is Codex's own.
     effort: Option<Effort>,
     /// Settings changed mid-run: from then on every turn asks for them.
@@ -50,7 +55,7 @@ pub struct CodexAppServer {
     skill_paths: BTreeMap<String, String>,
     /// What the images of each prompt and steer sent are, in order, until
     /// Codex echoes it as a user message.
-    echoing: VecDeque<Vec<Attachment>>,
+    echoing: EchoQueue,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -60,43 +65,56 @@ enum Phase {
     Ready(NativeThreadId),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum TurnSlot {
-    Idle,
-    /// `turn/start` was sent; its id is not known yet.
-    Requested,
-    Running(NativeTurnId),
+/// Every method Ren sends Codex's app server or reads from it, named as in
+/// Codex's protocol schema. A method read that Ren does not know stays
+/// unknown.
+#[derive(Display, EnumString, IntoStaticStr, VariantArray)]
+#[strum(serialize_all = "snake_case")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SerializeDisplay, DeserializeFromStr)]
+pub enum CodexMethod {
+    Initialize,
+    Initialized,
+    #[strum(to_string = "thread/start")]
+    ThreadStart,
+    #[strum(to_string = "thread/resume")]
+    ThreadResume,
+    #[strum(to_string = "model/list")]
+    ModelList,
+    #[strum(to_string = "turn/start")]
+    TurnStart,
+    #[strum(to_string = "turn/interrupt")]
+    TurnInterrupt,
+    #[strum(to_string = "turn/steer")]
+    TurnSteer,
+    #[strum(to_string = "skills/list")]
+    SkillsList,
+    #[strum(to_string = "skills/changed")]
+    SkillsChanged,
+    #[strum(to_string = "thread/started")]
+    ThreadStarted,
+    #[strum(to_string = "turn/started")]
+    TurnStarted,
+    #[strum(to_string = "turn/completed")]
+    TurnCompleted,
+    #[strum(to_string = "item/started")]
+    ItemStarted,
+    #[strum(to_string = "item/completed")]
+    ItemCompleted,
+    #[strum(to_string = "item/agentMessage/delta")]
+    AgentMessageDelta,
+    #[strum(to_string = "item/commandExecution/requestApproval")]
+    CommandExecutionRequestApproval,
+    #[strum(to_string = "item/fileChange/requestApproval")]
+    FileChangeRequestApproval,
+    #[strum(to_string = "serverRequest/resolved")]
+    ServerRequestResolved,
+    Error,
 }
 
 /// JSON-RPC's "method not found", for server requests Ren never serves.
 const METHOD_NOT_FOUND: i64 = -32601;
 
 impl CodexAppServer {
-    /// Every method this codec sends or reads, for the schema check.
-    #[cfg(test)]
-    const METHODS: &'static [&'static str] = &[
-        "initialize",
-        "initialized",
-        "thread/start",
-        "thread/resume",
-        "model/list",
-        "turn/start",
-        "turn/interrupt",
-        "turn/steer",
-        "skills/list",
-        "skills/changed",
-        "thread/started",
-        "turn/started",
-        "turn/completed",
-        "item/started",
-        "item/completed",
-        "item/agentMessage/delta",
-        "item/commandExecution/requestApproval",
-        "item/fileChange/requestApproval",
-        "serverRequest/resolved",
-        "error",
-    ];
-
     /// A codec for a freshly started server, and the first line to send it.
     /// `version` is Ren's own version, reported as the client's.
     pub fn open(opening: Opening, version: &str) -> (Self, Line) {
@@ -111,12 +129,11 @@ impl CodexAppServer {
             cwd,
             skills: Vec::new(),
             skill_paths: BTreeMap::new(),
-            echoing: VecDeque::new(),
+            echoing: EchoQueue::default(),
             phase: Phase::Initializing(opening),
-            next_request: 0,
-            requests: BTreeMap::new(),
+            requests: RequestLedger::new(|n| n),
             turn: TurnSlot::Idle,
-            approvals: BTreeMap::new(),
+            approvals: ApprovalBook::new(),
         };
         let line = codec.request(
             RequestKind::Initialize,
@@ -146,37 +163,31 @@ impl CodexAppServer {
         };
         match command {
             DriveCommand::Prompt(prompt) => self.prompt(thread, &prompt).map(|line| vec![line]),
-            DriveCommand::Interrupt => match self.turn {
-                TurnSlot::Running(turn) => Ok(vec![self.request(
+            DriveCommand::Interrupt => {
+                let turn = self.turn.running()?;
+                Ok(vec![self.request(
                     RequestKind::TurnInterrupt,
                     json!({ "threadId": thread.to_string(), "turnId": turn.to_string() }),
-                )]),
-                TurnSlot::Requested => Err(CommandRefused::TurnNotStarted),
-                TurnSlot::Idle => Err(CommandRefused::NoTurn),
-            },
+                )])
+            }
             DriveCommand::Answer { approval, decision } => {
-                let Some(id) = self.approvals.remove(&approval) else {
-                    return Err(CommandRefused::UnknownApproval(approval));
-                };
+                let id = self.approvals.answer(approval)?;
                 Ok(vec![Line::json(
                     &json!({ "id": id, "result": { "decision": Self::decision(decision) } }),
                 )])
             }
-            DriveCommand::Steer(prompt) => match self.turn {
-                TurnSlot::Running(turn) => {
-                    let input = self.input(&prompt);
-                    Ok(vec![self.request(
-                        RequestKind::TurnSteer,
-                        json!({
-                            "threadId": thread.to_string(),
-                            "expectedTurnId": turn.to_string(),
-                            "input": input,
-                        }),
-                    )])
-                }
-                TurnSlot::Requested => Err(CommandRefused::TurnNotStarted),
-                TurnSlot::Idle => Err(CommandRefused::NoTurn),
-            },
+            DriveCommand::Steer(prompt) => {
+                let turn = self.turn.running()?;
+                let input = self.input(&prompt);
+                Ok(vec![self.request(
+                    RequestKind::TurnSteer,
+                    json!({
+                        "threadId": thread.to_string(),
+                        "expectedTurnId": turn.to_string(),
+                        "input": input,
+                    }),
+                )])
+            }
             // Codex takes a turn's settings with the turn: kept for the
             // next one, and every one after.
             DriveCommand::Configure(settings) => {
@@ -188,57 +199,20 @@ impl CodexAppServer {
 
     /// Read one frame from the server's stdout.
     pub fn receive(&mut self, frame: Framed) -> Received {
+        let Envelope { line, body } = match Envelope::open(frame) {
+            Ok(envelope) => envelope,
+            Err(received) => return received,
+        };
         let mut received = Received::default();
-        let bytes = match frame {
-            Framed::Line(bytes) => bytes,
-            Framed::TooLong { bytes } => {
-                received.events.push(DriveEvent::Unreadable {
-                    line: RawLine::new(Vec::new()),
-                    reason: Unreadable::TooLong { bytes },
-                });
-                return received;
+        match JsonRpc::classify(body) {
+            JsonRpc::Request { id, method, params } => {
+                self.server_request(&method, id, params, line, &mut received);
             }
-        };
-        if bytes.is_empty() {
-            return received;
-        }
-        let Ok(message) = serde_json::from_slice::<Message>(&bytes) else {
-            let reason = match serde_json::from_slice::<Value>(&bytes) {
-                Ok(_) => Unreadable::NotJsonRpc,
-                Err(_) => Unreadable::NotJson,
-            };
-            received.events.push(DriveEvent::Unreadable {
-                line: RawLine::new(bytes),
-                reason,
-            });
-            return received;
-        };
-        let line = RawLine::new(bytes);
-        match message {
-            Message {
-                method: Some(method),
-                id: Some(id),
-                params,
-                ..
-            } => self.server_request(&method, id, params, line, &mut received),
-            Message {
-                method: Some(method),
-                id: None,
-                params,
-                ..
-            } => self.notification(&method, params, line, &mut received),
-            Message {
-                method: None,
-                id: Some(id),
-                result,
-                error,
-                ..
-            } => self.response(&id, result, error, line, &mut received),
-            Message {
-                method: None,
-                id: None,
-                ..
-            } => received.events.push(DriveEvent::Unreadable {
+            JsonRpc::Notification { method, params } => {
+                self.notification(&method, params, line, &mut received);
+            }
+            JsonRpc::Response { id, outcome } => self.response(&id, outcome, line, &mut received),
+            JsonRpc::Invalid => received.events.push(DriveEvent::Unreadable {
                 line,
                 reason: Unreadable::NotJsonRpc,
             }),
@@ -247,39 +221,32 @@ impl CodexAppServer {
     }
 
     fn prompt(&mut self, thread: NativeThreadId, prompt: &Prompt) -> Result<Line, CommandRefused> {
-        match self.turn {
-            TurnSlot::Idle => {
-                self.turn = TurnSlot::Requested;
-                let input = self.input(prompt);
-                Ok(self.request(RequestKind::TurnStart, {
-                    let mut params = json!({
-                        "threadId": thread.to_string(),
-                        "input": input,
-                    });
-                    let effort = match &self.changed {
-                        Some(changed) => changed.effort,
-                        None => self.effort,
-                    };
-                    if let (Some(effort), Value::Object(fields)) = (effort, &mut params) {
-                        fields.insert("effort".into(), effort.to_string().into());
-                    }
-                    if let Some(changed) = &self.changed {
-                        Self::turn_settings(&mut params, changed);
-                    }
-                    params
-                }))
+        self.turn.request(())?;
+        let input = self.input(prompt);
+        Ok(self.request(RequestKind::TurnStart, {
+            let mut params = json!({
+                "threadId": thread.to_string(),
+                "input": input,
+            });
+            let effort = match &self.changed {
+                Some(changed) => changed.effort,
+                None => self.effort,
+            };
+            if let (Some(effort), Value::Object(fields)) = (effort, &mut params) {
+                fields.insert("effort".into(), effort.to_string().into());
             }
-            TurnSlot::Requested | TurnSlot::Running(_) => Err(CommandRefused::TurnRunning),
-        }
+            if let Some(changed) = &self.changed {
+                Self::turn_settings(&mut params, changed);
+            }
+            params
+        }))
     }
 
     /// A prompt as Codex takes it: each image by the path of its file, its
     /// text, then each listed skill the text names (`$name`, standing on
     /// its own), once. The images are remembered for the prompt's echo.
     fn input(&mut self, prompt: &Prompt) -> Value {
-        if !prompt.images().is_empty() {
-            self.echoing.push_back(prompt.sent());
-        }
+        self.echoing.push(prompt);
         let mut input: Vec<Value> = prompt
             .images()
             .iter()
@@ -358,23 +325,22 @@ impl CodexAppServer {
     }
 
     fn request(&mut self, kind: RequestKind, params: Value) -> Line {
-        let id = self.next_request;
-        self.next_request += 1;
-        self.requests.insert(id, kind);
-        Line::json(&json!({ "id": id, "method": Self::method(kind), "params": params }))
+        let id = self.requests.send(kind);
+        let method = Self::method(kind).label();
+        Line::json(&json!({ "id": id, "method": method, "params": params }))
     }
 
-    fn method(kind: RequestKind) -> &'static str {
+    fn method(kind: RequestKind) -> CodexMethod {
         match kind {
-            RequestKind::Initialize => "initialize",
-            RequestKind::ThreadStart => "thread/start",
-            RequestKind::ThreadResume => "thread/resume",
-            RequestKind::TurnStart => "turn/start",
-            RequestKind::TurnInterrupt => "turn/interrupt",
-            RequestKind::TurnSteer => "turn/steer",
-            RequestKind::ListCommands => "skills/list",
+            RequestKind::Initialize => CodexMethod::Initialize,
+            RequestKind::ThreadStart => CodexMethod::ThreadStart,
+            RequestKind::ThreadResume => CodexMethod::ThreadResume,
+            RequestKind::TurnStart => CodexMethod::TurnStart,
+            RequestKind::TurnInterrupt => CodexMethod::TurnInterrupt,
+            RequestKind::TurnSteer => CodexMethod::TurnSteer,
+            RequestKind::ListCommands => CodexMethod::SkillsList,
             // Codex takes settings with each turn, never on their own.
-            RequestKind::Configure => "turn/start",
+            RequestKind::Configure => CodexMethod::TurnStart,
         }
     }
 
@@ -432,33 +398,48 @@ impl CodexAppServer {
     fn response(
         &mut self,
         id: &Value,
-        result: Option<Value>,
-        error: Option<RpcError>,
+        outcome: Result<Value, RpcError>,
         line: RawLine,
         received: &mut Received,
     ) {
-        let Some(kind) = id.as_u64().and_then(|id| self.requests.remove(&id)) else {
+        // Codex's errors always say what went wrong.
+        let outcome = match outcome {
+            Ok(result) => Ok(result),
+            Err(RpcError {
+                message: Some(message),
+            }) => Err(message),
+            Err(RpcError { message: None }) => {
+                received.events.push(DriveEvent::Unreadable {
+                    line,
+                    reason: Unreadable::NotJsonRpc,
+                });
+                return;
+            }
+        };
+        let Some(kind) = id.as_u64().and_then(|id| self.requests.answer(&id)) else {
             received.events.push(DriveEvent::Unreadable {
                 line,
                 reason: Unreadable::UnexpectedResponse,
             });
             return;
         };
-        if let Some(error) = error {
-            // Without its skills a run goes on; the list stays empty.
-            if kind == RequestKind::ListCommands {
+        let result = match outcome {
+            Ok(result) => result,
+            Err(message) => {
+                // Without its skills a run goes on; the list stays empty.
+                if kind == RequestKind::ListCommands {
+                    return;
+                }
+                if kind == RequestKind::TurnStart {
+                    self.turn.clear();
+                }
+                received.events.push(DriveEvent::Refused {
+                    request: kind,
+                    message,
+                });
                 return;
             }
-            if kind == RequestKind::TurnStart {
-                self.turn = TurnSlot::Idle;
-            }
-            received.events.push(DriveEvent::Refused {
-                request: kind,
-                message: error.message,
-            });
-            return;
-        }
-        let result = result.unwrap_or(Value::Null);
+        };
         match kind {
             RequestKind::Initialize => {
                 let opening = std::mem::replace(&mut self.phase, Phase::Opening);
@@ -470,9 +451,9 @@ impl CodexAppServer {
                     });
                     return;
                 };
-                received
-                    .replies
-                    .push(Line::json(&json!({ "method": "initialized" })));
+                received.replies.push(Line::json(
+                    &json!({ "method": CodexMethod::Initialized.label() }),
+                ));
                 received.replies.push(match opening {
                     Opening::New { cwd, settings, .. } => {
                         let mut params = json!({ "cwd": cwd });
@@ -527,13 +508,12 @@ impl CodexAppServer {
     fn notification(
         &mut self,
         method: &str,
-        params: Option<Value>,
+        params: Value,
         line: RawLine,
         received: &mut Received,
     ) {
-        let params = params.unwrap_or(Value::Null);
-        let event = match method {
-            "turn/started" => match Self::parse::<TurnHolder>(params)
+        let event = match Stored::<CodexMethod>::from_label(method) {
+            Stored::Known(CodexMethod::TurnStarted) => match Self::parse::<TurnHolder>(params)
                 .and_then(|holder| Self::native_turn(&holder.turn.id))
             {
                 Some(turn) => {
@@ -542,88 +522,64 @@ impl CodexAppServer {
                 }
                 None => None,
             },
-            "turn/completed" => Self::parse::<TurnHolder>(params).and_then(|holder| {
-                let turn = Self::native_turn(&holder.turn.id)?;
-                self.turn = TurnSlot::Idle;
-                let pending = std::mem::take(&mut self.approvals);
-                received.events.extend(
-                    pending
-                        .into_keys()
-                        .map(|approval| DriveEvent::ApprovalResolved { approval }),
-                );
-                Some(DriveEvent::TurnEnded {
-                    turn,
-                    end: holder.turn.end(),
-                })
-            }),
-            "item/started" | "item/completed" => {
-                let phase = match method {
-                    "item/started" => ItemPhase::Started,
-                    _ => ItemPhase::Completed,
-                };
-                Self::parse::<ItemHolder>(params).and_then(|holder| {
-                    let id = holder.item.get("id")?.as_str()?.to_owned();
-                    let kind = Self::item_kind(holder.item.get("type")?.as_str()?);
-                    let mut read = Self::item_read(&kind, &holder.item, phase);
-                    // The echo of a prompt sent with images: its start shows
-                    // them, its completion takes them.
-                    let with_images = holder.item["content"].as_array().is_some_and(|parts| {
-                        parts.iter().any(|part| {
-                            matches!(
-                                part.get("type").and_then(Value::as_str),
-                                Some("localImage" | "image")
-                            )
-                        })
-                    });
-                    if let ItemRead::Prompt { images, .. } = &mut read
-                        && with_images
-                    {
-                        *images = match phase {
-                            ItemPhase::Started => self.echoing.front().cloned().unwrap_or_default(),
-                            ItemPhase::Completed => self.echoing.pop_front().unwrap_or_default(),
-                        };
-                    }
-                    Some(DriveEvent::Item {
-                        phase,
-                        item: DriveItem {
-                            id: ItemId::new(id),
-                            kind,
-                            read,
-                            body: holder.item,
-                        },
+            Stored::Known(CodexMethod::TurnCompleted) => Self::parse::<TurnHolder>(params)
+                .and_then(|holder| {
+                    let turn = Self::native_turn(&holder.turn.id)?;
+                    self.turn.clear();
+                    self.approvals.withdraw(received);
+                    Some(DriveEvent::TurnEnded {
+                        turn,
+                        end: holder.turn.end(),
                     })
-                })
-            }
-            "item/agentMessage/delta" => {
+                }),
+            Stored::Known(CodexMethod::ItemStarted) => self.item(ItemPhase::Started, params),
+            Stored::Known(CodexMethod::ItemCompleted) => self.item(ItemPhase::Completed, params),
+            Stored::Known(CodexMethod::AgentMessageDelta) => {
                 Self::parse::<Delta>(params).map(|delta| DriveEvent::Delta {
                     item: ItemId::new(delta.item_id),
                     text: delta.delta,
                 })
             }
-            "serverRequest/resolved" => Self::parse::<Resolved>(params).map(|resolved| {
-                let approval = Self::approval_id(&resolved.request_id);
-                self.approvals.remove(&approval);
-                DriveEvent::ApprovalResolved { approval }
-            }),
-            "error" => Self::parse::<ErrorParams>(params).map(|error| DriveEvent::Error {
-                message: error.error.message,
-                retry: if error.will_retry {
-                    Retry::WillRetry
-                } else {
-                    Retry::Final
-                },
-            }),
+            Stored::Known(CodexMethod::ServerRequestResolved) => Self::parse::<Resolved>(params)
+                .map(|resolved| {
+                    let approval = ApprovalId::of_request(&resolved.request_id);
+                    self.approvals.resolve(&approval);
+                    DriveEvent::ApprovalResolved { approval }
+                }),
+            Stored::Known(CodexMethod::Error) => {
+                Self::parse::<ErrorParams>(params).map(|error| DriveEvent::Error {
+                    message: error.error.message,
+                    retry: if error.will_retry {
+                        Retry::WillRetry
+                    } else {
+                        Retry::Final
+                    },
+                })
+            }
             // Ren learns the thread from `thread/start`'s response.
-            "thread/started" => return,
+            Stored::Known(CodexMethod::ThreadStarted) => return,
             // A skill was added or removed: listed again.
-            "skills/changed" => {
+            Stored::Known(CodexMethod::SkillsChanged) => {
                 if let Phase::Ready(_) = self.phase {
                     let ask = self.ask_skills();
                     received.replies.push(ask);
                 }
                 return;
             }
-            _ => {
+            Stored::Known(
+                CodexMethod::Initialize
+                | CodexMethod::Initialized
+                | CodexMethod::ThreadStart
+                | CodexMethod::ThreadResume
+                | CodexMethod::ModelList
+                | CodexMethod::TurnStart
+                | CodexMethod::TurnInterrupt
+                | CodexMethod::TurnSteer
+                | CodexMethod::SkillsList
+                | CodexMethod::CommandExecutionRequestApproval
+                | CodexMethod::FileChangeRequestApproval,
+            )
+            | Stored::Unknown(_) => {
                 received.events.push(DriveEvent::Unknown { line });
                 return;
             }
@@ -636,26 +592,82 @@ impl CodexAppServer {
             }));
     }
 
+    /// An item started or completed.
+    fn item(&mut self, phase: ItemPhase, params: Value) -> Option<DriveEvent> {
+        let holder = Self::parse::<ItemHolder>(params)?;
+        let id = holder.item.get("id")?.as_str()?.to_owned();
+        let kind = Self::item_kind(holder.item.get("type")?.as_str()?);
+        let mut read = Self::item_read(&kind, &holder.item, phase);
+        // The echo of a prompt sent with images: its start shows them, its
+        // completion takes them.
+        let with_images = holder.item["content"].as_array().is_some_and(|parts| {
+            parts.iter().any(|part| {
+                matches!(
+                    part.get("type").and_then(Value::as_str),
+                    Some("localImage" | "image")
+                )
+            })
+        });
+        if let ItemRead::Prompt { images, .. } = &mut read
+            && with_images
+        {
+            *images = match phase {
+                ItemPhase::Started => self.echoing.front(),
+                ItemPhase::Completed => self.echoing.pop(),
+            };
+        }
+        Some(DriveEvent::Item {
+            phase,
+            item: DriveItem {
+                id: ItemId::new(id),
+                kind,
+                read,
+                body: holder.item,
+            },
+        })
+    }
+
     fn server_request(
         &mut self,
         method: &str,
         id: Value,
-        params: Option<Value>,
+        params: Value,
         line: RawLine,
         received: &mut Received,
     ) {
-        let params = params.unwrap_or(Value::Null);
-        let ask = match method {
-            "item/commandExecution/requestApproval" => {
+        let ask = match Stored::<CodexMethod>::from_label(method) {
+            Stored::Known(CodexMethod::CommandExecutionRequestApproval) => {
                 Self::parse::<CommandApproval>(params).map(|ask| ApprovalAsk::Command {
                     command: ask.command,
                     cwd: ask.cwd,
                     reason: ask.reason,
                 })
             }
-            "item/fileChange/requestApproval" => Self::parse::<FileChangeApproval>(params)
-                .map(|ask| ApprovalAsk::FileChange { reason: ask.reason }),
-            _ => {
+            Stored::Known(CodexMethod::FileChangeRequestApproval) => {
+                Self::parse::<FileChangeApproval>(params)
+                    .map(|ask| ApprovalAsk::FileChange { reason: ask.reason })
+            }
+            Stored::Known(
+                CodexMethod::Initialize
+                | CodexMethod::Initialized
+                | CodexMethod::ThreadStart
+                | CodexMethod::ThreadResume
+                | CodexMethod::ModelList
+                | CodexMethod::TurnStart
+                | CodexMethod::TurnInterrupt
+                | CodexMethod::TurnSteer
+                | CodexMethod::SkillsList
+                | CodexMethod::SkillsChanged
+                | CodexMethod::ThreadStarted
+                | CodexMethod::TurnStarted
+                | CodexMethod::TurnCompleted
+                | CodexMethod::ItemStarted
+                | CodexMethod::ItemCompleted
+                | CodexMethod::AgentMessageDelta
+                | CodexMethod::ServerRequestResolved
+                | CodexMethod::Error,
+            )
+            | Stored::Unknown(_) => {
                 received.replies.push(Line::json(&json!({
                     "id": id,
                     "error": { "code": METHOD_NOT_FOUND, "message": "not supported by Ren" },
@@ -668,8 +680,8 @@ impl CodexAppServer {
         };
         match ask {
             Some(ask) => {
-                let approval = Self::approval_id(&id);
-                self.approvals.insert(approval.clone(), id);
+                let approval = ApprovalId::of_request(&id);
+                self.approvals.ask(approval.clone(), id);
                 received.events.push(DriveEvent::Approval { approval, ask });
             }
             None => {
@@ -687,12 +699,8 @@ impl CodexAppServer {
     }
 
     fn turn_started(&mut self, turn: NativeTurnId, received: &mut Received) {
-        match self.turn {
-            TurnSlot::Running(running) if running == turn => {}
-            TurnSlot::Idle | TurnSlot::Requested | TurnSlot::Running(_) => {
-                self.turn = TurnSlot::Running(turn);
-                received.events.push(DriveEvent::TurnStarted { turn });
-            }
+        if let Some(started) = self.turn.start(turn) {
+            received.events.push(started);
         }
     }
 
@@ -706,18 +714,6 @@ impl CodexAppServer {
 
     fn native_turn(id: &str) -> Option<NativeTurnId> {
         Uuid::try_parse(id).ok().and_then(NativeTurnId::new)
-    }
-
-    /// A request id as text: strings as they are, numbers in decimal.
-    fn approval_id(id: &Value) -> ApprovalId {
-        ApprovalId(match id {
-            Value::String(text) => text.clone(),
-            other @ (Value::Null
-            | Value::Bool(_)
-            | Value::Number(_)
-            | Value::Array(_)
-            | Value::Object(_)) => other.to_string(),
-        })
     }
 
     fn item_kind(kind: &str) -> ItemKind {
@@ -853,18 +849,9 @@ impl CodexAppServer {
     }
 }
 
-/// Any JSON-RPC message, before it is told apart.
+/// An error Codex reports in a notification.
 #[derive(Deserialize)]
-struct Message {
-    id: Option<Value>,
-    method: Option<String>,
-    params: Option<Value>,
-    result: Option<Value>,
-    error: Option<RpcError>,
-}
-
-#[derive(Deserialize)]
-struct RpcError {
+struct CodexError {
     message: String,
 }
 
@@ -887,7 +874,7 @@ struct TurnHolder {
 struct TurnBody {
     id: String,
     status: Option<String>,
-    error: Option<RpcError>,
+    error: Option<CodexError>,
 }
 
 impl TurnBody {
@@ -929,7 +916,7 @@ struct Resolved {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ErrorParams {
-    error: RpcError,
+    error: CodexError,
     will_retry: bool,
 }
 
@@ -969,7 +956,7 @@ impl CodexModels {
     pub fn open(version: &str) -> (Self, Line) {
         let line = Line::json(&json!({
             "id": Self::INITIALIZE,
-            "method": "initialize",
+            "method": CodexMethod::Initialize.label(),
             "params": { "clientInfo": { "name": "ren", "title": "Ren", "version": version } },
         }));
         (
@@ -999,7 +986,7 @@ impl CodexModels {
         }
         match self.waiting {
             CodexListStep::Initialize if id == Self::INITIALIZE => Listing::Waiting(vec![
-                Line::json(&json!({ "method": "initialized" })),
+                Line::json(&json!({ "method": CodexMethod::Initialized.label() })),
                 self.page(1, None),
             ]),
             CodexListStep::List(request) if id == request => {
@@ -1026,7 +1013,7 @@ impl CodexModels {
         self.waiting = CodexListStep::List(request);
         Line::json(&json!({
             "id": request,
-            "method": "model/list",
+            "method": CodexMethod::ModelList.label(),
             "params": { "includeHidden": false, "cursor": cursor },
         }))
     }
@@ -1599,7 +1586,8 @@ mod tests {
             .lines()
             .filter(|line| !line.starts_with('#') && !line.is_empty())
             .collect();
-        for method in CodexAppServer::METHODS {
+        for method in <super::CodexMethod as strum::VariantArray>::VARIANTS {
+            let method: &&str = &method.into();
             assert!(
                 schema.contains(method),
                 "{method} is not in the pinned schema"

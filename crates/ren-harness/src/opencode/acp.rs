@@ -20,9 +20,10 @@
 //! advertises no file system or terminal of its own, so opencode uses its
 //! own tools; any other request it sends is answered with an error.
 
-use super::session::OpenCodeSessionId;
+use super::session::AcpSessionId;
 use crate::{
     attachment::{Attachment, Offer},
+    codec::{ApprovalBook, Envelope, JsonRpc, RequestLedger, RpcError, TurnMint, TurnSlot},
     commands::{ClientCommand, CommandKind, Sigil},
     drive::{
         ApprovalAsk, ApprovalId, CommandIntent, CommandRefused, Decision, DriveCommand, DriveEvent,
@@ -33,41 +34,38 @@ use crate::{
     models::{DefaultChoice, Listing, Model, ModelId, ModelListing},
     settings::{Midway, RunSettings, Setting, SettingsBook},
 };
-use ren_protocol::native::{NativeThreadId, NativeTurnId};
+use ren_protocol::{
+    label::{Labeled, Stored},
+    native::NativeThreadId,
+};
 use serde_json::{Value, json};
+use serde_with::{DeserializeFromStr, SerializeDisplay};
 use std::collections::BTreeMap;
+use strum::{Display, EnumString, IntoStaticStr, VariantArray};
 use uuid::Uuid;
 
 /// The client's side of one `opencode acp` process.
 #[derive(Debug)]
 pub struct OpenCodeAcp {
-    cwd: String,
-    /// The conversation Ren asked for: a new one, or this thread again.
-    resume: Option<NativeThreadId>,
-    /// The settings the run starts with, applied once the session opens.
-    wanted: RunSettings,
-    /// opencode's session, once open, and the thread Ren reads it as.
-    session: Option<String>,
-    thread: Option<NativeThreadId>,
-    ready: bool,
-    /// Settings requests sent while opening, still unanswered.
-    opening: usize,
+    /// The conversation Ren asked for, in which folder, on which settings.
+    opening: Opening,
+    phase: Phase,
     /// What the session runs on, and what Ren asked it to change to.
     settings: SettingsBook,
-    /// Turn ids are this, mixed with how many turns were minted.
-    seed: Uuid,
-    minted: u64,
-    next_request: u64,
+    /// opencode names no turns: each is minted from the process's seed.
+    turns: TurnMint,
     /// Requests Ren sent and waits on, by request id.
-    requests: BTreeMap<u64, Sent>,
-    turn: TurnSlot,
+    requests: RequestLedger<u64, Sent>,
+    /// The turn under way; a requested one keeps its prompt, which opencode
+    /// does not echo.
+    turn: TurnSlot<Echo>,
     /// The reply or reasoning streaming now, until another item begins.
     streaming: Option<Streaming>,
     /// Tool calls of the running turn, by tool call id.
     tools: BTreeMap<String, ToolCall>,
     /// Approvals waiting on the operator: opencode's request id, and the
     /// options it offered, by kind.
-    approvals: BTreeMap<ApprovalId, Waiting>,
+    approvals: ApprovalBook<Waiting>,
     /// Steering messages added to the running turn.
     steered: u64,
     /// The commands opencode lists for a prompt.
@@ -75,6 +73,95 @@ pub struct OpenCodeAcp {
     /// Whether opencode said, in its answer to `initialize`, that it takes
     /// images in a prompt.
     images: Offer,
+}
+
+/// Where opening the session stands.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Phase {
+    /// `initialize` was sent.
+    Initializing,
+    /// `session/new` was sent, or the folder's sessions are being listed
+    /// for the one to resume.
+    Opening,
+    /// The session to resume was found; `session/resume` was sent.
+    Resuming(AcpSessionId),
+    /// The session is open; the run's settings are being applied, this many
+    /// still unanswered.
+    Configuring {
+        session: AcpSessionId,
+        unanswered: usize,
+    },
+    /// Open, and taking prompts.
+    Ready(AcpSessionId),
+}
+
+impl Phase {
+    /// opencode's session, once Ren knows it.
+    fn session(&self) -> Option<&AcpSessionId> {
+        match self {
+            Self::Initializing | Self::Opening => None,
+            Self::Resuming(session) | Self::Configuring { session, .. } | Self::Ready(session) => {
+                Some(session)
+            }
+        }
+    }
+}
+
+/// When a setting was asked for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Applied {
+    /// While the session opens: it is ready once each is answered.
+    Opening,
+    MidRun,
+}
+
+/// Every method Ren sends opencode's ACP mode or reads from it; a method
+/// Ren does not know stays unknown.
+#[derive(Display, EnumString, IntoStaticStr, VariantArray)]
+#[strum(serialize_all = "snake_case")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SerializeDisplay, DeserializeFromStr)]
+pub enum AcpMethod {
+    Initialize,
+    #[strum(to_string = "session/new")]
+    SessionNew,
+    #[strum(to_string = "session/list")]
+    SessionList,
+    #[strum(to_string = "session/resume")]
+    SessionResume,
+    #[strum(to_string = "session/delete")]
+    SessionDelete,
+    #[strum(to_string = "session/set_config_option")]
+    SessionSetConfigOption,
+    #[strum(to_string = "session/prompt")]
+    SessionPrompt,
+    /// opencode's extension: a message added to the running turn.
+    #[strum(to_string = "_session/steering")]
+    SessionSteering,
+    #[strum(to_string = "session/cancel")]
+    SessionCancel,
+    #[strum(to_string = "session/update")]
+    SessionUpdate,
+    #[strum(to_string = "session/request_permission")]
+    SessionRequestPermission,
+}
+
+/// Every kind of `session/update` opencode sends; a kind Ren does not know
+/// stays unknown.
+#[derive(Display, EnumString, IntoStaticStr, VariantArray)]
+#[strum(serialize_all = "snake_case")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SerializeDisplay, DeserializeFromStr)]
+pub enum AcpUpdate {
+    AgentMessageChunk,
+    AgentThoughtChunk,
+    UserMessageChunk,
+    ToolCall,
+    ToolCallUpdate,
+    Plan,
+    AvailableCommandsUpdate,
+    UsageUpdate,
+    CurrentModeUpdate,
+    ConfigOptionUpdate,
+    SessionInfoUpdate,
 }
 
 /// A request Ren sent, and what it was for.
@@ -85,11 +172,10 @@ enum Sent {
     /// One page of the folder's sessions, looking for the thread to resume.
     List,
     Resume,
-    /// A setting changed, committed once opencode takes it; `opening`
-    /// while the session is still opening.
+    /// A setting changed, committed once opencode takes it.
     Configure {
         setting: Setting,
-        opening: bool,
+        applied: Applied,
     },
     Prompt,
     Steer(Echo),
@@ -110,18 +196,6 @@ impl Echo {
             images: prompt.sent(),
         }
     }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum TurnSlot {
-    Idle,
-    /// A prompt was sent; opencode has reported nothing of its turn yet.
-    Requested {
-        prompt: Echo,
-    },
-    Running {
-        turn: NativeTurnId,
-    },
 }
 
 #[derive(Debug)]
@@ -162,42 +236,38 @@ impl OpenCodeAcp {
     /// A codec for a freshly started process, and the first line to send it.
     /// `seed` is a fresh id the process's turn ids are minted from.
     pub fn open(opening: &Opening, version: &str, seed: Uuid) -> (Self, Line) {
-        let (cwd, resume, settings) = match opening {
-            Opening::New { cwd, settings, .. } => (cwd.clone(), None, settings.clone()),
-            Opening::Resume {
-                thread,
-                cwd,
-                settings,
-            } => (cwd.clone(), Some(*thread), settings.clone()),
-        };
         let mut codec = Self {
-            cwd,
-            resume,
             // The approval policy is opencode's configuration, set at launch.
             settings: SettingsBook::new(RunSettings {
                 model: None,
                 effort: None,
-                approvals: settings.approvals,
+                approvals: opening.settings().approvals,
             }),
-            wanted: settings,
-            session: None,
-            thread: None,
-            ready: false,
-            opening: 0,
-            seed,
-            minted: 0,
-            next_request: 0,
-            requests: BTreeMap::new(),
+            opening: opening.clone(),
+            phase: Phase::Initializing,
+            turns: TurnMint::new(seed),
+            requests: RequestLedger::new(|n| n),
             turn: TurnSlot::Idle,
             streaming: None,
             tools: BTreeMap::new(),
-            approvals: BTreeMap::new(),
+            approvals: ApprovalBook::new(),
             steered: 0,
             commands: Vec::new(),
             images: Offer::Unknown,
         };
-        let line = codec.request(Sent::Initialize, "initialize", Self::initialize(version));
+        let line = codec.request(
+            Sent::Initialize,
+            AcpMethod::Initialize,
+            Self::initialize(version),
+        );
         (codec, line)
+    }
+
+    /// The folder the session works in.
+    fn cwd(&self) -> &str {
+        match &self.opening {
+            Opening::New { cwd, .. } | Opening::Resume { cwd, .. } => cwd,
+        }
     }
 
     /// What Ren tells opencode of itself: the protocol version it speaks, and
@@ -215,7 +285,13 @@ impl OpenCodeAcp {
 
     /// The thread, once opencode opened the session.
     pub fn thread(&self) -> Option<NativeThreadId> {
-        if self.ready { self.thread } else { None }
+        match &self.phase {
+            Phase::Ready(session) => Some(session.thread()),
+            Phase::Initializing
+            | Phase::Opening
+            | Phase::Resuming(_)
+            | Phase::Configuring { .. } => None,
+        }
     }
 
     /// The commands a prompt can run, as opencode listed them: each is
@@ -226,35 +302,33 @@ impl OpenCodeAcp {
 
     /// The lines that carry `command`, or why it cannot be sent now.
     pub fn command(&mut self, command: DriveCommand) -> Result<Vec<Line>, CommandRefused> {
-        let Some(session) = self.session.clone().filter(|_| self.ready) else {
+        let Phase::Ready(session) = &self.phase else {
             return Err(CommandRefused::NotReady);
         };
+        let session = session.as_str().to_owned();
         match command {
             DriveCommand::Prompt(prompt) => {
                 if self.turn != TurnSlot::Idle {
                     return Err(CommandRefused::TurnRunning);
                 }
                 self.takes(&prompt)?;
-                self.turn = TurnSlot::Requested {
-                    prompt: Echo::of(&prompt),
-                };
+                self.turn.request(Echo::of(&prompt))?;
                 Ok(vec![self.request(
                     Sent::Prompt,
-                    "session/prompt",
+                    AcpMethod::SessionPrompt,
                     json!({ "sessionId": session, "prompt": Self::content(&prompt) }),
                 )])
             }
             // How the turn ended is what opencode reports: one asked to stop
             // that finished first is completed.
             DriveCommand::Interrupt => match self.turn {
-                TurnSlot::Running { .. } | TurnSlot::Requested { .. } => Ok(self.cancel(&session)),
+                TurnSlot::Requested(_) | TurnSlot::Running(_) | TurnSlot::Stopping(_) => {
+                    Ok(self.cancel(&session))
+                }
                 TurnSlot::Idle => Err(CommandRefused::NoTurn),
             },
             DriveCommand::Answer { approval, decision } => {
-                let waiting = self
-                    .approvals
-                    .remove(&approval)
-                    .ok_or(CommandRefused::UnknownApproval(approval))?;
+                let waiting = self.approvals.answer(approval)?;
                 let wanted = match decision {
                     Decision::Accept => ["allow_once", "allow_always"],
                     Decision::AcceptForSession => ["allow_always", "allow_once"],
@@ -277,19 +351,18 @@ impl OpenCodeAcp {
                 }
                 Ok(lines)
             }
-            DriveCommand::Steer(prompt) => match self.turn {
-                TurnSlot::Running { .. } => {
-                    self.takes(&prompt)?;
-                    Ok(vec![self.request(
-                        Sent::Steer(Echo::of(&prompt)),
-                        "_session/steering",
-                        json!({ "sessionId": session, "prompt": Self::content(&prompt) }),
-                    )])
-                }
-                TurnSlot::Requested { .. } => Err(CommandRefused::TurnNotStarted),
-                TurnSlot::Idle => Err(CommandRefused::NoTurn),
-            },
-            DriveCommand::Configure(settings) => self.configure(&session, settings, false),
+            DriveCommand::Steer(prompt) => {
+                self.turn.running()?;
+                self.takes(&prompt)?;
+                Ok(vec![self.request(
+                    Sent::Steer(Echo::of(&prompt)),
+                    AcpMethod::SessionSteering,
+                    json!({ "sessionId": session, "prompt": Self::content(&prompt) }),
+                )])
+            }
+            DriveCommand::Configure(settings) => {
+                self.configure(&session, settings, Applied::MidRun)
+            }
         }
     }
 
@@ -325,8 +398,9 @@ impl OpenCodeAcp {
     /// the approvals it waits on: the protocol has a cancelled turn's
     /// permission requests answered as cancelled.
     fn cancel(&mut self, session: &str) -> Vec<Line> {
-        let mut lines: Vec<Line> = std::mem::take(&mut self.approvals)
-            .into_values()
+        let mut lines: Vec<Line> = self
+            .approvals
+            .drain()
             .map(|waiting| {
                 Line::json(&json!({
                     "jsonrpc": "2.0",
@@ -337,7 +411,7 @@ impl OpenCodeAcp {
             .collect();
         lines.push(Line::json(&json!({
             "jsonrpc": "2.0",
-            "method": "session/cancel",
+            "method": AcpMethod::SessionCancel.label(),
             "params": { "sessionId": session },
         })));
         lines
@@ -352,7 +426,7 @@ impl OpenCodeAcp {
         &mut self,
         session: &str,
         settings: RunSettings,
-        opening: bool,
+        applied: Applied,
     ) -> Result<Vec<Line>, CommandRefused> {
         let change = self
             .settings
@@ -384,55 +458,57 @@ impl OpenCodeAcp {
             .map(|(setting, option, value)| {
                 self.settings.ask(setting.clone());
                 self.request(
-                    Sent::Configure { setting, opening },
-                    "session/set_config_option",
+                    Sent::Configure { setting, applied },
+                    AcpMethod::SessionSetConfigOption,
                     json!({ "sessionId": session, "configId": option, "value": value }),
                 )
             })
             .collect())
     }
 
-    fn request(&mut self, sent: Sent, method: &str, params: Value) -> Line {
-        let id = self.next_request;
-        self.next_request += 1;
-        self.requests.insert(id, sent);
-        Line::json(&json!({ "jsonrpc": "2.0", "id": id, "method": method, "params": params }))
+    fn request(&mut self, sent: Sent, method: AcpMethod, params: Value) -> Line {
+        let id = self.requests.send(sent);
+        Line::json(&json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": method.label(),
+            "params": params,
+        }))
     }
 
     /// Read one frame from opencode's stdout.
     pub fn receive(&mut self, frame: Framed) -> Received {
+        let Envelope { line, body } = match Envelope::open(frame) {
+            Ok(envelope) => envelope,
+            Err(received) => return received,
+        };
         let mut received = Received::default();
-        let bytes = match frame {
-            Framed::Line(bytes) => bytes,
-            Framed::TooLong { bytes } => {
-                received.events.push(DriveEvent::Unreadable {
-                    line: RawLine::new(Vec::new()),
-                    reason: Unreadable::TooLong { bytes },
-                });
-                return received;
+        match JsonRpc::classify(body) {
+            JsonRpc::Request { id, method, params } => {
+                self.client_request(&method, id, &params, line, &mut received);
             }
-        };
-        if bytes.is_empty() {
-            return received;
-        }
-        let Ok(message) = serde_json::from_slice::<Value>(&bytes) else {
-            received.events.push(DriveEvent::Unreadable {
-                line: RawLine::new(bytes),
-                reason: Unreadable::NotJson,
-            });
-            return received;
-        };
-        let line = RawLine::new(bytes);
-        let method = message.get("method").and_then(Value::as_str);
-        let id = message.get("id").filter(|id| !id.is_null());
-        match (method, id) {
-            (Some(method), Some(id)) => {
-                self.client_request(method, id.clone(), &message, line, &mut received);
+            JsonRpc::Notification { method, params } => {
+                match Stored::<AcpMethod>::from_label(&method) {
+                    Stored::Known(AcpMethod::SessionUpdate) => {
+                        self.update(&params, line, &mut received);
+                    }
+                    Stored::Known(
+                        AcpMethod::Initialize
+                        | AcpMethod::SessionNew
+                        | AcpMethod::SessionList
+                        | AcpMethod::SessionResume
+                        | AcpMethod::SessionDelete
+                        | AcpMethod::SessionSetConfigOption
+                        | AcpMethod::SessionPrompt
+                        | AcpMethod::SessionSteering
+                        | AcpMethod::SessionCancel
+                        | AcpMethod::SessionRequestPermission,
+                    )
+                    | Stored::Unknown(_) => received.events.push(DriveEvent::Unknown { line }),
+                }
             }
-            (Some("session/update"), None) => self.update(&message, line, &mut received),
-            (Some(_), None) => received.events.push(DriveEvent::Unknown { line }),
-            (None, Some(id)) => self.response(id, &message, line, &mut received),
-            (None, None) => received.events.push(DriveEvent::Unreadable {
+            JsonRpc::Response { id, outcome } => self.response(&id, outcome, line, &mut received),
+            JsonRpc::Invalid => received.events.push(DriveEvent::Unreadable {
                 line,
                 reason: Unreadable::NotJsonRpc,
             }),
@@ -446,11 +522,13 @@ impl OpenCodeAcp {
         &mut self,
         method: &str,
         id: Value,
-        message: &Value,
+        params: &Value,
         line: RawLine,
         received: &mut Received,
     ) {
-        if method != "session/request_permission" {
+        if Stored::<AcpMethod>::from_label(method)
+            != Stored::Known(AcpMethod::SessionRequestPermission)
+        {
             received
                 .replies
                 .push(Self::refusal(id, "not supported by Ren"));
@@ -459,7 +537,6 @@ impl OpenCodeAcp {
             });
             return;
         }
-        let params = &message["params"];
         let options: BTreeMap<String, String> = params
             .get("options")
             .and_then(Value::as_array)
@@ -496,9 +573,9 @@ impl OpenCodeAcp {
                 detail: title,
             },
         };
-        let approval = Self::approval_id(&id);
+        let approval = ApprovalId::of_request(&id);
         self.approvals
-            .insert(approval.clone(), Waiting { id, options });
+            .ask(approval.clone(), Waiting { id, options });
         received.events.push(DriveEvent::Approval { approval, ask });
     }
 
@@ -510,18 +587,6 @@ impl OpenCodeAcp {
         }))
     }
 
-    /// A request id as text: strings as they are, numbers in decimal.
-    fn approval_id(id: &Value) -> ApprovalId {
-        ApprovalId(match id {
-            Value::String(text) => text.clone(),
-            other @ (Value::Null
-            | Value::Bool(_)
-            | Value::Number(_)
-            | Value::Array(_)
-            | Value::Object(_)) => other.to_string(),
-        })
-    }
-
     fn text(value: &Value, key: &str) -> Option<String> {
         value
             .get(key)
@@ -531,20 +596,35 @@ impl OpenCodeAcp {
             .map(str::to_owned)
     }
 
-    fn response(&mut self, id: &Value, message: &Value, line: RawLine, received: &mut Received) {
-        let Some(sent) = id.as_u64().and_then(|id| self.requests.remove(&id)) else {
+    fn response(
+        &mut self,
+        id: &Value,
+        outcome: Result<Value, RpcError>,
+        line: RawLine,
+        received: &mut Received,
+    ) {
+        let Some(sent) = id.as_u64().and_then(|id| self.requests.answer(&id)) else {
             received.events.push(DriveEvent::Unreadable {
                 line,
                 reason: Unreadable::UnexpectedResponse,
             });
             return;
         };
-        if let Some(error) = message.get("error") {
-            let text = Self::text(error, "message").unwrap_or_else(|| "refused".into());
-            self.failed(sent, text, received);
-            return;
-        }
-        let result = &message["result"];
+        let result = match outcome {
+            Ok(result) => result,
+            Err(error) => {
+                let text = error
+                    .message
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|text| !text.is_empty())
+                    .unwrap_or("refused")
+                    .to_owned();
+                self.failed(sent, text, received);
+                return;
+            }
+        };
+        let result = &result;
         match sent {
             Sent::Initialize => {
                 self.images =
@@ -553,25 +633,24 @@ impl OpenCodeAcp {
                         Some(false) => Offer::NotOffered,
                         None => Offer::Unknown,
                     };
-                let line = match self.resume {
-                    None => self.request(
+                if self.phase == Phase::Initializing {
+                    self.phase = Phase::Opening;
+                }
+                let line = match self.opening {
+                    Opening::New { .. } => self.request(
                         Sent::New,
-                        "session/new",
-                        json!({ "cwd": self.cwd, "mcpServers": [] }),
+                        AcpMethod::SessionNew,
+                        json!({ "cwd": self.cwd(), "mcpServers": [] }),
                     ),
-                    Some(_) => self.list(None),
+                    Opening::Resume { .. } => self.list(None),
                 };
                 received.replies.push(line);
             }
             Sent::New => match Self::text(result, "sessionId")
                 .as_deref()
-                .and_then(OpenCodeSessionId::parse)
-                .and_then(|id| NativeThreadId::new(id.uuid()).map(|thread| (id.as_str(), thread)))
+                .and_then(AcpSessionId::parse)
             {
-                Some((session, thread)) => {
-                    let session = session.to_owned();
-                    self.opened(session, thread, received);
-                }
+                Some(session) => self.opened(session, received),
                 None => received.events.push(DriveEvent::Refused {
                     request: RequestKind::ThreadStart,
                     message: "opencode opened a session Ren cannot read".into(),
@@ -579,14 +658,16 @@ impl OpenCodeAcp {
             },
             Sent::List => self.listed(result, received),
             Sent::Resume => {
-                if let (Some(session), Some(thread)) = (self.session.clone(), self.resume) {
-                    self.opened(session, thread, received);
+                if let Phase::Resuming(session) = &self.phase {
+                    let session = session.clone();
+                    self.opened(session, received);
                 }
             }
-            Sent::Configure { setting, opening } => {
+            Sent::Configure { setting, applied } => {
                 self.settings.acknowledge(setting);
-                if opening {
-                    self.settled(received);
+                match applied {
+                    Applied::Opening => self.settled(received),
+                    Applied::MidRun => {}
                 }
             }
             Sent::Prompt => self.ended(result, received),
@@ -613,24 +694,26 @@ impl OpenCodeAcp {
             Sent::Initialize => RequestKind::Initialize,
             Sent::New => RequestKind::ThreadStart,
             Sent::List | Sent::Resume => RequestKind::ThreadResume,
-            Sent::Configure { setting, opening } => {
+            Sent::Configure { setting, applied } => {
                 self.settings.refused(&setting);
-                if opening {
-                    // The session opens on opencode's own setting instead.
-                    received.events.push(DriveEvent::Refused {
-                        request: RequestKind::Configure,
-                        message,
-                    });
-                    self.settled(received);
-                    return;
+                match applied {
+                    Applied::Opening => {
+                        // The session opens on opencode's own setting instead.
+                        received.events.push(DriveEvent::Refused {
+                            request: RequestKind::Configure,
+                            message,
+                        });
+                        self.settled(received);
+                        return;
+                    }
+                    Applied::MidRun => RequestKind::Configure,
                 }
-                RequestKind::Configure
             }
             Sent::Steer(_) => RequestKind::TurnSteer,
-            Sent::Prompt => match std::mem::replace(&mut self.turn, TurnSlot::Idle) {
+            Sent::Prompt => match self.turn.clear() {
                 // Nothing of the turn was reported: the prompt was refused.
-                TurnSlot::Idle | TurnSlot::Requested { .. } => RequestKind::TurnStart,
-                TurnSlot::Running { turn, .. } => {
+                TurnSlot::Idle | TurnSlot::Requested(_) => RequestKind::TurnStart,
+                TurnSlot::Running(turn) | TurnSlot::Stopping(turn) => {
                     self.close(received);
                     self.withdraw(received);
                     received.events.push(DriveEvent::TurnEnded {
@@ -650,17 +733,17 @@ impl OpenCodeAcp {
 
     /// The next page of the folder's sessions.
     fn list(&mut self, cursor: Option<String>) -> Line {
-        let mut params = json!({ "cwd": self.cwd });
+        let mut params = json!({ "cwd": self.cwd() });
         if let (Some(cursor), Value::Object(fields)) = (cursor, &mut params) {
             fields.insert("cursor".into(), cursor.into());
         }
-        self.request(Sent::List, "session/list", params)
+        self.request(Sent::List, AcpMethod::SessionList, params)
     }
 
     /// One page of the folder's sessions: the one whose UUID is the thread
     /// to resume is reopened; without it, the next page is asked for.
     fn listed(&mut self, result: &Value, received: &mut Received) {
-        let Some(thread) = self.resume else {
+        let Opening::Resume { thread, .. } = self.opening else {
             return;
         };
         let found = result
@@ -669,16 +752,13 @@ impl OpenCodeAcp {
             .into_iter()
             .flatten()
             .filter_map(|entry| entry.get("sessionId").and_then(Value::as_str))
-            .filter_map(OpenCodeSessionId::parse)
-            .find(|id| id.uuid() == thread.as_uuid())
-            .map(|id| id.as_str().to_owned());
+            .filter_map(AcpSessionId::parse)
+            .find(|id| id.thread() == thread);
         if let Some(session) = found {
-            self.session = Some(session.clone());
-            let line = self.request(
-                Sent::Resume,
-                "session/resume",
-                json!({ "sessionId": session, "cwd": self.cwd, "mcpServers": [] }),
-            );
+            let params =
+                json!({ "sessionId": session.as_str(), "cwd": self.cwd(), "mcpServers": [] });
+            self.phase = Phase::Resuming(session);
+            let line = self.request(Sent::Resume, AcpMethod::SessionResume, params);
             received.replies.push(line);
             return;
         }
@@ -689,64 +769,58 @@ impl OpenCodeAcp {
             }
             None => received.events.push(DriveEvent::Refused {
                 request: RequestKind::ThreadResume,
-                message: format!("opencode has no session {thread} in {}", self.cwd),
+                message: format!("opencode has no session {thread} in {}", self.cwd()),
             }),
         }
     }
 
     /// The session is open: the run's settings are applied, then it is ready.
-    fn opened(&mut self, session: String, thread: NativeThreadId, received: &mut Received) {
-        self.session = Some(session.clone());
-        self.thread = Some(thread);
-        let wanted = self.wanted.clone();
+    fn opened(&mut self, session: AcpSessionId, received: &mut Received) {
+        let wanted = self.opening.settings().clone();
         // A setting opencode does not take mid-run is left as opencode has it.
-        let lines = self.configure(&session, wanted, true).unwrap_or_default();
-        self.opening = lines.len();
+        let lines = self
+            .configure(session.as_str(), wanted, Applied::Opening)
+            .unwrap_or_default();
+        let unanswered = lines.len();
         received.replies.extend(lines);
-        if self.opening == 0 {
+        self.phase = Phase::Configuring {
+            session,
+            unanswered,
+        };
+        if unanswered == 0 {
             self.ready(received);
         }
     }
 
     /// One opening setting answered.
     fn settled(&mut self, received: &mut Received) {
-        self.opening = self.opening.saturating_sub(1);
-        if self.opening == 0 && !self.ready {
-            self.ready(received);
-        }
-    }
-
-    fn ready(&mut self, received: &mut Received) {
-        if let Some(thread) = self.thread {
-            self.ready = true;
-            received.events.push(DriveEvent::Ready { thread });
-        }
-    }
-
-    /// The next turn id: never nil, never one this process minted before.
-    fn mint(&mut self) -> NativeTurnId {
-        loop {
-            self.minted += 1;
-            let mixed = Uuid::from_u128(self.seed.as_u128() ^ u128::from(self.minted));
-            if let Some(turn) = NativeTurnId::new(mixed) {
-                return turn;
+        if let Phase::Configuring { unanswered, .. } = &mut self.phase {
+            *unanswered = unanswered.saturating_sub(1);
+            if *unanswered == 0 {
+                self.ready(received);
             }
+        }
+    }
+
+    /// Every opening setting answered: the session takes prompts.
+    fn ready(&mut self, received: &mut Received) {
+        if let Phase::Configuring { session, .. } = &self.phase {
+            let session = session.clone();
+            received.events.push(DriveEvent::Ready {
+                thread: session.thread(),
+            });
+            self.phase = Phase::Ready(session);
         }
     }
 
     /// The turn a prompt started, once opencode reports anything of it: it
     /// begins with the prompt Ren sent.
     fn start(&mut self, received: &mut Received) {
-        if !matches!(self.turn, TurnSlot::Requested { .. }) {
-            return;
-        }
-        let TurnSlot::Requested { prompt } = std::mem::replace(&mut self.turn, TurnSlot::Idle)
-        else {
+        let Some(prompt) = self.turn.withdraw() else {
             return;
         };
-        let turn = self.mint();
-        self.turn = TurnSlot::Running { turn };
-        received.events.push(DriveEvent::TurnStarted { turn });
+        let turn = self.turns.mint();
+        received.events.extend(self.turn.start(turn));
         let id = self.item("prompt".into());
         received
             .events
@@ -770,16 +844,13 @@ impl OpenCodeAcp {
 
     /// An item id within the running turn.
     fn item(&self, name: String) -> ItemId {
-        match self.turn {
-            TurnSlot::Running { turn, .. } => ItemId::new(format!("{turn}:{name}")),
-            TurnSlot::Idle | TurnSlot::Requested { .. } => ItemId::new(name),
-        }
+        self.turn.scope(name)
     }
 
     /// The turn's prompt answered: it ended.
     fn ended(&mut self, result: &Value, received: &mut Received) {
         self.start(received);
-        let TurnSlot::Running { turn } = std::mem::replace(&mut self.turn, TurnSlot::Idle) else {
+        let Some((turn, _)) = self.turn.end() else {
             return;
         };
         self.close(received);
@@ -810,11 +881,7 @@ impl OpenCodeAcp {
 
     /// The approvals a turn's end leaves waiting no longer wait.
     fn withdraw(&mut self, received: &mut Received) {
-        for approval in std::mem::take(&mut self.approvals).into_keys() {
-            received
-                .events
-                .push(DriveEvent::ApprovalResolved { approval });
-        }
+        self.approvals.withdraw(received);
         self.tools.clear();
     }
 
@@ -847,11 +914,15 @@ impl OpenCodeAcp {
         });
     }
 
-    fn update(&mut self, message: &Value, line: RawLine, received: &mut Received) {
-        let params = &message["params"];
+    fn update(&mut self, params: &Value, line: RawLine, received: &mut Received) {
         let update = &params["update"];
-        let ours = params.get("sessionId").and_then(Value::as_str) == self.session.as_deref();
-        let Some(kind) = update.get("sessionUpdate").and_then(Value::as_str) else {
+        let ours = params.get("sessionId").and_then(Value::as_str)
+            == self.phase.session().map(AcpSessionId::as_str);
+        let Some(kind) = update
+            .get("sessionUpdate")
+            .and_then(Value::as_str)
+            .map(Stored::<AcpUpdate>::from_label)
+        else {
             received.events.push(DriveEvent::Unreadable {
                 line,
                 reason: Unreadable::BadParams,
@@ -866,26 +937,33 @@ impl OpenCodeAcp {
         // opencode lists its commands as a turn begins, before the model
         // answers, so the turn can be interrupted from then on.
         self.start(received);
-        if kind == "available_commands_update" {
-            self.commands = Self::listed_commands(update);
-            return;
-        }
-        // Known, and nothing Ren shows: usage, mode, settings, and titles.
-        if matches!(
-            kind,
-            "usage_update" | "current_mode_update" | "config_option_update" | "session_info_update"
-        ) {
-            return;
-        }
-        if !matches!(self.turn, TurnSlot::Running { .. }) {
+        let kind = match kind {
+            Stored::Known(AcpUpdate::AvailableCommandsUpdate) => {
+                self.commands = Self::listed_commands(update);
+                return;
+            }
+            // Known, and nothing Ren shows: usage, mode, settings, and titles.
+            Stored::Known(
+                AcpUpdate::UsageUpdate
+                | AcpUpdate::CurrentModeUpdate
+                | AcpUpdate::ConfigOptionUpdate
+                | AcpUpdate::SessionInfoUpdate,
+            ) => return,
+            Stored::Known(kind) => kind,
+            Stored::Unknown(_) => {
+                received.events.push(DriveEvent::Unknown { line });
+                return;
+            }
+        };
+        if !self.turn.under_way() {
             received.events.push(DriveEvent::Unknown { line });
             return;
         }
         match kind {
-            "agent_message_chunk" => self.chunk(ItemKind::AgentMessage, update, received),
-            "agent_thought_chunk" => self.chunk(ItemKind::Reasoning, update, received),
-            "tool_call" | "tool_call_update" => self.tool(update, line, received),
-            "plan" => {
+            AcpUpdate::AgentMessageChunk => self.chunk(ItemKind::AgentMessage, update, received),
+            AcpUpdate::AgentThoughtChunk => self.chunk(ItemKind::Reasoning, update, received),
+            AcpUpdate::ToolCall | AcpUpdate::ToolCallUpdate => self.tool(update, line, received),
+            AcpUpdate::Plan => {
                 self.close(received);
                 let text = update
                     .get("entries")
@@ -910,8 +988,13 @@ impl OpenCodeAcp {
                 });
             }
             // A prompt opencode echoes; Ren reports the one it sent.
-            "user_message_chunk" => {}
-            _ => received.events.push(DriveEvent::Unknown { line }),
+            AcpUpdate::UserMessageChunk => {}
+            // Read above.
+            AcpUpdate::AvailableCommandsUpdate
+            | AcpUpdate::UsageUpdate
+            | AcpUpdate::CurrentModeUpdate
+            | AcpUpdate::ConfigOptionUpdate
+            | AcpUpdate::SessionInfoUpdate => {}
         }
     }
 
@@ -932,8 +1015,8 @@ impl OpenCodeAcp {
         });
         if !continues {
             self.close(received);
-            let name =
-                named.unwrap_or_else(|| format!("{}:{}", Self::kind_name(&kind), self.minted));
+            let name = named
+                .unwrap_or_else(|| format!("{}:{}", Self::kind_name(&kind), self.turns.minted()));
             let id = self.item(name);
             let read = match kind {
                 ItemKind::AgentMessage => ItemRead::Reply {
@@ -1187,7 +1270,7 @@ impl OpenCodeModels {
         let line = Line::json(&json!({
             "jsonrpc": "2.0",
             "id": Self::INITIALIZE,
-            "method": "initialize",
+            "method": AcpMethod::Initialize.label(),
             "params": OpenCodeAcp::initialize(version),
         }));
         (
@@ -1220,7 +1303,7 @@ impl OpenCodeModels {
                 Listing::Waiting(vec![Line::json(&json!({
                     "jsonrpc": "2.0",
                     "id": Self::NEW,
-                    "method": "session/new",
+                    "method": AcpMethod::SessionNew.label(),
                     "params": { "cwd": self.folder, "mcpServers": [] },
                 }))])
             }
@@ -1236,7 +1319,7 @@ impl OpenCodeModels {
                         Listing::Waiting(vec![Line::json(&json!({
                             "jsonrpc": "2.0",
                             "id": Self::DELETE,
-                            "method": "session/delete",
+                            "method": AcpMethod::SessionDelete.label(),
                             "params": { "sessionId": session },
                         }))])
                     }
@@ -1318,7 +1401,8 @@ impl OpenCodeModels {
 
 #[cfg(test)]
 mod tests {
-    use super::{OpenCodeAcp, OpenCodeSessionId};
+    use super::OpenCodeAcp;
+    use crate::opencode::session::OpenCodeSessionId;
     use crate::{
         commands::{CommandKind, Sigil},
         drive::{

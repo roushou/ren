@@ -2,6 +2,7 @@
 //! attribution header of each model request, and as the thread of a driven
 //! run, so a run and its recorded calls name the same conversation.
 
+use ren_protocol::native::NativeThreadId;
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
@@ -35,8 +36,32 @@ impl<'a> OpenCodeSessionId<'a> {
         bytes.copy_from_slice(&digest[..16]);
         uuid::Builder::from_custom_bytes(bytes).into_uuid()
     }
+}
 
-    pub(crate) fn as_str(&self) -> &'a str {
-        self.0
+/// opencode's session as ACP names it, and the thread Ren reads it as.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct AcpSessionId {
+    name: String,
+    thread: NativeThreadId,
+}
+
+impl AcpSessionId {
+    /// An identifier as opencode wrote it, when it is one of its sessions.
+    pub(crate) fn parse(text: &str) -> Option<Self> {
+        let id = OpenCodeSessionId::parse(text)?;
+        let thread = NativeThreadId::new(id.uuid())?;
+        Some(Self {
+            name: text.to_owned(),
+            thread,
+        })
+    }
+
+    pub(crate) fn as_str(&self) -> &str {
+        &self.name
+    }
+
+    /// The thread Ren reads the session as.
+    pub(crate) fn thread(&self) -> NativeThreadId {
+        self.thread
     }
 }
