@@ -225,11 +225,86 @@ impl AgentScript {
                 "content": params["input"].clone() }),
             )),
         ];
+        if Self::explores(&prompt) {
+            out.extend(self.explore(index));
+        }
         out.extend(match Ask::of(&prompt) {
             Some(ask) => self.ask(ask),
             None => self.call(),
         });
         out
+    }
+
+    /// Whether a prompt asks to look around first: the turn then reads,
+    /// searches, and lists before it answers.
+    fn explores(prompt: &str) -> bool {
+        let prompt = prompt.to_lowercase();
+        ["look", "explore"].iter().any(|word| prompt.contains(word))
+    }
+
+    /// The commands a turn that looks around runs, each started and
+    /// completed, with Codex's reading of their parts.
+    fn explore(&self, index: u32) -> Vec<Out> {
+        let at = |path: &str| format!("{}/{path}", self.cwd);
+        let steps = [
+            (
+                "sed -n 1,80p src/parser.rs",
+                json!([{ "type": "read", "command": "sed -n 1,80p src/parser.rs",
+                         "name": "parser.rs", "path": at("src/parser.rs") }]),
+                "pub fn parse(input: &str) -> Result<Ast, Error> {\n    todo!()\n}",
+                0,
+            ),
+            (
+                "rg -n \"todo!\" src",
+                json!([{ "type": "search", "command": "rg -n \"todo!\" src",
+                         "query": "todo!", "path": "src" }]),
+                "src/parser.rs:2:    todo!()",
+                0,
+            ),
+            (
+                "ls src",
+                json!([{ "type": "listFiles", "command": "ls src", "path": "src" }]),
+                "lexer.rs\nlib.rs\nparser.rs",
+                0,
+            ),
+            (
+                "sed -n 1,40p src/lexer.rs",
+                json!([{ "type": "read", "command": "sed -n 1,40p src/lexer.rs",
+                         "name": "lexer.rs", "path": at("src/lexer.rs") }]),
+                "pub struct Lexer<'a> { input: &'a str }",
+                0,
+            ),
+            (
+                "sed -n 80,160p src/parser.rs",
+                json!([{ "type": "read", "command": "sed -n 80,160p src/parser.rs",
+                         "name": "parser.rs", "path": at("src/parser.rs") }]),
+                "fn expression(&mut self) -> Ast {",
+                0,
+            ),
+            (
+                "cargo check --quiet",
+                json!([{ "type": "unknown", "command": "cargo check --quiet" }]),
+                "error[E0425]: cannot find value `ast` in this scope",
+                101,
+            ),
+        ];
+        steps
+            .into_iter()
+            .enumerate()
+            .flat_map(|(step, (command, actions, output, exit))| {
+                let id = format!("look-{index}-{step}");
+                let started = json!({ "type": "commandExecution", "id": id, "command": command,
+                    "cwd": self.cwd, "status": "inProgress", "commandActions": actions });
+                let mut completed = started.clone();
+                completed["status"] = if exit == 0 { "completed" } else { "failed" }.into();
+                completed["aggregatedOutput"] = output.into();
+                completed["exitCode"] = exit.into();
+                [
+                    Out::Send(self.item("started", started)),
+                    Out::Send(self.item("completed", completed)),
+                ]
+            })
+            .collect()
     }
 
     /// A message into the running turn: taken as a user message of it,
@@ -470,6 +545,33 @@ mod tests {
         let again = agent.receive(&json!({ "id": 3, "method": "turn/start",
             "params": { "input": [{ "type": "text", "text": "thanks" }] } }));
         assert_ne!(sent(&again)[0]["result"]["turn"]["id"], turn);
+    }
+
+    #[test]
+    fn a_prompt_to_look_around_reads_searches_and_lists_before_it_answers() {
+        let mut agent = opened();
+        let out = agent.receive(&json!({ "id": 2, "method": "turn/start",
+            "params": { "input": [{ "type": "text", "text": "look at the parser" }] } }));
+        let messages = sent(&out);
+        let items: Vec<&Value> = messages
+            .iter()
+            .filter(|message| message["method"] == "item/completed")
+            .map(|message| &message["params"]["item"])
+            .filter(|item| item["type"] == "commandExecution")
+            .collect();
+        let parts: Vec<&str> = items
+            .iter()
+            .map(|item| item["commandActions"][0]["type"].as_str().unwrap())
+            .collect();
+        assert_eq!(
+            parts,
+            ["read", "search", "listFiles", "read", "read", "unknown"]
+        );
+        assert_eq!(items.last().unwrap()["exitCode"], 101);
+        assert!(
+            matches!(out.last(), Some(Out::Call { .. })),
+            "then it answers"
+        );
     }
 
     #[test]
