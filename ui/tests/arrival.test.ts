@@ -10,13 +10,26 @@ const snapshot = (key: string, value: string | null): Snapshot<string> => ({
   updated: value === null ? null : 1,
 });
 
-test('a read is handed over pending only when streaming', async () => {
+test('a read is handed over pending only when streaming and late', async () => {
   const read = Promise.resolve(snapshot('a', 'rows'));
-  const ready = await Arrival.over('a', read, false);
-  assert.deepEqual(ready, { state: 'ready', snapshot: snapshot('a', 'rows') });
-  const pending = await Arrival.over('a', read, true);
-  assert.equal(pending.state, 'pending');
+  // Not streaming (a first load): read in full.
+  assert.deepEqual(await Arrival.over('a', read, false), {
+    state: 'ready',
+    snapshot: snapshot('a', 'rows'),
+  });
+  // Streaming, and in within the grace period: ready, so the page renders once.
+  assert.deepEqual(await Arrival.over('a', read, true, 50), {
+    state: 'ready',
+    snapshot: snapshot('a', 'rows'),
+  });
+  // Streaming, and late: pending, for the page to draw its outline.
+  const pending = await Arrival.over('a', new Promise<Snapshot<string>>(() => {}), true, 0);
   assert.ok(pending.state === 'pending' && pending.key === 'a');
+});
+
+test('a read is in within its wait, or late', async () => {
+  assert.deepEqual(await Arrival.within(Promise.resolve(1), 0), { state: 'in', value: 1 });
+  assert.deepEqual(await Arrival.within(new Promise(() => {}), 0), { state: 'late' });
 });
 
 test('a pending read shows its outline, or the same query’s previous rows', () => {

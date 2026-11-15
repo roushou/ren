@@ -1,10 +1,12 @@
 /**
  * A view's data as its page receives it: read already, or still on its way.
  *
- * A page that takes its data this way renders at once on a navigation in
- * the browser, with its own outline where the values will go, instead of
- * keeping the old page up until every read is done. A first load is still
- * read in full on the server, so the page arrives complete.
+ * On a navigation in the browser, a read that finishes within a short grace
+ * period arrives ready, so the page renders once, complete, as on a first
+ * load. Only a read that takes longer is handed over pending: the page then
+ * renders at once with its own outline where the values will go, instead of
+ * keeping the old page up until every read is done. A first load is read in
+ * full on the server, so the page arrives complete.
  */
 import { readSnapshot, retainSnapshot, type Snapshot } from './snapshots.ts';
 
@@ -12,10 +14,20 @@ export type Arriving<T> =
   | { state: 'ready'; snapshot: Snapshot<T> }
   | { state: 'pending'; key: string; snapshot: Promise<Snapshot<T>> };
 
+/** A read that came back within its wait, or one still on its way. */
+export type Within<T> = { state: 'in'; value: T } | { state: 'late' };
+
 /** What a page shows of an arriving read: the snapshot, or its outline. */
 export type Shown<T> = { state: 'ready'; snapshot: Snapshot<T> } | { state: 'pending' };
 
 export class Arrival {
+  /**
+   * How long a navigation waits for a read before handing it over pending,
+   * in ms. Below it, an outline would only flash by before the page; above
+   * it, the outline shows the page is coming instead of the old one lingering.
+   */
+  static readonly GRACE_MS = 500;
+
   /** Whether reads are handed over before they finish. */
   static #streaming = false;
 
@@ -29,25 +41,53 @@ export class Arrival {
     Arrival.#streaming = true;
   }
 
-  /** `read` under `key`, handed over pending when streaming. */
+  /** `read` under `key`, handed over pending when streaming and it is late. */
   static read<T>(key: string, read: () => Promise<T>): Promise<Arriving<T>> {
     return Arrival.over(key, readSnapshot(key, read), Arrival.#streaming);
   }
 
-  /** A snapshot already on its way under `key`, handed over pending when streaming. */
+  /** A snapshot already on its way under `key`, handed over pending when
+   * streaming and it is late. */
   static hand<T>(key: string, snapshot: Promise<Snapshot<T>>): Promise<Arriving<T>> {
     return Arrival.over(key, snapshot, Arrival.#streaming);
   }
 
-  /** A snapshot on its way, handed over pending, or once it is read. */
+  /**
+   * A snapshot on its way: once it is read, or, when streaming, as soon as
+   * it is in or the grace period is over, whichever comes first.
+   */
   static async over<T>(
     key: string,
     snapshot: Promise<Snapshot<T>>,
     streaming: boolean,
+    graceMs = Arrival.GRACE_MS,
   ): Promise<Arriving<T>> {
-    return streaming
-      ? { state: 'pending', key, snapshot }
-      : { state: 'ready', snapshot: await snapshot };
+    if (!streaming) return { state: 'ready', snapshot: await snapshot };
+    const within = await Arrival.within(snapshot, graceMs);
+    switch (within.state) {
+      case 'in':
+        return { state: 'ready', snapshot: within.value };
+      case 'late':
+        return { state: 'pending', key, snapshot };
+      default: {
+        const never: never = within;
+        return never;
+      }
+    }
+  }
+
+  /** `read`, if it is in within `ms`; else word that it is late. A server
+   * load uses this too, for the reads it streams on a navigation. */
+  static async within<T>(read: Promise<T>, ms: number): Promise<Within<T>> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const late = new Promise<Within<T>>((resolve) => {
+      timer = setTimeout(() => resolve({ state: 'late' }), ms);
+    });
+    try {
+      return await Promise.race([read.then((value): Within<T> => ({ state: 'in', value })), late]);
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   /**

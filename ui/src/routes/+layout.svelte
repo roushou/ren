@@ -56,17 +56,17 @@
       ?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
   });
   const view = $derived(Views.of(page.route.id));
-  /** The view being navigated to, when it is another one: its tab and title
-   * show at once, while the page itself draws its own outline as it loads. */
+  /** The view being navigated to, when it is another one: its tab lights up
+   * at once. */
   const target = $derived(
     navigating.to && navigating.to.route.id !== page.route.id
       ? Views.of(navigating.to.route.id)
       : null,
   );
   const tab = $derived(Views.tab(target ?? view));
-  /** The scope bar's snippet: the page's own, except while leaving for
-   * another view, when the bar names that view instead of the old filters. */
-  const scope = $derived(target ? undefined : workbench.scope);
+  /** The scope bar's snippet: the page's own. Leaving for another view, the
+   * old page's stays until the new page shows its own, so the bar changes once. */
+  const scope = $derived(workbench.scope);
   /** When the scope does not fit on one line it folds behind a button. */
   let scopeOpen = $state(false);
   let folded = $state(false);
@@ -115,7 +115,7 @@
     reads.of<RecordingsData>(page.data.sessions)?.value?.sessions.length ?? 0,
   );
   const selected = $derived(workbench.selected);
-  const pageTitle = $derived(page.error ? 'Page unavailable' : Views.title(target ?? view));
+  const pageTitle = $derived(page.error ? 'Page unavailable' : Views.title(view));
   const gatewayOrigin = $derived(page.data.gatewayUrl);
   // The header names where the gateway runs, not its address.
   const place = $derived(GatewayPlace.parse(gatewayOrigin));

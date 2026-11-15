@@ -3,6 +3,7 @@
 // Tailscale login, and never its cookies.
 import { proxy } from '#lib/server/runsProxy.ts';
 import { ToolsApi, type ToolListing } from '#lib/tools.ts';
+import { Arrival } from '#lib/arrival.ts';
 import type { PageServerLoad } from './$types';
 
 export type ToolsInitial =
@@ -10,6 +11,23 @@ export type ToolsInitial =
 
 /** The read as the page receives it: done, or still on its way. */
 export type ToolsArriving = ToolsInitial | { kind: 'pending'; read: Promise<ToolsInitial> };
+
+/** The listing on a navigation: whole if it is in within the grace period, else streamed. */
+class Tools {
+  static async arriving(read: Promise<ToolsInitial>): Promise<ToolsArriving> {
+    const within = await Arrival.within(read, Arrival.GRACE_MS);
+    switch (within.state) {
+      case 'in':
+        return within.value;
+      case 'late':
+        return { kind: 'pending', read };
+      default: {
+        const never: never = within;
+        return never;
+      }
+    }
+  }
+}
 
 export const load: PageServerLoad = async ({ request, isDataRequest }) => {
   const login = request.headers.get('tailscale-user-login');
@@ -32,8 +50,9 @@ export const load: PageServerLoad = async ({ request, isDataRequest }) => {
     }),
   );
   // A first load is read in full, so the page renders as it will stay. On a
-  // navigation in the browser the read is streamed to it, and the page draws
-  // its outline until it arrives.
-  const initial: ToolsArriving = isDataRequest ? { kind: 'pending', read } : await read;
+  // navigation in the browser a read that is in within the grace period
+  // arrives whole too; a later one is streamed, and the page draws its
+  // outline until it arrives.
+  const initial: ToolsArriving = isDataRequest ? await Tools.arriving(read) : await read;
   return { initial };
 };
