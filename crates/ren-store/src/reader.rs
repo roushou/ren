@@ -345,12 +345,15 @@ impl Reader {
         .bind(i64::from(limit.get()))
         .fetch_all(&self.pool)
         .await?;
-        let mut sessions = Vec::with_capacity(rows.len());
-        for row in &rows {
-            let id: String = row.try_get("id")?;
-            sessions.push(SessionView::from_row(row, self.session_runs(&id).await?)?);
-        }
-        Ok(sessions)
+        let ids = rows
+            .iter()
+            .map(|row| row.try_get::<String, _>("id"))
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut runs = self.sessions_runs(&ids).await?;
+        rows.iter()
+            .zip(&ids)
+            .map(|(row, id)| SessionView::from_row(row, runs.remove(id).unwrap_or_default()))
+            .collect()
     }
 
     /// One operator session, with its runs, if it was recorded.
@@ -384,6 +387,32 @@ impl Reader {
     }
 
     /// A session's runs, newest first.
+    /// The runs of each of `sessions`, newest first, in one query.
+    async fn sessions_runs(
+        &self,
+        sessions: &[String],
+    ) -> Result<HashMap<String, Vec<RunView>>, StoreError> {
+        let mut grouped = HashMap::<String, Vec<RunView>>::new();
+        if sessions.is_empty() {
+            return Ok(grouped);
+        }
+        let mut sql = QueryBuilder::<Sqlite>::new(RunView::SELECT);
+        sql.push(" WHERE operator_session IN (");
+        let mut ids = sql.separated(", ");
+        for session in sessions {
+            ids.push_bind(session);
+        }
+        sql.push(") ORDER BY started_at DESC, id DESC");
+        for row in sql.build().fetch_all(&self.pool).await? {
+            let session: String = row.try_get("operator_session")?;
+            grouped
+                .entry(session)
+                .or_default()
+                .push(RunView::from_row(&row)?);
+        }
+        Ok(grouped)
+    }
+
     async fn session_runs(&self, session: &str) -> Result<Vec<RunView>, StoreError> {
         sqlx::query(AssertSqlSafe(format!(
             "{} WHERE operator_session = ? ORDER BY started_at DESC, id DESC",

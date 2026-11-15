@@ -1867,6 +1867,47 @@ mod history {
     }
 
     #[tokio::test]
+    async fn listed_sessions_carry_the_same_runs_as_each_read_alone() {
+        let mut fixture = Fixture::new().await;
+        let first = fixture.run(5, true).await;
+        fixture.run(6, false).await;
+        // A second run serving the first session.
+        let session = fixture
+            .reader
+            .run(first)
+            .await
+            .unwrap()
+            .unwrap()
+            .operator_session
+            .unwrap();
+        let mut batch = Batch::default();
+        batch.push(Op::Run(RunRecord {
+            at: fixture.clock.now(),
+            run: RunId::generate(fixture.ids.as_ref()),
+            fact: RunFact::Started {
+                session,
+                harness: ren_harness::Harness::Codex,
+                workdir: "/work/acme".into(),
+                settings: ren_harness::settings::RunSettings::default(),
+                toolset: Some(ren_depot::toolset::Generation::NONE),
+            },
+        }));
+        fixture.store.commit(&batch).await.unwrap();
+        let listed = fixture
+            .reader
+            .sessions(PageLimit::DEFAULT, Shelf::Current)
+            .await
+            .unwrap();
+        assert_eq!(listed.len(), 2);
+        let runs: Vec<usize> = listed.iter().map(|session| session.runs.len()).collect();
+        assert_eq!(runs.iter().sum::<usize>(), 3);
+        for view in listed {
+            let alone = fixture.reader.session(view.id).await.unwrap().unwrap();
+            assert_eq!(view, alone);
+        }
+    }
+
+    #[tokio::test]
     async fn a_sessions_own_facts_change_it_without_a_run() {
         let mut fixture = Fixture::new().await;
         fixture.run(5, true).await;
