@@ -491,9 +491,19 @@ async fn admission_is_held_until_the_stream_ends_and_shutdown_aborts_it_at_the_d
     drop(stream);
     gateway.stop_expecting(Stopped::Aborted).await;
     let records = recorded(dir.path()).await;
-    assert_eq!(records.len(), 1);
-    assert_eq!(terminal(&records[0]), AttemptTerminal::Cancelled);
-    let attempt = &detail(dir.path(), records[0].id).await.attempts[0];
+    // The call refused while the gateway was full is recorded as such.
+    let (refused, forwarded): (Vec<_>, Vec<_>) =
+        records.iter().partition(|call| call.rejection.is_some());
+    assert_eq!(
+        refused
+            .iter()
+            .map(|call| call.rejection.as_ref().and_then(Stored::known))
+            .collect::<Vec<_>>(),
+        [Some(ren_recorder::capture::CallRejection::Busy)]
+    );
+    assert_eq!(forwarded.len(), 1);
+    assert_eq!(terminal(forwarded[0]), AttemptTerminal::Cancelled);
+    let attempt = &detail(dir.path(), forwarded[0].id).await.attempts[0];
     assert_eq!(
         (
             attempt.terminal_cause.clone(),

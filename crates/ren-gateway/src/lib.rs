@@ -94,7 +94,7 @@ use axum::{
     response::{IntoResponse, Response},
     routing::{MethodRouter, get, post},
 };
-use buffer::Decoded;
+use buffer::RequestRead;
 use bytes::Bytes;
 use http::{HeaderMap, HeaderValue, StatusCode};
 use http_body_util::BodyExt;
@@ -549,6 +549,7 @@ impl<U: Upstream> Gateway<U> {
             }
         };
         let Ok(admission) = self.admission.clone().try_acquire_owned() else {
+            self.recorder.reject(None, call, None, CallRejection::Busy);
             return GatewayError::Busy.into_response();
         };
         let abort = self.shutdown.abort_token();
@@ -568,11 +569,9 @@ impl<U: Upstream> Gateway<U> {
                 return RenReply::refused(refusal).into_response();
             }
         };
-        let decoded = Decoded::new(
-            &parts.headers,
-            buffered.bytes(),
-            self.config.buffer.request_limits.get(provider),
-        );
+        let decoded = self
+            .read_request(&parts.headers, buffered.bytes(), provider)
+            .await;
         let model = decoded.model();
         let operator = self.controls.snapshot();
         let plan = self.config.policy.plan(
@@ -581,7 +580,7 @@ impl<U: Upstream> Gateway<U> {
                 provider,
                 upstream: &bound.upstream,
                 endpoint: route.endpoint,
-                model: model.as_deref(),
+                model,
                 session,
                 user: call.caller.user(),
                 now: self.clock.now().wall,
@@ -703,6 +702,25 @@ impl<U: Upstream> Gateway<U> {
         }
     }
 
+    /// Read what planning needs from a buffered body. Decoding a compressed
+    /// body is bounded in memory but not in time, so it runs off the
+    /// executor.
+    async fn read_request(
+        &self,
+        headers: &HeaderMap,
+        body: &Bytes,
+        provider: ren_protocol::route::Provider,
+    ) -> RequestRead {
+        let limit = self.config.buffer.request_limits.get(provider);
+        if !RequestRead::needs_decoding(headers) {
+            return RequestRead::new(headers, body, limit);
+        }
+        let (headers, body) = (headers.clone(), body.clone());
+        tokio::task::spawn_blocking(move || RequestRead::new(&headers, &body, limit))
+            .await
+            .unwrap_or(RequestRead::Encoded { model: None })
+    }
+
     /// Apply the plan's transforms and the upstream entry's credential
     /// override to a copy of the request. `None` for an unknown upstream.
     fn prepare(
@@ -711,13 +729,13 @@ impl<U: Upstream> Gateway<U> {
         upstream: &UpstreamId,
         headers: &HeaderMap,
         original: &Bytes,
-        decoded: &Decoded<'_>,
+        decoded: &RequestRead,
     ) -> Option<Prepared> {
         let entry = self.config.upstreams.get(upstream)?;
         let mut headers = headers.clone();
         let mut json = match decoded {
-            Decoded::Identity(bytes) => RequestJson::new(bytes),
-            Decoded::Decompressed(_) | Decoded::Opaque => RequestJson::encoded(),
+            RequestRead::Plain { .. } => RequestJson::new(original),
+            RequestRead::Encoded { .. } => RequestJson::encoded(),
         };
         let mut steps = Vec::new();
         for rule in &plan.transforms {
@@ -836,6 +854,7 @@ impl<U: Upstream> Gateway<U> {
             return Self::handshake_refused("WebSocket channel limit reached; use HTTP/SSE\n");
         };
         let Ok(admission) = self.admission.clone().try_acquire_owned() else {
+            self.recorder.reject(None, start, None, CallRejection::Busy);
             return GatewayError::Busy.into_response();
         };
         // WebSocket channels are pinned to the route's entry.

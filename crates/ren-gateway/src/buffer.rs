@@ -13,11 +13,11 @@ use bytes::{Bytes, BytesMut};
 use http::HeaderMap;
 use http_body_util::BodyExt;
 use ren_protocol::{
-    encoding::{Decompressor, ResponseEncoding},
+    encoding::{BodyReader, ResponseEncoding},
     route::Provider,
 };
 use ren_recorder::capture::CallRejection;
-use std::{sync::Arc, time::Duration};
+use std::{io::Read, sync::Arc, time::Duration};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
 /// The largest request body each provider's routes accept; larger ones get
@@ -278,72 +278,70 @@ impl<'a> Held<'a> {
     }
 }
 
-/// A request body decoded for reading, if its encoding allows: what policy
-/// reads (the model) and body transforms change.
-#[derive(Debug)]
-pub enum Decoded<'a> {
-    /// The body as sent.
-    Identity(&'a [u8]),
-    /// Decoded from a compressed body, at most the request limit.
-    Decompressed(Vec<u8>),
-    /// Not decodable: unsupported, corrupt, or larger than the limit.
-    Opaque,
+/// What the gateway reads of a request body before planning: its model,
+/// and whether body transforms may change it. A compressed body is read
+/// through its decoder as a stream, never held decoded, and at most `limit`
+/// decoded bytes are read.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RequestRead {
+    /// Sent without a content encoding: transforms may change it.
+    Plain { model: Option<String> },
+    /// Compressed, or in an encoding Ren does not decode: transforms leave
+    /// it alone.
+    Encoded { model: Option<String> },
 }
 
-impl<'a> Decoded<'a> {
-    pub fn new(headers: &HeaderMap, body: &'a [u8], limit: usize) -> Self {
+impl RequestRead {
+    pub fn new(headers: &HeaderMap, body: &[u8], limit: usize) -> Self {
         let encoding = ResponseEncoding::from_headers(headers);
         match encoding {
-            ResponseEncoding::Identity => return Self::Identity(body),
+            ResponseEncoding::Identity => Self::Plain {
+                model: serde_json::from_slice::<ModelField>(body)
+                    .ok()
+                    .and_then(|body| body.model),
+            },
             ResponseEncoding::Gzip
             | ResponseEncoding::Zstd
             | ResponseEncoding::Brotli
-            | ResponseEncoding::Unsupported => {}
-        }
-        let Ok(mut decoder) = Decompressor::new(encoding) else {
-            return Self::Opaque;
-        };
-        let mut out = Vec::new();
-        let mut over = false;
-        let mut push = |bytes: &[u8]| {
-            if out.len().saturating_add(bytes.len()) > limit {
-                over = true;
-            } else {
-                out.extend_from_slice(bytes);
-            }
-        };
-        let decoded = decoder
-            .decode(body, &mut push)
-            .and_then(|()| decoder.finish(&mut push));
-        match (decoded, over) {
-            (Ok(()), false) => Self::Decompressed(out),
-            (Ok(()), true) | (Err(_), _) => Self::Opaque,
+            | ResponseEncoding::Unsupported => Self::Encoded {
+                model: BodyReader::new(encoding, body).ok().and_then(|reader| {
+                    let bounded = std::io::BufReader::new(
+                        reader.take(u64::try_from(limit).unwrap_or(u64::MAX)),
+                    );
+                    serde_json::from_reader::<_, ModelField>(bounded)
+                        .ok()
+                        .and_then(|body| body.model)
+                }),
+            },
         }
     }
 
-    pub fn json(&self) -> Option<&[u8]> {
-        match self {
-            Self::Identity(bytes) => Some(bytes),
-            Self::Decompressed(bytes) => Some(bytes),
-            Self::Opaque => None,
+    /// Whether reading the body needs decoding: worth moving off the
+    /// executor.
+    pub fn needs_decoding(headers: &HeaderMap) -> bool {
+        match ResponseEncoding::from_headers(headers) {
+            ResponseEncoding::Identity | ResponseEncoding::Unsupported => false,
+            ResponseEncoding::Gzip | ResponseEncoding::Zstd | ResponseEncoding::Brotli => true,
         }
     }
 
     /// The top-level `model`, if the body is a JSON object with one.
-    pub fn model(&self) -> Option<String> {
-        #[derive(serde::Deserialize)]
-        struct Model {
-            model: Option<String>,
+    pub fn model(&self) -> Option<&str> {
+        match self {
+            Self::Plain { model } | Self::Encoded { model } => model.as_deref(),
         }
-        serde_json::from_slice::<Model>(self.json()?)
-            .ok()
-            .and_then(|body| body.model)
     }
+}
+
+/// A request's top-level `model`; every other field is skipped unread.
+#[derive(serde::Deserialize)]
+struct ModelField {
+    model: Option<String>,
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{BufferOptions, BufferRefusal, Decoded, RequestBuffer, RequestLimits};
+    use super::{BufferOptions, BufferRefusal, RequestBuffer, RequestLimits, RequestRead};
     use axum::body::Body;
     use bytes::Bytes;
     use http::HeaderMap;
@@ -509,23 +507,43 @@ mod tests {
     fn the_model_is_read_from_identity_and_compressed_bodies() {
         let body = br#"{"model":"m-1","input":[]}"#;
         assert_eq!(
-            Decoded::new(&HeaderMap::new(), body, 1024)
-                .model()
-                .as_deref(),
-            Some("m-1")
+            RequestRead::new(&HeaderMap::new(), body, 1024),
+            RequestRead::Plain {
+                model: Some("m-1".to_owned())
+            }
         );
         let compressed = zstd::encode_all(&body[..], 3).unwrap();
         let mut headers = HeaderMap::new();
         headers.insert(http::header::CONTENT_ENCODING, "zstd".parse().unwrap());
-        let decoded = Decoded::new(&headers, &compressed, 1024);
-        assert_eq!(decoded.model().as_deref(), Some("m-1"));
-        assert!(matches!(
-            Decoded::new(&headers, &compressed, 4),
-            Decoded::Opaque
-        ));
-        assert!(matches!(
-            Decoded::new(&headers, b"junk", 1024),
-            Decoded::Opaque
-        ));
+        assert!(RequestRead::needs_decoding(&headers));
+        assert_eq!(
+            RequestRead::new(&headers, &compressed, 1024).model(),
+            Some("m-1")
+        );
+        // Past the limit, or not decodable: no model, and still encoded.
+        assert_eq!(
+            RequestRead::new(&headers, &compressed, 4),
+            RequestRead::Encoded { model: None }
+        );
+        assert_eq!(
+            RequestRead::new(&headers, b"junk", 1024),
+            RequestRead::Encoded { model: None }
+        );
+    }
+
+    #[test]
+    fn a_compression_bomb_is_read_as_a_stream() {
+        // 16 MiB of whitespace before the model, in a few KiB of zstd: read
+        // through, never held.
+        let mut body = vec![b' '; 16 * 1024 * 1024];
+        body.extend_from_slice(br#"{"model":"m-2"}"#);
+        let compressed = zstd::encode_all(&body[..], 3).unwrap();
+        assert!(compressed.len() < 64 * 1024);
+        let mut headers = HeaderMap::new();
+        headers.insert(http::header::CONTENT_ENCODING, "zstd".parse().unwrap());
+        assert_eq!(
+            RequestRead::new(&headers, &compressed, body.len()).model(),
+            Some("m-2")
+        );
     }
 }

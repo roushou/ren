@@ -112,6 +112,7 @@ const callRejections = [
   'identity_refused',
   'user_not_allowed',
   'user_busy',
+  'busy',
 ] as const;
 export type CallRejection = (typeof callRejections)[number];
 /** How a call's caller was identified (see the daemon's named users). */

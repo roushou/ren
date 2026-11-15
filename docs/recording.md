@@ -118,7 +118,8 @@ restart) and the close code. A call ended by an unresponsive upstream records
 ## Gateway responses and limits
 
 When the gateway answers instead of the provider, the status says why: `503` when
-the concurrency limit is reached or the daemon is shutting down, `429` when the
+the concurrency limit is reached (recorded as rejection `busy`) or the daemon is
+shutting down, `429` when the
 caller's own limit is (see [named users](policy.md#named-users)), `502` when the
 connection or send failed, `504` when no response head arrived in time, `409`
 when an operator cancelled the call (`ren_operator_cancelled`), and `400` when the
