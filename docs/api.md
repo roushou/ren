@@ -680,7 +680,10 @@ anywhere), and `@` the run's folder's files; ↑ and ↓ choose, Tab or Enter
 inserts, Esc closes. Each session keeps its own draft, ↑ and ↓ recall its earlier prompts, and writing to one whose
 client stopped continues it. The model, effort, and approvals
 change from the next turn, and a draft (no prompt sent yet) can change its
-client; a folder's `+` makes a session there at once.
+client; a folder's `+` makes a session there at once. A draft never asked
+anything is listed only while it is open, and is discarded once its client
+has sat idle for ten minutes; one open on the page then is made again in the
+same place, keeping what was typed.
 
 Refusals: `400` `invalid_directory` (not absolute, contains `..`, or outside
 every root once links are resolved), `400` `directory_not_found`, `400`
