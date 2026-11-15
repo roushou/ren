@@ -122,7 +122,7 @@ pub enum InstallError {
     #[error("{0} is not on PATH")]
     MissingProgram(&'static str),
     #[error("deploy/ren-ui.service no longer has the line {0:?} to render")]
-    UiTemplate(&'static str),
+    UiTemplate(String),
     #[error(
         "the UI does not answer {url}; see `journalctl --user -u ren-ui`. To roll back, stop ren-ui, move {} to {}, and start it",
         previous.display(),

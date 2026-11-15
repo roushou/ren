@@ -446,7 +446,7 @@ program_at = "acme-lint"
         Unit::Ui.start(
             Some(&self.ui_dir),
             &[ui.node()],
-            &["build".into()],
+            &[UiDeploy::entry().display().to_string()],
             &[
                 ("HOST", Self::UI.ip().to_string()),
                 ("PORT", Self::UI.port().to_string()),

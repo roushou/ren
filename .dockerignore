@@ -1,11 +1,11 @@
 # Only untracked build output: excluding a tracked file would mark the
 # image's recorded revision as dirty.
 target
-ui/node_modules
-ui/.svelte-kit
-ui/dist
-ui/build
-ui/.env
-ui/.env.*
+ui/**/node_modules
+ui/apps/web/.svelte-kit
+ui/apps/web/dist
+ui/apps/web/build
+ui/apps/web/.env
+ui/apps/web/.env.*
 deploy/container/*.env
 deploy/container/ren.toml

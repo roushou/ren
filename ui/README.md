@@ -11,6 +11,11 @@ Claude Code / Codex / Pi / OpenCode ───> Rust daemon ──> Providers
 Browser ──> optional SvelteKit server ──> Rust management API
 ```
 
+`ui` is a Bun workspace: the SvelteKit app is `apps/web`, and
+[`packages/redline`](packages/redline/README.md) is Redline. Run the commands
+below from `ui`; its scripts run each member's. Paths to source files below are
+in `apps/web`.
+
 Pages: Overview (`/`: one line that says how it stands, edged by the worst thing in it;
 what needs attention in the last day, worst first, with repeats folded into a count:
 exposed secrets, recording trouble, failed and cut-off model calls, then failed
@@ -95,7 +100,7 @@ bun run start
 ```
 
 Open http://127.0.0.1:3000. The [Node adapter](https://svelte.dev/docs/kit/adapter-node)
-produces `build/`. Cargo never builds or embeds the UI.
+produces `apps/web/build/`. Cargo never builds or embeds the UI.
 
 | Variable                 | Default                          | Purpose                                                                         |
 | ------------------------ | -------------------------------- | ------------------------------------------------------------------------------- |
@@ -111,7 +116,7 @@ produces `build/`. Cargo never builds or embeds the UI.
 
 Gateway URLs must be HTTP(S) origins, without credentials, paths, queries, or
 fragments, and must never point at the UI itself. `src/env.ts` validates them.
-`.env` files work in development only: `node build` doesn't load them, so export
+`.env` files (in `apps/web`) work in development only: `node build` doesn't load them, so export
 the variables or use a service environment file.
 
 To inspect a VPS daemon from a UI running on your laptop:
@@ -226,9 +231,10 @@ performs the steps below and upgrades the UI along with the daemon (see
 [deployment](../docs/deployment.md#install-task)). To do it by hand:
 
 The UI service is independent of the daemon service. The VPS needs Node only if the
-UI runs there. Build in a checkout with Bun and Node, then deploy `build/`,
-`package.json`, `bun.lock`, and `packages/` (the workspace packages the lockfile
-names) together to `~/.local/share/ren-ui`. Install
+UI runs there. Build in a checkout with Bun and Node, then deploy the workspace's
+shape to `~/.local/share/ren-ui`: `package.json`, `bun.lock`, `packages/`, and
+`apps/web/package.json` with `apps/web/build/` (the lockfile names every member,
+so all must be there). Install
 dependencies there with `bun install --production --frozen-lockfile --ignore-scripts`.
 Don't deploy `.env` files, or `node_modules` built on another platform. Node must be
 at the absolute path used in the unit, typically `/usr/bin/node`.

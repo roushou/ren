@@ -1,5 +1,5 @@
 //! The read API's JSON, pinned for the UI. Each read's answer to a fixed,
-//! synthetic history is compared with `ui/tests/fixtures/api/<read>.json`,
+//! synthetic history is compared with `ui/apps/web/tests/fixtures/api/<read>.json`,
 //! and the UI's decoder tests parse those same files, so a change on either
 //! side that breaks the contract fails a test. A test binary of its own, so
 //! its gateway's sequential IDs are the same on every run.
@@ -66,7 +66,7 @@ fn normalized(mut value: serde_json::Value) -> serde_json::Value {
 }
 
 fn fixtures() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../ui/tests/fixtures/api")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../ui/apps/web/tests/fixtures/api")
 }
 
 #[tokio::test]

@@ -462,7 +462,9 @@ dependencies under "Crates" below. Read the code for current module ownership.
   service definitions. Refactors preserve existing flags, output
   formats, exports, and client passthrough. Its integration tests run the built
   binary (`CARGO_BIN_EXE_ren`).
-- `ui`: an independent SvelteKit, Svelte 5, and TypeScript server (Node adapter). It
+- `ui`: a Bun workspace (`apps/*`, `packages/*`) whose app, `ui/apps/web`, is an
+  independent SvelteKit, Svelte 5, and TypeScript server (Node adapter); the
+  `src/` and `tests/` paths below are the app's. It
   reads the daemon only through the management API and forwards only allowlisted
   read-only endpoints. It never forwards browser cookies or credentials, never reads
   storage directly, and never proxies inference. There are two exceptions.
@@ -597,7 +599,7 @@ tracked and update it intentionally.
 The same principles apply in TypeScript:
 
 - Parse API responses and environment variables at the boundary.
-  `ui/src/env.ts` validates gateway origins, keeps loopback defaults, and keeps the
+  `ui/apps/web/src/env.ts` validates gateway origins, keeps loopback defaults, and keeps the
   server's daemon address separate from the client-facing address.
 - Use discriminated unions for states instead of loose flags.
 - Keep pure logic in `src/lib` modules that can be tested without a browser.
@@ -611,8 +613,8 @@ dots are round.
 
 Use filesystem routes and typed load functions. Private HTML, route data, and API
 responses are non-cacheable. SvelteKit generates CSP nonces, including for the
-inline theme initializer. The policy lives in `ui/src/csp.ts`; its only inline
-allowance is SvelteKit's route announcer style, by hash, pinned by `tests/csp.test.ts`. Never commit generated assets (`ui/build`, `.svelte-kit`).
+inline theme initializer. The policy lives in `ui/apps/web/src/csp.ts`; its only inline
+allowance is SvelteKit's route announcer style, by hash, pinned by `tests/csp.test.ts`. Never commit generated assets (`build`, `.svelte-kit`).
 
 ---
 
@@ -643,7 +645,8 @@ cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo test --workspace --locked
 ```
 
-UI changes, in `ui` (Bun from `package.json`, Node 22.17+):
+UI changes, in `ui`, the workspace root, whose scripts run each member's (Bun
+from `package.json`, Node 22.17+):
 
 ```sh
 bun install --frozen-lockfile
