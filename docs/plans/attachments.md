@@ -4,9 +4,11 @@ A prompt sent through Ren carries attachments: images first, then other files.
 Ren has one attachment vocabulary across the UI, the control API, the
 supervisor, and storage; each client declares, as data, which kinds it
 accepts and how it takes them, and only its codec turns a Ren attachment into
-the client's own input. Nothing in this plan is built. Today a `Prompt`
-(`ren_harness::drive`) is non-blank text, and each codec sends it as one text
-item. Record every deviation here, with its reason.
+the client's own input. Phase 1 is built: the vocabulary, parsing, limits,
+and each client's declaration (`ren_harness::attachment`), and
+`AttachmentId`. Nothing is uploaded or sent yet: a `Prompt`
+(`ren_harness::drive`) is still non-blank text, and each codec sends it as
+one text item. Record every deviation here, with its reason.
 
 ## Decisions
 
@@ -39,39 +41,51 @@ item. Record every deviation here, with its reason.
 ## Model
 
 - `AttachmentId` (`ren_recorder::id`): Ren's identity for one uploaded
-  attachment, from the `IdSource`.
-- `Attachment` (`ren_harness`, a new `attachment` module): its id, its
-  `AttachmentKind`, its byte size, its SHA-256, and its display name (a
-  sanitized file name, never a path).
-- `AttachmentKind`: `Image(ImageFormat)`, and in phase 4 `File`.
-  `ImageFormat` is a vocabulary (`png`, `jpeg`, `gif`, `webp`) with labels
-  pinned in `ren-harness`'s `tests/fixtures/labels.txt`.
+  attachment, from the `IdSource`. Built.
+- `Attachment` (`ren_harness::attachment`): its `AttachmentKind`, its
+  `ByteSize`, its SHA-256 (`ren_depot::source::Sha256`), and its
+  `AttachmentName` (the last part of the uploaded name, without control
+  characters; never a path, `.`, `..`, empty, or over 255 bytes). It has
+  no id: the store pairs an `AttachmentId` with it (phase 2). Built.
+- `AttachmentKind`: `Image(Image)`, an `ImageFormat` and its `Dimensions`
+  (never zero on a side); `File` comes in phase 4. `ImageFormat` is a
+  vocabulary (`png`, `jpeg`, `gif`, `webp`) with labels pinned in
+  `ren-harness`'s `tests/fixtures/labels.txt`. Built.
 - **Parsing** is pure: `Attachment::parse` reads the leading bytes for the
   format (never the name or the browser's media type) and the header for
   the image's dimensions, and refuses anything else with an
   `AttachmentError`. Past it, an attachment is known to be what it says.
+  Dimensions come from the `imagesize` crate (pure, no dependencies of its
+  own); the image is not decoded. Built.
 - `Prompt` gains its attachments: its text and an ordered list of
-  `Attachment`s. A prompt of attachments only is allowed; one with neither
-  text nor attachments is still blank.
-- `Acceptance`: what a client takes, as data. For each kind, whether it is
-  accepted and its `Delivery`, plus the client's own limits:
+  attachments. A prompt of attachments only is allowed; one with neither
+  text nor attachments is still blank. Phase 3.
+- `Acceptance`: what a client takes, as data. For each kind, a `Takes`:
+  `Always(Delivery)`, `IfOffered(Delivery)`, or `Never`. Built, with each
+  client's declaration in `Harness::acceptance`; `Delivery` labels are
+  pinned:
   - `InlineBase64`: the bytes, encoded, in the message (Claude Code, Pi,
     OpenCode).
   - `LocalPath`: the file's path in a native input item (Codex's
     `localImage`).
-  - `MentionPath`: the path named in the prompt's text (files, every client).
+  - `MentionPath`: the path named in the prompt's text (files, every
+    client). Phase 4.
 - **Static and learned.** `Harness::acceptance` is the static declaration.
   What only the running client says is learned by its codec and reported to
   the supervisor: OpenCode's `promptCapabilities.image` in its `initialize`
   answer, and whether the chosen model reads images where the client's model
   listing says so (`Model` gains its input kinds when the listing has them).
   The session's effective acceptance is the static declaration narrowed by
-  what was learned; unknown is not yes.
+  what was learned; unknown is not yes (`Takes::resolve` with an `Offer`:
+  offered, not offered, or unknown; built). The codecs' reports are phase
+  3.
 - `Limits`: declarative configuration (`[attachments]`), with defaults: 5 MB
   and 8000 px a side per image (the Anthropic API's limits), 10 attachments
   and 20 MB per prompt, and in phase 4, 25 MB per file. Inline delivery
-  grows bytes by a third (base64); limits are checked on the stored size and
-  the encoded size both.
+  grows bytes by a third (base64). Built with its defaults (MiB):
+  `Attachment::parse` checks an image's uploaded bytes and longest side,
+  and `Limits::check_prompt` a prompt's count and its bytes in base64. Read
+  from `[attachments]` in phase 2.
 - Errors: `AttachmentError` (unreadable, unsupported format, too large, too
   many), and the supervisor's refusals: not accepted by this client, not by
   this model, not this session's, gone.
@@ -143,12 +157,12 @@ What each client takes, to confirm against its current documentation before
 its codec is written (`AGENTS.md`: check official documentation before
 changing client behavior):
 
-| Client      | Image input                                                                        | Mid-turn steer with an image |
-| ----------- | ---------------------------------------------------------------------------------- | ---------------------------- |
-| Codex       | `localImage` (a path) or `image` input items in `turn/start`                       | to confirm (`turn/steer`)    |
-| Claude Code | `image` content blocks (base64) in a stream-json user message                      | to confirm                   |
-| Pi          | `images` on the RPC `prompt` command                                               | to confirm (`steer`)         |
-| OpenCode    | an ACP `image` content block, when `initialize` reports `promptCapabilities.image` | to confirm                   |
+| Client      | Image input                                                                        | Mid-turn steer with an image                     | Checked                                                 |
+| ----------- | ---------------------------------------------------------------------------------- | ------------------------------------------------ | ------------------------------------------------------- |
+| Codex       | `localImage` (a path) or `image` input items in `turn/start`                       | yes: `turn/steer` takes the same `UserInput`s    | 0.162.1, `codex app-server generate-json-schema`        |
+| Claude Code | `image` content blocks (base64) in a stream-json user message                      | to confirm                                       | not yet: needs a real request                           |
+| Pi          | `images` (`{ type: "image", data, mimeType }`) on the RPC `prompt` command         | yes: `images` on `steer` and `follow_up` too     | 1.5.2, its `rpc-types.d.ts`                             |
+| OpenCode    | an ACP `image` content block, when `initialize` reports `promptCapabilities.image` | to confirm (its steering is a `_meta` extension) | 2.2.7 reports `image: true` and `additionalDirectories` |
 
 Each codec's encoding is tested like the rest of the codec: a prompt with
 attachments in, the client's lines out, no I/O. Where a steer cannot carry
@@ -177,14 +191,15 @@ session's folder only. To confirm per client.
 
 1. **Vocabulary and parsing.** `AttachmentId`, `Attachment`, `ImageFormat`,
    `Attachment::parse`, `Limits`, `Acceptance` with each client's static
-   declaration, and `Prompt` with attachments (none sent yet). Unit tests,
-   labels pinned. Not built.
+   declaration. Unit tests (with a property test over arbitrary bytes),
+   labels pinned. Built; `Prompt` moved to phase 3 (see Deviations).
 2. **Storage and upload.** The migration, the session folder under
    `AgentHost`, the upload, read, and delete routes, deletion with the
    session, and the EXIF decision. Supervisor and `TestGateway` tests with
    in-memory hosts. Not built.
 3. **Images through every client.** Each codec's encoding, the learned
-   acceptance (OpenCode's capabilities, models' input kinds), refusals on
+   acceptance (OpenCode's capabilities, models' input kinds), `Prompt` with
+   its attachments, refusals on
    send, run entries naming attachments, and the UI composer and
    conversation. Fake clients in `cargo xtask dev` take images, so the dev
    slot shows them. Not built.
@@ -195,4 +210,17 @@ session's folder only. To confirm per client.
 
 ## Deviations
 
-None yet.
+- **`Attachment` has no id.** `ren-harness` sits below `ren-recorder`, where
+  Ren's identities live, so an `Attachment` is what was uploaded and the
+  store pairs it with its `AttachmentId`.
+- **`Prompt` is unchanged in phase 1.** What a prompt carries to a codec
+  (an attachment's bytes, or its path) follows from delivery, which phase 3
+  builds; a `Prompt` is stored and published as text, so changing its form
+  before then would change a format for nothing that uses it.
+- **`Limits` has defaults only.** `[attachments]` is read in phase 2, with
+  the upload that uses it.
+- **The per-image byte limit is on the uploaded bytes.** Whether a provider
+  counts an inline image's bytes before or after base64 is to confirm in
+  phase 3, with each client; the prompt limit already counts base64.
+- **`ByteSize` is the attachment module's.** The daemon's `ByteLimit` is a
+  download cap in a crate above it.
