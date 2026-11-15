@@ -11,7 +11,7 @@
 //! streamed pieces as the run's conversation; its model traffic is recorded
 //! like any other client's.
 
-use super::{ControlApi, Refusal};
+use super::{ControlApi, ControlRefusal};
 use axum::{
     Json, Router,
     extract::{Path, State, rejection::JsonRejection},
@@ -21,18 +21,16 @@ use axum::{
     },
     routing::{get, post},
 };
-use http::{HeaderMap, StatusCode};
+use http::HeaderMap;
 use ren_harness::{
     Harness,
     commands::ClientCommand,
-    drive::{CommandRefused, Decision},
+    drive::CommandRefused,
     models::ModelId,
     settings::{ApprovalPolicy, Effort, RunSettings},
 };
-use ren_recorder::id::AttachmentId;
 use ren_supervisor::{
-    CommandError, Delivery, ModelsError, RunRefused, RunSnapshot, StartError, Supervisor,
-    WorkdirError,
+    CommandError, ModelsError, RunRefused, RunSnapshot, StartError, Supervisor, WorkdirError,
 };
 use std::{convert::Infallible, sync::Arc, time::Duration};
 use tokio::sync::broadcast::error::RecvError;
@@ -54,40 +52,19 @@ impl FilesRequest {
     pub(super) const MOST: usize = 100;
 }
 
-#[derive(serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(super) struct PromptRequest {
-    /// May be blank when attachments go.
-    #[serde(default)]
-    pub(super) text: String,
-    /// The session's attachments to send with it, by id.
-    #[serde(default)]
-    pub(super) attachments: Vec<AttachmentId>,
-    /// How it goes: start a turn (the default), queue it for after the
-    /// running turn, or steer the running turn with it.
-    #[serde(default = "PromptRequest::start")]
-    pub(super) delivery: Delivery,
-}
-
 impl SettingsRequest {
     /// The settings asked for: a model must be one a client could name.
-    pub(super) fn settings(self) -> Result<RunSettings, Denied> {
+    pub(super) fn settings(self) -> Result<RunSettings, ControlRefusal> {
         let model = self
             .model
             .map(|model| model.parse::<ModelId>())
             .transpose()
-            .map_err(|_| Denied::Control(Refusal::Invalid))?;
+            .map_err(|_| ControlRefusal::InvalidRequest)?;
         Ok(RunSettings {
             model,
             effort: self.effort,
             approvals: self.approvals,
         })
-    }
-}
-
-impl PromptRequest {
-    fn start() -> Delivery {
-        Delivery::Start
     }
 }
 
@@ -103,86 +80,13 @@ pub(super) struct SettingsRequest {
     pub(super) approvals: Option<ApprovalPolicy>,
 }
 
-#[derive(serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(super) struct AnswerRequest {
-    pub(super) decision: Decision,
-}
-
 #[derive(serde::Serialize)]
 struct Runs {
     api_version: u32,
     runs: Vec<RunSnapshot>,
 }
 
-/// A refused request: the control API's access check or a run refusal.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum Denied {
-    Control(Refusal),
-    Run(RunRefusal),
-}
-
-impl IntoResponse for Denied {
-    fn into_response(self) -> Response {
-        match self {
-            Self::Control(refusal) => refusal.into_response(),
-            Self::Run(refusal) => refusal.into_response(),
-        }
-    }
-}
-
-/// Why a run request was refused, with the label clients match on.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum RunRefusal {
-    Disabled,
-    InvalidDirectory,
-    DirectoryNotFound,
-    NotDrivable,
-    NoApprovals,
-    NoScratch,
-    Unrecorded,
-    SpawnFailed,
-    NotFound,
-    Refused(&'static str),
-    Unavailable,
-    /// Sessions take no attachments here.
-    NoAttachments,
-    /// An upload that is not an attachment Ren takes, and why.
-    InvalidAttachment(&'static str),
-    /// An upload beyond the attachment limit.
-    AttachmentTooLarge,
-    /// An attachment could not be kept or read.
-    AttachmentStorage,
-}
-
-impl IntoResponse for RunRefusal {
-    fn into_response(self) -> Response {
-        let (status, code) = match self {
-            Self::Disabled => (StatusCode::NOT_FOUND, "runs_disabled"),
-            Self::InvalidDirectory => (StatusCode::BAD_REQUEST, "invalid_directory"),
-            Self::DirectoryNotFound => (StatusCode::BAD_REQUEST, "directory_not_found"),
-            Self::NotDrivable => (StatusCode::BAD_REQUEST, "not_drivable"),
-            Self::NoApprovals => (StatusCode::BAD_REQUEST, "no_approvals"),
-            Self::NoScratch => (StatusCode::SERVICE_UNAVAILABLE, "no_scratch"),
-            Self::Unrecorded => (StatusCode::SERVICE_UNAVAILABLE, "unrecorded"),
-            Self::SpawnFailed => (StatusCode::BAD_GATEWAY, "spawn_failed"),
-            Self::NotFound => (StatusCode::NOT_FOUND, "not_found"),
-            Self::Refused(reason) => (StatusCode::CONFLICT, reason),
-            Self::Unavailable => (StatusCode::SERVICE_UNAVAILABLE, "unavailable"),
-            Self::NoAttachments => (StatusCode::SERVICE_UNAVAILABLE, "no_attachments"),
-            Self::InvalidAttachment(reason) => (StatusCode::UNPROCESSABLE_ENTITY, reason),
-            Self::AttachmentTooLarge => (StatusCode::PAYLOAD_TOO_LARGE, "attachment_too_large"),
-            Self::AttachmentStorage => (StatusCode::INTERNAL_SERVER_ERROR, "attachment_storage"),
-        };
-        (
-            status,
-            Json(serde_json::json!({ "api_version": ControlApi::API_VERSION, "error": code })),
-        )
-            .into_response()
-    }
-}
-
-impl From<StartError> for RunRefusal {
+impl From<StartError> for ControlRefusal {
     fn from(error: StartError) -> Self {
         match error {
             StartError::Workdir(
@@ -191,7 +95,7 @@ impl From<StartError> for RunRefusal {
                 | WorkdirError::OutsideRoots
                 | WorkdirError::NotUtf8,
             ) => Self::InvalidDirectory,
-            StartError::Workdir(WorkdirError::NoRoots) => Self::Disabled,
+            StartError::Workdir(WorkdirError::NoRoots) => Self::RunsDisabled,
             StartError::Resolve(_) => Self::DirectoryNotFound,
             StartError::NotDrivable(_) => Self::NotDrivable,
             StartError::NoApprovals(_) => Self::NoApprovals,
@@ -203,30 +107,30 @@ impl From<StartError> for RunRefusal {
     }
 }
 
-impl From<CommandError> for RunRefusal {
+impl From<CommandError> for ControlRefusal {
     fn from(error: CommandError) -> Self {
         match error {
             CommandError::NoSuchRun(_) => Self::NotFound,
-            CommandError::Refused(refused) => Self::Refused(match refused {
-                RunRefused::Starting => "starting",
-                RunRefused::Busy => "busy",
-                RunRefused::NotWorking => "not_working",
-                RunRefused::TurnNotStarted => "turn_not_started",
-                RunRefused::NoSuchApproval(_) => "no_such_approval",
-                RunRefused::Stopping => "stopping",
-                RunRefused::Ended => "ended",
-                RunRefused::NothingQueued => "nothing_queued",
-            }),
+            CommandError::Refused(refused) => match refused {
+                RunRefused::Starting => Self::Starting,
+                RunRefused::Busy => Self::Busy,
+                RunRefused::NotWorking => Self::NotWorking,
+                RunRefused::TurnNotStarted => Self::TurnNotStarted,
+                RunRefused::NoSuchApproval(_) => Self::NoSuchApproval,
+                RunRefused::Stopping => Self::Stopping,
+                RunRefused::Ended => Self::Ended,
+                RunRefused::NothingQueued => Self::NothingQueued,
+            },
             // What the client has no way to do mid-run.
-            CommandError::Protocol(CommandRefused::NotOffered(_)) => Self::Refused("not_offered"),
-            CommandError::Protocol(CommandRefused::NoImages) => Self::Refused("no_images"),
+            CommandError::Protocol(CommandRefused::NotOffered(_)) => Self::NotOffered,
+            CommandError::Protocol(CommandRefused::NoImages) => Self::NoImages,
             CommandError::Protocol(
                 CommandRefused::NotReady
                 | CommandRefused::TurnRunning
                 | CommandRefused::NoTurn
                 | CommandRefused::TurnNotStarted
                 | CommandRefused::UnknownApproval(_),
-            ) => Self::Refused("protocol"),
+            ) => Self::Protocol,
             CommandError::Gone => Self::Unavailable,
         }
     }
@@ -277,24 +181,22 @@ impl RunsApi {
     }
 
     /// The supervisor, once the request is authorized.
-    pub(super) fn admit(&self, headers: &HeaderMap) -> Result<&Supervisor, Denied> {
-        self.control.authorize(headers).map_err(Denied::Control)?;
-        self.supervisor
-            .as_ref()
-            .ok_or(Denied::Run(RunRefusal::Disabled))
+    pub(super) fn admit(&self, headers: &HeaderMap) -> Result<&Supervisor, ControlRefusal> {
+        self.control.authorize(headers)?;
+        self.supervisor.as_ref().ok_or(ControlRefusal::RunsDisabled)
     }
 
-    pub(super) fn body<T>(body: Result<Json<T>, JsonRejection>) -> Result<T, Denied> {
+    pub(super) fn body<T>(body: Result<Json<T>, JsonRejection>) -> Result<T, ControlRefusal> {
         body.map(|Json(body)| body)
-            .map_err(|_| Denied::Control(Refusal::Invalid))
+            .map_err(|_| ControlRefusal::InvalidRequest)
     }
 
-    async fn list(State(api): Api, headers: HeaderMap) -> Result<Response, Denied> {
+    async fn list(State(api): Api, headers: HeaderMap) -> Result<Response, ControlRefusal> {
         let runs = api
             .admit(&headers)?
             .runs()
             .await
-            .map_err(|_| Denied::Run(RunRefusal::Unavailable))?;
+            .map_err(|_| ControlRefusal::Unavailable)?;
         Ok(Json(Runs {
             api_version: ControlApi::API_VERSION,
             runs,
@@ -302,12 +204,12 @@ impl RunsApi {
         .into_response())
     }
 
-    async fn projects(State(api): Api, headers: HeaderMap) -> Result<Response, Denied> {
+    async fn projects(State(api): Api, headers: HeaderMap) -> Result<Response, ControlRefusal> {
         let projects = api
             .admit(&headers)?
             .projects()
             .await
-            .map_err(|_| Denied::Run(RunRefusal::Unavailable))?;
+            .map_err(|_| ControlRefusal::Unavailable)?;
         Ok(Json(serde_json::json!({
             "api_version": ControlApi::API_VERSION,
             "projects": projects.projects,
@@ -316,12 +218,12 @@ impl RunsApi {
         .into_response())
     }
 
-    async fn clients(State(api): Api, headers: HeaderMap) -> Result<Response, Denied> {
+    async fn clients(State(api): Api, headers: HeaderMap) -> Result<Response, ControlRefusal> {
         let clients = api
             .admit(&headers)?
             .clients()
             .await
-            .map_err(|_| Denied::Run(RunRefusal::Unavailable))?;
+            .map_err(|_| ControlRefusal::Unavailable)?;
         Ok(Json(serde_json::json!({
             "api_version": ControlApi::API_VERSION,
             "clients": clients,
@@ -333,21 +235,13 @@ impl RunsApi {
         State(api): Api,
         headers: HeaderMap,
         Path(harness): Path<String>,
-    ) -> Result<Response, Denied> {
+    ) -> Result<Response, ControlRefusal> {
         let supervisor = api.admit(&headers)?;
         let harness = harness
             .parse::<Harness>()
-            .map_err(|_| Denied::Run(RunRefusal::NotFound))?;
+            .map_err(|_| ControlRefusal::NotFound)?;
         let unlisted = |error: ModelsError| {
-            (
-                StatusCode::BAD_GATEWAY,
-                Json(serde_json::json!({
-                    "api_version": ControlApi::API_VERSION,
-                    "error": "models_unavailable",
-                    "message": error.to_string(),
-                })),
-            )
-                .into_response()
+            ControlRefusal::ModelsUnavailable.explained(Some(error.to_string()))
         };
         Ok(match supervisor.models(harness).await {
             Ok(models) => Json(serde_json::json!({
@@ -356,9 +250,9 @@ impl RunsApi {
                 "models": models,
             }))
             .into_response(),
-            Err(ModelsError::NotDrivable(_)) => RunRefusal::NotDrivable.into_response(),
-            Err(ModelsError::NoRoot) => RunRefusal::Disabled.into_response(),
-            Err(ModelsError::Gone) => RunRefusal::Unavailable.into_response(),
+            Err(ModelsError::NotDrivable(_)) => ControlRefusal::NotDrivable.into_response(),
+            Err(ModelsError::NoRoot) => ControlRefusal::RunsDisabled.into_response(),
+            Err(ModelsError::Gone) => ControlRefusal::Unavailable.into_response(),
             Err(
                 error @ (ModelsError::Spawn
                 | ModelsError::Refused(_)
@@ -390,7 +284,7 @@ impl RunsApi {
 
     /// Updates from now on, as `run` events; `lagged` when the feed fell
     /// behind and skipped some (list the runs again to catch up).
-    async fn events(State(api): Api, headers: HeaderMap) -> Result<Response, Denied> {
+    async fn events(State(api): Api, headers: HeaderMap) -> Result<Response, ControlRefusal> {
         let supervisor = api.admit(&headers)?;
         let receiver = supervisor.subscribe();
         let shutdown = api.shutdown.clone();

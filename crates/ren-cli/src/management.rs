@@ -9,17 +9,16 @@
 //! in `control.tailscale_logins`.
 
 use crate::client::{ClientError, GatewayChoice};
-use ren_gateway::ApiRead;
+use ren_gateway::api::ErrorCode;
+use ren_gateway::api::control::request::{ControlFeed, ControlMethod, ControlRequest};
+use ren_gateway::{ApiRead, ControlRefusal, ControlToken};
 use ren_harness::{endpoint::GatewayEndpoint, host::HostEnv};
 use ren_protocol::direction::Direction;
-use ren_recorder::id::{CallId, TurnId};
+use ren_protocol::label::{Labeled, Stored};
+use ren_recorder::id::CallId;
 use ren_store::Reader;
-use ren_store::activity::{ActivityBudget, CallActivity, TurnActivity};
-use ren_store::query::{CallQuery, PageLimit, Shelf};
-use ren_store::read::ReadRequest;
-use ren_store::view::{CallPage, RecordingView};
+use ren_store::read::{ReadRequest, ReadResponse};
 use reqwest::{Method, StatusCode};
-use serde::{Deserialize, de::DeserializeOwned};
 use serde_json::{Map, Value};
 use std::time::Duration;
 
@@ -32,45 +31,18 @@ pub enum Target {
 }
 
 /// Where history is read: this host's storage, or a gateway's read API.
-/// Both answer a [`ReadRequest`] with the same JSON, since the API's body is
-/// the reader's response.
+/// Both answer a [`ReadRequest`] with the same typed [`ReadResponse`]: the
+/// API's body is the reader's response, decoded by the request.
 pub enum History {
     Local(Reader),
     Remote(Management),
 }
 
 impl History {
-    pub async fn serve(&self, request: &ReadRequest) -> Result<Value, ManagementError> {
+    pub async fn serve(&self, request: &ReadRequest) -> Result<ReadResponse, ManagementError> {
         match self {
-            Self::Local(reader) => Ok(serde_json::to_value(reader.serve(request).await?)?),
+            Self::Local(reader) => Ok(reader.serve(request).await?),
             Self::Remote(gateway) => gateway.serve(request).await,
-        }
-    }
-
-    /// Calls, newest first, as `query` narrows them.
-    pub async fn calls(&self, query: &CallQuery) -> Result<CallPage, ManagementError> {
-        match self {
-            Self::Local(reader) => Ok(reader.calls(query).await?),
-            Self::Remote(gateway) => gateway.calls(query).await,
-        }
-    }
-
-    /// Recordings, most recently seen first.
-    pub async fn recordings(
-        &self,
-        limit: PageLimit,
-    ) -> Result<Vec<RecordingView>, ManagementError> {
-        match self {
-            Self::Local(reader) => Ok(reader.recordings(limit, Shelf::Current).await?),
-            Self::Remote(gateway) => gateway.recordings(limit).await,
-        }
-    }
-
-    /// One turn's activity, as much of it as the read API shows.
-    pub async fn turn(&self, turn: TurnId) -> Result<TurnActivity, ManagementError> {
-        match self {
-            Self::Local(reader) => Ok(reader.turn_activity(turn, ActivityBudget::DEFAULT).await?),
-            Self::Remote(gateway) => gateway.turn(turn).await,
         }
     }
 }
@@ -113,58 +85,49 @@ pub enum ManagementError {
         status: StatusCode,
         refusal: Refusal,
     },
+    #[error("control request failed with {status}")]
+    Failed { status: StatusCode },
     #[error("the export ended after {received} of {expected} bytes")]
     Truncated { received: u64, expected: u64 },
     #[error("cannot write the export")]
     Write(#[source] std::io::Error),
 }
 
-/// An API error code (`{api_version, error}`), parsed once; codes this CLI
-/// does not know are kept.
+/// An API error code (`{api_version, error}`), parsed once into the read
+/// API's or the control API's vocabulary; codes this CLI does not know are
+/// kept.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Refusal {
-    NotFound,
-    Busy,
-    Unavailable,
-    InvalidQuery,
-    /// A control request without a token or a Tailscale identity.
-    Unauthorized,
-    /// A Tailscale login the daemon does not list.
-    Forbidden,
-    Other(String),
-}
-
-impl From<&str> for Refusal {
-    fn from(code: &str) -> Self {
-        match code {
-            "not_found" => Self::NotFound,
-            "busy" => Self::Busy,
-            "unavailable" => Self::Unavailable,
-            "invalid_query" => Self::InvalidQuery,
-            "unauthorized" => Self::Unauthorized,
-            "forbidden" => Self::Forbidden,
-            other => Self::Other(other.to_owned()),
-        }
-    }
+    Read(Stored<ErrorCode>),
+    Control(Stored<ControlRefusal>),
 }
 
 /// What a refusal means to someone running the CLI.
 impl std::fmt::Display for Refusal {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::NotFound => f.write_str("the gateway has no such record, or no complete captured body"),
-            Self::Busy => f.write_str("the gateway is busy; try again"),
-            Self::Unavailable => f.write_str("the gateway's storage is unavailable"),
-            Self::InvalidQuery => f.write_str("the gateway refused the query"),
-            Self::Unauthorized => f.write_str(
+            Self::Read(Stored::Known(ErrorCode::NotFound)) => f.write_str("the gateway has no such record, or no complete captured body"),
+            Self::Read(Stored::Known(ErrorCode::Busy)) => f.write_str("the gateway is busy; try again"),
+            Self::Read(Stored::Known(ErrorCode::Unavailable)) => f.write_str("the gateway's storage is unavailable"),
+            Self::Read(Stored::Known(ErrorCode::InvalidQuery)) => f.write_str("the gateway refused the query"),
+            Self::Read(Stored::Known(ErrorCode::IdentityRefused)) => f.write_str("the gateway refused this caller's identity"),
+            Self::Control(Stored::Known(ControlRefusal::Unauthorized)) => f.write_str(
                 "the gateway refused the control request without a Tailscale identity: reach it through Tailscale Serve, or run on the daemon's host without a gateway",
             ),
-            Self::Forbidden => f.write_str(
+            Self::Control(Stored::Known(ControlRefusal::Forbidden)) => f.write_str(
                 "the gateway refused this Tailscale login: add it to [control] tailscale_logins in the daemon's ren.toml and restart the daemon",
             ),
-            Self::Other(code) => write!(f, "the gateway refused the request: {code}"),
+            Self::Read(Stored::Unknown(code)) => write!(f, "the gateway refused the request: {}", code.as_str()),
+            Self::Control(code) => write!(f, "the daemon refused the request: {code}"),
         }
     }
+}
+
+/// How a control request is authorized: the daemon's token, read on its
+/// host, or the Tailscale identity Serve adds on the way through a gateway.
+pub enum ControlCredential {
+    Token(ControlToken),
+    Tailnet,
 }
 
 /// A control API answer, printed whatever its status.
@@ -173,12 +136,35 @@ pub struct ControlAnswer {
     pub body: Value,
 }
 
+impl ControlAnswer {
+    /// Print the answer; a refusal is an error after it.
+    pub fn report(&self) -> Result<std::process::ExitCode, ManagementError> {
+        println!("{}", serde_json::to_string_pretty(&self.body)?);
+        if self.status.is_success() {
+            Ok(std::process::ExitCode::SUCCESS)
+        } else {
+            Err(ManagementError::Failed {
+                status: self.status,
+            })
+        }
+    }
+}
+
 /// Whether the command line names this host's daemon (`--config` or
 /// `--data-dir`).
 #[derive(Clone, Copy)]
 pub enum HostFlags {
     Named,
     Absent,
+}
+
+impl ControlCredential {
+    fn authorize(&self, request: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+        match self {
+            Self::Token(token) => request.bearer_auth(token.expose()),
+            Self::Tailnet => request,
+        }
+    }
 }
 
 impl Target {
@@ -239,7 +225,7 @@ impl Management {
         let status = response.status();
         if !status.is_success() {
             let body = self.bytes(response).await?;
-            return Err(Self::error(status, &body));
+            return Err(Self::error(status, &body, Refusal::Read));
         }
         let expected = response.content_length();
         let mut received = 0_u64;
@@ -275,7 +261,7 @@ impl Management {
             Ok(response)
         } else {
             let body = self.bytes(response).await?;
-            Err(Self::error(status, &body))
+            Err(Self::error(status, &body, Refusal::Read))
         }
     }
 
@@ -296,109 +282,81 @@ impl Management {
         self.endpoint.root()
     }
 
-    /// Sends a control request through the gateway, without a token.
+    /// Send a control request, authorized by `credential`. Through a
+    /// gateway, a refused identity is an error; every other answer is
+    /// returned to be printed, as the daemon gave it.
     pub async fn control(
         &self,
-        method: Method,
-        path: &str,
-        body: Option<Value>,
+        request: &ControlRequest,
+        credential: &ControlCredential,
     ) -> Result<ControlAnswer, ManagementError> {
-        let mut request = self
-            .http
-            .request(method, self.endpoint.url(&format!("/control/v1/{path}")));
-        if let Some(body) = body {
-            request = request
+        let method = match request.method() {
+            ControlMethod::Get => Method::GET,
+            ControlMethod::Post => Method::POST,
+        };
+        let url = self
+            .endpoint
+            .url(&format!("/control/v1/{}", request.path()));
+        let mut sending = credential.authorize(self.http.request(method, url));
+        if let Some(body) = request.body()? {
+            sending = sending
                 .header("content-type", "application/json")
-                .body(body.to_string());
+                .body(body);
         }
-        let response = self.send(request).await?;
+        let response = self.send(sending).await?;
         let status = response.status();
         let body = self.bytes(response).await?;
         let body: Value =
             serde_json::from_slice(&body).map_err(|_| ManagementError::Shape { status })?;
-        if status.is_success() {
-            return Ok(ControlAnswer { status, body });
-        }
-        // Other refusals (a call not running, a backup in progress) are the
-        // daemon's answer, printed as the local command prints them.
-        match body.get("error").and_then(Value::as_str).map(Refusal::from) {
-            Some(refusal @ (Refusal::Unauthorized | Refusal::Forbidden)) => {
-                Err(ManagementError::Refused { status, refusal })
+        let refusal = body
+            .get("error")
+            .and_then(Value::as_str)
+            .map(Stored::<ControlRefusal>::from_label);
+        match (credential, refusal) {
+            (
+                ControlCredential::Tailnet,
+                Some(
+                    refusal @ Stored::Known(
+                        ControlRefusal::Unauthorized | ControlRefusal::Forbidden,
+                    ),
+                ),
+            ) => Err(ManagementError::Refused {
+                status,
+                refusal: Refusal::Control(refusal),
+            }),
+            (ControlCredential::Tailnet | ControlCredential::Token(_), _) => {
+                Ok(ControlAnswer { status, body })
             }
-            Some(
-                Refusal::NotFound
-                | Refusal::Busy
-                | Refusal::Unavailable
-                | Refusal::InvalidQuery
-                | Refusal::Other(_),
-            )
-            | None => Ok(ControlAnswer { status, body }),
         }
     }
 
-    /// A streamed control response (server-sent events) through the
-    /// gateway, without a token. Read it with [`Self::chunk`].
-    pub async fn control_stream(&self, path: &str) -> Result<reqwest::Response, ManagementError> {
-        let url = self.endpoint.url(&format!("/control/v1/{path}"));
-        let response = self
-            .send(self.http.get(url).header("accept", "text/event-stream"))
-            .await?;
+    /// A control event stream (server-sent events), authorized by
+    /// `credential`. Read it with [`Self::chunk`].
+    pub async fn control_stream(
+        &self,
+        feed: ControlFeed,
+        credential: &ControlCredential,
+    ) -> Result<reqwest::Response, ManagementError> {
+        let url = self.endpoint.url(&format!("/control/v1/{}", feed.path()));
+        let request =
+            credential.authorize(self.http.get(url).header("accept", "text/event-stream"));
+        let response = self.send(request).await?;
         let status = response.status();
         if status.is_success() {
             Ok(response)
         } else {
             let body = self.bytes(response).await?;
-            Err(Self::error(status, &body))
+            Err(Self::error(status, &body, Refusal::Control))
         }
     }
 
-    /// One history read, through the read API: its JSON body.
-    pub async fn serve(&self, request: &ReadRequest) -> Result<Value, ManagementError> {
-        Ok(Value::Object(
-            self.read(&ApiRead(request.clone()).uri()).await?,
-        ))
-    }
-
-    /// Calls, newest first, as `query` narrows them.
-    pub async fn calls(&self, query: &CallQuery) -> Result<CallPage, ManagementError> {
-        self.read_as(&ReadRequest::Calls(query.clone())).await
-    }
-
-    /// Recordings, most recently seen first.
-    pub async fn recordings(
-        &self,
-        limit: PageLimit,
-    ) -> Result<Vec<RecordingView>, ManagementError> {
-        /// The read API's body for a recording listing.
-        #[derive(Deserialize)]
-        struct Recordings {
-            sessions: Vec<RecordingView>,
-        }
-        self.read_as::<Recordings>(&ReadRequest::Recordings {
-            limit,
-            shelf: Shelf::Current,
-        })
-        .await
-        .map(|page| page.sessions)
-    }
-
-    /// One turn's activity, as much of it as the read API shows.
-    pub async fn turn(&self, turn: TurnId) -> Result<TurnActivity, ManagementError> {
-        self.read_as(&ReadRequest::Turn(turn)).await
-    }
-
-    /// One call's activity, as much of it as the read API shows.
-    pub async fn call_activity(&self, call: CallId) -> Result<CallActivity, ManagementError> {
-        self.read_as(&ReadRequest::CallActivity(call)).await
-    }
-
-    /// One history read, through the read API, parsed into its view.
-    async fn read_as<T: DeserializeOwned>(
-        &self,
-        request: &ReadRequest,
-    ) -> Result<T, ManagementError> {
+    /// One history read, through the read API, decoded as the read's
+    /// response.
+    pub async fn serve(&self, request: &ReadRequest) -> Result<ReadResponse, ManagementError> {
         let body = self.read(&ApiRead(request.clone()).uri()).await?;
-        serde_json::from_value(Value::Object(body)).map_err(ManagementError::Answer)
+        request
+            .decode(Value::Object(body))
+            .map_err(ManagementError::Answer)
     }
 
     /// A successful read's body, without `api_version`. `uri` is a path and
@@ -413,7 +371,7 @@ impl Management {
         let status = response.status();
         let body = self.bytes(response).await?;
         if !status.is_success() {
-            return Err(Self::error(status, &body));
+            return Err(Self::error(status, &body, Refusal::Read));
         }
         let Ok(Value::Object(mut map)) = serde_json::from_slice::<Value>(&body) else {
             return Err(ManagementError::Shape { status });
@@ -452,8 +410,13 @@ impl Management {
         }
     }
 
-    /// An error answer: its `error` code, or its status when it has none.
-    fn error(status: StatusCode, body: &[u8]) -> ManagementError {
+    /// An error answer: its `error` code, read in the API's vocabulary, or
+    /// its status when it has none.
+    fn error<T: Labeled>(
+        status: StatusCode,
+        body: &[u8],
+        vocabulary: impl FnOnce(Stored<T>) -> Refusal,
+    ) -> ManagementError {
         match serde_json::from_slice::<Value>(body)
             .ok()
             .as_ref()
@@ -462,7 +425,7 @@ impl Management {
         {
             Some(code) => ManagementError::Refused {
                 status,
-                refusal: Refusal::from(code),
+                refusal: vocabulary(Stored::from_label(code)),
             },
             None => ManagementError::Shape { status },
         }
@@ -472,30 +435,45 @@ impl Management {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ren_store::query::{CallQuery, PageLimit, Shelf};
 
     #[test]
-    fn error_answers_keep_their_code() {
+    fn error_answers_keep_their_code_in_their_apis_vocabulary() {
         let refused = Management::error(
             StatusCode::NOT_FOUND,
             br#"{"api_version":1,"error":"not_found"}"#,
+            Refusal::Read,
         );
         assert!(matches!(
             refused,
             ManagementError::Refused {
-                refusal: Refusal::NotFound,
+                refusal: Refusal::Read(Stored::Known(ErrorCode::NotFound)),
+                ..
+            }
+        ));
+        let control = Management::error(
+            StatusCode::CONFLICT,
+            br#"{"api_version":1,"error":"backup_running"}"#,
+            Refusal::Control,
+        );
+        assert!(matches!(
+            control,
+            ManagementError::Refused {
+                refusal: Refusal::Control(Stored::Known(ControlRefusal::BackupRunning)),
                 ..
             }
         ));
         let unknown = Management::error(
             StatusCode::CONFLICT,
-            br#"{"api_version":1,"error":"backup_running"}"#,
+            br#"{"api_version":1,"error":"a_newer_code"}"#,
+            Refusal::Read,
         );
         assert!(matches!(
             unknown,
-            ManagementError::Refused { refusal: Refusal::Other(ref code), .. } if code == "backup_running"
+            ManagementError::Refused { refusal: Refusal::Read(Stored::Unknown(ref code)), .. } if code.as_str() == "a_newer_code"
         ));
         assert!(matches!(
-            Management::error(StatusCode::BAD_GATEWAY, b"<html>"),
+            Management::error(StatusCode::BAD_GATEWAY, b"<html>", Refusal::Read),
             ManagementError::Shape { .. }
         ));
     }
@@ -538,6 +516,11 @@ mod tests {
                 "/api/calls",
                 get(|| async { Json(json!({ "api_version": 1, "calls": [], "next": null })) }),
             )
+            // Not a usage report: a page of calls.
+            .route(
+                "/api/usage",
+                get(|| async { Json(json!({ "api_version": 1, "calls": [], "next": null })) }),
+            )
             .route(
                 "/api/turns/{turn}",
                 get(move || async move {
@@ -572,15 +555,32 @@ mod tests {
     async fn a_gateway_answers_reads_as_views() {
         let (sessions, calls, turn) = against_gateway(|gateway| async move {
             let history = History::Remote(gateway);
-            let sessions = history
-                .recordings(PageLimit::new(10).unwrap())
+            let ReadResponse::Recordings { sessions } = history
+                .serve(&ReadRequest::Recordings {
+                    limit: PageLimit::new(10).unwrap(),
+                    shelf: Shelf::Current,
+                })
                 .await
-                .unwrap();
-            let calls = history.calls(&CallQuery::default()).await.unwrap();
-            let turn = history
-                .turn("00000000-0000-0000-0000-000000000004".parse().unwrap())
+                .unwrap()
+            else {
+                panic!("a recording listing")
+            };
+            let ReadResponse::Calls(calls) = history
+                .serve(&ReadRequest::Calls(CallQuery::default()))
                 .await
-                .unwrap();
+                .unwrap()
+            else {
+                panic!("a call page")
+            };
+            let ReadResponse::Turn(turn) = history
+                .serve(&ReadRequest::Turn(
+                    "00000000-0000-0000-0000-000000000004".parse().unwrap(),
+                ))
+                .await
+                .unwrap()
+            else {
+                panic!("a turn")
+            };
             (sessions, calls, turn)
         })
         .await;
@@ -605,14 +605,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn an_answer_that_is_not_the_view_asked_for_is_refused() {
-        // A session listing read as a page of calls.
+    async fn an_answer_that_is_not_the_reads_response_is_refused() {
         let wrong = against_gateway(|gateway| async move {
             gateway
-                .read_as::<CallPage>(&ReadRequest::Recordings {
-                    limit: PageLimit::new(10).unwrap(),
-                    shelf: Shelf::Current,
-                })
+                .serve(&ReadRequest::Usage(ren_store::query::TimeRange::default()))
                 .await
         })
         .await;

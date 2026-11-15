@@ -1387,3 +1387,130 @@ async fn an_image_is_uploaded_read_removed_kept_across_a_restart_and_deleted_wit
     assert_eq!(status, StatusCode::ACCEPTED, "{body}");
     assert!(!dir.path().join("attachments").join(&session).exists());
 }
+
+/// Every request the CLI builds reaches a control route: the answer is the
+/// control API's JSON (a result or one of its refusals), never the router's
+/// own 404 or 405 for a path or method it does not serve. The bodies are
+/// the routes' own types, so a body a route refuses is `invalid_request`.
+#[tokio::test]
+async fn every_control_request_reaches_its_route() {
+    use ren_gateway::ControlRefusal;
+    use ren_gateway::api::control::request::{
+        AnswerRequest, BlockRequest, CancelRequest, ControlFeed, ControlMethod, ControlRequest,
+        CreateRequest, PauseRequest, PromptRequest,
+    };
+    use ren_harness::{Harness, drive::Decision};
+    use ren_protocol::native::NativeSessionId;
+    use ren_recorder::batch::{HistoryChange, HistorySubject};
+    use ren_recorder::id::{CallId, RecordingId, RunId, SessionId};
+
+    let upstream = mock(Router::new()).await;
+    let dir = tempfile::tempdir().unwrap();
+    let gateway = TestGateway::with_runs(
+        &config(&upstream),
+        dir.path(),
+        vec![PathBuf::from("/work")],
+        ScriptedHost,
+    )
+    .await;
+    let id = |n: u128| uuid::Uuid::from_u128(0x0190_f3a0_0000_7000_8000_0000_0000_0000 | n);
+    let session = SessionId::restore(id(1));
+    let native = NativeSessionId::new(id(2)).unwrap();
+    let block = BlockRequest {
+        duration_seconds: Some(60),
+    };
+    let requests = [
+        ControlRequest::State,
+        ControlRequest::Pause(PauseRequest {
+            retry_after_seconds: 5,
+        }),
+        ControlRequest::Resume,
+        ControlRequest::BlockSession {
+            session: native,
+            block: block.clone(),
+        },
+        ControlRequest::UnblockSession(native),
+        ControlRequest::BlockUser {
+            user: "nobody".parse().unwrap(),
+            block,
+        },
+        ControlRequest::UnblockUser("nobody".parse().unwrap()),
+        ControlRequest::Cancel {
+            call: CallId::restore(id(3)),
+            cancel: CancelRequest::default(),
+        },
+        ControlRequest::Backup,
+        ControlRequest::Edit {
+            subject: HistorySubject::Session(RecordingId::restore(id(4))),
+            change: HistoryChange::Archive,
+        },
+        ControlRequest::Edit {
+            subject: HistorySubject::Run(RunId::restore(id(5))),
+            change: HistoryChange::Unarchive,
+        },
+        ControlRequest::Edit {
+            subject: HistorySubject::OperatorSession(session),
+            change: HistoryChange::Delete,
+        },
+        ControlRequest::Runs,
+        ControlRequest::Sessions,
+        ControlRequest::Projects,
+        ControlRequest::Create(CreateRequest::new(
+            Harness::Codex,
+            Some("/elsewhere".into()),
+        )),
+        ControlRequest::Prompt {
+            session,
+            prompt: PromptRequest::text("hello".into()),
+        },
+        ControlRequest::Answer {
+            session,
+            approval: "approval-1".into(),
+            answer: AnswerRequest {
+                decision: Decision::Accept,
+            },
+        },
+        ControlRequest::Interrupt(session),
+        ControlRequest::Stop(session),
+    ];
+    let http = client();
+    for request in &requests {
+        let url = format!("{}/control/v1/{}", gateway.base(), request.path());
+        let mut sending = match request.method() {
+            ControlMethod::Get => http.get(url),
+            ControlMethod::Post => http.post(url),
+        }
+        .bearer_auth(TestGateway::CONTROL_TOKEN);
+        if let Some(body) = request.body().unwrap() {
+            sending = sending
+                .header("content-type", "application/json")
+                .body(body);
+        }
+        let response = sending.send().await.unwrap();
+        let status = response.status();
+        let body: Value = serde_json::from_slice(&response.bytes().await.unwrap())
+            .unwrap_or_else(|_| panic!("{request:?}: {status} without the API's JSON"));
+        assert_eq!(body["api_version"], 1, "{request:?}: {body}");
+        let refused = body["error"]
+            .as_str()
+            .map(|code| code.parse::<ControlRefusal>().unwrap());
+        assert_ne!(
+            refused,
+            Some(ControlRefusal::InvalidRequest),
+            "{request:?}: its body is not the route's"
+        );
+        if let Some(refusal) = refused {
+            assert_eq!(status, refusal.status(), "{request:?}");
+        }
+    }
+    for feed in [ControlFeed::Runs, ControlFeed::Sessions] {
+        let response = http
+            .get(format!("{}/control/v1/{}", gateway.base(), feed.path()))
+            .bearer_auth(TestGateway::CONTROL_TOKEN)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK, "{feed:?}");
+    }
+    gateway.stop().await;
+}

@@ -130,7 +130,7 @@ pub struct TurnActivity {
 }
 
 /// One turn, as a session lists it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TurnSummary {
     pub turn: TurnId,
     pub native_id: String,

@@ -86,38 +86,6 @@ export type Chip =
   | { state: 'ready'; key: number; id: AttachmentId; read: AttachmentRead }
   | { state: 'refused'; key: number; name: string; reason: string };
 
-/** Why an upload or a prompt with images was refused, as the daemon names it. */
-export class Refusals {
-  static say(code: string): string {
-    switch (code) {
-      case 'attachment_unrecognized':
-      case 'image_required':
-        return 'Not a PNG, JPEG, GIF, or WebP image.';
-      case 'attachment_unreadable':
-        return 'The image’s size cannot be read.';
-      case 'attachment_too_wide':
-        return 'The image is too large on a side.';
-      case 'attachment_too_large':
-      case 'too_large':
-        return 'The image is too large.';
-      case 'attachment_empty':
-        return 'The file is empty.';
-      case 'attachment_name':
-        return 'The file needs a name.';
-      case 'too_many_attachments':
-        return 'Too many images for one prompt.';
-      case 'no_images':
-        return 'This client does not take images.';
-      case 'no_attachments':
-        return 'This daemon keeps no attachments.';
-      case 'attachment_sent':
-        return 'The image went out with a prompt and stays.';
-      default:
-        return `Refused: ${code}.`;
-    }
-  }
-}
-
 /**
  * The images about to go with the next prompt. Immutable: each change
  * returns a new tray. Uploads keep the order they were added in.

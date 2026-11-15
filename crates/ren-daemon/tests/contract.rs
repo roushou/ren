@@ -193,3 +193,79 @@ async fn the_read_api_answers_as_the_ui_fixtures_pin() {
         "the read API's JSON changed for {changed:?}; if intended, run with REN_UPDATE_FIXTURES=1 and update the UI's decoders"
     );
 }
+
+/// Each pinned answer reads back, through `ReadRequest::decode`, as the
+/// typed response that read returns, and serializes to the same JSON: the
+/// CLI and MCP get the reader's values through a gateway too.
+#[test]
+fn each_pinned_answer_decodes_as_its_read_and_round_trips() {
+    use ren_recorder::id::{CallId, RecordingId, TurnId};
+    use ren_store::query::{CallQuery, PageLimit, Shelf, TimeRange};
+    use ren_store::read::ReadRequest;
+    use ren_store::search::{ExposureQuery, SearchQuery};
+    let id = uuid::Uuid::from_u128(1);
+    let recording = RecordingId::restore(id);
+    let reads = [
+        ("calls", ReadRequest::Calls(CallQuery::default())),
+        ("call", ReadRequest::Call(CallId::restore(id))),
+        (
+            "call_activity",
+            ReadRequest::CallActivity(CallId::restore(id)),
+        ),
+        (
+            "sessions",
+            ReadRequest::Recordings {
+                limit: PageLimit::DEFAULT,
+                shelf: Shelf::Current,
+            },
+        ),
+        (
+            "session_calls",
+            ReadRequest::RecordingCalls {
+                recording,
+                limit: PageLimit::DEFAULT,
+                after: None,
+            },
+        ),
+        (
+            "turns",
+            ReadRequest::Turns {
+                recording,
+                limit: PageLimit::DEFAULT,
+            },
+        ),
+        ("turn", ReadRequest::Turn(TurnId::restore(id))),
+        ("report", ReadRequest::Report(recording)),
+        ("usage", ReadRequest::Usage(TimeRange::default())),
+        (
+            "search",
+            ReadRequest::Search(SearchQuery {
+                terms: ren_store::search::SearchTerms::parse("parser").unwrap(),
+                session: None,
+                client: None,
+                field: None,
+                time: TimeRange::default(),
+                limit: PageLimit::DEFAULT,
+            }),
+        ),
+        (
+            "exposures",
+            ReadRequest::Exposures(ExposureQuery {
+                session: None,
+                time: TimeRange::default(),
+                limit: PageLimit::DEFAULT,
+            }),
+        ),
+    ];
+    for (name, read) in reads {
+        let mut pinned: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(fixtures().join(format!("{name}.json"))).unwrap(),
+        )
+        .unwrap();
+        let decoded = read
+            .decode(pinned.clone())
+            .unwrap_or_else(|error| panic!("{name}: {error}"));
+        pinned.as_object_mut().unwrap().remove("api_version");
+        assert_eq!(serde_json::to_value(&decoded).unwrap(), pinned, "{name}");
+    }
+}

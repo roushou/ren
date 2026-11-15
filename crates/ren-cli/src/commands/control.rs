@@ -4,16 +4,20 @@
 //! Tailscale identity that Serve adds.
 use crate::commands::history::TargetArgs;
 use crate::context::Context;
-use crate::management::{Management, Target};
+use crate::management::{ControlAnswer, ControlCredential, Management, Target};
 use anyhow::{Context as _, Result, bail};
 use clap::{Args, Subcommand};
 use ren_gateway::ControlToken;
+use ren_gateway::api::control::request::{
+    BlockRequest, CancelRequest, ControlFeed, ControlRequest, PauseRequest,
+};
+use ren_harness::endpoint::GatewayEndpoint;
 use ren_protocol::native::NativeSessionId;
 use ren_recorder::{
+    batch::{HistoryChange, HistorySubject},
     caller::UserId,
     id::{CallId, RecordingId, RunId},
 };
-use reqwest::Method;
 use std::process::ExitCode;
 use uuid::Uuid;
 
@@ -73,10 +77,13 @@ enum Subject {
 }
 
 impl Subject {
-    fn path(self, change: &str) -> String {
-        match self {
-            Self::Session { session } => format!("history/sessions/{session}/{change}"),
-            Self::Run { run } => format!("history/runs/{run}/{change}"),
+    fn edit(self, change: HistoryChange) -> ControlRequest {
+        ControlRequest::Edit {
+            subject: match self {
+                Self::Session { session } => HistorySubject::Session(session),
+                Self::Run { run } => HistorySubject::Run(run),
+            },
+            change,
         }
     }
 }
@@ -148,19 +155,18 @@ impl RecordingArg {
 /// Where control requests go: this host's daemon, authorized by the control
 /// token in its data directory, or a gateway, authorized by the Tailscale
 /// identity Serve adds.
-pub(crate) enum ControlTarget {
-    Local {
-        client: reqwest::Client,
-        base: String,
-        token: ControlToken,
-    },
-    Remote(Management),
+pub(crate) struct ControlTarget {
+    gateway: Management,
+    credential: ControlCredential,
 }
 
 impl ControlTarget {
     pub(crate) fn select(target: &TargetArgs, ctx: &Context) -> Result<Self> {
         Ok(match target.select(ctx)? {
-            Target::Remote(gateway) => Self::Remote(gateway),
+            Target::Remote(gateway) => Self {
+                gateway,
+                credential: ControlCredential::Tailnet,
+            },
             Target::Local => {
                 let config = ctx.config()?;
                 let data_dir = ctx.data_dir(&config)?;
@@ -169,89 +175,24 @@ impl ControlTarget {
                     .as_deref()
                     .and_then(ControlToken::parse)
                     .context("no control token; is the daemon running with this data directory?")?;
-                Self::Local {
-                    client: reqwest::Client::builder().no_proxy().build()?,
-                    base: format!("http://{}/control/v1", config.listen),
-                    token,
+                Self {
+                    gateway: Management::new(GatewayEndpoint::resolve(None, config.listen)?)?,
+                    credential: ControlCredential::Token(token),
                 }
             }
         })
     }
 
-    /// Send one request, relative to `/control/v1/`, and return the daemon's
-    /// answer. Refused identities through a gateway are errors; every other
-    /// answer is returned to be printed.
-    pub(crate) async fn send(
-        &self,
-        method: Method,
-        path: &str,
-        body: Option<serde_json::Value>,
-    ) -> Result<(reqwest::StatusCode, serde_json::Value)> {
-        match self {
-            Self::Remote(gateway) => {
-                let answer = gateway.control(method, path, body).await?;
-                Ok((answer.status, answer.body))
-            }
-            Self::Local {
-                client,
-                base,
-                token,
-            } => {
-                let mut request = client
-                    .request(method, format!("{base}/{path}"))
-                    .bearer_auth(token.expose());
-                if let Some(body) = body {
-                    request = request
-                        .header("content-type", "application/json")
-                        .body(body.to_string());
-                }
-                let response = request.send().await.context("cannot reach the daemon")?;
-                let status = response.status();
-                let body: serde_json::Value = serde_json::from_slice(&response.bytes().await?)
-                    .context("the daemon's answer is not JSON")?;
-                Ok((status, body))
-            }
-        }
+    /// Send one request and return the daemon's answer. Refused identities
+    /// through a gateway are errors; every other answer is returned to be
+    /// printed.
+    pub(crate) async fn send(&self, request: &ControlRequest) -> Result<ControlAnswer> {
+        Ok(self.gateway.control(request, &self.credential).await?)
     }
 
-    /// A streamed `GET`, relative to `/control/v1/`: server-sent events.
-    pub(crate) async fn stream(&self, path: &str) -> Result<reqwest::Response> {
-        match self {
-            Self::Remote(gateway) => Ok(gateway.control_stream(path).await?),
-            Self::Local {
-                client,
-                base,
-                token,
-            } => {
-                let response = client
-                    .get(format!("{base}/{path}"))
-                    .bearer_auth(token.expose())
-                    .header("accept", "text/event-stream")
-                    .send()
-                    .await
-                    .context("cannot reach the daemon")?;
-                let status = response.status();
-                if !status.is_success() {
-                    let body: serde_json::Value =
-                        serde_json::from_slice(&response.bytes().await?).unwrap_or_default();
-                    println!("{}", serde_json::to_string_pretty(&body)?);
-                    bail!("control request failed with {status}");
-                }
-                Ok(response)
-            }
-        }
-    }
-
-    /// Print the daemon's answer; a refusal is an error after it.
-    pub(crate) fn report(
-        status: reqwest::StatusCode,
-        body: &serde_json::Value,
-    ) -> Result<ExitCode> {
-        println!("{}", serde_json::to_string_pretty(body)?);
-        if !status.is_success() {
-            bail!("control request failed with {status}");
-        }
-        Ok(ExitCode::SUCCESS)
+    /// One of the control API's event streams.
+    pub(crate) async fn stream(&self, feed: ControlFeed) -> Result<reqwest::Response> {
+        Ok(self.gateway.control_stream(feed, &self.credential).await?)
     }
 }
 
@@ -261,48 +202,43 @@ impl ControlCmd {
             bail!("deleting recorded history cannot be undone; pass --yes to delete");
         }
         let target = ControlTarget::select(&self.target, ctx)?;
-        let (method, path, body) = self.action.request();
-        let (status, body) = target.send(method, &path, body).await?;
-        ControlTarget::report(status, &body)
+        Ok(target.send(&self.action.request()).await?.report()?)
     }
 }
 
 impl ControlAction {
-    /// The control API request this action makes, relative to `/control/v1/`.
-    fn request(self) -> (Method, String, Option<serde_json::Value>) {
+    /// The control API request this action makes.
+    fn request(self) -> ControlRequest {
         match self {
-            Self::State => (Method::GET, "state".to_owned(), None),
-            Self::Pause(args) => (
-                Method::POST,
-                "pause".to_owned(),
-                Some(serde_json::json!({ "retry_after_seconds": args.retry_after })),
-            ),
-            Self::Resume => (Method::POST, "resume".to_owned(), None),
-            Self::Block(args) => (
-                Method::POST,
-                format!("sessions/{}/block", args.session.session.as_uuid()),
-                Some(serde_json::json!({ "duration_seconds": args.duration })),
-            ),
-            Self::Unblock(args) => (
-                Method::POST,
-                format!("sessions/{}/unblock", args.session.as_uuid()),
-                None,
-            ),
-            Self::BlockUser(args) => (
-                Method::POST,
-                format!("users/{}/block", args.user.user),
-                Some(serde_json::json!({ "duration_seconds": args.duration })),
-            ),
-            Self::UnblockUser(args) => (Method::POST, format!("users/{}/unblock", args.user), None),
-            Self::Cancel(args) => (
-                Method::POST,
-                format!("calls/{}/cancel", args.call),
-                Some(serde_json::json!({ "block_session_seconds": args.block_session })),
-            ),
-            Self::Backup => (Method::POST, "backup".to_owned(), None),
-            Self::Archive { subject } => (Method::POST, subject.path("archive"), None),
-            Self::Unarchive { subject } => (Method::POST, subject.path("unarchive"), None),
-            Self::Delete(args) => (Method::POST, args.subject.path("delete"), None),
+            Self::State => ControlRequest::State,
+            Self::Pause(args) => ControlRequest::Pause(PauseRequest {
+                retry_after_seconds: args.retry_after,
+            }),
+            Self::Resume => ControlRequest::Resume,
+            Self::Block(args) => ControlRequest::BlockSession {
+                session: args.session.session,
+                block: BlockRequest {
+                    duration_seconds: args.duration,
+                },
+            },
+            Self::Unblock(args) => ControlRequest::UnblockSession(args.session),
+            Self::BlockUser(args) => ControlRequest::BlockUser {
+                user: args.user.user,
+                block: BlockRequest {
+                    duration_seconds: args.duration,
+                },
+            },
+            Self::UnblockUser(args) => ControlRequest::UnblockUser(args.user),
+            Self::Cancel(args) => ControlRequest::Cancel {
+                call: args.call,
+                cancel: CancelRequest {
+                    block_session_seconds: args.block_session,
+                },
+            },
+            Self::Backup => ControlRequest::Backup,
+            Self::Archive { subject } => subject.edit(HistoryChange::Archive),
+            Self::Unarchive { subject } => subject.edit(HistoryChange::Unarchive),
+            Self::Delete(args) => args.subject.edit(HistoryChange::Delete),
         }
     }
 }

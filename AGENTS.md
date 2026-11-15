@@ -301,7 +301,8 @@ dependencies under "Crates" below. Read the code for current module ownership.
   `RecordSink::undigested` lists calls to derive again), and implements the recorder's `RecordSink`. It owns the versioned migrations for
   `ren.sqlite3` (`crates/ren-store/migrations`); never edit one that has
   shipped. Every history read is a `ReadRequest` that `Reader::serve` answers
-  (`read`); the API, the CLI, and MCP all ask through it. Its tests include
+  (`read`), and `ReadRequest::decode` reads the API's body back as the same
+  typed `ReadResponse`; the API, the CLI, and MCP all ask through it. Its tests include
   `tests/recorder.rs`, the recorder against the real store.
 - `crates/ren-supervisor`: runs, with `Supervisor` as its primary type: agent
   processes started in a folder and driven through their client's
@@ -401,6 +402,10 @@ dependencies under "Crates" below. Read the code for current module ownership.
     `Controls` (token or Tailscale identity; browsers refused), and its
     `[control]` configuration (`ControlOptions`) and `ControlToken`. Handler state
     stays crate-private; configuration and token types are exported at the root.
+    Every refusal is a `ControlRefusal` (`refusal`), one code with one status,
+    pinned in `tests/fixtures/labels.txt`. Its `request` module holds each request
+    the CLI sends as a value (`ControlRequest`: method, path, and the body types
+    the routes parse), and `tests/runs.rs` sends each one to the router.
     Its `tools` module serves `/control/v1/tools` (listing, change, and
     collection) through the `Toolbox` port the gateway declares in `tools`
     (with its views), which the daemon's `HostToolbox` implements.
@@ -485,6 +490,9 @@ dependencies under "Crates" below. Read the code for current module ownership.
   `src/lib/tools.ts` the Tools view's pure core (each package's
   `Standing`, the `ToolPlan` staged before it is applied, and `ToolGroups`),
   whose first read the UI server makes (`src/routes/tools/+page.server.ts`),
+  `src/lib/refusal.ts` what each refusal code means to the operator
+  (`Refusals`: the daemon's `ControlRefusal` codes and the proxy's own
+  `proxyRefusals`, one exhaustive table),
   `src/lib/signIn.ts` a client's sign-in as the API reports it and how the
   view words it, with `src/lib/SignInSheet.svelte` the sheet that runs the
   client's own login (its link out, the page's code back),
@@ -606,6 +614,9 @@ tracked and update it intentionally.
 The same principles apply in TypeScript:
 
 - Parse API responses and environment variables at the boundary.
+- Every closed vocabulary the UI decodes is an exported `as const` array
+  pinned to the daemon's `labels.txt` tables by `ui/apps/web/tests/labels.test.ts`;
+  a new vocabulary goes in its table.
   `ui/apps/web/src/env.ts` validates gateway origins, keeps loopback defaults, and keeps the
   server's daemon address separate from the client-facing address.
 - Use discriminated unions for states instead of loose flags.

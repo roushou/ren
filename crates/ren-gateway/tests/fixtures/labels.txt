@@ -1,5 +1,6 @@
 api::HealthStatus: ok degraded
 api::ErrorCode: not_found invalid_query busy unavailable identity_refused
+api::ControlRefusal: cross_site unauthorized forbidden invalid_request not_found unavailable not_running unrecorded unrecordable backup_running backup_incomplete backup_failed call_open run_running unreadable runs_disabled invalid_directory directory_not_found not_drivable no_approvals no_scratch spawn_failed models_unavailable starting busy not_working turn_not_started no_such_approval stopping ended nothing_queued not_offered no_images protocol client_fixed archived not_archived no_process no_attachments attachment_sent attachment_too_large attachment_storage blank_prompt too_many_attachments attachment_name attachment_empty attachment_unrecognized attachment_unreadable attachment_too_wide sign_in_not_offered not_installed no_sign_in not_awaiting_answer redirect_not_an_address redirect_elsewhere redirect_incomplete tools_disabled tools_busy tools_no_generation tools_collected tools_unsupported tools_refused tools_failed
 api::preview::RawFormat: utf8 hex
 api::preview::PreviewDecoding: none gzip_magic zstd_magic brotli
 api::preview::PreviewExtent: complete partial truncated gap

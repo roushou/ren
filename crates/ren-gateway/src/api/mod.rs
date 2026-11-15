@@ -10,14 +10,14 @@
 use serde_with::{DeserializeFromStr, SerializeDisplay};
 use strum::{Display, EnumString, IntoStaticStr, VariantArray};
 
-mod control;
+pub mod control;
 mod live;
 mod params;
 pub mod preview;
 mod route;
 
 pub(crate) use control::ControlApi;
-pub use control::{ControlOptions, ControlOptionsError, ControlToken};
+pub use control::{ControlOptions, ControlOptionsError, ControlRefusal, ControlToken};
 pub use route::ApiRead;
 
 use crate::build::Build;

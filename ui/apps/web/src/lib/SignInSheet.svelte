@@ -12,6 +12,7 @@
   import CopyButton from './CopyButton.svelte';
   import Icon from './Icon.svelte';
   import { RunCommandError, type Drivable } from './runs.ts';
+  import { Refusals } from './refusal.ts';
   import {
     SignIns,
     type Login,
@@ -83,23 +84,15 @@
   const reason = (error: unknown): string => {
     if (error instanceof RunCommandError) {
       switch (error.code) {
+        // Said with the client's name.
         case 'not_installed':
           return `${client} is not installed on the daemon’s host.`;
         case 'sign_in_not_offered':
           return `Ren cannot sign ${client} in yet.`;
-        case 'not_awaiting_answer':
-        case 'no_sign_in':
-          return 'This sign-in is no longer waiting for that. Start again.';
-        case 'redirect_elsewhere':
-          return 'That is not the address this sign-in waits on. Copy it from the tab the link opened.';
-        case 'redirect_incomplete':
-          return 'That address has no code yet: approve on the page first, then copy the address it goes to.';
-        case 'redirect_not_an_address':
-          return 'Paste the whole address from the browser’s address bar, starting with http://127.0.0.1.';
         case 'spawn_failed':
           return `${client} could not be started on the daemon’s host.`;
         default:
-          return `The daemon refused (${error.code ?? error.status}).`;
+          return error.message;
       }
     }
     return error instanceof Error ? error.message : 'The request failed.';
@@ -187,7 +180,7 @@
       step = { kind: 'done', outcome: await sendAnswer(pasted) };
     } catch (error) {
       // A wrong address can be pasted again; anything else ends the sign-in.
-      const again = error instanceof RunCommandError && (error.code ?? '').startsWith('redirect_');
+      const again = error instanceof RunCommandError && Refusals.redirect(error.code);
       step = again
         ? { kind: 'asking', asked, phase: 'typing', problem: reason(error) }
         : { kind: 'failed', message: reason(error) };

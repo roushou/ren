@@ -10,14 +10,17 @@ use crate::management::Target;
 use crate::style::Tone;
 use anyhow::{Result, bail};
 use clap::{Args, Subcommand, ValueEnum};
+use ren_gateway::api::control::request::{
+    AnswerRequest, ControlFeed, ControlRequest, CreateRequest, PromptRequest,
+};
 use ren_harness::Harness;
+use ren_harness::drive::Decision;
 use ren_protocol::sse::{EventName, SseFramer, SseLimits, SseOutput};
 use ren_recorder::id::{RunId, SessionId};
 use ren_store::{
     query::{PageLimit, Shelf},
     read::ReadRequest,
 };
-use reqwest::Method;
 use std::{path::PathBuf, process::ExitCode};
 use uuid::Uuid;
 
@@ -121,13 +124,13 @@ enum Answer {
     Cancel,
 }
 
-impl Answer {
-    fn label(self) -> &'static str {
-        match self {
-            Self::Accept => "accept",
-            Self::AcceptForSession => "accept_for_session",
-            Self::Decline => "decline",
-            Self::Cancel => "cancel",
+impl From<Answer> for Decision {
+    fn from(answer: Answer) -> Self {
+        match answer {
+            Answer::Accept => Self::Accept,
+            Answer::AcceptForSession => Self::AcceptForSession,
+            Answer::Decline => Self::Decline,
+            Answer::Cancel => Self::Cancel,
         }
     }
 }
@@ -159,7 +162,7 @@ struct HistoryArgs {
 
 impl RunsCmd {
     pub async fn run(self, ctx: &Context) -> Result<ExitCode> {
-        let (method, path, body) = match self.action {
+        let request = match self.action {
             RunsAction::History(args) => {
                 let answer = self
                     .target
@@ -177,65 +180,57 @@ impl RunsCmd {
                 let control = ControlTarget::select(&self.target, ctx)?;
                 return Self::watch(ctx, &control, args.run).await;
             }
-            RunsAction::Ls => (Method::GET, "runs".to_owned(), None),
-            RunsAction::Sessions => (Method::GET, "sessions".to_owned(), None),
-            RunsAction::Projects => (Method::GET, "runs/projects".to_owned(), None),
+            RunsAction::Ls => ControlRequest::Runs,
+            RunsAction::Sessions => ControlRequest::Sessions,
+            RunsAction::Projects => ControlRequest::Projects,
             RunsAction::Start(args) => {
                 let local = matches!(self.target.select(ctx)?, Target::Local);
                 let dir = Self::dir(args.dir.clone(), local)?;
                 let control = ControlTarget::select(&self.target, ctx)?;
                 return Self::start(&control, args, dir).await;
             }
-            RunsAction::Say(args) => (
-                Method::POST,
-                format!("sessions/{}/prompt", args.session),
-                Some(serde_json::json!({ "text": args.text.join(" ") })),
-            ),
-            RunsAction::Answer(args) => (
-                Method::POST,
-                format!("sessions/{}/approvals/{}", args.session, args.approval),
-                Some(serde_json::json!({ "decision": args.decision.label() })),
-            ),
-            RunsAction::Interrupt(args) => (
-                Method::POST,
-                format!("sessions/{}/interrupt", args.session),
-                None,
-            ),
-            RunsAction::Stop(args) => (
-                Method::POST,
-                format!("sessions/{}/stop", args.session),
-                None,
-            ),
+            RunsAction::Say(args) => ControlRequest::Prompt {
+                session: args.session,
+                prompt: PromptRequest::text(args.text.join(" ")),
+            },
+            RunsAction::Answer(args) => ControlRequest::Answer {
+                session: args.session,
+                approval: args.approval,
+                answer: AnswerRequest {
+                    decision: args.decision.into(),
+                },
+            },
+            RunsAction::Interrupt(args) => ControlRequest::Interrupt(args.session),
+            RunsAction::Stop(args) => ControlRequest::Stop(args.session),
         };
         let control = ControlTarget::select(&self.target, ctx)?;
-        let (status, body) = control.send(method, &path, body).await?;
-        ControlTarget::report(status, &body)
+        Ok(control.send(&request).await?.report()?)
     }
 
     /// Make a session in `dir`, then send its first prompt, if one is given;
     /// prints the session made.
     async fn start(control: &ControlTarget, args: StartArgs, dir: String) -> Result<ExitCode> {
-        let mut body = serde_json::json!({ "harness": Harness::from(args.client), "dir": dir });
-        if let Some(resume) = args.resume {
-            body["resume"] = resume.to_string().into();
+        let mut create = CreateRequest::new(Harness::from(args.client), Some(dir));
+        create.resume = args.resume;
+        let made = control.send(&ControlRequest::Create(create)).await?;
+        if !made.status.is_success() {
+            return Ok(made.report()?);
         }
-        let (status, made) = control.send(Method::POST, "sessions", Some(body)).await?;
-        if !status.is_success() {
-            return ControlTarget::report(status, &made);
-        }
-        if let (Some(prompt), Some(session)) = (args.prompt, made["session"].as_str()) {
-            let (status, answer) = control
-                .send(
-                    Method::POST,
-                    &format!("sessions/{session}/prompt"),
-                    Some(serde_json::json!({ "text": prompt })),
-                )
+        let session = made.body["session"]
+            .as_str()
+            .and_then(|session| session.parse::<SessionId>().ok());
+        if let (Some(prompt), Some(session)) = (args.prompt, session) {
+            let answer = control
+                .send(&ControlRequest::Prompt {
+                    session,
+                    prompt: PromptRequest::text(prompt),
+                })
                 .await?;
-            if !status.is_success() {
-                return ControlTarget::report(status, &answer);
+            if !answer.status.is_success() {
+                return Ok(answer.report()?);
             }
         }
-        ControlTarget::report(status, &made)
+        Ok(made.report()?)
     }
 
     /// The folder as the daemon must read it: absolute. A relative one is
@@ -261,7 +256,7 @@ impl RunsCmd {
         control: &ControlTarget,
         only: Option<RunId>,
     ) -> Result<ExitCode> {
-        let mut response = control.stream("runs/events").await?;
+        let mut response = control.stream(ControlFeed::Runs).await?;
         let stderr = ctx.terminal.stderr;
         let mut framer = SseFramer::new(SseLimits::default());
         while let Some(chunk) = response.chunk().await? {

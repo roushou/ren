@@ -276,7 +276,7 @@ impl CallView {
 }
 
 /// One upstream attempt of a call.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AttemptView {
     pub id: AttemptId,
     pub ordinal: u32,
@@ -331,7 +331,7 @@ impl AttemptView {
 }
 
 /// A call with its attempts and log.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CallDetail {
     pub call: CallView,
     pub transport: Stored<Transport>,
@@ -346,7 +346,7 @@ pub struct CallDetail {
 }
 
 /// One client connection or exchange.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ChannelView {
     pub id: ChannelId,
     pub transport: Stored<Transport>,
@@ -379,7 +379,7 @@ impl ChannelView {
 }
 
 /// Where one WebSocket message sits inside a body.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MessageView {
     pub direction: Stored<Direction>,
     pub offset: u64,
@@ -457,7 +457,7 @@ impl TokenTotals {
 }
 
 /// Calls, errors, and tokens over some set of calls.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UsageCounts {
     pub calls: u64,
     /// The calls the `errors` status filter finds.
@@ -477,7 +477,7 @@ impl UsageCounts {
 }
 
 /// Usage over a time range, by the hour, by model, and by user.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UsageView {
     pub totals: UsageCounts,
     /// Hours that had calls, oldest first, keyed by the hour's start (UTC).
@@ -492,14 +492,14 @@ pub struct UsageView {
     pub users: Vec<UserUsage>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UsageBucket {
     pub start: UnixMillis,
     #[serde(flatten)]
     pub usage: UsageCounts,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ModelUsage {
     pub provider: Stored<Provider>,
     pub model: Option<String>,
@@ -507,7 +507,7 @@ pub struct ModelUsage {
     pub usage: UsageCounts,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UserUsage {
     pub user: Option<String>,
     #[serde(flatten)]

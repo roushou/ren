@@ -44,9 +44,9 @@
     type FileMatch,
   } from '#lib/runs.ts';
   import { Mentions } from '#lib/mention.ts';
+  import { Refusals } from '#lib/refusal.ts';
   import {
     Gallery,
-    Refusals,
     Tray,
     type AttachmentRead,
     type Chip,

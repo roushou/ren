@@ -14,7 +14,7 @@
 //! Access is the control API's. Without a toolbox every route answers
 //! `tools_disabled`.
 
-use super::{ControlApi, Refusal};
+use super::{ControlApi, ControlRefusal};
 use crate::tools::{ToolChange, ToolCollection, ToolListing, Toolbox, ToolboxError};
 use axum::{
     Json, Router,
@@ -22,7 +22,7 @@ use axum::{
     response::{IntoResponse, Response},
     routing::{get, post},
 };
-use http::{HeaderMap, StatusCode};
+use http::HeaderMap;
 use ren_depot::{
     package::PackageId,
     toolset::{Edit, Generation},
@@ -60,49 +60,33 @@ struct Versioned<T> {
 /// Why a tools request was refused, beyond access.
 #[derive(Debug)]
 enum Untooled {
-    Access(Refusal),
+    Access(ControlRefusal),
     Disabled,
     Toolbox(ToolboxError),
 }
 
 impl IntoResponse for Untooled {
     fn into_response(self) -> Response {
-        let (status, code, message) = match self {
+        let (refusal, message) = match self {
             Self::Access(refusal) => return refusal.into_response(),
-            Self::Disabled => (StatusCode::SERVICE_UNAVAILABLE, "tools_disabled", None),
-            Self::Toolbox(ToolboxError::Busy) => (StatusCode::CONFLICT, "tools_busy", None),
-            Self::Toolbox(error @ ToolboxError::NoGeneration(_)) => (
-                StatusCode::NOT_FOUND,
-                "tools_no_generation",
-                Some(error.to_string()),
-            ),
-            Self::Toolbox(error @ ToolboxError::Collected(_)) => (
-                StatusCode::CONFLICT,
-                "tools_collected",
-                Some(error.to_string()),
-            ),
-            Self::Toolbox(ToolboxError::Unsupported) => {
-                (StatusCode::NOT_IMPLEMENTED, "tools_unsupported", None)
+            Self::Disabled => (ControlRefusal::ToolsDisabled, None),
+            Self::Toolbox(ToolboxError::Busy) => (ControlRefusal::ToolsBusy, None),
+            Self::Toolbox(error @ ToolboxError::NoGeneration(_)) => {
+                (ControlRefusal::ToolsNoGeneration, Some(error.to_string()))
             }
-            Self::Toolbox(error @ ToolboxError::Refused(_)) => (
-                StatusCode::UNPROCESSABLE_ENTITY,
-                "tools_refused",
-                Some(error.to_string()),
-            ),
+            Self::Toolbox(error @ ToolboxError::Collected(_)) => {
+                (ControlRefusal::ToolsCollected, Some(error.to_string()))
+            }
+            Self::Toolbox(ToolboxError::Unsupported) => (ControlRefusal::ToolsUnsupported, None),
+            Self::Toolbox(error @ ToolboxError::Refused(_)) => {
+                (ControlRefusal::ToolsRefused, Some(error.to_string()))
+            }
             Self::Toolbox(ToolboxError::Failed(reason)) => {
                 tracing::warn!(%reason, "the tool store failed");
-                (StatusCode::INTERNAL_SERVER_ERROR, "tools_failed", None)
+                (ControlRefusal::ToolsFailed, None)
             }
         };
-        (
-            status,
-            Json(serde_json::json!({
-                "api_version": ControlApi::API_VERSION,
-                "error": code,
-                "message": message,
-            })),
-        )
-            .into_response()
+        refusal.explained(message)
     }
 }
 
@@ -149,7 +133,7 @@ impl ToolsApi {
             Err(refused) => return refused.into_response(),
         };
         let Ok(Json(request)) = body else {
-            return Refusal::Invalid.into_response();
+            return ControlRefusal::InvalidRequest.into_response();
         };
         let edit = Edit {
             add: request.add,
@@ -168,7 +152,7 @@ impl ToolsApi {
             Err(refused) => return refused.into_response(),
         };
         let Ok(Json(request)) = body else {
-            return Refusal::Invalid.into_response();
+            return ControlRefusal::InvalidRequest.into_response();
         };
         Self::answer::<ToolChange>(toolbox.roll_back(request.generation).await)
     }

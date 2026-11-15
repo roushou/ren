@@ -13,10 +13,9 @@
 //! `/control/v1/sessions/{id}/block` and `/unblock` are the operator
 //! state's: they take a client's own session id, not one of these.
 
-use super::runs::{
-    AnswerRequest, Denied, FilesRequest, PromptRequest, RunRefusal, RunsApi, SettingsRequest,
-};
-use super::{ControlApi, Refusal};
+use super::request::{AnswerRequest, CreateRequest, PromptRequest};
+use super::runs::{FilesRequest, RunsApi, SettingsRequest};
+use super::{ControlApi, ControlRefusal};
 use axum::{
     Json, Router,
     body::Body,
@@ -38,7 +37,7 @@ use ren_harness::{
     },
     drive::ApprovalId,
     models::ModelId,
-    settings::{ApprovalPolicy, Effort, RunSettings},
+    settings::RunSettings,
 };
 use ren_protocol::label::Stored;
 use ren_protocol::native::NativeThreadId;
@@ -70,25 +69,6 @@ pub(super) struct SessionsApi {
 }
 
 type Api = State<Arc<SessionsApi>>;
-
-#[derive(serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-struct CreateRequest {
-    harness: Harness,
-    /// The folder, inside a root or another place; left out, the session
-    /// gets a new folder of its own in scratch.
-    #[serde(default)]
-    dir: Option<String>,
-    #[serde(default)]
-    model: Option<String>,
-    #[serde(default)]
-    effort: Option<Effort>,
-    #[serde(default)]
-    approvals: Option<ApprovalPolicy>,
-    /// A client conversation to go on with, begun elsewhere.
-    #[serde(default)]
-    resume: Option<uuid::Uuid>,
-}
 
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -174,66 +154,56 @@ impl SessionsApi {
     }
 
     /// The supervisor, once the request is authorized.
-    fn admit(&self, headers: &HeaderMap) -> Result<&Supervisor, Denied> {
-        self.control.authorize(headers).map_err(Denied::Control)?;
-        self.supervisor
-            .as_ref()
-            .ok_or(Denied::Run(RunRefusal::Disabled))
+    fn admit(&self, headers: &HeaderMap) -> Result<&Supervisor, ControlRefusal> {
+        self.control.authorize(headers)?;
+        self.supervisor.as_ref().ok_or(ControlRefusal::RunsDisabled)
     }
 
-    fn session(text: &str) -> Result<SessionId, Denied> {
-        text.parse().map_err(|_| Denied::Run(RunRefusal::NotFound))
+    fn session(text: &str) -> Result<SessionId, ControlRefusal> {
+        text.parse().map_err(|_| ControlRefusal::NotFound)
     }
 
-    fn refused(error: SessionError) -> Denied {
-        Denied::Run(match error {
-            SessionError::NoSuchSession(_) => RunRefusal::NotFound,
-            SessionError::Refused(SessionRefused::ClientFixed) => {
-                RunRefusal::Refused("client_fixed")
-            }
-            SessionError::Refused(SessionRefused::Archived) => RunRefusal::Refused("archived"),
-            SessionError::Refused(SessionRefused::NotArchived) => {
-                RunRefusal::Refused("not_archived")
-            }
-            SessionError::NoProcess => RunRefusal::Refused("no_process"),
-            SessionError::Running => RunRefusal::Refused("run_running"),
-            SessionError::Unreadable(_) => RunRefusal::Refused("unreadable"),
-            SessionError::Unrecorded => RunRefusal::Unrecorded,
+    fn refused(error: SessionError) -> ControlRefusal {
+        match error {
+            SessionError::NoSuchSession(_) => ControlRefusal::NotFound,
+            SessionError::Refused(SessionRefused::ClientFixed) => ControlRefusal::ClientFixed,
+            SessionError::Refused(SessionRefused::Archived) => ControlRefusal::Archived,
+            SessionError::Refused(SessionRefused::NotArchived) => ControlRefusal::NotArchived,
+            SessionError::NoProcess => ControlRefusal::NoProcess,
+            SessionError::Running => ControlRefusal::RunRunning,
+            SessionError::Unreadable(_) => ControlRefusal::Unreadable,
+            SessionError::Unrecorded => ControlRefusal::Unrecorded,
             SessionError::Start(error) => error.into(),
             SessionError::Command(error) => error.into(),
             SessionError::Attachment(error) => Self::unattachable(error),
-            SessionError::NoAttachments => RunRefusal::NoAttachments,
-            SessionError::NoSuchAttachment(_) => RunRefusal::NotFound,
-            SessionError::AttachmentSent(_) => RunRefusal::Refused("attachment_sent"),
-            SessionError::BlankPrompt => RunRefusal::InvalidAttachment("blank_prompt"),
+            SessionError::NoAttachments => ControlRefusal::NoAttachments,
+            SessionError::NoSuchAttachment(_) => ControlRefusal::NotFound,
+            SessionError::AttachmentSent(_) => ControlRefusal::AttachmentSent,
+            SessionError::BlankPrompt => ControlRefusal::BlankPrompt,
             SessionError::PromptAttachments(PromptLimitError::TooMany { .. }) => {
-                RunRefusal::InvalidAttachment("too_many_attachments")
+                ControlRefusal::TooManyAttachments
             }
             SessionError::PromptAttachments(PromptLimitError::TooLarge { .. }) => {
-                RunRefusal::AttachmentTooLarge
+                ControlRefusal::AttachmentTooLarge
             }
-            SessionError::ImagesNotTaken(_) => RunRefusal::Refused("no_images"),
+            SessionError::ImagesNotTaken(_) => ControlRefusal::NoImages,
             SessionError::AttachmentStorage(error) => {
                 tracing::warn!(%error, "an attachment could not be kept or read");
-                RunRefusal::AttachmentStorage
+                ControlRefusal::AttachmentStorage
             }
-            SessionError::Gone => RunRefusal::Unavailable,
-        })
+            SessionError::Gone => ControlRefusal::Unavailable,
+        }
     }
 
     /// Why an upload is not an attachment, as the API names it.
-    fn unattachable(error: AttachmentError) -> RunRefusal {
+    fn unattachable(error: AttachmentError) -> ControlRefusal {
         match error {
-            AttachmentError::TooLarge { .. } => RunRefusal::AttachmentTooLarge,
-            AttachmentError::Name(_) => RunRefusal::InvalidAttachment("attachment_name"),
-            AttachmentError::Empty => RunRefusal::InvalidAttachment("attachment_empty"),
-            AttachmentError::Unrecognized => {
-                RunRefusal::InvalidAttachment("attachment_unrecognized")
-            }
-            AttachmentError::Unreadable(_) => {
-                RunRefusal::InvalidAttachment("attachment_unreadable")
-            }
-            AttachmentError::TooWide { .. } => RunRefusal::InvalidAttachment("attachment_too_wide"),
+            AttachmentError::TooLarge { .. } => ControlRefusal::AttachmentTooLarge,
+            AttachmentError::Name(_) => ControlRefusal::AttachmentName,
+            AttachmentError::Empty => ControlRefusal::AttachmentEmpty,
+            AttachmentError::Unrecognized => ControlRefusal::AttachmentUnrecognized,
+            AttachmentError::Unreadable(_) => ControlRefusal::AttachmentUnreadable,
+            AttachmentError::TooWide { .. } => ControlRefusal::AttachmentTooWide,
         }
     }
 
@@ -314,21 +284,25 @@ impl SessionsApi {
     /// Serve `session` from the store, if it holds it and the supervisor
     /// does not serve it yet. A session the store does not hold may still
     /// be served: the store records a new one a moment after it is made.
-    async fn load(&self, supervisor: &Supervisor, session: SessionId) -> Result<(), Denied> {
+    async fn load(
+        &self,
+        supervisor: &Supervisor,
+        session: SessionId,
+    ) -> Result<(), ControlRefusal> {
         let stored = self
             .reader
             .session(session)
             .await
-            .map_err(|_| Denied::Run(RunRefusal::Unavailable))?;
+            .map_err(|_| ControlRefusal::Unavailable)?;
         let Some(stored) = stored else {
             return Ok(());
         };
-        let mut seed = Self::seed(&stored).ok_or(Denied::Run(RunRefusal::NotDrivable))?;
+        let mut seed = Self::seed(&stored).ok_or(ControlRefusal::NotDrivable)?;
         seed.attachments = self
             .reader
             .attachments(session)
             .await
-            .map_err(|_| Denied::Run(RunRefusal::Unavailable))?
+            .map_err(|_| ControlRefusal::Unavailable)?
             .into_iter()
             .filter_map(|stored| {
                 let id = stored.id;
@@ -356,7 +330,7 @@ impl SessionsApi {
         headers: &HeaderMap,
         session: &str,
         command: RunCommand,
-    ) -> Result<Response, Denied> {
+    ) -> Result<Response, ControlRefusal> {
         let supervisor = self.admit(headers)?;
         let session = Self::session(session)?;
         self.load(supervisor, session).await?;
@@ -371,21 +345,21 @@ impl SessionsApi {
         State(api): Api,
         headers: HeaderMap,
         query: Result<Query<ListRequest>, QueryRejection>,
-    ) -> Result<Response, Denied> {
+    ) -> Result<Response, ControlRefusal> {
         let supervisor = api.admit(&headers)?;
-        let Query(request) = query.map_err(|_| Denied::Control(Refusal::Invalid))?;
+        let Query(request) = query.map_err(|_| ControlRefusal::InvalidRequest)?;
         let shelf = request.shelf.unwrap_or_default();
         let limit = request
             .limit
             .map(PageLimit::new)
             .transpose()
-            .map_err(|_| Denied::Control(Refusal::Invalid))?
+            .map_err(|_| ControlRefusal::InvalidRequest)?
             .unwrap_or(PageLimit::DEFAULT);
         let stored = api
             .reader
             .sessions(limit, shelf)
             .await
-            .map_err(|_| Denied::Run(RunRefusal::Unavailable))?;
+            .map_err(|_| ControlRefusal::Unavailable)?;
         let mut served = supervisor.sessions().await.map_err(Self::refused)?;
         let mut sessions: Vec<SessionBody> = stored
             .into_iter()
@@ -414,7 +388,7 @@ impl SessionsApi {
                 .reader
                 .session(snapshot.session)
                 .await
-                .map_err(|_| Denied::Run(RunRefusal::Unavailable))?
+                .map_err(|_| ControlRefusal::Unavailable)?
                 .is_none()
             {
                 fresh.push(SessionBody {
@@ -436,14 +410,14 @@ impl SessionsApi {
         State(api): Api,
         headers: HeaderMap,
         Path(session): Path<String>,
-    ) -> Result<Response, Denied> {
+    ) -> Result<Response, ControlRefusal> {
         let supervisor = api.admit(&headers)?;
         let session = Self::session(&session)?;
         let stored = api
             .reader
             .session(session)
             .await
-            .map_err(|_| Denied::Run(RunRefusal::Unavailable))?;
+            .map_err(|_| ControlRefusal::Unavailable)?;
         let served = supervisor
             .sessions()
             .await
@@ -451,7 +425,7 @@ impl SessionsApi {
             .into_iter()
             .find(|snapshot| snapshot.session == session);
         if stored.is_none() && served.is_none() {
-            return Err(Denied::Run(RunRefusal::NotFound));
+            return Err(ControlRefusal::NotFound);
         }
         Ok(Json(serde_json::json!({
             "api_version": ControlApi::API_VERSION,
@@ -464,7 +438,7 @@ impl SessionsApi {
         State(api): Api,
         headers: HeaderMap,
         body: Result<Json<CreateRequest>, JsonRejection>,
-    ) -> Result<Response, Denied> {
+    ) -> Result<Response, ControlRefusal> {
         let supervisor = api.admit(&headers)?;
         let request = RunsApi::body(body)?;
         let settings = SettingsRequest {
@@ -500,11 +474,11 @@ impl SessionsApi {
         headers: HeaderMap,
         Path(session): Path<String>,
         body: Result<Json<PromptRequest>, JsonRejection>,
-    ) -> Result<Response, Denied> {
+    ) -> Result<Response, ControlRefusal> {
         let request = RunsApi::body(body)?;
         // Blank with nothing attached is a malformed request, as it always was.
         if request.text.trim().is_empty() && request.attachments.is_empty() {
-            return Err(Denied::Control(Refusal::Invalid));
+            return Err(ControlRefusal::InvalidRequest);
         }
         let supervisor = api.admit(&headers)?;
         let session = Self::session(&session)?;
@@ -520,7 +494,7 @@ impl SessionsApi {
         State(api): Api,
         headers: HeaderMap,
         Path(session): Path<String>,
-    ) -> Result<Response, Denied> {
+    ) -> Result<Response, ControlRefusal> {
         api.send(&headers, &session, RunCommand::Unqueue).await
     }
 
@@ -529,7 +503,7 @@ impl SessionsApi {
         headers: HeaderMap,
         Path(session): Path<String>,
         body: Result<Json<SettingsRequest>, JsonRejection>,
-    ) -> Result<Response, Denied> {
+    ) -> Result<Response, ControlRefusal> {
         let settings = RunsApi::body(body)?.settings()?;
         api.send(&headers, &session, RunCommand::Configure(settings))
             .await
@@ -540,10 +514,10 @@ impl SessionsApi {
         headers: HeaderMap,
         Path((session, approval)): Path<(String, String)>,
         body: Result<Json<AnswerRequest>, JsonRejection>,
-    ) -> Result<Response, Denied> {
+    ) -> Result<Response, ControlRefusal> {
         let approval = approval
             .parse::<ApprovalId>()
-            .map_err(|_| Denied::Run(RunRefusal::NotFound))?;
+            .map_err(|_| ControlRefusal::NotFound)?;
         let decision = RunsApi::body(body)?.decision;
         api.send(
             &headers,
@@ -557,7 +531,7 @@ impl SessionsApi {
         State(api): Api,
         headers: HeaderMap,
         Path(session): Path<String>,
-    ) -> Result<Response, Denied> {
+    ) -> Result<Response, ControlRefusal> {
         api.send(&headers, &session, RunCommand::Interrupt).await
     }
 
@@ -565,7 +539,7 @@ impl SessionsApi {
         State(api): Api,
         headers: HeaderMap,
         Path(session): Path<String>,
-    ) -> Result<Response, Denied> {
+    ) -> Result<Response, ControlRefusal> {
         api.send(&headers, &session, RunCommand::Stop).await
     }
 
@@ -574,7 +548,7 @@ impl SessionsApi {
         headers: HeaderMap,
         Path(session): Path<String>,
         body: Result<Json<ClientRequest>, JsonRejection>,
-    ) -> Result<Response, Denied> {
+    ) -> Result<Response, ControlRefusal> {
         let supervisor = api.admit(&headers)?;
         let session = Self::session(&session)?;
         let harness = RunsApi::body(body)?.harness;
@@ -591,7 +565,7 @@ impl SessionsApi {
         headers: &HeaderMap,
         session: &str,
         shelving: Shelving,
-    ) -> Result<Response, Denied> {
+    ) -> Result<Response, ControlRefusal> {
         let supervisor = self.admit(headers)?;
         let session = Self::session(session)?;
         self.load(supervisor, session).await?;
@@ -606,7 +580,7 @@ impl SessionsApi {
         State(api): Api,
         headers: HeaderMap,
         Path(session): Path<String>,
-    ) -> Result<Response, Denied> {
+    ) -> Result<Response, ControlRefusal> {
         api.shelve(&headers, &session, Shelving::Archive).await
     }
 
@@ -614,7 +588,7 @@ impl SessionsApi {
         State(api): Api,
         headers: HeaderMap,
         Path(session): Path<String>,
-    ) -> Result<Response, Denied> {
+    ) -> Result<Response, ControlRefusal> {
         api.shelve(&headers, &session, Shelving::Unarchive).await
     }
 
@@ -626,8 +600,8 @@ impl SessionsApi {
         State(api): Api,
         headers: HeaderMap,
         Path(session): Path<String>,
-    ) -> Result<Response, Denied> {
-        let actor = api.control.authorize(&headers).map_err(Denied::Control)?;
+    ) -> Result<Response, ControlRefusal> {
+        let actor = api.control.authorize(&headers)?;
         let supervisor = api.admit(&headers)?;
         let session = Self::session(&session)?;
         let subject = HistorySubject::OperatorSession(session);
@@ -636,23 +610,23 @@ impl SessionsApi {
             .reader
             .history_target(subject)
             .await
-            .map_err(|_| Denied::Run(RunRefusal::Unavailable))?;
+            .map_err(|_| ControlRefusal::Unavailable)?;
         if let Some(target) = target {
             if target.running_runs > 0 {
-                return Err(Denied::Run(RunRefusal::Refused("run_running")));
+                return Err(ControlRefusal::RunRunning);
             }
             if target.open_calls > 0 {
-                return Err(Denied::Run(RunRefusal::Refused("call_open")));
+                return Err(ControlRefusal::CallOpen);
             }
         }
         let slot = api
             .control
             .recorder
             .history_slot()
-            .ok_or(Denied::Run(RunRefusal::Unrecorded))?;
+            .ok_or(ControlRefusal::Unrecorded)?;
         let served = supervisor.forget(session).await.map_err(Self::refused)?;
         if target.is_none() && !served {
-            return Err(Denied::Run(RunRefusal::NotFound));
+            return Err(ControlRefusal::NotFound);
         }
         slot.record(actor, subject, HistoryChange::Delete);
         Ok(Self::done())
@@ -664,7 +638,7 @@ impl SessionsApi {
         State(api): Api,
         headers: HeaderMap,
         Path(session): Path<String>,
-    ) -> Result<Response, Denied> {
+    ) -> Result<Response, ControlRefusal> {
         let supervisor = api.admit(&headers)?;
         let session = Self::session(&session)?;
         api.load(supervisor, session).await?;
@@ -681,10 +655,10 @@ impl SessionsApi {
         headers: HeaderMap,
         Path(session): Path<String>,
         query: Result<Query<FilesRequest>, QueryRejection>,
-    ) -> Result<Response, Denied> {
+    ) -> Result<Response, ControlRefusal> {
         let supervisor = api.admit(&headers)?;
         let session = Self::session(&session)?;
-        let Query(request) = query.map_err(|_| Denied::Control(Refusal::Invalid))?;
+        let Query(request) = query.map_err(|_| ControlRefusal::InvalidRequest)?;
         api.load(supervisor, session).await?;
         let limit = request
             .limit
@@ -710,18 +684,17 @@ impl SessionsApi {
         Path(session): Path<String>,
         query: Result<Query<AttachRequest>, QueryRejection>,
         body: Body,
-    ) -> Result<Response, Denied> {
+    ) -> Result<Response, ControlRefusal> {
         let supervisor = api.admit(&headers)?;
         let session = Self::session(&session)?;
-        let Query(request) =
-            query.map_err(|_| Denied::Run(RunRefusal::InvalidAttachment("attachment_name")))?;
+        let Query(request) = query.map_err(|_| ControlRefusal::AttachmentName)?;
         let limits = supervisor
             .attachment_limits()
-            .ok_or(Denied::Run(RunRefusal::NoAttachments))?;
+            .ok_or(ControlRefusal::NoAttachments)?;
         let cap = usize::try_from(limits.image_bytes().get()).unwrap_or(usize::MAX);
         let bytes = axum::body::to_bytes(body, cap)
             .await
-            .map_err(|_| Denied::Run(RunRefusal::AttachmentTooLarge))?;
+            .map_err(|_| ControlRefusal::AttachmentTooLarge)?;
         api.load(supervisor, session).await?;
         let (attachment, read) = supervisor
             .attach(session, request.name, bytes.to_vec())
@@ -743,7 +716,7 @@ impl SessionsApi {
         State(api): Api,
         headers: HeaderMap,
         Path(session): Path<String>,
-    ) -> Result<Response, Denied> {
+    ) -> Result<Response, ControlRefusal> {
         let supervisor = api.admit(&headers)?;
         let session = Self::session(&session)?;
         api.load(supervisor, session).await?;
@@ -774,7 +747,7 @@ impl SessionsApi {
         State(api): Api,
         headers: HeaderMap,
         Path((session, attachment)): Path<(String, String)>,
-    ) -> Result<Response, Denied> {
+    ) -> Result<Response, ControlRefusal> {
         let supervisor = api.admit(&headers)?;
         let session = Self::session(&session)?;
         let attachment = Self::attachment_id(&attachment)?;
@@ -801,7 +774,7 @@ impl SessionsApi {
         State(api): Api,
         headers: HeaderMap,
         Path((session, attachment)): Path<(String, String)>,
-    ) -> Result<Response, Denied> {
+    ) -> Result<Response, ControlRefusal> {
         let supervisor = api.admit(&headers)?;
         let session = Self::session(&session)?;
         let attachment = Self::attachment_id(&attachment)?;
@@ -813,13 +786,13 @@ impl SessionsApi {
         Ok(Self::done())
     }
 
-    fn attachment_id(text: &str) -> Result<AttachmentId, Denied> {
-        text.parse().map_err(|_| Denied::Run(RunRefusal::NotFound))
+    fn attachment_id(text: &str) -> Result<AttachmentId, ControlRefusal> {
+        text.parse().map_err(|_| ControlRefusal::NotFound)
     }
 
     /// Session changes from now on, as `session` events (each the session
     /// as served); `lagged` when the feed fell behind (list them again).
-    async fn events(State(api): Api, headers: HeaderMap) -> Result<Response, Denied> {
+    async fn events(State(api): Api, headers: HeaderMap) -> Result<Response, ControlRefusal> {
         let supervisor = api.admit(&headers)?;
         let receiver = supervisor.subscribe_sessions();
         let shutdown = api.shutdown.clone();

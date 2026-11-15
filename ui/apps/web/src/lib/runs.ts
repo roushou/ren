@@ -5,6 +5,7 @@
 // No browser APIs beyond the `fetch` handed in; tested in tests/runs.test.ts.
 import {
   API_VERSION,
+  HARNESSES,
   RecordingId,
   toolEffect,
   versioned,
@@ -49,7 +50,6 @@ import {
 import {
   AttachmentId,
   IMAGE_TAKING,
-  Refusals,
   attachmentRead,
   keptList,
   uploaded,
@@ -57,6 +57,7 @@ import {
   type ImageTaking,
   type KeptAttachment,
 } from './attachments.ts';
+import { Refusals, type Refusal } from './refusal.ts';
 
 export type RunId = Brand<string, 'RunId'>;
 export const RunId = new Uuid<'RunId'>();
@@ -68,8 +69,7 @@ export type ApprovalId = Brand<string, 'ApprovalId'>;
 /** A turn item, named as the client named it. */
 export type ItemId = Brand<string, 'ItemId'>;
 
-const harnesses = ['claude_code', 'codex', 'pi', 'opencode'] as const;
-const runEnds = [
+export const runEnds = [
   'spawn_failed',
   'open_refused',
   'exited',
@@ -81,7 +81,7 @@ const runEnds = [
 export type RunEnd = (typeof runEnds)[number];
 const stopCauses = ['operator', 'shutdown', 'open_refused', 'idle'] as const;
 export type StopCause = (typeof stopCauses)[number];
-const decisions = ['accept', 'accept_for_session', 'decline', 'cancel'] as const;
+export const decisions = ['accept', 'accept_for_session', 'decline', 'cancel'] as const;
 /** How much a model reasons, from none to the most. */
 export const EFFORTS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const;
 export type Effort = (typeof EFFORTS)[number];
@@ -416,7 +416,7 @@ const itemRead: Decoder<ItemRead> = (value, path) => {
 
 const runSnapshot = object<RunSnapshot>({
   run: RunId.decode,
-  harness: label(harnesses),
+  harness: label(HARNESSES),
   workdir: string,
   state: runState,
   settings: runSettings,
@@ -515,7 +515,7 @@ export const runUpdate: Decoder<RunUpdate> = (value, path) => {
 
 const recordedRun = object<RecordedRun>({
   id: RunId.decode,
-  harness: label(harnesses),
+  harness: label(HARNESSES),
   workdir: string,
   started_at: brandedCount<'UnixMillis'>(),
   thread: nullable(branded<'NativeThreadId'>()),
@@ -582,7 +582,7 @@ export interface SessionBody {
 
 const servedSession = object<ServedSession>({
   session: SessionId.decode,
-  harness: label(harnesses),
+  harness: label(HARNESSES),
   workdir: string,
   settings: runSettings,
   state: object<SessionState>({ shelf: label(shelves), phase: label(SESSION_PHASES) }),
@@ -593,7 +593,7 @@ const servedSession = object<ServedSession>({
 
 const storedSession = object<StoredSession>({
   id: SessionId.decode,
-  harness: label(harnesses),
+  harness: label(HARNESSES),
   workdir: string,
   created_at: brandedCount<'UnixMillis'>(),
   model: nullable(branded<'ModelId'>()),
@@ -624,7 +624,7 @@ export type ProjectGit =
   | { kind: 'unreadable' }
   | { kind: 'none' };
 
-const placeKinds = ['project', 'other', 'scratch'] as const;
+export const placeKinds = ['project', 'other', 'scratch'] as const;
 /** What kind of place a run can start in. */
 export type PlaceKind = (typeof placeKinds)[number];
 
@@ -678,7 +678,7 @@ const runProjects = versioned(
 );
 const recordedRuns = versioned(object<{ runs: RecordedRun[] }>({ runs: array(recordedRun) }));
 
-const clientStatuses = ['ready', 'not_installed', 'not_drivable'] as const;
+export const clientStatuses = ['ready', 'not_installed', 'not_drivable'] as const;
 /** Whether a run can start with a client on the daemon's host. */
 export type ClientStatus = (typeof clientStatuses)[number];
 
@@ -700,7 +700,7 @@ const runClients = versioned(
   object<{ clients: RunClient[] }>({
     clients: array(
       object<RunClient>({
-        harness: label(harnesses),
+        harness: label(HARNESSES),
         status: label(clientStatuses),
         approvals: array(label(APPROVAL_POLICIES)),
         midway: array(label(MIDWAY)),
@@ -714,7 +714,7 @@ const runClients = versioned(
 );
 /** A model, named as its client names it (`--model`, or Pi's `provider/id`). */
 export type ModelId = Brand<string, 'ModelId'>;
-const modelChoices = ['default', 'other'] as const;
+export const modelChoices = ['default', 'other'] as const;
 
 /** A model a client offers, as the client itself lists it. */
 export interface RunModel {
@@ -821,78 +821,11 @@ const storedConversation = versioned(
 /** Why the daemon or this UI server refused a run command, by its error code. */
 export class RunCommandError extends Error {
   readonly status: number;
-  readonly code: string | null;
-  constructor(status: number, code: string | null) {
-    super(RunCommandError.describe(status, code));
+  readonly code: Stored<Refusal> | null;
+  constructor(status: number, code: Stored<Refusal> | null) {
+    super(code === null ? `The command was refused (${status}).` : Refusals.say(code));
     this.status = status;
     this.code = code;
-  }
-
-  static describe(status: number, code: string | null): string {
-    switch (code) {
-      case 'runs_off':
-        return 'This UI server does not drive runs: set REN_CONTROL_TOKEN_FILE.';
-      case 'runs_disabled':
-        return 'Runs are off on the daemon: add a folder to [runs] roots.';
-      case 'invalid_directory':
-        return 'That folder is not under one of the daemon’s run roots.';
-      case 'directory_not_found':
-        return 'That folder does not exist on the daemon’s host.';
-      case 'not_drivable':
-        return 'Ren cannot drive that client yet.';
-      case 'spawn_failed':
-        return 'The client could not be started; is it installed on the daemon’s host?';
-      case 'nothing_queued':
-        return 'Nothing is queued.';
-      case 'not_offered':
-        return 'That client cannot do this in a running conversation.';
-      case 'no_images':
-      case 'too_many_attachments':
-      case 'attachment_too_large':
-      case 'attachment_sent':
-      case 'no_attachments':
-      case 'attachment_unrecognized':
-      case 'attachment_unreadable':
-      case 'attachment_too_wide':
-        return Refusals.say(code);
-      case 'no_approvals':
-        return 'That client asks for nothing, so it takes no approval policy.';
-      case 'models_unavailable':
-        return 'The client could not list its models.';
-      case 'unrecorded':
-        return 'The recorder has no room to record a new run right now.';
-      case 'busy':
-        return 'A turn is already running.';
-      case 'starting':
-        return 'The run is still opening its conversation.';
-      case 'not_working':
-      case 'turn_not_started':
-        return 'No turn is running.';
-      case 'no_such_approval':
-        return 'That approval no longer waits.';
-      case 'stopping':
-      case 'ended':
-        return 'The run is stopping or has ended.';
-      case 'not_found':
-        return 'The daemon does not know that run.';
-      case 'call_open':
-        return 'A call of it is still open; delete it once the call ends.';
-      case 'run_running':
-        return 'A run of it is still running; stop it before deleting.';
-      case 'cross_origin':
-      case 'login_not_allowed':
-        return 'This UI does not let you drive runs.';
-      case 'no_control_token':
-        return 'The UI server cannot read the daemon’s control token. Is the daemon running?';
-      case 'daemon_unreachable':
-        return 'Cannot reach the Ren daemon.';
-      case 'unauthorized':
-      case 'forbidden':
-      case 'cross_site':
-        return 'The daemon refused the UI server’s control token.';
-      default:
-        return `The command was refused (${status}${code ? ` ${code}` : ''}).`;
-    }
   }
 }
 
@@ -1108,8 +1041,7 @@ export class RunsClient {
       parsed = null;
     }
     if (!response.ok) {
-      const code = isRecord(parsed) && typeof parsed.error === 'string' ? parsed.error : null;
-      throw new RunCommandError(response.status, code);
+      throw new RunCommandError(response.status, Refusals.read(parsed));
     }
     return uploaded(parsed, '').attachment;
   }
@@ -1203,8 +1135,7 @@ export class RunsClient {
       parsed = null;
     }
     if (!response.ok) {
-      const code = isRecord(parsed) && typeof parsed.error === 'string' ? parsed.error : null;
-      throw new RunCommandError(response.status, code);
+      throw new RunCommandError(response.status, Refusals.read(parsed));
     }
     if (decode === null) {
       if (!isRecord(parsed) || parsed.api_version !== API_VERSION) {

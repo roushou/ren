@@ -20,6 +20,7 @@ import {
   type Decoder,
   type Stored,
 } from './decode.ts';
+import { Refusals, type Refusal } from './refusal.ts';
 
 /** A package's name in Ren's catalog (`node`, `jq`). */
 export type PackageId = Brand<string, 'PackageId'>;
@@ -30,18 +31,18 @@ export type Generation = Brand<number, 'Generation'>;
 
 export const KINDS = ['runtime', 'utility', 'client'] as const;
 export type Kind = (typeof KINDS)[number];
-const origins = ['builtin', 'operator'] as const;
+export const origins = ['builtin', 'operator'] as const;
 /** Which catalog names a package: Ren's own, or the operator's `[tools]`. */
 export type Origin = (typeof origins)[number];
-const platforms = ['linux_x64', 'linux_arm64', 'macos_arm64'] as const;
+export const platforms = ['linux_x64', 'linux_arm64', 'macos_arm64'] as const;
 export type Platform = (typeof platforms)[number];
-const generationStates = ['current', 'in_use', 'idle'] as const;
+export const generationStates = ['current', 'in_use', 'idle'] as const;
 export type GenerationState = (typeof generationStates)[number];
-const outcomes = ['unchanged', 'activated', 'failed'] as const;
+export const outcomes = ['unchanged', 'activated', 'failed'] as const;
 export type ChangeOutcome = (typeof outcomes)[number];
-const changeKinds = ['add', 'replace', 'remove'] as const;
+export const changeKinds = ['add', 'replace', 'remove'] as const;
 export type ChangeKind = (typeof changeKinds)[number];
-const stages = ['fetch', 'verify', 'unpack', 'place'] as const;
+export const stages = ['fetch', 'verify', 'unpack', 'place'] as const;
 export type Stage = (typeof stages)[number];
 
 export interface InstalledTool {
@@ -552,39 +553,29 @@ export class ToolGroups {
 /** Why a tools request did not succeed, in the operator's words. */
 export class ToolsError extends Error {
   readonly status: number;
-  readonly code: string | null;
+  readonly code: Stored<Refusal> | null;
 
-  constructor(status: number, code: string | null, message: string | null) {
+  constructor(status: number, code: Stored<Refusal> | null, message: string | null) {
     super(ToolsError.describe(status, code, message));
     this.status = status;
     this.code = code;
   }
 
-  static describe(status: number, code: string | null, message: string | null): string {
+  /** The daemon's message where it explains more; otherwise the code's
+   * words, said for tools where the proxy's refusals read otherwise. */
+  static describe(status: number, code: Stored<Refusal> | null, message: string | null): string {
+    if (code === null) return `The request was refused (${status}).`;
     switch (code) {
       case 'tools_refused':
-        return message === null ? 'The daemon refused the change.' : `${message}.`;
       case 'tools_no_generation':
       case 'tools_collected':
-        return message === null ? 'That generation cannot be restored.' : `${message}.`;
-      case 'tools_busy':
-        return 'Another change to the tools is in progress. Try again when it ends.';
-      case 'tools_unsupported':
-        return 'Ren installs tools only on Linux x64, Linux arm64, and macOS arm64.';
-      case 'tools_disabled':
-        return 'The daemon could not set up its tools. Its log says why.';
-      case 'tools_failed':
-        return 'The daemon could not read or write its tool store. Its log says why.';
+        return message === null ? Refusals.say(code) : `${message}.`;
       case 'runs_off':
         return 'Set REN_CONTROL_TOKEN_FILE on the UI server to manage tools here.';
-      case 'no_control_token':
-        return 'The UI server cannot read the daemon’s control token.';
       case 'login_not_allowed':
         return 'Your Tailscale login may not change tools here.';
-      case 'daemon_unreachable':
-        return 'The daemon did not answer.';
       default:
-        return `The request was refused (${status}${code ? ` ${code}` : ''}).`;
+        return Refusals.say(code);
     }
   }
 }
@@ -638,7 +629,7 @@ export class ToolsApi {
       parsed = null;
     }
     if (!response.ok) {
-      const code = isRecord(parsed) && typeof parsed.error === 'string' ? parsed.error : null;
+      const code = Refusals.read(parsed);
       const message =
         isRecord(parsed) && typeof parsed.message === 'string' ? parsed.message : null;
       throw new ToolsError(response.status, code, message);
