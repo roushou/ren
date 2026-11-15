@@ -1,7 +1,7 @@
 import { defineEnvVars } from '@sveltejs/kit/env';
 import { devTrafficOrigin, gatewayOrigin } from '#lib/server/config.ts';
 import { RunsAccessConfig } from '#lib/server/control.ts';
-import { Redline } from '#lib/redline.ts';
+import { Briefing } from '#lib/briefing.ts';
 
 export const variables = defineEnvVars({
   REN_GATEWAY_URL: {
@@ -30,6 +30,6 @@ export const variables = defineEnvVars({
   REN_SOURCE_DIR: {
     description:
       "Optional: Ren's source checkout, an absolute path under the daemon's `[runs]` roots. Redline sends its briefs there; unset, it marks but cannot send.",
-    schema: (value) => Redline.checkout(value),
+    schema: (value) => Briefing.checkout(value),
   },
 });
