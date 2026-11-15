@@ -356,16 +356,19 @@
 
   /**
    * Read the run's conversation, whole, as the daemon stored it, keeping
-   * what streamed in meanwhile; and its record, for its session.
+   * what streamed in meanwhile; and its record, for its session. Shown, the
+   * conversation stands as pending while it is read; read again quietly,
+   * what is shown stays until the read lands, and a failure changes nothing.
    */
-  async function readConversation(run: RunId) {
-    if (selected === run) conversationRead = { run, state: 'pending' };
+  async function readConversation(run: RunId, how: 'shown' | 'again' = 'shown') {
+    if (how === 'shown' && selected === run) conversationRead = { run, state: 'pending' };
     try {
       const conversation = await client.conversation(run);
       transcripts.set(run, (transcripts.get(run) ?? new Transcript()).load(conversation));
       if (selected === run) conversationRead = { run, state: 'read' };
     } catch (error) {
-      if (selected === run) conversationRead = { run, state: 'failed', reason: message(error) };
+      if (how === 'shown' && selected === run)
+        conversationRead = { run, state: 'failed', reason: message(error) };
     }
   }
 
@@ -514,6 +517,9 @@
   /** The key that sends into a running turn, as this platform names it. */
   const navigatorKey =
     typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform) ? '⌘' : 'Ctrl';
+  /** The processes whose conversation was read again once they opened. */
+  const reread = new Set<RunId>();
+
   /** Groups of steps the operator opened or folded, by their first step:
    * the rest open while a step runs or after one failed, and fold once done. */
   const folds = new SvelteMap<string, boolean>();
@@ -962,6 +968,17 @@
         return;
       }
       if (update.kind === 'state') {
+        // A process is read as soon as the page selects it, which can be
+        // before the daemon has stored it: read it again, once, when it
+        // has opened.
+        if (
+          update.run === selected &&
+          update.state.phase !== 'starting' &&
+          !reread.has(update.run)
+        ) {
+          reread.add(update.run);
+          void readConversation(update.run, 'again');
+        }
         if (!live.some((run) => run.run === update.run)) {
           void readLive();
         } else {
@@ -973,7 +990,7 @@
       }
       transcripts.set(
         update.run,
-        (transcripts.get(update.run) ?? new Transcript()).apply(update.event),
+        (transcripts.get(update.run) ?? new Transcript()).apply(update.event, update.run),
       );
     });
     return () => {

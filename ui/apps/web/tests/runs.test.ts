@@ -214,6 +214,50 @@ test('the transcript streams a reply, then commands and file changes as items up
   assert.deepEqual(done.entries[3], { kind: 'message', item: 'm1', text: 'Fixed it.', done: true });
 });
 
+test('items of two processes keep apart though a client names them alike, stored or live', () => {
+  const first = '0190f3a0-0000-7000-8000-0000000000a1' as never;
+  const second = '0190f3a0-0000-7000-8000-0000000000a2' as never;
+  const prompt = (text: string) =>
+    event({
+      kind: 'item',
+      phase: 'completed',
+      item: { id: 'user-1', kind: 'user_message', read: { as: 'prompt', text } },
+    });
+  const reply = (text: string) =>
+    event({
+      kind: 'item',
+      phase: 'completed',
+      item: { id: 'msg-1', kind: 'agent_message', read: { as: 'reply', text } },
+    });
+  // A session's second process names its first items as the first did.
+  const stored = new Transcript().load({
+    entries: [
+      { run: first, seq: 1, event: prompt('explain the parser') },
+      { run: first, seq: 2, event: reply('It reads tokens.') },
+      { run: second, seq: 1, event: prompt('and the lexer?') },
+    ],
+    earlier: false,
+  });
+  const live = stored.apply(reply('It splits words.'), second);
+  const shown = (transcript: Transcript) =>
+    transcript.entries.map((entry) =>
+      entry.kind === 'prompt' || entry.kind === 'message' ? entry.text : entry.kind,
+    );
+  assert.deepEqual(shown(live), [
+    'explain the parser',
+    'It reads tokens.',
+    'and the lexer?',
+    'It splits words.',
+  ]);
+  // The same item reported again by its own process is still one entry.
+  assert.deepEqual(shown(live.apply(reply('It splits words, then tokens.'), second)), [
+    'explain the parser',
+    'It reads tokens.',
+    'and the lexer?',
+    'It splits words, then tokens.',
+  ]);
+});
+
 test('a tool keeps what it does as Ren read it, and an older one reads with none', () => {
   const read = event({
     kind: 'item',
@@ -422,8 +466,8 @@ test('the stored conversation and the live feed merge into one, nothing cut', ()
   // next reply streaming.
   const live = new Transcript()
     .prompted('and the docs')
-    .apply(prompt('u2', 'and the docs'))
-    .apply(event({ kind: 'delta', item: 'm2', text: 'Upd' }));
+    .apply(prompt('u2', 'and the docs'), run as never)
+    .apply(event({ kind: 'delta', item: 'm2', text: 'Upd' }), run as never);
   const loaded = live.load({
     entries: [
       prompt('u1', 'fix the test'),
@@ -438,11 +482,16 @@ test('the stored conversation and the live feed merge into one, nothing cut', ()
     loaded.entries.map((entry) => entry.kind),
     ['prompt', 'message', 'turn_end', 'prompt', 'message'],
   );
-  assert.deepEqual(loaded.entries[1], { kind: 'message', item: 'm1', text: long, done: true });
+  assert.deepEqual(loaded.entries[1], {
+    kind: 'message',
+    item: `${run}/m1`,
+    text: long,
+    done: true,
+  });
   // It goes on streaming and completes in place.
   const done = loaded
-    .apply(event({ kind: 'delta', item: 'm2', text: 'ated.' }))
-    .apply(reply('m2', 'Updated.'));
+    .apply(event({ kind: 'delta', item: 'm2', text: 'ated.' }), run as never)
+    .apply(reply('m2', 'Updated.'), run as never);
   assert.equal(done.entries.length, 5);
   assert.equal(done.firstPrompt(), 'fix the test');
   // Turns start at their prompts, all of them kept.
