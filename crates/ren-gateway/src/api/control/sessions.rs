@@ -2,7 +2,8 @@
 //! and driven. Creating one starts its client in a place; a prompt goes
 //! through its process, or a new one that resumes its conversation; its
 //! client changes while it is a draft; it is archived and unarchived; and
-//! its composer reads its client's commands and its folder's files. Access
+//! its composer reads its client's commands and its folder's files. Images
+//! are uploaded to it as attachments, read back, and removed. Access
 //! is the control API's; with no run roots configured, every route answers
 //! `runs_disabled`.
 //!
@@ -18,6 +19,7 @@ use super::runs::{
 use super::{ControlApi, Refusal};
 use axum::{
     Json, Router,
+    body::Body,
     extract::{
         Path, Query, State,
         rejection::{JsonRejection, QueryRejection},
@@ -28,9 +30,10 @@ use axum::{
     },
     routing::{get, post},
 };
-use http::{HeaderMap, StatusCode};
+use http::{HeaderMap, StatusCode, header};
 use ren_harness::{
     Harness,
+    attachment::{Attachment, AttachmentError, AttachmentKind, ByteSize, Dimensions, Image},
     drive::{ApprovalId, Prompt},
     models::ModelId,
     settings::{ApprovalPolicy, Effort, RunSettings},
@@ -39,12 +42,12 @@ use ren_protocol::label::Stored;
 use ren_protocol::native::NativeThreadId;
 use ren_recorder::{
     batch::{HistoryChange, HistorySubject},
-    id::SessionId,
+    id::{AttachmentId, SessionId},
 };
 use ren_store::{
     Reader,
     query::{PageLimit, Shelf},
-    view::SessionView,
+    view::{AttachmentView, SessionView},
 };
 use ren_supervisor::{
     Create, FileQuery, RunCommand, SessionError, SessionPhase, SessionRefused, SessionSeed,
@@ -101,6 +104,12 @@ struct ListRequest {
     limit: Option<u32>,
 }
 
+/// An upload's name, as `?name=`.
+#[derive(serde::Deserialize)]
+struct AttachRequest {
+    name: String,
+}
+
 /// One session: as the store holds it (with its runs), and as the
 /// supervisor serves it now. Either may be missing: the store records a
 /// new session a moment after it is made, and the supervisor serves a
@@ -151,6 +160,14 @@ impl SessionsApi {
                 get(Self::commands),
             )
             .route("/control/v1/sessions/{session}/files", get(Self::files))
+            .route(
+                "/control/v1/sessions/{session}/attachments",
+                post(Self::attach),
+            )
+            .route(
+                "/control/v1/sessions/{session}/attachments/{attachment}",
+                get(Self::attachment).delete(Self::detach),
+            )
             .with_state(Arc::new(self))
     }
 
@@ -182,8 +199,49 @@ impl SessionsApi {
             SessionError::Unrecorded => RunRefusal::Unrecorded,
             SessionError::Start(error) => error.into(),
             SessionError::Command(error) => error.into(),
+            SessionError::Attachment(error) => Self::unattachable(error),
+            SessionError::NoAttachments => RunRefusal::NoAttachments,
+            SessionError::NoSuchAttachment(_) => RunRefusal::NotFound,
+            SessionError::AttachmentStorage(error) => {
+                tracing::warn!(%error, "an attachment could not be kept or read");
+                RunRefusal::AttachmentStorage
+            }
             SessionError::Gone => RunRefusal::Unavailable,
         })
+    }
+
+    /// Why an upload is not an attachment, as the API names it.
+    fn unattachable(error: AttachmentError) -> RunRefusal {
+        match error {
+            AttachmentError::TooLarge { .. } => RunRefusal::AttachmentTooLarge,
+            AttachmentError::Name(_) => RunRefusal::InvalidAttachment("attachment_name"),
+            AttachmentError::Empty => RunRefusal::InvalidAttachment("attachment_empty"),
+            AttachmentError::Unrecognized => {
+                RunRefusal::InvalidAttachment("attachment_unrecognized")
+            }
+            AttachmentError::Unreadable(_) => {
+                RunRefusal::InvalidAttachment("attachment_unreadable")
+            }
+            AttachmentError::TooWide { .. } => RunRefusal::InvalidAttachment("attachment_too_wide"),
+        }
+    }
+
+    /// A stored attachment as the supervisor holds it; `None` for one this
+    /// daemon cannot read back (a format it does not know).
+    fn restore(stored: AttachmentView) -> Option<(AttachmentId, Attachment)> {
+        let Stored::Known(format) = stored.format else {
+            return None;
+        };
+        let dimensions = Dimensions::new(stored.width, stored.height)?;
+        let sha256 = stored.sha256.parse().ok()?;
+        let read = Attachment::restore(
+            &stored.name,
+            AttachmentKind::Image(Image::new(format, dimensions)),
+            ByteSize::new(stored.size),
+            sha256,
+        )
+        .ok()?;
+        Some((stored.id, read))
     }
 
     /// What a stored session is to the supervisor: where it works, on
@@ -230,6 +288,8 @@ impl SessionsApi {
                 Some(_) => SessionState::Archived(phase),
                 None => SessionState::Open(phase),
             },
+            // Read separately, by `load`.
+            attachments: Vec::new(),
         })
     }
 
@@ -245,7 +305,22 @@ impl SessionsApi {
         let Some(stored) = stored else {
             return Ok(());
         };
-        let seed = Self::seed(&stored).ok_or(Denied::Run(RunRefusal::NotDrivable))?;
+        let mut seed = Self::seed(&stored).ok_or(Denied::Run(RunRefusal::NotDrivable))?;
+        seed.attachments = self
+            .reader
+            .attachments(session)
+            .await
+            .map_err(|_| Denied::Run(RunRefusal::Unavailable))?
+            .into_iter()
+            .filter_map(|stored| {
+                let id = stored.id;
+                let restored = Self::restore(stored);
+                if restored.is_none() {
+                    tracing::warn!(%session, attachment = %id, "a stored attachment cannot be read back");
+                }
+                restored
+            })
+            .collect();
         supervisor.adopt(seed).await.map_err(Self::refused)
     }
 
@@ -597,6 +672,91 @@ impl SessionsApi {
             "files": files,
         }))
         .into_response())
+    }
+
+    /// Keep the request's body, an image named by `name`, with the session,
+    /// to go with a prompt. Bodies beyond the attachment limit are refused
+    /// as they are read.
+    async fn attach(
+        State(api): Api,
+        headers: HeaderMap,
+        Path(session): Path<String>,
+        query: Result<Query<AttachRequest>, QueryRejection>,
+        body: Body,
+    ) -> Result<Response, Denied> {
+        let supervisor = api.admit(&headers)?;
+        let session = Self::session(&session)?;
+        let Query(request) =
+            query.map_err(|_| Denied::Run(RunRefusal::InvalidAttachment("attachment_name")))?;
+        let limits = supervisor
+            .attachment_limits()
+            .ok_or(Denied::Run(RunRefusal::NoAttachments))?;
+        let cap = usize::try_from(limits.image_bytes().get()).unwrap_or(usize::MAX);
+        let bytes = axum::body::to_bytes(body, cap)
+            .await
+            .map_err(|_| Denied::Run(RunRefusal::AttachmentTooLarge))?;
+        api.load(supervisor, session).await?;
+        let (attachment, read) = supervisor
+            .attach(session, request.name, bytes.to_vec())
+            .await
+            .map_err(Self::refused)?;
+        Ok((
+            StatusCode::CREATED,
+            Json(serde_json::json!({
+                "api_version": ControlApi::API_VERSION,
+                "attachment": { "id": attachment, "read": read },
+            })),
+        )
+            .into_response())
+    }
+
+    /// One of the session's attachments: its bytes, as the image it is.
+    /// Never cached, and never read as anything but its own type.
+    async fn attachment(
+        State(api): Api,
+        headers: HeaderMap,
+        Path((session, attachment)): Path<(String, String)>,
+    ) -> Result<Response, Denied> {
+        let supervisor = api.admit(&headers)?;
+        let session = Self::session(&session)?;
+        let attachment = Self::attachment_id(&attachment)?;
+        api.load(supervisor, session).await?;
+        let (read, bytes) = supervisor
+            .attachment(session, attachment)
+            .await
+            .map_err(Self::refused)?;
+        let AttachmentKind::Image(image) = read.kind();
+        Ok((
+            [
+                (header::CONTENT_TYPE, image.format().media_type()),
+                (header::CACHE_CONTROL, "no-store"),
+                (header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
+                (header::CONTENT_DISPOSITION, "inline"),
+            ],
+            bytes,
+        )
+            .into_response())
+    }
+
+    /// Remove one of the session's attachments before it is sent.
+    async fn detach(
+        State(api): Api,
+        headers: HeaderMap,
+        Path((session, attachment)): Path<(String, String)>,
+    ) -> Result<Response, Denied> {
+        let supervisor = api.admit(&headers)?;
+        let session = Self::session(&session)?;
+        let attachment = Self::attachment_id(&attachment)?;
+        api.load(supervisor, session).await?;
+        supervisor
+            .detach(session, attachment)
+            .await
+            .map_err(Self::refused)?;
+        Ok(Self::done())
+    }
+
+    fn attachment_id(text: &str) -> Result<AttachmentId, Denied> {
+        text.parse().map_err(|_| Denied::Run(RunRefusal::NotFound))
     }
 
     /// Session changes from now on, as `session` events (each the session

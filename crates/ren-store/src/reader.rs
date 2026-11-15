@@ -11,10 +11,10 @@ use crate::{
     Store, StoreError,
     query::{CallQuery, Cursor, KindFilter, PageLimit, Shelf, StatusFilter, TimeRange, ToolFilter},
     view::{
-        AttemptView, BodyPrefix, BodyView, CallDetail, CallPage, CallView, ChannelView, Columns,
-        ConversationView, DiskUsage, HistoryTarget, MessageView, ModelUsage, OperatorActionView,
-        RecordingView, RunEntryView, RunView, SessionView, StorageView, TokenTotals, UsageBucket,
-        UsageCounts, UsageView, UserUsage,
+        AttachmentView, AttemptView, BodyPrefix, BodyView, CallDetail, CallPage, CallView,
+        ChannelView, Columns, ConversationView, DiskUsage, HistoryTarget, MessageView, ModelUsage,
+        OperatorActionView, RecordingView, RunEntryView, RunView, SessionView, StorageView,
+        TokenTotals, UsageBucket, UsageCounts, UsageView, UserUsage,
     },
     writer::BlobAccess,
 };
@@ -367,6 +367,20 @@ impl Reader {
             return Ok(None);
         };
         SessionView::from_row(&row, self.session_runs(&id).await?).map(Some)
+    }
+
+    /// The attachments uploaded to `session`, oldest first.
+    pub async fn attachments(&self, session: SessionId) -> Result<Vec<AttachmentView>, StoreError> {
+        sqlx::query(AssertSqlSafe(format!(
+            "{} WHERE operator_session = ? ORDER BY added_at, id",
+            AttachmentView::SELECT,
+        )))
+        .bind(session.to_string())
+        .fetch_all(&self.pool)
+        .await?
+        .iter()
+        .map(AttachmentView::from_row)
+        .collect()
     }
 
     /// A session's runs, newest first.

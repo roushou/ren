@@ -8,7 +8,11 @@ use ren_gateway::{
     policy::{EntryUsers, Policy, PolicyConfig},
     user::{UserConfig, Users},
 };
-use ren_harness::{host::HostEnv, pi::PiCache};
+use ren_harness::{
+    attachment::{AttachmentOptions, Limits},
+    host::HostEnv,
+    pi::PiCache,
+};
 use ren_protocol::route::{Api, Provider, UnsupportedWire, Wire};
 use ren_recorder::retention::RetentionPolicy;
 use ren_recorder::{
@@ -50,6 +54,8 @@ pub enum ConfigError {
     Buffer(#[from] ren_gateway::BufferOptionsError),
     #[error(transparent)]
     Control(#[from] ren_gateway::ControlOptionsError),
+    #[error(transparent)]
+    Attachments(#[from] ren_harness::attachment::AttachmentOptionsError),
     #[error("upstream {id}: {source}")]
     UpstreamUrl {
         id: String,
@@ -130,6 +136,8 @@ pub struct Config {
     pub instance: InstanceOptions,
     /// Agent runs: off until roots are configured.
     pub runs: RunsOptions,
+    /// How much a session's attachments may hold.
+    pub attachments: AttachmentOptions,
     /// The packages the operator adds to the built-in catalog.
     #[serde(skip_serializing_if = "ToolsOptions::is_empty")]
     pub tools: ToolsOptions,
@@ -298,6 +306,7 @@ impl Default for Config {
             users: Vec::new(),
             instance: InstanceOptions::default(),
             runs: RunsOptions::default(),
+            attachments: AttachmentOptions::default(),
             tools: ToolsOptions::default(),
         }
     }
@@ -391,6 +400,7 @@ impl Config {
             buffer: self.buffer,
             control: self.control.clone(),
             runs: self.runs.clone(),
+            attachment_limits: self.attachments.limits()?,
             run_places: match keys {
                 Keys::Env(env) => self.runs.places_in(env),
                 Keys::Unchecked => RunPlaces::default(),
@@ -508,6 +518,7 @@ pub struct RuntimeConfig {
     buffer: BufferOptions,
     control: ControlOptions,
     runs: RunsOptions,
+    attachment_limits: Limits,
     /// The runs' other places and scratch folder, with the home resolved.
     run_places: RunPlaces,
     /// Where driven Pi processes find Ren's extension, when the host
@@ -533,6 +544,11 @@ impl RuntimeConfig {
     pub fn instance(&self) -> InstanceOptions {
         self.instance
     }
+    /// How much a session's attachments may hold.
+    pub fn attachment_limits(&self) -> Limits {
+        self.attachment_limits
+    }
+
     pub fn runs(&self) -> &RunsOptions {
         &self.runs
     }

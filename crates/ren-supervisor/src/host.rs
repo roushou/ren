@@ -44,6 +44,17 @@ pub trait AgentHost: Send + Sync + 'static {
     /// repository, so what the run changes can be read as changes.
     fn make_scratch(&self, dir: &Path) -> io::Result<()>;
 
+    /// Write `bytes` to `incoming`, a new file, then move it to `target`,
+    /// making the folders above each where they are missing: `target`
+    /// appears whole or not at all.
+    fn place_file(&self, incoming: &Path, target: &Path, bytes: &[u8]) -> io::Result<()>;
+
+    /// The bytes of the file at `path`.
+    fn read_file(&self, path: &Path) -> io::Result<Vec<u8>>;
+
+    /// Remove `dir` and everything in it; one already gone is not an error.
+    fn remove_tree(&self, dir: &Path) -> io::Result<()>;
+
     /// The toolset a process started now gets: the current generation of
     /// the tools Ren installed here.
     fn tools(&self) -> RunTools;

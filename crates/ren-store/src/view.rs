@@ -5,9 +5,9 @@
 
 use crate::{StoreError, query::Cursor};
 use ren_depot::toolset::Generation;
-use ren_harness::Harness;
 use ren_harness::attribution::{HintIssue, HintSource};
 use ren_harness::tools::CallPurpose;
+use ren_harness::{Harness, attachment::ImageFormat};
 use ren_harness::{
     drive::DriveEvent,
     settings::{ApprovalPolicy, Effort},
@@ -30,7 +30,7 @@ use ren_recorder::{
         AttemptPhase, AttemptTerminal, BodyEnding, CallRejection, CallState, ChannelEnd,
         ProcessExit, RunEnd, TerminalCause,
     },
-    id::{AttemptId, CallId, ChannelId, RecordingId, RunId, SessionId, TurnId},
+    id::{AttachmentId, AttemptId, CallId, ChannelId, RecordingId, RunId, SessionId, TurnId},
     time::UnixMillis,
 };
 use serde::{Deserialize, Serialize};
@@ -722,6 +722,44 @@ impl SessionView {
     fn headline(text: &str) -> Option<String> {
         let line = text.lines().map(str::trim).find(|line| !line.is_empty())?;
         Some(line.chars().take(Self::FIRST_PROMPT_CHARS).collect())
+    }
+}
+
+/// One attachment uploaded to a session, as recorded. Its bytes are a file
+/// the daemon keeps; this is what it is.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AttachmentView {
+    pub id: AttachmentId,
+    pub session: SessionId,
+    pub name: String,
+    pub format: Stored<ImageFormat>,
+    pub width: u32,
+    pub height: u32,
+    pub size: u64,
+    pub sha256: String,
+    pub added_at: UnixMillis,
+}
+
+impl AttachmentView {
+    pub(super) const SELECT: &'static str = "SELECT id, operator_session, name, format, width, height, size, sha256, added_at FROM attachments";
+
+    pub(super) fn from_row(row: &SqliteRow) -> Result<Self, StoreError> {
+        let columns = Columns(row);
+        Ok(Self {
+            id: columns.id("id")?,
+            session: columns.id("operator_session")?,
+            name: columns
+                .text("name")?
+                .ok_or(StoreError::Corrupt("attachment"))?,
+            format: columns.label("format")?,
+            width: row.try_get("width")?,
+            height: row.try_get("height")?,
+            size: columns.count("size")?,
+            sha256: columns
+                .text("sha256")?
+                .ok_or(StoreError::Corrupt("attachment"))?,
+            added_at: columns.time("added_at")?,
+        })
     }
 }
 

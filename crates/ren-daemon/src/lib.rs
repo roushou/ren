@@ -103,6 +103,9 @@ impl Daemon {
     /// How long in-flight calls may continue after shutdown is requested.
     const DRAIN_DEADLINE: Duration = Duration::from_secs(10);
     const CAPTURE_DEADLINE: Duration = Duration::from_secs(10);
+    /// The folder under the data directory where sessions' attachments
+    /// are kept, a folder per session.
+    const ATTACHMENTS: &str = "attachments";
     /// How long stopped runs may take to exit and be recorded.
     const RUNS_DEADLINE: Duration = Duration::from_secs(10);
 
@@ -312,6 +315,8 @@ impl Daemon {
             version: env!("CARGO_PKG_VERSION").to_owned(),
             line_limit: LineLimit::DEFAULT,
             idle: ren_supervisor::IdleStop::DEFAULT,
+            attachments: Some(data_dir.join(Self::ATTACHMENTS)),
+            attachment_limits: config.attachment_limits(),
         };
         Ok(Some(Supervisor::new(
             options,

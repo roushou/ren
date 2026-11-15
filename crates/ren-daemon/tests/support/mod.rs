@@ -297,6 +297,8 @@ impl TestGateway {
                         version: "0.0.0-test".into(),
                         line_limit: LineLimit::DEFAULT,
                         idle: ren_supervisor::IdleStop::Never,
+                        attachments: Some(dir.join("attachments")),
+                        attachment_limits: ren_harness::attachment::Limits::default(),
                     },
                     host,
                     ids,

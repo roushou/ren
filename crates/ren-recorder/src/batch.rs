@@ -12,13 +12,16 @@ use crate::caller::Caller;
 use crate::digest::CallDigest;
 use crate::{
     capture::{BodyEnding, CallRejection, ChannelEnd, ProcessExit, RunEnd, TerminalRecord},
-    id::{AttemptId, CallId, ChannelId, RecordingId, RunId, SessionId},
+    id::{AttachmentId, AttemptId, CallId, ChannelId, RecordingId, RunId, SessionId},
     routing::{ConfigRevision, OperatorRevision, UpstreamId},
     time::{Moment, UnixMillis},
 };
 use bytes::Bytes;
 use ren_depot::toolset::Generation;
-use ren_harness::{Harness, attribution::Attribution, drive::DriveEvent, settings::RunSettings};
+use ren_harness::{
+    Harness, attachment::Attachment, attribution::Attribution, drive::DriveEvent,
+    settings::RunSettings,
+};
 use ren_protocol::{
     direction::Direction,
     encoding::{ResponseEncoding, ResponseFormat},
@@ -310,6 +313,16 @@ pub enum SessionFact {
     },
     Archived,
     Unarchived,
+    /// The operator uploaded `attachment`, read as `read`, to go with a
+    /// prompt.
+    Attached {
+        attachment: AttachmentId,
+        read: Attachment,
+    },
+    /// The operator removed `attachment` before sending it.
+    Detached {
+        attachment: AttachmentId,
+    },
 }
 
 impl SessionFact {
@@ -320,6 +333,8 @@ impl SessionFact {
             Self::ClientChosen { .. } => ObservationKind::SessionClientChosen,
             Self::Archived => ObservationKind::SessionArchived,
             Self::Unarchived => ObservationKind::SessionUnarchived,
+            Self::Attached { .. } => ObservationKind::SessionAttached,
+            Self::Detached { .. } => ObservationKind::SessionDetached,
         }
     }
 }
@@ -436,6 +451,10 @@ pub enum ObservationKind {
     SessionClientChosen,
     SessionArchived,
     SessionUnarchived,
+    /// An attachment was uploaded to a session.
+    SessionAttached,
+    /// An unsent attachment was removed from a session.
+    SessionDetached,
 }
 
 /// Where an operation belongs and when it happened. Every observation has it.

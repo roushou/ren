@@ -56,7 +56,8 @@ impl ImageFormat {
 }
 
 /// A count of bytes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize)]
+#[serde(transparent)]
 pub struct ByteSize(u64);
 
 impl ByteSize {
@@ -91,13 +92,18 @@ impl fmt::Display for ByteSize {
 }
 
 /// An image's size in pixels: never zero on either side.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize)]
 pub struct Dimensions {
     width: u32,
     height: u32,
 }
 
 impl Dimensions {
+    /// `None` with a side of zero.
+    pub fn new(width: u32, height: u32) -> Option<Self> {
+        (width > 0 && height > 0).then_some(Self { width, height })
+    }
+
     pub fn width(self) -> u32 {
         self.width
     }
@@ -115,9 +121,10 @@ impl Dimensions {
     /// can read, or a side of zero or beyond `u32`.
     fn read(bytes: &[u8]) -> Option<Self> {
         let size = imagesize::blob_size(bytes).ok()?;
-        let width = u32::try_from(size.width).ok().filter(|side| *side > 0)?;
-        let height = u32::try_from(size.height).ok().filter(|side| *side > 0)?;
-        Some(Self { width, height })
+        Self::new(
+            u32::try_from(size.width).ok()?,
+            u32::try_from(size.height).ok()?,
+        )
     }
 }
 
@@ -128,13 +135,18 @@ impl fmt::Display for Dimensions {
 }
 
 /// An image Ren read: its format and its size.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize)]
 pub struct Image {
     format: ImageFormat,
     dimensions: Dimensions,
 }
 
 impl Image {
+    /// An image read before, as stored.
+    pub fn new(format: ImageFormat, dimensions: Dimensions) -> Self {
+        Self { format, dimensions }
+    }
+
     pub fn format(self) -> ImageFormat {
         self.format
     }
@@ -145,7 +157,8 @@ impl Image {
 }
 
 /// What an attachment is.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
 pub enum AttachmentKind {
     Image(Image),
 }
@@ -153,7 +166,8 @@ pub enum AttachmentKind {
 /// An attachment's name, for showing it: the last part of the name it was
 /// uploaded with, without control characters. Never a path, never `.` or
 /// `..`, never empty, and at most [`AttachmentName::MAX_BYTES`].
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize)]
+#[serde(transparent)]
 pub struct AttachmentName(String);
 
 impl AttachmentName {
@@ -227,6 +241,11 @@ impl Default for Limits {
 }
 
 impl Limits {
+    /// The most bytes one image has, as uploaded: an upload's cap.
+    pub fn image_bytes(&self) -> ByteSize {
+        self.image_bytes
+    }
+
     /// Whether `attachments` can go in one prompt together. Each was read
     /// within these limits; this checks how many there are, and the bytes
     /// they make in base64, which is how inline clients send them.
@@ -253,6 +272,65 @@ impl Limits {
     }
 }
 
+/// The `[attachments]` configuration section: [`Limits`] as written.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct AttachmentOptions {
+    /// The most bytes one image has, as uploaded.
+    pub image_bytes: u64,
+    /// The longest side, in pixels, of one image.
+    pub image_side: u32,
+    /// The most attachments in one prompt.
+    pub prompt_count: usize,
+    /// The most bytes one prompt's attachments come to in base64.
+    pub prompt_bytes: u64,
+}
+
+impl Default for AttachmentOptions {
+    fn default() -> Self {
+        let limits = Limits::default();
+        Self {
+            image_bytes: limits.image_bytes.get(),
+            image_side: limits.image_side,
+            prompt_count: limits.prompt_count,
+            prompt_bytes: limits.prompt_bytes.get(),
+        }
+    }
+}
+
+impl AttachmentOptions {
+    /// The limits these options set: none zero, and one image fitting in a
+    /// prompt.
+    pub fn limits(&self) -> Result<Limits, AttachmentOptionsError> {
+        if self.image_bytes == 0
+            || self.image_side == 0
+            || self.prompt_count == 0
+            || self.prompt_bytes == 0
+        {
+            return Err(AttachmentOptionsError::Zero);
+        }
+        let image_bytes = ByteSize(self.image_bytes);
+        let prompt_bytes = ByteSize(self.prompt_bytes);
+        if image_bytes.base64() > prompt_bytes {
+            return Err(AttachmentOptionsError::ImageBeyondPrompt);
+        }
+        Ok(Limits {
+            image_bytes,
+            image_side: self.image_side,
+            prompt_count: self.prompt_count,
+            prompt_bytes,
+        })
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum AttachmentOptionsError {
+    #[error("attachments limits must not be zero")]
+    Zero,
+    #[error("attachments.prompt_bytes must hold one image of attachments.image_bytes in base64")]
+    ImageBeyondPrompt,
+}
+
 /// Why a prompt's attachments cannot go together.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum PromptLimitError {
@@ -264,7 +342,7 @@ pub enum PromptLimitError {
 
 /// One file uploaded to go with a prompt, read and known to be what it
 /// says. Ren's identity for it is the store's; this is what it is.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct Attachment {
     name: AttachmentName,
     kind: AttachmentKind,
@@ -300,6 +378,22 @@ impl Attachment {
             kind: AttachmentKind::Image(Image { format, dimensions }),
             size,
             sha256: Sha256::from_bytes(sha2::Sha256::digest(bytes).into()),
+        })
+    }
+
+    /// An attachment read before, as stored: its name is read again, so a
+    /// stored name that is not one is refused.
+    pub fn restore(
+        name: &str,
+        kind: AttachmentKind,
+        size: ByteSize,
+        sha256: Sha256,
+    ) -> Result<Self, NameError> {
+        Ok(Self {
+            name: AttachmentName::parse(name)?,
+            kind,
+            size,
+            sha256,
         })
     }
 
@@ -566,6 +660,53 @@ mod tests {
         assert_eq!(name("dir/"), Err(NameError::Empty));
         assert_eq!(name("a/.."), Err(NameError::Reserved));
         assert_eq!(name(&"a".repeat(256)), Err(NameError::TooLong));
+    }
+
+    #[test]
+    fn options_set_the_limits_and_refuse_ones_that_cannot_hold() {
+        use super::{AttachmentOptions, AttachmentOptionsError};
+        let options = AttachmentOptions::default();
+        assert_eq!(options.limits(), Ok(Limits::default()));
+        let parsed: AttachmentOptions = toml::from_str("image_side = 2000").unwrap();
+        let limits = parsed.limits().unwrap();
+        assert!(matches!(
+            Attachment::parse("a.png", &png(2001, 1), &limits),
+            Err(AttachmentError::TooWide { .. })
+        ));
+        let zero = AttachmentOptions {
+            prompt_count: 0,
+            ..options
+        };
+        assert_eq!(zero.limits(), Err(AttachmentOptionsError::Zero));
+        let tight = AttachmentOptions {
+            prompt_bytes: options.image_bytes,
+            ..options
+        };
+        assert_eq!(
+            tight.limits(),
+            Err(AttachmentOptionsError::ImageBeyondPrompt)
+        );
+        assert!(toml::from_str::<AttachmentOptions>("images = 1").is_err());
+    }
+
+    #[test]
+    fn an_attachment_serializes_what_it_is_and_restores_from_it() {
+        let read = Attachment::parse("dir/shot.png", &png(3, 2), &Limits::default()).unwrap();
+        let json = serde_json::to_value(&read).unwrap();
+        assert_eq!(json["name"], "shot.png");
+        assert_eq!(json["kind"]["kind"], "image");
+        assert_eq!(json["kind"]["format"], "png");
+        assert_eq!(json["kind"]["dimensions"]["width"], 3);
+        assert_eq!(json["size"], read.size().get());
+        assert_eq!(json["sha256"], read.sha256().to_string());
+        let restored =
+            Attachment::restore("shot.png", read.kind(), read.size(), read.sha256()).unwrap();
+        assert_eq!(restored, read);
+        assert_eq!(
+            Attachment::restore("..", read.kind(), read.size(), read.sha256()),
+            Err(NameError::Reserved)
+        );
+        assert_eq!(Dimensions::new(0, 1), None);
     }
 
     #[test]

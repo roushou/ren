@@ -141,7 +141,9 @@ impl Shown {
                 | ObservationKind::SessionConfigured
                 | ObservationKind::SessionClientChosen
                 | ObservationKind::SessionArchived
-                | ObservationKind::SessionUnarchived,
+                | ObservationKind::SessionUnarchived
+                | ObservationKind::SessionAttached
+                | ObservationKind::SessionDetached,
                 _,
             ) => Self::Hidden,
         })

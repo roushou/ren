@@ -72,6 +72,26 @@ impl AgentHost for ScriptedHost {
         Ok(())
     }
 
+    /// Attachments are real files, in the test's own data folder.
+    fn place_file(&self, incoming: &Path, target: &Path, bytes: &[u8]) -> io::Result<()> {
+        for dir in [incoming.parent(), target.parent()].into_iter().flatten() {
+            std::fs::create_dir_all(dir)?;
+        }
+        std::fs::write(incoming, bytes)?;
+        std::fs::rename(incoming, target)
+    }
+
+    fn read_file(&self, path: &Path) -> io::Result<Vec<u8>> {
+        std::fs::read(path)
+    }
+
+    fn remove_tree(&self, dir: &Path) -> io::Result<()> {
+        match std::fs::remove_dir_all(dir) {
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+            done => done,
+        }
+    }
+
     fn tools(&self) -> RunTools {
         RunTools::Empty
     }

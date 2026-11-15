@@ -10,6 +10,7 @@
 //! It can run a client's own sign-in commands (`sign_in`, run by `login`):
 //! its status, and its login, whose link and code it relays.
 
+mod attachments;
 pub mod client;
 mod entries;
 pub mod files;
@@ -39,8 +40,10 @@ pub use sign_in::{Login, LoginEnd, LoginOutcome, SignInState, Waited};
 pub use task::SupervisorTask;
 pub use workdir::{Bounds, Roots, Workdir, WorkdirError};
 
+use attachments::AttachmentFolders;
 use ren_harness::{
     Harness,
+    attachment::{Attachment, AttachmentError, Limits},
     commands::ClientCommand,
     drive::{CommandRefused, DriveEvent, Prompt},
     endpoint::GatewayEndpoint,
@@ -53,7 +56,7 @@ use ren_harness::{
 use ren_protocol::native::NativeThreadId;
 use ren_recorder::{
     Recorder, RunUnrecorded,
-    id::{IdSource, RunId, SessionId},
+    id::{AttachmentId, IdSource, RunId, SessionId},
 };
 use std::{io, path::PathBuf, sync::Arc};
 use tokio::sync::{broadcast, mpsc, oneshot};
@@ -68,6 +71,11 @@ pub struct SupervisorOptions {
     /// Where scratch runs each get a new folder; created when missing.
     /// None: runs cannot start in scratch.
     pub scratch: Option<PathBuf>,
+    /// Where each session's attachments are kept, a folder per session;
+    /// Ren's own, made when missing. None: sessions take no attachments.
+    pub attachments: Option<PathBuf>,
+    /// How much an attachment, and a prompt's attachments, may hold.
+    pub attachment_limits: Limits,
     /// The operator's home, for showing paths as `~/…`.
     pub home: Option<PathBuf>,
     /// When each client's models are first listed.
@@ -102,6 +110,8 @@ pub struct Supervisor {
     requests: mpsc::Sender<Request>,
     updates: broadcast::Sender<RunUpdate>,
     sessions: broadcast::Sender<SessionSnapshot>,
+    /// The attachment limits; `None` when sessions take no attachments.
+    attachment_limits: Option<Limits>,
 }
 
 /// A session as the supervisor serves it: what it is, where it stands,
@@ -139,6 +149,8 @@ pub struct SessionSeed {
     /// resumes it.
     pub thread: Option<NativeThreadId>,
     pub state: SessionState,
+    /// The attachments uploaded to it, as stored.
+    pub attachments: Vec<(AttachmentId, Attachment)>,
 }
 
 /// Why a session request was not carried out.
@@ -160,6 +172,14 @@ pub enum SessionError {
     Start(StartError),
     #[error(transparent)]
     Command(CommandError),
+    #[error(transparent)]
+    Attachment(AttachmentError),
+    #[error("sessions take no attachments here")]
+    NoAttachments,
+    #[error("no attachment {0} in the session")]
+    NoSuchAttachment(AttachmentId),
+    #[error("cannot keep or read the session's attachment: {0}")]
+    AttachmentStorage(io::Error),
     #[error("the supervisor has stopped")]
     Gone,
 }
@@ -299,6 +319,19 @@ pub(crate) enum SessionRequest {
         query: FileQuery,
         limit: usize,
     },
+    Attach {
+        session: SessionId,
+        name: String,
+        bytes: Vec<u8>,
+    },
+    ReadAttachment {
+        session: SessionId,
+        attachment: AttachmentId,
+    },
+    Detach {
+        session: SessionId,
+        attachment: AttachmentId,
+    },
 }
 
 /// What a session request answers.
@@ -308,6 +341,8 @@ pub(crate) enum SessionAnswer {
     Listed(Vec<SessionSnapshot>),
     Commands(Vec<ClientCommand>),
     Files(Vec<FileMatch>),
+    Attached(AttachmentId, Attachment),
+    AttachmentBytes(Attachment, Vec<u8>),
 }
 
 /// The supervisor has stopped.
@@ -428,6 +463,15 @@ impl Supervisor {
         });
         let bounds =
             Bounds::new(roots, places, scratch, options.home).map_err(SupervisorError::Roots)?;
+        // An attachments folder that cannot be made leaves sessions without
+        // attachments, not the supervisor without sessions.
+        let attachments = options.attachments.and_then(|root| {
+            host.make_dir(&root)
+                .inspect_err(|error| tracing::warn!(?root, %error, "no attachments folder"))
+                .ok()
+                .map(|()| AttachmentFolders::new(root))
+        });
+        let attachment_limits = attachments.as_ref().map(|_| options.attachment_limits);
         let (requests, receiver) = mpsc::channel(Self::QUEUE);
         let (updates, _) = broadcast::channel(Self::UPDATES);
         let (sessions, _) = broadcast::channel(Self::UPDATES);
@@ -444,12 +488,15 @@ impl Supervisor {
             version: options.version,
             line_limit: options.line_limit,
             idle: options.idle,
+            attachments,
+            attachment_limits: options.attachment_limits,
         };
         Ok((
             Self {
                 requests,
                 updates,
                 sessions,
+                attachment_limits,
             },
             task,
         ))
@@ -628,7 +675,9 @@ impl Supervisor {
             SessionAnswer::Done
             | SessionAnswer::Listed(_)
             | SessionAnswer::Commands(_)
-            | SessionAnswer::Files(_) => Err(SessionError::Gone),
+            | SessionAnswer::Files(_)
+            | SessionAnswer::Attached(..)
+            | SessionAnswer::AttachmentBytes(..) => Err(SessionError::Gone),
         }
     }
 
@@ -682,7 +731,9 @@ impl Supervisor {
             SessionAnswer::Created(_)
             | SessionAnswer::Done
             | SessionAnswer::Commands(_)
-            | SessionAnswer::Files(_) => Err(SessionError::Gone),
+            | SessionAnswer::Files(_)
+            | SessionAnswer::Attached(..)
+            | SessionAnswer::AttachmentBytes(..) => Err(SessionError::Gone),
         }
     }
 
@@ -697,7 +748,9 @@ impl Supervisor {
             SessionAnswer::Created(_)
             | SessionAnswer::Done
             | SessionAnswer::Listed(_)
-            | SessionAnswer::Files(_) => Err(SessionError::Gone),
+            | SessionAnswer::Files(_)
+            | SessionAnswer::Attached(..)
+            | SessionAnswer::AttachmentBytes(..) => Err(SessionError::Gone),
         }
     }
 
@@ -721,8 +774,80 @@ impl Supervisor {
             SessionAnswer::Created(_)
             | SessionAnswer::Done
             | SessionAnswer::Listed(_)
-            | SessionAnswer::Commands(_) => Err(SessionError::Gone),
+            | SessionAnswer::Commands(_)
+            | SessionAnswer::Attached(..)
+            | SessionAnswer::AttachmentBytes(..) => Err(SessionError::Gone),
         }
+    }
+
+    /// How much an attachment may hold; `None` when sessions take no
+    /// attachments here.
+    pub fn attachment_limits(&self) -> Option<Limits> {
+        self.attachment_limits
+    }
+
+    /// Keep `bytes`, uploaded as `name`, with `session`, to go with a
+    /// prompt: read as an attachment within the limits, written to the
+    /// session's folder, and recorded.
+    pub async fn attach(
+        &self,
+        session: SessionId,
+        name: String,
+        bytes: Vec<u8>,
+    ) -> Result<(AttachmentId, Attachment), SessionError> {
+        match self
+            .session(SessionRequest::Attach {
+                session,
+                name,
+                bytes,
+            })
+            .await?
+        {
+            SessionAnswer::Attached(attachment, read) => Ok((attachment, read)),
+            SessionAnswer::Created(_)
+            | SessionAnswer::Done
+            | SessionAnswer::Listed(_)
+            | SessionAnswer::Commands(_)
+            | SessionAnswer::Files(_)
+            | SessionAnswer::AttachmentBytes(..) => Err(SessionError::Gone),
+        }
+    }
+
+    /// One of `session`'s attachments, and its bytes.
+    pub async fn attachment(
+        &self,
+        session: SessionId,
+        attachment: AttachmentId,
+    ) -> Result<(Attachment, Vec<u8>), SessionError> {
+        match self
+            .session(SessionRequest::ReadAttachment {
+                session,
+                attachment,
+            })
+            .await?
+        {
+            SessionAnswer::AttachmentBytes(read, bytes) => Ok((read, bytes)),
+            SessionAnswer::Created(_)
+            | SessionAnswer::Done
+            | SessionAnswer::Listed(_)
+            | SessionAnswer::Commands(_)
+            | SessionAnswer::Files(_)
+            | SessionAnswer::Attached(..) => Err(SessionError::Gone),
+        }
+    }
+
+    /// Remove one of `session`'s attachments, its file and its record.
+    pub async fn detach(
+        &self,
+        session: SessionId,
+        attachment: AttachmentId,
+    ) -> Result<(), SessionError> {
+        self.session(SessionRequest::Detach {
+            session,
+            attachment,
+        })
+        .await
+        .map(|_| ())
     }
 
     /// Session changes from now on.

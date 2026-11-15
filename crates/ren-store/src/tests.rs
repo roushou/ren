@@ -1713,6 +1713,74 @@ mod history {
     /// An operator session is deleted with its ended runs and what they
     /// recorded, and goes even with no run at all.
     #[tokio::test]
+    async fn a_sessions_attachments_are_recorded_removed_and_deleted_with_it() {
+        use ren_harness::attachment::{Attachment, ImageFormat, Limits};
+        use ren_recorder::id::AttachmentId;
+        let mut fixture = Fixture::new().await;
+        let session = SessionId::generate(fixture.ids.as_ref());
+        let mut png = b"\x89PNG\r\n\x1a\n\0\0\0\x0dIHDR".to_vec();
+        png.extend(4u32.to_be_bytes());
+        png.extend(3u32.to_be_bytes());
+        png.extend([8, 6, 0, 0, 0, 0, 0, 0, 0]);
+        let read = Attachment::parse("shot.png", &png, &Limits::default()).unwrap();
+        let [first, second] = [(); 2].map(|()| AttachmentId::generate(fixture.ids.as_ref()));
+        let mut batch = Batch::default();
+        batch.push(Op::Session(SessionRecord {
+            at: fixture.clock.now(),
+            session,
+            fact: SessionFact::Created {
+                harness: ren_harness::Harness::Pi,
+                workdir: "/work/acme".into(),
+                settings: ren_harness::settings::RunSettings::default(),
+            },
+        }));
+        for attachment in [first, second] {
+            batch.push(Op::Session(SessionRecord {
+                at: fixture.clock.now(),
+                session,
+                fact: SessionFact::Attached {
+                    attachment,
+                    read: read.clone(),
+                },
+            }));
+        }
+        batch.push(Op::Session(SessionRecord {
+            at: fixture.clock.now(),
+            session,
+            fact: SessionFact::Detached { attachment: first },
+        }));
+        fixture.store.commit(&batch).await.unwrap();
+        let listed = fixture.reader.attachments(session).await.unwrap();
+        assert_eq!(listed.len(), 1);
+        let stored = &listed[0];
+        assert_eq!(stored.id, second);
+        assert_eq!(stored.session, session);
+        assert_eq!(stored.name, "shot.png");
+        assert_eq!(
+            stored.format,
+            ren_protocol::label::Stored::Known(ImageFormat::Png)
+        );
+        assert_eq!((stored.width, stored.height), (4, 3));
+        assert_eq!(stored.size, read.size().get());
+        assert_eq!(stored.sha256, read.sha256().to_string());
+
+        fixture
+            .edit(
+                HistorySubject::OperatorSession(session),
+                HistoryChange::Delete,
+            )
+            .await;
+        assert!(
+            fixture
+                .reader
+                .attachments(session)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[tokio::test]
     async fn an_operator_session_is_deleted_with_its_runs_or_none() {
         let mut fixture = Fixture::new().await;
         // A session with no run: its client never started.

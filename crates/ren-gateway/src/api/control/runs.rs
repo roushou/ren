@@ -139,6 +139,14 @@ pub(super) enum RunRefusal {
     NotFound,
     Refused(&'static str),
     Unavailable,
+    /// Sessions take no attachments here.
+    NoAttachments,
+    /// An upload that is not an attachment Ren takes, and why.
+    InvalidAttachment(&'static str),
+    /// An upload beyond the attachment limit.
+    AttachmentTooLarge,
+    /// An attachment could not be kept or read.
+    AttachmentStorage,
 }
 
 impl IntoResponse for RunRefusal {
@@ -155,6 +163,10 @@ impl IntoResponse for RunRefusal {
             Self::NotFound => (StatusCode::NOT_FOUND, "not_found"),
             Self::Refused(reason) => (StatusCode::CONFLICT, reason),
             Self::Unavailable => (StatusCode::SERVICE_UNAVAILABLE, "unavailable"),
+            Self::NoAttachments => (StatusCode::SERVICE_UNAVAILABLE, "no_attachments"),
+            Self::InvalidAttachment(reason) => (StatusCode::UNPROCESSABLE_ENTITY, reason),
+            Self::AttachmentTooLarge => (StatusCode::PAYLOAD_TOO_LARGE, "attachment_too_large"),
+            Self::AttachmentStorage => (StatusCode::INTERNAL_SERVER_ERROR, "attachment_storage"),
         };
         (
             status,

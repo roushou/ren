@@ -497,6 +497,36 @@ impl AgentHost for ProcessHost {
         std::fs::create_dir_all(dir)
     }
 
+    fn place_file(&self, incoming: &Path, target: &Path, bytes: &[u8]) -> io::Result<()> {
+        for dir in [incoming.parent(), target.parent()].into_iter().flatten() {
+            std::fs::create_dir_all(dir)?;
+        }
+        let written = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(incoming)
+            .and_then(|mut file| {
+                std::io::Write::write_all(&mut file, bytes)?;
+                file.sync_all()
+            })
+            .and_then(|()| std::fs::rename(incoming, target));
+        if written.is_err() {
+            let _ = std::fs::remove_file(incoming);
+        }
+        written
+    }
+
+    fn read_file(&self, path: &Path) -> io::Result<Vec<u8>> {
+        std::fs::read(path)
+    }
+
+    fn remove_tree(&self, dir: &Path) -> io::Result<()> {
+        match std::fs::remove_dir_all(dir) {
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+            done => done,
+        }
+    }
+
     fn make_scratch(&self, dir: &Path) -> io::Result<()> {
         std::fs::create_dir(dir)?;
         let mut git = std::process::Command::new("git");

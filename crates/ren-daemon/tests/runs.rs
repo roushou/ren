@@ -1164,3 +1164,186 @@ async fn a_key_is_typed_into_the_login_and_a_redirect_is_opened_only_when_it_is_
     assert_eq!(body["outcome"]["end"]["said"], "Connected to OpenAI");
     assert_eq!(body["outcome"]["state"], json!({ "kind": "signed_out" }));
 }
+
+/// A PNG header of `width` by `height` pixels.
+fn png(width: u32, height: u32) -> Vec<u8> {
+    let mut bytes = b"\x89PNG\r\n\x1a\n\0\0\0\x0dIHDR".to_vec();
+    bytes.extend(width.to_be_bytes());
+    bytes.extend(height.to_be_bytes());
+    bytes.extend([8, 6, 0, 0, 0, 0, 0, 0, 0]);
+    bytes
+}
+
+impl Control {
+    /// Upload `bytes` to `session` as `name`.
+    async fn upload(&self, session: &str, name: &str, bytes: Vec<u8>) -> (StatusCode, Value) {
+        let response = self
+            .http
+            // The names used here need no escaping in a query.
+            .post(format!(
+                "{}/sessions/{session}/attachments?name={name}",
+                self.base
+            ))
+            .bearer_auth(TestGateway::CONTROL_TOKEN)
+            .body(bytes)
+            .send()
+            .await
+            .unwrap();
+        let status = response.status();
+        let bytes = response.bytes().await.unwrap();
+        (
+            status,
+            serde_json::from_slice(&bytes).unwrap_or(Value::Null),
+        )
+    }
+
+    /// An attachment's bytes and the headers they came with.
+    async fn download(&self, session: &str, attachment: &str) -> reqwest::Response {
+        self.http
+            .get(format!(
+                "{}/sessions/{session}/attachments/{attachment}",
+                self.base
+            ))
+            .bearer_auth(TestGateway::CONTROL_TOKEN)
+            .send()
+            .await
+            .unwrap()
+    }
+}
+
+#[tokio::test]
+async fn an_image_is_uploaded_read_removed_kept_across_a_restart_and_deleted_with_its_session() {
+    let upstream = mock(Router::new()).await;
+    let dir = tempfile::tempdir().unwrap();
+    let gateway = TestGateway::with_runs(
+        &config(&upstream),
+        dir.path(),
+        vec![PathBuf::from("/work")],
+        ScriptedHost,
+    )
+    .await;
+    let control = Control::new(&gateway);
+    let (status, body) = control
+        .post(
+            "/sessions",
+            json!({ "harness": "codex", "dir": "/work/acme" }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    let session = body["session"].as_str().unwrap().to_owned();
+    let made = control
+        .until_session(&session, |s| {
+            !s["stored"].is_null() && !s["served"]["process"].is_null()
+        })
+        .await;
+    let process = made["served"]["process"].as_str().unwrap().to_owned();
+
+    // Uploaded, read from its bytes, and kept in the session's folder.
+    let (status, body) = control
+        .upload(&session, "../Desktop/shot.png", png(64, 48))
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    let attachment = body["attachment"]["id"].as_str().unwrap().to_owned();
+    let read = &body["attachment"]["read"];
+    assert_eq!(read["name"], "shot.png");
+    assert_eq!(read["kind"]["format"], "png");
+    assert_eq!(
+        read["kind"]["dimensions"],
+        json!({ "width": 64, "height": 48 })
+    );
+    let file = dir
+        .path()
+        .join("attachments")
+        .join(&session)
+        .join(&attachment)
+        .join("shot.png");
+    assert_eq!(std::fs::read(&file).unwrap(), png(64, 48));
+    let response = control.download(&session, &attachment).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let headers = response.headers();
+    assert_eq!(headers["content-type"], "image/png");
+    assert_eq!(headers["cache-control"], "no-store");
+    assert_eq!(headers["x-content-type-options"], "nosniff");
+    assert_eq!(response.bytes().await.unwrap().as_ref(), png(64, 48));
+
+    // What is not an image Ren takes, or is too large, is refused.
+    let (status, body) = control
+        .upload(&session, "page.svg", b"<svg/>".to_vec())
+        .await;
+    assert_eq!(
+        (status, body["error"].clone()),
+        (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            json!("attachment_unrecognized")
+        )
+    );
+    let mut large = png(10, 10);
+    large.resize(5 * 1024 * 1024 + 1, 0);
+    let (status, body) = control.upload(&session, "large.png", large).await;
+    assert_eq!(
+        (status, body["error"].clone()),
+        (StatusCode::PAYLOAD_TOO_LARGE, json!("attachment_too_large"))
+    );
+
+    // Removed, it is gone.
+    let (status, body) = control.upload(&session, "other.png", png(1, 1)).await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    let other = body["attachment"]["id"].as_str().unwrap().to_owned();
+    let removed = control
+        .http
+        .delete(format!(
+            "{}/sessions/{session}/attachments/{other}",
+            control.base
+        ))
+        .bearer_auth(TestGateway::CONTROL_TOKEN)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(removed.status(), StatusCode::ACCEPTED);
+    assert_eq!(
+        control.download(&session, &other).await.status(),
+        StatusCode::NOT_FOUND
+    );
+    assert!(
+        !dir.path()
+            .join("attachments")
+            .join(&session)
+            .join(&other)
+            .exists()
+    );
+
+    // Kept across a restart: the stored session is served again with it.
+    let (status, _) = control
+        .post(&format!("/sessions/{session}/stop"), json!({}))
+        .await;
+    assert_eq!(status, StatusCode::ACCEPTED);
+    control
+        .until_run(&process, |state| state["phase"] == "ended")
+        .await;
+    control
+        .until_session(&session, |s| s["stored"]["runs"][0]["ended_at"].is_number())
+        .await;
+    gateway.stop().await;
+    let gateway = TestGateway::with_runs(
+        &config(&upstream),
+        dir.path(),
+        vec![PathBuf::from("/work")],
+        ScriptedHost,
+    )
+    .await;
+    let control = Control::new(&gateway);
+    let response = control.download(&session, &attachment).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.bytes().await.unwrap().as_ref(), png(64, 48));
+    assert_eq!(
+        control.download(&session, &other).await.status(),
+        StatusCode::NOT_FOUND
+    );
+
+    // Deleted with its session, folder and all.
+    let (status, body) = control
+        .post(&format!("/sessions/{session}/delete"), json!({}))
+        .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+    assert!(!dir.path().join("attachments").join(&session).exists());
+}
