@@ -3,7 +3,6 @@ import assert from 'node:assert/strict';
 import {
   AttachmentId,
   Gallery,
-  Refusals,
   Tray,
   attachmentRead,
   keptList,
@@ -79,10 +78,4 @@ test('a sent image is found by its content, and described by its size', () => {
   assert.equal(Gallery.describe({ ...read, size: 3 * 1024 * 1024 }), '640×480 · 3.0 MB');
   assert.equal(Gallery.takes('image/webp'), true);
   assert.equal(Gallery.takes('image/svg+xml'), false);
-});
-
-test('refusals are worded for the operator', () => {
-  assert.equal(Refusals.say('attachment_unrecognized'), 'Not a PNG, JPEG, GIF, or WebP image.');
-  assert.equal(Refusals.say('no_images'), 'This client does not take images.');
-  assert.equal(Refusals.say('something_new'), 'Refused: something_new.');
 });

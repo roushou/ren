@@ -490,6 +490,9 @@ dependencies under "Crates" below. Read the code for current module ownership.
   `src/lib/tools.ts` the Tools view's pure core (each package's
   `Standing`, the `ToolPlan` staged before it is applied, and `ToolGroups`),
   whose first read the UI server makes (`src/routes/tools/+page.server.ts`),
+  `src/lib/refusal.ts` what each refusal code means to the operator
+  (`Refusals`: the daemon's `ControlRefusal` codes and the proxy's own
+  `proxyRefusals`, one exhaustive table),
   `src/lib/signIn.ts` a client's sign-in as the API reports it and how the
   view words it, with `src/lib/SignInSheet.svelte` the sheet that runs the
   client's own login (its link out, the page's code back),

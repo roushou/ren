@@ -21,6 +21,7 @@
  * `REN_CONTROL_LOGINS` set, from one of those
  * Tailscale logins, as Tailscale Serve reports them.
  */
+import type { ProxyRefusal } from '../refusal.ts';
 
 /** Who may drive runs through this UI, parsed once from the environment. */
 export type RunsAccess =
@@ -288,7 +289,7 @@ export class RunsProxy {
     }
   }
 
-  static #refuse(status: number, error: string): Response {
+  static #refuse(status: number, error: ProxyRefusal): Response {
     return Response.json({ error }, { status, headers });
   }
 
