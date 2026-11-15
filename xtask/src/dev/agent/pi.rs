@@ -124,7 +124,11 @@ impl PiScript {
                     { "name": "todo", "description": "List the open todos", "source": "extension" },
                 ] }),
             )],
-            Some("prompt") => self.prompted(id, message["message"].as_str().unwrap_or_default()),
+            Some("prompt") => self.prompted(
+                id,
+                message["message"].as_str().unwrap_or_default(),
+                &message["images"],
+            ),
             Some("abort") => {
                 let mut out = self.settle(None, true);
                 out.push(Self::response(id, "abort", Value::Null));
@@ -134,7 +138,10 @@ impl PiScript {
         }
     }
 
-    fn prompted(&mut self, id: &Value, prompt: &str) -> Vec<Out> {
+    /// A prompt, echoed as Pi does: its text, then its images.
+    fn prompted(&mut self, id: &Value, prompt: &str, images: &Value) -> Vec<Out> {
+        let mut content = vec![json!({ "type": "text", "text": prompt })];
+        content.extend(images.as_array().into_iter().flatten().cloned());
         if self.turn.is_some() {
             // The real client asks for a streaming behavior; Ren never sends one.
             return vec![Out::Send(
@@ -151,10 +158,10 @@ impl PiScript {
             Out::Send(json!({ "type": "turn_start" })),
             Out::Send(
                 json!({ "type": "message_start", "message": { "role": "user",
-                "content": [{ "type": "text", "text": prompt }], "timestamp": index } }),
+                "content": content.clone(), "timestamp": index } }),
             ),
             Out::Send(json!({ "type": "message_end", "message": { "role": "user",
-                "content": [{ "type": "text", "text": prompt }], "timestamp": index } })),
+                "content": content, "timestamp": index } })),
         ];
         if let Some(ask) = Ask::of(prompt) {
             out.extend(self.tool(index, ask));
