@@ -604,7 +604,14 @@ with its `command`, `cwd`, and `reason`, a `file_change` with its
 `{"kind": "event", run, event}`, where `event` is what the agent reported: its
 `delta` text, `item`s (each with its `kind`, its `read`, what Ren read of it
 the same way for every client: `{"as": "prompt"|"reply"|"plan", text}`,
-`{"as": "command", command, status, output, exit_code}`,
+`{"as": "command", command, intent, status, output, exit_code}`, where `intent`
+is what the client said the command is for, left out when it said nothing:
+`{"said": "described", text}` (Claude Code's and OpenCode's description of a
+shell command) or `{"said": "parts", parts}` (Codex's reading of its parts,
+each `{"part": "read", command, path, name}`, `{"part": "list_files", command,
+path}`, `{"part": "search", command, query, path}`, `{"part": "unknown",
+command}`, or `{"part": "unrecognized", raw}`, a kind Ren does not know, as
+Codex sent it),
 `{"as": "file_change", paths, status}`, `{"as": "tool", name, status}`,
 `{"as": "reasoning"}`, or `{"as": "unread"}`; and its `body` as the client
 described it), `approval` requests, `turn_started` and `turn_ended`, and

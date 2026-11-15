@@ -2295,6 +2295,9 @@ mod conversation {
                         ItemPhase::Started,
                         ItemRead::Command {
                             command: "cargo test".into(),
+                            intent: ren_harness::drive::CommandIntent::Described {
+                                text: "Run the tests".into(),
+                            },
                             status: ItemStatus::InProgress,
                             output: None,
                             exit_code: None,
@@ -2311,6 +2314,9 @@ mod conversation {
                         ItemPhase::Completed,
                         ItemRead::Command {
                             command: "cargo test".into(),
+                            intent: ren_harness::drive::CommandIntent::Described {
+                                text: "Run the tests".into(),
+                            },
                             status: ItemStatus::Completed,
                             output: Some("ok".into()),
                             exit_code: Some(0),
@@ -2389,6 +2395,17 @@ mod conversation {
             "started, then finished two entries later"
         );
         assert_eq!(read.entries[1].started_at, read.entries[1].at);
+        // What its client said the command is for is stored with it.
+        let DriveEvent::Item { item, .. } = &command.event else {
+            panic!("a command");
+        };
+        assert!(matches!(
+            &item.read,
+            ItemRead::Command {
+                intent: ren_harness::drive::CommandIntent::Described { text },
+                ..
+            } if text == "Run the tests"
+        ));
         // The reply is whole: nothing is cut for being long.
         let DriveEvent::Item { item, .. } = &read.entries[1].event else {
             panic!("a reply");

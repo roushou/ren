@@ -18,8 +18,9 @@ use crate::{
     attachment::Attachment,
     commands::{ClientCommand, CommandKind, Sigil},
     drive::{
-        CommandRefused, DriveCommand, DriveEvent, DriveItem, ItemId, ItemKind, ItemPhase, ItemRead,
-        ItemStatus, Opening, Prompt, RawLine, Received, RequestKind, Retry, TurnEnd, Unreadable,
+        CommandIntent, CommandRefused, DriveCommand, DriveEvent, DriveItem, ItemId, ItemKind,
+        ItemPhase, ItemRead, ItemStatus, Opening, Prompt, RawLine, Received, RequestKind, Retry,
+        TurnEnd, Unreadable,
     },
     lines::{Framed, Line},
     models::{DefaultChoice, Listing, Model, ModelId, ModelListing},
@@ -648,6 +649,7 @@ impl PiRpc {
                 ItemKind::CommandExecution,
                 ItemRead::Command {
                     command: text("command").unwrap_or_default(),
+                    intent: CommandIntent::Unsaid,
                     status: ItemStatus::InProgress,
                     output: None,
                     exit_code: None,
@@ -690,8 +692,11 @@ impl PiRpc {
         };
         let result = &message["result"];
         let read = match call.read {
-            ItemRead::Command { command, .. } => ItemRead::Command {
+            ItemRead::Command {
+                command, intent, ..
+            } => ItemRead::Command {
                 command,
+                intent,
                 status,
                 output: result
                     .get("content")
@@ -1138,6 +1143,7 @@ mod tests {
                     ItemKind::CommandExecution,
                     ItemRead::Command {
                         command: "cargo test".into(),
+                        intent: crate::drive::CommandIntent::Unsaid,
                         status: ItemStatus::InProgress,
                         output: None,
                         exit_code: None,
@@ -1149,6 +1155,7 @@ mod tests {
                     ItemKind::CommandExecution,
                     ItemRead::Command {
                         command: "cargo test".into(),
+                        intent: crate::drive::CommandIntent::Unsaid,
                         status: ItemStatus::Completed,
                         output: Some("ok".into()),
                         exit_code: None,
