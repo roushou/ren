@@ -85,7 +85,10 @@
   let unavailable = $state<string | null>(
     initial?.live.state === 'failed' ? initial.live.reason : null,
   );
-  let feed = $state<'connecting' | 'open' | 'closed'>('connecting');
+  /** The runs feed: opening for the first time, open, lost and being
+   * reopened by the browser, or given up on. Only a lost or given-up feed
+   * is worth a word in the header; the first opening is not a reconnect. */
+  let feed = $state<'opening' | 'open' | 'reconnecting' | 'closed'>('opening');
   /** Each run's conversation since this page started following it. */
   const transcripts = new SvelteMap<RunId, Transcript>();
   // The selected run's conversation, as the page was loaded with it.
@@ -96,6 +99,10 @@
   });
   /** The session the page shows, from the URL. */
   const chosen = $derived(data.session);
+  /** On a phone the page shows one pane at a time: the list, a session, or
+   * the new-session form that New session opened. */
+  let starting = $state(false);
+  const pane = $derived<'list' | 'session' | 'new'>(chosen ? 'session' : starting ? 'new' : 'list');
   /** The folder scratch sessions get theirs in; null when there is none. */
   let scratch = $state<string | null>(first(initial?.places, null)?.scratch ?? null);
   const folders = $derived(
@@ -844,7 +851,7 @@
       void readLive();
     });
     source.addEventListener('error', () => {
-      feed = source.readyState === EventSource.CLOSED ? 'closed' : 'connecting';
+      feed = source.readyState === EventSource.CLOSED ? 'closed' : 'reconnecting';
     });
     source.addEventListener('lagged', () => void readLive());
     // Sessions change as they are made, configured, archived, or get a new
@@ -947,15 +954,31 @@
   const compose = $derived(
     session ? Compose.session(current ? runState : null, client_?.midway ?? []) : null,
   );
+
+  /** What the header says of the runs feed. */
+  function feedNote(state: typeof feed): string {
+    switch (state) {
+      case 'opening':
+      case 'open':
+        return '';
+      case 'reconnecting':
+        return ' · updates reconnecting';
+      case 'closed':
+        return ' · updates stopped, reload to resume';
+      default: {
+        const never: never = state;
+        return never;
+      }
+    }
+  }
 </script>
 
 {#snippet scope()}
   <div class="scope-group scope-identity">
     <span class="scope-title">Sessions</span>
     <span class="muted"
-      >{liveCount} running{waiting ? ` · ${waiting} waiting for you` : ''}{data.runsControl &&
-      feed !== 'open'
-        ? ' · updates reconnecting'
+      >{liveCount} running{waiting ? ` · ${waiting} waiting for you` : ''}{data.runsControl
+        ? feedNote(feed)
         : ''}</span
     >
   </div>
@@ -1154,7 +1177,7 @@
 
 <svelte:window onkeydown={shortcut} />
 
-<div class="runs-page">
+<div class="runs-page" data-pane={pane}>
   <aside class="runs-sidebar" aria-label="Runs">
     {#if unavailable}<p class="sidebar-note danger">{unavailable}</p>{/if}
     <SessionList
@@ -1177,6 +1200,7 @@
       onselect={(next) => select(next)}
       oncreate={(dir) => void create(dir)}
       onnew={() => {
+        starting = true;
         select(null);
         void tick().then(() => newSession?.open());
       }}
@@ -1184,6 +1208,14 @@
   </aside>
 
   <section class="run-main" aria-label="Run">
+    <button
+      class="pane-back"
+      type="button"
+      onclick={() => {
+        starting = false;
+        select(null);
+      }}><span class="pane-back-icon"><Icon name="chevron" size={14} /></span>Sessions</button
+    >
     {#if !current || !runState || !mark || !controls}
       {#if data.runsControl}
         {#if chosen && !session}<p class="lost muted">
@@ -2081,15 +2113,42 @@
     white-space: nowrap;
     text-overflow: ellipsis;
   }
+  /* Back to the list: a phone's way out of a session. */
+  .pane-back {
+    display: none;
+    align-items: center;
+    gap: 4px;
+    padding: 9px 12px;
+    border: 0;
+    border-bottom: 1px solid var(--line);
+    background: var(--sidebar);
+    color: var(--muted);
+    font: inherit;
+    font-size: 12px;
+    text-align: left;
+    cursor: pointer;
+  }
+  .pane-back:hover {
+    color: var(--ink);
+  }
+  .pane-back-icon {
+    display: inline-flex;
+    transform: rotate(180deg);
+  }
   @media (max-width: 760px) {
     .runs-page {
       grid-template-columns: 1fr;
-      grid-template-rows: auto 1fr;
+      grid-template-rows: 1fr;
     }
     .runs-sidebar {
       border-right: 0;
-      border-bottom: 1px solid var(--line);
-      max-height: 40vh;
+    }
+    .runs-page[data-pane='list'] .run-main,
+    .runs-page:not([data-pane='list']) .runs-sidebar {
+      display: none;
+    }
+    .pane-back {
+      display: flex;
     }
     .approval {
       flex-direction: column;

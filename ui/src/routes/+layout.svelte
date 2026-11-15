@@ -40,6 +40,15 @@
   // The gateway says whether it is a development instance; the UI only shows it.
   const development = $derived(health?.instance.environment === 'development');
   const storage = $derived(gateway.current.value?.storage);
+  /** The tab row, which scrolls sideways on a phone. */
+  let tabs = $state<HTMLElement>();
+  // Keep the current view's tab in sight when the row is narrower than its tabs.
+  $effect(() => {
+    void page.url.pathname;
+    tabs
+      ?.querySelector('[aria-current="page"]')
+      ?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  });
   const view = $derived(
     page.route.id === '/'
       ? 'overview'
@@ -233,7 +242,7 @@
         >{#if development}<span class="dev-badge">dev</span>{/if}</span
       ></a
     >
-    <nav class="workbench-tabs" aria-label="Workbench views">
+    <nav class="workbench-tabs" aria-label="Workbench views" bind:this={tabs}>
       <a
         href="/"
         data-sveltekit-preload-data="hover"

@@ -1854,10 +1854,21 @@ tr.call-row {
   }
 }
 @media (max-width: 560px) {
-  .workbench-header {
-    flex-wrap: wrap;
+  /* One row: the tabs scroll sideways between the wordmark and the theme. */
+  .workbench-tabs {
+    flex: 1;
+    min-width: 0;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .workbench-tabs::-webkit-scrollbar {
+    display: none;
+  }
+  .workbench-tabs a {
+    flex: none;
   }
   .brand {
+    flex: none;
     padding: 0 8px;
     gap: 5px;
   }
@@ -2418,6 +2429,21 @@ td.zero {
   display: inline-flex;
   align-items: center;
   gap: 6px;
+}
+/* A name column that takes the room the numbers leave, and cuts its text
+   short rather than pushing them out of the panel. */
+.usage-list td.fill {
+  width: 100%;
+  max-width: 0;
+}
+.usage-list td.fill .row-link {
+  display: flex;
+  min-width: 0;
+  max-width: 100%;
+}
+.usage-list td.numeric,
+.usage-list th.numeric {
+  white-space: nowrap;
 }
 
 .connect-list {

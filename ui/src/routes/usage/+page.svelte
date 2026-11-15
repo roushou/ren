@@ -190,7 +190,7 @@
               <tbody>
                 {#each sessions as session (session.id)}
                   <tr>
-                    <td
+                    <td class="fill"
                       ><a class="row-link" href={`/recordings/${encodeURIComponent(session.id)}`}
                         ><RecordingName {session} detail={details.get(session.id)} /></a
                       ></td
