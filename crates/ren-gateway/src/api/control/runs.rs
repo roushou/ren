@@ -29,6 +29,7 @@ use ren_harness::{
     models::ModelId,
     settings::{ApprovalPolicy, Effort, RunSettings},
 };
+use ren_recorder::id::AttachmentId;
 use ren_supervisor::{
     CommandError, Delivery, ModelsError, RunRefused, RunSnapshot, StartError, Supervisor,
     WorkdirError,
@@ -56,7 +57,12 @@ impl FilesRequest {
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct PromptRequest {
+    /// May be blank when attachments go.
+    #[serde(default)]
     pub(super) text: String,
+    /// The session's attachments to send with it, by id.
+    #[serde(default)]
+    pub(super) attachments: Vec<AttachmentId>,
     /// How it goes: start a turn (the default), queue it for after the
     /// running turn, or steer the running turn with it.
     #[serde(default = "PromptRequest::start")]

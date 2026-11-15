@@ -143,7 +143,8 @@ impl Shown {
                 | ObservationKind::SessionArchived
                 | ObservationKind::SessionUnarchived
                 | ObservationKind::SessionAttached
-                | ObservationKind::SessionDetached,
+                | ObservationKind::SessionDetached
+                | ObservationKind::SessionAttachmentsSent,
                 _,
             ) => Self::Hidden,
         })

@@ -738,10 +738,12 @@ pub struct AttachmentView {
     pub size: u64,
     pub sha256: String,
     pub added_at: UnixMillis,
+    /// When it went out with a prompt; `None` while unsent.
+    pub sent_at: Option<UnixMillis>,
 }
 
 impl AttachmentView {
-    pub(super) const SELECT: &'static str = "SELECT id, operator_session, name, format, width, height, size, sha256, added_at FROM attachments";
+    pub(super) const SELECT: &'static str = "SELECT id, operator_session, name, format, width, height, size, sha256, added_at, sent_at FROM attachments";
 
     pub(super) fn from_row(row: &SqliteRow) -> Result<Self, StoreError> {
         let columns = Columns(row);
@@ -759,6 +761,7 @@ impl AttachmentView {
                 .text("sha256")?
                 .ok_or(StoreError::Corrupt("attachment"))?,
             added_at: columns.time("added_at")?,
+            sent_at: columns.optional_time("sent_at")?,
         })
     }
 }

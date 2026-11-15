@@ -11,6 +11,7 @@
 //! its status, and its login, whose link and code it relays.
 
 mod attachments;
+pub use attachments::{AttachmentUse, KeptAttachment};
 pub mod client;
 mod entries;
 pub mod files;
@@ -43,7 +44,7 @@ pub use workdir::{Bounds, Roots, Workdir, WorkdirError};
 use attachments::AttachmentFolders;
 use ren_harness::{
     Harness,
-    attachment::{Attachment, AttachmentError, Limits},
+    attachment::{Attachment, AttachmentError, Limits, NotAccepted, PromptLimitError, Takes},
     commands::ClientCommand,
     drive::{CommandRefused, DriveEvent, Prompt},
     endpoint::GatewayEndpoint,
@@ -125,6 +126,33 @@ pub struct SessionSnapshot {
     pub settings: RunSettings,
     pub state: SessionState,
     pub process: Option<RunId>,
+    /// Whether its client takes images with a prompt.
+    pub images: ImageTaking,
+}
+
+/// Whether a session's client takes images with a prompt: always, when the
+/// running client says it does (OpenCode, in its answer to `initialize`;
+/// a prompt it has not said yes to is refused when sent), or never.
+#[derive(strum::Display, strum::EnumString, strum::IntoStaticStr, strum::VariantArray)]
+#[strum(serialize_all = "snake_case")]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, serde_with::SerializeDisplay, serde_with::DeserializeFromStr,
+)]
+pub enum ImageTaking {
+    Always,
+    IfOffered,
+    Never,
+}
+
+impl ImageTaking {
+    /// What `harness` declares of images.
+    pub fn of(harness: Harness) -> Self {
+        match harness.acceptance().images() {
+            Takes::Always(_) => Self::Always,
+            Takes::IfOffered(_) => Self::IfOffered,
+            Takes::Never => Self::Never,
+        }
+    }
 }
 
 /// A new session: its client, where it works, and its settings. Its client
@@ -150,7 +178,7 @@ pub struct SessionSeed {
     pub thread: Option<NativeThreadId>,
     pub state: SessionState,
     /// The attachments uploaded to it, as stored.
-    pub attachments: Vec<(AttachmentId, Attachment)>,
+    pub attachments: Vec<KeptAttachment>,
 }
 
 /// Why a session request was not carried out.
@@ -180,6 +208,14 @@ pub enum SessionError {
     NoSuchAttachment(AttachmentId),
     #[error("cannot keep or read the session's attachment: {0}")]
     AttachmentStorage(io::Error),
+    #[error("attachment {0} went out with a prompt and stays")]
+    AttachmentSent(AttachmentId),
+    #[error("a prompt needs text or an image")]
+    BlankPrompt,
+    #[error(transparent)]
+    PromptAttachments(PromptLimitError),
+    #[error(transparent)]
+    ImagesNotTaken(NotAccepted),
     #[error("the supervisor has stopped")]
     Gone,
 }
@@ -332,6 +368,13 @@ pub(crate) enum SessionRequest {
         session: SessionId,
         attachment: AttachmentId,
     },
+    Attachments(SessionId),
+    Prompt {
+        session: SessionId,
+        text: String,
+        attachments: Vec<AttachmentId>,
+        delivery: Delivery,
+    },
 }
 
 /// What a session request answers.
@@ -343,6 +386,7 @@ pub(crate) enum SessionAnswer {
     Files(Vec<FileMatch>),
     Attached(AttachmentId, Attachment),
     AttachmentBytes(Attachment, Vec<u8>),
+    Attachments(Vec<KeptAttachment>),
 }
 
 /// The supervisor has stopped.
@@ -677,7 +721,8 @@ impl Supervisor {
             | SessionAnswer::Commands(_)
             | SessionAnswer::Files(_)
             | SessionAnswer::Attached(..)
-            | SessionAnswer::AttachmentBytes(..) => Err(SessionError::Gone),
+            | SessionAnswer::AttachmentBytes(..)
+            | SessionAnswer::Attachments(_) => Err(SessionError::Gone),
         }
     }
 
@@ -733,7 +778,8 @@ impl Supervisor {
             | SessionAnswer::Commands(_)
             | SessionAnswer::Files(_)
             | SessionAnswer::Attached(..)
-            | SessionAnswer::AttachmentBytes(..) => Err(SessionError::Gone),
+            | SessionAnswer::AttachmentBytes(..)
+            | SessionAnswer::Attachments(_) => Err(SessionError::Gone),
         }
     }
 
@@ -750,7 +796,8 @@ impl Supervisor {
             | SessionAnswer::Listed(_)
             | SessionAnswer::Files(_)
             | SessionAnswer::Attached(..)
-            | SessionAnswer::AttachmentBytes(..) => Err(SessionError::Gone),
+            | SessionAnswer::AttachmentBytes(..)
+            | SessionAnswer::Attachments(_) => Err(SessionError::Gone),
         }
     }
 
@@ -776,7 +823,8 @@ impl Supervisor {
             | SessionAnswer::Listed(_)
             | SessionAnswer::Commands(_)
             | SessionAnswer::Attached(..)
-            | SessionAnswer::AttachmentBytes(..) => Err(SessionError::Gone),
+            | SessionAnswer::AttachmentBytes(..)
+            | SessionAnswer::Attachments(_) => Err(SessionError::Gone),
         }
     }
 
@@ -809,7 +857,8 @@ impl Supervisor {
             | SessionAnswer::Listed(_)
             | SessionAnswer::Commands(_)
             | SessionAnswer::Files(_)
-            | SessionAnswer::AttachmentBytes(..) => Err(SessionError::Gone),
+            | SessionAnswer::AttachmentBytes(..)
+            | SessionAnswer::Attachments(_) => Err(SessionError::Gone),
         }
     }
 
@@ -832,8 +881,46 @@ impl Supervisor {
             | SessionAnswer::Listed(_)
             | SessionAnswer::Commands(_)
             | SessionAnswer::Files(_)
-            | SessionAnswer::Attached(..) => Err(SessionError::Gone),
+            | SessionAnswer::Attached(..)
+            | SessionAnswer::Attachments(_) => Err(SessionError::Gone),
         }
+    }
+
+    /// Every attachment of `session`, and whether each was sent.
+    pub async fn attachments(
+        &self,
+        session: SessionId,
+    ) -> Result<Vec<KeptAttachment>, SessionError> {
+        match self.session(SessionRequest::Attachments(session)).await? {
+            SessionAnswer::Attachments(kept) => Ok(kept),
+            SessionAnswer::Created(_)
+            | SessionAnswer::Done
+            | SessionAnswer::Listed(_)
+            | SessionAnswer::Commands(_)
+            | SessionAnswer::Files(_)
+            | SessionAnswer::Attached(..)
+            | SessionAnswer::AttachmentBytes(..) => Err(SessionError::Gone),
+        }
+    }
+
+    /// Prompt `session` with `text` and its `attachments`, delivered this
+    /// way: each must be the session's, within the limits, and of a kind
+    /// its client takes. Sent, they stay with the session.
+    pub async fn prompt(
+        &self,
+        session: SessionId,
+        text: String,
+        attachments: Vec<AttachmentId>,
+        delivery: Delivery,
+    ) -> Result<(), SessionError> {
+        self.session(SessionRequest::Prompt {
+            session,
+            text,
+            attachments,
+            delivery,
+        })
+        .await
+        .map(|_| ())
     }
 
     /// Remove one of `session`'s attachments, its file and its record.

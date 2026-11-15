@@ -781,7 +781,8 @@ impl MetadataTx<'_> {
                     | SessionFact::Configured { .. }
                     | SessionFact::ClientChosen { .. }
                     | SessionFact::Attached { .. }
-                    | SessionFact::Detached { .. } => None,
+                    | SessionFact::Detached { .. }
+                    | SessionFact::AttachmentsSent { .. } => None,
                 };
                 sqlx::query("UPDATE operator_sessions SET archived_at = ? WHERE id = ?")
                     .bind(archived)
@@ -805,6 +806,18 @@ impl MetadataTx<'_> {
                 .bind(at)
                 .execute(&mut *self.tx)
                 .await?;
+            }
+            SessionFact::AttachmentsSent { attachments } => {
+                for attachment in attachments {
+                    sqlx::query(
+                        "UPDATE attachments SET sent_at = ? WHERE id = ? AND operator_session = ?",
+                    )
+                    .bind(at)
+                    .bind(attachment.to_string())
+                    .bind(record.session.to_string())
+                    .execute(&mut *self.tx)
+                    .await?;
+                }
             }
             SessionFact::Detached { attachment } => {
                 sqlx::query("DELETE FROM attachments WHERE id = ? AND operator_session = ?")
@@ -1062,7 +1075,7 @@ impl MetadataTx<'_> {
             .await?
             .rows_affected();
         if gone > 0 {
-            sqlx::query("DELETE FROM observations WHERE call IS NULL AND kind IN (?, ?, ?, ?, ?, ?, ?) AND json_extract(payload, '$.session') = ?")
+            sqlx::query("DELETE FROM observations WHERE call IS NULL AND kind IN (?, ?, ?, ?, ?, ?, ?, ?) AND json_extract(payload, '$.session') = ?")
                 .bind(ObservationKind::SessionCreated.label())
                 .bind(ObservationKind::SessionConfigured.label())
                 .bind(ObservationKind::SessionClientChosen.label())
@@ -1070,6 +1083,7 @@ impl MetadataTx<'_> {
                 .bind(ObservationKind::SessionUnarchived.label())
                 .bind(ObservationKind::SessionAttached.label())
                 .bind(ObservationKind::SessionDetached.label())
+                .bind(ObservationKind::SessionAttachmentsSent.label())
                 .bind(session)
                 .execute(&mut *self.tx)
                 .await?;

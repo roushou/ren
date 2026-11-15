@@ -1312,6 +1312,42 @@ async fn an_image_is_uploaded_read_removed_kept_across_a_restart_and_deleted_wit
             .exists()
     );
 
+    // Sent with a prompt, it is listed as sent and stays.
+    let (status, body) = control
+        .post(
+            &format!("/sessions/{session}/prompt"),
+            json!({ "text": "what is this", "attachments": [attachment] }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+    let (status, listed) = control
+        .get(&format!("/sessions/{session}/attachments"))
+        .await;
+    assert_eq!(status, StatusCode::OK, "{listed}");
+    assert_eq!(listed["attachments"][0]["id"], attachment.as_str());
+    assert_eq!(listed["attachments"][0]["sent"], true);
+    let kept = control
+        .http
+        .delete(format!(
+            "{}/sessions/{session}/attachments/{attachment}",
+            control.base
+        ))
+        .bearer_auth(TestGateway::CONTROL_TOKEN)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(kept.status(), StatusCode::CONFLICT);
+    let (status, body) = control
+        .post(
+            &format!("/sessions/{session}/prompt"),
+            json!({ "text": "", "attachments": ["00000000-0000-0000-0000-0000000000ff"] }),
+        )
+        .await;
+    assert_eq!(
+        (status, body["error"].clone()),
+        (StatusCode::NOT_FOUND, json!("not_found"))
+    );
+
     // Kept across a restart: the stored session is served again with it.
     let (status, _) = control
         .post(&format!("/sessions/{session}/stop"), json!({}))
@@ -1339,6 +1375,10 @@ async fn an_image_is_uploaded_read_removed_kept_across_a_restart_and_deleted_wit
         control.download(&session, &other).await.status(),
         StatusCode::NOT_FOUND
     );
+    let (_, listed) = control
+        .get(&format!("/sessions/{session}/attachments"))
+        .await;
+    assert_eq!(listed["attachments"][0]["sent"], true, "{listed}");
 
     // Deleted with its session, folder and all.
     let (status, body) = control

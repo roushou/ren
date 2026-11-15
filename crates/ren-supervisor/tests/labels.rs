@@ -5,7 +5,7 @@
 )]
 
 use ren_protocol::label::Labeled;
-use ren_supervisor::{ClientStatus, Delivery, PathKind, PlaceKind, SessionPhase};
+use ren_supervisor::{ClientStatus, Delivery, ImageTaking, PathKind, PlaceKind, SessionPhase};
 use serde::{Serialize, de::DeserializeOwned};
 use std::fmt::{Debug, Display};
 use std::str::FromStr;
@@ -37,6 +37,7 @@ fn labels_are_pinned_and_round_trip() {
         + &row::<PlaceKind>("PlaceKind")
         + &row::<Delivery>("Delivery")
         + &row::<PathKind>("PathKind")
-        + &row::<SessionPhase>("SessionPhase");
+        + &row::<SessionPhase>("SessionPhase")
+        + &row::<ImageTaking>("ImageTaking");
     assert_eq!(table, include_str!("fixtures/labels.txt"));
 }

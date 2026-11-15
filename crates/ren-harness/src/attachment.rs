@@ -533,6 +533,11 @@ pub struct Acceptance {
 }
 
 impl Acceptance {
+    /// Whether, and how, the client takes images.
+    pub fn images(self) -> Takes {
+        self.images
+    }
+
     /// Whether, and how, the client takes `kind`.
     pub fn of(self, kind: AttachmentKind) -> Takes {
         match kind {

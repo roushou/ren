@@ -1570,7 +1570,11 @@ async fn a_sessions_attachments_are_kept_read_removed_and_go_with_it() {
             settings: ren_harness::settings::RunSettings::default(),
             thread: None,
             state: SessionState::Open(SessionPhase::Draft),
-            attachments: vec![(shot, read.clone())],
+            attachments: vec![ren_supervisor::KeptAttachment {
+                id: shot,
+                read: read.clone(),
+                used: ren_supervisor::AttachmentUse::Unsent,
+            }],
         })
         .await
         .unwrap();
@@ -1595,6 +1599,92 @@ async fn a_sessions_attachments_are_kept_read_removed_and_go_with_it() {
     );
     // One not served is not forgotten, but its folder still goes.
     assert!(!supervisor.forget(elsewhere).await.unwrap());
+}
+
+#[tokio::test]
+async fn a_prompt_takes_the_sessions_images_and_they_stay_once_sent() {
+    use ren_harness::drive::CommandRefused;
+    use ren_supervisor::{AttachmentUse, CommandError, Delivery, ImageTaking, SessionError};
+    let supervised = supervise(FakeHost::new(Script::Codex)).await;
+    let supervisor = &supervised.supervisor;
+    let mut updates = supervisor.subscribe();
+    let session = supervisor
+        .create(create(Harness::Codex, "/work/acme"))
+        .await
+        .unwrap();
+    state(&mut updates, |s| matches!(s, RunState::Idle { .. })).await;
+    assert_eq!(only_session(supervisor).await.images, ImageTaking::Always);
+    let (shot, _) = supervisor
+        .attach(session, "shot.png".into(), png(4, 4))
+        .await
+        .unwrap();
+
+    // Neither text nor images is blank; another session's image is not this one's.
+    assert!(matches!(
+        supervisor
+            .prompt(session, " ".into(), Vec::new(), Delivery::Start)
+            .await,
+        Err(SessionError::BlankPrompt)
+    ));
+    let stranger = ren_recorder::id::AttachmentId::restore(uuid::Uuid::from_u128(0x55));
+    assert!(matches!(
+        supervisor
+            .prompt(session, "look".into(), vec![stranger], Delivery::Start)
+            .await,
+        Err(SessionError::NoSuchAttachment(_))
+    ));
+    // Too many together is refused before anything is sent.
+    assert!(matches!(
+        supervisor
+            .prompt(session, "look".into(), vec![shot; 11], Delivery::Start)
+            .await,
+        Err(SessionError::PromptAttachments(_))
+    ));
+
+    // An image alone is a prompt; sent, it stays with the session.
+    supervisor
+        .prompt(session, String::new(), vec![shot], Delivery::Start)
+        .await
+        .unwrap();
+    state(&mut updates, working).await;
+    let kept = supervisor.attachments(session).await.unwrap();
+    assert_eq!(kept.len(), 1);
+    assert_eq!(kept[0].used, AttachmentUse::Sent);
+    assert!(matches!(
+        supervisor.detach(session, shot).await,
+        Err(SessionError::AttachmentSent(_))
+    ));
+
+    // OpenCode that has not said it takes images refuses one.
+    let open = supervise(FakeHost::new(Script::OpenCode)).await;
+    let mut opened = open.supervisor.subscribe();
+    let other = open
+        .supervisor
+        .create(create(Harness::OpenCode, "/work/acme"))
+        .await
+        .unwrap();
+    state(&mut opened, |s| matches!(s, RunState::Idle { .. })).await;
+    assert_eq!(
+        only_session(&open.supervisor).await.images,
+        ImageTaking::IfOffered
+    );
+    let (image, _) = open
+        .supervisor
+        .attach(other, "shot.png".into(), png(4, 4))
+        .await
+        .unwrap();
+    assert!(matches!(
+        open.supervisor
+            .prompt(other, "look".into(), vec![image], Delivery::Start)
+            .await,
+        Err(SessionError::Command(CommandError::Protocol(
+            CommandRefused::NoImages
+        )))
+    ));
+    assert_eq!(
+        open.supervisor.attachments(other).await.unwrap()[0].used,
+        AttachmentUse::Unsent
+    );
 }
 
 #[tokio::test]

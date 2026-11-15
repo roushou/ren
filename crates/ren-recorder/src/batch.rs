@@ -323,6 +323,10 @@ pub enum SessionFact {
     Detached {
         attachment: AttachmentId,
     },
+    /// `attachments` went out with a prompt: they stay with the session.
+    AttachmentsSent {
+        attachments: Vec<AttachmentId>,
+    },
 }
 
 impl SessionFact {
@@ -335,6 +339,7 @@ impl SessionFact {
             Self::Unarchived => ObservationKind::SessionUnarchived,
             Self::Attached { .. } => ObservationKind::SessionAttached,
             Self::Detached { .. } => ObservationKind::SessionDetached,
+            Self::AttachmentsSent { .. } => ObservationKind::SessionAttachmentsSent,
         }
     }
 }
@@ -455,6 +460,8 @@ pub enum ObservationKind {
     SessionAttached,
     /// An unsent attachment was removed from a session.
     SessionDetached,
+    /// A session's attachments went out with a prompt.
+    SessionAttachmentsSent,
 }
 
 /// Where an operation belongs and when it happened. Every observation has it.

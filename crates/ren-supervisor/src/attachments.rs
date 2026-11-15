@@ -51,25 +51,72 @@ impl AttachmentFolders {
     }
 }
 
+/// Whether an attachment went out with a prompt. One that did stays with
+/// the session: the conversation shows it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AttachmentUse {
+    Unsent,
+    Sent,
+}
+
+/// One attachment of a session: its id, what it is, and whether it was
+/// sent.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KeptAttachment {
+    pub id: AttachmentId,
+    pub read: Attachment,
+    pub used: AttachmentUse,
+}
+
 /// A session's attachments, by id.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub(crate) struct Attached(BTreeMap<AttachmentId, Attachment>);
+pub(crate) struct Attached(BTreeMap<AttachmentId, (Attachment, AttachmentUse)>);
 
 impl Attached {
-    pub(crate) fn from_stored(stored: Vec<(AttachmentId, Attachment)>) -> Self {
-        Self(stored.into_iter().collect())
+    pub(crate) fn from_stored(stored: Vec<KeptAttachment>) -> Self {
+        Self(
+            stored
+                .into_iter()
+                .map(|kept| (kept.id, (kept.read, kept.used)))
+                .collect(),
+        )
     }
 
     pub(crate) fn get(&self, attachment: AttachmentId) -> Option<&Attachment> {
-        self.0.get(&attachment)
+        self.0.get(&attachment).map(|(read, _)| read)
+    }
+
+    pub(crate) fn used(&self, attachment: AttachmentId) -> Option<AttachmentUse> {
+        self.0.get(&attachment).map(|(_, used)| *used)
     }
 
     pub(crate) fn insert(&mut self, attachment: AttachmentId, read: Attachment) {
-        self.0.insert(attachment, read);
+        self.0.insert(attachment, (read, AttachmentUse::Unsent));
     }
 
     pub(crate) fn remove(&mut self, attachment: AttachmentId) -> Option<Attachment> {
-        self.0.remove(&attachment)
+        self.0.remove(&attachment).map(|(read, _)| read)
+    }
+
+    /// `attachments` went out with a prompt.
+    pub(crate) fn sent(&mut self, attachments: &[AttachmentId]) {
+        for attachment in attachments {
+            if let Some((_, used)) = self.0.get_mut(attachment) {
+                *used = AttachmentUse::Sent;
+            }
+        }
+    }
+
+    /// Every attachment, oldest id first.
+    pub(crate) fn list(&self) -> Vec<KeptAttachment> {
+        self.0
+            .iter()
+            .map(|(id, (read, used))| KeptAttachment {
+                id: *id,
+                read: read.clone(),
+                used: *used,
+            })
+            .collect()
     }
 }
 

@@ -9,14 +9,14 @@
 //!
 //! [`Supervisor`]: crate::Supervisor
 
-use crate::attachments::{Attached, AttachmentFolders};
+use crate::attachments::{Attached, AttachmentFolders, AttachmentUse};
 use crate::entries::Entries;
 use crate::login::{SignInError, SignIns, StatusCheck};
 use crate::models::{Listings, ModelProbe, ModelsError, ModelsReply};
 use crate::{
-    CommandError, Conversation, Create, IdleStop, Places, Request, RunSnapshot, RunUpdate,
-    SessionAnswer, SessionError, SessionRequest, SessionSeed, SessionSnapshot, SignInRequest,
-    Start, StartError, StartPlace, Warmup,
+    CommandError, Conversation, Create, IdleStop, ImageTaking, Places, Request, RunSnapshot,
+    RunUpdate, SessionAnswer, SessionError, SessionRequest, SessionSeed, SessionSnapshot,
+    SignInRequest, Start, StartError, StartPlace, Warmup,
     client::{Client, ClientStatus},
     files::FileListing,
     host::{AgentHost, AgentProcess, KillSwitch},
@@ -33,8 +33,8 @@ use futures_util::{
 use ren_harness::sign_in::Console;
 use ren_harness::{
     Harness,
-    attachment::{Attachment, Limits},
-    drive::{DriveEvent, Driver, Opening, Prompt, TurnEnd},
+    attachment::{Attachment, Limits, NotAccepted, Offer},
+    drive::{DriveEvent, Driver, Opening, Prompt, PromptImage, TurnEnd},
     endpoint::GatewayEndpoint,
     lines::{Framed, Line, LineLimit, Lines},
     models::{DefaultChoice, ModelId, ModelListing},
@@ -145,6 +145,7 @@ impl Held {
             settings: self.settings.clone(),
             state: self.state,
             process: self.process,
+            images: ImageTaking::of(self.harness),
         }
     }
 }
@@ -652,6 +653,35 @@ impl<H: AgentHost> SupervisorTask<H> {
                 name,
                 bytes,
             } => self.attach(session, &name, &bytes, served),
+            SessionRequest::Attachments(session) => Ok(SessionAnswer::Attachments(
+                served
+                    .sessions
+                    .get(&session)
+                    .ok_or(SessionError::NoSuchSession(session))?
+                    .attached
+                    .list(),
+            )),
+            SessionRequest::Prompt {
+                session,
+                text,
+                attachments,
+                delivery,
+            } => {
+                let prompt = self.compose(session, text, &attachments, served)?;
+                let answer = self.send(session, delivery.command(prompt), served).await?;
+                if !attachments.is_empty() {
+                    self.record(
+                        session,
+                        SessionFact::AttachmentsSent {
+                            attachments: attachments.clone(),
+                        },
+                    )?;
+                    if let Some(held) = served.sessions.get_mut(&session) {
+                        held.attached.sent(&attachments);
+                    }
+                }
+                Ok(answer)
+            }
             SessionRequest::ReadAttachment {
                 session,
                 attachment,
@@ -686,8 +716,12 @@ impl<H: AgentHost> SupervisorTask<H> {
                     .sessions
                     .get_mut(&session)
                     .ok_or(SessionError::NoSuchSession(session))?;
-                if held.attached.get(attachment).is_none() {
-                    return Err(SessionError::NoSuchAttachment(attachment));
+                match held.attached.used(attachment) {
+                    None => return Err(SessionError::NoSuchAttachment(attachment)),
+                    Some(AttachmentUse::Sent) => {
+                        return Err(SessionError::AttachmentSent(attachment));
+                    }
+                    Some(AttachmentUse::Unsent) => {}
                 }
                 self.record(session, SessionFact::Detached { attachment })?;
                 held.attached.remove(attachment);
@@ -775,6 +809,67 @@ impl<H: AgentHost> SupervisorTask<H> {
         self.publish_session(session, &held);
         served.sessions.insert(session, held);
         Ok(SessionAnswer::Created(session))
+    }
+
+    /// The prompt `text` and `attachments` make for `session`: each one the
+    /// session's, together within the limits, of a kind its client takes,
+    /// and read from its file.
+    fn compose(
+        &self,
+        session: SessionId,
+        text: String,
+        attachments: &[AttachmentId],
+        served: &Served,
+    ) -> Result<Prompt, SessionError> {
+        let held = served
+            .sessions
+            .get(&session)
+            .ok_or(SessionError::NoSuchSession(session))?;
+        if attachments.is_empty() {
+            return Prompt::parse(text).map_err(|_| SessionError::BlankPrompt);
+        }
+        let folders = self
+            .attachments
+            .as_ref()
+            .ok_or(SessionError::NoAttachments)?;
+        let reads = attachments
+            .iter()
+            .map(|attachment| {
+                held.attached
+                    .get(*attachment)
+                    .cloned()
+                    .ok_or(SessionError::NoSuchAttachment(*attachment))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        self.attachment_limits
+            .check_prompt(&reads)
+            .map_err(SessionError::PromptAttachments)?;
+        // What the running client said; with none running, the next one says
+        // as it opens, and its codec refuses what it was not offered.
+        let offer = served
+            .process(session)
+            .and_then(|run| served.runs.get(&run))
+            .and_then(|live| live.codec.as_ref())
+            .map_or(Offer::Unknown, Driver::image_offer);
+        let images = attachments
+            .iter()
+            .zip(reads)
+            .map(|(attachment, read)| {
+                match held.harness.acceptance().of(read.kind()).resolve(offer) {
+                    Ok(_) | Err(NotAccepted::Unknown) => {}
+                    Err(refused @ (NotAccepted::Never | NotAccepted::NotOffered)) => {
+                        return Err(SessionError::ImagesNotTaken(refused));
+                    }
+                }
+                let path = folders.file(session, *attachment, read.name());
+                let bytes = self
+                    .host
+                    .read_file(&path)
+                    .map_err(SessionError::AttachmentStorage)?;
+                Ok(PromptImage::new(read, path, bytes.into()))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        Prompt::with_images(text, images).map_err(|_| SessionError::BlankPrompt)
     }
 
     /// Read `bytes`, uploaded as `name`, as an attachment of `session`,

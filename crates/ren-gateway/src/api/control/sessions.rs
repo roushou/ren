@@ -33,8 +33,10 @@ use axum::{
 use http::{HeaderMap, StatusCode, header};
 use ren_harness::{
     Harness,
-    attachment::{Attachment, AttachmentError, AttachmentKind, ByteSize, Dimensions, Image},
-    drive::{ApprovalId, Prompt},
+    attachment::{
+        Attachment, AttachmentError, AttachmentKind, ByteSize, Dimensions, Image, PromptLimitError,
+    },
+    drive::ApprovalId,
     models::ModelId,
     settings::{ApprovalPolicy, Effort, RunSettings},
 };
@@ -50,8 +52,8 @@ use ren_store::{
     view::{AttachmentView, SessionView},
 };
 use ren_supervisor::{
-    Create, FileQuery, RunCommand, SessionError, SessionPhase, SessionRefused, SessionSeed,
-    SessionSnapshot, SessionState, Shelving, StartPlace, Supervisor,
+    AttachmentUse, Create, FileQuery, KeptAttachment, RunCommand, SessionError, SessionPhase,
+    SessionRefused, SessionSeed, SessionSnapshot, SessionState, Shelving, StartPlace, Supervisor,
 };
 use std::{convert::Infallible, sync::Arc, time::Duration};
 use tokio::sync::broadcast::error::RecvError;
@@ -162,7 +164,7 @@ impl SessionsApi {
             .route("/control/v1/sessions/{session}/files", get(Self::files))
             .route(
                 "/control/v1/sessions/{session}/attachments",
-                post(Self::attach),
+                get(Self::attachments).post(Self::attach),
             )
             .route(
                 "/control/v1/sessions/{session}/attachments/{attachment}",
@@ -202,6 +204,15 @@ impl SessionsApi {
             SessionError::Attachment(error) => Self::unattachable(error),
             SessionError::NoAttachments => RunRefusal::NoAttachments,
             SessionError::NoSuchAttachment(_) => RunRefusal::NotFound,
+            SessionError::AttachmentSent(_) => RunRefusal::Refused("attachment_sent"),
+            SessionError::BlankPrompt => RunRefusal::InvalidAttachment("blank_prompt"),
+            SessionError::PromptAttachments(PromptLimitError::TooMany { .. }) => {
+                RunRefusal::InvalidAttachment("too_many_attachments")
+            }
+            SessionError::PromptAttachments(PromptLimitError::TooLarge { .. }) => {
+                RunRefusal::AttachmentTooLarge
+            }
+            SessionError::ImagesNotTaken(_) => RunRefusal::Refused("no_images"),
             SessionError::AttachmentStorage(error) => {
                 tracing::warn!(%error, "an attachment could not be kept or read");
                 RunRefusal::AttachmentStorage
@@ -228,7 +239,7 @@ impl SessionsApi {
 
     /// A stored attachment as the supervisor holds it; `None` for one this
     /// daemon cannot read back (a format it does not know).
-    fn restore(stored: AttachmentView) -> Option<(AttachmentId, Attachment)> {
+    fn restore(stored: AttachmentView) -> Option<KeptAttachment> {
         let Stored::Known(format) = stored.format else {
             return None;
         };
@@ -241,7 +252,14 @@ impl SessionsApi {
             sha256,
         )
         .ok()?;
-        Some((stored.id, read))
+        Some(KeptAttachment {
+            id: stored.id,
+            read,
+            used: match stored.sent_at {
+                Some(_) => AttachmentUse::Sent,
+                None => AttachmentUse::Unsent,
+            },
+        })
     }
 
     /// What a stored session is to the supervisor: where it works, on
@@ -484,9 +502,18 @@ impl SessionsApi {
         body: Result<Json<PromptRequest>, JsonRejection>,
     ) -> Result<Response, Denied> {
         let request = RunsApi::body(body)?;
-        let prompt = Prompt::parse(request.text).map_err(|_| Denied::Control(Refusal::Invalid))?;
-        api.send(&headers, &session, request.delivery.command(prompt))
+        // Blank with nothing attached is a malformed request, as it always was.
+        if request.text.trim().is_empty() && request.attachments.is_empty() {
+            return Err(Denied::Control(Refusal::Invalid));
+        }
+        let supervisor = api.admit(&headers)?;
+        let session = Self::session(&session)?;
+        api.load(supervisor, session).await?;
+        supervisor
+            .prompt(session, request.text, request.attachments, request.delivery)
             .await
+            .map_err(Self::refused)?;
+        Ok(Self::done())
     }
 
     async fn unqueue(
@@ -708,6 +735,37 @@ impl SessionsApi {
             })),
         )
             .into_response())
+    }
+
+    /// The session's attachments: each one's id, what it is, and whether it
+    /// went out with a prompt.
+    async fn attachments(
+        State(api): Api,
+        headers: HeaderMap,
+        Path(session): Path<String>,
+    ) -> Result<Response, Denied> {
+        let supervisor = api.admit(&headers)?;
+        let session = Self::session(&session)?;
+        api.load(supervisor, session).await?;
+        let kept = supervisor
+            .attachments(session)
+            .await
+            .map_err(Self::refused)?;
+        let attachments: Vec<serde_json::Value> = kept
+            .into_iter()
+            .map(|kept| {
+                serde_json::json!({
+                    "id": kept.id,
+                    "read": kept.read,
+                    "sent": matches!(kept.used, AttachmentUse::Sent),
+                })
+            })
+            .collect();
+        Ok(Json(serde_json::json!({
+            "api_version": ControlApi::API_VERSION,
+            "attachments": attachments,
+        }))
+        .into_response())
     }
 
     /// One of the session's attachments: its bytes, as the image it is.
