@@ -686,6 +686,10 @@ impl Git {
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null());
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "the one sanctioned place that runs git"
+        )]
         let status = git.status()?;
         Ok(ProcessHost::exit(status))
     }

@@ -15,6 +15,10 @@ disallowed-methods = [
   { path = "tokio::task::spawn", reason = "spawn tasks in the shell (daemon wiring), not in components" },
   { path = "std::process::Command::spawn", reason = "start agent processes through ren_supervisor::AgentHost" },
   { path = "tokio::process::Command::spawn", reason = "start agent processes through ren_supervisor::AgentHost", allow-invalid = true },
+  { path = "std::process::Command::status", reason = "start processes through ren_supervisor::AgentHost" },
+  { path = "std::process::Command::output", reason = "start processes through ren_supervisor::AgentHost" },
+  { path = "tokio::process::Command::status", reason = "start processes through ren_supervisor::AgentHost", allow-invalid = true },
+  { path = "tokio::process::Command::output", reason = "start processes through ren_supervisor::AgentHost", allow-invalid = true },
 ]
 
 allow-unwrap-in-tests = true

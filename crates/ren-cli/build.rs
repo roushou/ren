@@ -97,6 +97,10 @@ impl Source {
     }
 
     /// A git command's trimmed output, if it succeeds.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the build reads its own checkout's revision with the builder's git"
+    )]
     fn git(args: &[&str]) -> Option<String> {
         let output = Command::new("git")
             .arg("-C")

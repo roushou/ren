@@ -83,6 +83,10 @@ impl Invocation {
     }
 
     /// Runs with the terminal attached; fails unless it exits successfully.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "xtask is a shell; Invocation is how it runs external commands"
+    )]
     pub fn run(&self) -> Result<(), InstallError> {
         let status = self
             .command()
@@ -100,6 +104,10 @@ impl Invocation {
     }
 
     /// Whether it exits successfully. Failing to start is still an error.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "xtask is a shell; Invocation is how it runs external commands"
+    )]
     pub fn succeeds(&self, echo: Echo) -> Result<bool, InstallError> {
         let mut command = self.command();
         match echo {
@@ -127,6 +135,10 @@ impl Invocation {
         self.output(Refusal::Answer)
     }
 
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "xtask is a shell; Invocation is how it runs external commands"
+    )]
     fn output(&self, refusal: Refusal) -> Result<String, InstallError> {
         let output = self
             .command()
