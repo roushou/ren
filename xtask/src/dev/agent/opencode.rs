@@ -421,8 +421,7 @@ mod tests {
             opening.clone(),
             "0.1.0",
             uuid::Uuid::from_u128(5),
-        )
-        .unwrap();
+        );
         for _ in 0..8 {
             let mut next = Vec::new();
             for line in &lines {
