@@ -15,14 +15,10 @@ use ren_gateway::{ApiRead, ControlRefusal, ControlToken};
 use ren_harness::{endpoint::GatewayEndpoint, host::HostEnv};
 use ren_protocol::direction::Direction;
 use ren_protocol::label::{Labeled, Stored};
-use ren_recorder::id::{CallId, TurnId};
+use ren_recorder::id::CallId;
 use ren_store::Reader;
-use ren_store::activity::{ActivityBudget, CallActivity, TurnActivity};
-use ren_store::query::{CallQuery, PageLimit, Shelf};
-use ren_store::read::ReadRequest;
-use ren_store::view::{CallPage, RecordingView};
+use ren_store::read::{ReadRequest, ReadResponse};
 use reqwest::{Method, StatusCode};
-use serde::{Deserialize, de::DeserializeOwned};
 use serde_json::{Map, Value};
 use std::time::Duration;
 
@@ -35,45 +31,18 @@ pub enum Target {
 }
 
 /// Where history is read: this host's storage, or a gateway's read API.
-/// Both answer a [`ReadRequest`] with the same JSON, since the API's body is
-/// the reader's response.
+/// Both answer a [`ReadRequest`] with the same typed [`ReadResponse`]: the
+/// API's body is the reader's response, decoded by the request.
 pub enum History {
     Local(Reader),
     Remote(Management),
 }
 
 impl History {
-    pub async fn serve(&self, request: &ReadRequest) -> Result<Value, ManagementError> {
+    pub async fn serve(&self, request: &ReadRequest) -> Result<ReadResponse, ManagementError> {
         match self {
-            Self::Local(reader) => Ok(serde_json::to_value(reader.serve(request).await?)?),
+            Self::Local(reader) => Ok(reader.serve(request).await?),
             Self::Remote(gateway) => gateway.serve(request).await,
-        }
-    }
-
-    /// Calls, newest first, as `query` narrows them.
-    pub async fn calls(&self, query: &CallQuery) -> Result<CallPage, ManagementError> {
-        match self {
-            Self::Local(reader) => Ok(reader.calls(query).await?),
-            Self::Remote(gateway) => gateway.calls(query).await,
-        }
-    }
-
-    /// Recordings, most recently seen first.
-    pub async fn recordings(
-        &self,
-        limit: PageLimit,
-    ) -> Result<Vec<RecordingView>, ManagementError> {
-        match self {
-            Self::Local(reader) => Ok(reader.recordings(limit, Shelf::Current).await?),
-            Self::Remote(gateway) => gateway.recordings(limit).await,
-        }
-    }
-
-    /// One turn's activity, as much of it as the read API shows.
-    pub async fn turn(&self, turn: TurnId) -> Result<TurnActivity, ManagementError> {
-        match self {
-            Self::Local(reader) => Ok(reader.turn_activity(turn, ActivityBudget::DEFAULT).await?),
-            Self::Remote(gateway) => gateway.turn(turn).await,
         }
     }
 }
@@ -381,53 +350,13 @@ impl Management {
         }
     }
 
-    /// One history read, through the read API: its JSON body.
-    pub async fn serve(&self, request: &ReadRequest) -> Result<Value, ManagementError> {
-        Ok(Value::Object(
-            self.read(&ApiRead(request.clone()).uri()).await?,
-        ))
-    }
-
-    /// Calls, newest first, as `query` narrows them.
-    pub async fn calls(&self, query: &CallQuery) -> Result<CallPage, ManagementError> {
-        self.read_as(&ReadRequest::Calls(query.clone())).await
-    }
-
-    /// Recordings, most recently seen first.
-    pub async fn recordings(
-        &self,
-        limit: PageLimit,
-    ) -> Result<Vec<RecordingView>, ManagementError> {
-        /// The read API's body for a recording listing.
-        #[derive(Deserialize)]
-        struct Recordings {
-            sessions: Vec<RecordingView>,
-        }
-        self.read_as::<Recordings>(&ReadRequest::Recordings {
-            limit,
-            shelf: Shelf::Current,
-        })
-        .await
-        .map(|page| page.sessions)
-    }
-
-    /// One turn's activity, as much of it as the read API shows.
-    pub async fn turn(&self, turn: TurnId) -> Result<TurnActivity, ManagementError> {
-        self.read_as(&ReadRequest::Turn(turn)).await
-    }
-
-    /// One call's activity, as much of it as the read API shows.
-    pub async fn call_activity(&self, call: CallId) -> Result<CallActivity, ManagementError> {
-        self.read_as(&ReadRequest::CallActivity(call)).await
-    }
-
-    /// One history read, through the read API, parsed into its view.
-    async fn read_as<T: DeserializeOwned>(
-        &self,
-        request: &ReadRequest,
-    ) -> Result<T, ManagementError> {
+    /// One history read, through the read API, decoded as the read's
+    /// response.
+    pub async fn serve(&self, request: &ReadRequest) -> Result<ReadResponse, ManagementError> {
         let body = self.read(&ApiRead(request.clone()).uri()).await?;
-        serde_json::from_value(Value::Object(body)).map_err(ManagementError::Answer)
+        request
+            .decode(Value::Object(body))
+            .map_err(ManagementError::Answer)
     }
 
     /// A successful read's body, without `api_version`. `uri` is a path and
@@ -506,6 +435,7 @@ impl Management {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ren_store::query::{CallQuery, PageLimit, Shelf};
 
     #[test]
     fn error_answers_keep_their_code_in_their_apis_vocabulary() {
@@ -586,6 +516,11 @@ mod tests {
                 "/api/calls",
                 get(|| async { Json(json!({ "api_version": 1, "calls": [], "next": null })) }),
             )
+            // Not a usage report: a page of calls.
+            .route(
+                "/api/usage",
+                get(|| async { Json(json!({ "api_version": 1, "calls": [], "next": null })) }),
+            )
             .route(
                 "/api/turns/{turn}",
                 get(move || async move {
@@ -620,15 +555,32 @@ mod tests {
     async fn a_gateway_answers_reads_as_views() {
         let (sessions, calls, turn) = against_gateway(|gateway| async move {
             let history = History::Remote(gateway);
-            let sessions = history
-                .recordings(PageLimit::new(10).unwrap())
+            let ReadResponse::Recordings { sessions } = history
+                .serve(&ReadRequest::Recordings {
+                    limit: PageLimit::new(10).unwrap(),
+                    shelf: Shelf::Current,
+                })
                 .await
-                .unwrap();
-            let calls = history.calls(&CallQuery::default()).await.unwrap();
-            let turn = history
-                .turn("00000000-0000-0000-0000-000000000004".parse().unwrap())
+                .unwrap()
+            else {
+                panic!("a recording listing")
+            };
+            let ReadResponse::Calls(calls) = history
+                .serve(&ReadRequest::Calls(CallQuery::default()))
                 .await
-                .unwrap();
+                .unwrap()
+            else {
+                panic!("a call page")
+            };
+            let ReadResponse::Turn(turn) = history
+                .serve(&ReadRequest::Turn(
+                    "00000000-0000-0000-0000-000000000004".parse().unwrap(),
+                ))
+                .await
+                .unwrap()
+            else {
+                panic!("a turn")
+            };
             (sessions, calls, turn)
         })
         .await;
@@ -653,14 +605,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn an_answer_that_is_not_the_view_asked_for_is_refused() {
-        // A session listing read as a page of calls.
+    async fn an_answer_that_is_not_the_reads_response_is_refused() {
         let wrong = against_gateway(|gateway| async move {
             gateway
-                .read_as::<CallPage>(&ReadRequest::Recordings {
-                    limit: PageLimit::new(10).unwrap(),
-                    shelf: Shelf::Current,
-                })
+                .serve(&ReadRequest::Usage(ren_store::query::TimeRange::default()))
                 .await
         })
         .await;

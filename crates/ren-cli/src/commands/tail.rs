@@ -12,7 +12,7 @@ use crate::tail::{CallSummary, ClockTime, LiveDecoder, LiveEvent, Shown};
 use anyhow::Result;
 use clap::Args;
 use ren_recorder::Observation;
-use ren_store::read::ReadRequest;
+use ren_store::read::{ReadRequest, ReadResponse};
 use std::{process::ExitCode, time::Duration};
 
 /// Follow calls as they start and finish (`--json`: every observation).
@@ -150,7 +150,9 @@ impl TailCmd {
 
     /// The call's view, if it can be read; a tail line never fails on it.
     async fn summary(gateway: &Management, call: ren_recorder::id::CallId) -> Option<CallSummary> {
-        let detail = gateway.serve(&ReadRequest::Call(call)).await.ok()?;
-        serde_json::from_value(detail.get("call")?.clone()).ok()
+        let ReadResponse::Call(detail) = gateway.serve(&ReadRequest::Call(call)).await.ok()? else {
+            return None;
+        };
+        serde_json::from_value(serde_json::to_value(detail.call).ok()?).ok()
     }
 }

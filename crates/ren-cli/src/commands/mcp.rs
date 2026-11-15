@@ -56,7 +56,11 @@ impl McpCmd {
 
     async fn execute(gateway: &Management, pending: PendingCall) -> Value {
         let outcome = match &pending.tool {
-            ToolCall::Read(request) => gateway.serve(request).await.map(Ok),
+            ToolCall::Read(request) => gateway
+                .serve(request)
+                .await
+                .and_then(|answer| Ok(serde_json::to_value(answer)?))
+                .map(Ok),
             ToolCall::GetBody {
                 call,
                 direction,

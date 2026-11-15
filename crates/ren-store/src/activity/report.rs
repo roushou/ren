@@ -252,7 +252,7 @@ impl<'de> Deserialize<'de> for Finding {
 }
 
 /// One turn's row in a session report.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TurnMetrics {
     pub turn: TurnId,
     pub started_at: UnixMillis,
@@ -269,7 +269,7 @@ pub struct TurnMetrics {
 }
 
 /// Totals over a session's calls that reported usage.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct ReportTotals {
     pub calls: u64,
     pub calls_with_usage: u64,
@@ -282,7 +282,7 @@ pub struct ReportTotals {
 }
 
 /// A session's context and cost measurements, from its call records alone.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RecordingReport {
     pub session: RecordingId,
     pub totals: ReportTotals,

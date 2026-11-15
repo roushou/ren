@@ -301,7 +301,8 @@ dependencies under "Crates" below. Read the code for current module ownership.
   `RecordSink::undigested` lists calls to derive again), and implements the recorder's `RecordSink`. It owns the versioned migrations for
   `ren.sqlite3` (`crates/ren-store/migrations`); never edit one that has
   shipped. Every history read is a `ReadRequest` that `Reader::serve` answers
-  (`read`); the API, the CLI, and MCP all ask through it. Its tests include
+  (`read`), and `ReadRequest::decode` reads the API's body back as the same
+  typed `ReadResponse`; the API, the CLI, and MCP all ask through it. Its tests include
   `tests/recorder.rs`, the recorder against the real store.
 - `crates/ren-supervisor`: runs, with `Supervisor` as its primary type: agent
   processes started in a folder and driven through their client's
