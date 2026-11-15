@@ -55,6 +55,7 @@ pub enum ControlRefusal {
     RunsDisabled,
     InvalidDirectory,
     DirectoryNotFound,
+    /// A stored session's client is one this daemon does not know.
     NotDrivable,
     NoApprovals,
     NoScratch,

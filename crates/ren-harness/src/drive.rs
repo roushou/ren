@@ -7,6 +7,7 @@
 //! stdin out; lines from its stdout in, events and replies out. Framing
 //! (`lines`) knows nothing about JSON.
 
+use crate::Harness;
 use crate::attachment::{Attachment, AttachmentKind, Offer};
 use crate::claude_code::ClaudeStreamJson;
 use crate::codex::CodexAppServer;
@@ -16,7 +17,6 @@ use crate::opencode::OpenCodeAcp;
 use crate::pi::PiRpc;
 use crate::settings::{Midway, RunSettings};
 use crate::tools::ToolEffect;
-use crate::{Harness, launch::NotDrivable};
 use base64::Engine as _;
 use ren_protocol::activity::{ToolInput, ToolUse};
 use std::path::PathBuf;
@@ -92,23 +92,23 @@ impl Driver {
         opening: Opening,
         version: &str,
         seed: uuid::Uuid,
-    ) -> Result<(Self, Vec<Line>), NotDrivable> {
+    ) -> (Self, Vec<Line>) {
         match harness {
             Harness::Codex => {
                 let (codec, first) = CodexAppServer::open(opening, version);
-                Ok((Self::Codex(codec), vec![first]))
+                (Self::Codex(codec), vec![first])
             }
             Harness::ClaudeCode => {
                 let (codec, first) = ClaudeStreamJson::open(&opening);
-                Ok((Self::ClaudeCode(codec), vec![first]))
+                (Self::ClaudeCode(codec), vec![first])
             }
             Harness::Pi => {
                 let (codec, first) = PiRpc::open(&opening, seed);
-                Ok((Self::Pi(codec), vec![first]))
+                (Self::Pi(codec), vec![first])
             }
             Harness::OpenCode => {
                 let (codec, first) = OpenCodeAcp::open(&opening, version, seed);
-                Ok((Self::OpenCode(codec), vec![first]))
+                (Self::OpenCode(codec), vec![first])
             }
         }
     }

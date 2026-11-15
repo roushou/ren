@@ -573,7 +573,7 @@ test('clients say whether a run can start with each, keeping newer statuses', as
   const clients = await client.clients();
   assert.deepEqual(
     clients.map((entry) => Runs.unavailable(entry.status)),
-    [null, 'not installed on the daemon’s host', 'Ren cannot drive it yet', 'paused'],
+    [null, 'not installed on the daemon’s host', 'not_drivable', 'paused'],
   );
   // A policy a newer daemon names is kept as it was sent.
   assert.deepEqual(clients[1]?.approvals, ['ask', 'later']);

@@ -49,7 +49,6 @@ use ren_harness::{
     commands::ClientCommand,
     drive::{CommandRefused, DriveEvent},
     endpoint::GatewayEndpoint,
-    launch::NotDrivable,
     lines::LineLimit,
     models::Model,
     settings::RunSettings,
@@ -290,8 +289,6 @@ pub enum StartError {
     NoScratch,
     #[error("cannot create the scratch run's folder")]
     Scratch(#[source] io::Error),
-    #[error(transparent)]
-    NotDrivable(NotDrivable),
     #[error("{0} does not take that approval policy")]
     NoApprovals(Harness),
     #[error("the recorder has no room to record the run")]

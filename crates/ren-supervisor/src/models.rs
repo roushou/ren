@@ -6,7 +6,6 @@ use crate::host::AgentProcess;
 use futures_util::{FutureExt, future::BoxFuture, stream::FuturesUnordered};
 use ren_harness::{
     Harness,
-    launch::NotDrivable,
     lines::{Framed, Line, LineLimit, Lines},
     models::{Listing, Model, ModelListing},
 };
@@ -19,8 +18,6 @@ use tokio::{
 /// Why a client's models could not be listed.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ModelsError {
-    #[error(transparent)]
-    NotDrivable(NotDrivable),
     #[error("no run root to list models in")]
     NoRoot,
     #[error("cannot start the client; check it is installed on PATH")]

@@ -33,10 +33,8 @@ pub struct Client {
 #[strum(serialize_all = "snake_case")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, SerializeDisplay, DeserializeFromStr)]
 pub enum ClientStatus {
-    /// Ren drives it, and its program is on this host's path.
+    /// Its program is on this host's path.
     Ready,
-    /// Ren drives it, but its program is not on this host's path.
+    /// Its program is not on this host's path.
     NotInstalled,
-    /// Ren cannot drive it yet.
-    NotDrivable,
 }

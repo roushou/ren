@@ -678,7 +678,7 @@ const runProjects = versioned(
 );
 const recordedRuns = versioned(object<{ runs: RecordedRun[] }>({ runs: array(recordedRun) }));
 
-export const clientStatuses = ['ready', 'not_installed', 'not_drivable'] as const;
+export const clientStatuses = ['ready', 'not_installed'] as const;
 /** Whether a run can start with a client on the daemon's host. */
 export type ClientStatus = (typeof clientStatuses)[number];
 
@@ -1586,8 +1586,6 @@ export class Runs {
         return null;
       case 'not_installed':
         return 'not installed on the daemon’s host';
-      case 'not_drivable':
-        return 'Ren cannot drive it yet';
       default:
         return unrecognised(status);
     }
