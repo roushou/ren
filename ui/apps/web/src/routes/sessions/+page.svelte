@@ -53,6 +53,7 @@
     type KeptAttachment,
   } from '#lib/attachments.ts';
   import ComposerMenu, { type MenuEntry } from './ComposerMenu.svelte';
+  import CommandStep from './CommandStep.svelte';
   import Icon from '#lib/Icon.svelte';
   import Markdown from '#lib/Markdown.svelte';
   import ActionMenu, { type ActionItem } from '#lib/ActionMenu.svelte';
@@ -869,16 +870,18 @@
     }
   }
 
+  // The conversation scrolls from its end (`column-reverse`): its newest
+  // entry is at scrollTop 0, and scrolling up makes scrollTop negative.
   function onScroll() {
     if (!conversation) return;
-    following = conversation.scrollHeight - conversation.scrollTop - conversation.clientHeight < 48;
+    following = Math.abs(conversation.scrollTop) < 48;
   }
 
   $effect(() => {
     // Keep the newest entry in view as the conversation grows.
     void transcript?.entries;
     if (!following || !conversation) return;
-    void tick().then(() => conversation?.scrollTo({ top: conversation.scrollHeight }));
+    void tick().then(() => conversation?.scrollTo({ top: 0 }));
   });
 
   $effect(() => {
@@ -1144,27 +1147,7 @@
         <Icon name="thought" size={12} /> Thinking…
       </div>{/if}
   {:else if entry.kind === 'command'}
-    <details class="entry tool command">
-      <summary>
-        <Icon name="terminal" size={12} />
-        <span class="tool-target mono">{entry.command}</span>
-        <span
-          class="chip {entry.status === 'completed' && (entry.exit === 0 || entry.exit === null)
-            ? 'success'
-            : entry.status === 'in_progress'
-              ? 'live'
-              : entry.status === 'declined'
-                ? 'neutral'
-                : 'error'}"
-          >{entry.status === 'in_progress'
-            ? 'running'
-            : entry.exit !== null
-              ? `exit ${entry.exit}`
-              : entry.status}</span
-        >
-      </summary>
-      {#if entry.output}<pre class="activity-pre">{entry.output}</pre>{/if}
-    </details>
+    <CommandStep {entry} />
   {:else if entry.kind === 'file_change'}
     <div class="entry tool">
       <Icon name="pencil" size={12} />
@@ -1439,34 +1422,38 @@
       </div>
 
       {#if tab === 'conversation'}
+        <!-- Scrolled from its end, so it opens on the newest entry from the
+             first paint, before the page's scripts run. -->
         <div
-          class="conversation"
+          class="conversation from-end"
           bind:this={conversation}
           onscroll={onScroll}
           aria-busy={conversationPending}
         >
-          {#if conversationPending}
-            {@render turnsOutline()}
-          {:else}
-            {#if readError}<p class="entry notice-entry danger">{readError}</p>{/if}
-            {#if transcript?.earlier}<p class="quiet-empty">
-                Earlier turns are not shown: the conversation is longer than one read.
-              </p>{/if}
-            <!-- The whole conversation, every turn open, as one scroll. -->
-            {#each Runs.turns(transcript?.entries ?? []) as turn, index (index)}
-              <section class="turn">
-                {#each turn as entry, at (at)}{@render entryView(entry)}{/each}
-              </section>
-            {/each}
-          {/if}
-          {#if runState.phase === 'working' && !controls.approvals.length}<div
-              class="entry tool muted working"
-            >
-              <span class="phase-dot tone-live"></span> Working…
-            </div>{/if}
-          {#if transcript?.read && !transcript.entries.length && runState.phase === 'idle'}
-            <p class="quiet-empty">The conversation is open. Say what to do.</p>
-          {/if}
+          <div class="conversation-body">
+            {#if conversationPending}
+              {@render turnsOutline()}
+            {:else}
+              {#if readError}<p class="entry notice-entry danger">{readError}</p>{/if}
+              {#if transcript?.earlier}<p class="quiet-empty">
+                  Earlier turns are not shown: the conversation is longer than one read.
+                </p>{/if}
+              <!-- The whole conversation, every turn open, as one scroll. -->
+              {#each Runs.turns(transcript?.entries ?? []) as turn, index (index)}
+                <section class="turn">
+                  {#each turn as entry, at (at)}{@render entryView(entry)}{/each}
+                </section>
+              {/each}
+            {/if}
+            {#if runState.phase === 'working' && !controls.approvals.length}<div
+                class="entry tool muted working"
+              >
+                <span class="phase-dot tone-live"></span> Working…
+              </div>{/if}
+            {#if transcript?.read && !transcript.entries.length && runState.phase === 'idle'}
+              <p class="quiet-empty">The conversation is open. Say what to do.</p>
+            {/if}
+          </div>
         </div>
       {:else if tab === 'activity'}
         <div class="conversation">
@@ -1960,6 +1947,16 @@
     min-height: 0;
     overflow: auto;
   }
+  /* Laid out from its end, so the browser opens it scrolled to the newest
+     entry, and keeps it there as entries are added while it is. */
+  .conversation.from-end {
+    display: flex;
+    flex-direction: column-reverse;
+  }
+  /* A conversation shorter than the pane still starts at its top. */
+  .conversation-body {
+    margin-bottom: auto;
+  }
   /* A turn: its prompt, steps, and reply as rows, ruled off from the next. */
   .turn {
     border-bottom: 1px solid var(--line);
@@ -2043,21 +2040,11 @@
   .entry.tool.muted {
     color: var(--muted);
   }
-  .entry.tool.command {
-    display: block;
-  }
-  .entry.tool.command summary {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    cursor: pointer;
-  }
   .tool-name {
     color: var(--role-tool);
   }
   /* A step's state sits at the row's end, however long its target. */
-  .entry.tool > .chip,
-  .entry.tool.command summary > .chip {
+  .entry.tool > .chip {
     flex: none;
     margin-left: auto;
   }
