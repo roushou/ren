@@ -580,12 +580,14 @@ impl RuntimeConfig {
             max_concurrent_unnamed: self.max_concurrent_unnamed,
         }
     }
-    /// Lifecycle records the recorder reserves at once: every admitted call,
-    /// each channel's end, and a margin for calls whose response is still
-    /// draining after their admission returned.
+    /// Lifecycle units the recorder reserves at once: one per attempt every
+    /// admitted call's plan allows, each channel's end, and a margin for
+    /// calls whose response is still draining after their admission
+    /// returned.
     pub fn recorder_calls(&self) -> usize {
         self.max_concurrent_requests
             .saturating_mul(4)
+            .saturating_mul(ren_gateway::policy::Candidates::MAX)
             .saturating_add(self.websocket.max_channels.saturating_mul(2))
     }
     pub fn transport(&self) -> TransportTimeouts {

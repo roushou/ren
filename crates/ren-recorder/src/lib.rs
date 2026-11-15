@@ -42,8 +42,8 @@ pub use metrics::RecorderMetrics;
 pub use options::{CaptureOptions, CaptureOptionsError};
 pub use sink::{Committed, Observation, Pruned, RecordSink};
 pub use tap::{
-    AttemptStart, CallStart, CallTap, ChannelTap, HistorySlot, OperatorSlot, RunSession, RunTap,
-    RunUnrecorded, SessionSlot,
+    AttemptRequest, AttemptStart, AttemptTap, CallStart, CallTap, ChannelTap, Head, HistorySlot,
+    OperatorSlot, ResponseTap, RunSession, RunTap, RunUnrecorded, SessionSlot,
 };
 pub use task::RecorderTask;
 
@@ -78,7 +78,11 @@ impl RecorderMeter {
 pub struct RecorderSetup {
     pub options: CaptureOptions,
     pub retention: RetentionPolicy,
-    /// Calls open at once: the gateway's admission limit.
+    /// Lifecycle units held at once. A call holds one per attempt its plan
+    /// allows (`CallStart::attempts`), and a channel's end, a run, and each
+    /// pending operator or history record one each: size it from the
+    /// gateway's admission and channel limits and the most attempts its
+    /// plans allow.
     pub max_calls: usize,
     /// Committed observations kept for live subscribers that fall behind.
     pub live_buffer: usize,
@@ -146,14 +150,9 @@ impl Recorder {
 
     /// Admit a call and its first attempt for capture. Never blocks; without
     /// a free reservation the call is forwarded unrecorded and counted.
-    pub fn start(&self, start: CallStart, attempt: AttemptStart) -> Arc<CallTap> {
+    pub fn start(&self, start: CallStart, attempt: AttemptStart) -> AttemptTap {
         let channel = ChannelId::generate(self.shared.ids.as_ref());
-        Arc::new(CallTap::start(
-            self.shared.clone(),
-            channel,
-            start,
-            Some(attempt),
-        ))
+        AttemptTap::start(self.shared.clone(), channel, start, attempt)
     }
 
     /// Admit a call on a channel that already exists: a WebSocket message call.
@@ -162,13 +161,8 @@ impl Recorder {
         channel: ChannelId,
         start: CallStart,
         attempt: AttemptStart,
-    ) -> Arc<CallTap> {
-        Arc::new(CallTap::start(
-            self.shared.clone(),
-            channel,
-            start,
-            Some(attempt),
-        ))
+    ) -> AttemptTap {
+        AttemptTap::start(self.shared.clone(), channel, start, attempt)
     }
 
     /// Record a call Ren answered without forwarding, with its request as
@@ -181,7 +175,7 @@ impl Recorder {
         rejection: crate::capture::CallRejection,
     ) {
         let channel = channel.unwrap_or_else(|| ChannelId::generate(self.shared.ids.as_ref()));
-        let tap = CallTap::start(self.shared.clone(), channel, start, None);
+        let mut tap = CallTap::refused(self.shared.clone(), channel, start);
         if let Some(request) = request {
             tap.request(request);
         }

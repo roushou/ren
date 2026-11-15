@@ -15,7 +15,7 @@ use ren_protocol::{
     encoding::{ResponseEncoding, ResponseFormat},
 };
 use ren_recorder::{
-    CallTap,
+    AttemptTap, CallTap, Head, ResponseTap,
     capture::{AttemptPhase, TerminalRecord},
 };
 use std::{
@@ -36,11 +36,39 @@ pub(super) enum Closing {
     AttemptOnly,
 }
 
+/// Where an attempt's capture is: the recorder's tap state its owner holds.
+enum Capture {
+    /// Awaiting the head: the cell holds the attempt.
+    Awaiting(AttemptTap),
+    /// The response body holds the attempt while it streams.
+    Streaming,
+    /// The attempt ended. The call's tap waits here for the next attempt
+    /// when one follows; the handler takes it.
+    Ended(Option<CallTap>),
+}
+
+/// The attempt's tap at its end, from whichever owner held it.
+enum Ending {
+    Awaiting(AttemptTap),
+    Streaming(ResponseTap),
+}
+
+impl Ending {
+    fn end(self, end: TerminalRecord) -> CallTap {
+        match self {
+            Self::Awaiting(tap) => tap.end(end),
+            Self::Streaming(tap) => tap.end(end),
+        }
+    }
+}
+
 /// One attempt's lifecycle, capture, cancellation, and admission. Shared by the
 /// upload body, the dispatch, and the response body.
 pub(super) struct AttemptCell {
     state: Mutex<HttpAttempt>,
-    tap: Arc<CallTap>,
+    /// Locked at the attempt's head and end only; the response body writes
+    /// its bytes through the tap it owns.
+    capture: Mutex<Capture>,
     /// Cancelled when the attempt ends, which stops an upload still streaming
     /// and a dispatch still waiting.
     ended: CancellationToken,
@@ -56,14 +84,14 @@ pub(super) struct AttemptCell {
 
 impl AttemptCell {
     pub(super) fn new(
-        tap: Arc<CallTap>,
+        tap: AttemptTap,
         admission: Option<OwnedSemaphorePermit>,
         abort: CancellationToken,
         operator: CancellationToken,
     ) -> Arc<Self> {
         Arc::new(Self {
             state: Mutex::new(HttpAttempt::DISPATCHED),
-            tap,
+            capture: Mutex::new(Capture::Awaiting(tap)),
             ended: CancellationToken::new(),
             abort,
             operator,
@@ -83,6 +111,15 @@ impl AttemptCell {
             .take()
     }
 
+    /// The call's tap once this attempt ended with another to follow
+    /// ([`Self::hand_over`]).
+    pub(super) fn next_attempt(&self) -> Option<CallTap> {
+        match &mut *self.capture.lock().unwrap_or_else(PoisonError::into_inner) {
+            Capture::Ended(call) => call.take(),
+            Capture::Awaiting(_) | Capture::Streaming => None,
+        }
+    }
+
     /// Keep `value` alive until the attempt ends.
     pub(super) fn hold(&self, value: Box<dyn Send>) {
         *self.held.lock().unwrap_or_else(PoisonError::into_inner) = Some(value);
@@ -96,6 +133,12 @@ impl AttemptCell {
     /// expected races (a send error after a cancel) and are dropped here, by
     /// decision; any other illegal event is a relay bug and is logged.
     pub(super) fn observe(&self, event: HttpEvent) {
+        self.observe_holding(event, None);
+    }
+
+    /// [`Self::observe`] from the response body, which holds the attempt's
+    /// tap while it streams and gives it back with its event.
+    fn observe_holding(&self, event: HttpEvent, mut held: Option<ResponseTap>) {
         let actions = {
             let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
             match state.step(event) {
@@ -112,15 +155,37 @@ impl AttemptCell {
         };
         for action in actions {
             match action {
-                AttemptAction::Finish(end) => self.finish(end),
+                AttemptAction::Finish(end) => self.finish(end, held.take()),
             }
+        }
+        // A tap given back without an end is dropped, and records its
+        // attempt as dropped: the machine ends a streaming attempt on every
+        // response body event, so this is a relay bug.
+        if held.is_some() {
+            tracing::warn!(?event, "a response body event did not end its attempt");
         }
     }
 
-    fn finish(&self, end: AttemptEnd) {
-        match *self.closing.lock().unwrap_or_else(PoisonError::into_inner) {
-            Closing::Call => self.tap.finish(TerminalRecord::from(end)),
-            Closing::AttemptOnly => self.tap.finish_attempt(TerminalRecord::from(end)),
+    fn finish(&self, end: AttemptEnd, held: Option<ResponseTap>) {
+        let record = TerminalRecord::from(end);
+        {
+            let mut capture = self.capture.lock().unwrap_or_else(PoisonError::into_inner);
+            let ending = match (std::mem::replace(&mut *capture, Capture::Ended(None)), held) {
+                (Capture::Streaming, Some(tap)) => Some(Ending::Streaming(tap)),
+                (Capture::Awaiting(tap), None) => Some(Ending::Awaiting(tap)),
+                (Capture::Awaiting(_) | Capture::Ended(_), Some(_))
+                | (Capture::Streaming | Capture::Ended(_), None) => {
+                    // The machine ends an attempt once, from its owner.
+                    tracing::warn!("an attempt ended without its tap");
+                    None
+                }
+            };
+            if let Some(ending) = ending {
+                match *self.closing.lock().unwrap_or_else(PoisonError::into_inner) {
+                    Closing::Call => ending.end(record).finish(),
+                    Closing::AttemptOnly => *capture = Capture::Ended(Some(ending.end(record))),
+                }
+            }
         }
         self.ended.cancel();
         drop(
@@ -154,12 +219,20 @@ impl AttemptCell {
         self.abort.cancelled().await;
     }
 
-    pub(super) fn response_head(&self, response: &http::Response<UpstreamBody>) {
-        self.tap.response_head(
-            response.status().as_u16(),
-            ResponseFormat::from_headers(response.headers()),
-            ResponseEncoding::from_headers(response.headers()),
-        );
+    /// Record the response head, and hand the attempt's tap to the
+    /// response body. `None` only if the head came after the end, which
+    /// the machine forbids.
+    fn response_head(&self, response: &http::Response<UpstreamBody>) -> Option<ResponseTap> {
+        let mut capture = self.capture.lock().unwrap_or_else(PoisonError::into_inner);
+        let Capture::Awaiting(tap) = std::mem::replace(&mut *capture, Capture::Streaming) else {
+            tracing::warn!("a response head arrived for an attempt not awaiting one");
+            return None;
+        };
+        Some(tap.head(Head {
+            status: response.status().as_u16(),
+            format: ResponseFormat::from_headers(response.headers()),
+            encoding: ResponseEncoding::from_headers(response.headers()),
+        }))
     }
 }
 
@@ -187,12 +260,14 @@ impl Dispatch {
             // The attempt ended while the head was in flight; its end stands.
             return Err(end);
         }
-        cell.response_head(&response);
+        let Some(tap) = cell.response_head(&response) else {
+            return Err(Self::UNREACHABLE);
+        };
         let declared = ObservedResponse::declared_length(response.headers());
         let (parts, body) = response.into_parts();
         Ok(http::Response::from_parts(
             parts,
-            ObservedResponse::wrap(body, cell, declared),
+            ObservedResponse::wrap(body, cell, tap, declared),
         ))
     }
 
@@ -324,13 +399,23 @@ impl http_body::Body for ObservedUpload {
     }
 }
 
+/// Whether the response body still owns its attempt.
+enum Streaming {
+    /// It does, and writes the attempt's response through its tap.
+    Open {
+        cell: Arc<AttemptCell>,
+        tap: Box<ResponseTap>,
+    },
+    Done,
+}
+
 /// The upstream's response body on its way to the client. It owns the attempt:
 /// its end, failure, cancellation, or drop is the attempt's terminal.
 struct ObservedResponse {
     inner: UpstreamBody,
     aborted: BoxFuture<'static, ()>,
     operator: BoxFuture<'static, ()>,
-    watch: Watch,
+    watch: Streaming,
     /// The body length the response head declared, if any.
     declared: Option<u64>,
     /// Body bytes passed on so far.
@@ -338,14 +423,22 @@ struct ObservedResponse {
 }
 
 impl ObservedResponse {
-    fn wrap(inner: UpstreamBody, cell: Arc<AttemptCell>, declared: Option<u64>) -> Body {
+    fn wrap(
+        inner: UpstreamBody,
+        cell: Arc<AttemptCell>,
+        tap: ResponseTap,
+        declared: Option<u64>,
+    ) -> Body {
         let abort = cell.abort.clone();
         let operator = cell.operator.clone();
         let mut response = Self {
             inner,
             aborted: Box::pin(abort.cancelled_owned()),
             operator: Box::pin(operator.cancelled_owned()),
-            watch: Watch::Streaming(cell),
+            watch: Streaming::Open {
+                cell,
+                tap: Box::new(tap),
+            },
             declared,
             relayed: 0,
         };
@@ -366,10 +459,12 @@ impl ObservedResponse {
     }
 
     fn report(&mut self, event: HttpEvent) {
-        if let Watch::Streaming(cell) = std::mem::replace(&mut self.watch, Watch::Done) {
+        if let Streaming::Open { cell, mut tap } =
+            std::mem::replace(&mut self.watch, Streaming::Done)
+        {
             match event {
                 HttpEvent::BodyEnded | HttpEvent::LengthDelivered => {
-                    cell.tap.end(Direction::Response);
+                    tap.ended(Direction::Response);
                 }
                 HttpEvent::UploadEnded
                 | HttpEvent::UploadFailed
@@ -379,7 +474,7 @@ impl ObservedResponse {
                 | HttpEvent::Cancelled(_)
                 | HttpEvent::Dropped => {}
             }
-            cell.observe(event);
+            cell.observe_holding(event, Some(*tap));
         }
     }
 
@@ -398,7 +493,7 @@ impl http_body::Body for ObservedResponse {
         cx: &mut Context<'_>,
     ) -> Poll<Option<Result<Frame<Bytes>, io::Error>>> {
         let this = self.get_mut();
-        let Watch::Streaming(cell) = &this.watch else {
+        let Streaming::Open { .. } = &this.watch else {
             return Poll::Ready(None);
         };
         if this.aborted.as_mut().poll(cx).is_ready() {
@@ -408,12 +503,13 @@ impl http_body::Body for ObservedResponse {
         if this.operator.as_mut().poll(cx).is_ready() {
             return this.fail(HttpEvent::Cancelled(Canceller::Operator));
         }
-        let cell = cell.clone();
         match Pin::new(&mut this.inner).poll_frame(cx) {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Some(Ok(frame))) => {
-                if let Some(bytes) = frame.data_ref() {
-                    cell.tap.data(Direction::Response, bytes);
+                if let (Some(bytes), Streaming::Open { tap, .. }) =
+                    (frame.data_ref(), &mut this.watch)
+                {
+                    tap.data(Direction::Response, bytes);
                     this.relayed = this
                         .relayed
                         .saturating_add(u64::try_from(bytes.len()).unwrap_or(u64::MAX));
@@ -433,7 +529,7 @@ impl http_body::Body for ObservedResponse {
     }
 
     fn is_end_stream(&self) -> bool {
-        matches!(self.watch, Watch::Done)
+        matches!(self.watch, Streaming::Done)
     }
 
     fn size_hint(&self) -> SizeHint {

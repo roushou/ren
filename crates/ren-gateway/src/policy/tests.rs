@@ -1,6 +1,6 @@
 use super::{
-    Admission, AuthKind, CallFacts, EntryUsers, Policy, PolicyConfig, PolicyError, Rejection,
-    RequestJson, StepOutcome, UpstreamSummary,
+    Admission, AuthKind, CallFacts, Candidates, EntryUsers, Policy, PolicyConfig, PolicyError,
+    Rejection, RequestJson, StepOutcome, UpstreamSummary,
 };
 use crate::{
     operator::{OperatorCommand, OperatorState, RetryAfter},
@@ -84,7 +84,8 @@ fn plans_admit_block_transform_and_fall_over() {
         &operator,
     );
     assert_eq!(plan.admission, Admission::Admit);
-    assert_eq!(plan.candidates.len(), 2);
+    // The recorder reserves this many attempts per call.
+    assert_eq!(plan.candidates.len(), Candidates::MAX);
     assert_eq!(plan.candidates.first().as_str(), "anthropic");
     assert_eq!(plan.transforms.len(), 1);
     assert_eq!(
