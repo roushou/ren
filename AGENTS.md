@@ -324,15 +324,24 @@ dependencies under "Crates" below. Read the code for current module ownership.
   own under the attachments folder (`attachments`: `AttachmentFolders`,
   written through `AgentHost::place_file`, `<data>/attachments` in the
   daemon), removed with it by `forget`. Session
-  changes go to `subscribe_sessions`. A run started through `start` is a
-  session and its first process. A client idle between turns is stopped
+  changes go to `subscribe_sessions`; every request addresses a session,
+  never a run. A client idle between turns is stopped
   after `IdleStop` (ten minutes in the daemon; its run ends `idled`), and its
   session goes on, unless it is a draft never asked anything and holding no
   attachment: that one is discarded (`SessionAction::Discard`, recorded as
   a delete by `Actor::Ren`). `RunState` (`run`) is the
   pure lifecycle machine (starting, idle, working with its waiting approvals and the prompt queued
   for after the turn (a `Delivery`: start, queue, or steer),
-  stopping, ended with a `RunEnd`); `Workdir` (`workdir`) keeps runs inside
+  stopping, ended with a `RunEnd`). Around it, `Process` (`process`) is one
+  client process as Ren drives it (its run state, codec, settings, the first
+  prompt it holds until its conversation opens, its entries, and its `Rest`,
+  so an idle stop armed for an earlier rest is stale), and `Session`
+  (`session`) is one session as it is served (its state, client, folder,
+  settings, conversation, newest process, file listing, and attachments).
+  Both are pure: each change is checked first, a session change whose fact
+  the recorder has no `Room` for is refused unchanged, and what to do comes
+  back as `ProcessEffect`s and `SessionEffect`s, which the task carries out
+  with each process's stdin queue, kill switch, and tap. `Workdir` (`workdir`) keeps runs inside
   `Bounds`: the configured roots, the other places (`~/.config`), and the
   scratch folder Ren owns, where a run started without a folder
   (`StartPlace::Scratch`) gets a new git repository of its own; all resolved
@@ -366,7 +375,7 @@ dependencies under "Crates" below. Read the code for current module ownership.
   `AgentHost::spawn_in_terminal` when it needs a terminal, and a pasted
   address is opened with `AgentHost::open_local`. What a login prints is
   cleaned of every answer typed into it.
-  `src/purity.rs` keeps `run`, `workdir`, `project`, `entries`, `files`,
+  `src/purity.rs` keeps `run`, `process`, `workdir`, `project`, `entries`, `files`,
   `session`, and `sign_in` free of runtime and I/O. The daemon constructs it when `[runs]`
   roots are configured, with `ProcessHost`; the gateway's control API serves it.
 - `crates/ren-gateway`: Ren's HTTP interface, with `Gateway` as its primary type.
