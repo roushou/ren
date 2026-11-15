@@ -186,11 +186,16 @@ the old daemon: before stopping it, it lists each with how to continue it.
 Writing to its session (from the UI's Sessions page or
 `ren runs say <session> <prompt>`) starts its client again, which resumes the
 conversation where it left off; a run from a daemon without sessions is
-resumed with `ren runs start <client> <dir> --resume <thread>`. It runs `ren control backup`, stops the service, keeps the old
-binary as `~/.local/bin/ren.previous`, installs the new one, rewrites the unit
+resumed with `ren runs start <client> <dir> --resume <thread>`. It runs `ren control backup`, stops the service, moves the old
+binary aside to `~/.local/bin/ren.rollback`, installs the new one, rewrites the unit
 only if it changed, starts the service, enables lingering, and runs `ren doctor`.
 It requires doctor's build check to confirm the daemon runs the build just
-installed, then resumes admission, also when a later step failed. A daemon an
+installed. When that passes, the old binary is removed; when any of these steps
+fails, it stops the service, puts the old binary and its unit back, starts it,
+and checks it with `ren doctor` again, then reports the failure. A build that
+migrated the database may leave the old binary unable to open it; the install
+then says so and names the backup. It then resumes admission, also when a step
+failed. A daemon an
 operator had already paused stays paused. Its own pause is marked in
 `<data>/install-pause` (the operator revision the pause made) until it
 resumes, so an install stopped between the two leaves a pause the next one
@@ -205,7 +210,7 @@ when the agent that started it ends with the old daemon. With `--https-port`, it
 route only when that port is free, accepts one that already proxies to the
 configured listener, and refuses a port used by anything else or exposed through
 Funnel. `--sudo-tailscale` uses `sudo -n` for that step; `--skip-backup` skips the
-backup. On a failed `doctor` it stops with the rollback instructions. With no
+backup. With no
 `--https-port` given or saved, it leaves Tailscale untouched. Review the configuration after the
 first run.
 
@@ -215,10 +220,12 @@ stopping anything, it builds `ui/` and stages the build with its production
 dependencies in `~/.local/share/ren-ui.next`. After the daemon is upgraded, it
 writes `~/.config/ren/ui.env` if missing (the daemon on loopback, both
 Tailscale URLs, and `REN_SOURCE_DIR`, this checkout, for Redline) and adds
-`REN_SOURCE_DIR` to an existing one that names none, stops `ren-ui.service`, keeps the deployed copy as
-`ren-ui.previous`, swaps in the new one, installs the unit from
+`REN_SOURCE_DIR` to an existing one that names none, stops `ren-ui.service`, moves the deployed copy
+aside to `ren-ui.rollback`, swaps in the new one, installs the unit from
 `deploy/ren-ui.service` with the Node found on `PATH`, starts it, and checks the
-UI's `/health`, which relays the daemon's. It then publishes the UI on that port
+UI's `/health`, which relays the daemon's. When it answers, the old copy is
+removed; when it does not, the old copy and its unit are put back and started,
+and the install reports the failure. It then publishes the UI on that port
 under the same rules as the daemon's port. With no `--ui-https-port` given or saved,
 the UI is left untouched.
 

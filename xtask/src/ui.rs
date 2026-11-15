@@ -3,9 +3,11 @@
 //!
 //! The deployed copy is `~/.local/share/ren-ui` (ui/README.md): the build,
 //! `package.json`, `bun.lock`, the workspace packages, and production
-//! dependencies. The one before it is kept as `ren-ui.previous`.
+//! dependencies. The one it replaces waits as `ren-ui.rollback` until the
+//! new one answers, and is put back if it does not.
 use crate::install::{InstallError, InstallVps};
 use crate::invocation::{Echo, Invocation};
+use crate::rollback::{Held, Part, Upgrade};
 use ren_harness::host::HostEnv;
 use std::{
     fs,
@@ -23,7 +25,10 @@ pub struct UiDeploy {
     template: PathBuf,
     staged: PathBuf,
     dir: PathBuf,
-    previous: PathBuf,
+    /// Where the deployed copy waits while a new one is checked.
+    rollback: PathBuf,
+    /// Where installs kept the copy before rollback was automatic.
+    legacy: PathBuf,
     unit: PathBuf,
     env_file: PathBuf,
     node: PathBuf,
@@ -69,7 +74,8 @@ impl UiDeploy {
             template: repo.join("deploy/ren-ui.service"),
             staged: share.join("ren-ui.next"),
             dir: share.join("ren-ui"),
-            previous: share.join("ren-ui.previous"),
+            rollback: share.join("ren-ui.rollback"),
+            legacy: share.join("ren-ui.previous"),
             unit: home.join(".config/systemd/user").join(Self::SERVICE),
             env_file: home.join(".config/ren/ui.env"),
             node: Self::program(env, "node")?,
@@ -167,7 +173,8 @@ impl UiDeploy {
     }
 
     /// Swaps in the staged copy, writes `ui.env` if missing, starts the
-    /// service, and checks that the UI answers through to the daemon.
+    /// service, and checks that the UI answers through to the daemon. If it
+    /// does not, the copy it replaced is put back with its unit.
     pub fn install(&self, urls: &UiUrls) -> Result<(), InstallError> {
         self.write_env(urls)?;
         let rendered = self.render()?;
@@ -177,16 +184,21 @@ impl UiDeploy {
                 .args(["--user", "stop", Self::SERVICE])
                 .run()?;
         }
-        if self.previous.exists() {
-            fs::remove_dir_all(&self.previous).map_err(InstallError::file(&self.previous))?;
-        }
-        if self.dir.exists() {
-            fs::rename(&self.dir, &self.previous).map_err(InstallError::file(&self.previous))?;
-        }
-        InstallVps::step(&format!("Installing the UI in {}", self.dir.display()));
-        fs::rename(&self.staged, &self.dir).map_err(InstallError::file(&self.dir))?;
-        InstallVps::start_unit(&self.unit, &rendered, Self::SERVICE)?;
-        self.check()
+        // Kept by installs before rollback was automatic.
+        Held::clear(&self.legacy)?;
+        let held = Held::hold(&self.dir, &self.rollback, &self.unit)?;
+        Upgrade::attempt(
+            held,
+            Self::SERVICE,
+            || {
+                InstallVps::step(&format!("Installing the UI in {}", self.dir.display()));
+                fs::rename(&self.staged, &self.dir).map_err(InstallError::file(&self.dir))?;
+                InstallVps::start_unit(&self.unit, &rendered, Self::SERVICE)?;
+                self.check()
+            },
+            || self.check(),
+        )
+        .finish(Part::Ui)
     }
 
     /// Keeps an existing `ui.env`, which the operator may have edited, only
@@ -276,11 +288,7 @@ impl UiDeploy {
             }
             thread::sleep(Duration::from_secs(1));
         }
-        Err(InstallError::UiHealth {
-            url,
-            previous: self.previous.clone(),
-            dir: self.dir.clone(),
-        })
+        Err(InstallError::UiHealth { url })
     }
 }
 
@@ -296,7 +304,8 @@ mod tests {
             template: template.to_path_buf(),
             staged: none.clone(),
             dir: none.clone(),
-            previous: none.clone(),
+            rollback: none.clone(),
+            legacy: none.clone(),
             unit: none.clone(),
             env_file: none.clone(),
             node: PathBuf::from("/usr/local/bin/node"),

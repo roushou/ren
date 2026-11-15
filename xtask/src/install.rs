@@ -14,6 +14,7 @@ use crate::{
     },
     invocation::{Echo, Invocation},
     publish::Publish,
+    rollback::{Held, Part, Upgrade},
     tailscale::{NodeStatus, Route, ServeStatus},
     ui::{UiDeploy, UiUrls},
 };
@@ -99,12 +100,8 @@ pub enum InstallError {
         data_dir.display()
     )]
     Backup { data_dir: PathBuf },
-    #[error(
-        "doctor reported a failed check; see `journalctl --user -u ren`. To roll back, stop the service, move {} to {}, and start it",
-        previous.display(),
-        binary.display()
-    )]
-    Doctor { previous: PathBuf, binary: PathBuf },
+    #[error("doctor reported a failed check; see `journalctl --user -u ren`")]
+    Doctor,
     #[error(
         "tracked files differ from the commit; commit them, or pass --allow-dirty to deploy a -dirty build"
     )]
@@ -123,15 +120,23 @@ pub enum InstallError {
     MissingProgram(&'static str),
     #[error("deploy/ren-ui.service no longer has the line {0:?} to render")]
     UiTemplate(String),
+    #[error("the UI does not answer {url}; see `journalctl --user -u ren-ui`")]
+    UiHealth { url: String },
     #[error(
-        "the UI does not answer {url}; see `journalctl --user -u ren-ui`. To roll back, stop ren-ui, move {} to {}, and start it",
-        previous.display(),
-        dir.display()
+        "{part} failed after the upgrade ({failure}); what ran before was put back and runs again"
     )]
-    UiHealth {
-        url: String,
-        previous: PathBuf,
-        dir: PathBuf,
+    RolledBack {
+        part: Part,
+        failure: Box<InstallError>,
+    },
+    #[error(
+        "{part} failed after the upgrade ({failure}), and putting back what ran before failed too ({rollback}); {}",
+        part.advice()
+    )]
+    RollbackFailed {
+        part: Part,
+        failure: Box<InstallError>,
+        rollback: Box<InstallError>,
     },
     #[error("Tailscale reports no MagicDNS name for this node, which the UI's origin needs")]
     NoDnsName,
@@ -227,7 +232,8 @@ struct Layout {
     user: String,
     bin_dir: PathBuf,
     binary: PathBuf,
-    previous: PathBuf,
+    /// Where the installed binary waits while a new one is checked.
+    rollback: PathBuf,
     config: PathBuf,
     data_dir: PathBuf,
     unit: PathBuf,
@@ -331,7 +337,7 @@ impl Layout {
                 .unwrap_or_else(|| PathBuf::from("cargo")),
             user,
             binary: bin_dir.join("ren"),
-            previous: bin_dir.join("ren.previous"),
+            rollback: bin_dir.join("ren.rollback"),
             bin_dir,
             config: home.join(".config/ren/ren.toml"),
             data_dir: home.join(".local/state/ren"),
@@ -749,11 +755,24 @@ impl InstallVps {
         backup: Backup,
         tree: Tree,
     ) -> Result<(), InstallError> {
-        Self::install_binary(layout, built, backup)?;
-        Self::install_unit(layout)?;
-        Self::enable_linger(layout)?;
-        Self::doctor(layout)?;
-        Self::verify_build(layout, tree)
+        let held = Self::hold_binary(layout, backup)?;
+        Upgrade::attempt(
+            held,
+            SERVICE,
+            || {
+                Self::step(&format!("Installing {}", layout.binary.display()));
+                let contents = fs::read(built).map_err(InstallError::file(built))?;
+                Self::write_private(&layout.binary, &contents, 0o755)?;
+                Self::install_unit(layout)?;
+                Self::enable_linger(layout)?;
+                Self::doctor(layout)?;
+                Self::verify_build(layout, tree)
+            },
+            || Self::doctor(layout),
+        )
+        .finish(Part::Daemon {
+            data_dir: layout.data_dir.clone(),
+        })
     }
 
     /// The installed CLI and the daemon must report the same build.
@@ -803,7 +822,9 @@ impl InstallVps {
         }
     }
 
-    fn install_binary(layout: &Layout, built: &Path, backup: Backup) -> Result<(), InstallError> {
+    /// Backs up history with the running daemon, stops it, and holds its
+    /// binary aside for the new one.
+    fn hold_binary(layout: &Layout, backup: Backup) -> Result<Option<Held>, InstallError> {
         let running = Self::service_active()?;
         if running && layout.binary.exists() {
             match backup {
@@ -828,13 +849,9 @@ impl InstallVps {
                 .args(["--user", "stop", SERVICE])
                 .run()?;
         }
-        if layout.binary.exists() {
-            fs::copy(&layout.binary, &layout.previous)
-                .map_err(InstallError::file(&layout.previous))?;
-        }
-        Self::step(&format!("Installing {}", layout.binary.display()));
-        let contents = fs::read(built).map_err(InstallError::file(built))?;
-        Self::write_private(&layout.binary, &contents, 0o755)
+        // Kept by installs before rollback was automatic.
+        Held::clear(&layout.bin_dir.join("ren.previous"))?;
+        Held::hold(&layout.binary, &layout.rollback, &layout.unit)
     }
 
     /// Publishes `contents` at `path` atomically, with `mode`.
@@ -950,10 +967,7 @@ impl InstallVps {
         if doctor.succeeds(Echo::Show)? {
             Ok(())
         } else {
-            Err(InstallError::Doctor {
-                previous: layout.previous.clone(),
-                binary: layout.binary.clone(),
-            })
+            Err(InstallError::Doctor)
         }
     }
 
