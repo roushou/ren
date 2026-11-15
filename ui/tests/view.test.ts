@@ -19,10 +19,3 @@ test('a recording, its report, and its turns sit under the Recordings tab', () =
   assert.equal(Views.title('recording'), 'Recording activity');
   assert.equal(Views.title('recorder'), 'Recorder & storage');
 });
-
-test('placeholders follow how each view is laid out', () => {
-  assert.equal(Views.shape('overview'), 'dashboard');
-  assert.equal(Views.shape('traffic'), 'list');
-  assert.equal(Views.shape('sessions'), 'split');
-  assert.equal(Views.shape('tools'), 'split');
-});

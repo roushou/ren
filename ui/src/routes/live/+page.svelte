@@ -5,7 +5,7 @@
   import { page } from '$app/state';
   import { RecentCalls } from '#lib/loaders.ts';
   import { goto } from '$app/navigation';
-  import { createSnapshot } from '#lib/snapshot.svelte.ts';
+  import { createArrival } from '#lib/snapshot.svelte.ts';
   import { getWorkbench } from '#lib/workbench.svelte.ts';
   import { clock, providerName, short } from '#lib/api.ts';
   import { compactOrDash, span } from '#lib/display.ts';
@@ -34,13 +34,20 @@
   import Select, { type SelectOption } from '#lib/Select.svelte';
   import Markdown from '#lib/Markdown.svelte';
   import StreamingReply from '#lib/StreamingReply.svelte';
+  import Skeleton from '#lib/Skeleton.svelte';
+  import SkeletonRows from '#lib/SkeletonRows.svelte';
+  import type { Column } from '#lib/columns.ts';
   import type { PageProps } from './$types';
 
   let { data }: PageProps = $props();
   const workbench = getWorkbench();
   workbench.showScope(scope);
-  const snapshot = createSnapshot(() => data.live);
-  const current = $derived(snapshot.current.value);
+  const arrival = createArrival(() => data.live);
+  const shown = $derived(arrival.current);
+  /** The window's reads are on their way: the page draws its outline. */
+  const pending = $derived(shown.state === 'pending');
+  const snapshot = $derived(shown.state === 'ready' ? shown.snapshot : null);
+  const current = $derived(snapshot?.value ?? null);
 
   // Elapsed times tick between refreshes.
   let now = $state(Date.now());
@@ -125,6 +132,16 @@
     if (seconds < 3) return 'now';
     return seconds < 60 ? `${seconds}s` : `${Math.round(seconds / 60)}m`;
   }
+  /** The rows view's columns: its header and its outline rows are drawn from them. */
+  const rowColumns: Column[] = [
+    { label: 'Recording' },
+    { label: 'Now' },
+    { label: `Last ${span(Board.laneMs)}`, class: 'lane-column' },
+    { label: 'Latest', class: 'live-latest' },
+    { label: 'Context', numeric: true },
+  ];
+  /** Text widths for the outline cards' lines, varied so they read as text. */
+  const outlineLines = ['82%', '64%', '91%', '57%', '76%', '69%', '88%', '61%'];
   const emptySlots = $derived(board ? Math.max(0, board.capacity - board.tiles.length) : 0);
   const pinHref = (tile: Tile) => LivePlace.href(LivePlace.togglePin(view, tile.session.id));
   const turnHref = (turn: string) => `/turns/${encodeURIComponent(turn)}`;
@@ -287,6 +304,19 @@
           >partial: newest only</span
         >{/if}
     </div>
+  {:else if pending}
+    <div class="scope-group live-pulse" aria-label="Right now" aria-busy="true">
+      <span class="live-active">
+        <span class="chip"><Skeleton width="1.5em" /> active</span><Select
+          label="How far back a recording counts as active"
+          size="compact"
+          options={windowOptions}
+          value={view.window}
+          onchange={chooseWindow}
+        />
+      </span>
+      <span class="chip"><span class="status-dot"></span><Skeleton width="1.5em" /> in flight</span>
+    </div>
   {/if}
   <div class="scope-group end">
     <Select
@@ -340,6 +370,17 @@
   </svg>
 {/snippet}
 
+{#snippet rowsHead()}
+  <thead>
+    <tr>
+      {#each rowColumns as column (column.label)}<th
+          class={column.class}
+          class:numeric={column.numeric}>{column.label}</th
+        >{/each}
+    </tr>
+  </thead>
+{/snippet}
+
 {#snippet ticks(height: number)}
   {#each [200, 400, 600, 800] as x (x)}
     <line class="live-band-tick" x1={x} y1="0" x2={x} y2={height} />
@@ -370,11 +411,71 @@
 <svelte:window {onkeydown} />
 
 <div class="live-page">
-  {#if !current || !board}
+  {#if pending}
+    <section class="live-band" aria-label="Output tokens by {view.by}" aria-busy="true">
+      <svg
+        class="live-band-chart"
+        viewBox="0 0 1000 {BAND_HEIGHT}"
+        preserveAspectRatio="none"
+        aria-hidden="true"
+      >
+        {@render ticks(BAND_HEIGHT)}
+      </svg>
+      <div class="live-legend" aria-hidden="true">
+        {#each ['6em', '4.5em'] as width (width)}
+          <span class="live-legend-chip"
+            ><Skeleton {width} /><span class="mono"><Skeleton width="3.5em" /></span></span
+          >
+        {/each}
+      </div>
+      <div class="live-band-axis mono" aria-hidden="true">
+        <span>−10m</span><span>−8m</span><span>−6m</span><span>−4m</span><span>−2m</span><span
+          >now</span
+        >
+      </div>
+    </section>
+    <section class="live-now" aria-label="Now" aria-busy="true">
+      <span class="live-now-label"><span class="status-dot"></span>Now</span>
+      <div class="live-now-feed" aria-hidden="true">
+        {#each ['9em', '12em', '7em', '10em'] as width (width)}
+          <span class="live-now-item"><i></i><Skeleton {width} /></span>
+        {/each}
+      </div>
+    </section>
+    {#if view.density === 'compact'}
+      <div class="live-rows-wrap" aria-busy="true">
+        <table class="live-rows">
+          {@render rowsHead()}
+          <tbody><SkeletonRows columns={rowColumns} rows={Board.maxTiles} /></tbody>
+        </table>
+      </div>
+    {:else}
+      <div class="live-wall" aria-busy="true">
+        {#each Array.from({ length: Board.maxTiles }, (_, slot) => slot) as slot (slot)}
+          <div class="live-tile state-idle" aria-hidden="true">
+            <header class="live-tile-head">
+              <Skeleton width="{9 + (slot % 3) * 2}em" /><span class="mono muted end"
+                >ctx <Skeleton width="2.5em" /></span
+              >
+            </header>
+            <div class="live-tile-body">
+              {#each { length: 3 }, line (line)}
+                <p><Skeleton width={outlineLines[(slot + line * 3) % outlineLines.length]} /></p>
+              {/each}
+            </div>
+            <footer class="live-tile-foot mono">
+              <div class="live-foot-state"><Skeleton width="5em" /></div>
+              <div class="live-foot-facts"><Skeleton width="8em" /></div>
+            </footer>
+          </div>
+        {/each}
+      </div>
+    {/if}
+  {:else if !current || !board}
     <div class="empty-state" role="alert">
       <div class="empty-icon"><Icon name="alert" size={26} /></div>
       <h2>Live activity could not be read</h2>
-      <p>{snapshot.current.error?.message ?? 'Loading…'}</p>
+      <p>{snapshot?.error?.message ?? 'Loading…'}</p>
     </div>
   {:else}
     {#if band && band.series.length}
@@ -524,15 +625,7 @@
     {:else if view.density === 'compact'}
       <div class="live-rows-wrap">
         <table class="live-rows">
-          <thead>
-            <tr>
-              <th>Recording</th>
-              <th>Now</th>
-              <th class="lane-column">Last {span(Board.laneMs)}</th>
-              <th>Latest</th>
-              <th class="numeric">Context</th>
-            </tr>
-          </thead>
+          {@render rowsHead()}
           <tbody>
             {#each board.tiles as tile (tile.session.id)}
               {@const rowChip = Board.phaseChip(tile.phase, board.now)}

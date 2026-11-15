@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { createSnapshot } from '#lib/snapshot.svelte.ts';
+  import { createArrival } from '#lib/snapshot.svelte.ts';
   import { getWorkbench } from '#lib/workbench.svelte.ts';
   import { num, short, clock } from '#lib/api.ts';
   import { compact, compactOrDash, date, percentOrDash, span, sessionTone } from '#lib/display.ts';
@@ -7,19 +7,44 @@
   import RecordingName from '#lib/RecordingName.svelte';
   import FindingList from '#lib/FindingList.svelte';
   import Icon from '#lib/Icon.svelte';
+  import Skeleton from '#lib/Skeleton.svelte';
+  import SkeletonRows from '#lib/SkeletonRows.svelte';
+  import type { Column } from '#lib/columns.ts';
   import type { PageProps } from './$types';
   let { data }: PageProps = $props();
   getWorkbench().showScope(scope);
-  const snapshot = createSnapshot(() => data.report);
-  const current = $derived(snapshot.current.value);
+  const arrival = createArrival(() => data.report);
+  const arrived = $derived(arrival.current);
+  /** The report is on its way: the page draws its outline. */
+  const pending = $derived(arrived.state === 'pending');
+  const snapshot = $derived(arrived.state === 'ready' ? arrived.snapshot : null);
+  const current = $derived(snapshot?.value ?? null);
   const report = $derived(current?.report);
+  const totals = $derived(report?.totals);
   const session = $derived(current?.session);
   const rows = $derived(current ? turnRows(current.report, current.turns) : []);
   const findings = $derived(report ? report.findings.map(findingLine) : []);
   const chart = $derived(new ContextChart(rows));
   /** The chart's height in SVG units, drawn at the same height in pixels. */
   const CHART = 120;
+  const turnColumns: Column[] = [
+    { label: 'Started' },
+    { label: 'Prompt', class: 'turn-prompt' },
+    { label: 'Calls', numeric: true },
+    { label: 'Idle before', numeric: true },
+    { label: 'Context', numeric: true },
+    { label: 'From cache', numeric: true },
+    { label: 'Written', numeric: true },
+    { label: 'Out', numeric: true },
+  ];
 </script>
+
+<!-- A tile's figure or note, or its outline while the report is on its way. -->
+{#snippet value(
+  text: string | undefined,
+  width: string,
+  size: 'text' | 'figure' = 'text',
+)}{#if text === undefined}<Skeleton {size} {width} />{:else}{text}{/if}{/snippet}
 
 {#snippet scope()}
   <div class="scope-group scope-identity">
@@ -42,43 +67,69 @@
 
 <div class="usage-page">
   <div class="console">
-    {#if !report}
+    {#if !report && !pending}
       <div class="empty-state">
         <div class="empty-icon"><Icon name="alert" size={26} /></div>
         <h2>The report could not be read</h2>
-        <p>{snapshot.current.error?.message ?? 'Loading…'}</p>
+        <p>{snapshot?.error?.message ?? 'Loading…'}</p>
       </div>
     {:else}
-      {@const totals = report.totals}
-      <section class="usage-tiles" aria-label="Totals">
+      <section class="usage-tiles" aria-label="Totals" aria-busy={pending}>
         <div class="usage-tile">
           <span>Peak context</span><strong class="mono"
-            >{compact(totals.peak_context_tokens)}</strong
+            >{@render value(totals && compact(totals.peak_context_tokens), '4em', 'figure')}</strong
           ><small>tokens in one call</small>
         </div>
         <div class="usage-tile">
           <span>Read from cache</span><strong class="mono"
-            >{percentOrDash(totals.cache_hit_percent)}</strong
-          ><small>{compact(totals.cache_read_tokens)} of {compact(totals.context_tokens)}</small>
-        </div>
-        <div class="usage-tile">
-          <span>Written to cache</span><strong class="mono"
-            >{compact(totals.cache_written_tokens)}</strong
-          ><small>tokens</small>
-        </div>
-        <div class="usage-tile">
-          <span>Output</span><strong class="mono">{compact(totals.output_tokens)}</strong><small
-            >tokens</small
+            >{@render value(
+              totals && percentOrDash(totals.cache_hit_percent),
+              '3em',
+              'figure',
+            )}</strong
+          ><small
+            >{@render value(
+              totals && `${compact(totals.cache_read_tokens)} of ${compact(totals.context_tokens)}`,
+              '7em',
+            )}</small
           >
         </div>
         <div class="usage-tile">
-          <span>Calls</span><strong class="mono">{num(totals.calls)}</strong><small
-            >{num(totals.calls_with_usage)} reported usage</small
+          <span>Written to cache</span><strong class="mono"
+            >{@render value(
+              totals && compact(totals.cache_written_tokens),
+              '4em',
+              'figure',
+            )}</strong
+          ><small>tokens</small>
+        </div>
+        <div class="usage-tile">
+          <span>Output</span><strong class="mono"
+            >{@render value(totals && compact(totals.output_tokens), '4em', 'figure')}</strong
+          ><small>tokens</small>
+        </div>
+        <div class="usage-tile">
+          <span>Calls</span><strong class="mono"
+            >{@render value(totals && num(totals.calls), '3em', 'figure')}</strong
+          ><small
+            >{@render value(
+              totals && `${num(totals.calls_with_usage)} reported usage`,
+              '7em',
+            )}</small
           >
         </div>
       </section>
 
-      {#if chart.bars.length > 1}
+      {#if pending}
+        <section class="panel usage-panel" aria-labelledby="report-context-title">
+          <header class="panel-heading">
+            <h2 id="report-context-title">Context per turn</h2>
+          </header>
+          <div class="context-chart">
+            <div class="chart-outline"><Skeleton size="block" width="100%" /></div>
+          </div>
+        </section>
+      {:else if chart.bars.length > 1}
         <section class="panel usage-panel" aria-labelledby="report-context-title">
           <header class="panel-heading">
             <h2 id="report-context-title">Context per turn</h2>
@@ -128,7 +179,15 @@
           <h2 id="report-findings-title">Findings</h2>
           <span class="muted">Measured against fixed thresholds; causes are not inferred</span>
         </header>
-        {#if findings.length}
+        {#if pending}
+          <ul class="finding-list">
+            {#each ['62%', '48%'] as width (width)}
+              <li>
+                <Skeleton width="7em" /><span class="finding-detail"><Skeleton {width} /></span>
+              </li>
+            {/each}
+          </ul>
+        {:else if findings.length}
           <FindingList {findings} session={data.sessionId} page="session" />
         {:else}
           <p class="quiet-empty">No cache rebuilds or large context steps in this recording.</p>
@@ -140,19 +199,18 @@
           <h2 id="report-turns-title">Turns</h2>
           <span class="muted">Newest first · one user prompt each, as the client grouped them</span>
         </header>
-        {#if rows.length}
+        {#if rows.length || pending}
           <div class="table-scroll">
             <table class="usage-list turn-table">
               <thead
                 ><tr
-                  ><th>Started</th><th>Prompt</th><th class="numeric">Calls</th><th class="numeric"
-                    >Idle before</th
-                  ><th class="numeric">Context</th><th class="numeric">From cache</th><th
-                    class="numeric">Written</th
-                  ><th class="numeric">Out</th></tr
+                  >{#each turnColumns as column (column.label)}<th class:numeric={column.numeric}
+                      >{column.label}</th
+                    >{/each}</tr
                 ></thead
               >
               <tbody>
+                {#if pending}<SkeletonRows columns={turnColumns} rows={8} />{/if}
                 {#each rows as row (row.metrics.turn)}
                   {@const metrics = row.metrics}
                   <tr>
@@ -196,7 +254,7 @@
           </p>
         {/if}
       </section>
-      {#if report.omitted_calls}<p class="quiet-empty">
+      {#if report?.omitted_calls}<p class="quiet-empty">
           {num(report.omitted_calls)} older calls beyond the report's limit are not included.
         </p>{/if}
     {/if}
@@ -236,5 +294,9 @@
   }
   .start {
     fill: var(--ink);
+  }
+  /* The chart's outline holds the chart's own height, so nothing moves when it arrives. */
+  .chart-outline {
+    height: 120px;
   }
 </style>

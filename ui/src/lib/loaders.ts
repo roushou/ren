@@ -21,7 +21,7 @@ import {
 import { localDayStart, parseRange, rangeStart, type UsageRange } from './usage.ts';
 import { listingQuery } from './traffic.ts';
 import { readSnapshot, snapshotError, type Snapshot } from './snapshots.ts';
-import { Arrival } from './arrival.ts';
+import { Arrival, type Arriving } from './arrival.ts';
 import { Band, Board, LivePlace, type LiveWindow } from './board.ts';
 import { RecordingList, type RecordingDetail } from './recordings.ts';
 
@@ -77,7 +77,7 @@ export interface RecorderData {
 /** The Recorder page: its counters, and the oldest retained call for the history limit. */
 export function recorderSnapshot(fetcher: typeof fetch) {
   const api = new ManagementApi(fetcher);
-  return readSnapshot('recorder', async (): Promise<RecorderData> => {
+  return Arrival.read('recorder', async (): Promise<RecorderData> => {
     const [metrics, retained] = await Promise.all([
       api.metrics(),
       // Usage over every retained call lists its hours oldest first.
@@ -158,7 +158,7 @@ export interface OverviewData {
  */
 export function overviewSnapshot(fetcher: typeof fetch, live: LiveReader) {
   const api = new ManagementApi(fetcher);
-  return readSnapshot('overview', async (): Promise<OverviewData> => {
+  return Arrival.read('overview', async (): Promise<OverviewData> => {
     const now = Date.now();
     const day = 24 * 3_600_000;
     const since = String(now - day);
@@ -218,9 +218,10 @@ export class RecordingsReader {
   read(
     fetcher: typeof fetch,
     shelf: 'current' | 'archived' = 'current',
-  ): Promise<Snapshot<RecordingsData>> {
+  ): Promise<Arriving<RecordingsData>> {
     const api = new ManagementApi(fetcher);
-    return readSnapshot('sessions', async (): Promise<RecordingsData> => {
+    // Keyed by shelf: a refresh keeps its rows, but the other shelf is another query.
+    return Arrival.read(`sessions:${shelf}`, async (): Promise<RecordingsData> => {
       const [listing, open] = await Promise.all([
         api.sessions(100, undefined, shelf),
         api
@@ -400,7 +401,7 @@ export interface ReportData {
 /** A session's report, with its turns' prompts and its listing row. */
 export function reportSnapshot(fetcher: typeof fetch, sessionId: RecordingId) {
   const api = new ManagementApi(fetcher);
-  return readSnapshot(`/recordings/${sessionId}/report`, async (): Promise<ReportData> => {
+  return Arrival.read(`/recordings/${sessionId}/report`, async (): Promise<ReportData> => {
     const [report, turns, sessions] = await Promise.all([
       api.report(sessionId),
       api.turns(sessionId, 100),
@@ -418,7 +419,7 @@ export function reportSnapshot(fetcher: typeof fetch, sessionId: RecordingId) {
 /** What one turn did, read from its calls' bodies. */
 export function turnSnapshot(fetcher: typeof fetch, turnId: TurnId) {
   const api = new ManagementApi(fetcher);
-  return readSnapshot(`/turns/${turnId}`, () => api.turn(turnId));
+  return Arrival.read(`/turns/${turnId}`, () => api.turn(turnId));
 }
 
 export interface SearchData {
@@ -438,7 +439,7 @@ export function searchSnapshot(fetcher: typeof fetch, url: URL) {
   const q = (url.searchParams.get('q') ?? '').trim();
   const field = parseSearchField(url.searchParams.get('field'));
   const key = new URLSearchParams({ q, field: field ?? '' });
-  return readSnapshot(`/search?${key}`, async (): Promise<SearchData> => {
+  return Arrival.read(`/search?${key}`, async (): Promise<SearchData> => {
     if (!q) return { q, field, page: null, details: new Map(), sessions: [] };
     const query = new URLSearchParams({ q, limit: '50' });
     if (field) query.set('field', field);
@@ -560,6 +561,12 @@ export class LiveReader {
   readonly #calls = new RecentCalls();
   readonly #turns = new Map<TurnId, { signature: string; turn: TurnActivity }>();
 
+  /** The Live page's read, handed over pending on a navigation in the browser (`Arrival`). */
+  arrive(fetcher: typeof fetch, window: LiveWindow): Promise<Arriving<LiveData>> {
+    return Arrival.hand(`live:${window}`, this.read(fetcher, window));
+  }
+
+  /** The board's snapshot; the overview reads it whole, inside its own. */
   read(fetcher: typeof fetch, window: LiveWindow): Promise<Snapshot<LiveData>> {
     const api = new ManagementApi(fetcher);
     const spec = LivePlace.windows[window];

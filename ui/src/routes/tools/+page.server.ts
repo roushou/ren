@@ -8,7 +8,10 @@ import type { PageServerLoad } from './$types';
 export type ToolsInitial =
   { kind: 'ready'; listing: ToolListing } | { kind: 'failed'; message: string };
 
-export const load: PageServerLoad = async ({ request }) => {
+/** The read as the page receives it: done, or still on its way. */
+export type ToolsArriving = ToolsInitial | { kind: 'pending'; read: Promise<ToolsInitial> };
+
+export const load: PageServerLoad = async ({ request, isDataRequest }) => {
   const login = request.headers.get('tailscale-user-login');
   const api = new ToolsApi((async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = new URL(String(input), request.url);
@@ -21,11 +24,16 @@ export const load: PageServerLoad = async ({ request }) => {
       }),
     );
   }) as typeof fetch);
-  let initial: ToolsInitial;
-  try {
-    initial = { kind: 'ready', listing: await api.listing() };
-  } catch (error) {
-    initial = { kind: 'failed', message: error instanceof Error ? error.message : String(error) };
-  }
+  const read: Promise<ToolsInitial> = api.listing().then(
+    (listing) => ({ kind: 'ready', listing }),
+    (error: unknown) => ({
+      kind: 'failed',
+      message: error instanceof Error ? error.message : String(error),
+    }),
+  );
+  // A first load is read in full, so the page renders as it will stay. On a
+  // navigation in the browser the read is streamed to it, and the page draws
+  // its outline until it arrives.
+  const initial: ToolsArriving = isDataRequest ? { kind: 'pending', read } : await read;
   return { initial };
 };

@@ -1,14 +1,24 @@
+import { Arrival, type Arriving } from '#lib/arrival.ts';
 import { RunId, RunsClient, SessionId, Sessions, type StoredConversation } from '#lib/runs.ts';
 import type { PageLoad } from './$types';
 
+/** The selected session's newest run's conversation, as the page receives it. */
+export interface GivenConversation {
+  run: RunId;
+  conversation: Arriving<StoredConversation>;
+}
+
 // The server's first reads come through; the selected session's newest
-// run's conversation is read here too, so the page renders with it. A link
-// to a run (`?run=`) shows the session it served.
+// run's conversation is read here too: in full for a first load, so the
+// page renders with it, and handed over on its way on a navigation in the
+// browser, so the page appears at once with its outline. A link to a run
+// (`?run=`) shows the session it served.
 export const load: PageLoad = async ({ url, parent, data, fetch }) => {
   const { runsControl } = await parent();
+  const start = data.opening.kind === 'read' ? data.opening.start : null;
   const bodies = [
-    ...(data.initial?.sessions.state === 'read' ? data.initial.sessions.value : []),
-    ...(data.initial?.archivedSessions.state === 'read' ? data.initial.archivedSessions.value : []),
+    ...(start?.sessions.state === 'read' ? start.sessions.value : []),
+    ...(start?.archivedSessions.state === 'read' ? start.archivedSessions.value : []),
   ];
   const linkedRun = RunId.parse(url.searchParams.get('run'));
   const session =
@@ -16,13 +26,15 @@ export const load: PageLoad = async ({ url, parent, data, fetch }) => {
     (linkedRun ? Sessions.of(bodies, linkedRun) : null);
   const body = session ? bodies.find((entry) => entry.session === session) : undefined;
   const run = body ? (body.served?.process ?? body.stored?.runs[0]?.id ?? null) : null;
-  let conversation: { run: RunId; conversation: StoredConversation } | null = null;
-  if (run) {
-    try {
-      conversation = { run, conversation: await new RunsClient(fetch).conversation(run) };
-    } catch {
-      // The page reads it again, and says why when it cannot.
-    }
-  }
+  // A failed read is handed over too: the page reads it again, and says why
+  // when it cannot.
+  const conversation: GivenConversation | null = run
+    ? {
+        run,
+        conversation: await Arrival.read(`sessions:conversation:${run}`, () =>
+          new RunsClient(fetch).conversation(run),
+        ),
+      }
+    : null;
   return { ...data, runsControl, session, conversation };
 };

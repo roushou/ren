@@ -88,11 +88,13 @@ test('every response is version-checked and a mismatch is reported distinctly', 
     assert.match(result.error?.message ?? '', /requires version 1/);
   }
   // Error bodies (non-2xx) keep their status message instead.
-  const busy = await recorderSnapshot(async () => versioned({ error: 'busy' }, { status: 503 }));
+  const busy = ready(
+    await recorderSnapshot(async () => versioned({ error: 'busy' }, { status: 503 })),
+  );
   assert.equal(busy.error?.kind, 'failed');
   assert.match(busy.error?.message ?? '', /busy/);
-  const unavailable = await recorderSnapshot(async () =>
-    versioned({ error: 'unavailable' }, { status: 503 }),
+  const unavailable = ready(
+    await recorderSnapshot(async () => versioned({ error: 'unavailable' }, { status: 503 })),
   );
   assert.match(unavailable.error?.message ?? '', /storage is unavailable/);
   await assert.rejects(
@@ -104,18 +106,22 @@ test('every response is version-checked and a mismatch is reported distinctly', 
 });
 
 test('responses are parsed at the boundary: labels keep unknown text, shapes are enforced', async () => {
-  const metrics = await recorderSnapshot(async () =>
-    versioned({ recorder: recorderFixture(), storage: storageViewFixture() }),
+  const metrics = ready(
+    await recorderSnapshot(async () =>
+      versioned({ recorder: recorderFixture(), storage: storageViewFixture() }),
+    ),
   );
   assert.equal(metrics.value?.metrics.storage.disk.blobs.page_size, 4096);
   // The usage read failed to parse (this fake answers every path alike): no oldest call, no failure.
   assert.equal(metrics.value?.oldest, null);
-  const sessions = await new RecordingsReader(new RecordingDetails()).read(async (input) => {
-    if (path(input).startsWith('/api/calls')) return versioned({ calls: [], next: null });
-    if (path(input).endsWith('/turns?limit=5')) return versioned({ turns: [] });
-    assert.equal(path(input), '/api/sessions?limit=100');
-    return versioned({ sessions: [sessionRow(7, 2)] });
-  });
+  const sessions = ready(
+    await new RecordingsReader(new RecordingDetails()).read(async (input) => {
+      if (path(input).startsWith('/api/calls')) return versioned({ calls: [], next: null });
+      if (path(input).endsWith('/turns?limit=5')) return versioned({ turns: [] });
+      assert.equal(path(input), '/api/sessions?limit=100');
+      return versioned({ sessions: [sessionRow(7, 2)] });
+    }),
+  );
   // A label this UI does not know is kept as text.
   assert.equal(sessions.value?.sessions[0]?.provider, 'future_provider');
   // Tokens no call reported are null, never zero.
@@ -206,9 +212,11 @@ test('session pages read the session listing with only a cursor', async () => {
 });
 
 test('search reads nothing without a query and keeps only a known field', async () => {
-  const empty = await searchSnapshot(async () => {
-    throw new Error('Must not search without a query');
-  }, new URL('http://ui.test/search?q=%20%20&field=prompt'));
+  const empty = ready(
+    await searchSnapshot(async () => {
+      throw new Error('Must not search without a query');
+    }, new URL('http://ui.test/search?q=%20%20&field=prompt')),
+  );
   assert.deepEqual([empty.value?.q, empty.value?.field, empty.value?.page], ['', 'prompt', null]);
 
   const calls: string[] = [];
@@ -216,17 +224,15 @@ test('search reads nothing without a query and keeps only a known field', async 
     calls.push(path(input));
     return versioned({ hits: [], indexed_calls: 3 });
   };
-  const known = await searchSnapshot(
-    fetcher,
-    new URL('http://ui.test/search?q=a%26b&field=tool_output'),
+  const known = ready(
+    await searchSnapshot(fetcher, new URL('http://ui.test/search?q=a%26b&field=tool_output')),
   );
   assert.deepEqual(
     [known.value?.q, known.value?.field, known.value?.page],
     ['a&b', 'tool_output', { hits: [], indexed_calls: 3 }],
   );
-  const unknown = await searchSnapshot(
-    fetcher,
-    new URL('http://ui.test/search?q=a&field=everything'),
+  const unknown = ready(
+    await searchSnapshot(fetcher, new URL('http://ui.test/search?q=a&field=everything')),
   );
   assert.equal(unknown.value?.field, null);
   // Each search also reads the session listing, to name its hits' sessions.
@@ -297,7 +303,7 @@ test('sessions are read a few at a time', async () => {
       sessions: Array.from({ length: 20 }, (_, n) => sessionRow(20 + n, 2)),
     });
   };
-  const result = await new RecordingsReader(new RecordingDetails()).read(fetcher);
+  const result = ready(await new RecordingsReader(new RecordingDetails()).read(fetcher));
   assert.equal(result.value?.details.size, 20);
   assert.equal(most, RecordingDetails.parallel);
 });

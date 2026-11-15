@@ -8,5 +8,5 @@ import type { PageLoad } from './$types';
 const reader = browser ? new LiveReader() : null;
 
 export const load: PageLoad = async ({ fetch, url }) => ({
-  live: await (reader ?? new LiveReader()).read(fetch, LivePlace.parse(url.searchParams).window),
+  live: await (reader ?? new LiveReader()).arrive(fetch, LivePlace.parse(url.searchParams).window),
 });

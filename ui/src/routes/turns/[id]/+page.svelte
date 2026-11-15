@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { createSnapshot } from '#lib/snapshot.svelte.ts';
+  import { createArrival } from '#lib/snapshot.svelte.ts';
   import { getWorkbench } from '#lib/workbench.svelte.ts';
   import { num, short, clock, title } from '#lib/api.ts';
   import { compactOrDash, date, span, sessionTone } from '#lib/display.ts';
@@ -7,11 +7,16 @@
   import { Board } from '#lib/board.ts';
   import FindingList from '#lib/FindingList.svelte';
   import Icon from '#lib/Icon.svelte';
+  import Skeleton from '#lib/Skeleton.svelte';
   import type { PageProps } from './$types';
   let { data }: PageProps = $props();
   getWorkbench().showScope(scope);
-  const snapshot = createSnapshot(() => data.turn);
-  const turn = $derived(snapshot.current.value);
+  const arrival = createArrival(() => data.turn);
+  const arrived = $derived(arrival.current);
+  /** The turn is on its way: the page draws its outline. */
+  const pending = $derived(arrived.state === 'pending');
+  const snapshot = $derived(arrived.state === 'ready' ? arrived.snapshot : null);
+  const turn = $derived(snapshot?.value ?? null);
   const findings = $derived(turn ? turn.findings.map(findingLine) : []);
   /** The folder the turn's commands work in: paths under it are shown relative to it. */
   const workdir = $derived(turn ? Board.workdir(turn) : null);
@@ -31,9 +36,9 @@
       >{turn ? short(turn.native_id) : short(data.turnId)}</strong
     >
     <span class="muted"
-      >Turn{turn?.client ? ` · ${harnessLabel(turn.client)}` : ''}{turn?.started_at
-        ? ` · ${date(turn.started_at)} ${clock(turn.started_at)}`
-        : ''}</span
+      >Turn{#if pending}{' · '}<Skeleton width="10em" />{/if}{turn?.client
+        ? ` · ${harnessLabel(turn.client)}`
+        : ''}{turn?.started_at ? ` · ${date(turn.started_at)} ${clock(turn.started_at)}` : ''}</span
     >
   </div>
   {#if turn}<div class="scope-group end">
@@ -47,12 +52,45 @@
 
 <div class="usage-page">
   <div class="console">
-    {#if !turn}
+    {#if !turn && !pending}
       <div class="empty-state">
         <div class="empty-icon"><Icon name="alert" size={26} /></div>
         <h2>This turn could not be read</h2>
-        <p>{snapshot.current.error?.message ?? 'Loading…'}</p>
+        <p>{snapshot?.error?.message ?? 'Loading…'}</p>
       </div>
+    {:else if !turn}
+      <!-- The turn's frame, with outlines where its prompt, totals, and calls go. -->
+      <section class="panel usage-panel" aria-labelledby="turn-prompt-title" aria-busy="true">
+        <header class="panel-heading">
+          <h2 id="turn-prompt-title">Prompt</h2>
+        </header>
+        <p class="activity-text"><Skeleton width="78%" /><br /><Skeleton width="52%" /></p>
+      </section>
+
+      <section class="usage-tiles" aria-label="Totals" aria-busy="true">
+        {#each ['Calls', 'Tool calls', 'Files written', 'Commands'] as label (label)}
+          <div class="usage-tile">
+            <span>{label}</span><strong class="mono"><Skeleton size="figure" width="3em" /></strong>
+          </div>
+        {/each}
+      </section>
+
+      <section class="panel usage-panel" aria-labelledby="turn-calls-title" aria-busy="true">
+        <header class="panel-heading">
+          <h2 id="turn-calls-title">Calls</h2>
+          <span class="muted"
+            >Tool calls are what the model requested; results are what the client reported</span
+          >
+        </header>
+        {#each ['64%', '41%', '72%'] as width (width)}
+          <article class="activity-call">
+            <header class="activity-call-head">
+              <Skeleton width="4em" /><Skeleton width="9em" /><Skeleton width="16em" />
+            </header>
+            <p class="activity-text"><Skeleton {width} /></p>
+          </article>
+        {/each}
+      </section>
     {:else}
       <section class="panel usage-panel" aria-labelledby="turn-prompt-title">
         <header class="panel-heading">

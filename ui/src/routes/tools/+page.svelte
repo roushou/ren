@@ -5,8 +5,10 @@
   import { Runs, RunsClient, type Drivable, type RunClient } from '#lib/runs.ts';
   import { getWorkbench } from '#lib/workbench.svelte.ts';
   import Icon from '#lib/Icon.svelte';
+  import Skeleton from '#lib/Skeleton.svelte';
   import { harnessLabel } from '#lib/activity.ts';
   import {
+    KINDS,
     Platforms,
     RowActions,
     Supplies,
@@ -20,18 +22,19 @@
     type GenerationView,
     type PackageId,
     type ToolChange,
-    type ToolListing,
     type ToolPackage,
   } from '#lib/tools.ts';
 
   import type { PageProps } from './$types';
+  import type { ToolsInitial } from './+page.server.ts';
 
   let { data }: PageProps = $props();
   getWorkbench().showScope(scope);
   const api = new ToolsApi(fetch);
 
-  /** What the page shows: the daemon's listing, or why there is none. */
-  type Loaded = { kind: 'ready'; listing: ToolListing } | { kind: 'failed'; message: string };
+  /** What the page shows: the daemon's listing, why there is none, or its
+   * outline while the first read is on its way. */
+  type Loaded = ToolsInitial | { kind: 'pending' };
   /** What the plan bar is doing. */
   type Applying =
     | { kind: 'idle' }
@@ -39,8 +42,10 @@
     | { kind: 'done'; change: ToolChange }
     | { kind: 'failed'; message: string };
 
-  // The server's first read; later reads come from this page.
-  let loaded = $state<Loaded>(untrack(() => data.initial));
+  // The server's first read, done or on its way; later reads come from this page.
+  let loaded = $state<Loaded>(
+    untrack(() => (data.initial.kind === 'pending' ? { kind: 'pending' } : data.initial)),
+  );
   let plan = $state(ToolPlan.EMPTY);
   let applying = $state<Applying>({ kind: 'idle' });
   let selected = $state<PackageId | null>(
@@ -50,6 +55,21 @@
         : null,
     ),
   );
+
+  // The first read, when it was handed over on its way.
+  $effect(() => {
+    const initial = data.initial;
+    if (initial.kind !== 'pending') return;
+    let current = true;
+    void initial.read
+      .catch((error: unknown): ToolsInitial => ({ kind: 'failed', message: message(error) }))
+      .then((read) => {
+        if (current) took(read);
+      });
+    return () => {
+      current = false;
+    };
+  });
   let collecting = $state<string | null>(null);
 
   const listing = $derived(loaded.kind === 'ready' ? loaded.listing : null);
@@ -62,16 +82,30 @@
   const message = (error: unknown) =>
     error instanceof ToolsError || error instanceof Error ? error.message : String(error);
 
+  /** Show a read: its listing, keeping the plan within it, or why there is none. */
+  function took(read: ToolsInitial) {
+    loaded = read;
+    if (read.kind === 'failed') return;
+    plan = plan.within(read.listing);
+    if (selected === null)
+      selected = read.listing.packages.find((p) => p.release !== null)?.id ?? null;
+  }
+
   async function load() {
     try {
-      const read = await api.listing();
-      loaded = { kind: 'ready', listing: read };
-      plan = plan.within(read);
-      if (selected === null) selected = read.packages.find((p) => p.release !== null)?.id ?? null;
+      took({ kind: 'ready', listing: await api.listing() });
     } catch (error) {
-      loaded = { kind: 'failed', message: message(error) };
+      took({ kind: 'failed', message: message(error) });
     }
   }
+
+  /** The outline's groups: the catalog's kinds, with rows varied in width. */
+  const OUTLINE = KINDS.map((kind, index) => ({
+    kind,
+    title: ToolGroups.title(kind),
+    rows: [3, 4, 3][index] ?? 3,
+  }));
+  const OUTLINE_WIDTHS = ['62%', '48%', '71%', '55%'] as const;
 
   async function apply() {
     if (plan.empty || applying.kind === 'applying') return;
@@ -215,6 +249,72 @@
   {/if}
 {/snippet}
 
+{#snippet outline()}
+  <!-- The listing on its way: the catalog's groups with rows where packages
+       go, and the details pane's labels with bars where values go. -->
+  <section class="tools-main" aria-label="Packages" aria-busy="true">
+    <table class="tools-table">
+      <colgroup>
+        <col class="c-name" />
+        <col class="c-version" />
+        <col />
+        <col class="c-action" />
+      </colgroup>
+      {#each OUTLINE as group (group.kind)}
+        <tbody>
+          <tr class="tools-group">
+            <th colspan="4" scope="rowgroup">{group.title}</th>
+          </tr>
+          {#each { length: group.rows }, row (row)}
+            <tr aria-hidden="true">
+              <td class="mono name"
+                ><span class="dot none"></span><Skeleton
+                  width={OUTLINE_WIDTHS[row % OUTLINE_WIDTHS.length]}
+                /></td
+              >
+              <td class="mono"><Skeleton width="4.5em" /></td>
+              <td class="source"
+                ><Skeleton width={OUTLINE_WIDTHS[(row + 2) % OUTLINE_WIDTHS.length]} /></td
+              >
+              <td class="end"></td>
+            </tr>
+          {/each}
+        </tbody>
+      {/each}
+    </table>
+  </section>
+  <aside class="tools-inspector" aria-label="Details" aria-busy="true">
+    <section class="head">
+      <h2 class="mono"><span class="dot none"></span><Skeleton width="45%" /></h2>
+      <span class="chip-row"><Skeleton width="7em" /></span>
+    </section>
+    <section>
+      <dl>
+        <dt>Runs use</dt>
+        <dd><Skeleton width="35%" /></dd>
+        <dt>Pinned</dt>
+        <dd><Skeleton width="35%" /></dd>
+        <dt>SHA-256</dt>
+        <dd><Skeleton width="55%" /></dd>
+        <dt>Install</dt>
+        <dd><Skeleton width="85%" /></dd>
+      </dl>
+    </section>
+    <section>
+      <h3>History</h3>
+      <ul class="generations">
+        {#each OUTLINE_WIDTHS.slice(0, 3) as width, index (index)}
+          <li aria-hidden="true">
+            <Skeleton width="1.6em" />
+            <Skeleton {width} />
+            <span class="end"></span>
+          </li>
+        {/each}
+      </ul>
+    </section>
+  </aside>
+{/snippet}
+
 {#snippet dot(pkg: ToolPackage)}
   <span class="dot {Supplies.tone(pkg)}" aria-hidden="true"></span>
 {/snippet}
@@ -226,6 +326,8 @@
       <p>{loaded.message}</p>
       <button class="button" onclick={load}><Icon name="refresh" size={12} />Try again</button>
     </div>
+  {:else if loaded.kind === 'pending'}
+    {@render outline()}
   {:else if listing}
     <section class="tools-main" aria-label="Packages">
       <table class="tools-table">

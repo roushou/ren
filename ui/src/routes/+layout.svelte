@@ -1,13 +1,8 @@
-<script lang="ts" module>
-  /** How long a navigation waits before its view's outline is shown, in ms. */
-  const PLACEHOLDER_DELAY = 150;
-</script>
-
 <script lang="ts">
   import { flushSync, onMount, tick } from 'svelte';
   import { goto, onNavigate, preloadCode, refreshAll } from '$app/navigation';
   import { page, navigating } from '$app/state';
-  import { createSnapshot } from '#lib/snapshot.svelte.ts';
+  import { createSettled, createSnapshot } from '#lib/snapshot.svelte.ts';
   import { Workbench, setWorkbench } from '#lib/workbench.svelte.ts';
   import { LiveConnection } from '#lib/live.svelte.ts';
   import { num, short, clock } from '#lib/api.ts';
@@ -25,9 +20,9 @@
   import RedlineLayer from '#lib/RedlineLayer.svelte';
   import RedlinePanel from '#lib/RedlinePanel.svelte';
   import { RedlineDesk } from '#lib/redline.svelte.ts';
-  import { Views, type View } from '#lib/view.ts';
+  import { Views } from '#lib/view.ts';
   import { Arrival } from '#lib/arrival.ts';
-  import PagePlaceholder from '#lib/PagePlaceholder.svelte';
+  import type { RecordingsData } from '#lib/loaders.ts';
   import '#lib/style.css';
   import type { LayoutProps } from './$types';
   let { data, children }: LayoutProps = $props();
@@ -61,29 +56,17 @@
       ?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
   });
   const view = $derived(Views.of(page.route.id));
-  /** The view being navigated to, when it is another one: its tab lights up
-   * at once, and its placeholder follows if the wait is long enough to see. */
+  /** The view being navigated to, when it is another one: its tab and title
+   * show at once, while the page itself draws its own outline as it loads. */
   const target = $derived(
     navigating.to && navigating.to.route.id !== page.route.id
       ? Views.of(navigating.to.route.id)
       : null,
   );
-  /** The view whose outline stands in for the page while its data loads. */
-  let placeholder = $state<View | null>(null);
-  $effect(() => {
-    const next = target;
-    if (!next) {
-      placeholder = null;
-      return;
-    }
-    // A quick load swaps straight to the page, with no outline flashing by.
-    const timer = setTimeout(() => (placeholder = next), PLACEHOLDER_DELAY);
-    return () => clearTimeout(timer);
-  });
   const tab = $derived(Views.tab(target ?? view));
-  /** The scope bar's snippet: the page's own, except while another view's
-   * outline stands in for it, when the bar names that view instead. */
-  const scope = $derived(placeholder ? undefined : workbench.scope);
+  /** The scope bar's snippet: the page's own, except while leaving for
+   * another view, when the bar names that view instead of the old filters. */
+  const scope = $derived(target ? undefined : workbench.scope);
   /** When the scope does not fit on one line it folds behind a button. */
   let scopeOpen = $state(false);
   let folded = $state(false);
@@ -116,9 +99,23 @@
     if (toolbar) observer.observe(toolbar);
     return () => observer.disconnect();
   });
-  const sessionCount = $derived(page.data.sessions?.value?.sessions.length ?? 0);
+  /** The page's reads, as each comes in, for the status line and the error banner. */
+  const reads = createSettled(() => [
+    page.data.overview,
+    page.data.traffic,
+    page.data.live,
+    page.data.sessions,
+    page.data.usage,
+    page.data.recorder,
+    page.data.report,
+    page.data.turn,
+    page.data.search,
+  ]);
+  const sessionCount = $derived(
+    reads.of<RecordingsData>(page.data.sessions)?.value?.sessions.length ?? 0,
+  );
   const selected = $derived(workbench.selected);
-  const pageTitle = $derived(page.error ? 'Page unavailable' : Views.title(placeholder ?? view));
+  const pageTitle = $derived(page.error ? 'Page unavailable' : Views.title(target ?? view));
   const gatewayOrigin = $derived(page.data.gatewayUrl);
   // The header names where the gateway runs, not its address.
   const place = $derived(GatewayPlace.parse(gatewayOrigin));
@@ -137,13 +134,13 @@
   let refreshError = $state('');
   const failure = $derived<SnapshotError | null>(
     gateway.current.error ??
-      page.data.traffic?.error ??
-      page.data.live?.error ??
-      page.data.sessions?.error ??
-      page.data.recorder?.error ??
-      page.data.report?.error ??
-      page.data.turn?.error ??
-      page.data.search?.error ??
+      reads.of(page.data.traffic)?.error ??
+      reads.of(page.data.live)?.error ??
+      reads.of(page.data.sessions)?.error ??
+      reads.of(page.data.recorder)?.error ??
+      reads.of(page.data.report)?.error ??
+      reads.of(page.data.turn)?.error ??
+      reads.of(page.data.search)?.error ??
       null,
   );
   const error = $derived(refreshError || failure?.message || '');
@@ -353,15 +350,8 @@
       role="progressbar"
       aria-label="Loading view"
     ></div>{/if}
-  <main
-    class="workspace"
-    class:navigating={!!navigating.to && !placeholder}
-    aria-busy={!!navigating.to}
-  >
-    {#if placeholder}<PagePlaceholder shape={Views.shape(placeholder)} />{/if}
-    <!-- Kept mounted under the outline, so a navigation that fails or is
-         cancelled leaves the page as it was. -->
-    <div class="page-slot" class:hidden={!!placeholder}>{@render children()}</div>
+  <main class="workspace" class:navigating={!!navigating.to} aria-busy={!!navigating.to}>
+    {@render children()}
   </main>
   <footer class="statusline" class:redlining={redline.open} aria-label="Gateway status">
     <span

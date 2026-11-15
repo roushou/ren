@@ -1,7 +1,6 @@
 /**
  * The workbench's views: which one a route is, the tab it sits under, its
- * title, and the shape of its placeholder while its data loads. Pure, so
- * the layout's choices are tested without a browser.
+ * title. Pure, so the layout's choices are tested without a browser.
  */
 
 /** A view of the workbench, one per page. */
@@ -30,12 +29,6 @@ export type Tab =
   | 'usage'
   | 'tools'
   | 'recorder';
-
-/**
- * How a view is laid out, which its placeholder follows: tiles over panels,
- * a list of rows, or a sidebar beside a main pane.
- */
-export type Shape = 'dashboard' | 'list' | 'split';
 
 export class Views {
   /** The view a SvelteKit route id is; an unknown route is Traffic, the
@@ -120,31 +113,6 @@ export class Views {
         return 'Tools';
       case 'recorder':
         return 'Recorder & storage';
-      default: {
-        const never: never = view;
-        return never;
-      }
-    }
-  }
-
-  /** The shape of `view`'s placeholder. */
-  static shape(view: View): Shape {
-    switch (view) {
-      case 'overview':
-      case 'usage':
-      case 'report':
-      case 'recorder':
-        return 'dashboard';
-      case 'live':
-      case 'traffic':
-      case 'recordings':
-      case 'recording':
-      case 'turn':
-      case 'search':
-        return 'list';
-      case 'sessions':
-      case 'tools':
-        return 'split';
       default: {
         const never: never = view;
         return never;

@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
-  import { createSnapshot } from '#lib/snapshot.svelte.ts';
+  import { createArrival } from '#lib/snapshot.svelte.ts';
   import { getWorkbench } from '#lib/workbench.svelte.ts';
   import { num, short, clock, providerName, providerMark } from '#lib/api.ts';
   import { compactOrDash, span } from '#lib/display.ts';
@@ -11,12 +11,27 @@
   import { Board } from '#lib/board.ts';
   import Icon from '#lib/Icon.svelte';
   import StateGlyph from '#lib/StateGlyph.svelte';
+  import Skeleton from '#lib/Skeleton.svelte';
+  import SkeletonRows from '#lib/SkeletonRows.svelte';
+  import type { Column } from '#lib/columns.ts';
   import type { PageProps } from './$types';
 
   let { data }: PageProps = $props();
   getWorkbench().showScope(scope);
-  const snapshot = createSnapshot(() => data.sessions);
-  const current = $derived(snapshot.current.value);
+  const arrival = createArrival(() => data.sessions);
+  const arrived = $derived(arrival.current);
+  /** The listing is on its way: the page draws its outline. */
+  const pending = $derived(arrived.state === 'pending');
+  const current = $derived(arrived.state === 'ready' ? arrived.snapshot.value : null);
+  /** Widths come from the column group, so the folded table lines up with this one. */
+  const tableColumns: Column[] = [
+    { label: 'Recording' },
+    { label: 'Now' },
+    { label: 'Requests', numeric: true },
+    { label: 'Turns', numeric: true },
+    { label: 'Tokens in · out', numeric: true },
+    { label: 'Active for', numeric: true },
+  ];
   const sessions = $derived(current?.sessions ?? []);
   let query = $state('');
   // Relative times tick between refreshes.
@@ -46,7 +61,11 @@
 
 {#snippet scope()}
   <div class="scope-group">
-    <strong>{sessions.length}{sessions.length === 100 ? '+' : ''}</strong>
+    <strong
+      >{#if pending}<Skeleton width="2em" />{:else}{sessions.length}{sessions.length === 100
+          ? '+'
+          : ''}{/if}</strong
+    >
     <span class="muted"
       >{data.shelf === 'archived' ? 'archived recordings' : 'recordings'} · grouped by the IDs clients
       report</span
@@ -132,17 +151,18 @@
 
 <section class="panel list-panel sessions-panel">
   <div class="list-content">
-    {#if shown || list.folded.length}
+    {#if pending || shown || list.folded.length}
       <div class="table-scroll">
-        <table class="sessions-table">
+        <table class="sessions-table" aria-busy={pending}>
           {@render columns()}
           <thead
             ><tr
-              ><th>Recording</th><th>Now</th><th class="numeric">Requests</th><th class="numeric"
-                >Turns</th
-              ><th class="numeric">Tokens in · out</th><th class="numeric">Active for</th></tr
+              >{#each tableColumns as column (column.label)}<th class:numeric={column.numeric}
+                  >{column.label}</th
+                >{/each}</tr
             ></thead
           >
+          {#if pending}<tbody><SkeletonRows columns={tableColumns} rows={10} /></tbody>{/if}
           {#each list.groups as group (group.key)}
             <tbody>
               <tr class="day-row"

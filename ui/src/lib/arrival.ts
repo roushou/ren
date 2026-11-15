@@ -34,6 +34,11 @@ export class Arrival {
     return Arrival.over(key, readSnapshot(key, read), Arrival.#streaming);
   }
 
+  /** A snapshot already on its way under `key`, handed over pending when streaming. */
+  static hand<T>(key: string, snapshot: Promise<Snapshot<T>>): Promise<Arriving<T>> {
+    return Arrival.over(key, snapshot, Arrival.#streaming);
+  }
+
   /** A snapshot on its way, handed over pending, or once it is read. */
   static async over<T>(
     key: string,

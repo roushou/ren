@@ -1,18 +1,31 @@
 <script lang="ts">
-  import { createSnapshot } from '#lib/snapshot.svelte.ts';
+  import { page as location } from '$app/state';
+  import { createArrival } from '#lib/snapshot.svelte.ts';
   import { getWorkbench } from '#lib/workbench.svelte.ts';
-  import { num, clock, SEARCH_FIELDS, type SearchField } from '#lib/api.ts';
+  import { num, clock, parseSearchField, SEARCH_FIELDS, type SearchField } from '#lib/api.ts';
   import { date, sessionTone } from '#lib/display.ts';
   import { searchFieldLabel, searchHitHref, snippetParts } from '#lib/activity.ts';
   import Icon from '#lib/Icon.svelte';
   import RecordingName from '#lib/RecordingName.svelte';
   import Segmented, { type SegmentedOption } from '#lib/Segmented.svelte';
+  import Skeleton from '#lib/Skeleton.svelte';
   import type { PageProps } from './$types';
   let { data }: PageProps = $props();
   getWorkbench().showScope(scope);
-  const snapshot = createSnapshot(() => data.search);
-  const current = $derived(snapshot.current.value);
+  const arrival = createArrival(() => data.search);
+  const arrived = $derived(arrival.current);
+  /** The search is on its way: the page draws its outline. */
+  const pending = $derived(arrived.state === 'pending');
+  const snapshot = $derived(arrived.state === 'ready' ? arrived.snapshot : null);
+  const current = $derived(snapshot?.value ?? null);
   const page = $derived(current?.page ?? null);
+  /** What was searched for, from the URL until the search is read. */
+  const q = $derived(current?.q ?? (location.url.searchParams.get('q') ?? '').trim());
+  const field = $derived(
+    current ? current.field : parseSearchField(location.url.searchParams.get('field')),
+  );
+  /** Varied snippet widths for the outline, so its rows read as text. */
+  const outlineWidths = ['82%', '64%', '91%', '58%', '76%', '69%'];
   const details = $derived(current?.details ?? new Map());
   const sessionsById = $derived(new Map((current?.sessions ?? []).map((item) => [item.id, item])));
   const fieldOptions: SegmentedOption<SearchField | ''>[] = [
@@ -21,14 +34,14 @@
   ];
   const fieldHref = (field: SearchField | null) => {
     const query = new URLSearchParams();
-    if (current?.q) query.set('q', current.q);
+    if (q) query.set('q', q);
     if (field) query.set('field', field);
     return `/search?${query}`;
   };
   /** The input takes the keyboard when the page opens, and on `/`. */
   let input = $state<HTMLInputElement>();
   $effect(() => {
-    if (!current?.q) input?.focus();
+    if (!q) input?.focus();
   });
   function onKeydown(event: KeyboardEvent) {
     const typing =
@@ -61,33 +74,33 @@
         type="search"
         aria-label="Search recorded history"
         placeholder={'Search prompts, replies, commands, file paths, errors…'}
-        value={current?.q ?? ''}
+        value={q}
         autocomplete="off"
         spellcheck="false"
       />
-      {#if current?.field}<input type="hidden" name="field" value={current.field} />{/if}
+      {#if field}<input type="hidden" name="field" value={field} />{/if}
       <button class="button primary search-submit" type="submit">Search</button>
     </label>
     <Segmented
       label="Search in"
       class="search-fields"
       options={fieldOptions}
-      value={current?.field ?? ''}
+      value={field ?? ''}
       href={(field) => fieldHref(field || null)}
     />
   </form>
 {/snippet}
 
 <section class="panel list-panel search-panel">
-  {#if !current}
+  {#if !current && !pending}
     <div class="list-content">
       <div class="empty-state">
         <div class="empty-icon"><Icon name="alert" size={25} /></div>
         <h2>Search could not run</h2>
-        <p>{snapshot.current.error?.message ?? 'Loading…'}</p>
+        <p>{snapshot?.error?.message ?? 'Loading…'}</p>
       </div>
     </div>
-  {:else if !page}
+  {:else if pending ? !q : !page}
     <div class="list-content">
       <div class="search-hero">
         <h2>Search recorded history</h2>
@@ -104,8 +117,21 @@
     </div>
   {:else}
     <div class="search-bar">{@render searchForm(false)}</div>
-    <div class="list-content">
-      {#if page.hits.length}
+    <div class="list-content" aria-busy={pending}>
+      {#if pending}
+        <ul class="search-hits">
+          {#each outlineWidths as width, index (index)}
+            <li>
+              <div class="search-hit">
+                <span class="search-hit-meta">
+                  <Skeleton width="9em" /><Skeleton width="4em" /><Skeleton width="7em" />
+                </span>
+                <span class="search-snippet"><Skeleton {width} /></span>
+              </div>
+            </li>
+          {/each}
+        </ul>
+      {:else if page?.hits.length}
         <ul class="search-hits">
           {#each page.hits as hit (`${hit.call}-${hit.field}`)}
             <li>
@@ -135,16 +161,15 @@
       {:else}
         <div class="empty-state">
           <div class="empty-icon"><Icon name="search" size={25} /></div>
-          <h2>No matches for “{current.q}”</h2>
+          <h2>No matches for “{q}”</h2>
           <p>Try fewer words, search everything, or put a phrase in quotes.</p>
         </div>
       {/if}
     </div>
     <div class="table-footer">
       <span
-        >{num(page.hits.length)}{page.hits.length === 50 ? '+' : ''} matches, newest first · {num(
-          page.indexed_calls,
-        )} calls indexed</span
+        >{#if page}{num(page.hits.length)}{page.hits.length === 50 ? '+' : ''} matches, newest first ·
+          {num(page.indexed_calls)} calls indexed{:else}<Skeleton width="16em" />{/if}</span
       >
     </div>
   {/if}

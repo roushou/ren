@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { createSnapshot } from '#lib/snapshot.svelte.ts';
+  import { createArrival, createSnapshot } from '#lib/snapshot.svelte.ts';
   import { getWorkbench } from '#lib/workbench.svelte.ts';
   import { num, bytes, type FileUsage } from '#lib/api.ts';
   import { assertNever } from '#lib/decode.ts';
@@ -7,18 +7,28 @@
   import { RecorderReport } from '#lib/recorder.ts';
   import Icon from '#lib/Icon.svelte';
   import StateGlyph from '#lib/StateGlyph.svelte';
+  import Skeleton from '#lib/Skeleton.svelte';
   import type { PageProps } from './$types';
   let { data }: PageProps = $props();
   getWorkbench().showScope(scope);
   const gateway = createSnapshot(() => data.gateway);
-  const snapshot = createSnapshot(() => data.recorder);
+  const arrival = createArrival(() => data.recorder);
+  const shown = $derived(arrival.current);
+  /** The counters are on their way: the page draws its outline. */
+  const pending = $derived(shown.state === 'pending');
+  const snapshot = $derived(shown.state === 'ready' ? shown.snapshot : null);
   const policy = $derived(gateway.current.value?.storage.policy);
   // `/api/metrics` is fresher; `/health` keeps counters visible if storage reads fail.
+  // While the metrics are on their way, their places are outlined instead.
   const recorder = $derived(
-    snapshot.current.value?.metrics.recorder ?? gateway.current.value?.health.recorder,
+    pending
+      ? undefined
+      : (snapshot?.value?.metrics.recorder ?? gateway.current.value?.health.recorder),
   );
   const usage = $derived(
-    snapshot.current.value?.metrics.storage ?? gateway.current.value?.storage.usage,
+    pending
+      ? undefined
+      : (snapshot?.value?.metrics.storage ?? gateway.current.value?.storage.usage),
   );
   const report = $derived(
     recorder
@@ -26,11 +36,15 @@
           recorder,
           usage ?? null,
           policy ?? null,
-          snapshot.current.value?.oldest ?? null,
+          snapshot?.value?.oldest ?? null,
           Date.now(),
         )
       : null,
   );
+  /** The limits' gauges, labelled, for their outline. */
+  const gaugeOutline = $derived(RecorderReport.gauges(null, policy ?? null, null, Date.now()));
+  /** Rows the loss-and-errors outline shows. */
+  const NOTE_ROWS = 2;
   const verdict = $derived(report?.verdict ?? null);
   /** The share of a queue limit in use, for its meter. */
   const share = (used: number, capacity: number) =>
@@ -113,6 +127,10 @@
   ]);
 </script>
 
+{#snippet value(counter: Counter)}
+  {#if pending}<Skeleton width="5em" />{:else}{format(counter)}{/if}
+{/snippet}
+
 {#snippet scope()}
   <div class="scope-group">
     <span class="muted">Daemon build {buildLabel(gateway.current.value?.health.build ?? null)}</span
@@ -121,7 +139,11 @@
 {/snippet}
 
 <div class="recorder-console">
-  {#if verdict}
+  {#if pending}
+    <section class="rec-verdict state-edge" aria-label="How recording stands" aria-busy="true">
+      <Skeleton width="22em" />
+    </section>
+  {:else if verdict}
     <section class="rec-verdict state-edge {verdict.tone}" aria-label="How recording stands">
       <strong>{verdict.headline}</strong>
       {#each verdict.facts as fact (fact)}<span class="muted">{SEPARATOR}{fact}</span>{/each}
@@ -130,7 +152,19 @@
         >{/if}
     </section>
   {/if}
-  {#if report}
+  {#if pending}
+    <section class="rec-gauges" aria-label="Retention limits" aria-busy="true">
+      {#each gaugeOutline as gauge (gauge.label)}
+        <div class="rec-gauge">
+          <div class="rec-gauge-head"><span>{gauge.label}</span></div>
+          <div class="mono rec-gauge-value"><Skeleton size="figure" width="9em" /></div>
+          <svg class="rec-meter" viewBox="0 0 100 6" preserveAspectRatio="none" aria-hidden="true"
+            ><rect class="track" x="0" y="0" width="100" height="6" /></svg
+          >
+        </div>
+      {/each}
+    </section>
+  {:else if report}
     <section class="rec-gauges" aria-label="Retention limits">
       {#each report.gauges as gauge (gauge.label)}
         <div class="rec-gauge" class:binding={gauge.binding}>
@@ -195,13 +229,13 @@
           <dd>{policy ? bytes(policy.max_storage_bytes) : '—'}</dd>
         </div>
       </dl>
-      <section class="counter-group" aria-label="Disk usage">
+      <section class="counter-group" aria-label="Disk usage" aria-busy={pending}>
         <h3>Disk usage</h3>
         <dl class="health-list">
           {#each diskCounters as counter (counter.label)}
             <div>
               <dt>{counter.label}</dt>
-              <dd class:zero={counter.value === 0}>{format(counter)}</dd>
+              <dd class:zero={counter.value === 0}>{@render value(counter)}</dd>
             </div>
           {/each}
         </dl>
@@ -226,7 +260,38 @@
           <p>Counters since gateway startup</p>
         </div>
       </header>
-      {#if recorder}
+      {#if pending}
+        <section class="counter-group" aria-label="Queue" aria-busy="true">
+          <h3>Queue</h3>
+          <dl class="health-list">
+            {#each ['Records', 'Bytes'] as label (label)}
+              <div class="rec-queue">
+                <dt>{label}</dt>
+                <svg
+                  class="rec-meter"
+                  viewBox="0 0 100 6"
+                  preserveAspectRatio="none"
+                  aria-hidden="true"><rect class="track" x="0" y="0" width="100" height="6" /></svg
+                >
+                <dd><Skeleton width="7em" /></dd>
+              </div>
+            {/each}
+          </dl>
+        </section>
+        <section class="counter-group" aria-label="Loss and errors" aria-busy="true">
+          <h3>Loss and errors</h3>
+          {#each { length: NOTE_ROWS }, row (row)}
+            <div class="rec-note">
+              <i></i>
+              <div>
+                <strong><Skeleton width={['10em', '13em'][row % 2]} /></strong>
+                <small><Skeleton width={['20em', '16em'][row % 2]} /></small>
+              </div>
+              <span class="mono"><Skeleton width="2em" /></span>
+            </div>
+          {/each}
+        </section>
+      {:else if recorder}
         <section class="counter-group" aria-label="Queue">
           <h3>Queue</h3>
           <dl class="health-list">
@@ -287,14 +352,14 @@
         </section>
       {/if}
       {#each counterGroups as group (group.title)}
-        <section class="counter-group" aria-label={group.title}>
+        <section class="counter-group" aria-label={group.title} aria-busy={pending}>
           <h3>{group.title}</h3>
           <dl class="health-list">
             {#each group.counters as counter (counter.label)}
               <div>
                 <dt>{counter.label}</dt>
                 <dd class:zero={counter.value === 0}>
-                  {format(counter)}
+                  {@render value(counter)}
                 </dd>
               </div>
             {/each}

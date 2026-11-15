@@ -39,6 +39,7 @@
     type DeskSession,
     type SessionBody,
     type SessionId,
+    type StoredConversation,
     type ClientCommand,
     type FileMatch,
   } from '#lib/runs.ts';
@@ -60,7 +61,10 @@
   import SignInSheet from '#lib/SignInSheet.svelte';
   import { SignIns } from '#lib/signIn.ts';
   import RunSettingsBar from './RunSettingsBar.svelte';
-  import SessionList from './SessionList.svelte';
+  import SessionList, { type Listing } from './SessionList.svelte';
+  import Skeleton from '#lib/Skeleton.svelte';
+  import type { Arriving } from '#lib/arrival.ts';
+  import type { Snapshot } from '#lib/snapshots.ts';
   import type { PageProps } from './$types';
 
   let { data }: PageProps = $props();
@@ -69,14 +73,21 @@
   const client = new RunsClient();
   const api = new ManagementApi();
 
-  /** What the server read for the first render; the feed follows from here. */
-  const initial = untrack(() => data.initial);
+  /** What the server read for the first render; the feed follows from here.
+   * Null when it read nothing: runs are off, or the page came by a
+   * navigation in the browser and reads it all itself. */
+  const initial = untrack(() => (data.opening.kind === 'read' ? data.opening.start : null));
   const first = <T,>(read: Read<T> | undefined, none: T): T =>
     read?.state === 'read' ? read.value : none;
   let live = $state.raw<RunSnapshot[]>(first(initial?.live, []));
   /** The sessions, current and archived, as stored and served. */
   let sessions = $state.raw<SessionBody[]>(first(initial?.sessions, []));
   let archivedSessions = $state.raw<SessionBody[]>(first(initial?.archivedSessions, []));
+  /** Whether the lists have been read: on a navigation in the browser they
+   * are on their way, and the list draws its outline until they come. */
+  let listing = $state<Listing>(
+    untrack(() => (data.opening.kind === 'unread' ? 'pending' : 'read')),
+  );
   /** Which sessions the list shows. */
   let shelf = $state<Shelf>('current');
   /** A session's delete: asked, confirmed, and sent, one at a time. */
@@ -93,8 +104,9 @@
   const transcripts = new SvelteMap<RunId, Transcript>();
   // The selected run's conversation, as the page was loaded with it.
   untrack(() => {
-    if (data.conversation) {
-      transcripts.set(data.conversation.run, new Transcript().load(data.conversation.conversation));
+    const given = data.conversation;
+    if (given?.conversation.state === 'ready' && given.conversation.snapshot.value) {
+      transcripts.set(given.run, new Transcript().load(given.conversation.snapshot.value));
     }
   });
   /** The session the page shows, from the URL. */
@@ -145,9 +157,24 @@
   const waiting = $derived(folders.reduce((sum, folder) => sum + folder.waiting, 0));
   const liveCount = $derived(live.filter((run) => run.state.phase !== 'ended').length);
 
-  /** The selected run's recorded turns, oldest first, and the session they belong to. */
+  /** The selected run's stored conversation: on its way, read, or why it
+   * could not be. */
+  type ConversationRead =
+    | { run: RunId; state: 'pending' }
+    | { run: RunId; state: 'read' }
+    | { run: RunId; state: 'failed'; reason: string };
+  let conversationRead = $state.raw<ConversationRead | null>(null);
   /** Why the selected run's conversation could not be read. */
-  let readError = $state<string | null>(null);
+  const readError = $derived(
+    conversationRead?.state === 'failed' && conversationRead.run === selected
+      ? conversationRead.reason
+      : null,
+  );
+  /** The selected run's conversation is on its way, with nothing of it read
+   * here yet: the pane draws its outline. */
+  const conversationPending = $derived(
+    conversationRead?.state === 'pending' && conversationRead.run === selected && !transcript?.read,
+  );
 
   /** The projects the daemon offers to start a run in. */
   let offered = $state.raw<RunProject[]>(first(initial?.places, null)?.projects ?? []);
@@ -160,6 +187,13 @@
     ['activity', 'Activity'],
     ['files', 'Files'],
     ['calls', 'Calls'],
+  ] as const;
+  /** The turns a conversation's outline draws: each prompt's width and its
+   * reply's lines, varied so they read as text. */
+  const OUTLINE_TURNS = [
+    { prompt: '46%', reply: ['88%', '74%', '52%'] },
+    { prompt: '31%', reply: ['81%', '63%'] },
+    { prompt: '57%', reply: ['85%', '90%', '68%', '40%'] },
   ] as const;
   /** What the selected run shows. */
   let tab = $state<(typeof tabs)[number][0]>('conversation');
@@ -232,8 +266,10 @@
         client.sessions(),
         client.sessions('archived'),
       ]);
+      listing = 'read';
     } catch {
       // The list stays as it was; the feed brings changes.
+      if (listing === 'pending') listing = 'failed';
     }
   }
 
@@ -321,13 +357,37 @@
    * what streamed in meanwhile; and its record, for its session.
    */
   async function readConversation(run: RunId) {
+    if (selected === run) conversationRead = { run, state: 'pending' };
     try {
       const conversation = await client.conversation(run);
       transcripts.set(run, (transcripts.get(run) ?? new Transcript()).load(conversation));
-      if (selected === run) readError = null;
+      if (selected === run) conversationRead = { run, state: 'read' };
     } catch (error) {
-      if (selected === run) readError = message(error);
+      if (selected === run) conversationRead = { run, state: 'failed', reason: message(error) };
     }
+  }
+
+  /**
+   * Take the conversation the page was loaded with: at once when it was
+   * read, or once it arrives. A read that failed is made again here, which
+   * says why when it cannot.
+   */
+  function adopt(run: RunId, given: Arriving<StoredConversation>) {
+    if (given.state === 'ready') {
+      took(run, given.snapshot);
+      return;
+    }
+    conversationRead = { run, state: 'pending' };
+    void given.snapshot.then((snapshot) => took(run, snapshot));
+  }
+
+  function took(run: RunId, snapshot: Snapshot<StoredConversation>) {
+    if (snapshot.value === null) {
+      if (selected === run) void readConversation(run);
+      return;
+    }
+    transcripts.set(run, (transcripts.get(run) ?? new Transcript()).load(snapshot.value));
+    if (selected === run) conversationRead = { run, state: 'read' };
   }
 
   async function act(action: () => Promise<unknown>) {
@@ -797,7 +857,7 @@
 
   $effect(() => {
     const run = selected;
-    readError = null;
+    conversationRead = null;
     calls = null;
     // A question asked in the header is about the session it showed.
     untrack(() => {
@@ -816,7 +876,7 @@
     untrack(() => {
       const given = data.conversation;
       if (given?.run === run) {
-        transcripts.set(run, (transcripts.get(run) ?? new Transcript()).load(given.conversation));
+        adopt(run, given.conversation);
       } else {
         void readConversation(run);
       }
@@ -1175,6 +1235,41 @@
   {/if}
 {/snippet}
 
+{#snippet turnsOutline()}
+  <!-- A conversation on its way: turns ruled off as they will be, with
+       bars where each prompt and reply go. -->
+  {#each OUTLINE_TURNS as turn, index (index)}
+    <section class="turn" aria-hidden="true">
+      <div class="entry prompt outline"><Skeleton width={turn.prompt} /></div>
+      <div class="entry reply outline">
+        {#each turn.reply as width, line (line)}<Skeleton {width} />{/each}
+      </div>
+    </section>
+  {/each}
+{/snippet}
+
+{#snippet sessionOutline()}
+  <!-- A session on its way, before the lists say what it is: its header,
+       its tabs, and its conversation's outline. -->
+  <header class="run-head" aria-busy="true">
+    <div class="run-heading">
+      <h2 class="run-title"><Skeleton width="42%" /></h2>
+      <p class="run-facts"><Skeleton width="16em" /></p>
+    </div>
+  </header>
+  <div class="tabs" role="tablist" aria-label="What the run shows">
+    {#each tabs as [name, label] (name)}
+      <button
+        role="tab"
+        aria-selected={name === 'conversation'}
+        class:chosen={name === 'conversation'}
+        disabled>{label}</button
+      >
+    {/each}
+  </div>
+  <div class="conversation" aria-busy="true">{@render turnsOutline()}</div>
+{/snippet}
+
 <svelte:window onkeydown={shortcut} />
 
 <div class="runs-page" data-pane={pane}>
@@ -1182,6 +1277,7 @@
     {#if unavailable}<p class="sidebar-note danger">{unavailable}</p>{/if}
     <SessionList
       {folders}
+      {listing}
       selected={chosen}
       {now}
       {title}
@@ -1217,7 +1313,9 @@
       }}><span class="pane-back-icon"><Icon name="chevron" size={14} /></span>Sessions</button
     >
     {#if !current || !runState || !mark || !controls}
-      {#if data.runsControl}
+      {#if data.runsControl && chosen && !session && listing === 'pending'}
+        {@render sessionOutline()}
+      {:else if data.runsControl}
         {#if chosen && !session}<p class="lost muted">
             This session is not listed. Start another below.
           </p>{/if}
@@ -1313,17 +1411,26 @@
       </div>
 
       {#if tab === 'conversation'}
-        <div class="conversation" bind:this={conversation} onscroll={onScroll}>
-          {#if readError}<p class="entry notice-entry danger">{readError}</p>{/if}
-          {#if transcript?.earlier}<p class="quiet-empty">
-              Earlier turns are not shown: the conversation is longer than one read.
-            </p>{/if}
-          <!-- The whole conversation, every turn open, as one scroll. -->
-          {#each Runs.turns(transcript?.entries ?? []) as turn, index (index)}
-            <section class="turn">
-              {#each turn as entry, at (at)}{@render entryView(entry)}{/each}
-            </section>
-          {/each}
+        <div
+          class="conversation"
+          bind:this={conversation}
+          onscroll={onScroll}
+          aria-busy={conversationPending}
+        >
+          {#if conversationPending}
+            {@render turnsOutline()}
+          {:else}
+            {#if readError}<p class="entry notice-entry danger">{readError}</p>{/if}
+            {#if transcript?.earlier}<p class="quiet-empty">
+                Earlier turns are not shown: the conversation is longer than one read.
+              </p>{/if}
+            <!-- The whole conversation, every turn open, as one scroll. -->
+            {#each Runs.turns(transcript?.entries ?? []) as turn, index (index)}
+              <section class="turn">
+                {#each turn as entry, at (at)}{@render entryView(entry)}{/each}
+              </section>
+            {/each}
+          {/if}
           {#if runState.phase === 'working' && !controls.approvals.length}<div
               class="entry tool muted working"
             >
@@ -1865,6 +1972,21 @@
   }
   .sent-image.named {
     padding: 6px 8px;
+  }
+  /* An entry's outline: its bars stacked as its lines will be. */
+  .entry.outline {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 7px;
+    padding-block: 12px;
+  }
+  /* A prompt is drawn on the inset surface the bars use: its bar is ruled. */
+  .entry.prompt.outline :global(.skeleton) {
+    background: var(--line);
+  }
+  .tabs button:disabled {
+    cursor: default;
   }
   .entry.prompt {
     background: var(--surface-inset);

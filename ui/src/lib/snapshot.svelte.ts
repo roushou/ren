@@ -52,3 +52,35 @@ export function createArrival<T>(read: () => Arriving<T>) {
     },
   };
 }
+
+/**
+ * The snapshots of the reads `read` lists, as each comes in: for the layout,
+ * which reports any page's failed read and counts from it, whether the page
+ * received the read ready or pending.
+ */
+export function createSettled(read: () => readonly (Arriving<unknown> | undefined)[]) {
+  // Raw, not proxied: reads are looked up by identity.
+  let settled = $state.raw(new Map<Arriving<unknown>, Snapshot<unknown>>());
+  $effect(() => {
+    const pending = read().filter((arriving) => arriving?.state === 'pending');
+    settled = new Map();
+    let current = true;
+    for (const arriving of pending) {
+      if (arriving?.state !== 'pending') continue;
+      void arriving.snapshot.then((snapshot) => {
+        if (current) settled = new Map(settled).set(arriving, snapshot);
+      });
+    }
+    return () => {
+      current = false;
+    };
+  });
+  return {
+    /** `arriving`'s snapshot: at once when it came ready, else once it is in. */
+    of<T>(arriving: Arriving<T> | undefined): Snapshot<T> | null {
+      if (!arriving) return null;
+      if (arriving.state === 'ready') return arriving.snapshot;
+      return (settled.get(arriving) as Snapshot<T> | undefined) ?? null;
+    },
+  };
+}

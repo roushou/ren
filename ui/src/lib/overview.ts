@@ -314,10 +314,10 @@ export class Attention {
   }
 }
 
-/** A number tile: its value, a line under it, and the hours behind it. */
 /** Which of the day's numbers a tile shows: input gets a cached and fresh bar. */
 export type DayTileKind = 'calls' | 'failed' | 'input' | 'output';
 
+/** A number tile: its value, a line under it, and the hours behind it. */
 export interface DayTile {
   kind: DayTileKind;
   label: string;
@@ -334,6 +334,27 @@ export interface DayTile {
  * change in calls.
  */
 export class Day {
+  /** The tiles in order: the same before the day is read, for its outline. */
+  static readonly kinds: readonly DayTileKind[] = ['calls', 'failed', 'input', 'output'];
+
+  /** What a tile is called. */
+  static label(kind: DayTileKind): string {
+    switch (kind) {
+      case 'calls':
+        return 'Calls';
+      case 'failed':
+        return 'Failed work calls';
+      case 'input':
+        return 'Tokens in';
+      case 'output':
+        return 'Tokens out';
+      default: {
+        const never: never = kind;
+        return never;
+      }
+    }
+  }
+
   readonly points: UsagePoint[];
   readonly tiles: DayTile[];
   /** Input tokens read from cache and sent fresh; null when not reported. */
@@ -363,7 +384,7 @@ export class Day {
     this.tiles = [
       {
         kind: 'calls',
-        label: 'Calls',
+        label: Day.label('calls'),
         value: num(totals.calls),
         detail: Day.change(totals.calls, before),
         spark: this.points.map((point) => point.calls),
@@ -371,7 +392,7 @@ export class Day {
       },
       {
         kind: 'failed',
-        label: 'Failed work calls',
+        label: Day.label('failed'),
         value: num(totals.errors),
         detail: [
           `${num(counts.bookkeeping)} failed bookkeeping`,
@@ -382,7 +403,7 @@ export class Day {
       },
       {
         kind: 'input',
-        label: 'Tokens in',
+        label: Day.label('input'),
         value: compactOrDash(input),
         detail: this.input
           ? `${compactOrDash(this.input.cached)} cached · ${compactOrDash(this.input.fresh)} fresh`
@@ -392,7 +413,7 @@ export class Day {
       },
       {
         kind: 'output',
-        label: 'Tokens out',
+        label: Day.label('output'),
         value: compactOrDash(totals.tokens.output),
         detail: peak?.tokens.output
           ? `peak ${compactOrDash(peak.tokens.output)} at ${Day.clock(peak.start)}`

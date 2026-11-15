@@ -2126,13 +2126,6 @@ td > .chip {
     transform: translateX(300%);
   }
 }
-/* The page inside the workspace, as if it were the workspace's own child. */
-.page-slot {
-  display: contents;
-}
-.page-slot.hidden {
-  display: none;
-}
 .workspace.navigating,
 .list-content.busy {
   opacity: 0.6;

@@ -10,13 +10,23 @@
   in the row itself before anything is sent. The row says while the delete
   is under way, keeps a refusal's reason, and folds away once the session
   has left the list.
+
+  While the lists are on their way, a folder of outline rows stands where
+  the sessions will be, drawn with the rows' own markup.
 -->
+<script module lang="ts">
+  /** Whether the lists have been read: on their way, read, or kept as they
+   * were when the read failed. */
+  export type Listing = 'pending' | 'read' | 'failed';
+</script>
+
 <script lang="ts">
   import { tick } from 'svelte';
   import { SvelteSet } from 'svelte/reactivity';
   import { slide } from 'svelte/transition';
   import { harnessLabel } from '#lib/activity.ts';
   import Icon from '#lib/Icon.svelte';
+  import Skeleton from '#lib/Skeleton.svelte';
   import { ago } from '#lib/overview.ts';
   import {
     Deletions,
@@ -31,6 +41,7 @@
 
   let {
     folders,
+    listing,
     selected,
     now,
     title,
@@ -48,6 +59,7 @@
     onnew,
   }: {
     folders: readonly SessionFolder[];
+    listing: Listing;
     selected: SessionId | null;
     now: number;
     /** What a session was asked, when known here. */
@@ -86,6 +98,9 @@
       (session.phase === 'draft' ? 'New session' : `${harnessLabel(session.harness)} session`)
     );
   }
+
+  /** The outline's rows: each name's width, varied so they read as text. */
+  const OUTLINE_ROWS = ['72%', '54%', '83%', '61%'] as const;
 
   /** Back to the row's trash control, so the keyboard stays where it was. */
   async function cancel(session: DeskSession) {
@@ -216,49 +231,68 @@
       <Icon name="spark" size={13} /> New session <kbd>n</kbd>
     </button>
   {/if}
-  {#each folders as folder (folder.workdir)}
-    {@const shown = place(folder.workdir)}
-    {@const all = unfolded.has(folder.workdir) || shelf === 'archived'}
-    {@const visible = all
-      ? folder.sessions
-      : folder.sessions.filter(
-          (session, index) =>
-            index < SHOWN || session.session === selected || Sessions.running(session),
-        )}
-    <section class="folder">
-      <header title={folder.workdir}>
+  {#if listing === 'pending'}
+    <section class="folder" aria-busy="true" aria-label="Sessions, on their way">
+      <header>
         <Icon name="file" size={12} />
-        <strong>{folder.name}</strong>
-        {#if folder.waiting}<span class="chip warning">{folder.waiting} needs you</span>{/if}
-        {#if shown.includes('/')}<span class="muted mono parent"
-            ><bdi>{shown.slice(0, shown.lastIndexOf('/') + 1)}</bdi></span
-          >{/if}
-        {#if shelf === 'current'}<button
-            class="add"
-            disabled={busy}
-            title={folder.workdir === scratch
-              ? 'New session in a scratch folder of its own'
-              : `New session in ${shown}`}
-            aria-label="New session in {folder.name}"
-            onclick={() => oncreate(folder.workdir === scratch ? null : folder.workdir)}
-            ><Icon name="plus" size={12} /></button
-          >{/if}
+        <Skeleton width="38%" />
       </header>
-      {#each visible as session (session.session)}{@render row(session)}{/each}
-      {#if visible.length < folder.sessions.length}
-        <button class="fold" onclick={() => unfolded.add(folder.workdir)}>
-          <Icon name="chevron" size={10} />
-          {folder.sessions.length - visible.length} more
-        </button>
-      {/if}
+      {#each OUTLINE_ROWS as width, index (index)}
+        <div class="run-item" aria-hidden="true">
+          <div class="run-row outline">
+            <span class="phase-dot resting"></span>
+            <span class="run-name"><Skeleton {width} /></span>
+            <span class="run-state"><Skeleton width="34%" /></span>
+            <span class="run-when"><Skeleton width="2.4em" /></span>
+          </div>
+        </div>
+      {/each}
     </section>
   {:else}
-    <p class="note">
-      {shelf === 'archived'
-        ? 'Nothing is archived.'
-        : 'No sessions yet. Start one with New session.'}
-    </p>
-  {/each}
+    {#each folders as folder (folder.workdir)}
+      {@const shown = place(folder.workdir)}
+      {@const all = unfolded.has(folder.workdir) || shelf === 'archived'}
+      {@const visible = all
+        ? folder.sessions
+        : folder.sessions.filter(
+            (session, index) =>
+              index < SHOWN || session.session === selected || Sessions.running(session),
+          )}
+      <section class="folder">
+        <header title={folder.workdir}>
+          <Icon name="file" size={12} />
+          <strong>{folder.name}</strong>
+          {#if folder.waiting}<span class="chip warning">{folder.waiting} needs you</span>{/if}
+          {#if shown.includes('/')}<span class="muted mono parent"
+              ><bdi>{shown.slice(0, shown.lastIndexOf('/') + 1)}</bdi></span
+            >{/if}
+          {#if shelf === 'current'}<button
+              class="add"
+              disabled={busy}
+              title={folder.workdir === scratch
+                ? 'New session in a scratch folder of its own'
+                : `New session in ${shown}`}
+              aria-label="New session in {folder.name}"
+              onclick={() => oncreate(folder.workdir === scratch ? null : folder.workdir)}
+              ><Icon name="plus" size={12} /></button
+            >{/if}
+        </header>
+        {#each visible as session (session.session)}{@render row(session)}{/each}
+        {#if visible.length < folder.sessions.length}
+          <button class="fold" onclick={() => unfolded.add(folder.workdir)}>
+            <Icon name="chevron" size={10} />
+            {folder.sessions.length - visible.length} more
+          </button>
+        {/if}
+      </section>
+    {:else}
+      <p class="note">
+        {shelf === 'archived'
+          ? 'Nothing is archived.'
+          : 'No sessions yet. Start one with New session.'}
+      </p>
+    {/each}
+  {/if}
   {#if shelf === 'current' && scratch && !folders.some((folder) => folder.workdir === scratch)}
     <section class="folder">
       <header>
@@ -384,6 +418,12 @@
   }
   .run-row:hover {
     background: var(--row-hover);
+  }
+  .run-row.outline {
+    cursor: default;
+  }
+  .run-row.outline:hover {
+    background: none;
   }
   .run-row.selected {
     background: var(--row-selected);
