@@ -13,12 +13,7 @@ impl LaunchPlan {
     pub(crate) fn codex(gateway: &GatewayEndpoint) -> Self {
         let mut arguments: Vec<LaunchArg> = vec!["--no-daemon".into()];
         arguments.extend(Self::codex_provider(gateway));
-        Self {
-            harness: Harness::Codex,
-            executable: "codex",
-            arguments,
-            environment: BTreeMap::new(),
-        }
+        Self::client(Harness::Codex.profile(), arguments, BTreeMap::new())
     }
 
     /// Codex's configuration overrides that send its model traffic to

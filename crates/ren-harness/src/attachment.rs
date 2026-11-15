@@ -554,12 +554,9 @@ impl Harness {
     /// OpenCode takes an ACP `image` block when its `initialize` answer
     /// says `promptCapabilities.image`.
     pub fn acceptance(self) -> Acceptance {
-        let images = match self {
-            Self::Codex => Takes::Always(Delivery::LocalPath),
-            Self::ClaudeCode | Self::Pi => Takes::Always(Delivery::InlineBase64),
-            Self::OpenCode => Takes::IfOffered(Delivery::InlineBase64),
-        };
-        Acceptance { images }
+        Acceptance {
+            images: self.profile().images,
+        }
     }
 }
 

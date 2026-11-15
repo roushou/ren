@@ -217,7 +217,13 @@ dependencies under "Crates" below. Read the code for current module ownership.
   same parts), `pi` (`PiRpc` for `pi --mode rpc`, the bundled extension's
   `PiCache`, and the same parts), and `opencode` (`OpenCodeAcp` for
   `opencode acp`, the Agent Client Protocol, and the same parts). Each fills the shared types the rest of Ren reads,
-  and `Harness` dispatches to them by `match`; there is no per-client trait.
+  and `Harness` dispatches to them by `match` for behaviour; there is no
+  per-client trait. Each client's facts are data, its `ClientProfile`
+  (`profile`, behind `Harness::profile`, declared in its module's
+  `profile`): its program and packages, what it takes mid-run, its approval
+  policies, how it takes images, how it carries a user token
+  (`TokenCarrier`), whether a driven run names its default model
+  (`DefaultModel`), and its sign-in methods, each with its plan.
   The shared types: attribution (`attribution`: `Attribution` and the hint
   types, with `HeaderReading`, which each client's headers extend, behind
   `Harness::attribution`); launch plans (`launch`: `LaunchPlan`, each client
@@ -234,7 +240,9 @@ dependencies under "Crates" below. Read the code for current module ownership.
   `ModelId`, read by `ModelListing` from a short listing process), and a
   run's `RunSettings` (`settings`: its model, `Effort`, and
   `ApprovalPolicy`, and `Midway`, what each client takes mid-run: steering
-  and which settings change from the next turn); attachments to a prompt
+  and which settings change from the next turn; `RunSettings::change_to` is what a change
+  asks of a client, and each codec commits a setting only once its client
+  acknowledges it); attachments to a prompt
   (`attachment`: `Attachment`, read once from its bytes by
   `Attachment::parse` within `Limits`, never by its name, and what each
   client takes, `Harness::acceptance`, each codec turning a prompt's
@@ -251,9 +259,16 @@ dependencies under "Crates" below. Read the code for current module ownership.
   `SignInAnswer` handed back, a secret never shown; each client's in its
   module's `auth`); the gateway URL a harness is pointed at and the
   `UserToken` it presents there (`endpoint`); and `HostEnv` (`host`), the
-  host environment that launching and configuration read. It performs
-  filesystem and process I/O but has no async runtime, HTTP, database, or
-  CLI dependency.
+  host environment that launching and configuration read. The four codecs
+  are composed of shared parts (`codec`: `Envelope`, a line read as JSON;
+  `JsonRpc::classify`; `RequestLedger`, the requests sent and waiting;
+  `ApprovalBook`; `TurnSlot` and `TurnMint`; `EchoQueue`), with no codec
+  trait; each keeps only its client's wire mapping, reads its messages
+  through a typed vocabulary that keeps unknown ones (`ClaudeMessageType`,
+  `CodexMethod`, `PiEvent`, `AcpMethod`, `AcpUpdate`), and holds its
+  opening as a phase enum. `src/purity.rs` keeps the codecs, `drive`,
+  `lines`, and `settings` free of I/O. It performs filesystem and process
+  I/O elsewhere but has no async runtime, HTTP, database, or CLI dependency.
 - `crates/ren-recorder`: the bounded capture queue between forwarding and
   storage, with `Recorder` as its primary type. The forwarding side is a
   typestate per call, `AttemptTap` (awaiting its head), `ResponseTap`

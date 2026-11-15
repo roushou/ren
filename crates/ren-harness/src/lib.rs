@@ -13,6 +13,7 @@
 pub mod attachment;
 pub mod attribution;
 pub mod claude_code;
+mod codec;
 pub mod codex;
 pub mod commands;
 pub mod drive;
@@ -23,6 +24,9 @@ pub mod lines;
 pub mod models;
 pub mod opencode;
 pub mod pi;
+pub mod profile;
+#[cfg(test)]
+mod purity;
 pub mod settings;
 pub mod sign_in;
 pub mod tools;

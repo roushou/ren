@@ -16,7 +16,7 @@
 //! model requests carry, so a driven turn's id is its prompt's message id.
 
 use crate::{
-    attachment::Attachment,
+    codec::{ApprovalBook, EchoQueue, Envelope, RequestLedger, Stop, TurnSlot},
     commands::{ClientCommand, CommandKind, Sigil},
     drive::{
         ApprovalAsk, ApprovalId, CommandIntent, CommandRefused, Decision, DriveCommand, DriveEvent,
@@ -25,26 +25,29 @@ use crate::{
     },
     lines::{Framed, Line},
     models::{DefaultChoice, Listing, Model, ModelId, ModelListing},
-    settings::{ApprovalPolicy, Midway, RunSettings},
+    settings::{ApprovalPolicy, Midway, RunSettings, Setting, SettingsBook},
 };
-use ren_protocol::native::{NativeThreadId, NativeTurnId};
+use ren_protocol::{
+    label::Stored,
+    native::{NativeThreadId, NativeTurnId},
+};
 use serde_json::{Value, json};
+use serde_with::{DeserializeFromStr, SerializeDisplay};
 use std::collections::BTreeMap;
+use strum::{Display, EnumString, IntoStaticStr, VariantArray};
 use uuid::Uuid;
 
 /// The client's side of one `claude -p` stream-json process.
 #[derive(Debug)]
 pub struct ClaudeStreamJson {
-    thread: NativeThreadId,
-    ready: bool,
-    /// What the conversation runs on now, to tell what a change changes.
-    settings: RunSettings,
-    next_request: u64,
+    phase: Phase,
+    /// What the conversation runs on, and what Ren asked it to change to.
+    settings: SettingsBook,
     /// Control requests Ren sent and waits on, by request id.
-    requests: BTreeMap<String, RequestKind>,
+    requests: RequestLedger<String, Pending>,
     turn: TurnSlot,
     /// Permission prompts waiting for an answer.
-    approvals: BTreeMap<ApprovalId, Asked>,
+    approvals: ApprovalBook<Asked>,
     /// Tool calls started in this turn, by tool use id, until their result.
     tools: BTreeMap<String, ToolCall>,
     /// Text and thinking blocks counted per message, so a streamed block and
@@ -54,19 +57,68 @@ pub struct ClaudeStreamJson {
     /// The commands and skills Claude Code listed as it opened.
     commands: Vec<ClientCommand>,
     /// What the images sent with the last prompt are, until it is echoed.
-    echoing: Vec<Attachment>,
+    echoing: EchoQueue,
 }
 
+/// Whether the conversation Ren named is open.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum TurnSlot {
-    Idle,
-    /// A prompt was sent; its echo has not arrived.
-    Requested,
-    Running {
-        turn: NativeTurnId,
-        /// Ren asked for the turn to stop.
-        interrupted: bool,
-    },
+enum Phase {
+    /// `initialize` was sent; Claude Code has not answered.
+    Opening(NativeThreadId),
+    Ready(NativeThreadId),
+}
+
+/// Every message type Claude Code writes in stream-json; a type Ren does not
+/// know stays unknown.
+#[derive(Display, EnumString, IntoStaticStr, VariantArray)]
+#[strum(serialize_all = "snake_case")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SerializeDisplay, DeserializeFromStr)]
+pub enum ClaudeMessageType {
+    ControlResponse,
+    ControlRequest,
+    ControlCancelRequest,
+    User,
+    Assistant,
+    StreamEvent,
+    Result,
+    System,
+    /// The allowance status, which Ren reads from the recorded calls.
+    RateLimitEvent,
+}
+
+/// The `system` messages Claude Code writes, by subtype.
+#[derive(Display, EnumString, IntoStaticStr, VariantArray)]
+#[strum(serialize_all = "snake_case")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SerializeDisplay, DeserializeFromStr)]
+pub enum ClaudeSystemSubtype {
+    ApiRetry,
+    Init,
+    Status,
+    ThinkingTokens,
+    TaskSummary,
+    PostTurnSummary,
+    HookStarted,
+    HookProgress,
+    HookResponse,
+}
+
+/// A control request Ren sent, and what it was for.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Pending {
+    Initialize,
+    Interrupt,
+    /// A setting changed mid-run, committed once Claude Code takes it.
+    Configure(Setting),
+}
+
+impl Pending {
+    fn kind(&self) -> RequestKind {
+        match self {
+            Self::Initialize => RequestKind::Initialize,
+            Self::Interrupt => RequestKind::TurnInterrupt,
+            Self::Configure(_) => RequestKind::Configure,
+        }
+    }
 }
 
 /// What a permission prompt asked, kept to answer it.
@@ -162,26 +214,27 @@ impl ClaudeStreamJson {
             } => (*thread, settings.clone()),
         };
         let mut codec = Self {
-            thread,
-            ready: false,
-            settings,
-            next_request: 0,
-            requests: BTreeMap::new(),
+            phase: Phase::Opening(thread),
+            settings: SettingsBook::new(settings),
+            requests: RequestLedger::new(|n| format!("ren-{n}")),
             turn: TurnSlot::Idle,
-            approvals: BTreeMap::new(),
+            approvals: ApprovalBook::new(),
             tools: BTreeMap::new(),
             blocks: BTreeMap::new(),
             streaming: None,
             commands: Vec::new(),
-            echoing: Vec::new(),
+            echoing: EchoQueue::default(),
         };
-        let line = codec.request(RequestKind::Initialize, json!({ "subtype": "initialize" }));
+        let line = codec.request(Pending::Initialize, json!({ "subtype": "initialize" }));
         (codec, line)
     }
 
     /// The conversation, once Claude Code accepted the opening.
     pub fn thread(&self) -> Option<NativeThreadId> {
-        self.ready.then_some(self.thread)
+        match self.phase {
+            Phase::Ready(thread) => Some(thread),
+            Phase::Opening(_) => None,
+        }
     }
 
     /// The commands and skills a prompt can run, as Claude Code listed them
@@ -219,33 +272,24 @@ impl ClaudeStreamJson {
 
     /// The line that carries `command`, or why it cannot be sent now.
     pub fn command(&mut self, command: DriveCommand) -> Result<Vec<Line>, CommandRefused> {
-        if !self.ready {
+        let Phase::Ready(thread) = self.phase else {
             return Err(CommandRefused::NotReady);
-        }
+        };
         match command {
-            DriveCommand::Prompt(prompt) => self.prompt(&prompt).map(|line| vec![line]),
+            DriveCommand::Prompt(prompt) => self.prompt(thread, &prompt).map(|line| vec![line]),
             // Claude Code holds a message sent mid-turn for after it; it has
             // no way to add one to the turn.
             DriveCommand::Steer(_) => Err(CommandRefused::NotOffered(Midway::Steer)),
             DriveCommand::Configure(settings) => self.configure(settings),
-            DriveCommand::Interrupt => match self.turn {
-                TurnSlot::Running { turn, .. } => {
-                    self.turn = TurnSlot::Running {
-                        turn,
-                        interrupted: true,
-                    };
-                    Ok(vec![self.request(
-                        RequestKind::TurnInterrupt,
-                        json!({ "subtype": "interrupt" }),
-                    )])
-                }
-                TurnSlot::Requested => Err(CommandRefused::TurnNotStarted),
-                TurnSlot::Idle => Err(CommandRefused::NoTurn),
-            },
+            DriveCommand::Interrupt => {
+                self.turn.stop()?;
+                Ok(vec![self.request(
+                    Pending::Interrupt,
+                    json!({ "subtype": "interrupt" }),
+                )])
+            }
             DriveCommand::Answer { approval, decision } => {
-                let Some(asked) = self.approvals.remove(&approval) else {
-                    return Err(CommandRefused::UnknownApproval(approval));
-                };
+                let asked = self.approvals.answer(approval.clone())?;
                 let answer = match decision {
                     Decision::Accept => json!({ "behavior": "allow", "updatedInput": asked.input }),
                     Decision::AcceptForSession => json!({
@@ -255,11 +299,9 @@ impl ClaudeStreamJson {
                     }),
                     Decision::Decline => json!({ "behavior": "deny", "message": DECLINED }),
                     Decision::Cancel => {
-                        if let TurnSlot::Running { turn, .. } = self.turn {
-                            self.turn = TurnSlot::Running {
-                                turn,
-                                interrupted: true,
-                            };
+                        // The turn ends interrupted, as far as one runs.
+                        if self.turn.under_way() {
+                            self.turn.stop()?;
                         }
                         json!({ "behavior": "deny", "message": DECLINED, "interrupt": true })
                     }
@@ -278,28 +320,36 @@ impl ClaudeStreamJson {
 
     /// The control requests that move the conversation to `settings`:
     /// Claude Code switches model and permission mode mid-run, not effort.
+    /// Each is committed once Claude Code answers it.
     fn configure(&mut self, settings: RunSettings) -> Result<Vec<Line>, CommandRefused> {
-        if settings.effort != self.settings.effort {
-            return Err(CommandRefused::NotOffered(Midway::Effort));
-        }
-        let mut lines = Vec::new();
-        if settings.model != self.settings.model {
-            // `default` is Claude Code's own choice.
-            let model = settings.model.as_ref().map_or("default", ModelId::as_str);
-            lines.push(self.request(
-                RequestKind::Configure,
-                json!({ "subtype": "set_model", "model": model }),
-            ));
-        }
-        if settings.approvals != self.settings.approvals {
-            let mode = settings.approvals.map_or("default", Self::permission_mode);
-            lines.push(self.request(
-                RequestKind::Configure,
-                json!({ "subtype": "set_permission_mode", "mode": mode }),
-            ));
-        }
-        self.settings = settings;
-        Ok(lines)
+        let change = self
+            .settings
+            .change_to(&settings, crate::Harness::ClaudeCode.profile().midway)?;
+        let requests = change
+            .into_iter()
+            .map(|setting| {
+                let request = match &setting {
+                    // `default` is Claude Code's own choice.
+                    Setting::Model(model) => json!({
+                        "subtype": "set_model",
+                        "model": model.as_ref().map_or("default", ModelId::as_str),
+                    }),
+                    Setting::Approvals(policy) => json!({
+                        "subtype": "set_permission_mode",
+                        "mode": policy.map_or("default", Self::permission_mode),
+                    }),
+                    Setting::Effort(_) => return Err(CommandRefused::NotOffered(Midway::Effort)),
+                };
+                Ok((setting, request))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(requests
+            .into_iter()
+            .map(|(setting, request)| {
+                self.settings.ask(setting.clone());
+                self.request(Pending::Configure(setting), request)
+            })
+            .collect())
     }
 
     /// The permission mode a policy runs Claude Code in.
@@ -313,73 +363,60 @@ impl ClaudeStreamJson {
 
     /// Read one frame from Claude Code's stdout.
     pub fn receive(&mut self, frame: Framed) -> Received {
+        let envelope = match Envelope::open(frame) {
+            Ok(envelope) => envelope,
+            Err(received) => return received,
+        };
+        let Some(kind) = envelope.typed::<ClaudeMessageType>() else {
+            return Received::event(envelope.untyped());
+        };
+        let Envelope {
+            line,
+            body: message,
+        } = envelope;
         let mut received = Received::default();
-        let bytes = match frame {
-            Framed::Line(bytes) => bytes,
-            Framed::TooLong { bytes } => {
-                received.events.push(DriveEvent::Unreadable {
-                    line: RawLine::new(Vec::new()),
-                    reason: Unreadable::TooLong { bytes },
-                });
-                return received;
-            }
-        };
-        if bytes.is_empty() {
-            return received;
-        }
-        let Ok(message) = serde_json::from_slice::<Value>(&bytes) else {
-            received.events.push(DriveEvent::Unreadable {
-                line: RawLine::new(bytes),
-                reason: Unreadable::NotJson,
-            });
-            return received;
-        };
-        let line = RawLine::new(bytes);
-        let Some(kind) = message.get("type").and_then(Value::as_str) else {
-            received.events.push(DriveEvent::Unreadable {
-                line,
-                reason: Unreadable::Untyped,
-            });
-            return received;
-        };
         // Subagents' own messages carry the tool call that started them; the
         // call itself is the item Ren shows.
         let main = message.get("parent_tool_use_id").is_none_or(Value::is_null);
+        let Stored::Known(kind) = kind else {
+            received.events.push(DriveEvent::Unknown { line });
+            return received;
+        };
         match kind {
-            "control_response" => self.control_response(&message, line, &mut received),
-            "control_request" => self.control_request(&message, line, &mut received),
-            "control_cancel_request" => {
+            ClaudeMessageType::ControlResponse => {
+                self.control_response(&message, line, &mut received);
+            }
+            ClaudeMessageType::ControlRequest => {
+                self.control_request(&message, line, &mut received);
+            }
+            ClaudeMessageType::ControlCancelRequest => {
                 if let Some(id) = message.get("request_id").and_then(Value::as_str) {
                     let approval = ApprovalId(id.to_owned());
-                    if self.approvals.remove(&approval).is_some() {
+                    if self.approvals.resolve(&approval).is_some() {
                         received
                             .events
                             .push(DriveEvent::ApprovalResolved { approval });
                     }
                 }
             }
-            "user" if main => self.user(&message, line, &mut received),
-            "assistant" if main => self.assistant(&message, &mut received),
-            "stream_event" if main => self.stream_event(&message, &mut received),
-            "result" => self.result(&message, line, &mut received),
-            "system" => self.system(&message, line, &mut received),
+            ClaudeMessageType::User if main => self.user(&message, line, &mut received),
+            ClaudeMessageType::Assistant if main => self.assistant(&message, &mut received),
+            ClaudeMessageType::StreamEvent if main => self.stream_event(&message, &mut received),
+            ClaudeMessageType::Result => self.result(&message, line, &mut received),
+            ClaudeMessageType::System => self.system(&message, line, &mut received),
             // Known, and nothing Ren shows: subagents' messages, and the
             // allowance status Ren reads from the recorded calls instead.
-            "user" | "assistant" | "stream_event" | "rate_limit_event" => {}
-            _ => received.events.push(DriveEvent::Unknown { line }),
+            ClaudeMessageType::User
+            | ClaudeMessageType::Assistant
+            | ClaudeMessageType::StreamEvent
+            | ClaudeMessageType::RateLimitEvent => {}
         }
         received
     }
 
-    fn prompt(&mut self, prompt: &Prompt) -> Result<Line, CommandRefused> {
-        match self.turn {
-            TurnSlot::Idle => {}
-            TurnSlot::Requested | TurnSlot::Running { .. } => {
-                return Err(CommandRefused::TurnRunning);
-            }
-        }
-        self.turn = TurnSlot::Requested;
-        self.echoing = prompt.sent();
+    fn prompt(&mut self, thread: NativeThreadId, prompt: &Prompt) -> Result<Line, CommandRefused> {
+        self.turn.request(())?;
+        self.echoing.only(prompt);
         // Text alone goes as text; with images, as the Messages API's
         // content blocks: each image in base64, then the text.
         let content = if prompt.images().is_empty() {
@@ -402,14 +439,12 @@ impl ClaudeStreamJson {
             "type": "user",
             "message": { "role": "user", "content": content },
             "parent_tool_use_id": null,
-            "session_id": self.thread.to_string(),
+            "session_id": thread.to_string(),
         })))
     }
 
-    fn request(&mut self, kind: RequestKind, request: Value) -> Line {
-        let id = format!("ren-{}", self.next_request);
-        self.next_request += 1;
-        self.requests.insert(id.clone(), kind);
+    fn request(&mut self, pending: Pending, request: Value) -> Line {
+        let id = self.requests.send(pending);
         Line::json(&json!({ "type": "control_request", "request_id": id, "request": request }))
     }
 
@@ -445,34 +480,33 @@ impl ClaudeStreamJson {
         };
         // Claude Code also echoes Ren's own answers; only Ren's requests
         // wait on a response.
-        let Some(kind) = self.requests.remove(id) else {
+        let Some(pending) = self.requests.answer(id) else {
             return;
         };
         match response.get("subtype").and_then(Value::as_str) {
-            Some("success") => match kind {
-                RequestKind::Initialize => {
-                    self.ready = true;
+            Some("success") => match pending {
+                Pending::Initialize => {
+                    let (Phase::Opening(thread) | Phase::Ready(thread)) = self.phase;
+                    self.phase = Phase::Ready(thread);
                     self.commands = Self::listed(&response["response"]);
-                    received.events.push(DriveEvent::Ready {
-                        thread: self.thread,
-                    });
+                    received.events.push(DriveEvent::Ready { thread });
                 }
-                RequestKind::TurnInterrupt
-                | RequestKind::ThreadStart
-                | RequestKind::ThreadResume
-                | RequestKind::TurnStart
-                | RequestKind::TurnSteer
-                | RequestKind::Configure
-                | RequestKind::ListCommands => {}
+                Pending::Configure(setting) => self.settings.acknowledge(setting),
+                Pending::Interrupt => {}
             },
-            Some(_) | None => received.events.push(DriveEvent::Refused {
-                request: kind,
-                message: response
-                    .get("error")
-                    .and_then(Value::as_str)
-                    .unwrap_or("refused")
-                    .to_owned(),
-            }),
+            Some(_) | None => {
+                if let Pending::Configure(setting) = &pending {
+                    self.settings.refused(setting);
+                }
+                received.events.push(DriveEvent::Refused {
+                    request: pending.kind(),
+                    message: response
+                        .get("error")
+                        .and_then(Value::as_str)
+                        .unwrap_or("refused")
+                        .to_owned(),
+                });
+            }
         }
     }
 
@@ -495,7 +529,7 @@ impl ClaudeStreamJson {
                 let input = request.get("input").cloned().unwrap_or(Value::Null);
                 let ask = Self::ask(tool, request, &input);
                 let approval = ApprovalId(id.to_owned());
-                self.approvals.insert(
+                self.approvals.ask(
                     approval.clone(),
                     Asked {
                         input,
@@ -597,7 +631,7 @@ impl ClaudeStreamJson {
                     kind: ItemKind::UserMessage,
                     read: ItemRead::Prompt {
                         text,
-                        images: std::mem::take(&mut self.echoing),
+                        images: self.echoing.pop(),
                     },
                     body: DriveItem::without_image_bytes(message["message"].clone()),
                 },
@@ -713,22 +747,15 @@ impl ClaudeStreamJson {
         let Some(turn) = Uuid::try_parse(id).ok().and_then(NativeTurnId::new) else {
             return;
         };
-        match self.turn {
-            TurnSlot::Running { turn: running, .. } if running == turn => {}
-            TurnSlot::Idle | TurnSlot::Requested | TurnSlot::Running { .. } => {
-                self.turn = TurnSlot::Running {
-                    turn,
-                    interrupted: false,
-                };
-                received.events.push(DriveEvent::TurnStarted { turn });
-            }
+        if let Some(started) = self.turn.start(turn) {
+            received.events.push(started);
         }
     }
 
     /// A turn Claude Code started on its own (after background work), which
     /// no prompt's echo announced.
     fn unprompted(&mut self, message: &Value, received: &mut Received) {
-        if let TurnSlot::Idle = self.turn
+        if self.turn == TurnSlot::Idle
             && let Some(uuid) = message.get("uuid").and_then(Value::as_str)
         {
             self.start_turn(uuid, received);
@@ -903,7 +930,7 @@ impl ClaudeStreamJson {
     }
 
     fn result(&mut self, message: &Value, line: RawLine, received: &mut Received) {
-        let TurnSlot::Running { turn, interrupted } = self.turn else {
+        let Some((turn, stop)) = self.turn.end() else {
             // A result for no turn Ren knows of: one that failed is the
             // client's error before any turn (a conversation it could not
             // resume); anything else stays unknown.
@@ -917,20 +944,14 @@ impl ClaudeStreamJson {
             }
             return;
         };
-        self.turn = TurnSlot::Idle;
         self.tools.clear();
         self.blocks.clear();
         self.streaming = None;
-        let pending = std::mem::take(&mut self.approvals);
-        received.events.extend(
-            pending
-                .into_keys()
-                .map(|approval| DriveEvent::ApprovalResolved { approval }),
-        );
+        self.approvals.withdraw(received);
         let text = |key: &str| message.get(key).and_then(Value::as_str);
         let aborted = text("terminal_reason").is_some_and(|reason| reason.starts_with("aborted"));
         let failed = message.get("is_error").and_then(Value::as_bool) == Some(true);
-        let end = if interrupted || aborted {
+        let end = if stop == Stop::Asked || aborted {
             TurnEnd::Interrupted
         } else {
             match text("subtype") {
@@ -962,8 +983,11 @@ impl ClaudeStreamJson {
 
     fn system(&mut self, message: &Value, line: RawLine, received: &mut Received) {
         let field = |key: &str| message.get(key);
-        match field("subtype").and_then(Value::as_str) {
-            Some("api_retry") => {
+        let subtype = field("subtype")
+            .and_then(Value::as_str)
+            .map(Stored::<ClaudeSystemSubtype>::from_label);
+        match subtype {
+            Some(Stored::Known(ClaudeSystemSubtype::ApiRetry)) => {
                 let mut text = String::from("API request failed");
                 if let Some(error) = field("error").and_then(Value::as_str) {
                     text = format!("API request failed: {error}");
@@ -981,11 +1005,17 @@ impl ClaudeStreamJson {
             }
             // Known, and nothing Ren shows: the session's metadata, progress
             // notes, and summaries its own interface draws.
-            Some(
-                "init" | "status" | "thinking_tokens" | "task_summary" | "post_turn_summary"
-                | "hook_started" | "hook_progress" | "hook_response",
-            ) => {}
-            Some(_) | None => received.events.push(DriveEvent::Unknown { line }),
+            Some(Stored::Known(
+                ClaudeSystemSubtype::Init
+                | ClaudeSystemSubtype::Status
+                | ClaudeSystemSubtype::ThinkingTokens
+                | ClaudeSystemSubtype::TaskSummary
+                | ClaudeSystemSubtype::PostTurnSummary
+                | ClaudeSystemSubtype::HookStarted
+                | ClaudeSystemSubtype::HookProgress
+                | ClaudeSystemSubtype::HookResponse,
+            )) => {}
+            Some(Stored::Unknown(_)) | None => received.events.push(DriveEvent::Unknown { line }),
         }
     }
 }
@@ -1644,6 +1674,45 @@ mod tests {
             .events
             .is_empty()
         );
+    }
+
+    /// A setting is Claude Code's once it answers; one it refuses is sent
+    /// again when asked for again.
+    #[test]
+    fn a_refused_setting_is_not_kept() {
+        use crate::settings::RunSettings;
+        let mut codec = ready();
+        let small = || {
+            DriveCommand::Configure(RunSettings {
+                model: Some("small".parse().unwrap()),
+                ..RunSettings::default()
+            })
+        };
+        let first = sent(&codec.command(small()).unwrap()[0]);
+        let refused = feed(
+            &mut codec,
+            json!({ "type": "control_response", "response": { "subtype": "error",
+                    "request_id": first["request_id"], "error": "no such model" } }),
+        );
+        assert_eq!(
+            refused.events,
+            vec![DriveEvent::Refused {
+                request: RequestKind::Configure,
+                message: "no such model".into()
+            }]
+        );
+        let again = codec.command(small()).unwrap();
+        assert_eq!(
+            sent(&again[0])["request"],
+            json!({ "subtype": "set_model", "model": "small" })
+        );
+        // Taken this time: asking again sends nothing.
+        let _ = feed(
+            &mut codec,
+            json!({ "type": "control_response", "response": { "subtype": "success",
+                    "request_id": sent(&again[0])["request_id"], "response": {} } }),
+        );
+        assert_eq!(codec.command(small()), Ok(Vec::new()));
     }
 
     /// Claude Code switches model and permission mode mid-run; it has no

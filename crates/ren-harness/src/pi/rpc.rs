@@ -15,7 +15,7 @@
 //! Ren provides no interface for them.
 
 use crate::{
-    attachment::Attachment,
+    codec::{EchoQueue, Envelope, RequestLedger, Stop, TurnMint, TurnSlot},
     commands::{ClientCommand, CommandKind, Sigil},
     drive::{
         CommandIntent, CommandRefused, DriveCommand, DriveEvent, DriveItem, ItemId, ItemKind,
@@ -24,26 +24,25 @@ use crate::{
     },
     lines::{Framed, Line},
     models::{DefaultChoice, Listing, Model, ModelId, ModelListing},
-    settings::{Effort, Midway, RunSettings},
+    settings::{Effort, Midway, RunSettings, Setting, SettingsBook},
 };
-use ren_protocol::native::{NativeThreadId, NativeTurnId};
+use ren_protocol::{label::Stored, native::NativeThreadId};
 use serde_json::{Value, json};
-use std::collections::{BTreeMap, VecDeque};
+use serde_with::{DeserializeFromStr, SerializeDisplay};
+use std::collections::BTreeMap;
+use strum::{Display, EnumString, IntoStaticStr, VariantArray};
 use uuid::Uuid;
 
 /// The client's side of one `pi --mode rpc` process.
 #[derive(Debug)]
 pub struct PiRpc {
-    thread: NativeThreadId,
-    ready: bool,
-    /// What the session runs on now, to tell what a change changes.
-    settings: RunSettings,
-    /// Turn ids are this, mixed with how many turns were minted.
-    seed: Uuid,
-    minted: u64,
-    next_request: u64,
+    phase: Phase,
+    /// What the session runs on, and what Ren asked it to change to.
+    settings: SettingsBook,
+    /// Pi names no turns: each is minted from the process's seed.
+    turns: TurnMint,
     /// Commands Ren sent and waits on, by request id.
-    requests: BTreeMap<String, RequestKind>,
+    requests: RequestLedger<String, Pending>,
     turn: TurnSlot,
     /// Assistant messages started in this process, naming their items.
     messages: u64,
@@ -57,19 +56,67 @@ pub struct PiRpc {
     commands: Vec<ClientCommand>,
     /// What the images of each prompt and steer sent are, in order, until
     /// Pi echoes it as a user message.
-    echoing: VecDeque<Vec<Attachment>>,
+    echoing: EchoQueue,
 }
 
+/// Whether the session Ren named is open.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum TurnSlot {
-    Idle,
-    /// A prompt was sent; Pi's run has not started.
-    Requested,
-    Running {
-        turn: NativeTurnId,
-        /// Ren asked for the turn to stop.
-        interrupted: bool,
-    },
+enum Phase {
+    /// `get_state` was sent; Pi has not answered.
+    Opening(NativeThreadId),
+    /// Open, under the session Pi reported.
+    Ready(NativeThreadId),
+}
+
+/// Every message type Pi writes in RPC mode; a type Ren does not know stays
+/// unknown.
+#[derive(Display, EnumString, IntoStaticStr, VariantArray)]
+#[strum(serialize_all = "snake_case")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SerializeDisplay, DeserializeFromStr)]
+pub enum PiEvent {
+    Response,
+    AgentStart,
+    AgentSettled,
+    MessageStart,
+    MessageUpdate,
+    MessageEnd,
+    ToolExecutionStart,
+    ToolExecutionEnd,
+    AutoRetryStart,
+    AutoRetryEnd,
+    ExtensionError,
+    ExtensionUiRequest,
+    TurnStart,
+    TurnEnd,
+    AgentEnd,
+    ToolExecutionUpdate,
+    BashExecutionUpdate,
+    QueueUpdate,
+    CompactionStart,
+    CompactionEnd,
+    SummarizationRetryScheduled,
+    SummarizationRetryAttemptStart,
+    SummarizationRetryFinished,
+    EntryAppended,
+    SessionInfoChanged,
+    ThinkingLevelChanged,
+}
+
+/// A command Ren sent, and what it was for.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Pending {
+    Request(RequestKind),
+    /// A setting changed mid-run, committed once Pi takes it.
+    Configure(Setting),
+}
+
+impl Pending {
+    fn kind(&self) -> RequestKind {
+        match self {
+            Self::Request(kind) => *kind,
+            Self::Configure(_) => RequestKind::Configure,
+        }
+    }
 }
 
 /// How an assistant message stopped, where it says the turn did not finish.
@@ -124,20 +171,17 @@ impl PiRpc {
             } => (*thread, RequestKind::ThreadResume, settings.clone()),
         };
         let mut codec = Self {
-            thread,
-            ready: false,
-            settings,
-            seed,
-            minted: 0,
-            next_request: 0,
-            requests: BTreeMap::new(),
+            phase: Phase::Opening(thread),
+            settings: SettingsBook::new(settings),
+            turns: TurnMint::new(seed),
+            requests: RequestLedger::new(|n| format!("ren-{n}")),
             turn: TurnSlot::Idle,
             messages: 0,
             streaming: None,
             stopped: None,
             tools: BTreeMap::new(),
             commands: Vec::new(),
-            echoing: VecDeque::new(),
+            echoing: EchoQueue::default(),
         };
         let line = codec.request(kind, json!({ "type": "get_state" }));
         (codec, line)
@@ -145,7 +189,10 @@ impl PiRpc {
 
     /// The session, once Pi reported it open.
     pub fn thread(&self) -> Option<NativeThreadId> {
-        self.ready.then_some(self.thread)
+        match self.phase {
+            Phase::Ready(thread) => Some(thread),
+            Phase::Opening(_) => None,
+        }
     }
 
     /// The commands a prompt can run, as Pi listed them once the session
@@ -187,86 +234,63 @@ impl PiRpc {
 
     /// The line that carries `command`, or why it cannot be sent now.
     pub fn command(&mut self, command: DriveCommand) -> Result<Vec<Line>, CommandRefused> {
-        if !self.ready {
+        if let Phase::Opening(_) = self.phase {
             return Err(CommandRefused::NotReady);
         }
         match command {
             DriveCommand::Prompt(prompt) => self.prompt(&prompt).map(|line| vec![line]),
-            DriveCommand::Interrupt => match self.turn {
-                TurnSlot::Running { turn, .. } => {
-                    self.turn = TurnSlot::Running {
-                        turn,
-                        interrupted: true,
-                    };
-                    Ok(vec![self.request(
-                        RequestKind::TurnInterrupt,
-                        json!({ "type": "abort" }),
-                    )])
-                }
-                TurnSlot::Requested => Err(CommandRefused::TurnNotStarted),
-                TurnSlot::Idle => Err(CommandRefused::NoTurn),
-            },
+            DriveCommand::Interrupt => {
+                self.turn.stop()?;
+                Ok(vec![self.request(
+                    RequestKind::TurnInterrupt,
+                    json!({ "type": "abort" }),
+                )])
+            }
             // Pi asks for no approvals.
             DriveCommand::Answer { approval, .. } => Err(CommandRefused::UnknownApproval(approval)),
             // Read after the running assistant message's tool calls, before
             // its next model call.
-            DriveCommand::Steer(prompt) => match self.turn {
-                TurnSlot::Running { .. } => {
-                    let command = self.message("steer", &prompt);
-                    Ok(vec![self.request(RequestKind::TurnSteer, command)])
-                }
-                TurnSlot::Requested => Err(CommandRefused::TurnNotStarted),
-                TurnSlot::Idle => Err(CommandRefused::NoTurn),
-            },
+            DriveCommand::Steer(prompt) => {
+                self.turn.running()?;
+                let command = self.message("steer", &prompt);
+                Ok(vec![self.request(RequestKind::TurnSteer, command)])
+            }
             DriveCommand::Configure(settings) => self.configure(settings),
         }
     }
 
     /// Read one frame from Pi's stdout.
     pub fn receive(&mut self, frame: Framed) -> Received {
+        let envelope = match Envelope::open(frame) {
+            Ok(envelope) => envelope,
+            Err(received) => return received,
+        };
+        let Some(kind) = envelope.typed::<PiEvent>() else {
+            return Received::event(envelope.untyped());
+        };
+        let Envelope {
+            line,
+            body: message,
+        } = envelope;
         let mut received = Received::default();
-        let bytes = match frame {
-            Framed::Line(bytes) => bytes,
-            Framed::TooLong { bytes } => {
-                received.events.push(DriveEvent::Unreadable {
-                    line: RawLine::new(Vec::new()),
-                    reason: Unreadable::TooLong { bytes },
-                });
-                return received;
-            }
-        };
-        if bytes.is_empty() {
-            return received;
-        }
-        let Ok(message) = serde_json::from_slice::<Value>(&bytes) else {
-            received.events.push(DriveEvent::Unreadable {
-                line: RawLine::new(bytes),
-                reason: Unreadable::NotJson,
-            });
-            return received;
-        };
-        let line = RawLine::new(bytes);
-        let Some(kind) = message.get("type").and_then(Value::as_str) else {
-            received.events.push(DriveEvent::Unreadable {
-                line,
-                reason: Unreadable::Untyped,
-            });
+        let Stored::Known(kind) = kind else {
+            received.events.push(DriveEvent::Unknown { line });
             return received;
         };
         match kind {
-            "response" => self.response(&message, line, &mut received),
-            "agent_start" => self.agent_start(&mut received),
-            "agent_settled" => self.settled(&message, line, &mut received),
-            "message_start" => self.message_start(&message, &mut received),
-            "message_update" => self.message_update(&message, &mut received),
-            "message_end" => self.message_end(&message, &mut received),
-            "tool_execution_start" => self.tool_start(&message, line, &mut received),
-            "tool_execution_end" => self.tool_end(&message, &mut received),
-            "auto_retry_start" => received.events.push(DriveEvent::Error {
+            PiEvent::Response => self.response(&message, line, &mut received),
+            PiEvent::AgentStart => self.agent_start(&mut received),
+            PiEvent::AgentSettled => self.settled(&message, line, &mut received),
+            PiEvent::MessageStart => self.message_start(&message, &mut received),
+            PiEvent::MessageUpdate => self.message_update(&message, &mut received),
+            PiEvent::MessageEnd => self.message_end(&message, &mut received),
+            PiEvent::ToolExecutionStart => self.tool_start(&message, line, &mut received),
+            PiEvent::ToolExecutionEnd => self.tool_end(&message, &mut received),
+            PiEvent::AutoRetryStart => received.events.push(DriveEvent::Error {
                 message: Self::retrying(&message),
                 retry: Retry::WillRetry,
             }),
-            "auto_retry_end" => {
+            PiEvent::AutoRetryEnd => {
                 if message.get("success").and_then(Value::as_bool) == Some(false) {
                     received.events.push(DriveEvent::Error {
                         message: Self::text(&message, "finalError")
@@ -275,7 +299,7 @@ impl PiRpc {
                     });
                 }
             }
-            "extension_error" => received.events.push(DriveEvent::Error {
+            PiEvent::ExtensionError => received.events.push(DriveEvent::Error {
                 message: format!(
                     "extension {}: {}",
                     Self::text(&message, "extensionPath").unwrap_or_default(),
@@ -283,37 +307,30 @@ impl PiRpc {
                 ),
                 retry: Retry::Final,
             }),
-            "extension_ui_request" => Self::dialog(&message, line, &mut received),
+            PiEvent::ExtensionUiRequest => Self::dialog(&message, line, &mut received),
             // Known, and nothing Ren shows: Pi's inner model turns, the end
             // of one low-level run (more may follow until it settles),
             // streamed tool output, queues, compaction, and session metadata.
-            "turn_start"
-            | "turn_end"
-            | "agent_end"
-            | "tool_execution_update"
-            | "bash_execution_update"
-            | "queue_update"
-            | "compaction_start"
-            | "compaction_end"
-            | "summarization_retry_scheduled"
-            | "summarization_retry_attempt_start"
-            | "summarization_retry_finished"
-            | "entry_appended"
-            | "session_info_changed"
-            | "thinking_level_changed" => {}
-            _ => received.events.push(DriveEvent::Unknown { line }),
+            PiEvent::TurnStart
+            | PiEvent::TurnEnd
+            | PiEvent::AgentEnd
+            | PiEvent::ToolExecutionUpdate
+            | PiEvent::BashExecutionUpdate
+            | PiEvent::QueueUpdate
+            | PiEvent::CompactionStart
+            | PiEvent::CompactionEnd
+            | PiEvent::SummarizationRetryScheduled
+            | PiEvent::SummarizationRetryAttemptStart
+            | PiEvent::SummarizationRetryFinished
+            | PiEvent::EntryAppended
+            | PiEvent::SessionInfoChanged
+            | PiEvent::ThinkingLevelChanged => {}
         }
         received
     }
 
     fn prompt(&mut self, prompt: &Prompt) -> Result<Line, CommandRefused> {
-        match self.turn {
-            TurnSlot::Idle => {}
-            TurnSlot::Requested | TurnSlot::Running { .. } => {
-                return Err(CommandRefused::TurnRunning);
-            }
-        }
-        self.turn = TurnSlot::Requested;
+        self.turn.request(())?;
         let command = self.message("prompt", prompt);
         Ok(self.request(RequestKind::TurnStart, command))
     }
@@ -322,8 +339,8 @@ impl PiRpc {
     /// remembered for the message's echo.
     fn message(&mut self, kind: &str, prompt: &Prompt) -> Value {
         let mut command = json!({ "type": kind, "message": prompt.as_str() });
+        self.echoing.push(prompt);
         if !prompt.images().is_empty() {
-            self.echoing.push_back(prompt.sent());
             command["images"] = prompt
                 .images()
                 .iter()
@@ -335,10 +352,12 @@ impl PiRpc {
         command
     }
 
-    fn request(&mut self, kind: RequestKind, mut command: Value) -> Line {
-        let id = format!("ren-{}", self.next_request);
-        self.next_request += 1;
-        self.requests.insert(id.clone(), kind);
+    fn request(&mut self, kind: RequestKind, command: Value) -> Line {
+        self.send(Pending::Request(kind), command)
+    }
+
+    fn send(&mut self, pending: Pending, mut command: Value) -> Line {
+        let id = self.requests.send(pending);
         if let Value::Object(fields) = &mut command {
             fields.insert("id".into(), id.into());
         }
@@ -350,10 +369,10 @@ impl PiRpc {
     }
 
     fn response(&mut self, message: &Value, line: RawLine, received: &mut Received) {
-        let Some(kind) = message
+        let Some(pending) = message
             .get("id")
             .and_then(Value::as_str)
-            .and_then(|id| self.requests.remove(id))
+            .and_then(|id| self.requests.answer(id))
         else {
             received.events.push(DriveEvent::Unreadable {
                 line,
@@ -361,13 +380,17 @@ impl PiRpc {
             });
             return;
         };
+        let kind = pending.kind();
         if message.get("success").and_then(Value::as_bool) != Some(true) {
+            if let Pending::Configure(setting) = &pending {
+                self.settings.refused(setting);
+            }
             // Without its commands a run goes on; the list stays empty.
             if kind == RequestKind::ListCommands {
                 return;
             }
-            if let (RequestKind::TurnStart, TurnSlot::Requested) = (kind, self.turn) {
-                self.turn = TurnSlot::Idle;
+            if kind == RequestKind::TurnStart {
+                self.turn.withdraw();
             }
             received.events.push(DriveEvent::Refused {
                 request: kind,
@@ -376,22 +399,23 @@ impl PiRpc {
             return;
         }
         let data = &message["data"];
+        if let Pending::Configure(setting) = pending {
+            self.settings.acknowledge(setting);
+            return;
+        }
         match kind {
             RequestKind::ThreadStart | RequestKind::ThreadResume => {
                 // Pi opened the session Ren named; should it report another,
                 // that is the one its model traffic is recorded under.
-                if let Some(reported) = data
+                let (Phase::Opening(named) | Phase::Ready(named)) = self.phase;
+                let thread = data
                     .get("sessionId")
                     .and_then(Value::as_str)
                     .and_then(|id| Uuid::try_parse(id).ok())
                     .and_then(NativeThreadId::new)
-                {
-                    self.thread = reported;
-                }
-                self.ready = true;
-                received.events.push(DriveEvent::Ready {
-                    thread: self.thread,
-                });
+                    .unwrap_or(named);
+                self.phase = Phase::Ready(thread);
+                received.events.push(DriveEvent::Ready { thread });
                 let ask =
                     self.request(RequestKind::ListCommands, json!({ "type": "get_commands" }));
                 received.replies.push(ask);
@@ -400,9 +424,8 @@ impl PiRpc {
             RequestKind::TurnStart => {
                 // An extension consumed the prompt: no run starts for it.
                 if data.get("disposition").and_then(Value::as_str) == Some("handled")
-                    && let TurnSlot::Requested = self.turn
+                    && self.turn.withdraw().is_some()
                 {
-                    self.turn = TurnSlot::Idle;
                     received.events.push(DriveEvent::Refused {
                         request: kind,
                         message: "an extension handled the prompt; no turn ran".into(),
@@ -419,75 +442,60 @@ impl PiRpc {
     /// The commands that move the session to `settings`: Pi switches model
     /// and thinking level mid-run, and asks for no approvals. Neither goes
     /// back to "Pi's own" once chosen: it keeps the last one set.
+    /// Each is committed once Pi answers it.
     fn configure(&mut self, settings: RunSettings) -> Result<Vec<Line>, CommandRefused> {
-        if settings.approvals.is_some() {
-            return Err(CommandRefused::NotOffered(Midway::Approvals));
-        }
-        let mut lines = Vec::new();
-        if settings.model != self.settings.model {
-            let model = settings
-                .model
-                .as_ref()
-                .ok_or(CommandRefused::NotOffered(Midway::Model))?;
-            let (provider, id) = model
-                .as_str()
-                .split_once('/')
-                .ok_or(CommandRefused::NotOffered(Midway::Model))?;
-            lines.push(self.request(
-                RequestKind::Configure,
-                json!({ "type": "set_model", "provider": provider, "modelId": id }),
-            ));
-        }
-        if settings.effort != self.settings.effort {
-            let level = settings
-                .effort
-                .ok_or(CommandRefused::NotOffered(Midway::Effort))?;
-            lines.push(self.request(
-                RequestKind::Configure,
-                json!({ "type": "set_thinking_level", "level": level.to_string() }),
-            ));
-        }
-        self.settings = settings;
-        Ok(lines)
-    }
-
-    /// The next turn id: never nil, never one this process minted before.
-    fn mint(&mut self) -> NativeTurnId {
-        loop {
-            self.minted += 1;
-            let mixed = Uuid::from_u128(self.seed.as_u128() ^ u128::from(self.minted));
-            if let Some(turn) = NativeTurnId::new(mixed) {
-                return turn;
-            }
-        }
+        let change = self
+            .settings
+            .change_to(&settings, crate::Harness::Pi.profile().midway)?;
+        let commands = change
+            .into_iter()
+            .map(|setting| {
+                let command = match &setting {
+                    Setting::Model(model) => {
+                        let (provider, id) = model
+                            .as_ref()
+                            .and_then(|model| model.as_str().split_once('/'))
+                            .ok_or(CommandRefused::NotOffered(Midway::Model))?;
+                        json!({ "type": "set_model", "provider": provider, "modelId": id })
+                    }
+                    Setting::Effort(effort) => {
+                        let level = effort.ok_or(CommandRefused::NotOffered(Midway::Effort))?;
+                        json!({ "type": "set_thinking_level", "level": level.to_string() })
+                    }
+                    Setting::Approvals(_) => {
+                        return Err(CommandRefused::NotOffered(Midway::Approvals));
+                    }
+                };
+                Ok((setting, command))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(commands
+            .into_iter()
+            .map(|(setting, command)| {
+                self.settings.ask(setting.clone());
+                self.send(Pending::Configure(setting), command)
+            })
+            .collect())
     }
 
     fn agent_start(&mut self, received: &mut Received) {
         // A retry or follow-up run within the turn starts no new one.
-        match self.turn {
-            TurnSlot::Running { .. } => {}
-            TurnSlot::Idle | TurnSlot::Requested => {
-                let turn = self.mint();
-                self.turn = TurnSlot::Running {
-                    turn,
-                    interrupted: false,
-                };
-                received.events.push(DriveEvent::TurnStarted { turn });
-            }
+        if !self.turn.under_way() {
+            let turn = self.turns.mint();
+            received.events.extend(self.turn.start(turn));
         }
     }
 
     fn settled(&mut self, message: &Value, line: RawLine, received: &mut Received) {
-        let TurnSlot::Running { turn, interrupted } = self.turn else {
+        let Some((turn, stop)) = self.turn.end() else {
             // Settled with no turn Ren knows of.
             received.events.push(DriveEvent::Unknown { line });
             return;
         };
-        self.turn = TurnSlot::Idle;
         self.streaming = None;
         self.tools.clear();
         let aborted = message.get("aborted").and_then(Value::as_bool) == Some(true);
-        let end = match (interrupted || aborted, self.stopped.take()) {
+        let end = match (stop == Stop::Asked || aborted, self.stopped.take()) {
             (true, _) | (false, Some(Stopped::Aborted)) => TurnEnd::Interrupted,
             (false, Some(Stopped::Error(message))) => TurnEnd::Failed { message },
             (false, None) => TurnEnd::Completed,
@@ -497,10 +505,7 @@ impl PiRpc {
 
     /// An item id within the running turn.
     fn item(&self, name: String) -> ItemId {
-        match self.turn {
-            TurnSlot::Running { turn, .. } => ItemId::new(format!("{turn}:{name}")),
-            TurnSlot::Idle | TurnSlot::Requested => ItemId::new(name),
-        }
+        self.turn.scope(name)
     }
 
     fn message_start(&mut self, message: &Value, received: &mut Received) {
@@ -525,7 +530,7 @@ impl PiRpc {
                         .any(|part| part.get("type").and_then(Value::as_str) == Some("image"))
                 });
                 let images = match with_images {
-                    true => self.echoing.pop_front().unwrap_or_default(),
+                    true => self.echoing.pop(),
                     false => Vec::new(),
                 };
                 received.events.push(DriveEvent::Item {

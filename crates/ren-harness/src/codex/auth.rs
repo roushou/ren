@@ -4,11 +4,9 @@
 //! approves on that page.
 
 use crate::{
-    Harness,
     launch::LaunchPlan,
     sign_in::{LoginReader, Standing, StatedMethod, StatusUnread},
 };
-use std::collections::BTreeMap;
 
 /// Reads what Codex's sign-in commands print.
 pub struct CodexAuth;
@@ -56,15 +54,13 @@ impl LaunchPlan {
     }
 
     fn codex_login(arguments: &[&str]) -> Self {
-        Self {
-            harness: Harness::Codex,
-            executable: "codex",
-            arguments: arguments
+        Self::program(
+            "codex",
+            arguments
                 .iter()
                 .map(|argument| (*argument).into())
                 .collect(),
-            environment: BTreeMap::new(),
-        }
+        )
     }
 }
 

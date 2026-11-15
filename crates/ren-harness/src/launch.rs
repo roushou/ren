@@ -7,12 +7,14 @@ use crate::{
     host::HostEnv,
     opencode::{OpenCodeAcp, OpenCodeModels},
     pi::{PiCache, PiCacheError, PiModels, PiRpc},
+    profile::{ClientProfile, DefaultModel, LaunchNotice, TokenCarrier},
 };
-use ren_depot::package::{PackageId, Requirement};
+use ren_depot::package::Requirement;
 use serde::Serialize;
 use std::{
     collections::BTreeMap,
     ffi::OsString,
+    fmt,
     path::Path,
     process::{Command, ExitCode},
 };
@@ -26,10 +28,19 @@ pub enum LaunchError {
     Spawn(#[source] std::io::Error),
 }
 
-/// A harness Ren cannot drive through a structured mode yet.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-#[error("{0} cannot be driven by Ren yet")]
-pub struct NotDrivable(pub Harness);
+/// A harness Ren cannot drive through a structured mode. Every harness is
+/// driven, so it has no value: a result that names it never fails. It stays
+/// only while callers still name it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NotDrivable {}
+
+impl fmt::Display for NotDrivable {
+    fn fmt(&self, _: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match *self {}
+    }
+}
+
+impl std::error::Error for NotDrivable {}
 
 /// What a structured-mode process is started for.
 #[derive(Clone, Copy)]
@@ -106,11 +117,15 @@ impl From<&str> for EnvValue {
 
 #[derive(Serialize)]
 pub struct LaunchPlan {
-    #[serde(skip)]
-    pub(crate) harness: Harness,
     pub executable: &'static str,
     pub arguments: Vec<LaunchArg>,
     pub environment: BTreeMap<String, EnvValue>,
+    /// How the client takes a user token, for [`LaunchPlan::presenting`].
+    #[serde(skip)]
+    token: TokenCarrier,
+    /// What Ren tells the operator when it runs the client itself.
+    #[serde(skip)]
+    notices: &'static [LaunchNotice],
 }
 
 impl Harness {
@@ -125,29 +140,15 @@ impl Harness {
         }
     }
 
-    /// The program Ren runs to drive this harness, when it can drive it.
+    /// The program Ren runs to drive this harness (its profile's).
     pub fn driven_program(self) -> Result<&'static str, NotDrivable> {
-        match self {
-            Self::Codex => Ok("codex"),
-            Self::ClaudeCode => Ok("claude"),
-            Self::Pi => Ok("pi"),
-            Self::OpenCode => Ok("opencode"),
-        }
+        Ok(self.profile().program)
     }
 
-    /// The packages this harness needs on the host it runs on: its own
-    /// program, and the runtime that program runs on, where it needs one.
-    /// No version bound is stated where the client documents none.
+    /// The packages this harness needs on the host it runs on (its
+    /// profile's).
     pub fn requirements(self) -> Vec<Requirement> {
-        match self {
-            Self::ClaudeCode => vec![Requirement::any(PackageId::CLAUDE)],
-            Self::Codex => vec![Requirement::any(PackageId::CODEX)],
-            Self::Pi => vec![
-                Requirement::any(PackageId::PI),
-                Requirement::any(PackageId::NODE),
-            ],
-            Self::OpenCode => vec![Requirement::any(PackageId::OPENCODE)],
-        }
+        self.profile().requirements()
     }
 
     /// How to start this harness in its structured mode, driven by Ren
@@ -178,12 +179,7 @@ impl Harness {
                 let mut arguments: Vec<LaunchArg> =
                     vec!["app-server".into(), "--listen".into(), "stdio://".into()];
                 arguments.extend(LaunchPlan::codex_provider(gateway));
-                Ok(LaunchPlan {
-                    harness: self,
-                    executable: "codex",
-                    arguments,
-                    environment: BTreeMap::new(),
-                })
+                Ok(LaunchPlan::program(self.profile().program, arguments))
             }
             Self::ClaudeCode => {
                 // The same environment as a launched session: its traffic
@@ -216,51 +212,73 @@ impl Harness {
                 // Without the override: the models OpenCode can use as it is
                 // set up, and the default it takes on its own. No model call
                 // is made while listing.
-                Structured::Listing => LaunchPlan {
-                    harness: self,
-                    executable: "opencode",
-                    arguments: OpenCodeModels::arguments()
+                Structured::Listing => LaunchPlan::program(
+                    self.profile().program,
+                    OpenCodeModels::arguments()
                         .into_iter()
                         .map(Into::into)
                         .collect(),
-                    environment: BTreeMap::new(),
-                },
+                ),
             }),
         }
     }
 
     /// Whether a driven run names the client's own default model when none
-    /// is chosen. Ren's override names OpenCode's `anthropic` and `openai`
-    /// providers, which OpenCode then counts as set up whether or not it has
-    /// a key for them, and with no model chosen it takes the first of their
-    /// models; its listing, made without the override, names the default it
-    /// would take on its own.
+    /// is chosen (its profile's [`DefaultModel`]).
     pub fn names_its_default(self) -> bool {
-        match self {
-            Self::OpenCode => true,
-            Self::ClaudeCode | Self::Codex | Self::Pi => false,
+        match self.profile().default_model {
+            DefaultModel::Named => true,
+            DefaultModel::ClientOwn => false,
         }
     }
 
-    /// Whether a launched session can send a user token. opencode's header
-    /// configuration is not yet confirmed, so it sends none.
+    /// Whether a launched session can send a user token (its profile's
+    /// [`TokenCarrier`]).
     pub fn sends_user_token(self) -> bool {
-        match self {
-            Self::ClaudeCode | Self::Codex | Self::Pi => true,
-            Self::OpenCode => false,
+        match self.profile().token {
+            TokenCarrier::CustomHeader | TokenCarrier::Env => true,
+            TokenCarrier::None => false,
         }
     }
 }
 
 impl LaunchPlan {
+    /// `profile`'s client with these arguments and environment: what Ren
+    /// tells the operator, and how a user token goes, are the profile's.
+    pub(crate) fn client(
+        profile: &'static ClientProfile,
+        arguments: Vec<LaunchArg>,
+        environment: BTreeMap<String, EnvValue>,
+    ) -> Self {
+        Self {
+            executable: profile.program,
+            arguments,
+            environment,
+            token: profile.token,
+            notices: profile.notices,
+        }
+    }
+
+    /// `executable` with `arguments` and nothing else: a client's own
+    /// commands (its sign-in, its model listing), which take no token.
+    pub(crate) fn program(executable: &'static str, arguments: Vec<LaunchArg>) -> Self {
+        Self {
+            executable,
+            arguments,
+            environment: BTreeMap::new(),
+            token: TokenCarrier::None,
+            notices: &[],
+        }
+    }
+
     /// The plan with `token` sent to the gateway on every request. Claude
     /// Code takes it as a custom header, after any the user set; Codex and
     /// the Pi extension read it from the environment.
     #[must_use]
     pub fn presenting(mut self, token: &UserToken, env: &HostEnv) -> Self {
         let header = format!("{}: {}", UserToken::HEADER, token.expose());
-        match self.harness {
-            Harness::ClaudeCode => {
+        match self.token {
+            TokenCarrier::CustomHeader => {
                 let headers = match env.get(Self::CUSTOM_HEADERS) {
                     Some(existing) if !existing.trim().is_empty() => {
                         format!("{existing}\n{header}")
@@ -270,13 +288,13 @@ impl LaunchPlan {
                 self.environment
                     .insert(Self::CUSTOM_HEADERS.into(), EnvValue::Secret(headers));
             }
-            Harness::Codex | Harness::Pi => {
+            TokenCarrier::Env => {
                 self.environment.insert(
                     UserToken::ENV.into(),
                     EnvValue::Secret(token.expose().into()),
                 );
             }
-            Harness::OpenCode => {}
+            TokenCarrier::None => {}
         }
         self
     }
@@ -314,26 +332,20 @@ impl LaunchPlan {
     /// Replace this process with the client. Returns only on failure, or
     /// (off Unix) with the client's exit status.
     pub fn execute(&self, args: &[OsString], env: &HostEnv) -> Result<ExitCode, LaunchError> {
-        let extension = match self.harness {
-            Harness::Pi => {
-                eprintln!(
-                    "Ren routes Pi's anthropic, openai, and openai-codex providers; other providers keep their own endpoints."
-                );
-                Some(PiCache::locate(env)?.materialize()?)
-            }
-            Harness::OpenCode => {
-                if env.is_set(LaunchPlan::OPENCODE_CONFIG) {
-                    eprintln!(
-                        "Ren replaces {} for this session; keep other settings in opencode.json.",
-                        LaunchPlan::OPENCODE_CONFIG
-                    );
+        for notice in self.notices {
+            match notice {
+                LaunchNotice::Routes(text) => eprintln!("{text}"),
+                LaunchNotice::Replaces { variable, advice } => {
+                    if env.is_set(variable) {
+                        eprintln!("Ren replaces {variable} for this session; {advice}.");
+                    }
                 }
-                eprintln!(
-                    "Ren routes opencode's anthropic and openai providers; other providers keep their own endpoints."
-                );
-                None
             }
-            Harness::ClaudeCode | Harness::Codex => None,
+        }
+        let extension = if self.loads_pi_extension() {
+            Some(PiCache::locate(env)?.materialize()?)
+        } else {
+            None
         };
         let mut command = self.command(extension.as_deref(), args);
         // Replacing the launcher preserves the terminal, signals, and exact exit

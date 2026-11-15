@@ -168,13 +168,7 @@ impl Harness {
     /// The user's own words in a request's newest user text: the client's
     /// added context removed. `None` when nothing else is left.
     pub fn prompt(self, user_text: &[String]) -> Option<String> {
-        match self {
-            Self::ClaudeCode => ClaudeCodeTool::CONTEXT,
-            Self::Codex => CodexTool::CONTEXT,
-            Self::Pi => UserContext::NONE,
-            Self::OpenCode => OpenCodeTool::CONTEXT,
-        }
-        .prompt(user_text)
+        self.profile().user_context.prompt(user_text)
     }
 
     /// A tool result's status: the protocol's flag, or, for Codex commands,

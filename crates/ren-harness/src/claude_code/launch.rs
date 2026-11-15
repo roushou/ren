@@ -14,11 +14,6 @@ impl LaunchPlan {
             gateway.url("/anthropic").to_string().into(),
         );
         environment.insert("CLAUDE_CODE_GATEWAY_HINT_HEADERS".into(), "1".into());
-        Self {
-            harness: Harness::ClaudeCode,
-            executable: "claude",
-            arguments: Vec::new(),
-            environment,
-        }
+        Self::client(Harness::ClaudeCode.profile(), Vec::new(), environment)
     }
 }

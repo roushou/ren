@@ -12,8 +12,9 @@
 //! never reads, stores, or records it.
 //!
 //! Each client fills the shared types here from its own module
-//! (`claude_code`, `codex`, `pi`, `opencode`); [`Harness`] dispatches by
-//! `match`.
+//! (`claude_code`, `codex`, `pi`, `opencode`): its ways of signing in are
+//! data in its profile (`profile`), and reading its status is behaviour,
+//! which [`Harness`] dispatches by `match`.
 
 use crate::{Harness, launch::LaunchPlan, lines::Framed, lines::Line};
 use serde::Serialize;
@@ -331,10 +332,7 @@ impl LoginReader {
 
     pub fn new(harness: Harness, flow: SignInFlow) -> Self {
         Self {
-            prompt: match harness {
-                Harness::ClaudeCode => Some(crate::claude_code::ClaudeAuth::PROMPT),
-                Harness::Codex | Harness::Pi | Harness::OpenCode => None,
-            },
+            prompt: harness.profile().login_prompt,
             flow,
             linked: false,
             coded: false,
@@ -412,21 +410,10 @@ impl LoginReader {
 }
 
 impl Harness {
-    /// The ways this client signs in through Ren, first the usual one;
-    /// none where Ren cannot sign it in yet.
+    /// The ways this client signs in through Ren, first the usual one
+    /// (its profile's).
     pub fn sign_in_methods(self) -> &'static [SignInMethod] {
-        match self {
-            Self::ClaudeCode => &[
-                SignInMethod::ClaudeSubscription,
-                SignInMethod::AnthropicConsole,
-            ],
-            Self::Codex => &[SignInMethod::Chatgpt],
-            Self::Pi | Self::OpenCode => &[
-                SignInMethod::Chatgpt,
-                SignInMethod::AnthropicApiKey,
-                SignInMethod::OpenaiApiKey,
-            ],
-        }
+        self.profile().sign_in.methods()
     }
 
     /// The commands that say whether this client is signed in, each read
@@ -453,71 +440,13 @@ impl Harness {
 
     /// The client's own login, signing in with `method`.
     pub fn sign_in(self, method: SignInMethod) -> Result<SignInPlan, SignInRefused> {
-        let plan = |launch, console, flow| {
-            Ok(SignInPlan {
-                launch,
-                console,
-                flow,
-            })
-        };
-        match (self, method) {
-            (Self::ClaudeCode, SignInMethod::ClaudeSubscription) => plan(
-                LaunchPlan::claude_auth_login("--claudeai"),
-                Console::Pipes,
-                SignInFlow::PasteCode,
-            ),
-            (Self::ClaudeCode, SignInMethod::AnthropicConsole) => plan(
-                LaunchPlan::claude_auth_login("--console"),
-                Console::Pipes,
-                SignInFlow::PasteCode,
-            ),
-            (Self::Codex, SignInMethod::Chatgpt) => plan(
-                LaunchPlan::codex_device_login(),
-                Console::Pipes,
-                SignInFlow::DeviceCode,
-            ),
-            (Self::Pi, SignInMethod::Chatgpt) => plan(
-                LaunchPlan::pi_auth_login("openai-codex", "--no-browser"),
-                Console::Terminal,
-                SignInFlow::DeviceCode,
-            ),
-            (Self::Pi, SignInMethod::AnthropicApiKey) => plan(
-                LaunchPlan::pi_auth_login("anthropic", "--api-key"),
-                Console::Terminal,
-                SignInFlow::EnterKey,
-            ),
-            (Self::Pi, SignInMethod::OpenaiApiKey) => plan(
-                LaunchPlan::pi_auth_login("openai", "--api-key"),
-                Console::Terminal,
-                SignInFlow::EnterKey,
-            ),
-            (Self::OpenCode, SignInMethod::Chatgpt) => plan(
-                LaunchPlan::opencode_auth_login("openai", "chatgpt-token-sharing"),
-                Console::Pipes,
-                SignInFlow::PasteRedirect,
-            ),
-            (Self::OpenCode, SignInMethod::AnthropicApiKey) => plan(
-                LaunchPlan::opencode_auth_login("anthropic", "key"),
-                Console::Terminal,
-                SignInFlow::EnterKey,
-            ),
-            (Self::OpenCode, SignInMethod::OpenaiApiKey) => plan(
-                LaunchPlan::opencode_auth_login("openai", "key"),
-                Console::Terminal,
-                SignInFlow::EnterKey,
-            ),
-            (
-                Self::ClaudeCode | Self::Codex | Self::Pi | Self::OpenCode,
-                SignInMethod::ClaudeSubscription
-                | SignInMethod::AnthropicConsole
-                | SignInMethod::Chatgpt
-                | SignInMethod::AnthropicApiKey
-                | SignInMethod::OpenaiApiKey,
-            ) => Err(SignInRefused::NoSuchMethod {
+        self.profile()
+            .sign_in
+            .plan(method)
+            .ok_or(SignInRefused::NoSuchMethod {
                 harness: self,
                 method,
-            }),
-        }
+            })
     }
 }
 

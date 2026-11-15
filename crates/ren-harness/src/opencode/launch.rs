@@ -60,11 +60,6 @@ impl LaunchPlan {
         }
         let mut environment = BTreeMap::new();
         environment.insert(Self::OPENCODE_CONFIG.into(), config.to_string().into());
-        Self {
-            harness: Harness::OpenCode,
-            executable: "opencode",
-            arguments: Vec::new(),
-            environment,
-        }
+        Self::client(Harness::OpenCode.profile(), Vec::new(), environment)
     }
 }

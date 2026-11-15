@@ -5,12 +5,10 @@
 //! (`--api-key`). Its login needs a terminal.
 
 use crate::{
-    Harness,
     launch::LaunchPlan,
     sign_in::{Standing, StatedMethod, StatusUnread},
 };
 use serde::Deserialize;
-use std::collections::BTreeMap;
 
 /// Reads what Pi's sign-in commands print.
 pub struct PiAuth;
@@ -76,15 +74,13 @@ impl LaunchPlan {
     }
 
     fn pi_auth(arguments: &[&str]) -> Self {
-        Self {
-            harness: Harness::Pi,
-            executable: "pi",
-            arguments: arguments
+        Self::program(
+            "pi",
+            arguments
                 .iter()
                 .map(|argument| (*argument).into())
                 .collect(),
-            environment: BTreeMap::new(),
-        }
+        )
     }
 }
 

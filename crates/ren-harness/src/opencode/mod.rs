@@ -9,9 +9,10 @@ mod acp;
 mod auth;
 mod headers;
 mod launch;
+mod profile;
 mod session;
 mod tools;
 
-pub use acp::{OpenCodeAcp, OpenCodeModels};
+pub use acp::{AcpMethod, AcpUpdate, OpenCodeAcp, OpenCodeModels};
 pub use auth::OpenCodeAuth;
 pub use tools::OpenCodeTool;
