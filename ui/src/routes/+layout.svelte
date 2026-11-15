@@ -20,6 +20,7 @@
   import RedlineLayer from '#lib/RedlineLayer.svelte';
   import RedlinePanel from '#lib/RedlinePanel.svelte';
   import { RedlineDesk } from '#lib/redline.svelte.ts';
+  import { Views } from '#lib/view.ts';
   import '#lib/style.css';
   import type { LayoutProps } from './$types';
   let { data, children }: LayoutProps = $props();
@@ -49,36 +50,8 @@
       ?.querySelector('[aria-current="page"]')
       ?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
   });
-  const view = $derived(
-    page.route.id === '/'
-      ? 'overview'
-      : page.route.id === '/live'
-        ? 'live'
-        : page.route.id === '/recorder'
-          ? 'recorder'
-          : page.route.id === '/usage'
-            ? 'usage'
-            : page.route.id === '/recordings'
-              ? 'recordings'
-              : page.route.id === '/recordings/[id]/report'
-                ? 'report'
-                : page.route.id === '/turns/[id]'
-                  ? 'turn'
-                  : page.route.id === '/search'
-                    ? 'search'
-                    : page.route.id === '/sessions'
-                      ? 'sessions'
-                      : page.route.id === '/tools'
-                        ? 'tools'
-                        : 'traffic',
-  );
-  /** A session page's ID; reports and turns belong under Recordings too. */
-  const sessionId = $derived(
-    page.route.id === '/recordings/[id]' ? (page.params.id ?? null) : null,
-  );
-  const underRecordings = $derived(
-    view === 'recordings' || view === 'report' || view === 'turn' || !!sessionId,
-  );
+  const view = $derived(Views.of(page.route.id));
+  const tab = $derived(Views.tab(view));
   /** When the scope does not fit on one line it folds behind a button. */
   let scopeOpen = $state(false);
   let folded = $state(false);
@@ -113,33 +86,7 @@
   });
   const sessionCount = $derived(page.data.sessions?.value?.sessions.length ?? 0);
   const selected = $derived(workbench.selected);
-  const pageTitle = $derived(
-    page.error
-      ? 'Page unavailable'
-      : view === 'overview'
-        ? 'Overview'
-        : view === 'live'
-          ? 'Live'
-          : view === 'recorder'
-            ? 'Recorder & storage'
-            : view === 'usage'
-              ? 'Usage'
-              : view === 'recordings'
-                ? 'Recordings'
-                : view === 'report'
-                  ? 'Recording report'
-                  : view === 'turn'
-                    ? 'Turn'
-                    : view === 'search'
-                      ? 'Search'
-                      : view === 'sessions'
-                        ? 'Sessions'
-                        : view === 'tools'
-                          ? 'Tools'
-                          : sessionId
-                            ? 'Recording activity'
-                            : 'Traffic',
-  );
+  const pageTitle = $derived(page.error ? 'Page unavailable' : Views.title(view));
   const gatewayOrigin = $derived(page.data.gatewayUrl);
   // The header names where the gateway runs, not its address.
   const place = $derived(GatewayPlace.parse(gatewayOrigin));
@@ -246,59 +193,59 @@
       <a
         href="/"
         data-sveltekit-preload-data="hover"
-        class:active={view === 'overview'}
-        aria-current={view === 'overview' ? 'page' : undefined}
+        class:active={tab === 'overview'}
+        aria-current={tab === 'overview' ? 'page' : undefined}
         ><Icon name="monitor" size={14} />Overview</a
       >
       <a
         href="/live"
         data-sveltekit-preload-data="hover"
-        class:active={view === 'live'}
-        aria-current={view === 'live' ? 'page' : undefined}><Icon name="pulse" size={14} />Live</a
+        class:active={tab === 'live'}
+        aria-current={tab === 'live' ? 'page' : undefined}><Icon name="pulse" size={14} />Live</a
       >
       <a
         href="/sessions"
-        class:active={view === 'sessions'}
-        aria-current={view === 'sessions' ? 'page' : undefined}
+        class:active={tab === 'sessions'}
+        aria-current={tab === 'sessions' ? 'page' : undefined}
         ><Icon name="spark" size={14} />Sessions</a
       >
       <a
         href="/traffic"
         data-sveltekit-preload-data="hover"
-        class:active={view === 'traffic' && !sessionId}
-        aria-current={view === 'traffic' && !sessionId ? 'page' : undefined}
+        class:active={tab === 'traffic'}
+        aria-current={tab === 'traffic' ? 'page' : undefined}
         ><Icon name="logs" size={14} />Traffic</a
       >
       <a
         href="/recordings"
         data-sveltekit-preload-data="hover"
-        class:active={underRecordings}
-        aria-current={underRecordings ? 'page' : undefined}
+        class:active={tab === 'recordings'}
+        aria-current={tab === 'recordings' ? 'page' : undefined}
         ><Icon name="sessions" size={14} />Recordings</a
       >
       <a
         href="/search"
         data-sveltekit-preload-data="hover"
-        class:active={view === 'search'}
-        aria-current={view === 'search' ? 'page' : undefined}
+        class:active={tab === 'search'}
+        aria-current={tab === 'search' ? 'page' : undefined}
         ><Icon name="search" size={14} />Search</a
       >
       <a
         href="/usage"
         data-sveltekit-preload-data="hover"
-        class:active={view === 'usage'}
-        aria-current={view === 'usage' ? 'page' : undefined}><Icon name="chart" size={14} />Usage</a
+        class:active={tab === 'usage'}
+        aria-current={tab === 'usage' ? 'page' : undefined}><Icon name="chart" size={14} />Usage</a
       >
       <a
         href="/tools"
-        class:active={view === 'tools'}
-        aria-current={view === 'tools' ? 'page' : undefined}><Icon name="tool" size={14} />Tools</a
+        class:active={tab === 'tools'}
+        aria-current={tab === 'tools' ? 'page' : undefined}><Icon name="tool" size={14} />Tools</a
       >
       <a
         href="/recorder"
         data-sveltekit-preload-data="hover"
-        class:active={view === 'recorder'}
-        aria-current={view === 'recorder' ? 'page' : undefined}
+        class:active={tab === 'recorder'}
+        aria-current={tab === 'recorder' ? 'page' : undefined}
         ><Icon name="storage" size={14} />Recorder{#if loss || degraded}<span
             class="warning"
             aria-label="Recording needs attention">!</span
@@ -413,13 +360,13 @@
             : 'No capture loss recorded'}</button
     >
     <span class="status-context mono"
-      >{selected && view === 'traffic'
+      >{selected && (view === 'traffic' || view === 'recording')
         ? `${short(selected.id)} · ${captureState(selected, gateway.current.value?.storage.capture?.body_limit_bytes ?? null).toLowerCase()}`
         : view === 'recorder'
           ? `${num(storage?.usage.calls)} calls retained`
           : view === 'recordings'
             ? `${sessionCount}${sessionCount === 100 ? '+' : ''} recordings loaded`
-            : view === 'traffic'
+            : view === 'traffic' || view === 'recording'
               ? `${workbench.callCount} calls on page · ${workbench.activeCount} in progress`
               : `${num(storage?.usage.calls)} calls retained`}</span
     >
