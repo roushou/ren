@@ -582,7 +582,11 @@ pub struct ConversationView {
 pub struct RunEntryView {
     pub run: RunId,
     pub seq: u64,
+    /// When it was last reported: an item reported again (finished,
+    /// completed) is the same entry, as it last stood.
     pub at: UnixMillis,
+    /// When it was first reported: an item's start.
+    pub started_at: UnixMillis,
     /// The client's turn it belongs to, once one started.
     pub turn: Option<String>,
     pub event: DriveEvent,

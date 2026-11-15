@@ -344,8 +344,11 @@ it came. Entries are written through the recorder like bodies, never
 blocking forwarding: without queue room an entry is counted as omitted.
 
 `GET /api/runs/{run-id}/conversation` answers `{api_version, entries,
-earlier}`. Each entry is `{run, seq, at, turn, event}`, where `event` is the
-event as the run feed sends it. The conversation includes the runs before
+earlier}`. Each entry is `{run, seq, at, started_at, turn, event}`, where
+`event` is the event as the run feed sends it. An item reported again (a
+command that finished, a reply that completed) is one entry as it last
+stood: `at` is when it was last reported and `started_at` when it was first
+(the same for entries stored before Ren kept both). The conversation includes the runs before
 this one on the same client thread (a resumed conversation reads as one), up
 to the newest 20,000 entries; `earlier` says older ones were left out.
 Deleting a run deletes its conversation.

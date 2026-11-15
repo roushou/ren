@@ -2143,6 +2143,7 @@ mod conversation {
                     turn: Some(turn),
                     event,
                 }));
+                self.clock.advance(std::time::Duration::from_millis(1));
             }
             batch.push(Op::Run(RunRecord {
                 at: self.clock.now(),
@@ -2379,6 +2380,15 @@ mod conversation {
                 (resumed, "msg_2 Completed".to_owned()),
             ]
         );
+        // The command reported again keeps when it started, and is read as
+        // it last stood.
+        let command = &read.entries[0];
+        assert_eq!(
+            command.at.as_millis() - command.started_at.as_millis(),
+            2,
+            "started, then finished two entries later"
+        );
+        assert_eq!(read.entries[1].started_at, read.entries[1].at);
         // The reply is whole: nothing is cut for being long.
         let DriveEvent::Item { item, .. } = &read.entries[1].event else {
             panic!("a reply");
