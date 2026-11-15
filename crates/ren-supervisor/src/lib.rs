@@ -47,7 +47,7 @@ use ren_harness::{
     Harness,
     attachment::{Attachment, AttachmentError, Limits, NotAccepted, PromptLimitError, Takes},
     commands::ClientCommand,
-    drive::{CommandRefused, DriveEvent, Prompt},
+    drive::{CommandRefused, DriveEvent},
     endpoint::GatewayEndpoint,
     launch::NotDrivable,
     lines::LineLimit,
@@ -257,15 +257,6 @@ pub struct Places {
     pub scratch: Option<String>,
 }
 
-/// Which conversation a new run opens.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Conversation {
-    New,
-    /// Continue the client's own conversation, by its thread id: a run that
-    /// ended, or was recovered after a restart, picks up where it left off.
-    Resume(NativeThreadId),
-}
-
 /// One run as the supervisor holds it now.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct RunSnapshot {
@@ -411,28 +402,7 @@ pub(crate) enum SessionRequest {
 #[error("the supervisor has stopped")]
 pub struct Gone;
 
-/// What a new run starts: which client, where, which conversation, with which
-/// settings, and its first prompt.
-pub struct Start {
-    pub harness: Harness,
-    pub place: StartPlace,
-    pub conversation: Conversation,
-    /// Each left out is the client's own.
-    pub settings: RunSettings,
-    /// Sent once the conversation is open.
-    pub first: Option<Prompt>,
-}
-
 pub(crate) enum Request {
-    Start {
-        start: Start,
-        reply: oneshot::Sender<Result<RunId, StartError>>,
-    },
-    Command {
-        run: RunId,
-        command: RunCommand,
-        reply: oneshot::Sender<Result<(), CommandError>>,
-    },
     List {
         reply: oneshot::Sender<Vec<RunSnapshot>>,
     },
@@ -558,29 +528,6 @@ impl Supervisor {
             },
             task,
         ))
-    }
-
-    /// Start a run.
-    pub async fn start(&self, start: Start) -> Result<RunId, StartError> {
-        let (reply, answer) = oneshot::channel();
-        self.requests
-            .send(Request::Start { start, reply })
-            .await
-            .map_err(|_| StartError::Gone)?;
-        answer.await.map_err(|_| StartError::Gone)?
-    }
-
-    pub async fn command(&self, run: RunId, command: RunCommand) -> Result<(), CommandError> {
-        let (reply, answer) = oneshot::channel();
-        self.requests
-            .send(Request::Command {
-                run,
-                command,
-                reply,
-            })
-            .await
-            .map_err(|_| CommandError::Gone)?;
-        answer.await.map_err(|_| CommandError::Gone)?
     }
 
     /// Every run the supervisor knows of, ended ones included.

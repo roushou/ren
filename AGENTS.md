@@ -324,8 +324,8 @@ dependencies under "Crates" below. Read the code for current module ownership.
   own under the attachments folder (`attachments`: `AttachmentFolders`,
   written through `AgentHost::place_file`, `<data>/attachments` in the
   daemon), removed with it by `forget`. Session
-  changes go to `subscribe_sessions`. A run started through `start` is a
-  session and its first process. A client idle between turns is stopped
+  changes go to `subscribe_sessions`; every request addresses a session,
+  never a run. A client idle between turns is stopped
   after `IdleStop` (ten minutes in the daemon; its run ends `idled`), and its
   session goes on, unless it is a draft never asked anything and holding no
   attachment: that one is discarded (`SessionAction::Discard`, recorded as

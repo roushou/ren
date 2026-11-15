@@ -28,9 +28,9 @@ use ren_recorder::{
 };
 use ren_store::{Reader, Store, query::PageLimit, view::RunView};
 use ren_supervisor::{
-    AgentHost, AgentProcess, CommandError, Conversation, FileQuery, FoundPath, KillSignal,
-    KillSwitch, Look, PathKind, ProcessExit, RunCommand, RunRefused, RunState, RunTools, RunUpdate,
-    StartError, Supervisor, SupervisorOptions, WalkLimits, Workdir,
+    AgentHost, AgentProcess, CommandError, FileQuery, FoundPath, KillSignal, KillSwitch, Look,
+    PathKind, ProcessExit, RunCommand, RunRefused, RunState, RunTools, RunUpdate, StartError,
+    Supervisor, SupervisorOptions, WalkLimits, Workdir,
 };
 use serde_json::{Value, json};
 use std::{
@@ -693,15 +693,12 @@ async fn runs_a_turn_through_an_approval_and_stops() {
     let supervisor = &supervised.supervisor;
     let mut updates = supervisor.subscribe();
 
-    let run = supervisor
-        .start(starting(
-            Harness::Codex,
-            "/work/acme",
-            Conversation::New,
-            None,
-        ))
-        .await
-        .unwrap();
+    let (session, run) = start(
+        supervisor,
+        starting(Harness::Codex, "/work/acme", Conversation::New, None),
+    )
+    .await
+    .unwrap();
     let (arguments, workdir) = spawned.lock().unwrap()[0].clone();
     assert_eq!(arguments[..3], ["app-server", "--listen", "stdio://"]);
     assert_eq!(workdir, PathBuf::from("/work/acme"));
@@ -712,10 +709,12 @@ async fn runs_a_turn_through_an_approval_and_stops() {
     );
     state(&mut updates, |s| matches!(s, RunState::Idle { .. })).await;
 
-    supervisor.command(run, prompt()).await.unwrap();
+    supervisor.send(session, prompt()).await.unwrap();
     assert!(matches!(
-        supervisor.command(run, prompt()).await,
-        Err(CommandError::Refused(RunRefused::Busy))
+        supervisor.send(session, prompt()).await,
+        Err(ren_supervisor::SessionError::Command(
+            CommandError::Refused(RunRefused::Busy)
+        ))
     ));
     let waiting = state(
         &mut updates,
@@ -735,8 +734,8 @@ async fn runs_a_turn_through_an_approval_and_stops() {
     let approval: ApprovalId = waiting.approval.clone();
     assert_eq!(approval.to_string(), "ap-1");
     supervisor
-        .command(
-            run,
+        .send(
+            session,
             RunCommand::Answer {
                 approval,
                 decision: Decision::Accept,
@@ -746,7 +745,7 @@ async fn runs_a_turn_through_an_approval_and_stops() {
         .unwrap();
     state(&mut updates, |s| matches!(s, RunState::Idle { .. })).await;
 
-    supervisor.command(run, RunCommand::Stop).await.unwrap();
+    supervisor.send(session, RunCommand::Stop).await.unwrap();
     let ended = state(&mut updates, RunState::is_ended).await;
     assert_eq!(
         ended,
@@ -755,9 +754,10 @@ async fn runs_a_turn_through_an_approval_and_stops() {
             exit: Some(ProcessExit::Signal(9))
         }
     );
+    // Its process has ended: what only a process can do is refused.
     assert!(matches!(
-        supervisor.command(run, prompt()).await,
-        Err(CommandError::Refused(RunRefused::Ended))
+        supervisor.send(session, RunCommand::Interrupt).await,
+        Err(ren_supervisor::SessionError::NoProcess)
     ));
     let runs = supervisor.runs().await.unwrap();
     assert_eq!(runs.len(), 1);
@@ -787,10 +787,15 @@ async fn refuses_directories_outside_the_roots() {
         ("/missing", "Resolve"),
     ];
     for (dir, expected) in refused {
-        let error = supervisor
-            .start(starting(Harness::Codex, dir, Conversation::New, None))
-            .await
-            .unwrap_err();
+        let error = start(
+            supervisor,
+            starting(Harness::Codex, dir, Conversation::New, None),
+        )
+        .await
+        .unwrap_err();
+        let ren_supervisor::SessionError::Start(error) = error else {
+            panic!("{dir}: {error:?}");
+        };
         assert!(
             format!("{error:?}").starts_with(expected),
             "{dir}: {error:?}"
@@ -805,17 +810,13 @@ async fn a_failed_spawn_is_reported_and_kept() {
     host.spawn_fails = true;
     let supervised = supervise(host).await;
     let supervisor = &supervised.supervisor;
-    let Err(StartError::Spawn { run, .. }) = supervisor
-        .start(starting(
-            Harness::Codex,
-            "/work/acme",
-            Conversation::New,
-            None,
-        ))
-        .await
-    else {
-        panic!("expected a spawn failure");
-    };
+    // The session is kept, its process ended as it began.
+    let (_, run) = start(
+        supervisor,
+        starting(Harness::Codex, "/work/acme", Conversation::New, None),
+    )
+    .await
+    .unwrap();
     let runs = supervisor.runs().await.unwrap();
     assert_eq!(runs[0].run, run);
     assert_eq!(
@@ -835,15 +836,12 @@ async fn a_refused_opening_stops_the_run() {
     let supervised = supervise(FakeHost::new(Script::RefusesOpening)).await;
     let supervisor = &supervised.supervisor;
     let mut updates = supervisor.subscribe();
-    supervisor
-        .start(starting(
-            Harness::Codex,
-            "/work/acme",
-            Conversation::New,
-            None,
-        ))
-        .await
-        .unwrap();
+    start(
+        supervisor,
+        starting(Harness::Codex, "/work/acme", Conversation::New, None),
+    )
+    .await
+    .unwrap();
     assert_eq!(
         state(&mut updates, RunState::is_ended).await,
         RunState::Ended {
@@ -858,15 +856,12 @@ async fn an_agent_that_exits_on_its_own_ends_the_run() {
     let supervised = supervise(FakeHost::new(Script::ExitsEarly)).await;
     let supervisor = &supervised.supervisor;
     let mut updates = supervisor.subscribe();
-    supervisor
-        .start(starting(
-            Harness::Codex,
-            "/work/acme",
-            Conversation::New,
-            None,
-        ))
-        .await
-        .unwrap();
+    start(
+        supervisor,
+        starting(Harness::Codex, "/work/acme", Conversation::New, None),
+    )
+    .await
+    .unwrap();
     assert_eq!(
         state(&mut updates, RunState::is_ended).await,
         RunState::Ended {
@@ -881,14 +876,18 @@ async fn dropping_every_handle_drains_the_runs_and_ends_the_task() {
     let supervised = supervise(FakeHost::new(Script::Codex)).await;
     let supervisor = &supervised.supervisor;
     let mut updates = supervisor.subscribe();
-    supervisor
-        .start(starting(Harness::Codex, "/work/a", Conversation::New, None))
-        .await
-        .unwrap();
-    supervisor
-        .start(starting(Harness::Codex, "/work/b", Conversation::New, None))
-        .await
-        .unwrap();
+    start(
+        supervisor,
+        starting(Harness::Codex, "/work/a", Conversation::New, None),
+    )
+    .await
+    .unwrap();
+    start(
+        supervisor,
+        starting(Harness::Codex, "/work/b", Conversation::New, None),
+    )
+    .await
+    .unwrap();
     state(&mut updates, |s| matches!(s, RunState::Idle { .. })).await;
     let (stored, _dir) = supervised.stored().await;
     assert_eq!(stored.len(), 2);
@@ -917,15 +916,17 @@ async fn a_run_can_resume_the_clients_thread() {
     let earlier = "0190f3a0-0000-7000-8000-0000000000ee";
     let thread =
         ren_protocol::native::NativeThreadId::new(uuid::Uuid::parse_str(earlier).unwrap()).unwrap();
-    supervisor
-        .start(starting(
+    start(
+        supervisor,
+        starting(
             Harness::Codex,
             "/work/acme",
             Conversation::Resume(thread),
             None,
-        ))
-        .await
-        .unwrap();
+        ),
+    )
+    .await
+    .unwrap();
     assert_eq!(
         state(&mut updates, |s| matches!(s, RunState::Idle { .. })).await,
         RunState::Idle { thread }
@@ -942,15 +943,12 @@ async fn drives_claude_code_through_a_turn_in_the_conversation_ren_names() {
     let supervisor = &supervised.supervisor;
     let mut updates = supervisor.subscribe();
 
-    let run = supervisor
-        .start(starting(
-            Harness::ClaudeCode,
-            "/work/acme",
-            Conversation::New,
-            None,
-        ))
-        .await
-        .unwrap();
+    let (session, _) = start(
+        supervisor,
+        starting(Harness::ClaudeCode, "/work/acme", Conversation::New, None),
+    )
+    .await
+    .unwrap();
     let (arguments, _) = spawned.lock().unwrap()[0].clone();
     assert_eq!(arguments[0], "-p");
     let named = arguments
@@ -965,7 +963,7 @@ async fn drives_claude_code_through_a_turn_in_the_conversation_ren_names() {
     };
     assert_eq!(thread.to_string(), named);
 
-    supervisor.command(run, prompt()).await.unwrap();
+    supervisor.send(session, prompt()).await.unwrap();
     let waiting = state(
         &mut updates,
         |s| matches!(s, RunState::Working { turn: Some(_), approvals, .. } if !approvals.is_empty()),
@@ -984,8 +982,8 @@ async fn drives_claude_code_through_a_turn_in_the_conversation_ren_names() {
         }
     );
     supervisor
-        .command(
-            run,
+        .send(
+            session,
             RunCommand::Answer {
                 approval: waiting.approval.clone(),
                 decision: Decision::Accept,
@@ -994,7 +992,7 @@ async fn drives_claude_code_through_a_turn_in_the_conversation_ren_names() {
         .await
         .unwrap();
     state(&mut updates, |s| matches!(s, RunState::Idle { .. })).await;
-    supervisor.command(run, RunCommand::Stop).await.unwrap();
+    supervisor.send(session, RunCommand::Stop).await.unwrap();
     state(&mut updates, RunState::is_ended).await;
 
     let (stored, _dir) = supervised.stored().await;
@@ -1013,10 +1011,12 @@ async fn drives_pi_through_a_turn_in_the_session_ren_names() {
     let supervisor = &supervised.supervisor;
     let mut updates = supervisor.subscribe();
 
-    let run = supervisor
-        .start(starting(Harness::Pi, "/work/acme", Conversation::New, None))
-        .await
-        .unwrap();
+    let (session, _) = start(
+        supervisor,
+        starting(Harness::Pi, "/work/acme", Conversation::New, None),
+    )
+    .await
+    .unwrap();
     let (arguments, workdir) = spawned.lock().unwrap()[0].clone();
     assert_eq!(workdir, PathBuf::from("/work/acme"));
     assert!(arguments.windows(2).any(|pair| pair == ["--mode", "rpc"]));
@@ -1032,13 +1032,13 @@ async fn drives_pi_through_a_turn_in_the_session_ren_names() {
     };
     assert_eq!(thread.to_string(), named);
 
-    supervisor.command(run, prompt()).await.unwrap();
+    supervisor.send(session, prompt()).await.unwrap();
     state(&mut updates, |s| {
         matches!(s, RunState::Working { turn: Some(_), .. })
     })
     .await;
     state(&mut updates, |s| matches!(s, RunState::Idle { .. })).await;
-    supervisor.command(run, RunCommand::Stop).await.unwrap();
+    supervisor.send(session, RunCommand::Stop).await.unwrap();
     state(&mut updates, RunState::is_ended).await;
 
     let (stored, _dir) = supervised.stored().await;
@@ -1054,15 +1054,17 @@ async fn a_first_prompt_goes_out_once_the_conversation_opens() {
     let supervised = supervise(FakeHost::new(Script::Claude)).await;
     let supervisor = &supervised.supervisor;
     let mut updates = supervisor.subscribe();
-    supervisor
-        .start(starting(
+    start(
+        supervisor,
+        starting(
             Harness::ClaudeCode,
             "/work/acme",
             Conversation::New,
             Some(prompt_text("run the tests")),
-        ))
-        .await
-        .unwrap();
+        ),
+    )
+    .await
+    .unwrap();
     // No prompt command: the run asks its first approval on its own.
     state(
         &mut updates,
@@ -1253,15 +1255,12 @@ async fn opencode_starts_on_the_default_it_listed_when_none_is_chosen() {
         models[0].choice,
         ren_harness::models::DefaultChoice::Default
     );
-    let run = supervisor
-        .start(starting(
-            Harness::OpenCode,
-            "/work/acme",
-            Conversation::New,
-            None,
-        ))
-        .await
-        .unwrap();
+    let (_, run) = start(
+        supervisor,
+        starting(Harness::OpenCode, "/work/acme", Conversation::New, None),
+    )
+    .await
+    .unwrap();
     let runs = supervisor.runs().await.unwrap();
     let started = runs.iter().find(|entry| entry.run == run).unwrap();
     assert_eq!(
@@ -1270,8 +1269,8 @@ async fn opencode_starts_on_the_default_it_listed_when_none_is_chosen() {
     );
     // A model chosen is kept.
     let mut chosen = starting(Harness::OpenCode, "/work/acme", Conversation::New, None);
-    chosen.settings.model = Some("opencode/other".parse().unwrap());
-    let run = supervisor.start(chosen).await.unwrap();
+    chosen.0.settings.model = Some("opencode/other".parse().unwrap());
+    let (_, run) = start(supervisor, chosen).await.unwrap();
     let runs = supervisor.runs().await.unwrap();
     let started = runs.iter().find(|entry| entry.run == run).unwrap();
     assert_eq!(
@@ -1299,10 +1298,10 @@ async fn a_run_starts_with_its_chosen_settings() {
     let host = FakeHost::new(Script::Claude);
     let spawned = host.spawned.clone();
     let supervised = supervise(host).await;
-    let mut start = starting(Harness::ClaudeCode, "/work/acme", Conversation::New, None);
-    start.settings.model = Some("small".parse().unwrap());
-    start.settings.approvals = Some(ren_harness::settings::ApprovalPolicy::Auto);
-    supervised.supervisor.start(start).await.unwrap();
+    let mut chosen = starting(Harness::ClaudeCode, "/work/acme", Conversation::New, None);
+    chosen.0.settings.model = Some("small".parse().unwrap());
+    chosen.0.settings.approvals = Some(ren_harness::settings::ApprovalPolicy::Auto);
+    start(&supervised.supervisor, chosen).await.unwrap();
     let (arguments, _) = spawned.lock().unwrap()[0].clone();
     assert_eq!(
         arguments[arguments.len() - 4..],
@@ -1316,10 +1315,12 @@ async fn a_run_starts_with_its_chosen_settings() {
     );
     // Pi asks for nothing, so it takes no approval policy.
     let mut pi = starting(Harness::Pi, "/work/acme", Conversation::New, None);
-    pi.settings.approvals = Some(ren_harness::settings::ApprovalPolicy::Ask);
+    pi.0.settings.approvals = Some(ren_harness::settings::ApprovalPolicy::Ask);
     assert!(matches!(
-        supervised.supervisor.start(pi).await,
-        Err(StartError::NoApprovals(Harness::Pi))
+        start(&supervised.supervisor, pi).await,
+        Err(ren_supervisor::SessionError::Start(
+            StartError::NoApprovals(Harness::Pi)
+        ))
     ));
 }
 
@@ -1328,9 +1329,9 @@ async fn a_scratch_run_gets_a_new_repository_of_its_own() {
     let host = FakeHost::new(Script::Codex);
     let (spawned, made) = (host.spawned.clone(), host.made.clone());
     let supervised = supervise(host).await;
-    let mut start = starting(Harness::Codex, "/unused", Conversation::New, None);
-    start.place = ren_supervisor::StartPlace::Scratch;
-    supervised.supervisor.start(start).await.unwrap();
+    let mut scratch = starting(Harness::Codex, "/unused", Conversation::New, None);
+    scratch.0.place = ren_supervisor::StartPlace::Scratch;
+    start(&supervised.supervisor, scratch).await.unwrap();
     let (_, workdir) = spawned.lock().unwrap()[0].clone();
     assert!(
         workdir.to_str().unwrap().starts_with("/scratch/scratch-"),
@@ -1349,27 +1350,61 @@ async fn a_scratch_run_gets_a_new_repository_of_its_own() {
     );
     // A folder outside every root and place is refused, a home included.
     let outside = starting(Harness::Codex, "/home/op", Conversation::New, None);
-    assert!(supervised.supervisor.start(outside).await.is_err());
+    assert!(start(&supervised.supervisor, outside).await.is_err());
 }
 
 fn prompt_text(text: &str) -> Prompt {
     Prompt::parse(text.into()).unwrap()
 }
 
-/// What a run starts with, on the client's own default model.
+/// What a session starts with: its client in `dir`, on the client's own
+/// default model, going on with `conversation`, and its first prompt.
 fn starting(
     harness: Harness,
     dir: &str,
     conversation: Conversation,
     first: Option<ren_harness::drive::Prompt>,
-) -> ren_supervisor::Start {
-    ren_supervisor::Start {
-        harness,
-        place: ren_supervisor::StartPlace::Folder(dir.into()),
-        conversation,
-        settings: ren_harness::settings::RunSettings::default(),
+) -> (ren_supervisor::Create, Option<ren_harness::drive::Prompt>) {
+    let resume = match conversation {
+        Conversation::New => None,
+        Conversation::Resume(thread) => Some(thread),
+    };
+    (
+        ren_supervisor::Create {
+            harness,
+            place: ren_supervisor::StartPlace::Folder(dir.into()),
+            settings: ren_harness::settings::RunSettings::default(),
+            resume,
+        },
         first,
+    )
+}
+
+/// A session made and sent its first prompt, and the process its client
+/// started.
+async fn start(
+    supervisor: &Supervisor,
+    (create, first): (ren_supervisor::Create, Option<ren_harness::drive::Prompt>),
+) -> Result<(ren_recorder::id::SessionId, ren_recorder::id::RunId), ren_supervisor::SessionError> {
+    let session = supervisor.create(create).await?;
+    if let Some(first) = first {
+        supervisor.send(session, RunCommand::Prompt(first)).await?;
     }
+    let run = supervisor
+        .sessions()
+        .await?
+        .into_iter()
+        .find(|served| served.session == session)
+        .and_then(|served| served.process)
+        .expect("a session's client is started as it is made");
+    Ok((session, run))
+}
+
+/// Whether to continue a client's conversation.
+#[derive(Clone, Copy)]
+enum Conversation {
+    New,
+    Resume(ren_protocol::native::NativeThreadId),
 }
 
 fn create(harness: Harness, dir: &str) -> ren_supervisor::Create {

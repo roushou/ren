@@ -300,13 +300,6 @@ impl Session {
         }
     }
 
-    /// A new session whose first prompt goes with its first process: active
-    /// from the start. Nothing is recorded: the run records the session.
-    pub(crate) fn with_first_prompt(mut self) -> Self {
-        self.state = self.state.prompted();
-        self
-    }
-
     /// `run` is its newest process.
     pub(crate) fn started(&mut self, run: RunId) {
         self.process = Some(run);

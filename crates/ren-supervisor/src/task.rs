@@ -16,9 +16,8 @@ use crate::login::{SignInError, SignIns, StatusCheck};
 use crate::models::{Listings, ModelProbe, ModelsError, ModelsReply};
 use crate::process::{Process, ProcessEffect, Rest, Serving};
 use crate::{
-    CommandError, Conversation, Create, IdleStop, Places, Reply, Request, RunSnapshot, RunUpdate,
-    SessionError, SessionRequest, SessionSeed, SessionSnapshot, SignInRequest, Start, StartError,
-    StartPlace, Warmup,
+    Create, IdleStop, Places, Reply, Request, RunSnapshot, RunUpdate, SessionError, SessionRequest,
+    SessionSeed, SessionSnapshot, SignInRequest, StartError, StartPlace, Warmup,
     client::{Client, ClientStatus},
     files::{FileListing, FileMatch, FileQuery, FoundPath},
     host::{AgentHost, AgentProcess, KillSwitch},
@@ -283,18 +282,6 @@ impl<H: AgentHost> SupervisorTask<H> {
 
     async fn request(&self, request: Request, served: &mut Served) {
         match request {
-            Request::Start { start, reply } => {
-                let started = self.start(start, served).await;
-                let _ = reply.send(started);
-            }
-            Request::Command {
-                run,
-                command,
-                reply,
-            } => {
-                let result = self.run_command(run, command, served).await;
-                let _ = reply.send(result);
-            }
             Request::Session(request) => self.session(request, served).await,
             Request::Projects { reply } => {
                 // Bounded by `Search`; the host reads only folder listings
@@ -494,39 +481,6 @@ impl<H: AgentHost> SupervisorTask<H> {
             }
             Some(_) | None => Ok(()),
         }
-    }
-
-    /// A run: a session and its first process, sent `first` once open.
-    async fn start(
-        &self,
-        Start {
-            harness,
-            place,
-            conversation,
-            settings,
-            first,
-        }: Start,
-        served: &mut Served,
-    ) -> Result<RunId, StartError> {
-        let workdir = self.place(place).await?;
-        Self::drivable(harness, &settings)?;
-        let session = SessionId::generate(self.ids.as_ref());
-        let resume = match conversation {
-            Conversation::New => None,
-            Conversation::Resume(thread) => Some(thread),
-        };
-        let mut new = Session::new(harness, workdir, settings, resume);
-        if first.is_some() {
-            new = new.with_first_prompt();
-        }
-        let started = self
-            .spawn(session, &mut new, RunSession::New(session), first, served)
-            .await;
-        // A run the recorder had no room for leaves no session.
-        if !matches!(started, Err(StartError::Unrecorded(_))) {
-            served.sessions.insert(session, new);
-        }
-        started
     }
 
     /// A new process for `session`, recorded as `recorded`: it resumes the
@@ -1273,43 +1227,6 @@ impl<H: AgentHost> SupervisorTask<H> {
                 tracing::debug!(%session, %error, "the session's process would not stop");
             }
         }
-    }
-
-    /// An operator command to a run, and to the session it serves.
-    async fn run_command(
-        &self,
-        run: RunId,
-        command: RunCommand,
-        served: &mut Served,
-    ) -> Result<(), CommandError> {
-        let live = served
-            .runs
-            .get_mut(&run)
-            .ok_or(CommandError::NoSuchRun(run))?;
-        let session = live.process.session();
-        let prompted = matches!(
-            command,
-            RunCommand::Prompt(_) | RunCommand::Queue(_) | RunCommand::Steer(_)
-        );
-        let effects = live.process.command(command)?;
-        self.carry_out(live, effects, &mut served.idles);
-        let settings = live.process.settings().clone();
-        let Some(mut serving) = served.sessions.remove(&session) else {
-            return Ok(());
-        };
-        serving.took(settings);
-        let (slot, room) = self.room();
-        let effects = match prompted {
-            true => serving.prompted(room).unwrap_or_else(|error| {
-                tracing::debug!(%session, %error, "the session's return was not recorded");
-                Vec::new()
-            }),
-            false => Vec::new(),
-        };
-        let _ = self
-            .carry_out_session(session, serving, effects, slot, served)
-            .await;
-        Ok(())
     }
 
     /// Whether `harness`'s program is on this host's path.
