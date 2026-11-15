@@ -271,6 +271,7 @@ pub enum RunEnd {
     /// storage recovery; the outcome is unknown.
     Recovered,
     /// The client sat idle, so Ren stopped it; its session goes on, and the
-    /// next prompt starts one again.
+    /// next prompt starts one again (a draft never asked anything and holding
+    /// nothing is discarded instead).
     Idled,
 }

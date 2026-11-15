@@ -215,6 +215,9 @@ pub enum Actor {
     Loopback,
     /// A Tailscale Serve user, by login name.
     Tailscale(String),
+    /// Ren itself, by its own rule: a draft session left unused is
+    /// discarded.
+    Ren,
 }
 
 /// An operator command and the state revision it made. The command and state

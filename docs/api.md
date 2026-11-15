@@ -425,7 +425,9 @@ up downloads or its catalog.
 A session is what an operator works in: a folder, a client, its settings, and
 its conversation across every client process (run) that serves it. It is a
 draft until its first prompt goes out, active after, and archived when the
-operator shelves it. These routes need runs enabled (`[runs]` roots, see
+operator shelves it. A draft never asked anything and holding no attachment
+is discarded when its client is stopped for sitting idle: Ren deletes it as
+an operator's delete would, recorded with the actor `{"kind": "ren"}`. These routes need runs enabled (`[runs]` roots, see
 [runs](#runs)) and the control API's access.
 `/control/v1/sessions/{session}/block` and `/unblock` above are the operator
 state's and take a client's own session ID, not a session's.
@@ -667,7 +669,8 @@ command line.
 
 A client sitting idle between turns for ten minutes is stopped: its run ends
 `idled` (shown as Resting), and its session goes on, its next prompt starting
-the client again to resume the conversation.
+the client again to resume the conversation. A draft never asked anything and
+holding no image is discarded instead.
 
 In the web UI, what is written while a turn runs is queued for after it (Enter),
 shown under the conversation, and can be taken back to edit; it can instead go
