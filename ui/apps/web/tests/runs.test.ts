@@ -194,6 +194,7 @@ test('the transcript streams a reply, then commands and file changes as items up
       kind: 'command',
       item: 'c1',
       command: 'cargo test',
+      intent: { said: 'unsaid' },
       status: 'completed',
       output: 'ok',
       exit: 0,

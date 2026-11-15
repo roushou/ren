@@ -161,6 +161,7 @@ export type ItemRead =
   | {
       as: 'command';
       command: string;
+      intent: CommandIntent;
       status: ItemStatus;
       output: string | null;
       exit_code: number | null;
@@ -310,6 +311,66 @@ const runState: Decoder<RunState> = (value, path) => {
   }
 };
 
+/** One part of a command as its client read it (Codex's `commandActions`). */
+export type CommandPart =
+  | { part: 'read'; command: string; path: string; name: string }
+  | { part: 'list_files'; command: string; path: string | null }
+  | { part: 'search'; command: string; query: string | null; path: string | null }
+  /** A part its client could not read, or of a kind this UI does not know. */
+  | { part: 'unknown'; command: string | null };
+
+/** What a command is for, in its client's terms. */
+export type CommandIntent =
+  | { said: 'unsaid' }
+  | { said: 'described'; text: string }
+  | { said: 'parts'; parts: CommandPart[] };
+
+const commandPart: Decoder<CommandPart> = (value, path) => {
+  if (!isRecord(value)) return { part: 'unknown', command: null };
+  const at = (key: string) => `${path}.${key}`;
+  const command = () => string(value.command, at('command'));
+  switch (value.part) {
+    case 'read':
+      return {
+        part: 'read',
+        command: command(),
+        path: string(value.path, at('path')),
+        name: string(value.name, at('name')),
+      };
+    case 'list_files':
+      return {
+        part: 'list_files',
+        command: command(),
+        path: optionalString(value.path, at('path')),
+      };
+    case 'search':
+      return {
+        part: 'search',
+        command: command(),
+        query: optionalString(value.query, at('query')),
+        path: optionalString(value.path, at('path')),
+      };
+    case 'unknown':
+      return { part: 'unknown', command: command() };
+    default: {
+      const raw = isRecord(value.raw) ? value.raw.command : value.command;
+      return { part: 'unknown', command: typeof raw === 'string' ? raw : null };
+    }
+  }
+};
+
+const commandIntent: Decoder<CommandIntent> = (value, path) => {
+  if (!isRecord(value)) return { said: 'unsaid' };
+  switch (value.said) {
+    case 'described':
+      return { said: 'described', text: string(value.text, `${path}.text`) };
+    case 'parts':
+      return { said: 'parts', parts: array(commandPart)(value.parts, `${path}.parts`) };
+    default:
+      return { said: 'unsaid' };
+  }
+};
+
 const itemRead: Decoder<ItemRead> = (value, path) => {
   if (!isRecord(value)) return { as: 'unread' };
   const at = (key: string) => `${path}.${key}`;
@@ -330,6 +391,7 @@ const itemRead: Decoder<ItemRead> = (value, path) => {
       return {
         as: 'command',
         command: string(value.command, at('command')),
+        intent: commandIntent(value.intent, at('intent')),
         status: status(),
         output: optionalString(value.output, at('output')),
         exit_code: value.exit_code == null ? null : integer(value.exit_code, at('exit_code')),
@@ -1163,6 +1225,7 @@ export type Entry =
       kind: 'command';
       item: ItemId;
       command: string;
+      intent: CommandIntent;
       status: string;
       output: string | null;
       exit: number | null;
@@ -1332,6 +1395,7 @@ export class Transcript {
           kind: 'command',
           item: item.id,
           command: read.command,
+          intent: read.intent,
           status: read.status,
           output: read.output,
           exit: read.exit_code,

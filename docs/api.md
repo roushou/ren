@@ -687,6 +687,15 @@ A client sitting idle between turns for ten minutes is stopped: its run ends
 the client again to resume the conversation. A draft never asked anything and
 holding no image is discarded instead.
 
+In the web UI's conversation, the steps between two things the agent said
+(commands, other tools, file changes) fold into one line of what they did,
+such as "Read parser.rs ×2 · Searched “todo!” · Ran 1 command". Each step is
+read from what its client said where it said something (a command's
+description, Codex's parts of it, a tool's effects), and from the command as
+written otherwise. A group stays open while a step in it runs or after one
+failed, and opens to a row per step; a command's row opens to the command
+exactly as run and its output.
+
 In the web UI, what is written while a turn runs is queued for after it (Enter),
 shown under the conversation, and can be taken back to edit; it can instead go
 into the running turn (Ctrl+Enter or Send now) where the client takes that. Typing `/` at the start of a prompt
