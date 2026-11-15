@@ -13,11 +13,10 @@ impl LaunchPlan {
     pub(crate) fn pi(gateway: &GatewayEndpoint) -> Self {
         let mut environment = BTreeMap::new();
         environment.insert("REN_PI_GATEWAY".into(), gateway.url("/").to_string().into());
-        Self {
-            harness: Harness::Pi,
-            executable: "pi",
-            arguments: vec!["--extension".into(), LaunchArg::PiExtension],
+        Self::client(
+            Harness::Pi.profile(),
+            vec!["--extension".into(), LaunchArg::PiExtension],
             environment,
-        }
+        )
     }
 }

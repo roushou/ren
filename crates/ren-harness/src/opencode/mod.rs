@@ -9,6 +9,7 @@ mod acp;
 mod auth;
 mod headers;
 mod launch;
+mod profile;
 mod session;
 mod tools;
 

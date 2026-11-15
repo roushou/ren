@@ -9,6 +9,7 @@ mod app_server;
 mod auth;
 mod headers;
 mod launch;
+mod profile;
 mod tools;
 
 pub use app_server::{CodexAppServer, CodexModels};

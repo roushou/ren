@@ -24,7 +24,7 @@ use crate::{
     },
     lines::{Framed, Line},
     models::{DefaultChoice, Listing, Model, ModelId, ModelListing},
-    settings::{Effort, Midway, RunSettings},
+    settings::{Effort, Midway, RunSettings, Setting, SettingsBook},
 };
 use ren_protocol::native::{NativeThreadId, NativeTurnId};
 use serde_json::{Value, json};
@@ -36,14 +36,14 @@ use uuid::Uuid;
 pub struct PiRpc {
     thread: NativeThreadId,
     ready: bool,
-    /// What the session runs on now, to tell what a change changes.
-    settings: RunSettings,
+    /// What the session runs on, and what Ren asked it to change to.
+    settings: SettingsBook,
     /// Turn ids are this, mixed with how many turns were minted.
     seed: Uuid,
     minted: u64,
     next_request: u64,
     /// Commands Ren sent and waits on, by request id.
-    requests: BTreeMap<String, RequestKind>,
+    requests: BTreeMap<String, Pending>,
     turn: TurnSlot,
     /// Assistant messages started in this process, naming their items.
     messages: u64,
@@ -70,6 +70,23 @@ enum TurnSlot {
         /// Ren asked for the turn to stop.
         interrupted: bool,
     },
+}
+
+/// A command Ren sent, and what it was for.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Pending {
+    Request(RequestKind),
+    /// A setting changed mid-run, committed once Pi takes it.
+    Configure(Setting),
+}
+
+impl Pending {
+    fn kind(&self) -> RequestKind {
+        match self {
+            Self::Request(kind) => *kind,
+            Self::Configure(_) => RequestKind::Configure,
+        }
+    }
 }
 
 /// How an assistant message stopped, where it says the turn did not finish.
@@ -126,7 +143,7 @@ impl PiRpc {
         let mut codec = Self {
             thread,
             ready: false,
-            settings,
+            settings: SettingsBook::new(settings),
             seed,
             minted: 0,
             next_request: 0,
@@ -335,10 +352,14 @@ impl PiRpc {
         command
     }
 
-    fn request(&mut self, kind: RequestKind, mut command: Value) -> Line {
+    fn request(&mut self, kind: RequestKind, command: Value) -> Line {
+        self.send(Pending::Request(kind), command)
+    }
+
+    fn send(&mut self, pending: Pending, mut command: Value) -> Line {
         let id = format!("ren-{}", self.next_request);
         self.next_request += 1;
-        self.requests.insert(id.clone(), kind);
+        self.requests.insert(id.clone(), pending);
         if let Value::Object(fields) = &mut command {
             fields.insert("id".into(), id.into());
         }
@@ -350,7 +371,7 @@ impl PiRpc {
     }
 
     fn response(&mut self, message: &Value, line: RawLine, received: &mut Received) {
-        let Some(kind) = message
+        let Some(pending) = message
             .get("id")
             .and_then(Value::as_str)
             .and_then(|id| self.requests.remove(id))
@@ -361,7 +382,11 @@ impl PiRpc {
             });
             return;
         };
+        let kind = pending.kind();
         if message.get("success").and_then(Value::as_bool) != Some(true) {
+            if let Pending::Configure(setting) = &pending {
+                self.settings.refused(setting);
+            }
             // Without its commands a run goes on; the list stays empty.
             if kind == RequestKind::ListCommands {
                 return;
@@ -376,6 +401,10 @@ impl PiRpc {
             return;
         }
         let data = &message["data"];
+        if let Pending::Configure(setting) = pending {
+            self.settings.acknowledge(setting);
+            return;
+        }
         match kind {
             RequestKind::ThreadStart | RequestKind::ThreadResume => {
                 // Pi opened the session Ren named; should it report another,
@@ -419,36 +448,40 @@ impl PiRpc {
     /// The commands that move the session to `settings`: Pi switches model
     /// and thinking level mid-run, and asks for no approvals. Neither goes
     /// back to "Pi's own" once chosen: it keeps the last one set.
+    /// Each is committed once Pi answers it.
     fn configure(&mut self, settings: RunSettings) -> Result<Vec<Line>, CommandRefused> {
-        if settings.approvals.is_some() {
-            return Err(CommandRefused::NotOffered(Midway::Approvals));
-        }
-        let mut lines = Vec::new();
-        if settings.model != self.settings.model {
-            let model = settings
-                .model
-                .as_ref()
-                .ok_or(CommandRefused::NotOffered(Midway::Model))?;
-            let (provider, id) = model
-                .as_str()
-                .split_once('/')
-                .ok_or(CommandRefused::NotOffered(Midway::Model))?;
-            lines.push(self.request(
-                RequestKind::Configure,
-                json!({ "type": "set_model", "provider": provider, "modelId": id }),
-            ));
-        }
-        if settings.effort != self.settings.effort {
-            let level = settings
-                .effort
-                .ok_or(CommandRefused::NotOffered(Midway::Effort))?;
-            lines.push(self.request(
-                RequestKind::Configure,
-                json!({ "type": "set_thinking_level", "level": level.to_string() }),
-            ));
-        }
-        self.settings = settings;
-        Ok(lines)
+        let change = self
+            .settings
+            .change_to(&settings, crate::Harness::Pi.profile().midway)?;
+        let commands = change
+            .into_iter()
+            .map(|setting| {
+                let command = match &setting {
+                    Setting::Model(model) => {
+                        let (provider, id) = model
+                            .as_ref()
+                            .and_then(|model| model.as_str().split_once('/'))
+                            .ok_or(CommandRefused::NotOffered(Midway::Model))?;
+                        json!({ "type": "set_model", "provider": provider, "modelId": id })
+                    }
+                    Setting::Effort(effort) => {
+                        let level = effort.ok_or(CommandRefused::NotOffered(Midway::Effort))?;
+                        json!({ "type": "set_thinking_level", "level": level.to_string() })
+                    }
+                    Setting::Approvals(_) => {
+                        return Err(CommandRefused::NotOffered(Midway::Approvals));
+                    }
+                };
+                Ok((setting, command))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(commands
+            .into_iter()
+            .map(|(setting, command)| {
+                self.settings.ask(setting.clone());
+                self.send(Pending::Configure(setting), command)
+            })
+            .collect())
     }
 
     /// The next turn id: never nil, never one this process minted before.

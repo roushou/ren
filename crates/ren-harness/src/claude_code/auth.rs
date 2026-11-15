@@ -3,12 +3,10 @@
 //! link and reads back the code the page shows.
 
 use crate::{
-    Harness,
     launch::LaunchPlan,
     sign_in::{Standing, StatedMethod, StatusUnread},
 };
 use serde::Deserialize;
-use std::collections::BTreeMap;
 
 /// Reads what Claude Code's sign-in commands print.
 pub struct ClaudeAuth;
@@ -58,15 +56,13 @@ impl LaunchPlan {
     }
 
     fn claude_auth(arguments: &[&str]) -> Self {
-        Self {
-            harness: Harness::ClaudeCode,
-            executable: "claude",
-            arguments: arguments
+        Self::program(
+            "claude",
+            arguments
                 .iter()
                 .map(|argument| (*argument).into())
                 .collect(),
-            environment: BTreeMap::new(),
-        }
+        )
     }
 }
 

@@ -6,11 +6,9 @@
 //! needs a terminal.
 
 use crate::{
-    Harness,
     launch::LaunchPlan,
     sign_in::{LoginReader, Standing, StatedMethod, StatusUnread},
 };
-use std::collections::BTreeMap;
 
 /// Reads what OpenCode's sign-in commands print.
 pub struct OpenCodeAuth;
@@ -64,15 +62,13 @@ impl LaunchPlan {
     }
 
     fn opencode_auth(arguments: &[&str]) -> Self {
-        Self {
-            harness: Harness::OpenCode,
-            executable: "opencode",
-            arguments: arguments
+        Self::program(
+            "opencode",
+            arguments
                 .iter()
                 .map(|argument| (*argument).into())
                 .collect(),
-            environment: BTreeMap::new(),
-        }
+        )
     }
 }
 

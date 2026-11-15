@@ -9,6 +9,7 @@ mod auth;
 mod cache;
 mod headers;
 mod launch;
+mod profile;
 mod rpc;
 mod tools;
 

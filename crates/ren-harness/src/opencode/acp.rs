@@ -31,7 +31,7 @@ use crate::{
     },
     lines::{Framed, Line},
     models::{DefaultChoice, Listing, Model, ModelId, ModelListing},
-    settings::{Midway, RunSettings},
+    settings::{Midway, RunSettings, Setting, SettingsBook},
 };
 use ren_protocol::native::{NativeThreadId, NativeTurnId};
 use serde_json::{Value, json};
@@ -52,8 +52,8 @@ pub struct OpenCodeAcp {
     ready: bool,
     /// Settings requests sent while opening, still unanswered.
     opening: usize,
-    /// What the session runs on now, to tell what a change changes.
-    settings: RunSettings,
+    /// What the session runs on, and what Ren asked it to change to.
+    settings: SettingsBook,
     /// Turn ids are this, mixed with how many turns were minted.
     seed: Uuid,
     minted: u64,
@@ -85,8 +85,10 @@ enum Sent {
     /// One page of the folder's sessions, looking for the thread to resume.
     List,
     Resume,
-    /// A setting changed; `opening` while the session is still opening.
+    /// A setting changed, committed once opencode takes it; `opening`
+    /// while the session is still opening.
     Configure {
+        setting: Setting,
         opening: bool,
     },
     Prompt,
@@ -172,11 +174,11 @@ impl OpenCodeAcp {
             cwd,
             resume,
             // The approval policy is opencode's configuration, set at launch.
-            settings: RunSettings {
+            settings: SettingsBook::new(RunSettings {
                 model: None,
                 effort: None,
                 approvals: settings.approvals,
-            },
+            }),
             wanted: settings,
             session: None,
             thread: None,
@@ -345,39 +347,49 @@ impl OpenCodeAcp {
     /// model and effort from the next turn; its approvals are its
     /// configuration, set when the process starts. Effort goes back to the
     /// model's own; a model, once chosen, stays until another is.
+    /// Each is committed once opencode answers it.
     fn configure(
         &mut self,
         session: &str,
         settings: RunSettings,
         opening: bool,
     ) -> Result<Vec<Line>, CommandRefused> {
-        if settings.approvals != self.settings.approvals {
-            return Err(CommandRefused::NotOffered(Midway::Approvals));
-        }
-        let mut lines = Vec::new();
-        if settings.model != self.settings.model {
-            let model = settings
-                .model
-                .as_ref()
-                .ok_or(CommandRefused::NotOffered(Midway::Model))?;
-            lines.push(self.set(session, "model", model.as_str(), opening));
-        }
-        if settings.effort != self.settings.effort {
-            let value = settings
-                .effort
-                .map_or_else(|| "default".to_owned(), |effort| effort.to_string());
-            lines.push(self.set(session, "effort", &value, opening));
-        }
-        self.settings = settings;
-        Ok(lines)
-    }
-
-    fn set(&mut self, session: &str, option: &str, value: &str, opening: bool) -> Line {
-        self.request(
-            Sent::Configure { opening },
-            "session/set_config_option",
-            json!({ "sessionId": session, "configId": option, "value": value }),
-        )
+        let change = self
+            .settings
+            .change_to(&settings, crate::Harness::OpenCode.profile().midway)?;
+        let options = change
+            .into_iter()
+            .map(|setting| {
+                let (option, value) = match &setting {
+                    Setting::Model(model) => (
+                        "model",
+                        model
+                            .as_ref()
+                            .ok_or(CommandRefused::NotOffered(Midway::Model))?
+                            .to_string(),
+                    ),
+                    Setting::Effort(effort) => (
+                        "effort",
+                        effort.map_or_else(|| "default".to_owned(), |effort| effort.to_string()),
+                    ),
+                    Setting::Approvals(_) => {
+                        return Err(CommandRefused::NotOffered(Midway::Approvals));
+                    }
+                };
+                Ok((setting, option, value))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(options
+            .into_iter()
+            .map(|(setting, option, value)| {
+                self.settings.ask(setting.clone());
+                self.request(
+                    Sent::Configure { setting, opening },
+                    "session/set_config_option",
+                    json!({ "sessionId": session, "configId": option, "value": value }),
+                )
+            })
+            .collect())
     }
 
     fn request(&mut self, sent: Sent, method: &str, params: Value) -> Line {
@@ -571,7 +583,8 @@ impl OpenCodeAcp {
                     self.opened(session, thread, received);
                 }
             }
-            Sent::Configure { opening } => {
+            Sent::Configure { setting, opening } => {
+                self.settings.acknowledge(setting);
                 if opening {
                     self.settled(received);
                 }
@@ -600,7 +613,8 @@ impl OpenCodeAcp {
             Sent::Initialize => RequestKind::Initialize,
             Sent::New => RequestKind::ThreadStart,
             Sent::List | Sent::Resume => RequestKind::ThreadResume,
-            Sent::Configure { opening } => {
+            Sent::Configure { setting, opening } => {
+                self.settings.refused(&setting);
                 if opening {
                     // The session opens on opencode's own setting instead.
                     received.events.push(DriveEvent::Refused {
@@ -1516,7 +1530,20 @@ mod tests {
                 DriveEvent::Ready { thread: thread() },
             ]
         );
-        // Effort back to the model's own; approvals cannot change mid-run.
+        // The refused effort was never taken: opencode keeps its own, so
+        // asking for its own sends nothing.
+        let mut configure = |effort| {
+            codec.command(DriveCommand::Configure(RunSettings {
+                model: Some("opencode/big-pickle".parse().unwrap()),
+                effort,
+                approvals: Some(ApprovalPolicy::Ask),
+            }))
+        };
+        assert_eq!(configure(None), Ok(Vec::new()));
+        let low = configure(Some(Effort::Low)).unwrap();
+        assert_eq!(sent(&low[0])["params"]["value"], "low");
+        // Effort back to the model's own, once the last one was taken.
+        let _ = feed(&mut codec, answer(&sent(&low[0])["id"], json!({})));
         let lines = codec
             .command(DriveCommand::Configure(RunSettings {
                 model: Some("opencode/big-pickle".parse().unwrap()),
@@ -1525,6 +1552,7 @@ mod tests {
             }))
             .unwrap();
         assert_eq!(sent(&lines[0])["params"]["value"], "default");
+        // Approvals cannot change mid-run.
         assert_eq!(
             codec.command(DriveCommand::Configure(RunSettings::default())),
             Err(CommandRefused::NotOffered(Midway::Approvals))

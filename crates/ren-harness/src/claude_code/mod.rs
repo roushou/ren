@@ -8,6 +8,7 @@
 mod auth;
 mod headers;
 mod launch;
+mod profile;
 mod stream_json;
 mod tools;
 

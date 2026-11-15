@@ -23,6 +23,7 @@ pub mod lines;
 pub mod models;
 pub mod opencode;
 pub mod pi;
+pub mod profile;
 pub mod settings;
 pub mod sign_in;
 pub mod tools;

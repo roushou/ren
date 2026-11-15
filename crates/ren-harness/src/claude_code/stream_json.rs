@@ -25,7 +25,7 @@ use crate::{
     },
     lines::{Framed, Line},
     models::{DefaultChoice, Listing, Model, ModelId, ModelListing},
-    settings::{ApprovalPolicy, Midway, RunSettings},
+    settings::{ApprovalPolicy, Midway, RunSettings, Setting, SettingsBook},
 };
 use ren_protocol::native::{NativeThreadId, NativeTurnId};
 use serde_json::{Value, json};
@@ -37,11 +37,11 @@ use uuid::Uuid;
 pub struct ClaudeStreamJson {
     thread: NativeThreadId,
     ready: bool,
-    /// What the conversation runs on now, to tell what a change changes.
-    settings: RunSettings,
+    /// What the conversation runs on, and what Ren asked it to change to.
+    settings: SettingsBook,
     next_request: u64,
     /// Control requests Ren sent and waits on, by request id.
-    requests: BTreeMap<String, RequestKind>,
+    requests: BTreeMap<String, Pending>,
     turn: TurnSlot,
     /// Permission prompts waiting for an answer.
     approvals: BTreeMap<ApprovalId, Asked>,
@@ -67,6 +67,25 @@ enum TurnSlot {
         /// Ren asked for the turn to stop.
         interrupted: bool,
     },
+}
+
+/// A control request Ren sent, and what it was for.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Pending {
+    Initialize,
+    Interrupt,
+    /// A setting changed mid-run, committed once Claude Code takes it.
+    Configure(Setting),
+}
+
+impl Pending {
+    fn kind(&self) -> RequestKind {
+        match self {
+            Self::Initialize => RequestKind::Initialize,
+            Self::Interrupt => RequestKind::TurnInterrupt,
+            Self::Configure(_) => RequestKind::Configure,
+        }
+    }
 }
 
 /// What a permission prompt asked, kept to answer it.
@@ -164,7 +183,7 @@ impl ClaudeStreamJson {
         let mut codec = Self {
             thread,
             ready: false,
-            settings,
+            settings: SettingsBook::new(settings),
             next_request: 0,
             requests: BTreeMap::new(),
             turn: TurnSlot::Idle,
@@ -175,7 +194,7 @@ impl ClaudeStreamJson {
             commands: Vec::new(),
             echoing: Vec::new(),
         };
-        let line = codec.request(RequestKind::Initialize, json!({ "subtype": "initialize" }));
+        let line = codec.request(Pending::Initialize, json!({ "subtype": "initialize" }));
         (codec, line)
     }
 
@@ -235,7 +254,7 @@ impl ClaudeStreamJson {
                         interrupted: true,
                     };
                     Ok(vec![self.request(
-                        RequestKind::TurnInterrupt,
+                        Pending::Interrupt,
                         json!({ "subtype": "interrupt" }),
                     )])
                 }
@@ -278,28 +297,36 @@ impl ClaudeStreamJson {
 
     /// The control requests that move the conversation to `settings`:
     /// Claude Code switches model and permission mode mid-run, not effort.
+    /// Each is committed once Claude Code answers it.
     fn configure(&mut self, settings: RunSettings) -> Result<Vec<Line>, CommandRefused> {
-        if settings.effort != self.settings.effort {
-            return Err(CommandRefused::NotOffered(Midway::Effort));
-        }
-        let mut lines = Vec::new();
-        if settings.model != self.settings.model {
-            // `default` is Claude Code's own choice.
-            let model = settings.model.as_ref().map_or("default", ModelId::as_str);
-            lines.push(self.request(
-                RequestKind::Configure,
-                json!({ "subtype": "set_model", "model": model }),
-            ));
-        }
-        if settings.approvals != self.settings.approvals {
-            let mode = settings.approvals.map_or("default", Self::permission_mode);
-            lines.push(self.request(
-                RequestKind::Configure,
-                json!({ "subtype": "set_permission_mode", "mode": mode }),
-            ));
-        }
-        self.settings = settings;
-        Ok(lines)
+        let change = self
+            .settings
+            .change_to(&settings, crate::Harness::ClaudeCode.profile().midway)?;
+        let requests = change
+            .into_iter()
+            .map(|setting| {
+                let request = match &setting {
+                    // `default` is Claude Code's own choice.
+                    Setting::Model(model) => json!({
+                        "subtype": "set_model",
+                        "model": model.as_ref().map_or("default", ModelId::as_str),
+                    }),
+                    Setting::Approvals(policy) => json!({
+                        "subtype": "set_permission_mode",
+                        "mode": policy.map_or("default", Self::permission_mode),
+                    }),
+                    Setting::Effort(_) => return Err(CommandRefused::NotOffered(Midway::Effort)),
+                };
+                Ok((setting, request))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(requests
+            .into_iter()
+            .map(|(setting, request)| {
+                self.settings.ask(setting.clone());
+                self.request(Pending::Configure(setting), request)
+            })
+            .collect())
     }
 
     /// The permission mode a policy runs Claude Code in.
@@ -406,10 +433,10 @@ impl ClaudeStreamJson {
         })))
     }
 
-    fn request(&mut self, kind: RequestKind, request: Value) -> Line {
+    fn request(&mut self, pending: Pending, request: Value) -> Line {
         let id = format!("ren-{}", self.next_request);
         self.next_request += 1;
-        self.requests.insert(id.clone(), kind);
+        self.requests.insert(id.clone(), pending);
         Line::json(&json!({ "type": "control_request", "request_id": id, "request": request }))
     }
 
@@ -445,34 +472,34 @@ impl ClaudeStreamJson {
         };
         // Claude Code also echoes Ren's own answers; only Ren's requests
         // wait on a response.
-        let Some(kind) = self.requests.remove(id) else {
+        let Some(pending) = self.requests.remove(id) else {
             return;
         };
         match response.get("subtype").and_then(Value::as_str) {
-            Some("success") => match kind {
-                RequestKind::Initialize => {
+            Some("success") => match pending {
+                Pending::Initialize => {
                     self.ready = true;
                     self.commands = Self::listed(&response["response"]);
                     received.events.push(DriveEvent::Ready {
                         thread: self.thread,
                     });
                 }
-                RequestKind::TurnInterrupt
-                | RequestKind::ThreadStart
-                | RequestKind::ThreadResume
-                | RequestKind::TurnStart
-                | RequestKind::TurnSteer
-                | RequestKind::Configure
-                | RequestKind::ListCommands => {}
+                Pending::Configure(setting) => self.settings.acknowledge(setting),
+                Pending::Interrupt => {}
             },
-            Some(_) | None => received.events.push(DriveEvent::Refused {
-                request: kind,
-                message: response
-                    .get("error")
-                    .and_then(Value::as_str)
-                    .unwrap_or("refused")
-                    .to_owned(),
-            }),
+            Some(_) | None => {
+                if let Pending::Configure(setting) = &pending {
+                    self.settings.refused(setting);
+                }
+                received.events.push(DriveEvent::Refused {
+                    request: pending.kind(),
+                    message: response
+                        .get("error")
+                        .and_then(Value::as_str)
+                        .unwrap_or("refused")
+                        .to_owned(),
+                });
+            }
         }
     }
 
@@ -1644,6 +1671,45 @@ mod tests {
             .events
             .is_empty()
         );
+    }
+
+    /// A setting is Claude Code's once it answers; one it refuses is sent
+    /// again when asked for again.
+    #[test]
+    fn a_refused_setting_is_not_kept() {
+        use crate::settings::RunSettings;
+        let mut codec = ready();
+        let small = || {
+            DriveCommand::Configure(RunSettings {
+                model: Some("small".parse().unwrap()),
+                ..RunSettings::default()
+            })
+        };
+        let first = sent(&codec.command(small()).unwrap()[0]);
+        let refused = feed(
+            &mut codec,
+            json!({ "type": "control_response", "response": { "subtype": "error",
+                    "request_id": first["request_id"], "error": "no such model" } }),
+        );
+        assert_eq!(
+            refused.events,
+            vec![DriveEvent::Refused {
+                request: RequestKind::Configure,
+                message: "no such model".into()
+            }]
+        );
+        let again = codec.command(small()).unwrap();
+        assert_eq!(
+            sent(&again[0])["request"],
+            json!({ "subtype": "set_model", "model": "small" })
+        );
+        // Taken this time: asking again sends nothing.
+        let _ = feed(
+            &mut codec,
+            json!({ "type": "control_response", "response": { "subtype": "success",
+                    "request_id": sent(&again[0])["request_id"], "response": {} } }),
+        );
+        assert_eq!(codec.command(small()), Ok(Vec::new()));
     }
 
     /// Claude Code switches model and permission mode mid-run; it has no
