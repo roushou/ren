@@ -1,9 +1,9 @@
 <script lang="ts">
+  import Toolbar from '#lib/Toolbar.svelte';
   import { onMount, untrack } from 'svelte';
   import SignInSheet from '#lib/SignInSheet.svelte';
   import { SignIns } from '#lib/signIn.ts';
   import { Runs, RunsClient, type Drivable, type RunClient } from '#lib/runs.ts';
-  import { getWorkbench } from '#lib/workbench.svelte.ts';
   import Icon from '#lib/Icon.svelte';
   import Skeleton from '#lib/Skeleton.svelte';
   import { harnessLabel } from '#lib/activity.ts';
@@ -29,7 +29,6 @@
   import type { ToolsInitial } from './+page.server.ts';
 
   let { data }: PageProps = $props();
-  getWorkbench().showScope(scope);
   const api = new ToolsApi(fetch);
 
   /** What the page shows: the daemon's listing, why there is none, or its
@@ -165,7 +164,8 @@
 
   // Each client's sign-in on this host, read from the run API when it is on.
   const runs = new RunsClient(fetch);
-  let clients = $state.raw<RunClient[]>([]);
+  // Read on the server with the listing when it could be; else here.
+  let clients = $state.raw<RunClient[]>(untrack(() => data.clients ?? []));
   let signingIn = $state<Drivable | null>(null);
   let checking = $state<Drivable | null>(null);
   async function readClients() {
@@ -175,7 +175,9 @@
       // Runs are off or unreachable: no sign-in is shown.
     }
   }
-  onMount(() => void readClients());
+  onMount(() => {
+    if (untrack(() => data.clients) === null) void readClients();
+  });
   /** The client a package is, with its sign-in; null for other packages. */
   const clientOf = (pkg: ToolPackage) => SignIns.clientOf(pkg, clients);
   const signedOut = $derived(
@@ -319,6 +321,7 @@
   <span class="dot {Supplies.tone(pkg)}" aria-hidden="true"></span>
 {/snippet}
 
+<Toolbar {scope} />
 <div class="tools-view">
   {#if loaded.kind === 'failed'}
     <div class="tools-empty">

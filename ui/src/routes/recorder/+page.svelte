@@ -1,6 +1,6 @@
 <script lang="ts">
+  import Toolbar from '#lib/Toolbar.svelte';
   import { createArrival, createSnapshot } from '#lib/snapshot.svelte.ts';
-  import { getWorkbench } from '#lib/workbench.svelte.ts';
   import { num, bytes, type FileUsage } from '#lib/api.ts';
   import { assertNever } from '#lib/decode.ts';
   import { buildLabel, SEPARATOR } from '#lib/display.ts';
@@ -10,7 +10,6 @@
   import Skeleton from '#lib/Skeleton.svelte';
   import type { PageProps } from './$types';
   let { data }: PageProps = $props();
-  getWorkbench().showScope(scope);
   const gateway = createSnapshot(() => data.gateway);
   const arrival = createArrival(() => data.recorder);
   const shown = $derived(arrival.current);
@@ -138,6 +137,7 @@
   </div>
 {/snippet}
 
+<Toolbar {scope} />
 <div class="recorder-console">
   {#if pending}
     <section class="rec-verdict state-edge" aria-label="How recording stands" aria-busy="true">

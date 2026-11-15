@@ -1,6 +1,6 @@
 <script lang="ts">
+  import Toolbar from '#lib/Toolbar.svelte';
   import { createArrival } from '#lib/snapshot.svelte.ts';
-  import { getWorkbench } from '#lib/workbench.svelte.ts';
   import { num, short, clock, title } from '#lib/api.ts';
   import { compactOrDash, date, span, sessionTone } from '#lib/display.ts';
   import { callHref, effectLabel, findingLine, harnessLabel, omitted } from '#lib/activity.ts';
@@ -10,7 +10,6 @@
   import Skeleton from '#lib/Skeleton.svelte';
   import type { PageProps } from './$types';
   let { data }: PageProps = $props();
-  getWorkbench().showScope(scope);
   const arrival = createArrival(() => data.turn);
   const arrived = $derived(arrival.current);
   /** The turn is on its way: the page draws its outline. */
@@ -50,6 +49,7 @@
     </div>{/if}
 {/snippet}
 
+<Toolbar {scope} />
 <div class="usage-page">
   <div class="console">
     {#if !turn && !pending}

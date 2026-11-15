@@ -530,6 +530,11 @@ pre {
   border-bottom: 1px solid var(--line);
   min-height: 33px;
   flex-shrink: 0;
+  /* Each page renders it first in the scrolling workspace: it stays on top. */
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  background: var(--canvas);
 }
 .workbench-toolbar h1 {
   display: flex;
@@ -2342,6 +2347,17 @@ td.zero {
 .usage-chart svg {
   display: block;
   overflow: visible;
+}
+/* The axis's fixed column, then the bars across the rest. */
+.usage-plot {
+  display: flex;
+}
+.usage-axis-column {
+  flex: none;
+}
+.usage-bars {
+  flex: 1;
+  min-width: 0;
 }
 .usage-bar {
   fill: var(--chart);

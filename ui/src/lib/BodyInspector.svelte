@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, untrack } from 'svelte';
   import {
     ManagementApi,
     ApiError,
@@ -31,7 +31,8 @@
     onupdate: (detail: CallDetail) => void;
   } = $props();
   const api = new ManagementApi();
-  let direction = $state<Direction>('request');
+  // The direction it reads as it mounts, so the server names that one too.
+  let direction = $state<Direction>(untrack(() => initialDirection));
   let mode = $state<'readable' | 'raw'>('readable');
   const modes: SegmentedOption<'readable' | 'raw'>[] = [
     { value: 'readable', label: 'Readable' },
@@ -42,7 +43,9 @@
   let following = $state(false);
   let updated = $state<number | null>(null);
   let stopped = $state('');
-  let busy = $state(false);
+  // It reads its body as it mounts, so it starts out loading: the server
+  // draws the loading line the browser goes on to show, not an invitation.
+  let busy = $state(true);
   let controller: AbortController | undefined;
   let generation = 0;
   /** WebSocket message boundaries, from the call detail read after each preview. */

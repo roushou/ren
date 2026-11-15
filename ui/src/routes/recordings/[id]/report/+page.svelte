@@ -1,6 +1,6 @@
 <script lang="ts">
+  import Toolbar from '#lib/Toolbar.svelte';
   import { createArrival } from '#lib/snapshot.svelte.ts';
-  import { getWorkbench } from '#lib/workbench.svelte.ts';
   import { num, short, clock } from '#lib/api.ts';
   import { compact, compactOrDash, date, percentOrDash, span, sessionTone } from '#lib/display.ts';
   import { ContextChart, findingLine, rowPrompt, turnHref, turnRows } from '#lib/activity.ts';
@@ -12,7 +12,6 @@
   import type { Column } from '#lib/columns.ts';
   import type { PageProps } from './$types';
   let { data }: PageProps = $props();
-  getWorkbench().showScope(scope);
   const arrival = createArrival(() => data.report);
   const arrived = $derived(arrival.current);
   /** The report is on its way: the page draws its outline. */
@@ -65,6 +64,7 @@
   </div>
 {/snippet}
 
+<Toolbar {scope} />
 <div class="usage-page">
   <div class="console">
     {#if !report && !pending}

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Toolbar from './Toolbar.svelte';
   import { onDestroy, onMount, untrack } from 'svelte';
   import { invalidateAll } from '$app/navigation';
   import { goto } from '$app/navigation';
@@ -49,7 +50,6 @@
     $props();
   const workbench = getWorkbench();
   // The scope bar shows the narrowing controls, or the session itself.
-  workbench.showScope(scope);
   const arrival = createArrival(() => snapshot);
   const shown = $derived(arrival.current);
   /** The listing is on its way: the table draws its own outline. */
@@ -396,7 +396,10 @@
         >
       </div>{/if}
     <div class="scope-group end">
-      {#if page.data.runsControl}<RecordingActions session={sessionId} />{/if}
+      {#if page.data.runsControl}<RecordingActions
+          session={sessionId}
+          shelf={session ? session.archived_at !== null : null}
+        />{/if}
       <a class="text-button" href={`/recordings/${encodeURIComponent(sessionId)}/report`}
         >Turns and report <Icon name="arrow" size={12} /></a
       ><a class="text-button" href={`/traffic?session=${encodeURIComponent(sessionId)}`}
@@ -460,6 +463,7 @@
       onclick={closeInspector}>Dismiss</button
     >
   </div>{/if}
+<Toolbar {scope} />
 <div class="traffic-workspace" class:with-inspector={!!selected}>
   <section class="panel list-panel traffic-panel" aria-label="Recorded calls">
     {#if !sessionId}

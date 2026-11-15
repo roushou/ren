@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Toolbar from '#lib/Toolbar.svelte';
   import { onMount } from 'svelte';
   import { slide } from 'svelte/transition';
   import { prefersReducedMotion } from 'svelte/motion';
@@ -41,7 +42,6 @@
 
   let { data }: PageProps = $props();
   const workbench = getWorkbench();
-  workbench.showScope(scope);
   const arrival = createArrival(() => data.live);
   const shown = $derived(arrival.current);
   /** The window's reads are on their way: the page draws its outline. */
@@ -410,6 +410,7 @@
 
 <svelte:window {onkeydown} />
 
+<Toolbar {scope} />
 <div class="live-page">
   {#if pending}
     <section class="live-band" aria-label="Output tokens by {view.by}" aria-busy="true">

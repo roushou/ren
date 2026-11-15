@@ -1,8 +1,8 @@
 <script lang="ts">
+  import Toolbar from '#lib/Toolbar.svelte';
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import { createArrival } from '#lib/snapshot.svelte.ts';
-  import { getWorkbench } from '#lib/workbench.svelte.ts';
   import { num, short, clock, providerName, providerMark } from '#lib/api.ts';
   import { compactOrDash, span } from '#lib/display.ts';
   import { localDayStart } from '#lib/usage.ts';
@@ -17,7 +17,6 @@
   import type { PageProps } from './$types';
 
   let { data }: PageProps = $props();
-  getWorkbench().showScope(scope);
   const arrival = createArrival(() => data.sessions);
   const arrived = $derived(arrival.current);
   /** The listing is on its way: the page draws its outline. */
@@ -149,6 +148,7 @@
   </tr>
 {/snippet}
 
+<Toolbar {scope} />
 <section class="panel list-panel sessions-panel">
   <div class="list-content">
     {#if pending || shown || list.folded.length}

@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { flushSync, onMount, tick } from 'svelte';
-  import { goto, onNavigate, preloadCode, refreshAll } from '$app/navigation';
+  import { onMount } from 'svelte';
+  import { goto, preloadCode, refreshAll } from '$app/navigation';
   import { page, navigating } from '$app/state';
   import { createSettled, createSnapshot } from '#lib/snapshot.svelte.ts';
   import { Workbench, setWorkbench } from '#lib/workbench.svelte.ts';
@@ -29,15 +29,6 @@
   const workbench = setWorkbench(new Workbench());
   /** Marking what's wrong on a page, for an agent to fix: needs the control token. */
   const redline = new RedlineDesk(() => page.data.redlineSource);
-  // The scope bar renders the current page's snippet, but the page owns its
-  // state. Leaving for another page, the snippet is dropped before that
-  // page's data arrives, or it would render the old page against new data.
-  // The new page shows its own scope once it mounts.
-  onNavigate((navigation) => {
-    if (navigation.from?.route.id === navigation.to?.route.id) return;
-    workbench.scope = undefined;
-    flushSync();
-  });
   // Hydrated: from here on, pages that can take their data pending render
   // at once on a navigation, with their own outline (`Arrival`).
   onMount(() => Arrival.stream());
@@ -64,41 +55,6 @@
       : null,
   );
   const tab = $derived(Views.tab(target ?? view));
-  /** The scope bar's snippet: the page's own. Leaving for another view, the
-   * old page's stays until the new page shows its own, so the bar changes once. */
-  const scope = $derived(workbench.scope);
-  /** When the scope does not fit on one line it folds behind a button. */
-  let scopeOpen = $state(false);
-  let folded = $state(false);
-  let toolbar = $state<HTMLElement>();
-  let scopeElement = $state<HTMLElement>();
-  /** The scope's width on one line, measured while it is shown inline. */
-  let natural = 0;
-  function fit() {
-    if (!toolbar || !scopeElement) return;
-    if (!folded) {
-      // The content's own width: its groups and the 24px between each.
-      const groups = [...scopeElement.children] as HTMLElement[];
-      natural =
-        groups.reduce((sum, group) => sum + group.offsetWidth, 0) +
-        Math.max(0, groups.length - 1) * 24;
-    }
-    const actions = toolbar.querySelector<HTMLElement>('.page-actions')?.offsetWidth ?? 0;
-    const padding = 24 + 12;
-    folded = !!workbench.scope && natural > toolbar.clientWidth - actions - padding;
-    if (!folded) scopeOpen = false;
-  }
-  $effect(() => {
-    // A new view's scope is measured inline first.
-    void workbench.scope;
-    folded = false;
-    void tick().then(fit);
-  });
-  onMount(() => {
-    const observer = new ResizeObserver(() => fit());
-    if (toolbar) observer.observe(toolbar);
-    return () => observer.disconnect();
-  });
   /** The page's reads, as each comes in, for the status line and the error banner. */
   const reads = createSettled(() => [
     page.data.overview,
@@ -169,6 +125,12 @@
       workbench.manual = false;
     }
   }
+  // Set before any page renders its toolbar, on the server too.
+  workbench.controls = {
+    refresh: () => void refresh(),
+    loading: () => loading,
+    problem: () => error,
+  };
   // The views' code is small and static: fetch it once up front, so switching
   // views waits only for data (which hovering a tab also starts).
   onMount(() => {
@@ -311,40 +273,6 @@
     </div>
     <ThemeControl />
   </header>
-  <div class="workbench-toolbar" class:folded class:scope-open={scopeOpen} bind:this={toolbar}>
-    <!-- The nav tab names the view; the bar shows its scope. -->
-    <h1 class="sr-only">{pageTitle}</h1>
-    {#if scope && folded}<button
-        class="button small scope-toggle"
-        aria-expanded={scopeOpen}
-        aria-controls="scope"
-        onclick={() => (scopeOpen = !scopeOpen)}><Icon name="filter" size={13} /> Scope</button
-      >{/if}
-    <div class="scope" id="scope" bind:this={scopeElement}>
-      {#if scope}{@render scope()}{:else}<span class="scope-title">{pageTitle}</span>{/if}
-    </div>
-    <div class="page-actions">
-      <label class="toggle-control"
-        ><input type="checkbox" bind:checked={workbench.automatic} /><span class="switch"
-        ></span><span>Live updates</span></label
-      >
-      <button
-        class="icon-button"
-        onclick={() => void refresh()}
-        disabled={loading}
-        aria-label="Refresh workspace"
-        title="Refresh workspace"
-        ><span class:spinning={loading}><Icon name="refresh" size={14} /></span></button
-      >
-    </div>
-  </div>
-
-  {#if error}<div class="notice danger" role="alert">
-      <Icon name="alert" size={14} /><span>{error} Displayed data may be out of date.</span><button
-        class="text-button"
-        onclick={() => void refresh()}>Retry</button
-      >
-    </div>{/if}
   {#if navigating.to}<div
       class="nav-progress"
       role="progressbar"

@@ -1,7 +1,7 @@
 <script lang="ts">
+  import Toolbar from '#lib/Toolbar.svelte';
   import { page as location } from '$app/state';
   import { createArrival } from '#lib/snapshot.svelte.ts';
-  import { getWorkbench } from '#lib/workbench.svelte.ts';
   import { num, clock, parseSearchField, SEARCH_FIELDS, type SearchField } from '#lib/api.ts';
   import { date, sessionTone } from '#lib/display.ts';
   import { searchFieldLabel, searchHitHref, snippetParts } from '#lib/activity.ts';
@@ -11,7 +11,6 @@
   import Skeleton from '#lib/Skeleton.svelte';
   import type { PageProps } from './$types';
   let { data }: PageProps = $props();
-  getWorkbench().showScope(scope);
   const arrival = createArrival(() => data.search);
   const arrived = $derived(arrival.current);
   /** The search is on its way: the page draws its outline. */
@@ -91,6 +90,7 @@
   </form>
 {/snippet}
 
+<Toolbar {scope} />
 <section class="panel list-panel search-panel">
   {#if !current && !pending}
     <div class="list-content">

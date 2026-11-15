@@ -1,7 +1,7 @@
 <script lang="ts">
+  import Toolbar from '#lib/Toolbar.svelte';
   import { page } from '$app/state';
   import { createArrival } from '#lib/snapshot.svelte.ts';
-  import { getWorkbench } from '#lib/workbench.svelte.ts';
   import { num, providerMark } from '#lib/api.ts';
   import { compactOrDash, SEPARATOR } from '#lib/display.ts';
   import {
@@ -21,7 +21,6 @@
   import type { Column } from '#lib/columns.ts';
   import type { PageProps } from './$types';
   let { data }: PageProps = $props();
-  getWorkbench().showScope(scope);
   const arrival = createArrival(() => data.usage);
   const shown = $derived(arrival.current);
   /** The range's reads are on their way: the page draws its outline. */
@@ -105,6 +104,7 @@
   >
 {/snippet}
 
+<Toolbar {scope} />
 <div class="usage-page">
   <div class="console">
     {#if !current && !pending}

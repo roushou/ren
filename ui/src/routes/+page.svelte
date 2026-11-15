@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Toolbar from '#lib/Toolbar.svelte';
   import { onMount } from 'svelte';
   import { page } from '$app/state';
   import { createArrival, createSnapshot } from '#lib/snapshot.svelte.ts';
@@ -102,6 +103,7 @@
   const OUTLINE_ROWS = 3;
 </script>
 
+<Toolbar />
 <div class="overview">
   <div class="console ov-console">
     {#if !pending && (!current || !attention || !day)}

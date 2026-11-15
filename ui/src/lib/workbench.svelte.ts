@@ -1,9 +1,18 @@
-import { createContext, type Snippet } from 'svelte';
+import { createContext } from 'svelte';
 import type { CallView } from './api.ts';
 import { SvelteMap } from 'svelte/reactivity';
 import type { CallId } from './api.ts';
 import { LiveFollow, type LiveState } from './live.ts';
 import { Streaming, type CallProgress } from './streaming.ts';
+
+/** The layout's part of every page's toolbar. */
+export interface ToolbarControls {
+  refresh(): void;
+  /** A refresh or a navigation is under way. */
+  loading(): boolean;
+  /** Why the shown data may be out of date; empty when it is not. */
+  problem(): string;
+}
 
 export class Workbench {
   /** Follow `/api/live` and refresh when calls change. */
@@ -18,24 +27,16 @@ export class Workbench {
   selected = $state<CallView | undefined>();
   callCount = $state(0);
   activeCount = $state(0);
-  /** What the current view puts in the scope bar: what you are looking at,
-   * and the controls that change it. Unset, the bar names the view. */
-  scope = $state.raw<Snippet | undefined>();
+  /**
+   * What the toolbar offers from the layout: refreshing, whether a refresh
+   * or navigation is under way, and why the shown data may be out of date.
+   * The layout sets it as it starts, before any page renders a toolbar.
+   */
+  controls: ToolbarControls | null = null;
 
   /** Keep a streaming call's newest reply so far. */
   stream(update: CallProgress) {
     Streaming.keep(this.streamed, update);
-  }
-
-  /** Show `snippet` in the scope bar while the calling component lives.
-   * Call it from a component's script, where effects can be created. */
-  showScope(snippet: Snippet) {
-    $effect(() => {
-      this.scope = snippet;
-      return () => {
-        if (this.scope === snippet) this.scope = undefined;
-      };
-    });
   }
 }
 export const [getWorkbench, setWorkbench] = createContext<Workbench>();

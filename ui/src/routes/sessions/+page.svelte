@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Toolbar from '#lib/Toolbar.svelte';
   import { onMount, tick, untrack } from 'svelte';
   import { SvelteMap } from 'svelte/reactivity';
   import { goto } from '$app/navigation';
@@ -6,7 +7,6 @@
   import { ago } from '#lib/overview.ts';
   import { harnessLabel } from '#lib/activity.ts';
   import { callStatus, statusBadge, tokenSummary } from '#lib/display.ts';
-  import { getWorkbench } from '#lib/workbench.svelte.ts';
   import {
     Deletions,
     Desk,
@@ -68,7 +68,6 @@
   import type { PageProps } from './$types';
 
   let { data }: PageProps = $props();
-  getWorkbench().showScope(scope);
 
   const client = new RunsClient();
   const api = new ManagementApi();
@@ -1272,6 +1271,7 @@
 
 <svelte:window onkeydown={shortcut} />
 
+<Toolbar {scope} />
 <div class="runs-page" data-pane={pane}>
   <aside class="runs-sidebar" aria-label="Runs">
     {#if unavailable}<p class="sidebar-note danger">{unavailable}</p>{/if}

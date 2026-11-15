@@ -4,16 +4,25 @@
   daemon's control token). A delete asks once more first.
 -->
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, untrack } from 'svelte';
   import { goto } from '$app/navigation';
   import { ManagementApi, type RecordingId } from './api.ts';
   import { RunCommandError, RunsClient, type HistoryChange } from './runs.ts';
 
-  let { session }: { session: RecordingId } = $props();
+  let {
+    session,
+    shelf,
+  }: {
+    session: RecordingId;
+    /** Whether it is archived, from the recording's own listing; null when
+     * the page did not list it, and it is read here instead. */
+    shelf: boolean | null;
+  } = $props();
 
   const client = new RunsClient();
-  /** Whether it is archived; null until read. */
-  let archived = $state<boolean | null>(null);
+  /** Whether it is archived; null until read. Known from the page when it
+   * listed the recording, so the buttons render with the page. */
+  let archived = $state<boolean | null>(untrack(() => shelf));
   let confirming = $state(false);
   let busy = $state(false);
   let notice = $state<string | null>(null);
@@ -45,7 +54,9 @@
     }
   }
 
-  onMount(() => void readShelf());
+  onMount(() => {
+    if (archived === null) void readShelf();
+  });
 </script>
 
 <span class="session-actions">
