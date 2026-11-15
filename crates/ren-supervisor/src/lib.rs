@@ -331,63 +331,79 @@ pub enum CommandError {
     Gone,
 }
 
-/// What is asked of the sessions.
+/// Where a session request's answer goes: its own type, or why not.
+pub(crate) type Reply<T> = oneshot::Sender<Result<T, SessionError>>;
+
+/// What is asked of the sessions, each with the reply its answer goes to.
 pub(crate) enum SessionRequest {
-    Create(Create),
-    Adopt(SessionSeed),
+    Create {
+        create: Create,
+        reply: Reply<SessionId>,
+    },
+    Adopt {
+        seed: SessionSeed,
+        reply: Reply<()>,
+    },
     Send {
         session: SessionId,
         command: RunCommand,
+        reply: Reply<()>,
     },
     ChooseClient {
         session: SessionId,
         harness: Harness,
+        reply: Reply<()>,
     },
     Shelve {
         session: SessionId,
         shelving: Shelving,
+        reply: Reply<()>,
     },
     /// Stop serving a session that is being deleted.
-    Forget(SessionId),
-    List,
-    Commands(SessionId),
+    Forget {
+        session: SessionId,
+        reply: Reply<()>,
+    },
+    List {
+        reply: Reply<Vec<SessionSnapshot>>,
+    },
+    Commands {
+        session: SessionId,
+        reply: Reply<Vec<ClientCommand>>,
+    },
     Files {
         session: SessionId,
         query: FileQuery,
         limit: usize,
+        reply: Reply<Vec<FileMatch>>,
     },
     Attach {
         session: SessionId,
         name: String,
         bytes: Vec<u8>,
+        reply: Reply<(AttachmentId, Attachment)>,
     },
     ReadAttachment {
         session: SessionId,
         attachment: AttachmentId,
+        reply: Reply<(Attachment, Vec<u8>)>,
     },
     Detach {
         session: SessionId,
         attachment: AttachmentId,
+        reply: Reply<()>,
     },
-    Attachments(SessionId),
+    Attachments {
+        session: SessionId,
+        reply: Reply<Vec<KeptAttachment>>,
+    },
     Prompt {
         session: SessionId,
         text: String,
         attachments: Vec<AttachmentId>,
         delivery: Delivery,
+        reply: Reply<()>,
     },
-}
-
-/// What a session request answers.
-pub(crate) enum SessionAnswer {
-    Created(SessionId),
-    Done,
-    Listed(Vec<SessionSnapshot>),
-    Commands(Vec<ClientCommand>),
-    Files(Vec<FileMatch>),
-    Attached(AttachmentId, Attachment),
-    AttachmentBytes(Attachment, Vec<u8>),
-    Attachments(Vec<KeptAttachment>),
 }
 
 /// The supervisor has stopped.
@@ -430,10 +446,7 @@ pub(crate) enum Request {
         harness: Harness,
         reply: models::ModelsReply,
     },
-    Session {
-        request: SessionRequest,
-        reply: oneshot::Sender<Result<SessionAnswer, SessionError>>,
-    },
+    Session(SessionRequest),
     SignIn(SignInRequest),
 }
 
@@ -704,10 +717,14 @@ impl Supervisor {
             .await
     }
 
-    async fn session(&self, request: SessionRequest) -> Result<SessionAnswer, SessionError> {
+    /// Ask the task, and wait for its answer.
+    async fn ask<T>(
+        &self,
+        request: impl FnOnce(Reply<T>) -> SessionRequest,
+    ) -> Result<T, SessionError> {
         let (reply, answer) = oneshot::channel();
         self.requests
-            .send(Request::Session { request, reply })
+            .send(Request::Session(request(reply)))
             .await
             .map_err(|_| SessionError::Gone)?;
         answer.await.map_err(|_| SessionError::Gone)?
@@ -715,30 +732,26 @@ impl Supervisor {
 
     /// A new session, its client started in it.
     pub async fn create(&self, create: Create) -> Result<SessionId, SessionError> {
-        match self.session(SessionRequest::Create(create)).await? {
-            SessionAnswer::Created(session) => Ok(session),
-            SessionAnswer::Done
-            | SessionAnswer::Listed(_)
-            | SessionAnswer::Commands(_)
-            | SessionAnswer::Files(_)
-            | SessionAnswer::Attached(..)
-            | SessionAnswer::AttachmentBytes(..)
-            | SessionAnswer::Attachments(_) => Err(SessionError::Gone),
-        }
+        self.ask(|reply| SessionRequest::Create { create, reply })
+            .await
     }
 
     /// Serve a session the store holds; nothing when it is served already.
     pub async fn adopt(&self, seed: SessionSeed) -> Result<(), SessionError> {
-        self.session(SessionRequest::Adopt(seed)).await.map(|_| ())
+        self.ask(|reply| SessionRequest::Adopt { seed, reply })
+            .await
     }
 
     /// Carry out `command` in `session`: through its process, or, for a
     /// prompt with none running, through a new one that resumes its
     /// conversation; settings with none running apply to the next.
     pub async fn send(&self, session: SessionId, command: RunCommand) -> Result<(), SessionError> {
-        self.session(SessionRequest::Send { session, command })
-            .await
-            .map(|_| ())
+        self.ask(|reply| SessionRequest::Send {
+            session,
+            command,
+            reply,
+        })
+        .await
     }
 
     /// Work with `harness` instead, while the session is a draft: its
@@ -748,23 +761,32 @@ impl Supervisor {
         session: SessionId,
         harness: Harness,
     ) -> Result<(), SessionError> {
-        self.session(SessionRequest::ChooseClient { session, harness })
-            .await
-            .map(|_| ())
+        self.ask(|reply| SessionRequest::ChooseClient {
+            session,
+            harness,
+            reply,
+        })
+        .await
     }
 
     /// Archive a session (which stops its process) or unarchive it.
     pub async fn shelve(&self, session: SessionId, shelving: Shelving) -> Result<(), SessionError> {
-        self.session(SessionRequest::Shelve { session, shelving })
-            .await
-            .map(|_| ())
+        self.ask(|reply| SessionRequest::Shelve {
+            session,
+            shelving,
+            reply,
+        })
+        .await
     }
 
     /// Stop serving `session`, which is being deleted, with its ended runs:
     /// refused while a process serves it. Whether it was served.
     pub async fn forget(&self, session: SessionId) -> Result<bool, SessionError> {
-        match self.session(SessionRequest::Forget(session)).await {
-            Ok(_) => Ok(true),
+        match self
+            .ask(|reply| SessionRequest::Forget { session, reply })
+            .await
+        {
+            Ok(()) => Ok(true),
             Err(SessionError::NoSuchSession(_)) => Ok(false),
             Err(error) => Err(error),
         }
@@ -772,16 +794,7 @@ impl Supervisor {
 
     /// Every session served since the supervisor started.
     pub async fn sessions(&self) -> Result<Vec<SessionSnapshot>, SessionError> {
-        match self.session(SessionRequest::List).await? {
-            SessionAnswer::Listed(sessions) => Ok(sessions),
-            SessionAnswer::Created(_)
-            | SessionAnswer::Done
-            | SessionAnswer::Commands(_)
-            | SessionAnswer::Files(_)
-            | SessionAnswer::Attached(..)
-            | SessionAnswer::AttachmentBytes(..)
-            | SessionAnswer::Attachments(_) => Err(SessionError::Gone),
-        }
+        self.ask(|reply| SessionRequest::List { reply }).await
     }
 
     /// What the session's client offers a prompt: none while no process
@@ -790,16 +803,8 @@ impl Supervisor {
         &self,
         session: SessionId,
     ) -> Result<Vec<ClientCommand>, SessionError> {
-        match self.session(SessionRequest::Commands(session)).await? {
-            SessionAnswer::Commands(commands) => Ok(commands),
-            SessionAnswer::Created(_)
-            | SessionAnswer::Done
-            | SessionAnswer::Listed(_)
-            | SessionAnswer::Files(_)
-            | SessionAnswer::Attached(..)
-            | SessionAnswer::AttachmentBytes(..)
-            | SessionAnswer::Attachments(_) => Err(SessionError::Gone),
-        }
+        self.ask(|reply| SessionRequest::Commands { session, reply })
+            .await
     }
 
     /// The `limit` paths of the session's folder that best match `query`,
@@ -810,23 +815,13 @@ impl Supervisor {
         query: FileQuery,
         limit: usize,
     ) -> Result<Vec<FileMatch>, SessionError> {
-        match self
-            .session(SessionRequest::Files {
-                session,
-                query,
-                limit,
-            })
-            .await?
-        {
-            SessionAnswer::Files(files) => Ok(files),
-            SessionAnswer::Created(_)
-            | SessionAnswer::Done
-            | SessionAnswer::Listed(_)
-            | SessionAnswer::Commands(_)
-            | SessionAnswer::Attached(..)
-            | SessionAnswer::AttachmentBytes(..)
-            | SessionAnswer::Attachments(_) => Err(SessionError::Gone),
-        }
+        self.ask(|reply| SessionRequest::Files {
+            session,
+            query,
+            limit,
+            reply,
+        })
+        .await
     }
 
     /// How much an attachment may hold; `None` when sessions take no
@@ -844,23 +839,13 @@ impl Supervisor {
         name: String,
         bytes: Vec<u8>,
     ) -> Result<(AttachmentId, Attachment), SessionError> {
-        match self
-            .session(SessionRequest::Attach {
-                session,
-                name,
-                bytes,
-            })
-            .await?
-        {
-            SessionAnswer::Attached(attachment, read) => Ok((attachment, read)),
-            SessionAnswer::Created(_)
-            | SessionAnswer::Done
-            | SessionAnswer::Listed(_)
-            | SessionAnswer::Commands(_)
-            | SessionAnswer::Files(_)
-            | SessionAnswer::AttachmentBytes(..)
-            | SessionAnswer::Attachments(_) => Err(SessionError::Gone),
-        }
+        self.ask(|reply| SessionRequest::Attach {
+            session,
+            name,
+            bytes,
+            reply,
+        })
+        .await
     }
 
     /// One of `session`'s attachments, and its bytes.
@@ -869,22 +854,12 @@ impl Supervisor {
         session: SessionId,
         attachment: AttachmentId,
     ) -> Result<(Attachment, Vec<u8>), SessionError> {
-        match self
-            .session(SessionRequest::ReadAttachment {
-                session,
-                attachment,
-            })
-            .await?
-        {
-            SessionAnswer::AttachmentBytes(read, bytes) => Ok((read, bytes)),
-            SessionAnswer::Created(_)
-            | SessionAnswer::Done
-            | SessionAnswer::Listed(_)
-            | SessionAnswer::Commands(_)
-            | SessionAnswer::Files(_)
-            | SessionAnswer::Attached(..)
-            | SessionAnswer::Attachments(_) => Err(SessionError::Gone),
-        }
+        self.ask(|reply| SessionRequest::ReadAttachment {
+            session,
+            attachment,
+            reply,
+        })
+        .await
     }
 
     /// Every attachment of `session`, and whether each was sent.
@@ -892,16 +867,8 @@ impl Supervisor {
         &self,
         session: SessionId,
     ) -> Result<Vec<KeptAttachment>, SessionError> {
-        match self.session(SessionRequest::Attachments(session)).await? {
-            SessionAnswer::Attachments(kept) => Ok(kept),
-            SessionAnswer::Created(_)
-            | SessionAnswer::Done
-            | SessionAnswer::Listed(_)
-            | SessionAnswer::Commands(_)
-            | SessionAnswer::Files(_)
-            | SessionAnswer::Attached(..)
-            | SessionAnswer::AttachmentBytes(..) => Err(SessionError::Gone),
-        }
+        self.ask(|reply| SessionRequest::Attachments { session, reply })
+            .await
     }
 
     /// Prompt `session` with `text` and its `attachments`, delivered this
@@ -914,14 +881,14 @@ impl Supervisor {
         attachments: Vec<AttachmentId>,
         delivery: Delivery,
     ) -> Result<(), SessionError> {
-        self.session(SessionRequest::Prompt {
+        self.ask(|reply| SessionRequest::Prompt {
             session,
             text,
             attachments,
             delivery,
+            reply,
         })
         .await
-        .map(|_| ())
     }
 
     /// Remove one of `session`'s attachments, its file and its record.
@@ -930,12 +897,12 @@ impl Supervisor {
         session: SessionId,
         attachment: AttachmentId,
     ) -> Result<(), SessionError> {
-        self.session(SessionRequest::Detach {
+        self.ask(|reply| SessionRequest::Detach {
             session,
             attachment,
+            reply,
         })
         .await
-        .map(|_| ())
     }
 
     /// Session changes from now on.
