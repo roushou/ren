@@ -9,6 +9,7 @@ use crate::label::Labeled;
 use crate::messages::{BlockKind, EventKind};
 use serde_json::{Map, Value};
 use serde_with::{DeserializeFromStr, SerializeDisplay};
+use std::collections::BTreeMap;
 use strum::{Display, EnumString, IntoStaticStr, VariantArray};
 
 /// Who wrote a message. Claude Code also sends `system` messages inside
@@ -145,8 +146,9 @@ struct Block {
 #[derive(Debug, Clone)]
 pub(super) struct Response {
     limits: ActivityLimits,
-    /// By stream index.
-    blocks: Vec<Option<Block>>,
+    /// By stream index. Sparse: the index is the wire's, so it never sizes
+    /// an allocation.
+    blocks: BTreeMap<usize, Block>,
     limitations: Vec<ActivityLimitation>,
 }
 
@@ -154,7 +156,7 @@ impl Response {
     pub(super) fn new(limits: ActivityLimits) -> Self {
         Self {
             limits,
-            blocks: Vec::new(),
+            blocks: BTreeMap::new(),
             limitations: Vec::new(),
         }
     }
@@ -197,7 +199,7 @@ impl Response {
                 let Some(delta) = event.get("delta").and_then(Value::as_object) else {
                     return;
                 };
-                let Some(Some(block)) = self.blocks.get_mut(index) else {
+                let Some(block) = self.blocks.get_mut(&index) else {
                     return;
                 };
                 match Fields(delta).str("type").and_then(DeltaKind::from_label) {
@@ -215,7 +217,7 @@ impl Response {
                 }
             }
             (Some(EventKind::ContentBlockStop), Some(index)) => {
-                if let Some(Some(block)) = self.blocks.get_mut(index) {
+                if let Some(block) = self.blocks.get_mut(&index) {
                     block.closed = true;
                 }
             }
@@ -256,17 +258,12 @@ impl Response {
     }
 
     fn put(&mut self, index: usize, block: Block) {
-        if index >= self.blocks.len() {
-            self.blocks.resize_with(index.saturating_add(1), || None);
-        }
-        if let Some(slot) = self.blocks.get_mut(index) {
-            *slot = Some(block);
-        }
+        self.blocks.insert(index, block);
     }
 
     /// Whether the newest block is the model's thinking, still open.
     pub(super) fn thinking(&self) -> bool {
-        self.blocks.iter().flatten().last().is_some_and(|block| {
+        self.blocks.values().next_back().is_some_and(|block| {
             !block.closed
                 && match block.kind {
                     BlockKind::Thinking | BlockKind::RedactedThinking => true,
@@ -286,7 +283,7 @@ impl Response {
             ..ResponseActivity::default()
         };
         let mut replies = Vec::new();
-        for block in self.blocks.into_iter().flatten() {
+        for block in self.blocks.into_values() {
             match block.kind {
                 BlockKind::Text => replies.push(block.text),
                 BlockKind::ToolUse | BlockKind::ServerToolUse | BlockKind::McpToolUse => {

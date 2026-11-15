@@ -9,6 +9,7 @@ use crate::chat::ToolCallKind;
 use crate::label::Labeled;
 use serde_json::{Map, Value};
 use serde_with::{DeserializeFromStr, SerializeDisplay};
+use std::collections::BTreeMap;
 use strum::{Display, EnumString, IntoStaticStr, VariantArray};
 
 /// Who wrote a message. `function` is the deprecated form of `tool`.
@@ -157,19 +158,15 @@ impl Call {
 #[derive(Debug, Clone, Default)]
 struct Choice {
     text: String,
-    /// By the call's `index` within the choice.
-    calls: Vec<Option<Call>>,
+    /// By the call's `index` within the choice. Sparse: the index is the
+    /// wire's, so it never sizes an allocation.
+    calls: BTreeMap<usize, Call>,
     finished: bool,
 }
 
 impl Choice {
-    fn call(&mut self, index: usize) -> Option<&mut Call> {
-        if index >= self.calls.len() {
-            self.calls.resize_with(index.saturating_add(1), || None);
-        }
-        self.calls
-            .get_mut(index)
-            .map(|slot| slot.get_or_insert_with(Call::default))
+    fn call(&mut self, index: usize) -> &mut Call {
+        self.calls.entry(index).or_default()
     }
 
     /// A document's `message` or a chunk's `delta`. Calls without an
@@ -188,9 +185,7 @@ impl Choice {
                 .and_then(Value::as_u64)
                 .and_then(|index| usize::try_from(index).ok())
                 .unwrap_or(position);
-            if let Some(slot) = self.call(index) {
-                slot.absorb(call);
-            }
+            self.call(index).absorb(call);
         }
     }
 }
@@ -200,14 +195,15 @@ impl Choice {
 #[derive(Debug, Clone)]
 pub(super) struct Response {
     limits: ActivityLimits,
-    choices: Vec<Option<Choice>>,
+    /// By the choice's `index`. Sparse, as a choice's calls are.
+    choices: BTreeMap<usize, Choice>,
 }
 
 impl Response {
     pub(super) fn new(limits: ActivityLimits) -> Self {
         Self {
             limits,
-            choices: Vec::new(),
+            choices: BTreeMap::new(),
         }
     }
 
@@ -233,13 +229,7 @@ impl Response {
                 .and_then(Value::as_u64)
                 .and_then(|index| usize::try_from(index).ok())
                 .unwrap_or(position);
-            if index >= self.choices.len() {
-                self.choices.resize_with(index.saturating_add(1), || None);
-            }
-            let Some(slot) = self.choices.get_mut(index) else {
-                continue;
-            };
-            let reading = slot.get_or_insert_with(Choice::default);
+            let reading = self.choices.entry(index).or_default();
             if let Some(body) = choice.get(body).and_then(Value::as_object) {
                 reading.absorb(body);
             }
@@ -256,9 +246,9 @@ impl Response {
     pub(super) fn finish(self) -> ResponseActivity {
         let mut activity = ResponseActivity::default();
         let mut replies = Vec::new();
-        for choice in self.choices.into_iter().flatten() {
+        for choice in self.choices.into_values() {
             replies.push(choice.text);
-            for call in choice.calls.into_iter().flatten() {
+            for call in choice.calls.into_values() {
                 if !activity.has_room(self.limits.max_tool_uses) {
                     continue;
                 }
