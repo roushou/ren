@@ -1273,7 +1273,7 @@ export class Transcript {
   /** What the daemon stored, with what streamed in meanwhile kept. */
   load(stored: StoredConversation): Transcript {
     let loaded = new Transcript();
-    for (const entry of stored.entries) loaded = loaded.apply(entry.event);
+    for (const entry of stored.entries) loaded = loaded.apply(entry.event, entry.run);
     const entries = loaded.entries.slice();
     for (const live of this.entries) {
       const at = entries.findIndex((entry) => Transcript.same(entry, live));
@@ -1330,20 +1330,28 @@ export class Transcript {
     return JSON.stringify(one) === JSON.stringify(two);
   }
 
-  apply(event: DriveEvent): Transcript {
+  /**
+   * The conversation after `event`, which process `run` of it reported. A
+   * client names its items afresh in each process (Pi counts them from the
+   * first), so an item is the same item only within its process; without
+   * a process, by its name alone.
+   */
+  apply(event: DriveEvent, run: RunId | null = null): Transcript {
+    const own = (item: ItemId): ItemId => (run === null ? item : (`${run}/${item}` as ItemId));
     switch (event.kind) {
       case 'turn_started':
         return new Transcript(this.entries, event.turn, this.read, this.earlier);
       case 'delta': {
-        const index = this.#find(event.item);
+        const item = own(event.item);
+        const index = this.#find(item);
         const entry = index === -1 ? undefined : this.entries[index];
         if (entry?.kind === 'message') {
           return this.#replace(index, { ...entry, text: entry.text + event.text });
         }
-        return this.#push({ kind: 'message', item: event.item, text: event.text, done: false });
+        return this.#push({ kind: 'message', item, text: event.text, done: false });
       }
       case 'item':
-        return this.#item(event.item, event.phase === 'completed');
+        return this.#item({ ...event.item, id: own(event.item.id) }, event.phase === 'completed');
       case 'turn_ended':
         return new Transcript(this.entries, event.turn, this.read, this.earlier).#push({
           kind: 'turn_end',

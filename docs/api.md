@@ -349,7 +349,8 @@ earlier}`. Each entry is `{run, seq, at, started_at, turn, event}`, where
 command that finished, a reply that completed) is one entry as it last
 stood: `at` is when it was last reported and `started_at` when it was first
 (the same for entries stored before Ren kept both). The conversation includes the runs before
-this one on the same client thread (a resumed conversation reads as one), up
+this one on the same client thread (a resumed conversation reads as one) and
+its session's earlier runs, even before this one has opened its thread, up
 to the newest 20,000 entries; `earlier` says older ones were left out.
 Deleting a run deletes its conversation.
 
