@@ -3,3 +3,4 @@ import type { RequestHandler } from './$types';
 
 export const GET: RequestHandler = ({ request }) => proxy.respond(request);
 export const POST = GET;
+export const DELETE = GET;

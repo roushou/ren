@@ -169,10 +169,15 @@ impl ClaudeScript {
             // The real client queues it; this fake keeps one turn at a time.
             return Vec::new();
         }
-        let prompt = message["message"]["content"]
-            .as_str()
-            .unwrap_or_default()
-            .to_owned();
+        // Text alone, or the text blocks of a message with images.
+        let content = &message["message"]["content"];
+        let prompt = match content.as_array() {
+            Some(blocks) => blocks
+                .iter()
+                .filter_map(|block| block["text"].as_str())
+                .collect(),
+            None => content.as_str().unwrap_or_default().to_owned(),
+        };
         self.turns += 1;
         let index = self.turns;
         self.turn = Some(Active {

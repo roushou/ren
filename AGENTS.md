@@ -234,7 +234,12 @@ dependencies under "Crates" below. Read the code for current module ownership.
   `ModelId`, read by `ModelListing` from a short listing process), and a
   run's `RunSettings` (`settings`: its model, `Effort`, and
   `ApprovalPolicy`, and `Midway`, what each client takes mid-run: steering
-  and which settings change from the next turn); the commands a client
+  and which settings change from the next turn); attachments to a prompt
+  (`attachment`: `Attachment`, read once from its bytes by
+  `Attachment::parse` within `Limits`, never by its name, and what each
+  client takes, `Harness::acceptance`, each codec turning a prompt's
+  `PromptImage`s into its client's input; `docs/plans/attachments.md`); the
+  commands a client
   offers a prompt (`commands`: `ClientCommand`, each codec reading its
   client's own list); a client's own sign-in commands (`sign_in`: the
   `SignInMethod`s each offers, each a `SignInPlan`: its command, its
@@ -284,7 +289,8 @@ dependencies under "Crates" below. Read the code for current module ownership.
   encoding). Each operator session is in `operator_sessions` (not
   `sessions`, which holds recordings), and each run names the session it
   serves (`runs.operator_session`); `Reader::sessions` and `Reader::session`
-  read them with their runs (`SessionView`). Each driven run's conversation is in `run_entries`, whole, and
+  read them with their runs (`SessionView`); a session's attachments are in
+  `attachments` (`Reader::attachments`), their files in the daemon's data folder. Each driven run's conversation is in `run_entries`, whole, and
   `Reader::conversation` reads it across the runs on one client thread. It
   contains typed query parameters and read views, turn and call
   activity assembled from the calls' stored digests (`activity`, with the
@@ -309,7 +315,11 @@ dependencies under "Crates" below. Read the code for current module ownership.
   its conversation, `choose_client` replaces a draft's client, `shelve`
   archives (stopping its process) or unarchives, `adopt` serves a session the
   store holds, `forget` stops serving one being deleted, and `session_commands` and `session_files` serve its composer
-  (the folder's listing is the session's, kept until a turn ends). Session
+  (the folder's listing is the session's, kept until a turn ends), and
+  `attach`, `attachment`, and `detach` keep its images in a folder of its
+  own under the attachments folder (`attachments`: `AttachmentFolders`,
+  written through `AgentHost::place_file`, `<data>/attachments` in the
+  daemon), removed with it by `forget`. Session
   changes go to `subscribe_sessions`. A run started through `start` is a
   session and its first process. A client idle between turns is stopped
   after `IdleStop` (ten minutes in the daemon; its run ends `idled`), and its
@@ -394,7 +404,8 @@ dependencies under "Crates" below. Read the code for current module ownership.
     Its `sessions` module serves `/control/v1/sessions`: creating a session,
     prompting, unqueueing, answering approvals, configuring, choosing its
     client while a draft, interrupting, stopping, archiving, unarchiving,
-    deleting, its composer's commands and files, and session changes as SSE, through
+    deleting, its composer's commands and files, its attachments (upload,
+    read, remove), and session changes as SSE, through
     the `Supervisor`, loading a session the store holds (`Reader::session`)
     on its first request. Its `runs` module serves `/control/v1/runs`, read only: the live runs
     of the `ren_supervisor::Supervisor` in `ManagementSetup` and their updates
@@ -472,6 +483,8 @@ dependencies under "Crates" below. Read the code for current module ownership.
   `src/lib/signIn.ts` a client's sign-in as the API reports it and how the
   view words it, with `src/lib/SignInSheet.svelte` the sheet that runs the
   client's own login (its link out, the page's code back),
+  `src/lib/attachments.ts` the composer's images (the `Tray` of uploads,
+  and the `Gallery` that finds a sent image's thumbnail by its hash),
   `src/lib/mention.ts` the composer's offers (the client's commands after
   `/` or `$`, the folder's files after `@`), `src/lib/redline.ts` Redline's
   pure core (what a mark points at, the brief an agent gets, and the open

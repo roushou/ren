@@ -29,6 +29,7 @@ use ren_harness::{
     models::ModelId,
     settings::{ApprovalPolicy, Effort, RunSettings},
 };
+use ren_recorder::id::AttachmentId;
 use ren_supervisor::{
     CommandError, Delivery, ModelsError, RunRefused, RunSnapshot, StartError, Supervisor,
     WorkdirError,
@@ -56,7 +57,12 @@ impl FilesRequest {
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct PromptRequest {
+    /// May be blank when attachments go.
+    #[serde(default)]
     pub(super) text: String,
+    /// The session's attachments to send with it, by id.
+    #[serde(default)]
+    pub(super) attachments: Vec<AttachmentId>,
     /// How it goes: start a turn (the default), queue it for after the
     /// running turn, or steer the running turn with it.
     #[serde(default = "PromptRequest::start")]
@@ -139,6 +145,14 @@ pub(super) enum RunRefusal {
     NotFound,
     Refused(&'static str),
     Unavailable,
+    /// Sessions take no attachments here.
+    NoAttachments,
+    /// An upload that is not an attachment Ren takes, and why.
+    InvalidAttachment(&'static str),
+    /// An upload beyond the attachment limit.
+    AttachmentTooLarge,
+    /// An attachment could not be kept or read.
+    AttachmentStorage,
 }
 
 impl IntoResponse for RunRefusal {
@@ -155,6 +169,10 @@ impl IntoResponse for RunRefusal {
             Self::NotFound => (StatusCode::NOT_FOUND, "not_found"),
             Self::Refused(reason) => (StatusCode::CONFLICT, reason),
             Self::Unavailable => (StatusCode::SERVICE_UNAVAILABLE, "unavailable"),
+            Self::NoAttachments => (StatusCode::SERVICE_UNAVAILABLE, "no_attachments"),
+            Self::InvalidAttachment(reason) => (StatusCode::UNPROCESSABLE_ENTITY, reason),
+            Self::AttachmentTooLarge => (StatusCode::PAYLOAD_TOO_LARGE, "attachment_too_large"),
+            Self::AttachmentStorage => (StatusCode::INTERNAL_SERVER_ERROR, "attachment_storage"),
         };
         (
             status,
@@ -201,6 +219,7 @@ impl From<CommandError> for RunRefusal {
             }),
             // What the client has no way to do mid-run.
             CommandError::Protocol(CommandRefused::NotOffered(_)) => Self::Refused("not_offered"),
+            CommandError::Protocol(CommandRefused::NoImages) => Self::Refused("no_images"),
             CommandError::Protocol(
                 CommandRefused::NotReady
                 | CommandRefused::TurnRunning

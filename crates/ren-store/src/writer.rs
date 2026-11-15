@@ -7,7 +7,7 @@ use crate::{
     view::{DiskUsage, FileUsage},
 };
 use bytes::Bytes;
-use ren_harness::{drive::DriveEvent, models::ModelId};
+use ren_harness::{attachment::AttachmentKind, drive::DriveEvent, models::ModelId};
 use ren_protocol::{
     direction::Direction,
     label::{Labeled, Stored},
@@ -779,10 +779,49 @@ impl MetadataTx<'_> {
                     SessionFact::Unarchived
                     | SessionFact::Created { .. }
                     | SessionFact::Configured { .. }
-                    | SessionFact::ClientChosen { .. } => None,
+                    | SessionFact::ClientChosen { .. }
+                    | SessionFact::Attached { .. }
+                    | SessionFact::Detached { .. }
+                    | SessionFact::AttachmentsSent { .. } => None,
                 };
                 sqlx::query("UPDATE operator_sessions SET archived_at = ? WHERE id = ?")
                     .bind(archived)
+                    .bind(record.session.to_string())
+                    .execute(&mut *self.tx)
+                    .await?;
+            }
+            SessionFact::Attached { attachment, read } => {
+                let AttachmentKind::Image(image) = read.kind();
+                sqlx::query(
+                    "INSERT INTO attachments(id, operator_session, name, format, width, height, size, sha256, added_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                )
+                .bind(attachment.to_string())
+                .bind(record.session.to_string())
+                .bind(read.name().as_str())
+                .bind(image.format().label())
+                .bind(image.dimensions().width())
+                .bind(image.dimensions().height())
+                .bind(i64::try_from(read.size().get()).unwrap_or(i64::MAX))
+                .bind(read.sha256().to_string())
+                .bind(at)
+                .execute(&mut *self.tx)
+                .await?;
+            }
+            SessionFact::AttachmentsSent { attachments } => {
+                for attachment in attachments {
+                    sqlx::query(
+                        "UPDATE attachments SET sent_at = ? WHERE id = ? AND operator_session = ?",
+                    )
+                    .bind(at)
+                    .bind(attachment.to_string())
+                    .bind(record.session.to_string())
+                    .execute(&mut *self.tx)
+                    .await?;
+                }
+            }
+            SessionFact::Detached { attachment } => {
+                sqlx::query("DELETE FROM attachments WHERE id = ? AND operator_session = ?")
+                    .bind(attachment.to_string())
                     .bind(record.session.to_string())
                     .execute(&mut *self.tx)
                     .await?;
@@ -1036,12 +1075,19 @@ impl MetadataTx<'_> {
             .await?
             .rows_affected();
         if gone > 0 {
-            sqlx::query("DELETE FROM observations WHERE call IS NULL AND kind IN (?, ?, ?, ?, ?) AND json_extract(payload, '$.session') = ?")
+            sqlx::query("DELETE FROM observations WHERE call IS NULL AND kind IN (?, ?, ?, ?, ?, ?, ?, ?) AND json_extract(payload, '$.session') = ?")
                 .bind(ObservationKind::SessionCreated.label())
                 .bind(ObservationKind::SessionConfigured.label())
                 .bind(ObservationKind::SessionClientChosen.label())
                 .bind(ObservationKind::SessionArchived.label())
                 .bind(ObservationKind::SessionUnarchived.label())
+                .bind(ObservationKind::SessionAttached.label())
+                .bind(ObservationKind::SessionDetached.label())
+                .bind(ObservationKind::SessionAttachmentsSent.label())
+                .bind(session)
+                .execute(&mut *self.tx)
+                .await?;
+            sqlx::query("DELETE FROM attachments WHERE operator_session = ?")
                 .bind(session)
                 .execute(&mut *self.tx)
                 .await?;

@@ -16,6 +16,7 @@
 //! model requests carry, so a driven turn's id is its prompt's message id.
 
 use crate::{
+    attachment::Attachment,
     commands::{ClientCommand, CommandKind, Sigil},
     drive::{
         ApprovalAsk, ApprovalId, CommandRefused, Decision, DriveCommand, DriveEvent, DriveItem,
@@ -52,6 +53,8 @@ pub struct ClaudeStreamJson {
     streaming: Option<Streaming>,
     /// The commands and skills Claude Code listed as it opened.
     commands: Vec<ClientCommand>,
+    /// What the images sent with the last prompt are, until it is echoed.
+    echoing: Vec<Attachment>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -170,6 +173,7 @@ impl ClaudeStreamJson {
             blocks: BTreeMap::new(),
             streaming: None,
             commands: Vec::new(),
+            echoing: Vec::new(),
         };
         let line = codec.request(RequestKind::Initialize, json!({ "subtype": "initialize" }));
         (codec, line)
@@ -375,9 +379,28 @@ impl ClaudeStreamJson {
             }
         }
         self.turn = TurnSlot::Requested;
+        self.echoing = prompt.sent();
+        // Text alone goes as text; with images, as the Messages API's
+        // content blocks: each image in base64, then the text.
+        let content = if prompt.images().is_empty() {
+            json!(prompt.as_str())
+        } else {
+            let mut blocks: Vec<Value> = prompt
+                .images()
+                .iter()
+                .map(|image| {
+                    json!({ "type": "image", "source": {
+                        "type": "base64", "media_type": image.media_type(), "data": image.base64() } })
+                })
+                .collect();
+            if !prompt.as_str().trim().is_empty() {
+                blocks.push(json!({ "type": "text", "text": prompt.as_str() }));
+            }
+            Value::Array(blocks)
+        };
         Ok(Line::json(&json!({
             "type": "user",
-            "message": { "role": "user", "content": prompt.as_str() },
+            "message": { "role": "user", "content": content },
             "parent_tool_use_id": null,
             "session_id": self.thread.to_string(),
         })))
@@ -572,8 +595,11 @@ impl ClaudeStreamJson {
                 item: DriveItem {
                     id: ItemId::new(uuid.to_owned()),
                     kind: ItemKind::UserMessage,
-                    read: ItemRead::Prompt { text },
-                    body: message["message"].clone(),
+                    read: ItemRead::Prompt {
+                        text,
+                        images: std::mem::take(&mut self.echoing),
+                    },
+                    body: DriveItem::without_image_bytes(message["message"].clone()),
                 },
             });
             return;
@@ -1181,6 +1207,58 @@ mod tests {
     }
 
     #[test]
+    fn sends_images_as_content_blocks_and_shows_them_on_the_echo() {
+        use crate::drive::PromptImage;
+        let mut codec = ready();
+        let image = PromptImage::sample();
+        let line = codec
+            .command(DriveCommand::Prompt(PromptImage::prompt("what is this")))
+            .unwrap()
+            .remove(0);
+        assert_eq!(
+            sent(&line)["message"]["content"],
+            json!([
+                { "type": "image", "source": { "type": "base64", "media_type": "image/png",
+                  "data": image.base64() } },
+                { "type": "text", "text": "what is this" },
+            ])
+        );
+        let echoed = feed(
+            &mut codec,
+            json!({ "type": "user", "message": { "role": "user", "content": [
+                        { "type": "image", "source": { "type": "base64", "media_type": "image/png",
+                          "data": image.base64() } },
+                        { "type": "text", "text": "what is this" } ] },
+                    "session_id": SESSION, "parent_tool_use_id": null, "uuid": PROMPT,
+                    "isReplay": true }),
+        );
+        let [_, DriveEvent::Item { item, .. }] = echoed.events.as_slice() else {
+            panic!("{:?}", echoed.events);
+        };
+        assert_eq!(
+            item.read,
+            ItemRead::Prompt {
+                text: "what is this".into(),
+                images: vec![image.read().clone()],
+            }
+        );
+        assert!(!item.body.to_string().contains(&image.base64()));
+        // Images alone go without a text block.
+        let _ = feed(
+            &mut codec,
+            json!({ "type": "result", "subtype": "success", "is_error": false }),
+        );
+        let alone = codec
+            .command(DriveCommand::Prompt(PromptImage::prompt("")))
+            .unwrap()
+            .remove(0);
+        assert_eq!(
+            sent(&alone)["message"]["content"].as_array().map(Vec::len),
+            Some(1)
+        );
+    }
+
+    #[test]
     fn runs_a_turn_with_streamed_text_and_a_command() {
         let mut codec = ready();
         let line = codec.command(prompt("run the tests")).unwrap().remove(0);
@@ -1205,7 +1283,7 @@ mod tests {
                 DriveEvent::TurnStarted { turn },
                 DriveEvent::Item { phase: ItemPhase::Completed, item },
             ] if turn.to_string() == PROMPT
-                && item.read == ItemRead::Prompt { text: "run the tests".into() }
+                && item.read == ItemRead::Prompt { text: "run the tests".into(), images: Vec::new() }
         ));
 
         let tool_use = json!({ "type": "tool_use", "id": "toolu_1", "name": "Bash",

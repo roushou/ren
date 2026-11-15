@@ -3,3 +3,4 @@ PlaceKind: project other scratch
 Delivery: start queue steer
 PathKind: file directory
 SessionPhase: draft active
+ImageTaking: always if_offered never

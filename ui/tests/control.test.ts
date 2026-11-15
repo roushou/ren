@@ -188,6 +188,64 @@ test('sessions map to their control routes, and a recording block is not proxied
   ]);
 });
 
+test("a session's images are uploaded as bytes, listed, read back, and removed", async () => {
+  const seen: string[] = [];
+  const daemon = host((url, init) => {
+    const body = init.body instanceof ArrayBuffer ? `${init.body.byteLength}b` : '';
+    seen.push(`${init.method} ${url.pathname}${url.search} ${body}`.trim());
+    const type = new Headers(init.headers).get('content-type');
+    if (init.method === 'POST') assert.equal(type, 'image/png');
+    return url.pathname.endsWith(attachment)
+      ? new Response(new Uint8Array([1, 2]), { headers: { 'content-type': 'image/png' } })
+      : Response.json({ api_version: 1 });
+  });
+  const attachment = '00000000-0000-0000-0000-0000000000a1';
+  const proxy = new RunsProxy(on, 'http://daemon.test', daemon);
+  const same = { 'sec-fetch-site': 'same-origin' };
+  const upload = (type: string) =>
+    proxy.respond(
+      new Request(`http://ui.test/control/sessions/${run}/attachments?name=shot.png&x=1`, {
+        method: 'POST',
+        headers: { ...same, 'content-type': type },
+        body: new Uint8Array([137, 80, 78, 71]),
+      }),
+    );
+  assert.equal((await upload('image/png')).status, 200);
+  assert.equal((await upload('image/svg+xml')).status, 415);
+  assert.equal((await upload('application/json')).status, 415);
+  await proxy.respond(
+    new Request(`http://ui.test/control/sessions/${run}/attachments`, { headers: same }),
+  );
+  const image = await proxy.respond(
+    new Request(`http://ui.test/control/sessions/${run}/attachments/${attachment}`, {
+      headers: same,
+    }),
+  );
+  assert.equal(image.headers.get('content-type'), 'image/png');
+  assert.equal(image.headers.get('cache-control'), 'no-store');
+  assert.deepEqual([...new Uint8Array(await image.arrayBuffer())], [1, 2]);
+  const removed = await proxy.respond(
+    new Request(`http://ui.test/control/sessions/${run}/attachments/${attachment}`, {
+      method: 'DELETE',
+      headers: same,
+    }),
+  );
+  assert.equal(removed.status, 200);
+  // Removing without a browser's same-origin mark never reaches the daemon.
+  const bare = await proxy.respond(
+    new Request(`http://ui.test/control/sessions/${run}/attachments/${attachment}`, {
+      method: 'DELETE',
+    }),
+  );
+  assert.equal(bare.status, 403);
+  assert.deepEqual(seen, [
+    `POST /control/v1/sessions/${run}/attachments?name=shot.png 4b`,
+    `GET /control/v1/sessions/${run}/attachments`,
+    `GET /control/v1/sessions/${run}/attachments/${attachment}`,
+    `DELETE /control/v1/sessions/${run}/attachments/${attachment}`,
+  ]);
+});
+
 test('cross-site, non-JSON, unknown, and unlisted requests never reach the daemon', async () => {
   const proxy = new RunsProxy(on, 'http://daemon.test', host(never));
   const cases: [Request, number][] = [

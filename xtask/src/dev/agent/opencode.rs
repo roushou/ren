@@ -156,6 +156,7 @@ impl OpenCodeScript {
                 id,
                 json!({ "protocolVersion": 1,
                     "agentCapabilities": { "loadSession": true,
+                        "promptCapabilities": { "image": true, "embeddedContext": true },
                         "sessionCapabilities": { "list": {}, "resume": {}, "delete": {} } },
                     "agentInfo": { "name": "OpenCode", "version": "dev" } }),
             )],
@@ -208,7 +209,13 @@ impl OpenCodeScript {
                 )]
             }
             "session/prompt" => {
-                let prompt = params["prompt"][0]["text"].as_str().unwrap_or_default();
+                // The text part, after any images.
+                let prompt = params["prompt"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .find_map(|part| part["text"].as_str())
+                    .unwrap_or_default();
                 self.prompted(id, prompt)
             }
             "_session/steering" => {

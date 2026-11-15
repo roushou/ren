@@ -7,6 +7,7 @@
 //! stdin out; lines from its stdout in, events and replies out. Framing
 //! (`lines`) knows nothing about JSON.
 
+use crate::attachment::{Attachment, AttachmentKind, Offer};
 use crate::claude_code::ClaudeStreamJson;
 use crate::codex::CodexAppServer;
 use crate::commands::ClientCommand;
@@ -15,6 +16,9 @@ use crate::opencode::OpenCodeAcp;
 use crate::pi::PiRpc;
 use crate::settings::{Midway, RunSettings};
 use crate::{Harness, launch::NotDrivable};
+use base64::Engine as _;
+use std::path::PathBuf;
+use std::sync::Arc;
 
 use ren_protocol::native::{NativeThreadId, NativeTurnId};
 use serde_with::{DeserializeFromStr, SerializeDisplay};
@@ -119,6 +123,15 @@ impl Driver {
         }
     }
 
+    /// What the client said of images: only OpenCode says, in its answer
+    /// to `initialize`; the others always take them (`Harness::acceptance`).
+    pub fn image_offer(&self) -> Offer {
+        match self {
+            Self::OpenCode(codec) => codec.image_offer(),
+            Self::Codex(_) | Self::ClaudeCode(_) | Self::Pi(_) => Offer::Unknown,
+        }
+    }
+
     /// Read one frame from the client's stdout.
     pub fn receive(&mut self, frame: Framed) -> Received {
         match self {
@@ -148,18 +161,98 @@ pub enum DriveCommand {
     Configure(RunSettings),
 }
 
-/// The text of a prompt: never blank.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Prompt(String);
+/// An image sent with a prompt: what it is, where its file is, and its
+/// bytes. Each client's codec takes the one its client reads: Codex the
+/// path, the others the bytes, in base64.
+#[derive(Clone, PartialEq, Eq)]
+pub struct PromptImage {
+    read: Attachment,
+    path: PathBuf,
+    bytes: Arc<[u8]>,
+}
 
-/// Sent as its text.
-impl serde::Serialize for Prompt {
-    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.serialize_str(&self.0)
+impl PromptImage {
+    /// `read`, kept at `path`, whose bytes are `bytes`.
+    pub fn new(read: Attachment, path: PathBuf, bytes: Arc<[u8]>) -> Self {
+        Self { read, path, bytes }
+    }
+
+    pub fn read(&self) -> &Attachment {
+        &self.read
+    }
+
+    pub fn path(&self) -> &std::path::Path {
+        &self.path
+    }
+
+    /// Its format's media type.
+    pub fn media_type(&self) -> &'static str {
+        match self.read.kind() {
+            AttachmentKind::Image(image) => image.format().media_type(),
+        }
+    }
+
+    /// Its bytes in base64, as the inline clients take them.
+    pub fn base64(&self) -> String {
+        base64::engine::general_purpose::STANDARD.encode(&self.bytes)
     }
 }
 
-/// Read back as text that is not blank.
+#[cfg(test)]
+impl PromptImage {
+    /// A 2×1 PNG header, `shot.png`, kept at `/data/attachments/s/a/shot.png`.
+    pub(crate) fn sample() -> Self {
+        let mut bytes = b"\x89PNG\r\n\x1a\n\0\0\0\x0dIHDR".to_vec();
+        bytes.extend(2u32.to_be_bytes());
+        bytes.extend(1u32.to_be_bytes());
+        bytes.extend([8, 6, 0, 0, 0, 0, 0, 0, 0]);
+        let read =
+            Attachment::parse("shot.png", &bytes, &crate::attachment::Limits::default()).unwrap();
+        Self::new(read, "/data/attachments/s/a/shot.png".into(), bytes.into())
+    }
+
+    /// A prompt of `text` with the sample image.
+    pub(crate) fn prompt(text: &str) -> Prompt {
+        Prompt::with_images(text.into(), vec![Self::sample()]).unwrap()
+    }
+}
+
+/// What it is and where, never its bytes.
+impl std::fmt::Debug for PromptImage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PromptImage")
+            .field("read", &self.read)
+            .field("path", &self.path)
+            .finish_non_exhaustive()
+    }
+}
+
+/// A prompt: its text, and the images sent with it. Never blank: it has
+/// text, images, or both.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Prompt {
+    text: String,
+    images: Vec<PromptImage>,
+}
+
+/// Sent as its text, or, with images, as its text and what each image is
+/// (never their bytes).
+impl serde::Serialize for Prompt {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeStruct;
+        if self.images.is_empty() {
+            return serializer.serialize_str(&self.text);
+        }
+        let mut prompt = serializer.serialize_struct("Prompt", 2)?;
+        prompt.serialize_field("text", &self.text)?;
+        let images: Vec<&Attachment> = self.images.iter().map(PromptImage::read).collect();
+        prompt.serialize_field("images", &images)?;
+        prompt.end()
+    }
+}
+
+/// Read back as text that is not blank. A prompt with images is not read
+/// back: their bytes were never written.
 impl<'de> serde::Deserialize<'de> for Prompt {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         Self::parse(String::deserialize(deserializer)?).map_err(serde::de::Error::custom)
@@ -172,15 +265,29 @@ pub struct BlankPrompt;
 
 impl Prompt {
     pub fn parse(text: String) -> Result<Self, BlankPrompt> {
-        if text.trim().is_empty() {
+        Self::with_images(text, Vec::new())
+    }
+
+    /// `text` with `images`; the text may be blank when images go.
+    pub fn with_images(text: String, images: Vec<PromptImage>) -> Result<Self, BlankPrompt> {
+        if text.trim().is_empty() && images.is_empty() {
             Err(BlankPrompt)
         } else {
-            Ok(Self(text))
+            Ok(Self { text, images })
         }
     }
 
     pub fn as_str(&self) -> &str {
-        &self.0
+        &self.text
+    }
+
+    pub fn images(&self) -> &[PromptImage] {
+        &self.images
+    }
+
+    /// What each image sent with it is, for the echo of this prompt.
+    pub fn sent(&self) -> Vec<Attachment> {
+        self.images.iter().map(|image| image.read.clone()).collect()
     }
 }
 
@@ -389,14 +496,49 @@ pub struct DriveItem {
     pub body: serde_json::Value,
 }
 
+impl DriveItem {
+    /// `body` without the bytes of any image inlined in it: the `data` of
+    /// each part whose `type` is `image` or `base64` becomes a note of how
+    /// long it was. An echoed prompt then never carries an image's bytes
+    /// into what Ren records and publishes.
+    pub fn without_image_bytes(body: serde_json::Value) -> serde_json::Value {
+        use serde_json::Value;
+        match body {
+            Value::Object(mut fields) => {
+                let inline = matches!(
+                    fields.get("type").and_then(Value::as_str),
+                    Some("image" | "base64")
+                );
+                if inline && let Some(Value::String(data)) = fields.get("data") {
+                    let note = format!("{} characters of base64, not kept", data.len());
+                    fields.insert("data".into(), Value::String(note));
+                }
+                Value::Object(
+                    fields
+                        .into_iter()
+                        .map(|(key, value)| (key, Self::without_image_bytes(value)))
+                        .collect(),
+                )
+            }
+            Value::Array(parts) => {
+                Value::Array(parts.into_iter().map(Self::without_image_bytes).collect())
+            }
+            other @ (Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_)) => other,
+        }
+    }
+}
+
 /// What Ren read from an item, the same for every client, so consumers never
 /// parse a client's own body. Each client's codec fills it.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "as", rename_all = "snake_case")]
 pub enum ItemRead {
-    /// The operator's prompt, as the client echoed it.
+    /// The operator's prompt, as the client echoed it, with what each
+    /// image Ren sent with it is.
     Prompt {
         text: String,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        images: Vec<Attachment>,
     },
     /// Reply text; empty while it is still streaming as deltas.
     Reply {
@@ -580,6 +722,9 @@ pub enum CommandRefused {
     /// The client has no way to do this mid-run.
     #[error("this client cannot change {0} in a running conversation")]
     NotOffered(Midway),
+    /// The client did not say it takes images.
+    #[error("this client does not take images")]
+    NoImages,
 }
 
 #[cfg(test)]
@@ -588,6 +733,40 @@ mod tests {
         ApprovalAsk, ApprovalId, DriveEvent, DriveItem, ItemId, ItemKind, ItemPhase, ItemRead,
         ItemStatus, RawLine, Retry, TurnEnd, Unreadable,
     };
+
+    #[test]
+    fn a_prompt_with_images_shows_what_they_are_never_their_bytes() {
+        use super::{BlankPrompt, Prompt, PromptImage};
+        assert_eq!(Prompt::parse("  ".into()), Err(BlankPrompt));
+        let images = PromptImage::prompt("");
+        assert_eq!(images.as_str(), "");
+        let text = serde_json::to_value(Prompt::parse("go".into()).unwrap()).unwrap();
+        assert_eq!(text, "go");
+        let shown = serde_json::to_value(PromptImage::prompt("look")).unwrap();
+        assert_eq!(shown["text"], "look");
+        assert_eq!(shown["images"][0]["name"], "shot.png");
+        assert!(!shown.to_string().contains(&PromptImage::sample().base64()));
+        assert!(serde_json::from_value::<Prompt>(shown).is_err());
+        assert!(!format!("{:?}", PromptImage::sample()).contains("bytes"));
+    }
+
+    #[test]
+    fn an_echoed_body_keeps_no_image_bytes() {
+        let body = serde_json::json!({ "role": "user", "content": [
+            { "type": "image", "source": { "type": "base64", "media_type": "image/png", "data": "iVBORw0K" } },
+            { "type": "image", "data": "iVBORw0K", "mimeType": "image/png" },
+            { "type": "text", "text": "look", "data": "kept" },
+        ] });
+        let trimmed = DriveItem::without_image_bytes(body);
+        let content = &trimmed["content"];
+        assert_eq!(
+            content[0]["source"]["data"],
+            "8 characters of base64, not kept"
+        );
+        assert_eq!(content[1]["data"], "8 characters of base64, not kept");
+        assert_eq!(content[1]["mimeType"], "image/png");
+        assert_eq!(content[2]["data"], "kept");
+    }
 
     /// What the daemon sends on its run feed reads back as the same events,
     /// unknown kinds and statuses keeping the client's own names.

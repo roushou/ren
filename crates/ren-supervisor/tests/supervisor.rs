@@ -81,6 +81,8 @@ struct FakeHost {
     made: Arc<Mutex<Vec<(PathBuf, bool)>>>,
     /// Folders walked for a file search, in order.
     walked: Arc<Mutex<Vec<PathBuf>>>,
+    /// The files written, by path.
+    files: Arc<Mutex<std::collections::BTreeMap<PathBuf, Vec<u8>>>>,
 }
 
 impl FakeHost {
@@ -92,6 +94,7 @@ impl FakeHost {
             tools_given: Arc::default(),
             made: Arc::default(),
             walked: Arc::default(),
+            files: Arc::default(),
         }
     }
 }
@@ -154,6 +157,32 @@ impl AgentHost for FakeHost {
 
     fn make_scratch(&self, dir: &Path) -> io::Result<()> {
         self.made.lock().unwrap().push((dir.to_path_buf(), true));
+        Ok(())
+    }
+
+    fn place_file(&self, incoming: &Path, target: &Path, bytes: &[u8]) -> io::Result<()> {
+        assert!(incoming.starts_with("/data/attachments/.incoming"));
+        self.files
+            .lock()
+            .unwrap()
+            .insert(target.to_path_buf(), bytes.to_vec());
+        Ok(())
+    }
+
+    fn read_file(&self, path: &Path) -> io::Result<Vec<u8>> {
+        self.files
+            .lock()
+            .unwrap()
+            .get(path)
+            .cloned()
+            .ok_or_else(|| io::Error::from(io::ErrorKind::NotFound))
+    }
+
+    fn remove_tree(&self, dir: &Path) -> io::Result<()> {
+        self.files
+            .lock()
+            .unwrap()
+            .retain(|path, _| !path.starts_with(dir));
         Ok(())
     }
 
@@ -380,6 +409,8 @@ fn options() -> SupervisorOptions {
         version: "0.1.0".into(),
         line_limit: LineLimit::DEFAULT,
         idle: ren_supervisor::IdleStop::Never,
+        attachments: Some(PathBuf::from("/data/attachments")),
+        attachment_limits: ren_harness::attachment::Limits::default(),
     }
 }
 
@@ -1248,10 +1279,17 @@ async fn a_scratch_run_gets_a_new_repository_of_its_own() {
         workdir.to_str().unwrap().starts_with("/scratch/scratch-"),
         "{workdir:?}"
     );
-    // The scratch folder was made at setup; the run's own as a repository.
+    // The scratch and attachments folders were made at setup; the run's
+    // own as a repository.
     let made = made.lock().unwrap().clone();
-    assert_eq!(made[0], (PathBuf::from("/scratch"), false));
-    assert_eq!(made[1], (workdir, true));
+    assert_eq!(
+        made,
+        [
+            (PathBuf::from("/scratch"), false),
+            (PathBuf::from("/data/attachments"), false),
+            (workdir, true)
+        ]
+    );
     // A folder outside every root and place is refused, a home included.
     let outside = starting(Harness::Codex, "/home/op", Conversation::New, None);
     assert!(supervised.supervisor.start(outside).await.is_err());
@@ -1441,6 +1479,237 @@ async fn a_conversation_no_turn_ran_in_is_not_resumed() {
     assert!(arguments(2).iter().any(|argument| argument == "--resume"));
 }
 
+/// A PNG header of `width` by `height` pixels.
+fn png(width: u32, height: u32) -> Vec<u8> {
+    let mut bytes = b"\x89PNG\r\n\x1a\n\0\0\0\x0dIHDR".to_vec();
+    bytes.extend(width.to_be_bytes());
+    bytes.extend(height.to_be_bytes());
+    bytes.extend([8, 6, 0, 0, 0, 0, 0, 0, 0]);
+    bytes
+}
+
+#[tokio::test]
+async fn a_sessions_attachments_are_kept_read_removed_and_go_with_it() {
+    use ren_harness::attachment::{AttachmentError, AttachmentKind, ImageFormat};
+    use ren_supervisor::{SessionError, SessionPhase, SessionSeed, SessionState};
+    let host = FakeHost::new(Script::Codex);
+    let files = host.files.clone();
+    let supervised = supervise(host).await;
+    let supervisor = &supervised.supervisor;
+    let mut updates = supervisor.subscribe();
+    assert!(supervisor.attachment_limits().is_some());
+    let session = supervisor
+        .create(create(Harness::Codex, "/work/acme"))
+        .await
+        .unwrap();
+    state(&mut updates, |s| matches!(s, RunState::Idle { .. })).await;
+
+    // Read from its bytes, kept in the session's folder under its name.
+    let (shot, read) = supervisor
+        .attach(session, "Desktop/shot.png".into(), png(64, 48))
+        .await
+        .unwrap();
+    let AttachmentKind::Image(image) = read.kind();
+    assert_eq!(image.format(), ImageFormat::Png);
+    assert_eq!(read.name().as_str(), "shot.png");
+    let path = PathBuf::from(format!("/data/attachments/{session}/{shot}/shot.png"));
+    assert_eq!(files.lock().unwrap().get(&path), Some(&png(64, 48)));
+    let (again, bytes) = supervisor.attachment(session, shot).await.unwrap();
+    assert_eq!((again, bytes), (read.clone(), png(64, 48)));
+
+    // What is not an image Ren takes is refused, and nothing is written.
+    assert!(matches!(
+        supervisor
+            .attach(session, "notes.txt".into(), b"just text".to_vec())
+            .await,
+        Err(SessionError::Attachment(AttachmentError::Unrecognized))
+    ));
+    assert_eq!(files.lock().unwrap().len(), 1);
+
+    // Removed, it is gone from the session and its folder.
+    let (other, _) = supervisor
+        .attach(session, "other.png".into(), png(2, 2))
+        .await
+        .unwrap();
+    supervisor.detach(session, other).await.unwrap();
+    assert!(matches!(
+        supervisor.attachment(session, other).await,
+        Err(SessionError::NoSuchAttachment(_))
+    ));
+    assert!(matches!(
+        supervisor.detach(session, other).await,
+        Err(SessionError::NoSuchAttachment(_))
+    ));
+    assert_eq!(files.lock().unwrap().len(), 1);
+    // Another session's attachment is not this one's.
+    let elsewhere = ren_recorder::id::SessionId::restore(uuid::Uuid::from_u128(0x99));
+    assert!(supervisor.attachment(elsewhere, shot).await.is_err());
+
+    // Recorded: the store holds the one still attached.
+    let reader = Reader::open(supervised.dir.path(), 1).await.unwrap();
+    let recorded = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let stored = reader.attachments(session).await.unwrap();
+            if stored.len() == 1 {
+                return stored;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("the attachment is recorded");
+    assert_eq!(recorded[0].id, shot);
+
+    // A session served again from the store has its attachments.
+    let stored = ren_recorder::id::SessionId::restore(uuid::Uuid::from_u128(0x77));
+    supervisor
+        .adopt(SessionSeed {
+            session: stored,
+            harness: Harness::Codex,
+            workdir: "/work/acme".into(),
+            settings: ren_harness::settings::RunSettings::default(),
+            thread: None,
+            state: SessionState::Open(SessionPhase::Draft),
+            attachments: vec![ren_supervisor::KeptAttachment {
+                id: shot,
+                read: read.clone(),
+                used: ren_supervisor::AttachmentUse::Unsent,
+            }],
+        })
+        .await
+        .unwrap();
+    let kept = PathBuf::from(format!("/data/attachments/{stored}/{shot}/shot.png"));
+    files.lock().unwrap().insert(kept, png(64, 48));
+    assert_eq!(supervisor.attachment(stored, shot).await.unwrap().0, read);
+
+    // Deleted, its folder goes with it; a running one is not deleted.
+    assert!(matches!(
+        supervisor.forget(session).await,
+        Err(SessionError::Running)
+    ));
+    supervisor.send(session, RunCommand::Stop).await.unwrap();
+    state(&mut updates, |s| matches!(s, RunState::Ended { .. })).await;
+    assert!(supervisor.forget(session).await.unwrap());
+    assert!(
+        files
+            .lock()
+            .unwrap()
+            .keys()
+            .all(|path| !path.starts_with(format!("/data/attachments/{session}")))
+    );
+    // One not served is not forgotten, but its folder still goes.
+    assert!(!supervisor.forget(elsewhere).await.unwrap());
+}
+
+#[tokio::test]
+async fn a_prompt_takes_the_sessions_images_and_they_stay_once_sent() {
+    use ren_harness::drive::CommandRefused;
+    use ren_supervisor::{AttachmentUse, CommandError, Delivery, ImageTaking, SessionError};
+    let supervised = supervise(FakeHost::new(Script::Codex)).await;
+    let supervisor = &supervised.supervisor;
+    let mut updates = supervisor.subscribe();
+    let session = supervisor
+        .create(create(Harness::Codex, "/work/acme"))
+        .await
+        .unwrap();
+    state(&mut updates, |s| matches!(s, RunState::Idle { .. })).await;
+    assert_eq!(only_session(supervisor).await.images, ImageTaking::Always);
+    let (shot, _) = supervisor
+        .attach(session, "shot.png".into(), png(4, 4))
+        .await
+        .unwrap();
+
+    // Neither text nor images is blank; another session's image is not this one's.
+    assert!(matches!(
+        supervisor
+            .prompt(session, " ".into(), Vec::new(), Delivery::Start)
+            .await,
+        Err(SessionError::BlankPrompt)
+    ));
+    let stranger = ren_recorder::id::AttachmentId::restore(uuid::Uuid::from_u128(0x55));
+    assert!(matches!(
+        supervisor
+            .prompt(session, "look".into(), vec![stranger], Delivery::Start)
+            .await,
+        Err(SessionError::NoSuchAttachment(_))
+    ));
+    // Too many together is refused before anything is sent.
+    assert!(matches!(
+        supervisor
+            .prompt(session, "look".into(), vec![shot; 11], Delivery::Start)
+            .await,
+        Err(SessionError::PromptAttachments(_))
+    ));
+
+    // An image alone is a prompt; sent, it stays with the session.
+    supervisor
+        .prompt(session, String::new(), vec![shot], Delivery::Start)
+        .await
+        .unwrap();
+    state(&mut updates, working).await;
+    let kept = supervisor.attachments(session).await.unwrap();
+    assert_eq!(kept.len(), 1);
+    assert_eq!(kept[0].used, AttachmentUse::Sent);
+    assert!(matches!(
+        supervisor.detach(session, shot).await,
+        Err(SessionError::AttachmentSent(_))
+    ));
+
+    // OpenCode that has not said it takes images refuses one.
+    let open = supervise(FakeHost::new(Script::OpenCode)).await;
+    let mut opened = open.supervisor.subscribe();
+    let other = open
+        .supervisor
+        .create(create(Harness::OpenCode, "/work/acme"))
+        .await
+        .unwrap();
+    state(&mut opened, |s| matches!(s, RunState::Idle { .. })).await;
+    assert_eq!(
+        only_session(&open.supervisor).await.images,
+        ImageTaking::IfOffered
+    );
+    let (image, _) = open
+        .supervisor
+        .attach(other, "shot.png".into(), png(4, 4))
+        .await
+        .unwrap();
+    assert!(matches!(
+        open.supervisor
+            .prompt(other, "look".into(), vec![image], Delivery::Start)
+            .await,
+        Err(SessionError::Command(CommandError::Protocol(
+            CommandRefused::NoImages
+        )))
+    ));
+    assert_eq!(
+        open.supervisor.attachments(other).await.unwrap()[0].used,
+        AttachmentUse::Unsent
+    );
+}
+
+#[tokio::test]
+async fn without_an_attachments_folder_sessions_take_none() {
+    use ren_supervisor::SessionError;
+    let supervised = supervise_with(
+        FakeHost::new(Script::Codex),
+        SupervisorOptions {
+            attachments: None,
+            ..options()
+        },
+    )
+    .await;
+    let supervisor = &supervised.supervisor;
+    assert_eq!(supervisor.attachment_limits(), None);
+    let session = supervisor
+        .create(create(Harness::Codex, "/work/acme"))
+        .await
+        .unwrap();
+    assert!(matches!(
+        supervisor.attach(session, "a.png".into(), png(1, 1)).await,
+        Err(SessionError::NoAttachments)
+    ));
+}
+
 #[tokio::test]
 async fn a_draft_changes_client_and_a_stored_session_is_adopted() {
     use ren_harness::settings::{Effort, RunSettings};
@@ -1490,6 +1759,7 @@ async fn a_draft_changes_client_and_a_stored_session_is_adopted() {
                 .unwrap(),
         ),
         state: SessionState::Open(SessionPhase::Active),
+        attachments: Vec::new(),
     };
     assert!(
         supervisor.adopt(seed("/etc")).await.is_err(),

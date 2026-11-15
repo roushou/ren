@@ -1,0 +1,220 @@
+// Images sent with a prompt: what the daemon says each one is, the
+// composer's tray of uploads (each one uploading, ready, or refused), and
+// how a prompt in the conversation finds the thumbnails of what it sent.
+// Pure: no browser APIs; tested in tests/attachments.test.ts.
+import {
+  Uuid,
+  array,
+  boolean,
+  count,
+  label,
+  object,
+  string,
+  type Brand,
+  type Decoder,
+  type Stored,
+} from './decode.ts';
+
+export type AttachmentId = Brand<string, 'AttachmentId'>;
+export const AttachmentId = new Uuid<'AttachmentId'>();
+
+export const IMAGE_FORMATS = ['png', 'jpeg', 'gif', 'webp'] as const;
+export type ImageFormat = (typeof IMAGE_FORMATS)[number];
+
+/** The media types an upload may have: the formats Ren takes. */
+export const IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'] as const;
+
+/** What an attachment is, as the daemon read it from its bytes. */
+export interface AttachmentRead {
+  name: string;
+  format: Stored<ImageFormat>;
+  width: number;
+  height: number;
+  size: number;
+  sha256: string;
+}
+
+const dimensions = object<{ width: number; height: number }>({ width: count, height: count });
+const kind = object<{ format: Stored<ImageFormat>; dimensions: { width: number; height: number } }>(
+  { format: label(IMAGE_FORMATS), dimensions },
+);
+
+export const attachmentRead: Decoder<AttachmentRead> = (value, path) => {
+  const read = object<{
+    name: string;
+    kind: { format: Stored<ImageFormat>; dimensions: { width: number; height: number } };
+    size: number;
+    sha256: string;
+  }>({ name: string, kind, size: count, sha256: string })(value, path);
+  return {
+    name: read.name,
+    format: read.kind.format,
+    width: read.kind.dimensions.width,
+    height: read.kind.dimensions.height,
+    size: read.size,
+    sha256: read.sha256,
+  };
+};
+
+/** One of a session's attachments, as listed. */
+export interface KeptAttachment {
+  id: AttachmentId;
+  read: AttachmentRead;
+  sent: boolean;
+}
+
+export const uploaded = object<{ attachment: { id: AttachmentId; read: AttachmentRead } }>({
+  attachment: object<{ id: AttachmentId; read: AttachmentRead }>({
+    id: AttachmentId.decode,
+    read: attachmentRead,
+  }),
+});
+
+export const keptList = object<{ attachments: KeptAttachment[] }>({
+  attachments: array(
+    object<KeptAttachment>({ id: AttachmentId.decode, read: attachmentRead, sent: boolean }),
+  ),
+});
+
+/** Whether a session's client takes images with a prompt. */
+export const IMAGE_TAKING = ['always', 'if_offered', 'never'] as const;
+export type ImageTaking = (typeof IMAGE_TAKING)[number];
+
+/** One upload in the composer's tray. */
+export type Chip =
+  | { state: 'uploading'; key: number; name: string }
+  | { state: 'ready'; key: number; id: AttachmentId; read: AttachmentRead }
+  | { state: 'refused'; key: number; name: string; reason: string };
+
+/** Why an upload or a prompt with images was refused, as the daemon names it. */
+export class Refusals {
+  static say(code: string): string {
+    switch (code) {
+      case 'attachment_unrecognized':
+      case 'image_required':
+        return 'Not a PNG, JPEG, GIF, or WebP image.';
+      case 'attachment_unreadable':
+        return 'The image’s size cannot be read.';
+      case 'attachment_too_wide':
+        return 'The image is too large on a side.';
+      case 'attachment_too_large':
+      case 'too_large':
+        return 'The image is too large.';
+      case 'attachment_empty':
+        return 'The file is empty.';
+      case 'attachment_name':
+        return 'The file needs a name.';
+      case 'too_many_attachments':
+        return 'Too many images for one prompt.';
+      case 'no_images':
+        return 'This client does not take images.';
+      case 'no_attachments':
+        return 'This daemon keeps no attachments.';
+      case 'attachment_sent':
+        return 'The image went out with a prompt and stays.';
+      default:
+        return `Refused: ${code}.`;
+    }
+  }
+}
+
+/**
+ * The images about to go with the next prompt. Immutable: each change
+ * returns a new tray. Uploads keep the order they were added in.
+ */
+export class Tray {
+  readonly chips: readonly Chip[];
+  readonly #next: number;
+
+  constructor(chips: readonly Chip[] = [], next = 0) {
+    this.chips = chips;
+    this.#next = next;
+  }
+
+  /** An upload of `name` started; its key names it until it ends. */
+  adding(name: string): { tray: Tray; key: number } {
+    const key = this.#next;
+    return {
+      tray: new Tray([...this.chips, { state: 'uploading', key, name }], key + 1),
+      key,
+    };
+  }
+
+  /** The upload `key` became attachment `id`. */
+  uploaded(key: number, id: AttachmentId, read: AttachmentRead): Tray {
+    return this.#replace(key, { state: 'ready', key, id, read });
+  }
+
+  /** The upload `key` was refused. */
+  refused(key: number, reason: string): Tray {
+    const chip = this.chips.find((one) => one.key === key);
+    if (!chip) return this;
+    const name = chip.state === 'ready' ? chip.read.name : chip.name;
+    return this.#replace(key, { state: 'refused', key, name, reason });
+  }
+
+  without(key: number): Tray {
+    return new Tray(
+      this.chips.filter((chip) => chip.key !== key),
+      this.#next,
+    );
+  }
+
+  /** The attachments ready to send, in order. */
+  ids(): AttachmentId[] {
+    return this.chips.flatMap((chip) => (chip.state === 'ready' ? [chip.id] : []));
+  }
+
+  /** Whether an upload is still running: the prompt waits for it. */
+  uploading(): boolean {
+    return this.chips.some((chip) => chip.state === 'uploading');
+  }
+
+  /** Sent: the ready ones leave; refused ones stay to be read. */
+  sent(): Tray {
+    return new Tray(
+      this.chips.filter((chip) => chip.state === 'refused'),
+      this.#next,
+    );
+  }
+
+  #replace(key: number, chip: Chip): Tray {
+    return new Tray(
+      this.chips.map((one) => (one.key === key ? chip : one)),
+      this.#next,
+    );
+  }
+}
+
+/** A session's attachments by content, so a prompt finds what it sent. */
+export class Gallery {
+  readonly #byHash: ReadonlyMap<string, AttachmentId>;
+
+  constructor(kept: readonly KeptAttachment[] = []) {
+    this.#byHash = new Map(kept.map((one) => [one.read.sha256, one.id]));
+  }
+
+  /** The attachment whose bytes these are, if the session has it. */
+  find(read: AttachmentRead): AttachmentId | null {
+    return this.#byHash.get(read.sha256) ?? null;
+  }
+
+  /** Where a session's attachment is read from, through this UI server. */
+  static url(session: string, id: AttachmentId): string {
+    return `/control/sessions/${session}/attachments/${id}`;
+  }
+
+  /** An image's size, as `640×480 · 1.2 MB`. */
+  static describe(read: AttachmentRead): string {
+    const size =
+      read.size >= 1024 * 1024
+        ? `${(read.size / (1024 * 1024)).toFixed(1)} MB`
+        : `${Math.max(1, Math.round(read.size / 1024))} KB`;
+    return `${read.width}×${read.height} · ${size}`;
+  }
+
+  /** Whether a file's media type is one Ren takes. */
+  static takes(type: string): boolean {
+    return (IMAGE_TYPES as readonly string[]).includes(type);
+  }
+}

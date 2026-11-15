@@ -44,6 +44,17 @@ import {
   type Decoder,
   type Stored,
 } from './decode.ts';
+import {
+  AttachmentId,
+  IMAGE_TAKING,
+  Refusals,
+  attachmentRead,
+  keptList,
+  uploaded,
+  type AttachmentRead,
+  type ImageTaking,
+  type KeptAttachment,
+} from './attachments.ts';
 
 export type RunId = Brand<string, 'RunId'>;
 export const RunId = new Uuid<'RunId'>();
@@ -141,7 +152,7 @@ export type ItemStatus = 'in_progress' | 'completed' | 'failed' | 'declined' | (
 
 /** What the daemon read from an item, the same for every client. */
 export type ItemRead =
-  | { as: 'prompt'; text: string }
+  | { as: 'prompt'; text: string; images: AttachmentRead[] }
   | { as: 'reply'; text: string }
   | { as: 'reasoning' }
   | { as: 'plan'; text: string }
@@ -220,6 +231,10 @@ export type HistoryChange = 'archive' | 'unarchive' | 'delete';
 const optionalString: Decoder<string | null> = (value, path) =>
   value === undefined || value === null ? null : string(value, path);
 
+/** A queued prompt's text: text alone, or with images, `{text, images}`. */
+const queuedText: Decoder<string | null> = (value, path) =>
+  isRecord(value) ? string(value.text, `${path}.text`) : optionalString(value, path);
+
 const integer: Decoder<number> = (value, path) => {
   if (typeof value !== 'number' || !Number.isInteger(value))
     throw new ShapeError(path, 'an integer');
@@ -276,7 +291,7 @@ const runState: Decoder<RunState> = (value, path) => {
         thread: thread(),
         turn: nullable(branded<'NativeTurnId'>())(value.turn ?? null, `${path}.turn`),
         approvals: array(waiting)(value.approvals ?? [], `${path}.approvals`),
-        queued: optionalString(value.queued, `${path}.queued`),
+        queued: queuedText(value.queued, `${path}.queued`),
       };
     case 'stopping':
       return { phase: 'stopping', cause: label(stopCauses)(value.cause, `${path}.cause`) };
@@ -297,6 +312,11 @@ const itemRead: Decoder<ItemRead> = (value, path) => {
   const status = () => string(value.status, at('status'));
   switch (value.as) {
     case 'prompt':
+      return {
+        as: 'prompt',
+        text: string(value.text, at('text')),
+        images: array(attachmentRead)(value.images ?? [], at('images')),
+      };
     case 'reply':
     case 'plan':
       return { as: value.as, text: string(value.text, at('text')) };
@@ -461,6 +481,8 @@ export interface ServedSession {
   state: SessionState;
   /** Its newest process, whose state the run feed carries. */
   process: RunId | null;
+  /** Whether its client takes images with a prompt. */
+  images: Stored<ImageTaking>;
 }
 
 /** A session as the store holds it, with its runs newest first. */
@@ -494,6 +516,8 @@ const servedSession = object<ServedSession>({
   settings: runSettings,
   state: object<SessionState>({ shelf: label(shelves), phase: label(SESSION_PHASES) }),
   process: nullable(RunId.decode),
+  // A daemon that does not say takes no images.
+  images: (value, path) => (value === undefined ? 'never' : label(IMAGE_TAKING)(value, path)),
 });
 
 const storedSession = object<StoredSession>({
@@ -751,6 +775,15 @@ export class RunCommandError extends Error {
         return 'Nothing is queued.';
       case 'not_offered':
         return 'That client cannot do this in a running conversation.';
+      case 'no_images':
+      case 'too_many_attachments':
+      case 'attachment_too_large':
+      case 'attachment_sent':
+      case 'no_attachments':
+      case 'attachment_unrecognized':
+      case 'attachment_unreadable':
+      case 'attachment_too_wide':
+        return Refusals.say(code);
       case 'no_approvals':
         return 'That client asks for nothing, so it takes no approval policy.';
       case 'models_unavailable':
@@ -931,7 +964,7 @@ export class RunsClient {
   async toSession(
     session: SessionId,
     command:
-      | { kind: 'prompt'; text: string; delivery: Delivery }
+      | { kind: 'prompt'; text: string; delivery: Delivery; attachments?: AttachmentId[] }
       | {
           kind: 'settings';
           model: ModelId | null;
@@ -948,7 +981,11 @@ export class RunsClient {
         return this.#send(
           'POST',
           `${base}/prompt`,
-          { text: command.text, delivery: command.delivery },
+          {
+            text: command.text,
+            delivery: command.delivery,
+            ...(command.attachments?.length ? { attachments: command.attachments } : {}),
+          },
           null,
         );
       case 'settings': {
@@ -974,6 +1011,49 @@ export class RunsClient {
       default:
         return assertNever(command);
     }
+  }
+  /** Upload an image to the session, to go with a prompt. */
+  async attach(
+    session: SessionId,
+    name: string,
+    type: string,
+    bytes: ArrayBuffer,
+  ): Promise<{ id: AttachmentId; read: AttachmentRead }> {
+    const response = await this.#fetch(
+      `/control/sessions/${session}/attachments?${new URLSearchParams({ name })}`,
+      {
+        method: 'POST',
+        cache: 'no-store',
+        headers: { accept: 'application/json', 'content-type': type },
+        body: bytes,
+        signal: AbortSignal.timeout(120_000),
+      },
+    );
+    let parsed: unknown = null;
+    try {
+      parsed = await response.json();
+    } catch {
+      parsed = null;
+    }
+    if (!response.ok) {
+      const code = isRecord(parsed) && typeof parsed.error === 'string' ? parsed.error : null;
+      throw new RunCommandError(response.status, code);
+    }
+    return uploaded(parsed, '').attachment;
+  }
+  /** The session's attachments, and whether each was sent. */
+  async attachments(session: SessionId, signal?: AbortSignal): Promise<KeptAttachment[]> {
+    const path = `/control/sessions/${session}/attachments`;
+    return (await this.#send('GET', path, undefined, keptList, signal)).attachments;
+  }
+  /** Remove an attachment not sent yet. */
+  async detach(session: SessionId, attachment: AttachmentId): Promise<void> {
+    return this.#send(
+      'DELETE',
+      `/control/sessions/${session}/attachments/${attachment}`,
+      undefined,
+      null,
+    );
   }
   /** What the session's client offers a prompt. */
   async sessionCommands(session: SessionId, signal?: AbortSignal): Promise<ClientCommand[]> {
@@ -1026,7 +1106,7 @@ export class RunsClient {
   }
 
   async #send<T>(
-    method: 'GET' | 'POST',
+    method: 'GET' | 'POST' | 'DELETE',
     path: string,
     body: unknown,
     decode: Decoder<T> | null,
@@ -1066,7 +1146,7 @@ export class RunsClient {
 
 /** One entry of a run's conversation, built from its events. */
 export type Entry =
-  | { kind: 'prompt'; item: ItemId | null; text: string }
+  | { kind: 'prompt'; item: ItemId | null; text: string; images: AttachmentRead[] }
   | { kind: 'message'; item: ItemId; text: string; done: boolean }
   | { kind: 'reasoning'; item: ItemId; done: boolean }
   | {
@@ -1131,8 +1211,8 @@ export class Transcript {
   }
 
   /** The prompt the operator just sent; the client's echo of it is the same prompt. */
-  prompted(text: string): Transcript {
-    return this.#push({ kind: 'prompt', item: null, text });
+  prompted(text: string, images: AttachmentRead[] = []): Transcript {
+    return this.#push({ kind: 'prompt', item: null, text, images });
   }
 
   /** Every prompt sent, oldest first, to recall. */
@@ -1222,7 +1302,10 @@ export class Transcript {
     let entry: Entry | null;
     switch (read.as) {
       case 'prompt':
-        entry = read.text === '' ? null : { kind: 'prompt', item: item.id, text: read.text };
+        entry =
+          read.text === '' && read.images.length === 0
+            ? null
+            : { kind: 'prompt', item: item.id, text: read.text, images: read.images };
         break;
       case 'reply': {
         const index = this.#find(item.id);
@@ -1742,6 +1825,8 @@ export interface DeskSession {
   state: RunState | null;
   /** Its runs as recorded, newest first. */
   runs: RecordedRun[];
+  /** Whether its client takes images; null until the daemon serves it. */
+  images: Stored<ImageTaking> | null;
 }
 
 /** Sessions grouped by folder, folders that need you first. */
@@ -1785,6 +1870,7 @@ export class Sessions {
       run,
       state,
       runs: stored?.runs ?? [],
+      images: served?.images ?? null,
     };
   }
 

@@ -10,6 +10,7 @@
 //! refresh, and retries; nothing here handles credentials. Ren can run a
 //! client's own sign-in commands (`sign_in`) and relay their link and code.
 
+pub mod attachment;
 pub mod attribution;
 pub mod claude_code;
 pub mod codex;

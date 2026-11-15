@@ -135,6 +135,10 @@ identity!(
     /// session; the run is not the session.
     RunId as "run"
 );
+identity!(
+    /// One file uploaded to an operator session, to go with a prompt.
+    AttachmentId as "attachment"
+);
 
 #[cfg(test)]
 mod tests {

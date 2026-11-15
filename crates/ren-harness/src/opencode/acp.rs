@@ -22,6 +22,7 @@
 
 use super::session::OpenCodeSessionId;
 use crate::{
+    attachment::{Attachment, Offer},
     commands::{ClientCommand, CommandKind, Sigil},
     drive::{
         ApprovalAsk, ApprovalId, CommandRefused, Decision, DriveCommand, DriveEvent, DriveItem,
@@ -71,6 +72,9 @@ pub struct OpenCodeAcp {
     steered: u64,
     /// The commands opencode lists for a prompt.
     commands: Vec<ClientCommand>,
+    /// Whether opencode said, in its answer to `initialize`, that it takes
+    /// images in a prompt.
+    images: Offer,
 }
 
 /// A request Ren sent, and what it was for.
@@ -86,7 +90,24 @@ enum Sent {
         opening: bool,
     },
     Prompt,
-    Steer(String),
+    Steer(Echo),
+}
+
+/// What Ren sent as a prompt, for the item it shows as the prompt: opencode
+/// echoes none of its own.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Echo {
+    text: String,
+    images: Vec<Attachment>,
+}
+
+impl Echo {
+    fn of(prompt: &Prompt) -> Self {
+        Self {
+            text: prompt.as_str().to_owned(),
+            images: prompt.sent(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -94,7 +115,7 @@ enum TurnSlot {
     Idle,
     /// A prompt was sent; opencode has reported nothing of its turn yet.
     Requested {
-        prompt: String,
+        prompt: Echo,
     },
     Running {
         turn: NativeTurnId,
@@ -171,6 +192,7 @@ impl OpenCodeAcp {
             approvals: BTreeMap::new(),
             steered: 0,
             commands: Vec::new(),
+            images: Offer::Unknown,
         };
         let line = codec.request(Sent::Initialize, "initialize", Self::initialize(version));
         (codec, line)
@@ -210,8 +232,9 @@ impl OpenCodeAcp {
                 if self.turn != TurnSlot::Idle {
                     return Err(CommandRefused::TurnRunning);
                 }
+                self.takes(&prompt)?;
                 self.turn = TurnSlot::Requested {
-                    prompt: prompt.as_str().to_owned(),
+                    prompt: Echo::of(&prompt),
                 };
                 Ok(vec![self.request(
                     Sent::Prompt,
@@ -253,11 +276,14 @@ impl OpenCodeAcp {
                 Ok(lines)
             }
             DriveCommand::Steer(prompt) => match self.turn {
-                TurnSlot::Running { .. } => Ok(vec![self.request(
-                    Sent::Steer(prompt.as_str().to_owned()),
-                    "_session/steering",
-                    json!({ "sessionId": session, "prompt": Self::content(&prompt) }),
-                )]),
+                TurnSlot::Running { .. } => {
+                    self.takes(&prompt)?;
+                    Ok(vec![self.request(
+                        Sent::Steer(Echo::of(&prompt)),
+                        "_session/steering",
+                        json!({ "sessionId": session, "prompt": Self::content(&prompt) }),
+                    )])
+                }
                 TurnSlot::Requested { .. } => Err(CommandRefused::TurnNotStarted),
                 TurnSlot::Idle => Err(CommandRefused::NoTurn),
             },
@@ -265,9 +291,32 @@ impl OpenCodeAcp {
         }
     }
 
-    /// A prompt as ACP content: one text block.
+    /// What opencode said of images in a prompt.
+    pub fn image_offer(&self) -> Offer {
+        self.images
+    }
+
+    /// Refuses a prompt with images unless opencode said it takes them.
+    fn takes(&self, prompt: &Prompt) -> Result<(), CommandRefused> {
+        match (prompt.images().is_empty(), self.images) {
+            (true, _) | (false, Offer::Offered) => Ok(()),
+            (false, Offer::NotOffered | Offer::Unknown) => Err(CommandRefused::NoImages),
+        }
+    }
+
+    /// A prompt as ACP content: each image in base64, then its text.
     fn content(prompt: &Prompt) -> Value {
-        json!([{ "type": "text", "text": prompt.as_str() }])
+        let mut content: Vec<Value> = prompt
+            .images()
+            .iter()
+            .map(|image| {
+                json!({ "type": "image", "data": image.base64(), "mimeType": image.media_type() })
+            })
+            .collect();
+        if !prompt.as_str().trim().is_empty() || content.is_empty() {
+            content.push(json!({ "type": "text", "text": prompt.as_str() }));
+        }
+        Value::Array(content)
     }
 
     /// The notification that cancels the turn, and the answers that withdraw
@@ -486,6 +535,12 @@ impl OpenCodeAcp {
         let result = &message["result"];
         match sent {
             Sent::Initialize => {
+                self.images =
+                    match result["agentCapabilities"]["promptCapabilities"]["image"].as_bool() {
+                        Some(true) => Offer::Offered,
+                        Some(false) => Offer::NotOffered,
+                        None => Offer::Unknown,
+                    };
                 let line = match self.resume {
                     None => self.request(
                         Sent::New,
@@ -684,13 +739,16 @@ impl OpenCodeAcp {
             .push(Self::prompt_item(id, prompt, Value::Null));
     }
 
-    fn prompt_item(id: ItemId, text: String, body: Value) -> DriveEvent {
+    fn prompt_item(id: ItemId, echo: Echo, body: Value) -> DriveEvent {
         DriveEvent::Item {
             phase: ItemPhase::Completed,
             item: DriveItem {
                 id,
                 kind: ItemKind::UserMessage,
-                read: ItemRead::Prompt { text },
+                read: ItemRead::Prompt {
+                    text: echo.text,
+                    images: echo.images,
+                },
                 body,
             },
         }
@@ -1332,6 +1390,49 @@ mod tests {
     }
 
     #[test]
+    fn sends_images_only_once_opencode_offers_them() {
+        use crate::attachment::Offer;
+        use crate::drive::PromptImage;
+        // Said nothing of images: a prompt with one is refused.
+        let mut silent = ready();
+        assert_eq!(silent.image_offer(), Offer::Unknown);
+        assert_eq!(
+            silent.command(DriveCommand::Prompt(PromptImage::prompt("look"))),
+            Err(CommandRefused::NoImages)
+        );
+
+        let (mut codec, first) =
+            OpenCodeAcp::open(&opening(RunSettings::default()), "0.1.0", seed());
+        let first = sent(&first);
+        let replies = feed(
+            &mut codec,
+            answer(
+                &first["id"],
+                json!({ "protocolVersion": 1, "agentCapabilities": {
+                    "promptCapabilities": { "image": true } } }),
+            ),
+        )
+        .replies;
+        let new = sent(&replies[0]);
+        let _ = feed(
+            &mut codec,
+            answer(&new["id"], json!({ "sessionId": SESSION })),
+        );
+        assert_eq!(codec.image_offer(), Offer::Offered);
+        let image = PromptImage::sample();
+        let lines = codec
+            .command(DriveCommand::Prompt(PromptImage::prompt("look")))
+            .unwrap();
+        assert_eq!(
+            sent(&lines[0])["params"]["prompt"],
+            json!([
+                { "type": "image", "data": image.base64(), "mimeType": "image/png" },
+                { "type": "text", "text": "look" },
+            ])
+        );
+    }
+
+    #[test]
     fn a_new_session_is_the_thread_its_name_derives_and_lists_its_commands() {
         let mut codec = ready();
         assert_eq!(
@@ -1509,7 +1610,8 @@ mod tests {
         assert_eq!(
             item.read,
             ItemRead::Prompt {
-                text: "run ls".into()
+                text: "run ls".into(),
+                images: Vec::new(),
             }
         );
         let DriveEvent::Item {
@@ -1789,7 +1891,7 @@ mod tests {
         );
         assert!(matches!(
             injected.events.as_slice(),
-            [DriveEvent::Item { item, .. }] if item.read == ItemRead::Prompt { text: "also".into() }
+            [DriveEvent::Item { item, .. }] if item.read == ItemRead::Prompt { text: "also".into(), images: Vec::new() }
         ));
 
         // opencode asks for a file Ren never serves: refused with an error.

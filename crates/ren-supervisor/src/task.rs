@@ -9,13 +9,14 @@
 //!
 //! [`Supervisor`]: crate::Supervisor
 
+use crate::attachments::{Attached, AttachmentFolders, AttachmentUse};
 use crate::entries::Entries;
 use crate::login::{SignInError, SignIns, StatusCheck};
 use crate::models::{Listings, ModelProbe, ModelsError, ModelsReply};
 use crate::{
-    CommandError, Conversation, Create, IdleStop, Places, Request, RunSnapshot, RunUpdate,
-    SessionAnswer, SessionError, SessionRequest, SessionSeed, SessionSnapshot, SignInRequest,
-    Start, StartError, StartPlace, Warmup,
+    CommandError, Conversation, Create, IdleStop, ImageTaking, Places, Request, RunSnapshot,
+    RunUpdate, SessionAnswer, SessionError, SessionRequest, SessionSeed, SessionSnapshot,
+    SignInRequest, Start, StartError, StartPlace, Warmup,
     client::{Client, ClientStatus},
     files::FileListing,
     host::{AgentHost, AgentProcess, KillSwitch},
@@ -32,7 +33,8 @@ use futures_util::{
 use ren_harness::sign_in::Console;
 use ren_harness::{
     Harness,
-    drive::{DriveEvent, Driver, Opening, Prompt, TurnEnd},
+    attachment::{Attachment, Limits, NotAccepted, Offer},
+    drive::{DriveEvent, Driver, Opening, Prompt, PromptImage, TurnEnd},
     endpoint::GatewayEndpoint,
     lines::{Framed, Line, LineLimit, Lines},
     models::{DefaultChoice, ModelId, ModelListing},
@@ -44,7 +46,7 @@ use ren_recorder::{
     Recorder, RunSession, RunTap,
     batch::SessionFact,
     capture::RunEnd,
-    id::{IdSource, RunId, SessionId},
+    id::{AttachmentId, IdSource, RunId, SessionId},
 };
 use std::{
     collections::{BTreeMap, HashMap},
@@ -70,6 +72,9 @@ pub struct SupervisorTask<H> {
     pub(crate) version: String,
     pub(crate) line_limit: LineLimit,
     pub(crate) idle: IdleStop,
+    /// Where sessions' attachments are kept; `None`: they take none.
+    pub(crate) attachments: Option<AttachmentFolders>,
+    pub(crate) attachment_limits: Limits,
 }
 
 /// One run the task knows of.
@@ -114,6 +119,8 @@ struct Held {
     /// Its folder as walked for the last file search, until a turn ends:
     /// turns change files.
     files: Option<FileListing>,
+    /// The attachments uploaded to it.
+    attached: Attached,
 }
 
 impl Held {
@@ -126,6 +133,7 @@ impl Held {
             thread: None,
             process: None,
             files: None,
+            attached: Attached::default(),
         }
     }
 
@@ -137,6 +145,7 @@ impl Held {
             settings: self.settings.clone(),
             state: self.state,
             process: self.process,
+            images: ImageTaking::of(self.harness),
         }
     }
 }
@@ -624,14 +633,105 @@ impl<H: AgentHost> SupervisorTask<H> {
                 self.shelve(session, shelving, served).await
             }
             SessionRequest::Forget(session) => {
-                if !served.sessions.contains_key(&session) {
-                    return Err(SessionError::NoSuchSession(session));
-                }
                 if served.process(session).is_some() {
                     return Err(SessionError::Running);
                 }
-                served.sessions.remove(&session);
+                // Its attachments go with it, served or not.
+                if let Some(folders) = &self.attachments {
+                    self.host
+                        .remove_tree(&folders.session(session))
+                        .map_err(SessionError::AttachmentStorage)?;
+                }
+                if served.sessions.remove(&session).is_none() {
+                    return Err(SessionError::NoSuchSession(session));
+                }
                 served.runs.retain(|_, live| live.session != session);
+                Ok(SessionAnswer::Done)
+            }
+            SessionRequest::Attach {
+                session,
+                name,
+                bytes,
+            } => self.attach(session, &name, &bytes, served),
+            SessionRequest::Attachments(session) => Ok(SessionAnswer::Attachments(
+                served
+                    .sessions
+                    .get(&session)
+                    .ok_or(SessionError::NoSuchSession(session))?
+                    .attached
+                    .list(),
+            )),
+            SessionRequest::Prompt {
+                session,
+                text,
+                attachments,
+                delivery,
+            } => {
+                let prompt = self.compose(session, text, &attachments, served)?;
+                let answer = self.send(session, delivery.command(prompt), served).await?;
+                if !attachments.is_empty() {
+                    self.record(
+                        session,
+                        SessionFact::AttachmentsSent {
+                            attachments: attachments.clone(),
+                        },
+                    )?;
+                    if let Some(held) = served.sessions.get_mut(&session) {
+                        held.attached.sent(&attachments);
+                    }
+                }
+                Ok(answer)
+            }
+            SessionRequest::ReadAttachment {
+                session,
+                attachment,
+            } => {
+                let folders = self
+                    .attachments
+                    .as_ref()
+                    .ok_or(SessionError::NoAttachments)?;
+                let held = served
+                    .sessions
+                    .get(&session)
+                    .ok_or(SessionError::NoSuchSession(session))?;
+                let read = held
+                    .attached
+                    .get(attachment)
+                    .ok_or(SessionError::NoSuchAttachment(attachment))?;
+                let bytes = self
+                    .host
+                    .read_file(&folders.file(session, attachment, read.name()))
+                    .map_err(SessionError::AttachmentStorage)?;
+                Ok(SessionAnswer::AttachmentBytes(read.clone(), bytes))
+            }
+            SessionRequest::Detach {
+                session,
+                attachment,
+            } => {
+                let folders = self
+                    .attachments
+                    .as_ref()
+                    .ok_or(SessionError::NoAttachments)?;
+                let held = served
+                    .sessions
+                    .get_mut(&session)
+                    .ok_or(SessionError::NoSuchSession(session))?;
+                match held.attached.used(attachment) {
+                    None => return Err(SessionError::NoSuchAttachment(attachment)),
+                    Some(AttachmentUse::Sent) => {
+                        return Err(SessionError::AttachmentSent(attachment));
+                    }
+                    Some(AttachmentUse::Unsent) => {}
+                }
+                self.record(session, SessionFact::Detached { attachment })?;
+                held.attached.remove(attachment);
+                // Detached as recorded; a file left behind is only space.
+                if let Err(error) = self
+                    .host
+                    .remove_tree(&folders.attachment(session, attachment))
+                {
+                    tracing::warn!(%session, %attachment, %error, "a detached attachment's file stays");
+                }
                 Ok(SessionAnswer::Done)
             }
             SessionRequest::List => Ok(SessionAnswer::Listed(
@@ -711,6 +811,108 @@ impl<H: AgentHost> SupervisorTask<H> {
         Ok(SessionAnswer::Created(session))
     }
 
+    /// The prompt `text` and `attachments` make for `session`: each one the
+    /// session's, together within the limits, of a kind its client takes,
+    /// and read from its file.
+    fn compose(
+        &self,
+        session: SessionId,
+        text: String,
+        attachments: &[AttachmentId],
+        served: &Served,
+    ) -> Result<Prompt, SessionError> {
+        let held = served
+            .sessions
+            .get(&session)
+            .ok_or(SessionError::NoSuchSession(session))?;
+        if attachments.is_empty() {
+            return Prompt::parse(text).map_err(|_| SessionError::BlankPrompt);
+        }
+        let folders = self
+            .attachments
+            .as_ref()
+            .ok_or(SessionError::NoAttachments)?;
+        let reads = attachments
+            .iter()
+            .map(|attachment| {
+                held.attached
+                    .get(*attachment)
+                    .cloned()
+                    .ok_or(SessionError::NoSuchAttachment(*attachment))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        self.attachment_limits
+            .check_prompt(&reads)
+            .map_err(SessionError::PromptAttachments)?;
+        // What the running client said; with none running, the next one says
+        // as it opens, and its codec refuses what it was not offered.
+        let offer = served
+            .process(session)
+            .and_then(|run| served.runs.get(&run))
+            .and_then(|live| live.codec.as_ref())
+            .map_or(Offer::Unknown, Driver::image_offer);
+        let images = attachments
+            .iter()
+            .zip(reads)
+            .map(|(attachment, read)| {
+                match held.harness.acceptance().of(read.kind()).resolve(offer) {
+                    Ok(_) | Err(NotAccepted::Unknown) => {}
+                    Err(refused @ (NotAccepted::Never | NotAccepted::NotOffered)) => {
+                        return Err(SessionError::ImagesNotTaken(refused));
+                    }
+                }
+                let path = folders.file(session, *attachment, read.name());
+                let bytes = self
+                    .host
+                    .read_file(&path)
+                    .map_err(SessionError::AttachmentStorage)?;
+                Ok(PromptImage::new(read, path, bytes.into()))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        Prompt::with_images(text, images).map_err(|_| SessionError::BlankPrompt)
+    }
+
+    /// Read `bytes`, uploaded as `name`, as an attachment of `session`,
+    /// write it to the session's folder, and record it.
+    fn attach(
+        &self,
+        session: SessionId,
+        name: &str,
+        bytes: &[u8],
+        served: &mut Served,
+    ) -> Result<SessionAnswer, SessionError> {
+        let folders = self
+            .attachments
+            .as_ref()
+            .ok_or(SessionError::NoAttachments)?;
+        let held = served
+            .sessions
+            .get_mut(&session)
+            .ok_or(SessionError::NoSuchSession(session))?;
+        let read = Attachment::parse(name, bytes, &self.attachment_limits)
+            .map_err(SessionError::Attachment)?;
+        let attachment = AttachmentId::generate(self.ids.as_ref());
+        let file = folders.file(session, attachment, read.name());
+        self.host
+            .place_file(&folders.incoming(attachment), &file, bytes)
+            .map_err(SessionError::AttachmentStorage)?;
+        // One that cannot be recorded is not kept.
+        if let Err(error) = self.record(
+            session,
+            SessionFact::Attached {
+                attachment,
+                read: read.clone(),
+            },
+        ) {
+            let _ = self
+                .host
+                .remove_tree(&folders.attachment(session, attachment));
+            return Err(error);
+        }
+        held.attached.insert(attachment, read.clone());
+        Ok(SessionAnswer::Attached(attachment, read))
+    }
+
     fn adopt(&self, seed: SessionSeed, served: &mut Served) -> Result<SessionAnswer, SessionError> {
         if served.sessions.contains_key(&seed.session) {
             return Ok(SessionAnswer::Done);
@@ -721,6 +923,7 @@ impl<H: AgentHost> SupervisorTask<H> {
         let mut held = Held::new(seed.harness, workdir, seed.settings);
         held.state = seed.state;
         held.thread = seed.thread;
+        held.attached = Attached::from_stored(seed.attachments);
         self.publish_session(seed.session, &held);
         served.sessions.insert(seed.session, held);
         Ok(SessionAnswer::Done)

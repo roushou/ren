@@ -220,8 +220,9 @@ impl AgentScript {
                               "params": { "threadId": self.thread_id(), "turn": turn } })),
             Out::Send(self.item(
                 "completed",
+                // Echoed as Ren sent it, images included, as Codex does.
                 json!({ "type": "userMessage", "id": format!("user-{index}"),
-                "content": [{ "type": "text", "text": prompt }] }),
+                "content": params["input"].clone() }),
             )),
         ];
         out.extend(match Ask::of(&prompt) {
@@ -231,17 +232,9 @@ impl AgentScript {
         out
     }
 
-    /// A message into the running turn: taken as a user message of it.
+    /// A message into the running turn: taken as a user message of it,
+    /// echoed as Ren sent it.
     fn steer(&mut self, id: Value, params: &Value) -> Vec<Out> {
-        let text: String = params["input"]
-            .as_array()
-            .map(|parts| {
-                parts
-                    .iter()
-                    .filter_map(|part| part["text"].as_str())
-                    .collect()
-            })
-            .unwrap_or_default();
         let Some(turn) = self.turn.as_ref() else {
             return vec![Out::Send(json!({ "id": id,
                 "error": { "code": -32600, "message": "no turn is running" } }))];
@@ -253,7 +246,7 @@ impl AgentScript {
             Out::Send(self.item(
                 "completed",
                 json!({ "type": "userMessage", "id": format!("steer-{index}-{}", self.requests),
-                "content": [{ "type": "text", "text": text }] }),
+                "content": params["input"].clone() }),
             )),
         ]
     }

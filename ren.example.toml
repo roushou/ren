@@ -80,6 +80,15 @@ tailscale_logins = []
 # off while this is empty. Absolute paths; links are resolved.
 roots = []
 
+[attachments]
+# Images uploaded to a session to go with a prompt (PNG, JPEG, GIF, WebP),
+# kept in <data>/attachments, a folder per session. Bytes and pixels.
+image_bytes = 5242880
+image_side = 8000
+prompt_count = 10
+# A prompt's attachments together, counted in base64.
+prompt_bytes = 20971520
+
 # Optional: named users of the gateway, people or machines, recorded on each
 # call they make. A user is proven by a Tailscale login (through Tailscale
 # Serve) or by a token sent in X-Ren-User-Token; `ren users token <id>` makes

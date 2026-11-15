@@ -12,7 +12,9 @@ description = "Claude Code, Codex, Pi, and opencode harness support for the Ren 
 # The harnesses and how Ren launches them. Never add an async runtime, HTTP
 # client or server, database driver, or CLI parser (docs/architecture.md).
 [dependencies]
+base64 = "0.22"
 http.workspace = true
+imagesize = "0.13"
 ren-depot.workspace = true
 ren-protocol.workspace = true
 serde.workspace = true
