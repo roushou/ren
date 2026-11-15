@@ -44,10 +44,22 @@ impl UiDeploy {
     const SERVICE: &str = "ren-ui.service";
     /// The listener `deploy/ren-ui.service` sets (`HOST`, `PORT`).
     pub const TARGET: &str = "http://127.0.0.1:3000";
-    /// The template's Node path, replaced with the one found on PATH.
-    const EXEC: &str = "ExecStart=/usr/bin/node build";
+    /// The template's Node, replaced with the one found on PATH.
+    const TEMPLATE_NODE: &str = "/usr/bin/node";
+    /// The SvelteKit app, within `ui/`, the Bun workspace's root.
+    const APP: &str = "";
     /// The folder of the UI's workspace packages (`package.json`'s `workspaces`).
     const PACKAGES: &str = "packages";
+
+    /// What Node runs, from the deployed copy's root: the app's build.
+    pub fn entry() -> PathBuf {
+        Path::new(Self::APP).join("build")
+    }
+
+    /// The unit's start line, with `node`.
+    fn exec(node: &Path) -> String {
+        format!("ExecStart={} {}", node.display(), Self::entry().display())
+    }
 
     pub fn new(env: &HostEnv, home: &Path, repo: &Path) -> Result<Self, InstallError> {
         let share = home.join(".local/share");
@@ -107,15 +119,27 @@ impl UiDeploy {
             .mode(0o700)
             .create(staged)
             .map_err(InstallError::file(staged))?;
-        Invocation::new("cp")
-            .arg("-R")
-            .arg(self.source.join("build"))
-            .arg(staged.join("build"))
-            .run()?;
+        // The workspace's shape, so the frozen install below finds every
+        // member its lockfile names: the root's manifest and lockfile, the
+        // app's manifest and build, and the packages.
         for file in ["package.json", "bun.lock"] {
             let target = staged.join(file);
             fs::copy(self.source.join(file), &target).map_err(InstallError::file(&target))?;
         }
+        let app = staged.join(Self::APP);
+        fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(&app)
+            .map_err(InstallError::file(&app))?;
+        let manifest = app.join("package.json");
+        fs::copy(self.source.join(Self::APP).join("package.json"), &manifest)
+            .map_err(InstallError::file(&manifest))?;
+        Invocation::new("cp")
+            .arg("-R")
+            .arg(self.source.join(Self::entry()))
+            .arg(staged.join(Self::entry()))
+            .run()?;
         // The UI's workspace packages: the lockfile names them, so a
         // frozen install refuses a copy without them.
         let packages = self.source.join(Self::PACKAGES);
@@ -226,13 +250,11 @@ impl UiDeploy {
     fn render(&self) -> Result<String, InstallError> {
         let template =
             fs::read_to_string(&self.template).map_err(InstallError::file(&self.template))?;
-        if !template.lines().any(|line| line == Self::EXEC) {
-            return Err(InstallError::UiTemplate(Self::EXEC));
+        let exec = Self::exec(Path::new(Self::TEMPLATE_NODE));
+        if !template.lines().any(|line| line == exec) {
+            return Err(InstallError::UiTemplate(exec));
         }
-        Ok(template.replace(
-            Self::EXEC,
-            &format!("ExecStart={} build", self.node.display()),
-        ))
+        Ok(template.replace(&exec, &Self::exec(&self.node)))
     }
 
     /// The UI's `/health` relays the daemon's, so success means both run.
@@ -291,7 +313,7 @@ mod tests {
         assert!(
             rendered
                 .lines()
-                .any(|line| line == "ExecStart=/usr/local/bin/node build")
+                .any(|line| line == UiDeploy::exec(Path::new("/usr/local/bin/node")))
         );
         assert!(!rendered.contains("/usr/bin/node"));
         assert!(rendered.contains("Environment=HOST=127.0.0.1 PORT=3000"));
