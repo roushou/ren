@@ -486,12 +486,12 @@ dependencies under "Crates" below. Read the code for current module ownership.
   `src/lib/attachments.ts` the composer's images (the `Tray` of uploads,
   and the `Gallery` that finds a sent image's thumbnail by its hash),
   `src/lib/mention.ts` the composer's offers (the client's commands after
-  `/` or `$`, the folder's files after `@`), `src/lib/redline.ts` Redline's
-  pure core (what a mark points at, the brief an agent gets, and the open
-  sessions in Ren's checkout, `REN_SOURCE_DIR`, a brief can go to;
-  `RedlineDesk` in `src/lib/redline.svelte.ts` holds the pane's marks and
-  destinations, and the layer and its floating pane are `RedlineLayer.svelte`
-  and `RedlinePanel.svelte`, sending through the same session routes),
+  `/` or `$`, the folder's files after `@`), `src/lib/briefing.ts` Ren's side
+  of Redline (`Briefing`: the open sessions in Ren's checkout,
+  `REN_SOURCE_DIR`, a brief can go to, where its change is made, and what
+  the brief says of Ren; `Recipients` in `src/lib/briefing.svelte.ts`
+  reads them, and `BriefingPanel.svelte` fills Redline's pane with them,
+  sending through the same session routes),
   `src/lib/markdown.ts` how Markdown is read (`MarkdownTree`: CommonMark with
   GitHub's extensions, parsed by `mdast-util-from-markdown` into a typed tree
   with untrusted text made inert, rendered by `Markdown.svelte` without
@@ -502,6 +502,16 @@ dependencies under "Crates" below. Read the code for current module ownership.
   The dev slot's: with `REN_DEV_TRAFFIC_URL` set (loopback only), `/dev/traffic`
   forwards the dev toolbar's three JSON requests to the slot's fake traffic
   generator, never to the daemon.
+- `ui/packages/redline`: Redline, a Bun workspace package of the UI with
+  `Redline` as its primary type (`src/redline.ts`: what a mark points at,
+  and the Markdown brief its marks make, with the lines a host adds as a
+  `Framing`), `RedlineDesk` (`redline/desk`, the marks of one page view),
+  the layer that marks the page (`RedlineLayer.svelte`), the floating pane
+  whose foot and brief preview the host fills (`RedlinePanel.svelte`), and
+  its theme (`redline.css`, `--redline-*` properties, which `style.css` sets
+  from Ren's tokens). It knows nothing of Ren: its manifest has only Svelte,
+  and `tests/boundary.test.ts` keeps its sources importing only each other
+  and Svelte. The UI's `check` and `test` scripts cover it.
 - `crates/ren-harness/pi`: the embedded Pi extension and its dependency-free contract tests.
   Pi owns provider authentication, refresh, payload conversion, and retries.
 - `xtask`: repository tasks run with `cargo xtask` (alias in `.cargo/config.toml`),

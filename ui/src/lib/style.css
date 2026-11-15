@@ -30,6 +30,17 @@
   --redline: #d33a3f;
   --redline-hover: #b82f34;
   --on-redline: #ffffff;
+  /* Redline's theme (`redline.css`), drawn in Ren's own tokens; the dark
+     theme redefines those, so it follows. */
+  --redline-surface: var(--popover);
+  --redline-border: var(--popover-border);
+  --redline-shadow: var(--popover-shadow);
+  --redline-ink: var(--ink);
+  --redline-muted: var(--muted);
+  --redline-control: var(--control-border);
+  --redline-control-hover: var(--surface-hover);
+  --redline-well: var(--surface-subtle);
+  --redline-well-border: var(--line);
   --success: #22805e;
   --error: #c44444;
   --error-soft: #fdf0ef;

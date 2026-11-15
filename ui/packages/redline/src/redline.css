@@ -1,0 +1,25 @@
+/*
+ * Redline's theme: the custom properties its layer and pane are drawn
+ * with. These are the defaults, at no specificity, so a host sets any of
+ * them on `:root` (or on an element around the overlay) to fit its own.
+ */
+:where(:root) {
+  /* The marks' color, and what is written on it. */
+  --redline: #d33a3f;
+  --redline-hover: #b82f34;
+  --on-redline: #ffffff;
+  /* The pane and the note: their surface, edge, and shadow. */
+  --redline-surface: #ffffff;
+  --redline-border: #cfd3dc;
+  --redline-shadow: 0 2px 6px rgb(16 18 27 / 0.08), 0 14px 36px rgb(16 18 27 / 0.18);
+  /* Text, and quieter text. */
+  --redline-ink: #252732;
+  --redline-muted: #707583;
+  /* A control's edge, and its background under the pointer. */
+  --redline-control: #dfe2e9;
+  --redline-control-hover: #f0f1f6;
+  /* The brief's preview: its background and edge. */
+  --redline-well: #f8f9fc;
+  --redline-well-border: #e9ebf0;
+  --redline-mono: 'SFMono-Regular', Consolas, monospace;
+}

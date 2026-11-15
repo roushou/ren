@@ -1,13 +1,12 @@
 <!--
-  Redline's pane, floating over everything while marking, dragged by its
-  header (or moved with the arrow keys there): the marks with their
-  notes, the brief folded until asked for, and one line saying where it
-  goes: the session running in Ren's own source checkout (`REN_SOURCE_DIR`)
-  when there is one, so marks follow the work under way, else a new session
-  on the client last used; its menu offers the rest. A new session gets the
-  brief as its first prompt; a running one as its next, queued after its
-  turn while one runs. Sending opens the session. The client last used,
-  and where the pane was left, are remembered in this browser only.
+  Redline's pane in Ren: the generic pane (`RedlinePanel`), with the brief
+  shown as Markdown and a foot saying where it goes: the session running in
+  Ren's own source checkout (`REN_SOURCE_DIR`) when there is one, so marks
+  follow the work under way, else a new session on the client last used;
+  its menu offers the rest. A new session gets the brief as its first
+  prompt; a running one as its next, queued after its turn while one runs.
+  Sending opens the session. The client last used, and where the pane was
+  left, are remembered in this browser only.
 -->
 <script lang="ts">
   import { untrack } from 'svelte';
@@ -20,8 +19,11 @@
   import Icon from './Icon.svelte';
   import { SignIns } from './signIn.ts';
   import type { Revision } from './api.ts';
-  import { Redline, type Destination, type PageContext } from './redline.ts';
-  import type { RedlineDesk } from './redline.svelte.ts';
+  import { Redline, type PageContext } from 'redline';
+  import type { RedlineDesk } from 'redline/desk';
+  import RedlinePanel from 'redline/RedlinePanel.svelte';
+  import { Briefing, type Destination } from './briefing.ts';
+  import type { Recipients } from './briefing.svelte.ts';
   import {
     APPROVAL_POLICIES,
     Compose,
@@ -40,10 +42,13 @@
 
   let {
     desk,
+    recipients,
     source,
     revision,
   }: {
     desk: RedlineDesk;
+    /** Where a brief can go, read from the daemon. */
+    recipients: Recipients;
     /** Ren's source checkout, where the agent works; null when unset. */
     source: string | null;
     /** What the daemon serving this page was built from, once read. */
@@ -66,84 +71,13 @@
 
   /** The clients read; until then the pane keeps its shape, with every
    * client waiting. */
-  const read = $derived(desk.destinations.state === 'read' ? desk.destinations.value : null);
+  const read = $derived(
+    recipients.destinations.state === 'read' ? recipients.destinations.value : null,
+  );
   const ready = $derived(read?.ready ?? []);
   const offered = $derived<DeskSession[]>(read?.sessions ?? []);
   /** The clients shown: those ready once read, every one while reading. */
   const shown = $derived(read ? read.ready : DRIVABLE);
-
-  /** Where the pane sits: its top-left corner, in viewport pixels. */
-  const PLACE = 'ren.redline.pane';
-  const MARGIN = 8;
-  let pane = $state<HTMLElement>();
-  let at = $state<{ x: number; y: number }>(placed());
-  let dragging = $state<{ dx: number; dy: number } | null>(null);
-
-  /** Where this browser left the pane, else near the top right. */
-  function placed(): { x: number; y: number } {
-    try {
-      const kept = JSON.parse(localStorage.getItem(PLACE) ?? 'null') as {
-        x?: unknown;
-        y?: unknown;
-      };
-      if (typeof kept?.x === 'number' && typeof kept?.y === 'number')
-        return { x: kept.x, y: kept.y };
-    } catch {
-      // Not kept; the default place.
-    }
-    return { x: Math.max(MARGIN, window.innerWidth - 356), y: 56 };
-  }
-  /** `x`, `y` moved back on screen, so the header can always be grabbed. */
-  function clamp(x: number, y: number): { x: number; y: number } {
-    const width = pane?.offsetWidth ?? 340;
-    return {
-      x: Math.min(Math.max(MARGIN, x), Math.max(MARGIN, window.innerWidth - width - MARGIN)),
-      y: Math.min(Math.max(MARGIN, y), Math.max(MARGIN, window.innerHeight - 48)),
-    };
-  }
-  function leave() {
-    try {
-      localStorage.setItem(PLACE, JSON.stringify(at));
-    } catch {
-      // Not kept; it opens at the default place next time.
-    }
-  }
-  function grab(event: PointerEvent) {
-    if (event.button !== 0 || (event.target as Element).closest('button')) return;
-    event.preventDefault();
-    dragging = { dx: event.clientX - at.x, dy: event.clientY - at.y };
-    (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
-  }
-  function drag(event: PointerEvent) {
-    if (dragging) at = clamp(event.clientX - dragging.dx, event.clientY - dragging.dy);
-  }
-  function drop() {
-    if (!dragging) return;
-    dragging = null;
-    leave();
-  }
-  function nudge(event: KeyboardEvent) {
-    const step = event.shiftKey ? 64 : 16;
-    const moves: Record<string, [number, number]> = {
-      ArrowLeft: [-step, 0],
-      ArrowRight: [step, 0],
-      ArrowUp: [0, -step],
-      ArrowDown: [0, step],
-    };
-    const move = moves[event.key];
-    if (!move) return;
-    event.preventDefault();
-    at = clamp(at.x + move[0], at.y + move[1]);
-    leave();
-  }
-  // Kept on screen as the window changes. `at` is read untracked: writing a
-  // new position must not run this again.
-  $effect(() => {
-    const keep = () => untrack(() => (at = clamp(at.x, at.y)));
-    keep();
-    window.addEventListener('resize', keep);
-    return () => window.removeEventListener('resize', keep);
-  });
 
   /** The client and approvals this browser last started a session with: a
    * convenience, so a refusal is ignored. */
@@ -202,7 +136,7 @@
   /** Another client to send it to instead, offered, never switched to. */
   const instead = $derived(
     read && destination.kind === 'new' && signedOut
-      ? Redline.instead(read.ready, read.clients, harness)
+      ? Briefing.instead(read.ready, read.clients, harness)
       : null,
   );
   /** The client whose sign-in sheet is open. */
@@ -316,24 +250,31 @@
         : 'Send',
   );
 
-  // Start reading, if the toggle's hover has not.
-  untrack(() => desk.prepare());
+  // Start reading, if the toggle's hover has not; read again at the next
+  // opening, since sessions come and go.
+  untrack(() => recipients.prepare());
+  $effect(() => () => recipients.close());
 
   const context = $derived.by((): PageContext => {
     const chosen = document.documentElement.dataset.theme;
     const dark = chosen ? chosen === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches;
     return {
       path: `${page.url.pathname}${page.url.search}`,
-      route: page.route.id,
       title: document.title,
       width: window.innerWidth,
       height: window.innerHeight,
       theme: dark ? 'dark' : 'light',
-      revision,
     };
   });
-  const noted = $derived(desk.marks.filter((mark) => mark.note));
-  const brief = $derived(Redline.brief(context, noted, Redline.place(destination, offered)));
+  const noted = $derived(Redline.noted(desk.marks));
+  const brief = $derived(
+    Briefing.brief(
+      context,
+      { route: page.route.id, revision },
+      noted,
+      Briefing.place(destination, offered),
+    ),
+  );
 
   /** A new session in `checkout`, with the brief as its first prompt. */
   async function start(checkout: string): Promise<SessionId> {
@@ -352,7 +293,7 @@
       error = 'That session is no longer open.';
       return null;
     }
-    const handoff = Redline.handoff(Compose.session(now.state, []), brief);
+    const handoff = Briefing.handoff(Compose.session(now.state, []), brief);
     switch (handoff.kind) {
       case 'send':
         // A changed policy first, so the brief's turn runs under it.
@@ -411,73 +352,15 @@
   }
 </script>
 
-<aside
-  bind:this={pane}
-  class="redline-panel"
-  class:dragging={!!dragging}
-  data-redline
-  aria-label="Redline"
-  style:left="{at.x}px"
-  style:top="{at.y}px"
->
-  <header
-    role="toolbar"
-    tabindex="0"
-    title="Drag to move; arrow keys move it too"
-    aria-label="Redline pane: drag, or use the arrow keys, to move it"
-    onpointerdown={grab}
-    onpointermove={drag}
-    onpointerup={drop}
-    onpointercancel={drop}
-    onkeydown={nudge}
-  >
-    <span class="grip" aria-hidden="true">⠿</span>
-    <strong>Redline</strong>
-    <span class="count">{desk.marks.length} mark{desk.marks.length === 1 ? '' : 's'}</span>
-    <button
-      class="close"
-      aria-label="Leave Redline"
-      title="Leave Redline (Esc)"
-      onclick={() => desk.toggle()}>×</button
-    >
-  </header>
-  <div class="body">
-    {#if !desk.marks.length}
-      <p class="hint">
-        Click anything on the page to mark it. <kbd>Esc</kbd> leaves; your marks stay.
-      </p>
-    {/if}
-
-    {#each desk.marks as mark, index (mark.id)}
-      <div
-        class="mark"
-        title="{mark.target.selector}{mark.target.source ? `\n${mark.target.source}` : ''}"
-      >
-        <span class="num">{index + 1}</span>
-        <span class="what">{Redline.name(mark.target)}</span>
-        <button
-          class="remove"
-          aria-label="Remove mark {index + 1}"
-          title="Remove"
-          onclick={() => desk.drop(mark.id)}>×</button
-        >
-        <span class="text" class:writing={!mark.note}>{mark.note || 'Writing a note…'}</span>
-      </div>
-    {/each}
-
-    {#if noted.length}
-      <details class="brief-fold">
-        <summary>Brief the agent gets</summary>
-        <div class="brief"><Markdown text={brief} /></div>
-      </details>
-    {/if}
-  </div>
-
-  <footer>
+<RedlinePanel {desk} {brief} keep="ren.redline.pane">
+  {#snippet preview(text: string)}
+    <div class="markdown-brief"><Markdown {text} /></div>
+  {/snippet}
+  {#snippet footer()}
     {#if source}
       {#if error}<p class="error" role="alert">{error}</p>{/if}
-      {#if desk.destinations.state === 'failed'}
-        <p class="error" role="alert">{desk.destinations.reason}</p>
+      {#if recipients.destinations.state === 'failed'}
+        <p class="error" role="alert">{recipients.destinations.reason}</p>
       {/if}
       {#if signedOut && target}
         <p class="signed-out" role="status">
@@ -559,211 +442,38 @@
         checkout, a folder under the daemon's <code>[runs]</code> roots, and restart it.
       </p>
     {/if}
-  </footer>
-  {#if signingIn}
-    {@const signing = signingIn}
-    <SignInSheet
-      harness={signing}
-      client={harnessLabel(signing)}
-      methods={read?.clients.find((entry) => entry.harness === signing)?.sign_in_methods ?? []}
-      start={(method) => client.startSignIn(signing, method)}
-      answer={(answer) => client.signInAnswer(signing, answer)}
-      wait={() => client.waitSignIn(signing)}
-      cancel={() => client.cancelSignIn(signing)}
-      onclose={() => {
-        signingIn = null;
-        desk.reread();
-      }}
-    />
-  {/if}
-</aside>
+    {#if signingIn}
+      {@const signing = signingIn}
+      <SignInSheet
+        harness={signing}
+        client={harnessLabel(signing)}
+        methods={read?.clients.find((entry) => entry.harness === signing)?.sign_in_methods ?? []}
+        start={(method) => client.startSignIn(signing, method)}
+        answer={(answer) => client.signInAnswer(signing, answer)}
+        wait={() => client.waitSignIn(signing)}
+        cancel={() => client.cancelSignIn(signing)}
+        onclose={() => {
+          signingIn = null;
+          recipients.reread();
+        }}
+      />
+    {/if}
+  {/snippet}
+</RedlinePanel>
 
 <style>
-  /* Above everything, Redline's own marks and note included. */
-  .redline-panel {
-    position: fixed;
-    z-index: 2147483647;
-    width: 340px;
-    max-width: calc(100vw - 16px);
-    max-height: calc(100vh - 16px);
-    /* The body scrolls, so the destination menu can open past the pane. */
-    overflow: visible;
-    display: flex;
-    flex-direction: column;
-    background: var(--popover);
-    border: 1px solid var(--popover-border);
-    border-top: 2px solid var(--redline);
-    box-shadow: var(--popover-shadow);
-  }
-  .redline-panel.dragging {
-    user-select: none;
-    box-shadow:
-      var(--popover-shadow),
-      0 0 0 1px var(--redline);
-  }
-  header {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 8px 8px 8px 10px;
-    border-bottom: 1px solid var(--popover-border);
-    background: var(--popover);
-    cursor: grab;
-    touch-action: none;
-  }
-  .dragging header {
-    cursor: grabbing;
-  }
-  header:focus-visible {
-    outline: 2px solid var(--redline);
-    outline-offset: -2px;
-  }
-  .grip {
-    color: var(--muted);
-    font-size: 13px;
-    line-height: 1;
-  }
-  .close {
-    width: 22px;
-    height: 22px;
-    display: grid;
-    place-items: center;
-    padding: 0;
-    border: 1px solid transparent;
-    border-radius: 3px;
-    background: none;
-    color: var(--muted);
-    font-size: 16px;
-    line-height: 1;
-    cursor: pointer;
-  }
-  .close:hover {
-    border-color: var(--control-border);
-    background: var(--surface-hover);
-    color: var(--ink);
-  }
-  .count {
-    margin-left: auto;
-    color: var(--muted);
-    font:
-      11px 'SFMono-Regular',
-      Consolas,
-      monospace;
-  }
-  .hint {
-    margin: 0;
-    padding: 8px 12px;
-    color: var(--muted);
-    font-size: 12px;
-  }
-  .body {
-    flex: 1;
-    min-height: 0;
-    overflow-x: hidden;
-    overflow-y: auto;
-  }
-  .mark {
-    display: grid;
-    grid-template-columns: 18px minmax(0, 1fr) auto;
-    align-items: center;
-    gap: 3px 10px;
-    padding: 9px 8px 9px 12px;
-    border-top: 1px solid var(--popover-border);
-  }
-  .hint + .mark,
-  .mark:first-child {
-    border-top: 0;
-  }
-  .num {
-    width: 18px;
-    height: 18px;
-    display: grid;
-    place-items: center;
-    background: var(--redline);
-    color: var(--on-redline);
-    font:
-      700 11px 'SFMono-Regular',
-      Consolas,
-      monospace;
-  }
-  .what {
-    color: var(--muted);
-    font-size: 12px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .remove {
-    width: 20px;
-    height: 20px;
-    display: grid;
-    place-items: center;
-    padding: 0;
-    border: 1px solid transparent;
-    border-radius: 3px;
-    background: none;
-    color: var(--muted);
-    font-size: 14px;
-    line-height: 1;
-    cursor: pointer;
-  }
-  .remove:hover {
-    border-color: var(--control-border);
-    background: var(--surface-hover);
-    color: var(--ink);
-  }
-  .text {
-    grid-column: 2 / -1;
-    font-size: 13px;
-    overflow-wrap: anywhere;
-  }
-  .text.writing {
-    color: var(--muted);
-    font-style: italic;
-  }
-  .brief-fold {
-    border-top: 1px solid var(--popover-border);
-  }
-  .brief-fold summary {
-    padding: 8px 12px;
-    color: var(--muted);
-    font-size: 11px;
-    font-weight: 600;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-    cursor: pointer;
-  }
-  .brief-fold summary:hover {
-    color: var(--ink);
-  }
-  .brief {
-    margin: 0 12px 10px;
-    max-height: 280px;
-    overflow-y: auto;
-    padding: 8px 10px;
-    border: 1px solid var(--line);
-    background: var(--surface-subtle);
-  }
   /* The brief as the agent reads it, at the pane's size; its line breaks
      kept, as the agent gets them. */
-  .brief :global(.markdown) {
+  .markdown-brief :global(.markdown) {
     font-size: 12px;
     line-height: 1.5;
   }
-  .brief :global(.markdown p) {
+  .markdown-brief :global(.markdown p) {
     white-space: pre-wrap;
   }
-  .brief :global(.markdown code) {
+  .markdown-brief :global(.markdown code) {
     padding: 0 3px;
     font-size: 11px;
-  }
-  footer {
-    position: relative;
-    display: grid;
-    gap: 8px;
-    padding: 10px 12px;
-    border-top: 1px solid var(--popover-border);
-    background: var(--popover);
   }
   .send {
     display: flex;
@@ -782,8 +492,8 @@
   .redline-send {
     flex: none;
   }
-  /* The menus open from the footer, not from their chips, so both span
-     the pane's width wherever their chip sits in the row. */
+  /* The menus open from the pane's foot, not from their chips, so both
+     span the pane's width wherever their chip sits in the row. */
   .send :global(.picker) {
     position: static;
     display: flex;
@@ -807,19 +517,21 @@
     white-space: nowrap;
   }
   /* The menu fits the pane instead of the page. */
-  .redline-panel :global(.picker .panel) {
+  .send :global(.picker .panel) {
     left: 12px;
     width: 316px;
     max-width: calc(100vw - 24px);
+  }
+  .hint {
+    margin: 0;
+    color: var(--muted);
+    font-size: 12px;
   }
   .unset code {
     font:
       11px 'SFMono-Regular',
       Consolas,
       monospace;
-  }
-  footer .hint {
-    padding: 0;
   }
   .error {
     margin: 0;
@@ -865,10 +577,5 @@
   .redline-send:hover:not(:disabled) {
     background: var(--redline-hover);
     border-color: var(--redline-hover);
-  }
-  @media (max-width: 760px) {
-    .redline-panel {
-      max-height: 60vh;
-    }
   }
 </style>

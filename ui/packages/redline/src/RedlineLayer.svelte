@@ -10,6 +10,7 @@
   import { tick } from 'svelte';
   import { Redline } from './redline.ts';
   import { RedlineDesk } from './redline.svelte.ts';
+  import './redline.css';
 
   let { desk }: { desk: RedlineDesk } = $props();
 
@@ -186,9 +187,7 @@
         aria-label="Note"></textarea>
       <div class="foot">
         <span><kbd>Enter</kbd> saves · <kbd>Esc</kbd> drops</span>
-        <button class="button small redline-save" onclick={() => desk.save(editing.id, draft)}
-          >Save</button
-        >
+        <button class="redline-save" onclick={() => desk.save(editing.id, draft)}>Save</button>
       </div>
     </div>
   {/if}
@@ -220,10 +219,7 @@
     padding: 1px 6px;
     background: var(--redline);
     color: var(--on-redline);
-    font:
-      11px 'SFMono-Regular',
-      Consolas,
-      monospace;
+    font: 11px var(--redline-mono);
   }
   .tag.below {
     bottom: auto;
@@ -240,28 +236,22 @@
     pointer-events: none;
     background: var(--redline);
     color: var(--on-redline);
-    font:
-      700 11px 'SFMono-Regular',
-      Consolas,
-      monospace;
+    font: 700 11px var(--redline-mono);
   }
   .note {
     position: fixed;
     z-index: 2147483646;
     display: grid;
-    background: var(--popover);
-    border: 1px solid var(--popover-border);
+    background: var(--redline-surface);
+    border: 1px solid var(--redline-border);
     border-top: 2px solid var(--redline);
-    box-shadow: var(--popover-shadow);
+    box-shadow: var(--redline-shadow);
   }
   .what {
     padding: 7px 10px;
-    border-bottom: 1px solid var(--popover-border);
-    color: var(--muted);
-    font:
-      11px 'SFMono-Regular',
-      Consolas,
-      monospace;
+    border-bottom: 1px solid var(--redline-border);
+    color: var(--redline-muted);
+    font: 11px var(--redline-mono);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -269,7 +259,7 @@
   textarea {
     border: 0;
     background: transparent;
-    color: var(--ink);
+    color: var(--redline-ink);
     font: inherit;
     font-size: 13px;
     padding: 8px 10px;
@@ -281,22 +271,36 @@
     align-items: center;
     gap: 8px;
     padding: 6px 10px;
-    border-top: 1px solid var(--popover-border);
-    color: var(--muted);
+    border-top: 1px solid var(--redline-border);
+    color: var(--redline-muted);
     font-size: 11px;
   }
   .foot button {
     margin-left: auto;
   }
-  /* Filled in Redline's color, also on hover, where the shared button
-     rule would otherwise clear it. */
-  .redline-save,
-  .redline-save:hover:not(:disabled) {
-    background: var(--redline);
-    border-color: var(--redline);
-    color: var(--on-redline);
+  kbd {
+    padding: 0 3px;
+    border: 1px solid var(--redline-control);
+    border-radius: 2px;
+    color: var(--redline-muted);
+    font: 10px var(--redline-mono);
   }
-  .redline-save:hover:not(:disabled) {
+  /* Filled in Redline's color. */
+  .redline-save {
+    display: inline-flex;
+    align-items: center;
+    min-height: 25px;
+    padding: 3px 7px;
+    border: 1px solid var(--redline);
+    border-radius: 3px;
+    background: var(--redline);
+    color: var(--on-redline);
+    font: inherit;
+    font-size: 11px;
+    white-space: nowrap;
+    cursor: pointer;
+  }
+  .redline-save:hover {
     background: var(--redline-hover);
     border-color: var(--redline-hover);
   }

@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { Redline, type ElementLike, type Mark, type PageContext } from '../src/lib/redline.ts';
+import type { Mark, PageContext } from 'redline';
+import { Briefing, type RenPage } from '../src/lib/briefing.ts';
 import type {
   DeskSession,
   RunClient,
@@ -10,29 +11,16 @@ import type {
   SessionId,
 } from '../src/lib/runs.ts';
 
-function element(
-  tagName: string,
-  classes: string[] = [],
-  parent: ElementLike | null = null,
-  attributes: Record<string, string> = {},
-  id = '',
-): ElementLike {
-  return {
-    tagName: tagName.toUpperCase(),
-    id,
-    classList: classes,
-    parentElement: parent,
-    getAttribute: (name) => attributes[name] ?? null,
-  };
-}
-
 const page: PageContext = {
   path: '/sessions?session=s1',
-  route: '/sessions',
   title: 'Ren - Sessions',
   width: 1400,
   height: 820,
   theme: 'dark',
+};
+
+const ren: RenPage = {
+  route: '/sessions',
   revision: { kind: 'commit', commit: '97aa93b'.padEnd(40, '0'), tree: 'clean' },
 };
 
@@ -50,37 +38,13 @@ function mark(id: number, note: string): Mark {
   };
 }
 
-test('a selector names the labelled region, then the element and two ancestors', () => {
-  const region = element('section', ['run-main'], null, { 'aria-label': 'Run' });
-  const convo = element('div', ['conversation', 'svelte-1x2y3z'], region);
-  const entry = element('div', ['entry', 'tool'], convo);
-  const chip = element('span', ['chip', 'success', 'svelte-1x2y3z'], entry);
-  assert.equal(
-    Redline.selector(chip),
-    '[aria-label="Run"] div.conversation > div.entry.tool > span.chip.success',
-  );
-  // An id stands for the element; with no labelled region, the steps alone.
-  const lone = element('button', ['x'], element('main', [], null, {}, 'top'));
-  assert.equal(Redline.selector(lone), 'main#top > button.x');
-});
-
-test('text is one line, cut short', () => {
-  assert.equal(Redline.text('  run\n  the   tests '), 'run the tests');
-  const long = Redline.text('a'.repeat(200));
-  assert.equal(long.length, Redline.TEXT);
-  assert.ok(long.endsWith('…'));
-});
-
-test('the branch is named from the first note', () => {
-  assert.equal(
-    Redline.branch([mark(1, 'The status chip floats mid-row; move it!')]),
-    'redline/the-status-chip-floats-mid',
-  );
-  assert.equal(Redline.branch([]), 'redline/change');
-});
-
 test('the brief lists each noted mark with what it points at', () => {
-  const brief = Redline.brief(page, [mark(1, 'Move it to the end.'), mark(2, '  ')], 'worktree');
+  const brief = Briefing.brief(
+    page,
+    ren,
+    [mark(1, 'Move it to the end.'), mark(2, '  ')],
+    'worktree',
+  );
   assert.equal(
     brief,
     [
@@ -98,11 +62,11 @@ test('the brief lists each noted mark with what it points at', () => {
       "Answer what the notes ask without changing anything. If a note asks for a change, make it on a new branch, `redline/move-it-to-the-end`, in a git worktree of this repository, not in the checkout itself, since other sessions are open there, and run the project's checks. Don't install or restart anything: I'll review the branch.",
     ].join('\n'),
   );
-  assert.equal(Redline.routeFile('/'), 'ui/src/routes/+page.svelte');
+  assert.equal(Briefing.routeFile('/'), 'ui/src/routes/+page.svelte');
 });
 
 test('alone in the checkout, a change is made there and the checkout switched back', () => {
-  const brief = Redline.brief(page, [mark(1, 'Move it to the end.')], 'checkout');
+  const brief = Briefing.brief(page, ren, [mark(1, 'Move it to the end.')], 'checkout');
   assert.equal(
     brief.split('\n').at(-1),
     "Answer what the notes ask without changing anything. If a note asks for a change, make it on a new branch, `redline/move-it-to-the-end`, in this checkout, since no other session is open here; if `git status` shows uncommitted changes, use a git worktree of this repository instead. Run the project's checks, commit, and switch the checkout back to the branch it was on. Don't install or restart anything: I'll review the branch.",
@@ -113,28 +77,28 @@ test('a worktree is asked for only when another session is open in the checkout'
   const session = (id: string) => ({ session: id as SessionId }) as DeskSession;
   const [a, b] = [session('a'), session('b')];
   // A new session: any open one is another.
-  assert.equal(Redline.place({ kind: 'new' }, []), 'checkout');
-  assert.equal(Redline.place({ kind: 'new' }, [a]), 'worktree');
+  assert.equal(Briefing.place({ kind: 'new' }, []), 'checkout');
+  assert.equal(Briefing.place({ kind: 'new' }, [a]), 'worktree');
   // An open session: itself does not count.
-  assert.equal(Redline.place({ kind: 'session', session: a }, [a]), 'checkout');
-  assert.equal(Redline.place({ kind: 'session', session: a }, [a, b]), 'worktree');
+  assert.equal(Briefing.place({ kind: 'session', session: a }, [a]), 'checkout');
+  assert.equal(Briefing.place({ kind: 'session', session: a }, [a, b]), 'worktree');
 });
 
 test('the build is named when the daemon says what it was built from', () => {
   assert.equal(
-    Redline.built({ kind: 'commit', commit: 'a'.repeat(40), tree: 'modified' }),
+    Briefing.built({ kind: 'commit', commit: 'a'.repeat(40), tree: 'modified' }),
     'This page was served by a build of commit `aaaaaaaaaaaa` with uncommitted changes; the checkout may have moved on since.',
   );
-  assert.equal(Redline.built({ kind: 'unknown' }), null);
-  assert.equal(Redline.built(null), null);
+  assert.equal(Briefing.built({ kind: 'unknown' }), null);
+  assert.equal(Briefing.built(null), null);
 });
 
 test('the source checkout is an absolute path, or absent', () => {
-  assert.equal(Redline.checkout(undefined), undefined);
-  assert.equal(Redline.checkout(''), undefined);
-  assert.equal(Redline.checkout('/home/you/ren/'), '/home/you/ren');
-  assert.equal(Redline.checkout('/'), '/');
-  assert.throws(() => Redline.checkout('ren'), /absolute/);
+  assert.equal(Briefing.checkout(undefined), undefined);
+  assert.equal(Briefing.checkout(''), undefined);
+  assert.equal(Briefing.checkout('/home/you/ren/'), '/home/you/ren');
+  assert.equal(Briefing.checkout('/'), '/');
+  assert.throws(() => Briefing.checkout('ren'), /absolute/);
 });
 
 function stored(id: string, workdir: string, createdAt: number, archived = false): SessionBody {
@@ -197,51 +161,44 @@ test('the sessions offered are those running in the checkout, newest first', () 
     } satisfies RunSnapshot;
   });
   assert.deepEqual(
-    Redline.offered(bodies, live, '/home/you/ren').map((session) => session.session),
+    Briefing.offered(bodies, live, '/home/you/ren').map((session) => session.session),
     [ids[1], ids[0]],
   );
-  assert.deepEqual(Redline.offered(bodies, live, '/nowhere'), []);
-});
-
-test("a mark is named by the element's text, else its selector's last step", () => {
-  const target = { selector: '[aria-label="Run"] div.entry > span.chip', width: 1, height: 1 };
-  assert.equal(Redline.name({ ...target, text: 'completed', source: null }), '“completed”');
-  assert.equal(Redline.name({ ...target, text: '', source: null }), 'span.chip');
+  assert.deepEqual(Briefing.offered(bodies, live, '/nowhere'), []);
 });
 
 test('a brief starts a turn, or is queued after the running one', () => {
-  assert.deepEqual(Redline.handoff({ kind: 'start' }, 'B'), {
+  assert.deepEqual(Briefing.handoff({ kind: 'start' }, 'B'), {
     kind: 'send',
     delivery: 'start',
     text: 'B',
   });
-  assert.deepEqual(Redline.handoff({ kind: 'continue' }, 'B').kind, 'send');
+  assert.deepEqual(Briefing.handoff({ kind: 'continue' }, 'B').kind, 'send');
   // Queued after what was queued before, as one message: a queue replaces.
-  assert.deepEqual(Redline.handoff({ kind: 'during', steer: true, queued: 'A' }, 'B'), {
+  assert.deepEqual(Briefing.handoff({ kind: 'during', steer: true, queued: 'A' }, 'B'), {
     kind: 'send',
     delivery: 'queue',
     text: 'A\n\nB',
   });
-  assert.deepEqual(Redline.handoff({ kind: 'during', steer: false, queued: null }, 'B'), {
+  assert.deepEqual(Briefing.handoff({ kind: 'during', steer: false, queued: null }, 'B'), {
     kind: 'send',
     delivery: 'queue',
     text: 'B',
   });
-  assert.deepEqual(Redline.handoff({ kind: 'closed', reason: 'stopping' }, 'B'), {
+  assert.deepEqual(Briefing.handoff({ kind: 'closed', reason: 'stopping' }, 'B'), {
     kind: 'wait',
     reason: 'stopping',
   });
 });
 
-test("a brief's code spans fence past backticks inside, and a note's lines stay in its item", () => {
-  assert.equal(Redline.code('a.b'), '`a.b`');
-  assert.equal(Redline.code('a `b` c'), '`` a `b` c ``');
-  const brief = Redline.brief(
-    { ...page, route: null, revision: null },
-    [mark(1, 'First line\nsecond line')],
+test('without a route or a build, the brief says nothing of either', () => {
+  const brief = Briefing.brief(
+    page,
+    { route: null, revision: null },
+    [mark(1, 'Move it.')],
     'checkout',
   );
-  assert.ok(brief.includes('1. First line\n   second line\n   - Element:'));
+  assert.ok(brief.includes('dark theme.\n\n1. Move it.'));
 });
 
 test('a signed-out client is never switched from on its own, only offered another', () => {
@@ -258,6 +215,6 @@ test('a signed-out client is never switched from on its own, only offered anothe
     client('codex', { kind: 'not_checked' }),
     client('pi', { kind: 'signed_out' }),
   ];
-  assert.equal(Redline.instead(['claude_code', 'pi', 'codex'], clients, 'claude_code'), 'codex');
-  assert.equal(Redline.instead(['claude_code', 'pi'], clients, 'claude_code'), null);
+  assert.equal(Briefing.instead(['claude_code', 'pi', 'codex'], clients, 'claude_code'), 'codex');
+  assert.equal(Briefing.instead(['claude_code', 'pi'], clients, 'claude_code'), null);
 });

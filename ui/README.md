@@ -190,6 +190,10 @@ back to its branch afterwards; when another session is open there, in a git
 worktree, so the change stays clear of it. The client and approvals last used, and where the pane was
 left, are kept in this browser only.
 
+Marking and the brief are the [`redline`](packages/redline/README.md) package,
+which knows nothing of Ren; where a brief goes, and what it says of Ren, are
+Ren's (`src/lib/briefing.ts`, `BriefingPanel.svelte`).
+
 ## Payload previews
 
 Payloads are rendered inert. Message text is formatted as Markdown (CommonMark with
@@ -223,7 +227,8 @@ performs the steps below and upgrades the UI along with the daemon (see
 
 The UI service is independent of the daemon service. The VPS needs Node only if the
 UI runs there. Build in a checkout with Bun and Node, then deploy `build/`,
-`package.json`, and `bun.lock` together to `~/.local/share/ren-ui`. Install
+`package.json`, `bun.lock`, and `packages/` (the workspace packages the lockfile
+names) together to `~/.local/share/ren-ui`. Install
 dependencies there with `bun install --production --frozen-lockfile --ignore-scripts`.
 Don't deploy `.env` files, or `node_modules` built on another platform. Node must be
 at the absolute path used in the unit, typically `/usr/bin/node`.

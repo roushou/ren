@@ -17,9 +17,10 @@
   import { RecorderReport } from '#lib/recorder.ts';
   import CopyButton from '#lib/CopyButton.svelte';
   import DevToolbar from '#lib/DevToolbar.svelte';
-  import RedlineLayer from '#lib/RedlineLayer.svelte';
-  import RedlinePanel from '#lib/RedlinePanel.svelte';
-  import { RedlineDesk } from '#lib/redline.svelte.ts';
+  import RedlineLayer from 'redline/RedlineLayer.svelte';
+  import BriefingPanel from '#lib/BriefingPanel.svelte';
+  import { RedlineDesk } from 'redline/desk';
+  import { Recipients } from '#lib/briefing.svelte.ts';
   import { Views } from '#lib/view.ts';
   import { Arrival } from '#lib/arrival.ts';
   import type { RecordingsData } from '#lib/loaders.ts';
@@ -28,7 +29,9 @@
   let { data, children }: LayoutProps = $props();
   const workbench = setWorkbench(new Workbench());
   /** Marking what's wrong on a page, for an agent to fix: needs the control token. */
-  const redline = new RedlineDesk(() => page.data.redlineSource);
+  const redline = new RedlineDesk();
+  /** Where Redline's briefs go: sessions in Ren's own source checkout. */
+  const recipients = new Recipients(() => page.data.redlineSource);
   // Hydrated: from here on, pages that can take their data pending render
   // at once on a navigation, with their own outline (`Arrival`).
   onMount(() => Arrival.stream());
@@ -335,8 +338,8 @@
         class:on={redline.open}
         data-redline
         aria-pressed={redline.open}
-        onpointerenter={() => redline.prepare()}
-        onfocus={() => redline.prepare()}
+        onpointerenter={() => recipients.prepare()}
+        onfocus={() => recipients.prepare()}
         onclick={() => redline.toggle()}
         title="Mark what's wrong on this page for an agent to fix (m)"
         ><Icon name="pencil" size={12} />Redline{#if redline.marks.length}<span
@@ -345,8 +348,9 @@
       >{/if}
   </footer>
   {#if development && page.data.devTraffic}<DevToolbar />{/if}
-  {#if page.data.runsControl}<RedlineLayer desk={redline} />{#if redline.open}<RedlinePanel
+  {#if page.data.runsControl}<RedlineLayer desk={redline} />{#if redline.open}<BriefingPanel
         desk={redline}
+        {recipients}
         source={page.data.redlineSource}
         revision={health?.build.revision ?? null}
       />{/if}{/if}
