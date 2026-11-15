@@ -427,7 +427,7 @@ mod tests {
             id: NativeThreadId::new(uuid(1)).unwrap(),
             settings: RunSettings::default(),
         };
-        let (codec, lines) = Driver::open(Harness::Codex, opening, "0.1.0", uuid(2)).unwrap();
+        let (codec, lines) = Driver::open(Harness::Codex, opening, "0.1.0", uuid(2));
         Process::opening(serving(), codec, lines, first)
     }
 

@@ -14,7 +14,6 @@ use serde::Serialize;
 use std::{
     collections::BTreeMap,
     ffi::OsString,
-    fmt,
     path::Path,
     process::{Command, ExitCode},
 };
@@ -27,20 +26,6 @@ pub enum LaunchError {
     #[error("cannot launch client; check it is installed on PATH")]
     Spawn(#[source] std::io::Error),
 }
-
-/// A harness Ren cannot drive through a structured mode. Every harness is
-/// driven, so it has no value: a result that names it never fails. It stays
-/// only while callers still name it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum NotDrivable {}
-
-impl fmt::Display for NotDrivable {
-    fn fmt(&self, _: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match *self {}
-    }
-}
-
-impl std::error::Error for NotDrivable {}
 
 /// What a structured-mode process is started for.
 #[derive(Clone, Copy)]
@@ -141,8 +126,8 @@ impl Harness {
     }
 
     /// The program Ren runs to drive this harness (its profile's).
-    pub fn driven_program(self) -> Result<&'static str, NotDrivable> {
-        Ok(self.profile().program)
+    pub fn driven_program(self) -> &'static str {
+        self.profile().program
     }
 
     /// The packages this harness needs on the host it runs on (its
@@ -154,32 +139,24 @@ impl Harness {
     /// How to start this harness in its structured mode, driven by Ren
     /// through `drive`, with its model traffic sent to `gateway`. The client
     /// keeps its own sign-in. OpenCode is driven through its ACP mode.
-    pub fn drive(
-        self,
-        gateway: &GatewayEndpoint,
-        opening: &Opening,
-    ) -> Result<LaunchPlan, NotDrivable> {
+    pub fn drive(self, gateway: &GatewayEndpoint, opening: &Opening) -> LaunchPlan {
         self.structured(gateway, Structured::Conversation(opening))
     }
 
     /// How to start this harness only to list its models
     /// (`models::ModelListing`): its structured mode with no conversation.
-    pub fn list_models(self, gateway: &GatewayEndpoint) -> Result<LaunchPlan, NotDrivable> {
+    pub fn list_models(self, gateway: &GatewayEndpoint) -> LaunchPlan {
         self.structured(gateway, Structured::Listing)
     }
 
-    fn structured(
-        self,
-        gateway: &GatewayEndpoint,
-        mode: Structured<'_>,
-    ) -> Result<LaunchPlan, NotDrivable> {
+    fn structured(self, gateway: &GatewayEndpoint, mode: Structured<'_>) -> LaunchPlan {
         match self {
             Self::Codex => {
                 // One server speaks both; the listing opens no thread.
                 let mut arguments: Vec<LaunchArg> =
                     vec!["app-server".into(), "--listen".into(), "stdio://".into()];
                 arguments.extend(LaunchPlan::codex_provider(gateway));
-                Ok(LaunchPlan::program(self.profile().program, arguments))
+                LaunchPlan::program(self.profile().program, arguments)
             }
             Self::ClaudeCode => {
                 // The same environment as a launched session: its traffic
@@ -190,7 +167,7 @@ impl Harness {
                     Structured::Listing => ClaudeModels::arguments(),
                 };
                 plan.arguments = arguments.into_iter().map(LaunchArg::Literal).collect();
-                Ok(plan)
+                plan
             }
             Self::Pi => {
                 // The same extension and gateway as a launched session.
@@ -201,9 +178,9 @@ impl Harness {
                 };
                 plan.arguments
                     .extend(arguments.into_iter().map(LaunchArg::Literal));
-                Ok(plan)
+                plan
             }
-            Self::OpenCode => Ok(match mode {
+            Self::OpenCode => match mode {
                 Structured::Conversation(opening) => LaunchPlan::opencode_driven(
                     gateway,
                     opening.settings().approvals,
@@ -219,7 +196,7 @@ impl Harness {
                         .map(Into::into)
                         .collect(),
                 ),
-            }),
+            },
         }
     }
 
@@ -396,7 +373,7 @@ mod tests {
             for requirement in &requirements {
                 assert!(depot.package(requirement.package()).is_some(), "{harness}");
             }
-            let program = harness.driven_program().unwrap();
+            let program = harness.driven_program();
             assert!(
                 requirements.iter().any(|requirement| depot
                     .package(requirement.package())
@@ -413,7 +390,7 @@ mod tests {
             serde_json::from_str(plan.environment[super::LaunchPlan::OPENCODE_CONFIG].expose())
                 .unwrap()
         };
-        let driven = Harness::OpenCode.drive(&gateway, &opening()).unwrap();
+        let driven = Harness::OpenCode.drive(&gateway, &opening());
         let command = driven.command(None, &[]);
         assert_eq!(command.get_program(), "opencode");
         assert_eq!(command.get_args().collect::<Vec<_>>(), ["acp"]);
@@ -427,7 +404,7 @@ mod tests {
                 ..crate::settings::RunSettings::default()
             },
         };
-        let driven = config(&Harness::OpenCode.drive(&gateway, &asking).unwrap());
+        let driven = config(&Harness::OpenCode.drive(&gateway, &asking));
         assert_eq!(
             driven["permissions"],
             serde_json::json!([{ "action": "shell", "resource": "*", "effect": "ask" }])
@@ -437,7 +414,7 @@ mod tests {
             "http://127.0.0.1:8787/anthropic/v1"
         );
         // Listed as OpenCode is set up on its own, without the override.
-        let listing = Harness::OpenCode.list_models(&gateway).unwrap();
+        let listing = Harness::OpenCode.list_models(&gateway);
         let listing = listing.command(None, &[]);
         assert_eq!(listing.get_args().collect::<Vec<_>>(), ["acp"]);
         assert_eq!(listing.get_envs().count(), 0);
@@ -448,11 +425,11 @@ mod tests {
     #[test]
     fn drives_codex_app_server_over_stdio_through_the_gateway() {
         let gateway = GatewayEndpoint::parse("http://127.0.0.1:8787").unwrap();
-        let driven = Harness::Codex.drive(&gateway, &opening()).unwrap();
+        let driven = Harness::Codex.drive(&gateway, &opening());
         let launched = Harness::Codex.launch(&gateway);
         let command = driven.command(None, &[]);
         assert_eq!(command.get_program(), "codex");
-        assert_eq!(Harness::Codex.driven_program(), Ok("codex"));
+        assert_eq!(Harness::Codex.driven_program(), "codex");
         let arguments: Vec<_> = command.get_args().collect();
         assert_eq!(arguments[..3], ["app-server", "--listen", "stdio://"]);
         // The same provider overrides as an interactive session.
@@ -460,19 +437,18 @@ mod tests {
         let overrides: Vec<_> = interactive.get_args().skip(1).collect();
         assert_eq!(arguments[3..], overrides[..]);
         assert_eq!(command.get_envs().count(), 0);
-        assert_eq!(Harness::OpenCode.driven_program(), Ok("opencode"));
+        assert_eq!(Harness::OpenCode.driven_program(), "opencode");
     }
 
     #[test]
     fn drives_pi_in_rpc_mode_with_rens_extension_through_the_gateway() {
         let gateway = GatewayEndpoint::parse("http://127.0.0.1:8787").unwrap();
-        let driven = Harness::Pi.drive(&gateway, &opening()).unwrap();
-        assert_eq!(Harness::Pi.driven_program(), Ok("pi"));
+        let driven = Harness::Pi.drive(&gateway, &opening());
+        assert_eq!(Harness::Pi.driven_program(), "pi");
         assert!(driven.loads_pi_extension());
         assert!(
             !Harness::Codex
                 .drive(&gateway, &opening())
-                .unwrap()
                 .loads_pi_extension()
         );
         let command = driven.command(Some(Path::new("/cache/ren.ts")), &[]);
@@ -501,10 +477,9 @@ mod tests {
         let gateway = GatewayEndpoint::parse("http://127.0.0.1:8787").unwrap();
         let command = Harness::ClaudeCode
             .drive(&gateway, &opening())
-            .unwrap()
             .command(None, &[]);
         assert_eq!(command.get_program(), "claude");
-        assert_eq!(Harness::ClaudeCode.driven_program(), Ok("claude"));
+        assert_eq!(Harness::ClaudeCode.driven_program(), "claude");
         let arguments: Vec<_> = command
             .get_args()
             .map(|argument| argument.to_str().unwrap())
@@ -542,7 +517,6 @@ mod tests {
                     settings: crate::settings::RunSettings::default(),
                 },
             )
-            .unwrap()
             .command(None, &[]);
         let tail: Vec<_> = resumed.get_args().skip(10).collect();
         assert_eq!(tail, ["--resume", SESSION]);

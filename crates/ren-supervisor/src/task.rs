@@ -472,9 +472,8 @@ impl<H: AgentHost> SupervisorTask<H> {
         Workdir::confirm(&self.bounds, resolved).map_err(StartError::Workdir)
     }
 
-    /// Whether `harness` can be driven, on `settings`.
+    /// Whether `harness` runs on `settings`: an approval policy it offers.
     fn drivable(harness: Harness, settings: &RunSettings) -> Result<(), StartError> {
-        harness.driven_program().map_err(StartError::NotDrivable)?;
         match settings.approvals {
             Some(policy) if !ApprovalPolicy::offered(harness).contains(&policy) => {
                 Err(StartError::NoApprovals(harness))
@@ -512,12 +511,9 @@ impl<H: AgentHost> SupervisorTask<H> {
                 settings: settings.clone(),
             },
         };
-        let plan = harness
-            .drive(&self.gateway, &opening)
-            .map_err(StartError::NotDrivable)?;
+        let plan = harness.drive(&self.gateway, &opening);
         let (codec, opening_lines) =
-            Driver::open(harness, opening, &self.version, self.ids.next_uuid())
-                .map_err(StartError::NotDrivable)?;
+            Driver::open(harness, opening, &self.version, self.ids.next_uuid());
         let run = RunId::generate(self.ids.as_ref());
         let tools = self.host.tools();
         // Every run is recorded: without room, it does not start.
@@ -1231,9 +1227,7 @@ impl<H: AgentHost> SupervisorTask<H> {
 
     /// Whether `harness`'s program is on this host's path.
     fn installed(&self, harness: Harness) -> bool {
-        harness
-            .driven_program()
-            .is_ok_and(|program| self.host.finds(program))
+        self.host.finds(harness.driven_program())
     }
 
     /// Every client as this host has it, with its sign-in as last read.
@@ -1242,10 +1236,9 @@ impl<H: AgentHost> SupervisorTask<H> {
             .iter()
             .map(|harness| Client {
                 harness: *harness,
-                status: match harness.driven_program() {
-                    Ok(program) if self.host.finds(program) => ClientStatus::Ready,
-                    Ok(_) => ClientStatus::NotInstalled,
-                    Err(_) => ClientStatus::NotDrivable,
+                status: match self.installed(*harness) {
+                    true => ClientStatus::Ready,
+                    false => ClientStatus::NotInstalled,
                 },
                 approvals: ApprovalPolicy::offered(*harness).to_vec(),
                 midway: Midway::offered(*harness).to_vec(),
@@ -1393,9 +1386,7 @@ impl<H: AgentHost> SupervisorTask<H> {
         harness: Harness,
     ) -> Result<BoxFuture<'static, Result<Vec<ren_harness::models::Model>, ModelsError>>, ModelsError>
     {
-        let plan = harness
-            .list_models(&self.gateway)
-            .map_err(ModelsError::NotDrivable)?;
+        let plan = harness.list_models(&self.gateway);
         let root = self
             .bounds
             .roots()
@@ -1405,8 +1396,7 @@ impl<H: AgentHost> SupervisorTask<H> {
         let workdir =
             Workdir::confirm(&self.bounds, root.to_path_buf()).map_err(|_| ModelsError::NoRoot)?;
         let (listing, first) =
-            ModelListing::open(harness, &self.version, &workdir.as_path().to_string_lossy())
-                .map_err(ModelsError::NotDrivable)?;
+            ModelListing::open(harness, &self.version, &workdir.as_path().to_string_lossy());
         let process = self
             .host
             .spawn(&plan, &workdir, &self.host.tools())

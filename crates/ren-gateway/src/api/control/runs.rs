@@ -97,7 +97,6 @@ impl From<StartError> for ControlRefusal {
             ) => Self::InvalidDirectory,
             StartError::Workdir(WorkdirError::NoRoots) => Self::RunsDisabled,
             StartError::Resolve(_) => Self::DirectoryNotFound,
-            StartError::NotDrivable(_) => Self::NotDrivable,
             StartError::NoApprovals(_) => Self::NoApprovals,
             StartError::NoScratch | StartError::Scratch(_) => Self::NoScratch,
             StartError::Unrecorded(_) => Self::Unrecorded,
@@ -250,7 +249,6 @@ impl RunsApi {
                 "models": models,
             }))
             .into_response(),
-            Err(ModelsError::NotDrivable(_)) => ControlRefusal::NotDrivable.into_response(),
             Err(ModelsError::NoRoot) => ControlRefusal::RunsDisabled.into_response(),
             Err(ModelsError::Gone) => ControlRefusal::Unavailable.into_response(),
             Err(

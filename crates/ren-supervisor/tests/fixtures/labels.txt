@@ -1,4 +1,4 @@
-ClientStatus: ready not_installed not_drivable
+ClientStatus: ready not_installed
 PlaceKind: project other scratch
 Delivery: start queue steer
 PathKind: file directory

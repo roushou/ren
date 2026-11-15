@@ -90,7 +90,7 @@ export class Refusals {
       case 'directory_not_found':
         return 'That folder does not exist on the daemon’s host.';
       case 'not_drivable':
-        return 'Ren cannot drive that client yet.';
+        return 'This daemon does not know that session’s client.';
       case 'no_approvals':
         return 'That client asks for nothing, so it takes no approval policy.';
       case 'no_scratch':

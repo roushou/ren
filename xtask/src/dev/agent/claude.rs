@@ -482,7 +482,7 @@ mod tests {
             lines::Framed,
             models::{Listing, ModelListing},
         };
-        let (mut listing, mut lines) = ModelListing::open(harness, "0.1.0", "/work").unwrap();
+        let (mut listing, mut lines) = ModelListing::open(harness, "0.1.0", "/work");
         for _ in 0..8 {
             let mut next = Vec::new();
             for line in &lines {
