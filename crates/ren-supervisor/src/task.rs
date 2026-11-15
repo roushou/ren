@@ -11,20 +11,20 @@
 //!
 //! [`Supervisor`]: crate::Supervisor
 
-use crate::attachments::{Attached, AttachmentFolders, AttachmentUse};
+use crate::attachments::{AttachmentFolders, AttachmentUse};
 use crate::login::{SignInError, SignIns, StatusCheck};
 use crate::models::{Listings, ModelProbe, ModelsError, ModelsReply};
 use crate::process::{Process, ProcessEffect, Rest, Serving};
 use crate::{
-    CommandError, Conversation, Create, IdleStop, ImageTaking, Places, Request, RunSnapshot,
-    RunUpdate, SessionAnswer, SessionError, SessionRequest, SessionSeed, SessionSnapshot,
-    SignInRequest, Start, StartError, StartPlace, Warmup,
+    CommandError, Conversation, Create, IdleStop, Places, Request, RunSnapshot, RunUpdate,
+    SessionAnswer, SessionError, SessionRequest, SessionSeed, SessionSnapshot, SignInRequest,
+    Start, StartError, StartPlace, Warmup,
     client::{Client, ClientStatus},
     files::{FileListing, FileQuery, FoundPath},
     host::{AgentHost, AgentProcess, KillSwitch},
     project::Search,
     run::{ProcessExit, RunCommand, RunState},
-    session::{SessionAction, SessionInput, SessionState, Shelving},
+    session::{Launch, Room, Session, SessionEffect, Shelving, TurnsEnded},
     workdir::{Bounds, RequestedDir, Workdir},
 };
 use futures_util::{
@@ -45,9 +45,8 @@ use ren_harness::{
 use ren_protocol::label::Labeled;
 use ren_protocol::native::NativeThreadId;
 use ren_recorder::{
-    Recorder, RunSession, RunTap,
+    Recorder, RunSession, RunTap, SessionSlot,
     batch::{Actor, HistoryChange, HistorySubject, SessionFact},
-    capture::RunEnd,
     id::{AttachmentId, IdSource, RunId, SessionId},
 };
 use std::{
@@ -100,56 +99,6 @@ enum Turned {
     },
 }
 
-/// One session the task serves.
-struct Held {
-    state: SessionState,
-    harness: Harness,
-    workdir: Workdir,
-    /// What its next turn runs on.
-    settings: RunSettings,
-    /// The client's conversation, once a turn ran in it: the next process
-    /// resumes it.
-    thread: Option<NativeThreadId>,
-    /// Its newest process.
-    process: Option<RunId>,
-    /// Its folder as walked for the last file search, until a turn ends:
-    /// turns change files.
-    files: Option<FileListing>,
-    /// How many turns ended: a walk begun before the newest one ended is
-    /// not kept.
-    turns_ended: u64,
-    /// The attachments uploaded to it.
-    attached: Attached,
-}
-
-impl Held {
-    fn new(harness: Harness, workdir: Workdir, settings: RunSettings) -> Self {
-        Self {
-            state: SessionState::NEW,
-            harness,
-            workdir,
-            settings,
-            thread: None,
-            process: None,
-            files: None,
-            turns_ended: 0,
-            attached: Attached::default(),
-        }
-    }
-
-    fn snapshot(&self, session: SessionId) -> SessionSnapshot {
-        SessionSnapshot {
-            session,
-            harness: self.harness,
-            workdir: self.workdir.as_path().to_path_buf(),
-            settings: self.settings.clone(),
-            state: self.state,
-            process: self.process,
-            images: ImageTaking::of(self.harness),
-        }
-    }
-}
-
 type Outputs = SelectAll<BoxStream<'static, (RunId, Vec<Framed>)>>;
 type Exits = FuturesUnordered<BoxFuture<'static, (RunId, ProcessExit)>>;
 
@@ -167,7 +116,7 @@ enum Composing {
 struct Walked {
     session: SessionId,
     /// The session's `turns_ended` when the walk began.
-    turns_ended: u64,
+    turns_ended: TurnsEnded,
     found: std::io::Result<Vec<FoundPath>>,
     query: FileQuery,
     limit: usize,
@@ -178,7 +127,7 @@ struct Walked {
 /// and exits it waits on.
 #[derive(Default)]
 struct Served {
-    sessions: BTreeMap<SessionId, Held>,
+    sessions: BTreeMap<SessionId, Session>,
     runs: BTreeMap<RunId, Live>,
     outputs: Outputs,
     /// Answers being worked out off the task, each sending its own reply.
@@ -201,7 +150,12 @@ struct Served {
 impl Served {
     /// The run serving `session` now, if one runs.
     fn process(&self, session: SessionId) -> Option<RunId> {
-        let run = self.sessions.get(&session)?.process?;
+        self.serving(self.sessions.get(&session)?)
+    }
+
+    /// The run serving `session` now, if one runs.
+    fn serving(&self, session: &Session) -> Option<RunId> {
+        let run = session.process()?;
         match self.runs.get(&run)?.process.state() {
             RunState::Ended { .. } => None,
             RunState::Starting
@@ -322,7 +276,7 @@ impl<H: AgentHost> SupervisorTask<H> {
                         let effects = live.process.exited(exit);
                         self.carry_out(live, effects, &mut served.idles);
                     }
-                    self.rested(run, &mut served);
+                    self.ended(run, &mut served).await;
                 }
                 else => break,
             }
@@ -460,16 +414,16 @@ impl<H: AgentHost> SupervisorTask<H> {
         reply: oneshot::Sender<Result<SessionAnswer, SessionError>>,
         served: &Served,
     ) -> Option<BoxFuture<'static, Walked>> {
-        let Some(held) = served.sessions.get(&session) else {
+        let Some(served_session) = served.sessions.get(&session) else {
             let _ = reply.send(Err(SessionError::NoSuchSession(session)));
             return None;
         };
-        if let Some(files) = &held.files {
+        if let Some(files) = served_session.files() {
             let _ = reply.send(Ok(SessionAnswer::Files(files.search(&query, limit))));
             return None;
         }
-        let dir = held.workdir.as_path().to_path_buf();
-        let turns_ended = held.turns_ended;
+        let (workdir, turns_ended) = served_session.walk();
+        let dir = workdir.as_path().to_path_buf();
         let walk = self.off_task(move |host| host.files(&dir, FileListing::LIMITS));
         Some(
             async move {
@@ -500,10 +454,8 @@ impl<H: AgentHost> SupervisorTask<H> {
         let answer = found.map_err(SessionError::Unreadable).map(|found| {
             let listing = FileListing::new(found);
             let matches = listing.search(&query, limit);
-            if let Some(held) = served.sessions.get_mut(&session)
-                && held.turns_ended == turns_ended
-            {
-                held.files = Some(listing);
+            if let Some(served_session) = served.sessions.get_mut(&session) {
+                served_session.walked(listing, turns_ended);
             }
             SessionAnswer::Files(matches)
         });
@@ -526,7 +478,7 @@ impl<H: AgentHost> SupervisorTask<H> {
             .get(&session)
             .ok_or(SessionError::NoSuchSession(session))?;
         let read = held
-            .attached
+            .attached()
             .get(attachment)
             .ok_or(SessionError::NoSuchAttachment(attachment))?
             .clone();
@@ -600,19 +552,20 @@ impl<H: AgentHost> SupervisorTask<H> {
         let workdir = self.place(place).await?;
         Self::drivable(harness, &settings)?;
         let session = SessionId::generate(self.ids.as_ref());
-        let mut held = Held::new(harness, workdir, settings);
-        if let Conversation::Resume(thread) = conversation {
-            held.thread = Some(thread);
-        }
+        let resume = match conversation {
+            Conversation::New => None,
+            Conversation::Resume(thread) => Some(thread),
+        };
+        let mut new = Session::new(harness, workdir, settings, resume);
         if first.is_some() {
-            Self::advance(&mut held, SessionInput::Prompted);
+            new = new.with_first_prompt();
         }
         let started = self
-            .spawn(session, &mut held, RunSession::New(session), first, served)
+            .spawn(session, &mut new, RunSession::New(session), first, served)
             .await;
         // A run the recorder had no room for leaves no session.
         if !matches!(started, Err(StartError::Unrecorded(_))) {
-            served.sessions.insert(session, held);
+            served.sessions.insert(session, new);
         }
         started
     }
@@ -623,23 +576,18 @@ impl<H: AgentHost> SupervisorTask<H> {
     async fn spawn(
         &self,
         session: SessionId,
-        held: &mut Held,
+        serving: &mut Session,
         recorded: RunSession,
         first: Option<Prompt>,
         served: &mut Served,
     ) -> Result<RunId, StartError> {
-        let harness = held.harness;
-        // A client whose launch changes its own default starts on the one it
-        // listed, by name, when the session chose none.
-        if held.settings.model.is_none()
-            && harness.names_its_default()
-            && let Some(listed) = served.defaults.get(&harness)
-        {
-            held.settings.model = Some(listed.clone());
-        }
-        let settings = held.settings.clone();
-        let workdir = held.workdir.clone();
-        let opening = match held.thread {
+        let Launch {
+            harness,
+            workdir,
+            settings,
+            resume,
+        } = serving.launch(served.defaults.get(&serving.harness()));
+        let opening = match resume {
             None => Opening::New {
                 cwd: workdir.as_str().to_owned(),
                 id: NativeThreadId::new(self.ids.next_uuid()).ok_or(StartError::NilId)?,
@@ -671,7 +619,7 @@ impl<H: AgentHost> SupervisorTask<H> {
                 tools.generation(),
             )
             .map_err(StartError::Unrecorded)?;
-        held.process = Some(run);
+        serving.started(run);
         let serving = Serving {
             run,
             session,
@@ -722,19 +670,15 @@ impl<H: AgentHost> SupervisorTask<H> {
         Ok(run)
     }
 
-    /// Move `held` on by an input its state takes: a prompt or a change
-    /// the caller already checked. A refusal here changes nothing.
-    fn advance(held: &mut Held, input: SessionInput) -> Vec<SessionAction> {
-        match held.state.apply(input) {
-            Ok((state, actions)) => {
-                held.state = state;
-                actions
-            }
-            Err(refused) => {
-                tracing::debug!(%refused, "a session input was refused");
-                Vec::new()
-            }
-        }
+    /// Whether the recorder has room for a session's fact, with the slot
+    /// that records it.
+    fn room(&self) -> (Option<SessionSlot>, Room) {
+        let slot = self.recorder.session_slot();
+        let room = match slot {
+            Some(_) => Room::Recordable,
+            None => Room::Full,
+        };
+        (slot, room)
     }
 
     /// Record `fact` about `session`; without room it is counted lost by
@@ -747,9 +691,59 @@ impl<H: AgentHost> SupervisorTask<H> {
         Ok(())
     }
 
-    fn publish_session(&self, session: SessionId, held: &Held) {
+    fn publish_session(&self, session: SessionId, serving: &Session) {
         // No subscriber is not an error.
-        let _ = self.sessions.send(held.snapshot(session));
+        let _ = self.sessions.send(serving.snapshot(session));
+    }
+
+    /// Carry out `serving`'s effects, with the slot its fact records in
+    /// (each change records at most one), and serve it again unless it was
+    /// discarded. A process it started, or why it did not start.
+    async fn carry_out_session(
+        &self,
+        session: SessionId,
+        mut serving: Session,
+        effects: Vec<SessionEffect>,
+        mut slot: Option<SessionSlot>,
+        served: &mut Served,
+    ) -> Option<Result<RunId, StartError>> {
+        let mut started = None;
+        let mut discard = false;
+        for effect in effects {
+            match effect {
+                SessionEffect::Record(fact) => match slot.take() {
+                    Some(slot) => slot.record(session, fact),
+                    None => tracing::warn!(%session, "a session fact had no slot"),
+                },
+                SessionEffect::StopProcess => {
+                    let run = served.serving(&serving);
+                    self.stop_process(session, run, served);
+                }
+                SessionEffect::StartProcess { first } => {
+                    started = Some(
+                        self.spawn(
+                            session,
+                            &mut serving,
+                            RunSession::Existing(session),
+                            first,
+                            served,
+                        )
+                        .await,
+                    );
+                }
+                SessionEffect::Discard => discard = true,
+            }
+        }
+        let kept = if discard {
+            self.discard(session, serving, served)
+        } else {
+            Some(serving)
+        };
+        if let Some(serving) = kept {
+            self.publish_session(session, &serving);
+            served.sessions.insert(session, serving);
+        }
+        started
     }
 
     async fn session(
@@ -796,7 +790,7 @@ impl<H: AgentHost> SupervisorTask<H> {
                     .sessions
                     .get(&session)
                     .ok_or(SessionError::NoSuchSession(session))?
-                    .attached
+                    .attached()
                     .list(),
             )),
             SessionRequest::Prompt {
@@ -816,7 +810,7 @@ impl<H: AgentHost> SupervisorTask<H> {
                         },
                     )?;
                     if let Some(held) = served.sessions.get_mut(&session) {
-                        held.attached.sent(&attachments);
+                        held.attached_mut().sent(&attachments);
                     }
                 }
                 Ok(answer)
@@ -837,7 +831,7 @@ impl<H: AgentHost> SupervisorTask<H> {
                     .sessions
                     .get_mut(&session)
                     .ok_or(SessionError::NoSuchSession(session))?;
-                match held.attached.used(attachment) {
+                match held.attached().used(attachment) {
                     None => return Err(SessionError::NoSuchAttachment(attachment)),
                     Some(AttachmentUse::Sent) => {
                         return Err(SessionError::AttachmentSent(attachment));
@@ -845,7 +839,7 @@ impl<H: AgentHost> SupervisorTask<H> {
                     Some(AttachmentUse::Unsent) => {}
                 }
                 self.record(session, SessionFact::Detached { attachment })?;
-                held.attached.remove(attachment);
+                held.attached_mut().remove(attachment);
                 // Detached as recorded; a file left behind is only space.
                 let folder = folders.attachment(session, attachment);
                 if let Err(error) = self.off_task(move |host| host.remove_tree(&folder)).await {
@@ -909,24 +903,16 @@ impl<H: AgentHost> SupervisorTask<H> {
                 settings: settings.clone(),
             },
         )?;
-        let mut held = Held::new(harness, workdir, settings);
-        held.thread = resume;
         // Its client starts now, so its commands are there before the first
         // prompt. One that cannot start is kept, ended, as its process.
-        if let Err(error) = self
-            .spawn(
-                session,
-                &mut held,
-                RunSession::Existing(session),
-                None,
-                served,
-            )
+        let new = Session::new(harness, workdir, settings, resume);
+        let start = vec![SessionEffect::StartProcess { first: None }];
+        if let Some(Err(error)) = self
+            .carry_out_session(session, new, start, None, served)
             .await
         {
             tracing::debug!(%session, %error, "a new session's client did not start");
         }
-        self.publish_session(session, &held);
-        served.sessions.insert(session, held);
         Ok(SessionAnswer::Created(session))
     }
 
@@ -956,7 +942,7 @@ impl<H: AgentHost> SupervisorTask<H> {
         let reads = attachments
             .iter()
             .map(|attachment| {
-                held.attached
+                held.attached()
                     .get(*attachment)
                     .cloned()
                     .ok_or(SessionError::NoSuchAttachment(*attachment))
@@ -973,7 +959,7 @@ impl<H: AgentHost> SupervisorTask<H> {
             .map_or(Offer::Unknown, |live| live.process.image_offer());
         let mut files = Vec::with_capacity(reads.len());
         for (attachment, read) in attachments.iter().zip(reads) {
-            match held.harness.acceptance().of(read.kind()).resolve(offer) {
+            match held.harness().acceptance().of(read.kind()).resolve(offer) {
                 Ok(_) | Err(NotAccepted::Unknown) => {}
                 Err(refused @ (NotAccepted::Never | NotAccepted::NotOffered)) => {
                     return Err(SessionError::ImagesNotTaken(refused));
@@ -1047,7 +1033,7 @@ impl<H: AgentHost> SupervisorTask<H> {
             let _ = self.off_task(move |host| host.remove_tree(&folder)).await;
             return Err(error);
         }
-        held.attached.insert(attachment, read.clone());
+        held.attached_mut().insert(attachment, read.clone());
         Ok(SessionAnswer::Attached(attachment, read))
     }
 
@@ -1061,12 +1047,10 @@ impl<H: AgentHost> SupervisorTask<H> {
         let requested = RequestedDir::parse(&seed.workdir)
             .map_err(|error| SessionError::Start(StartError::Workdir(error)))?;
         let workdir = self.confirm(&requested).map_err(SessionError::Start)?;
-        let mut held = Held::new(seed.harness, workdir, seed.settings);
-        held.state = seed.state;
-        held.thread = seed.thread;
-        held.attached = Attached::from_stored(seed.attachments);
-        self.publish_session(seed.session, &held);
-        served.sessions.insert(seed.session, held);
+        let session = seed.session;
+        let restored = Session::restore(seed, workdir);
+        self.publish_session(session, &restored);
+        served.sessions.insert(session, restored);
         Ok(SessionAnswer::Done)
     }
 
@@ -1076,9 +1060,9 @@ impl<H: AgentHost> SupervisorTask<H> {
         command: RunCommand,
         served: &mut Served,
     ) -> Result<SessionAnswer, SessionError> {
-        if !served.sessions.contains_key(&session) {
+        let Some(mut serving) = served.sessions.remove(&session) else {
             return Err(SessionError::NoSuchSession(session));
-        }
+        };
         let prompt = match &command {
             RunCommand::Prompt(prompt) | RunCommand::Queue(prompt) | RunCommand::Steer(prompt) => {
                 Some(prompt.clone())
@@ -1089,85 +1073,46 @@ impl<H: AgentHost> SupervisorTask<H> {
             | RunCommand::Interrupt
             | RunCommand::Stop => None,
         };
-        if let Some(run) = served.process(session) {
-            let Some(live) = served.runs.get_mut(&run) else {
-                return Err(SessionError::NoProcess);
-            };
-            let effects = live
-                .process
-                .command(command)
-                .map_err(SessionError::Command)?;
-            self.carry_out(live, effects, &mut served.idles);
-            let settings = live.process.settings().clone();
-            if let Some(held) = served.sessions.get_mut(&session) {
-                held.settings = settings;
-                self.prompted(session, held, prompt.is_some())?;
-                self.publish_session(session, held);
-            }
-            return Ok(SessionAnswer::Done);
-        }
-        let Some(mut held) = served.sessions.remove(&session) else {
-            return Err(SessionError::NoSuchSession(session));
-        };
-        let answer = match (command, prompt) {
-            (RunCommand::Configure(settings), _) => self
-                .record(
-                    session,
-                    SessionFact::Configured {
-                        settings: settings.clone(),
-                    },
-                )
-                .map(|()| {
-                    held.settings = settings;
-                    SessionAnswer::Done
-                }),
-            // No process: a new one resumes the conversation with it.
-            (_, Some(prompt)) => match self.prompted(session, &mut held, true) {
-                Ok(()) => self
-                    .spawn(
-                        session,
-                        &mut held,
-                        RunSession::Existing(session),
-                        Some(prompt),
-                        served,
-                    )
-                    .await
-                    .map(|_| SessionAnswer::Done)
-                    .map_err(SessionError::Start),
-                Err(error) => Err(error),
+        let (slot, room) = self.room();
+        let outcome = match served.serving(&serving) {
+            Some(run) => match served.runs.get_mut(&run) {
+                None => Err(SessionError::NoProcess),
+                Some(live) => match live.process.command(command) {
+                    Err(error) => Err(SessionError::Command(error)),
+                    Ok(effects) => {
+                        self.carry_out(live, effects, &mut served.idles);
+                        serving.took(live.process.settings().clone());
+                        match prompt {
+                            Some(_) => serving.prompted(room),
+                            None => Ok(Vec::new()),
+                        }
+                    }
+                },
             },
-            (
-                RunCommand::Prompt(_)
-                | RunCommand::Queue(_)
-                | RunCommand::Steer(_)
-                | RunCommand::Unqueue
-                | RunCommand::Answer { .. }
-                | RunCommand::Interrupt
-                | RunCommand::Stop,
-                None,
-            ) => Err(SessionError::NoProcess),
+            // No process: settings wait for the next one, and a prompt
+            // starts one that resumes the conversation with it.
+            None => match (command, prompt) {
+                (RunCommand::Configure(settings), _) => serving.configure_unserved(settings, room),
+                (_, Some(prompt)) => serving.prompt_unserved(prompt, room),
+                (
+                    RunCommand::Prompt(_)
+                    | RunCommand::Queue(_)
+                    | RunCommand::Steer(_)
+                    | RunCommand::Unqueue
+                    | RunCommand::Answer { .. }
+                    | RunCommand::Interrupt
+                    | RunCommand::Stop,
+                    None,
+                ) => Err(SessionError::NoProcess),
+            },
         };
-        self.publish_session(session, &held);
-        served.sessions.insert(session, held);
-        answer
-    }
-
-    /// A prompt went out in the session (when `sent`): it is active, and
-    /// current again if it was archived.
-    fn prompted(
-        &self,
-        session: SessionId,
-        held: &mut Held,
-        sent: bool,
-    ) -> Result<(), SessionError> {
-        if !sent {
-            return Ok(());
+        match self
+            .settle_session(session, serving, outcome, slot, served)
+            .await?
+        {
+            Some(Err(error)) => Err(SessionError::Start(error)),
+            Some(Ok(_)) | None => Ok(SessionAnswer::Done),
         }
-        if let SessionState::Archived(_) = held.state {
-            self.record(session, SessionFact::Unarchived)?;
-        }
-        Self::advance(held, SessionInput::Prompted);
-        Ok(())
     }
 
     async fn choose_client(
@@ -1176,39 +1121,23 @@ impl<H: AgentHost> SupervisorTask<H> {
         harness: Harness,
         served: &mut Served,
     ) -> Result<SessionAnswer, SessionError> {
-        let held = served
-            .sessions
-            .get(&session)
-            .ok_or(SessionError::NoSuchSession(session))?;
-        held.state
-            .apply(SessionInput::ChooseClient(harness))
-            .map_err(SessionError::Refused)?;
+        if !served.sessions.contains_key(&session) {
+            return Err(SessionError::NoSuchSession(session));
+        }
         Self::drivable(harness, &RunSettings::default()).map_err(SessionError::Start)?;
-        self.record(session, SessionFact::ClientChosen { harness })?;
-        // The old client's process goes; its model and settings with it.
-        self.stop_process(session, served).await;
-        let Some(mut held) = served.sessions.remove(&session) else {
+        let Some(mut serving) = served.sessions.remove(&session) else {
             return Err(SessionError::NoSuchSession(session));
         };
-        Self::advance(&mut held, SessionInput::ChooseClient(harness));
-        held.harness = harness;
-        held.settings = RunSettings::default();
-        held.thread = None;
-        if let Err(error) = self
-            .spawn(
-                session,
-                &mut held,
-                RunSession::Existing(session),
-                None,
-                served,
-            )
+        let (slot, room) = self.room();
+        let outcome = serving.choose_client(harness, room);
+        self.settle_session(session, serving, outcome, slot, served)
             .await
-        {
-            tracing::debug!(%session, %error, "the chosen client did not start");
-        }
-        self.publish_session(session, &held);
-        served.sessions.insert(session, held);
-        Ok(SessionAnswer::Done)
+            .map(|started| {
+                if let Some(Err(error)) = started {
+                    tracing::debug!(%session, %error, "the chosen client did not start");
+                }
+                SessionAnswer::Done
+            })
     }
 
     async fn shelve(
@@ -1217,55 +1146,59 @@ impl<H: AgentHost> SupervisorTask<H> {
         shelving: Shelving,
         served: &mut Served,
     ) -> Result<SessionAnswer, SessionError> {
-        let held = served
-            .sessions
-            .get(&session)
-            .ok_or(SessionError::NoSuchSession(session))?;
-        let (state, actions) = held
-            .state
-            .apply(shelving.input())
-            .map_err(SessionError::Refused)?;
-        let fact = match shelving {
-            Shelving::Archive => SessionFact::Archived,
-            Shelving::Unarchive => SessionFact::Unarchived,
+        let Some(mut serving) = served.sessions.remove(&session) else {
+            return Err(SessionError::NoSuchSession(session));
         };
-        self.record(session, fact)?;
-        for action in actions {
-            match action {
-                SessionAction::StopProcess => self.stop_process(session, served).await,
-                SessionAction::UseClient(_) | SessionAction::Discard => {}
-            }
-        }
-        if let Some(held) = served.sessions.get_mut(&session) {
-            held.state = state;
-            self.publish_session(session, held);
-        }
-        Ok(SessionAnswer::Done)
+        let (slot, room) = self.room();
+        let outcome = serving.shelve(shelving, room);
+        self.settle_session(session, serving, outcome, slot, served)
+            .await
+            .map(|_| SessionAnswer::Done)
     }
 
-    /// After `run` ended: when it was its session's newest process and
-    /// ended for resting idle, the session takes that in, and a draft never
-    /// asked anything and holding nothing is discarded.
-    fn rested(&self, run: RunId, served: &mut Served) {
+    /// Carry out a session change's effects, or serve it again unchanged
+    /// when it was refused.
+    async fn settle_session(
+        &self,
+        session: SessionId,
+        serving: Session,
+        outcome: Result<Vec<SessionEffect>, SessionError>,
+        slot: Option<SessionSlot>,
+        served: &mut Served,
+    ) -> Result<Option<Result<RunId, StartError>>, SessionError> {
+        match outcome {
+            Ok(effects) => Ok(self
+                .carry_out_session(session, serving, effects, slot, served)
+                .await),
+            Err(refused) => {
+                served.sessions.insert(session, serving);
+                Err(refused)
+            }
+        }
+    }
+
+    /// After `run` ended, its session takes that in: a draft never asked
+    /// anything and holding nothing, whose newest process stopped after
+    /// resting idle, is discarded.
+    async fn ended(&self, run: RunId, served: &mut Served) {
         let Some(live) = served.runs.get(&run) else {
             return;
         };
-        let RunState::Ended {
-            end: RunEnd::Idled, ..
-        } = live.process.state()
-        else {
+        let RunState::Ended { end, .. } = *live.process.state() else {
             return;
         };
         let session = live.process.session();
-        let Some(held) = served.sessions.get_mut(&session) else {
+        let Some(serving) = served.sessions.get_mut(&session) else {
             return;
         };
-        if held.process != Some(run) {
+        let effects = serving.process_ended(run, end);
+        if effects.is_empty() {
             return;
         }
-        let holding = held.attached.holding();
-        if Self::advance(held, SessionInput::Idled(holding)).contains(&SessionAction::Discard) {
-            self.discard(session, served);
+        if let Some(serving) = served.sessions.remove(&session) {
+            let _ = self
+                .carry_out_session(session, serving, effects, None, served)
+                .await;
         }
     }
 
@@ -1273,10 +1206,15 @@ impl<H: AgentHost> SupervisorTask<H> {
     /// delete would: it stops being served, and the store deletes it and its
     /// ended runs when the recorder reaches the edit, after the run's end.
     /// Without room to record that, it is kept and served as it was.
-    fn discard(&self, session: SessionId, served: &mut Served) {
+    fn discard(
+        &self,
+        session: SessionId,
+        serving: Session,
+        served: &mut Served,
+    ) -> Option<Session> {
         let Some(slot) = self.recorder.history_slot() else {
             tracing::debug!(%session, "no room to record an unused draft's discard; it is kept");
-            return;
+            return Some(serving);
         };
         if let Some(folders) = &self.attachments {
             let folder = folders.session(session);
@@ -1290,7 +1228,6 @@ impl<H: AgentHost> SupervisorTask<H> {
                 .boxed(),
             );
         }
-        served.sessions.remove(&session);
         served
             .runs
             .retain(|_, live| live.process.session() != session);
@@ -1301,20 +1238,20 @@ impl<H: AgentHost> SupervisorTask<H> {
             HistoryChange::Delete,
         );
         tracing::debug!(%session, "an unused draft was discarded");
+        None
     }
 
-    /// Stop the process serving `session`, if one runs.
-    async fn stop_process(&self, session: SessionId, served: &mut Served) {
-        if let Some(run) = served.process(session)
-            && let Some(live) = served.runs.get_mut(&run)
-        {
-            match live.process.command(RunCommand::Stop) {
-                Ok(effects) => {
-                    self.carry_out(live, effects, &mut served.idles);
-                }
-                Err(error) => {
-                    tracing::debug!(%session, %error, "the session's process would not stop");
-                }
+    /// Stop `run`, the process serving `session`, if one runs.
+    fn stop_process(&self, session: SessionId, run: Option<RunId>, served: &mut Served) {
+        let Some(live) = run.and_then(|run| served.runs.get_mut(&run)) else {
+            return;
+        };
+        match live.process.command(RunCommand::Stop) {
+            Ok(effects) => {
+                self.carry_out(live, effects, &mut served.idles);
+            }
+            Err(error) => {
+                tracing::debug!(%session, %error, "the session's process would not stop");
             }
         }
     }
@@ -1338,13 +1275,21 @@ impl<H: AgentHost> SupervisorTask<H> {
         let effects = live.process.command(command)?;
         self.carry_out(live, effects, &mut served.idles);
         let settings = live.process.settings().clone();
-        if let Some(held) = served.sessions.get_mut(&session) {
-            held.settings = settings;
-            if prompted && let Err(error) = self.prompted(session, held, true) {
+        let Some(mut serving) = served.sessions.remove(&session) else {
+            return Ok(());
+        };
+        serving.took(settings);
+        let (slot, room) = self.room();
+        let effects = match prompted {
+            true => serving.prompted(room).unwrap_or_else(|error| {
                 tracing::debug!(%session, %error, "the session's return was not recorded");
-            }
-            self.publish_session(session, held);
-        }
+                Vec::new()
+            }),
+            false => Vec::new(),
+        };
+        let _ = self
+            .carry_out_session(session, serving, effects, slot, served)
+            .await;
         Ok(())
     }
 
@@ -1595,24 +1540,21 @@ impl<H: AgentHost> SupervisorTask<H> {
 
     /// Apply what a process's turns mean to the session it serves. Whether
     /// a turn failed.
-    fn turned(mut held: Option<&mut Held>, turned: Vec<Turned>) -> bool {
+    fn turned(mut serving: Option<&mut Session>, turned: Vec<Turned>) -> bool {
         let mut failed = false;
         for turn in turned {
             match turn {
-                // A conversation is kept once a turn runs in it.
                 Turned::Started { conversation } => {
-                    if let (Some(held), Some(thread)) = (held.as_deref_mut(), conversation) {
-                        held.thread = Some(thread);
+                    if let Some(serving) = serving.as_deref_mut() {
+                        serving.turn_started(conversation);
                     }
                 }
-                // Turns change files.
                 Turned::Ended {
                     failed: ended_failed,
                 } => {
                     failed |= ended_failed;
-                    if let Some(held) = held.as_deref_mut() {
-                        held.files = None;
-                        held.turns_ended = held.turns_ended.wrapping_add(1);
+                    if let Some(serving) = serving.as_deref_mut() {
+                        serving.turn_ended();
                     }
                 }
             }
