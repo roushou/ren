@@ -59,6 +59,8 @@ pub enum ControlRefusal {
     NoApprovals,
     NoScratch,
     SpawnFailed,
+    /// The client's model listing failed.
+    ModelsUnavailable,
 
     // Runs and sessions: what the run's state refuses.
     Starting,
@@ -168,7 +170,7 @@ impl ControlRefusal {
             | Self::AttachmentStorage
             | Self::ToolsFailed => StatusCode::INTERNAL_SERVER_ERROR,
             Self::ToolsUnsupported => StatusCode::NOT_IMPLEMENTED,
-            Self::SpawnFailed => StatusCode::BAD_GATEWAY,
+            Self::SpawnFailed | Self::ModelsUnavailable => StatusCode::BAD_GATEWAY,
             Self::Unavailable
             | Self::Unrecorded
             | Self::BackupIncomplete

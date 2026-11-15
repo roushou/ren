@@ -45,9 +45,9 @@ export const RecordingId = new Uuid<'RecordingId'>();
 export const TurnId = new Uuid<'TurnId'>();
 
 // Vocabularies (the daemon's label enums). Unrecognised text is kept.
-const providers = ['anthropic', 'codex', 'openai', 'deepseek'] as const;
+export const providers = ['anthropic', 'codex', 'openai', 'deepseek'] as const;
 export type Provider = (typeof providers)[number];
-const endpoints = [
+export const endpoints = [
   'messages',
   'count_tokens',
   'models',
@@ -57,13 +57,13 @@ const endpoints = [
 ] as const;
 export type Endpoint = (typeof endpoints)[number];
 // `MESSAGE`: a `response.create` on a WebSocket channel.
-const methods = ['GET', 'POST', 'MESSAGE'] as const;
+export const methods = ['GET', 'POST', 'MESSAGE'] as const;
 export type Method = (typeof methods)[number];
-const transports = ['http', 'websocket'] as const;
+export const transports = ['http', 'websocket'] as const;
 export type Transport = (typeof transports)[number];
-const callStates = ['open', 'finished', 'recovered'] as const;
+export const callStates = ['open', 'finished', 'recovered'] as const;
 export type CallState = (typeof callStates)[number];
-const attemptTerminals = [
+export const attemptTerminals = [
   'body_complete',
   // A WebSocket call's terminal event arrived.
   'terminal_event',
@@ -76,7 +76,7 @@ const attemptTerminals = [
   'interrupted',
 ] as const;
 export type AttemptTerminal = (typeof attemptTerminals)[number];
-const terminalCauses = [
+export const terminalCauses = [
   'connect_failed',
   'stream_refused',
   'header_timeout',
@@ -93,12 +93,12 @@ const terminalCauses = [
   'declared_length',
 ] as const;
 export type TerminalCause = (typeof terminalCauses)[number];
-const attemptPhases = ['upload', 'awaiting_head', 'response'] as const;
+export const attemptPhases = ['upload', 'awaiting_head', 'response'] as const;
 /** Why Ren answered a call without forwarding it. */
-const callPurposes = ['work', 'quota_probe'] as const;
+export const callPurposes = ['work', 'quota_probe'] as const;
 /** Why a client sent a call: its session's work, or a check of its own. */
 export type CallPurpose = (typeof callPurposes)[number];
-const callRejections = [
+export const callRejections = [
   'too_large',
   'buffer_full',
   'upload_timeout',
@@ -116,7 +116,7 @@ const callRejections = [
 ] as const;
 export type CallRejection = (typeof callRejections)[number];
 /** How a call's caller was identified (see the daemon's named users). */
-const callerKinds = ['user_tailscale', 'user_token', 'unlisted', 'unidentified'] as const;
+export const callerKinds = ['user_tailscale', 'user_token', 'unlisted', 'unidentified'] as const;
 export type CallerKind = (typeof callerKinds)[number];
 /** Who made a call: a named user, a Tailscale login no user lists, or nobody Ren can identify. */
 export interface CallerView {
@@ -127,9 +127,9 @@ export interface CallerView {
   login: string | null;
 }
 export type AttemptPhase = (typeof attemptPhases)[number];
-const bodyEndings = ['open', 'ended', 'unfinished'] as const;
+export const bodyEndings = ['open', 'ended', 'unfinished'] as const;
 export type BodyEnding = (typeof bodyEndings)[number];
-const modelOutcomes = [
+export const modelOutcomes = [
   'completed',
   'incomplete',
   'refused',
@@ -138,7 +138,7 @@ const modelOutcomes = [
   'unknown',
 ] as const;
 export type ModelOutcome = (typeof modelOutcomes)[number];
-const hintSources = [
+export const hintSources = [
   'claude_code_headers',
   'codex_headers',
   'pi_extension_headers',
@@ -146,18 +146,18 @@ const hintSources = [
   'opencode_headers',
 ] as const;
 export type HintSource = (typeof hintSources)[number];
-const hintIssues = [
+export const hintIssues = [
   'invalid_or_duplicate_header',
   'invalid_turn_metadata',
   'conflicting_identifiers',
   'turn_without_session',
 ] as const;
 export type HintIssue = (typeof hintIssues)[number];
-const inputAccountings = ['includes_cache', 'excludes_cache'] as const;
+export const inputAccountings = ['includes_cache', 'excludes_cache'] as const;
 export type InputAccounting = (typeof inputAccountings)[number];
-const coverages = ['complete', 'partial', 'unavailable'] as const;
+export const coverages = ['complete', 'partial', 'unavailable'] as const;
 export type Coverage = (typeof coverages)[number];
-const limitations = [
+export const limitations = [
   'unsupported_format',
   'unsupported_encoding',
   'capture_gap',
@@ -174,11 +174,11 @@ const limitations = [
   'no_terminal_event',
 ] as const;
 export type Limitation = (typeof limitations)[number];
-const formatSources = ['declared', 'inferred'] as const;
+export const formatSources = ['declared', 'inferred'] as const;
 export type FormatSource = (typeof formatSources)[number];
-const terminalEvents = ['seen', 'missing'] as const;
+export const terminalEvents = ['seen', 'missing'] as const;
 export type TerminalEvent = (typeof terminalEvents)[number];
-const kindFamilies = [
+export const kindFamilies = [
   'event',
   'document',
   'content_block',
@@ -188,7 +188,7 @@ const kindFamilies = [
   'incomplete_reason',
 ] as const;
 export type KindFamily = (typeof kindFamilies)[number];
-const responseFormats = [
+export const responseFormats = [
   'event_stream',
   'json',
   'other',
@@ -196,9 +196,9 @@ const responseFormats = [
   'websocket_messages',
 ] as const;
 export type ResponseFormat = (typeof responseFormats)[number];
-const responseEncodings = ['identity', 'gzip', 'zstd', 'brotli', 'unsupported'] as const;
+export const responseEncodings = ['identity', 'gzip', 'zstd', 'brotli', 'unsupported'] as const;
 export type ResponseEncoding = (typeof responseEncodings)[number];
-const observationKinds = [
+export const observationKinds = [
   'call_opened',
   'attempt_started',
   'response_head',
@@ -207,8 +207,22 @@ const observationKinds = [
   'call_recovered',
   'channel_closed',
   'operator_action',
+  'run_started',
+  'run_opened',
+  'run_ended',
+  'run_recovered',
+  'history_edited',
+  'run_configured',
+  'session_created',
+  'session_configured',
+  'session_client_chosen',
+  'session_archived',
+  'session_unarchived',
+  'session_attached',
+  'session_detached',
+  'session_attachments_sent',
 ] as const;
-const channelEnds = [
+export const channelEnds = [
   'client_closed',
   'upstream_closed',
   'client_failed',
@@ -222,25 +236,99 @@ const channelEnds = [
   'recovered',
 ] as const;
 export type ChannelEnd = (typeof channelEnds)[number];
-const messagePayloads = ['text', 'binary'] as const;
+export const messagePayloads = ['text', 'binary'] as const;
 export type MessagePayload = (typeof messagePayloads)[number];
 export type ObservationKind = (typeof observationKinds)[number];
-const healthStatuses = ['ok', 'degraded'] as const;
+export const healthStatuses = ['ok', 'degraded'] as const;
 /** What the gateway says it is: the installed service, or a development one. */
-const environments = ['production', 'development'] as const;
+export const environments = ['production', 'development'] as const;
 export type Environment = (typeof environments)[number];
 export type HealthStatus = (typeof healthStatuses)[number];
-const errorCodes = ['not_found', 'invalid_query', 'busy', 'unavailable'] as const;
+export const errorCodes = [
+  'not_found',
+  'invalid_query',
+  'busy',
+  'unavailable',
+  'identity_refused',
+] as const;
 export type ErrorCode = (typeof errorCodes)[number];
-const previewExtents = ['complete', 'partial', 'truncated', 'gap'] as const;
+/** Why the daemon's control API refused a request: its `error` code. The UI
+ * server adds codes of its own when it refuses before the daemon is asked. */
+export const controlRefusals = [
+  'cross_site',
+  'unauthorized',
+  'forbidden',
+  'invalid_request',
+  'not_found',
+  'unavailable',
+  'not_running',
+  'unrecorded',
+  'unrecordable',
+  'backup_running',
+  'backup_incomplete',
+  'backup_failed',
+  'call_open',
+  'run_running',
+  'unreadable',
+  'runs_disabled',
+  'invalid_directory',
+  'directory_not_found',
+  'not_drivable',
+  'no_approvals',
+  'no_scratch',
+  'spawn_failed',
+  'models_unavailable',
+  'starting',
+  'busy',
+  'not_working',
+  'turn_not_started',
+  'no_such_approval',
+  'stopping',
+  'ended',
+  'nothing_queued',
+  'not_offered',
+  'no_images',
+  'protocol',
+  'client_fixed',
+  'archived',
+  'not_archived',
+  'no_process',
+  'no_attachments',
+  'attachment_sent',
+  'attachment_too_large',
+  'attachment_storage',
+  'blank_prompt',
+  'too_many_attachments',
+  'attachment_name',
+  'attachment_empty',
+  'attachment_unrecognized',
+  'attachment_unreadable',
+  'attachment_too_wide',
+  'sign_in_not_offered',
+  'not_installed',
+  'no_sign_in',
+  'not_awaiting_answer',
+  'redirect_not_an_address',
+  'redirect_elsewhere',
+  'redirect_incomplete',
+  'tools_disabled',
+  'tools_busy',
+  'tools_no_generation',
+  'tools_collected',
+  'tools_unsupported',
+  'tools_refused',
+  'tools_failed',
+] as const;
+export type ControlRefusal = (typeof controlRefusals)[number];
+export const previewExtents = ['complete', 'partial', 'truncated', 'gap'] as const;
 export type PreviewExtent = (typeof previewExtents)[number];
-const rawFormats = ['utf8', 'hex'] as const;
+export const rawFormats = ['utf8', 'hex'] as const;
 export type RawFormat = (typeof rawFormats)[number];
-const textEnds = ['intact', 'split_character'] as const;
+export const textEnds = ['intact', 'split_character'] as const;
 export type TextEnd = (typeof textEnds)[number];
-const previewDecodings = ['none', 'gzip_magic', 'zstd_magic', 'brotli'] as const;
+export const previewDecodings = ['none', 'gzip_magic', 'zstd_magic', 'brotli'] as const;
 export type PreviewDecoding = (typeof previewDecodings)[number];
-const decodeIntegrities = ['not_decoded', 'verified', 'prefix', 'failed'] as const;
+export const decodeIntegrities = ['not_decoded', 'verified', 'prefix', 'failed'] as const;
 export type DecodeIntegrity = (typeof decodeIntegrities)[number];
 
 export type Direction = 'request' | 'response';
@@ -866,10 +954,10 @@ export class ApiError extends Error {
 
 // Activity and reports: what a turn or call did, read from recorded bodies,
 // and where a session's context and cache tokens went.
-const harnesses = ['claude_code', 'codex', 'pi', 'opencode'] as const;
+export const harnesses = ['claude_code', 'codex', 'pi', 'opencode'] as const;
 export type Harness = (typeof harnesses)[number];
 export const HARNESSES = harnesses;
-const effectKinds = [
+export const effectKinds = [
   'read_file',
   'write_file',
   'run_command',
@@ -878,9 +966,9 @@ const effectKinds = [
   'fetch',
 ] as const;
 export type EffectKind = (typeof effectKinds)[number];
-const resultStatuses = ['succeeded', 'failed', 'unreported'] as const;
+export const resultStatuses = ['succeeded', 'failed', 'unreported'] as const;
 export type ResultStatus = (typeof resultStatuses)[number];
-const activityLimitations = [
+export const activityLimitations = [
   'unsupported_endpoint',
   'capture_gap',
   'truncated',
@@ -894,14 +982,14 @@ const activityLimitations = [
   'not_yet_derived',
 ] as const;
 export type ActivityLimitation = (typeof activityLimitations)[number];
-const findingKinds = [
+export const findingKinds = [
   'cache_rebuild',
   'context_growth',
   'large_tool_output',
   'repeated_failure',
   'secret_exposure',
 ] as const;
-const secretKinds = [
+export const secretKinds = [
   'anthropic_key',
   'openai_key',
   'github_token',
@@ -1188,7 +1276,7 @@ const turns = object<Turns>({
     }),
   ),
 });
-const searchFields = ['prompt', 'reply', 'tool_input', 'tool_output'] as const;
+export const searchFields = ['prompt', 'reply', 'tool_input', 'tool_output'] as const;
 export type SearchField = (typeof searchFields)[number];
 export const SEARCH_FIELDS = searchFields;
 /** A `?field=` value: a known search field, or null for any other text or none. */

@@ -5,6 +5,7 @@
 // No browser APIs beyond the `fetch` handed in; tested in tests/runs.test.ts.
 import {
   API_VERSION,
+  HARNESSES,
   RecordingId,
   toolEffect,
   versioned,
@@ -68,8 +69,7 @@ export type ApprovalId = Brand<string, 'ApprovalId'>;
 /** A turn item, named as the client named it. */
 export type ItemId = Brand<string, 'ItemId'>;
 
-const harnesses = ['claude_code', 'codex', 'pi', 'opencode'] as const;
-const runEnds = [
+export const runEnds = [
   'spawn_failed',
   'open_refused',
   'exited',
@@ -81,7 +81,7 @@ const runEnds = [
 export type RunEnd = (typeof runEnds)[number];
 const stopCauses = ['operator', 'shutdown', 'open_refused', 'idle'] as const;
 export type StopCause = (typeof stopCauses)[number];
-const decisions = ['accept', 'accept_for_session', 'decline', 'cancel'] as const;
+export const decisions = ['accept', 'accept_for_session', 'decline', 'cancel'] as const;
 /** How much a model reasons, from none to the most. */
 export const EFFORTS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const;
 export type Effort = (typeof EFFORTS)[number];
@@ -416,7 +416,7 @@ const itemRead: Decoder<ItemRead> = (value, path) => {
 
 const runSnapshot = object<RunSnapshot>({
   run: RunId.decode,
-  harness: label(harnesses),
+  harness: label(HARNESSES),
   workdir: string,
   state: runState,
   settings: runSettings,
@@ -515,7 +515,7 @@ export const runUpdate: Decoder<RunUpdate> = (value, path) => {
 
 const recordedRun = object<RecordedRun>({
   id: RunId.decode,
-  harness: label(harnesses),
+  harness: label(HARNESSES),
   workdir: string,
   started_at: brandedCount<'UnixMillis'>(),
   thread: nullable(branded<'NativeThreadId'>()),
@@ -582,7 +582,7 @@ export interface SessionBody {
 
 const servedSession = object<ServedSession>({
   session: SessionId.decode,
-  harness: label(harnesses),
+  harness: label(HARNESSES),
   workdir: string,
   settings: runSettings,
   state: object<SessionState>({ shelf: label(shelves), phase: label(SESSION_PHASES) }),
@@ -593,7 +593,7 @@ const servedSession = object<ServedSession>({
 
 const storedSession = object<StoredSession>({
   id: SessionId.decode,
-  harness: label(harnesses),
+  harness: label(HARNESSES),
   workdir: string,
   created_at: brandedCount<'UnixMillis'>(),
   model: nullable(branded<'ModelId'>()),
@@ -624,7 +624,7 @@ export type ProjectGit =
   | { kind: 'unreadable' }
   | { kind: 'none' };
 
-const placeKinds = ['project', 'other', 'scratch'] as const;
+export const placeKinds = ['project', 'other', 'scratch'] as const;
 /** What kind of place a run can start in. */
 export type PlaceKind = (typeof placeKinds)[number];
 
@@ -678,7 +678,7 @@ const runProjects = versioned(
 );
 const recordedRuns = versioned(object<{ runs: RecordedRun[] }>({ runs: array(recordedRun) }));
 
-const clientStatuses = ['ready', 'not_installed', 'not_drivable'] as const;
+export const clientStatuses = ['ready', 'not_installed', 'not_drivable'] as const;
 /** Whether a run can start with a client on the daemon's host. */
 export type ClientStatus = (typeof clientStatuses)[number];
 
@@ -700,7 +700,7 @@ const runClients = versioned(
   object<{ clients: RunClient[] }>({
     clients: array(
       object<RunClient>({
-        harness: label(harnesses),
+        harness: label(HARNESSES),
         status: label(clientStatuses),
         approvals: array(label(APPROVAL_POLICIES)),
         midway: array(label(MIDWAY)),
@@ -714,7 +714,7 @@ const runClients = versioned(
 );
 /** A model, named as its client names it (`--model`, or Pi's `provider/id`). */
 export type ModelId = Brand<string, 'ModelId'>;
-const modelChoices = ['default', 'other'] as const;
+export const modelChoices = ['default', 'other'] as const;
 
 /** A model a client offers, as the client itself lists it. */
 export interface RunModel {

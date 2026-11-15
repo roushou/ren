@@ -30,18 +30,18 @@ export type Generation = Brand<number, 'Generation'>;
 
 export const KINDS = ['runtime', 'utility', 'client'] as const;
 export type Kind = (typeof KINDS)[number];
-const origins = ['builtin', 'operator'] as const;
+export const origins = ['builtin', 'operator'] as const;
 /** Which catalog names a package: Ren's own, or the operator's `[tools]`. */
 export type Origin = (typeof origins)[number];
-const platforms = ['linux_x64', 'linux_arm64', 'macos_arm64'] as const;
+export const platforms = ['linux_x64', 'linux_arm64', 'macos_arm64'] as const;
 export type Platform = (typeof platforms)[number];
-const generationStates = ['current', 'in_use', 'idle'] as const;
+export const generationStates = ['current', 'in_use', 'idle'] as const;
 export type GenerationState = (typeof generationStates)[number];
-const outcomes = ['unchanged', 'activated', 'failed'] as const;
+export const outcomes = ['unchanged', 'activated', 'failed'] as const;
 export type ChangeOutcome = (typeof outcomes)[number];
-const changeKinds = ['add', 'replace', 'remove'] as const;
+export const changeKinds = ['add', 'replace', 'remove'] as const;
 export type ChangeKind = (typeof changeKinds)[number];
-const stages = ['fetch', 'verify', 'unpack', 'place'] as const;
+export const stages = ['fetch', 'verify', 'unpack', 'place'] as const;
 export type Stage = (typeof stages)[number];
 
 export interface InstalledTool {

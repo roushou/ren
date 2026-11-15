@@ -611,6 +611,9 @@ tracked and update it intentionally.
 The same principles apply in TypeScript:
 
 - Parse API responses and environment variables at the boundary.
+- Every closed vocabulary the UI decodes is an exported `as const` array
+  pinned to the daemon's `labels.txt` tables by `ui/apps/web/tests/labels.test.ts`;
+  a new vocabulary goes in its table.
   `ui/apps/web/src/env.ts` validates gateway origins, keeps loopback defaults, and keeps the
   server's daemon address separate from the client-facing address.
 - Use discriminated unions for states instead of loose flags.

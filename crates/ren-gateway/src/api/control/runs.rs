@@ -21,7 +21,7 @@ use axum::{
     },
     routing::{get, post},
 };
-use http::{HeaderMap, StatusCode};
+use http::HeaderMap;
 use ren_harness::{
     Harness,
     commands::ClientCommand,
@@ -241,15 +241,7 @@ impl RunsApi {
             .parse::<Harness>()
             .map_err(|_| ControlRefusal::NotFound)?;
         let unlisted = |error: ModelsError| {
-            (
-                StatusCode::BAD_GATEWAY,
-                Json(serde_json::json!({
-                    "api_version": ControlApi::API_VERSION,
-                    "error": "models_unavailable",
-                    "message": error.to_string(),
-                })),
-            )
-                .into_response()
+            ControlRefusal::ModelsUnavailable.explained(Some(error.to_string()))
         };
         Ok(match supervisor.models(harness).await {
             Ok(models) => Json(serde_json::json!({
