@@ -18,6 +18,7 @@ pub mod files;
 pub mod host;
 mod login;
 mod models;
+mod process;
 pub mod project;
 #[cfg(test)]
 mod purity;

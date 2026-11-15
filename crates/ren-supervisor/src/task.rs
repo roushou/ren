@@ -12,9 +12,9 @@
 //! [`Supervisor`]: crate::Supervisor
 
 use crate::attachments::{Attached, AttachmentFolders, AttachmentUse};
-use crate::entries::Entries;
 use crate::login::{SignInError, SignIns, StatusCheck};
 use crate::models::{Listings, ModelProbe, ModelsError, ModelsReply};
+use crate::process::{Process, ProcessEffect, Rest, Serving};
 use crate::{
     CommandError, Conversation, Create, IdleStop, ImageTaking, Places, Request, RunSnapshot,
     RunUpdate, SessionAnswer, SessionError, SessionRequest, SessionSeed, SessionSnapshot,
@@ -23,7 +23,7 @@ use crate::{
     files::{FileListing, FileQuery, FoundPath},
     host::{AgentHost, AgentProcess, KillSwitch},
     project::Search,
-    run::{ProcessExit, RunAction, RunCommand, RunEvent, RunState},
+    run::{ProcessExit, RunCommand, RunState},
     session::{SessionAction, SessionInput, SessionState, Shelving},
     workdir::{Bounds, RequestedDir, Workdir},
 };
@@ -36,7 +36,7 @@ use ren_harness::sign_in::Console;
 use ren_harness::{
     Harness,
     attachment::{Attachment, Limits, NotAccepted, Offer},
-    drive::{DriveEvent, Driver, Opening, Prompt, PromptImage, TurnEnd},
+    drive::{Driver, Opening, Prompt, PromptImage},
     endpoint::GatewayEndpoint,
     lines::{Framed, Line, LineLimit, Lines},
     models::{DefaultChoice, ModelId, ModelListing},
@@ -79,32 +79,25 @@ pub struct SupervisorTask<H> {
     pub(crate) attachment_limits: Limits,
 }
 
-/// One run the task knows of.
+/// One process the task drives: its pure lifecycle, and the handles that
+/// carry out what it says.
 struct Live {
-    /// The session the run serves.
-    session: SessionId,
-    harness: Harness,
-    workdir: Workdir,
-    settings: RunSettings,
-    state: RunState,
-    codec: Option<Driver>,
+    process: Process,
     /// Lines queued for its stdin; `None` once its stdin is closed.
     stdin: Option<mpsc::Sender<Line>>,
     kill: Option<KillSwitch>,
     /// Records the run's opening and end; taken when the end is recorded.
     tap: Option<RunTap>,
-    /// The first prompt, sent once the conversation opens.
-    first: Option<Prompt>,
-    /// The conversation its client opened. The session resumes it only once
-    /// a turn has run in it: a client keeps no conversation without one.
-    opened: Option<NativeThreadId>,
-    /// What the run's conversation keeps of its client's events.
-    entries: Entries,
-    /// How many times the run became idle: a timer set for an earlier time
-    /// is stale.
-    rested: u64,
-    /// It became idle and its timer is not set yet.
-    arm: bool,
+}
+
+/// What a process's effects mean for the session it serves.
+enum Turned {
+    Started {
+        conversation: Option<NativeThreadId>,
+    },
+    Ended {
+        failed: bool,
+    },
 }
 
 /// One session the task serves.
@@ -195,8 +188,8 @@ struct Served {
     /// Each run's stdin writer: how it ended.
     writers: FuturesUnordered<BoxFuture<'static, (RunId, std::io::Result<()>)>>,
     exits: Exits,
-    /// Idle timers: the run, and which time it became idle.
-    idles: FuturesUnordered<BoxFuture<'static, (RunId, u64)>>,
+    /// Idle stops: the run, and the rest each was armed for.
+    idles: FuturesUnordered<BoxFuture<'static, (RunId, Rest)>>,
     /// The default model each client listed, for a client that is started
     /// on it by name when none is chosen.
     defaults: HashMap<Harness, ModelId>,
@@ -209,7 +202,7 @@ impl Served {
     /// The run serving `session` now, if one runs.
     fn process(&self, session: SessionId) -> Option<RunId> {
         let run = self.sessions.get(&session)?.process?;
-        match self.runs.get(&run)?.state {
+        match self.runs.get(&run)?.process.state() {
             RunState::Ended { .. } => None,
             RunState::Starting
             | RunState::Idle { .. }
@@ -250,22 +243,24 @@ impl<H: AgentHost> SupervisorTask<H> {
                     Some(request) => self.request(request, &mut served).await,
                     None => {
                         accepting = false;
-                        for (run, live) in &mut served.runs {
-                            self.apply(*run, live, RunEvent::Shutdown).await;
+                        for live in served.runs.values_mut() {
+                            let effects = live.process.shut_down();
+                            self.carry_out(live, effects, &mut served.idles);
                         }
                     }
                 },
                 Some((run, frames)) = served.outputs.next(), if !served.outputs.is_empty() => {
                     if let Some(live) = served.runs.get_mut(&run) {
-                        let mut held = served.sessions.get_mut(&live.session);
-                        let mut failed = false;
+                        let mut turned = Vec::new();
                         for frame in frames {
-                            failed |= self.frame(run, live, held.as_deref_mut(), frame).await;
+                            let effects = live.process.receive(frame);
+                            turned.extend(self.carry_out(live, effects, &mut served.idles));
                         }
+                        let (session, harness) = (live.process.session(), live.process.harness());
+                        let failed = Self::turned(served.sessions.get_mut(&session), turned);
                         // A failed turn may be a sign-in that ran out:
                         // read the client's sign-in again.
                         if failed {
-                            let harness = live.harness;
                             sign_ins.check(harness, None, || self.status_check(harness));
                         }
                     }
@@ -314,43 +309,25 @@ impl<H: AgentHost> SupervisorTask<H> {
                         }
                     }
                 }
-                Some((run, rested)) = served.idles.next(), if !served.idles.is_empty() => {
-                    if let Some(live) = served.runs.get_mut(&run)
-                        && live.rested == rested
-                    {
-                        self.apply(run, live, RunEvent::IdleTimeout).await;
+                Some((run, rest)) = served.idles.next(), if !served.idles.is_empty() => {
+                    if let Some(live) = served.runs.get_mut(&run) {
+                        let effects = live.process.rest_over(rest);
+                        self.carry_out(live, effects, &mut served.idles);
                     }
                 }
                 Some((run, exit)) = served.exits.next(), if !served.exits.is_empty() => {
                     if let Some(live) = served.runs.get_mut(&run) {
                         live.stdin = None;
                         live.kill = None;
-                        self.apply(run, live, RunEvent::Exited(exit)).await;
+                        let effects = live.process.exited(exit);
+                        self.carry_out(live, effects, &mut served.idles);
                     }
                     self.rested(run, &mut served);
                 }
                 else => break,
             }
-            self.arm(&mut served);
             if !accepting && served.exits.is_empty() {
                 break;
-            }
-        }
-    }
-
-    /// Set the timer of each run that became idle.
-    fn arm(&self, served: &mut Served) {
-        let IdleStop::After(after) = self.idle else {
-            return;
-        };
-        for (run, live) in &mut served.runs {
-            if std::mem::take(&mut live.arm) {
-                let (run, rested) = (*run, live.rested);
-                served.idles.push(
-                    tokio::time::sleep(after)
-                        .map(move |()| (run, rested))
-                        .boxed(),
-                );
             }
         }
     }
@@ -449,11 +426,11 @@ impl<H: AgentHost> SupervisorTask<H> {
                         .iter()
                         .map(|(run, live)| RunSnapshot {
                             run: *run,
-                            session: live.session,
-                            harness: live.harness,
-                            workdir: live.workdir.as_path().to_path_buf(),
-                            state: live.state.clone(),
-                            settings: live.settings.clone(),
+                            session: live.process.session(),
+                            harness: live.process.harness(),
+                            workdir: live.process.workdir().as_path().to_path_buf(),
+                            state: live.process.state().clone(),
+                            settings: live.process.settings().clone(),
                         })
                         .collect(),
                 );
@@ -695,37 +672,25 @@ impl<H: AgentHost> SupervisorTask<H> {
             )
             .map_err(StartError::Unrecorded)?;
         held.process = Some(run);
+        let serving = Serving {
+            run,
+            session,
+            harness,
+            workdir: workdir.clone(),
+            settings,
+        };
         let process = match self.host.spawn(&plan, &workdir, &tools) {
             Ok(process) => process,
             Err(source) => {
-                tap.end(RunEnd::SpawnFailed, None);
-                let state = RunState::Ended {
-                    end: RunEnd::SpawnFailed,
-                    exit: None,
+                let (process, effects) = Process::unstarted(serving);
+                let mut live = Live {
+                    process,
+                    stdin: None,
+                    kill: None,
+                    tap: Some(tap),
                 };
-                self.publish(RunUpdate::State {
-                    run,
-                    state: state.clone(),
-                });
-                served.runs.insert(
-                    run,
-                    Live {
-                        session,
-                        harness,
-                        workdir,
-                        settings,
-                        state,
-                        codec: None,
-                        stdin: None,
-                        kill: None,
-                        tap: None,
-                        first: None,
-                        opened: None,
-                        entries: Entries::default(),
-                        rested: 0,
-                        arm: false,
-                    },
-                );
+                self.carry_out(&mut live, effects, &mut served.idles);
+                served.runs.insert(run, live);
                 return Err(StartError::Spawn { run, source });
             }
         };
@@ -741,29 +706,14 @@ impl<H: AgentHost> SupervisorTask<H> {
                 .map(move |written| (run, written))
                 .boxed(),
         );
+        let (process, effects) = Process::opening(serving, codec, opening_lines, first);
         let mut live = Live {
-            session,
-            harness,
-            workdir,
-            settings,
-            state: RunState::Starting,
-            codec: Some(codec),
+            process,
             stdin: Some(queue),
             kill: Some(kill),
             tap: Some(tap),
-            first,
-            opened: None,
-            entries: Entries::default(),
-            rested: 0,
-            arm: false,
         };
-        self.publish(RunUpdate::State {
-            run,
-            state: RunState::Starting,
-        });
-        for line in &opening_lines {
-            Self::write(run, &mut live, line);
-        }
+        self.carry_out(&mut live, effects, &mut served.idles);
         served
             .outputs
             .push(Self::output(run, stdout, self.line_limit));
@@ -831,7 +781,9 @@ impl<H: AgentHost> SupervisorTask<H> {
                 if served.sessions.remove(&session).is_none() {
                     return Err(SessionError::NoSuchSession(session));
                 }
-                served.runs.retain(|_, live| live.session != session);
+                served
+                    .runs
+                    .retain(|_, live| live.process.session() != session);
                 Ok(SessionAnswer::Done)
             }
             SessionRequest::Attach {
@@ -916,8 +868,7 @@ impl<H: AgentHost> SupervisorTask<H> {
                     served
                         .process(session)
                         .and_then(|run| served.runs.get(&run))
-                        .and_then(|live| live.codec.as_ref())
-                        .map(|codec| codec.commands().to_vec())
+                        .map(|live| live.process.commands().to_vec())
                         .unwrap_or_default(),
                 ))
             }
@@ -1019,8 +970,7 @@ impl<H: AgentHost> SupervisorTask<H> {
         let offer = served
             .process(session)
             .and_then(|run| served.runs.get(&run))
-            .and_then(|live| live.codec.as_ref())
-            .map_or(Offer::Unknown, Driver::image_offer);
+            .map_or(Offer::Unknown, |live| live.process.image_offer());
         let mut files = Vec::with_capacity(reads.len());
         for (attachment, read) in attachments.iter().zip(reads) {
             match held.harness.acceptance().of(read.kind()).resolve(offer) {
@@ -1143,24 +1093,12 @@ impl<H: AgentHost> SupervisorTask<H> {
             let Some(live) = served.runs.get_mut(&run) else {
                 return Err(SessionError::NoProcess);
             };
-            match (&live.state, prompt.clone()) {
-                // Still opening: the prompt waits for it, as a first one.
-                (RunState::Starting, Some(prompt)) if live.first.is_none() => {
-                    live.first = Some(prompt);
-                }
-                (
-                    RunState::Starting
-                    | RunState::Idle { .. }
-                    | RunState::Working { .. }
-                    | RunState::Stopping { .. }
-                    | RunState::Ended { .. },
-                    Some(_) | None,
-                ) => self
-                    .command(run, live, command)
-                    .await
-                    .map_err(SessionError::Command)?,
-            }
-            let settings = live.settings.clone();
+            let effects = live
+                .process
+                .command(command)
+                .map_err(SessionError::Command)?;
+            self.carry_out(live, effects, &mut served.idles);
+            let settings = live.process.settings().clone();
             if let Some(held) = served.sessions.get_mut(&session) {
                 held.settings = settings;
                 self.prompted(session, held, prompt.is_some())?;
@@ -1314,11 +1252,11 @@ impl<H: AgentHost> SupervisorTask<H> {
         };
         let RunState::Ended {
             end: RunEnd::Idled, ..
-        } = live.state
+        } = live.process.state()
         else {
             return;
         };
-        let session = live.session;
+        let session = live.process.session();
         let Some(held) = served.sessions.get_mut(&session) else {
             return;
         };
@@ -1353,7 +1291,9 @@ impl<H: AgentHost> SupervisorTask<H> {
             );
         }
         served.sessions.remove(&session);
-        served.runs.retain(|_, live| live.session != session);
+        served
+            .runs
+            .retain(|_, live| live.process.session() != session);
         served.discarded.insert(session);
         slot.record(
             Actor::Ren,
@@ -1367,9 +1307,15 @@ impl<H: AgentHost> SupervisorTask<H> {
     async fn stop_process(&self, session: SessionId, served: &mut Served) {
         if let Some(run) = served.process(session)
             && let Some(live) = served.runs.get_mut(&run)
-            && let Err(error) = self.command(run, live, RunCommand::Stop).await
         {
-            tracing::debug!(%session, %error, "the session's process would not stop");
+            match live.process.command(RunCommand::Stop) {
+                Ok(effects) => {
+                    self.carry_out(live, effects, &mut served.idles);
+                }
+                Err(error) => {
+                    tracing::debug!(%session, %error, "the session's process would not stop");
+                }
+            }
         }
     }
 
@@ -1384,13 +1330,14 @@ impl<H: AgentHost> SupervisorTask<H> {
             .runs
             .get_mut(&run)
             .ok_or(CommandError::NoSuchRun(run))?;
-        let session = live.session;
+        let session = live.process.session();
         let prompted = matches!(
             command,
             RunCommand::Prompt(_) | RunCommand::Queue(_) | RunCommand::Steer(_)
         );
-        self.command(run, live, command).await?;
-        let settings = live.settings.clone();
+        let effects = live.process.command(command)?;
+        self.carry_out(live, effects, &mut served.idles);
+        let settings = live.process.settings().clone();
         if let Some(held) = served.sessions.get_mut(&session) {
             held.settings = settings;
             if prompted && let Err(error) = self.prompted(session, held, true) {
@@ -1589,189 +1536,88 @@ impl<H: AgentHost> SupervisorTask<H> {
         Ok(ModelProbe::run(listing, first, process, self.line_limit).boxed())
     }
 
-    async fn command(
+    /// Carry out what `live`'s process asked for, with its handles. What
+    /// its turns mean for its session is returned for the caller to apply.
+    fn carry_out(
         &self,
-        run: RunId,
         live: &mut Live,
-        command: RunCommand,
-    ) -> Result<(), CommandError> {
-        // Settings the run moves to, once the client takes them.
-        let configuring = if let RunCommand::Configure(settings) = &command {
-            Some(settings.clone())
-        } else {
-            None
-        };
-        let transition = live
-            .state
-            .apply(RunEvent::Operator(command))
-            .map_err(CommandError::Refused)?;
-        // Encode before committing, so a command the protocol refuses leaves
-        // the run as it was.
-        let mut lines = Vec::new();
-        let mut kill = false;
-        for action in transition.actions {
-            match action {
-                RunAction::Send(command) => {
-                    let codec = live.codec.as_mut().ok_or(CommandError::NoSuchRun(run))?;
-                    lines.extend(codec.command(command).map_err(CommandError::Protocol)?);
-                }
-                RunAction::Kill => kill = true,
-            }
-        }
-        for line in &lines {
-            Self::write(run, live, line);
-        }
-        if kill && let Some(switch) = live.kill.take() {
-            switch.fire();
-        }
-        if let Some(settings) = configuring {
-            if let Some(tap) = live.tap.as_ref() {
-                tap.configured(settings.clone());
-            }
-            live.settings = settings;
-            // The state may not change, but the run did: say so.
-            self.publish(RunUpdate::State {
-                run,
-                state: transition.state.clone(),
-            });
-        }
-        self.settle(run, live, transition.state);
-        Ok(())
-    }
-
-    /// Read one frame of a run's output. Whether a turn failed in it.
-    async fn frame(
-        &self,
-        run: RunId,
-        live: &mut Live,
-        held: Option<&mut Held>,
-        frame: Framed,
-    ) -> bool {
-        let Some(codec) = live.codec.as_mut() else {
-            return false;
-        };
-        let received = codec.receive(frame);
-        for reply in &received.replies {
-            Self::write(run, live, reply);
-        }
-        let mut held = held;
-        let mut failed = false;
-        for event in received.events {
-            if let DriveEvent::Ready { thread } = &event {
-                live.opened = Some(*thread);
-            }
-            if let Some(held) = held.as_deref_mut() {
-                match &event {
-                    // Turns change files.
-                    DriveEvent::TurnEnded { .. } => {
-                        held.files = None;
-                        held.turns_ended = held.turns_ended.wrapping_add(1);
-                    }
-                    // A conversation is kept once a turn runs in it.
-                    DriveEvent::TurnStarted { .. } => {
-                        if let Some(thread) = live.opened {
-                            held.thread = Some(thread);
-                        }
-                    }
-                    DriveEvent::Ready { .. }
-                    | DriveEvent::Delta { .. }
-                    | DriveEvent::Item { .. }
-                    | DriveEvent::Approval { .. }
-                    | DriveEvent::ApprovalResolved { .. }
-                    | DriveEvent::Error { .. }
-                    | DriveEvent::Refused { .. }
-                    | DriveEvent::Unsupported { .. }
-                    | DriveEvent::Unknown { .. }
-                    | DriveEvent::Unreadable { .. } => {}
-                }
-            }
-            if let (DriveEvent::Ready { thread }, Some(tap)) = (&event, live.tap.as_ref()) {
-                tap.opened(*thread);
-            }
-            if let Some(tap) = live.tap.as_ref() {
-                for (turn, entry) in live.entries.take(&event) {
-                    tap.entry(turn, entry);
-                }
-            }
-            failed |= matches!(
-                event,
-                DriveEvent::TurnEnded {
-                    end: TurnEnd::Failed { .. },
-                    ..
-                }
-            );
-            self.publish(RunUpdate::Event {
-                run,
-                event: event.clone(),
-            });
-            self.apply(run, live, RunEvent::Agent(event)).await;
-            // Open now: the first prompt goes out.
-            if let RunState::Idle { .. } = live.state
-                && let Some(prompt) = live.first.take()
-                && let Err(error) = self.command(run, live, RunCommand::Prompt(prompt)).await
-            {
-                tracing::debug!(%run, %error, "the first prompt was refused");
-            }
-        }
-        failed
-    }
-
-    /// Apply an event that is not the operator's. Refusals here mean the run
-    /// already ended; they change nothing.
-    async fn apply(&self, run: RunId, live: &mut Live, event: RunEvent) {
-        let transition = match live.state.apply(event) {
-            Ok(transition) => transition,
-            Err(refused) => {
-                tracing::debug!(%run, %refused, "event after the run's end");
-                return;
-            }
-        };
-        for action in transition.actions {
-            match action {
-                RunAction::Send(command) => {
-                    let lines = match live.codec.as_mut().map(|codec| codec.command(command)) {
-                        Some(Ok(lines)) => lines,
-                        Some(Err(refused)) => {
-                            // A queued prompt the client would not take.
-                            tracing::debug!(%run, %refused, "the client refused a command");
-                            Vec::new()
-                        }
-                        None => Vec::new(),
-                    };
-                    for line in &lines {
-                        Self::write(run, live, line);
-                    }
-                }
-                RunAction::Kill => {
+        effects: Vec<ProcessEffect>,
+        idles: &mut FuturesUnordered<BoxFuture<'static, (RunId, Rest)>>,
+    ) -> Vec<Turned> {
+        let run = live.process.run();
+        let mut turned = Vec::new();
+        for effect in effects {
+            match effect {
+                ProcessEffect::Write(line) => Self::write(run, live, &line),
+                ProcessEffect::Kill => {
                     if let Some(switch) = live.kill.take() {
                         switch.fire();
                     }
                 }
+                ProcessEffect::Rested(rest) => match self.idle {
+                    IdleStop::After(after) => {
+                        idles.push(tokio::time::sleep(after).map(move |()| (run, rest)).boxed())
+                    }
+                    IdleStop::Never => {}
+                },
+                ProcessEffect::Publish(update) => self.publish(update),
+                ProcessEffect::Opened(thread) => {
+                    if let Some(tap) = live.tap.as_ref() {
+                        tap.opened(thread);
+                    }
+                }
+                ProcessEffect::Configured(settings) => {
+                    if let Some(tap) = live.tap.as_ref() {
+                        tap.configured(settings);
+                    }
+                }
+                ProcessEffect::Entry(turn, entry) => {
+                    if let Some(tap) = live.tap.as_ref() {
+                        tap.entry(turn, entry);
+                    }
+                }
+                ProcessEffect::Ended { end, exit } => {
+                    if let Some(tap) = live.tap.take() {
+                        tap.end(end, exit);
+                    }
+                }
+                ProcessEffect::TurnStarted { conversation } => {
+                    turned.push(Turned::Started { conversation });
+                }
+                ProcessEffect::TurnEnded { failed } => turned.push(Turned::Ended { failed }),
+                ProcessEffect::FirstRefused(error) => {
+                    tracing::debug!(%run, %error, "the first prompt was refused");
+                }
             }
         }
-        self.settle(run, live, transition.state);
+        turned
     }
 
-    fn settle(&self, run: RunId, live: &mut Live, state: RunState) {
-        // Idle now, not before: its idle timer starts.
-        if let (RunState::Idle { .. }, false) =
-            (&state, matches!(live.state, RunState::Idle { .. }))
-        {
-            live.rested += 1;
-            live.arm = true;
-        }
-        if let RunState::Ended { end, exit } = &state
-            && let Some(tap) = live.tap.take()
-        {
-            for (turn, entry) in live.entries.finish() {
-                tap.entry(turn, entry);
+    /// Apply what a process's turns mean to the session it serves. Whether
+    /// a turn failed.
+    fn turned(mut held: Option<&mut Held>, turned: Vec<Turned>) -> bool {
+        let mut failed = false;
+        for turn in turned {
+            match turn {
+                // A conversation is kept once a turn runs in it.
+                Turned::Started { conversation } => {
+                    if let (Some(held), Some(thread)) = (held.as_deref_mut(), conversation) {
+                        held.thread = Some(thread);
+                    }
+                }
+                // Turns change files.
+                Turned::Ended {
+                    failed: ended_failed,
+                } => {
+                    failed |= ended_failed;
+                    if let Some(held) = held.as_deref_mut() {
+                        held.files = None;
+                        held.turns_ended = held.turns_ended.wrapping_add(1);
+                    }
+                }
             }
-            tap.end(*end, *exit);
         }
-        if state != live.state {
-            live.state = state.clone();
-            self.publish(RunUpdate::State { run, state });
-        }
+        failed
     }
 
     fn publish(&self, update: RunUpdate) {
