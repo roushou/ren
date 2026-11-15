@@ -4,6 +4,7 @@ mod dev;
 mod install;
 mod invocation;
 mod publish;
+mod rollback;
 mod tailscale;
 mod ui;
 
