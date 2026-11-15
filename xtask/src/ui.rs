@@ -2,8 +2,8 @@
 //! then swap the deployed copy, run it as `ren-ui.service`, and check it.
 //!
 //! The deployed copy is `~/.local/share/ren-ui` (ui/README.md): the build,
-//! `package.json`, `bun.lock`, and production dependencies. The one before it
-//! is kept as `ren-ui.previous`.
+//! `package.json`, `bun.lock`, the workspace packages, and production
+//! dependencies. The one before it is kept as `ren-ui.previous`.
 use crate::install::{InstallError, InstallVps};
 use crate::invocation::{Echo, Invocation};
 use ren_harness::host::HostEnv;
@@ -46,6 +46,8 @@ impl UiDeploy {
     pub const TARGET: &str = "http://127.0.0.1:3000";
     /// The template's Node path, replaced with the one found on PATH.
     const EXEC: &str = "ExecStart=/usr/bin/node build";
+    /// The folder of the UI's workspace packages (`package.json`'s `workspaces`).
+    const PACKAGES: &str = "packages";
 
     pub fn new(env: &HostEnv, home: &Path, repo: &Path) -> Result<Self, InstallError> {
         let share = home.join(".local/share");
@@ -84,7 +86,8 @@ impl UiDeploy {
     }
 
     /// Builds the UI and stages a complete deployable copy in `staged`:
-    /// the build, `package.json`, `bun.lock`, and production dependencies.
+    /// the build, `package.json`, `bun.lock`, the workspace packages, and
+    /// production dependencies.
     pub fn build_into(&self, staged: &Path) -> Result<(), InstallError> {
         InstallVps::step("Building the UI");
         Invocation::new(&self.bun)
@@ -112,6 +115,16 @@ impl UiDeploy {
         for file in ["package.json", "bun.lock"] {
             let target = staged.join(file);
             fs::copy(self.source.join(file), &target).map_err(InstallError::file(&target))?;
+        }
+        // The UI's workspace packages: the lockfile names them, so a
+        // frozen install refuses a copy without them.
+        let packages = self.source.join(Self::PACKAGES);
+        if packages.is_dir() {
+            Invocation::new("cp")
+                .arg("-R")
+                .arg(&packages)
+                .arg(staged.join(Self::PACKAGES))
+                .run()?;
         }
         Invocation::new(&self.bun)
             .args([
