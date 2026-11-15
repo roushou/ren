@@ -16,7 +16,7 @@ use ren_recorder::{
 };
 use ren_supervisor::{
     AgentHost, AgentProcess, FoundPath, KillSwitch, Look, PathKind, ProcessExit, RunTools,
-    WalkLimits, Workdir,
+    WalkLimits, Workdir, git,
 };
 use std::future::Future;
 use std::io;
@@ -389,26 +389,20 @@ impl ProcessHost {
 }
 
 impl ProcessHost {
-    /// Whether `dir` holds a git repository, and its `HEAD`'s text when it
-    /// can be read. `.git` is a folder, or, in a linked worktree, a file
-    /// naming the repository's folder (`gitdir: <path>`).
-    fn git(dir: &Path) -> Option<Option<String>> {
-        let dot_git = dir.join(".git");
-        let kind = std::fs::symlink_metadata(&dot_git).ok()?.file_type();
-        let git_dir = if kind.is_dir() {
-            Some(dot_git)
-        } else if kind.is_file() {
-            Self::small(&dot_git).and_then(|text| {
-                let path = text.trim().strip_prefix("gitdir:")?.trim().to_owned();
-                Some(dir.join(path))
-            })
-        } else {
-            None
-        };
-        Some(git_dir.and_then(|git_dir| Self::small(&git_dir.join("HEAD"))))
+    /// What is at `path`, for `Repository::find`. Links are not followed.
+    fn entry(path: &Path) -> git::Entry {
+        match std::fs::symlink_metadata(path) {
+            Err(error) if error.kind() == io::ErrorKind::NotFound => git::Entry::Missing,
+            Err(_) => git::Entry::Unreadable,
+            Ok(metadata) if metadata.is_dir() => git::Entry::Folder,
+            Ok(metadata) if metadata.is_file() => {
+                Self::small(path).map_or(git::Entry::Unreadable, git::Entry::File)
+            }
+            Ok(_) => git::Entry::Other,
+        }
     }
 
-    /// A small text file's first bytes; `HEAD` is one line.
+    /// A small text file's first bytes; `HEAD` and a `.git` file are one line.
     fn small(path: &Path) -> Option<String> {
         use std::io::Read as _;
         let mut text = String::new();
@@ -452,7 +446,7 @@ impl AgentHost for ProcessHost {
         }
         Ok(Look {
             folders,
-            git: Self::git(dir),
+            repository: git::Repository::find(dir, Self::entry),
         })
     }
 

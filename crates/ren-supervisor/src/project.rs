@@ -7,6 +7,7 @@
 //! the host looks at each folder (`AgentHost::look`), and this module decides
 //! where to look next.
 
+use crate::git::{Head, Repository};
 use crate::workdir::{Bounds, Roots};
 use serde_with::{DeserializeFromStr, SerializeDisplay};
 use std::path::{Path, PathBuf};
@@ -17,9 +18,8 @@ use strum::{Display, EnumString, IntoStaticStr, VariantArray};
 pub struct Look {
     /// The names of the folders directly inside it, links not followed.
     pub folders: Vec<String>,
-    /// Whether it holds a git repository (`.git`), and the text of its
-    /// `HEAD` when that could be read.
-    pub git: Option<Option<String>>,
+    /// Whether it holds a git repository, and where its `HEAD` stands.
+    pub repository: Repository,
 }
 
 /// A place a run can start in.
@@ -63,26 +63,18 @@ pub enum ProjectGit {
 }
 
 impl ProjectGit {
-    /// What a `HEAD` file says: `ref: refs/heads/<branch>`, or a commit id.
-    pub fn read(head: Option<&str>) -> Self {
-        let Some(head) = head.map(str::trim) else {
-            return Self::Unreadable;
-        };
-        if let Some(reference) = head.strip_prefix("ref:") {
-            let reference = reference.trim();
-            return Self::Branch {
-                name: reference
-                    .strip_prefix("refs/heads/")
-                    .unwrap_or(reference)
-                    .to_owned(),
-            };
+    /// The view of `repository` the API serves.
+    pub fn of(repository: &Repository) -> Self {
+        match repository {
+            Repository::None => Self::None,
+            Repository::At(Head::Branch(name)) => Self::Branch {
+                name: name.as_str().to_owned(),
+            },
+            Repository::At(Head::Detached(commit)) => Self::Detached {
+                commit: commit.short().to_owned(),
+            },
+            Repository::Unreadable(_) => Self::Unreadable,
         }
-        if head.len() >= 7 && head.chars().all(|ch| ch.is_ascii_hexdigit()) {
-            return Self::Detached {
-                commit: head.chars().take(7).collect(),
-            };
-        }
-        Self::Unreadable
     }
 }
 
@@ -109,9 +101,9 @@ impl Walk {
         let Some(seen) = look(folder) else {
             return false;
         };
-        if let Some(head) = seen.git {
+        if seen.repository.exists() {
             self.found
-                .push((folder.to_path_buf(), ProjectGit::read(head.as_deref())));
+                .push((folder.to_path_buf(), ProjectGit::of(&seen.repository)));
             return true;
         }
         if depth >= self.search.depth {
@@ -193,8 +185,8 @@ impl Bounds {
         let mut others = Vec::new();
         for place in self.others() {
             let Some(inside) = seen(place) else { continue };
-            if let Some(head) = inside.git {
-                others.push((place.clone(), ProjectGit::read(head.as_deref())));
+            if inside.repository.exists() {
+                others.push((place.clone(), ProjectGit::of(&inside.repository)));
                 continue;
             }
             others.extend(Self::folders(
@@ -233,10 +225,7 @@ impl Bounds {
             .filter(|name| !skips(name))
             .filter_map(|name| {
                 let child = folder.join(name);
-                let git = match look(&child)?.git {
-                    Some(head) => ProjectGit::read(head.as_deref()),
-                    None => ProjectGit::None,
-                };
+                let git = ProjectGit::of(&look(&child)?.repository);
                 Some((child, git))
             })
             .collect()
@@ -302,6 +291,7 @@ impl Bounds {
 #[cfg(test)]
 mod tests {
     use super::{Look, PlaceKind, ProjectGit, Search};
+    use crate::git::{Entry, Repository};
     use crate::workdir::{Bounds, Roots};
     use std::{collections::BTreeMap, path::PathBuf};
 
@@ -309,11 +299,11 @@ mod tests {
     fn tree() -> BTreeMap<&'static str, Look> {
         let folder = |names: &[&str]| Look {
             folders: names.iter().map(|name| (*name).to_owned()).collect(),
-            git: None,
+            repository: Repository::None,
         };
-        let repo = |head: &str, names: &[&str]| Look {
+        let repo = |text: &str, names: &[&str]| Look {
             folders: names.iter().map(|name| (*name).to_owned()).collect(),
-            git: Some(Some(head.to_owned())),
+            repository: head(text),
         };
         BTreeMap::from([
             (
@@ -366,7 +356,7 @@ mod tests {
         .unwrap();
         let folder = |names: &[&str], git: Option<&str>| Look {
             folders: names.iter().map(|name| (*name).to_owned()).collect(),
-            git: git.map(|head| Some(head.to_owned())),
+            repository: git.map_or(Repository::None, head),
         };
         let tree = BTreeMap::from([
             ("/home/op/dev", folder(&["acme"], None)),
@@ -521,14 +511,29 @@ mod tests {
     }
 
     #[test]
-    fn reads_head() {
+    fn the_api_reads_a_repository_as_its_head_says() {
+        let read = |text: &str| ProjectGit::of(&head(text));
         assert_eq!(
-            ProjectGit::read(Some("ref: refs/heads/main\n")),
+            read("ref: refs/heads/main\n"),
             ProjectGit::Branch {
                 name: "main".into()
             }
         );
-        assert_eq!(ProjectGit::read(None), ProjectGit::Unreadable);
-        assert_eq!(ProjectGit::read(Some("nonsense")), ProjectGit::Unreadable);
+        assert_eq!(
+            read("0123456789abcdef0123456789abcdef01234567"),
+            ProjectGit::Detached {
+                commit: "0123456".into()
+            }
+        );
+        assert_eq!(read("nonsense"), ProjectGit::Unreadable);
+        assert_eq!(ProjectGit::of(&Repository::None), ProjectGit::None);
+    }
+
+    /// A repository whose `HEAD` holds `text`.
+    fn head(text: &str) -> Repository {
+        Repository::find(std::path::Path::new("/r"), |path| match path.to_str() {
+            Some("/r/.git") => Entry::Folder,
+            Some(_) | None => Entry::File(text.to_owned()),
+        })
     }
 }

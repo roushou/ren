@@ -7,6 +7,7 @@
 //! real client, network, or credentials.
 
 use ren_harness::launch::LaunchPlan;
+use ren_supervisor::git::{Entry, Repository};
 use ren_supervisor::{
     AgentHost, AgentProcess, FoundPath, KillSignal, KillSwitch, Look, PathKind, ProcessExit,
     RunTools, WalkLimits, Workdir,
@@ -41,11 +42,14 @@ impl AgentHost for ScriptedHost {
         Ok(match dir.to_str() {
             Some("/work") => Look {
                 folders: vec!["acme".into(), "web".into()],
-                git: None,
+                repository: Repository::None,
             },
             Some("/work/acme") => Look {
                 folders: vec![],
-                git: Some(Some("ref: refs/heads/main".into())),
+                repository: Repository::find(dir, |path| match path.file_name() {
+                    Some(name) if name == ".git" => Entry::Folder,
+                    Some(_) | None => Entry::File("ref: refs/heads/main".into()),
+                }),
             },
             Some(_) | None => Look::default(),
         })

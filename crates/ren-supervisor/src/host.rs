@@ -25,8 +25,8 @@ pub trait AgentHost: Send + Sync + 'static {
     /// The real, absolute path of `path`, with every link resolved.
     fn resolve(&self, path: &Path) -> io::Result<PathBuf>;
 
-    /// What `dir` holds: its folders (links not followed), and whether it
-    /// is a git repository, with its `HEAD`'s text when readable.
+    /// What `dir` holds: its folders (links not followed), and its git
+    /// repository, read with `Repository::find`.
     fn look(&self, dir: &Path) -> io::Result<Look>;
 
     /// The files and folders under `dir`, relative to it, leaving out what

@@ -15,6 +15,7 @@ pub use attachments::{AttachmentUse, KeptAttachment};
 pub mod client;
 mod entries;
 pub mod files;
+pub mod git;
 pub mod host;
 mod login;
 mod models;
