@@ -255,8 +255,11 @@ dependencies under "Crates" below. Read the code for current module ownership.
   filesystem and process I/O but has no async runtime, HTTP, database, or
   CLI dependency.
 - `crates/ren-recorder`: the bounded capture queue between forwarding and
-  storage, with `Recorder` as its primary type. `CallTap` (and `ChannelTap` for a
-  WebSocket's end) is the forwarding side, `RunTap` records an agent run's
+  storage, with `Recorder` as its primary type. The forwarding side is a
+  typestate per call, `AttemptTap` (awaiting its head), `ResponseTap`
+  (streaming), and `CallTap` (between attempts), each transition consuming
+  the state it leaves and a dropped state recording what was open as
+  interrupted (and `ChannelTap` for a WebSocket's end), `RunTap` records an agent run's
   start (with the operator session it serves, `RunSession`, a new one recorded
   first as `SessionRecord`), opening, settings changed mid-run, end, and each entry of its conversation (`RunEntry`, whole,
   admitted against the queue's byte budget), and `HistorySlot` an operator's archive or delete

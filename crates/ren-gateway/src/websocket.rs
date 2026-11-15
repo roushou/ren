@@ -37,7 +37,7 @@ use ren_protocol::{
     websocket::{ClientEvent, CloseCode, Payload, ResponseId, UpstreamMessage},
 };
 use ren_recorder::{
-    AttemptStart, CallStart, CallTap, ChannelTap, Recorder,
+    AttemptStart, CallStart, ChannelTap, Head, Recorder, ResponseTap,
     batch::Recorded,
     capture::{AttemptTerminal, ChannelEnd},
     id::ChannelId,
@@ -244,7 +244,9 @@ struct Planned {
 
 /// A call open on the channel.
 struct OpenCall {
-    tap: Arc<CallTap>,
+    /// Its response streams from the moment it opens: a message call has
+    /// the channel's head.
+    tap: ResponseTap,
     /// Taken once the gateway admits the call.
     admission: Option<OwnedSemaphorePermit>,
     /// Keeps the call cancellable by the operator.
@@ -262,7 +264,8 @@ struct Relay {
     /// Cancelled when the channel ends.
     ended: CancellationToken,
     channel: ChannelId,
-    tap: ChannelTap,
+    /// The channel's end, recorded once by [`ChannelRecord::close`].
+    tap: Mutex<ChannelRecord>,
     recorder: Recorder,
     admission: Arc<Semaphore>,
     call: CallStart,
@@ -273,6 +276,30 @@ struct Relay {
     clock: Arc<dyn Clock>,
     /// Operator cancels, by call slot.
     interrupts: mpsc::UnboundedSender<CallSlot>,
+}
+
+/// The channel's own capture.
+enum ChannelRecord {
+    Open(ChannelTap),
+    Closed,
+}
+
+impl ChannelRecord {
+    /// Record the channel's end. The machine ends a channel once; a second
+    /// end is a relay bug, logged and not recorded.
+    fn close(&mut self, end: ChannelEnd, code: Option<u16>) {
+        match std::mem::replace(self, Self::Closed) {
+            Self::Open(tap) => tap.close(end, code),
+            Self::Closed => tracing::warn!(?end, "a channel ended twice"),
+        }
+    }
+
+    fn unattributed(&mut self, bytes: &[u8]) {
+        match self {
+            Self::Open(tap) => tap.unattributed(bytes),
+            Self::Closed => {}
+        }
+    }
 }
 
 #[derive(Debug, Default)]
@@ -317,7 +344,7 @@ impl Relay {
             closes: Mutex::new(Closes::default()),
             ended: CancellationToken::new(),
             channel: tap.channel(),
-            tap,
+            tap: Mutex::new(ChannelRecord::Open(tap)),
             recorder,
             admission,
             call,
@@ -474,7 +501,7 @@ impl Relay {
             .calls
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
-            .get(&slot)
+            .get_mut(&slot)
         {
             open.tap
                 .message(Direction::Request, frame.payload, &frame.bytes);
@@ -653,12 +680,12 @@ impl Relay {
                     .lock()
                     .unwrap_or_else(PoisonError::into_inner)
                     .remove(&slot);
-                if let Some(open) = open {
+                if let Some(OpenCall { mut tap, .. }) = open {
                     // Client messages arrive whole, so the request body ends
                     // with the call; the response ended only at its terminal event.
-                    open.tap.end(Direction::Request);
+                    tap.ended(Direction::Request);
                     match record.terminal {
-                        AttemptTerminal::TerminalEvent => open.tap.end(Direction::Response),
+                        AttemptTerminal::TerminalEvent => tap.ended(Direction::Response),
                         AttemptTerminal::BodyComplete
                         | AttemptTerminal::NotSent
                         | AttemptTerminal::Refused
@@ -667,7 +694,7 @@ impl Relay {
                         | AttemptTerminal::Cancelled
                         | AttemptTerminal::Interrupted => {}
                     }
-                    open.tap.finish(record);
+                    tap.finish(record);
                 }
                 None
             }
@@ -684,7 +711,10 @@ impl Relay {
                     let closes = self.closes.lock().unwrap_or_else(PoisonError::into_inner);
                     closes.client.or(closes.upstream)
                 };
-                self.tap.close(end, code.map(CloseCode::get));
+                self.tap
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .close(end, code.map(CloseCode::get));
                 self.ended.cancel();
                 None
             }
@@ -717,11 +747,11 @@ impl Relay {
                 relay: self.interrupts.clone(),
             },
         );
-        tap.response_head(
-            http::StatusCode::SWITCHING_PROTOCOLS.as_u16(),
-            ResponseFormat::WebSocketMessages,
-            ResponseEncoding::Identity,
-        );
+        let tap = tap.head(Head {
+            status: http::StatusCode::SWITCHING_PROTOCOLS.as_u16(),
+            format: ResponseFormat::WebSocketMessages,
+            encoding: ResponseEncoding::Identity,
+        });
         self.calls
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
@@ -759,13 +789,17 @@ impl Relay {
         };
         match owner {
             Owner::Call(slot) => {
-                let calls = self.calls.lock().unwrap_or_else(PoisonError::into_inner);
-                if let Some(open) = calls.get(&slot) {
+                let mut calls = self.calls.lock().unwrap_or_else(PoisonError::into_inner);
+                if let Some(open) = calls.get_mut(&slot) {
                     open.tap
                         .message(direction, observed.frame.payload, &observed.frame.bytes);
                 }
             }
-            Owner::Unattributed => self.tap.unattributed(&observed.frame.bytes),
+            Owner::Unattributed => self
+                .tap
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .unattributed(&observed.frame.bytes),
         }
     }
 
@@ -855,7 +889,11 @@ impl Drop for Relay {
                         open.tap.finish(record);
                     }
                 }
-                WsAction::End(end) => self.tap.close(end, None),
+                WsAction::End(end) => self
+                    .tap
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .close(end, None),
                 WsAction::OpenCall(_)
                 | WsAction::Interrupt(_)
                 | WsAction::Ping(_)

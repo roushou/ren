@@ -226,8 +226,16 @@ pub enum Rejection {
 pub struct Candidates(Vec<UpstreamId>);
 
 impl Candidates {
+    /// The most upstreams a plan tries: its own and one fallback. The
+    /// recorder is sized for this many attempts per call.
+    pub const MAX: usize = 2;
+
     fn one(id: UpstreamId) -> Self {
         Self(vec![id])
+    }
+
+    fn falling_over(primary: UpstreamId, fallback: UpstreamId) -> Self {
+        Self(vec![primary, fallback])
     }
 
     pub fn first(&self) -> &UpstreamId {
@@ -486,7 +494,7 @@ impl Policy {
                         None,
                     ),
                     Some(rule) => (
-                        Candidates(vec![primary, rule.to.clone()]),
+                        Candidates::falling_over(primary, rule.to.clone()),
                         transforms,
                         RetryPolicy::falling_over_on(rule.on_status.clone()),
                         Some(rule.id.clone()),

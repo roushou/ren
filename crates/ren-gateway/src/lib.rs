@@ -107,7 +107,7 @@ use ren_protocol::{
     route::{Method, Transport},
 };
 use ren_recorder::{
-    AttemptStart, CallStart, CallTap, Recorder,
+    AttemptRequest, AttemptStart, CallStart, CallTap, Recorder,
     batch::{AttemptBody, Recorded},
     caller::Caller,
     capture::CallRejection,
@@ -349,6 +349,14 @@ struct Prepared {
     headers: HeaderMap,
     body: Bytes,
     start: AttemptStart,
+}
+
+/// Which attempt of a call the forwarding loop starts next.
+enum NextAttempt {
+    /// The first: it admits the call.
+    First,
+    /// A fallback, continuing the call its previous attempt handed back.
+    Fallback(CallTap),
 }
 
 /// What Ren changed in an attempt's request, as recorded. No header values.
@@ -599,7 +607,7 @@ impl<U: Upstream> Gateway<U> {
         }
         let operator_cancel = CancellationToken::new();
         let mut admission = Some(admission);
-        let mut tap: Option<Arc<CallTap>> = None;
+        let mut next = NextAttempt::First;
         let mut registered = None;
         let mut run = CallRun::new(plan.candidates.len());
         loop {
@@ -611,29 +619,21 @@ impl<U: Upstream> Gateway<U> {
                 return GatewayError::Busy.into_response();
             };
             let upstream = prepared.start.upstream.clone();
-            let current = match &tap {
-                None => {
-                    let started = self.recorder.start(call.clone(), prepared.start.clone());
-                    started.request(buffered.bytes());
+            let current = match next {
+                NextAttempt::Fallback(call) => call.attempt(prepared.start),
+                NextAttempt::First => {
+                    let mut first = self.recorder.start(call.clone(), prepared.start);
+                    first.request(buffered.bytes());
                     registered = Some(self.controls.register(
-                        started.call(),
+                        first.call(),
                         Transport::Http,
                         session,
                         call.caller.user().cloned(),
                         Cancel::Http(operator_cancel.clone()),
                     ));
-                    tap = Some(started.clone());
-                    started
-                }
-                Some(started) => {
-                    started.next_attempt(prepared.start.clone());
-                    started.clone()
+                    first
                 }
             };
-            match prepared.start.body {
-                AttemptBody::Original => {}
-                AttemptBody::Changed => current.attempt_request(&prepared.body),
-            }
             let cell = AttemptCell::new(
                 current,
                 admission.take(),
@@ -665,7 +665,10 @@ impl<U: Upstream> Gateway<U> {
                 },
             };
             let end = match run.step(dispatched, &plan.retry) {
-                CallStep::FallOver { refused, next } => {
+                CallStep::FallOver {
+                    refused,
+                    next: following,
+                } => {
                     admission = cell.hand_over();
                     match refused {
                         // Read and record the refusal; nothing reached the client.
@@ -678,7 +681,14 @@ impl<U: Upstream> Gateway<U> {
                             let _first = dispatch.stopped(HttpEvent::SendFailed(failure));
                         }
                     }
-                    run = next;
+                    let Some(call) = cell.next_attempt() else {
+                        // The ended attempt hands its call back; falling over
+                        // before that end is a relay bug.
+                        tracing::error!("a fallback attempt has no call to continue");
+                        return GatewayError::Busy.into_response();
+                    };
+                    next = NextAttempt::Fallback(call);
+                    run = following;
                     continue;
                 }
                 CallStep::Relay(response) => {
@@ -752,9 +762,10 @@ impl<U: Upstream> Gateway<U> {
                     http::header::CONTENT_LENGTH,
                     HeaderValue::from(changed.len()),
                 );
-                (Bytes::from(changed), AttemptBody::Changed)
+                let changed = Bytes::from(changed);
+                (changed.clone(), AttemptRequest::Changed(changed))
             }
-            None => (original.clone(), AttemptBody::Original),
+            None => (original.clone(), AttemptRequest::Original),
         };
         let auth = entry.authorize(&mut headers);
         let changes = match (auth, steps.is_empty()) {
@@ -762,7 +773,7 @@ impl<U: Upstream> Gateway<U> {
             (AuthOverride::None | AuthOverride::OperatorKey, _) => Recorded::of(&AttemptChanges {
                 auth,
                 steps: &steps,
-                body: kind,
+                body: kind.label(),
             })
             .ok(),
         };
@@ -861,11 +872,12 @@ impl<U: Upstream> Gateway<U> {
         };
         // WebSocket channels are pinned to the route's entry.
         let upstream = bound.upstream.clone();
-        let tap = self.recorder.start(
+        let mut tap = self.recorder.start(
             start.clone(),
             AttemptStart::unchanged(upstream.clone(), bound.api.provider()),
         );
-        tap.end(ren_protocol::direction::Direction::Request);
+        // A handshake has no body: its request ends at once.
+        tap.request_ended();
         let channel = tap.channel();
         let cell = AttemptCell::new(
             tap,

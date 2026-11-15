@@ -21,8 +21,8 @@ use ren_recorder::routing::UpstreamId;
 use ren_recorder::secrets::SecretScanner;
 use ren_recorder::time::Clock;
 use ren_recorder::{
-    AttemptStart, CallStart, CallTap, CaptureOptions, Recorder, RecorderMetrics, RecorderSetup,
-    RecorderTask,
+    AttemptStart, AttemptTap, CallStart, CaptureOptions, Head, Recorder, RecorderMetrics,
+    RecorderSetup, RecorderTask,
 };
 use ren_recorder::{
     batch::ObservationKind,
@@ -76,7 +76,7 @@ impl Harness {
         }
     }
 
-    fn start(&self) -> Arc<CallTap> {
+    fn start(&self) -> AttemptTap {
         self.recorder.start(
             CallStart {
                 transport: Transport::Http,
@@ -118,30 +118,35 @@ async fn detail(reader: &Reader, call: CallId) -> CallDetail {
     reader.call(call).await.unwrap()
 }
 
-fn complete(tap: &CallTap, request: &[u8], response: &[u8]) {
-    tap.data(Direction::Request, request);
-    tap.end(Direction::Request);
-    tap.response_head(200, ResponseFormat::EventStream, ResponseEncoding::Identity);
+const EVENT_STREAM: Head = Head {
+    status: 200,
+    format: ResponseFormat::EventStream,
+    encoding: ResponseEncoding::Identity,
+};
+
+fn complete(mut tap: AttemptTap, request: &[u8], response: &[u8]) {
+    tap.request_data(request);
+    tap.request_ended();
+    let mut tap = tap.head(EVENT_STREAM);
     tap.data(Direction::Response, response);
-    tap.end(Direction::Response);
+    tap.ended(Direction::Response);
     tap.finish(ended(AttemptTerminal::BodyComplete));
 }
 
 #[tokio::test]
 async fn a_streamed_call_is_recorded_inspected_and_stored_completely() {
     let harness = Harness::new(CaptureOptions::default(), 4).await;
-    let tap = harness.start();
+    let mut tap = harness.start();
     let call = tap.call();
-    tap.data(Direction::Request, b"{\"stream\":true}");
-    tap.end(Direction::Request);
-    tap.response_head(200, ResponseFormat::EventStream, ResponseEncoding::Identity);
+    tap.request_data(b"{\"stream\":true}");
+    tap.request_ended();
+    let mut tap = tap.head(EVENT_STREAM);
     // Arbitrary fragments, including inside an event.
     for piece in MESSAGE_STREAM.chunks(7) {
         tap.data(Direction::Response, piece);
     }
-    tap.end(Direction::Response);
+    tap.ended(Direction::Response);
     tap.finish(ended(AttemptTerminal::BodyComplete));
-    drop(tap);
     let (_dir, metrics, reader) = harness.drain().await;
     assert_eq!(metrics.omissions.unrecorded_calls, 0);
     let detail = detail(&reader, call).await;
@@ -177,15 +182,14 @@ async fn an_exhausted_byte_budget_omits_data_but_never_the_terminal() {
         ..CaptureOptions::default()
     };
     let harness = Harness::new(options, 4).await;
-    let tap = harness.start();
+    let mut tap = harness.start();
     let call = tap.call();
-    tap.data(Direction::Request, &vec![7; PIECE * 3]);
-    tap.end(Direction::Request);
-    tap.response_head(200, ResponseFormat::EventStream, ResponseEncoding::Identity);
+    tap.request_data(&vec![7; PIECE * 3]);
+    tap.request_ended();
+    let mut tap = tap.head(EVENT_STREAM);
     tap.data(Direction::Response, MESSAGE_STREAM);
-    tap.end(Direction::Response);
+    tap.ended(Direction::Response);
     tap.finish(ended(AttemptTerminal::BodyComplete));
-    drop(tap);
     let (_dir, metrics, reader) = harness.drain().await;
     let omitted = u64::try_from(PIECE * 2 + MESSAGE_STREAM.len()).unwrap();
     assert_eq!(metrics.omissions.queue_bytes_bytes, omitted);
@@ -220,12 +224,11 @@ async fn exhausted_data_slots_are_counted_by_reason() {
         ..CaptureOptions::default()
     };
     let harness = Harness::new(options, 1).await;
-    let tap = harness.start();
+    let mut tap = harness.start();
     for _ in 0..6 {
-        tap.data(Direction::Request, b"0123456789");
+        tap.request_data(b"0123456789");
     }
     tap.finish(ended(AttemptTerminal::Cancelled));
-    drop(tap);
     let (_dir, metrics, reader) = harness.drain().await;
     assert_eq!(metrics.omissions.queue_slots_bytes, 20);
     let page = reader.calls(&CallQuery::default()).await.unwrap();
@@ -250,17 +253,19 @@ async fn every_admitted_call_keeps_its_terminal_when_data_saturates_the_queue() 
         ..CaptureOptions::default()
     };
     let harness = Harness::new(options, 8).await;
-    let taps: Vec<_> = (0..8).map(|_| harness.start()).collect();
-    for tap in &taps {
-        tap.data(Direction::Request, &vec![1; PIECE]);
-        tap.response_head(200, ResponseFormat::EventStream, ResponseEncoding::Identity);
-        tap.data(Direction::Response, MESSAGE_STREAM);
-    }
+    let taps: Vec<_> = (0..8)
+        .map(|_| {
+            let mut tap = harness.start();
+            tap.request_data(&vec![1; PIECE]);
+            let mut tap = tap.head(EVENT_STREAM);
+            tap.data(Direction::Response, MESSAGE_STREAM);
+            tap
+        })
+        .collect();
     let calls: Vec<_> = taps.iter().map(|tap| tap.call()).collect();
-    for tap in &taps {
+    for tap in taps {
         tap.finish(ended(AttemptTerminal::BodyComplete));
     }
-    drop(taps);
     let (_dir, metrics, reader) = harness.drain().await;
     assert_eq!(metrics.omissions.unrecorded_calls, 0);
     assert!(metrics.omissions.queue_bytes_bytes + metrics.omissions.queue_slots_bytes > 0);
@@ -281,10 +286,9 @@ async fn calls_beyond_the_reservation_limit_are_forwarded_unrecorded_and_counted
     let harness = Harness::new(CaptureOptions::default(), 1).await;
     let first = harness.start();
     let second = harness.start();
-    complete(&second, b"x", b"y");
-    complete(&first, b"a", MESSAGE_STREAM);
     let recorded = first.call();
-    drop((first, second));
+    complete(second, b"x", b"y");
+    complete(first, b"a", MESSAGE_STREAM);
     // After the first call's finish is dequeued its reservation is free again.
     let (_dir, metrics, reader) = harness.drain().await;
     assert_eq!(metrics.omissions.unrecorded_calls, 1);
@@ -296,9 +300,9 @@ async fn calls_beyond_the_reservation_limit_are_forwarded_unrecorded_and_counted
 #[tokio::test]
 async fn a_dropped_tap_records_an_interrupted_attempt_with_unfinished_bodies() {
     let harness = Harness::new(CaptureOptions::default(), 2).await;
-    let tap = harness.start();
+    let mut tap = harness.start();
     let call = tap.call();
-    tap.data(Direction::Request, b"partial upload");
+    tap.request_data(b"partial upload");
     drop(tap);
     let (_dir, _, reader) = harness.drain().await;
     let detail = detail(&reader, call).await;
@@ -321,8 +325,7 @@ async fn the_body_limit_is_a_policy_omission() {
     };
     let harness = Harness::new(options, 2).await;
     let tap = harness.start();
-    complete(&tap, b"abcdef", b"");
-    drop(tap);
+    complete(tap, b"abcdef", b"");
     let (_dir, metrics, reader) = harness.drain().await;
     assert_eq!(metrics.omissions.policy_limit_bytes, 3);
     let call = reader
@@ -361,11 +364,10 @@ async fn live_subscribers_see_committed_observations_in_order() {
     );
     let observe = async move {
         complete(
-            &tap,
+            tap,
             b"{}",
             b"data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\"}}\n\n",
         );
-        drop(tap);
         let mut kinds = Vec::new();
         while kinds.len() < 5 {
             let observation = live.recv().await.unwrap();
@@ -404,8 +406,7 @@ async fn a_failed_commit_keeps_lifecycle_records_and_reports_the_lost_bytes() {
     sabotage.close().await.unwrap();
     let tap = harness.start();
     let call = tap.call();
-    complete(&tap, b"request body", MESSAGE_STREAM);
-    drop(tap);
+    complete(tap, b"request body", MESSAGE_STREAM);
     let (_dir, metrics, reader) = harness.drain().await;
     assert_eq!(metrics.storage_errors, 1);
     assert!(!metrics.healthy());
@@ -487,16 +488,16 @@ async fn a_digest_derived_while_recording_equals_one_derived_from_storage() {
     let mut calls = Vec::new();
     for word in ["needle", "haystack"] {
         let (request, response) = exchange(word);
-        let tap = harness.start();
+        let mut tap = harness.start();
         calls.push(tap.call());
-        tap.data(Direction::Request, &request);
-        tap.end(Direction::Request);
-        tap.response_head(200, ResponseFormat::EventStream, ResponseEncoding::Identity);
+        tap.request_data(&request);
+        tap.request_ended();
+        let mut tap = tap.head(EVENT_STREAM);
         // Arbitrary fragments, including inside an event.
         for piece in response.chunks(11) {
             tap.data(Direction::Response, piece);
         }
-        tap.end(Direction::Response);
+        tap.ended(Direction::Response);
         tap.finish(ended(AttemptTerminal::BodyComplete));
     }
     let (dir, _metrics, _reader) = harness.drain().await;
@@ -589,7 +590,7 @@ async fn a_websocket_calls_digest_is_derived_from_its_messages_alike() {
         .channel(ren_recorder::id::ChannelId::restore(uuid::Uuid::from_u128(
             77,
         )));
-    let tap = harness.recorder.start_in(
+    let mut tap = harness.recorder.start_in(
         channel.channel(),
         CallStart {
             transport: Transport::WebSocket,
@@ -610,13 +611,13 @@ async fn a_websocket_calls_digest_is_derived_from_its_messages_alike() {
         { "type": "message", "role": "user", "content": [{ "type": "input_text", "text": "Run the suite" }] },
     ] })
     .to_string();
-    tap.message(Direction::Request, Payload::Text, create.as_bytes());
-    tap.end(Direction::Request);
-    tap.response_head(
-        101,
-        ResponseFormat::WebSocketMessages,
-        ResponseEncoding::Identity,
-    );
+    tap.request_message(Payload::Text, create.as_bytes());
+    tap.request_ended();
+    let mut tap = tap.head(Head {
+        status: 101,
+        format: ResponseFormat::WebSocketMessages,
+        encoding: ResponseEncoding::Identity,
+    });
     let item = serde_json::json!({ "type": "function_call", "call_id": "c1", "name": "shell", "arguments": "{\"command\":[\"cargo\",\"test\"]}" });
     for event in [
         serde_json::json!({ "type": "response.created", "response": {} }),
@@ -629,9 +630,8 @@ async fn a_websocket_calls_digest_is_derived_from_its_messages_alike() {
             event.to_string().as_bytes(),
         );
     }
-    tap.end(Direction::Response);
+    tap.ended(Direction::Response);
     tap.finish(ended(AttemptTerminal::TerminalEvent));
-    drop(tap);
     drop(channel);
     let (dir, _metrics, _reader) = harness.drain().await;
     let live = stored_digest(dir.path(), call).await.unwrap();
@@ -659,8 +659,7 @@ async fn the_recorder_derives_missing_digests_from_stored_bodies() {
     let (request, response) = exchange("needle");
     let tap = harness.start();
     let call = tap.call();
-    complete(&tap, &request, &response);
-    drop(tap);
+    complete(tap, &request, &response);
     let (dir, _metrics, _reader) = harness.drain().await;
     let live = stored_digest(dir.path(), call).await.unwrap();
 

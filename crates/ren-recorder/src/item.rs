@@ -4,9 +4,10 @@
 //! capacity is the data slots plus the lifecycle slots of every admitted call:
 //! open, the call's finish, and per attempt a start (after the first), a
 //! response head, and the attempt's finish. A call reserves the slots of every
-//! attempt its plan allows at admission and holds a call permit until its
-//! finish record is dequeued, so data can never take the slots a terminal
-//! needs.
+//! attempt its plan allows at admission and holds one unit per attempt until
+//! its finish record is dequeued, so data can never take the slots a terminal
+//! needs. The caller sizes the units (`RecorderSetup::max_calls`) for the
+//! attempts its plans allow; the recorder holds no plan of its own.
 
 use super::{metrics::Counters, options::CaptureOptions};
 pub(super) use crate::recording::{Piece, Record, Track};
@@ -61,8 +62,8 @@ pub(super) enum Item {
         stamp: Stamp,
         request: BodyEnd,
         rejection: Option<CallRejection>,
-        /// Released when dequeued, returning this call's lifecycle slots.
-        _call: OwnedSemaphorePermit,
+        /// Released when dequeued, returning this call's lifecycle units.
+        _units: OwnedSemaphorePermit,
     },
     Operator {
         action: OperatorAction,
@@ -142,7 +143,7 @@ impl Item {
                 stamp,
                 request,
                 rejection,
-                _call,
+                _units,
             } => (
                 Record::FinishCall {
                     stamp,
@@ -170,7 +171,9 @@ impl Item {
 /// State shared by every tap.
 pub(super) struct Shared {
     pub sender: mpsc::Sender<Item>,
-    calls: Arc<Semaphore>,
+    /// Lifecycle units: one per attempt of an open call, per channel end,
+    /// and per pending lifecycle record of a run or the operator.
+    units: Arc<Semaphore>,
     slots: Arc<Semaphore>,
     pub bytes: Arc<Semaphore>,
     pub counters: Arc<Counters>,
@@ -179,13 +182,13 @@ pub(super) struct Shared {
     pub ids: Arc<dyn IdSource>,
 }
 
-/// A call's lifecycle slots and its call permit.
+/// A call's lifecycle slots and its units.
 pub(super) struct Reservation {
     pub open: OwnedPermit<Item>,
     pub finish: OwnedPermit<Item>,
     /// One entry per attempt the call may make, in order.
     pub attempts: std::collections::VecDeque<AttemptSlots>,
-    pub call: OwnedSemaphorePermit,
+    pub units: OwnedSemaphorePermit,
 }
 
 /// One attempt's lifecycle slots. The first attempt starts with the call's
@@ -222,29 +225,27 @@ impl Admission {
 }
 
 impl Shared {
-    /// Open and the call's finish.
-    const CALL_SLOTS: usize = 2;
-    /// Start, response head, and finish.
-    const ATTEMPT_SLOTS: usize = 3;
-    /// Attempts one call may make: its upstream and one fallback.
-    pub const MAX_ATTEMPTS: usize = 2;
-    const LIFECYCLE_SLOTS: usize = Self::CALL_SLOTS + Self::ATTEMPT_SLOTS * Self::MAX_ATTEMPTS;
+    /// Queue slots per unit: a one-attempt call's open and finish, and its
+    /// attempt's start, response head, and finish. A call of `n` attempts
+    /// needs `3n + 1` slots and holds `n` units, so the units it holds
+    /// always cover its slots.
+    const UNIT_SLOTS: usize = 5;
 
     pub fn new(
         options: CaptureOptions,
-        max_calls: usize,
+        units: usize,
         counters: Arc<Counters>,
         clock: Arc<dyn Clock>,
         ids: Arc<dyn IdSource>,
     ) -> (Self, mpsc::Receiver<Item>) {
-        let max_calls = max_calls.max(1);
+        let units = units.max(1);
         let capacity = options
             .queue_capacity
-            .saturating_add(max_calls.saturating_mul(Self::LIFECYCLE_SLOTS));
+            .saturating_add(units.saturating_mul(Self::UNIT_SLOTS));
         let (sender, receiver) = mpsc::channel(capacity);
         let shared = Self {
             sender,
-            calls: Arc::new(Semaphore::new(max_calls)),
+            units: Arc::new(Semaphore::new(units)),
             slots: Arc::new(Semaphore::new(options.queue_capacity)),
             bytes: Arc::new(Semaphore::new(options.queue_bytes)),
             counters,
@@ -256,13 +257,14 @@ impl Shared {
     }
 
     /// Lifecycle slots for a new call that may make up to `attempts`
-    /// attempts, or `None` when more calls are open than the recorder was
-    /// sized for, or the recorder has stopped.
+    /// attempts, or `None` when the units the recorder was sized for are
+    /// taken, or the recorder has stopped.
     pub fn reserve(&self, attempts: usize) -> Option<Reservation> {
-        let call = self.calls.clone().try_acquire_owned().ok()?;
+        let units = u32::try_from(attempts.max(1)).ok()?;
+        let units = self.units.clone().try_acquire_many_owned(units).ok()?;
         let slot = || self.sender.clone().try_reserve_owned().ok();
         let mut reserved = std::collections::VecDeque::new();
-        for ordinal in 0..attempts.min(Self::MAX_ATTEMPTS) {
+        for ordinal in 0..attempts {
             reserved.push_back(AttemptSlots {
                 start: if ordinal == 0 { None } else { Some(slot()?) },
                 head: slot()?,
@@ -273,14 +275,14 @@ impl Shared {
             open: slot()?,
             finish: slot()?,
             attempts: reserved,
-            call,
+            units,
         })
     }
 
-    /// The end slot of a WebSocket channel. It counts as a call, so the
-    /// recorder's call limit must include the channel limit.
+    /// One lifecycle slot, such as a WebSocket channel's end. It takes a
+    /// unit, so the recorder's units must include the channel limit.
     pub fn reserve_close(&self) -> Option<(OwnedPermit<Item>, OwnedSemaphorePermit)> {
-        let call = self.calls.clone().try_acquire_owned().ok()?;
+        let call = self.units.clone().try_acquire_owned().ok()?;
         let slot = self.sender.clone().try_reserve_owned().ok()?;
         Some((slot, call))
     }
