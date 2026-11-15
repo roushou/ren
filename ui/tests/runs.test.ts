@@ -189,7 +189,7 @@ test('the transcript streams a reply, then commands and file changes as items up
   }
   assert.equal(transcript.turn, 'turn-1');
   assert.deepEqual(transcript.entries, [
-    { kind: 'prompt', item: 'u1', text: 'fix the failing test' },
+    { kind: 'prompt', item: 'u1', text: 'fix the failing test', images: [] },
     {
       kind: 'command',
       item: 'c1',
@@ -213,6 +213,28 @@ test('the transcript streams a reply, then commands and file changes as items up
   assert.deepEqual(done.entries[3], { kind: 'message', item: 'm1', text: 'Fixed it.', done: true });
 });
 
+test('an echoed prompt keeps what each image sent with it is', () => {
+  const image = {
+    name: 'shot.png',
+    kind: { kind: 'image', format: 'png', dimensions: { width: 4, height: 3 } },
+    size: 9,
+    sha256: 'ab',
+  };
+  const echo = event({
+    kind: 'item',
+    phase: 'completed',
+    item: { id: 'u2', kind: 'user_message', read: { as: 'prompt', text: '', images: [image] } },
+  });
+  assert.deepEqual(new Transcript().apply(echo).entries, [
+    {
+      kind: 'prompt',
+      item: 'u2',
+      text: '',
+      images: [{ name: 'shot.png', format: 'png', width: 4, height: 3, size: 9, sha256: 'ab' }],
+    },
+  ]);
+});
+
 test('a prompt shows once, whether the echo or the local copy comes first', () => {
   const echo = event({
     kind: 'item',
@@ -221,10 +243,10 @@ test('a prompt shows once, whether the echo or the local copy comes first', () =
   });
   const ended = event({ kind: 'turn_ended', turn: 't1', end: { kind: 'completed' } });
   assert.deepEqual(new Transcript().apply(echo).prompted('go').entries, [
-    { kind: 'prompt', item: 'u1', text: 'go' },
+    { kind: 'prompt', item: 'u1', text: 'go', images: [] },
   ]);
   assert.deepEqual(new Transcript().prompted('go').apply(echo).entries, [
-    { kind: 'prompt', item: 'u1', text: 'go' },
+    { kind: 'prompt', item: 'u1', text: 'go', images: [] },
   ]);
   // The same words in a later turn are a new prompt.
   const again = new Transcript().prompted('go').apply(ended).prompted('go');

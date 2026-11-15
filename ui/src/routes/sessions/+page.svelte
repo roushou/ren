@@ -43,6 +43,14 @@
     type FileMatch,
   } from '#lib/runs.ts';
   import { Mentions } from '#lib/mention.ts';
+  import {
+    Gallery,
+    Refusals,
+    Tray,
+    type AttachmentRead,
+    type Chip,
+    type KeptAttachment,
+  } from '#lib/attachments.ts';
   import ComposerMenu, { type MenuEntry } from './ComposerMenu.svelte';
   import Icon from '#lib/Icon.svelte';
   import Markdown from '#lib/Markdown.svelte';
@@ -420,6 +428,74 @@
   function write(text: string) {
     if (chosen) drafts.set(chosen, text);
   }
+  /** Each session's images about to go with its next prompt. */
+  const trays = new SvelteMap<SessionId, Tray>();
+  const tray = $derived(chosen ? (trays.get(chosen) ?? new Tray()) : new Tray());
+  /** Each session's attachments as the daemon lists them, to show what a prompt sent. */
+  const kept = new SvelteMap<SessionId, KeptAttachment[]>();
+  const gallery = $derived(new Gallery(chosen ? (kept.get(chosen) ?? []) : []));
+  /** Whether the composer offers images: not for a client that takes none. */
+  const imagesTaken = $derived(session?.images !== 'never');
+  let picker = $state<HTMLInputElement>();
+  /** Something is being dragged over the composer. */
+  let dropping = $state(false);
+
+  async function readAttachments(target: SessionId) {
+    if (!data.runsControl) return;
+    try {
+      kept.set(target, await client.attachments(target));
+    } catch {
+      // Without the listing, sent images show by name.
+    }
+  }
+
+  $effect(() => {
+    const target = chosen;
+    if (target) untrack(() => void readAttachments(target));
+  });
+
+  /** Upload each image to the session; each is a chip until it is sent. */
+  async function addImages(files: readonly File[]) {
+    const target = chosen;
+    if (!target || !imagesTaken) return;
+    for (const file of files) {
+      const start = (trays.get(target) ?? new Tray()).adding(file.name || 'image');
+      trays.set(target, start.tray);
+      const settle = (change: (now: Tray) => Tray) =>
+        trays.set(target, change(trays.get(target) ?? new Tray()));
+      if (!Gallery.takes(file.type)) {
+        settle((now) => now.refused(start.key, Refusals.say('image_required')));
+        continue;
+      }
+      try {
+        const bytes = await file.arrayBuffer();
+        const made = await client.attach(target, file.name || 'image', file.type, bytes);
+        settle((now) => now.uploaded(start.key, made.id, made.read));
+      } catch (error) {
+        const code = error instanceof RunCommandError ? error.code : null;
+        settle((now) => now.refused(start.key, code ? Refusals.say(code) : message(error)));
+      }
+    }
+  }
+
+  /** Take an image out of the tray; one uploaded is removed from the session. */
+  async function removeChip(chip: Chip) {
+    const target = chosen;
+    if (!target) return;
+    if (chip.state === 'ready') {
+      try {
+        await client.detach(target, chip.id);
+      } catch (error) {
+        notice = message(error);
+        return;
+      }
+    }
+    trays.set(target, (trays.get(target) ?? new Tray()).without(chip.key));
+  }
+
+  function imagesOf(transfer: DataTransfer | null): File[] {
+    return [...(transfer?.files ?? [])].filter((file) => file.type.startsWith('image/'));
+  }
   /** Where the caret is in the prompt, for what the word there asks to be offered. */
   let caret = $state(0);
   /** Where an offer closed with Esc starts: it stays closed until another word asks. */
@@ -573,28 +649,48 @@
     const text = draft.trim();
     const target = chosen;
     const run = selected;
-    if (!target || !text || !compose || signedOut) return;
+    const attachments = tray.ids();
+    const images: AttachmentRead[] = tray.chips.flatMap((chip) =>
+      chip.state === 'ready' ? [chip.read] : [],
+    );
+    if (!target || (!text && attachments.length === 0) || tray.uploading()) return;
+    if (!compose || signedOut) return;
     // Shown at once where its process runs; a new process reads it back.
     const shown = (sent: string) => {
       if (run && session && Sessions.running(session)) {
-        transcripts.set(run, (transcripts.get(run) ?? new Transcript()).prompted(sent));
+        transcripts.set(run, (transcripts.get(run) ?? new Transcript()).prompted(sent, images));
       }
     };
     await act(async () => {
       switch (compose.kind) {
         case 'start':
         case 'continue':
-          await client.toSession(target, { kind: 'prompt', text, delivery: 'start' });
+          await client.toSession(target, {
+            kind: 'prompt',
+            text,
+            delivery: 'start',
+            attachments,
+          });
           shown(text);
           break;
         case 'during':
           if (delivery === 'steer' && compose.steer) {
-            await client.toSession(target, { kind: 'prompt', text, delivery: 'steer' });
+            await client.toSession(target, {
+              kind: 'prompt',
+              text,
+              delivery: 'steer',
+              attachments,
+            });
             shown(text);
           } else {
             // Queued after what was queued before: one message, in order.
             const next = compose.queued ? `${compose.queued}\n\n${text}` : text;
-            await client.toSession(target, { kind: 'prompt', text: next, delivery: 'queue' });
+            await client.toSession(target, {
+              kind: 'prompt',
+              text: next,
+              delivery: 'queue',
+              attachments,
+            });
           }
           break;
         case 'closed':
@@ -602,7 +698,8 @@
         default:
           return assertNever(compose);
       }
-      await Promise.all([readSessions(), readLive()]);
+      trays.set(target, (trays.get(target) ?? new Tray()).sent());
+      await Promise.all([readSessions(), readLive(), readAttachments(target)]);
       drafts.delete(target);
       recalling = null;
       following = true;
@@ -904,7 +1001,30 @@
 
 {#snippet entryView(entry: Entry)}
   {#if entry.kind === 'prompt'}
-    <div class="entry prompt"><Markdown text={entry.text} /></div>
+    <div class="entry prompt">
+      {#if entry.images.length > 0}
+        <div class="sent-images">
+          {#each entry.images as image, index (index)}
+            {@const id = gallery.find(image)}
+            {#if id && chosen}
+              <a
+                class="sent-image"
+                href={Gallery.url(chosen, id)}
+                target="_blank"
+                rel="noopener"
+                title="{image.name} · {Gallery.describe(image)}"
+                ><img src={Gallery.url(chosen, id)} alt={image.name} loading="lazy" /></a
+              >
+            {:else}
+              <span class="sent-image named" title={Gallery.describe(image)}
+                ><Icon name="image" size={12} />{image.name}</span
+              >
+            {/if}
+          {/each}
+        </div>
+      {/if}
+      {#if entry.text}<Markdown text={entry.text} />{/if}
+    </div>
   {:else if entry.kind === 'message'}
     <div class="entry reply" class:streaming={!entry.done}>
       <Markdown text={entry.text} />
@@ -1247,11 +1367,57 @@
         <form
           class="composer"
           class:locked={signedOut}
+          class:dropping
           onsubmit={(event) => {
             event.preventDefault();
             void send('queue');
           }}
+          ondragover={(event) => {
+            if (!imagesTaken || compose.kind === 'closed') return;
+            if ([...(event.dataTransfer?.types ?? [])].includes('Files')) {
+              event.preventDefault();
+              dropping = true;
+            }
+          }}
+          ondragleave={() => (dropping = false)}
+          ondrop={(event) => {
+            dropping = false;
+            const files = imagesOf(event.dataTransfer);
+            if (files.length === 0 || !imagesTaken || compose.kind === 'closed') return;
+            event.preventDefault();
+            void addImages(files);
+          }}
         >
+          {#if tray.chips.length > 0}
+            <ul class="tray" aria-label="Images to send">
+              {#each tray.chips as chip (chip.key)}
+                <li class="tray-chip {chip.state}">
+                  {#if chip.state === 'ready' && chosen}
+                    <img src={Gallery.url(chosen, chip.id)} alt="" />
+                    <span class="tray-name" title={Gallery.describe(chip.read)}
+                      >{chip.read.name}</span
+                    >
+                  {:else if chip.state === 'uploading'}
+                    <Icon name="image" size={12} />
+                    <span class="tray-name">{chip.name}</span>
+                    <span class="muted">Uploading…</span>
+                  {:else if chip.state === 'refused'}
+                    <Icon name="alert" size={12} />
+                    <span class="tray-name">{chip.name}</span>
+                    <span class="refused-reason">{chip.reason}</span>
+                  {/if}
+                  {#if chip.state !== 'uploading'}
+                    <button
+                      type="button"
+                      class="tray-remove"
+                      aria-label="Remove {chip.state === 'ready' ? chip.read.name : chip.name}"
+                      onclick={() => void removeChip(chip)}><Icon name="close" size={10} /></button
+                    >
+                  {/if}
+                </li>
+              {/each}
+            </ul>
+          {/if}
           {#if offering}
             <ComposerMenu
               id={menuId}
@@ -1282,6 +1448,12 @@
               trackCaret(event);
             }}
             onkeydown={composerKey}
+            onpaste={(event) => {
+              const files = imagesOf(event.clipboardData);
+              if (files.length === 0 || !imagesTaken) return;
+              event.preventDefault();
+              void addImages(files);
+            }}
             onkeyup={trackCaret}
             onclick={trackCaret}
             onfocus={trackCaret}
@@ -1348,10 +1520,35 @@
               />
             {/if}
             <span class="composer-actions">
+              {#if imagesTaken && compose.kind !== 'closed'}
+                <input
+                  bind:this={picker}
+                  class="picker"
+                  type="file"
+                  accept="image/png,image/jpeg,image/gif,image/webp"
+                  multiple
+                  tabindex="-1"
+                  onchange={(event) => {
+                    const files = [...(event.currentTarget.files ?? [])];
+                    event.currentTarget.value = '';
+                    void addImages(files);
+                  }}
+                />
+                <button
+                  type="button"
+                  class="button"
+                  title="Attach images. They are kept and sent as they are, metadata included."
+                  aria-label="Attach images"
+                  onclick={() => picker?.click()}><Icon name="image" size={12} /></button
+                >
+              {/if}
               {#if compose.kind === 'during' && compose.steer}<button
                   type="button"
                   class="button"
-                  disabled={busy || !draft.trim() || signedOut}
+                  disabled={busy ||
+                    (!draft.trim() && tray.ids().length === 0) ||
+                    tray.uploading() ||
+                    signedOut}
                   title="Add it to the turn that is running"
                   onclick={() => void send('steer')}>Send now</button
                 >{/if}
@@ -1366,7 +1563,11 @@
               {:else}
                 <button
                   class="button primary"
-                  disabled={busy || !draft.trim() || compose.kind === 'closed' || signedOut}
+                  disabled={busy ||
+                    (!draft.trim() && tray.ids().length === 0) ||
+                    tray.uploading() ||
+                    compose.kind === 'closed' ||
+                    signedOut}
                   title={signedOut ? `Sign ${harnessLabel(current.harness)} in to send` : null}
                   >{compose.kind === 'during'
                     ? 'Queue'
@@ -1608,6 +1809,31 @@
   .entry.prompt :global(.markdown p) {
     white-space: pre-wrap;
   }
+  /* A prompt's images, as thumbnails that touch, opened full size on click. */
+  .sent-images {
+    display: flex;
+    flex-wrap: wrap;
+    margin-top: 10px;
+    border: 1px solid var(--line);
+    width: fit-content;
+  }
+  .sent-image {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+  }
+  .sent-image + .sent-image {
+    border-left: 1px solid var(--line);
+  }
+  .sent-image img {
+    display: block;
+    max-width: 240px;
+    max-height: 160px;
+  }
+  .sent-image.named {
+    padding: 6px 8px;
+  }
   .entry.prompt {
     background: var(--surface-inset);
     box-shadow: inset 2px 0 var(--role-user);
@@ -1746,6 +1972,65 @@
     color: var(--ink);
     font: inherit;
     font-size: 13px;
+  }
+  /* Something dragged over the composer: its edge says it takes the drop. */
+  .composer.dropping {
+    box-shadow: inset 2px 0 var(--accent);
+    background: var(--surface-inset);
+  }
+  /* The images about to go: square chips that touch, ruled off by 1px. */
+  .tray {
+    display: flex;
+    flex-wrap: wrap;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    border-bottom: 1px solid var(--line);
+  }
+  .tray-chip {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    max-width: 280px;
+    height: 40px;
+    padding: 0 6px 0 0;
+    border-right: 1px solid var(--line);
+    font-size: 12px;
+  }
+  .tray-chip img {
+    width: 40px;
+    height: 40px;
+    object-fit: cover;
+    border-right: 1px solid var(--line);
+  }
+  .tray-chip.uploading,
+  .tray-chip.refused {
+    padding-left: 8px;
+  }
+  .tray-name {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .refused-reason {
+    color: var(--error);
+    white-space: nowrap;
+  }
+  .tray-remove {
+    display: inline-flex;
+    padding: 3px;
+    border: 0;
+    border-radius: 2px;
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+  }
+  .tray-remove:hover {
+    background: var(--surface-inset);
+  }
+  .picker {
+    display: none;
   }
   .composer-bar {
     display: flex;

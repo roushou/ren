@@ -4,7 +4,8 @@
  * token file (`REN_CONTROL_TOKEN_FILE`), and it reaches only the daemon's
  * `/control/v1/sessions` routes (listing, creating, prompting, answering,
  * configuring, interrupting, stopping, and archiving sessions, their
- * composer's commands and files, and their update feed), its
+ * composer's commands and files, their image attachments (uploaded, listed,
+ * read back, and removed), and their update feed), its
  * `/control/v1/runs` reads (the live runs and their feed, the projects a
  * session can start in, and the clients and models it can start with), and
  * its `/control/v1/history` routes (archiving, unarchiving, and deleting a
@@ -16,7 +17,8 @@
  * The browser never sees the token: this server reads it from the file on
  * each request (the daemon writes a new one when it starts) and sends it as
  * the bearer. A browser request must come from this UI's own pages (same
- * origin, JSON body), and with `REN_CONTROL_LOGINS` set, from one of those
+ * origin, JSON body, or an image's bytes for an upload), and with
+ * `REN_CONTROL_LOGINS` set, from one of those
  * Tailscale logins, as Tailscale Serve reports them.
  */
 
@@ -75,12 +77,15 @@ export interface ControlHost {
 /**
  * `query`: the query parameters forwarded; every other one is dropped.
  * `timeout`: how long a request that is not a feed may take, in ms.
+ * `body`: what a POST carries: JSON (the default), or an image's bytes, an
+ * upload the daemon reads and caps itself.
  */
 type Route = {
-  method: 'GET' | 'POST';
+  method: 'GET' | 'POST' | 'DELETE';
   feed: boolean;
   query?: readonly string[];
   timeout?: number;
+  body?: 'json' | 'image';
 };
 
 const runId = '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}';
@@ -131,6 +136,20 @@ const routes: { pattern: RegExp; route: Route }[] = [
     pattern: new RegExp(`^/control/sessions/${runId}/approvals/${approvalId}$`),
     route: { method: 'POST', feed: false },
   },
+  // A session's attachments: uploaded as raw image bytes, listed, read back
+  // for thumbnails, and removed while unsent.
+  {
+    pattern: new RegExp(`^/control/sessions/${runId}/attachments$`),
+    route: { method: 'POST', feed: false, query: ['name'], body: 'image', timeout: 120_000 },
+  },
+  {
+    pattern: new RegExp(`^/control/sessions/${runId}/attachments(?:/${runId})?$`),
+    route: { method: 'GET', feed: false },
+  },
+  {
+    pattern: new RegExp(`^/control/sessions/${runId}/attachments/${runId}$`),
+    route: { method: 'DELETE', feed: false },
+  },
   {
     pattern: new RegExp(
       `^/control/history/(?:sessions|runs)/${runId}/(?:archive|unarchive|delete)$`,
@@ -150,6 +169,9 @@ const routes: { pattern: RegExp; route: Route }[] = [
 /** Creating a session is the one POST to the session listing's own path. */
 const sessionsPath = '/control/sessions';
 const maxBody = 256 * 1024;
+/** An upload's own cap, above any image limit the daemon enforces exactly. */
+const maxImage = 64 * 1024 * 1024;
+const imageTypes = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'];
 const headers = { 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' };
 /** Sent first on the feed, so EventSource reports it open at once (see management.ts). */
 const openingComment = new TextEncoder().encode(': connected\n\n');
@@ -181,11 +203,16 @@ export class RunsProxy {
         return RunsProxy.#refuse(403, 'login_not_allowed');
       }
     }
-    let body: string | undefined;
-    if (route.method === 'POST') {
-      if (request.headers.get('content-type')?.split(';')[0]?.trim() !== 'application/json') {
-        return RunsProxy.#refuse(415, 'json_required');
-      }
+    let body: string | ArrayBuffer | undefined;
+    const type = request.headers.get('content-type')?.split(';')[0]?.trim() ?? '';
+    if (route.method === 'POST' && route.body === 'image') {
+      if (!imageTypes.includes(type)) return RunsProxy.#refuse(415, 'image_required');
+      const length = Number(request.headers.get('content-length') ?? '0');
+      if (length > maxImage) return RunsProxy.#refuse(413, 'too_large');
+      body = await request.arrayBuffer();
+      if (body.byteLength > maxImage) return RunsProxy.#refuse(413, 'too_large');
+    } else if (route.method === 'POST') {
+      if (type !== 'application/json') return RunsProxy.#refuse(415, 'json_required');
       body = await request.text();
       if (body.length > maxBody) return RunsProxy.#refuse(413, 'too_large');
     }
@@ -209,7 +236,7 @@ export class RunsProxy {
         headers: {
           authorization: `Bearer ${token}`,
           accept: route.feed ? 'text/event-stream' : 'application/json',
-          ...(body === undefined ? {} : { 'content-type': 'application/json' }),
+          ...(body === undefined ? {} : { 'content-type': type }),
         },
         body,
         redirect: 'manual',
@@ -237,9 +264,9 @@ export class RunsProxy {
 
   static #route(path: string, method: string): Route | 'method' | null {
     if (path === sessionsPath && method === 'POST') return { method: 'POST', feed: false };
-    const found = routes.find(({ pattern }) => pattern.test(path));
-    if (!found) return null;
-    return found.route.method === method ? found.route : 'method';
+    const matching = routes.filter(({ pattern }) => pattern.test(path));
+    if (matching.length === 0) return null;
+    return matching.find(({ route }) => route.method === method)?.route ?? 'method';
   }
 
   /**

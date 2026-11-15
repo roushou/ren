@@ -482,6 +482,8 @@ dependencies under "Crates" below. Read the code for current module ownership.
   `src/lib/signIn.ts` a client's sign-in as the API reports it and how the
   view words it, with `src/lib/SignInSheet.svelte` the sheet that runs the
   client's own login (its link out, the page's code back),
+  `src/lib/attachments.ts` the composer's images (the `Tray` of uploads,
+  and the `Gallery` that finds a sent image's thumbnail by its hash),
   `src/lib/mention.ts` the composer's offers (the client's commands after
   `/` or `$`, the folder's files after `@`), `src/lib/redline.ts` Redline's
   pure core (what a mark points at, the brief an agent gets, and the open

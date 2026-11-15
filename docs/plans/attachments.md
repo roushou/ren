@@ -4,12 +4,11 @@ A prompt sent through Ren carries attachments: images first, then other files.
 Ren has one attachment vocabulary across the UI, the control API, the
 supervisor, and storage; each client declares, as data, which kinds it
 accepts and how it takes them, and only its codec turns a Ren attachment into
-the client's own input. Phases 1 and 2 are built: the vocabulary, parsing,
-limits, and each client's declaration (`ren_harness::attachment`), and
-images uploaded to a session, kept, read back, removed, and deleted with it.
-Nothing is sent yet: a `Prompt` (`ren_harness::drive`) is still non-blank
-text, and each codec sends it as one text item. Record every deviation here,
-with its reason.
+the client's own input. Phases 1 to 3 are built: images are uploaded to a
+session from the Sessions view, sent with a prompt through every client,
+shown in the conversation, and kept with the session. Files (phase 4) and
+Redline's screenshots (phase 5) are not. Record every deviation here, with
+its reason.
 
 ## Decisions
 
@@ -59,8 +58,9 @@ with its reason.
   Dimensions come from the `imagesize` crate (pure, no dependencies of its
   own); the image is not decoded. Built.
 - `Prompt` gains its attachments: its text and an ordered list of
-  attachments. A prompt of attachments only is allowed; one with neither
-  text nor attachments is still blank. Phase 3.
+  `PromptImage`s (what each is, its file's path, and its bytes, never shown
+  in `Debug` or serialized). A prompt of attachments only is allowed; one
+  with neither text nor attachments is still blank. Built.
 - `Acceptance`: what a client takes, as data. For each kind, a `Takes`:
   `Always(Delivery)`, `IfOffered(Delivery)`, or `Never`. Built, with each
   client's declaration in `Harness::acceptance`; `Delivery` labels are
@@ -78,8 +78,8 @@ with its reason.
   listing says so (`Model` gains its input kinds when the listing has them).
   The session's effective acceptance is the static declaration narrowed by
   what was learned; unknown is not yes (`Takes::resolve` with an `Offer`:
-  offered, not offered, or unknown; built). The codecs' reports are phase
-  3.
+  offered, not offered, or unknown). Built for OpenCode
+  (`Driver::image_offer`); models' input kinds are not (see Deviations).
 - `Limits`: declarative configuration (`[attachments]`), with defaults: 5 MB
   and 8000 px a side per image (the Anthropic API's limits), 10 attachments
   and 20 MB per prompt, and in phase 4, 25 MB per file. Inline delivery
@@ -160,15 +160,18 @@ and `TestGateway`'s on disk.
   `Content-Disposition: inline` for images (`attachment` for files, phase
   4), and `nosniff`. Built.
 - `DELETE` of one not yet sent in a prompt (a chip removed from the
-  composer). One sent stays with the session. Built without the sent rule:
-  nothing is sent until phase 3, which adds it.
-- Listing a session's attachments: phase 3, with the composer that needs
-  it.
+  composer). One sent stays with the session (`409` `attachment_sent`;
+  `sent_at` in the store). Built.
+- `GET /control/v1/sessions/{id}/attachments`: each attachment, what it is,
+  and whether it was sent. Built.
 - The prompt request (`PromptRequest`) gains `attachments: [AttachmentId]`.
-- A session's view gains its effective `acceptance`, so the composer offers
-  only what the client takes. The server checks again on send.
+  Built.
+- A served session says whether its client takes images (`images`:
+  `always`, `if_offered`, or `never`), so the composer offers only what the
+  client takes. The server checks again on send. Built.
 - The UI's `RunsProxy` (`ui/src/lib/server/control.ts`) forwards the upload
-  and the read with the control token, like the other session routes.
+  (an image's bytes, `image/*` only), the listing, the read, and the removal
+  with the control token, like the other session routes. Built.
 
 ## Clients
 
@@ -184,9 +187,13 @@ changing client behavior):
 | OpenCode    | an ACP `image` content block, when `initialize` reports `promptCapabilities.image` | to confirm (its steering is a `_meta` extension) | 2.2.7 reports `image: true` and `additionalDirectories` |
 
 Each codec's encoding is tested like the rest of the codec: a prompt with
-attachments in, the client's lines out, no I/O. Where a steer cannot carry
-an image, `Midway` says so and a steering prompt with one is refused
-(queued instead, if the operator chooses).
+attachments in, the client's lines out, no I/O. Built: Codex sends each
+image as a `localImage` path, and Claude Code, Pi, and OpenCode in base64.
+Each codec remembers the images of what it sent and puts what they are on
+the prompt's echo (`ItemRead::Prompt { images }`); an echoed body keeps no
+image bytes (`DriveItem::without_image_bytes`), so none reach run entries or
+the live feed. Steering with an image goes as the client's steer takes it;
+Claude Code takes no steer at all.
 
 Reading access for files (phase 4): Claude Code's `--add-dir`, Codex's
 sandbox readable roots, and the equivalents for Pi and OpenCode, given the
@@ -195,16 +202,20 @@ session's folder only. To confirm per client.
 ## UI
 
 - The composer (`ui/src/routes/sessions/+page.svelte`) takes a pasted image,
-  a dropped file, or a picked one. Each upload is a chip with its thumbnail
-  or name, its progress, and a remove control; sending waits for uploads to
-  finish. What the session's acceptance refuses is greyed with the reason.
+  a dropped file, or a picked one. Each upload is a square chip with its
+  thumbnail and name (or "Uploading…", or why it was refused) and a remove
+  control; sending waits for uploads to finish. A client that takes no
+  images is offered none; the attach button says images are kept and sent
+  as they are. Built.
 - The conversation shows a prompt's images as thumbnails, opened full size
-  on click, and its files by name.
-- ↑ recalls an earlier prompt with its attachments.
+  on click, found by their SHA-256 among the session's attachments; one not
+  found shows by name. Built.
+- ↑ recalls an earlier prompt's text only (see Deviations).
 - Redline's brief can attach its screenshot (phase 5).
-- Pure logic (acceptance checks, chip states as a discriminated union) in
-  `ui/src/lib`, tested without a browser. Thumbnails are served same-origin;
-  `ui/src/csp.ts` needs no new source.
+- Pure logic in `ui/src/lib/attachments.ts` (`Tray`, its `Chip` states as a
+  discriminated union, `Gallery`, `Refusals`), tested without a browser.
+  Thumbnails are served same-origin; `ui/src/csp.ts` needs no new source.
+  Built.
 
 ## Phases
 
@@ -222,7 +233,9 @@ session's folder only. To confirm per client.
    its attachments, refusals on
    send, run entries naming attachments, and the UI composer and
    conversation. Fake clients in `cargo xtask dev` take images, so the dev
-   slot shows them. Not built.
+   slot shows them. Built, checked in the dev slot through the UI server:
+   an image uploaded, sent through the fake Claude Code, recorded with no
+   bytes in its entry, and shown as a thumbnail.
 4. **Files.** `AttachmentKind::File`, `MentionPath` delivery, each client
    given its session's folder to read, and the UI's file chips. Not built.
 5. **Redline screenshots.** A Redline brief sends its marked screenshot as
@@ -251,6 +264,23 @@ session's folder only. To confirm per client.
   apart (`Reader::attachments`) when it serves it from the store.
 - **The table has image columns, not a kind.** Images are the only kind
   until phase 4, whose migration adds files.
+- **Models' input kinds are not read.** No client's model listing as Ren
+  reads it says which models take images, so a prompt with an image to a
+  model that reads none fails at the provider, and that failure shows in
+  the conversation as the client reports it.
+- **An OpenCode session not yet running says `if_offered`.** Its offer is
+  known once its process answers `initialize`; a prompt sent before then
+  goes to the new process, whose codec refuses it if it was not offered
+  (`no_images`), and its images stay unsent.
+- **A sent image is matched by its SHA-256.** The echo carries what each
+  image is, not its id: ids are the store's, and `ren-harness` is below it.
+  Two uploads of the same bytes show the same thumbnail, which is the same
+  image.
+- **↑ and a queued prompt keep text only.** A queued prompt's images are
+  marked sent when it is queued; taking it back into the composer to edit
+  keeps its text, and its images do not come back to the tray.
+- **The composer's thumbnail comes from the upload.** A local preview before
+  the upload would need `blob:` images in the CSP.
 - **A stored attachment Ren cannot read back is left out** of the session
   as served (a format this build does not know), with a warning; its row
   and file stay.
