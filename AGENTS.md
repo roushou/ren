@@ -343,10 +343,11 @@ dependencies under "Crates" below. Read the code for current module ownership.
   looking in folders, making folders (a scratch run's as a repository),
   finding programs, the current toolset a process gets (`RunTools`: a
   generation and its folder, none, or an unreadable store, recorded as such
-  with the run), and starting processes, which tests
+  with the run), doing blocking work off the task (`AgentHost::blocking`,
+  Tokio's blocking pool in `ProcessHost`), and starting processes, which tests
   fill with
   scripted in-memory agents. `SupervisorTask` is the shell: one task reads every
-  agent's stdout, writes its stdin, and waits for its exit, records each run
+  agent's stdout, writes its stdin through a bounded queue per agent, and waits for its exit, records each run
   through the recorder's `RunTap` (a run without room to be recorded does not
   start), with every event of its conversation as `entries` keeps it (no
   streamed pieces; a reply cut off kept as far as it came), and drains every

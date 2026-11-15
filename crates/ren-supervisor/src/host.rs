@@ -88,6 +88,18 @@ pub trait AgentHost: Send + Sync + 'static {
         tools: &RunTools,
     ) -> io::Result<AgentProcess>;
 
+    /// Do `work`, which reads or writes the filesystem or waits on a short
+    /// process, where it holds up no thread the supervisor's task or the
+    /// rest of the daemon runs on. The default does it in place: for hosts
+    /// whose work never blocks, as tests' in-memory ones.
+    fn blocking<T, W>(&self, work: W) -> BoxFuture<'static, io::Result<T>>
+    where
+        T: Send + 'static,
+        W: FnOnce() -> io::Result<T> + Send + 'static,
+    {
+        Box::pin(std::future::ready(work()))
+    }
+
     /// Open `address`, a loopback address on this host a client's login
     /// listens on, as the operator's browser would have: one `GET`, no
     /// redirects followed.

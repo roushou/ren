@@ -83,6 +83,9 @@ struct FakeHost {
     walked: Arc<Mutex<Vec<PathBuf>>>,
     /// The files written, by path.
     files: Arc<Mutex<std::collections::BTreeMap<PathBuf, Vec<u8>>>>,
+    /// A folder whose agents never read their stdin, through a pipe too
+    /// small for a single line.
+    deaf: Option<PathBuf>,
 }
 
 impl FakeHost {
@@ -95,6 +98,7 @@ impl FakeHost {
             made: Arc::default(),
             walked: Arc::default(),
             files: Arc::default(),
+            deaf: None,
         }
     }
 }
@@ -212,10 +216,25 @@ impl AgentHost for FakeHost {
             .lock()
             .unwrap()
             .push((arguments.clone(), workdir.as_path().to_path_buf()));
-        let (stdin, agent_in) = tokio::io::duplex(64 * 1024);
-        let (agent_out, stdout) = tokio::io::duplex(64 * 1024);
         let (exit_tx, exit_rx) = oneshot::channel();
         let (kill, signal) = KillSwitch::pair();
+        if self.deaf.as_deref() == Some(workdir.as_path()) {
+            let (stdin, agent_in) = tokio::io::duplex(16);
+            let (agent_out, stdout) = tokio::io::duplex(16);
+            tokio::spawn(async move {
+                let _held = (agent_in, agent_out);
+                signal.fired().await;
+                let _ = exit_tx.send(ProcessExit::Signal(9));
+            });
+            return Ok(AgentProcess {
+                stdin: Box::new(stdin),
+                stdout: Box::new(stdout),
+                exit: Box::pin(async move { exit_rx.await.unwrap_or(ProcessExit::Unknown) }),
+                kill,
+            });
+        }
+        let (stdin, agent_in) = tokio::io::duplex(64 * 1024);
+        let (agent_out, stdout) = tokio::io::duplex(64 * 1024);
         match self.script {
             Script::Claude => tokio::spawn(claude(agent_in, agent_out, signal, exit_tx)),
             Script::Pi => {
@@ -1103,6 +1122,44 @@ async fn a_sessions_folder_is_walked_once_until_a_turn_ends() {
         supervisor.session_commands(unknown).await,
         Err(SessionError::NoSuchSession(_))
     ));
+}
+
+#[tokio::test]
+async fn an_agent_that_never_reads_its_stdin_holds_up_no_other_session() {
+    let mut host = FakeHost::new(Script::Codex);
+    host.deaf = Some(PathBuf::from("/work/notes"));
+    let supervised = supervise(host).await;
+    let supervisor = &supervised.supervisor;
+    let mut updates = supervisor.subscribe();
+    let bounded = Duration::from_secs(5);
+    // Its opening lines do not fit its pipe: they wait in its queue.
+    let deaf = tokio::time::timeout(
+        bounded,
+        supervisor.create(create(Harness::Codex, "/work/notes")),
+    )
+    .await
+    .expect("creating does not wait on the agent's stdin")
+    .unwrap();
+    let heard = tokio::time::timeout(
+        bounded,
+        supervisor.create(create(Harness::Codex, "/work/acme")),
+    )
+    .await
+    .expect("another session is served")
+    .unwrap();
+    tokio::time::timeout(
+        bounded,
+        state(&mut updates, |s| matches!(s, RunState::Idle { .. })),
+    )
+    .await
+    .expect("the other session's client opens");
+    let sessions = supervisor.sessions().await.unwrap();
+    assert!(sessions.iter().any(|session| session.session == deaf));
+    assert!(sessions.iter().any(|session| session.session == heard));
+    // Stopping drains both: the deaf agent is killed.
+    tokio::time::timeout(bounded, supervised.stored())
+        .await
+        .expect("the supervisor drains");
 }
 
 #[tokio::test]
