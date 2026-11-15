@@ -21,6 +21,7 @@ import {
 import { localDayStart, parseRange, rangeStart, type UsageRange } from './usage.ts';
 import { listingQuery } from './traffic.ts';
 import { readSnapshot, snapshotError, type Snapshot } from './snapshots.ts';
+import { Arrival } from './arrival.ts';
 import { Band, Board, LivePlace, type LiveWindow } from './board.ts';
 import { RecordingList, type RecordingDetail } from './recordings.ts';
 
@@ -102,11 +103,12 @@ export interface UsageData {
   bookkeepingErrors: number | null;
 }
 
-/** The Usage page: totals for the range, and the sessions list for its top sessions. */
+/** The Usage page: totals for the range, and the sessions list for its top sessions; handed
+ * over pending on a navigation in the browser (`Arrival`). */
 export function usageSnapshot(fetcher: typeof fetch, rawRange: string | null) {
   const api = new ManagementApi(fetcher);
   const range = parseRange(rawRange);
-  return readSnapshot(`usage?${range}`, async (): Promise<UsageData> => {
+  return Arrival.read(`usage?${range}`, async (): Promise<UsageData> => {
     const now = Date.now();
     const from = rangeStart(range, now, localDayStart);
     const bookkeeping = new URLSearchParams({ status: 'errors', kind: 'other', limit: '100' });
@@ -301,6 +303,7 @@ export class RecordingDetails {
   }
 }
 
+/** A listing of calls, handed over pending on a navigation in the browser (`Arrival`). */
 export async function trafficSnapshot(
   fetcher: typeof fetch,
   url: URL,
@@ -317,7 +320,7 @@ export async function trafficSnapshot(
     if (value) named.set(key, value);
   }
   const key = `${sessionId ? `/recordings/${sessionId}` : '/traffic'}?${named}`;
-  return readSnapshot(key, async (): Promise<TrafficData> => {
+  return Arrival.read(key, async (): Promise<TrafficData> => {
     if (sessionId) {
       // A session's own listing accepts only a cursor.
       const [sessions, page] = await Promise.all([

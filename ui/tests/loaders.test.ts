@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readSnapshot, retainSnapshot } from '../src/lib/snapshots.ts';
+import { readSnapshot, retainSnapshot, type Snapshot } from '../src/lib/snapshots.ts';
+import type { Arriving } from '../src/lib/arrival.ts';
 import {
   gatewaySnapshot,
   recorderSnapshot,
@@ -28,6 +29,13 @@ const path = (input: Parameters<typeof fetch>[0]) => {
   assert.ok(typeof input === 'string');
   return input;
 };
+
+/** A read handed over ready: tests run outside the browser, where reads finish first. */
+function ready<T>(arriving: Arriving<T>): Snapshot<T> {
+  assert.equal(arriving.state, 'ready');
+  if (arriving.state !== 'ready') throw new Error('The read was handed over pending.');
+  return arriving.snapshot;
+}
 
 test('background failure retains only the matching snapshot and recovery clears the error', async () => {
   const previous = await readSnapshot('/traffic', async () => ['retained']);
@@ -121,10 +129,12 @@ test('responses are parsed at the boundary: labels keep unknown text, shapes are
     prompt: null,
     workdir: null,
   });
-  const malformed = await trafficSnapshot(
-    async () => versioned({ calls: [{ ...callFixture(), id: 'not-a-uuid' }], next: null }),
-    new URL('http://localhost/traffic'),
-    null,
+  const malformed = ready(
+    await trafficSnapshot(
+      async () => versioned({ calls: [{ ...callFixture(), id: 'not-a-uuid' }], next: null }),
+      new URL('http://localhost/traffic'),
+      null,
+    ),
   );
   assert.equal(malformed.value, null);
   assert.equal(malformed.error?.kind, 'failed');
@@ -142,7 +152,7 @@ test('the listing ignores the selection, and off-page selections load on their o
       : versioned(detailFixture(older));
   };
   const url = new URL(`http://localhost/traffic?call=${older.id}&model=fixture&unknown=ignored`);
-  const listing = await trafficSnapshot(fetcher, url, null);
+  const listing = ready(await trafficSnapshot(fetcher, url, null));
   // The listing (model calls by default), the sessions for the picker, and
   // how many calls the default hides; never the selected call.
   assert.deepEqual(requested, [
@@ -175,15 +185,17 @@ test('session pages read the session listing with only a cursor', async () => {
   const session = RecordingId.parse(uuid(3));
   assert.ok(session);
   const requested: string[] = [];
-  const page = await trafficSnapshot(
-    async (input) => {
-      requested.push(path(input));
-      return path(input).startsWith('/api/sessions?')
-        ? versioned({ sessions: [] })
-        : versioned({ calls: [finishedFixture(callId(1))], next: '5:cursor' });
-    },
-    new URL('http://localhost/sessions/x?after=1%3Aabc&model=ignored'),
-    session,
+  const page = ready(
+    await trafficSnapshot(
+      async (input) => {
+        requested.push(path(input));
+        return path(input).startsWith('/api/sessions?')
+          ? versioned({ sessions: [] })
+          : versioned({ calls: [finishedFixture(callId(1))], next: '5:cursor' });
+      },
+      new URL('http://localhost/sessions/x?after=1%3Aabc&model=ignored'),
+      session,
+    ),
   );
   assert.deepEqual(requested, [
     '/api/sessions?limit=100',

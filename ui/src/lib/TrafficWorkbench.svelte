@@ -4,8 +4,10 @@
   import { goto } from '$app/navigation';
   import { page, navigating } from '$app/state';
   import { getWorkbench } from './workbench.svelte.ts';
-  import { createSnapshot } from './snapshot.svelte.ts';
-  import type { Snapshot } from './snapshots.ts';
+  import { createArrival } from './snapshot.svelte.ts';
+  import type { Arriving } from './arrival.ts';
+  import type { Column } from './columns.ts';
+  import SkeletonRows from './SkeletonRows.svelte';
   import { offPageSelection, type OffPageSelection, type TrafficData } from './loaders.ts';
   import { CallId, type CallView, type RecordingId } from './api.ts';
   import { num, short, title, clock, providerName, providerMark } from './api.ts';
@@ -43,21 +45,32 @@
   import Segmented, { type SegmentedOption } from './Segmented.svelte';
   import ConnectClient from './ConnectClient.svelte';
   import RecordingName from './RecordingName.svelte';
-  let { snapshot, sessionId }: { snapshot: Snapshot<TrafficData>; sessionId: RecordingId | null } =
+  let { snapshot, sessionId }: { snapshot: Arriving<TrafficData>; sessionId: RecordingId | null } =
     $props();
   const workbench = getWorkbench();
   // The scope bar shows the narrowing controls, or the session itself.
   workbench.showScope(scope);
-  const retained = createSnapshot(() => snapshot);
-  const calls = $derived(retained.current.value?.calls ?? []);
-  const nextAfter = $derived(retained.current.value?.next ?? null);
-  const session = $derived(retained.current.value?.session);
-  const details = $derived(retained.current.value?.details ?? new Map());
+  const arrival = createArrival(() => snapshot);
+  const shown = $derived(arrival.current);
+  /** The listing is on its way: the table draws its own outline. */
+  const outlined = $derived(shown.state === 'pending');
+  const retained = $derived(shown.state === 'ready' ? shown.snapshot : null);
+  /** The listing's columns: its header and its outline rows are drawn from them. */
+  const callColumns: Column[] = [
+    { label: 'Time', class: 'time-column' },
+    { label: 'Call' },
+    { label: 'Model / upstream' },
+    { label: 'Outcome / duration' },
+  ];
+  const calls = $derived(retained?.value?.calls ?? []);
+  const nextAfter = $derived(retained?.value?.next ?? null);
+  const session = $derived(retained?.value?.session);
+  const details = $derived(retained?.value?.details ?? new Map());
   /** The listed sessions by ID, to name them in rows. */
   const sessionsById = $derived(
-    new Map((retained.current.value?.sessions ?? []).map((item) => [item.id, item])),
+    new Map((retained?.value?.sessions ?? []).map((item) => [item.id, item])),
   );
-  const updated = $derived(retained.current.updated);
+  const updated = $derived(retained?.updated ?? null);
   const today = date(Date.now());
   const liveStatus = $derived(
     LiveFollow.summary(workbench.live, updated ? `Updated ${clock(updated)}` : null),
@@ -256,7 +269,7 @@
     change(filters);
     applyFilters();
   }
-  const sessionChoices = $derived(retained.current.value?.sessions ?? []);
+  const sessionChoices = $derived(retained?.value?.sessions ?? []);
   const sessionOptions = $derived<SelectOption<string>[]>([
     { value: '', label: 'All recordings' },
     ...sessionChoices.map((choice) => ({
@@ -292,7 +305,7 @@
     { value: 'errors', label: 'Errors' },
     { value: 'interrupted', label: 'Interrupted / cancelled' },
   ];
-  const hidden = $derived(retained.current.value?.hidden ?? null);
+  const hidden = $derived(retained?.value?.hidden ?? null);
   function sessionName(id: string) {
     const found = sessionChoices.find((item) => item.id === id);
     return found ? short(found.native_id) : short(id);
@@ -350,6 +363,15 @@
     }
   }
 </script>
+
+{#snippet callHead()}
+  <thead
+    ><tr
+      >{#each callColumns as column (column.label)}<th class={column.class}>{column.label}</th
+        >{/each}</tr
+    ></thead
+  >
+{/snippet}
 
 {#snippet scope()}
   {#if sessionId}
@@ -559,15 +581,22 @@
       </form>
     {/if}
     <div class="list-content" class:busy={loading && calls.length > 0} aria-busy={loading}>
-      {#if calls.length === 0 && retained.current.error && !loading}
+      {#if outlined}
+        <div class="attempt-list">
+          <table class="requests-table">
+            {@render callHead()}
+            <tbody><SkeletonRows columns={callColumns} rows={12} /></tbody>
+          </table>
+        </div>
+      {:else if calls.length === 0 && retained?.error && !loading}
         <div class="empty-state" role="alert">
           <div class="empty-icon"><Icon name="alert" size={26} /></div>
           <h2>
-            {retained.current.error.kind === 'incompatible'
+            {retained.error.kind === 'incompatible'
               ? 'This UI and the daemon disagree'
               : "Can't reach Ren"}
           </h2>
-          <p>{retained.current.error.message}</p>
+          <p>{retained.error.message}</p>
           <p class="muted">
             Nothing is shown because nothing could be read, not because nothing was recorded.
           </p>
@@ -622,13 +651,7 @@
                   >{/if}
               </div>{/if}
             <table class="requests-table">
-              <thead
-                ><tr
-                  ><th class="time-column">Time</th><th>Call</th><th>Model / upstream</th><th
-                    >Outcome / duration</th
-                  ></tr
-                ></thead
-              >
+              {@render callHead()}
               <tbody>
                 {#each group.rows as c, index (c.id)}{@const badge = callBadge(c)}{@const http =
                     httpChip(c.status)}{@const stream = streamChip(c)}{@const capture = captureChip(
@@ -726,10 +749,10 @@
       {/if}
     </div>
     <div class="table-footer">
-      <span
-        >{num(calls.length)} call{calls.length === 1 ? '' : 's'}
-        <span class="muted">· {sessionId ? 'Oldest first' : 'Newest first'}</span></span
-      >
+      {#if outlined}<span class="muted">Reading requests…</span>{:else}<span
+          >{num(calls.length)} call{calls.length === 1 ? '' : 's'}
+          <span class="muted">· {sessionId ? 'Oldest first' : 'Newest first'}</span></span
+        >{/if}
       <div class="pagination">
         <button class="button small" disabled={loading || !after} onclick={() => paginate(false)}
           ><span class="rotate"><Icon name="chevron" size={13} /></span> Previous</button

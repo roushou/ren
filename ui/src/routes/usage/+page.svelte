@@ -1,10 +1,12 @@
 <script lang="ts">
-  import { createSnapshot } from '#lib/snapshot.svelte.ts';
+  import { page } from '$app/state';
+  import { createArrival } from '#lib/snapshot.svelte.ts';
   import { getWorkbench } from '#lib/workbench.svelte.ts';
   import { num, providerMark } from '#lib/api.ts';
   import { compactOrDash, SEPARATOR } from '#lib/display.ts';
   import {
     cacheShare,
+    parseRange,
     usageMeasures,
     usagePoints,
     usageRanges,
@@ -14,13 +16,29 @@
   import Icon from '#lib/Icon.svelte';
   import RecordingName from '#lib/RecordingName.svelte';
   import Segmented, { type SegmentedOption } from '#lib/Segmented.svelte';
+  import Skeleton from '#lib/Skeleton.svelte';
+  import SkeletonRows from '#lib/SkeletonRows.svelte';
+  import type { Column } from '#lib/columns.ts';
   import type { PageProps } from './$types';
   let { data }: PageProps = $props();
   getWorkbench().showScope(scope);
-  const snapshot = createSnapshot(() => data.usage);
-  const current = $derived(snapshot.current.value);
+  const arrival = createArrival(() => data.usage);
+  const shown = $derived(arrival.current);
+  /** The range's reads are on their way: the page draws its outline. */
+  const pending = $derived(shown.state === 'pending');
+  const snapshot = $derived(shown.state === 'ready' ? shown.snapshot : null);
+  const current = $derived(snapshot?.value ?? null);
   const details = $derived(current?.details ?? new Map());
-  const range = $derived(current?.range ?? '7d');
+  const range = $derived(current?.range ?? parseRange(page.url.searchParams.get('range')));
+  const figures: Column[] = [
+    { label: 'Calls', numeric: true },
+    { label: 'Errors', numeric: true },
+    { label: 'Tokens in', numeric: true },
+    { label: 'Out', numeric: true },
+  ];
+  const modelColumns: Column[] = [{ label: 'Model' }, ...figures];
+  const recordingColumns: Column[] = [{ label: 'Recording', class: 'fill' }, ...figures];
+  const userColumns: Column[] = [{ label: 'User' }, ...figures];
   const totals = $derived(current?.usage.totals);
   const points = $derived(current ? usagePoints(current.usage.hours, range, current.now) : []);
   let measure = $state<UsageMeasure>('input');
@@ -63,6 +81,15 @@
   );
 </script>
 
+{#snippet head(columns: readonly Column[])}
+  <thead
+    ><tr
+      >{#each columns as column (column.label)}<th class:numeric={column.numeric}>{column.label}</th
+        >{/each}</tr
+    ></thead
+  >
+{/snippet}
+
 {#snippet scope()}
   <nav class="scope-group segmented" aria-label="Time range">
     {#each usageRanges as item}<a
@@ -80,36 +107,50 @@
 
 <div class="usage-page">
   <div class="console">
-    {#if !current}
+    {#if !current && !pending}
       <div class="empty-state">
         <div class="empty-icon"><Icon name="alert" size={26} /></div>
         <h2>Usage could not be read</h2>
-        <p>{snapshot.current.error?.message ?? 'Loading…'}</p>
+        <p>{snapshot?.error?.message ?? 'Loading…'}</p>
       </div>
     {:else}
-      <section class="usage-tiles" aria-label="Totals">
+      <section class="usage-tiles" aria-label="Totals" aria-busy={pending}>
         <div class="usage-tile">
-          <span>Calls</span><strong class="mono">{num(totals?.calls)}</strong>
+          <span>Calls</span><strong class="mono"
+            >{#if pending}<Skeleton size="figure" width="5em" />{:else}{num(
+                totals?.calls,
+              )}{/if}</strong
+          >
         </div>
         <div class="usage-tile">
           <span>Failed work calls</span><strong class="mono" class:error-count={!!totals?.errors}
-            >{num(totals?.errors)}</strong
+            >{#if pending}<Skeleton size="figure" width="3em" />{:else}{num(
+                totals?.errors,
+              )}{/if}</strong
           ><small
-            >{errorRate === null
-              ? '—'
-              : `${(errorRate * 100).toFixed(1)}% of calls`}{#if current.bookkeepingErrors}{SEPARATOR}{num(
-                current.bookkeepingErrors,
-              )}{current.bookkeepingErrors >= 100 ? '+' : ''} failed bookkeeping{/if}</small
+            >{#if pending}<Skeleton width="7em" />{:else}{errorRate === null
+                ? '—'
+                : `${(errorRate * 100).toFixed(1)}% of calls`}{#if current?.bookkeepingErrors}{SEPARATOR}{num(
+                  current.bookkeepingErrors,
+                )}{current.bookkeepingErrors >= 100 ? '+' : ''} failed bookkeeping{/if}{/if}</small
           >
         </div>
         <div class="usage-tile">
           <span>Tokens in</span><strong class="mono"
-            >{compactOrDash(totals?.tokens.input ?? null)}</strong
-          ><small>{share === null ? '—' : `${Math.round(share * 100)}% read from cache`}</small>
+            >{#if pending}<Skeleton size="figure" width="4em" />{:else}{compactOrDash(
+                totals?.tokens.input ?? null,
+              )}{/if}</strong
+          ><small
+            >{#if pending}<Skeleton width="8em" />{:else}{share === null
+                ? '—'
+                : `${Math.round(share * 100)}% read from cache`}{/if}</small
+          >
         </div>
         <div class="usage-tile">
           <span>Tokens out</span><strong class="mono"
-            >{compactOrDash(totals?.tokens.output ?? null)}</strong
+            >{#if pending}<Skeleton size="figure" width="4em" />{:else}{compactOrDash(
+                totals?.tokens.output ?? null,
+              )}{/if}</strong
           >
         </div>
       </section>
@@ -119,7 +160,9 @@
           <h2 id="usage-chart-title">{measureLabel} per {byHour ? 'hour' : 'day'}</h2>
           <Segmented label="Measure" options={measureOptions} bind:value={measure} />
         </header>
-        {#if totals?.calls}
+        {#if pending}
+          <div class="chart-outline"><Skeleton size="block" width="100%" /></div>
+        {:else if totals?.calls}
           <UsageChart {points} {measure} label={measureLabel} {period} />
         {:else}
           <p class="quiet-empty">No calls in this range.</p>
@@ -129,16 +172,11 @@
       <div class="usage-columns usage-fill">
         <section class="panel usage-panel" aria-labelledby="usage-models-title">
           <header class="panel-heading"><h2 id="usage-models-title">By model</h2></header>
-          {#if models.length}
+          {#if models.length || pending}
             <table class="usage-list">
-              <thead
-                ><tr
-                  ><th>Model</th><th class="numeric">Calls</th><th class="numeric">Errors</th><th
-                    class="numeric">Tokens in</th
-                  ><th class="numeric">Out</th></tr
-                ></thead
-              >
+              {@render head(modelColumns)}
               <tbody>
+                {#if pending}<SkeletonRows columns={modelColumns} rows={6} />{/if}
                 {#each models as model (`${model.provider}-${model.model}`)}
                   <tr>
                     <td>
@@ -179,15 +217,11 @@
             <h2 id="usage-sessions-title">Busiest recordings</h2>
             <span class="subtle-label">Totals over each recording's whole life</span>
           </header>
-          {#if sessions.length}
+          {#if sessions.length || pending}
             <table class="usage-list">
-              <thead
-                ><tr
-                  ><th>Recording</th><th class="numeric">Calls</th><th class="numeric">Errors</th
-                  ><th class="numeric">Tokens in</th><th class="numeric">Out</th></tr
-                ></thead
-              >
+              {@render head(recordingColumns)}
               <tbody>
+                {#if pending}<SkeletonRows columns={recordingColumns} rows={5} />{/if}
                 {#each sessions as session (session.id)}
                   <tr>
                     <td class="fill"
@@ -216,13 +250,7 @@
               <span class="subtle-label">Who made the calls, as the gateway identified them</span>
             </header>
             <table class="usage-list">
-              <thead
-                ><tr
-                  ><th>User</th><th class="numeric">Calls</th><th class="numeric">Errors</th><th
-                    class="numeric">Tokens in</th
-                  ><th class="numeric">Out</th></tr
-                ></thead
-              >
+              {@render head(userColumns)}
               <tbody>
                 {#each users as user (user.user)}
                   <tr>
@@ -261,5 +289,10 @@
   }
   .usage-fill {
     flex: 1 0 auto;
+  }
+  /* The chart's outline holds the chart's own height, so nothing moves when it arrives. */
+  .chart-outline {
+    height: 224px;
+    padding: 12px;
   }
 </style>

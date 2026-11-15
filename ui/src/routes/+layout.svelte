@@ -26,6 +26,7 @@
   import RedlinePanel from '#lib/RedlinePanel.svelte';
   import { RedlineDesk } from '#lib/redline.svelte.ts';
   import { Views, type View } from '#lib/view.ts';
+  import { Arrival } from '#lib/arrival.ts';
   import PagePlaceholder from '#lib/PagePlaceholder.svelte';
   import '#lib/style.css';
   import type { LayoutProps } from './$types';
@@ -42,6 +43,9 @@
     workbench.scope = undefined;
     flushSync();
   });
+  // Hydrated: from here on, pages that can take their data pending render
+  // at once on a navigation, with their own outline (`Arrival`).
+  onMount(() => Arrival.stream());
   const gateway = createSnapshot(() => data.gateway);
   const health = $derived(gateway.current.value?.health);
   // The gateway says whether it is a development instance; the UI only shows it.
