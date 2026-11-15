@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import type { Mark, PageContext } from '../src/lib/redline.ts';
+import type { Mark, PageContext } from 'redline';
 import { Briefing, type RenPage } from '../src/lib/briefing.ts';
 import type {
   DeskSession,

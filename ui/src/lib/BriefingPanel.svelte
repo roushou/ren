@@ -19,9 +19,9 @@
   import Icon from './Icon.svelte';
   import { SignIns } from './signIn.ts';
   import type { Revision } from './api.ts';
-  import { Redline, type PageContext } from './redline.ts';
-  import type { RedlineDesk } from './redline.svelte.ts';
-  import RedlinePanel from './RedlinePanel.svelte';
+  import { Redline, type PageContext } from 'redline';
+  import type { RedlineDesk } from 'redline/desk';
+  import RedlinePanel from 'redline/RedlinePanel.svelte';
   import { Briefing, type Destination } from './briefing.ts';
   import type { Recipients } from './briefing.svelte.ts';
   import {

@@ -5,7 +5,7 @@
  * how the change is to be made). Pure, so it is tested without a browser.
  */
 import type { Revision } from './api.ts';
-import { Redline, type Framing, type Mark, type PageContext } from './redline.ts';
+import { Redline, type Framing, type Mark, type PageContext } from 'redline';
 import { SignIns } from './signIn.ts';
 import {
   Sessions,

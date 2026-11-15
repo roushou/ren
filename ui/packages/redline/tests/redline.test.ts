@@ -6,7 +6,7 @@ import {
   type Framing,
   type Mark,
   type PageContext,
-} from '../src/lib/redline.ts';
+} from '../src/redline.ts';
 
 function element(
   tagName: string,

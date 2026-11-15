@@ -17,9 +17,9 @@
   import { RecorderReport } from '#lib/recorder.ts';
   import CopyButton from '#lib/CopyButton.svelte';
   import DevToolbar from '#lib/DevToolbar.svelte';
-  import RedlineLayer from '#lib/RedlineLayer.svelte';
+  import RedlineLayer from 'redline/RedlineLayer.svelte';
   import BriefingPanel from '#lib/BriefingPanel.svelte';
-  import { RedlineDesk } from '#lib/redline.svelte.ts';
+  import { RedlineDesk } from 'redline/desk';
   import { Recipients } from '#lib/briefing.svelte.ts';
   import { Views } from '#lib/view.ts';
   import { Arrival } from '#lib/arrival.ts';

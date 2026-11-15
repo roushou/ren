@@ -1,0 +1,28 @@
+{
+  "name": "redline",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Mark elements on a page, note what's wrong, and get a Markdown brief for an agent.",
+  "license": "MIT OR Apache-2.0",
+  "type": "module",
+  "exports": {
+    ".": "./src/redline.ts",
+    "./desk": "./src/redline.svelte.ts",
+    "./RedlineLayer.svelte": "./src/RedlineLayer.svelte",
+    "./RedlinePanel.svelte": "./src/RedlinePanel.svelte",
+    "./redline.css": "./src/redline.css"
+  },
+  "scripts": {
+    "check": "svelte-check --tsconfig ./tsconfig.json",
+    "test": "node --experimental-strip-types --test tests/*.test.ts"
+  },
+  "devDependencies": {
+    "@types/node": "26.6.6",
+    "svelte": "5.57.3",
+    "svelte-check": "4.7.8",
+    "typescript": "6.0.3"
+  },
+  "peerDependencies": {
+    "svelte": "^5.57.3"
+  }
+}
