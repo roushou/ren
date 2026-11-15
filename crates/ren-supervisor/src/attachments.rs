@@ -4,6 +4,7 @@
 //! the folder's `.incoming`, then moved into place whole. Pure: the host
 //! makes, reads, and removes the files.
 
+use crate::session::Holding;
 use ren_harness::attachment::{Attachment, AttachmentName};
 use ren_recorder::id::{AttachmentId, SessionId};
 use std::collections::BTreeMap;
@@ -104,6 +105,15 @@ impl Attached {
             if let Some((_, used)) = self.0.get_mut(attachment) {
                 *used = AttachmentUse::Sent;
             }
+        }
+    }
+
+    /// Whether any attachment is held, sent or not.
+    pub(crate) fn holding(&self) -> Holding {
+        if self.0.is_empty() {
+            Holding::Nothing
+        } else {
+            Holding::Attachments
         }
     }
 

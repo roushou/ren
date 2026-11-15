@@ -1796,6 +1796,11 @@ async fn an_idle_client_is_stopped_and_its_session_goes_on() {
         .create(create(Harness::Codex, "/work/acme"))
         .await
         .unwrap();
+    // Holding an image, the draft is the operator's: it is kept.
+    supervisor
+        .attach(session, "shot.png".into(), png(2, 2))
+        .await
+        .unwrap();
     // Opened and idle, it is stopped once its timer runs out.
     state(&mut updates, |s| matches!(s, RunState::Idle { .. })).await;
     let ended = state(&mut updates, |s| matches!(s, RunState::Ended { .. })).await;
@@ -1825,4 +1830,58 @@ async fn an_idle_client_is_stopped_and_its_session_goes_on() {
     let runs = supervisor.runs().await.unwrap();
     let held = runs.iter().find(|snapshot| snapshot.run == run).unwrap();
     assert!(working(&held.state), "{:?}", held.state);
+}
+
+#[tokio::test]
+async fn a_draft_left_idle_unasked_is_discarded_with_its_run() {
+    use ren_supervisor::{IdleStop, SessionError};
+    let supervised = supervise_with(
+        FakeHost::new(Script::Codex),
+        SupervisorOptions {
+            idle: IdleStop::After(Duration::from_millis(50)),
+            ..options()
+        },
+    )
+    .await;
+    let supervisor = &supervised.supervisor;
+    let mut updates = supervisor.subscribe();
+    let session = supervisor
+        .create(create(Harness::Codex, "/work/acme"))
+        .await
+        .unwrap();
+    let ended = state(&mut updates, RunState::is_ended).await;
+    assert!(
+        matches!(
+            ended,
+            RunState::Ended {
+                end: ren_recorder::capture::RunEnd::Idled,
+                ..
+            }
+        ),
+        "{ended:?}"
+    );
+    // No longer served: a prompt to it finds nothing.
+    assert!(supervisor.sessions().await.unwrap().is_empty());
+    assert!(matches!(
+        supervisor
+            .send(session, RunCommand::Prompt(prompt_text("too late")))
+            .await,
+        Err(SessionError::NoSuchSession(gone)) if gone == session
+    ));
+    // Nor served again from what the store held before it deleted it.
+    let seed = ren_supervisor::SessionSeed {
+        session,
+        harness: Harness::Codex,
+        workdir: "/work/acme".into(),
+        settings: ren_harness::settings::RunSettings::default(),
+        thread: None,
+        state: ren_supervisor::SessionState::NEW,
+        attachments: Vec::new(),
+    };
+    assert!(matches!(
+        supervisor.adopt(seed).await,
+        Err(SessionError::NoSuchSession(gone)) if gone == session
+    ));
+    // Nor stored: the session and its one run are deleted.
+    assert!(supervised.stored_sessions().await.is_empty());
 }

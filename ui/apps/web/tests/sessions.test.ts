@@ -111,13 +111,18 @@ test('sessions read as stored and served, and group by folder with the busiest f
       settings: { model: null, effort: null, approvals: null },
     },
   ];
-  const folders = Sessions.folders(bodies, live, '/scratch');
+  // Drafts never asked anything are left out, unless open.
+  assert.deepEqual(
+    Sessions.folders(bodies, live, '/scratch').map((folder) => [
+      folder.name,
+      folder.sessions.map((entry) => entry.session),
+    ]),
+    [['acme', [sessionA]]],
+  );
+  const folders = Sessions.folders(bodies, live, '/scratch', sessionB);
   assert.deepEqual(
     folders.map((folder) => [folder.name, folder.sessions.map((entry) => entry.session)]),
-    [
-      ['acme', [sessionA, sessionB]],
-      ['Scratch', [sessionC]],
-    ],
+    [['acme', [sessionA, sessionB]]],
   );
   const [a, b] = folders[0]!.sessions;
   assert.equal(folders[0]!.waiting, 1);
@@ -131,7 +136,12 @@ test('sessions read as stored and served, and group by folder with the busiest f
   assert.deepEqual(b!.state, { phase: 'ended', end: 'stopped', exit: null });
   assert.equal(b!.phase, 'draft');
   assert.equal(Sessions.running(b!), false);
-  const fresh = folders[1]!.sessions[0]!;
+  const scratchFolders = Sessions.folders(bodies, live, '/scratch', sessionC);
+  assert.deepEqual(
+    scratchFolders.map((folder) => folder.name),
+    ['acme', 'Scratch'],
+  );
+  const fresh = scratchFolders[1]!.sessions[0]!;
   assert.equal(fresh.run, null);
   assert.equal(fresh.state, null);
   assert.equal(fresh.activeAt, null);
@@ -164,6 +174,46 @@ test('a new session reuses the draft in its folder that was never asked anything
       : body,
   );
   assert.equal(Sessions.unused(archived, [], '/scratch', '/work/acme'), null);
+});
+
+test('a draft never asked anything is made again where it was, with its known settings', async () => {
+  const bodies = await sessions();
+  const desk = (id: SessionId, edit: (body: SessionBody) => SessionBody = (body) => body) =>
+    Sessions.desk(edit(bodies.find((body) => body.session === id)!), [])!;
+  // In its folder, on its client.
+  assert.deepEqual(Sessions.renewal(desk(sessionB), '/scratch'), {
+    harness: 'claude_code',
+    dir: '/work/acme',
+    settings: { model: null, effort: null, approvals: null },
+  });
+  // A scratch draft gets a scratch folder of its own again.
+  assert.equal(Sessions.renewal(desk(sessionC), '/scratch')?.dir, null);
+  assert.equal(Sessions.renewal(desk(sessionC), null)?.dir, '/scratch/scratch-1');
+  // Its settings, those known here.
+  const configured = desk(sessionC, (body) => ({
+    ...body,
+    served: body.served && {
+      ...body.served,
+      settings: {
+        model: 'pi-fast' as never,
+        effort: 'later_level' as never,
+        approvals: 'edits',
+      },
+    },
+  }));
+  assert.deepEqual(Sessions.renewal(configured, '/scratch')?.settings, {
+    model: 'pi-fast',
+    effort: null,
+    approvals: 'edits',
+  });
+  // Not a session that was asked something, nor an archived draft.
+  assert.equal(Sessions.renewal(desk(sessionA), '/scratch'), null);
+  const archived = desk(sessionB, (body) => ({
+    ...body,
+    stored: body.stored && { ...body.stored, archived_at: 1 as never },
+  }));
+  assert.equal(Sessions.untouched(archived), false);
+  assert.equal(Sessions.renewal(archived, '/scratch'), null);
 });
 
 test('a run leads to its session', async () => {

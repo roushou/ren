@@ -1880,15 +1880,23 @@ export class Sessions {
     return session.state !== null && !['ended', 'unrecognized'].includes(session.state.phase);
   }
 
+  /** Whether the session is a current draft never asked anything: not
+   * listed unless it is open, and discarded once its client sits idle. */
+  static untouched(session: DeskSession): boolean {
+    return session.phase === 'draft' && session.shelf === 'open' && session.asked === null;
+  }
+
   /**
    * The sessions grouped by folder: scratch sessions share one group.
    * Folders with an approval waiting come first, then those with a process
-   * running, then the most recently active; the same within a folder.
+   * running, then the most recently active; the same within a folder. A
+   * draft never asked anything is left out unless it is `open`.
    */
   static folders(
     bodies: readonly SessionBody[],
     live: readonly RunSnapshot[],
     scratch: string | null = null,
+    open: SessionId | null = null,
   ): SessionFolder[] {
     const group = (workdir: string) =>
       scratch && workdir.startsWith(`${scratch}/`) ? scratch : workdir;
@@ -1896,6 +1904,7 @@ export class Sessions {
     for (const body of bodies) {
       const session = Sessions.desk(body, live);
       if (!session) continue;
+      if (Sessions.untouched(session) && session.session !== open) continue;
       const sessions = groups.get(group(session.workdir)) ?? [];
       sessions.push(session);
       groups.set(group(session.workdir), sessions);
@@ -1954,14 +1963,38 @@ export class Sessions {
       .map((body) => Sessions.desk(body, live))
       .filter(
         (session): session is DeskSession =>
-          session !== null &&
-          session.phase === 'draft' &&
-          session.shelf === 'open' &&
-          session.asked === null &&
-          here(session.workdir),
+          session !== null && Sessions.untouched(session) && here(session.workdir),
       );
     const newest = (session: DeskSession) => session.activeAt ?? Number.MAX_SAFE_INTEGER;
     return drafts.toSorted((a, b) => newest(b) - newest(a))[0]?.session ?? null;
+  }
+
+  /**
+   * How to make `session` again, a draft never asked anything that Ren
+   * discarded while it was open: its client, its folder (null: a scratch
+   * folder of its own, as it had), and the settings it had that are known
+   * here. Null for any other session, or a client Ren cannot drive.
+   */
+  static renewal(
+    session: DeskSession,
+    scratch: string | null,
+  ): {
+    harness: Drivable;
+    dir: string | null;
+    settings: { model: ModelId | null; effort: Effort | null; approvals: ApprovalPolicy | null };
+  } | null {
+    const harness = Runs.drivable(session.harness);
+    if (!Sessions.untouched(session) || !harness) return null;
+    const { model, effort, approvals } = session.settings;
+    return {
+      harness,
+      dir: scratch && session.workdir.startsWith(`${scratch}/`) ? null : session.workdir,
+      settings: {
+        model,
+        effort: EFFORTS.find((level) => level === effort) ?? null,
+        approvals: APPROVAL_POLICIES.find((policy) => policy === approvals) ?? null,
+      },
+    };
   }
 
   /** The session one of whose runs is `run`, for links to a run. */

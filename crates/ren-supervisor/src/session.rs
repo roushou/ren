@@ -4,7 +4,8 @@
 //!
 //! A session is not its process. Its client starts, idles, and ends any
 //! number of times (`run`); the session goes on until it is archived, and
-//! comes back when it is written to again.
+//! comes back when it is written to again. A draft whose client stops after
+//! resting idle, never asked anything and holding nothing, is discarded.
 
 use ren_harness::Harness;
 use serde_with::{DeserializeFromStr, SerializeDisplay};
@@ -40,6 +41,16 @@ pub enum SessionInput {
     Prompted,
     Archive,
     Unarchive,
+    /// Its client stopped after resting idle, holding what it holds.
+    Idled(Holding),
+}
+
+/// Whether a session holds anything of the operator's besides its
+/// settings: an image uploaded to it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Holding {
+    Nothing,
+    Attachments,
 }
 
 /// The operator shelving a session, or taking it back.
@@ -66,6 +77,9 @@ pub enum SessionAction {
     /// End the client process serving the session, if one runs: nothing is
     /// served while it is shelved.
     StopProcess,
+    /// Delete it: a draft left before it was asked anything, holding
+    /// nothing, is not kept.
+    Discard,
 }
 
 /// Why an input was refused in the session's state.
@@ -110,6 +124,15 @@ impl SessionState {
             (Self::Archived(_), SessionInput::Archive) => Err(SessionRefused::Archived),
             (Self::Archived(phase), SessionInput::Unarchive) => Ok((Self::Open(phase), Vec::new())),
             (Self::Open(_), SessionInput::Unarchive) => Err(SessionRefused::NotArchived),
+            (Self::Open(SessionPhase::Draft), SessionInput::Idled(Holding::Nothing)) => {
+                Ok((self, vec![SessionAction::Discard]))
+            }
+            // Asked something, holding an image, or shelved by the
+            // operator, it is kept: its next prompt starts a client again.
+            (Self::Open(SessionPhase::Draft), SessionInput::Idled(Holding::Attachments))
+            | (Self::Open(SessionPhase::Active) | Self::Archived(_), SessionInput::Idled(_)) => {
+                Ok((self, Vec::new()))
+            }
         }
     }
 }
@@ -180,6 +203,37 @@ mod tests {
             SessionState::NEW.apply(SessionInput::Unarchive),
             Err(SessionRefused::NotArchived)
         );
+    }
+
+    #[test]
+    fn a_draft_left_idle_holding_nothing_is_discarded_and_any_other_kept() {
+        assert_eq!(
+            SessionState::NEW.apply(SessionInput::Idled(Holding::Nothing)),
+            Ok((SessionState::NEW, vec![SessionAction::Discard]))
+        );
+        let kept = [
+            (SessionState::NEW, Holding::Attachments),
+            (SessionState::Open(SessionPhase::Active), Holding::Nothing),
+            (
+                SessionState::Open(SessionPhase::Active),
+                Holding::Attachments,
+            ),
+            (
+                SessionState::Archived(SessionPhase::Draft),
+                Holding::Nothing,
+            ),
+            (
+                SessionState::Archived(SessionPhase::Active),
+                Holding::Nothing,
+            ),
+        ];
+        for (state, holding) in kept {
+            assert_eq!(
+                state.apply(SessionInput::Idled(holding)),
+                Ok((state, Vec::new())),
+                "{state:?} holding {holding:?}"
+            );
+        }
     }
 
     #[test]

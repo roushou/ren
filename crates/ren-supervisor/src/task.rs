@@ -44,12 +44,12 @@ use ren_protocol::label::Labeled;
 use ren_protocol::native::NativeThreadId;
 use ren_recorder::{
     Recorder, RunSession, RunTap,
-    batch::SessionFact,
+    batch::{Actor, HistoryChange, HistorySubject, SessionFact},
     capture::RunEnd,
     id::{AttachmentId, IdSource, RunId, SessionId},
 };
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::{BTreeMap, BTreeSet, HashMap},
     sync::Arc,
 };
 use tokio::{
@@ -166,6 +166,9 @@ struct Served {
     /// The default model each client listed, for a client that is started
     /// on it by name when none is chosen.
     defaults: HashMap<Harness, ModelId>,
+    /// Unused drafts Ren discarded: the store may still hold one until the
+    /// recorder reaches its delete, and it is not served again from there.
+    discarded: BTreeSet<SessionId>,
 }
 
 impl Served {
@@ -277,6 +280,7 @@ impl<H: AgentHost> SupervisorTask<H> {
                         live.kill = None;
                         self.apply(run, live, RunEvent::Exited(exit)).await;
                     }
+                    self.rested(run, &mut served);
                 }
                 else => break,
             }
@@ -917,6 +921,9 @@ impl<H: AgentHost> SupervisorTask<H> {
         if served.sessions.contains_key(&seed.session) {
             return Ok(SessionAnswer::Done);
         }
+        if served.discarded.contains(&seed.session) {
+            return Err(SessionError::NoSuchSession(seed.session));
+        }
         let requested = RequestedDir::parse(&seed.workdir)
             .map_err(|error| SessionError::Start(StartError::Workdir(error)))?;
         let workdir = self.confirm(&requested).map_err(SessionError::Start)?;
@@ -1104,7 +1111,7 @@ impl<H: AgentHost> SupervisorTask<H> {
         for action in actions {
             match action {
                 SessionAction::StopProcess => self.stop_process(session, served).await,
-                SessionAction::UseClient(_) => {}
+                SessionAction::UseClient(_) | SessionAction::Discard => {}
             }
         }
         if let Some(held) = served.sessions.get_mut(&session) {
@@ -1112,6 +1119,57 @@ impl<H: AgentHost> SupervisorTask<H> {
             self.publish_session(session, held);
         }
         Ok(SessionAnswer::Done)
+    }
+
+    /// After `run` ended: when it was its session's newest process and
+    /// ended for resting idle, the session takes that in, and a draft never
+    /// asked anything and holding nothing is discarded.
+    fn rested(&self, run: RunId, served: &mut Served) {
+        let Some(live) = served.runs.get(&run) else {
+            return;
+        };
+        let RunState::Ended {
+            end: RunEnd::Idled, ..
+        } = live.state
+        else {
+            return;
+        };
+        let session = live.session;
+        let Some(held) = served.sessions.get_mut(&session) else {
+            return;
+        };
+        if held.process != Some(run) {
+            return;
+        }
+        let holding = held.attached.holding();
+        if Self::advance(held, SessionInput::Idled(holding)).contains(&SessionAction::Discard) {
+            self.discard(session, served);
+        }
+    }
+
+    /// Delete `session`, a draft never asked anything, as the operator's
+    /// delete would: it stops being served, and the store deletes it and its
+    /// ended runs when the recorder reaches the edit, after the run's end.
+    /// Without room to record that, it is kept and served as it was.
+    fn discard(&self, session: SessionId, served: &mut Served) {
+        let Some(slot) = self.recorder.history_slot() else {
+            tracing::debug!(%session, "no room to record an unused draft's discard; it is kept");
+            return;
+        };
+        if let Some(folders) = &self.attachments
+            && let Err(error) = self.host.remove_tree(&folders.session(session))
+        {
+            tracing::warn!(%session, %error, "cannot remove an unused draft's attachments folder");
+        }
+        served.sessions.remove(&session);
+        served.runs.retain(|_, live| live.session != session);
+        served.discarded.insert(session);
+        slot.record(
+            Actor::Ren,
+            HistorySubject::OperatorSession(session),
+            HistoryChange::Delete,
+        );
+        tracing::debug!(%session, "an unused draft was discarded");
     }
 
     /// Stop the process serving `session`, if one runs.

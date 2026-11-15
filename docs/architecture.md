@@ -188,7 +188,9 @@ Three concepts keep that apart, each with one job:
   next turn; its conversation across every process; and its shelf (current or
   archived). Creating one starts its client at once, so its commands are listed
   before the first prompt (no client writes its own history merely by opening a
-  conversation). A prompt with no client running starts one that resumes the
+  conversation). A draft never asked anything and holding no attachment is
+  discarded when its client is stopped for sitting idle: the supervisor
+  records a delete by `Actor::Ren` and does not serve it again. A prompt with no client running starts one that resumes the
   session's conversation, so continuing is the same session. Its pure machine is
   `SessionState`; its facts (`session_created`, `session_configured`,
   `session_client_chosen`, `session_archived`, `session_unarchived`) are stored

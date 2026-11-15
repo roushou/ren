@@ -323,7 +323,9 @@ dependencies under "Crates" below. Read the code for current module ownership.
   changes go to `subscribe_sessions`. A run started through `start` is a
   session and its first process. A client idle between turns is stopped
   after `IdleStop` (ten minutes in the daemon; its run ends `idled`), and its
-  session goes on. `RunState` (`run`) is the
+  session goes on, unless it is a draft never asked anything and holding no
+  attachment: that one is discarded (`SessionAction::Discard`, recorded as
+  a delete by `Actor::Ren`). `RunState` (`run`) is the
   pure lifecycle machine (starting, idle, working with its waiting approvals and the prompt queued
   for after the turn (a `Delivery`: start, queue, or steer),
   stopping, ended with a `RunEnd`); `Workdir` (`workdir`) keeps runs inside

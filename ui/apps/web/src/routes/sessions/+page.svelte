@@ -117,7 +117,7 @@
   /** The folder scratch sessions get theirs in; null when there is none. */
   let scratch = $state<string | null>(first(initial?.places, null)?.scratch ?? null);
   const folders = $derived(
-    Sessions.folders(shelf === 'current' ? sessions : archivedSessions, live, scratch),
+    Sessions.folders(shelf === 'current' ? sessions : archivedSessions, live, scratch, chosen),
   );
   const session = $derived.by((): DeskSession | null => {
     const body = [...sessions, ...archivedSessions].find((entry) => entry.session === chosen);
@@ -401,8 +401,35 @@
     }
   }
 
-  function select(next: SessionId | null) {
-    void goto(next ? `/sessions?session=${next}` : '/sessions');
+  function select(next: SessionId | null, how: 'push' | 'replace' = 'push') {
+    void goto(next ? `/sessions?session=${next}` : '/sessions', {
+      replaceState: how === 'replace',
+    });
+  }
+
+  /**
+   * The open draft, never asked anything, whose client `run` just ended
+   * resting idle: Ren discards such a draft, so once the lists no longer
+   * hold it, it is made again in the same place on the same client and
+   * settings, keeping what was written in it. A draft Ren kept (holding an
+   * image) stays as it is.
+   */
+  async function renew(run: RunId) {
+    const open = session;
+    if (!open || open.run !== run) return;
+    const plan = Sessions.renewal(open, scratch);
+    if (!plan) return;
+    const target = open.session;
+    const gone = await until(() => !listed(target, sessions) && !listed(target, archivedSessions));
+    if (!gone || chosen !== target) return;
+    await act(async () => {
+      const made = await client.createSession(plan.harness, plan.dir, plan.settings);
+      const written = drafts.get(target);
+      if (written) drafts.set(made, written);
+      drafts.delete(target);
+      await Promise.all([readSessions(), readLive()]);
+      if (chosen === target) select(made, 'replace');
+    });
   }
 
   /** The client and settings last chosen here: a new session starts with them. */
@@ -932,6 +959,7 @@
           live = Runs.update(live, update);
         }
         if (update.state.phase === 'ended' || update.state.phase === 'idle') void readSessions();
+        if (update.state.phase === 'ended' && update.state.end === 'idled') void renew(update.run);
         return;
       }
       transcripts.set(

@@ -3,7 +3,8 @@
   that needs you first. Each folder's `+` makes a session there at once, on
   the last client used; New session opens the form for any other place. A
   session is named by what it was asked, when that is known here, and says
-  how it stands. The archived sessions are a shelf of their own.
+  how it stands. A draft never asked anything is listed only while it is
+  open. The archived sessions are a shelf of their own.
 
   A session with no process running can be deleted from its row: the
   trash control takes the place of its time on hover or focus, and asks
