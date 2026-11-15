@@ -18,6 +18,9 @@ pub struct ControlState {
 
 #[derive(Deserialize)]
 struct OperatorState {
+    /// The operator state's revision: each pause or resume makes a new one.
+    #[serde(default)]
+    revision: Option<u64>,
     pause: PauseState,
 }
 
@@ -124,6 +127,18 @@ impl ControlState {
 
     pub fn admission(&self) -> &Admission {
         &self.state.pause.state
+    }
+
+    /// The operator state's revision, when the daemon reports one.
+    pub fn revision(&self) -> Option<u64> {
+        self.state.revision
+    }
+
+    /// Whether the daemon is paused by the install that marked `mark`, the
+    /// revision its pause made: nothing has changed admission since, so the
+    /// pause is that install's, stranded, not an operator's.
+    pub fn paused_by(&self, mark: Option<u64>) -> bool {
+        matches!(self.admission(), Admission::Paused) && mark.is_some() && self.revision() == mark
     }
 }
 
@@ -487,6 +502,29 @@ mod tests {
 
     fn runs(list: &[serde_json::Value]) -> Runs {
         Runs::parse(&serde_json::json!({ "api_version": 1, "runs": list }).to_string()).unwrap()
+    }
+
+    #[test]
+    fn a_pause_is_an_installs_own_only_at_the_revision_it_made() {
+        let paused = |revision: u64| {
+            ControlState::parse(
+                &serde_json::json!({ "state": { "revision": revision,
+                    "pause": { "state": "paused", "retry_after": 10 } }, "running": [] })
+                .to_string(),
+            )
+            .unwrap()
+        };
+        assert!(paused(125).paused_by(Some(125)));
+        // An operator paused or resumed since: theirs, left alone.
+        assert!(!paused(127).paused_by(Some(125)));
+        assert!(!paused(125).paused_by(None));
+        let running = ControlState::parse(
+            r#"{"state":{"revision":125,"pause":{"state":"running"}},"running":[]}"#,
+        )
+        .unwrap();
+        assert!(!running.paused_by(Some(125)));
+        // A daemon that reports no revision is never taken for one.
+        assert!(!state("paused", 0).paused_by(Some(0)));
     }
 
     #[test]

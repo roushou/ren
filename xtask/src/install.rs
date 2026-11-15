@@ -234,6 +234,80 @@ struct Layout {
 }
 
 const SERVICE: &str = "ren.service";
+/// The transient unit an install started inside `ren.service` carries on in.
+const RELAUNCH_UNIT: &str = "ren-install-vps";
+
+/// Where this process runs: inside the service an install restarts, or not.
+#[derive(Debug, PartialEq, Eq)]
+enum Placement {
+    InService,
+    Elsewhere,
+}
+
+impl Placement {
+    /// The environment a relaunched install keeps: the search path and the
+    /// folders the build and the install read.
+    const CARRIED: [&str; 8] = [
+        "PATH",
+        "HOME",
+        "CARGO_HOME",
+        "RUSTUP_HOME",
+        "BUN_INSTALL",
+        "XDG_CONFIG_HOME",
+        "XDG_DATA_HOME",
+        "XDG_STATE_HOME",
+    ];
+
+    /// Read from `/proc/self/cgroup`: inside when a line's cgroup path has
+    /// `service` as one of its parts.
+    fn read(cgroup: &str, service: &str) -> Self {
+        let inside = cgroup
+            .lines()
+            .filter_map(|line| line.splitn(3, ':').nth(2))
+            .any(|path| path.split('/').any(|part| part == service));
+        if inside {
+            Self::InService
+        } else {
+            Self::Elsewhere
+        }
+    }
+}
+
+/// The file in the data folder that keeps the revision of the pause an
+/// install made, until it resumes: a pause at that revision is the
+/// install's own.
+struct PauseMark {
+    path: PathBuf,
+}
+
+impl PauseMark {
+    const FILE: &str = "install-pause";
+
+    fn of(layout: &Layout) -> Self {
+        Self {
+            path: layout.data_dir.join(Self::FILE),
+        }
+    }
+
+    fn read(&self) -> Option<u64> {
+        fs::read_to_string(&self.path)
+            .ok()
+            .and_then(|text| text.trim().parse().ok())
+    }
+
+    fn write(&self, revision: Option<u64>) -> Result<(), InstallError> {
+        match revision {
+            Some(revision) => fs::write(&self.path, format!("{revision}\n"))
+                .map_err(InstallError::file(&self.path)),
+            None => Ok(()),
+        }
+    }
+
+    /// Gone once its pause is resumed or another's; a missing mark is fine.
+    fn clear(&self) {
+        let _ = fs::remove_file(&self.path);
+    }
+}
 
 impl Layout {
     fn new(env: &HostEnv) -> Result<Self, InstallError> {
@@ -299,6 +373,13 @@ impl InstallVps {
         };
         Self::preflight()?;
         let layout = Layout::new(env)?;
+        // Inside the service it restarts, the restart would stop this task
+        // between its pause and its resume: carry on outside it.
+        let cgroup = fs::read_to_string("/proc/self/cgroup").unwrap_or_default();
+        match Placement::read(&cgroup, SERVICE) {
+            Placement::InService => return Self::relaunch(env, &layout),
+            Placement::Elsewhere => {}
+        }
         let saved = Publish::path(&layout.home);
         let publish = self.publish.resolve(&saved)?;
         let tailscale = if publish.sudo_tailscale {
@@ -349,6 +430,39 @@ impl InstallVps {
         Self::step("Done");
         Self::remind_ending(&quiesced.ending);
         Ok(())
+    }
+
+    /// Runs this same command again as the transient user unit
+    /// [`RELAUNCH_UNIT`], outside `ren.service`, and waits for it. Its output
+    /// goes to the journal: this process may be stopped with the service,
+    /// and the install carries on without it.
+    fn relaunch(env: &HostEnv, layout: &Layout) -> Result<(), InstallError> {
+        let program = std::env::current_exe().map_err(InstallError::file(Path::new("xtask")))?;
+        Self::step(&format!(
+            "This runs inside {SERVICE}, which the install restarts; continuing as the unit {RELAUNCH_UNIT}. Follow it with `journalctl --user -u {RELAUNCH_UNIT} -f`"
+        ));
+        let mut relaunch = Invocation::new("systemd-run")
+            .args([
+                "--user",
+                "--unit",
+                RELAUNCH_UNIT,
+                "--collect",
+                "--wait",
+                "--quiet",
+            ])
+            .arg("--working-directory")
+            .arg(&layout.repo);
+        // What the build and the install read; never the operator's keys.
+        for name in Placement::CARRIED {
+            if let Some(value) = env.get(name) {
+                relaunch = relaunch.arg(format!("--setenv={name}={value}"));
+            }
+        }
+        relaunch
+            .arg("--")
+            .arg(program)
+            .args(std::env::args_os().skip(1))
+            .run()
     }
 
     pub(crate) fn step(message: &str) {
@@ -555,8 +669,12 @@ impl InstallVps {
                 Quiesce::Pause => {
                     Self::control(layout, &["pause", "--retry-after", Self::RETRY_AFTER])?;
                     let runs = Self::runs(ren())?;
-                    match Self::control_state(layout)?.after_pause(&runs, policy) {
+                    let paused = Self::control_state(layout)?;
+                    match paused.after_pause(&runs, policy) {
                         AfterPause::Quiet => {
+                            // Marked, so an install that does not get to
+                            // resume leaves a pause the next one knows.
+                            PauseMark::of(layout).write(paused.revision())?;
                             Self::step("Paused admission; clients wait and retry");
                             return Ok(Quiesced {
                                 admission: Quiet::Paused,
@@ -569,7 +687,18 @@ impl InstallVps {
                         }
                     }
                 }
+                Quiesce::LeaveAlone if state.paused_by(PauseMark::of(layout).read()) => {
+                    Self::step(
+                        "The daemon is still paused by an earlier install that did not finish; this one resumes it",
+                    );
+                    return Ok(Quiesced {
+                        admission: Quiet::Paused,
+                        ending: runs.ending(),
+                    });
+                }
                 Quiesce::LeaveAlone => {
+                    // A mark from an older pause is not this one's.
+                    PauseMark::of(layout).clear();
                     Self::step("The daemon was already paused; leaving it paused");
                     return Ok(Quiesced {
                         admission: Quiet::LeftAlone,
@@ -601,7 +730,10 @@ impl InstallVps {
         match quiet {
             Quiet::Stopped | Quiet::LeftAlone => {}
             Quiet::Paused => match Self::control(layout, &["resume"]) {
-                Ok(()) => Self::step("Resumed admission"),
+                Ok(()) => {
+                    PauseMark::of(layout).clear();
+                    Self::step("Resumed admission");
+                }
                 Err(error) => eprintln!(
                     "warning: could not resume admission ({error}); once the daemon runs, run `{} control resume`",
                     layout.binary.display()
@@ -921,5 +1053,28 @@ mod tests {
                 Verdict::Unconfirmed
             );
         }
+    }
+
+    #[test]
+    fn an_install_inside_the_service_it_restarts_knows_it() {
+        use super::Placement;
+        let inside = "0::/user.slice/user-1000.slice/user@1000.service/app.slice/ren.service\n";
+        assert_eq!(Placement::read(inside, "ren.service"), Placement::InService);
+        let shell = "0::/user.slice/user-1000.slice/user@1000.service/app.slice/app-term.scope\n";
+        assert_eq!(Placement::read(shell, "ren.service"), Placement::Elsewhere);
+        // Another unit whose name only starts the same is not the service.
+        let ui = "0::/user.slice/user-1000.slice/user@1000.service/app.slice/ren.service-ui\n";
+        assert_eq!(Placement::read(ui, "ren.service"), Placement::Elsewhere);
+        // The relaunched install's own unit is outside it.
+        let relaunched =
+            "0::/user.slice/user-1000.slice/user@1000.service/app.slice/ren-install-vps.service\n";
+        assert_eq!(
+            Placement::read(relaunched, "ren.service"),
+            Placement::Elsewhere
+        );
+        // Hybrid hierarchies list several lines; any one places it.
+        let hybrid = "12:pids:/user.slice\n1:name=systemd:/user.slice/user@1000.service/app.slice/ren.service\n";
+        assert_eq!(Placement::read(hybrid, "ren.service"), Placement::InService);
+        assert_eq!(Placement::read("", "ren.service"), Placement::Elsewhere);
     }
 }

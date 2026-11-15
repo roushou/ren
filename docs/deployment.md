@@ -191,7 +191,17 @@ binary as `~/.local/bin/ren.previous`, installs the new one, rewrites the unit
 only if it changed, starts the service, enables lingering, and runs `ren doctor`.
 It requires doctor's build check to confirm the daemon runs the build just
 installed, then resumes admission, also when a later step failed. A daemon an
-operator had already paused stays paused. With `--https-port`, it adds a Serve
+operator had already paused stays paused. Its own pause is marked in
+`<data>/install-pause` (the operator revision the pause made) until it
+resumes, so an install stopped between the two leaves a pause the next one
+recognizes and lifts; once anything else changes admission, the pause is the
+operator's.
+
+Started inside `ren.service` (by an agent a run drives, say), whose restart
+would stop it before it resumes, it carries on as the transient unit
+`ren-install-vps`, waiting for it: its output then goes to the journal
+(`journalctl --user -u ren-install-vps -f`), and the install finishes even
+when the agent that started it ends with the old daemon. With `--https-port`, it adds a Serve
 route only when that port is free, accepts one that already proxies to the
 configured listener, and refuses a port used by anything else or exposed through
 Funnel. `--sudo-tailscale` uses `sudo -n` for that step; `--skip-backup` skips the
