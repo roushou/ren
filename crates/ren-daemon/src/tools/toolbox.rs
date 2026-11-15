@@ -104,10 +104,11 @@ impl<F: Fetch + 'static> HostToolbox<F> {
 
     pub async fn sweep(&self) -> Result<ToolCollection, ToolboxError> {
         let live = self.live().await?;
-        let collected = self
-            .inner
-            .store
-            .collect(&live)
+        let inner = self.inner.clone();
+        // Collecting waits on the store's lock and removes folders.
+        let collected = tokio::task::spawn_blocking(move || inner.store.collect(&live))
+            .await
+            .map_err(|error| ToolboxError::Failed(error.to_string()))?
             .map_err(Inner::<F>::failed)?;
         Ok(ToolCollection {
             generations: collected.generations,
