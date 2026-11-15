@@ -18,6 +18,13 @@ import {
 /** Where a brief goes: a new session in the checkout, or one running there. */
 export type Destination = { kind: 'new' } | { kind: 'session'; session: DeskSession };
 
+/**
+ * Where a brief's change is made: in the checkout itself, when no other
+ * session is open there, or in a git worktree, so it stays clear of the
+ * sessions that are.
+ */
+export type WorkPlace = 'checkout' | 'worktree';
+
 /** How a brief reaches an open session: the prompt to send, or why it waits. */
 export type Handoff =
   { kind: 'send'; delivery: 'start' | 'queue'; text: string } | { kind: 'wait'; reason: string };
@@ -167,6 +174,34 @@ export class Redline {
   }
 
   /**
+   * Where a brief sent to `destination` makes its change: in the checkout
+   * when no session of `offered` other than the destination is open there,
+   * else in a worktree. A worktree in Rust costs a cold build and a target
+   * folder of its own, so it is asked for only when another session could
+   * be editing the same files or be switched onto the brief's branch.
+   */
+  static place(destination: Destination, offered: readonly DeskSession[]): WorkPlace {
+    const others = offered.filter(
+      (session) => destination.kind === 'new' || session.session !== destination.session.session,
+    );
+    return others.length ? 'worktree' : 'checkout';
+  }
+
+  /** How a change is to be made, in the brief's closing paragraph. */
+  static #work(place: WorkPlace, branch: string): string {
+    switch (place) {
+      case 'checkout':
+        return `make it on a new branch, ${Redline.code(branch)}, in this checkout, since no other session is open here; if ${Redline.code('git status')} shows uncommitted changes, use a git worktree of this repository instead. Run the project's checks, commit, and switch the checkout back to the branch it was on.`;
+      case 'worktree':
+        return `make it on a new branch, ${Redline.code(branch)}, in a git worktree of this repository, not in the checkout itself, since other sessions are open there, and run the project's checks.`;
+      default: {
+        const never: never = place;
+        return never;
+      }
+    }
+  }
+
+  /**
    * How `brief` goes into a session whose composer is in `mode`: it starts
    * a turn when none runs, or is queued after the running one (after
    * anything queued before, as one message), never steering it.
@@ -236,8 +271,9 @@ export class Redline {
    * session is named by its first line, so it stays plain), the page, each
    * mark as a list item with what it points at,
    * and how to work: questions are answered in place, and only a change
-   * gets a branch. Marks without a note are left out. */
-  static brief(page: PageContext, marks: readonly Mark[]): string {
+   * gets a branch, made where `place` says. Marks without a note are left
+   * out. */
+  static brief(page: PageContext, marks: readonly Mark[], place: WorkPlace): string {
     const noted = marks.filter((mark) => mark.note.trim());
     const first = noted[0]?.note.trim().split('\n')[0] ?? 'Changes to a page';
     const more = noted.length > 1 ? ` (and ${noted.length - 1} more)` : '';
@@ -265,7 +301,7 @@ export class Redline {
     });
     lines.push(
       '',
-      `Answer what the notes ask without changing anything. If a note asks for a change, make it on a new branch, ${Redline.code(Redline.branch(noted))}, in a git worktree of this repository, not in the checkout itself, and run the project's checks. Don't install or restart anything: I'll review the branch.`,
+      `Answer what the notes ask without changing anything. If a note asks for a change, ${Redline.#work(place, Redline.branch(noted))} Don't install or restart anything: I'll review the branch.`,
     );
     return lines.join('\n');
   }

@@ -333,7 +333,7 @@
     };
   });
   const noted = $derived(desk.marks.filter((mark) => mark.note));
-  const brief = $derived(Redline.brief(context, noted));
+  const brief = $derived(Redline.brief(context, noted, Redline.place(destination, offered)));
 
   /** A new session in `checkout`, with the brief as its first prompt. */
   async function start(checkout: string): Promise<SessionId> {

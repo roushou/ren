@@ -1,7 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Redline, type ElementLike, type Mark, type PageContext } from '../src/lib/redline.ts';
-import type { RunClient, RunId, RunSnapshot, SessionBody, SessionId } from '../src/lib/runs.ts';
+import type {
+  DeskSession,
+  RunClient,
+  RunId,
+  RunSnapshot,
+  SessionBody,
+  SessionId,
+} from '../src/lib/runs.ts';
 
 function element(
   tagName: string,
@@ -73,7 +80,7 @@ test('the branch is named from the first note', () => {
 });
 
 test('the brief lists each noted mark with what it points at', () => {
-  const brief = Redline.brief(page, [mark(1, 'Move it to the end.'), mark(2, '  ')]);
+  const brief = Redline.brief(page, [mark(1, 'Move it to the end.'), mark(2, '  ')], 'worktree');
   assert.equal(
     brief,
     [
@@ -88,10 +95,29 @@ test('the brief lists each noted mark with what it points at', () => {
       '   - Source: `src/routes/sessions/+page.svelte:861`',
       '   - Size: 62×18',
       '',
-      "Answer what the notes ask without changing anything. If a note asks for a change, make it on a new branch, `redline/move-it-to-the-end`, in a git worktree of this repository, not in the checkout itself, and run the project's checks. Don't install or restart anything: I'll review the branch.",
+      "Answer what the notes ask without changing anything. If a note asks for a change, make it on a new branch, `redline/move-it-to-the-end`, in a git worktree of this repository, not in the checkout itself, since other sessions are open there, and run the project's checks. Don't install or restart anything: I'll review the branch.",
     ].join('\n'),
   );
   assert.equal(Redline.routeFile('/'), 'ui/src/routes/+page.svelte');
+});
+
+test('alone in the checkout, a change is made there and the checkout switched back', () => {
+  const brief = Redline.brief(page, [mark(1, 'Move it to the end.')], 'checkout');
+  assert.equal(
+    brief.split('\n').at(-1),
+    "Answer what the notes ask without changing anything. If a note asks for a change, make it on a new branch, `redline/move-it-to-the-end`, in this checkout, since no other session is open here; if `git status` shows uncommitted changes, use a git worktree of this repository instead. Run the project's checks, commit, and switch the checkout back to the branch it was on. Don't install or restart anything: I'll review the branch.",
+  );
+});
+
+test('a worktree is asked for only when another session is open in the checkout', () => {
+  const session = (id: string) => ({ session: id as SessionId }) as DeskSession;
+  const [a, b] = [session('a'), session('b')];
+  // A new session: any open one is another.
+  assert.equal(Redline.place({ kind: 'new' }, []), 'checkout');
+  assert.equal(Redline.place({ kind: 'new' }, [a]), 'worktree');
+  // An open session: itself does not count.
+  assert.equal(Redline.place({ kind: 'session', session: a }, [a]), 'checkout');
+  assert.equal(Redline.place({ kind: 'session', session: a }, [a, b]), 'worktree');
 });
 
 test('the build is named when the daemon says what it was built from', () => {
@@ -210,9 +236,11 @@ test('a brief starts a turn, or is queued after the running one', () => {
 test("a brief's code spans fence past backticks inside, and a note's lines stay in its item", () => {
   assert.equal(Redline.code('a.b'), '`a.b`');
   assert.equal(Redline.code('a `b` c'), '`` a `b` c ``');
-  const brief = Redline.brief({ ...page, route: null, revision: null }, [
-    mark(1, 'First line\nsecond line'),
-  ]);
+  const brief = Redline.brief(
+    { ...page, route: null, revision: null },
+    [mark(1, 'First line\nsecond line')],
+    'checkout',
+  );
   assert.ok(brief.includes('1. First line\n   second line\n   - Element:'));
 });
 

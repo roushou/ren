@@ -182,9 +182,12 @@ is `REN_SOURCE_DIR`, since the marks are on Ren's pages; `cargo xtask
 install-vps` sets it to the checkout it installs from, and without it Redline
 marks but cannot send. The checkout must be under the daemon's `[runs]` roots.
 The brief asks the agent to answer questions without changing anything, to make
-any change on a new `redline/…` branch in a git worktree, and not to install
-anything; nothing enforces that beyond the agent following it and the
-client's approvals. The client and approvals last used, and where the pane was
+any change on a new `redline/…` branch, and not to install anything; nothing
+enforces that beyond the agent following it and the client's approvals. When no
+other session is open in the checkout, the branch is made in the checkout itself
+(in a git worktree if it has uncommitted changes), and the checkout is switched
+back to its branch afterwards; when another session is open there, in a git
+worktree, so the change stays clear of it. The client and approvals last used, and where the pane was
 left, are kept in this browser only.
 
 ## Payload previews
