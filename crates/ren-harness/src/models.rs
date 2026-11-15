@@ -305,21 +305,27 @@ mod tests {
                     { "value": "default", "resolvedModel": "claude-big-1",
                       "displayName": "Default (recommended)" },
                     { "value": "big", "resolvedModel": "claude-big-1",
-                      "displayName": "Big", "description": "For hard tasks" },
+                      "displayName": "Big", "description": "Big 1.5 · For hard tasks" },
                     { "value": "claude-big-1", "resolvedModel": "claude-big-1",
                       "displayName": "Big 1" },
                     { "value": "small", "resolvedModel": "claude-small-1",
-                      "displayName": "Small" },
+                      "displayName": "Small", "description": "Quick · and light" },
+                    { "value": "tiny", "resolvedModel": "claude-tiny-1",
+                      "displayName": "Tiny", "description": "Tiny 2 · " },
                 ] } } }),
         );
-        let mut big = model("big", "Big", None, DefaultChoice::Default);
+        // The versioned name the description opens with is the model's name.
+        let mut big = model("big", "Big 1.5", None, DefaultChoice::Default);
         big.description = Some("For hard tasks".into());
+        let mut small = model("small", "Small", None, DefaultChoice::Other);
+        small.description = Some("Quick · and light".into());
         assert_eq!(
             listed,
             Listing::Listed(vec![
                 big,
                 model("claude-big-1", "Big 1", None, DefaultChoice::Other),
-                model("small", "Small", None, DefaultChoice::Other),
+                small,
+                model("tiny", "Tiny 2", None, DefaultChoice::Other),
             ])
         );
     }

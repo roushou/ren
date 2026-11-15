@@ -825,10 +825,11 @@ export class RunCommandError extends Error {
   }
 }
 
-/** The clients the daemon can drive, in the order a draft offers them. */
+/** The clients the daemon can drive, in the order a draft offers them:
+ * Claude Code, the default, first. */
 export const DRIVABLE = [
-  'codex',
   'claude_code',
+  'codex',
   'pi',
   'opencode',
 ] as const satisfies readonly Harness[];
@@ -2051,6 +2052,12 @@ export class Setup {
     };
   }
 
+  /** The option that stands for the client's own choice, named for what it
+   * is: "Opus 5.5 (default)". */
+  static own(known: string): string {
+    return `${known} (default)`;
+  }
+
   /** The efforts the chosen model takes: the default's are its model's. */
   static efforts(models: readonly RunModel[], model: ModelId | null): RunModel | null {
     return (
@@ -2079,7 +2086,8 @@ export interface Remembered {
  */
 export class Memory {
   static readonly COOKIE = 'ren_runs';
-  static readonly NONE: Remembered = { harness: 'codex', settings: {} };
+  /** A viewer with nothing remembered starts on Claude Code. */
+  static readonly NONE: Remembered = { harness: 'claude_code', settings: {} };
 
   /** The cookie's value, read; anything unreadable is the default. */
   static parse(raw: string | null | undefined): Remembered {
@@ -2109,7 +2117,7 @@ export class Memory {
       }
     }
     return {
-      harness: DRIVABLE.find((drivable) => drivable === saved.harness) ?? 'codex',
+      harness: DRIVABLE.find((drivable) => drivable === saved.harness) ?? Memory.NONE.harness,
       settings,
     };
   }

@@ -707,6 +707,8 @@ test('a client’s models read as listed, grouped by provider, the default known
     ['openai/fast', 'high effort', 'edits alone'],
   );
   assert.deepEqual(Setup.words({ model: null, effort: null, approvals: null }), []);
+  // The client's own choice names what it is, when the client says.
+  assert.equal(Setup.own('Opus 5.5'), 'Opus 5.5 (default)');
   // Starting again, a label this UI does not know is left to the client.
   assert.deepEqual(Setup.known({ model: null, effort: 'ludicrous' as never, approvals: 'auto' }), {
     model: null,
@@ -765,7 +767,7 @@ test('the remembered settings read back from their cookie, and junk is the defau
     },
   });
   for (const junk of [null, '', '{', '[]', '{"harness":"gpt"}']) {
-    assert.equal(Memory.parse(junk).harness, 'codex', String(junk));
+    assert.equal(Memory.parse(junk).harness, 'claude_code', String(junk));
   }
   // A client this UI does not drive, or a value that is not text, is left out.
   assert.deepEqual(

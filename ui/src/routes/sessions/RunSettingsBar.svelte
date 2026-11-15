@@ -79,11 +79,22 @@
       ? null
       : `${harnessLabel(harness)} cannot change its ${change} in a running conversation`;
 
+  /** The model a run gets when none is chosen, when the client says: its
+   * row stands for the client's own choice, so there is no separate one. */
+  const fallback = $derived(Models.fallback(models));
+  /** The model chosen, as the picker's value: the default's own is no choice. */
+  const modelValue = $derived(
+    current.model && current.model !== fallback?.id ? current.model : DEFAULT,
+  );
   const modelGroups = $derived<PickerGroup[]>([
     {
       label: null,
       options: [
-        { value: DEFAULT, label: 'Default', detail: `${harnessLabel(harness)}’s own choice` },
+        ...(fallback
+          ? []
+          : [
+              { value: DEFAULT, label: 'Default', detail: `${harnessLabel(harness)}’s own choice` },
+            ]),
         ...(current.model && !models.some((offered) => offered.id === current.model)
           ? [{ value: current.model, label: current.model }]
           : []),
@@ -91,23 +102,31 @@
     },
     ...Models.groups(models).map((group) => ({
       label: group.provider ?? 'Models',
-      options: group.models.map((offered) => ({
-        value: offered.id,
-        label: offered.name,
-        detail: offered.description,
-        badge: offered.choice === 'default' ? 'default' : null,
-      })),
+      options: group.models.map((offered) =>
+        offered.id === fallback?.id
+          ? { value: DEFAULT, label: Setup.own(offered.name), detail: offered.description }
+          : { value: offered.id, label: offered.name, detail: offered.description },
+      ),
     })),
   ]);
+  /** The effort a run gets when none is chosen, when the client says. */
+  const ownEffort = $derived(efforts.find((level) => level === effective?.effort) ?? null);
+  const effortValue = $derived(
+    current.effort && current.effort !== ownEffort ? current.effort : DEFAULT,
+  );
   const effortGroups = $derived<PickerGroup[]>([
     {
       label: null,
       options: [
-        { value: DEFAULT, label: 'Default', hint: effective?.effort ?? undefined },
+        ...(ownEffort ? [] : [{ value: DEFAULT, label: 'Default' }]),
         ...(current.effort && !efforts.includes(current.effort)
           ? [{ value: current.effort, label: current.effort }]
           : []),
-        ...efforts.map((level) => ({ value: level, label: level })),
+        ...efforts.map((level) =>
+          level === ownEffort
+            ? { value: DEFAULT, label: Setup.own(level) }
+            : { value: level, label: level },
+        ),
       ],
     },
   ]);
@@ -159,8 +178,8 @@
     label="Model for the next turn"
     icon="cpu"
     groups={modelGroups}
-    value={current.model ?? DEFAULT}
-    placeholder="Default"
+    value={modelValue}
+    placeholder={fallback ? Setup.own(fallback.name) : 'Default'}
     search={models.length > 8}
     disabled={busy ? 'Waiting for the last change' : why('model')}
     onchange={(value) =>
@@ -172,8 +191,8 @@
     label="Effort for the next turn"
     icon="thought"
     groups={effortGroups}
-    value={current.effort ?? DEFAULT}
-    placeholder="Default"
+    value={effortValue}
+    placeholder={ownEffort ? Setup.own(ownEffort) : 'Default'}
     search={false}
     disabled={busy ? 'Waiting for the last change' : why('effort')}
     onchange={(value) => change({ effort: efforts.find((level) => level === value) ?? null })}

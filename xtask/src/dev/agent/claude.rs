@@ -110,19 +110,20 @@ impl ClaudeScript {
 
     /// Read one line from Ren.
     /// The models its `initialize` answer lists: invented, with the entry
-    /// that stands for no choice first, as the real client lists it.
+    /// that stands for no choice first and each description opening with
+    /// the model's versioned name, as the real client lists them.
     fn models() -> Value {
         json!([
             { "value": "default", "resolvedModel": "dev-large-1",
-              "displayName": "Default (recommended)", "description": "Dev Large · for most work" },
+              "displayName": "Default (recommended)", "description": "Dev Large 2 · For most work" },
             { "value": "large", "resolvedModel": "dev-large-1", "displayName": "Dev Large",
-              "description": "For most work", "supportsEffort": true,
+              "description": "Dev Large 2 · For most work", "supportsEffort": true,
               "supportedEffortLevels": ["low", "medium", "high", "xhigh", "max"] },
             { "value": "huge", "resolvedModel": "dev-huge-1", "displayName": "Dev Huge",
-              "description": "For the hardest, longest tasks", "supportsEffort": true,
+              "description": "Dev Huge 2 · For the hardest, longest tasks", "supportsEffort": true,
               "supportedEffortLevels": ["low", "medium", "high", "xhigh", "max"] },
             { "value": "small", "resolvedModel": "dev-small-1", "displayName": "Dev Small",
-              "description": "Fastest, for quick answers" },
+              "description": "Dev Small 2 · Fastest, for quick answers" },
             { "value": "dev-large-0", "resolvedModel": "dev-large-0", "displayName": "Dev Large 0",
               "description": "The previous large model" },
         ])
@@ -507,7 +508,10 @@ mod tests {
             sent(&agent.receive(message))
         });
         let names: Vec<&str> = models.iter().map(|model| model.name.as_str()).collect();
-        assert_eq!(names, ["Dev Large", "Dev Huge", "Dev Small", "Dev Large 0"]);
+        assert_eq!(
+            names,
+            ["Dev Large 2", "Dev Huge 2", "Dev Small 2", "Dev Large 0"]
+        );
         assert_eq!(
             models[0].choice,
             ren_harness::models::DefaultChoice::Default
