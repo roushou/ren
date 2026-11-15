@@ -1398,6 +1398,50 @@ async fn a_session_goes_on_across_its_processes() {
 }
 
 #[tokio::test]
+async fn a_conversation_no_turn_ran_in_is_not_resumed() {
+    use ren_supervisor::{SessionPhase, SessionState};
+    let host = FakeHost::new(Script::Claude);
+    let spawned = host.spawned.clone();
+    let supervised = supervise(host).await;
+    let supervisor = &supervised.supervisor;
+    let mut updates = supervisor.subscribe();
+    let session = supervisor
+        .create(create(Harness::ClaudeCode, "/work/acme"))
+        .await
+        .unwrap();
+    // The draft's client opens a conversation, and stops before any turn:
+    // Claude Code keeps no conversation without one.
+    state(&mut updates, |s| matches!(s, RunState::Idle { .. })).await;
+    supervisor.send(session, RunCommand::Stop).await.unwrap();
+    state(&mut updates, |s| matches!(s, RunState::Ended { .. })).await;
+    assert_eq!(
+        only_session(supervisor).await.state,
+        SessionState::Open(SessionPhase::Draft)
+    );
+
+    // The first prompt starts a new conversation rather than resuming one.
+    supervisor
+        .send(session, RunCommand::Prompt(prompt_text("edit src")))
+        .await
+        .unwrap();
+    state(&mut updates, working).await;
+    let arguments = |at: usize| spawned.lock().unwrap()[at].0.clone();
+    let second = arguments(1);
+    assert!(second.iter().any(|argument| argument == "--session-id"));
+    assert!(!second.iter().any(|argument| argument == "--resume"));
+
+    // Once a turn ran in it, the next process resumes it.
+    supervisor.send(session, RunCommand::Stop).await.unwrap();
+    state(&mut updates, |s| matches!(s, RunState::Ended { .. })).await;
+    supervisor
+        .send(session, RunCommand::Prompt(prompt_text("and the docs")))
+        .await
+        .unwrap();
+    state(&mut updates, working).await;
+    assert!(arguments(2).iter().any(|argument| argument == "--resume"));
+}
+
+#[tokio::test]
 async fn a_draft_changes_client_and_a_stored_session_is_adopted() {
     use ren_harness::settings::{Effort, RunSettings};
     use ren_supervisor::{SessionPhase, SessionSeed, SessionState};

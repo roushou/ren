@@ -877,8 +877,17 @@ impl ClaudeStreamJson {
 
     fn result(&mut self, message: &Value, line: RawLine, received: &mut Received) {
         let TurnSlot::Running { turn, interrupted } = self.turn else {
-            // A result for no turn Ren knows of.
-            received.events.push(DriveEvent::Unknown { line });
+            // A result for no turn Ren knows of: one that failed is the
+            // client's error before any turn (a conversation it could not
+            // resume); anything else stays unknown.
+            let failed = message.get("is_error").and_then(Value::as_bool) == Some(true);
+            match Self::failure(message) {
+                Some(message) if failed => received.events.push(DriveEvent::Error {
+                    message,
+                    retry: Retry::Final,
+                }),
+                Some(_) | None => received.events.push(DriveEvent::Unknown { line }),
+            }
             return;
         };
         self.turn = TurnSlot::Idle;
@@ -1015,10 +1024,13 @@ impl ClaudeModels {
                     && resolved.is_some()
                     && ModelListing::text(entry, "resolvedModel") == resolved;
                 marked |= default;
+                let (name, description) = Self::named(
+                    ModelListing::text(entry, "displayName").unwrap_or_else(|| id.to_string()),
+                    ModelListing::text(entry, "description"),
+                );
                 Some(Model {
-                    name: ModelListing::text(entry, "displayName")
-                        .unwrap_or_else(|| id.to_string()),
-                    description: ModelListing::text(entry, "description"),
+                    name,
+                    description,
                     provider: None,
                     choice: if default {
                         DefaultChoice::Default
@@ -1039,6 +1051,32 @@ impl ClaudeModels {
             })
             .collect();
         Listing::Listed(models)
+    }
+
+    /// A model's name and description as Claude Code lists them: its short
+    /// name ("Opus"), and a description that opens with the versioned name
+    /// ("Opus 5.5 · Best for everyday tasks"). The versioned name is the
+    /// model's name, and the rest its description.
+    fn named(name: String, description: Option<String>) -> (String, Option<String>) {
+        const SEPARATOR: char = '·';
+        let Some(text) = description else {
+            return (name, None);
+        };
+        match text.split_once(SEPARATOR) {
+            Some((versioned, rest))
+                if versioned
+                    .trim_end()
+                    .strip_prefix(name.as_str())
+                    .is_some_and(|version| version.starts_with(' ')) =>
+            {
+                let rest = rest.trim();
+                (
+                    versioned.trim().to_owned(),
+                    (!rest.is_empty()).then(|| rest.to_owned()),
+                )
+            }
+            Some(_) | None => (name, Some(text)),
+        }
     }
 }
 
@@ -1345,6 +1383,29 @@ mod tests {
                 end: TurnEnd::Interrupted,
                 ..
             }]
+        ));
+    }
+
+    #[test]
+    fn a_failed_result_before_any_turn_is_an_error() {
+        let mut codec = ready();
+        let failed = feed(
+            &mut codec,
+            json!({ "type": "result", "subtype": "error_during_execution", "is_error": true,
+                    "errors": ["No conversation found with session ID: x"] }),
+        );
+        assert!(matches!(
+            failed.events.as_slice(),
+            [DriveEvent::Error { message, retry: Retry::Final }]
+                if message == "No conversation found with session ID: x"
+        ));
+        let other = feed(
+            &mut codec,
+            json!({ "type": "result", "subtype": "success", "is_error": false }),
+        );
+        assert!(matches!(
+            other.events.as_slice(),
+            [DriveEvent::Unknown { .. }]
         ));
     }
 

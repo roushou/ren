@@ -187,8 +187,9 @@ impl SessionsApi {
     }
 
     /// What a stored session is to the supervisor: where it works, on
-    /// what, the conversation its newest process opened, and where it
-    /// stands. `None` for one whose client this daemon does not know.
+    /// what, the conversation its newest process opened (a draft's none: no
+    /// turn ran, so its client kept no conversation to resume), and where
+    /// it stands. `None` for one whose client this daemon does not know.
     fn seed(stored: &SessionView) -> Option<SessionSeed> {
         let Stored::Known(harness) = stored.harness else {
             return None;
@@ -216,12 +217,15 @@ impl SessionsApi {
                     Some(Stored::Unknown(_)) | None => None,
                 },
             },
-            thread: stored
-                .runs
-                .iter()
-                .find_map(|run| run.thread.as_deref())
-                .and_then(|thread| thread.parse::<uuid::Uuid>().ok())
-                .and_then(NativeThreadId::new),
+            thread: match phase {
+                SessionPhase::Draft => None,
+                SessionPhase::Active => stored
+                    .runs
+                    .iter()
+                    .find_map(|run| run.thread.as_deref())
+                    .and_then(|thread| thread.parse::<uuid::Uuid>().ok())
+                    .and_then(NativeThreadId::new),
+            },
             state: match stored.archived_at {
                 Some(_) => SessionState::Archived(phase),
                 None => SessionState::Open(phase),

@@ -87,6 +87,9 @@ struct Live {
     tap: Option<RunTap>,
     /// The first prompt, sent once the conversation opens.
     first: Option<Prompt>,
+    /// The conversation its client opened. The session resumes it only once
+    /// a turn has run in it: a client keeps no conversation without one.
+    opened: Option<NativeThreadId>,
     /// What the run's conversation keeps of its client's events.
     entries: Entries,
     /// How many times the run became idle: a timer set for an earlier time
@@ -103,8 +106,8 @@ struct Held {
     workdir: Workdir,
     /// What its next turn runs on.
     settings: RunSettings,
-    /// The client's conversation, once a process opened it: the next
-    /// process resumes it.
+    /// The client's conversation, once a turn ran in it: the next process
+    /// resumes it.
     thread: Option<NativeThreadId>,
     /// Its newest process.
     process: Option<RunId>,
@@ -529,6 +532,7 @@ impl<H: AgentHost> SupervisorTask<H> {
                         kill: None,
                         tap: None,
                         first: None,
+                        opened: None,
                         entries: Entries::default(),
                         rested: 0,
                         arm: false,
@@ -554,6 +558,7 @@ impl<H: AgentHost> SupervisorTask<H> {
             kill: Some(kill),
             tap: Some(tap),
             first,
+            opened: None,
             entries: Entries::default(),
             rested: 0,
             arm: false,
@@ -1200,12 +1205,20 @@ impl<H: AgentHost> SupervisorTask<H> {
         let mut held = held;
         let mut failed = false;
         for event in received.events {
+            if let DriveEvent::Ready { thread } = &event {
+                live.opened = Some(*thread);
+            }
             if let Some(held) = held.as_deref_mut() {
                 match &event {
                     // Turns change files.
                     DriveEvent::TurnEnded { .. } => held.files = None,
-                    DriveEvent::Ready { thread } => held.thread = Some(*thread),
-                    DriveEvent::TurnStarted { .. }
+                    // A conversation is kept once a turn runs in it.
+                    DriveEvent::TurnStarted { .. } => {
+                        if let Some(thread) = live.opened {
+                            held.thread = Some(thread);
+                        }
+                    }
+                    DriveEvent::Ready { .. }
                     | DriveEvent::Delta { .. }
                     | DriveEvent::Item { .. }
                     | DriveEvent::Approval { .. }
