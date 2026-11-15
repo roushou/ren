@@ -449,3 +449,27 @@ fn a_streaming_reply_sends_spaced_updates_that_grow_into_it() {
     // Taken once; a commit sends them.
     assert!(core.take_progress().is_empty());
 }
+
+#[test]
+fn response_bytes_with_no_attempt_open_are_dropped_not_stored_as_the_request() {
+    let mut script = Script::new();
+    let first = script.attempt(0);
+    let attempt = first.attempt;
+    let mut core = core();
+    let open = script.open(first);
+    core.accept(open);
+    let finished = script.finish_attempt(attempt, 0);
+    core.accept(finished);
+    let stray = script.data(Track::Response, 0, b"stray");
+    core.accept(stray);
+    let stray = script.data(Track::AttemptRequest, 0, b"stray");
+    core.accept(stray);
+    let batch = core.take_batch();
+    assert!(
+        !batch
+            .operations()
+            .iter()
+            .any(|op| matches!(op, Op::Segments { .. })),
+        "no body took the stray bytes"
+    );
+}

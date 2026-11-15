@@ -120,21 +120,57 @@ pub(crate) struct RecorderCore {
 
 /// Recorder state for a call between its open and finish records.
 struct CallInProgress {
-    protocol: Option<Protocol>,
     /// The harness whose hints attributed the call.
     harness: Option<Harness>,
-    /// The request as it is captured, read when it ends.
-    reading: Option<RequestReader>,
+    /// Whether Ren reads the call's protocol, and its request as it is read.
+    interpretation: Interpretation,
     /// What the latest attempt's response showed: the final one's, once the
     /// call finishes.
     response_activity: ResponseActivity,
     request: BodyCapture,
-    /// The open attempt's changed request, if it sends one.
-    attempt_request: Option<BodyCapture>,
-    response: BodyCapture,
-    inspector: Option<CallInspector>,
+    attempt: AttemptPhase,
     /// When the call's next progress update is due.
     throttle: Throttle,
+}
+
+/// Whether Ren understands a call's protocol.
+enum Interpretation {
+    /// Its bytes are stored but not read.
+    Opaque,
+    Read {
+        protocol: Protocol,
+        /// The request as it is captured, read when it ends.
+        reader: RequestReader,
+    },
+}
+
+/// The call's attempt, if one is open.
+enum AttemptPhase {
+    /// Before the first attempt, or between attempts.
+    None,
+    Open(OpenAttempt),
+}
+
+/// An open attempt's bodies.
+struct OpenAttempt {
+    response: BodyCapture,
+    /// Its changed request, if it sends one.
+    changed: ChangedRequest,
+    inspection: Inspection,
+}
+
+enum ChangedRequest {
+    Original,
+    Changed(BodyCapture),
+}
+
+/// How the open attempt's response is read.
+enum Inspection {
+    /// Its head has not arrived.
+    AwaitingHead,
+    Reading(Box<CallInspector>),
+    /// The protocol is opaque, or the inspection finished.
+    Unread,
 }
 
 /// One body being cut into chunks.
@@ -221,7 +257,9 @@ impl RecorderCore {
     /// deduplication matters. The core starts an empty batch.
     pub(crate) fn take_batch(&mut self) -> Batch {
         for call in self.calls.values_mut() {
-            call.response.flush(&mut self.batch);
+            if let AttemptPhase::Open(attempt) = &mut call.attempt {
+                attempt.response.flush(&mut self.batch);
+            }
         }
         std::mem::take(&mut self.batch)
     }
@@ -252,25 +290,25 @@ impl RecorderCore {
                 endpoint,
             } => {
                 let call = open.stamp.call;
-                let protocol = Protocol::for_endpoint(endpoint);
+                let interpretation = match Protocol::for_endpoint(endpoint) {
+                    None => Interpretation::Opaque,
+                    Some(protocol) => Interpretation::Read {
+                        protocol,
+                        reader: RequestReader::new(protocol, ActivityLimits::default()),
+                    },
+                };
                 self.calls.insert(
                     call,
                     CallInProgress {
-                        protocol,
                         harness: open
                             .attribution
                             .hint
                             .as_ref()
                             .map(|hint| hint.source.harness()),
-                        reading: protocol.map(|protocol| {
-                            RequestReader::new(protocol, ActivityLimits::default())
-                        }),
+                        interpretation,
                         response_activity: ResponseActivity::default(),
                         request: BodyCapture::new(BodyKey::Request(call)),
-                        attempt_request: None,
-                        // Replaced when the first attempt starts.
-                        response: BodyCapture::new(BodyKey::Request(call)),
-                        inspector: None,
+                        attempt: AttemptPhase::None,
                         throttle: Throttle::default(),
                     },
                 );
@@ -283,15 +321,20 @@ impl RecorderCore {
                 self.attempt(attempt);
             }
             Record::Head(head) => {
-                if let Some(call) = self.calls.get_mut(&head.stamp.call) {
-                    call.inspector = call.protocol.map(|protocol| {
-                        CallInspector::new(
-                            protocol,
-                            head.format,
-                            head.encoding,
-                            InspectionLimits::default(),
-                        )
-                    });
+                if let Some(call) = self.calls.get_mut(&head.stamp.call)
+                    && let AttemptPhase::Open(attempt) = &mut call.attempt
+                {
+                    attempt.inspection = match &call.interpretation {
+                        Interpretation::Opaque => Inspection::Unread,
+                        Interpretation::Read { protocol, .. } => {
+                            Inspection::Reading(Box::new(CallInspector::new(
+                                *protocol,
+                                head.format,
+                                head.encoding,
+                                InspectionLimits::default(),
+                            )))
+                        }
+                    };
                 }
                 self.batch.push(Op::ResponseHead(head));
             }
@@ -310,13 +353,20 @@ impl RecorderCore {
                 request,
             } => {
                 let inspection = self.calls.get_mut(&stamp.call).and_then(|call| {
-                    if let Some(mut changed) = call.attempt_request.take() {
+                    let AttemptPhase::Open(mut attempt) =
+                        std::mem::replace(&mut call.attempt, AttemptPhase::None)
+                    else {
+                        return None;
+                    };
+                    if let ChangedRequest::Changed(changed) = &mut attempt.changed {
                         changed.flush(&mut self.batch);
                     }
-                    call.response.flush(&mut self.batch);
-                    let mut inspector = call.inspector.take()?;
+                    attempt.response.flush(&mut self.batch);
+                    let Inspection::Reading(mut inspector) = attempt.inspection else {
+                        return None;
+                    };
                     // Observed bytes that never reached the recorder are a gap.
-                    if call.response.received() < response.observed_bytes {
+                    if attempt.response.received() < response.observed_bytes {
                         inspector.gap();
                     }
                     let reading = inspector.finish(response.ending.end());
@@ -339,8 +389,8 @@ impl RecorderCore {
             } => {
                 let digest = self.calls.remove(&stamp.call).map(|mut call| {
                     call.request.flush(&mut self.batch);
-                    let reading = match call.reading {
-                        Some(mut reader) => {
+                    let reading = match call.interpretation {
+                        Interpretation::Read { mut reader, .. } => {
                             // Observed bytes that never reached the recorder are a gap.
                             if call.request.received() < request.observed_bytes {
                                 reader.gap();
@@ -350,7 +400,7 @@ impl RecorderCore {
                                 response: call.response_activity,
                             }
                         }
-                        None => Reading::unsupported(),
+                        Interpretation::Opaque => Reading::unsupported(),
                     };
                     CallDigest::seal(
                         InterpretedCall::new(call.harness, reading),
@@ -376,14 +426,16 @@ impl RecorderCore {
     /// An attempt started: its bodies are captured from here on.
     fn attempt(&mut self, attempt: StartAttempt) {
         if let Some(call) = self.calls.get_mut(&attempt.stamp.call) {
-            call.response = BodyCapture::new(BodyKey::Response(attempt.attempt));
-            call.attempt_request = match attempt.body {
-                AttemptBody::Original => None,
-                AttemptBody::Changed => {
-                    Some(BodyCapture::new(BodyKey::AttemptRequest(attempt.attempt)))
-                }
-            };
-            call.inspector = None;
+            call.attempt = AttemptPhase::Open(OpenAttempt {
+                response: BodyCapture::new(BodyKey::Response(attempt.attempt)),
+                changed: match attempt.body {
+                    AttemptBody::Original => ChangedRequest::Original,
+                    AttemptBody::Changed => ChangedRequest::Changed(BodyCapture::new(
+                        BodyKey::AttemptRequest(attempt.attempt),
+                    )),
+                },
+                inspection: Inspection::AwaitingHead,
+            });
         }
         self.batch.push(Op::StartAttempt(attempt));
     }
@@ -392,13 +444,16 @@ impl RecorderCore {
         let Some(call) = self.calls.get_mut(&piece.call) else {
             return;
         };
-        let body = match piece.track {
-            Track::Request => &mut call.request,
-            Track::Response => &mut call.response,
-            Track::AttemptRequest => match &mut call.attempt_request {
-                Some(body) => body,
-                None => return,
+        // A piece for a body that is not open is dropped: the tap's states
+        // send none, so it would be a queue bug.
+        let body = match (piece.track, &mut call.attempt) {
+            (Track::Request, _) => &mut call.request,
+            (Track::Response, AttemptPhase::Open(attempt)) => &mut attempt.response,
+            (Track::AttemptRequest, AttemptPhase::Open(attempt)) => match &mut attempt.changed {
+                ChangedRequest::Changed(body) => body,
+                ChangedRequest::Original => return,
             },
+            (Track::Response | Track::AttemptRequest, AttemptPhase::None) => return,
         };
         if let Some(mark) = piece.message {
             self.batch.push(Op::Message {
@@ -410,7 +465,7 @@ impl RecorderCore {
         match piece.track {
             Track::AttemptRequest => {}
             Track::Request => {
-                if let Some(reader) = &mut call.reading {
+                if let Interpretation::Read { reader, .. } = &mut call.interpretation {
                     match continuity {
                         Continuity::Contiguous => {}
                         Continuity::AfterGap => reader.gap(),
@@ -422,7 +477,11 @@ impl RecorderCore {
                 }
             }
             Track::Response => {
-                if let Some(inspector) = &mut call.inspector {
+                if let AttemptPhase::Open(OpenAttempt {
+                    inspection: Inspection::Reading(inspector),
+                    ..
+                }) = &mut call.attempt
+                {
                     match continuity {
                         Continuity::Contiguous => {}
                         Continuity::AfterGap => inspector.gap(),
