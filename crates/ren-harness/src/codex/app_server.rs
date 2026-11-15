@@ -11,6 +11,7 @@
 //! sign-in, and Ren provides no tools.
 
 use crate::{
+    attachment::Attachment,
     commands::{ClientCommand, CommandKind, Sigil},
     drive::{
         ApprovalAsk, ApprovalId, CommandRefused, Decision, DriveCommand, DriveEvent, DriveItem,
@@ -24,7 +25,7 @@ use crate::{
 use ren_protocol::native::{NativeThreadId, NativeTurnId};
 use serde::Deserialize;
 use serde_json::{Value, json};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 use uuid::Uuid;
 
 /// The client's side of one `codex app-server` process.
@@ -47,6 +48,9 @@ pub struct CodexAppServer {
     /// Each listed skill's path, by name: a prompt naming a skill (`$name`)
     /// sends it along, as Codex's own interface does.
     skill_paths: BTreeMap<String, String>,
+    /// What the images of each prompt and steer sent are, in order, until
+    /// Codex echoes it as a user message.
+    echoing: VecDeque<Vec<Attachment>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -107,6 +111,7 @@ impl CodexAppServer {
             cwd,
             skills: Vec::new(),
             skill_paths: BTreeMap::new(),
+            echoing: VecDeque::new(),
             phase: Phase::Initializing(opening),
             next_request: 0,
             requests: BTreeMap::new(),
@@ -158,14 +163,17 @@ impl CodexAppServer {
                 )])
             }
             DriveCommand::Steer(prompt) => match self.turn {
-                TurnSlot::Running(turn) => Ok(vec![self.request(
-                    RequestKind::TurnSteer,
-                    json!({
-                        "threadId": thread.to_string(),
-                        "expectedTurnId": turn.to_string(),
-                        "input": self.input(&prompt),
-                    }),
-                )]),
+                TurnSlot::Running(turn) => {
+                    let input = self.input(&prompt);
+                    Ok(vec![self.request(
+                        RequestKind::TurnSteer,
+                        json!({
+                            "threadId": thread.to_string(),
+                            "expectedTurnId": turn.to_string(),
+                            "input": input,
+                        }),
+                    )])
+                }
                 TurnSlot::Requested => Err(CommandRefused::TurnNotStarted),
                 TurnSlot::Idle => Err(CommandRefused::NoTurn),
             },
@@ -242,10 +250,11 @@ impl CodexAppServer {
         match self.turn {
             TurnSlot::Idle => {
                 self.turn = TurnSlot::Requested;
+                let input = self.input(prompt);
                 Ok(self.request(RequestKind::TurnStart, {
                     let mut params = json!({
                         "threadId": thread.to_string(),
-                        "input": self.input(prompt),
+                        "input": input,
                     });
                     let effort = match &self.changed {
                         Some(changed) => changed.effort,
@@ -264,10 +273,21 @@ impl CodexAppServer {
         }
     }
 
-    /// A prompt as Codex takes it: its text, then each listed skill the
-    /// text names (`$name`, standing on its own), once.
-    fn input(&self, prompt: &Prompt) -> Value {
-        let mut input = vec![json!({ "type": "text", "text": prompt.as_str() })];
+    /// A prompt as Codex takes it: each image by the path of its file, its
+    /// text, then each listed skill the text names (`$name`, standing on
+    /// its own), once. The images are remembered for the prompt's echo.
+    fn input(&mut self, prompt: &Prompt) -> Value {
+        if !prompt.images().is_empty() {
+            self.echoing.push_back(prompt.sent());
+        }
+        let mut input: Vec<Value> = prompt
+            .images()
+            .iter()
+            .map(|image| json!({ "type": "localImage", "path": image.path() }))
+            .collect();
+        if !prompt.as_str().trim().is_empty() || input.is_empty() {
+            input.push(json!({ "type": "text", "text": prompt.as_str() }));
+        }
         let mut named = Vec::new();
         for word in prompt.as_str().split_whitespace() {
             let Some(name) = word
@@ -544,7 +564,25 @@ impl CodexAppServer {
                 Self::parse::<ItemHolder>(params).and_then(|holder| {
                     let id = holder.item.get("id")?.as_str()?.to_owned();
                     let kind = Self::item_kind(holder.item.get("type")?.as_str()?);
-                    let read = Self::item_read(&kind, &holder.item, phase);
+                    let mut read = Self::item_read(&kind, &holder.item, phase);
+                    // The echo of a prompt sent with images: its start shows
+                    // them, its completion takes them.
+                    let with_images = holder.item["content"].as_array().is_some_and(|parts| {
+                        parts.iter().any(|part| {
+                            matches!(
+                                part.get("type").and_then(Value::as_str),
+                                Some("localImage" | "image")
+                            )
+                        })
+                    });
+                    if let ItemRead::Prompt { images, .. } = &mut read
+                        && with_images
+                    {
+                        *images = match phase {
+                            ItemPhase::Started => self.echoing.front().cloned().unwrap_or_default(),
+                            ItemPhase::Completed => self.echoing.pop_front().unwrap_or_default(),
+                        };
+                    }
                     Some(DriveEvent::Item {
                         phase,
                         item: DriveItem {
@@ -720,6 +758,7 @@ impl CodexAppServer {
                             .collect()
                     })
                     .unwrap_or_default(),
+                images: Vec::new(),
             },
             ItemKind::AgentMessage => ItemRead::Reply {
                 text: text("text").unwrap_or_default(),
@@ -1462,6 +1501,56 @@ mod tests {
 
     /// A message added to the running turn goes to that turn; settings
     /// changed mid-run go with every turn from the next.
+    #[test]
+    fn sends_images_by_path_and_shows_them_on_the_echo() {
+        use crate::drive::PromptImage;
+        let mut codec = ready();
+        let image = PromptImage::sample();
+        let start = codec
+            .command(DriveCommand::Prompt(PromptImage::prompt("what is this")))
+            .unwrap()
+            .remove(0);
+        assert_eq!(
+            sent(&start)["params"]["input"],
+            json!([
+                { "type": "localImage", "path": "/data/attachments/s/a/shot.png" },
+                { "type": "text", "text": "what is this" },
+            ])
+        );
+        let echo = |method: &str| {
+            json!({ "method": method, "params": { "threadId": THREAD, "turnId": TURN,
+                "item": { "type": "userMessage", "id": "user_1", "content": [
+                    { "type": "localImage", "path": "/data/attachments/s/a/shot.png" },
+                    { "type": "text", "text": "what is this" } ] } } })
+        };
+        for method in ["item/started", "item/completed"] {
+            let echoed = feed(&mut codec, echo(method));
+            let [DriveEvent::Item { item, .. }] = echoed.events.as_slice() else {
+                panic!("{:?}", echoed.events);
+            };
+            assert_eq!(
+                item.read,
+                ItemRead::Prompt {
+                    text: "what is this".into(),
+                    images: vec![image.read().clone()],
+                },
+                "{method}"
+            );
+        }
+        // A message without images takes none.
+        let plain = feed(
+            &mut codec,
+            json!({ "method": "item/completed", "params": { "threadId": THREAD, "turnId": TURN,
+                "item": { "type": "userMessage", "id": "user_2",
+                          "content": [{ "type": "text", "text": "and this" }] } } }),
+        );
+        assert!(matches!(
+            plain.events.as_slice(),
+            [DriveEvent::Item { item, .. }] if item.read == ItemRead::Prompt {
+                text: "and this".into(), images: Vec::new() }
+        ));
+    }
+
     #[test]
     fn steers_the_running_turn_and_takes_new_settings_with_the_next() {
         use crate::settings::{ApprovalPolicy, Effort, RunSettings};

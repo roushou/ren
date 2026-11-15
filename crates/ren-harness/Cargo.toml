@@ -13,6 +13,7 @@ description = "Claude Code, Codex, Pi, and opencode harness support for the Ren 
 # client or server, database driver, or CLI parser (docs/architecture.md).
 [dependencies]
 http.workspace = true
+base64 = "0.22"
 imagesize = "0.13"
 ren-depot.workspace = true
 ren-protocol.workspace = true

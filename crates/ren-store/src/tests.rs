@@ -2212,7 +2212,14 @@ mod conversation {
                 at: fixture.clock.now(),
                 run,
                 turn: None,
-                event: item(id, ItemPhase::Completed, ItemRead::Prompt { text }),
+                event: item(
+                    id,
+                    ItemPhase::Completed,
+                    ItemRead::Prompt {
+                        text,
+                        images: Vec::new(),
+                    },
+                ),
             }));
         }
         fixture.store.commit(&batch).await.unwrap();
@@ -2254,6 +2261,7 @@ mod conversation {
                 ItemPhase::Completed,
                 ItemRead::Prompt {
                     text: "é".repeat(500),
+                    images: Vec::new(),
                 },
             ),
         }));

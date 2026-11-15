@@ -56,7 +56,9 @@ impl ImageFormat {
 }
 
 /// A count of bytes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
 #[serde(transparent)]
 pub struct ByteSize(u64);
 
@@ -92,7 +94,8 @@ impl fmt::Display for ByteSize {
 }
 
 /// An image's size in pixels: never zero on either side.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(try_from = "RawDimensions")]
 pub struct Dimensions {
     width: u32,
     height: u32,
@@ -128,6 +131,21 @@ impl Dimensions {
     }
 }
 
+/// Dimensions as written, read back only through [`Dimensions::new`].
+#[derive(serde::Deserialize)]
+struct RawDimensions {
+    width: u32,
+    height: u32,
+}
+
+impl TryFrom<RawDimensions> for Dimensions {
+    type Error = &'static str;
+
+    fn try_from(raw: RawDimensions) -> Result<Self, Self::Error> {
+        Self::new(raw.width, raw.height).ok_or("an image has no side of zero")
+    }
+}
+
 impl fmt::Display for Dimensions {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}×{}", self.width, self.height)
@@ -135,7 +153,7 @@ impl fmt::Display for Dimensions {
 }
 
 /// An image Ren read: its format and its size.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct Image {
     format: ImageFormat,
     dimensions: Dimensions,
@@ -157,7 +175,7 @@ impl Image {
 }
 
 /// What an attachment is.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum AttachmentKind {
     Image(Image),
@@ -341,8 +359,10 @@ pub enum PromptLimitError {
 }
 
 /// One file uploaded to go with a prompt, read and known to be what it
-/// says. Ren's identity for it is the store's; this is what it is.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+/// says. Ren's identity for it is the store's; this is what it is. Read
+/// back from JSON through [`Attachment::restore`].
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(try_from = "StoredAttachment")]
 pub struct Attachment {
     name: AttachmentName,
     kind: AttachmentKind,
@@ -411,6 +431,23 @@ impl Attachment {
 
     pub fn sha256(&self) -> Sha256 {
         self.sha256
+    }
+}
+
+/// An attachment as written.
+#[derive(serde::Deserialize)]
+struct StoredAttachment {
+    name: String,
+    kind: AttachmentKind,
+    size: ByteSize,
+    sha256: Sha256,
+}
+
+impl TryFrom<StoredAttachment> for Attachment {
+    type Error = NameError;
+
+    fn try_from(stored: StoredAttachment) -> Result<Self, Self::Error> {
+        Self::restore(&stored.name, stored.kind, stored.size, stored.sha256)
     }
 }
 
@@ -707,6 +744,16 @@ mod tests {
             Err(NameError::Reserved)
         );
         assert_eq!(Dimensions::new(0, 1), None);
+        assert_eq!(
+            serde_json::from_value::<Attachment>(json.clone()).unwrap(),
+            read
+        );
+        let mut zero = json.clone();
+        zero["kind"]["dimensions"]["width"] = 0.into();
+        assert!(serde_json::from_value::<Attachment>(zero).is_err());
+        let mut path = json;
+        path["name"] = "..".into();
+        assert!(serde_json::from_value::<Attachment>(path).is_err());
     }
 
     #[test]

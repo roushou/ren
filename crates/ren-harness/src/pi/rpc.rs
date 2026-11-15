@@ -15,6 +15,7 @@
 //! Ren provides no interface for them.
 
 use crate::{
+    attachment::Attachment,
     commands::{ClientCommand, CommandKind, Sigil},
     drive::{
         CommandRefused, DriveCommand, DriveEvent, DriveItem, ItemId, ItemKind, ItemPhase, ItemRead,
@@ -26,7 +27,7 @@ use crate::{
 };
 use ren_protocol::native::{NativeThreadId, NativeTurnId};
 use serde_json::{Value, json};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 use uuid::Uuid;
 
 /// The client's side of one `pi --mode rpc` process.
@@ -53,6 +54,9 @@ pub struct PiRpc {
     tools: BTreeMap<String, ToolCall>,
     /// The extension commands, prompt templates, and skills Pi listed.
     commands: Vec<ClientCommand>,
+    /// What the images of each prompt and steer sent are, in order, until
+    /// Pi echoes it as a user message.
+    echoing: VecDeque<Vec<Attachment>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -132,6 +136,7 @@ impl PiRpc {
             stopped: None,
             tools: BTreeMap::new(),
             commands: Vec::new(),
+            echoing: VecDeque::new(),
         };
         let line = codec.request(kind, json!({ "type": "get_state" }));
         (codec, line)
@@ -205,10 +210,10 @@ impl PiRpc {
             // Read after the running assistant message's tool calls, before
             // its next model call.
             DriveCommand::Steer(prompt) => match self.turn {
-                TurnSlot::Running { .. } => Ok(vec![self.request(
-                    RequestKind::TurnSteer,
-                    json!({ "type": "steer", "message": prompt.as_str() }),
-                )]),
+                TurnSlot::Running { .. } => {
+                    let command = self.message("steer", &prompt);
+                    Ok(vec![self.request(RequestKind::TurnSteer, command)])
+                }
                 TurnSlot::Requested => Err(CommandRefused::TurnNotStarted),
                 TurnSlot::Idle => Err(CommandRefused::NoTurn),
             },
@@ -308,10 +313,25 @@ impl PiRpc {
             }
         }
         self.turn = TurnSlot::Requested;
-        Ok(self.request(
-            RequestKind::TurnStart,
-            json!({ "type": "prompt", "message": prompt.as_str() }),
-        ))
+        let command = self.message("prompt", prompt);
+        Ok(self.request(RequestKind::TurnStart, command))
+    }
+
+    /// A `prompt` or `steer` command: its text, and each image in base64,
+    /// remembered for the message's echo.
+    fn message(&mut self, kind: &str, prompt: &Prompt) -> Value {
+        let mut command = json!({ "type": kind, "message": prompt.as_str() });
+        if !prompt.images().is_empty() {
+            self.echoing.push_back(prompt.sent());
+            command["images"] = prompt
+                .images()
+                .iter()
+                .map(|image| {
+                    json!({ "type": "image", "data": image.base64(), "mimeType": image.media_type() })
+                })
+                .collect();
+        }
+        command
     }
 
     fn request(&mut self, kind: RequestKind, mut command: Value) -> Line {
@@ -497,13 +517,23 @@ impl PiRpc {
                     }
                 };
                 let stamp = body.get("timestamp").and_then(Value::as_u64).unwrap_or(0);
+                // A message echoing images is the oldest one sent with them.
+                let with_images = body["content"].as_array().is_some_and(|parts| {
+                    parts
+                        .iter()
+                        .any(|part| part.get("type").and_then(Value::as_str) == Some("image"))
+                });
+                let images = match with_images {
+                    true => self.echoing.pop_front().unwrap_or_default(),
+                    false => Vec::new(),
+                };
                 received.events.push(DriveEvent::Item {
                     phase: ItemPhase::Completed,
                     item: DriveItem {
                         id: self.item(format!("user:{stamp}")),
                         kind: ItemKind::UserMessage,
-                        read: ItemRead::Prompt { text },
-                        body: body.clone(),
+                        read: ItemRead::Prompt { text, images },
+                        body: DriveItem::without_image_bytes(body.clone()),
                     },
                 });
             }
@@ -970,6 +1000,42 @@ mod tests {
     }
 
     #[test]
+    fn sends_images_inline_and_shows_them_on_the_echo() {
+        use crate::drive::PromptImage;
+        let mut codec = ready();
+        let image = PromptImage::sample();
+        let line = codec
+            .command(DriveCommand::Prompt(PromptImage::prompt("what is this")))
+            .unwrap()
+            .remove(0);
+        let command = sent(&line);
+        assert_eq!(command["type"], "prompt");
+        assert_eq!(command["message"], "what is this");
+        assert_eq!(
+            command["images"],
+            json!([{ "type": "image", "data": image.base64(), "mimeType": "image/png" }])
+        );
+        let echoed = feed(
+            &mut codec,
+            json!({ "type": "message_start", "message": { "role": "user", "timestamp": 7,
+                "content": [
+                    { "type": "text", "text": "what is this" },
+                    { "type": "image", "data": image.base64(), "mimeType": "image/png" } ] } }),
+        );
+        let [DriveEvent::Item { item, .. }] = echoed.events.as_slice() else {
+            panic!("{:?}", echoed.events);
+        };
+        assert_eq!(
+            item.read,
+            ItemRead::Prompt {
+                text: "what is this".into(),
+                images: vec![image.read().clone()],
+            }
+        );
+        assert!(!item.body.to_string().contains(&image.base64()));
+    }
+
+    #[test]
     fn pi_is_started_in_rpc_mode_on_the_session_ren_names() {
         assert_eq!(
             PiRpc::arguments(&opening()),
@@ -1048,7 +1114,8 @@ mod tests {
                     ItemPhase::Completed,
                     ItemKind::UserMessage,
                     ItemRead::Prompt {
-                        text: "fix the test".into()
+                        text: "fix the test".into(),
+                        images: Vec::new(),
                     },
                     at("user:5"),
                 ),

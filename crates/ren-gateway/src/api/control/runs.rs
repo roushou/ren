@@ -213,6 +213,7 @@ impl From<CommandError> for RunRefusal {
             }),
             // What the client has no way to do mid-run.
             CommandError::Protocol(CommandRefused::NotOffered(_)) => Self::Refused("not_offered"),
+            CommandError::Protocol(CommandRefused::NoImages) => Self::Refused("no_images"),
             CommandError::Protocol(
                 CommandRefused::NotReady
                 | CommandRefused::TurnRunning
