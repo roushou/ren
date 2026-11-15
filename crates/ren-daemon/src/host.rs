@@ -422,6 +422,20 @@ impl ProcessHost {
 }
 
 impl AgentHost for ProcessHost {
+    /// On Tokio's blocking pool: the filesystem and short processes wait
+    /// there, not on the threads that forward calls.
+    fn blocking<T, W>(&self, work: W) -> futures_util::future::BoxFuture<'static, io::Result<T>>
+    where
+        T: Send + 'static,
+        W: FnOnce() -> io::Result<T> + Send + 'static,
+    {
+        Box::pin(async move {
+            tokio::task::spawn_blocking(work)
+                .await
+                .unwrap_or_else(|joined| Err(io::Error::other(joined)))
+        })
+    }
+
     fn resolve(&self, path: &Path) -> io::Result<PathBuf> {
         std::fs::canonicalize(path)
     }

@@ -523,7 +523,7 @@ impl Supervisor {
             requests: receiver,
             updates: updates.clone(),
             sessions: sessions.clone(),
-            host,
+            host: Arc::new(host),
             ids,
             recorder,
             bounds,

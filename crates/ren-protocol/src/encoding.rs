@@ -2,7 +2,9 @@
 //!
 //! Only classifications are kept from headers, never header values. Decoding
 //! is incremental, so compressed bodies are never buffered whole, and it
-//! distinguishes a corrupt stream from one that simply ended early.
+//! distinguishes a corrupt stream from one that simply ended early. Output
+//! is handed on in bounded pieces: however much a fragment expands, no
+//! buffer grows with it.
 
 use http::{HeaderMap, header};
 use serde_with::{DeserializeFromStr, SerializeDisplay};
@@ -118,12 +120,29 @@ enum Codec {
     Identity,
     Gzip(Box<flate2::write::MultiGzDecoder<Vec<u8>>>),
     Zstd(Box<ZstdStream>),
-    Brotli(Box<brotli_decompressor::DecompressorWriter<Vec<u8>>>),
+    Brotli(Box<BrotliStream>),
 }
 
-/// Brotli's working buffer; the window it decodes with is the stream's own,
-/// at most 16 MiB (large windows are not enabled).
-const BROTLI_BUFFER: usize = 32 * 1024;
+/// Gzip input is written this many bytes at a time. Deflate expands a byte
+/// at most 1032 times, so the decoder's output buffer stays near 260 KiB
+/// whatever the stream holds.
+const GZIP_INPUT_STEP: usize = 256;
+
+/// Brotli decoded through its streaming interface, into a fixed output
+/// buffer. Its window is the stream's own, at most 16 MiB: large windows
+/// are refused (`BrotliState::new_strict`).
+struct BrotliStream {
+    state: brotli_decompressor::BrotliState<
+        brotli_decompressor::StandardAlloc,
+        brotli_decompressor::StandardAlloc,
+        brotli_decompressor::StandardAlloc,
+    >,
+    frame: FrameState,
+}
+
+impl BrotliStream {
+    const OUTPUT_CHUNK: usize = 32 * 1024;
+}
 
 struct ZstdStream {
     decoder: zstd::stream::raw::Decoder<'static>,
@@ -177,9 +196,7 @@ impl Decompressor {
                     frame: FrameState::Open,
                 }))
             }
-            ResponseEncoding::Brotli => Codec::Brotli(Box::new(
-                brotli_decompressor::DecompressorWriter::new(Vec::new(), BROTLI_BUFFER),
-            )),
+            ResponseEncoding::Brotli => Codec::Brotli(Box::new(BrotliStream::new())),
             ResponseEncoding::Unsupported => return Err(DecodeFailure::Unsupported),
         };
         Ok(Self { codec })
@@ -197,24 +214,18 @@ impl Decompressor {
                 Ok(())
             }
             Codec::Gzip(decoder) => {
-                decoder
-                    .write_all(input)
-                    .map_err(|_| DecodeFailure::Corrupt)?;
-                let decoded = decoder.get_mut();
-                out(decoded);
-                decoded.clear();
+                for step in input.chunks(GZIP_INPUT_STEP) {
+                    decoder
+                        .write_all(step)
+                        .map_err(|_| DecodeFailure::Corrupt)?;
+                    let decoded = decoder.get_mut();
+                    out(decoded);
+                    decoded.clear();
+                }
                 Ok(())
             }
             Codec::Zstd(stream) => stream.run(input, &mut out),
-            Codec::Brotli(decoder) => {
-                decoder
-                    .write_all(input)
-                    .map_err(|_| DecodeFailure::Corrupt)?;
-                let decoded = decoder.get_mut();
-                out(decoded);
-                decoded.clear();
-                Ok(())
-            }
+            Codec::Brotli(stream) => stream.run(input, &mut out),
         }
     }
 
@@ -233,14 +244,10 @@ impl Decompressor {
                 FrameState::Complete => Ok(()),
                 FrameState::Open => Err(DecodeFailure::Truncated),
             },
-            Codec::Brotli(mut decoder) => {
-                // `close` fails unless the stream reached its final block.
-                let result = decoder.close();
-                let decoded = decoder.get_mut();
-                out(decoded);
-                decoded.clear();
-                result.map_err(|_| DecodeFailure::Truncated)
-            }
+            Codec::Brotli(stream) => match stream.frame {
+                FrameState::Complete => Ok(()),
+                FrameState::Open => Err(DecodeFailure::Truncated),
+            },
         }
     }
 }
@@ -270,6 +277,153 @@ impl ZstdStream {
             let input_done = input.pos() == input.src.len();
             if input_done && written < buffer.len() {
                 return Ok(());
+            }
+        }
+    }
+}
+
+/// A whole body read through its decoder, as `std::io::Read`: what the
+/// reader asks for is decoded, and nothing more, so a body is never held
+/// decoded however far it expands. Reading a slice is not I/O.
+pub struct BodyReader<'a> {
+    source: Source<'a>,
+}
+
+enum Source<'a> {
+    Identity(&'a [u8]),
+    Gzip(Box<flate2::bufread::MultiGzDecoder<&'a [u8]>>),
+    Zstd(Box<zstd::stream::read::Decoder<'static, &'a [u8]>>),
+    Brotli(Box<BrotliPull<'a>>),
+}
+
+/// Brotli pulled straight into the reader's buffer.
+struct BrotliPull<'a> {
+    input: &'a [u8],
+    stream: BrotliStream,
+}
+
+impl<'a> BodyReader<'a> {
+    pub fn new(encoding: ResponseEncoding, body: &'a [u8]) -> Result<Self, DecodeFailure> {
+        let source = match encoding {
+            ResponseEncoding::Identity => Source::Identity(body),
+            ResponseEncoding::Gzip => {
+                Source::Gzip(Box::new(flate2::bufread::MultiGzDecoder::new(body)))
+            }
+            ResponseEncoding::Zstd => {
+                let mut decoder = zstd::stream::read::Decoder::with_buffer(body)
+                    .map_err(|_| DecodeFailure::Corrupt)?;
+                decoder
+                    .window_log_max(ZstdStream::WINDOW_LOG_MAX)
+                    .map_err(|_| DecodeFailure::Corrupt)?;
+                Source::Zstd(Box::new(decoder))
+            }
+            ResponseEncoding::Brotli => Source::Brotli(Box::new(BrotliPull {
+                input: body,
+                stream: BrotliStream::new(),
+            })),
+            ResponseEncoding::Unsupported => return Err(DecodeFailure::Unsupported),
+        };
+        Ok(Self { source })
+    }
+}
+
+impl std::io::Read for BodyReader<'_> {
+    fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+        match &mut self.source {
+            Source::Identity(rest) => rest.read(buffer),
+            Source::Gzip(decoder) => decoder.read(buffer),
+            Source::Zstd(decoder) => decoder.read(buffer),
+            Source::Brotli(pull) => pull.read(buffer),
+        }
+    }
+}
+
+impl std::io::Read for BrotliPull<'_> {
+    fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+        let corrupt =
+            |failure: DecodeFailure| std::io::Error::new(std::io::ErrorKind::InvalidData, failure);
+        if buffer.is_empty() {
+            return Ok(0);
+        }
+        loop {
+            let (consumed, produced) = self.stream.step(self.input, buffer).map_err(corrupt)?;
+            self.input = self.input.get(consumed..).unwrap_or_default();
+            match (produced, self.stream.frame) {
+                // Input taken, nothing out yet: keep going.
+                (0, FrameState::Open) if consumed > 0 => {}
+                (0, FrameState::Open) => return Err(corrupt(DecodeFailure::Truncated)),
+                (0, FrameState::Complete) if !self.input.is_empty() => {
+                    return Err(corrupt(DecodeFailure::Corrupt));
+                }
+                (produced, FrameState::Open | FrameState::Complete) => return Ok(produced),
+            }
+        }
+    }
+}
+
+impl BrotliStream {
+    fn new() -> Self {
+        Self {
+            state: brotli_decompressor::BrotliState::new_strict(
+                brotli_decompressor::StandardAlloc::default(),
+                brotli_decompressor::StandardAlloc::default(),
+                brotli_decompressor::StandardAlloc::default(),
+            ),
+            frame: FrameState::Open,
+        }
+    }
+
+    /// Decode from `input` into `output`, at most its length: the input
+    /// consumed and the bytes produced.
+    fn step(&mut self, input: &[u8], output: &mut [u8]) -> Result<(usize, usize), DecodeFailure> {
+        use brotli_decompressor::{BrotliDecompressStream, BrotliResult};
+        if self.frame == FrameState::Complete {
+            return Ok((0, 0));
+        }
+        let mut available_in = input.len();
+        let mut input_offset = 0;
+        let mut available_out = output.len();
+        let mut output_offset = 0;
+        let mut total_out = 0;
+        let result = BrotliDecompressStream(
+            &mut available_in,
+            &mut input_offset,
+            input,
+            &mut available_out,
+            &mut output_offset,
+            output,
+            &mut total_out,
+            &mut self.state,
+        );
+        match result {
+            BrotliResult::NeedsMoreOutput | BrotliResult::NeedsMoreInput => {}
+            BrotliResult::ResultSuccess => self.frame = FrameState::Complete,
+            BrotliResult::ResultFailure => return Err(DecodeFailure::Corrupt),
+        }
+        Ok((input_offset, output_offset))
+    }
+
+    fn run(&mut self, mut input: &[u8], out: &mut impl FnMut(&[u8])) -> Result<(), DecodeFailure> {
+        if input.is_empty() {
+            return Ok(());
+        }
+        // A stream ends once; bytes after its end are not brotli.
+        if self.frame == FrameState::Complete {
+            return Err(DecodeFailure::Corrupt);
+        }
+        let mut buffer = vec![0; Self::OUTPUT_CHUNK];
+        loop {
+            let (consumed, produced) = self.step(input, &mut buffer)?;
+            input = input.get(consumed..).unwrap_or_default();
+            out(buffer.get(..produced).unwrap_or_default());
+            match (self.frame, input.is_empty()) {
+                // More output is waiting while the buffer comes back full,
+                // and input is left while the decoder still takes it.
+                (FrameState::Open, _) if produced == buffer.len() => {}
+                (FrameState::Open, false) if consumed > 0 => {}
+                (FrameState::Open, _) => return Ok(()),
+                (FrameState::Complete, true) => return Ok(()),
+                (FrameState::Complete, false) => return Err(DecodeFailure::Corrupt),
             }
         }
     }
@@ -459,5 +613,80 @@ mod tests {
             ResponseEncoding::from_headers(&headers),
             ResponseEncoding::Brotli
         );
+    }
+
+    #[test]
+    fn a_small_fragment_that_expands_hugely_arrives_in_bounded_pieces() {
+        let zstd = |bytes: &[u8]| zstd::stream::encode_all(bytes, 19).unwrap();
+        let body = vec![0_u8; 16 * 1024 * 1024];
+        for (encoding, encoded) in [
+            (ResponseEncoding::Gzip, gzip(&body)),
+            (ResponseEncoding::Zstd, zstd(&body)),
+            (ResponseEncoding::Brotli, brotli(&body)),
+        ] {
+            // The whole bomb in one fragment.
+            let mut decoder = Decompressor::new(encoding).unwrap();
+            let mut largest = 0;
+            let mut total = 0;
+            let mut piece = |bytes: &[u8]| {
+                largest = largest.max(bytes.len());
+                total += bytes.len();
+            };
+            decoder.decode(&encoded, &mut piece).unwrap();
+            decoder.finish(&mut piece).unwrap();
+            assert_eq!(total, body.len(), "{encoding}");
+            assert!(largest <= 300 * 1024, "{encoding}: a {largest}-byte piece");
+        }
+    }
+
+    #[test]
+    fn bytes_after_a_brotli_stream_ends_are_corrupt() {
+        let mut encoded = brotli(b"{}");
+        encoded.extend_from_slice(b"tail");
+        let (decoded, end) = decode(ResponseEncoding::Brotli, &encoded, encoded.len());
+        assert_eq!(decoded, b"{}");
+        assert_eq!(end, Err(DecodeFailure::Corrupt));
+    }
+
+    #[test]
+    fn a_body_reader_reads_each_encoding_and_never_holds_more_than_asked() {
+        use super::BodyReader;
+        use std::io::Read;
+        let body: Vec<u8> =
+            br#"{"model":"m-1","input":"ok"}"#.iter().copied().cycle().take(200_000).collect();
+        let zstd = zstd::stream::encode_all(&body[..], 3).unwrap();
+        for (encoding, encoded) in [
+            (ResponseEncoding::Identity, body.clone()),
+            (ResponseEncoding::Gzip, gzip(&body)),
+            (ResponseEncoding::Zstd, zstd),
+            (ResponseEncoding::Brotli, brotli(&body)),
+        ] {
+            let mut read = Vec::new();
+            BodyReader::new(encoding, &encoded)
+                .unwrap()
+                .read_to_end(&mut read)
+                .unwrap();
+            assert_eq!(read, body, "{encoding}");
+            // A bounded read stops at its bound.
+            let mut head = Vec::new();
+            BodyReader::new(encoding, &encoded)
+                .unwrap()
+                .take(10)
+                .read_to_end(&mut head)
+                .unwrap();
+            assert_eq!(head, body[..10], "{encoding}");
+            // Cut short, it fails rather than ending quietly.
+            let cut = &encoded[..encoded.len() / 2];
+            let mut rest = Vec::new();
+            let ended = BodyReader::new(encoding, cut)
+                .unwrap()
+                .read_to_end(&mut rest);
+            assert_eq!(
+                ended.is_err(),
+                encoding != ResponseEncoding::Identity,
+                "{encoding}"
+            );
+        }
+        assert!(BodyReader::new(ResponseEncoding::Unsupported, b"").is_err());
     }
 }

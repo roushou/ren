@@ -95,6 +95,19 @@ pub enum Changed {
 #[derive(Debug)]
 struct WriteLock(#[expect(dead_code, reason = "held for its lock")] fs::File);
 
+impl WriteLock {
+    /// Whether `file`'s lock was free and is now this process's.
+    fn taken(file: &fs::File) -> Result<bool, ToolStoreError> {
+        match file.try_lock() {
+            Ok(()) => Ok(true),
+            Err(fs::TryLockError::WouldBlock) => Ok(false),
+            Err(fs::TryLockError::Error(error)) => {
+                Err(ToolStoreError::io("lock the tool store")(error))
+            }
+        }
+    }
+}
+
 /// What a collection removed.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Collected {
@@ -174,28 +187,44 @@ impl<F> ToolStore<F> {
     const LOCK_TRIES: u32 = 100;
     const LOCK_WAIT: std::time::Duration = std::time::Duration::from_millis(10);
 
-    /// The store's write lock, or `Busy` when another writer holds it.
+    /// The store's write lock, or `Busy` when another writer holds it. It
+    /// waits on the calling thread: for blocking code only.
     fn lock(&self) -> Result<WriteLock, ToolStoreError> {
+        let file = self.lock_file()?;
+        for _ in 0..Self::LOCK_TRIES {
+            if WriteLock::taken(&file)? {
+                return Ok(WriteLock(file));
+            }
+            std::thread::sleep(Self::LOCK_WAIT);
+        }
+        Err(ToolStoreError::Busy)
+    }
+
+    /// The write lock, as `lock` takes it, waiting without holding a
+    /// runtime thread.
+    async fn lock_waiting(&self) -> Result<WriteLock, ToolStoreError> {
+        let file = self.lock_file()?;
+        for _ in 0..Self::LOCK_TRIES {
+            if WriteLock::taken(&file)? {
+                return Ok(WriteLock(file));
+            }
+            tokio::time::sleep(Self::LOCK_WAIT).await;
+        }
+        Err(ToolStoreError::Busy)
+    }
+
+    /// The lock file. A process started at the same moment can hold a
+    /// copy of a just closed lock until it runs its program, so a held
+    /// lock is tried again for a second before it counts as another
+    /// writer's.
+    fn lock_file(&self) -> Result<fs::File, ToolStoreError> {
         fs::create_dir_all(&self.root).map_err(ToolStoreError::io("make the tool store"))?;
-        let file = fs::OpenOptions::new()
+        fs::OpenOptions::new()
             .create(true)
             .truncate(false)
             .write(true)
             .open(self.root.join(".lock"))
-            .map_err(ToolStoreError::io("open the tool store's lock"))?;
-        // A process started at the same moment can hold a copy of a just
-        // closed lock until it runs its program, so a held lock is tried
-        // again for a second before it counts as another writer's.
-        for _ in 0..Self::LOCK_TRIES {
-            match file.try_lock() {
-                Ok(()) => return Ok(WriteLock(file)),
-                Err(fs::TryLockError::WouldBlock) => std::thread::sleep(Self::LOCK_WAIT),
-                Err(fs::TryLockError::Error(error)) => {
-                    return Err(ToolStoreError::io("lock the tool store")(error));
-                }
-            }
-        }
-        Err(ToolStoreError::Busy)
+            .map_err(ToolStoreError::io("open the tool store's lock"))
     }
 
     /// Every generation kept, newest first. One that cannot be read is
@@ -356,7 +385,7 @@ impl<F: Fetch> ToolStore<F> {
         platform: Platform,
         edit: &Edit,
     ) -> Result<Changed, ToolStoreError> {
-        let _lock = self.lock()?;
+        let _lock = self.lock_waiting().await?;
         let current = self.current()?;
         let wanted = current.wanted_after(edit)?;
         let plan = current.plan(depot, platform, &wanted)?;

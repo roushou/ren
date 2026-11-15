@@ -4,8 +4,10 @@
 //! spawn, so the daemon runs this task; it ends once every [`Supervisor`]
 //! handle is gone and every run has ended.
 //!
-//! Writes to an agent's stdin are awaited in the task. Ren's lines are small,
-//! so this waits only if an agent stops reading its stdin altogether.
+//! Each agent's stdin is a bounded queue, written in order by a writer the
+//! task polls beside the run's output, so an agent that stops reading its
+//! stdin holds up only its own lines. One whose queue fills has its stdin
+//! closed: it is not reading what it is sent.
 //!
 //! [`Supervisor`]: crate::Supervisor
 
@@ -18,7 +20,7 @@ use crate::{
     RunUpdate, SessionAnswer, SessionError, SessionRequest, SessionSeed, SessionSnapshot,
     SignInRequest, Start, StartError, StartPlace, Warmup,
     client::{Client, ClientStatus},
-    files::FileListing,
+    files::{FileListing, FileQuery, FoundPath},
     host::{AgentHost, AgentProcess, KillSwitch},
     project::Search,
     run::{ProcessExit, RunAction, RunCommand, RunEvent, RunState},
@@ -63,7 +65,7 @@ pub struct SupervisorTask<H> {
     pub(crate) requests: mpsc::Receiver<Request>,
     pub(crate) updates: broadcast::Sender<RunUpdate>,
     pub(crate) sessions: broadcast::Sender<SessionSnapshot>,
-    pub(crate) host: H,
+    pub(crate) host: Arc<H>,
     pub(crate) ids: Arc<dyn IdSource>,
     pub(crate) recorder: Recorder,
     pub(crate) bounds: Bounds,
@@ -86,7 +88,8 @@ struct Live {
     settings: RunSettings,
     state: RunState,
     codec: Option<Driver>,
-    stdin: Option<Box<dyn AsyncWrite + Send + Unpin>>,
+    /// Lines queued for its stdin; `None` once its stdin is closed.
+    stdin: Option<mpsc::Sender<Line>>,
     kill: Option<KillSwitch>,
     /// Records the run's opening and end; taken when the end is recorded.
     tap: Option<RunTap>,
@@ -119,6 +122,9 @@ struct Held {
     /// Its folder as walked for the last file search, until a turn ends:
     /// turns change files.
     files: Option<FileListing>,
+    /// How many turns ended: a walk begun before the newest one ended is
+    /// not kept.
+    turns_ended: u64,
     /// The attachments uploaded to it.
     attached: Attached,
 }
@@ -133,6 +139,7 @@ impl Held {
             thread: None,
             process: None,
             files: None,
+            turns_ended: 0,
             attached: Attached::default(),
         }
     }
@@ -153,6 +160,27 @@ impl Held {
 type Outputs = SelectAll<BoxStream<'static, (RunId, Vec<Framed>)>>;
 type Exits = FuturesUnordered<BoxFuture<'static, (RunId, ProcessExit)>>;
 
+/// A prompt checked against its session: whole, or with its images still
+/// to be read.
+enum Composing {
+    Ready(Prompt),
+    Images {
+        text: String,
+        files: Vec<(Attachment, std::path::PathBuf)>,
+    },
+}
+
+/// A session's folder walked off the task, for the search that asked.
+struct Walked {
+    session: SessionId,
+    /// The session's `turns_ended` when the walk began.
+    turns_ended: u64,
+    found: std::io::Result<Vec<FoundPath>>,
+    query: FileQuery,
+    limit: usize,
+    reply: oneshot::Sender<Result<SessionAnswer, SessionError>>,
+}
+
 /// Everything the task serves: sessions, their runs, and the runs' output
 /// and exits it waits on.
 #[derive(Default)]
@@ -160,6 +188,12 @@ struct Served {
     sessions: BTreeMap<SessionId, Held>,
     runs: BTreeMap<RunId, Live>,
     outputs: Outputs,
+    /// Answers being worked out off the task, each sending its own reply.
+    replies: FuturesUnordered<BoxFuture<'static, ()>>,
+    /// Folder walks for file searches, cached as they finish.
+    walks: FuturesUnordered<BoxFuture<'static, Walked>>,
+    /// Each run's stdin writer: how it ended.
+    writers: FuturesUnordered<BoxFuture<'static, (RunId, std::io::Result<()>)>>,
     exits: Exits,
     /// Idle timers: the run, and which time it became idle.
     idles: FuturesUnordered<BoxFuture<'static, (RunId, u64)>>,
@@ -267,6 +301,19 @@ impl<H: AgentHost> SupervisorTask<H> {
                         }
                     }
                 }
+                Some(()) = served.replies.next(), if !served.replies.is_empty() => {}
+                Some(walked) = served.walks.next(), if !served.walks.is_empty() => {
+                    Self::walked(walked, &mut served);
+                }
+                Some((run, written)) = served.writers.next(), if !served.writers.is_empty() => {
+                    if let Err(error) = written {
+                        // The process is ending; its exit will say how.
+                        tracing::debug!(%run, %error, "agent stdin closed");
+                        if let Some(live) = served.runs.get_mut(&run) {
+                            live.stdin = None;
+                        }
+                    }
+                }
                 Some((run, rested)) = served.idles.next(), if !served.idles.is_empty() => {
                     if let Some(live) = served.runs.get_mut(&run)
                         && live.rested == rested
@@ -322,27 +369,64 @@ impl<H: AgentHost> SupervisorTask<H> {
                 let result = self.run_command(run, command, served).await;
                 let _ = reply.send(result);
             }
+            Request::Session {
+                request:
+                    SessionRequest::Files {
+                        session,
+                        query,
+                        limit,
+                    },
+                reply,
+            } => {
+                if let Some(walk) = self.search_files(session, query, limit, reply, served) {
+                    served.walks.push(walk);
+                }
+            }
+            Request::Session {
+                request:
+                    SessionRequest::ReadAttachment {
+                        session,
+                        attachment,
+                    },
+                reply,
+            } => match self.read_attachment(session, attachment, served) {
+                Ok(reading) => served.replies.push(
+                    async move {
+                        let _ = reply.send(reading.await);
+                    }
+                    .boxed(),
+                ),
+                Err(error) => {
+                    let _ = reply.send(Err(error));
+                }
+            },
             Request::Session { request, reply } => {
                 let answer = self.session(request, served).await;
                 let _ = reply.send(answer);
             }
             Request::Projects { reply } => {
                 // Bounded by `Search`; the host reads only folder listings
-                // and `HEAD` files.
-                let projects = self.bounds.places(Search::DEFAULT, |folder| {
-                    self.host
-                        .look(folder)
-                        .inspect_err(|error| tracing::debug!(%error, "cannot look in a folder"))
-                        .ok()
+                // and `HEAD` files, off the task.
+                let bounds = self.bounds.clone();
+                let scratch = self
+                    .bounds
+                    .scratch()
+                    .and_then(|scratch| scratch.to_str())
+                    .map(str::to_owned);
+                let looked = self.off_task(move |host| {
+                    Ok(bounds.places(Search::DEFAULT, |folder| {
+                        host.look(folder)
+                            .inspect_err(|error| tracing::debug!(%error, "cannot look in a folder"))
+                            .ok()
+                    }))
                 });
-                let _ = reply.send(Places {
-                    projects,
-                    scratch: self
-                        .bounds
-                        .scratch()
-                        .and_then(|scratch| scratch.to_str())
-                        .map(str::to_owned),
-                });
+                served.replies.push(
+                    async move {
+                        let projects = looked.await.unwrap_or_default();
+                        let _ = reply.send(Places { projects, scratch });
+                    }
+                    .boxed(),
+                );
             }
             Request::Clients { reply } => {
                 // Answered by the loop, which holds the sign-ins.
@@ -377,22 +461,112 @@ impl<H: AgentHost> SupervisorTask<H> {
         }
     }
 
-    /// The session's folder as last walked, walked now when it is not
-    /// kept. Bounded by `FileListing::LIMITS`, so a walk is short.
-    fn files<'a>(&self, held: &'a mut Held) -> Result<&'a FileListing, SessionError> {
-        if held.files.is_none() {
-            let found = self
-                .host
-                .files(held.workdir.as_path(), FileListing::LIMITS)
-                .map_err(SessionError::Unreadable)?;
-            held.files = Some(FileListing::new(found));
+    /// Do `work` with the host off the task: see [`AgentHost::blocking`].
+    fn off_task<T, W>(&self, work: W) -> BoxFuture<'static, std::io::Result<T>>
+    where
+        T: Send + 'static,
+        W: FnOnce(&H) -> std::io::Result<T> + Send + 'static,
+    {
+        let host = Arc::clone(&self.host);
+        self.host.blocking(move || work(&host))
+    }
+
+    /// Search the session's folder as last walked, answering now, or the
+    /// walk off the task that answers once [`Self::walked`] takes it.
+    /// Bounded by `FileListing::LIMITS`.
+    #[must_use = "a walk answers its search only once it is taken"]
+    fn search_files(
+        &self,
+        session: SessionId,
+        query: FileQuery,
+        limit: usize,
+        reply: oneshot::Sender<Result<SessionAnswer, SessionError>>,
+        served: &Served,
+    ) -> Option<BoxFuture<'static, Walked>> {
+        let Some(held) = served.sessions.get(&session) else {
+            let _ = reply.send(Err(SessionError::NoSuchSession(session)));
+            return None;
+        };
+        if let Some(files) = &held.files {
+            let _ = reply.send(Ok(SessionAnswer::Files(files.search(&query, limit))));
+            return None;
         }
-        held.files.as_ref().ok_or(SessionError::Gone)
+        let dir = held.workdir.as_path().to_path_buf();
+        let turns_ended = held.turns_ended;
+        let walk = self.off_task(move |host| host.files(&dir, FileListing::LIMITS));
+        Some(
+            async move {
+                Walked {
+                    session,
+                    turns_ended,
+                    found: walk.await,
+                    query,
+                    limit,
+                    reply,
+                }
+            }
+            .boxed(),
+        )
+    }
+
+    /// A walk finished: kept for later searches, unless a turn ended since
+    /// it began, and the search that asked answered.
+    fn walked(walked: Walked, served: &mut Served) {
+        let Walked {
+            session,
+            turns_ended,
+            found,
+            query,
+            limit,
+            reply,
+        } = walked;
+        let answer = found.map_err(SessionError::Unreadable).map(|found| {
+            let listing = FileListing::new(found);
+            let matches = listing.search(&query, limit);
+            if let Some(held) = served.sessions.get_mut(&session)
+                && held.turns_ended == turns_ended
+            {
+                held.files = Some(listing);
+            }
+            SessionAnswer::Files(matches)
+        });
+        let _ = reply.send(answer);
+    }
+
+    /// An attachment's bytes, read off the task.
+    fn read_attachment(
+        &self,
+        session: SessionId,
+        attachment: AttachmentId,
+        served: &Served,
+    ) -> Result<BoxFuture<'static, Result<SessionAnswer, SessionError>>, SessionError> {
+        let folders = self
+            .attachments
+            .as_ref()
+            .ok_or(SessionError::NoAttachments)?;
+        let held = served
+            .sessions
+            .get(&session)
+            .ok_or(SessionError::NoSuchSession(session))?;
+        let read = held
+            .attached
+            .get(attachment)
+            .ok_or(SessionError::NoSuchAttachment(attachment))?
+            .clone();
+        let path = folders.file(session, attachment, read.name());
+        let reading = self.off_task(move |host| host.read_file(&path));
+        Ok(async move {
+            reading
+                .await
+                .map(|bytes| SessionAnswer::AttachmentBytes(read, bytes))
+                .map_err(SessionError::AttachmentStorage)
+        }
+        .boxed())
     }
 
     /// The folder a session works in: a folder inside the bounds, or a new
     /// scratch folder of its own.
-    fn place(&self, place: StartPlace) -> Result<Workdir, StartError> {
+    async fn place(&self, place: StartPlace) -> Result<Workdir, StartError> {
         let requested = match place {
             StartPlace::Folder(dir) => RequestedDir::parse(&dir).map_err(StartError::Workdir)?,
             StartPlace::Scratch => {
@@ -404,8 +578,9 @@ impl<H: AgentHost> SupervisorTask<H> {
                     "scratch-{}",
                     id.get(id.len().saturating_sub(8)..).unwrap_or(&id)
                 ));
-                self.host
-                    .make_scratch(&folder)
+                let making = folder.clone();
+                self.off_task(move |host| host.make_scratch(&making))
+                    .await
                     .map_err(StartError::Scratch)?;
                 RequestedDir::parse(folder.to_str().ok_or(StartError::NoScratch)?)
                     .map_err(StartError::Workdir)?
@@ -445,7 +620,7 @@ impl<H: AgentHost> SupervisorTask<H> {
         }: Start,
         served: &mut Served,
     ) -> Result<RunId, StartError> {
-        let workdir = self.place(place)?;
+        let workdir = self.place(place).await?;
         Self::drivable(harness, &settings)?;
         let session = SessionId::generate(self.ids.as_ref());
         let mut held = Held::new(harness, workdir, settings);
@@ -560,6 +735,12 @@ impl<H: AgentHost> SupervisorTask<H> {
             exit,
             kill,
         } = process;
+        let (queue, lines) = mpsc::channel(Self::STDIN_LINES);
+        served.writers.push(
+            Self::writer(stdin, lines)
+                .map(move |written| (run, written))
+                .boxed(),
+        );
         let mut live = Live {
             session,
             harness,
@@ -567,7 +748,7 @@ impl<H: AgentHost> SupervisorTask<H> {
             settings,
             state: RunState::Starting,
             codec: Some(codec),
-            stdin: Some(stdin),
+            stdin: Some(queue),
             kill: Some(kill),
             tap: Some(tap),
             first,
@@ -581,7 +762,7 @@ impl<H: AgentHost> SupervisorTask<H> {
             state: RunState::Starting,
         });
         for line in &opening_lines {
-            Self::write(run, &mut live, line).await;
+            Self::write(run, &mut live, line);
         }
         served
             .outputs
@@ -642,8 +823,9 @@ impl<H: AgentHost> SupervisorTask<H> {
                 }
                 // Its attachments go with it, served or not.
                 if let Some(folders) = &self.attachments {
-                    self.host
-                        .remove_tree(&folders.session(session))
+                    let folder = folders.session(session);
+                    self.off_task(move |host| host.remove_tree(&folder))
+                        .await
                         .map_err(SessionError::AttachmentStorage)?;
                 }
                 if served.sessions.remove(&session).is_none() {
@@ -656,7 +838,7 @@ impl<H: AgentHost> SupervisorTask<H> {
                 session,
                 name,
                 bytes,
-            } => self.attach(session, &name, &bytes, served),
+            } => self.attach(session, &name, bytes, served).await,
             SessionRequest::Attachments(session) => Ok(SessionAnswer::Attachments(
                 served
                     .sessions
@@ -671,7 +853,8 @@ impl<H: AgentHost> SupervisorTask<H> {
                 attachments,
                 delivery,
             } => {
-                let prompt = self.compose(session, text, &attachments, served)?;
+                let composing = self.compose(session, text, &attachments, served)?;
+                let prompt = self.prompt(composing).await?;
                 let answer = self.send(session, delivery.command(prompt), served).await?;
                 if !attachments.is_empty() {
                     self.record(
@@ -689,25 +872,7 @@ impl<H: AgentHost> SupervisorTask<H> {
             SessionRequest::ReadAttachment {
                 session,
                 attachment,
-            } => {
-                let folders = self
-                    .attachments
-                    .as_ref()
-                    .ok_or(SessionError::NoAttachments)?;
-                let held = served
-                    .sessions
-                    .get(&session)
-                    .ok_or(SessionError::NoSuchSession(session))?;
-                let read = held
-                    .attached
-                    .get(attachment)
-                    .ok_or(SessionError::NoSuchAttachment(attachment))?;
-                let bytes = self
-                    .host
-                    .read_file(&folders.file(session, attachment, read.name()))
-                    .map_err(SessionError::AttachmentStorage)?;
-                Ok(SessionAnswer::AttachmentBytes(read.clone(), bytes))
-            }
+            } => self.read_attachment(session, attachment, served)?.await,
             SessionRequest::Detach {
                 session,
                 attachment,
@@ -730,10 +895,8 @@ impl<H: AgentHost> SupervisorTask<H> {
                 self.record(session, SessionFact::Detached { attachment })?;
                 held.attached.remove(attachment);
                 // Detached as recorded; a file left behind is only space.
-                if let Err(error) = self
-                    .host
-                    .remove_tree(&folders.attachment(session, attachment))
-                {
+                let folder = folders.attachment(session, attachment);
+                if let Err(error) = self.off_task(move |host| host.remove_tree(&folder)).await {
                     tracing::warn!(%session, %attachment, %error, "a detached attachment's file stays");
                 }
                 Ok(SessionAnswer::Done)
@@ -763,12 +926,13 @@ impl<H: AgentHost> SupervisorTask<H> {
                 query,
                 limit,
             } => {
-                let held = served
-                    .sessions
-                    .get_mut(&session)
-                    .ok_or(SessionError::NoSuchSession(session))?;
-                let files = self.files(held)?;
-                Ok(SessionAnswer::Files(files.search(&query, limit)))
+                // The task takes searches apart (`request`); here the walk is
+                // awaited in place.
+                let (reply, answer) = oneshot::channel();
+                if let Some(walk) = self.search_files(session, query, limit, reply, served) {
+                    Self::walked(walk.await, served);
+                }
+                answer.await.map_err(|_| SessionError::Gone)?
             }
         }
     }
@@ -783,7 +947,7 @@ impl<H: AgentHost> SupervisorTask<H> {
         }: Create,
         served: &mut Served,
     ) -> Result<SessionAnswer, SessionError> {
-        let workdir = self.place(place).map_err(SessionError::Start)?;
+        let workdir = self.place(place).await.map_err(SessionError::Start)?;
         Self::drivable(harness, &settings).map_err(SessionError::Start)?;
         let session = SessionId::generate(self.ids.as_ref());
         self.record(
@@ -824,13 +988,15 @@ impl<H: AgentHost> SupervisorTask<H> {
         text: String,
         attachments: &[AttachmentId],
         served: &Served,
-    ) -> Result<Prompt, SessionError> {
+    ) -> Result<Composing, SessionError> {
         let held = served
             .sessions
             .get(&session)
             .ok_or(SessionError::NoSuchSession(session))?;
         if attachments.is_empty() {
-            return Prompt::parse(text).map_err(|_| SessionError::BlankPrompt);
+            return Prompt::parse(text)
+                .map(Composing::Ready)
+                .map_err(|_| SessionError::BlankPrompt);
         }
         let folders = self
             .attachments
@@ -855,34 +1021,51 @@ impl<H: AgentHost> SupervisorTask<H> {
             .and_then(|run| served.runs.get(&run))
             .and_then(|live| live.codec.as_ref())
             .map_or(Offer::Unknown, Driver::image_offer);
-        let images = attachments
-            .iter()
-            .zip(reads)
-            .map(|(attachment, read)| {
-                match held.harness.acceptance().of(read.kind()).resolve(offer) {
-                    Ok(_) | Err(NotAccepted::Unknown) => {}
-                    Err(refused @ (NotAccepted::Never | NotAccepted::NotOffered)) => {
-                        return Err(SessionError::ImagesNotTaken(refused));
-                    }
+        let mut files = Vec::with_capacity(reads.len());
+        for (attachment, read) in attachments.iter().zip(reads) {
+            match held.harness.acceptance().of(read.kind()).resolve(offer) {
+                Ok(_) | Err(NotAccepted::Unknown) => {}
+                Err(refused @ (NotAccepted::Never | NotAccepted::NotOffered)) => {
+                    return Err(SessionError::ImagesNotTaken(refused));
                 }
-                let path = folders.file(session, *attachment, read.name());
-                let bytes = self
-                    .host
-                    .read_file(&path)
-                    .map_err(SessionError::AttachmentStorage)?;
-                Ok(PromptImage::new(read, path, bytes.into()))
+            }
+            let path = folders.file(session, *attachment, read.name());
+            files.push((read, path));
+        }
+        Ok(Composing::Images { text, files })
+    }
+
+    /// The prompt, its images read off the task.
+    async fn prompt(&self, composing: Composing) -> Result<Prompt, SessionError> {
+        let (text, files) = match composing {
+            Composing::Ready(prompt) => return Ok(prompt),
+            Composing::Images { text, files } => (text, files),
+        };
+        let paths: Vec<_> = files.iter().map(|(_, path)| path.clone()).collect();
+        let bytes = self
+            .off_task(move |host| {
+                paths
+                    .iter()
+                    .map(|path| host.read_file(path))
+                    .collect::<Result<Vec<_>, _>>()
             })
-            .collect::<Result<Vec<_>, _>>()?;
+            .await
+            .map_err(SessionError::AttachmentStorage)?;
+        let images = files
+            .into_iter()
+            .zip(bytes)
+            .map(|((read, path), bytes)| PromptImage::new(read, path, bytes.into()))
+            .collect::<Vec<_>>();
         Prompt::with_images(text, images).map_err(|_| SessionError::BlankPrompt)
     }
 
     /// Read `bytes`, uploaded as `name`, as an attachment of `session`,
     /// write it to the session's folder, and record it.
-    fn attach(
+    async fn attach(
         &self,
         session: SessionId,
         name: &str,
-        bytes: &[u8],
+        bytes: Vec<u8>,
         served: &mut Served,
     ) -> Result<SessionAnswer, SessionError> {
         let folders = self
@@ -893,12 +1076,14 @@ impl<H: AgentHost> SupervisorTask<H> {
             .sessions
             .get_mut(&session)
             .ok_or(SessionError::NoSuchSession(session))?;
-        let read = Attachment::parse(name, bytes, &self.attachment_limits)
+        let read = Attachment::parse(name, &bytes, &self.attachment_limits)
             .map_err(SessionError::Attachment)?;
         let attachment = AttachmentId::generate(self.ids.as_ref());
         let file = folders.file(session, attachment, read.name());
-        self.host
-            .place_file(&folders.incoming(attachment), &file, bytes)
+        let incoming = folders.incoming(attachment);
+        let placing = file.clone();
+        self.off_task(move |host| host.place_file(&incoming, &placing, &bytes))
+            .await
             .map_err(SessionError::AttachmentStorage)?;
         // One that cannot be recorded is not kept.
         if let Err(error) = self.record(
@@ -908,9 +1093,8 @@ impl<H: AgentHost> SupervisorTask<H> {
                 read: read.clone(),
             },
         ) {
-            let _ = self
-                .host
-                .remove_tree(&folders.attachment(session, attachment));
+            let folder = folders.attachment(session, attachment);
+            let _ = self.off_task(move |host| host.remove_tree(&folder)).await;
             return Err(error);
         }
         held.attached.insert(attachment, read.clone());
@@ -1156,10 +1340,17 @@ impl<H: AgentHost> SupervisorTask<H> {
             tracing::debug!(%session, "no room to record an unused draft's discard; it is kept");
             return;
         };
-        if let Some(folders) = &self.attachments
-            && let Err(error) = self.host.remove_tree(&folders.session(session))
-        {
-            tracing::warn!(%session, %error, "cannot remove an unused draft's attachments folder");
+        if let Some(folders) = &self.attachments {
+            let folder = folders.session(session);
+            let removing = self.off_task(move |host| host.remove_tree(&folder));
+            served.replies.push(
+                async move {
+                    if let Err(error) = removing.await {
+                        tracing::warn!(%session, %error, "cannot remove an unused draft's attachments folder");
+                    }
+                }
+                .boxed(),
+            );
         }
         served.sessions.remove(&session);
         served.runs.retain(|_, live| live.session != session);
@@ -1428,7 +1619,7 @@ impl<H: AgentHost> SupervisorTask<H> {
             }
         }
         for line in &lines {
-            Self::write(run, live, line).await;
+            Self::write(run, live, line);
         }
         if kill && let Some(switch) = live.kill.take() {
             switch.fire();
@@ -1461,7 +1652,7 @@ impl<H: AgentHost> SupervisorTask<H> {
         };
         let received = codec.receive(frame);
         for reply in &received.replies {
-            Self::write(run, live, reply).await;
+            Self::write(run, live, reply);
         }
         let mut held = held;
         let mut failed = false;
@@ -1472,7 +1663,10 @@ impl<H: AgentHost> SupervisorTask<H> {
             if let Some(held) = held.as_deref_mut() {
                 match &event {
                     // Turns change files.
-                    DriveEvent::TurnEnded { .. } => held.files = None,
+                    DriveEvent::TurnEnded { .. } => {
+                        held.files = None;
+                        held.turns_ended = held.turns_ended.wrapping_add(1);
+                    }
                     // A conversation is kept once a turn runs in it.
                     DriveEvent::TurnStarted { .. } => {
                         if let Some(thread) = live.opened {
@@ -1545,7 +1739,7 @@ impl<H: AgentHost> SupervisorTask<H> {
                         None => Vec::new(),
                     };
                     for line in &lines {
-                        Self::write(run, live, line).await;
+                        Self::write(run, live, line);
                     }
                 }
                 RunAction::Kill => {
@@ -1585,20 +1779,41 @@ impl<H: AgentHost> SupervisorTask<H> {
         let _ = self.updates.send(update);
     }
 
-    async fn write(run: RunId, live: &mut Live, line: &Line) {
-        let Some(stdin) = live.stdin.as_mut() else {
+    /// Lines an agent's stdin queue holds before it counts as not reading.
+    const STDIN_LINES: usize = 256;
+
+    /// Queue `line` for the run's stdin. A queue that is full belongs to an
+    /// agent that stopped reading: its stdin is closed rather than the task
+    /// waiting on it.
+    fn write(run: RunId, live: &mut Live, line: &Line) {
+        let Some(stdin) = live.stdin.as_ref() else {
             return;
         };
-        let written = async {
+        match stdin.try_send(line.clone()) {
+            Ok(()) => {}
+            Err(mpsc::error::TrySendError::Closed(_)) => {
+                // The process is ending; its exit will say how.
+                tracing::debug!(%run, "agent stdin closed");
+                live.stdin = None;
+            }
+            Err(mpsc::error::TrySendError::Full(_)) => {
+                tracing::warn!(%run, "an agent stopped reading its stdin; closing it");
+                live.stdin = None;
+            }
+        }
+    }
+
+    /// Write each queued line to `stdin`, in order, until the queue closes
+    /// or a write fails.
+    async fn writer(
+        mut stdin: Box<dyn AsyncWrite + Send + Unpin>,
+        mut lines: mpsc::Receiver<Line>,
+    ) -> std::io::Result<()> {
+        while let Some(line) = lines.recv().await {
             stdin.write_all(line.as_bytes()).await?;
-            stdin.flush().await
+            stdin.flush().await?;
         }
-        .await;
-        if let Err(error) = written {
-            // The process is ending; its exit will say how.
-            tracing::debug!(%run, %error, "agent stdin closed");
-            live.stdin = None;
-        }
+        Ok(())
     }
 
     fn output(

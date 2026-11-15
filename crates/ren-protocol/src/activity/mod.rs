@@ -270,6 +270,9 @@ enum RequestFraming {
 }
 
 impl RequestReader {
+    /// Compressed bytes decoded between checks of the decoded limit.
+    const DECODE_STEP: usize = 64 * 1024;
+
     pub fn new(protocol: Protocol, limits: ActivityLimits) -> Self {
         Self {
             protocol,
@@ -362,24 +365,49 @@ impl RequestReader {
             limitations.push(ActivityLimitation::UnsupportedEncoding);
             return None;
         };
-        let mut decoded = Vec::new();
-        let mut oversized = false;
-        let max = self.limits.max_decoded_bytes;
-        let mut keep = |bytes: &[u8]| {
-            let room = max.saturating_sub(decoded.len());
-            oversized |= bytes.len() > room;
-            decoded.extend_from_slice(bytes.get(..room.min(bytes.len())).unwrap_or_default());
+        let mut kept = Kept {
+            decoded: Vec::new(),
+            oversized: false,
+            max: self.limits.max_decoded_bytes,
         };
-        let decoding = decoder.decode(&self.bytes, &mut keep);
-        let finished = decoding.and_then(|()| decoder.finish(&mut keep));
+        // In steps, so a body that expands past the limit stops being decoded
+        // there rather than at its end.
+        let mut decoding = Ok(());
+        for step in self.bytes.chunks(Self::DECODE_STEP) {
+            decoding = decoder.decode(step, |bytes| kept.keep(bytes));
+            if decoding.is_err() || kept.oversized {
+                break;
+            }
+        }
+        let finished = match (decoding, kept.oversized) {
+            (Ok(()), false) => decoder.finish(|bytes| kept.keep(bytes)),
+            (Ok(()), true) => Ok(()),
+            (Err(failure), _) => Err(failure),
+        };
         match (finished, extent) {
             (Ok(()), _) | (Err(_), Extent::Truncated | Extent::Gap) => {}
             (Err(_), Extent::Complete) => limitations.push(ActivityLimitation::DecodingError),
         }
-        if oversized {
+        if kept.oversized {
             limitations.push(ActivityLimitation::DecodedTooLarge);
         }
-        Some(decoded)
+        Some(kept.decoded)
+    }
+}
+
+/// Decoded request bytes, kept up to the limit.
+struct Kept {
+    decoded: Vec<u8>,
+    oversized: bool,
+    max: usize,
+}
+
+impl Kept {
+    fn keep(&mut self, bytes: &[u8]) {
+        let room = self.max.saturating_sub(self.decoded.len());
+        self.oversized |= bytes.len() > room;
+        self.decoded
+            .extend_from_slice(bytes.get(..room.min(bytes.len())).unwrap_or_default());
     }
 }
 

@@ -712,3 +712,35 @@ fn a_responses_reply_streams_from_its_text_deltas() {
         ]
     );
 }
+
+#[test]
+fn wire_indices_never_size_an_allocation() {
+    // An index near `u64::MAX` would ask a dense vector for exabytes; read
+    // sparsely, it is one block among the others, in index order.
+    let huge = u64::MAX - 1;
+    let stream = sse(&[
+        json!({ "type": "content_block_start", "index": huge, "content_block": { "type": "text", "text": "late" } }),
+        json!({ "type": "content_block_stop", "index": huge }),
+        json!({ "type": "content_block_start", "index": 0, "content_block": { "type": "text", "text": "early" } }),
+        json!({ "type": "content_block_stop", "index": 0 }),
+    ]);
+    let messages = response(Protocol::Messages, ResponseFormat::EventStream, &stream);
+    assert_eq!(messages.reply, "early\nlate");
+
+    let chunk = json!({
+        "object": "chat.completion.chunk",
+        "choices": [{
+            "index": huge,
+            "delta": { "content": "far", "tool_calls": [{ "index": huge, "id": "c", "function": { "name": "far", "arguments": "{}" } }] },
+            "finish_reason": "tool_calls",
+        }],
+    });
+    let chat = response(
+        Protocol::ChatCompletions,
+        ResponseFormat::EventStream,
+        format!("data: {chunk}\n\ndata: [DONE]\n\n").as_bytes(),
+    );
+    assert_eq!(chat.reply, "far");
+    assert_eq!(chat.tool_uses.len(), 1);
+    assert_eq!(chat.tool_uses[0].name, "far");
+}

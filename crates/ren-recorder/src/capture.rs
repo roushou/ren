@@ -171,6 +171,9 @@ pub enum CallRejection {
     /// The caller already had as many calls running as its limit allows
     /// (`429` with `retry-after`).
     UserBusy,
+    /// The gateway was running as many calls as `max_concurrent_requests`
+    /// allows (`503`).
+    Busy,
 }
 
 /// How a captured body's byte stream ended.
