@@ -1,10 +1,10 @@
 /target
-/ui/node_modules
-/ui/.svelte-kit
-/ui/dist
-/ui/build
-/ui/.env
-/ui/.env.*
-!/ui/.env.example
+/ui/**/node_modules
+/ui/apps/web/.svelte-kit
+/ui/apps/web/dist
+/ui/apps/web/build
+/ui/apps/web/.env
+/ui/apps/web/.env.*
+!/ui/apps/web/.env.example
 /deploy/container/*.env
 /deploy/container/ren.toml

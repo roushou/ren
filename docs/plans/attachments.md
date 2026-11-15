@@ -170,7 +170,7 @@ and `TestGateway`'s on disk.
 - A served session says whether its client takes images (`images`:
   `always`, `if_offered`, or `never`), so the composer offers only what the
   client takes. The server checks again on send. Built.
-- The UI's `RunsProxy` (`ui/src/lib/server/control.ts`) forwards the upload
+- The UI's `RunsProxy` (`ui/apps/web/src/lib/server/control.ts`) forwards the upload
   (an image's bytes, `image/*` only), the listing, the read, and the removal
   with the control token, like the other session routes. Built.
 
@@ -202,7 +202,7 @@ session's folder only. To confirm per client.
 
 ## UI
 
-- The composer (`ui/src/routes/sessions/+page.svelte`) takes a pasted image,
+- The composer (`ui/apps/web/src/routes/sessions/+page.svelte`) takes a pasted image,
   a dropped file, or a picked one. Each upload is a square chip with its
   thumbnail and name (or "Uploading…", or why it was refused) and a remove
   control; sending waits for uploads to finish. A client that takes no
@@ -213,9 +213,9 @@ session's folder only. To confirm per client.
   found shows by name. Built.
 - ↑ recalls an earlier prompt's text only (see Deviations).
 - Redline's brief can attach its screenshot (phase 5).
-- Pure logic in `ui/src/lib/attachments.ts` (`Tray`, its `Chip` states as a
+- Pure logic in `ui/apps/web/src/lib/attachments.ts` (`Tray`, its `Chip` states as a
   discriminated union, `Gallery`, `Refusals`), tested without a browser.
-  Thumbnails are served same-origin; `ui/src/csp.ts` needs no new source.
+  Thumbnails are served same-origin; `ui/apps/web/src/csp.ts` needs no new source.
   Built.
 
 ## Phases

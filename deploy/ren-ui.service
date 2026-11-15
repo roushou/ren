@@ -1,5 +1,6 @@
 # Optional systemd user service: ~/.config/systemd/user/ren-ui.service
-# Deploy ui/build, package.json and production dependencies to the directory below.
+# Deploy the UI workspace (package.json, bun.lock, packages/, apps/web/package.json,
+# apps/web/build) and its production dependencies to the directory below.
 # Adjust the absolute Node path for your host. No dependency on ren.service:
 # the daemon may run remotely, and either service can restart independently.
 [Unit]
@@ -10,7 +11,7 @@ StartLimitBurst=5
 [Service]
 Type=exec
 WorkingDirectory=%h/.local/share/ren-ui
-ExecStart=/usr/bin/node build
+ExecStart=/usr/bin/node apps/web/build
 Environment=HOST=127.0.0.1 PORT=3000
 EnvironmentFile=%h/.config/ren/ui.env
 Restart=on-failure

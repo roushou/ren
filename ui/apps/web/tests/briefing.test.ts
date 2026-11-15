@@ -51,7 +51,7 @@ test('the brief lists each noted mark with what it points at', () => {
       'Redline: Move it to the end.',
       '',
       'Marked on `/sessions?session=s1` (Ren - Sessions), 1400×820, dark theme.',
-      "In Ren's UI this page is `ui/src/routes/sessions/+page.svelte`.",
+      "In Ren's UI this page is `ui/apps/web/src/routes/sessions/+page.svelte`.",
       'This page was served by a build of commit `97aa93b00000`; the checkout may have moved on since.',
       '',
       '1. Move it to the end.',
@@ -62,7 +62,7 @@ test('the brief lists each noted mark with what it points at', () => {
       "Answer what the notes ask without changing anything. If a note asks for a change, make it on a new branch, `redline/move-it-to-the-end`, in a git worktree of this repository, not in the checkout itself, since other sessions are open there, and run the project's checks. Don't install or restart anything: I'll review the branch.",
     ].join('\n'),
   );
-  assert.equal(Briefing.routeFile('/'), 'ui/src/routes/+page.svelte');
+  assert.equal(Briefing.routeFile('/'), 'ui/apps/web/src/routes/+page.svelte');
 });
 
 test('alone in the checkout, a change is made there and the checkout switched back', () => {

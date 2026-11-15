@@ -47,7 +47,7 @@ impl UiDeploy {
     /// The template's Node, replaced with the one found on PATH.
     const TEMPLATE_NODE: &str = "/usr/bin/node";
     /// The SvelteKit app, within `ui/`, the Bun workspace's root.
-    const APP: &str = "";
+    const APP: &str = "apps/web";
     /// The folder of the UI's workspace packages (`package.json`'s `workspaces`).
     const PACKAGES: &str = "packages";
 
@@ -222,7 +222,7 @@ impl UiDeploy {
         InstallVps::write_private(&self.env_file, contents.as_bytes(), 0o600)
     }
 
-    /// The UI's setting for Ren's source checkout (`ui/src/env.ts`).
+    /// The UI's setting for Ren's source checkout (`ui/apps/web/src/env.ts`).
     const SOURCE_KEY: &str = "REN_SOURCE_DIR";
 
     /// `existing` with `REN_SOURCE_DIR=<checkout>` added, or `None` when it

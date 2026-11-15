@@ -184,7 +184,7 @@ export class Briefing {
 
   /** The Svelte file that renders a route of Ren's UI. */
   static routeFile(route: string): string {
-    return `ui/src/routes${route === '/' ? '' : route}/+page.svelte`;
+    return `ui/apps/web/src/routes${route === '/' ? '' : route}/+page.svelte`;
   }
 
   /** What Ren adds to a brief: the route's file and the build, and how to

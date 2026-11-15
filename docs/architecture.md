@@ -740,7 +740,7 @@ state; it is logged, not recorded in `operator_actions`.
 - **Responses.** Each carries `api_version` (1); the UI checks compatibility at
   load and shows an explicit mismatch error. `crates/ren-daemon/tests/contract.rs`
   pins each read's answer to a fixed synthetic history in
-  `ui/tests/fixtures/api/`, and the UI's decoder tests parse those files, so a
+  `ui/apps/web/tests/fixtures/api/`, and the UI's decoder tests parse those files, so a
   contract change fails a test on whichever side it breaks
   (`REN_UPDATE_FIXTURES=1` regenerates them).
 - **Live feed.** `/api/live?after=<seq>` (or `Last-Event-ID`) replays retained
