@@ -57,6 +57,7 @@ fn every_label_is_pinned() {
     let table = table![
         api::HealthStatus,
         api::ErrorCode,
+        api::ControlRefusal,
         api::preview::RawFormat,
         api::preview::PreviewDecoding,
         api::preview::PreviewExtent,

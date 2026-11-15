@@ -10,7 +10,7 @@
 //! subject's calls are open or its runs still running, since the recorder
 //! keeps both.
 
-use super::{ControlApi, Refusal};
+use super::{ControlApi, ControlRefusal};
 use axum::{
     Json, Router,
     extract::{Path, State},
@@ -25,32 +25,6 @@ use std::sync::Arc;
 pub(super) struct HistoryApi {
     pub control: Arc<ControlApi>,
     pub reader: Reader,
-}
-
-/// Why an edit was refused, beyond access.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Unedited {
-    /// A call of the subject is still open.
-    CallOpen,
-    /// A run of the subject is still running.
-    RunRunning,
-    /// What the edit would touch could not be read.
-    Unreadable,
-}
-
-impl IntoResponse for Unedited {
-    fn into_response(self) -> Response {
-        let (status, code) = match self {
-            Self::CallOpen => (StatusCode::CONFLICT, "call_open"),
-            Self::RunRunning => (StatusCode::CONFLICT, "run_running"),
-            Self::Unreadable => (StatusCode::INTERNAL_SERVER_ERROR, "unreadable"),
-        };
-        (
-            status,
-            Json(serde_json::json!({ "api_version": ControlApi::API_VERSION, "error": code })),
-        )
-            .into_response()
-    }
 }
 
 impl HistoryApi {
@@ -93,27 +67,27 @@ impl HistoryApi {
             Err(refusal) => return refusal.into_response(),
         };
         let (Some(subject), Ok(change)) = (subject, change.parse::<HistoryChange>()) else {
-            return Refusal::NotFound.into_response();
+            return ControlRefusal::NotFound.into_response();
         };
         let target = match self.reader.history_target(subject).await {
             Ok(Some(target)) => target,
-            Ok(None) => return Refusal::NotFound.into_response(),
+            Ok(None) => return ControlRefusal::NotFound.into_response(),
             Err(error) => {
                 tracing::warn!(%error, "history target unreadable");
-                return Unedited::Unreadable.into_response();
+                return ControlRefusal::Unreadable.into_response();
             }
         };
         match change {
             HistoryChange::Delete if target.running_runs > 0 => {
-                return Unedited::RunRunning.into_response();
+                return ControlRefusal::RunRunning.into_response();
             }
             HistoryChange::Delete if target.open_calls > 0 => {
-                return Unedited::CallOpen.into_response();
+                return ControlRefusal::CallOpen.into_response();
             }
             HistoryChange::Archive | HistoryChange::Unarchive | HistoryChange::Delete => {}
         }
         let Some(slot) = self.control.recorder.history_slot() else {
-            return Refusal::Control(crate::control::ControlError::Unrecorded).into_response();
+            return ControlRefusal::Unrecorded.into_response();
         };
         slot.record(actor, subject, change);
         (

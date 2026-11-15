@@ -6,10 +6,7 @@
 //! to the login's stdin: it is never logged, recorded, or answered with.
 //! Access is the control API's, as for the other run routes.
 
-use super::{
-    ControlApi, Refusal,
-    runs::{Denied, RunRefusal, RunsApi},
-};
+use super::{ControlApi, ControlRefusal, runs::RunsApi};
 use axum::{
     Json,
     extract::{Path, State, rejection::JsonRejection},
@@ -45,36 +42,32 @@ impl RunsApi {
     /// How long one wait on a login lasts: under the UI proxy's 30 seconds.
     const WAIT: std::time::Duration = std::time::Duration::from_secs(20);
 
-    fn harness(harness: &str) -> Result<Harness, Denied> {
+    fn harness(harness: &str) -> Result<Harness, ControlRefusal> {
         harness
             .parse::<Harness>()
-            .map_err(|_| Denied::Run(RunRefusal::NotFound))
+            .map_err(|_| ControlRefusal::NotFound)
     }
 
-    fn sign_in_refused(error: SignInError) -> Denied {
-        Denied::Run(match error {
-            SignInError::Refused(SignInRefused::NotOffered(_)) => {
-                RunRefusal::Refused("sign_in_not_offered")
-            }
+    fn sign_in_refused(error: SignInError) -> ControlRefusal {
+        match error {
+            SignInError::Refused(SignInRefused::NotOffered(_)) => ControlRefusal::SignInNotOffered,
             SignInError::Refused(SignInRefused::NoSuchMethod { .. }) => {
-                return Denied::Control(Refusal::Invalid);
+                return ControlRefusal::InvalidRequest;
             }
-            SignInError::NotInstalled(_) => RunRefusal::Refused("not_installed"),
-            SignInError::NoRoot => RunRefusal::Disabled,
-            SignInError::Spawn => RunRefusal::SpawnFailed,
-            SignInError::NoLogin(_) => RunRefusal::Refused("no_sign_in"),
-            SignInError::NotAwaitingAnswer => RunRefusal::Refused("not_awaiting_answer"),
+            SignInError::NotInstalled(_) => ControlRefusal::NotInstalled,
+            SignInError::NoRoot => ControlRefusal::RunsDisabled,
+            SignInError::Spawn => ControlRefusal::SpawnFailed,
+            SignInError::NoLogin(_) => ControlRefusal::NoSignIn,
+            SignInError::NotAwaitingAnswer => ControlRefusal::NotAwaitingAnswer,
             SignInError::Redirect(RedirectRefused::NotAnAddress) => {
-                RunRefusal::Refused("redirect_not_an_address")
+                ControlRefusal::RedirectNotAnAddress
             }
-            SignInError::Redirect(RedirectRefused::Elsewhere) => {
-                RunRefusal::Refused("redirect_elsewhere")
-            }
+            SignInError::Redirect(RedirectRefused::Elsewhere) => ControlRefusal::RedirectElsewhere,
             SignInError::Redirect(RedirectRefused::Incomplete) => {
-                RunRefusal::Refused("redirect_incomplete")
+                ControlRefusal::RedirectIncomplete
             }
-            SignInError::Gone => RunRefusal::Unavailable,
-        })
+            SignInError::Gone => ControlRefusal::Unavailable,
+        }
     }
 
     /// `POST …/sign-in/check`: run the client's status command now.
@@ -82,7 +75,7 @@ impl RunsApi {
         State(api): Api,
         headers: HeaderMap,
         Path(harness): Path<String>,
-    ) -> Result<Response, Denied> {
+    ) -> Result<Response, ControlRefusal> {
         let supervisor = api.admit(&headers)?;
         let harness = Self::harness(&harness)?;
         let state = supervisor
@@ -104,7 +97,7 @@ impl RunsApi {
         headers: HeaderMap,
         Path(harness): Path<String>,
         body: Result<Json<StartRequest>, JsonRejection>,
-    ) -> Result<Response, Denied> {
+    ) -> Result<Response, ControlRefusal> {
         let supervisor = api.admit(&headers)?;
         let harness = Self::harness(&harness)?;
         let requested = Self::body(body)?.method;
@@ -137,11 +130,11 @@ impl RunsApi {
         headers: HeaderMap,
         Path(harness): Path<String>,
         body: Result<Json<AnswerRequest>, JsonRejection>,
-    ) -> Result<Response, Denied> {
+    ) -> Result<Response, ControlRefusal> {
         let supervisor = api.admit(&headers)?;
         let harness = Self::harness(&harness)?;
         let answer = SignInAnswer::parse(&Self::body(body)?.answer)
-            .map_err(|_| Denied::Control(Refusal::Invalid))?;
+            .map_err(|_| ControlRefusal::InvalidRequest)?;
         let outcome = supervisor
             .answer_sign_in(harness, answer)
             .await
@@ -162,7 +155,7 @@ impl RunsApi {
         State(api): Api,
         headers: HeaderMap,
         Path(harness): Path<String>,
-    ) -> Result<Response, Denied> {
+    ) -> Result<Response, ControlRefusal> {
         let supervisor = api.admit(&headers)?;
         let harness = Self::harness(&harness)?;
         let waited = supervisor
@@ -182,7 +175,7 @@ impl RunsApi {
         State(api): Api,
         headers: HeaderMap,
         Path(harness): Path<String>,
-    ) -> Result<Response, Denied> {
+    ) -> Result<Response, ControlRefusal> {
         let supervisor = api.admit(&headers)?;
         let harness = Self::harness(&harness)?;
         supervisor

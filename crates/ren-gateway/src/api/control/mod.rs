@@ -12,12 +12,13 @@
 //!   forwards tagged devices and Funnel traffic to loopback without identity.
 
 mod history;
+mod refusal;
 mod runs;
 mod sessions;
 mod sign_in;
 mod tools;
 
-use crate::control::{ControlError, Controls, RunningCall};
+use crate::control::{Controls, RunningCall};
 use crate::operator::{OperatorCommand, OperatorState, RetryAfter};
 use crate::user::Users;
 use axum::{
@@ -28,6 +29,7 @@ use axum::{
 };
 use history::HistoryApi;
 use http::{HeaderMap, HeaderValue, StatusCode, header};
+pub use refusal::ControlRefusal;
 use ren_protocol::native::NativeSessionId;
 use ren_recorder::{
     Recorder,
@@ -151,47 +153,6 @@ struct CancelRequest {
     block_session_seconds: Option<u64>,
 }
 
-/// Why a control request was refused.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Refusal {
-    CrossSite,
-    Unauthorized,
-    Forbidden,
-    Invalid,
-    NotFound,
-    Control(ControlError),
-    BackupRunning,
-    BackupIncomplete,
-    BackupFailed,
-}
-
-impl IntoResponse for Refusal {
-    fn into_response(self) -> Response {
-        let (status, code) = match self {
-            Self::CrossSite => (StatusCode::FORBIDDEN, "cross_site"),
-            Self::Unauthorized => (StatusCode::UNAUTHORIZED, "unauthorized"),
-            Self::Forbidden => (StatusCode::FORBIDDEN, "forbidden"),
-            Self::Invalid => (StatusCode::BAD_REQUEST, "invalid_request"),
-            Self::NotFound => (StatusCode::NOT_FOUND, "not_found"),
-            Self::Control(ControlError::NotRunning) => (StatusCode::NOT_FOUND, "not_running"),
-            Self::Control(ControlError::Unrecorded) => {
-                (StatusCode::SERVICE_UNAVAILABLE, "unrecorded")
-            }
-            Self::Control(ControlError::Unrecordable) => {
-                (StatusCode::INTERNAL_SERVER_ERROR, "unrecordable")
-            }
-            Self::BackupRunning => (StatusCode::CONFLICT, "backup_running"),
-            Self::BackupIncomplete => (StatusCode::SERVICE_UNAVAILABLE, "backup_incomplete"),
-            Self::BackupFailed => (StatusCode::INTERNAL_SERVER_ERROR, "backup_failed"),
-        };
-        (
-            status,
-            Json(serde_json::json!({ "api_version": ControlApi::API_VERSION, "error": code })),
-        )
-            .into_response()
-    }
-}
-
 impl ControlApi {
     pub const API_VERSION: u32 = 1;
     /// The longest session block a request may set.
@@ -282,26 +243,26 @@ impl ControlApi {
         response
     }
 
-    fn authorize(&self, headers: &HeaderMap) -> Result<Actor, Refusal> {
+    fn authorize(&self, headers: &HeaderMap) -> Result<Actor, ControlRefusal> {
         if headers.contains_key(header::ORIGIN) || headers.contains_key("sec-fetch-site") {
-            return Err(Refusal::CrossSite);
+            return Err(ControlRefusal::CrossSite);
         }
         if let Some(login) = headers.get("tailscale-user-login") {
-            let login = login.to_str().map_err(|_| Refusal::Forbidden)?;
+            let login = login.to_str().map_err(|_| ControlRefusal::Forbidden)?;
             return if self.logins.iter().any(|allowed| allowed == login) {
                 Ok(Actor::Tailscale(login.to_owned()))
             } else {
-                Err(Refusal::Forbidden)
+                Err(ControlRefusal::Forbidden)
             };
         }
         let bearer = headers
             .get(header::AUTHORIZATION)
             .and_then(|value| value.as_bytes().strip_prefix(b"Bearer "))
-            .ok_or(Refusal::Unauthorized)?;
+            .ok_or(ControlRefusal::Unauthorized)?;
         if self.token.matches(bearer) {
             Ok(Actor::Loopback)
         } else {
-            Err(Refusal::Unauthorized)
+            Err(ControlRefusal::Unauthorized)
         }
     }
 
@@ -317,31 +278,31 @@ impl ControlApi {
     fn command(&self, actor: Actor, command: OperatorCommand) -> Response {
         match self.controls.apply(&self.recorder, actor, command) {
             Ok(state) => self.respond(&state),
-            Err(error) => Refusal::Control(error).into_response(),
+            Err(error) => ControlRefusal::from(error).into_response(),
         }
     }
 
-    fn session(text: &str) -> Result<NativeSessionId, Refusal> {
+    fn session(text: &str) -> Result<NativeSessionId, ControlRefusal> {
         Uuid::try_parse(text)
             .ok()
             .and_then(NativeSessionId::new)
-            .ok_or(Refusal::NotFound)
+            .ok_or(ControlRefusal::NotFound)
     }
 
     /// A configured user; any other name is not found.
-    fn user(&self, text: &str) -> Result<UserId, Refusal> {
+    fn user(&self, text: &str) -> Result<UserId, ControlRefusal> {
         UserId::parse(text)
             .ok()
             .filter(|user| self.users.knows(user))
-            .ok_or(Refusal::NotFound)
+            .ok_or(ControlRefusal::NotFound)
     }
 
-    fn duration(seconds: Option<u64>) -> Result<Option<Duration>, Refusal> {
+    fn duration(seconds: Option<u64>) -> Result<Option<Duration>, ControlRefusal> {
         seconds
             .map(Duration::from_secs)
             .map(|duration| {
                 if duration.is_zero() || duration > Self::MAX_BLOCK {
-                    Err(Refusal::Invalid)
+                    Err(ControlRefusal::InvalidRequest)
                 } else {
                     Ok(duration)
                 }
@@ -369,7 +330,7 @@ impl ControlApi {
             .map_err(drop)
             .and_then(|Json(body)| RetryAfter::seconds(body.retry_after_seconds).map_err(drop))
         else {
-            return Refusal::Invalid.into_response();
+            return ControlRefusal::InvalidRequest.into_response();
         };
         api.command(actor, OperatorCommand::Pause { retry_after })
     }
@@ -467,10 +428,10 @@ impl ControlApi {
                 Json(serde_json::json!({ "api_version": Self::API_VERSION, "backup": report }))
                     .into_response()
             }
-            Err(BackupError::Running) => Refusal::BackupRunning.into_response(),
+            Err(BackupError::Running) => ControlRefusal::BackupRunning.into_response(),
             Err(error @ BackupError::Incomplete(_)) => {
                 tracing::warn!(%error, "backup incomplete");
-                Refusal::BackupIncomplete.into_response()
+                ControlRefusal::BackupIncomplete.into_response()
             }
             Err(
                 error @ (BackupError::Io(_)
@@ -479,7 +440,7 @@ impl ControlApi {
                 | BackupError::NonUtf8Path),
             ) => {
                 tracing::warn!(%error, "backup failed");
-                Refusal::BackupFailed.into_response()
+                ControlRefusal::BackupFailed.into_response()
             }
         }
     }
@@ -493,7 +454,7 @@ impl ControlApi {
         body: Option<Json<CancelRequest>>,
     ) -> Response {
         let request = api.authorize(&headers).and_then(|actor| {
-            let call: CallId = call.parse().map_err(|_| Refusal::NotFound)?;
+            let call: CallId = call.parse().map_err(|_| ControlRefusal::NotFound)?;
             let block = Self::duration(body.unwrap_or_default().0.block_session_seconds)?;
             Ok((actor, call, block))
         });
@@ -509,11 +470,11 @@ impl ControlApi {
                 OperatorCommand::CancelCall { call },
             )
         }) {
-            return Refusal::Control(error).into_response();
+            return ControlRefusal::from(error).into_response();
         }
         let session = match api.controls.cancel(call) {
             Ok(session) => session,
-            Err(error) => return Refusal::Control(error).into_response(),
+            Err(error) => return ControlRefusal::from(error).into_response(),
         };
         match (block, session) {
             (Some(duration), Some(session)) => api.command(

@@ -17,7 +17,7 @@ pub mod preview;
 mod route;
 
 pub(crate) use control::ControlApi;
-pub use control::{ControlOptions, ControlOptionsError, ControlToken};
+pub use control::{ControlOptions, ControlOptionsError, ControlRefusal, ControlToken};
 pub use route::ApiRead;
 
 use crate::build::Build;
