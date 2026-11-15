@@ -14,9 +14,9 @@ use crate::{
     attachment::Attachment,
     commands::{ClientCommand, CommandKind, Sigil},
     drive::{
-        ApprovalAsk, ApprovalId, CommandRefused, Decision, DriveCommand, DriveEvent, DriveItem,
-        ItemId, ItemKind, ItemPhase, ItemRead, ItemStatus, Opening, Prompt, RawLine, Received,
-        RequestKind, Retry, TurnEnd, Unreadable,
+        ApprovalAsk, ApprovalId, CommandIntent, CommandPart, CommandRefused, Decision,
+        DriveCommand, DriveEvent, DriveItem, ItemId, ItemKind, ItemPhase, ItemRead, ItemStatus,
+        Opening, Prompt, RawLine, Received, RequestKind, Retry, TurnEnd, Unreadable,
     },
     lines::{Framed, Line},
     models::{DefaultChoice, Listing, Model, ModelId, ModelListing},
@@ -734,6 +734,50 @@ impl CodexAppServer {
         }
     }
 
+    /// What Codex read of a command's parts (`commandActions`): unsaid when
+    /// it gave none.
+    fn command_intent(actions: Option<&Value>) -> CommandIntent {
+        let parts: Vec<CommandPart> = actions
+            .and_then(Value::as_array)
+            .map(|actions| actions.iter().map(Self::command_part).collect())
+            .unwrap_or_default();
+        if parts.is_empty() {
+            CommandIntent::Unsaid
+        } else {
+            CommandIntent::Parts { parts }
+        }
+    }
+
+    fn command_part(action: &Value) -> CommandPart {
+        let text = |key: &str| action.get(key).and_then(Value::as_str).map(str::to_owned);
+        let unrecognized = || CommandPart::Unrecognized {
+            raw: action.clone(),
+        };
+        let Some(command) = text("command") else {
+            return unrecognized();
+        };
+        match action.get("type").and_then(Value::as_str) {
+            Some("read") => match (text("path"), text("name")) {
+                (Some(path), Some(name)) => CommandPart::Read {
+                    command,
+                    path,
+                    name,
+                },
+                (None, _) | (_, None) => unrecognized(),
+            },
+            Some("listFiles") => CommandPart::ListFiles {
+                command,
+                path: text("path"),
+            },
+            Some("search") => CommandPart::Search {
+                command,
+                query: text("query"),
+                path: text("path"),
+            },
+            Some("unknown") => CommandPart::Unknown { command },
+            Some(_) | None => unrecognized(),
+        }
+    }
     /// What Ren reads of an item, from the fields Codex's schema gives each
     /// kind. A field that is missing or of another type reads as absent.
     fn item_read(kind: &ItemKind, body: &Value, phase: ItemPhase) -> ItemRead {
@@ -769,6 +813,7 @@ impl CodexAppServer {
             },
             ItemKind::CommandExecution => ItemRead::Command {
                 command: text("command").unwrap_or_default(),
+                intent: Self::command_intent(body.get("commandActions")),
                 status: status(),
                 output: text("aggregatedOutput"),
                 exit_code: body.get("exitCode").and_then(Value::as_i64),
@@ -789,13 +834,18 @@ impl CodexAppServer {
             },
             ItemKind::McpToolCall => ItemRead::Tool {
                 name: text("tool").unwrap_or_else(|| "MCP tool".to_owned()),
+                effects: Vec::new(),
                 status: status(),
             },
             ItemKind::WebSearch => ItemRead::Tool {
-                name: text("query").map_or_else(
-                    || "web search".to_owned(),
-                    |query| format!("search: {query}"),
-                ),
+                name: "web search".to_owned(),
+                effects: text("query")
+                    .map(|target| crate::tools::ToolEffect {
+                        kind: crate::tools::EffectKind::Search,
+                        target,
+                    })
+                    .into_iter()
+                    .collect(),
                 status: status(),
             },
             ItemKind::Other(_) => ItemRead::Unread,
@@ -1016,8 +1066,9 @@ mod tests {
     use crate::drive::{Opening, Received};
     use crate::{
         drive::{
-            ApprovalAsk, ApprovalId, CommandRefused, Decision, DriveCommand, DriveEvent, ItemKind,
-            ItemPhase, ItemRead, ItemStatus, Prompt, RequestKind, Retry, TurnEnd, Unreadable,
+            ApprovalAsk, ApprovalId, CommandIntent, CommandPart, CommandRefused, Decision,
+            DriveCommand, DriveEvent, ItemKind, ItemPhase, ItemRead, ItemStatus, Prompt,
+            RequestKind, Retry, TurnEnd, Unreadable,
         },
         lines::{Framed, Line},
     };
@@ -1181,11 +1232,68 @@ mod tests {
             [DriveEvent::Item { phase: ItemPhase::Completed, item }]
                 if item.kind == ItemKind::CommandExecution && item.read == ItemRead::Command {
                     command: "cargo build".into(),
+                    intent: CommandIntent::Unsaid,
                     status: ItemStatus::Completed,
                     output: None,
                     exit_code: Some(0),
                 }
         ));
+        // Codex's reading of a command's parts is its intent; a part of a
+        // kind Ren does not know, or missing what its kind needs, is kept.
+        let parted = feed(
+            &mut codec,
+            json!({ "method": "item/completed", "params": {
+                "threadId": THREAD, "turnId": TURN, "completedAtMs": 2,
+                "item": { "type": "commandExecution", "id": "cmd_2",
+                          "command": "sed -n 1,9p a.rs; rg -n todo src; ls; make",
+                          "commandActions": [
+                              { "type": "read", "command": "sed -n 1,9p a.rs",
+                                "name": "a.rs", "path": "/work/acme/a.rs" },
+                              { "type": "search", "command": "rg -n todo src",
+                                "query": "todo", "path": "src" },
+                              { "type": "listFiles", "command": "ls", "path": null },
+                              { "type": "unknown", "command": "make" },
+                              { "type": "read", "command": "cat" },
+                              { "type": "teleport", "command": "beam" }
+                          ],
+                          "exitCode": 0 } } }),
+        );
+        let [DriveEvent::Item { item, .. }] = parted.events.as_slice() else {
+            panic!("one item: {:?}", parted.events);
+        };
+        let ItemRead::Command { intent, .. } = &item.read else {
+            panic!("a command: {:?}", item.read);
+        };
+        assert_eq!(
+            intent,
+            &CommandIntent::Parts {
+                parts: vec![
+                    CommandPart::Read {
+                        command: "sed -n 1,9p a.rs".into(),
+                        path: "/work/acme/a.rs".into(),
+                        name: "a.rs".into(),
+                    },
+                    CommandPart::Search {
+                        command: "rg -n todo src".into(),
+                        query: Some("todo".into()),
+                        path: Some("src".into()),
+                    },
+                    CommandPart::ListFiles {
+                        command: "ls".into(),
+                        path: None,
+                    },
+                    CommandPart::Unknown {
+                        command: "make".into(),
+                    },
+                    CommandPart::Unrecognized {
+                        raw: json!({ "type": "read", "command": "cat" }),
+                    },
+                    CommandPart::Unrecognized {
+                        raw: json!({ "type": "teleport", "command": "beam" }),
+                    },
+                ],
+            }
+        );
 
         let interrupt = codec.command(DriveCommand::Interrupt).unwrap().remove(0);
         assert_eq!(

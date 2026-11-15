@@ -54,6 +54,8 @@
   } from '#lib/attachments.ts';
   import ComposerMenu, { type MenuEntry } from './ComposerMenu.svelte';
   import CommandStep from './CommandStep.svelte';
+  import StepGroup from './StepGroup.svelte';
+  import { Steps } from '#lib/steps.ts';
   import Icon from '#lib/Icon.svelte';
   import Markdown from '#lib/Markdown.svelte';
   import ActionMenu, { type ActionItem } from '#lib/ActionMenu.svelte';
@@ -512,6 +514,10 @@
   /** The key that sends into a running turn, as this platform names it. */
   const navigatorKey =
     typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform) ? '⌘' : 'Ctrl';
+  /** Groups of steps the operator opened or folded, by their first step:
+   * the rest open while a step runs or after one failed, and fold once done. */
+  const folds = new SvelteMap<string, boolean>();
+
   /** Each session's draft, kept while the page is open. */
   const drafts = new SvelteMap<SessionId, string>();
   /** How far back ↑ has recalled the run's prompts; null: not recalling. */
@@ -1162,6 +1168,9 @@
   {:else if entry.kind === 'tool'}
     <div class="entry tool">
       <Icon name="tool" size={12} /><span class="tool-name">{entry.name}</span>
+      {#each entry.effects as effect, index (index)}<span class="tool-target mono"
+          >{effect.target}</span
+        >{/each}
       {#if !entry.done}<span class="chip live">running</span>{/if}
     </div>
   {:else if entry.kind === 'turn_end'}
@@ -1441,7 +1450,18 @@
               <!-- The whole conversation, every turn open, as one scroll. -->
               {#each Runs.turns(transcript?.entries ?? []) as turn, index (index)}
                 <section class="turn">
-                  {#each turn as entry, at (at)}{@render entryView(entry)}{/each}
+                  {#each Steps.blocks(turn, session?.workdir ?? null) as block, at (at)}
+                    {#if block.kind === 'steps'}
+                      <StepGroup
+                        steps={block.steps}
+                        state={block.state}
+                        open={folds.get(block.key) ?? Steps.opens(block.state)}
+                        ontoggle={(open) => folds.set(block.key, open)}
+                      />
+                    {:else}
+                      {@render entryView(block.entry)}
+                    {/if}
+                  {/each}
                 </section>
               {/each}
             {/if}

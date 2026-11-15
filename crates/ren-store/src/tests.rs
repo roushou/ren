@@ -2143,6 +2143,7 @@ mod conversation {
                     turn: Some(turn),
                     event,
                 }));
+                self.clock.advance(std::time::Duration::from_millis(1));
             }
             batch.push(Op::Run(RunRecord {
                 at: self.clock.now(),
@@ -2294,6 +2295,9 @@ mod conversation {
                         ItemPhase::Started,
                         ItemRead::Command {
                             command: "cargo test".into(),
+                            intent: ren_harness::drive::CommandIntent::Described {
+                                text: "Run the tests".into(),
+                            },
                             status: ItemStatus::InProgress,
                             output: None,
                             exit_code: None,
@@ -2310,6 +2314,9 @@ mod conversation {
                         ItemPhase::Completed,
                         ItemRead::Command {
                             command: "cargo test".into(),
+                            intent: ren_harness::drive::CommandIntent::Described {
+                                text: "Run the tests".into(),
+                            },
                             status: ItemStatus::Completed,
                             output: Some("ok".into()),
                             exit_code: Some(0),
@@ -2379,6 +2386,26 @@ mod conversation {
                 (resumed, "msg_2 Completed".to_owned()),
             ]
         );
+        // The command reported again keeps when it started, and is read as
+        // it last stood.
+        let command = &read.entries[0];
+        assert_eq!(
+            command.at.as_millis() - command.started_at.as_millis(),
+            2,
+            "started, then finished two entries later"
+        );
+        assert_eq!(read.entries[1].started_at, read.entries[1].at);
+        // What its client said the command is for is stored with it.
+        let DriveEvent::Item { item, .. } = &command.event else {
+            panic!("a command");
+        };
+        assert!(matches!(
+            &item.read,
+            ItemRead::Command {
+                intent: ren_harness::drive::CommandIntent::Described { text },
+                ..
+            } if text == "Run the tests"
+        ));
         // The reply is whole: nothing is cut for being long.
         let DriveEvent::Item { item, .. } = &read.entries[1].event else {
             panic!("a reply");

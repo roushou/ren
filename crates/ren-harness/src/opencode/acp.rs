@@ -25,9 +25,9 @@ use crate::{
     attachment::{Attachment, Offer},
     commands::{ClientCommand, CommandKind, Sigil},
     drive::{
-        ApprovalAsk, ApprovalId, CommandRefused, Decision, DriveCommand, DriveEvent, DriveItem,
-        ItemId, ItemKind, ItemPhase, ItemRead, ItemStatus, Opening, Prompt, RawLine, Received,
-        RequestKind, TurnEnd, Unreadable,
+        ApprovalAsk, ApprovalId, CommandIntent, CommandRefused, Decision, DriveCommand, DriveEvent,
+        DriveItem, ItemId, ItemKind, ItemPhase, ItemRead, ItemStatus, Opening, Prompt, RawLine,
+        Received, RequestKind, TurnEnd, Unreadable,
     },
     lines::{Framed, Line},
     models::{DefaultChoice, Listing, Model, ModelId, ModelListing},
@@ -993,11 +993,17 @@ impl OpenCodeAcp {
         if let Some(status) = Self::text(update, "status") {
             call.status = Some(status);
         }
-        if let Some(input) = update
+        // An update says what changed: its input's fields join those
+        // reported before, so a field only the first report had stays.
+        if let Some(fields) = update
             .get("rawInput")
-            .filter(|input| input.as_object().is_some_and(|fields| !fields.is_empty()))
+            .and_then(Value::as_object)
+            .filter(|fields| !fields.is_empty())
         {
-            call.input = input.clone();
+            match call.input.as_object_mut() {
+                Some(known) => known.extend(fields.clone()),
+                None => call.input = Value::Object(fields.clone()),
+            }
         }
         let paths: Vec<String> = update
             .get("locations")
@@ -1064,6 +1070,9 @@ impl OpenCodeAcp {
                     command: Self::text(&call.input, "command")
                         .or_else(|| call.title.clone())
                         .unwrap_or_default(),
+                    intent: CommandIntent::described(
+                        Self::text(&call.input, "description").as_deref(),
+                    ),
                     status,
                     output: (!call.output.is_empty()).then(|| call.output.join("\n")),
                     exit_code: call.exit,
@@ -1079,14 +1088,16 @@ impl OpenCodeAcp {
             }
             other => (
                 ItemKind::Other(if other.is_empty() { "tool" } else { other }.to_owned()),
-                ItemRead::Tool {
-                    name: if call.name.is_empty() {
+                ItemRead::tool(
+                    crate::Harness::OpenCode,
+                    &if call.name.is_empty() {
                         call.title.clone().unwrap_or_else(|| "tool".into())
                     } else {
                         call.name.clone()
                     },
+                    &call.input,
                     status,
-                },
+                ),
             ),
         }
     }
@@ -1627,7 +1638,8 @@ mod tests {
             &mut codec,
             update(
                 json!({ "sessionUpdate": "tool_call", "toolCallId": "call_1", "name": "shell",
-                "title": "ls -1", "kind": "execute", "status": "pending", "rawInput": {} }),
+                "title": "ls -1", "kind": "execute", "status": "pending",
+                "rawInput": { "command": "ls -1", "description": "List the folder" } }),
             ),
         );
         // The reasoning closes; the command starts.
@@ -1668,6 +1680,9 @@ mod tests {
             item.read,
             ItemRead::Command {
                 command: "ls -1".into(),
+                intent: crate::drive::CommandIntent::Described {
+                    text: "List the folder".into()
+                },
                 status: ItemStatus::Completed,
                 output: Some("a.txt\n".into()),
                 exit_code: Some(0),

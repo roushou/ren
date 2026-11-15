@@ -15,8 +15,10 @@ use crate::lines::{Framed, Line};
 use crate::opencode::OpenCodeAcp;
 use crate::pi::PiRpc;
 use crate::settings::{Midway, RunSettings};
+use crate::tools::ToolEffect;
 use crate::{Harness, launch::NotDrivable};
 use base64::Engine as _;
+use ren_protocol::activity::{ToolInput, ToolUse};
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -550,6 +552,10 @@ pub enum ItemRead {
     },
     Command {
         command: String,
+        /// What the command is for, as its client said; absent from items
+        /// stored before Ren read it.
+        #[serde(default, skip_serializing_if = "CommandIntent::is_unsaid")]
+        intent: CommandIntent,
         status: ItemStatus,
         output: Option<String>,
         exit_code: Option<i64>,
@@ -558,13 +564,76 @@ pub enum ItemRead {
         paths: Vec<String>,
         status: ItemStatus,
     },
-    /// Any other tool the client used, by the name it gave.
+    /// Any other tool the client used: its name as the client gave it (with
+    /// what its input names, when Ren reads no effect from it), and what it
+    /// does as Ren reads any tool call (`Harness::effects`); none for items
+    /// stored before Ren read them.
     Tool {
         name: String,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        effects: Vec<ToolEffect>,
         status: ItemStatus,
     },
     /// An item Ren reads nothing from; its kind and body say what it is.
     Unread,
+}
+
+/// What a command is for, in its client's terms: Ren reads nothing into
+/// the command's own text.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "said", rename_all = "snake_case")]
+pub enum CommandIntent {
+    /// Its client said nothing of it.
+    #[default]
+    Unsaid,
+    /// Its client's own words for it: the `description` Claude Code and
+    /// OpenCode give their shell tool.
+    Described { text: String },
+    /// Its client's reading of its parts: Codex's `commandActions`.
+    Parts { parts: Vec<CommandPart> },
+}
+
+impl CommandIntent {
+    pub fn is_unsaid(&self) -> bool {
+        matches!(self, Self::Unsaid)
+    }
+
+    /// Its client's words, when it gave some that are not blank.
+    pub fn described(text: Option<&str>) -> Self {
+        match text.map(str::trim) {
+            Some(text) if !text.is_empty() => Self::Described {
+                text: text.to_owned(),
+            },
+            Some(_) | None => Self::Unsaid,
+        }
+    }
+}
+
+/// One part of a command as its client read it, with the part's own text.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "part", rename_all = "snake_case")]
+pub enum CommandPart {
+    /// It reads the file at `path`, named `name`.
+    Read {
+        command: String,
+        path: String,
+        name: String,
+    },
+    /// It lists the files under `path`, or where it runs.
+    ListFiles {
+        command: String,
+        path: Option<String>,
+    },
+    /// It searches for `query` under `path`.
+    Search {
+        command: String,
+        query: Option<String>,
+        path: Option<String>,
+    },
+    /// A part its client could not read either.
+    Unknown { command: String },
+    /// A part of a kind Ren does not know, kept as its client sent it.
+    Unrecognized { raw: serde_json::Value },
 }
 
 /// Where an item's action stands.
@@ -577,6 +646,50 @@ pub enum ItemStatus {
     Declined,
     /// A status Ren does not know, as the client named it.
     Other(String),
+}
+
+impl ItemRead {
+    /// The fields of a tool's input that say what it acts on, in the order
+    /// one is shown after a name Ren reads no effect from.
+    const DETAILS: [&'static str; 6] = [
+        "file_path",
+        "path",
+        "pattern",
+        "url",
+        "query",
+        "description",
+    ];
+
+    /// The tool `name` that `harness` ran with `input`: what it does, read
+    /// as Ren reads the same tool on the wire; with none read, its name
+    /// followed by what its input names.
+    pub(crate) fn tool(
+        harness: Harness,
+        name: &str,
+        input: &serde_json::Value,
+        status: ItemStatus,
+    ) -> Self {
+        let effects = harness.effects(&ToolUse {
+            id: None,
+            kind: "tool_use".to_owned(),
+            name: name.to_owned(),
+            input: ToolInput::Json(input.clone()),
+        });
+        let name = match (
+            effects.is_empty(),
+            Self::DETAILS
+                .into_iter()
+                .find_map(|key| input.get(key).and_then(serde_json::Value::as_str)),
+        ) {
+            (true, Some(detail)) => format!("{name} {detail}"),
+            (true, None) | (false, _) => name.to_owned(),
+        };
+        Self::Tool {
+            name,
+            effects,
+            status,
+        }
+    }
 }
 
 impl ItemStatus {
@@ -730,8 +843,8 @@ pub enum CommandRefused {
 #[cfg(test)]
 mod tests {
     use super::{
-        ApprovalAsk, ApprovalId, DriveEvent, DriveItem, ItemId, ItemKind, ItemPhase, ItemRead,
-        ItemStatus, RawLine, Retry, TurnEnd, Unreadable,
+        ApprovalAsk, ApprovalId, CommandIntent, CommandPart, DriveEvent, DriveItem, ItemId,
+        ItemKind, ItemPhase, ItemRead, ItemStatus, RawLine, Retry, TurnEnd, Unreadable,
     };
 
     #[test]
@@ -768,6 +881,98 @@ mod tests {
         assert_eq!(content[2]["data"], "kept");
     }
 
+    /// A command stored before Ren read its intent reads as unsaid; one with
+    /// parts reads back whole, a part of an unknown kind kept as it came.
+    #[test]
+    fn a_commands_intent_reads_back_and_older_ones_are_unsaid() {
+        let older: ItemRead = serde_json::from_value(serde_json::json!({
+            "as": "command", "command": "ls", "status": "completed",
+            "output": null, "exit_code": 0
+        }))
+        .unwrap();
+        assert!(matches!(
+            older,
+            ItemRead::Command {
+                intent: CommandIntent::Unsaid,
+                ..
+            }
+        ));
+        let unsaid = serde_json::to_value(&older).unwrap();
+        assert!(unsaid.get("intent").is_none(), "nothing written for unsaid");
+        let read = ItemRead::Command {
+            command: "sed -n 1,9p a.rs && rg x".into(),
+            intent: CommandIntent::Parts {
+                parts: vec![
+                    CommandPart::Read {
+                        command: "sed -n 1,9p a.rs".into(),
+                        path: "/work/acme/a.rs".into(),
+                        name: "a.rs".into(),
+                    },
+                    CommandPart::Unrecognized {
+                        raw: serde_json::json!({ "type": "teleport", "command": "rg x" }),
+                    },
+                ],
+            },
+            status: ItemStatus::Completed,
+            output: None,
+            exit_code: Some(0),
+        };
+        let back: ItemRead = serde_json::from_value(serde_json::to_value(&read).unwrap()).unwrap();
+        assert_eq!(back, read);
+        assert_eq!(
+            CommandIntent::described(Some("  ")),
+            CommandIntent::Unsaid,
+            "blank words say nothing"
+        );
+    }
+
+    /// A tool reads as what it does, the way Ren reads it on the wire; one
+    /// Ren reads nothing from keeps what its input names in its name, and
+    /// a tool stored before Ren read effects reads with none.
+    #[test]
+    fn a_tool_reads_as_its_effects_or_keeps_its_detail() {
+        use crate::Harness;
+        use crate::tools::{EffectKind, ToolEffect};
+        let read = ItemRead::tool(
+            Harness::ClaudeCode,
+            "Read",
+            &serde_json::json!({ "file_path": "/work/acme/a.rs", "offset": 10 }),
+            ItemStatus::InProgress,
+        );
+        assert_eq!(
+            read,
+            ItemRead::Tool {
+                name: "Read".into(),
+                effects: vec![ToolEffect {
+                    kind: EffectKind::ReadFile,
+                    target: "/work/acme/a.rs".into(),
+                }],
+                status: ItemStatus::InProgress,
+            }
+        );
+        let unknown = ItemRead::tool(
+            Harness::ClaudeCode,
+            "TodoWrite",
+            &serde_json::json!({ "description": "plan the fix" }),
+            ItemStatus::Completed,
+        );
+        assert_eq!(
+            unknown,
+            ItemRead::Tool {
+                name: "TodoWrite plan the fix".into(),
+                effects: Vec::new(),
+                status: ItemStatus::Completed,
+            }
+        );
+        let older: ItemRead = serde_json::from_value(serde_json::json!({
+            "as": "tool", "name": "Read /work/acme/a.rs", "status": "completed"
+        }))
+        .unwrap();
+        assert!(matches!(older, ItemRead::Tool { effects, .. } if effects.is_empty()));
+        let back: ItemRead = serde_json::from_value(serde_json::to_value(&read).unwrap()).unwrap();
+        assert_eq!(back, read);
+    }
+
     /// What the daemon sends on its run feed reads back as the same events,
     /// unknown kinds and statuses keeping the client's own names.
     #[test]
@@ -782,6 +987,9 @@ mod tests {
                     kind: ItemKind::CommandExecution,
                     read: ItemRead::Command {
                         command: "cargo test".into(),
+                        intent: CommandIntent::Described {
+                            text: "Run the tests".into(),
+                        },
                         status: ItemStatus::Other("queued".into()),
                         output: Some("ok".into()),
                         exit_code: Some(0),

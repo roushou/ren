@@ -344,8 +344,11 @@ it came. Entries are written through the recorder like bodies, never
 blocking forwarding: without queue room an entry is counted as omitted.
 
 `GET /api/runs/{run-id}/conversation` answers `{api_version, entries,
-earlier}`. Each entry is `{run, seq, at, turn, event}`, where `event` is the
-event as the run feed sends it. The conversation includes the runs before
+earlier}`. Each entry is `{run, seq, at, started_at, turn, event}`, where
+`event` is the event as the run feed sends it. An item reported again (a
+command that finished, a reply that completed) is one entry as it last
+stood: `at` is when it was last reported and `started_at` when it was first
+(the same for entries stored before Ren kept both). The conversation includes the runs before
 this one on the same client thread (a resumed conversation reads as one), up
 to the newest 20,000 entries; `earlier` says older ones were left out.
 Deleting a run deletes its conversation.
@@ -601,8 +604,20 @@ with its `command`, `cwd`, and `reason`, a `file_change` with its
 `{"kind": "event", run, event}`, where `event` is what the agent reported: its
 `delta` text, `item`s (each with its `kind`, its `read`, what Ren read of it
 the same way for every client: `{"as": "prompt"|"reply"|"plan", text}`,
-`{"as": "command", command, status, output, exit_code}`,
-`{"as": "file_change", paths, status}`, `{"as": "tool", name, status}`,
+`{"as": "command", command, intent, status, output, exit_code}`, where `intent`
+is what the client said the command is for, left out when it said nothing:
+`{"said": "described", text}` (Claude Code's and OpenCode's description of a
+shell command) or `{"said": "parts", parts}` (Codex's reading of its parts,
+each `{"part": "read", command, path, name}`, `{"part": "list_files", command,
+path}`, `{"part": "search", command, query, path}`, `{"part": "unknown",
+command}`, or `{"part": "unrecognized", raw}`, a kind Ren does not know, as
+Codex sent it),
+`{"as": "file_change", paths, status}`, `{"as": "tool", name, effects,
+status}` (`effects`, what the tool does as Ren reads any tool call, each
+`{kind, target}` with `kind` one of `read_file`, `write_file`, `run_command`,
+`search`, `delegate`, and `fetch`, left out when none is read; `name` is the
+client's name for the tool, followed by what its input names when no effect
+is read),
 `{"as": "reasoning"}`, or `{"as": "unread"}`; and its `body` as the client
 described it), `approval` requests, `turn_started` and `turn_ended`, and
 `error`s. Every event but the streamed `delta` text is also stored, as the
@@ -671,6 +686,15 @@ A client sitting idle between turns for ten minutes is stopped: its run ends
 `idled` (shown as Resting), and its session goes on, its next prompt starting
 the client again to resume the conversation. A draft never asked anything and
 holding no image is discarded instead.
+
+In the web UI's conversation, the steps between two things the agent said
+(commands, other tools, file changes) fold into one line of what they did,
+such as "Read parser.rs ×2 · Searched “todo!” · Ran 1 command". Each step is
+read from what its client said where it said something (a command's
+description, Codex's parts of it, a tool's effects), and from the command as
+written otherwise. A group stays open while a step in it runs or after one
+failed, and opens to a row per step; a command's row opens to the command
+exactly as run and its output.
 
 In the web UI, what is written while a turn runs is queued for after it (Enter),
 shown under the conversation, and can be taken back to edit; it can instead go

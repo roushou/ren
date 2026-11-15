@@ -489,6 +489,10 @@ dependencies under "Crates" below. Read the code for current module ownership.
   client's own login (its link out, the page's code back),
   `src/lib/attachments.ts` the composer's images (the `Tray` of uploads,
   and the `Gallery` that finds a sent image's thumbnail by its hash),
+  `src/lib/steps.ts` the conversation's steps (`Steps`: each command, tool,
+  and file change read as what it did, from what its client said, and the
+  steps between two things said grouped and summed up in a line, drawn by
+  `StepGroup.svelte`),
   `src/lib/mention.ts` the composer's offers (the client's commands after
   `/` or `$`, the folder's files after `@`), `src/lib/briefing.ts` Ren's side
   of Redline (`Briefing`: the open sessions in Ren's checkout,

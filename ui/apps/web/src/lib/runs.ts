@@ -6,10 +6,12 @@
 import {
   API_VERSION,
   RecordingId,
+  toolEffect,
   versioned,
   type Harness,
   type NativeThreadId,
   type NativeTurnId,
+  type ToolEffect,
   type UnixMillis,
 } from './api.ts';
 import {
@@ -159,12 +161,15 @@ export type ItemRead =
   | {
       as: 'command';
       command: string;
+      intent: CommandIntent;
       status: ItemStatus;
       output: string | null;
       exit_code: number | null;
     }
   | { as: 'file_change'; paths: string[]; status: ItemStatus }
-  | { as: 'tool'; name: string; status: ItemStatus }
+  /** Another tool: its name as the client gave it, and what it does as Ren
+   * reads it (none for items stored before Ren read them). */
+  | { as: 'tool'; name: string; effects: ToolEffect[]; status: ItemStatus }
   /** Nothing read, or a reading a newer daemon gives: shown by the item's kind. */
   | { as: 'unread' };
 
@@ -306,6 +311,66 @@ const runState: Decoder<RunState> = (value, path) => {
   }
 };
 
+/** One part of a command as its client read it (Codex's `commandActions`). */
+export type CommandPart =
+  | { part: 'read'; command: string; path: string; name: string }
+  | { part: 'list_files'; command: string; path: string | null }
+  | { part: 'search'; command: string; query: string | null; path: string | null }
+  /** A part its client could not read, or of a kind this UI does not know. */
+  | { part: 'unknown'; command: string | null };
+
+/** What a command is for, in its client's terms. */
+export type CommandIntent =
+  | { said: 'unsaid' }
+  | { said: 'described'; text: string }
+  | { said: 'parts'; parts: CommandPart[] };
+
+const commandPart: Decoder<CommandPart> = (value, path) => {
+  if (!isRecord(value)) return { part: 'unknown', command: null };
+  const at = (key: string) => `${path}.${key}`;
+  const command = () => string(value.command, at('command'));
+  switch (value.part) {
+    case 'read':
+      return {
+        part: 'read',
+        command: command(),
+        path: string(value.path, at('path')),
+        name: string(value.name, at('name')),
+      };
+    case 'list_files':
+      return {
+        part: 'list_files',
+        command: command(),
+        path: optionalString(value.path, at('path')),
+      };
+    case 'search':
+      return {
+        part: 'search',
+        command: command(),
+        query: optionalString(value.query, at('query')),
+        path: optionalString(value.path, at('path')),
+      };
+    case 'unknown':
+      return { part: 'unknown', command: command() };
+    default: {
+      const raw = isRecord(value.raw) ? value.raw.command : value.command;
+      return { part: 'unknown', command: typeof raw === 'string' ? raw : null };
+    }
+  }
+};
+
+const commandIntent: Decoder<CommandIntent> = (value, path) => {
+  if (!isRecord(value)) return { said: 'unsaid' };
+  switch (value.said) {
+    case 'described':
+      return { said: 'described', text: string(value.text, `${path}.text`) };
+    case 'parts':
+      return { said: 'parts', parts: array(commandPart)(value.parts, `${path}.parts`) };
+    default:
+      return { said: 'unsaid' };
+  }
+};
+
 const itemRead: Decoder<ItemRead> = (value, path) => {
   if (!isRecord(value)) return { as: 'unread' };
   const at = (key: string) => `${path}.${key}`;
@@ -326,6 +391,7 @@ const itemRead: Decoder<ItemRead> = (value, path) => {
       return {
         as: 'command',
         command: string(value.command, at('command')),
+        intent: commandIntent(value.intent, at('intent')),
         status: status(),
         output: optionalString(value.output, at('output')),
         exit_code: value.exit_code == null ? null : integer(value.exit_code, at('exit_code')),
@@ -337,7 +403,12 @@ const itemRead: Decoder<ItemRead> = (value, path) => {
         status: status(),
       };
     case 'tool':
-      return { as: 'tool', name: string(value.name, at('name')), status: status() };
+      return {
+        as: 'tool',
+        name: string(value.name, at('name')),
+        effects: array(toolEffect)(value.effects ?? [], at('effects')),
+        status: status(),
+      };
     default:
       return { as: 'unread' };
   }
@@ -1154,12 +1225,13 @@ export type Entry =
       kind: 'command';
       item: ItemId;
       command: string;
+      intent: CommandIntent;
       status: string;
       output: string | null;
       exit: number | null;
     }
   | { kind: 'file_change'; item: ItemId; paths: string[]; status: string }
-  | { kind: 'tool'; item: ItemId; name: string; done: boolean }
+  | { kind: 'tool'; item: ItemId; name: string; effects: ToolEffect[]; done: boolean }
   | { kind: 'turn_end'; turn: NativeTurnId; end: TurnEnd }
   | { kind: 'notice'; tone: 'warn' | 'danger'; text: string };
 
@@ -1323,6 +1395,7 @@ export class Transcript {
           kind: 'command',
           item: item.id,
           command: read.command,
+          intent: read.intent,
           status: read.status,
           output: read.output,
           exit: read.exit_code,
@@ -1335,10 +1408,10 @@ export class Transcript {
         entry = read.text ? { kind: 'message', item: item.id, text: read.text, done } : null;
         break;
       case 'tool':
-        entry = { kind: 'tool', item: item.id, name: read.name, done };
+        entry = { kind: 'tool', item: item.id, name: read.name, effects: read.effects, done };
         break;
       case 'unread':
-        entry = { kind: 'tool', item: item.id, name: item.kind, done };
+        entry = { kind: 'tool', item: item.id, name: item.kind, effects: [], done };
         break;
       default:
         return assertNever(read);

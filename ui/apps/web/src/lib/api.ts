@@ -924,6 +924,8 @@ export interface ToolEffect {
   /** The path, command, pattern, task, or URL the tool's input names. */
   target: string;
 }
+/** What a tool does, as Ren reads it: on the wire, or in a driven run. */
+export const toolEffect = object<ToolEffect>({ kind: label(effectKinds), target: string });
 /** A tool result as the client reported it. */
 export interface ToolResultView {
   status: Stored<ResultStatus>;
@@ -1090,7 +1092,7 @@ const callActivity = object<CallActivity>({
     object<ToolCallActivity>({
       id: nullable(string),
       name: string,
-      effects: array(object<ToolEffect>({ kind: label(effectKinds), target: string })),
+      effects: array(toolEffect),
       input: excerpt,
       result: nullable(object<ToolResultView>({ status: label(resultStatuses), output: excerpt })),
     }),

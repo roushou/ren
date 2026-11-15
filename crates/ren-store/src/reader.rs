@@ -1038,7 +1038,7 @@ impl Reader {
         // The runs that make the conversation, in the order they started.
         let chain = "SELECT r.id, r.started_at FROM runs r, runs this WHERE this.id = ?1 AND (r.id = this.id OR (this.thread IS NOT NULL AND r.thread = this.thread AND r.started_at <= this.started_at))";
         let rows = sqlx::query(AssertSqlSafe(format!(
-            "SELECT * FROM (SELECT e.run, e.seq, e.at, e.turn, e.event, chain.started_at FROM run_entries e JOIN ({chain}) chain ON chain.id = e.run ORDER BY chain.started_at DESC, e.run DESC, e.seq DESC LIMIT ?2) ORDER BY started_at, run, seq"
+            "SELECT * FROM (SELECT e.run, e.seq, e.at, e.started_at AS entry_started_at, e.turn, e.event, chain.started_at FROM run_entries e JOIN ({chain}) chain ON chain.id = e.run ORDER BY chain.started_at DESC, e.run DESC, e.seq DESC LIMIT ?2) ORDER BY started_at, run, seq"
         )))
         .bind(&id)
         .bind(i64::from(limit) + 1)
@@ -1055,6 +1055,7 @@ impl Reader {
                     run: columns.id("run")?,
                     seq: columns.count("seq")?,
                     at: columns.time("at")?,
+                    started_at: columns.time("entry_started_at")?,
                     turn: columns.text("turn")?,
                     event: serde_json::from_str(&event)
                         .map_err(|_| StoreError::Corrupt("run entry"))?,

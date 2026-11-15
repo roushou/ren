@@ -946,7 +946,7 @@ impl MetadataTx<'_> {
             .unwrap_or_default()
             .to_owned();
         sqlx::query(
-            "INSERT INTO run_entries(run, seq, at, turn, item, kind, event) VALUES (?1, (SELECT COALESCE(MAX(seq), 0) + 1 FROM run_entries WHERE run = ?1), ?2, ?3, ?4, ?5, ?6) ON CONFLICT(run, item) WHERE item IS NOT NULL DO UPDATE SET at = excluded.at, kind = excluded.kind, event = excluded.event",
+            "INSERT INTO run_entries(run, seq, at, started_at, turn, item, kind, event) VALUES (?1, (SELECT COALESCE(MAX(seq), 0) + 1 FROM run_entries WHERE run = ?1), ?2, ?2, ?3, ?4, ?5, ?6) ON CONFLICT(run, item) WHERE item IS NOT NULL DO UPDATE SET at = excluded.at, kind = excluded.kind, event = excluded.event",
         )
         .bind(&run)
         .bind(i64::try_from(entry.at.wall.as_millis()).unwrap_or(i64::MAX))

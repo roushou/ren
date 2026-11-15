@@ -194,6 +194,7 @@ test('the transcript streams a reply, then commands and file changes as items up
       kind: 'command',
       item: 'c1',
       command: 'cargo test',
+      intent: { said: 'unsaid' },
       status: 'completed',
       output: 'ok',
       exit: 0,
@@ -211,6 +212,42 @@ test('the transcript streams a reply, then commands and file changes as items up
     }),
   );
   assert.deepEqual(done.entries[3], { kind: 'message', item: 'm1', text: 'Fixed it.', done: true });
+});
+
+test('a tool keeps what it does as Ren read it, and an older one reads with none', () => {
+  const read = event({
+    kind: 'item',
+    phase: 'started',
+    item: {
+      id: 't1',
+      kind: 'Read',
+      read: {
+        as: 'tool',
+        name: 'Read',
+        effects: [{ kind: 'read_file', target: '/work/acme/a.rs' }],
+        status: 'in_progress',
+      },
+    },
+  });
+  const older = event({
+    kind: 'item',
+    phase: 'completed',
+    item: {
+      id: 't2',
+      kind: 'Grep',
+      read: { as: 'tool', name: 'Grep TODO', status: 'completed' },
+    },
+  });
+  assert.deepEqual(new Transcript().apply(read).apply(older).entries, [
+    {
+      kind: 'tool',
+      item: 't1',
+      name: 'Read',
+      effects: [{ kind: 'read_file', target: '/work/acme/a.rs' }],
+      done: false,
+    },
+    { kind: 'tool', item: 't2', name: 'Grep TODO', effects: [], done: true },
+  ]);
 });
 
 test('an echoed prompt keeps what each image sent with it is', () => {

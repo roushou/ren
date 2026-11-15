@@ -19,9 +19,9 @@ use crate::{
     attachment::Attachment,
     commands::{ClientCommand, CommandKind, Sigil},
     drive::{
-        ApprovalAsk, ApprovalId, CommandRefused, Decision, DriveCommand, DriveEvent, DriveItem,
-        ItemId, ItemKind, ItemPhase, ItemRead, ItemStatus, Opening, Prompt, RawLine, Received,
-        RequestKind, Retry, TurnEnd, Unreadable,
+        ApprovalAsk, ApprovalId, CommandIntent, CommandRefused, Decision, DriveCommand, DriveEvent,
+        DriveItem, ItemId, ItemKind, ItemPhase, ItemRead, ItemStatus, Opening, Prompt, RawLine,
+        Received, RequestKind, Retry, TurnEnd, Unreadable,
     },
     lines::{Framed, Line},
     models::{DefaultChoice, Listing, Model, ModelId, ModelListing},
@@ -638,14 +638,21 @@ impl ClaudeStreamJson {
             };
             let output = Self::output(part, &message["tool_use_result"]);
             let read = match call.read {
-                ItemRead::Command { command, .. } => ItemRead::Command {
+                ItemRead::Command {
+                    command, intent, ..
+                } => ItemRead::Command {
                     exit_code: failed.then(|| Self::exit_code(output.as_deref())).flatten(),
                     command,
+                    intent,
                     status,
                     output,
                 },
                 ItemRead::FileChange { paths, .. } => ItemRead::FileChange { paths, status },
-                ItemRead::Tool { name, .. } => ItemRead::Tool { name, status },
+                ItemRead::Tool { name, effects, .. } => ItemRead::Tool {
+                    name,
+                    effects,
+                    status,
+                },
                 other @ (ItemRead::Prompt { .. }
                 | ItemRead::Reply { .. }
                 | ItemRead::Reasoning
@@ -815,6 +822,9 @@ impl ClaudeStreamJson {
                 ItemKind::CommandExecution,
                 ItemRead::Command {
                     command: text("command").unwrap_or_default(),
+                    intent: CommandIntent::described(
+                        input.get("description").and_then(Value::as_str),
+                    ),
                     status: ItemStatus::InProgress,
                     output: None,
                     exit_code: None,
@@ -830,29 +840,20 @@ impl ClaudeStreamJson {
                     status: ItemStatus::InProgress,
                 },
             ),
-            "WebSearch" => (
-                ItemKind::WebSearch,
-                ItemRead::Tool {
-                    name: text("query").map_or_else(
-                        || "web search".to_owned(),
-                        |query| format!("search: {query}"),
-                    ),
-                    status: ItemStatus::InProgress,
-                },
-            ),
             other => (
-                if other.starts_with("mcp__") {
+                if other == "WebSearch" {
+                    ItemKind::WebSearch
+                } else if other.starts_with("mcp__") {
                     ItemKind::McpToolCall
                 } else {
                     ItemKind::Other(other.to_owned())
                 },
-                ItemRead::Tool {
-                    name: match Self::detail(input) {
-                        Some(detail) => format!("{other} {detail}"),
-                        None => other.to_owned(),
-                    },
-                    status: ItemStatus::InProgress,
-                },
+                ItemRead::tool(
+                    crate::Harness::ClaudeCode,
+                    other,
+                    input,
+                    ItemStatus::InProgress,
+                ),
             ),
         }
     }
@@ -1300,6 +1301,7 @@ mod tests {
                 if item.kind == ItemKind::CommandExecution
                     && item.read == ItemRead::Command {
                         command: "cargo test".into(),
+                        intent: crate::drive::CommandIntent::Described { text: "Run tests".into() },
                         status: ItemStatus::InProgress,
                         output: None,
                         exit_code: None,
@@ -1318,6 +1320,7 @@ mod tests {
             [DriveEvent::Item { phase: ItemPhase::Completed, item }]
                 if item.id.as_str() == "toolu_1" && item.read == ItemRead::Command {
                     command: "cargo test".into(),
+                    intent: crate::drive::CommandIntent::Described { text: "Run tests".into() },
                     status: ItemStatus::Failed,
                     output: Some("Exit code 101\ntest failed".into()),
                     exit_code: Some(101),

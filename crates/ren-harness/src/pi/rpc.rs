@@ -18,8 +18,9 @@ use crate::{
     attachment::Attachment,
     commands::{ClientCommand, CommandKind, Sigil},
     drive::{
-        CommandRefused, DriveCommand, DriveEvent, DriveItem, ItemId, ItemKind, ItemPhase, ItemRead,
-        ItemStatus, Opening, Prompt, RawLine, Received, RequestKind, Retry, TurnEnd, Unreadable,
+        CommandIntent, CommandRefused, DriveCommand, DriveEvent, DriveItem, ItemId, ItemKind,
+        ItemPhase, ItemRead, ItemStatus, Opening, Prompt, RawLine, Received, RequestKind, Retry,
+        TurnEnd, Unreadable,
     },
     lines::{Framed, Line},
     models::{DefaultChoice, Listing, Model, ModelId, ModelListing},
@@ -648,6 +649,7 @@ impl PiRpc {
                 ItemKind::CommandExecution,
                 ItemRead::Command {
                     command: text("command").unwrap_or_default(),
+                    intent: CommandIntent::Unsaid,
                     status: ItemStatus::InProgress,
                     output: None,
                     exit_code: None,
@@ -662,16 +664,7 @@ impl PiRpc {
             ),
             other => (
                 ItemKind::Other(other.to_owned()),
-                ItemRead::Tool {
-                    name: match ["path", "pattern", "url", "query"]
-                        .into_iter()
-                        .find_map(text)
-                    {
-                        Some(detail) => format!("{other} {detail}"),
-                        None => other.to_owned(),
-                    },
-                    status: ItemStatus::InProgress,
-                },
+                ItemRead::tool(crate::Harness::Pi, other, args, ItemStatus::InProgress),
             ),
         }
     }
@@ -690,8 +683,11 @@ impl PiRpc {
         };
         let result = &message["result"];
         let read = match call.read {
-            ItemRead::Command { command, .. } => ItemRead::Command {
+            ItemRead::Command {
+                command, intent, ..
+            } => ItemRead::Command {
                 command,
+                intent,
                 status,
                 output: result
                     .get("content")
@@ -707,7 +703,11 @@ impl PiRpc {
                 exit_code: None,
             },
             ItemRead::FileChange { paths, .. } => ItemRead::FileChange { paths, status },
-            ItemRead::Tool { name, .. } => ItemRead::Tool { name, status },
+            ItemRead::Tool { name, effects, .. } => ItemRead::Tool {
+                name,
+                effects,
+                status,
+            },
             other @ (ItemRead::Prompt { .. }
             | ItemRead::Reply { .. }
             | ItemRead::Reasoning
@@ -1138,6 +1138,7 @@ mod tests {
                     ItemKind::CommandExecution,
                     ItemRead::Command {
                         command: "cargo test".into(),
+                        intent: crate::drive::CommandIntent::Unsaid,
                         status: ItemStatus::InProgress,
                         output: None,
                         exit_code: None,
@@ -1149,6 +1150,7 @@ mod tests {
                     ItemKind::CommandExecution,
                     ItemRead::Command {
                         command: "cargo test".into(),
+                        intent: crate::drive::CommandIntent::Unsaid,
                         status: ItemStatus::Completed,
                         output: Some("ok".into()),
                         exit_code: None,
@@ -1176,8 +1178,13 @@ mod tests {
                 (
                     ItemPhase::Started,
                     ItemKind::Other("grep".into()),
+                    // What it does is read, so its name is Pi's alone.
                     ItemRead::Tool {
-                        name: "grep TODO".into(),
+                        name: "grep".into(),
+                        effects: vec![crate::tools::ToolEffect {
+                            kind: crate::tools::EffectKind::Search,
+                            target: "TODO".into(),
+                        }],
                         status: ItemStatus::InProgress,
                     },
                     "call_3".into(),
