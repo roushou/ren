@@ -21,8 +21,14 @@ pub enum Head {
 }
 
 /// A full commit id: 40 (SHA-1) or 64 (SHA-256) hex digits, lowercase.
+/// Parsed from text with [`str::parse`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CommitId(String);
+
+/// Text that is not a full commit id, kept as it was.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("not a full commit id: {0:?}")]
+pub struct NotACommitId(pub String);
 
 impl Repository {
     /// `dir`'s repository, read from disk. Its `.git` is a folder, or in a
@@ -80,16 +86,23 @@ impl Head {
             let name = reference.strip_prefix("refs/heads/").unwrap_or(reference);
             return (!name.is_empty()).then(|| Self::Branch(name.to_owned()));
         }
-        CommitId::parse(text).map(Self::Detached)
+        text.parse().ok().map(Self::Detached)
+    }
+}
+
+impl std::str::FromStr for CommitId {
+    type Err = NotACommitId;
+
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        if matches!(text.len(), 40 | 64) && text.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            Ok(Self(text.to_ascii_lowercase()))
+        } else {
+            Err(NotACommitId(text.to_owned()))
+        }
     }
 }
 
 impl CommitId {
-    pub(crate) fn parse(text: &str) -> Option<Self> {
-        (matches!(text.len(), 40 | 64) && text.bytes().all(|byte| byte.is_ascii_hexdigit()))
-            .then(|| Self(text.to_ascii_lowercase()))
-    }
-
     /// Its first `digits` hex digits, as people read it.
     pub fn abbreviated(&self, digits: usize) -> &str {
         self.0.get(..digits).unwrap_or(&self.0)

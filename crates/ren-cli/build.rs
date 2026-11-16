@@ -6,7 +6,7 @@
 //! including `cargo install --git`, has git. Untracked files don't count as
 //! modifications: cargo writes one into its own git checkouts.
 
-use ren_git::{Git, Tree};
+use ren_git::{CommitId, Git, Tree};
 use std::path::{Path, PathBuf};
 
 /// Where the revision comes from.
@@ -19,7 +19,7 @@ enum Source {
 
 /// What the build script found.
 struct Revision {
-    commit: String,
+    commit: CommitId,
     tree: Tree,
 }
 
@@ -56,7 +56,7 @@ impl Source {
                 let text = std::fs::read_to_string(path).ok()?;
                 let info: VcsInfo = serde_json::from_str(&text).ok()?;
                 Some(Revision {
-                    commit: info.git.sha1,
+                    commit: info.git.sha1.parse().ok()?,
                     tree: if info.git.dirty {
                         Tree::Modified
                     } else {
@@ -68,7 +68,7 @@ impl Source {
                 let (git, dir) = (Git::inherited(), Path::new(Self::MANIFEST_DIR));
                 Self::watch_git(&git, dir);
                 Some(Revision {
-                    commit: git.head_commit(dir).ok()?.to_string(),
+                    commit: git.head_commit(dir).ok()?,
                     tree: git.tree(dir).ok()?,
                 })
             }
@@ -93,7 +93,7 @@ fn main() {
         Some(Revision {
             commit,
             tree: Tree::Clean,
-        }) => commit,
+        }) => commit.to_string(),
         Some(Revision {
             commit,
             tree: Tree::Modified,

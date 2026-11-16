@@ -1,4 +1,4 @@
-use crate::{CommitId, Exit, GitError, Repository};
+use crate::{CommitId, Exit, GitError, NotACommitId, Repository};
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
@@ -73,10 +73,12 @@ impl Git {
     pub fn head_commit(&self, dir: &Path) -> Result<CommitId, GitError> {
         let args = ["rev-parse", "--verify", "HEAD"];
         let output = self.answer(dir, &args)?;
-        CommitId::parse(&output).ok_or_else(|| GitError::Unexpected {
-            args: args.join(" "),
-            output,
-        })
+        output
+            .parse()
+            .map_err(|_: NotACommitId| GitError::Unexpected {
+                args: args.join(" "),
+                output,
+            })
     }
 
     /// Whether `dir`'s tracked files differ from its commit.

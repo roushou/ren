@@ -1,4 +1,4 @@
-use crate::{CommitId, Exit, Git, GitError, Head, Published, Repository, Tree};
+use crate::{CommitId, Exit, Git, GitError, Head, NotACommitId, Published, Repository, Tree};
 use std::path::Path;
 
 /// A repository at `dir` whose `HEAD` holds `head`, written by hand.
@@ -38,6 +38,21 @@ fn a_repository_reads_as_its_head_says() {
         assert_eq!(at(garbage), Repository::Unreadable, "{garbage:?}");
     }
     assert_eq!(Git::repository(dir.path()), Repository::None);
+}
+
+#[test]
+fn a_commit_id_parses_only_whole() {
+    let id: CommitId = "0123456789ABCDEF0123456789abcdef01234567".parse().unwrap();
+    assert_eq!(id.to_string(), "0123456789abcdef0123456789abcdef01234567");
+    assert!("f".repeat(64).parse::<CommitId>().is_ok());
+    for text in [
+        "",
+        "0123456",
+        " 0123456789abcdef0123456789abcdef01234567",
+        &"g".repeat(40),
+    ] {
+        assert_eq!(text.parse::<CommitId>(), Err(NotACommitId(text.to_owned())));
+    }
 }
 
 #[test]
@@ -152,7 +167,7 @@ esac"
     .unwrap();
     assert_eq!(
         git.head_commit(dir.path()).unwrap(),
-        CommitId::parse(full).unwrap()
+        full.parse::<CommitId>().unwrap()
     );
     assert_eq!(git.tree(dir.path()).unwrap(), Tree::Modified);
     assert_eq!(git.published(dir.path()).unwrap(), Published::LocalOnly);
