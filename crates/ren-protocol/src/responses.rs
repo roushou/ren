@@ -2,7 +2,7 @@
 //! public API and the ChatGPT Codex backend.
 //!
 //! The same event JSON arrives as SSE `data` or, over WebSocket, as one text
-//! message per event, so [`Event::decode`] takes only the payload and an
+//! message per event, so [`Event::decode`] takes only the parsed payload and an
 //! optional transport-level name. Vocabularies follow the documented sets
 //! (checked 2026-11-04); anything else is kept as [`Kind::Unknown`].
 
@@ -10,7 +10,7 @@ use super::{
     inspect::{
         EventClass, InputAccounting, KindFamily, ModelOutcome, Observation, ToolCall, Usage,
     },
-    json::{DecodeError, Field, JsonDocument, JsonObject, Kind},
+    json::{DecodeError, Field, Frame, JsonObject, Kind},
     sse::EventName,
     text::WireText,
 };
@@ -355,11 +355,12 @@ pub enum Event {
 impl Event {
     /// Decode one event payload. The JSON `type` field is authoritative; an
     /// SSE event name is used only when `type` is absent.
-    pub fn decode(name: EventName<'_>, data: &[u8]) -> Result<Self, DecodeError> {
-        if data == b"[DONE]" {
-            return Ok(Self::DoneSentinel);
-        }
-        let document = JsonDocument::parse(data)?;
+    pub fn decode(name: EventName<'_>, frame: &Frame) -> Result<Self, DecodeError> {
+        let document = match frame {
+            Frame::Done => return Ok(Self::DoneSentinel),
+            Frame::Json(document) => document,
+            Frame::NotJson => return Err(DecodeError::NotJson),
+        };
         let object = document.object()?;
         let kind = match object.label::<EventKind>("type") {
             Field::Present(kind) => kind,
@@ -445,8 +446,8 @@ impl Event {
 pub struct Document(Response);
 
 impl Document {
-    pub fn decode(bytes: &[u8]) -> Result<Self, DecodeError> {
-        let document = JsonDocument::parse(bytes)?;
+    pub fn decode(frame: &Frame) -> Result<Self, DecodeError> {
+        let document = frame.document()?;
         Ok(Self(Response::read(document.object()?)))
     }
 
