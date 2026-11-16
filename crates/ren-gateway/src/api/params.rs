@@ -29,7 +29,7 @@ impl RawLabel {
 pub(super) struct RawCallQuery {
     limit: Option<u32>,
     after: Option<String>,
-    session: RawLabel,
+    recording: RawLabel,
     client: RawLabel,
     user: RawLabel,
     kind: RawLabel,
@@ -51,7 +51,7 @@ pub(super) struct RawPageQuery {
     pub after: Option<String>,
 }
 
-/// `GET /api/sessions` and `/api/runs` parameters: a page of one shelf.
+/// `GET /api/recordings` and `/api/runs` parameters: a page of one shelf.
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields, default)]
 pub(super) struct RawShelfQuery {
@@ -92,7 +92,7 @@ impl TryFrom<RawUsageQuery> for TimeRange {
 #[serde(deny_unknown_fields, default)]
 pub(super) struct RawSearchQuery {
     q: Option<String>,
-    session: RawLabel,
+    recording: RawLabel,
     client: RawLabel,
     field: RawLabel,
     from_ms: Option<u64>,
@@ -104,7 +104,7 @@ impl RawSearchQuery {
     pub fn parse(self) -> Result<SearchQuery, super::ApiError> {
         Ok(SearchQuery {
             terms: SearchTerms::parse(self.q.as_deref().unwrap_or_default())?,
-            session: self.session.parse()?,
+            recording: self.recording.parse()?,
             client: self.client.parse()?,
             field: self.field.parse()?,
             time: TimeRange::new(
@@ -120,7 +120,7 @@ impl RawSearchQuery {
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields, default)]
 pub(super) struct RawExposureQuery {
-    session: RawLabel,
+    recording: RawLabel,
     from_ms: Option<u64>,
     until_ms: Option<u64>,
     limit: Option<u32>,
@@ -129,7 +129,7 @@ pub(super) struct RawExposureQuery {
 impl RawExposureQuery {
     pub fn parse(self) -> Result<ExposureQuery, QueryError> {
         Ok(ExposureQuery {
-            session: self.session.parse()?,
+            recording: self.recording.parse()?,
             time: TimeRange::new(
                 self.from_ms.map(UnixMillis::from_millis),
                 self.until_ms.map(UnixMillis::from_millis),
@@ -167,7 +167,7 @@ impl TryFrom<RawCallQuery> for CallQuery {
             limit: raw.limit.map_or(Ok(PageLimit::DEFAULT), PageLimit::new)?,
             after: raw.after.as_deref().map(Cursor::from_str).transpose()?,
             filter: CallFilter {
-                session: raw.session.parse()?,
+                recording: raw.recording.parse()?,
                 client: raw.client.parse()?,
                 user: raw.user.parse()?,
                 kind: raw.kind.parse()?,

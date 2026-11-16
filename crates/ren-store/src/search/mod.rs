@@ -24,14 +24,15 @@ impl Reader {
     /// Matching texts, newest call first.
     pub async fn search(&self, query: &SearchQuery) -> Result<SearchPage, StoreError> {
         let mut sql = QueryBuilder::<Sqlite>::new(
-            "SELECT s.call, s.field, snippet(search, 0, '«', '»', '…', 24) AS snippet, c.session, c.turn, json_extract(c.attribution, '$.hint.source') AS source, c.started_at FROM search JOIN search_texts s ON s.id = search.rowid JOIN calls c ON c.id = s.call WHERE search MATCH ",
+            "SELECT s.call, s.field, snippet(search, 0, '«', '»', '…', 24) AS snippet, c.recording, c.turn, json_extract(c.attribution, '$.hint.source') AS source, c.started_at FROM search JOIN search_texts s ON s.id = search.rowid JOIN calls c ON c.id = s.call WHERE search MATCH ",
         );
         sql.push_bind(query.terms.expression());
         if let Some(field) = query.field {
             sql.push(" AND s.field = ").push_bind(field.label());
         }
-        if let Some(session) = query.session {
-            sql.push(" AND c.session = ").push_bind(session.to_string());
+        if let Some(recording) = query.recording {
+            sql.push(" AND c.recording = ")
+                .push_bind(recording.to_string());
         }
         if let Some(client) = query.client {
             CallQuery::push_client(&mut sql, client);
@@ -45,7 +46,7 @@ impl Reader {
             let columns = Columns(row);
             hits.push(SearchHit {
                 call: columns.id("call")?,
-                session: columns.optional_id("session")?,
+                recording: columns.optional_id("recording")?,
                 turn: columns.optional_id("turn")?,
                 client: Self::client(&columns)?,
                 started_at: columns.time("started_at")?,
@@ -62,10 +63,11 @@ impl Reader {
     /// Secrets calls carried, newest call first.
     pub async fn exposures(&self, query: &ExposureQuery) -> Result<Vec<ExposureView>, StoreError> {
         let mut sql = QueryBuilder::<Sqlite>::new(
-            "SELECT e.call, e.field, e.kind, e.hint, e.fingerprint, e.count, c.session, c.turn, json_extract(c.attribution, '$.hint.source') AS source, c.started_at FROM call_exposures e JOIN calls c ON c.id = e.call WHERE 1 = 1",
+            "SELECT e.call, e.field, e.kind, e.hint, e.fingerprint, e.count, c.recording, c.turn, json_extract(c.attribution, '$.hint.source') AS source, c.started_at FROM call_exposures e JOIN calls c ON c.id = e.call WHERE 1 = 1",
         );
-        if let Some(session) = query.session {
-            sql.push(" AND c.session = ").push_bind(session.to_string());
+        if let Some(recording) = query.recording {
+            sql.push(" AND c.recording = ")
+                .push_bind(recording.to_string());
         }
         query.time.push_started(&mut sql);
         sql.push(" ORDER BY c.started_at DESC, e.rowid LIMIT ")
@@ -78,7 +80,7 @@ impl Reader {
                 let columns = Columns(row);
                 Ok(ExposureView {
                     call: columns.id("call")?,
-                    session: columns.optional_id("session")?,
+                    recording: columns.optional_id("recording")?,
                     turn: columns.optional_id("turn")?,
                     client: Self::client(&columns)?,
                     started_at: columns.time("started_at")?,

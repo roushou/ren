@@ -273,10 +273,10 @@ export class Board {
   static byRecording(calls: CallView[]): Map<RecordingId, CallView[]> {
     const groups = new Map<RecordingId, CallView[]>();
     for (const call of calls) {
-      if (!call.session) continue;
-      const list = groups.get(call.session) ?? [];
+      if (!call.recording) continue;
+      const list = groups.get(call.recording) ?? [];
       list.push(call);
-      groups.set(call.session, list);
+      groups.set(call.recording, list);
     }
     for (const list of groups.values()) list.sort((a, b) => a.started_at - b.started_at);
     return groups;
@@ -289,7 +289,7 @@ export class Board {
   ): { turn: TurnId; signature: string }[] {
     return sessions.flatMap((session) => {
       const own = calls
-        .filter((call) => call.session === session)
+        .filter((call) => call.recording === session)
         .sort((a, b) => a.started_at - b.started_at);
       const turn = own.findLast((call) => call.turn !== null)?.turn ?? null;
       if (!turn) return [];
@@ -836,8 +836,8 @@ export class Feed {
     const sessions = new Map(input.sessions.map((session) => [session.id, session]));
     const of = (id: RecordingId | null) => (id ? (sessions.get(id) ?? null) : null);
     const callHref = (call: CallView) =>
-      call.session
-        ? `/recordings/${encodeURIComponent(call.session)}?call=${encodeURIComponent(call.id)}`
+      call.recording
+        ? `/recordings/${encodeURIComponent(call.recording)}?call=${encodeURIComponent(call.id)}`
         : null;
     const calm = (at: number) => at <= now && now - at <= Feed.calmMs;
     const items: FeedItem[] = [];
@@ -862,7 +862,7 @@ export class Feed {
       if (turn.prompt && turn.started_at !== null && calm(turn.started_at)) {
         items.push({
           key: `${turn.turn}:prompt`,
-          session: of(turn.session),
+          session: of(turn.recording),
           tone: 'neutral',
           text: `you: “${Feed.clip(turn.prompt.text, 60)}”`,
           detail: null,
@@ -880,7 +880,7 @@ export class Feed {
           const target = tool.effects[0]?.target ?? null;
           items.push({
             key: `${call.call}:${tool.id ?? position}:failed`,
-            session: of(turn.session),
+            session: of(turn.recording),
             tone: 'error',
             text: `${tool.name}${target ? ` ${Feed.clip(target, 40)}` : ''} failed`,
             detail: null,
@@ -898,7 +898,7 @@ export class Feed {
         if (call.status !== null || waited < Feed.waitMs) continue;
         items.push({
           key: `${call.id}:waiting`,
-          session: of(call.session),
+          session: of(call.recording),
           tone: waited >= Board.slowHeadMs ? 'warning' : 'neutral',
           text: `no response head after ${span(waited)}`,
           detail: call.model,
@@ -914,7 +914,7 @@ export class Feed {
       const tools = [...new Set(call.tool_names)];
       items.push({
         key: `${call.id}:done`,
-        session: of(call.session),
+        session: of(call.recording),
         tone: tools.length ? 'neutral' : 'success',
         text: tools.length
           ? `asked for ${tools.slice(0, 3).join(', ')}${tools.length > 3 ? ` +${tools.length - 3}` : ''}`
@@ -1277,7 +1277,7 @@ export class Band {
   static harnessOf(call: CallView, sessions: Map<RecordingId, RecordingView>): Harness | null {
     const source =
       call.attribution.hint?.source ??
-      (call.session ? sessions.get(call.session)?.source : undefined);
+      (call.recording ? sessions.get(call.recording)?.source : undefined);
     if (source === undefined) return null;
     const harness = Board.harness(source);
     return harness !== null && (HARNESSES as readonly string[]).includes(harness)

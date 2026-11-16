@@ -210,8 +210,8 @@ export interface RecordedRun {
   workdir: string;
   started_at: UnixMillis;
   thread: NativeThreadId | null;
-  /** The session its model traffic was recorded under, once a call was. */
-  session: RecordingId | null;
+  /** The recording its model traffic was recorded under, once a call was. */
+  recording: RecordingId | null;
   ended_at: UnixMillis | null;
   end: Stored<RunEnd> | null;
   exit: ProcessExit | null;
@@ -227,7 +227,7 @@ export interface RecordedRun {
 export type Shelf = 'current' | 'archived';
 
 /** What an archive or delete applies to. */
-export type HistorySubject = { kind: 'session'; id: RecordingId } | { kind: 'run'; id: RunId };
+export type HistorySubject = { kind: 'recording'; id: RecordingId } | { kind: 'run'; id: RunId };
 
 /** What a history edit does. */
 export type HistoryChange = 'archive' | 'unarchive' | 'delete';
@@ -507,7 +507,7 @@ const recordedRun = object<RecordedRun>({
   workdir: string,
   started_at: brandedCount<'UnixMillis'>(),
   thread: nullable(branded<'NativeThreadId'>()),
-  session: nullable(RecordingId.decode),
+  recording: nullable(RecordingId.decode),
   ended_at: nullable(brandedCount<'UnixMillis'>()),
   end: nullable(label(runEnds)),
   exit: nullable(processExit),
@@ -1069,7 +1069,7 @@ export class RunsClient {
    * when.
    */
   async edit(subject: HistorySubject, change: HistoryChange): Promise<void> {
-    const kind = subject.kind === 'session' ? 'sessions' : 'runs';
+    const kind = subject.kind === 'recording' ? 'recordings' : 'runs';
     await this.#send('POST', `/control/history/${kind}/${subject.id}/${change}`, {}, null);
   }
   /** Recorded runs on `shelf`, newest first, from the read-only management API. */

@@ -198,16 +198,16 @@ export class Attention {
     const found = input.exposures ?? [];
     const newest = found[0];
     if (!newest) return [];
-    const sessions = new Set(found.map((exposure) => exposure.session ?? exposure.call));
+    const recordings = new Set(found.map((exposure) => exposure.recording ?? exposure.call));
     const kinds = [...new Set(found.map((exposure) => secretKindLabel(exposure.kind)))];
     const fields = [...new Set(found.map((exposure) => searchFieldLabel(exposure.field)))];
-    const only = sessions.size === 1 && newest.session;
+    const only = recordings.size === 1 && newest.recording;
     return [
       {
         key: 'secrets',
         severity: 'error',
         title: `${Attention.count(found)} secret${found.length === 1 ? '' : 's'} exposed`,
-        detail: `${kinds.join(', ')} in ${fields.join(', ').toLowerCase()} · ${sessions.size} recording${sessions.size === 1 ? '' : 's'} · rotate ${found.length === 1 ? 'it' : 'them'}`,
+        detail: `${kinds.join(', ')} in ${fields.join(', ').toLowerCase()} · ${recordings.size} recording${recordings.size === 1 ? '' : 's'} · rotate ${found.length === 1 ? 'it' : 'them'}`,
         at: newest.started_at,
         marks: found.map((exposure) => Attention.along(exposure.started_at, input.now)),
         href: only

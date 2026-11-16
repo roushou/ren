@@ -421,7 +421,7 @@ impl Store {
         let over_bytes = self.disk_usage().await?.live_bytes() > policy.max_storage_bytes;
         let over_calls = retained.saturating_sub(policy.max_calls);
         let candidates = sqlx::query(
-            "SELECT id, channel, session, started_at FROM calls WHERE state <> ? ORDER BY started_at, id LIMIT ?",
+            "SELECT id, channel, recording, started_at FROM calls WHERE state <> ? ORDER BY started_at, id LIMIT ?",
         )
         .bind(CallState::Open.label())
         .bind(PRUNE_BATCH)
@@ -439,8 +439,8 @@ impl Store {
             }
             let call: String = row.try_get("id")?;
             let channel: String = row.try_get("channel")?;
-            let session: Option<String> = row.try_get("session")?;
-            tx.retire(&call, &channel, session.as_deref()).await?;
+            let recording: Option<String> = row.try_get("recording")?;
+            tx.retire(&call, &channel, recording.as_deref()).await?;
             pruned.calls = pruned.calls.saturating_add(1);
         }
         // Operator actions are few; keep the newest, with their log rows.
@@ -969,19 +969,20 @@ impl MetadataTx<'_> {
         Ok(())
     }
 
-    /// Archive, unarchive, or delete a session or a run. A run's edit
-    /// applies to the sessions its client recorded under its thread too, and
-    /// a session's to the runs that worked in it, so the two never disagree.
+    /// Archive, unarchive, or delete a recording, a run, or an operator
+    /// session. A run's edit applies to the recordings its client made under
+    /// its thread too, and a recording's to the runs that worked in it, so
+    /// the two never disagree.
     async fn history(&mut self, edit: &HistoryEdit) -> Result<Observation, StoreError> {
         let at = i64::try_from(edit.at.wall.as_millis()).unwrap_or(i64::MAX);
-        let (sessions, runs) = self.subjects(edit.subject).await?;
+        let (recordings, runs) = self.subjects(edit.subject).await?;
         match edit.change {
             HistoryChange::Archive | HistoryChange::Unarchive => {
                 let at = match edit.change {
                     HistoryChange::Archive => Some(at),
                     HistoryChange::Unarchive | HistoryChange::Delete => None,
                 };
-                for (table, ids) in [("sessions", &sessions), ("runs", &runs)] {
+                for (table, ids) in [("recordings", &recordings), ("runs", &runs)] {
                     for id in ids {
                         sqlx::query(AssertSqlSafe(format!(
                             "UPDATE {table} SET archived_at = ? WHERE id = ?"
@@ -993,7 +994,7 @@ impl MetadataTx<'_> {
                     }
                 }
                 // An operator session's own shelf; otherwise, while each
-                // session has one run, it is archived with it.
+                // operator session has one run, it is archived with it.
                 if let HistorySubject::OperatorSession(session) = edit.subject {
                     sqlx::query("UPDATE operator_sessions SET archived_at = ? WHERE id = ?")
                         .bind(at)
@@ -1010,18 +1011,18 @@ impl MetadataTx<'_> {
                 }
             }
             HistoryChange::Delete => {
-                for session in &sessions {
+                for recording in &recordings {
                     let calls = sqlx::query(
-                        "SELECT id, channel FROM calls WHERE session = ? AND state <> ?",
+                        "SELECT id, channel FROM calls WHERE recording = ? AND state <> ?",
                     )
-                    .bind(session)
+                    .bind(recording)
                     .bind(CallState::Open.label())
                     .fetch_all(&mut *self.tx)
                     .await?;
                     for row in calls {
                         let call: String = row.try_get("id")?;
                         let channel: String = row.try_get("channel")?;
-                        self.retire(&call, &channel, Some(session)).await?;
+                        self.retire(&call, &channel, Some(recording)).await?;
                     }
                 }
                 for run in &runs {
@@ -1052,7 +1053,7 @@ impl MetadataTx<'_> {
                             .bind(run)
                             .execute(&mut *self.tx)
                             .await?;
-                        // A session goes with its last run.
+                        // An operator session goes with its last run.
                         if let Some(session) = &session {
                             self.drop_session(session).await?;
                         }
@@ -1105,31 +1106,31 @@ impl MetadataTx<'_> {
         Ok(())
     }
 
-    /// The sessions and runs an edit of `subject` applies to: a recording
+    /// The recordings and runs an edit of `subject` applies to: a recording
     /// and the runs whose thread it is, a run and the recordings its thread
     /// names, or an operator session's runs and the recordings they name.
     async fn subjects(
         &mut self,
         subject: HistorySubject,
     ) -> Result<(Vec<String>, Vec<String>), StoreError> {
-        let (id, sessions, runs) = match subject {
-            HistorySubject::Session(session) => (
-                session.to_string(),
-                "SELECT id FROM sessions WHERE id = ?1",
-                "SELECT id FROM runs WHERE thread = (SELECT native_id FROM sessions WHERE id = ?1)",
+        let (id, recordings, runs) = match subject {
+            HistorySubject::Recording(recording) => (
+                recording.to_string(),
+                "SELECT id FROM recordings WHERE id = ?1",
+                "SELECT id FROM runs WHERE thread = (SELECT native_id FROM recordings WHERE id = ?1)",
             ),
             HistorySubject::Run(run) => (
                 run.to_string(),
-                "SELECT id FROM sessions WHERE native_id = (SELECT thread FROM runs WHERE id = ?1)",
+                "SELECT id FROM recordings WHERE native_id = (SELECT thread FROM runs WHERE id = ?1)",
                 "SELECT id FROM runs WHERE id = ?1",
             ),
             HistorySubject::OperatorSession(session) => (
                 session.to_string(),
-                "SELECT id FROM sessions WHERE native_id IN (SELECT thread FROM runs WHERE operator_session = ?1)",
+                "SELECT id FROM recordings WHERE native_id IN (SELECT thread FROM runs WHERE operator_session = ?1)",
                 "SELECT id FROM runs WHERE operator_session = ?1",
             ),
         };
-        let sessions = sqlx::query_scalar(sessions)
+        let recordings = sqlx::query_scalar(recordings)
             .bind(&id)
             .fetch_all(&mut *self.tx)
             .await?;
@@ -1137,7 +1138,7 @@ impl MetadataTx<'_> {
             .bind(&id)
             .fetch_all(&mut *self.tx)
             .await?;
-        Ok((sessions, runs))
+        Ok((recordings, runs))
     }
 
     async fn message(&mut self, body: BodyKey, mark: &MessageMark) -> Result<(), StoreError> {
@@ -1184,10 +1185,10 @@ impl MetadataTx<'_> {
             .bind(open.provider.label())
             .execute(&mut *self.tx)
             .await?;
-        let (session, turn) = match &open.attribution.hint {
+        let (recording, turn) = match &open.attribution.hint {
             None => (None, None),
             Some(hint) => {
-                let session: String = sqlx::query_scalar("INSERT INTO sessions(id, provider, source, native_id, first_seen, last_seen) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(provider, source, native_id) DO UPDATE SET first_seen = MIN(first_seen, excluded.first_seen), last_seen = MAX(last_seen, excluded.last_seen) RETURNING id")
+                let recording: String = sqlx::query_scalar("INSERT INTO recordings(id, provider, source, native_id, first_seen, last_seen) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(provider, source, native_id) DO UPDATE SET first_seen = MIN(first_seen, excluded.first_seen), last_seen = MAX(last_seen, excluded.last_seen) RETURNING id")
                     .bind(RecordingId::generate(self.ids).to_string())
                     .bind(open.provider.label())
                     .bind(hint.source.label())
@@ -1199,18 +1200,18 @@ impl MetadataTx<'_> {
                 let turn = match hint.turn {
                     None => None,
                     Some(native) => Some(
-                        sqlx::query_scalar::<_, String>("INSERT INTO turns(id, session, native_id) VALUES (?, ?, ?) ON CONFLICT(session, native_id) DO UPDATE SET native_id = excluded.native_id RETURNING id")
+                        sqlx::query_scalar::<_, String>("INSERT INTO turns(id, recording, native_id) VALUES (?, ?, ?) ON CONFLICT(recording, native_id) DO UPDATE SET native_id = excluded.native_id RETURNING id")
                             .bind(TurnId::generate(self.ids).to_string())
-                            .bind(&session)
+                            .bind(&recording)
                             .bind(native.to_string())
                             .fetch_one(&mut *self.tx)
                             .await?,
                     ),
                 };
-                (Some(session), turn)
+                (Some(recording), turn)
             }
         };
-        sqlx::query("INSERT INTO calls(id, channel, started_at, provider, wire, endpoint, method, config_revision, session, turn, attribution, state, operator_revision, plan, caller, user, tailscale_login) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+        sqlx::query("INSERT INTO calls(id, channel, started_at, provider, wire, endpoint, method, config_revision, recording, turn, attribution, state, operator_revision, plan, caller, user, tailscale_login) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
             .bind(stamp.call.to_string())
             .bind(stamp.channel.to_string())
             .bind(at)
@@ -1219,7 +1220,7 @@ impl MetadataTx<'_> {
             .bind(open.endpoint.label())
             .bind(open.method.label())
             .bind(open.config_revision.as_str())
-            .bind(session)
+            .bind(recording)
             .bind(turn)
             .bind(serde_json::to_string(&open.attribution)?)
             .bind(CallState::Open.label())
@@ -1438,7 +1439,7 @@ impl MetadataTx<'_> {
         &mut self,
         call: &str,
         channel: &str,
-        session: Option<&str>,
+        recording: Option<&str>,
     ) -> Result<(), StoreError> {
         let request = Direction::Request.label();
         for statement in [
@@ -1474,13 +1475,13 @@ impl MetadataTx<'_> {
             .bind(Transport::WebSocket.label())
             .execute(&mut *self.tx)
             .await?;
-        if let Some(session) = session {
-            sqlx::query("DELETE FROM turns WHERE session = ? AND NOT EXISTS (SELECT 1 FROM calls WHERE turn = turns.id)")
-                .bind(session)
+        if let Some(recording) = recording {
+            sqlx::query("DELETE FROM turns WHERE recording = ? AND NOT EXISTS (SELECT 1 FROM calls WHERE turn = turns.id)")
+                .bind(recording)
                 .execute(&mut *self.tx)
                 .await?;
-            sqlx::query("DELETE FROM sessions WHERE id = ? AND NOT EXISTS (SELECT 1 FROM calls WHERE session = sessions.id)")
-                .bind(session)
+            sqlx::query("DELETE FROM recordings WHERE id = ? AND NOT EXISTS (SELECT 1 FROM calls WHERE recording = recordings.id)")
+                .bind(recording)
                 .execute(&mut *self.tx)
                 .await?;
         }

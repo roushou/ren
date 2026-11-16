@@ -17,7 +17,7 @@
   import type { PageProps } from './$types';
 
   let { data }: PageProps = $props();
-  const arrival = createArrival(() => data.sessions);
+  const arrival = createArrival(() => data.recordings);
   const arrived = $derived(arrival.current);
   /** The listing is on its way: the page draws its outline. */
   const pending = $derived(arrived.state === 'pending');
@@ -31,7 +31,7 @@
     { label: 'Tokens in · out', numeric: true },
     { label: 'Active for', numeric: true },
   ];
-  const sessions = $derived(current?.sessions ?? []);
+  const sessions = $derived(current?.recordings ?? []);
   let query = $state('');
   // Relative times tick between refreshes.
   let now = $state(Date.now());
@@ -195,8 +195,8 @@
         <div class="empty-icon"><Icon name="archive" size={25} /></div>
         <h2>Nothing archived</h2>
         <p>
-          Archive a session from its page, or a run from Runs. A session with new traffic is listed
-          with the current ones again.
+          Archive a recording from its page, or a run from Runs. A recording with new traffic is
+          listed with the current ones again.
         </p>
         <a class="button" href="/recordings">Current recordings <Icon name="arrow" size={14} /></a>
       </div>

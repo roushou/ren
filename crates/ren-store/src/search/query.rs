@@ -79,7 +79,7 @@ impl fmt::Display for SearchTerms {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SearchQuery {
     pub terms: SearchTerms,
-    pub session: Option<RecordingId>,
+    pub recording: Option<RecordingId>,
     pub client: Option<Harness>,
     pub field: Option<SearchField>,
     pub time: TimeRange,
@@ -89,7 +89,7 @@ pub struct SearchQuery {
 /// Which exposures to list.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExposureQuery {
-    pub session: Option<RecordingId>,
+    pub recording: Option<RecordingId>,
     pub time: TimeRange,
     pub limit: PageLimit,
 }
@@ -98,7 +98,7 @@ pub struct ExposureQuery {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ExposureView {
     pub call: CallId,
-    pub session: Option<RecordingId>,
+    pub recording: Option<RecordingId>,
     pub turn: Option<TurnId>,
     pub client: Option<Stored<Harness>>,
     pub started_at: UnixMillis,
@@ -113,7 +113,7 @@ pub struct ExposureView {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SearchHit {
     pub call: CallId,
-    pub session: Option<RecordingId>,
+    pub recording: Option<RecordingId>,
     pub turn: Option<TurnId>,
     pub client: Option<Stored<Harness>>,
     pub started_at: UnixMillis,

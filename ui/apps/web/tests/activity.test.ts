@@ -27,7 +27,7 @@ import {
 } from '../src/lib/activity.ts';
 import { uuid, versioned } from './fixtures.ts';
 
-const session = uuid(1);
+const recording = uuid(1);
 const turn = uuid(2);
 const call = uuid(3);
 
@@ -40,7 +40,7 @@ const answering =
   };
 
 const reportBody = {
-  session,
+  recording,
   totals: {
     calls: 3,
     calls_with_usage: 2,
@@ -87,11 +87,11 @@ const reportBody = {
   omitted_calls: 0,
 };
 
-test('a session report decodes, keeps unknown findings, and reads as measurements', async () => {
-  const id = RecordingId.parse(session);
+test('a recording report decodes, keeps unknown findings, and reads as measurements', async () => {
+  const id = RecordingId.parse(recording);
   assert.ok(id);
   const report = await new ManagementApi(
-    answering(`/api/sessions/${session}/report`, reportBody),
+    answering(`/api/recordings/${recording}/report`, reportBody),
   ).report(id);
   assert.equal(report.totals.cache_hit_percent, 49);
   assert.deepEqual(
@@ -141,7 +141,7 @@ test('a turn decodes its calls, tool calls, effects, and results', async () => {
   assert.ok(id);
   const body = {
     turn,
-    session,
+    recording,
     native_id: 'prompt-1',
     client: 'claude_code',
     started_at: 1_000,
@@ -267,16 +267,16 @@ test('a search field parses from its label and nothing else', () => {
 });
 
 test('links to calls, turns, hits, and findings encode their IDs', () => {
-  const sessionId = RecordingId.parse(session);
+  const recordingId = RecordingId.parse(recording);
   const turnId = TurnId.parse(turn);
   const callId = CallId.parse(call);
-  assert.ok(sessionId && turnId && callId);
-  assert.equal(callHref(sessionId, callId), `/recordings/${session}?call=${call}`);
+  assert.ok(recordingId && turnId && callId);
+  assert.equal(callHref(recordingId, callId), `/recordings/${recording}?call=${call}`);
   assert.equal(turnHref(turnId), `/turns/${turn}`);
 
   const hit = (overrides: Partial<SearchHit>): SearchHit => ({
     call: callId,
-    session: sessionId,
+    recording: recordingId,
     turn: turnId,
     client: 'codex',
     started_at: 0 as never,
@@ -285,8 +285,8 @@ test('links to calls, turns, hits, and findings encode their IDs', () => {
     ...overrides,
   });
   assert.equal(searchHitHref(hit({})), `/turns/${turn}`);
-  assert.equal(searchHitHref(hit({ turn: null })), `/recordings/${session}?call=${call}`);
-  assert.equal(searchHitHref(hit({ turn: null, session: null })), `/traffic?call=${call}`);
+  assert.equal(searchHitHref(hit({ turn: null })), `/recordings/${recording}?call=${call}`);
+  assert.equal(searchHitHref(hit({ turn: null, recording: null })), `/traffic?call=${call}`);
 
   const line = (overrides: Partial<FindingLine>): FindingLine => ({
     tone: 'warning',
@@ -296,21 +296,21 @@ test('links to calls, turns, hits, and findings encode their IDs', () => {
     turn: turnId,
     ...overrides,
   });
-  // A session report opens the turn first; a turn's page opens only the call.
-  assert.deepEqual(findingLink(line({}), sessionId, 'session'), {
+  // A recording's report opens the turn first; a turn's page opens only the call.
+  assert.deepEqual(findingLink(line({}), recordingId, 'recording'), {
     href: `/turns/${turn}`,
     label: 'Open turn',
   });
-  assert.deepEqual(findingLink(line({ turn: null }), sessionId, 'session'), {
-    href: `/recordings/${session}?call=${call}`,
+  assert.deepEqual(findingLink(line({ turn: null }), recordingId, 'recording'), {
+    href: `/recordings/${recording}?call=${call}`,
     label: 'Open call',
   });
-  assert.deepEqual(findingLink(line({}), sessionId, 'turn'), {
-    href: `/recordings/${session}?call=${call}`,
+  assert.deepEqual(findingLink(line({}), recordingId, 'turn'), {
+    href: `/recordings/${recording}?call=${call}`,
     label: 'Open call',
   });
-  assert.equal(findingLink(line({ call: null, turn: null }), sessionId, 'session'), null);
-  assert.equal(findingLink(line({ call: null }), sessionId, 'turn'), null);
+  assert.equal(findingLink(line({ call: null, turn: null }), recordingId, 'recording'), null);
+  assert.equal(findingLink(line({ call: null }), recordingId, 'turn'), null);
 });
 
 test('the context chart reads oldest first, against the peak, and marks flagged turns', () => {

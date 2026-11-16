@@ -223,7 +223,7 @@ impl McpServer {
     const NAME: &str = "ren";
     const PROTOCOL_VERSION: &str = "io.modelcontextprotocol/protocolVersion";
     const CLIENT_CAPABILITIES: &str = "io.modelcontextprotocol/clientCapabilities";
-    const INSTRUCTIONS: &str = "Ren records the traffic between coding agents (Claude Code, Codex, and Pi) and their model providers. These read-only tools look up recorded calls: search_history finds what prompts, replies, and tool input and output said; search_calls finds calls, newest first, by text, session, client, model, tool, or status; list_sessions and session_calls follow a session's calls in order; session_report shows where context and prompt-cache tokens went; list_turns and get_turn show what each user prompt led to (tool calls, their results, files written, commands run); get_call shows one call's attempts, inspection, and observation log; get_body reads a bounded excerpt of a request or response body; usage totals calls, errors, and tokens; list_exposures shows credentials calls carried (never the secrets). Times are Unix milliseconds (UTC). Pass a listing's `next` value as `after` to read the next page. Bodies may hold private prompts and tool output. Token counts are what providers reported, not subscription allowance or cost.";
+    const INSTRUCTIONS: &str = "Ren records the traffic between coding agents (Claude Code, Codex, and Pi) and their model providers. These read-only tools look up recorded calls: search_history finds what prompts, replies, and tool input and output said; search_calls finds calls, newest first, by text, recording, client, model, tool, or status; list_recordings and recording_calls follow a recording's calls in order; recording_report shows where context and prompt-cache tokens went; list_turns and get_turn show what each user prompt led to (tool calls, their results, files written, commands run); get_call shows one call's attempts, inspection, and observation log; get_body reads a bounded excerpt of a request or response body; usage totals calls, errors, and tokens; list_exposures shows credentials calls carried (never the secrets). Times are Unix milliseconds (UTC). Pass a listing's `next` value as `after` to read the next page. Bodies may hold private prompts and tool output. Token counts are what providers reported, not subscription allowance or cost.";
 
     /// A server reporting `version` (Ren's own) as its implementation version.
     pub fn new(version: impl Into<String>) -> Self {
@@ -495,9 +495,9 @@ mod tests {
             [
                 "search_history",
                 "search_calls",
-                "list_sessions",
-                "session_calls",
-                "session_report",
+                "list_recordings",
+                "recording_calls",
+                "recording_report",
                 "list_turns",
                 "get_turn",
                 "get_call",
@@ -577,7 +577,7 @@ mod tests {
         let pending = run(
             &mut server,
             &format!(
-                r#"{{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{{"name":"list_sessions","arguments":{{"limit":5}},{MODERN_META}}}}}"#
+                r#"{{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{{"name":"list_recordings","arguments":{{"limit":5}},{MODERN_META}}}}}"#
             ),
         );
         assert!(

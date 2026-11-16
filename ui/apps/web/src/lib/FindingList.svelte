@@ -4,20 +4,20 @@
   import Icon from './Icon.svelte';
   let {
     findings,
-    session,
+    recording,
     page,
   }: {
     findings: FindingLine[];
-    /** The session the findings' calls belong to. */
-    session: RecordingId;
+    /** The recording the findings' calls belong to. */
+    recording: RecordingId;
     /** The page showing them, which decides where each finding links. */
-    page: 'session' | 'turn';
+    page: 'recording' | 'turn';
   } = $props();
 </script>
 
 <ul class="finding-list">
   {#each findings as line, index (index)}
-    {@const link = findingLink(line, session, page)}
+    {@const link = findingLink(line, recording, page)}
     <li>
       <span class="chip {line.tone}">{line.title}</span>
       <span class="finding-detail">{line.detail}</span>

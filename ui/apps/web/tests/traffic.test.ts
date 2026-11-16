@@ -108,15 +108,15 @@ test('j and k step through calls and stop at the ends', () => {
 
 test('the listing defaults to model calls and resolves since against now', () => {
   const now = Date.UTC(2026, 10, 6, 18, 0);
-  const keys = ['q', 'session', 'client', 'status', 'from_ms', 'after'] as const;
+  const keys = ['q', 'recording', 'client', 'status', 'from_ms', 'after'] as const;
   const query = (search: string) =>
     Object.fromEntries(listingQuery(new URLSearchParams(search), keys, now));
   assert.deepEqual(query(''), { kind: 'model' });
   assert.deepEqual(query('kind=all&client=codex'), { client: 'codex' });
   assert.deepEqual(query('kind=other'), { kind: 'other' });
   assert.deepEqual(query('kind=nonsense'), { kind: 'model' });
-  assert.deepEqual(query('since=1h&session=abc'), {
-    session: 'abc',
+  assert.deepEqual(query('since=1h&recording=abc'), {
+    recording: 'abc',
     kind: 'model',
     from_ms: String(now - 3_600_000),
   });
@@ -129,7 +129,7 @@ test('the listing defaults to model calls and resolves since against now', () =>
 test('narrowing filters round-trip through the URL', () => {
   const filters = {
     ...emptyFilters(),
-    session: '33333333-3333-4333-8333-333333333333',
+    recording: '33333333-3333-4333-8333-333333333333',
     client: 'claude_code',
     kind: 'all' as const,
     since: 'today',
@@ -137,12 +137,12 @@ test('narrowing filters round-trip through the URL', () => {
   const params = trafficParams(filters);
   assert.equal(
     params,
-    'session=33333333-3333-4333-8333-333333333333&client=claude_code&since=today&kind=all',
+    'recording=33333333-3333-4333-8333-333333333333&client=claude_code&since=today&kind=all',
   );
   const back = filtersFromParams(new URLSearchParams(params));
   assert.deepEqual(
-    [back.session, back.client, back.kind, back.since],
-    [filters.session, filters.client, 'all', 'today'],
+    [back.recording, back.client, back.kind, back.since],
+    [filters.recording, filters.client, 'all', 'today'],
   );
   // The default kind stays out of the URL.
   assert.equal(trafficParams(emptyFilters()), '');

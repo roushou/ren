@@ -231,8 +231,8 @@ impl ControlRequest {
             Self::Cancel { call, .. } => format!("calls/{call}/cancel"),
             Self::Backup => "backup".to_owned(),
             Self::Edit { subject, change } => match subject {
-                HistorySubject::Session(recording) => {
-                    format!("history/sessions/{recording}/{change}")
+                HistorySubject::Recording(recording) => {
+                    format!("history/recordings/{recording}/{change}")
                 }
                 HistorySubject::Run(run) => format!("history/runs/{run}/{change}"),
                 HistorySubject::OperatorSession(session) => format!("sessions/{session}/{change}"),

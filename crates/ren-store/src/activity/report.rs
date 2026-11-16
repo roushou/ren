@@ -1,4 +1,4 @@
-//! Context and cost measurements over a session's calls, and the findings
+//! Context and cost measurements over a recording's calls, and the findings
 //! they support: where the provider's prompt cache was rebuilt, where
 //! context grew most, which tool outputs were largest, and which tool calls
 //! kept failing.
@@ -85,13 +85,13 @@ pub struct CacheRebuild {
     pub turn: Option<TurnId>,
     pub cache_read_tokens: u64,
     pub cache_written_tokens: u64,
-    /// The largest context of the session's earlier calls.
+    /// The largest context of the recording's earlier calls.
     pub earlier_peak_tokens: u64,
-    /// Time since the session's previous call ended.
+    /// Time since the recording's previous call ended.
     pub idle_before_ms: Option<u64>,
 }
 
-/// A call's context passed the session's earlier peak by at least
+/// A call's context passed the recording's earlier peak by at least
 /// [`FindingKind::GROWTH_TOKENS`].
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ContextGrowth {
@@ -171,7 +171,7 @@ impl RawFinding {
 }
 
 impl FindingKind {
-    /// An earlier peak below this is the session's start, such as a small
+    /// An earlier peak below this is the recording's start, such as a small
     /// side call before the first real one: nothing to rebuild or grow from.
     pub const MIN_PEAK_TOKENS: u64 = 10_000;
     /// Fewer tokens written are not reported as a rebuild.
@@ -251,14 +251,14 @@ impl<'de> Deserialize<'de> for Finding {
     }
 }
 
-/// One turn's row in a session report.
+/// One turn's row in a recording report.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TurnMetrics {
     pub turn: TurnId,
     pub started_at: UnixMillis,
     pub ended_at: Option<UnixMillis>,
     pub call_count: u64,
-    /// Time between the session's previous call ending and this turn.
+    /// Time between the recording's previous call ending and this turn.
     pub idle_before_ms: Option<u64>,
     pub context_start_tokens: Option<u64>,
     pub context_end_tokens: Option<u64>,
@@ -268,7 +268,7 @@ pub struct TurnMetrics {
     pub output_tokens: u64,
 }
 
-/// Totals over a session's calls that reported usage.
+/// Totals over a recording's calls that reported usage.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct ReportTotals {
     pub calls: u64,
@@ -281,10 +281,10 @@ pub struct ReportTotals {
     pub cache_hit_percent: Option<u64>,
 }
 
-/// A session's context and cost measurements, from its call records alone.
+/// A recording's context and cost measurements, from its call records alone.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RecordingReport {
-    pub session: RecordingId,
+    pub recording: RecordingId,
     pub totals: ReportTotals,
     pub turns: Vec<TurnMetrics>,
     pub findings: Vec<Finding>,
@@ -358,7 +358,7 @@ impl TurnRow {
 }
 
 impl RecordingReport {
-    /// Add the secrets the session's calls carried, from their digests'
+    /// Add the secrets the recording's calls carried, from their digests'
     /// exposures, as findings in call order.
     pub fn add_exposures(&mut self, exposures: Vec<ExposureView>) {
         let mut timed: Vec<(UnixMillis, Finding)> = exposures
@@ -383,8 +383,8 @@ impl RecordingReport {
             .extend(timed.into_iter().map(|(_, finding)| finding));
     }
 
-    /// The report over `calls`, a session's calls in start order.
-    pub fn build(session: RecordingId, calls: &[CallView], omitted_calls: u64) -> Self {
+    /// The report over `calls`, a recording's calls in start order.
+    pub fn build(recording: RecordingId, calls: &[CallView], omitted_calls: u64) -> Self {
         let mut totals = ReportTotals::default();
         let mut rows: Vec<TurnRow> = Vec::new();
         let mut timed: Vec<(UnixMillis, Finding)> = Vec::new();
@@ -481,7 +481,7 @@ impl RecordingReport {
         );
         timed.sort_by_key(|(at, _)| *at);
         Self {
-            session,
+            recording,
             totals,
             turns: rows.into_iter().map(|row| row.metrics).collect(),
             findings: timed.into_iter().map(|(_, finding)| finding).collect(),

@@ -115,8 +115,8 @@ identity!(
     AttemptId as "attempt"
 );
 identity!(
-    /// Ren's grouping of calls that a client attributed to one session.
-    RecordingId as "session"
+    /// Ren's grouping of calls that a client attributed to one session: a recording.
+    RecordingId as "recording"
 );
 identity!(
     /// Ren's grouping of calls that a client attributed to one turn of a session.

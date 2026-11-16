@@ -107,7 +107,7 @@ pub struct CallActivity {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TurnActivity {
     pub turn: TurnId,
-    pub session: RecordingId,
+    pub recording: RecordingId,
     /// The client's turn identifier.
     pub native_id: String,
     pub client: Option<Stored<Harness>>,
@@ -129,7 +129,7 @@ pub struct TurnActivity {
     pub omitted_calls: u64,
 }
 
-/// One turn, as a session lists it.
+/// One turn, as a recording lists it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TurnSummary {
     pub turn: TurnId,
@@ -151,7 +151,7 @@ impl TurnSummary {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TurnHead {
     pub turn: TurnId,
-    pub session: RecordingId,
+    pub recording: RecordingId,
     pub native_id: String,
 }
 
@@ -311,7 +311,7 @@ impl TurnActivity {
             .collect();
         let mut turn = Self {
             turn: head.turn,
-            session: head.session,
+            recording: head.recording,
             native_id: head.native_id,
             client,
             started_at: calls.first().map(|call| call.started_at),

@@ -1,4 +1,4 @@
-// What turns did and where a session's tokens went, as the views show them.
+// What turns did and where a recording's tokens went, as the views show them.
 // Pure: no browser, no fetching; tested in tests/activity.test.ts.
 import type {
   CallId,
@@ -172,7 +172,7 @@ export interface ContextBar {
   turn: TurnId;
   x: number;
   width: number;
-  /** Context the turn started and ended with, against the session's peak. */
+  /** Context the turn started and ended with, against the recording's peak. */
   start: number;
   end: number;
   /** A finding points into the turn. */
@@ -182,7 +182,7 @@ export interface ContextBar {
 
 /**
  * The report's context per turn, oldest first: a bar to the context each
- * turn ended with, marked where it started, against the session's peak, so
+ * turn ended with, marked where it started, against the recording's peak, so
  * growth and compaction read at a glance. The model's context limit is not
  * on the wire, so none is drawn.
  */
@@ -302,9 +302,9 @@ export function harnessLabel(harness: Stored<Harness>): string {
   }
 }
 
-/** A call, selected in its session's traffic. */
-export function callHref(session: RecordingId, call: CallId): string {
-  return `/recordings/${encodeURIComponent(session)}?call=${encodeURIComponent(call)}`;
+/** A call, selected in its recording's traffic. */
+export function callHref(recording: RecordingId, call: CallId): string {
+  return `/recordings/${encodeURIComponent(recording)}?call=${encodeURIComponent(call)}`;
 }
 
 /** What one turn did. */
@@ -312,10 +312,10 @@ export function turnHref(turn: TurnId): string {
   return `/turns/${encodeURIComponent(turn)}`;
 }
 
-/** A search hit: its turn, else its call in its session, else the call in Traffic. */
+/** A search hit: its turn, else its call in its recording, else the call in Traffic. */
 export function searchHitHref(hit: SearchHit): string {
   if (hit.turn) return turnHref(hit.turn);
-  if (hit.session) return callHref(hit.session, hit.call);
+  if (hit.recording) return callHref(hit.recording, hit.call);
   return `/traffic?call=${encodeURIComponent(hit.call)}`;
 }
 
@@ -326,16 +326,16 @@ export interface FindingLink {
 }
 
 /**
- * Where a finding leads from a page. A session's report opens the finding's
+ * Where a finding leads from a page. A recording's report opens the finding's
  * turn, else its call; a turn's own page opens only the call, since the turn
  * is already shown.
  */
 export function findingLink(
   line: FindingLine,
-  session: RecordingId,
-  page: 'session' | 'turn',
+  recording: RecordingId,
+  page: 'recording' | 'turn',
 ): FindingLink | null {
-  if (page === 'session' && line.turn) return { href: turnHref(line.turn), label: 'Open turn' };
-  if (line.call) return { href: callHref(session, line.call), label: 'Open call' };
+  if (page === 'recording' && line.turn) return { href: turnHref(line.turn), label: 'Open turn' };
+  if (line.call) return { href: callHref(recording, line.call), label: 'Open call' };
   return null;
 }

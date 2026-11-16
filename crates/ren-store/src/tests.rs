@@ -264,7 +264,7 @@ async fn a_recorded_call_reads_back_with_its_log_bodies_and_inspection() {
     assert_eq!(view.outcome, Some(Stored::Known(ModelOutcome::Completed)));
     assert_eq!(view.tool_names, ["Bash"]);
     assert!(view.capture_complete);
-    assert!(view.session.is_some() && view.turn.is_some());
+    assert!(view.recording.is_some() && view.turn.is_some());
     let request_view = view.request.as_ref().unwrap();
     assert_eq!(request_view.observed_bytes, Some(300_000));
     assert_eq!(request_view.stored_bytes, 300_000);
@@ -1190,11 +1190,11 @@ async fn calls_narrow_by_session_client_and_kind() {
         .await
         .unwrap()
         .call
-        .session
+        .recording
         .unwrap();
     assert_eq!(
         ids(CallFilter {
-            session: Some(first_session),
+            recording: Some(first_session),
             ..CallFilter::default()
         })
         .await,
@@ -1295,7 +1295,7 @@ mod digests {
     fn query(text: &str) -> SearchQuery {
         SearchQuery {
             terms: SearchTerms::parse(text).unwrap(),
-            session: None,
+            recording: None,
             client: None,
             field: None,
             time: TimeRange::default(),
@@ -1468,10 +1468,10 @@ mod digests {
         filtered.field = Some(SearchField::Prompt);
         assert_eq!(reader.search(&filtered).await.unwrap().hits[0].call, claude);
         filtered.field = None;
-        filtered.session = reader.call(codex).await.unwrap().call.session;
+        filtered.recording = reader.call(codex).await.unwrap().call.recording;
         let hits = reader.search(&filtered).await.unwrap().hits;
         assert_eq!(hits.iter().map(|hit| hit.call).collect::<Vec<_>>(), [codex]);
-        filtered.session = None;
+        filtered.recording = None;
         let codex_start = reader.call(codex).await.unwrap().call.started_at;
         filtered.time = TimeRange::new(Some(codex_start), None).unwrap();
         assert_eq!(reader.search(&filtered).await.unwrap().hits.len(), 1);
@@ -1487,7 +1487,7 @@ mod digests {
 
         let exposures = reader
             .exposures(&ExposureQuery {
-                session: None,
+                recording: None,
                 time: TimeRange::default(),
                 limit: PageLimit::new(10).unwrap(),
             })
@@ -1534,7 +1534,7 @@ mod digests {
             .await
             .unwrap()
             .call
-            .session
+            .recording
             .unwrap();
         let listed = fixture
             .reader
@@ -1678,7 +1678,7 @@ mod history {
         };
         let (newest, archived) = (*newest, *archived);
         fixture
-            .edit(HistorySubject::Session(archived), HistoryChange::Archive)
+            .edit(HistorySubject::Recording(archived), HistoryChange::Archive)
             .await;
         assert_eq!(fixture.shelf(Shelf::Current).await, [newest]);
         assert_eq!(fixture.shelf(Shelf::Archived).await, [archived]);
@@ -1693,7 +1693,10 @@ mod history {
         assert_eq!(fixture.runs(Shelf::Archived).await, [run]);
 
         fixture
-            .edit(HistorySubject::Session(archived), HistoryChange::Unarchive)
+            .edit(
+                HistorySubject::Recording(archived),
+                HistoryChange::Unarchive,
+            )
             .await;
         assert_eq!(fixture.shelf(Shelf::Current).await.len(), 2);
         assert_eq!(fixture.runs(Shelf::Current).await, [run]);
@@ -2042,7 +2045,10 @@ mod history {
         let session = sessions[0];
         let before = fixture.reader.storage().await.unwrap();
         // What a delete would leave is known before it is asked for.
-        for subject in [HistorySubject::Session(session), HistorySubject::Run(ended)] {
+        for subject in [
+            HistorySubject::Recording(session),
+            HistorySubject::Run(ended),
+        ] {
             assert_eq!(
                 fixture.reader.history_target(subject).await.unwrap(),
                 Some(crate::view::HistoryTarget {
@@ -2055,7 +2061,7 @@ mod history {
         assert_eq!(
             fixture
                 .reader
-                .history_target(HistorySubject::Session(sessions[1]))
+                .history_target(HistorySubject::Recording(sessions[1]))
                 .await
                 .unwrap(),
             Some(crate::view::HistoryTarget {
@@ -2073,7 +2079,7 @@ mod history {
         );
 
         fixture
-            .edit(HistorySubject::Session(session), HistoryChange::Delete)
+            .edit(HistorySubject::Recording(session), HistoryChange::Delete)
             .await;
         assert!(matches!(
             fixture.reader.call(gone).await,
@@ -2786,4 +2792,69 @@ async fn usage_from_one_scan_matches_a_query_per_breakdown() {
         reader.usage(TimeRange::default()).await.unwrap(),
         per_breakdown
     );
+}
+
+/// Migration 0016 renames recordings' table and columns in place: every
+/// recording, turn, and call keeps its rows and their links.
+#[tokio::test]
+async fn the_recordings_migration_keeps_recordings_turns_and_calls_linked() {
+    use sqlx::{
+        Connection,
+        migrate::Migrator,
+        sqlite::{SqliteConnectOptions, SqliteConnection},
+    };
+    use std::borrow::Cow;
+
+    let dir = tempfile::tempdir().unwrap();
+    let options = SqliteConnectOptions::new()
+        .filename(dir.path().join("ren.sqlite3"))
+        .create_if_missing(true);
+    let mut db = SqliteConnection::connect_with(&options).await.unwrap();
+    let all = sqlx::migrate!("./migrations");
+    let before = Migrator {
+        migrations: Cow::Owned(
+            all.migrations
+                .iter()
+                .filter(|migration| migration.version < 16)
+                .cloned()
+                .collect(),
+        ),
+        ..sqlx::migrate!("./migrations")
+    };
+    before.run(&mut db).await.unwrap();
+    sqlx::raw_sql(
+        r"
+        INSERT INTO channels(id, transport, opened_at, unattributed_messages, unattributed_bytes) VALUES ('ch', 'http', 1, 0, 0);
+        INSERT INTO sessions(id, provider, source, native_id, first_seen, last_seen) VALUES ('rec', 'anthropic', 'claude_code_headers', 'native', 1, 2);
+        INSERT INTO turns(id, session, native_id) VALUES ('turn', 'rec', 'native-turn');
+        INSERT INTO calls(id, channel, started_at, provider, endpoint, method, config_revision, session, turn, attribution, state, tool_count, capture_complete)
+        VALUES ('call', 'ch', 1, 'anthropic', 'messages', 'post', 'r', 'rec', 'turn', '{}', 'finished', 0, 1);
+        ",
+    )
+    .execute(&mut db)
+    .await
+    .unwrap();
+
+    all.run(&mut db).await.unwrap();
+
+    let linked: (String, String, String) = sqlx::query_as(
+        "SELECT r.native_id, t.native_id, c.id FROM recordings r JOIN turns t ON t.recording = r.id JOIN calls c ON c.recording = r.id AND c.turn = t.id",
+    )
+    .fetch_one(&mut db)
+    .await
+    .unwrap();
+    assert_eq!(
+        linked,
+        (
+            "native".to_owned(),
+            "native-turn".to_owned(),
+            "call".to_owned()
+        )
+    );
+    let old: Option<String> =
+        sqlx::query_scalar("SELECT name FROM sqlite_master WHERE name IN ('sessions', 'sessions_recent', 'sessions_native', 'calls_session')")
+            .fetch_optional(&mut db)
+            .await
+            .unwrap();
+    assert_eq!(old, None, "no table or index keeps the old name");
 }

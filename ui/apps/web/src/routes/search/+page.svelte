@@ -26,7 +26,9 @@
   /** Varied snippet widths for the outline, so its rows read as text. */
   const outlineWidths = ['82%', '64%', '91%', '58%', '76%', '69%'];
   const details = $derived(current?.details ?? new Map());
-  const sessionsById = $derived(new Map((current?.sessions ?? []).map((item) => [item.id, item])));
+  const recordingsById = $derived(
+    new Map((current?.recordings ?? []).map((item) => [item.id, item])),
+  );
   const fieldOptions: SegmentedOption<SearchField | ''>[] = [
     { value: '', label: 'Everything' },
     ...SEARCH_FIELDS.map((field) => ({ value: field, label: searchFieldLabel(field) })),
@@ -137,11 +139,11 @@
             <li>
               <a class="search-hit" href={searchHitHref(hit)}>
                 <span class="search-hit-meta">
-                  {#if hit.session && sessionsById.get(hit.session)}<RecordingName
-                      session={sessionsById.get(hit.session)!}
-                      detail={details.get(hit.session)}
-                    />{:else if hit.session}<span
-                      class="session-dot tone-{sessionTone(hit.session)}"
+                  {#if hit.recording && recordingsById.get(hit.recording)}<RecordingName
+                      session={recordingsById.get(hit.recording)!}
+                      detail={details.get(hit.recording)}
+                    />{:else if hit.recording}<span
+                      class="session-dot tone-{sessionTone(hit.recording)}"
                     ></span>{/if}
                   <span class="chip">{searchFieldLabel(hit.field)}</span>
                   <span class="muted">{date(hit.started_at)} {clock(hit.started_at)}</span>

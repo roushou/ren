@@ -40,7 +40,7 @@ enum ControlAction {
     Resume,
     /// Refuse a client session's calls (non-retryable 403).
     Block(BlockArgs),
-    Unblock(RecordingArg),
+    Unblock(NativeSessionArg),
     /// Refuse a named user's new calls (non-retryable 403), effective at
     /// once; running calls continue.
     BlockUser(BlockUserArgs),
@@ -50,18 +50,18 @@ enum ControlAction {
     /// Copy the history into <data-dir>/backup while the daemon runs. Only
     /// new chunks are copied; keep this running until it reports.
     Backup,
-    /// Hide a recorded session, or an ended run with its session, from
-    /// listings. A session with new traffic is listed again.
+    /// Hide a recording, or an ended run with its recording, from listings.
+    /// A recording with new traffic is listed again.
     Archive {
         #[command(subcommand)]
         subject: Subject,
     },
-    /// List an archived session or run again.
+    /// List an archived recording or run again.
     Unarchive {
         #[command(subcommand)]
         subject: Subject,
     },
-    /// Delete a recorded session, or a run with its session: their calls,
+    /// Delete a recording, or a run with its recording: their calls,
     /// bodies, and runs. Refused while a call is open or a run is running.
     /// It cannot be undone.
     Delete(DeleteArgs),
@@ -70,9 +70,9 @@ enum ControlAction {
 /// What an archive or delete applies to.
 #[derive(Subcommand, Clone, Copy)]
 enum Subject {
-    /// A session, by Ren's session id (`ren sessions` lists them).
-    Session { session: RecordingId },
-    /// A run, by its run id, with the session its client recorded.
+    /// A recording, by its id (`ren recordings` lists them).
+    Recording { recording: RecordingId },
+    /// A run, by its run id, with the recording its client made.
     Run { run: RunId },
 }
 
@@ -80,7 +80,7 @@ impl Subject {
     fn edit(self, change: HistoryChange) -> ControlRequest {
         ControlRequest::Edit {
             subject: match self {
-                Self::Session { session } => HistorySubject::Session(session),
+                Self::Recording { recording } => HistorySubject::Recording(recording),
                 Self::Run { run } => HistorySubject::Run(run),
             },
             change,
@@ -105,16 +105,16 @@ struct PauseArgs {
 }
 
 #[derive(Args)]
-struct RecordingArg {
+struct NativeSessionArg {
     /// The client's native session id (a UUID).
-    #[arg(value_parser = RecordingArg::parse)]
+    #[arg(value_parser = NativeSessionArg::parse)]
     session: NativeSessionId,
 }
 
 #[derive(Args)]
 struct BlockArgs {
     #[command(flatten)]
-    session: RecordingArg,
+    session: NativeSessionArg,
     /// Block for this many seconds; without it, until unblocked.
     #[arg(long = "for")]
     duration: Option<u64>,
@@ -143,7 +143,7 @@ struct CancelArgs {
     block_session: Option<u64>,
 }
 
-impl RecordingArg {
+impl NativeSessionArg {
     fn parse(text: &str) -> Result<NativeSessionId, String> {
         Uuid::try_parse(text)
             .ok()

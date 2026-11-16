@@ -88,7 +88,7 @@ fn view(n: u128, source: HintSource) -> CallView {
         endpoint: Endpoint::Messages.into(),
         method: Method::Post.into(),
         config_revision: String::new(),
-        session: None,
+        recording: None,
         turn: None,
         attribution: AttributionView {
             hint: Some(SessionHintView {
@@ -141,7 +141,7 @@ fn result(id: &str, status: ResultStatus, output: &str) -> ToolResult {
 fn head() -> TurnHead {
     TurnHead {
         turn: TurnId::restore(id(7)),
-        session: RecordingId::restore(id(8)),
+        recording: RecordingId::restore(id(8)),
         native_id: "prompt-1".to_owned(),
     }
 }

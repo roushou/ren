@@ -368,7 +368,7 @@ export interface CallView {
   endpoint: Stored<Endpoint>;
   method: Stored<Method>;
   config_revision: string;
-  session: RecordingId | null;
+  recording: RecordingId | null;
   turn: TurnId | null;
   attribution: Attribution;
   state: Stored<CallState>;
@@ -610,7 +610,7 @@ export interface CaptureLimits {
   body_limit_bytes: number;
 }
 export interface Recordings {
-  sessions: RecordingView[];
+  recordings: RecordingView[];
 }
 /** A bounded preview of a stored body (`crates/ren-daemon/src/api/preview.rs`). */
 export interface BodyPreview {
@@ -653,7 +653,7 @@ const callView = object<CallView>({
   endpoint: label(endpoints),
   method: label(methods),
   config_revision: string,
-  session: nullable(RecordingId.decode),
+  recording: nullable(RecordingId.decode),
   turn: nullable(TurnId.decode),
   attribution: object<Attribution>({
     hint: nullable(
@@ -779,8 +779,8 @@ function tokenTotals(value: unknown, path: string): TokenTotals {
     cache_read: nullable(count),
   })(value, path);
 }
-const sessions = object<Recordings>({
-  sessions: array(
+const recordings = object<Recordings>({
+  recordings: array(
     object<RecordingView>({
       id: RecordingId.decode,
       provider: label(providers),
@@ -953,7 +953,7 @@ export class ApiError extends Error {
 }
 
 // Activity and reports: what a turn or call did, read from recorded bodies,
-// and where a session's context and cache tokens went.
+// and where a recording's context and cache tokens went.
 export const harnesses = ['claude_code', 'codex', 'pi', 'opencode'] as const;
 export type Harness = (typeof harnesses)[number];
 export const HARNESSES = harnesses;
@@ -1100,7 +1100,7 @@ export type Finding =
   | { kind: 'unrecognized'; text: string };
 export interface TurnActivity {
   turn: TurnId;
-  session: RecordingId;
+  recording: RecordingId;
   native_id: NativeTurnId;
   client: Stored<Harness> | null;
   started_at: UnixMillis | null;
@@ -1152,7 +1152,7 @@ export interface ReportTotals {
   cache_hit_percent: number | null;
 }
 export interface RecordingReport {
-  session: RecordingId;
+  recording: RecordingId;
   totals: ReportTotals;
   turns: TurnMetrics[];
   findings: Finding[];
@@ -1246,7 +1246,7 @@ const finding: Decoder<Finding> = (value, path) => {
 };
 const turnActivity = object<TurnActivity>({
   turn: TurnId.decode,
-  session: RecordingId.decode,
+  recording: RecordingId.decode,
   native_id: branded<'NativeTurnId'>(),
   client: nullable(label(harnesses)),
   started_at: nullable(millis),
@@ -1285,7 +1285,7 @@ export function parseSearchField(text: string | null): SearchField | null {
 }
 export interface SearchHit {
   call: CallId;
-  session: RecordingId | null;
+  recording: RecordingId | null;
   turn: TurnId | null;
   client: Stored<Harness> | null;
   started_at: UnixMillis;
@@ -1302,7 +1302,7 @@ const searchPage = object<SearchPage>({
   hits: array(
     object<SearchHit>({
       call: CallId.decode,
-      session: nullable(RecordingId.decode),
+      recording: nullable(RecordingId.decode),
       turn: nullable(TurnId.decode),
       client: nullable(label(harnesses)),
       started_at: millis,
@@ -1315,7 +1315,7 @@ const searchPage = object<SearchPage>({
 /** A credential one call carried: never the secret itself. */
 export interface ExposureView {
   call: CallId;
-  session: RecordingId | null;
+  recording: RecordingId | null;
   turn: TurnId | null;
   client: Stored<Harness> | null;
   started_at: UnixMillis;
@@ -1332,7 +1332,7 @@ const exposures = object<Exposures>({
   exposures: array(
     object<ExposureView>({
       call: CallId.decode,
-      session: nullable(RecordingId.decode),
+      recording: nullable(RecordingId.decode),
       turn: nullable(TurnId.decode),
       client: nullable(label(harnesses)),
       started_at: millis,
@@ -1344,8 +1344,8 @@ const exposures = object<Exposures>({
     }),
   ),
 });
-const sessionReport = object<RecordingReport>({
-  session: RecordingId.decode,
+const recordingReport = object<RecordingReport>({
+  recording: RecordingId.decode,
   totals: object<ReportTotals>({
     calls: count,
     calls_with_usage: count,
@@ -1420,35 +1420,39 @@ export class ManagementApi {
     const suffix = query.size ? `?${query}` : '';
     return this.#read(`/api/usage${suffix}`, usageView, signal);
   }
-  /** The most recently active sessions; `archived` lists those archived instead. */
-  sessions(
+  /** The most recently active recordings; `archived` lists those archived instead. */
+  recordings(
     limit = 100,
     signal?: AbortSignal,
     shelf: 'current' | 'archived' = 'current',
   ): Promise<Recordings> {
     const query = shelf === 'archived' ? '&shelf=archived' : '';
-    return this.#read(`/api/sessions?limit=${limit}${query}`, sessions, signal);
+    return this.#read(`/api/recordings?limit=${limit}${query}`, recordings, signal);
   }
   /** Oldest first. Only `after` is accepted besides the limit. */
-  sessionCalls(id: RecordingId, after: string | null, signal?: AbortSignal): Promise<CallPage> {
+  recordingCalls(id: RecordingId, after: string | null, signal?: AbortSignal): Promise<CallPage> {
     const query = new URLSearchParams();
     if (after) query.set('after', after);
-    return this.#read(`/api/sessions/${id}/calls?${ManagementApi.#page(query)}`, callPage, signal);
+    return this.#read(
+      `/api/recordings/${id}/calls?${ManagementApi.#page(query)}`,
+      callPage,
+      signal,
+    );
   }
 
-  /** A session's turns, newest first, with the start of each prompt. */
+  /** A recording's turns, newest first, with the start of each prompt. */
   turns(id: RecordingId, limit = 100, signal?: AbortSignal): Promise<Turns> {
-    return this.#read(`/api/sessions/${id}/turns?limit=${limit}`, turns, signal);
+    return this.#read(`/api/recordings/${id}/turns?limit=${limit}`, turns, signal);
   }
-  /** Where a session's context and cache tokens went, from its call records. */
+  /** Where a recording's context and cache tokens went, from its call records. */
   report(id: RecordingId, signal?: AbortSignal): Promise<RecordingReport> {
-    return this.#read(`/api/sessions/${id}/report`, sessionReport, signal);
+    return this.#read(`/api/recordings/${id}/report`, recordingReport, signal);
   }
   /** What one turn did, read from its calls' bodies. */
   turn(id: TurnId, signal?: AbortSignal): Promise<TurnActivity> {
     return this.#read(`/api/turns/${id}`, turnActivity, signal);
   }
-  /** Full-text search: `q`, and optionally `field`, `session`, `client`, `limit`. */
+  /** Full-text search: `q`, and optionally `field`, `recording`, `client`, `limit`. */
   search(query: URLSearchParams, signal?: AbortSignal): Promise<SearchPage> {
     return this.#read(`/api/search?${query}`, searchPage, signal);
   }

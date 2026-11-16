@@ -101,14 +101,14 @@ impl Reader {
         CallPage::from_rows(&rows, query.limit)
     }
 
-    /// A session's calls in chronological order.
+    /// A recording's calls in chronological order.
     pub async fn recording_calls(
         &self,
-        session: RecordingId,
+        recording: RecordingId,
         limit: PageLimit,
         after: Option<Cursor>,
     ) -> Result<CallPage, StoreError> {
-        self.require_recording(session).await?;
+        self.require_recording(recording).await?;
         let (time, call) = after.map_or((-1, String::new()), |cursor| {
             (
                 i64::try_from(cursor.started_at.as_millis()).unwrap_or(i64::MAX),
@@ -116,10 +116,10 @@ impl Reader {
             )
         });
         let rows = sqlx::query(AssertSqlSafe(format!(
-            "{} WHERE c.session = ? AND (c.started_at, c.id) > (?, ?) ORDER BY c.started_at, c.id LIMIT ?",
+            "{} WHERE c.recording = ? AND (c.started_at, c.id) > (?, ?) ORDER BY c.started_at, c.id LIMIT ?",
             CallView::SELECT
         )))
-        .bind(session.to_string())
+        .bind(recording.to_string())
         .bind(time)
         .bind(call)
         .bind(i64::from(limit.get()).saturating_add(1))
@@ -194,17 +194,17 @@ impl Reader {
         })
     }
 
-    /// The `limit` most recently active sessions on `shelf`.
+    /// The `limit` most recently active recordings on `shelf`.
     pub async fn recordings(
         &self,
         limit: PageLimit,
         shelf: Shelf,
     ) -> Result<Vec<RecordingView>, StoreError> {
         let mut sql = QueryBuilder::<Sqlite>::new(
-            "SELECT s.id, s.provider, s.source, s.native_id, s.first_seen, s.last_seen, CASE WHEN s.archived_at >= s.last_seen THEN s.archived_at END AS archived_at, (SELECT COUNT(*) FROM turns WHERE session = s.id) AS turn_count, ",
+            "SELECT s.id, s.provider, s.source, s.native_id, s.first_seen, s.last_seen, CASE WHEN s.archived_at >= s.last_seen THEN s.archived_at END AS archived_at, (SELECT COUNT(*) FROM turns WHERE recording = s.id) AS turn_count, ",
         );
         CallQuery::push_usage_columns(&mut sql);
-        sql.push(" FROM sessions s LEFT JOIN calls c ON c.session = s.id WHERE ")
+        sql.push(" FROM recordings s LEFT JOIN calls c ON c.recording = s.id WHERE ")
             .push(shelf.recordings())
             .push(" GROUP BY s.id ORDER BY s.last_seen DESC, s.id DESC LIMIT ")
             .push_bind(i64::from(limit.get()));
@@ -680,7 +680,7 @@ impl CallQuery {
     /// `calls`, `errors`, `input_tokens`, `output_tokens`, and
     /// `cache_read_tokens` aggregated over the rows of `calls c`. Errors are
     /// the model calls the `errors` status filter finds: a client's own
-    /// check or a failed token count is not a failure of the session's
+    /// check or a failed token count is not a failure of the recording's
     /// work. Input adds cached
     /// context where the provider reported it separately. A token SUM over
     /// calls that reported no usage is NULL: "not reported", not zero.
@@ -745,8 +745,9 @@ impl CallQuery {
                 .push_bind(text)
                 .push(")) > 0))");
         }
-        if let Some(session) = filter.session {
-            sql.push(" AND c.session = ").push_bind(session.to_string());
+        if let Some(recording) = filter.recording {
+            sql.push(" AND c.recording = ")
+                .push_bind(recording.to_string());
         }
         if let Some(client) = filter.client {
             Self::push_client(sql, client);
@@ -822,7 +823,7 @@ impl Reader {
     };
     /// The most calls one turn's activity reads.
     const MAX_TURN_CALLS: i64 = 100;
-    /// The most calls a session report reads, oldest first.
+    /// The most calls a recording report reads, oldest first.
     const MAX_REPORT_CALLS: i64 = 5_000;
 
     /// One turn: its prompt, calls, tool calls, and effects, from its
@@ -832,7 +833,7 @@ impl Reader {
         turn: TurnId,
         budget: ActivityBudget,
     ) -> Result<TurnActivity, StoreError> {
-        let row = sqlx::query("SELECT id, session, native_id FROM turns WHERE id = ?")
+        let row = sqlx::query("SELECT id, recording, native_id FROM turns WHERE id = ?")
             .bind(turn.to_string())
             .fetch_optional(&self.pool)
             .await?
@@ -840,7 +841,7 @@ impl Reader {
         let columns = Columns(&row);
         let head = TurnHead {
             turn: columns.id("id")?,
-            session: columns.id("session")?,
+            recording: columns.id("recording")?,
             native_id: columns.text("native_id")?.unwrap_or_default(),
         };
         let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM calls WHERE turn = ?")
@@ -854,21 +855,21 @@ impl Reader {
         Ok(TurnActivity::assemble(head, calls, omitted, budget))
     }
 
-    /// A session's turns, newest first, each with the start of its prompt:
+    /// A recording's turns, newest first, each with the start of its prompt:
     /// the first one among its calls' digests.
     pub async fn recording_turns(
         &self,
-        session: RecordingId,
+        recording: RecordingId,
         limit: PageLimit,
     ) -> Result<Vec<TurnSummary>, StoreError> {
-        self.require_recording(session).await?;
+        self.require_recording(recording).await?;
         let mut sql = QueryBuilder::<Sqlite>::new(
             "SELECT t.id, t.native_id, MIN(c.started_at) AS started_at, \
              CASE WHEN COUNT(c.ended_at) = COUNT(*) THEN MAX(c.ended_at) END AS ended_at, ",
         );
         CallQuery::push_usage_columns(&mut sql);
-        sql.push(" FROM turns t JOIN calls c ON c.turn = t.id WHERE t.session = ")
-            .push_bind(session.to_string())
+        sql.push(" FROM turns t JOIN calls c ON c.turn = t.id WHERE t.recording = ")
+            .push_bind(recording.to_string())
             .push(" GROUP BY t.id ORDER BY started_at DESC, t.id DESC LIMIT ")
             .push_bind(i64::from(limit.get()));
         let rows = sql.build().fetch_all(&self.pool).await?;
@@ -928,22 +929,22 @@ impl Reader {
         Ok(prompts)
     }
 
-    /// A session's context and cost measurements, from call records alone,
+    /// A recording's context and cost measurements, from call records alone,
     /// with the secrets its calls carried.
     pub async fn recording_report(
         &self,
-        session: RecordingId,
+        recording: RecordingId,
     ) -> Result<RecordingReport, StoreError> {
-        self.require_recording(session).await?;
-        let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM calls WHERE session = ?")
-            .bind(session.to_string())
+        self.require_recording(recording).await?;
+        let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM calls WHERE recording = ?")
+            .bind(recording.to_string())
             .fetch_one(&self.pool)
             .await?;
         let calls: Vec<CallView> = sqlx::query(AssertSqlSafe(format!(
-            "{} WHERE c.session = ? ORDER BY c.started_at, c.id LIMIT ?",
+            "{} WHERE c.recording = ? ORDER BY c.started_at, c.id LIMIT ?",
             CallView::SELECT
         )))
-        .bind(session.to_string())
+        .bind(recording.to_string())
         .bind(Self::MAX_REPORT_CALLS)
         .fetch_all(&self.pool)
         .await?
@@ -952,10 +953,10 @@ impl Reader {
         .collect::<Result<_, _>>()?;
         let read = i64::try_from(calls.len()).unwrap_or(i64::MAX);
         let omitted = u64::try_from(total.saturating_sub(read)).unwrap_or(0);
-        let mut report = RecordingReport::build(session, &calls, omitted);
+        let mut report = RecordingReport::build(recording, &calls, omitted);
         report.add_exposures(
             self.exposures(&ExposureQuery {
-                session: Some(session),
+                recording: Some(recording),
                 time: TimeRange::default(),
                 limit: PageLimit::LARGEST,
             })
@@ -1010,7 +1011,7 @@ impl Reader {
             .collect())
     }
 
-    /// `NotFound` unless the store has `session`.
+    /// `NotFound` unless the store has `recording`.
     /// The newest `limit` entries of `run`'s conversation, oldest first:
     /// its own, and those of the runs before it on the same client thread
     /// (a conversation resumed in a new run reads as one). `None` when the
@@ -1029,7 +1030,7 @@ impl Reader {
             return Ok(None);
         }
         // The runs that make the conversation, in the order they started:
-        // those before it on its thread, and its session's earlier
+        // those before it on its thread, and its recording's earlier
         // processes, which a new one resumes before it says which thread it
         // opened.
         let chain = "SELECT r.id, r.started_at FROM runs r, runs this WHERE this.id = ?1 AND (r.id = this.id OR (r.started_at <= this.started_at AND ((this.thread IS NOT NULL AND r.thread = this.thread) OR (this.operator_session IS NOT NULL AND r.operator_session = this.operator_session))))";
@@ -1062,8 +1063,8 @@ impl Reader {
     }
 
     /// What an edit of `subject` would touch, or `None` when it was never
-    /// recorded: the open calls of its sessions and its runs still running.
-    /// A session's runs are those whose thread it is; a run's sessions those
+    /// recorded: the open calls of its recordings and its runs still running.
+    /// A recording's runs are those whose thread it is; a run's recordings those
     /// its thread names.
     pub async fn history_target(
         &self,
@@ -1071,11 +1072,11 @@ impl Reader {
     ) -> Result<Option<HistoryTarget>, StoreError> {
         // The recordings a subject names (by their native ids), and its runs.
         let (id, exists, threads, runs) = match subject {
-            HistorySubject::Session(session) => (
-                session.to_string(),
-                "SELECT EXISTS(SELECT 1 FROM sessions WHERE id = ?1)",
-                "(SELECT native_id FROM sessions WHERE id = ?1)",
-                "id = ?1 OR thread = (SELECT native_id FROM sessions WHERE id = ?1)",
+            HistorySubject::Recording(recording) => (
+                recording.to_string(),
+                "SELECT EXISTS(SELECT 1 FROM recordings WHERE id = ?1)",
+                "(SELECT native_id FROM recordings WHERE id = ?1)",
+                "id = ?1 OR thread = (SELECT native_id FROM recordings WHERE id = ?1)",
             ),
             HistorySubject::Run(run) => (
                 run.to_string(),
@@ -1098,7 +1099,7 @@ impl Reader {
             return Ok(None);
         }
         let counts = sqlx::query(AssertSqlSafe(format!(
-            "SELECT (SELECT COUNT(*) FROM calls WHERE state = ?2 AND session IN (SELECT id FROM sessions WHERE native_id IN {threads})) AS open_calls, (SELECT COUNT(*) FROM runs WHERE ended_at IS NULL AND ({runs})) AS running_runs"
+            "SELECT (SELECT COUNT(*) FROM calls WHERE state = ?2 AND recording IN (SELECT id FROM recordings WHERE native_id IN {threads})) AS open_calls, (SELECT COUNT(*) FROM runs WHERE ended_at IS NULL AND ({runs})) AS running_runs"
         )))
         .bind(&id)
         .bind(CallState::Open.label())
@@ -1111,11 +1112,12 @@ impl Reader {
         }))
     }
 
-    async fn require_recording(&self, session: RecordingId) -> Result<(), StoreError> {
-        let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM sessions WHERE id = ?)")
-            .bind(session.to_string())
-            .fetch_one(&self.pool)
-            .await?;
+    async fn require_recording(&self, recording: RecordingId) -> Result<(), StoreError> {
+        let exists: bool =
+            sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM recordings WHERE id = ?)")
+                .bind(recording.to_string())
+                .fetch_one(&self.pool)
+                .await?;
         if exists {
             Ok(())
         } else {

@@ -46,10 +46,12 @@
   import Segmented, { type SegmentedOption } from './Segmented.svelte';
   import ConnectClient from './ConnectClient.svelte';
   import RecordingName from './RecordingName.svelte';
-  let { snapshot, sessionId }: { snapshot: Arriving<TrafficData>; sessionId: RecordingId | null } =
-    $props();
+  let {
+    snapshot,
+    recordingId,
+  }: { snapshot: Arriving<TrafficData>; recordingId: RecordingId | null } = $props();
   const workbench = getWorkbench();
-  // The scope bar shows the narrowing controls, or the session itself.
+  // The scope bar shows the narrowing controls, or the recording itself.
   const arrival = createArrival(() => snapshot);
   const shown = $derived(arrival.current);
   /** The listing is on its way: the table draws its own outline. */
@@ -64,11 +66,11 @@
   ];
   const calls = $derived(retained?.value?.calls ?? []);
   const nextAfter = $derived(retained?.value?.next ?? null);
-  const session = $derived(retained?.value?.session);
+  const session = $derived(retained?.value?.recording);
   const details = $derived(retained?.value?.details ?? new Map());
-  /** The listed sessions by ID, to name them in rows. */
+  /** The listed recordings by ID, to name them in rows. */
   const sessionsById = $derived(
-    new Map((retained?.value?.sessions ?? []).map((item) => [item.id, item])),
+    new Map((retained?.value?.recordings ?? []).map((item) => [item.id, item])),
   );
   const updated = $derived(retained?.updated ?? null);
   const today = date(Date.now());
@@ -155,7 +157,7 @@
     workbench.activeCount = 0;
   });
   const groups = $derived(
-    sessionId
+    recordingId
       ? turnGroups(calls)
       : [{ id: 'recent', label: 'Recent calls', turn: null, rows: calls }],
   );
@@ -257,10 +259,10 @@
     else if (key === 'has_tools') filters.has_tools = false;
     else if (key === 'kind') filters.kind = 'model';
     else if (
-      ['q', 'session', 'client', 'since', 'provider', 'model', 'tool', 'status'].includes(key)
+      ['q', 'recording', 'client', 'since', 'provider', 'model', 'tool', 'status'].includes(key)
     )
       filters[
-        key as 'q' | 'session' | 'client' | 'since' | 'provider' | 'model' | 'tool' | 'status'
+        key as 'q' | 'recording' | 'client' | 'since' | 'provider' | 'model' | 'tool' | 'status'
       ] = '';
     applyFilters();
   }
@@ -269,10 +271,10 @@
     change(filters);
     applyFilters();
   }
-  const sessionChoices = $derived(retained?.value?.sessions ?? []);
-  const sessionOptions = $derived<SelectOption<string>[]>([
+  const recordingChoices = $derived(retained?.value?.recordings ?? []);
+  const recordingOptions = $derived<SelectOption<string>[]>([
     { value: '', label: 'All recordings' },
-    ...sessionChoices.map((choice) => ({
+    ...recordingChoices.map((choice) => ({
       value: choice.id,
       label: short(choice.native_id),
       hint: `${providerName(choice.provider)} · ${date(choice.last_seen)} ${clock(choice.last_seen)}`,
@@ -306,12 +308,12 @@
     { value: 'interrupted', label: 'Interrupted / cancelled' },
   ];
   const hidden = $derived(retained?.value?.hidden ?? null);
-  function sessionName(id: string) {
-    const found = sessionChoices.find((item) => item.id === id);
+  function recordingName(id: string) {
+    const found = recordingChoices.find((item) => item.id === id);
     return found ? short(found.native_id) : short(id);
   }
   function chipLabel(key: string, value: string) {
-    if (key === 'session') return `Recording: ${sessionName(value)}`;
+    if (key === 'recording') return `Recording: ${recordingName(value)}`;
     if (key === 'user') return `User: ${value}`;
     if (key === 'client')
       return `Client: ${clientChoices.find((item) => item.client === value)?.label ?? value}`;
@@ -352,7 +354,7 @@
     if (event.key === 'Escape' && selected) void closeInspector();
     if (
       event.key === '/' &&
-      !sessionId &&
+      !recordingId &&
       !(
         event.target instanceof HTMLElement &&
         (event.target.matches('input,textarea,select') || event.target.isContentEditable)
@@ -374,13 +376,13 @@
 {/snippet}
 
 {#snippet scope()}
-  {#if sessionId}
+  {#if recordingId}
     <div class="scope-group scope-identity">
       {#if session}<span class="scope-session"
           ><RecordingName {session} detail={details.get(session.id)} /></span
         ><small class="mono muted" title={`Ren's own ID for this recording: ${session.id}`}
           >{short(session.native_id)}</small
-        >{:else}<strong class="mono">{short(sessionId)}</strong>{/if}
+        >{:else}<strong class="mono">{short(recordingId)}</strong>{/if}
     </div>
     {#if session}<div class="scope-group scope-figures">
         <span><b class="mono">{num(session.call_count)}</b> calls</span>
@@ -397,12 +399,12 @@
       </div>{/if}
     <div class="scope-group end">
       {#if page.data.runsControl}<RecordingActions
-          session={sessionId}
+          recording={recordingId}
           shelf={session ? session.archived_at !== null : null}
         />{/if}
-      <a class="text-button" href={`/recordings/${encodeURIComponent(sessionId)}/report`}
+      <a class="text-button" href={`/recordings/${encodeURIComponent(recordingId)}/report`}
         >Turns and report <Icon name="arrow" size={12} /></a
-      ><a class="text-button" href={`/traffic?session=${encodeURIComponent(sessionId)}`}
+      ><a class="text-button" href={`/traffic?recording=${encodeURIComponent(recordingId)}`}
         >Narrow in Traffic <Icon name="arrow" size={12} /></a
       ><a class="text-button" href="/recordings">All recordings <Icon name="arrow" size={12} /></a>
     </div>
@@ -419,10 +421,10 @@
       <Select
         label="Recording"
         size="compact"
-        options={sessionOptions}
-        value={applied.get('session') ?? ''}
-        placeholder={sessionName(applied.get('session') ?? '')}
-        onchange={(session) => pick((f) => (f.session = session))}
+        options={recordingOptions}
+        value={applied.get('recording') ?? ''}
+        placeholder={recordingName(applied.get('recording') ?? '')}
+        onchange={(session) => pick((f) => (f.recording = session))}
       />
     </div>
     <div class="scope-group">
@@ -466,7 +468,7 @@
 <Toolbar {scope} />
 <div class="traffic-workspace" class:with-inspector={!!selected}>
   <section class="panel list-panel traffic-panel" aria-label="Recorded calls">
-    {#if !sessionId}
+    {#if !recordingId}
       <div class="request-tabs" aria-label="Quick filters">
         <button
           class:active={!applied.get('status') && !applied.get('has_tools')}
@@ -609,7 +611,7 @@
           >
         </div>
       {:else if calls.length === 0}
-        <div class="empty-state" class:first-run={!filterCount && !sessionId && !after}>
+        <div class="empty-state" class:first-run={!filterCount && !recordingId && !after}>
           <div class="empty-icon">
             <Icon name={loading ? 'refresh' : filterCount ? 'search' : 'logs'} size={26} />
           </div>
@@ -618,7 +620,7 @@
               ? 'Loading requests…'
               : filterCount || !!after
                 ? 'No requests match these filters'
-                : sessionId
+                : recordingId
                   ? 'No requests on this page'
                   : 'No recorded traffic'}
           </h2>
@@ -627,14 +629,14 @@
               ? 'Reading captured traffic from your gateway.'
               : filterCount || !!after
                 ? 'Try a broader search or adjust your filters.'
-                : sessionId
+                : recordingId
                   ? 'Refresh to check for new activity in this recording.'
                   : 'Point a client at Ren or use a launch command below.'}
           </p>
           {#if !loading && (filterCount || !!after)}<button class="button" onclick={resetFilters}
               >Clear filters & return to first page</button
             >
-          {:else if !loading && !sessionId}<ConnectClient
+          {:else if !loading && !recordingId}<ConnectClient
               layout="box"
               gatewayOrigin={page.data.gatewayUrl}
             />
@@ -645,7 +647,7 @@
       {:else}
         <div class="attempt-list">
           {#each groups as group (group.id)}
-            {#if sessionId}<div class="turn-heading">
+            {#if recordingId}<div class="turn-heading">
                 <Icon name="sessions" size={13} /><strong>{group.label}</strong><span
                   >{group.rows.length} call{group.rows.length === 1 ? '' : 's'}</span
                 >{#if group.turn}<a
@@ -680,26 +682,26 @@
                         onclick={(event) => selectCall(event, c.id)}
                         aria-label={`Inspect call ${c.id}`}
                         aria-current={selectedId === c.id ? 'true' : undefined}>{short(c.id)}</a
-                      >{#if !sessionId}{@const previous = group.rows[index - 1]}<small
+                      >{#if !recordingId}{@const previous = group.rows[index - 1]}<small
                           class="mono session-line"
                           title={c.attribution.hint?.session ??
                             'No session identifier was reported'}
-                          >{#if c.session}{@const session = c.session}<button
+                          >{#if c.recording}{@const session = c.recording}<button
                               type="button"
                               class="session-filter"
                               title="Show only this recording's calls"
                               aria-label={`Show only recording ${short(c.attribution.hint?.session ?? session)}`}
-                              onclick={() => pick((f) => (f.session = session))}
-                              >{#if sessionsById.get(session) && (!previous || previous.session !== c.session)}<RecordingName
+                              onclick={() => pick((f) => (f.recording = session))}
+                              >{#if sessionsById.get(session) && (!previous || previous.recording !== c.recording)}<RecordingName
                                   session={sessionsById.get(session)!}
                                   detail={details.get(session)}
                                   client={false}
                                 />{:else}<span class="session-dot tone-{sessionTone(session)}"
-                                ></span>{#if !previous || previous.session !== c.session}{c
+                                ></span>{#if !previous || previous.recording !== c.recording}{c
                                     .attribution.hint
                                     ? short(c.attribution.hint.session)
                                     : 'Recording'}{/if}{/if}</button
-                            >{:else if !previous || previous.session !== c.session}No recording{/if}{#if c.caller?.user || c.caller?.login}{@const caller =
+                            >{:else if !previous || previous.recording !== c.recording}No recording{/if}{#if c.caller?.user || c.caller?.login}{@const caller =
                               callerShown(c.caller)}<span class="caller-line"
                               >{SEPARATOR}{#if caller.user}{@const user = caller.user}<button
                                   type="button"
@@ -755,7 +757,7 @@
     <div class="table-footer">
       {#if outlined}<span class="muted">Reading requests…</span>{:else}<span
           >{num(calls.length)} call{calls.length === 1 ? '' : 's'}
-          <span class="muted">· {sessionId ? 'Oldest first' : 'Newest first'}</span></span
+          <span class="muted">· {recordingId ? 'Oldest first' : 'Newest first'}</span></span
         >{/if}
       <div class="pagination">
         <button class="button small" disabled={loading || !after} onclick={() => paginate(false)}
@@ -771,7 +773,7 @@
   {#if selected}{#key selected.id}<Inspector
         call={selected}
         close={closeInspector}
-        onsession={showCallRecording}
+        onrecording={showCallRecording}
         onupdate={updateCall}
       />{/key}{/if}
 </div>

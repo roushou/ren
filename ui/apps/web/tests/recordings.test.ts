@@ -84,7 +84,9 @@ test('a row says who it is, what it is about, and what it does now', () => {
           },
         ],
       ]),
-      open: [callFixture(callId(1), { session: sid(3), started_at: (NOW - 4_000) as UnixMillis })],
+      open: [
+        callFixture(callId(1), { recording: sid(3), started_at: (NOW - 4_000) as UnixMillis }),
+      ],
     }),
   );
   const rows = new Map(

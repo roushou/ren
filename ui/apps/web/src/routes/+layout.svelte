@@ -63,15 +63,15 @@
     page.data.overview,
     page.data.traffic,
     page.data.live,
-    page.data.sessions,
+    page.data.recordings,
     page.data.usage,
     page.data.recorder,
     page.data.report,
     page.data.turn,
     page.data.search,
   ]);
-  const sessionCount = $derived(
-    reads.of<RecordingsData>(page.data.sessions)?.value?.sessions.length ?? 0,
+  const recordingCount = $derived(
+    reads.of<RecordingsData>(page.data.recordings)?.value?.recordings.length ?? 0,
   );
   const selected = $derived(workbench.selected);
   const pageTitle = $derived(page.error ? 'Page unavailable' : Views.title(view));
@@ -95,7 +95,7 @@
     gateway.current.error ??
       reads.of(page.data.traffic)?.error ??
       reads.of(page.data.live)?.error ??
-      reads.of(page.data.sessions)?.error ??
+      reads.of(page.data.recordings)?.error ??
       reads.of(page.data.recorder)?.error ??
       reads.of(page.data.report)?.error ??
       reads.of(page.data.turn)?.error ??
@@ -323,7 +323,7 @@
         : view === 'recorder'
           ? `${num(storage?.usage.calls)} calls retained`
           : view === 'recordings'
-            ? `${sessionCount}${sessionCount === 100 ? '+' : ''} recordings loaded`
+            ? `${recordingCount}${recordingCount === 100 ? '+' : ''} recordings loaded`
             : view === 'traffic' || view === 'recording'
               ? `${workbench.callCount} calls on page · ${workbench.activeCount} in progress`
               : `${num(storage?.usage.calls)} calls retained`}</span

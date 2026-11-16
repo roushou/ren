@@ -18,10 +18,10 @@ const pinned: typeof fetch = async (input) => {
     [
       [/^\/api\/calls$/, 'calls'],
       [/^\/api\/calls\/[^/]+$/, 'call'],
-      [/^\/api\/sessions$/, 'sessions'],
-      [/^\/api\/sessions\/[^/]+\/calls$/, 'session_calls'],
-      [/^\/api\/sessions\/[^/]+\/turns$/, 'turns'],
-      [/^\/api\/sessions\/[^/]+\/report$/, 'report'],
+      [/^\/api\/recordings$/, 'recordings'],
+      [/^\/api\/recordings\/[^/]+\/calls$/, 'recording_calls'],
+      [/^\/api\/recordings\/[^/]+\/turns$/, 'turns'],
+      [/^\/api\/recordings\/[^/]+\/report$/, 'report'],
       [/^\/api\/turns\/[^/]+$/, 'turn'],
       [/^\/api\/usage$/, 'usage'],
       [/^\/api\/search$/, 'search'],
@@ -42,18 +42,18 @@ test('every read the UI makes decodes the daemon’s pinned answers', async () =
   const detail = await api.call(callId);
   assert.equal(detail.call.id, first.id);
 
-  const sessions = await api.sessions();
-  const sessionId = RecordingId.parse(sessions.sessions[0].id);
-  assert.ok(sessionId);
-  assert.equal((await api.sessionCalls(sessionId, null)).calls.length, 2);
-  const turns = await api.turns(sessionId);
+  const recordings = await api.recordings();
+  const recordingId = RecordingId.parse(recordings.recordings[0].id);
+  assert.ok(recordingId);
+  assert.equal((await api.recordingCalls(recordingId, null)).calls.length, 2);
+  const turns = await api.turns(recordingId);
   assert.equal(turns.turns[0].prompt?.text, 'Fix the parser');
   const turnId = TurnId.parse(turns.turns[0].turn);
   assert.ok(turnId);
   const turn = await api.turn(turnId);
   assert.equal(turn.calls.length, 2);
   assert.ok(turn.findings.some((finding) => finding.kind === 'secret_exposure'));
-  const report = await api.report(sessionId);
+  const report = await api.report(recordingId);
   assert.equal(report.turns.length, 1);
   await api.usage({});
 

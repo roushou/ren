@@ -114,24 +114,24 @@ test('responses are parsed at the boundary: labels keep unknown text, shapes are
   assert.equal(metrics.value?.metrics.storage.disk.blobs.page_size, 4096);
   // The usage read failed to parse (this fake answers every path alike): no oldest call, no failure.
   assert.equal(metrics.value?.oldest, null);
-  const sessions = ready(
+  const recordings = ready(
     await new RecordingsReader(new RecordingDetails()).read(async (input) => {
       if (path(input).startsWith('/api/calls')) return versioned({ calls: [], next: null });
       if (path(input).endsWith('/turns?limit=5')) return versioned({ turns: [] });
-      assert.equal(path(input), '/api/sessions?limit=100');
-      return versioned({ sessions: [sessionRow(7, 2)] });
+      assert.equal(path(input), '/api/recordings?limit=100');
+      return versioned({ recordings: [recordingRow(7, 2)] });
     }),
   );
   // A label this UI does not know is kept as text.
-  assert.equal(sessions.value?.sessions[0]?.provider, 'future_provider');
+  assert.equal(recordings.value?.recordings[0]?.provider, 'future_provider');
   // Tokens no call reported are null, never zero.
-  assert.deepEqual(sessions.value?.sessions[0]?.tokens, {
+  assert.deepEqual(recordings.value?.recordings[0]?.tokens, {
     input: null,
     output: null,
     cache_read: null,
   });
-  // A session with no turn yet is read, and says so: no prompt, no folder.
-  assert.deepEqual(sessions.value?.details.get(uuid(7) as never), {
+  // A recording with no turn yet is read, and says so: no prompt, no folder.
+  assert.deepEqual(recordings.value?.details.get(uuid(7) as never), {
     prompt: null,
     workdir: null,
   });
@@ -152,18 +152,18 @@ test('the listing ignores the selection, and off-page selections load on their o
   const requested: string[] = [];
   const fetcher = async (input: RequestInfo | URL) => {
     requested.push(path(input));
-    if (path(input).startsWith('/api/sessions?')) return versioned({ sessions: [] });
+    if (path(input).startsWith('/api/recordings?')) return versioned({ recordings: [] });
     return path(input).startsWith('/api/calls?')
       ? versioned({ calls: [], next: null })
       : versioned(detailFixture(older));
   };
   const url = new URL(`http://localhost/traffic?call=${older.id}&model=fixture&unknown=ignored`);
   const listing = ready(await trafficSnapshot(fetcher, url, null));
-  // The listing (model calls by default), the sessions for the picker, and
+  // The listing (model calls by default), the recordings for the picker, and
   // how many calls the default hides; never the selected call.
   assert.deepEqual(requested, [
     '/api/calls?limit=100&model=fixture&kind=model',
-    '/api/sessions?limit=100',
+    '/api/recordings?limit=100',
     '/api/calls?limit=100&model=fixture&kind=other',
   ]);
   assert.deepEqual(listing.value?.calls, []);
@@ -187,25 +187,25 @@ test('the listing ignores the selection, and off-page selections load on their o
   assert.equal((await offPageSelection(fetcher, 'nope', [])).kind, 'failed');
 });
 
-test('session pages read the session listing with only a cursor', async () => {
-  const session = RecordingId.parse(uuid(3));
-  assert.ok(session);
+test('recording pages read the recording listing with only a cursor', async () => {
+  const recording = RecordingId.parse(uuid(3));
+  assert.ok(recording);
   const requested: string[] = [];
   const page = ready(
     await trafficSnapshot(
       async (input) => {
         requested.push(path(input));
-        return path(input).startsWith('/api/sessions?')
-          ? versioned({ sessions: [] })
+        return path(input).startsWith('/api/recordings?')
+          ? versioned({ recordings: [] })
           : versioned({ calls: [finishedFixture(callId(1))], next: '5:cursor' });
       },
-      new URL('http://localhost/sessions/x?after=1%3Aabc&model=ignored'),
-      session,
+      new URL('http://localhost/recordings/x?after=1%3Aabc&model=ignored'),
+      recording,
     ),
   );
   assert.deepEqual(requested, [
-    '/api/sessions?limit=100',
-    `/api/sessions/${session}/calls?limit=100&after=1%3Aabc`,
+    '/api/recordings?limit=100',
+    `/api/recordings/${recording}/calls?limit=100&after=1%3Aabc`,
   ]);
   assert.equal(page.value?.next, '5:cursor');
   assert.equal(RecordingId.parse('../evil'), null);
@@ -235,19 +235,19 @@ test('search reads nothing without a query and keeps only a known field', async 
     await searchSnapshot(fetcher, new URL('http://ui.test/search?q=a&field=everything')),
   );
   assert.equal(unknown.value?.field, null);
-  // Each search also reads the session listing, to name its hits' sessions.
+  // Each search also reads the recording listing, to name its hits' recordings.
   assert.deepEqual(calls, [
     '/api/search?q=a%26b&limit=50&field=tool_output',
-    '/api/sessions?limit=100',
+    '/api/recordings?limit=100',
     '/api/search?q=a&limit=50',
-    '/api/sessions?limit=100',
+    '/api/recordings?limit=100',
   ]);
   // The key encodes the query, so `&` in the text stays part of it.
   assert.equal(known.key, '/search?q=a%26b&field=tool_output');
   assert.equal(unknown.key, '/search?q=a&field=');
 });
 
-function sessionRow(n: number, lastSeen: number, calls = 3, turns = 1) {
+function recordingRow(n: number, lastSeen: number, calls = 3, turns = 1) {
   return {
     id: uuid(n),
     provider: 'future_provider',
@@ -263,7 +263,7 @@ function sessionRow(n: number, lastSeen: number, calls = 3, turns = 1) {
   };
 }
 
-test('sessions are read in detail once per activity, and single-call ones not at all', async () => {
+test('recordings are read in detail once per activity, and single-call ones not at all', async () => {
   const reader = new RecordingsReader(new RecordingDetails());
   const turnReads: string[] = [];
   let lastSeen = 2;
@@ -274,19 +274,19 @@ test('sessions are read in detail once per activity, and single-call ones not at
       turnReads.push(where);
       return versioned({ turns: [] });
     }
-    // Session 8 is one call with no turn: a client's own check.
-    return versioned({ sessions: [sessionRow(7, lastSeen), sessionRow(8, 2, 1, 0)] });
+    // Recording 8 is one call with no turn: a client's own check.
+    return versioned({ recordings: [recordingRow(7, lastSeen), recordingRow(8, 2, 1, 0)] });
   };
   await reader.read(fetcher);
   await reader.read(fetcher);
-  assert.deepEqual(turnReads, [`/api/sessions/${uuid(7)}/turns?limit=5`]);
+  assert.deepEqual(turnReads, [`/api/recordings/${uuid(7)}/turns?limit=5`]);
   // New activity reads it again.
   lastSeen = 3;
   await reader.read(fetcher);
   assert.equal(turnReads.length, 2);
 });
 
-test('sessions are read a few at a time', async () => {
+test('recordings are read a few at a time', async () => {
   let inFlight = 0;
   let most = 0;
   const fetcher = async (input: RequestInfo | URL) => {
@@ -300,7 +300,7 @@ test('sessions are read a few at a time', async () => {
       return versioned({ turns: [] });
     }
     return versioned({
-      sessions: Array.from({ length: 20 }, (_, n) => sessionRow(20 + n, 2)),
+      recordings: Array.from({ length: 20 }, (_, n) => recordingRow(20 + n, 2)),
     });
   };
   const result = ready(await new RecordingsReader(new RecordingDetails()).read(fetcher));

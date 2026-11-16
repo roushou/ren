@@ -60,7 +60,7 @@
   const band = $derived(
     current
       ? new Band(
-          current.sessions,
+          current.recordings,
           current.recent,
           Math.max(now, current.read),
           view.by,
@@ -81,7 +81,7 @@
   const board = $derived(
     current
       ? new Board({
-          sessions: current.sessions,
+          sessions: current.recordings,
           calls: current.calls,
           turns: current.turns,
           now: Math.max(now, current.read),
@@ -296,11 +296,11 @@
           title="The wall shows only recordings in this series; select to show every recording"
           >only {only.label} <Icon name="close" size={11} /></a
         >{/if}
-      {#if current && (current.truncated.calls || current.truncated.sessions)}<span
+      {#if current && (current.truncated.calls || current.truncated.recordings)}<span
           class="chip warning"
           title="The window holds more than the page reads at once ({RecentCalls.pageLimit *
             RecentCalls.maxPages} calls, {LivePlace.windows[current.window]
-            .sessions} sessions): the oldest are left out. Choose a shorter window to see all of it."
+            .sessions} recordings): the oldest are left out. Choose a shorter window to see all of it."
           >partial: newest only</span
         >{/if}
     </div>
@@ -632,8 +632,10 @@
               {@const rowChip = Board.phaseChip(tile.phase, board.now)}
               <tr class:quiet={tile.quiet}>
                 <td
-                  ><a class="live-open" href={sessionHref(tile.session.id)} title="Open the session"
-                    >{@render identity(tile)}</a
+                  ><a
+                    class="live-open"
+                    href={sessionHref(tile.session.id)}
+                    title="Open the recording">{@render identity(tile)}</a
                   ></td
                 >
                 <td
@@ -665,7 +667,7 @@
             class:highlighted={highlighted === tile.session.id || inHoveredSeries(tile)}
           >
             <header class="live-tile-head">
-              <a class="live-open" href={sessionHref(tile.session.id)} title="Open the session"
+              <a class="live-open" href={sessionHref(tile.session.id)} title="Open the recording"
                 >{@render identity(tile)}<span class="live-open-hint"
                   ><Icon name="arrow" size={11} /></span
                 ></a

@@ -42,7 +42,7 @@ pub enum StoreError {
     NonUtf8Path,
     #[error("stored data is corrupt: {0}")]
     Corrupt(&'static str),
-    #[error("call, session, or body not found")]
+    #[error("call, recording, or body not found")]
     NotFound,
     #[error("body capture is incomplete; inspect its metadata instead")]
     IncompleteBody,

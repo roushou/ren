@@ -1,4 +1,4 @@
-//! The management API: health, metrics, calls, sessions, body previews, the
+//! The management API: health, metrics, calls, recordings, body previews, the
 //! live observation feed, and authenticated controls under `/control/v1`.
 //!
 //! Every JSON response carries `api_version`, which the UI checks at load.

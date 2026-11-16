@@ -93,18 +93,18 @@ impl HistoryCmd {
     }
 }
 
-/// List sessions grouped by explicit client-provided identifiers.
+/// List recordings: calls grouped by the session identifiers their clients sent.
 #[derive(Args)]
-pub struct SessionsCmd {
+pub struct RecordingsCmd {
     #[arg(long, default_value = "20")]
     limit: PageLimit,
-    /// `current`, or `archived`: the sessions archived and not active since.
+    /// `current`, or `archived`: the recordings archived and not active since.
     #[arg(long, default_value_t = Shelf::Current)]
     shelf: Shelf,
     #[command(flatten)]
     target: TargetArgs,
 }
-impl SessionsCmd {
+impl RecordingsCmd {
     pub async fn run(self, ctx: &Context) -> Result<ExitCode> {
         self.target
             .print(
@@ -118,7 +118,7 @@ impl SessionsCmd {
     }
 }
 
-/// List a session's calls chronologically, with optional pagination.
+/// List a recording's calls chronologically, with optional pagination.
 #[derive(Args)]
 pub struct TimelineCmd {
     id: RecordingId,
@@ -141,7 +141,7 @@ impl TimelineCmd {
     }
 }
 
-/// List a session's turns, newest first, each with the start of its prompt.
+/// List a recording's turns, newest first, each with the start of its prompt.
 #[derive(Args)]
 pub struct TurnsCmd {
     id: RecordingId,
@@ -168,9 +168,9 @@ pub struct SearchCmd {
     /// What to look for.
     #[arg(required = true, num_args = 1..)]
     text: Vec<String>,
-    /// Only this Ren session.
+    /// Only this recording.
     #[arg(long)]
-    session: Option<RecordingId>,
+    recording: Option<RecordingId>,
     /// Only calls from this client.
     #[arg(long)]
     client: Option<Harness>,
@@ -186,7 +186,7 @@ impl SearchCmd {
     pub async fn run(self, ctx: &Context) -> Result<ExitCode> {
         let request = ReadRequest::Search(SearchQuery {
             terms: SearchTerms::parse(&self.text.join(" "))?,
-            session: self.session,
+            recording: self.recording,
             client: self.client,
             field: self.field,
             time: TimeRange::default(),
@@ -201,9 +201,9 @@ impl SearchCmd {
 /// fingerprint. The secrets themselves are never stored or shown.
 #[derive(Args)]
 pub struct ExposuresCmd {
-    /// Only this Ren session.
+    /// Only this recording.
     #[arg(long)]
-    session: Option<RecordingId>,
+    recording: Option<RecordingId>,
     #[arg(long, default_value = "50")]
     limit: PageLimit,
     #[command(flatten)]
@@ -212,7 +212,7 @@ pub struct ExposuresCmd {
 impl ExposuresCmd {
     pub async fn run(self, ctx: &Context) -> Result<ExitCode> {
         let request = ReadRequest::Exposures(ExposureQuery {
-            session: self.session,
+            recording: self.recording,
             time: TimeRange::default(),
             limit: self.limit,
         });
@@ -220,7 +220,7 @@ impl ExposuresCmd {
     }
 }
 
-/// Report a session's context and cost: per turn, context size, prompt-cache
+/// Report a recording's context and cost: per turn, context size, prompt-cache
 /// hits and writes, output, and idle time, with cache rebuilds and the
 /// largest context growth. Token counts are provider-reported, not cost.
 #[derive(Args)]

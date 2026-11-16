@@ -147,7 +147,7 @@ async fn agents_read_recorded_traffic_over_stdio_in_both_protocol_eras() {
             modern(
                 8,
                 "tools/call",
-                json!({ "name": "list_sessions", "arguments": { "limit": 0 } }),
+                json!({ "name": "list_recordings", "arguments": { "limit": 0 } }),
             ),
         ],
     );
@@ -181,13 +181,13 @@ async fn agents_read_recorded_traffic_over_stdio_in_both_protocol_eras() {
         &[
             json!({ "jsonrpc": "2.0", "id": 0, "method": "initialize", "params": { "protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": { "name": "fixture", "version": "1" } } }),
             json!({ "jsonrpc": "2.0", "method": "notifications/initialized" }),
-            json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": { "name": "list_sessions", "arguments": {} } }),
+            json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": { "name": "list_recordings", "arguments": {} } }),
         ],
     );
     assert_eq!(replies.len(), 2);
     assert_eq!(replies[0]["result"]["protocolVersion"], "2025-06-18");
-    let sessions = data(&replies[1]);
-    assert_eq!(sessions["sessions"].as_array().unwrap().len(), 1);
+    let recordings = data(&replies[1]);
+    assert_eq!(recordings["recordings"].as_array().unwrap().len(), 1);
     assert!(replies[1]["result"].get("resultType").is_none());
 
     // An unreachable gateway is a tool error the model can read, not a
@@ -328,20 +328,20 @@ async fn a_turns_activity_reads_the_same_locally_through_a_gateway_and_over_mcp(
         response.bytes().await.unwrap();
     }
     let data_dir = state.to_str().unwrap();
-    let mut sessions = Value::Null;
+    let mut recordings = Value::Null;
     for _ in 0..100 {
-        sessions = cli_json(&home, &["--data-dir", data_dir, "sessions"])["sessions"].clone();
-        if sessions[0]["call_count"] == 2 {
+        recordings = cli_json(&home, &["--data-dir", data_dir, "recordings"])["recordings"].clone();
+        if recordings[0]["call_count"] == 2 {
             break;
         }
         tokio::time::sleep(std::time::Duration::from_millis(20)).await;
     }
-    let session_id = sessions[0]["id"].as_str().unwrap().to_owned();
+    let recording_id = recordings[0]["id"].as_str().unwrap().to_owned();
 
     // Locally and through the gateway, the same JSON.
-    let turns = cli_json(&home, &["--data-dir", data_dir, "turns", &session_id]);
+    let turns = cli_json(&home, &["--data-dir", data_dir, "turns", &recording_id]);
     assert_eq!(
-        cli_json(&home, &["turns", &session_id, "--gateway", &gateway]),
+        cli_json(&home, &["turns", &recording_id, "--gateway", &gateway]),
         turns
     );
     let listed = &turns["turns"];
@@ -401,9 +401,9 @@ async fn a_turns_activity_reads_the_same_locally_through_a_gateway_and_over_mcp(
     }
     assert_eq!(found["indexed_calls"], 2, "{found}");
     // Indexed now, so both reports include the same exposures.
-    let report = cli_json(&home, &["--data-dir", data_dir, "report", &session_id]);
+    let report = cli_json(&home, &["--data-dir", data_dir, "report", &recording_id]);
     assert_eq!(
-        cli_json(&home, &["report", &session_id, "--gateway", &gateway]),
+        cli_json(&home, &["report", &recording_id, "--gateway", &gateway]),
         report
     );
     assert_eq!(report["totals"]["calls"], 2);
@@ -411,7 +411,7 @@ async fn a_turns_activity_reads_the_same_locally_through_a_gateway_and_over_mcp(
     assert_eq!(report["turns"][0]["output_tokens"], 9);
     assert_eq!(found["hits"][0]["field"], "tool_output");
     assert_eq!(found["hits"][0]["snippet"], "test «parser» ... FAILED");
-    assert_eq!(found["hits"][0]["session"], session_id.as_str());
+    assert_eq!(found["hits"][0]["recording"], recording_id.as_str());
     assert_eq!(
         cli_json(
             &home,
@@ -460,7 +460,7 @@ async fn a_turns_activity_reads_the_same_locally_through_a_gateway_and_over_mcp(
     assert_eq!(listed[0]["kind"], "openai_key");
     assert_eq!(listed[0]["field"], "prompt");
     assert_eq!(listed[0]["hint"], "sk-proj-…Q9z8");
-    let report = cli_json(&home, &["--data-dir", data_dir, "report", &session_id]);
+    let report = cli_json(&home, &["--data-dir", data_dir, "report", &recording_id]);
     let kinds: Vec<_> = report["findings"]
         .as_array()
         .unwrap()
@@ -483,7 +483,7 @@ async fn a_turns_activity_reads_the_same_locally_through_a_gateway_and_over_mcp(
             modern(
                 1,
                 "tools/call",
-                json!({ "name": "list_turns", "arguments": { "session_id": session_id } }),
+                json!({ "name": "list_turns", "arguments": { "recording_id": recording_id } }),
             ),
             modern(
                 2,
@@ -498,7 +498,7 @@ async fn a_turns_activity_reads_the_same_locally_through_a_gateway_and_over_mcp(
             modern(
                 4,
                 "tools/call",
-                json!({ "name": "session_report", "arguments": { "session_id": session_id } }),
+                json!({ "name": "recording_report", "arguments": { "recording_id": recording_id } }),
             ),
             modern(
                 5,

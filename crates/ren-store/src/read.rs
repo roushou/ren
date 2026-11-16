@@ -57,9 +57,9 @@ pub enum ReadRequest {
 pub enum ReadResponse {
     Calls(CallPage),
     Call(Box<CallDetail>),
-    /// Serialized as the read API's `sessions`.
+    /// Serialized as the read API's `recordings`.
     Recordings {
-        sessions: Vec<RecordingView>,
+        recordings: Vec<RecordingView>,
     },
     Turns {
         turns: Vec<TurnSummary>,
@@ -82,7 +82,7 @@ pub enum ReadResponse {
 /// The read API's body for a recording listing.
 #[derive(Deserialize)]
 struct Recordings {
-    sessions: Vec<RecordingView>,
+    recordings: Vec<RecordingView>,
 }
 
 #[derive(Deserialize)]
@@ -111,7 +111,7 @@ impl ReadRequest {
             }
             Self::Call(_) => ReadResponse::Call(serde_json::from_value(body)?),
             Self::Recordings { .. } => ReadResponse::Recordings {
-                sessions: serde_json::from_value::<Recordings>(body)?.sessions,
+                recordings: serde_json::from_value::<Recordings>(body)?.recordings,
             },
             Self::Turns { .. } => ReadResponse::Turns {
                 turns: serde_json::from_value::<Turns>(body)?.turns,
@@ -143,7 +143,7 @@ impl Reader {
             ReadRequest::Calls(query) => ReadResponse::Calls(self.calls(query).await?),
             ReadRequest::Call(call) => ReadResponse::Call(Box::new(self.call(*call).await?)),
             ReadRequest::Recordings { limit, shelf } => ReadResponse::Recordings {
-                sessions: self.recordings(*limit, *shelf).await?,
+                recordings: self.recordings(*limit, *shelf).await?,
             },
             ReadRequest::RecordingCalls {
                 recording,

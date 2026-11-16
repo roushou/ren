@@ -259,13 +259,13 @@ pub struct HistoryEdit {
     pub change: HistoryChange,
 }
 
-/// What a history edit applies to: a recording (its `kind` is `session`, as
-/// the read API names recordings), a run with the recording its client
-/// recorded, when there is one, or an operator session with all its runs.
+/// What a history edit applies to: a recording, a run with the recording its
+/// client recorded, when there is one, or an operator session with all its
+/// runs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case", tag = "kind", content = "id")]
 pub enum HistorySubject {
-    Session(RecordingId),
+    Recording(RecordingId),
     Run(RunId),
     OperatorSession(SessionId),
 }
@@ -275,7 +275,7 @@ pub enum HistorySubject {
 #[strum(serialize_all = "snake_case")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SerializeDisplay, DeserializeFromStr)]
 pub enum HistoryChange {
-    /// Hide it from listings until it is unarchived, or until a session
+    /// Hide it from listings until it is unarchived, or until a recording
     /// has new traffic.
     Archive,
     Unarchive,

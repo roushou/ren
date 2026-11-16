@@ -782,7 +782,7 @@ async fn tool_follow_up_is_grouped_and_visible_through_read_only_api() {
     let sessions: serde_json::Value = timeout(Duration::from_secs(3), async {
         loop {
             let response = client()
-                .get(format!("{base}/api/sessions"))
+                .get(format!("{base}/api/recordings"))
                 .send()
                 .await
                 .unwrap();
@@ -790,8 +790,8 @@ async fn tool_follow_up_is_grouped_and_visible_through_read_only_api() {
             let value: serde_json::Value =
                 serde_json::from_slice(&response.bytes().await.unwrap()).unwrap();
             assert_eq!(value["api_version"], 1);
-            if value["sessions"][0]["call_count"] == 2 {
-                break value["sessions"].clone();
+            if value["recordings"][0]["call_count"] == 2 {
+                break value["recordings"].clone();
             }
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
@@ -801,7 +801,7 @@ async fn tool_follow_up_is_grouped_and_visible_through_read_only_api() {
     assert_eq!(sessions.as_array().unwrap().len(), 1);
     assert_eq!(sessions[0]["turn_count"], 1);
     let id = sessions[0]["id"].as_str().unwrap();
-    let url = format!("{base}/api/sessions/{id}/calls?limit=1");
+    let url = format!("{base}/api/recordings/{id}/calls?limit=1");
     let first: serde_json::Value = serde_json::from_slice(
         &client()
             .get(&url)
@@ -830,8 +830,8 @@ async fn tool_follow_up_is_grouped_and_visible_through_read_only_api() {
     assert_ne!(first["calls"][0]["id"], second["calls"][0]["id"]);
     for path in [
         "/api/calls?limit=0",
-        "/api/sessions?limit=1001",
-        "/api/sessions?extra=1",
+        "/api/recordings?limit=1001",
+        "/api/recordings?extra=1",
     ] {
         assert_eq!(
             client()
@@ -845,7 +845,7 @@ async fn tool_follow_up_is_grouped_and_visible_through_read_only_api() {
     }
     assert_eq!(
         client()
-            .post(format!("{base}/api/sessions"))
+            .post(format!("{base}/api/recordings"))
             .send()
             .await
             .unwrap()
@@ -1187,7 +1187,7 @@ async fn live_previews_advance_without_claiming_completion_and_traffic_filters_v
         "from_ms=2&until_ms=1",
         "after=bad",
         "typo=1",
-        "session=not-a-uuid",
+        "recording=not-a-uuid",
         "client=cursor",
         "kind=everything",
     ] {
@@ -1206,7 +1206,7 @@ async fn live_previews_advance_without_claiming_completion_and_traffic_filters_v
         "client=claude_code&kind=model",
         "client=codex",
         "kind=other",
-        "session=33333333-3333-4333-8333-333333333333&status=finished",
+        "recording=33333333-3333-4333-8333-333333333333&status=finished",
     ] {
         assert_eq!(
             client

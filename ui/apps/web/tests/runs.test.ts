@@ -359,7 +359,7 @@ test('the sidebar groups runs by folder, waiting and live ones first', () => {
       workdir: '/work/web',
       started_at: 2000 as never,
       thread: null,
-      session: null,
+      recording: null,
       ended_at: 3000 as never,
       end: 'stopped',
       exit: { kind: 'signal', value: 9 },
@@ -374,7 +374,7 @@ test('the sidebar groups runs by folder, waiting and live ones first', () => {
       workdir: '/work/acme',
       started_at: 1000 as never,
       thread: thread as never,
-      session: null,
+      recording: null,
       ended_at: null,
       end: null,
       exit: null,
@@ -637,7 +637,7 @@ test('a folder lists its runs that have not ended before those that have', () =>
     workdir: '/work/acme',
     started_at: 1 as never,
     thread: null,
-    session: null,
+    recording: null,
     ended_at: 2 as never,
     end: 'stopped',
     exit: null,
@@ -673,7 +673,7 @@ test('history edits and the archived shelf map to their routes and words', async
               workdir: '/work/acme',
               started_at: 1,
               thread: null,
-              session: null,
+              recording: null,
               ended_at: 2,
               end: 'stopped',
               exit: null,
@@ -687,7 +687,7 @@ test('history edits and the archived shelf map to their routes and words', async
       : Response.json({ api_version: 1, change: 'archive' }, { status: 202 });
   }) as unknown as typeof fetch);
   await client.edit({ kind: 'run', id: run as never }, 'archive');
-  await client.edit({ kind: 'session', id: thread as never }, 'unarchive');
+  await client.edit({ kind: 'recording', id: thread as never }, 'unarchive');
   const [shelved] = await client.recorded(5, 'archived');
   assert.equal(shelved?.archived_at, 3);
   assert.deepEqual(
@@ -701,7 +701,7 @@ test('history edits and the archived shelf map to their routes and words', async
   );
   assert.deepEqual(seen, [
     `POST /control/history/runs/${run}/archive`,
-    `POST /control/history/sessions/${thread}/unarchive`,
+    `POST /control/history/recordings/${thread}/unarchive`,
     'GET /api/runs?limit=5&shelf=archived',
     `POST /control/history/runs/${run}/delete`,
   ]);

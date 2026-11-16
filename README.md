@@ -83,7 +83,7 @@ ren init --gateway https://your-vps.your-tailnet.ts.net:8443
 Browse what was recorded:
 
 ```sh
-ren sessions
+ren recordings
 ren history --limit 10
 ren inspect <call-id>
 ren tail

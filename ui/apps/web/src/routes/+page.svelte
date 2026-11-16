@@ -62,7 +62,7 @@
   const board = $derived(
     live
       ? new Board({
-          sessions: live.sessions,
+          sessions: live.recordings,
           calls: live.calls,
           turns: live.turns,
           now: Math.max(now, live.read),
@@ -77,7 +77,7 @@
   const working = $derived(
     (board?.tiles ?? []).toSorted((a, b) => b.session.last_seen - a.session.last_seen).slice(0, 6),
   );
-  const lastCall = $derived(Math.max(0, ...(current?.sessions ?? []).map((s) => s.last_seen)));
+  const lastCall = $derived(Math.max(0, ...(current?.recordings ?? []).map((s) => s.last_seen)));
 
   /** The verdict: how the day stands, in one line, coloured by the worst thing in it. */
   const verdict = $derived(

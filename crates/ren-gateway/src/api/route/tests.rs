@@ -25,7 +25,7 @@ fn every_read() -> Vec<ReadRequest> {
         ..CallQuery::default()
     };
     filtered.filter = CallFilter {
-        session: Some(session),
+        recording: Some(session),
         client: Some(Harness::Codex),
         user: Some(UserId::parse("alice").unwrap()),
         kind: Some(KindFilter::Model),
@@ -71,14 +71,14 @@ fn every_read() -> Vec<ReadRequest> {
         ReadRequest::Usage(time),
         ReadRequest::Search(SearchQuery {
             terms: SearchTerms::parse(r#"run "install vps" & co"#).unwrap(),
-            session: Some(session),
+            recording: Some(session),
             client: Some(Harness::ClaudeCode),
             field: Some(SearchField::ToolInput),
             time,
             limit,
         }),
         ReadRequest::Exposures(ExposureQuery {
-            session: Some(session),
+            recording: Some(session),
             time,
             limit,
         }),
@@ -122,12 +122,12 @@ fn unknown_paths_ids_and_parameters_are_refused() {
         Err(ApiError::Query(QueryError::Filter))
     ));
     assert!(matches!(
-        parse("/api/sessions?limit=0"),
+        parse("/api/recordings?limit=0"),
         Err(ApiError::Query(QueryError::Limit))
     ));
     assert!(matches!(
         parse(&format!(
-            "/api/sessions/{}/turns?after=x",
+            "/api/recordings/{}/turns?after=x",
             Uuid::from_u128(2)
         )),
         Err(ApiError::Query(QueryError::Cursor))

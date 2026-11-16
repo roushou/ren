@@ -25,10 +25,10 @@ impl ApiRead {
         "/api/calls",
         "/api/calls/{id}",
         "/api/calls/{id}/activity",
-        "/api/sessions",
-        "/api/sessions/{id}/calls",
-        "/api/sessions/{id}/turns",
-        "/api/sessions/{id}/report",
+        "/api/recordings",
+        "/api/recordings/{id}/calls",
+        "/api/recordings/{id}/turns",
+        "/api/recordings/{id}/report",
         "/api/turns/{id}",
         "/api/usage",
         "/api/search",
@@ -48,30 +48,27 @@ impl ApiRead {
                 QueryParams::default(),
             ),
             ReadRequest::Recordings { limit, shelf } => (
-                "/api/sessions".to_owned(),
+                "/api/recordings".to_owned(),
                 QueryParams::default()
                     .with("limit", limit.get())
                     .shelf(*shelf),
             ),
             ReadRequest::RecordingCalls {
-                recording: session,
+                recording,
                 limit,
                 after,
             } => (
-                format!("/api/sessions/{session}/calls"),
+                format!("/api/recordings/{recording}/calls"),
                 QueryParams::default()
                     .with("limit", limit.get())
                     .opt("after", after.as_ref()),
             ),
-            ReadRequest::Turns {
-                recording: session,
-                limit,
-            } => (
-                format!("/api/sessions/{session}/turns"),
+            ReadRequest::Turns { recording, limit } => (
+                format!("/api/recordings/{recording}/turns"),
                 QueryParams::default().with("limit", limit.get()),
             ),
-            ReadRequest::Report(session) => (
-                format!("/api/sessions/{session}/report"),
+            ReadRequest::Report(recording) => (
+                format!("/api/recordings/{recording}/report"),
                 QueryParams::default(),
             ),
             ReadRequest::Turn(turn) => (format!("/api/turns/{turn}"), QueryParams::default()),
@@ -84,7 +81,7 @@ impl ApiRead {
                 QueryParams::default()
                     .with("q", &query.terms)
                     .with("limit", query.limit.get())
-                    .opt("session", query.session)
+                    .opt("recording", query.recording)
                     .opt("client", query.client.map(|client| client.label()))
                     .opt("field", query.field.map(|field| field.label()))
                     .range(query.time),
@@ -93,7 +90,7 @@ impl ApiRead {
                 "/api/exposures".to_owned(),
                 QueryParams::default()
                     .with("limit", query.limit.get())
-                    .opt("session", query.session)
+                    .opt("recording", query.recording)
                     .range(query.time),
             ),
             ReadRequest::Runs { limit, shelf } => (
@@ -129,29 +126,29 @@ impl ApiRead {
             }
             ["calls", call] => ReadRequest::Call(Self::id(call)?),
             ["calls", call, "activity"] => ReadRequest::CallActivity(Self::id(call)?),
-            ["sessions"] => {
+            ["recordings"] => {
                 let (limit, shelf) = Self::query::<RawShelfQuery>(uri)?.parse()?;
                 ReadRequest::Recordings { limit, shelf }
             }
-            ["sessions", session, "calls"] => {
+            ["recordings", recording, "calls"] => {
                 let page = Self::query::<RawPageQuery>(uri)?;
                 ReadRequest::RecordingCalls {
-                    recording: Self::id(session)?,
+                    recording: Self::id(recording)?,
                     limit: page.limit()?,
                     after: page.after()?,
                 }
             }
-            ["sessions", session, "turns"] => {
+            ["recordings", recording, "turns"] => {
                 let page = Self::query::<RawPageQuery>(uri)?;
                 if page.after.is_some() {
                     return Err(QueryError::Cursor.into());
                 }
                 ReadRequest::Turns {
-                    recording: Self::id(session)?,
+                    recording: Self::id(recording)?,
                     limit: page.limit()?,
                 }
             }
-            ["sessions", session, "report"] => ReadRequest::Report(Self::id(session)?),
+            ["recordings", recording, "report"] => ReadRequest::Report(Self::id(recording)?),
             ["turns", turn] => ReadRequest::Turn(Self::id(turn)?),
             ["usage"] => {
                 ReadRequest::Usage(TimeRange::try_from(Self::query::<RawUsageQuery>(uri)?)?)
@@ -185,7 +182,7 @@ impl ApiRead {
         QueryParams::default()
             .with("limit", query.limit.get())
             .opt("after", query.after.as_ref())
-            .opt("session", filter.session.as_ref())
+            .opt("recording", filter.recording.as_ref())
             .opt("client", filter.client.map(|client| client.label()))
             .opt("user", filter.user.as_ref())
             .opt("kind", filter.kind.map(|kind| kind.label()))

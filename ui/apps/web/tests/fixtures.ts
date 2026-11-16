@@ -28,7 +28,7 @@ export function callFixture(id: CallId = callId(1), overrides: Partial<CallView>
     endpoint: 'messages',
     method: 'POST',
     config_revision: 'fixture',
-    session: null,
+    recording: null,
     turn: null,
     attribution: { hint: null, issues: [] },
     state: 'open',
