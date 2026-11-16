@@ -3,7 +3,8 @@
 
 use crate::{
     attachment::Attachment,
-    drive::{CommandRefused, DriveEvent, ItemId, Prompt},
+    drive::{CommandRefused, DriveEvent, ItemId},
+    prompt::Prompt,
 };
 use ren_protocol::native::NativeTurnId;
 use std::collections::VecDeque;

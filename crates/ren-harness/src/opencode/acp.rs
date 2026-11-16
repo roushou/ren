@@ -27,11 +27,12 @@ use crate::{
     commands::{ClientCommand, CommandKind, Sigil},
     drive::{
         ApprovalAsk, ApprovalId, CommandIntent, CommandRefused, Decision, DriveCommand, DriveEvent,
-        DriveItem, ItemId, ItemKind, ItemPhase, ItemRead, ItemStatus, Opening, Prompt, RawLine,
-        Received, RequestKind, TurnEnd, Unreadable,
+        DriveItem, ItemId, ItemKind, ItemPhase, ItemRead, ItemStatus, Opening, RawLine, Received,
+        RequestKind, TurnEnd, Unreadable,
     },
     lines::{Framed, Line},
     models::{DefaultChoice, Listing, Model, ModelId, ModelListing},
+    prompt::Prompt,
     settings::{Midway, RunSettings, Setting, SettingsBook},
 };
 use ren_protocol::{
@@ -1407,9 +1408,10 @@ mod tests {
         commands::{CommandKind, Sigil},
         drive::{
             ApprovalAsk, ApprovalId, CommandRefused, Decision, DriveCommand, DriveEvent, ItemKind,
-            ItemPhase, ItemRead, ItemStatus, Opening, Prompt, Received, RequestKind, TurnEnd,
+            ItemPhase, ItemRead, ItemStatus, Opening, Received, RequestKind, TurnEnd,
         },
         lines::{Framed, Line},
+        prompt::Prompt,
         settings::{ApprovalPolicy, Effort, Midway, RunSettings},
     };
     use ren_protocol::native::{NativeThreadId, NativeTurnId};
@@ -1501,12 +1503,12 @@ mod tests {
     #[test]
     fn sends_images_only_once_opencode_offers_them() {
         use crate::attachment::Offer;
-        use crate::drive::PromptImage;
+        use crate::prompt::PromptImage;
         // Said nothing of images: a prompt with one is refused.
         let mut silent = ready();
         assert_eq!(silent.image_offer(), Offer::Unknown);
         assert_eq!(
-            silent.command(DriveCommand::Prompt(PromptImage::prompt("look"))),
+            silent.command(DriveCommand::Prompt(Prompt::sample("look"))),
             Err(CommandRefused::NoImages)
         );
 
@@ -1530,7 +1532,7 @@ mod tests {
         assert_eq!(codec.image_offer(), Offer::Offered);
         let image = PromptImage::sample();
         let lines = codec
-            .command(DriveCommand::Prompt(PromptImage::prompt("look")))
+            .command(DriveCommand::Prompt(Prompt::sample("look")))
             .unwrap();
         assert_eq!(
             sent(&lines[0])["params"]["prompt"],

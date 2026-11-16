@@ -12,10 +12,11 @@
 use ren_depot::toolset::Generation;
 use ren_harness::{
     Harness,
-    drive::{ApprovalId, Decision, Prompt},
+    drive::{ApprovalId, Decision},
     endpoint::GatewayEndpoint,
     launch::LaunchPlan,
     lines::LineLimit,
+    prompt::Prompt,
 };
 use ren_protocol::label::Stored;
 use ren_recorder::{
@@ -1366,8 +1367,8 @@ fn starting(
     harness: Harness,
     dir: &str,
     conversation: Conversation,
-    first: Option<ren_harness::drive::Prompt>,
-) -> (ren_supervisor::Create, Option<ren_harness::drive::Prompt>) {
+    first: Option<ren_harness::prompt::Prompt>,
+) -> (ren_supervisor::Create, Option<ren_harness::prompt::Prompt>) {
     let resume = match conversation {
         Conversation::New => None,
         Conversation::Resume(thread) => Some(thread),
@@ -1387,7 +1388,7 @@ fn starting(
 /// started.
 async fn start(
     supervisor: &Supervisor,
-    (create, first): (ren_supervisor::Create, Option<ren_harness::drive::Prompt>),
+    (create, first): (ren_supervisor::Create, Option<ren_harness::prompt::Prompt>),
 ) -> Result<(ren_recorder::id::SessionId, ren_recorder::id::RunId), ren_supervisor::SessionError> {
     let session = supervisor.create(create).await?;
     if let Some(first) = first {

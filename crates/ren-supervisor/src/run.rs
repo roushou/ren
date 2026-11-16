@@ -3,8 +3,9 @@
 //! to do about it, out. No I/O.
 
 use ren_harness::drive::{
-    ApprovalAsk, ApprovalId, Decision, DriveCommand, DriveEvent, Prompt, RequestKind,
+    ApprovalAsk, ApprovalId, Decision, DriveCommand, DriveEvent, RequestKind,
 };
+use ren_harness::prompt::Prompt;
 use ren_harness::settings::RunSettings;
 use ren_protocol::native::{NativeThreadId, NativeTurnId};
 pub use ren_recorder::capture::ProcessExit;
@@ -576,8 +577,9 @@ mod tests {
         Approvals, ProcessExit, RunAction, RunCommand, RunEvent, RunRefused, RunState, StopCause,
     };
     use ren_harness::drive::{
-        ApprovalAsk, ApprovalId, Decision, DriveCommand, DriveEvent, Prompt, RequestKind, TurnEnd,
+        ApprovalAsk, ApprovalId, Decision, DriveCommand, DriveEvent, RequestKind, TurnEnd,
     };
+    use ren_harness::prompt::Prompt;
     use ren_protocol::native::{NativeThreadId, NativeTurnId};
     use ren_recorder::capture::RunEnd;
     use uuid::Uuid;

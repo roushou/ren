@@ -16,10 +16,11 @@ use crate::{
     drive::{
         ApprovalAsk, ApprovalId, CommandIntent, CommandPart, CommandRefused, Decision,
         DriveCommand, DriveEvent, DriveItem, ItemId, ItemKind, ItemPhase, ItemRead, ItemStatus,
-        Opening, Prompt, RawLine, Received, RequestKind, Retry, TurnEnd, Unreadable,
+        Opening, RawLine, Received, RequestKind, Retry, TurnEnd, Unreadable,
     },
     lines::{Framed, Line},
     models::{DefaultChoice, Listing, Model, ModelId, ModelListing},
+    prompt::Prompt,
     settings::{ApprovalPolicy, Effort, RunSettings},
 };
 use ren_protocol::{
@@ -1054,10 +1055,11 @@ mod tests {
     use crate::{
         drive::{
             ApprovalAsk, ApprovalId, CommandIntent, CommandPart, CommandRefused, Decision,
-            DriveCommand, DriveEvent, ItemKind, ItemPhase, ItemRead, ItemStatus, Prompt,
-            RequestKind, Retry, TurnEnd, Unreadable,
+            DriveCommand, DriveEvent, ItemKind, ItemPhase, ItemRead, ItemStatus, RequestKind,
+            Retry, TurnEnd, Unreadable,
         },
         lines::{Framed, Line},
+        prompt::Prompt,
     };
     use serde_json::{Value, json};
 
@@ -1599,11 +1601,11 @@ mod tests {
     /// changed mid-run go with every turn from the next.
     #[test]
     fn sends_images_by_path_and_shows_them_on_the_echo() {
-        use crate::drive::PromptImage;
+        use crate::prompt::PromptImage;
         let mut codec = ready();
         let image = PromptImage::sample();
         let start = codec
-            .command(DriveCommand::Prompt(PromptImage::prompt("what is this")))
+            .command(DriveCommand::Prompt(Prompt::sample("what is this")))
             .unwrap()
             .remove(0);
         assert_eq!(

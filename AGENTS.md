@@ -249,7 +249,9 @@ dependencies under "Crates" below. Read the code for current module ownership.
   and `InterpretedCall`, a `Reading` read as its client uses it); driving a
   client through its structured mode (`drive`: the `DriveCommand` and
   `DriveEvent` vocabulary, with `ItemRead`, what Ren reads of each item for
-  every client, and the `Driver` over each client's codec), its pure line
+  every client, and the `Driver` over each client's codec), the prompt a
+  run is sent (`prompt`: `Prompt`, its text and its `PromptImage`s, never
+  blank, `BlankPrompt` when it would be), its pure line
   framing (`lines`), the models a client lists (`models`: `Model` by
   `ModelId`, read by `ModelListing` from a short listing process), and a
   run's `RunSettings` (`settings`: its model, `Effort`, and
@@ -281,7 +283,7 @@ dependencies under "Crates" below. Read the code for current module ownership.
   through a typed vocabulary that keeps unknown ones (`ClaudeMessageType`,
   `CodexMethod`, `PiEvent`, `AcpMethod`, `AcpUpdate`), and holds its
   opening as a phase enum. `src/purity.rs` keeps the codecs, `drive`,
-  `lines`, and `settings` free of I/O. It performs filesystem and process
+  `prompt`, `lines`, and `settings` free of I/O. It performs filesystem and process
   I/O elsewhere but has no async runtime, HTTP, database, or CLI dependency.
 - `crates/ren-recorder`: the bounded capture queue between forwarding and
   storage, with `Recorder` as its primary type. The forwarding side is a

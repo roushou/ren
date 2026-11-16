@@ -19,11 +19,12 @@ use crate::{
     commands::{ClientCommand, CommandKind, Sigil},
     drive::{
         CommandIntent, CommandRefused, DriveCommand, DriveEvent, DriveItem, ItemId, ItemKind,
-        ItemPhase, ItemRead, ItemStatus, Opening, Prompt, RawLine, Received, RequestKind, Retry,
-        TurnEnd, Unreadable,
+        ItemPhase, ItemRead, ItemStatus, Opening, RawLine, Received, RequestKind, Retry, TurnEnd,
+        Unreadable,
     },
     lines::{Framed, Line},
     models::{DefaultChoice, Listing, Model, ModelId, ModelListing},
+    prompt::Prompt,
     settings::{Effort, Midway, RunSettings, Setting, SettingsBook},
 };
 use ren_protocol::{label::Stored, native::NativeThreadId};
@@ -867,9 +868,10 @@ mod tests {
     use crate::{
         drive::{
             CommandRefused, DriveCommand, DriveEvent, ItemKind, ItemPhase, ItemRead, ItemStatus,
-            Opening, Prompt, Received, RequestKind, Retry, TurnEnd, Unreadable,
+            Opening, Received, RequestKind, Retry, TurnEnd, Unreadable,
         },
         lines::{Framed, Line},
+        prompt::Prompt,
     };
     use ren_protocol::native::{NativeThreadId, NativeTurnId};
     use serde_json::{Value, json};
@@ -1006,11 +1008,11 @@ mod tests {
 
     #[test]
     fn sends_images_inline_and_shows_them_on_the_echo() {
-        use crate::drive::PromptImage;
+        use crate::prompt::PromptImage;
         let mut codec = ready();
         let image = PromptImage::sample();
         let line = codec
-            .command(DriveCommand::Prompt(PromptImage::prompt("what is this")))
+            .command(DriveCommand::Prompt(Prompt::sample("what is this")))
             .unwrap()
             .remove(0);
         let command = sent(&line);
