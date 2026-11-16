@@ -9,7 +9,7 @@ use crate::{
 use bytes::Bytes;
 use ren_harness::{
     attachment::AttachmentKind,
-    drive::{DriveEvent, ItemRead},
+    drive::{DriveEvent, DriveEventKind, ItemRead},
     models::ModelId,
 };
 use ren_protocol::{
@@ -948,12 +948,8 @@ impl MetadataTx<'_> {
         } else {
             None
         };
-        let event = serde_json::to_value(&entry.event)?;
-        let kind = event
-            .get("kind")
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or_default()
-            .to_owned();
+        let kind = DriveEventKind::from(&entry.event);
+        let event = serde_json::to_string(&entry.event)?;
         sqlx::query(
             "INSERT INTO run_entries(run, seq, at, started_at, turn, item, kind, event, prompt) VALUES (?1, (SELECT COALESCE(MAX(seq), 0) + 1 FROM run_entries WHERE run = ?1), ?2, ?2, ?3, ?4, ?5, ?6, ?7) ON CONFLICT(run, item) WHERE item IS NOT NULL DO UPDATE SET at = excluded.at, kind = excluded.kind, event = excluded.event, prompt = excluded.prompt",
         )
@@ -961,8 +957,8 @@ impl MetadataTx<'_> {
         .bind(i64::try_from(entry.at.wall.as_millis()).unwrap_or(i64::MAX))
         .bind(entry.turn.map(|turn| turn.to_string()))
         .bind(item)
-        .bind(kind)
-        .bind(event.to_string())
+        .bind(kind.label())
+        .bind(event)
         .bind(prompt)
         .execute(&mut *self.tx)
         .await?;

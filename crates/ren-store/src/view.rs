@@ -6,6 +6,7 @@
 use crate::{StoreError, query::Cursor};
 use ren_depot::toolset::Generation;
 use ren_harness::attribution::{HintIssue, HintSource};
+use ren_harness::drive::DriveEventKind;
 use ren_harness::tools::CallPurpose;
 use ren_harness::{Harness, attachment::ImageFormat};
 use ren_harness::{
@@ -829,7 +830,15 @@ pub struct SessionView {
 }
 
 impl SessionView {
-    pub(super) const SELECT: &'static str = "SELECT id, harness, workdir, created_at, model, effort, approvals, archived_at, (SELECT MIN(e.at) FROM run_entries e JOIN runs r ON r.id = e.run WHERE r.operator_session = operator_sessions.id AND e.kind = 'turn_started') AS first_turn_at, (SELECT e.prompt FROM run_entries e JOIN runs r ON r.id = e.run WHERE r.operator_session = operator_sessions.id AND e.prompt IS NOT NULL ORDER BY e.at, r.started_at, e.seq LIMIT 1) AS first_prompt FROM operator_sessions";
+    /// Its columns, with the turn-start kind written into the query as a
+    /// literal: the `run_entries_turn_started` index is partial on that
+    /// literal, so a bound parameter would not use it.
+    pub(super) fn select() -> String {
+        let turn_started = DriveEventKind::TurnStarted.label();
+        format!(
+            "SELECT id, harness, workdir, created_at, model, effort, approvals, archived_at, (SELECT MIN(e.at) FROM run_entries e JOIN runs r ON r.id = e.run WHERE r.operator_session = operator_sessions.id AND e.kind = '{turn_started}') AS first_turn_at, (SELECT e.prompt FROM run_entries e JOIN runs r ON r.id = e.run WHERE r.operator_session = operator_sessions.id AND e.prompt IS NOT NULL ORDER BY e.at, r.started_at, e.seq LIMIT 1) AS first_prompt FROM operator_sessions"
+        )
+    }
 
     /// The most of a first prompt a session view carries.
     pub const FIRST_PROMPT_CHARS: usize = 200;

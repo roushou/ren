@@ -250,9 +250,24 @@ pub enum RequestKind {
     ListCommands,
 }
 
-/// What a driven client reported, as Ren reads it.
-#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+/// What a driven client reported, as Ren reads it. Its kind
+/// ([`DriveEventKind`]) is the `kind` tag it is stored and sent with; a test
+/// keeps serde's tag and the label the same.
+#[derive(
+    Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, strum::EnumDiscriminants,
+)]
 #[serde(tag = "kind", rename_all = "snake_case")]
+#[strum_discriminants(name(DriveEventKind), vis(pub))]
+#[strum_discriminants(derive(
+    Display,
+    EnumString,
+    IntoStaticStr,
+    VariantArray,
+    Hash,
+    SerializeDisplay,
+    DeserializeFromStr
+))]
+#[strum_discriminants(strum(serialize_all = "snake_case"))]
 pub enum DriveEvent {
     /// The conversation is open and takes prompts.
     Ready {
@@ -738,9 +753,80 @@ pub enum CommandRefused {
 #[cfg(test)]
 mod tests {
     use super::{
-        ApprovalAsk, ApprovalId, CommandIntent, CommandPart, DriveEvent, DriveItem, ItemId,
-        ItemKind, ItemPhase, ItemRead, ItemStatus, RawLine, Retry, TurnEnd, Unreadable,
+        ApprovalAsk, ApprovalId, CommandIntent, CommandPart, DriveEvent, DriveEventKind, DriveItem,
+        ItemId, ItemKind, ItemPhase, ItemRead, ItemStatus, RawLine, RequestKind, Retry, TurnEnd,
+        Unreadable,
     };
+
+    /// Every event's `kind` tag, as serde writes it, is its kind's label:
+    /// the store keeps the label beside the event and finds entries by it.
+    #[test]
+    fn every_events_kind_tag_is_its_kinds_label() {
+        use ren_protocol::label::Labeled;
+        use ren_protocol::native::{NativeThreadId, NativeTurnId};
+        let uuid = uuid::Uuid::from_u128(1);
+        let turn = NativeTurnId::new(uuid).unwrap();
+        let item = ItemId::new("i".to_owned());
+        let approval = ApprovalId("a".to_owned());
+        let line = || RawLine::new(b"{}".to_vec());
+        let events = [
+            DriveEvent::Ready {
+                thread: NativeThreadId::new(uuid).unwrap(),
+            },
+            DriveEvent::TurnStarted { turn },
+            DriveEvent::Delta {
+                item: item.clone(),
+                text: "t".to_owned(),
+            },
+            DriveEvent::Item {
+                phase: ItemPhase::Started,
+                item: DriveItem {
+                    id: item,
+                    kind: ItemKind::UserMessage,
+                    read: ItemRead::Prompt {
+                        text: "fix the acme widget".to_owned(),
+                        images: Vec::new(),
+                    },
+                    body: serde_json::Value::Null,
+                },
+            },
+            DriveEvent::Approval {
+                approval: approval.clone(),
+                ask: ApprovalAsk::FileChange { reason: None },
+            },
+            DriveEvent::ApprovalResolved { approval },
+            DriveEvent::TurnEnded {
+                turn,
+                end: TurnEnd::Completed,
+            },
+            DriveEvent::Error {
+                message: "m".to_owned(),
+                retry: Retry::Final,
+            },
+            DriveEvent::Refused {
+                request: RequestKind::Initialize,
+                message: "m".to_owned(),
+            },
+            DriveEvent::Unsupported {
+                method: "m".to_owned(),
+            },
+            DriveEvent::Unknown { line: line() },
+            DriveEvent::Unreadable {
+                line: line(),
+                reason: Unreadable::NotJson,
+            },
+        ];
+        let kinds: Vec<DriveEventKind> = events.iter().map(DriveEventKind::from).collect();
+        assert_eq!(kinds, DriveEventKind::ALL, "one example of every kind");
+        for event in &events {
+            let json = serde_json::to_value(event).unwrap();
+            assert_eq!(
+                json["kind"],
+                DriveEventKind::from(event).label(),
+                "{event:?}"
+            );
+        }
+    }
 
     #[test]
     fn an_echoed_body_keeps_no_image_bytes() {
