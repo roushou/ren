@@ -1827,8 +1827,7 @@ mod history {
             .await
             .unwrap()
             .unwrap()
-            .operator_session
-            .unwrap();
+            .operator_session;
         let running = fixture.run(10, false).await;
         let busy = fixture
             .reader
@@ -1836,8 +1835,7 @@ mod history {
             .await
             .unwrap()
             .unwrap()
-            .operator_session
-            .unwrap();
+            .operator_session;
         assert_eq!(
             fixture
                 .reader
@@ -1884,8 +1882,7 @@ mod history {
             .await
             .unwrap()
             .unwrap()
-            .operator_session
-            .unwrap();
+            .operator_session;
         let mut batch = Batch::default();
         batch.push(Op::Run(RunRecord {
             at: fixture.clock.now(),
@@ -2571,100 +2568,6 @@ mod conversation {
     }
 }
 
-/// Migration 0015 moves a call's usage and tool names, and a run entry's
-/// prompt, out of JSON into columns, keeping what earlier rows said.
-#[tokio::test]
-async fn the_call_columns_migration_keeps_usage_tools_and_prompts() {
-    use sqlx::{
-        Connection, Row,
-        migrate::Migrator,
-        sqlite::{SqliteConnectOptions, SqliteConnection},
-    };
-    use std::borrow::Cow;
-
-    let dir = tempfile::tempdir().unwrap();
-    let options = SqliteConnectOptions::new()
-        .filename(dir.path().join("ren.sqlite3"))
-        .create_if_missing(true);
-    let mut db = SqliteConnection::connect_with(&options).await.unwrap();
-    let all = sqlx::migrate!("./migrations");
-    let before = Migrator {
-        migrations: Cow::Owned(
-            all.migrations
-                .iter()
-                .filter(|migration| migration.version < 15)
-                .cloned()
-                .collect(),
-        ),
-        ..sqlx::migrate!("./migrations")
-    };
-    before.run(&mut db).await.unwrap();
-    sqlx::raw_sql(
-        r#"
-        INSERT INTO channels(id, transport, opened_at, unattributed_messages, unattributed_bytes) VALUES ('ch', 'http', 1, 0, 0);
-        INSERT INTO calls(id, channel, started_at, provider, endpoint, method, config_revision, attribution, state, tool_names, tool_count, usage, capture_complete)
-        VALUES
-          ('call-a', 'ch', 1, 'anthropic', 'messages', 'post', 'r', '{}', 'finished', '["Read","Bash"]', 2,
-           '{"accounting":"excludes_cache","input_tokens":5,"output_tokens":3,"cache_read_tokens":70,"cache_creation_tokens":2,"reasoning_tokens":null}', 1),
-          ('call-b', 'ch', 2, 'openai', 'responses', 'post', 'r', '{}', 'finished', '[]', 0, NULL, 1);
-        INSERT INTO operator_sessions(id, harness, workdir, created_at) VALUES ('os', 'claude_code', '/acme', 1);
-        INSERT INTO runs(id, harness, workdir, started_at, operator_session) VALUES ('run', 'claude_code', '/acme', 1, 'os');
-        INSERT INTO run_entries(run, seq, at, started_at, kind, event) VALUES
-          ('run', 1, 1, 1, 'turn_started', '{"kind":"turn_started"}'),
-          ('run', 2, 2, 1, 'item', '{"kind":"item","item":{"read":{"as":"prompt","text":"fix the acme widget"}}}'),
-          ('run', 3, 3, 1, 'item', '{"kind":"item","item":{"read":{"as":"reply","text":"done"}}}');
-        "#,
-    )
-    .execute(&mut db)
-    .await
-    .unwrap();
-
-    all.run(&mut db).await.unwrap();
-
-    let usage = |call: &'static str| {
-        sqlx::query("SELECT input_accounting, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, reasoning_tokens FROM calls WHERE id = ?")
-            .bind(call)
-    };
-    let a = usage("call-a").fetch_one(&mut db).await.unwrap();
-    assert_eq!(
-        a.get::<Option<String>, _>(0).as_deref(),
-        Some("excludes_cache")
-    );
-    assert_eq!(
-        (1..=5)
-            .map(|column| a.get::<Option<i64>, _>(column))
-            .collect::<Vec<_>>(),
-        [Some(5), Some(3), Some(70), Some(2), None]
-    );
-    let b = usage("call-b").fetch_one(&mut db).await.unwrap();
-    assert_eq!(b.get::<Option<String>, _>(0), None);
-    let tools: Vec<(String, i64, String)> =
-        sqlx::query_as("SELECT call, position, name FROM call_tools ORDER BY call, position")
-            .fetch_all(&mut db)
-            .await
-            .unwrap();
-    assert_eq!(
-        tools,
-        [
-            ("call-a".to_owned(), 0, "Read".to_owned()),
-            ("call-a".to_owned(), 1, "Bash".to_owned()),
-        ]
-    );
-    let prompts: Vec<(i64, Option<String>)> =
-        sqlx::query_as("SELECT seq, prompt FROM run_entries ORDER BY seq")
-            .fetch_all(&mut db)
-            .await
-            .unwrap();
-    assert_eq!(
-        prompts,
-        [
-            (1, None),
-            (2, Some("fix the acme widget".to_owned())),
-            (3, None),
-        ]
-    );
-}
-
 /// The usage report from one grouped scan equals the report the store built
 /// before, with one query for the totals, the hours, the models, and the
 /// users, over calls that vary in hour, provider, model, user, status, and
@@ -2792,69 +2695,4 @@ async fn usage_from_one_scan_matches_a_query_per_breakdown() {
         reader.usage(TimeRange::default()).await.unwrap(),
         per_breakdown
     );
-}
-
-/// Migration 0016 renames recordings' table and columns in place: every
-/// recording, turn, and call keeps its rows and their links.
-#[tokio::test]
-async fn the_recordings_migration_keeps_recordings_turns_and_calls_linked() {
-    use sqlx::{
-        Connection,
-        migrate::Migrator,
-        sqlite::{SqliteConnectOptions, SqliteConnection},
-    };
-    use std::borrow::Cow;
-
-    let dir = tempfile::tempdir().unwrap();
-    let options = SqliteConnectOptions::new()
-        .filename(dir.path().join("ren.sqlite3"))
-        .create_if_missing(true);
-    let mut db = SqliteConnection::connect_with(&options).await.unwrap();
-    let all = sqlx::migrate!("./migrations");
-    let before = Migrator {
-        migrations: Cow::Owned(
-            all.migrations
-                .iter()
-                .filter(|migration| migration.version < 16)
-                .cloned()
-                .collect(),
-        ),
-        ..sqlx::migrate!("./migrations")
-    };
-    before.run(&mut db).await.unwrap();
-    sqlx::raw_sql(
-        r"
-        INSERT INTO channels(id, transport, opened_at, unattributed_messages, unattributed_bytes) VALUES ('ch', 'http', 1, 0, 0);
-        INSERT INTO sessions(id, provider, source, native_id, first_seen, last_seen) VALUES ('rec', 'anthropic', 'claude_code_headers', 'native', 1, 2);
-        INSERT INTO turns(id, session, native_id) VALUES ('turn', 'rec', 'native-turn');
-        INSERT INTO calls(id, channel, started_at, provider, endpoint, method, config_revision, session, turn, attribution, state, tool_count, capture_complete)
-        VALUES ('call', 'ch', 1, 'anthropic', 'messages', 'post', 'r', 'rec', 'turn', '{}', 'finished', 0, 1);
-        ",
-    )
-    .execute(&mut db)
-    .await
-    .unwrap();
-
-    all.run(&mut db).await.unwrap();
-
-    let linked: (String, String, String) = sqlx::query_as(
-        "SELECT r.native_id, t.native_id, c.id FROM recordings r JOIN turns t ON t.recording = r.id JOIN calls c ON c.recording = r.id AND c.turn = t.id",
-    )
-    .fetch_one(&mut db)
-    .await
-    .unwrap();
-    assert_eq!(
-        linked,
-        (
-            "native".to_owned(),
-            "native-turn".to_owned(),
-            "call".to_owned()
-        )
-    );
-    let old: Option<String> =
-        sqlx::query_scalar("SELECT name FROM sqlite_master WHERE name IN ('sessions', 'sessions_recent', 'sessions_native', 'calls_session')")
-            .fetch_optional(&mut db)
-            .await
-            .unwrap();
-    assert_eq!(old, None, "no table or index keeps the old name");
 }

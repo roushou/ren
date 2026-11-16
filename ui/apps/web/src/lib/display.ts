@@ -41,12 +41,8 @@ export interface CallerShown {
   user: string | null;
 }
 
-/**
- * Who made a call. A call with no stored caller is unknown, not unidentified.
- */
-export function callerShown(caller: CallerView | null): CallerShown {
-  if (caller === null)
-    return { label: 'Unknown', title: 'No caller is stored for this call', user: null };
+/** Who made a call. */
+export function callerShown(caller: CallerView): CallerShown {
   const user = caller.user ?? '?';
   const login = caller.login ?? '?';
   switch (caller.kind) {

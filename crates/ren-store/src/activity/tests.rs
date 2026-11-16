@@ -1,8 +1,9 @@
 use super::*;
-use crate::view::{AttributionView, SessionHintView};
+use crate::view::{AttributionView, CallerView, SessionHintView};
 use ren_harness::tools::InterpretedCall;
 use ren_protocol::activity::{Reading, RequestActivity, ResponseActivity};
 use ren_protocol::{inspect::ToolCall, native::ToolCallId, text::WireText};
+use ren_recorder::caller::CallerKind;
 use ren_recorder::digest::{CallDigest, DigestBudget};
 use ren_recorder::secrets::SecretScanner;
 
@@ -84,7 +85,7 @@ fn view(n: u128, source: HintSource) -> CallView {
             u64::try_from(n).unwrap() * 1000 + 500,
         )),
         provider: Provider::Anthropic.into(),
-        wire: Some(Provider::Anthropic.native_api().wire().into()),
+        wire: Provider::Anthropic.native_api().wire().into(),
         endpoint: Endpoint::Messages.into(),
         method: Method::Post.into(),
         config_revision: String::new(),
@@ -99,7 +100,11 @@ fn view(n: u128, source: HintSource) -> CallView {
             }),
             issues: Vec::new(),
         },
-        caller: None,
+        caller: CallerView {
+            kind: CallerKind::Unidentified.into(),
+            user: None,
+            login: None,
+        },
         state: CallState::Finished.into(),
         terminal: None,
         status: Some(200),

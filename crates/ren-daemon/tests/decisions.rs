@@ -249,7 +249,7 @@ async fn a_direct_entry_has_routes_of_its_own_and_a_fallback_only_entry_has_none
     let calls = recorded(dir.path()).await;
     let call = &calls[0];
     assert_eq!(call.provider, Stored::Known(Provider::Anthropic));
-    assert_eq!(call.wire, Some(Stored::Known(Wire::AnthropicMessages)));
+    assert_eq!(call.wire, Stored::Known(Wire::AnthropicMessages));
     assert!(call.recording.is_some(), "Claude Code's headers are read");
     let plan = call.plan.as_ref().unwrap();
     assert_eq!(plan["candidates"], serde_json::json!(["anthropic-key"]));
@@ -259,7 +259,7 @@ async fn a_direct_entry_has_routes_of_its_own_and_a_fallback_only_entry_has_none
         panic!("one attempt expected, got {}", detail.attempts.len());
     };
     assert_eq!(attempt.upstream, "anthropic-key");
-    assert_eq!(attempt.provider, Some(Stored::Known(Provider::Anthropic)));
+    assert_eq!(attempt.provider, Stored::Known(Provider::Anthropic));
     assert_eq!(attempt.changes.as_ref().unwrap()["auth"], "operator_key");
 }
 
@@ -325,7 +325,7 @@ async fn a_chat_completions_entry_streams_and_records_model_usage_and_tool_calls
     let calls = recorded(dir.path()).await;
     let call = &calls[0];
     assert_eq!(call.provider, Stored::Known(Provider::DeepSeek));
-    assert_eq!(call.wire, Some(Stored::Known(Wire::OpenAiChatCompletions)));
+    assert_eq!(call.wire, Stored::Known(Wire::OpenAiChatCompletions));
     let detail = detail(dir.path(), call.id).await;
     let [attempt] = detail.attempts.as_slice() else {
         panic!("one attempt expected, got {}", detail.attempts.len());

@@ -389,8 +389,7 @@ export interface CallView {
   operator_revision: number | null;
   /** Why the client sent it, once derived; null before then */
   purpose: Stored<CallPurpose> | null;
-  /** Null when no caller is stored for the call */
-  caller: CallerView | null;
+  caller: CallerView;
 }
 export interface ToolCallRecord {
   call_id: string | null;
@@ -679,13 +678,11 @@ const callView = object<CallView>({
   rejection: nullable(label(callRejections)),
   operator_revision: nullable(count),
   purpose: nullable(label(callPurposes)),
-  caller: nullable(
-    object<CallerView>({
-      kind: label(callerKinds),
-      user: nullable(string),
-      login: nullable(string),
-    }),
-  ),
+  caller: object<CallerView>({
+    kind: label(callerKinds),
+    user: nullable(string),
+    login: nullable(string),
+  }),
 });
 const inspection = object<InspectionRecord>({
   coverage: label(coverages),

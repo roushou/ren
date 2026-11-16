@@ -701,7 +701,7 @@
                                     .attribution.hint
                                     ? short(c.attribution.hint.session)
                                     : 'Recording'}{/if}{/if}</button
-                            >{:else if !previous || previous.recording !== c.recording}No recording{/if}{#if c.caller?.user || c.caller?.login}{@const caller =
+                            >{:else if !previous || previous.recording !== c.recording}No recording{/if}{#if c.caller.user || c.caller.login}{@const caller =
                               callerShown(c.caller)}<span class="caller-line"
                               >{SEPARATOR}{#if caller.user}{@const user = caller.user}<button
                                   type="button"
