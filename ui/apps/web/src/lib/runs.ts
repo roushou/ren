@@ -58,6 +58,9 @@ import {
   type KeptAttachment,
 } from './attachments.ts';
 import { Refusals, type Refusal } from './refusal.ts';
+import { processExit, type ProcessExit } from './exit.ts';
+
+export type { ProcessExit };
 
 export type RunId = Brand<string, 'RunId'>;
 export const RunId = new Uuid<'RunId'>();
@@ -107,10 +110,6 @@ const runSettings = object<RunSettings>({
   approvals: nullable(label(APPROVAL_POLICIES)),
 });
 export type Decision = (typeof decisions)[number];
-
-/** How a run's process exited. */
-export type ProcessExit =
-  { kind: 'code'; value: number } | { kind: 'signal'; value: number } | { kind: 'unknown' };
 
 /** What an approval asks the operator to allow. */
 export type ApprovalAsk =
@@ -244,17 +243,6 @@ const integer: Decoder<number> = (value, path) => {
   if (typeof value !== 'number' || !Number.isInteger(value))
     throw new ShapeError(path, 'an integer');
   return value;
-};
-
-const processExit: Decoder<ProcessExit> = (value, path) => {
-  if (!isRecord(value)) throw new ShapeError(path, 'an object');
-  switch (value.kind) {
-    case 'code':
-    case 'signal':
-      return { kind: value.kind, value: integer(value.value, `${path}.value`) };
-    default:
-      return { kind: 'unknown' };
-  }
 };
 
 const approvalAsk: Decoder<ApprovalAsk> = (value, path) => {
