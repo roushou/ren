@@ -203,7 +203,7 @@ Ren's (`src/lib/briefing.ts`, `BriefingPanel.svelte`).
 
 Payloads are rendered inert. Message text is formatted as Markdown (CommonMark with
 GitHub's tables, strikethrough, task lists, autolinks, and footnotes), read by
-`mdast-util-from-markdown` into a typed tree (`src/lib/markdown.ts`) that Svelte
+`mdast-util-from-markdown` into a typed tree (the [`markdown`](packages/markdown/README.md) package) that Svelte
 components render as elements, never HTML: raw HTML stays text, links show their address but are not
 clickable, and images are named but never loaded. Agent context wrapped in tags such
 as `<system-reminder>` is folded under its name. Message cards are colored by role

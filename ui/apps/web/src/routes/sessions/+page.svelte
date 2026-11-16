@@ -57,7 +57,7 @@
   import StepGroup from './StepGroup.svelte';
   import { Steps } from '#lib/steps.ts';
   import Icon from '#lib/Icon.svelte';
-  import Markdown from '#lib/Markdown.svelte';
+  import Markdown from 'markdown/Markdown.svelte';
   import ActionMenu, { type ActionItem } from '#lib/ActionMenu.svelte';
   import { assertNever } from '#lib/decode.ts';
   import NewSession from './NewSession.svelte';

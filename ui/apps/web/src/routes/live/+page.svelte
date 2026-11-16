@@ -33,7 +33,7 @@
   import Icon, { type IconName } from '#lib/Icon.svelte';
   import StateGlyph from '#lib/StateGlyph.svelte';
   import Select, { type SelectOption } from '#lib/Select.svelte';
-  import Markdown from '#lib/Markdown.svelte';
+  import Markdown from 'markdown/Markdown.svelte';
   import StreamingReply from '#lib/StreamingReply.svelte';
   import Skeleton from '#lib/Skeleton.svelte';
   import SkeletonRows from '#lib/SkeletonRows.svelte';

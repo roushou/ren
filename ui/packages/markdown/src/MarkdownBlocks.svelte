@@ -4,7 +4,7 @@
   levelled below the page's own, so a reply never outranks its view.
 -->
 <script lang="ts">
-  import type { Block } from './markdown.ts';
+  import type { Block } from './tree.ts';
   import MarkdownBlocks from './MarkdownBlocks.svelte';
   import MarkdownInlines from './MarkdownInlines.svelte';
 

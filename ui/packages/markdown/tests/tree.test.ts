@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { Markdown, type Block } from '../src/lib/markdown.ts';
+import { Markdown, type Block } from '../src/tree.ts';
 
 const parseMarkdown = (text: string) => Markdown.parse(text).blocks;
 const parseInline = (text: string) => Markdown.inline(text);

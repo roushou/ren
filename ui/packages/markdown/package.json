@@ -1,0 +1,31 @@
+{
+  "name": "markdown",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Untrusted Markdown, read into a typed tree and rendered as elements only.",
+  "license": "MIT OR Apache-2.0",
+  "type": "module",
+  "exports": {
+    ".": "./src/tree.ts",
+    "./Markdown.svelte": "./src/Markdown.svelte"
+  },
+  "scripts": {
+    "check": "svelte-check --tsconfig ./tsconfig.json",
+    "test": "node --experimental-strip-types --test tests/*.test.ts"
+  },
+  "dependencies": {
+    "@types/mdast": "4.0.4",
+    "mdast-util-from-markdown": "2.0.2",
+    "mdast-util-gfm": "3.1.0",
+    "micromark-extension-gfm": "3.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "26.6.6",
+    "svelte": "5.57.3",
+    "svelte-check": "4.7.8",
+    "typescript": "6.0.3"
+  },
+  "peerDependencies": {
+    "svelte": "^5.57.3"
+  }
+}

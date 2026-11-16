@@ -556,10 +556,7 @@ dependencies under "Crates" below. Read the code for current module ownership.
   the brief says of Ren; `Recipients` in `src/lib/briefing.svelte.ts`
   reads them, and `BriefingPanel.svelte` fills Redline's pane with them,
   sending through the same session routes),
-  `src/lib/markdown.ts` how Markdown is read (`Markdown`: CommonMark with
-  GitHub's extensions, parsed by `mdast-util-from-markdown` into a typed tree
-  with untrusted text made inert, rendered by `Markdown.svelte` without
-  `{@html}`), and
+  `Markdown.svelte` from `ui/packages/markdown` draws Markdown, and
   `src/lib/server/runsStart.ts` makes the Sessions page's first reads on the UI
   server, with the browser's Tailscale login and never its cookies, so the
   page renders as it will stay.
@@ -576,6 +573,16 @@ dependencies under "Crates" below. Read the code for current module ownership.
   from Ren's tokens). It knows nothing of Ren: its manifest has only Svelte,
   and `tests/boundary.test.ts` keeps its sources importing only each other
   and Svelte. The UI's `check` and `test` scripts cover it.
+- `ui/packages/markdown`: untrusted Markdown, a Bun workspace package of the
+  UI with `Markdown` as its primary type (`src/tree.ts`: CommonMark
+  with GitHub's extensions, parsed by `mdast-util-from-markdown` into a
+  closed, typed tree of `Block`s with the text made inert), the view that
+  draws it without `{@html}` (`Markdown.svelte`, through
+  `MarkdownBlocks` and `MarkdownInlines`), and its theme (`markdown.css`,
+  `--markdown-*` properties, which `style.css` sets from Ren's tokens). It
+  knows nothing of Ren: `tests/boundary.test.ts` keeps its sources
+  importing only each other, Svelte, and the parser. The UI's `check` and
+  `test` scripts cover it.
 - `crates/ren-harness/pi`: the embedded Pi extension and its dependency-free contract tests.
   Pi owns provider authentication, refresh, payload conversion, and retries.
 - `xtask`: repository tasks run with `cargo xtask` (alias in `.cargo/config.toml`),
