@@ -17,11 +17,12 @@ use ren_recorder::{
     caller::{Caller, Proof, TailscaleLogin, UserId},
     id::IdSource,
 };
+use serde_with::{DeserializeFromStr, SerializeDisplay};
 use std::{collections::HashMap, num::NonZeroU32};
 
 /// The BLAKE3 digest of a user token, as configuration holds it: 64
 /// lowercase hexadecimal digits.
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, SerializeDisplay, DeserializeFromStr)]
 pub struct TokenDigest([u8; 32]);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
@@ -34,7 +35,19 @@ impl TokenDigest {
         Self(*blake3::hash(token.expose().as_bytes()).as_bytes())
     }
 
-    pub fn parse(text: &str) -> Result<Self, InvalidTokenDigest> {
+    fn nibble(digit: u8) -> Result<u8, InvalidTokenDigest> {
+        match digit {
+            b'0'..=b'9' => Ok(digit - b'0'),
+            b'a'..=b'f' => Ok(digit - b'a' + 10),
+            _ => Err(InvalidTokenDigest),
+        }
+    }
+}
+
+impl std::str::FromStr for TokenDigest {
+    type Err = InvalidTokenDigest;
+
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
         let digits = text.as_bytes();
         if digits.len() != 64 {
             return Err(InvalidTokenDigest);
@@ -45,14 +58,6 @@ impl TokenDigest {
             *byte = (Self::nibble(*high)? << 4) | Self::nibble(*low)?;
         }
         Ok(Self(bytes))
-    }
-
-    fn nibble(digit: u8) -> Result<u8, InvalidTokenDigest> {
-        match digit {
-            b'0'..=b'9' => Ok(digit - b'0'),
-            b'a'..=b'f' => Ok(digit - b'a' + 10),
-            _ => Err(InvalidTokenDigest),
-        }
     }
 }
 
@@ -65,19 +70,6 @@ impl std::fmt::Display for TokenDigest {
 impl std::fmt::Debug for TokenDigest {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "TokenDigest({self})")
-    }
-}
-
-impl serde::Serialize for TokenDigest {
-    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.collect_str(self)
-    }
-}
-
-impl<'de> serde::Deserialize<'de> for TokenDigest {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let text = String::deserialize(deserializer)?;
-        Self::parse(&text).map_err(serde::de::Error::custom)
     }
 }
 
@@ -202,7 +194,7 @@ impl Users {
                 value
                     .to_str()
                     .ok()
-                    .and_then(|text| TailscaleLogin::parse(text).ok())
+                    .and_then(|text| text.parse::<TailscaleLogin>().ok())
                     .ok_or(IdentifyError::MalformedLogin)
             })
             .transpose()?;
@@ -258,11 +250,11 @@ mod tests {
     };
 
     fn id(text: &str) -> UserId {
-        UserId::parse(text).unwrap()
+        text.parse::<UserId>().unwrap()
     }
 
     fn login(text: &str) -> TailscaleLogin {
-        TailscaleLogin::parse(text).unwrap()
+        text.parse::<TailscaleLogin>().unwrap()
     }
 
     fn headers(pairs: &[(&'static str, &str)]) -> HeaderMap {
@@ -306,14 +298,14 @@ mod tests {
         let digest = TokenDigest::of(&Users::new_token(&SequentialIds::default()));
         let text = digest.to_string();
         assert_eq!(text.len(), 64);
-        assert_eq!(TokenDigest::parse(&text), Ok(digest));
+        assert_eq!(text.parse::<TokenDigest>(), Ok(digest));
         for bad in [
             "",
             &text[1..],
             &text.to_uppercase(),
             &format!("{}g", &text[1..]),
         ] {
-            assert!(TokenDigest::parse(bad).is_err(), "{bad:?}");
+            assert!(bad.parse::<TokenDigest>().is_err(), "{bad:?}");
         }
     }
 

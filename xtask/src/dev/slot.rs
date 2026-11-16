@@ -208,9 +208,11 @@ impl Slot {
     /// users, and operator-key entries whose key is fake.
     pub fn config(&self) -> Result<Config, DevError> {
         let fake = |prefix: &str| format!("http://{}/{prefix}", Self::PROVIDER);
-        let id = |text: &str| UpstreamId::parse(text).map_err(|_| DevError::Config);
-        let user = |text: &str| UserId::parse(text).map_err(|_| DevError::Config);
-        let login = TailscaleLogin::parse("alice@example.com").map_err(|_| DevError::Config)?;
+        let id = |text: &str| text.parse::<UpstreamId>().map_err(|_| DevError::Config);
+        let user = |text: &str| text.parse::<UserId>().map_err(|_| DevError::Config);
+        let login = "alice@example.com"
+            .parse::<TailscaleLogin>()
+            .map_err(|_| DevError::Config)?;
         Ok(Config {
             listen: Self::DAEMON,
             data_dir: Some(self.data_dir.clone()),

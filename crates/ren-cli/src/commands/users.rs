@@ -68,7 +68,7 @@ mod tests {
     #[test]
     fn the_printed_configuration_names_the_tokens_digest() {
         let token = Users::new_token(&SequentialIds::default());
-        let text = TokenArgs::instructions(&UserId::parse("alice").unwrap(), &token);
+        let text = TokenArgs::instructions(&"alice".parse::<UserId>().unwrap(), &token);
         let (_, toml_part) = text.split_once("[[users]]\n").unwrap();
         let config: UserConfig = toml::from_str(toml_part).unwrap();
         assert_eq!(config.id.as_str(), "alice");

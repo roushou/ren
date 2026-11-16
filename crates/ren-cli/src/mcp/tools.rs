@@ -131,7 +131,7 @@ impl Field {
     fn user(self, value: Option<String>) -> Result<Option<UserId>, ArgumentError> {
         Self::present(value)
             .map(|value| {
-                UserId::parse(value.trim()).map_err(|_| {
+                value.trim().parse::<UserId>().map_err(|_| {
                     ArgumentError(format!(
                         "{} must be a user id: lowercase letters, digits, '-' or '_'",
                         self.0

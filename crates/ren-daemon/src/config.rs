@@ -799,7 +799,7 @@ mod tests {
     fn with_operator_key(policy: &str) -> Config {
         Config {
             upstreams: vec![UpstreamConfig {
-                id: UpstreamId::parse("anthropic-key").unwrap(),
+                id: "anthropic-key".parse::<UpstreamId>().unwrap(),
                 provider: Provider::Anthropic,
                 wire: None,
                 base_url: "https://api.anthropic.com".into(),
@@ -823,7 +823,7 @@ mod tests {
         let runtime = config.resolve_with(&env).unwrap();
         let entry = runtime
             .upstreams()
-            .get(&UpstreamId::parse("anthropic-key").unwrap())
+            .get(&"anthropic-key".parse::<UpstreamId>().unwrap())
             .unwrap();
         assert!(!format!("{entry:?}").contains("SECRET"));
         let invalid = HostEnv::from_pairs([("REN_FIXTURE_KEY", "sk-\nSECRET")]);
@@ -837,7 +837,7 @@ mod tests {
         codex.upstreams[0].provider = Provider::Codex;
         assert!(codex.check().is_err());
         let mut reserved = with_operator_key("");
-        reserved.upstreams[0].id = UpstreamId::parse("anthropic").unwrap();
+        reserved.upstreams[0].id = "anthropic".parse::<UpstreamId>().unwrap();
         assert!(reserved.check().is_err());
         // Loading checks the policy; its rules are tested with the policy.
         let spoof = "[[transform]]\nid = \"bad\"\nmatch = { provider = \"anthropic\" }\nsteps = [{ op = \"set_header\", name = \"user-agent\", value = \"spoof\" }]\nreason = \"fixture\"\n";
@@ -846,7 +846,7 @@ mod tests {
 
     #[test]
     fn an_upstream_speaks_its_providers_native_wire_unless_one_it_offers_is_named() {
-        let key = UpstreamId::parse("anthropic-key").unwrap();
+        let key = "anthropic-key".parse::<UpstreamId>().unwrap();
         let env = HostEnv::from_pairs([("REN_FIXTURE_KEY", "sk-FIXTURE")]);
         let api = |config: &Config| {
             config
