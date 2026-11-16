@@ -91,6 +91,20 @@ fn a_linked_worktree_reads_head_through_its_gitdir_file() {
     }
 }
 
+/// Taken by every test that writes a fake `git` or starts a process. A
+/// script is written through an open file; a process another test thread
+/// starts meanwhile inherits that file until it execs, and running the
+/// script while any process holds it open for writing fails with "text file
+/// busy" (`ETXTBSY`). Taking turns removes the race.
+static PROCESSES: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// This test's turn to write fakes and start processes.
+fn turn() -> std::sync::MutexGuard<'static, ()> {
+    PROCESSES
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
 /// A fake `git` in a folder of its own under `dir`, running `body`.
 #[cfg(unix)]
 fn fake(dir: &Path, name: &str, body: &str) -> std::path::PathBuf {
@@ -106,6 +120,7 @@ fn fake(dir: &Path, name: &str, body: &str) -> std::path::PathBuf {
 #[cfg(unix)]
 #[test]
 fn the_first_git_on_the_path_runs_and_failures_keep_their_exit() {
+    let _turn = turn();
     let dir = tempfile::tempdir().unwrap();
     let works = fake(
         dir.path(),
@@ -148,6 +163,7 @@ fn the_first_git_on_the_path_runs_and_failures_keep_their_exit() {
 #[cfg(unix)]
 #[test]
 fn answers_are_read_from_gits_output() {
+    let _turn = turn();
     let dir = tempfile::tempdir().unwrap();
     let full = "0123456789abcdef0123456789abcdef01234567";
     let git = Git::find(&[fake(
@@ -193,6 +209,7 @@ esac"
 /// installer ask of it. Skipped where no git is installed.
 #[test]
 fn the_real_git_answers_on_its_own_repository() {
+    let _turn = turn();
     let dir = tempfile::tempdir().unwrap();
     let git = Git::inherited();
     if git.init(dir.path()).is_err() {

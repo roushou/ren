@@ -329,9 +329,15 @@ async fn a_turns_activity_reads_the_same_locally_through_a_gateway_and_over_mcp(
     }
     let data_dir = state.to_str().unwrap();
     let mut recordings = Value::Null;
+    // A call counts from when it opens; wait until both have finished, so
+    // every read below sees the same turn.
     for _ in 0..100 {
         recordings = cli_json(&home, &["--data-dir", data_dir, "recordings"])["recordings"].clone();
-        if recordings[0]["call_count"] == 2 {
+        let calls = cli_json(&home, &["--data-dir", data_dir, "history"])["calls"].clone();
+        let finished = calls
+            .as_array()
+            .is_some_and(|calls| calls.iter().all(|call| call["state"] == "finished"));
+        if recordings[0]["call_count"] == 2 && finished {
             break;
         }
         tokio::time::sleep(std::time::Duration::from_millis(20)).await;
