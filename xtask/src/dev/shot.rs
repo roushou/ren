@@ -3,10 +3,8 @@
 //! for a few seconds, then is captured; the live feed never holds it open.
 
 use super::DevError;
-use crate::{
-    install::InstallError,
-    invocation::{Echo, Invocation},
-};
+use crate::file::FileError;
+use crate::invocation::{Echo, Invocation};
 use clap::ValueEnum;
 use ren_harness::host::HostEnv;
 use std::{
@@ -171,7 +169,7 @@ impl Camera {
         pages: &[Page],
         (width, height): (u16, u16),
     ) -> Result<Vec<PathBuf>, DevError> {
-        fs::create_dir_all(&self.out).map_err(InstallError::file(&self.out))?;
+        fs::create_dir_all(&self.out).map_err(FileError::at(&self.out))?;
         let newest = Newest {
             recording: self.newest("recordings"),
             run: self.newest("runs"),

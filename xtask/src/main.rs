@@ -1,10 +1,10 @@
 //! `cargo xtask`: repository tasks, run from a checkout.
 mod daemon;
 mod dev;
+mod file;
 mod install;
 mod invocation;
-mod publish;
-mod rollback;
+mod progress;
 mod tailscale;
 mod ui;
 

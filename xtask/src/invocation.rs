@@ -1,10 +1,40 @@
 //! External commands, reported by their argument list.
-use crate::install::InstallError;
 use std::{
     ffi::{OsStr, OsString},
+    fmt::Display,
     path::{Path, PathBuf},
-    process::{Command, Stdio},
+    process::{Command, ExitStatus, Stdio},
 };
+
+/// A command that could not start, failed, or printed what was not
+/// understood.
+#[derive(Debug, thiserror::Error)]
+pub enum InvocationError {
+    #[error("`{command}` could not start: {source}")]
+    Spawn {
+        command: String,
+        #[source]
+        source: std::io::Error,
+    },
+    #[error("`{command}` exited with {status}{detail}")]
+    Failed {
+        command: String,
+        status: ExitStatus,
+        detail: String,
+    },
+    #[error("unexpected output from `{command}`: {detail}")]
+    Output { command: String, detail: String },
+}
+
+impl InvocationError {
+    /// Wraps what was wrong with `command`'s output.
+    pub fn output<E: Display>(command: &str) -> impl FnOnce(E) -> Self + '_ {
+        move |detail| Self::Output {
+            command: command.to_owned(),
+            detail: detail.to_string(),
+        }
+    }
+}
 
 /// Whether a command's output reaches the terminal.
 #[derive(Clone, Copy)]
@@ -75,8 +105,8 @@ impl Invocation {
         command
     }
 
-    fn spawn_error(&self, source: std::io::Error) -> InstallError {
-        InstallError::Spawn {
+    fn spawn_error(&self, source: std::io::Error) -> InvocationError {
+        InvocationError::Spawn {
             command: self.describe(),
             source,
         }
@@ -87,7 +117,7 @@ impl Invocation {
         clippy::disallowed_methods,
         reason = "xtask is a shell; Invocation is how it runs external commands"
     )]
-    pub fn run(&self) -> Result<(), InstallError> {
+    pub fn run(&self) -> Result<(), InvocationError> {
         let status = self
             .command()
             .status()
@@ -95,7 +125,7 @@ impl Invocation {
         if status.success() {
             Ok(())
         } else {
-            Err(InstallError::Failed {
+            Err(InvocationError::Failed {
                 command: self.describe(),
                 status,
                 detail: String::new(),
@@ -108,7 +138,7 @@ impl Invocation {
         clippy::disallowed_methods,
         reason = "xtask is a shell; Invocation is how it runs external commands"
     )]
-    pub fn succeeds(&self, echo: Echo) -> Result<bool, InstallError> {
+    pub fn succeeds(&self, echo: Echo) -> Result<bool, InvocationError> {
         let mut command = self.command();
         match echo {
             Echo::Show => {}
@@ -124,14 +154,24 @@ impl Invocation {
 
     /// Its standard output; fails, with its standard error, unless it exits
     /// successfully.
-    pub fn capture(&self) -> Result<String, InstallError> {
+    pub fn capture(&self) -> Result<String, InvocationError> {
         self.output(Refusal::Fail)
+    }
+
+    /// Its standard output read by `parse`; `command` names it in an error.
+    pub fn json<T>(
+        self,
+        command: &str,
+        parse: fn(&str) -> Result<T, serde_json::Error>,
+    ) -> Result<T, InvocationError> {
+        let text = self.capture()?;
+        parse(&text).map_err(InvocationError::output(command))
     }
 
     /// Its standard output, also when it exits unsuccessfully but printed an
     /// answer (`ren runs ls` prints a refusal as JSON); fails, with its
     /// standard error, only when it printed nothing.
-    pub fn answer(&self) -> Result<String, InstallError> {
+    pub fn answer(&self) -> Result<String, InvocationError> {
         self.output(Refusal::Answer)
     }
 
@@ -139,7 +179,7 @@ impl Invocation {
         clippy::disallowed_methods,
         reason = "xtask is a shell; Invocation is how it runs external commands"
     )]
-    fn output(&self, refusal: Refusal) -> Result<String, InstallError> {
+    fn output(&self, refusal: Refusal) -> Result<String, InvocationError> {
         let output = self
             .command()
             .output()
@@ -153,7 +193,7 @@ impl Invocation {
         } else {
             let stderr = String::from_utf8_lossy(&output.stderr);
             let stderr = stderr.trim();
-            Err(InstallError::Failed {
+            Err(InvocationError::Failed {
                 command: self.describe(),
                 status: output.status,
                 detail: if stderr.is_empty() {

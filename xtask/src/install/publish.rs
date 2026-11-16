@@ -5,10 +5,20 @@
 //! parser, so there is one vocabulary. A run given any of these flags uses
 //! exactly those and saves them after it succeeds; a run given none uses the
 //! saved ones.
-use crate::install::{InstallError, InstallVps};
+use crate::file::{FileError, FileMode};
+use crate::progress::Progress;
 use clap::{Args, Parser};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
+
+/// Why saved flags could not be read or saved.
+#[derive(Debug, thiserror::Error)]
+pub enum PublishError {
+    #[error("{} does not hold valid install-vps flags; fix or delete it", .0.display())]
+    SavedOptions(PathBuf),
+    #[error(transparent)]
+    File(#[from] FileError),
+}
 
 /// Tailscale Serve publishing flags.
 #[derive(Args, Debug, Clone, Default, PartialEq, Eq)]
@@ -68,7 +78,7 @@ impl Publish {
     }
 
     /// These flags if any were given, else the saved ones.
-    pub fn resolve(self, path: &Path) -> Result<Self, InstallError> {
+    pub fn resolve(self, path: &Path) -> Result<Self, PublishError> {
         if self.given() {
             return Ok(self);
         }
@@ -76,33 +86,27 @@ impl Publish {
             Ok(text) => text,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(self),
             Err(source) => {
-                return Err(InstallError::File {
-                    path: path.to_path_buf(),
-                    source,
-                });
+                return Err(FileError::at(path)(source).into());
             }
         };
         let saved = toml::from_str::<SavedFile>(&text)
             .ok()
             .and_then(|file| Self::parse(&file.args).ok())
-            .ok_or_else(|| InstallError::SavedOptions(path.to_path_buf()))?;
-        InstallVps::step(&format!(
+            .ok_or_else(|| PublishError::SavedOptions(path.to_path_buf()))?;
+        Progress(&format!(
             "Using saved options from {}: {}",
             path.display(),
             saved.args().join(" ")
-        ));
+        ))
+        .show();
         Ok(saved)
     }
 
     /// Saves these choices for the next run.
-    pub fn save(&self, path: &Path) -> Result<(), InstallError> {
-        let text = toml::to_string(&SavedFile { args: self.args() }).map_err(|error| {
-            InstallError::File {
-                path: path.to_path_buf(),
-                source: std::io::Error::other(error),
-            }
-        })?;
-        InstallVps::write_private(path, text.as_bytes(), 0o600)
+    pub fn save(&self, path: &Path) -> Result<(), PublishError> {
+        let text = toml::to_string(&SavedFile { args: self.args() })
+            .map_err(|error| FileError::at(path)(std::io::Error::other(error)))?;
+        Ok(FileMode::Private.write(path, text.as_bytes())?)
     }
 
     /// `~/.config/ren/install-vps.toml`.
@@ -170,7 +174,7 @@ mod tests {
             assert!(
                 matches!(
                     Publish::default().resolve(&path),
-                    Err(InstallError::SavedOptions(_))
+                    Err(PublishError::SavedOptions(_))
                 ),
                 "{text}"
             );

@@ -7,16 +7,25 @@
 //! wait), replaces the binary, checks that the daemon runs the new build, and
 //! resumes. Idle runs end with the old daemon; it names each, with how to
 //! continue its conversation.
+pub(crate) mod publish;
+pub(crate) mod rollback;
+mod ui;
+
+use self::{
+    publish::{Publish, PublishError},
+    rollback::{Held, Part, Upgrade},
+    ui::{UiDeploy, UiUrls},
+};
 use crate::{
     daemon::{
-        AfterPause, Busy, CheckStatus, ControlState, DoctorReport, LiveRun, Quiesce, RunPolicy,
-        Runs,
+        AfterPause, Busy, CheckStatus, ControlState, DoctorReport, Ending, Quiesce, RunPolicy,
+        Runs, StillBusy,
     },
-    invocation::{Echo, Invocation},
-    publish::Publish,
-    rollback::{Held, Part, Upgrade},
-    tailscale::{NodeStatus, Route, ServeStatus},
-    ui::{UiDeploy, UiUrls},
+    file::{FileError, FileMode},
+    invocation::{Echo, Invocation, InvocationError},
+    progress::Progress,
+    tailscale::{TailscaleCli, TailscaleError},
+    ui::UiBuildError,
 };
 use clap::Args;
 use ren_daemon::config::{Config, ConfigError};
@@ -25,9 +34,8 @@ use ren_harness::host::HostEnv;
 use std::{
     fs,
     io::Write as _,
-    os::unix::fs::{DirBuilderExt, PermissionsExt},
+    os::unix::fs::DirBuilderExt,
     path::{Path, PathBuf},
-    process::ExitStatus,
     thread,
     time::Duration,
 };
@@ -70,26 +78,10 @@ pub enum InstallError {
     Root,
     #[error("{0} is not set")]
     MissingEnv(&'static str),
-    #[error("`{command}` could not start: {source}")]
-    Spawn {
-        command: String,
-        #[source]
-        source: std::io::Error,
-    },
-    #[error("`{command}` exited with {status}{detail}")]
-    Failed {
-        command: String,
-        status: ExitStatus,
-        detail: String,
-    },
-    #[error("unexpected output from `{command}`: {detail}")]
-    Output { command: String, detail: String },
-    #[error("{}: {source}", path.display())]
-    File {
-        path: PathBuf,
-        #[source]
-        source: std::io::Error,
-    },
+    #[error(transparent)]
+    Invocation(#[from] InvocationError),
+    #[error(transparent)]
+    File(#[from] FileError),
     #[error("invalid configuration {}: {source}", path.display())]
     Config {
         path: PathBuf,
@@ -109,18 +101,14 @@ pub enum InstallError {
         "tracked files differ from the commit; commit them, or pass --allow-dirty to deploy a -dirty build"
     )]
     Dirty,
-    #[error(
-        "{} still running after {waited} seconds; nothing was changed. {}",
-        .busy.summary(),
-        .busy.advice()
-    )]
-    Busy { busy: Busy, waited: u64 },
+    #[error(transparent)]
+    Busy(#[from] StillBusy),
     #[error("the daemon does not run the build just installed: {0}")]
     BuildMismatch(String),
-    #[error("{} does not hold valid install-vps flags; fix or delete it", .0.display())]
-    SavedOptions(PathBuf),
-    #[error("{0} is not on PATH")]
-    MissingProgram(&'static str),
+    #[error(transparent)]
+    SavedOptions(#[from] PublishError),
+    #[error(transparent)]
+    UiBuild(#[from] UiBuildError),
     #[error("deploy/ren-ui.service no longer has the line {0:?} to render")]
     UiTemplate(String),
     #[error("the UI does not answer {url}; see `journalctl --user -u ren-ui`")]
@@ -141,16 +129,8 @@ pub enum InstallError {
         failure: Box<InstallError>,
         rollback: Box<InstallError>,
     },
-    #[error("Tailscale reports no MagicDNS name for this node, which the UI's origin needs")]
-    NoDnsName,
-    #[error(
-        "Tailscale Serve did not publish port {port}. If it refused this user, run again with --sudo-tailscale (the choice is saved), or allow this user once with `sudo tailscale set --operator=$USER`"
-    )]
-    ServeRefused { port: u16 },
-    #[error("Tailscale is {0}, not running: run `tailscale up` first")]
-    TailscaleDown(String),
-    #[error("Tailscale Serve port {port} is in use ({route}); choose another --https-port")]
-    PortTaken { port: u16, route: Route },
+    #[error(transparent)]
+    Tailscale(#[from] TailscaleError),
 }
 
 /// Whether to back up history before replacing a running daemon.
@@ -174,7 +154,7 @@ enum Verdict {
 #[must_use]
 struct Quiesced {
     admission: Quiet,
-    ending: Vec<LiveRun>,
+    ending: Ending,
 }
 
 /// What the upgrade did to admission before replacing a running daemon.
@@ -186,22 +166,6 @@ enum Quiet {
     /// An operator had already paused it (or set a state this task does not
     /// know); it is left as it was.
     LeftAlone,
-}
-
-/// How to run `tailscale` for the Serve step.
-#[derive(Debug, Clone, Copy)]
-pub(crate) enum TailscaleCli {
-    Direct,
-    Sudo,
-}
-
-impl TailscaleCli {
-    pub(crate) fn invocation(self) -> Invocation {
-        match self {
-            Self::Direct => Invocation::new("tailscale"),
-            Self::Sudo => Invocation::new("sudo").args(["-n", "tailscale"]),
-        }
-    }
 }
 
 /// `loginctl show-user -p Linger --value`.
@@ -300,7 +264,7 @@ impl PauseMark {
     fn write(&self, revision: Option<u64>) -> Result<(), InstallError> {
         match revision {
             Some(revision) => fs::write(&self.path, format!("{revision}\n"))
-                .map_err(InstallError::file(&self.path)),
+                .map_err(|error| FileError::at(&self.path)(error).into()),
             None => Ok(()),
         }
     }
@@ -351,16 +315,6 @@ impl Layout {
     }
 }
 
-impl InstallError {
-    /// Wraps an I/O error with the path it concerns.
-    pub(crate) fn file(path: &Path) -> impl FnOnce(std::io::Error) -> Self + '_ {
-        move |source| Self::File {
-            path: path.to_path_buf(),
-            source,
-        }
-    }
-}
-
 impl InstallVps {
     pub fn run(self, env: &HostEnv) -> Result<(), InstallError> {
         let backup = if self.skip_backup {
@@ -401,13 +355,13 @@ impl InstallVps {
         Self::seed_config(&layout)?;
         let config = Self::load_config(&layout)?;
         let quiesced = Self::quiesce(&layout, self.idle_timeout, policy)?;
-        Self::announce_ending(&quiesced.ending);
+        quiesced.ending.announce();
         let replaced = Self::replace(&layout, &built, backup, tree);
         Self::release(&layout, quiesced.admission);
         replaced?;
         let dns = match publish.https_port {
             Some(port) => {
-                let dns = Self::publish(tailscale, port, &format!("http://{}", config.listen))?;
+                let dns = tailscale.publish(port, &format!("http://{}", config.listen))?;
                 let url = Self::url(dns.as_deref(), port);
                 println!(
                     "\nGateway root URL for clients: {url}\n  ren init --gateway {url}\n  ren run claude\n"
@@ -419,18 +373,18 @@ impl InstallVps {
         if let (Some(ui), Some(ui_port), Some(port)) =
             (&ui, publish.ui_https_port, publish.https_port)
         {
-            let dns = dns.as_deref().ok_or(InstallError::NoDnsName)?;
+            let dns = dns.as_deref().ok_or(TailscaleError::NoDnsName)?;
             ui.install(&UiUrls {
                 gateway: format!("http://{}", config.listen),
                 public_gateway: format!("https://{dns}:{port}"),
                 origin: format!("https://{dns}:{ui_port}"),
             })?;
-            Self::publish(tailscale, ui_port, UiDeploy::TARGET)?;
+            tailscale.publish(ui_port, UiDeploy::TARGET)?;
             println!("\nUI: {}\n", Self::url(Some(dns), ui_port));
         }
         publish.save(&saved)?;
-        Self::step("Done");
-        Self::remind_ending(&quiesced.ending);
+        Progress("Done").show();
+        quiesced.ending.remind();
         Ok(())
     }
 
@@ -442,10 +396,10 @@ impl InstallVps {
     /// that turn open and the two would wait on each other until the
     /// install gave up. Its output goes to the journal.
     fn relaunch(env: &HostEnv, layout: &Layout) -> Result<(), InstallError> {
-        let program = std::env::current_exe().map_err(InstallError::file(Path::new("xtask")))?;
-        Self::step(&format!(
+        let program = std::env::current_exe().map_err(FileError::at(Path::new("xtask")))?;
+        Progress(&format!(
             "This runs inside {SERVICE}, which the install restarts; continuing in the background as the unit {RELAUNCH_UNIT}. It restarts the daemon once every run's turn has ended, the one that started it included, so end that turn rather than wait for the install in it. Follow it with `journalctl --user -u {RELAUNCH_UNIT} -f`"
-        ));
+        )).show();
         let mut relaunch = Invocation::new("systemd-run")
             .args(["--user", "--unit", RELAUNCH_UNIT, "--collect", "--quiet"])
             .arg("--working-directory")
@@ -460,11 +414,8 @@ impl InstallVps {
             .arg("--")
             .arg(program)
             .args(std::env::args_os().skip(1))
-            .run()
-    }
-
-    pub(crate) fn step(message: &str) {
-        println!("==> {message}");
+            .run()?;
+        Ok(())
     }
 
     fn preflight() -> Result<(), InstallError> {
@@ -473,17 +424,17 @@ impl InstallVps {
         }
         let id = Invocation::new("id").arg("-u");
         let uid = id.capture()?;
-        let uid: u32 = uid.trim().parse().map_err(|_| InstallError::Output {
-            command: "id -u".to_owned(),
-            detail: uid.trim().to_owned(),
-        })?;
+        let uid: u32 = uid
+            .trim()
+            .parse()
+            .map_err(|_| InvocationError::output("id -u")(uid.trim()))?;
         if uid == 0 {
             return Err(InstallError::Root);
         }
         Invocation::new("systemctl")
             .args(["--user", "show-environment"])
-            .capture()
-            .map(drop)
+            .capture()?;
+        Ok(())
     }
 
     /// Refuses modified tracked files unless allowed, and warns when the
@@ -509,21 +460,21 @@ impl InstallVps {
                 "warning: commit {commit} is on no remote branch; push it so the deployed source is saved"
             ),
         }
-        Self::step(&format!("Installing commit {commit}"));
+        Progress(&format!("Installing commit {commit}")).show();
         Ok(tree)
     }
 
     /// The release binary: the installed `ren` is the operator's own, on the
     /// host they drive sessions from.
     fn build(layout: &Layout) -> Result<PathBuf, InstallError> {
-        Self::step("Building the release binary");
+        Progress("Building the release binary").show();
         Invocation::new(&layout.cargo)
             .args(["build", "--release", "--locked", "--package", "ren-rs"])
             .args(["--bin", "ren", "--manifest-path"])
             .arg(layout.repo.join("Cargo.toml"))
             .run()?;
         let built = layout.repo.join("target/release/ren");
-        fs::canonicalize(&built).map_err(InstallError::file(&built))
+        Ok(fs::canonicalize(&built).map_err(FileError::at(&built))?)
     }
 
     fn seed_config(layout: &Layout) -> Result<(), InstallError> {
@@ -534,22 +485,24 @@ impl InstallVps {
                 .recursive(true)
                 .mode(0o700)
                 .create(dir)
-                .map_err(InstallError::file(dir))?;
+                .map_err(FileError::at(dir))?;
         }
         if layout.config.exists() {
-            Self::step(&format!(
+            Progress(&format!(
                 "Keeping existing configuration {}",
                 layout.config.display()
-            ));
+            ))
+            .show();
             return Ok(());
         }
-        Self::step(&format!(
+        Progress(&format!(
             "Creating {} from ren.example.toml (review it)",
             layout.config.display()
-        ));
+        ))
+        .show();
         let example = layout.repo.join("ren.example.toml");
-        let contents = fs::read(&example).map_err(InstallError::file(&example))?;
-        Self::write_private(&layout.config, &contents, 0o600)
+        let contents = fs::read(&example).map_err(FileError::at(&example))?;
+        Ok(FileMode::Private.write(&layout.config, &contents)?)
     }
 
     /// The configuration the new binary will run with, checked before the
@@ -570,9 +523,9 @@ impl InstallVps {
     }
 
     pub(crate) fn active(service: &str) -> Result<bool, InstallError> {
-        Invocation::new("systemctl")
+        Ok(Invocation::new("systemctl")
             .args(["--user", "is-active", "--quiet", service])
-            .succeeds(Echo::Hide)
+            .succeeds(Echo::Hide)?)
     }
 
     /// Seconds between checks for running calls.
@@ -581,61 +534,10 @@ impl InstallVps {
     const RETRY_AFTER: &str = "10";
 
     fn control_state(layout: &Layout) -> Result<ControlState, InstallError> {
-        Self::json(
-            layout.ren(&layout.binary).args(["control", "state"]),
-            "ren control state",
-            ControlState::parse,
-        )
-    }
-
-    /// The runs the daemon drives now, through `ren` (`ren runs ls`).
-    pub(crate) fn runs(ren: Invocation) -> Result<Runs, InstallError> {
-        let text = ren.args(["runs", "ls"]).answer()?;
-        Runs::parse(&text).map_err(|error| InstallError::Output {
-            command: "ren runs ls".to_owned(),
-            detail: error.to_string(),
-        })
-    }
-
-    /// Says what a restart waits for, when it changed since `reported`.
-    pub(crate) fn report_wait(busy: &Busy, reported: &mut Option<Busy>, timeout: u64) {
-        if reported.as_ref() == Some(busy) {
-            return;
-        }
-        Self::step(&format!(
-            "Waiting for {} to finish (up to {timeout} seconds)",
-            busy.summary()
-        ));
-        for line in busy.run_lines() {
-            println!("    {line}");
-        }
-        *reported = Some(busy.clone());
-    }
-
-    /// Names the runs whose process ends with the daemon about to stop.
-    pub(crate) fn announce_ending(ending: &[LiveRun]) {
-        if ending.is_empty() {
-            return;
-        }
-        Self::step(&format!(
-            "{} end with the daemon; each conversation can be continued:",
-            match ending.len() {
-                1 => "1 run".to_owned(),
-                n => format!("{n} runs"),
-            }
-        ));
-        for run in ending {
-            println!("    {run}\n      {}", run.continuation());
-        }
-    }
-
-    /// After the restart, once more, so it is the last thing shown.
-    pub(crate) fn remind_ending(ending: &[LiveRun]) {
-        match ending.len() {
-            0 => {}
-            1 => println!("1 run ended with the restart (listed above); it can be continued."),
-            n => println!("{n} runs ended with the restart (listed above); each can be continued."),
-        }
+        Ok(layout
+            .ren(&layout.binary)
+            .args(["control", "state"])
+            .json("ren control state", ControlState::parse)?)
     }
 
     /// Waits until no call is running and no run is mid-way (unless `policy`
@@ -651,7 +553,7 @@ impl InstallVps {
         if !Self::service_active()? || !layout.binary.exists() {
             return Ok(Quiesced {
                 admission: Quiet::Stopped,
-                ending: Vec::new(),
+                ending: Ending::default(),
             });
         }
         let ren = || layout.ren(&layout.binary);
@@ -659,18 +561,18 @@ impl InstallVps {
         let mut reported = None;
         for _ in 0..polls {
             let state = Self::control_state(layout)?;
-            let runs = Self::runs(ren())?;
+            let runs = Runs::read(ren())?;
             match state.quiesce(&runs, policy) {
                 Quiesce::Pause => {
                     Self::control(layout, &["pause", "--retry-after", Self::RETRY_AFTER])?;
-                    let runs = Self::runs(ren())?;
+                    let runs = Runs::read(ren())?;
                     let paused = Self::control_state(layout)?;
                     match paused.after_pause(&runs, policy) {
                         AfterPause::Quiet => {
                             // Marked, so an install that does not get to
                             // resume leaves a pause the next one knows.
                             PauseMark::of(layout).write(paused.revision())?;
-                            Self::step("Paused admission; clients wait and retry");
+                            Progress("Paused admission; clients wait and retry").show();
                             return Ok(Quiesced {
                                 admission: Quiet::Paused,
                                 ending: runs.ending(),
@@ -678,14 +580,14 @@ impl InstallVps {
                         }
                         AfterPause::SlippedIn(busy) => {
                             Self::control(layout, &["resume"])?;
-                            Self::report_wait(&busy, &mut reported, idle_timeout);
+                            busy.report(&mut reported, idle_timeout);
                         }
                     }
                 }
                 Quiesce::LeaveAlone if state.paused_by(PauseMark::of(layout).read()) => {
-                    Self::step(
+                    Progress(
                         "The daemon is still paused by an earlier install that did not finish; this one resumes it",
-                    );
+                    ).show();
                     return Ok(Quiesced {
                         admission: Quiet::Paused,
                         ending: runs.ending(),
@@ -694,20 +596,21 @@ impl InstallVps {
                 Quiesce::LeaveAlone => {
                     // A mark from an older pause is not this one's.
                     PauseMark::of(layout).clear();
-                    Self::step("The daemon was already paused; leaving it paused");
+                    Progress("The daemon was already paused; leaving it paused").show();
                     return Ok(Quiesced {
                         admission: Quiet::LeftAlone,
                         ending: runs.ending(),
                     });
                 }
-                Quiesce::Wait(busy) => Self::report_wait(&busy, &mut reported, idle_timeout),
+                Quiesce::Wait(busy) => busy.report(&mut reported, idle_timeout),
             }
             thread::sleep(Self::POLL);
         }
-        Err(InstallError::Busy {
+        Err(StillBusy {
             busy: reported.unwrap_or_else(|| Busy::of_runs(&Runs::default(), policy)),
             waited: idle_timeout,
-        })
+        }
+        .into())
     }
 
     fn control(layout: &Layout, args: &[&str]) -> Result<(), InstallError> {
@@ -715,8 +618,8 @@ impl InstallVps {
             .ren(&layout.binary)
             .arg("control")
             .args(args)
-            .capture()
-            .map(drop)
+            .capture()?;
+        Ok(())
     }
 
     /// Resumes admission if this task paused it, whether or not the upgrade
@@ -727,7 +630,7 @@ impl InstallVps {
             Quiet::Paused => match Self::control(layout, &["resume"]) {
                 Ok(()) => {
                     PauseMark::of(layout).clear();
-                    Self::step("Resumed admission");
+                    Progress("Resumed admission").show();
                 }
                 Err(error) => eprintln!(
                     "warning: could not resume admission ({error}); once the daemon runs, run `{} control resume`",
@@ -749,9 +652,9 @@ impl InstallVps {
             held,
             SERVICE,
             || {
-                Self::step(&format!("Installing {}", layout.binary.display()));
-                let contents = fs::read(built).map_err(InstallError::file(built))?;
-                Self::write_private(&layout.binary, &contents, 0o755)?;
+                Progress(&format!("Installing {}", layout.binary.display())).show();
+                let contents = fs::read(built).map_err(FileError::at(built))?;
+                FileMode::Executable.write(&layout.binary, &contents)?;
                 Self::install_unit(layout)?;
                 Self::enable_linger(layout)?;
                 Self::doctor(layout)?;
@@ -766,11 +669,10 @@ impl InstallVps {
 
     /// The installed CLI and the daemon must report the same build.
     fn verify_build(layout: &Layout, tree: Tree) -> Result<(), InstallError> {
-        let report = Self::json(
-            layout.ren(&layout.binary).args(["doctor", "--json"]),
-            "ren doctor --json",
-            DoctorReport::parse,
-        )?;
+        let report = layout
+            .ren(&layout.binary)
+            .args(["doctor", "--json"])
+            .json("ren doctor --json", DoctorReport::parse)?;
         let Some(check) = report.build() else {
             return Err(InstallError::BuildMismatch(
                 "doctor reported no build check".to_owned(),
@@ -778,7 +680,7 @@ impl InstallVps {
         };
         match Self::verdict(check.status(), tree) {
             Verdict::Confirmed => {
-                Self::step(check.message());
+                Progress(check.message()).show();
                 Ok(())
             }
             Verdict::Unconfirmed => {
@@ -818,7 +720,7 @@ impl InstallVps {
         if running && layout.binary.exists() {
             match backup {
                 Backup::Run => {
-                    Self::step("Backing up history with the running daemon");
+                    Progress("Backing up history with the running daemon").show();
                     if !layout
                         .ren(&layout.binary)
                         .args(["control", "backup"])
@@ -829,39 +731,16 @@ impl InstallVps {
                         });
                     }
                 }
-                Backup::Skip => Self::step("Skipping the history backup"),
+                Backup::Skip => Progress("Skipping the history backup").show(),
             }
         }
         if running {
-            Self::step("Stopping the service");
+            Progress("Stopping the service").show();
             Invocation::new("systemctl")
                 .args(["--user", "stop", SERVICE])
                 .run()?;
         }
         Held::hold(&layout.binary, &layout.rollback, &layout.unit)
-    }
-
-    /// Publishes `contents` at `path` atomically, with `mode`.
-    pub(crate) fn write_private(
-        path: &Path,
-        contents: &[u8],
-        mode: u32,
-    ) -> Result<(), InstallError> {
-        let dir = path.parent().unwrap_or(Path::new("/"));
-        let mut file = tempfile::Builder::new()
-            .prefix(".ren.")
-            .tempfile_in(dir)
-            .map_err(InstallError::file(dir))?;
-        file.write_all(contents).map_err(InstallError::file(path))?;
-        file.as_file()
-            .set_permissions(fs::Permissions::from_mode(mode))
-            .map_err(InstallError::file(path))?;
-        file.as_file()
-            .sync_all()
-            .map_err(InstallError::file(path))?;
-        file.persist(path)
-            .map_err(|error| InstallError::file(path)(error.error))?;
-        Ok(())
     }
 
     fn install_unit(layout: &Layout) -> Result<(), InstallError> {
@@ -882,40 +761,38 @@ impl InstallVps {
     ) -> Result<(), InstallError> {
         let current = fs::read_to_string(unit).ok();
         if current.as_deref() == Some(rendered) {
-            Self::step(&format!("Unit {} is up to date", unit.display()));
+            Progress(&format!("Unit {} is up to date", unit.display())).show();
         } else {
-            Self::step(&format!("Writing {}", unit.display()));
+            Progress(&format!("Writing {}", unit.display())).show();
             let dir = unit.parent().unwrap_or(Path::new("/"));
             let mut staged = tempfile::Builder::new()
                 .prefix(".ren.")
                 .suffix(".service")
                 .tempfile_in(dir)
-                .map_err(InstallError::file(dir))?;
+                .map_err(FileError::at(dir))?;
             staged
                 .write_all(rendered.as_bytes())
-                .map_err(InstallError::file(unit))?;
-            staged
-                .as_file()
-                .sync_all()
-                .map_err(InstallError::file(unit))?;
+                .map_err(FileError::at(unit))?;
+            staged.as_file().sync_all().map_err(FileError::at(unit))?;
             Invocation::new("systemd-analyze")
                 .args(["--user", "verify"])
                 .arg(staged.path())
                 .capture()?;
             staged
                 .persist(unit)
-                .map_err(|error| InstallError::file(unit)(error.error))?;
+                .map_err(|error| FileError::at(unit)(error.error))?;
         }
         Invocation::new("systemctl")
             .args(["--user", "daemon-reload"])
             .run()?;
-        Self::step(&format!("Enabling and starting {service}"));
+        Progress(&format!("Enabling and starting {service}")).show();
         Invocation::new("systemctl")
             .args(["--user", "reset-failed", service])
             .succeeds(Echo::Hide)?;
         Invocation::new("systemctl")
             .args(["--user", "enable", "--now", service])
-            .run()
+            .run()?;
+        Ok(())
     }
 
     fn enable_linger(layout: &Layout) -> Result<(), InstallError> {
@@ -924,9 +801,9 @@ impl InstallVps {
             .capture()
             .map_or(Linger::Disabled, |text| Linger::parse(&text));
         match linger {
-            Linger::Enabled => Self::step("Lingering is already enabled"),
+            Linger::Enabled => Progress("Lingering is already enabled").show(),
             Linger::Disabled => {
-                Self::step("Enabling lingering so the service runs after logout");
+                Progress("Enabling lingering so the service runs after logout").show();
                 if !Invocation::new("loginctl")
                     .args(["enable-linger", &layout.user])
                     .succeeds(Echo::Show)?
@@ -942,7 +819,7 @@ impl InstallVps {
     }
 
     fn doctor(layout: &Layout) -> Result<(), InstallError> {
-        Self::step("Checking the daemon with ren doctor");
+        Progress("Checking the daemon with ren doctor").show();
         let doctor = layout.ren(&layout.binary).arg("doctor");
         // The unit is Type=exec: started is not yet listening.
         for _ in 0..10 {
@@ -956,67 +833,6 @@ impl InstallVps {
         } else {
             Err(InstallError::Doctor)
         }
-    }
-
-    fn json<T>(
-        invocation: Invocation,
-        command: &str,
-        parse: fn(&str) -> Result<T, serde_json::Error>,
-    ) -> Result<T, InstallError> {
-        let text = invocation.capture()?;
-        parse(&text).map_err(|error| InstallError::Output {
-            command: command.to_owned(),
-            detail: error.to_string(),
-        })
-    }
-
-    /// Publishes `target` privately on `port`, and returns the node's
-    /// MagicDNS name.
-    pub(crate) fn publish(
-        tailscale: TailscaleCli,
-        port: u16,
-        target: &str,
-    ) -> Result<Option<String>, InstallError> {
-        let node = Self::json(
-            Invocation::new("tailscale").args(["status", "--json"]),
-            "tailscale status --json",
-            NodeStatus::parse,
-        )?;
-        if let Some(state) = node.not_running() {
-            return Err(InstallError::TailscaleDown(state.to_owned()));
-        }
-        let serve = Self::json(
-            Invocation::new("tailscale").args(["serve", "status", "--json"]),
-            "tailscale serve status --json",
-            ServeStatus::parse,
-        )?;
-        match serve.route(port, target) {
-            Route::Free => {
-                Self::step(&format!(
-                    "Publishing {target} on the tailnet at port {port}"
-                ));
-                let served = tailscale
-                    .invocation()
-                    .args(["serve", "--bg", &format!("--https={port}"), target])
-                    .run();
-                match (served, tailscale) {
-                    (Ok(()), TailscaleCli::Direct | TailscaleCli::Sudo) => {}
-                    // Tailscale refuses Serve changes from a user who is not its
-                    // operator; its own message is already on the terminal.
-                    (Err(InstallError::Failed { .. }), TailscaleCli::Direct) => {
-                        return Err(InstallError::ServeRefused { port });
-                    }
-                    (Err(error), TailscaleCli::Direct | TailscaleCli::Sudo) => return Err(error),
-                }
-            }
-            Route::Target => Self::step(&format!(
-                "Tailscale Serve port {port} already proxies to {target}"
-            )),
-            route @ (Route::Funnel { .. } | Route::Other { .. } | Route::TcpForward) => {
-                return Err(InstallError::PortTaken { port, route });
-            }
-        }
-        Ok(node.dns_name().map(str::to_owned))
     }
 
     /// `https://<node>:<port>`, or a description when the node has no name.

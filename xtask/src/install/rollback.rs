@@ -4,8 +4,10 @@
 //! `install-vps` holds the daemon's binary and the UI's deployed copy this
 //! way, so a failed check restores what ran before on its own and nothing
 //! is left behind after an install.
-use crate::install::{InstallError, InstallVps};
+use crate::file::{FileError, FileMode};
+use crate::install::InstallError;
 use crate::invocation::Invocation;
+use crate::progress::Progress;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -90,9 +92,9 @@ impl Held {
         let unit_text = match fs::read_to_string(unit) {
             Ok(text) => Some(text),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
-            Err(error) => return Err(InstallError::file(unit)(error)),
+            Err(error) => return Err(FileError::at(unit)(error).into()),
         };
-        fs::rename(installed, aside).map_err(InstallError::file(aside))?;
+        fs::rename(installed, aside).map_err(FileError::at(aside))?;
         Ok(Some(Self {
             installed: installed.to_path_buf(),
             aside: aside.to_path_buf(),
@@ -110,10 +112,10 @@ impl Held {
     /// version. The service is the caller's to stop first and start after.
     pub(crate) fn put_back(self) -> Result<(), InstallError> {
         Self::clear(&self.installed)?;
-        fs::rename(&self.aside, &self.installed).map_err(InstallError::file(&self.installed))?;
+        fs::rename(&self.aside, &self.installed).map_err(FileError::at(&self.installed))?;
         match &self.unit_text {
             Some(text) => {
-                InstallVps::write_private(&self.unit, text.as_bytes(), 0o644)?;
+                FileMode::Readable.write(&self.unit, text.as_bytes())?;
             }
             None => Self::clear(&self.unit)?,
         }
@@ -123,10 +125,10 @@ impl Held {
     /// Removes `path`, a file or a folder, if it is there.
     fn clear(path: &Path) -> Result<(), InstallError> {
         match fs::symlink_metadata(path) {
-            Ok(meta) if meta.is_dir() => fs::remove_dir_all(path).map_err(InstallError::file(path)),
-            Ok(_) => fs::remove_file(path).map_err(InstallError::file(path)),
+            Ok(meta) if meta.is_dir() => Ok(fs::remove_dir_all(path).map_err(FileError::at(path))?),
+            Ok(_) => Ok(fs::remove_file(path).map_err(FileError::at(path))?),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-            Err(error) => Err(InstallError::file(path)(error)),
+            Err(error) => Err(FileError::at(path)(error).into()),
         }
     }
 }
@@ -155,9 +157,10 @@ impl Upgrade {
         let Some(held) = held else {
             return Self::Failed { failure };
         };
-        InstallVps::step(&format!(
+        Progress(&format!(
             "The new version failed; putting back what ran before ({failure})"
-        ));
+        ))
+        .show();
         let restored = Self::restart(service, held).and_then(|()| recheck());
         match restored {
             Ok(()) => Self::RolledBack { failure },
@@ -196,7 +199,8 @@ impl Upgrade {
             .run()?;
         Invocation::new("systemctl")
             .args(["--user", "start", service])
-            .run()
+            .run()?;
+        Ok(())
     }
 }
 
@@ -280,13 +284,13 @@ mod tests {
         let upgrade = Upgrade::attempt(
             None,
             "unused.service",
-            || Err(InstallError::NoDnsName),
+            || Err(InstallError::Doctor),
             || Ok(()),
         );
         assert!(matches!(
             upgrade,
             Upgrade::Failed {
-                failure: InstallError::NoDnsName
+                failure: InstallError::Doctor
             }
         ));
     }
@@ -299,7 +303,7 @@ mod tests {
         let upgrade = Upgrade::attempt(
             held,
             "unused.service",
-            || fs::create_dir(&installed).map_err(InstallError::file(&installed)),
+            || Ok(fs::create_dir(&installed).map_err(FileError::at(&installed))?),
             || Ok(()),
         );
         assert!(matches!(upgrade, Upgrade::Kept));

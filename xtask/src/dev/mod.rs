@@ -9,10 +9,13 @@ mod slot;
 mod traffic;
 mod work;
 
+use crate::file::FileError;
+use crate::invocation::InvocationError;
+use crate::tailscale::{TailscaleCli, TailscaleError};
 use crate::{
-    daemon::RunPolicy,
-    install::{InstallError, TailscaleCli},
-    publish::Publish,
+    daemon::{RunPolicy, StillBusy},
+    install::publish::{Publish, PublishError},
+    ui::UiBuildError,
 };
 use agent::{
     AgentError, FakeAgent, FakeClaudeAuth, FakeCodexAuth, FakeOpenCodeAuth, FakePiAuth, Played,
@@ -128,7 +131,7 @@ impl TailnetArgs {
     fn cli(&self, env: &HostEnv) -> Result<TailscaleCli, DevError> {
         let home = env
             .absolute_path("HOME")
-            .ok_or(InstallError::MissingEnv("HOME"))?;
+            .ok_or(DevError::MissingEnv("HOME"))?;
         let saved = Publish::default().resolve(&Publish::path(&home))?;
         Ok(if self.sudo_tailscale || saved.sudo_tailscale {
             TailscaleCli::Sudo
@@ -211,8 +214,20 @@ struct ProviderArgs {
 pub enum DevError {
     #[error(transparent)]
     Provider(#[from] ProviderError),
+    #[error("{0} is not set")]
+    MissingEnv(&'static str),
     #[error(transparent)]
-    Command(#[from] InstallError),
+    SavedOptions(#[from] PublishError),
+    #[error(transparent)]
+    Ui(#[from] UiBuildError),
+    #[error(transparent)]
+    Invocation(#[from] InvocationError),
+    #[error(transparent)]
+    File(#[from] FileError),
+    #[error(transparent)]
+    Tailscale(#[from] TailscaleError),
+    #[error(transparent)]
+    Busy(#[from] StillBusy),
     #[error("the dev configuration is invalid; this is a bug in `xtask dev`")]
     Config,
     #[error("nothing answered on {0} in time; see `journalctl --user -u 'ren-dev-*'`")]

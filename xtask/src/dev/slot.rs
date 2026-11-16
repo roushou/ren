@@ -5,12 +5,13 @@
 //! match the installed service.
 
 use super::DevError;
+use crate::file::{FileError, FileMode};
+use crate::progress::Progress;
 use crate::{
-    daemon::{Busy, LiveRun, RunPolicy, Runs},
-    install::{InstallError, InstallVps, TailscaleCli},
-    invocation::{Echo, Invocation},
-    tailscale::{Route, ServeStatus},
-    ui::UiDeploy,
+    daemon::{Busy, Ending, RunPolicy, Runs, StillBusy},
+    invocation::{Echo, Invocation, InvocationError},
+    tailscale::{Route, ServeStatus, TailscaleCli, TailscaleError},
+    ui::UiBuild,
 };
 use ren_daemon::config::{Config, RunsOptions, ToolsOptions, UpstreamConfig};
 use ren_gateway::{
@@ -70,14 +71,14 @@ impl Unit {
         }
     }
 
-    pub fn active(self) -> Result<bool, InstallError> {
+    pub fn active(self) -> Result<bool, InvocationError> {
         Invocation::new("systemctl")
             .args(["--user", "is-active", "--quiet"])
             .arg(self.service())
             .succeeds(Echo::Hide)
     }
 
-    pub fn stop(self) -> Result<(), InstallError> {
+    pub fn stop(self) -> Result<(), InvocationError> {
         if self.active()? {
             Invocation::new("systemctl")
                 .args(["--user", "stop"])
@@ -99,7 +100,7 @@ impl Unit {
         command: &[&Path],
         args: &[String],
         environment: &[(&str, String)],
-    ) -> Result<(), InstallError> {
+    ) -> Result<(), InvocationError> {
         let mut run = Invocation::new("systemd-run")
             .args(["--user", "--collect", "--quiet"])
             .arg(format!("--unit={}", self.name()))
@@ -139,7 +140,6 @@ pub struct Slot {
     pub config: PathBuf,
     pub data_dir: PathBuf,
     pub bin_dir: PathBuf,
-    home: PathBuf,
     ui_dir: PathBuf,
     ui_next: PathBuf,
     /// The dev daemon's run root, with a few fake projects to start runs in.
@@ -174,7 +174,7 @@ impl Slot {
     pub fn new(env: &HostEnv) -> Result<Self, DevError> {
         let home = env
             .absolute_path("HOME")
-            .ok_or(DevError::Command(InstallError::MissingEnv("HOME")))?;
+            .ok_or(DevError::MissingEnv("HOME"))?;
         let share = home.join(".local/share/ren-dev");
         Ok(Self {
             repo: Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -191,7 +191,6 @@ impl Slot {
             work_dir: share.join("work"),
             places_dir: share.join("config"),
             scratch_dir: share.join("scratch"),
-            home: home.clone(),
         })
     }
 
@@ -286,23 +285,19 @@ format = "tar_gz"
 program_at = "acme-lint"
 "#;
 
-    fn step(message: &str) {
-        InstallVps::step(message);
-    }
-
     /// Build this checkout and copy the binaries the units run, so a later
     /// build never replaces one under a running unit.
     fn build(&self) -> Result<(), DevError> {
-        Self::step("Building ren and xtask from this checkout");
+        Progress("Building ren and xtask from this checkout").show();
         Invocation::new(&self.cargo)
             .current_dir(&self.repo)
             .args(["build", "--locked", "-p", "ren-rs", "-p", "xtask"])
             .run()?;
-        fs::create_dir_all(&self.bin_dir).map_err(InstallError::file(&self.bin_dir))?;
+        fs::create_dir_all(&self.bin_dir).map_err(FileError::at(&self.bin_dir))?;
         for name in ["ren", "xtask"] {
             let built = self.repo.join("target/debug").join(name);
-            let contents = fs::read(&built).map_err(InstallError::file(&built))?;
-            InstallVps::write_private(&self.bin_dir.join(name), &contents, 0o755)?;
+            let contents = fs::read(&built).map_err(FileError::at(&built))?;
+            FileMode::Executable.write(&self.bin_dir.join(name), &contents)?;
         }
         self.write_agent()
     }
@@ -323,7 +318,7 @@ program_at = "acme-lint"
     /// `claude`, and `pi`, and create the fake projects under the run root.
     fn write_agent(&self) -> Result<(), DevError> {
         let dir = self.agent_dir();
-        fs::create_dir_all(&dir).map_err(InstallError::file(&dir))?;
+        fs::create_dir_all(&dir).map_err(FileError::at(&dir))?;
         for (program, client, name) in [
             ("codex", "codex", "Codex"),
             ("claude", "claude", "Claude Code"),
@@ -335,22 +330,22 @@ program_at = "acme-lint"
                 Self::quote(&self.bin_dir.join("xtask")),
                 Self::quote(&self.data_dir),
             );
-            InstallVps::write_private(&dir.join(program), script.as_bytes(), 0o755)?;
+            FileMode::Executable.write(&dir.join(program), script.as_bytes())?;
         }
         for place in Self::PLACES {
             let folder = self.places_dir.join(place);
-            fs::create_dir_all(&folder).map_err(InstallError::file(&folder))?;
+            fs::create_dir_all(&folder).map_err(FileError::at(&folder))?;
         }
         for project in Self::PROJECTS {
             let folder = self.work_dir.join(project);
-            fs::create_dir_all(folder.join("src")).map_err(InstallError::file(&folder))?;
+            fs::create_dir_all(folder.join("src")).map_err(FileError::at(&folder))?;
             let readme = folder.join("README.md");
             if !readme.exists() {
                 fs::write(
                     &readme,
                     format!("# {project}\n\nA fake project for the dev slot's runs.\n"),
                 )
-                .map_err(InstallError::file(&readme))?;
+                .map_err(FileError::at(&readme))?;
             }
         }
         Ok(())
@@ -366,13 +361,12 @@ program_at = "acme-lint"
         config.check().map_err(|_| DevError::Config)?;
         let text = toml::to_string(&config).map_err(|_| DevError::Config)?;
         let dir = self.config.parent().unwrap_or(Path::new("/"));
-        fs::create_dir_all(dir).map_err(InstallError::file(dir))?;
-        fs::create_dir_all(&self.data_dir).map_err(InstallError::file(&self.data_dir))?;
-        InstallVps::write_private(
+        fs::create_dir_all(dir).map_err(FileError::at(dir))?;
+        fs::create_dir_all(&self.data_dir).map_err(FileError::at(&self.data_dir))?;
+        FileMode::Private.write(
             &self.config,
             format!("# Generated by `cargo xtask dev up`; rewritten on every run.\n{text}")
                 .as_bytes(),
-            0o600,
         )?;
         Ok(())
     }
@@ -418,37 +412,34 @@ program_at = "acme-lint"
         preview: Preview,
         wait: RunWait,
     ) -> Result<(), DevError> {
-        let ui = UiDeploy::new(env, &self.home, &self.repo)?;
+        let ui = UiBuild::new(env, &self.repo)?;
         self.start_core(wait)?;
         ui.build_into(&self.ui_next)?;
         Unit::Ui.stop()?;
         if self.ui_dir.exists() {
-            fs::remove_dir_all(&self.ui_dir).map_err(InstallError::file(&self.ui_dir))?;
+            fs::remove_dir_all(&self.ui_dir).map_err(FileError::at(&self.ui_dir))?;
         }
-        fs::rename(&self.ui_next, &self.ui_dir).map_err(InstallError::file(&self.ui_dir))?;
+        fs::rename(&self.ui_next, &self.ui_dir).map_err(FileError::at(&self.ui_dir))?;
         let (public_gateway, origin) = match preview {
             Preview::Local => (
                 format!("http://{}", Self::DAEMON),
                 format!("http://{}", Self::UI),
             ),
             Preview::Tailnet(tailscale) => {
-                let dns = InstallVps::publish(
-                    tailscale,
-                    Self::GATEWAY_PORT,
-                    &format!("http://{}", Self::DAEMON),
-                )?
-                .ok_or(InstallError::NoDnsName)?;
+                let dns = tailscale
+                    .publish(Self::GATEWAY_PORT, &format!("http://{}", Self::DAEMON))?
+                    .ok_or(TailscaleError::NoDnsName)?;
                 (
                     format!("https://{dns}:{}", Self::GATEWAY_PORT),
                     format!("https://{dns}:{}", Self::UI_PORT),
                 )
             }
         };
-        Self::step(&format!("Starting the dev UI on {}", Self::UI));
+        Progress(&format!("Starting the dev UI on {}", Self::UI)).show();
         Unit::Ui.start(
             Some(&self.ui_dir),
             &[ui.node()],
-            &[UiDeploy::entry().display().to_string()],
+            &[UiBuild::entry().display().to_string()],
             &[
                 ("HOST", Self::UI.ip().to_string()),
                 ("PORT", Self::UI.port().to_string()),
@@ -471,7 +462,7 @@ program_at = "acme-lint"
         // The UI's /health relays the dev daemon's.
         Self::wait_for(Self::UI, "/health")?;
         if let Preview::Tailnet(tailscale) = preview {
-            InstallVps::publish(tailscale, Self::UI_PORT, &format!("http://{}", Self::UI))?;
+            tailscale.publish(Self::UI_PORT, &format!("http://{}", Self::UI))?;
         }
         println!("\nDev preview: {origin}\n");
         Ok(())
@@ -481,13 +472,13 @@ program_at = "acme-lint"
         self.build()?;
         self.write_config()?;
         let ending = self.settle_runs(wait)?;
-        InstallVps::announce_ending(&ending);
+        ending.announce();
         for unit in [Unit::Daemon, Unit::Provider] {
             unit.stop()?;
         }
         let xtask = self.bin_dir.join("xtask");
         let ren = self.bin_dir.join("ren");
-        Self::step(&format!("Starting the fake provider on {}", Self::PROVIDER));
+        Progress(&format!("Starting the fake provider on {}", Self::PROVIDER)).show();
         Unit::Provider.start(
             None,
             &[&xtask],
@@ -502,7 +493,7 @@ program_at = "acme-lint"
             &[],
         )?;
         Self::wait_for(Self::PROVIDER, "/anthropic/v1/models")?;
-        Self::step(&format!("Starting the dev daemon on {}", Self::DAEMON));
+        Progress(&format!("Starting the dev daemon on {}", Self::DAEMON)).show();
         Unit::Daemon.start(
             None,
             &[&ren],
@@ -524,7 +515,7 @@ program_at = "acme-lint"
             ],
         )?;
         Self::wait_for(Self::DAEMON, "/health")?;
-        InstallVps::remind_ending(&ending);
+        ending.remind();
         self.start_traffic()
     }
 
@@ -532,9 +523,9 @@ program_at = "acme-lint"
     /// waited for: the fake traffic never stops), and returns the runs that
     /// end with it. Polls are counted rather than timed, so this reads no
     /// clock.
-    fn settle_runs(&self, wait: RunWait) -> Result<Vec<LiveRun>, DevError> {
+    fn settle_runs(&self, wait: RunWait) -> Result<Ending, DevError> {
         if !Unit::Daemon.active()? {
-            return Ok(Vec::new());
+            return Ok(Ending::default());
         }
         let ren = || {
             Invocation::new(self.bin_dir.join("ren"))
@@ -544,15 +535,15 @@ program_at = "acme-lint"
         let polls = wait.timeout.div_ceil(Self::RUN_POLL.as_secs()).max(1);
         let mut reported = None;
         for _ in 0..polls {
-            let runs = InstallVps::runs(ren())?;
+            let runs = Runs::read(ren())?;
             let busy = Busy::of_runs(&runs, wait.policy);
             if busy.is_quiet() {
                 return Ok(runs.ending());
             }
-            InstallVps::report_wait(&busy, &mut reported, wait.timeout);
+            busy.report(&mut reported, wait.timeout);
             thread::sleep(Self::RUN_POLL);
         }
-        Err(InstallError::Busy {
+        Err(StillBusy {
             busy: reported.unwrap_or_else(|| Busy::of_runs(&Runs::default(), wait.policy)),
             waited: wait.timeout,
         }
@@ -562,7 +553,7 @@ program_at = "acme-lint"
     /// (Re)start the traffic generator, which follows the settings file.
     pub fn start_traffic(&self) -> Result<(), DevError> {
         Unit::Traffic.stop()?;
-        Self::step("Starting the traffic generator");
+        Progress("Starting the traffic generator").show();
         Unit::Traffic.start(
             None,
             &[&self.bin_dir.join("xtask")],
@@ -586,7 +577,7 @@ program_at = "acme-lint"
 
     pub fn down() -> Result<(), DevError> {
         for unit in Unit::ALL {
-            Self::step(&format!("Stopping {}", unit.name()));
+            Progress(&format!("Stopping {}", unit.name())).show();
             unit.stop()?;
         }
         Ok(())
@@ -605,7 +596,7 @@ program_at = "acme-lint"
         ] {
             match serve.route(port, &target) {
                 Route::Target => {
-                    Self::step(&format!("Unpublishing port {port}"));
+                    Progress(&format!("Unpublishing port {port}")).show();
                     tailscale
                         .invocation()
                         .args(["serve", &format!("--https={port}"), "off"])
@@ -622,8 +613,8 @@ program_at = "acme-lint"
     pub fn wipe(&self) -> Result<(), DevError> {
         Self::down()?;
         if self.data_dir.ends_with(".local/state/ren-dev") && self.data_dir.exists() {
-            Self::step(&format!("Removing {}", self.data_dir.display()));
-            fs::remove_dir_all(&self.data_dir).map_err(InstallError::file(&self.data_dir))?;
+            Progress(&format!("Removing {}", self.data_dir.display())).show();
+            fs::remove_dir_all(&self.data_dir).map_err(FileError::at(&self.data_dir))?;
         }
         Ok(())
     }

@@ -587,10 +587,18 @@ dependencies under "Crates" below. Read the code for current module ownership.
   new build; started inside `ren.service` it carries on in the background as the unit
   `ren-install-vps`, restarting after the starting run's turn ends, and with `--ui-https-port` it builds and deploys the UI as `ren-ui.service`. It is a
   shell: it runs external commands and reads configuration through
-  `ren-daemon`'s `Config`. Its parsing of Tailscale status (`tailscale`) and of the
-  installed `ren`'s output (`daemon`), its UI unit rendering (`ui`), its saved flags
-  (`publish`), and the upgrade's wait, pause, and build-check decisions are
-  unit-tested; the commands it runs are exercised only by running it.
+  `ren-daemon`'s `Config`. install-vps's own parts are under `install`
+  (its saved flags, `install::publish`; putting back what an upgrade
+  replaced, `install::rollback`; deploying the UI, `install::ui`). What it
+  shares with the dev slot sits beside it, each with its own error:
+  running commands (`invocation`), writing files (`file`), progress lines
+  (`progress`), Tailscale (`tailscale`: its status, and publishing a port
+  with Serve), the daemon a restart waits on (`daemon`: the installed
+  `ren`'s output, the wait, and the runs that end), and building the UI
+  (`ui`). Its parsing of Tailscale status and of the installed `ren`'s
+  output, its UI unit rendering, its saved flags, and the upgrade's wait,
+  pause, and build-check decisions are unit-tested; the commands it runs
+  are exercised only by running it.
   `cargo xtask dev` runs the dev slot (`dev`, `docs/deployment.md#dev-slot`):
   this checkout's build beside the installed service, with its own config,
   data, and ports, against a fake provider (`dev::provider`, whose replies are

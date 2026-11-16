@@ -1,7 +1,12 @@
-//! What the installed `ren` reports about its daemon, read only as far as an
-//! upgrade needs: `ren control state` (running calls and admission),
-//! `ren runs ls` (the agent runs it drives), and `ren doctor --json` (its
-//! checks).
+//! The daemon as a restart sees it, through the installed `ren`: what it
+//! reports, read only as far as an upgrade needs (`ren control state`,
+//! running calls and admission; `ren runs ls`, the agent runs it drives;
+//! `ren doctor --json`, its checks), and what a restart tells the operator
+//! while it waits and about the runs that end with it.
+use crate::{
+    invocation::{Invocation, InvocationError},
+    progress::Progress,
+};
 use ren_harness::Harness;
 use ren_protocol::label::Stored;
 use ren_recorder::id::RunId;
@@ -143,6 +148,22 @@ impl ControlState {
 }
 
 impl Busy {
+    /// Says what a restart waits for, when it changed since `reported`.
+    pub fn report(&self, reported: &mut Option<Busy>, timeout: u64) {
+        if reported.as_ref() == Some(self) {
+            return;
+        }
+        Progress(&format!(
+            "Waiting for {} to finish (up to {timeout} seconds)",
+            self.summary()
+        ))
+        .show();
+        for line in self.run_lines() {
+            println!("    {line}");
+        }
+        *reported = Some(self.clone());
+    }
+
     /// Only runs: the dev slot restarts its daemon under constant fake
     /// traffic, so it waits for runs and not for calls.
     pub fn of_runs(runs: &Runs, policy: RunPolicy) -> Self {
@@ -307,14 +328,72 @@ impl Runs {
         }
     }
 
-    /// The runs whose process ends with the daemon: every one not ended.
-    pub fn ending(&self) -> Vec<LiveRun> {
-        self.0
-            .iter()
-            .filter(|run| run.state.phase.restart() != Restart::Spares)
-            .cloned()
-            .collect()
+    /// The runs the daemon drives now, through `ren` (`ren runs ls`).
+    pub fn read(ren: Invocation) -> Result<Self, InvocationError> {
+        let text = ren.args(["runs", "ls"]).answer()?;
+        Self::parse(&text).map_err(InvocationError::output("ren runs ls"))
     }
+
+    /// The runs whose process ends with the daemon: every one not ended.
+    pub fn ending(&self) -> Ending {
+        Ending(
+            self.0
+                .iter()
+                .filter(|run| run.state.phase.restart() != Restart::Spares)
+                .cloned()
+                .collect(),
+        )
+    }
+}
+
+/// The runs whose process ends with a daemon about to stop.
+#[derive(Debug, Default)]
+pub struct Ending(Vec<LiveRun>);
+
+impl Ending {
+    #[cfg(test)]
+    pub fn runs(&self) -> &[LiveRun] {
+        &self.0
+    }
+
+    /// Names each, with how to continue its conversation.
+    pub fn announce(&self) {
+        if self.0.is_empty() {
+            return;
+        }
+        Progress(&format!(
+            "{} end with the daemon; each conversation can be continued:",
+            match self.0.len() {
+                1 => "1 run".to_owned(),
+                n => format!("{n} runs"),
+            }
+        ))
+        .show();
+        for run in &self.0 {
+            println!("    {run}\n      {}", run.continuation());
+        }
+    }
+
+    /// After the restart, once more, so it is the last thing shown.
+    pub fn remind(&self) {
+        match self.0.len() {
+            0 => {}
+            1 => println!("1 run ended with the restart (listed above); it can be continued."),
+            n => println!("{n} runs ended with the restart (listed above); each can be continued."),
+        }
+    }
+}
+
+/// A restart that gave up waiting, having changed nothing.
+#[derive(Debug, thiserror::Error)]
+#[error(
+    "{} still running after {waited} seconds; nothing was changed. {}",
+    .busy.summary(),
+    .busy.advice()
+)]
+pub struct StillBusy {
+    pub busy: Busy,
+    pub waited: u64,
 }
 
 impl LiveRun {
@@ -618,6 +697,7 @@ mod tests {
         ]);
         let ending: Vec<_> = listed
             .ending()
+            .runs()
             .iter()
             .map(|run| format!("{run}; {}", run.continuation()))
             .collect();
@@ -646,7 +726,7 @@ mod tests {
         assert!(busy.run_lines()[0].ends_with("working, waiting for 2 approvals"));
         // A client this task does not know is kept by its label.
         assert!(
-            listed.ending()[1]
+            listed.ending().runs()[1]
                 .to_string()
                 .starts_with("opencode_next run")
         );
@@ -655,6 +735,7 @@ mod tests {
             Runs::parse(r#"{"api_version":1,"error":"runs_disabled"}"#)
                 .unwrap()
                 .ending()
+                .runs()
                 .is_empty()
         );
         assert!(matches!(
