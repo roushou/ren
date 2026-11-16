@@ -9,6 +9,7 @@
 
 use super::{EventClass, FormatSource, InspectionReport, Inspector, Limitation, ReportLimits};
 use crate::activity::{ActivityLimits, ResponseActivity, ResponseReader};
+use crate::json::Frame;
 use crate::{
     chat,
     encoding::{DecodeFailure, Decompressor, ResponseEncoding, ResponseFormat},
@@ -39,18 +40,18 @@ impl Protocol {
         }
     }
 
-    fn observe_event(self, name: EventName<'_>, data: &[u8], inspector: &mut Inspector) {
+    fn observe_event(self, name: EventName<'_>, frame: &Frame, inspector: &mut Inspector) {
         let class = match self {
-            Self::Messages => match messages::Event::decode(name, data) {
+            Self::Messages => match messages::Event::decode(name, frame) {
                 Ok(event) => event.observe(&mut |observation| inspector.observe(observation)),
                 Err(_) => EventClass::Malformed,
             },
-            Self::Responses => match responses::Event::decode(name, data) {
+            Self::Responses => match responses::Event::decode(name, frame) {
                 Ok(event) => event.observe(&mut |observation| inspector.observe(observation)),
                 Err(_) => EventClass::Malformed,
             },
             // Chunks carry no event names.
-            Self::ChatCompletions => match chat::Event::decode(data) {
+            Self::ChatCompletions => match chat::Event::decode(frame) {
                 Ok(event) => event.observe(&mut |observation| inspector.observe(observation)),
                 Err(_) => EventClass::Malformed,
             },
@@ -58,17 +59,17 @@ impl Protocol {
         inspector.count(class);
     }
 
-    fn observe_document(self, bytes: &[u8], inspector: &mut Inspector) {
+    fn observe_document(self, frame: &Frame, inspector: &mut Inspector) {
         let class = match self {
-            Self::Messages => match messages::Document::decode(bytes) {
+            Self::Messages => match messages::Document::decode(frame) {
                 Ok(document) => document.observe(&mut |observation| inspector.observe(observation)),
                 Err(_) => EventClass::Malformed,
             },
-            Self::Responses => match responses::Document::decode(bytes) {
+            Self::Responses => match responses::Document::decode(frame) {
                 Ok(document) => document.observe(&mut |observation| inspector.observe(observation)),
                 Err(_) => EventClass::Malformed,
             },
-            Self::ChatCompletions => match chat::Document::decode(bytes) {
+            Self::ChatCompletions => match chat::Document::decode(frame) {
                 Ok(document) => document.observe(&mut |observation| inspector.observe(observation)),
                 Err(_) => EventClass::Malformed,
             },
@@ -134,17 +135,21 @@ pub struct ResponseReading {
 }
 
 impl Readers {
+    /// One event, parsed once for both readers.
     fn event(&mut self, protocol: Protocol, name: EventName<'_>, data: &[u8]) {
-        protocol.observe_event(name, data, &mut self.inspector);
+        let frame = Frame::parse(data);
+        protocol.observe_event(name, &frame, &mut self.inspector);
         if let Some(activity) = &mut self.activity {
-            activity.event_bytes(data);
+            activity.event(frame);
         }
     }
 
+    /// A whole body, parsed once for both readers.
     fn document(&mut self, protocol: Protocol, bytes: &[u8]) {
-        protocol.observe_document(bytes, &mut self.inspector);
+        let frame = Frame::parse(bytes);
+        protocol.observe_document(&frame, &mut self.inspector);
         if let Some(activity) = &mut self.activity {
-            activity.document_bytes(bytes);
+            activity.document(frame);
         }
     }
 

@@ -14,7 +14,7 @@ use super::{
     inspect::{
         EventClass, InputAccounting, KindFamily, ModelOutcome, Observation, ToolCall, Usage,
     },
-    json::{DecodeError, Field, JsonDocument, JsonObject, Kind},
+    json::{DecodeError, Field, Frame, JsonObject, Kind},
     text::WireText,
 };
 use serde_with::{DeserializeFromStr, SerializeDisplay};
@@ -324,11 +324,12 @@ pub enum Event {
 }
 
 impl Event {
-    pub fn decode(data: &[u8]) -> Result<Self, DecodeError> {
-        if data == b"[DONE]" {
-            return Ok(Self::Done);
-        }
-        let document = JsonDocument::parse(data)?;
+    pub fn decode(frame: &Frame) -> Result<Self, DecodeError> {
+        let document = match frame {
+            Frame::Done => return Ok(Self::Done),
+            Frame::Json(document) => document,
+            Frame::NotJson => return Err(DecodeError::NotJson),
+        };
         let object = document.object()?;
         if !matches!(object.object("error"), Field::Absent) {
             return Ok(Self::Error);
@@ -371,8 +372,8 @@ pub enum Document {
 }
 
 impl Document {
-    pub fn decode(bytes: &[u8]) -> Result<Self, DecodeError> {
-        let document = JsonDocument::parse(bytes)?;
+    pub fn decode(frame: &Frame) -> Result<Self, DecodeError> {
+        let document = frame.document()?;
         let object = document.object()?;
         if !matches!(object.object("error"), Field::Absent) {
             return Ok(Self::Error);

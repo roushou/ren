@@ -14,6 +14,7 @@ pub mod openai;
 
 use crate::encoding::{Decompressor, ResponseEncoding};
 use crate::inspect::pipeline::{BodyEnd, Protocol};
+use crate::json::Frame;
 use crate::sse::SseLimits;
 use serde_json::{Map, Value};
 use serde_with::{DeserializeFromStr, SerializeDisplay};
@@ -194,9 +195,11 @@ impl ResponseReader {
     }
 
     /// One streamed event's data, or one WebSocket message.
-    pub fn event_bytes(&mut self, data: &[u8]) {
+    pub fn event(&mut self, frame: Frame) {
         // An event that is not a JSON object holds nothing to read.
-        if let Ok(Value::Object(event)) = serde_json::from_slice::<Value>(data) {
+        if let Frame::Json(document) = frame
+            && let Value::Object(event) = document.into_value()
+        {
             match &mut self.protocol {
                 ProtocolResponse::Messages(response) => response.event(&event),
                 ProtocolResponse::Responses(response) => response.event(event),
@@ -206,15 +209,21 @@ impl ResponseReader {
     }
 
     /// A whole response document.
-    pub fn document_bytes(&mut self, bytes: &[u8]) {
-        match serde_json::from_slice::<Value>(bytes) {
-            Ok(Value::Object(document)) => match &mut self.protocol {
-                ProtocolResponse::Messages(response) => response.document(document),
-                ProtocolResponse::Responses(response) => response.document(document),
-                ProtocolResponse::ChatCompletions(response) => response.document(&document),
+    pub fn document(&mut self, frame: Frame) {
+        match frame {
+            Frame::Json(document) => match document.into_value() {
+                Value::Object(document) => match &mut self.protocol {
+                    ProtocolResponse::Messages(response) => response.document(document),
+                    ProtocolResponse::Responses(response) => response.document(document),
+                    ProtocolResponse::ChatCompletions(response) => response.document(&document),
+                },
+                Value::Null
+                | Value::Bool(_)
+                | Value::Number(_)
+                | Value::String(_)
+                | Value::Array(_) => self.limitations.push(ActivityLimitation::UnexpectedShape),
             },
-            Ok(_) => self.limitations.push(ActivityLimitation::UnexpectedShape),
-            Err(_) => self.limitations.push(ActivityLimitation::NotJson),
+            Frame::Done | Frame::NotJson => self.limitations.push(ActivityLimitation::NotJson),
         }
     }
 

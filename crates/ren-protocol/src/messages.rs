@@ -8,7 +8,7 @@ use super::{
     inspect::{
         EventClass, InputAccounting, KindFamily, ModelOutcome, Observation, ToolCall, Usage,
     },
-    json::{DecodeError, Field, JsonDocument, JsonObject, Kind},
+    json::{DecodeError, Field, Frame, JsonObject, Kind},
     sse::EventName,
     text::WireText,
 };
@@ -255,11 +255,12 @@ pub enum Event {
 impl Event {
     /// Decode one SSE event. The JSON `type` field is authoritative; the SSE
     /// event name is used only when `type` is absent.
-    pub fn decode(name: EventName<'_>, data: &[u8]) -> Result<Self, DecodeError> {
-        if data == b"[DONE]" {
-            return Ok(Self::DoneSentinel);
-        }
-        let document = JsonDocument::parse(data)?;
+    pub fn decode(name: EventName<'_>, frame: &Frame) -> Result<Self, DecodeError> {
+        let document = match frame {
+            Frame::Done => return Ok(Self::DoneSentinel),
+            Frame::Json(document) => document,
+            Frame::NotJson => return Err(DecodeError::NotJson),
+        };
         let object = document.object()?;
         let kind = match object.label::<EventKind>("type") {
             Field::Present(kind) => kind,
@@ -330,8 +331,8 @@ pub enum Document {
 }
 
 impl Document {
-    pub fn decode(bytes: &[u8]) -> Result<Self, DecodeError> {
-        let document = JsonDocument::parse(bytes)?;
+    pub fn decode(frame: &Frame) -> Result<Self, DecodeError> {
+        let document = frame.document()?;
         let object = document.object()?;
         Ok(match object.label::<DocumentKind>("type") {
             Field::Present(Kind::Known(DocumentKind::Message)) | Field::Absent => {

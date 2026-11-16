@@ -80,6 +80,11 @@ impl JsonDocument {
             .map_err(|_| DecodeError::NotJson)
     }
 
+    /// The parsed value, for a reader that keeps parts of it.
+    pub(crate) fn into_value(self) -> Value {
+        self.0
+    }
+
     pub fn object(&self) -> Result<JsonObject<'_>, DecodeError> {
         match &self.0 {
             Value::Object(map) => Ok(JsonObject(map)),
@@ -88,6 +93,33 @@ impl JsonDocument {
             | Value::Number(_)
             | Value::String(_)
             | Value::Array(_) => Err(DecodeError::NotObject),
+        }
+    }
+}
+
+/// One frame's data (an event, a message, or a whole body), parsed once and
+/// read by every reader of the frame.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Frame {
+    /// `[DONE]`, which some transports append. Not JSON.
+    Done,
+    Json(JsonDocument),
+    NotJson,
+}
+
+impl Frame {
+    pub fn parse(data: &[u8]) -> Self {
+        if data == b"[DONE]" {
+            return Self::Done;
+        }
+        JsonDocument::parse(data).map_or(Self::NotJson, Self::Json)
+    }
+
+    /// The document, for a reader that knows no sentinel.
+    pub fn document(&self) -> Result<&JsonDocument, DecodeError> {
+        match self {
+            Self::Json(document) => Ok(document),
+            Self::Done | Self::NotJson => Err(DecodeError::NotJson),
         }
     }
 }
