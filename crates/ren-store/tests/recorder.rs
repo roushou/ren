@@ -16,7 +16,7 @@ use ren_protocol::{
     route::{Endpoint, Method, Provider, Transport, Wire},
 };
 use ren_recorder::RecordSink;
-use ren_recorder::digest::CallDigest;
+use ren_recorder::digest::{CallDigest, RederivePass};
 use ren_recorder::routing::UpstreamId;
 use ren_recorder::secrets::SecretScanner;
 use ren_recorder::time::Clock;
@@ -534,8 +534,29 @@ async fn a_digest_derived_while_recording_equals_one_derived_from_storage() {
         .await
         .unwrap();
     let scanner = SecretScanner::new().unwrap();
-    let exchanges = store.undigested(CallDigest::VERSION + 1, 10).await.unwrap();
+    let wide = RederivePass {
+        calls: 10,
+        bytes: usize::MAX,
+    };
+    let exchanges = store
+        .undigested(CallDigest::VERSION + 1, wide)
+        .await
+        .unwrap();
     assert_eq!(exchanges.len(), 2);
+    assert!(!wide.filled(&exchanges));
+    // A pass stops at the call whose bodies reach its byte budget; one
+    // call always fits.
+    let narrow = RederivePass {
+        calls: 10,
+        bytes: 1,
+    };
+    let first = store
+        .undigested(CallDigest::VERSION + 1, narrow)
+        .await
+        .unwrap();
+    assert_eq!(first.len(), 1);
+    assert!(narrow.filled(&first));
+    assert_eq!(first[0], exchanges[0]);
     for exchange in exchanges {
         let call = exchange.call;
         let replayed = exchange.digest(&scanner);
@@ -544,7 +565,13 @@ async fn a_digest_derived_while_recording_equals_one_derived_from_storage() {
     // Current digests are not listed again.
     assert!(
         store
-            .undigested(CallDigest::VERSION, 10)
+            .undigested(
+                CallDigest::VERSION,
+                RederivePass {
+                    calls: 10,
+                    bytes: usize::MAX
+                }
+            )
             .await
             .unwrap()
             .is_empty()
@@ -643,7 +670,16 @@ async fn a_websocket_calls_digest_is_derived_from_its_messages_alike() {
         .await
         .unwrap();
     let scanner = SecretScanner::new().unwrap();
-    let exchanges = store.undigested(CallDigest::VERSION + 1, 10).await.unwrap();
+    let exchanges = store
+        .undigested(
+            CallDigest::VERSION + 1,
+            RederivePass {
+                calls: 10,
+                bytes: usize::MAX,
+            },
+        )
+        .await
+        .unwrap();
     let replayed = exchanges
         .into_iter()
         .find(|exchange| exchange.call == call)

@@ -586,9 +586,11 @@ forwarding worker. Taps reach it only through the bounded queue.
   every text redacted, then cut to `DigestBudget::STORED`. The digest is written
   in the same batch as the call's finish.
 - **Rederive.** A pass on the recorder task asks the sink for finished calls whose
-  digest is missing or older than `CallDigest::VERSION` (25 at a time, newest
-  first; every 250 ms while some wait, else every 30 s) and replays their stored
-  bodies through the same readers. Tests check that a digest derived while
+  digest is missing or older than `CallDigest::VERSION` (a `RederivePass`: up to
+  25 calls and 16 MiB of stored bodies, one call always fitting, newest first;
+  every 250 ms while some wait, else every 30 s) and replays their stored bodies
+  through the same readers. The byte bound limits how long a pass holds the
+  capture queue. Tests check that a digest derived while
   recording equals one derived from storage, for HTTP and WebSocket calls.
 
 ### Inspection

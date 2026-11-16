@@ -12,7 +12,7 @@ use super::{
 };
 use crate::{
     capture::Omission,
-    digest::CallDigest,
+    digest::{CallDigest, RederivePass},
     retention::RetentionPolicy,
     time::{Clock, Monotonic},
 };
@@ -55,8 +55,12 @@ impl<S: RecordSink> RecorderTask<S> {
     const MAINTENANCE: Duration = Duration::from_secs(60);
     /// Checkpoint the WALs every this many maintenance passes.
     const CHECKPOINT_EVERY: u32 = 5;
-    /// Calls whose digest is derived again from storage per pass.
-    const REDERIVE_BATCH: usize = 25;
+    /// What one pass derives again from storage. The bytes bound how long
+    /// a pass holds the queue: a pass reads and derives them all at once.
+    const REDERIVE_PASS: RederivePass = RederivePass {
+        calls: 25,
+        bytes: 16 * 1024 * 1024,
+    };
     /// The pause between passes while calls wait, and once none do.
     const REDERIVE_BUSY: Duration = Duration::from_millis(250);
     const REDERIVE_IDLE: Duration = Duration::from_secs(30);
@@ -118,11 +122,11 @@ impl<S: RecordSink> RecorderTask<S> {
     async fn rederive(&mut self) -> Duration {
         match self
             .sink
-            .undigested(CallDigest::VERSION, Self::REDERIVE_BATCH)
+            .undigested(CallDigest::VERSION, Self::REDERIVE_PASS)
             .await
         {
             Ok(exchanges) => {
-                let full = exchanges.len() >= Self::REDERIVE_BATCH;
+                let full = Self::REDERIVE_PASS.filled(&exchanges);
                 self.core.rederived(exchanges);
                 self.commit().await;
                 if full {
