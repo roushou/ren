@@ -100,18 +100,20 @@ pub(super) struct RawSearchQuery {
     limit: Option<u32>,
 }
 
-impl RawSearchQuery {
-    pub fn parse(self) -> Result<SearchQuery, super::ApiError> {
+impl TryFrom<RawSearchQuery> for SearchQuery {
+    type Error = super::ApiError;
+
+    fn try_from(raw: RawSearchQuery) -> Result<Self, Self::Error> {
         Ok(SearchQuery {
-            terms: SearchTerms::parse(self.q.as_deref().unwrap_or_default())?,
-            recording: self.recording.parse()?,
-            client: self.client.parse()?,
-            field: self.field.parse()?,
+            terms: SearchTerms::parse(raw.q.as_deref().unwrap_or_default())?,
+            recording: raw.recording.parse()?,
+            client: raw.client.parse()?,
+            field: raw.field.parse()?,
             time: TimeRange::new(
-                self.from_ms.map(UnixMillis::from_millis),
-                self.until_ms.map(UnixMillis::from_millis),
+                raw.from_ms.map(UnixMillis::from_millis),
+                raw.until_ms.map(UnixMillis::from_millis),
             )?,
-            limit: self.limit.map_or(Ok(PageLimit::DEFAULT), PageLimit::new)?,
+            limit: raw.limit.map_or(Ok(PageLimit::DEFAULT), PageLimit::new)?,
         })
     }
 }
@@ -126,15 +128,17 @@ pub(super) struct RawExposureQuery {
     limit: Option<u32>,
 }
 
-impl RawExposureQuery {
-    pub fn parse(self) -> Result<ExposureQuery, QueryError> {
+impl TryFrom<RawExposureQuery> for ExposureQuery {
+    type Error = QueryError;
+
+    fn try_from(raw: RawExposureQuery) -> Result<Self, Self::Error> {
         Ok(ExposureQuery {
-            recording: self.recording.parse()?,
+            recording: raw.recording.parse()?,
             time: TimeRange::new(
-                self.from_ms.map(UnixMillis::from_millis),
-                self.until_ms.map(UnixMillis::from_millis),
+                raw.from_ms.map(UnixMillis::from_millis),
+                raw.until_ms.map(UnixMillis::from_millis),
             )?,
-            limit: self.limit.map_or(Ok(PageLimit::DEFAULT), PageLimit::new)?,
+            limit: raw.limit.map_or(Ok(PageLimit::DEFAULT), PageLimit::new)?,
         })
     }
 }

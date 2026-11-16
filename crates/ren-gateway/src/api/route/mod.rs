@@ -12,6 +12,7 @@ use http::Uri;
 use ren_protocol::label::Labeled;
 use ren_store::query::{CallQuery, QueryError, Shelf, TimeRange};
 use ren_store::read::ReadRequest;
+use ren_store::search::{ExposureQuery, SearchQuery};
 use serde::de::DeserializeOwned;
 use std::fmt::Display;
 
@@ -153,8 +154,13 @@ impl ApiRead {
             ["usage"] => {
                 ReadRequest::Usage(TimeRange::try_from(Self::query::<RawUsageQuery>(uri)?)?)
             }
-            ["search"] => ReadRequest::Search(Self::query::<RawSearchQuery>(uri)?.parse()?),
-            ["exposures"] => ReadRequest::Exposures(Self::query::<RawExposureQuery>(uri)?.parse()?),
+            ["search"] => {
+                ReadRequest::Search(SearchQuery::try_from(Self::query::<RawSearchQuery>(uri)?)?)
+            }
+            ["exposures"] => {
+                let raw = Self::query::<RawExposureQuery>(uri)?;
+                ReadRequest::Exposures(ExposureQuery::try_from(raw)?)
+            }
             ["runs"] => {
                 let (limit, shelf) = Self::query::<RawShelfQuery>(uri)?.parse()?;
                 ReadRequest::Runs { limit, shelf }
