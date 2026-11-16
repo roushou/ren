@@ -7,7 +7,11 @@ use crate::{
     view::{DiskUsage, FileUsage},
 };
 use bytes::Bytes;
-use ren_harness::{attachment::AttachmentKind, drive::DriveEvent, models::ModelId};
+use ren_harness::{
+    attachment::AttachmentKind,
+    drive::{DriveEvent, ItemRead},
+    models::ModelId,
+};
 use ren_protocol::{
     direction::Direction,
     label::{Labeled, Stored},
@@ -936,6 +940,14 @@ impl MetadataTx<'_> {
             | DriveEvent::Unknown { .. }
             | DriveEvent::Unreadable { .. } => None,
         };
+        // A prompt's text, kept beside the event for the sessions list.
+        let prompt = if let DriveEvent::Item { item, .. } = &entry.event
+            && let ItemRead::Prompt { text, .. } = &item.read
+        {
+            Some(text.as_str())
+        } else {
+            None
+        };
         let event = serde_json::to_value(&entry.event)?;
         let kind = event
             .get("kind")
@@ -943,7 +955,7 @@ impl MetadataTx<'_> {
             .unwrap_or_default()
             .to_owned();
         sqlx::query(
-            "INSERT INTO run_entries(run, seq, at, started_at, turn, item, kind, event) VALUES (?1, (SELECT COALESCE(MAX(seq), 0) + 1 FROM run_entries WHERE run = ?1), ?2, ?2, ?3, ?4, ?5, ?6) ON CONFLICT(run, item) WHERE item IS NOT NULL DO UPDATE SET at = excluded.at, kind = excluded.kind, event = excluded.event",
+            "INSERT INTO run_entries(run, seq, at, started_at, turn, item, kind, event, prompt) VALUES (?1, (SELECT COALESCE(MAX(seq), 0) + 1 FROM run_entries WHERE run = ?1), ?2, ?2, ?3, ?4, ?5, ?6, ?7) ON CONFLICT(run, item) WHERE item IS NOT NULL DO UPDATE SET at = excluded.at, kind = excluded.kind, event = excluded.event, prompt = excluded.prompt",
         )
         .bind(&run)
         .bind(i64::try_from(entry.at.wall.as_millis()).unwrap_or(i64::MAX))
@@ -951,6 +963,7 @@ impl MetadataTx<'_> {
         .bind(item)
         .bind(kind)
         .bind(event.to_string())
+        .bind(prompt)
         .execute(&mut *self.tx)
         .await?;
         Ok(())
@@ -1359,20 +1372,40 @@ impl MetadataTx<'_> {
             self.end_body(BodyKey::AttemptRequest(finish.attempt), request)
                 .await?;
         }
-        let tools = inspection
-            .map(InspectionRecord::tool_names)
-            .unwrap_or_default();
-        sqlx::query("UPDATE calls SET terminal = ?, model = ?, outcome = ?, stop_reason = ?, tool_names = ?, tool_count = ?, usage = ? WHERE id = ?")
+        let usage = inspection.and_then(|record| record.usage.as_ref());
+        let count =
+            |count: Option<u64>| count.map(|count| i64::try_from(count).unwrap_or(i64::MAX));
+        sqlx::query("UPDATE calls SET terminal = ?, model = ?, outcome = ?, stop_reason = ?, tool_count = ?, input_accounting = ?, input_tokens = ?, output_tokens = ?, cache_read_tokens = ?, cache_creation_tokens = ?, reasoning_tokens = ? WHERE id = ?")
             .bind(finish.end.terminal.label())
             .bind(inspection.and_then(|record| record.model.clone()))
             .bind(inspection.and_then(|record| record.outcome.as_ref().map(|outcome| outcome.label().to_owned())))
             .bind(inspection.and_then(|record| record.stop_reason.clone()))
-            .bind(serde_json::to_string(&tools)?)
             .bind(inspection.map_or(0, |record| i64::try_from(record.tool_calls.len()).unwrap_or(i64::MAX)))
-            .bind(inspection.and_then(|record| record.usage.as_ref()).map(serde_json::to_string).transpose()?)
+            .bind(usage.map(|usage| usage.accounting.label().to_owned()))
+            .bind(usage.and_then(|usage| count(usage.input_tokens)))
+            .bind(usage.and_then(|usage| count(usage.output_tokens)))
+            .bind(usage.and_then(|usage| count(usage.cache_read_tokens)))
+            .bind(usage.and_then(|usage| count(usage.cache_creation_tokens)))
+            .bind(usage.and_then(|usage| count(usage.reasoning_tokens)))
             .bind(stamp.call.to_string())
             .execute(&mut *self.tx)
             .await?;
+        // The final attempt's tools replace an earlier attempt's.
+        sqlx::query("DELETE FROM call_tools WHERE call = ?")
+            .bind(stamp.call.to_string())
+            .execute(&mut *self.tx)
+            .await?;
+        let tools = inspection
+            .map(InspectionRecord::tool_names)
+            .unwrap_or_default();
+        for (position, name) in tools.into_iter().enumerate() {
+            sqlx::query("INSERT INTO call_tools(call, position, name) VALUES (?, ?, ?)")
+                .bind(stamp.call.to_string())
+                .bind(i64::try_from(position).unwrap_or(i64::MAX))
+                .bind(name)
+                .execute(&mut *self.tx)
+                .await?;
+        }
         self.append(
             stamp,
             Some(finish.attempt.to_string()),

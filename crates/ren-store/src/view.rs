@@ -15,7 +15,7 @@ use ren_harness::{
 use ren_protocol::{
     direction::Direction,
     encoding::{ResponseEncoding, ResponseFormat},
-    inspect::ModelOutcome,
+    inspect::{InputAccounting, ModelOutcome},
     label::{Labeled, Stored},
     route::{Endpoint, Method, Provider, Transport, Wire},
     websocket::Payload,
@@ -108,6 +108,21 @@ impl Columns<'_> {
         let text: Option<String> = self.0.try_get(column)?;
         text.map(|text| serde_json::from_str(&text).map_err(StoreError::from))
             .transpose()
+    }
+
+    /// A call's usage from its columns: none when it reported none.
+    fn usage(&self) -> Result<Option<UsageRecord>, StoreError> {
+        let Some(accounting) = self.optional_label::<InputAccounting>("input_accounting")? else {
+            return Ok(None);
+        };
+        Ok(Some(UsageRecord {
+            accounting,
+            input_tokens: self.optional_count("input_tokens")?,
+            output_tokens: self.optional_count("output_tokens")?,
+            cache_read_tokens: self.optional_count("cache_read_tokens")?,
+            cache_creation_tokens: self.optional_count("cache_creation_tokens")?,
+            reasoning_tokens: self.optional_count("reasoning_tokens")?,
+        }))
     }
 
     pub(super) fn flag(&self, column: &str) -> Result<bool, StoreError> {
@@ -231,7 +246,7 @@ pub struct CallView {
 impl CallView {
     /// Columns every call query selects, joined to the request body (`rq`) and
     /// the final attempt's response body (`rs`).
-    pub(super) const SELECT: &'static str = "SELECT c.id, c.channel, c.started_at, c.ended_at, c.provider, c.wire, c.endpoint, c.method, c.config_revision, c.session, c.turn, c.attribution, c.caller, c.user, c.tailscale_login, c.state, c.terminal, c.status, c.model, c.outcome, c.stop_reason, c.tool_names, c.usage, c.capture_complete, c.rejection, c.operator_revision, c.plan, rq.observed_bytes AS rq_observed, rq.stored_bytes AS rq_stored, rq.ending AS rq_ending, rs.observed_bytes AS rs_observed, rs.stored_bytes AS rs_stored, rs.ending AS rs_ending, dp.purpose AS purpose FROM calls c LEFT JOIN bodies rq ON rq.owner = c.id AND rq.direction = 'request' LEFT JOIN bodies rs ON rs.owner = c.final_attempt AND rs.direction = 'response' LEFT JOIN call_digests dp ON dp.call = c.id";
+    pub(super) const SELECT: &'static str = "SELECT c.id, c.channel, c.started_at, c.ended_at, c.provider, c.wire, c.endpoint, c.method, c.config_revision, c.session, c.turn, c.attribution, c.caller, c.user, c.tailscale_login, c.state, c.terminal, c.status, c.model, c.outcome, c.stop_reason, (SELECT json_group_array(name) FROM (SELECT t.name FROM call_tools t WHERE t.call = c.id ORDER BY t.position)) AS tool_names, c.input_accounting, c.input_tokens, c.output_tokens, c.cache_read_tokens, c.cache_creation_tokens, c.reasoning_tokens, c.capture_complete, c.rejection, c.operator_revision, c.plan, rq.observed_bytes AS rq_observed, rq.stored_bytes AS rq_stored, rq.ending AS rq_ending, rs.observed_bytes AS rs_observed, rs.stored_bytes AS rs_stored, rs.ending AS rs_ending, dp.purpose AS purpose FROM calls c LEFT JOIN bodies rq ON rq.owner = c.id AND rq.direction = 'request' LEFT JOIN bodies rs ON rs.owner = c.final_attempt AND rs.direction = 'response' LEFT JOIN call_digests dp ON dp.call = c.id";
 
     pub(super) fn from_row(row: &SqliteRow) -> Result<Self, StoreError> {
         let row = Columns(row);
@@ -256,7 +271,7 @@ impl CallView {
             outcome: row.optional_label("outcome")?,
             stop_reason: row.text("stop_reason")?,
             tool_names: row.json("tool_names")?.unwrap_or_default(),
-            usage: row.json("usage")?,
+            usage: row.usage()?,
             capture_complete: row.flag("capture_complete")?,
             request: BodyView::from_columns(&row, "rq")?,
             response: BodyView::from_columns(&row, "rs")?,
@@ -699,7 +714,7 @@ pub struct SessionView {
 }
 
 impl SessionView {
-    pub(super) const SELECT: &'static str = "SELECT id, harness, workdir, created_at, model, effort, approvals, archived_at, (SELECT MIN(e.at) FROM run_entries e JOIN runs r ON r.id = e.run WHERE r.operator_session = operator_sessions.id AND e.kind = 'turn_started') AS first_turn_at, (SELECT json_extract(e.event, '$.item.read.text') FROM run_entries e JOIN runs r ON r.id = e.run WHERE r.operator_session = operator_sessions.id AND e.kind = 'item' AND json_extract(e.event, '$.item.read.as') = 'prompt' ORDER BY e.at, r.started_at, e.seq LIMIT 1) AS first_prompt FROM operator_sessions";
+    pub(super) const SELECT: &'static str = "SELECT id, harness, workdir, created_at, model, effort, approvals, archived_at, (SELECT MIN(e.at) FROM run_entries e JOIN runs r ON r.id = e.run WHERE r.operator_session = operator_sessions.id AND e.kind = 'turn_started') AS first_turn_at, (SELECT e.prompt FROM run_entries e JOIN runs r ON r.id = e.run WHERE r.operator_session = operator_sessions.id AND e.prompt IS NOT NULL ORDER BY e.at, r.started_at, e.seq LIMIT 1) AS first_prompt FROM operator_sessions";
 
     /// The most of a first prompt a session view carries.
     pub const FIRST_PROMPT_CHARS: usize = 200;

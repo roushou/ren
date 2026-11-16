@@ -673,9 +673,12 @@ these as findings.
 (each agent run's harness, folder, the client's thread once opened, and its end
 and exit; a run's recording is the one its client named with that thread, as
 Codex sends its thread id as its session id; a run whose end was never recorded is marked recovered at startup),
-and the search columns. Derived from each finished call: `call_digests` (version, purpose,
+and the search columns. What the read queries filter and sum on is kept in columns, not
+JSON: a call's token counts and input accounting on `calls`, the tools its final attempt
+requested in `call_tools` (by position), and a run entry's prompt text on `run_entries`,
+with partial indexes for prompts and turn starts. Derived from each finished call: `call_digests` (version, purpose,
 prompt, and the digest as JSON), `call_exposures`, and `search_texts` with its FTS5 index
-`search` (external content, kept in step by triggers). They reference `calls`
+`search` (external content, kept in step by triggers). They and `call_tools` reference `calls`
 with `ON DELETE CASCADE`, so retention removes them with their call. The writer updates them directly, in the same transaction as the
 log; there is no generic reducer framework.
 
