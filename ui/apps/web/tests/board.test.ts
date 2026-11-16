@@ -19,7 +19,7 @@ const tid = (n: number) => uuid(200 + n) as TurnId;
 const NOW = 10_000_000;
 const WINDOW = LivePlace.windows['15m'].ms;
 
-function session(n: number, overrides: Partial<RecordingView> = {}): RecordingView {
+function recording(n: number, overrides: Partial<RecordingView> = {}): RecordingView {
   return {
     id: sid(n),
     provider: 'anthropic',
@@ -92,7 +92,7 @@ function turn(n: number, s: number, calls: CallActivity[], overrides: Partial<Tu
 }
 const board = (input: Partial<BoardInput>) =>
   new Board({
-    sessions: [],
+    recordings: [],
     calls: [],
     turns: new Map(),
     now: NOW,
@@ -128,7 +128,7 @@ test('a slow response head turns its chip to a warning and raises an alert', () 
   const quick = Board.phaseChip({ kind: 'awaiting', call: open(1, 1), since: NOW - 5000 }, NOW);
   assert.equal(quick.tone, 'live');
   const slow = board({
-    sessions: [session(1)],
+    recordings: [recording(1)],
     calls: [open(1, 1, { started_at: ms(NOW - Board.slowHeadMs - 1000) })],
   });
   assert.equal(Board.phaseChip(slow.tiles[0].phase, NOW).tone, 'warning');
@@ -138,45 +138,49 @@ test('a slow response head turns its chip to a warning and raises an alert', () 
   );
 });
 
-test('tiles keep the order sessions first appeared in, whatever is busiest', () => {
-  const sessions = [session(2), session(1), session(3, { last_seen: ms(NOW - WINDOW - 1) })];
-  const first = board({ sessions, calls: [open(1, 2)] });
-  const second = board({ sessions, calls: [open(1, 1)] });
+test('tiles keep the order recordings first appeared in, whatever is busiest', () => {
+  const recordings = [
+    recording(2),
+    recording(1),
+    recording(3, { last_seen: ms(NOW - WINDOW - 1) }),
+  ];
+  const first = board({ recordings, calls: [open(1, 2)] });
+  const second = board({ recordings, calls: [open(1, 1)] });
   assert.deepEqual(
-    first.tiles.map((tile) => tile.session.id),
+    first.tiles.map((tile) => tile.recording.id),
     [sid(1), sid(2)],
   );
   assert.deepEqual(
-    second.tiles.map((tile) => tile.session.id),
-    first.tiles.map((tile) => tile.session.id),
+    second.tiles.map((tile) => tile.recording.id),
+    first.tiles.map((tile) => tile.recording.id),
   );
-  // A session outside the window stays while a call is still open.
-  const longCall = board({ sessions, calls: [open(1, 3)] });
-  assert.ok(longCall.tiles.some((tile) => tile.session.id === sid(3)));
+  // A recording outside the window stays while a call is still open.
+  const longCall = board({ recordings, calls: [open(1, 3)] });
+  assert.ok(longCall.tiles.some((tile) => tile.recording.id === sid(3)));
   assert.equal(longCall.inFlight, 1);
 });
 
-test('sessions beyond the tile limit are counted, not dropped silently', () => {
-  const sessions = Array.from({ length: Board.maxTiles + 3 }, (_, n) => session(n));
-  const full = board({ sessions });
+test('recordings beyond the tile limit are counted, not dropped silently', () => {
+  const recordings = Array.from({ length: Board.maxTiles + 3 }, (_, n) => recording(n));
+  const full = board({ recordings });
   assert.equal(full.tiles.length, Board.maxTiles);
   assert.equal(full.overflow, 3);
 });
 
-test('the wall shows the busiest and most recent sessions, in the order they appeared', () => {
-  const sessions = Array.from({ length: Board.maxTiles + 2 }, (_, n) =>
-    // Session 0 appeared first but was seen longest ago.
-    session(n, { last_seen: ms(NOW - 60_000 + n * 1000) }),
+test('the wall shows the busiest and most recent recordings, in the order they appeared', () => {
+  const recordings = Array.from({ length: Board.maxTiles + 2 }, (_, n) =>
+    // Recording 0 appeared first but was seen longest ago.
+    recording(n, { last_seen: ms(NOW - 60_000 + n * 1000) }),
   );
-  const full = board({ sessions, calls: [open(1, 0)] });
-  const shown = full.tiles.map((tile) => tile.session.id);
-  // Session 0 has an open call, so it stays; session 1 is the oldest idle one and leaves.
+  const full = board({ recordings, calls: [open(1, 0)] });
+  const shown = full.tiles.map((tile) => tile.recording.id);
+  // Recording 0 has an open call, so it stays; recording 1 is the oldest idle one and leaves.
   assert.equal(shown[0], sid(0));
   assert.ok(!shown.includes(sid(1)));
   assert.deepEqual(
     shown,
     [...shown].sort(
-      (a, b) => sessions.findIndex((s) => s.id === a) - sessions.findIndex((s) => s.id === b),
+      (a, b) => recordings.findIndex((s) => s.id === a) - recordings.findIndex((s) => s.id === b),
     ),
   );
 });
@@ -214,7 +218,7 @@ test('a tile reads its newest turn: prompt, lines, and what is not derived yet',
     open(3, 1, { turn: tid(1) }),
   ];
   const [tile] = board({
-    sessions: [session(1)],
+    recordings: [recording(1)],
     calls,
     turns: new Map([[tid(1), activityTurn]]),
   }).tiles;
@@ -284,7 +288,7 @@ test('alerts group rate limits, list bad endings, and surface exposures and repe
     context_tokens: 2,
   };
   const alerts = board({
-    sessions: [session(1)],
+    recordings: [recording(1)],
     calls: [
       done(1, 1, { status: 429, outcome: null }),
       done(2, 1, { status: 429, outcome: null }),
@@ -301,7 +305,7 @@ test('alerts group rate limits, list bad endings, and surface exposures and repe
   assert.ok(alerts.every((alert) => alert.href.startsWith('/')));
 });
 
-test('turns to read: each session newest turn, with a signature that moves with its calls', () => {
+test('turns to read: each recording newest turn, with a signature that moves with its calls', () => {
   const before = [done(1, 1, { turn: tid(1) }), open(2, 1, { turn: tid(2) }), done(3, 2)];
   const after = [done(1, 1, { turn: tid(1) }), done(2, 1, { turn: tid(2) }), done(3, 2)];
   const [first] = Board.turnsToRead([sid(1), sid(2)], before);
@@ -324,7 +328,7 @@ test('the URL place parses density, band, grouping, and window once', () => {
   const view = LivePlace.parse(
     new URLSearchParams('density=compact&band=area&window=1h&focus=x&by=model&series=m-a'),
   );
-  // A focus that is not a session ID is dropped.
+  // A focus that is not a recording ID is dropped.
   assert.deepEqual(view, {
     density: 'compact',
     band: 'area',
@@ -354,13 +358,15 @@ test('the URL place parses density, band, grouping, and window once', () => {
   assert.equal(LivePlace.longer('4h'), null);
 });
 
-test('the window decides which sessions count as active', () => {
-  const sessions = [
-    session(1, { last_seen: ms(NOW - 10 * 60_000) }),
-    session(2, { last_seen: ms(NOW - 2 * 60 * 60_000) }),
+test('the window decides which recordings count as active', () => {
+  const recordings = [
+    recording(1, { last_seen: ms(NOW - 10 * 60_000) }),
+    recording(2, { last_seen: ms(NOW - 2 * 60 * 60_000) }),
   ];
   const active = (window: '5m' | '15m' | '1h' | '4h') =>
-    Board.activeRecordings(sessions, new Map(), NOW, LivePlace.windows[window].ms).map((s) => s.id);
+    Board.activeRecordings(recordings, new Map(), NOW, LivePlace.windows[window].ms).map(
+      (s) => s.id,
+    );
   assert.deepEqual(active('5m'), []);
   assert.deepEqual(active('15m'), [sid(1)]);
   assert.deepEqual(active('4h'), [sid(1), sid(2)]);
@@ -376,7 +382,7 @@ test('the reader reads a turn again only when its calls change or text is still 
     const path = String(input);
     reads.push(path.split('?')[0]);
     if (path.startsWith('/api/recordings'))
-      return versioned({ recordings: [session(1, { last_seen: ms(Date.now()) })] });
+      return versioned({ recordings: [recording(1, { last_seen: ms(Date.now()) })] });
     if (path.startsWith('/api/calls')) return versioned({ calls, next: null });
     const limitations = pending ? ['not_yet_derived'] : [];
     return versioned(turn(1, 1, [activity(1, { limitations: limitations as never })]));
@@ -407,7 +413,7 @@ test('the reader reads as far back as the window or the band, and pages through 
     const path = String(input);
     paths.push(path);
     if (path.startsWith('/api/recordings'))
-      return versioned({ recordings: [session(1, { last_seen: ms(Date.now()) })] });
+      return versioned({ recordings: [recording(1, { last_seen: ms(Date.now()) })] });
     if (path.startsWith('/api/calls')) {
       const params = new URL(path, 'http://ui').searchParams;
       if (!params.has('from_ms')) return versioned({ calls: [], next: null });
@@ -506,17 +512,17 @@ test('held calls are read again only while unsettled or newer than the previous 
 
 test('the band shades what was not read', () => {
   const now = NOW;
-  const band = new Band([session(1)], [], now, 'client', now - Band.spanMs / 4);
+  const band = new Band([recording(1)], [], now, 'client', now - Band.spanMs / 4);
   assert.equal(band.unread, 0.75);
-  assert.equal(new Band([session(1)], [], now).unread, 0);
-  assert.equal(new Band([session(1)], [], now, 'client', now - 2 * Band.spanMs).unread, 0);
+  assert.equal(new Band([recording(1)], [], now).unread, 0);
+  assert.equal(new Band([recording(1)], [], now, 'client', now - 2 * Band.spanMs).unread, 0);
 });
 
 test('a turn that cannot be read leaves the board readable', async () => {
   const fetcher = (async (input: Parameters<typeof fetch>[0]) => {
     const path = String(input);
     if (path.startsWith('/api/recordings'))
-      return versioned({ recordings: [session(1, { last_seen: ms(Date.now()) })] });
+      return versioned({ recordings: [recording(1, { last_seen: ms(Date.now()) })] });
     if (path.startsWith('/api/calls'))
       return versioned({
         calls: [done(1, 1, { started_at: ms(Date.now()), turn: tid(1) })],
@@ -557,9 +563,9 @@ test('a missing tool result is expected until a later call in the turn has been 
   );
 });
 
-test('a session with nothing on its lane is quiet; an open call is not', () => {
+test('a recording with nothing on its lane is quiet; an open call is not', () => {
   const board = new Board({
-    sessions: [session(1), session(2)],
+    recordings: [recording(1), recording(2)],
     calls: [done(1, 1, { started_at: ms(NOW - 400_000), ended_at: ms(NOW - 300_000) }), open(2, 2)],
     turns: new Map(),
     now: NOW,
@@ -576,7 +582,7 @@ test('a session with nothing on its lane is quiet; an open call is not', () => {
 
 test("a tile's attention is its worst alert", () => {
   const board = new Board({
-    sessions: [session(1), session(2), session(3)],
+    recordings: [recording(1), recording(2), recording(3)],
     calls: [
       done(1, 1, { status: 429, outcome: null }),
       done(2, 2, { terminal: 'cancelled', outcome: null }),
@@ -597,9 +603,9 @@ test("a tile's attention is its worst alert", () => {
 test('the band counts output tokens per client when each call ends', () => {
   const band = new Band(
     [
-      session(1),
-      session(2, { source: 'codex_headers' }),
-      session(3, { source: 'pi_extension_headers' }),
+      recording(1),
+      recording(2, { source: 'codex_headers' }),
+      recording(3, { source: 'pi_extension_headers' }),
     ],
     [
       done(1, 1, { usage: usage(600), ended_at: ms(NOW - 30_000) }),
@@ -647,14 +653,14 @@ test('the band keeps past bins as time passes, and only slides', () => {
     done(1, 1, { usage: usage(600), ended_at: ms(NOW - 200_000) }),
     done(2, 1, { usage: usage(300), ended_at: ms(NOW - 61_000) }),
   ];
-  const bins = (now: number) => new Band([session(1)], calls, now).series[0]?.bins ?? [];
+  const bins = (now: number) => new Band([recording(1)], calls, now).series[0]?.bins ?? [];
   // Within one slot, a redraw changes nothing about past calls.
   assert.deepEqual(bins(NOW + 1_000), bins(NOW));
   // A slot later, the same bins have moved one to the left.
   const later = bins(NOW + Band.binMs);
   assert.deepEqual(later.slice(0, -1), bins(NOW).slice(1));
   // And the band slides smoothly in between.
-  const offset = (now: number) => new Band([session(1)], calls, now).offset;
+  const offset = (now: number) => new Band([recording(1)], calls, now).offset;
   assert.ok(offset(NOW + 1_000) < offset(NOW));
   assert.ok(offset(NOW) <= 0 && offset(NOW) > -Band.binMs / Band.spanMs);
 });
@@ -669,7 +675,7 @@ test('the band groups by provider or model, and merges past the biggest four', (
       ended_at: ms(NOW - 30_000),
     }),
   );
-  const byModel = new Band([session(1)], calls, NOW, 'model');
+  const byModel = new Band([recording(1)], calls, NOW, 'model');
   assert.deepEqual(
     byModel.series.map((series) => series.key),
     ['m-a', 'm-b', 'm-c', 'm-d', Band.other],
@@ -681,10 +687,10 @@ test('the band groups by provider or model, and merges past the biggest four', (
   assert.equal(byModel.seriesOf('m-f')?.key, Band.other);
   assert.equal(byModel.seriesOf('m-z'), null);
   // One past the limit is drawn on its own: merging a single series hides its name for nothing.
-  const five = new Band([session(1)], calls.slice(0, 5), NOW, 'model');
+  const five = new Band([recording(1)], calls.slice(0, 5), NOW, 'model');
   assert.equal(five.series.length, 5);
   assert.ok(!five.series.some((series) => series.key === Band.other));
-  const byProvider = new Band([session(1)], calls, NOW, 'provider');
+  const byProvider = new Band([recording(1)], calls, NOW, 'provider');
   assert.deepEqual(
     byProvider.series.map((series) => [series.label, series.swatch]),
     [
@@ -694,11 +700,11 @@ test('the band groups by provider or model, and merges past the biggest four', (
   );
 });
 
-test('picking a band series narrows the wall to its sessions', () => {
-  const sessions = [session(1), session(2, { source: 'codex_headers', provider: 'openai' })];
+test('picking a band series narrows the wall to its recordings', () => {
+  const recordings = [recording(1), recording(2, { source: 'codex_headers', provider: 'openai' })];
   const calls = [done(1, 1, { model: 'm-a' }), done(2, 2, { model: 'm-b' })];
   const ids = (input: Partial<BoardInput>) =>
-    board({ sessions, calls, ...input }).tiles.map((tile) => tile.session.id);
+    board({ recordings, calls, ...input }).tiles.map((tile) => tile.recording.id);
   assert.deepEqual(ids({}), [sid(1), sid(2)]);
   assert.deepEqual(ids({ only: { by: 'client', keys: ['codex'] } }), [sid(2)]);
   assert.deepEqual(ids({ only: { by: 'provider', keys: ['anthropic'] } }), [sid(1)]);
@@ -726,9 +732,9 @@ test('the feed tells what happened lately, ongoing waits first, newest next', ()
     { started_at: ms(NOW - 40_000) },
   );
   const feed = board({
-    sessions: [
-      session(1, { first_seen: ms(NOW - 50_000) }),
-      session(2, { first_seen: ms(NOW - 600_000) }),
+    recordings: [
+      recording(1, { first_seen: ms(NOW - 50_000) }),
+      recording(2, { first_seen: ms(NOW - 600_000) }),
     ],
     calls: [
       done(1, 1, { turn: tid(1), tool_names: ['Edit', 'Edit'], ended_at: ms(NOW - 9000) }),
@@ -779,16 +785,16 @@ function usage(output: number): CallView['usage'] {
   };
 }
 
-test('a session that reports no turns keeps its newest call, so its reply can stream', () => {
-  const sessions = [session(1, { source: 'opencode_headers', turn_count: 0 })];
+test('a recording that reports no turns keeps its newest call, so its reply can stream', () => {
+  const recordings = [recording(1, { source: 'opencode_headers', turn_count: 0 })];
   const calls = [done(1, 1, { started_at: ms(NOW - 30_000) }), open(2, 1)];
-  const [tile] = board({ sessions, calls, turns: new Map() }).tiles;
+  const [tile] = board({ recordings, calls, turns: new Map() }).tiles;
   assert.equal(tile.turnId, null);
   assert.deepEqual(
     tile.unread.map((unread) => [unread.call.id, unread.index]),
     [[callId(2), 2]],
   );
-  const [quiet] = board({ sessions, calls: calls.slice(0, 1), turns: new Map() }).tiles;
+  const [quiet] = board({ recordings, calls: calls.slice(0, 1), turns: new Map() }).tiles;
   assert.deepEqual(
     quiet.unread.map((unread) => unread.call.id),
     [callId(1)],
@@ -886,15 +892,15 @@ test("a card drops the cd into the turn's directory and paths under it", () => {
 });
 
 test('an expanded card comes first, with four beside it and the rest counted', () => {
-  const sessions = Array.from({ length: Board.maxTiles + 1 }, (_, n) => session(n));
-  const focused = board({ sessions, focus: sid(6) });
+  const recordings = Array.from({ length: Board.maxTiles + 1 }, (_, n) => recording(n));
+  const focused = board({ recordings, focus: sid(6) });
   assert.equal(focused.focus, sid(6));
-  assert.equal(focused.tiles[0]?.session.id, sid(6));
+  assert.equal(focused.tiles[0]?.recording.id, sid(6));
   assert.equal(focused.tiles.length, 1 + Board.besideFocus);
   assert.equal(focused.capacity, 1 + Board.besideFocus);
-  assert.equal(focused.overflow, sessions.length - focused.tiles.length);
-  // A focus on a session that is not active is ignored.
-  const gone = board({ sessions, focus: sid(50) });
+  assert.equal(focused.overflow, recordings.length - focused.tiles.length);
+  // A focus on a recording that is not active is ignored.
+  const gone = board({ recordings, focus: sid(50) });
   assert.equal(gone.focus, null);
   assert.equal(gone.tiles.length, Board.maxTiles);
   assert.equal(gone.capacity, Board.maxTiles);
@@ -910,21 +916,21 @@ test('pins parse once, deduplicated, and toggle in the URL', () => {
   assert.deepEqual(LivePlace.togglePin(view, sid(3)).pins, [sid(2), sid(1), sid(3)]);
 });
 
-test('a pinned session keeps its card when busier ones would take it', () => {
-  // Session 0 is the quietest: seen longest ago, nothing open.
-  const sessions = Array.from({ length: Board.maxTiles + 2 }, (_, n) =>
-    session(n, { last_seen: ms(NOW - 60_000 + n * 1000) }),
+test('a pinned recording keeps its card when busier ones would take it', () => {
+  // Recording 0 is the quietest: seen longest ago, nothing open.
+  const recordings = Array.from({ length: Board.maxTiles + 2 }, (_, n) =>
+    recording(n, { last_seen: ms(NOW - 60_000 + n * 1000) }),
   );
   const calls = Array.from({ length: Board.maxTiles + 1 }, (_, n) => open(n + 1, n + 1));
-  const unpinned = board({ sessions, calls });
-  assert.ok(!unpinned.tiles.some((tile) => tile.session.id === sid(0)));
-  const pinned = board({ sessions, calls, pins: [sid(0)] });
-  const tile = pinned.tiles.find((candidate) => candidate.session.id === sid(0));
+  const unpinned = board({ recordings, calls });
+  assert.ok(!unpinned.tiles.some((tile) => tile.recording.id === sid(0)));
+  const pinned = board({ recordings, calls, pins: [sid(0)] });
+  const tile = pinned.tiles.find((candidate) => candidate.recording.id === sid(0));
   assert.equal(tile?.pinned, true);
   assert.equal(pinned.tiles.length, Board.maxTiles);
   assert.equal(pinned.tiles.filter((candidate) => candidate.pinned).length, 1);
-  // A pin on a session that is not active adds nothing.
-  assert.equal(board({ sessions, pins: [sid(50)] }).tiles.length, Board.maxTiles);
+  // A pin on a recording that is not active adds nothing.
+  assert.equal(board({ recordings, pins: [sid(50)] }).tiles.length, Board.maxTiles);
 });
 
 test('every state has its own mark, and an unknown ending is never a failure', () => {

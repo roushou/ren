@@ -480,7 +480,7 @@ export interface RecordingView {
   last_seen: UnixMillis;
   call_count: number;
   turn_count: number;
-  /** Null from a daemon older than session totals. */
+  /** Null from a daemon older than recording totals. */
   error_count: number | null;
   /** Input includes cached context; null when no call reported usage. */
   tokens: TokenTotals;

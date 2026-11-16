@@ -62,7 +62,7 @@
   const board = $derived(
     live
       ? new Board({
-          sessions: live.recordings,
+          recordings: live.recordings,
           calls: live.calls,
           turns: live.turns,
           now: Math.max(now, live.read),
@@ -73,9 +73,11 @@
         })
       : null,
   );
-  /** The sessions at work, most recently seen first. */
+  /** The recordings at work, most recently seen first. */
   const working = $derived(
-    (board?.tiles ?? []).toSorted((a, b) => b.session.last_seen - a.session.last_seen).slice(0, 6),
+    (board?.tiles ?? [])
+      .toSorted((a, b) => b.recording.last_seen - a.recording.last_seen)
+      .slice(0, 6),
   );
   const lastCall = $derived(Math.max(0, ...(current?.recordings ?? []).map((s) => s.last_seen)));
 
@@ -92,7 +94,7 @@
     }),
   );
 
-  const sessionHref = (id: string) => `/recordings/${encodeURIComponent(id)}`;
+  const recordingHref = (id: string) => `/recordings/${encodeURIComponent(id)}`;
   const spark = (values: number[]) => Day.spark(values, 22);
   const CHART = 120;
   /** Nothing recorded in the last day: the page leads with how to connect a client. */
@@ -209,34 +211,34 @@
             </header>
             {#if pending}
               {#each { length: OUTLINE_ROWS }, row (row)}
-                <div class="ov-session outline">
-                  <span class="ov-session-who">
+                <div class="ov-recording outline">
+                  <span class="ov-recording-who">
                     <strong><Skeleton width="6em" /></strong>
                     <span class="live-state"><Skeleton width="5em" /></span>
                   </span>
-                  <span class="ov-session-prompt"
+                  <span class="ov-recording-prompt"
                     ><Skeleton width={['85%', '64%', '76%'][row % 3]} /></span
                   >
                   <span class="ov-lane"><Skeleton width="100%" /></span>
                 </div>
               {/each}
-            {:else}{#each working as tile (tile.session.id)}
+            {:else}{#each working as tile (tile.recording.id)}
                 {@const chip = Board.phaseChip(tile.phase, board?.now ?? now)}
                 <a
-                  class="ov-session state-edge state-{chip.mark}"
+                  class="ov-recording state-edge state-{chip.mark}"
                   class:quiet={tile.quiet}
-                  href={sessionHref(tile.session.id)}
+                  href={recordingHref(tile.recording.id)}
                 >
-                  <span class="ov-session-who">
+                  <span class="ov-recording-who">
                     <strong>{Board.clientName(tile.harness)}</strong>
-                    <span class="mono muted">{short(tile.session.native_id)}</span>
+                    <span class="mono muted">{short(tile.recording.native_id)}</span>
                     <span class="mono live-state {chip.tone} state-{chip.mark}" title={chip.title}
                       ><StateGlyph mark={chip.mark} />{chip.label}</span
                     >
                   </span>
-                  <span class="ov-session-prompt"
+                  <span class="ov-recording-prompt"
                     >{tile.prompt?.text ??
-                      `${providerName(tile.session.provider)} · ${tile.model ?? 'no model yet'}`}</span
+                      `${providerName(tile.recording.provider)} · ${tile.model ?? 'no model yet'}`}</span
                   >
                   <svg
                     class="ov-lane"
@@ -587,7 +589,7 @@
   }
   /* An outline row is not a link: it does not answer the pointer. */
   .ov-attention.outline:hover,
-  .ov-session.outline:hover {
+  .ov-recording.outline:hover {
     background: transparent;
   }
   .ov-when {
@@ -595,8 +597,8 @@
     white-space: nowrap;
   }
 
-  /* Live now: the sessions at work, in the Live page's state colours. */
-  .ov-session {
+  /* Live now: the recordings at work, in the Live page's state colours. */
+  .ov-recording {
     display: grid;
     grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr) 90px;
     align-items: center;
@@ -607,24 +609,24 @@
     color: var(--ink);
     text-decoration: none;
   }
-  .ov-session:hover {
+  .ov-recording:hover {
     background: var(--row-hover);
   }
-  .ov-session.quiet {
+  .ov-recording.quiet {
     opacity: 0.55;
   }
-  .ov-session-who {
+  .ov-recording-who {
     display: flex;
     flex-wrap: wrap;
     align-items: baseline;
     gap: 2px 8px;
     min-width: 0;
   }
-  .ov-session-who strong {
+  .ov-recording-who strong {
     font-size: 12.5px;
     font-weight: 600;
   }
-  .ov-session-who .mono {
+  .ov-recording-who .mono {
     font-size: 11px;
   }
   .live-state {
@@ -647,7 +649,7 @@
   .live-state.state-yours {
     color: var(--success);
   }
-  .ov-session-prompt {
+  .ov-recording-prompt {
     overflow: hidden;
     color: var(--muted);
     font-size: 12px;
@@ -874,10 +876,10 @@
     }
   }
   @media (max-width: 560px) {
-    .ov-session {
+    .ov-recording {
       grid-template-columns: minmax(0, 1fr) 70px;
     }
-    .ov-session-prompt {
+    .ov-recording-prompt {
       display: none;
     }
     .ov-marks {

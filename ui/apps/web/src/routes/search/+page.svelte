@@ -3,7 +3,7 @@
   import { page as location } from '$app/state';
   import { createArrival } from '#lib/snapshot.svelte.ts';
   import { num, clock, parseSearchField, SEARCH_FIELDS, type SearchField } from '#lib/api.ts';
-  import { date, sessionTone } from '#lib/display.ts';
+  import { date, recordingTone } from '#lib/display.ts';
   import { searchFieldLabel, searchHitHref, snippetParts } from '#lib/activity.ts';
   import Icon from '#lib/Icon.svelte';
   import RecordingName from '#lib/RecordingName.svelte';
@@ -140,10 +140,10 @@
               <a class="search-hit" href={searchHitHref(hit)}>
                 <span class="search-hit-meta">
                   {#if hit.recording && recordingsById.get(hit.recording)}<RecordingName
-                      session={recordingsById.get(hit.recording)!}
+                      recording={recordingsById.get(hit.recording)!}
                       detail={details.get(hit.recording)}
                     />{:else if hit.recording}<span
-                      class="session-dot tone-{sessionTone(hit.recording)}"
+                      class="recording-dot tone-{recordingTone(hit.recording)}"
                     ></span>{/if}
                   <span class="chip">{searchFieldLabel(hit.field)}</span>
                   <span class="muted">{date(hit.started_at)} {clock(hit.started_at)}</span>

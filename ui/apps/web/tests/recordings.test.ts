@@ -11,7 +11,7 @@ const NOW = 100 * DAY + 12 * 3_600_000;
 const dayStart = (ms: number) => Math.floor(ms / DAY) * DAY;
 const sid = (n: number) => uuid(300 + n) as RecordingId;
 
-function session(
+function recording(
   n: number,
   lastSeen: number,
   overrides: Partial<RecordingView> = {},
@@ -32,7 +32,7 @@ function session(
   };
 }
 const input = (overrides: Partial<RecordingListInput>): RecordingListInput => ({
-  sessions: [],
+  recordings: [],
   details: new Map(),
   open: [],
   now: NOW,
@@ -41,21 +41,21 @@ const input = (overrides: Partial<RecordingListInput>): RecordingListInput => ({
   ...overrides,
 });
 
-test('sessions group by the day they were last seen, newest first, and checks fold away', () => {
+test('recordings group by the day they were last seen, newest first, and checks fold away', () => {
   const list = new RecordingList(
     input({
-      sessions: [
-        session(1, NOW - 2 * DAY),
-        session(2, NOW - DAY),
-        session(3, NOW - 60_000),
-        session(4, NOW - 2 * 60_000),
+      recordings: [
+        recording(1, NOW - 2 * DAY),
+        recording(2, NOW - DAY),
+        recording(3, NOW - 60_000),
+        recording(4, NOW - 2 * 60_000),
         // One call, no turn: a client's own check.
-        session(5, NOW - 30_000, { call_count: 1, turn_count: 0 }),
+        recording(5, NOW - 30_000, { call_count: 1, turn_count: 0 }),
       ],
     }),
   );
   assert.deepEqual(
-    list.groups.map((group) => [group.label, group.rows.map((row) => row.session.id)]),
+    list.groups.map((group) => [group.label, group.rows.map((row) => row.recording.id)]),
     [
       ['Today', [sid(3), sid(4)]],
       ['Yesterday', [sid(2)]],
@@ -63,18 +63,22 @@ test('sessions group by the day they were last seen, newest first, and checks fo
     ],
   );
   assert.deepEqual(
-    list.folded.map((row) => row.session.id),
+    list.folded.map((row) => row.recording.id),
     [sid(5)],
   );
   // Sizes are against the largest in the list.
   const largest = list.groups.flatMap((group) => group.rows).find((row) => row.requests === 1);
-  assert.equal(largest?.session.id, sid(4));
+  assert.equal(largest?.recording.id, sid(4));
 });
 
 test('a row says who it is, what it is about, and what it does now', () => {
   const list = new RecordingList(
     input({
-      sessions: [session(1, NOW - 60_000), session(2, NOW - 3_600_000), session(3, NOW - 5_000)],
+      recordings: [
+        recording(1, NOW - 60_000),
+        recording(2, NOW - 3_600_000),
+        recording(3, NOW - 5_000),
+      ],
       details: new Map([
         [
           sid(1),
@@ -90,7 +94,7 @@ test('a row says who it is, what it is about, and what it does now', () => {
     }),
   );
   const rows = new Map(
-    list.groups.flatMap((group) => group.rows).map((row) => [row.session.id, row]),
+    list.groups.flatMap((group) => group.rows).map((row) => [row.recording.id, row]),
   );
   const first = rows.get(sid(1));
   assert.equal(first?.client, 'Claude Code');
@@ -103,12 +107,12 @@ test('a row says who it is, what it is about, and what it does now', () => {
 });
 
 test('search reads the prompt and folder as well as the IDs', () => {
-  const sessions = [session(1, NOW - 60_000), session(2, NOW - 60_000)];
+  const recordings = [recording(1, NOW - 60_000), recording(2, NOW - 60_000)];
   const details = new Map([[sid(2), { prompt: null, workdir: '/srv/ren' }]]);
   const ids = (query: string) =>
-    new RecordingList(input({ sessions, details, query })).groups
+    new RecordingList(input({ recordings, details, query })).groups
       .flatMap((group) => group.rows)
-      .map((row) => row.session.id);
+      .map((row) => row.recording.id);
   assert.deepEqual(ids('ren'), [sid(2)]);
   assert.deepEqual(ids('NATIVE-1'), [sid(1)]);
   assert.deepEqual(ids('claude code'), [sid(1), sid(2)]);

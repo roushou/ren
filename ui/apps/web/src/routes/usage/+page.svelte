@@ -69,7 +69,7 @@
   const users = $derived(current?.usage.users ?? []);
   const named = $derived(users.some((u) => u.user !== null));
   // Recordings active in the range, most input first.
-  const sessions = $derived(
+  const recordings = $derived(
     (current?.recordings ?? [])
       .filter(
         (s) =>
@@ -212,31 +212,31 @@
           {:else}<p class="quiet-empty">No calls in this range.</p>{/if}
         </section>
 
-        <section class="panel usage-panel" aria-labelledby="usage-sessions-title">
+        <section class="panel usage-panel" aria-labelledby="usage-recordings-title">
           <header class="panel-heading">
-            <h2 id="usage-sessions-title">Busiest recordings</h2>
+            <h2 id="usage-recordings-title">Busiest recordings</h2>
             <span class="subtle-label">Totals over each recording's whole life</span>
           </header>
-          {#if sessions.length || pending}
+          {#if recordings.length || pending}
             <table class="usage-list">
               {@render head(recordingColumns)}
               <tbody>
                 {#if pending}<SkeletonRows columns={recordingColumns} rows={5} />{/if}
-                {#each sessions as session (session.id)}
+                {#each recordings as recording (recording.id)}
                   <tr>
                     <td class="fill"
-                      ><a class="row-link" href={`/recordings/${encodeURIComponent(session.id)}`}
-                        ><RecordingName {session} detail={details.get(session.id)} /></a
+                      ><a class="row-link" href={`/recordings/${encodeURIComponent(recording.id)}`}
+                        ><RecordingName {recording} detail={details.get(recording.id)} /></a
                       ></td
                     >
-                    <td class="mono numeric">{num(session.call_count)}</td>
+                    <td class="mono numeric">{num(recording.call_count)}</td>
                     <td
                       class="mono numeric"
-                      class:error-count={!!session.error_count}
-                      class:zero={session.error_count === 0}>{num(session.error_count)}</td
+                      class:error-count={!!recording.error_count}
+                      class:zero={recording.error_count === 0}>{num(recording.error_count)}</td
                     >
-                    <td class="mono numeric">{compactOrDash(session.tokens.input)}</td>
-                    <td class="mono numeric">{compactOrDash(session.tokens.output)}</td>
+                    <td class="mono numeric">{compactOrDash(recording.tokens.input)}</td>
+                    <td class="mono numeric">{compactOrDash(recording.tokens.output)}</td>
                   </tr>
                 {/each}
               </tbody>

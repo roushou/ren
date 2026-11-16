@@ -22,7 +22,7 @@
     httpChip,
     streamChip,
     tokenSummary,
-    sessionTone,
+    recordingTone,
     compactOrDash,
     callerShown,
     SEPARATOR,
@@ -66,10 +66,10 @@
   ];
   const calls = $derived(retained?.value?.calls ?? []);
   const nextAfter = $derived(retained?.value?.next ?? null);
-  const session = $derived(retained?.value?.recording);
+  const recording = $derived(retained?.value?.recording);
   const details = $derived(retained?.value?.details ?? new Map());
   /** The listed recordings by ID, to name them in rows. */
-  const sessionsById = $derived(
+  const recordingsById = $derived(
     new Map((retained?.value?.recordings ?? []).map((item) => [item.id, item])),
   );
   const updated = $derived(retained?.updated ?? null);
@@ -378,29 +378,29 @@
 {#snippet scope()}
   {#if recordingId}
     <div class="scope-group scope-identity">
-      {#if session}<span class="scope-session"
-          ><RecordingName {session} detail={details.get(session.id)} /></span
-        ><small class="mono muted" title={`Ren's own ID for this recording: ${session.id}`}
-          >{short(session.native_id)}</small
+      {#if recording}<span class="scope-recording"
+          ><RecordingName {recording} detail={details.get(recording.id)} /></span
+        ><small class="mono muted" title={`Ren's own ID for this recording: ${recording.id}`}
+          >{short(recording.native_id)}</small
         >{:else}<strong class="mono">{short(recordingId)}</strong>{/if}
     </div>
-    {#if session}<div class="scope-group scope-figures">
-        <span><b class="mono">{num(session.call_count)}</b> calls</span>
-        <span><b class="mono">{num(session.turn_count)}</b> turns</span>
-        <span class:error-count={!!session.error_count}
-          ><b class="mono">{num(session.error_count)}</b> errors</span
+    {#if recording}<div class="scope-group scope-figures">
+        <span><b class="mono">{num(recording.call_count)}</b> calls</span>
+        <span><b class="mono">{num(recording.turn_count)}</b> turns</span>
+        <span class:error-count={!!recording.error_count}
+          ><b class="mono">{num(recording.error_count)}</b> errors</span
         >
         <span
           title="Provider reported; input includes cached context. Not subscription allowance or charges."
-          ><b class="mono">{compactOrDash(session.tokens.input)}</b>
+          ><b class="mono">{compactOrDash(recording.tokens.input)}</b>
           in ·
-          <b class="mono">{compactOrDash(session.tokens.output)}</b> out</span
+          <b class="mono">{compactOrDash(recording.tokens.output)}</b> out</span
         >
       </div>{/if}
     <div class="scope-group end">
       {#if page.data.runsControl}<RecordingActions
           recording={recordingId}
-          shelf={session ? session.archived_at !== null : null}
+          shelf={recording ? recording.archived_at !== null : null}
         />{/if}
       <a class="text-button" href={`/recordings/${encodeURIComponent(recordingId)}/report`}
         >Turns and report <Icon name="arrow" size={12} /></a
@@ -424,7 +424,7 @@
         options={recordingOptions}
         value={applied.get('recording') ?? ''}
         placeholder={recordingName(applied.get('recording') ?? '')}
-        onchange={(session) => pick((f) => (f.recording = session))}
+        onchange={(recording) => pick((f) => (f.recording = recording))}
       />
     </div>
     <div class="scope-group">
@@ -683,20 +683,20 @@
                         aria-label={`Inspect call ${c.id}`}
                         aria-current={selectedId === c.id ? 'true' : undefined}>{short(c.id)}</a
                       >{#if !recordingId}{@const previous = group.rows[index - 1]}<small
-                          class="mono session-line"
+                          class="mono recording-line"
                           title={c.attribution.hint?.session ??
                             'No session identifier was reported'}
-                          >{#if c.recording}{@const session = c.recording}<button
+                          >{#if c.recording}{@const recording = c.recording}<button
                               type="button"
-                              class="session-filter"
+                              class="recording-filter"
                               title="Show only this recording's calls"
-                              aria-label={`Show only recording ${short(c.attribution.hint?.session ?? session)}`}
-                              onclick={() => pick((f) => (f.recording = session))}
-                              >{#if sessionsById.get(session) && (!previous || previous.recording !== c.recording)}<RecordingName
-                                  session={sessionsById.get(session)!}
-                                  detail={details.get(session)}
+                              aria-label={`Show only recording ${short(c.attribution.hint?.session ?? recording)}`}
+                              onclick={() => pick((f) => (f.recording = recording))}
+                              >{#if recordingsById.get(recording) && (!previous || previous.recording !== c.recording)}<RecordingName
+                                  recording={recordingsById.get(recording)!}
+                                  detail={details.get(recording)}
                                   client={false}
-                                />{:else}<span class="session-dot tone-{sessionTone(session)}"
+                                />{:else}<span class="recording-dot tone-{recordingTone(recording)}"
                                 ></span>{#if !previous || previous.recording !== c.recording}{c
                                     .attribution.hint
                                     ? short(c.attribution.hint.session)
@@ -705,7 +705,7 @@
                               callerShown(c.caller)}<span class="caller-line"
                               >{SEPARATOR}{#if caller.user}{@const user = caller.user}<button
                                   type="button"
-                                  class="session-filter"
+                                  class="recording-filter"
                                   title={`${caller.title}. Show only this user's calls`}
                                   aria-label={`Show only user ${user}'s calls`}
                                   onclick={() => pick((f) => (f.user = user))}

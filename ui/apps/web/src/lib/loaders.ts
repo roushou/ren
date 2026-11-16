@@ -580,7 +580,7 @@ export class LiveReader {
     return readSnapshot(`live:${window}`, async (): Promise<LiveData> => {
       const read = Date.now();
       const [recordings, held] = await Promise.all([
-        api.recordings(spec.sessions),
+        api.recordings(spec.recordings),
         this.#calls.read(api, read, Math.max(spec.ms, Band.spanMs)),
       ]);
       const recent = held.calls;
@@ -627,7 +627,7 @@ export class LiveReader {
         truncated: {
           calls: held.complete > read - spec.ms,
           recordings:
-            recordings.recordings.length >= spec.sessions &&
+            recordings.recordings.length >= spec.recordings &&
             oldest !== undefined &&
             read - oldest.last_seen <= spec.ms,
         },

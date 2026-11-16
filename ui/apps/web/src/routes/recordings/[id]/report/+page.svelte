@@ -2,7 +2,14 @@
   import Toolbar from '#lib/Toolbar.svelte';
   import { createArrival } from '#lib/snapshot.svelte.ts';
   import { num, short, clock } from '#lib/api.ts';
-  import { compact, compactOrDash, date, percentOrDash, span, sessionTone } from '#lib/display.ts';
+  import {
+    compact,
+    compactOrDash,
+    date,
+    percentOrDash,
+    span,
+    recordingTone,
+  } from '#lib/display.ts';
   import { ContextChart, findingLine, rowPrompt, turnHref, turnRows } from '#lib/activity.ts';
   import RecordingName from '#lib/RecordingName.svelte';
   import FindingList from '#lib/FindingList.svelte';
@@ -20,7 +27,7 @@
   const current = $derived(snapshot?.value ?? null);
   const report = $derived(current?.report);
   const totals = $derived(report?.totals);
-  const session = $derived(current?.recording);
+  const recording = $derived(current?.recording);
   const rows = $derived(current ? turnRows(current.report, current.turns) : []);
   const findings = $derived(report ? report.findings.map(findingLine) : []);
   const chart = $derived(new ContextChart(rows));
@@ -47,8 +54,8 @@
 
 {#snippet scope()}
   <div class="scope-group scope-identity">
-    {#if session}<RecordingName {session} detail={current?.detail} />{:else}<span
-        class="session-dot tone-{sessionTone(data.recordingId)}"
+    {#if recording}<RecordingName {recording} detail={current?.detail} />{:else}<span
+        class="recording-dot tone-{recordingTone(data.recordingId)}"
       ></span><strong class="mono">{short(data.recordingId)}</strong>{/if}
     <span class="muted">Context and cache report</span>
   </div>

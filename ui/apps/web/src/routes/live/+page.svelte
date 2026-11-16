@@ -81,7 +81,7 @@
   const board = $derived(
     current
       ? new Board({
-          sessions: current.recordings,
+          recordings: current.recordings,
           calls: current.calls,
           turns: current.turns,
           now: Math.max(now, current.read),
@@ -112,7 +112,7 @@
   /** Whether a card belongs to the hovered band series. */
   function inHoveredSeries(tile: Tile): boolean {
     if (!hoveredSeries || !band) return false;
-    const key = Band.sessionKey(view.by, tile.session, tile.model);
+    const key = Band.recordingKey(view.by, tile.recording, tile.model);
     return band.seriesOf(key)?.key === hoveredSeries;
   }
   /** The band's height in SVG units, drawn at the same height in pixels. */
@@ -124,7 +124,7 @@
   }));
   const chooseWindow = (window: LiveWindow) => goto(LivePlace.href({ ...view, window }));
   const longer = $derived(LivePlace.longer(view.window));
-  /** The session whose line in the Now strip is under the pointer. */
+  /** The recording whose line in the Now strip is under the pointer. */
   let highlighted = $state<string | null>(null);
   /** How long ago a feed item happened, as short as it gets. */
   function ago(item: FeedItem, now: number): string {
@@ -143,15 +143,18 @@
   /** Text widths for the outline cards' lines, varied so they read as text. */
   const outlineLines = ['82%', '64%', '91%', '57%', '76%', '69%', '88%', '61%'];
   const emptySlots = $derived(board ? Math.max(0, board.capacity - board.tiles.length) : 0);
-  const pinHref = (tile: Tile) => LivePlace.href(LivePlace.togglePin(view, tile.session.id));
+  const pinHref = (tile: Tile) => LivePlace.href(LivePlace.togglePin(view, tile.recording.id));
   const turnHref = (turn: string) => `/turns/${encodeURIComponent(turn)}`;
   /** The call a card is about: the open or last one its state names, else the newest. */
   function callHref(tile: Tile): string | null {
     const call = tile.phase.kind === 'idle' ? tile.latest : tile.phase.call;
-    return call ? `${sessionHref(tile.session.id)}?call=${encodeURIComponent(call.id)}` : null;
+    return call ? `${recordingHref(tile.recording.id)}?call=${encodeURIComponent(call.id)}` : null;
   }
   const focusHref = (tile: Tile) =>
-    LivePlace.href({ ...view, focus: board?.focus === tile.session.id ? null : tile.session.id });
+    LivePlace.href({
+      ...view,
+      focus: board?.focus === tile.recording.id ? null : tile.recording.id,
+    });
   /** Escape closes the expanded card, unless a control has the key. */
   function onkeydown(event: KeyboardEvent) {
     if (event.key !== 'Escape' || !board?.focus || event.defaultPrevented) return;
@@ -235,7 +238,7 @@
       ? `\n… ${excerpt.omitted_chars.toLocaleString('en')} more characters`
       : '';
 
-  const sessionHref = (id: string) => `/recordings/${encodeURIComponent(id)}`;
+  const recordingHref = (id: string) => `/recordings/${encodeURIComponent(id)}`;
   const percent = (share: number | null) => (share === null ? '—' : `${Math.round(share * 100)}%`);
   const harnessClass = (tile: Tile) => `harness-${tile.harness ?? 'unknown'}`;
   /** The tile's facts line: model, cached share, output. The context is in the header. */
@@ -245,7 +248,7 @@
     if (tile.output !== null) parts.push(`out ${compactOrDash(tile.output)}`);
     return parts.join(' · ');
   }
-  /** The newest thing the session did, for a row. */
+  /** The newest thing the recording did, for a row. */
   function lastLine(tile: Tile): string {
     const line = tile.lines.at(-1);
     if (line?.kind === 'tools')
@@ -300,7 +303,7 @@
           class="chip warning"
           title="The window holds more than the page reads at once ({RecentCalls.pageLimit *
             RecentCalls.maxPages} calls, {LivePlace.windows[current.window]
-            .sessions} recordings): the oldest are left out. Choose a shorter window to see all of it."
+            .recordings} recordings): the oldest are left out. Choose a shorter window to see all of it."
           >partial: newest only</span
         >{/if}
     </div>
@@ -401,10 +404,10 @@
 
 {#snippet identity(tile: Tile)}
   <span class="harness-mark {harnessClass(tile)}"></span><strong
-    >{Board.clientName(tile.harness)} → {providerName(tile.session.provider)}</strong
+    >{Board.clientName(tile.harness)} → {providerName(tile.recording.provider)}</strong
   >
   <span class="mono muted" title="The session ID your client reported"
-    >{short(tile.session.native_id)}</span
+    >{short(tile.recording.native_id)}</span
   >
 {/snippet}
 
@@ -601,9 +604,9 @@
             href={item.href}
             title={item.detail ?? undefined}
             in:slide={{ axis: 'x', duration: prefersReducedMotion.current ? 0 : 180 }}
-            onpointerenter={() => (highlighted = item.session?.id ?? null)}
+            onpointerenter={() => (highlighted = item.recording?.id ?? null)}
             onpointerleave={() => (highlighted = null)}
-            ><i></i>{#if item.session}<b>{short(item.session.native_id)}</b>{/if}<span
+            ><i></i>{#if item.recording}<b>{short(item.recording.native_id)}</b>{/if}<span
               >{item.text}</span
             >{#if item.detail}<span class="muted">{item.detail}</span>{/if}{#if !item.pinned}<span
                 class="live-now-age">{ago(item, board.now)}</span
@@ -628,13 +631,13 @@
         <table class="live-rows">
           {@render rowsHead()}
           <tbody>
-            {#each board.tiles as tile (tile.session.id)}
+            {#each board.tiles as tile (tile.recording.id)}
               {@const rowChip = Board.phaseChip(tile.phase, board.now)}
               <tr class:quiet={tile.quiet}>
                 <td
                   ><a
                     class="live-open"
-                    href={sessionHref(tile.session.id)}
+                    href={recordingHref(tile.recording.id)}
                     title="Open the recording">{@render identity(tile)}</a
                   ></td
                 >
@@ -653,10 +656,10 @@
       </div>
     {:else}
       <div class="live-wall">
-        {#each board.tiles as tile (tile.session.id)}
-          {@const attention = board.attention(tile.session.id)}
+        {#each board.tiles as tile (tile.recording.id)}
+          {@const attention = board.attention(tile.recording.id)}
           {@const chip = Board.phaseChip(tile.phase, board.now)}
-          {@const focused = board.focus === tile.session.id}
+          {@const focused = board.focus === tile.recording.id}
           {@const toCall = callHref(tile)}
           <article
             class="live-tile state-{chip.mark} {harnessClass(tile)} {attention
@@ -664,10 +667,13 @@
               : ''}"
             class:quiet={tile.quiet && !focused}
             class:focused
-            class:highlighted={highlighted === tile.session.id || inHoveredSeries(tile)}
+            class:highlighted={highlighted === tile.recording.id || inHoveredSeries(tile)}
           >
             <header class="live-tile-head">
-              <a class="live-open" href={sessionHref(tile.session.id)} title="Open the recording"
+              <a
+                class="live-open"
+                href={recordingHref(tile.recording.id)}
+                title="Open the recording"
                 >{@render identity(tile)}<span class="live-open-hint"
                   ><Icon name="arrow" size={11} /></span
                 ></a
@@ -1161,7 +1167,7 @@
     background: var(--surface);
   }
   /*
-   * Quiet sessions fade to dim once, as they go quiet; hovering brings one
+   * Quiet recordings fade to dim once, as they go quiet; hovering brings one
    * back at once, with no transition either way.
    */
   .live-tile.quiet,
@@ -1667,7 +1673,7 @@
     color: var(--muted);
   }
 
-  /* Rows: the same board, one line per session. */
+  /* Rows: the same board, one line per recording. */
   .live-rows-wrap {
     flex: 1;
     min-height: 0;

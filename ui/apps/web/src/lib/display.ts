@@ -649,11 +649,11 @@ export function span(ms: number): string {
 
 /** Recordings get one of eight colors, the same for an ID everywhere. A class,
  * not an inline style, so the CSP stays strict. */
-export const SESSION_TONES = 8;
-export function sessionTone(id: string): number {
+export const RECORDING_TONES = 8;
+export function recordingTone(id: string): number {
   let hash = 0;
   for (const char of id) hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
-  return hash % SESSION_TONES;
+  return hash % RECORDING_TONES;
 }
 
 /**

@@ -31,7 +31,7 @@
     { label: 'Tokens in · out', numeric: true },
     { label: 'Active for', numeric: true },
   ];
-  const sessions = $derived(current?.recordings ?? []);
+  const recordings = $derived(current?.recordings ?? []);
   let query = $state('');
   // Relative times tick between refreshes.
   let now = $state(Date.now());
@@ -41,7 +41,7 @@
   });
   const list = $derived(
     new RecordingList({
-      sessions,
+      recordings,
       details: current?.details ?? new Map(),
       open: current?.open ?? [],
       now,
@@ -50,18 +50,18 @@
     }),
   );
   const shown = $derived(list.groups.reduce((sum, group) => sum + group.rows.length, 0));
-  const sessionHref = (id: string) => `/recordings/${encodeURIComponent(id)}`;
+  const recordingHref = (id: string) => `/recordings/${encodeURIComponent(id)}`;
   function open(event: MouseEvent, row: RecordingRow) {
     if (event.target instanceof Element && event.target.closest('a,button,summary')) return;
     if (window.getSelection()?.toString()) return;
-    void goto(sessionHref(row.session.id));
+    void goto(recordingHref(row.recording.id));
   }
 </script>
 
 {#snippet scope()}
   <div class="scope-group">
     <strong
-      >{#if pending}<Skeleton width="2em" />{:else}{sessions.length}{sessions.length === 100
+      >{#if pending}<Skeleton width="2em" />{:else}{recordings.length}{recordings.length === 100
           ? '+'
           : ''}{/if}</strong
     >
@@ -95,65 +95,66 @@
 
 {#snippet columns()}
   <colgroup
-    ><col class="col-session" /><col class="col-now" /><col class="col-requests" /><col
+    ><col class="col-recording" /><col class="col-now" /><col class="col-requests" /><col
       class="col-turns"
     /><col class="col-tokens" /><col class="col-active" /></colgroup
   >
 {/snippet}
 
 {#snippet row(row: RecordingRow)}
-  {@const session = row.session}
-  <tr class="call-row session-row" onclick={(event) => open(event, row)}>
+  {@const recording = row.recording}
+  <tr class="call-row recording-row" onclick={(event) => open(event, row)}>
     <!-- The edge sits on the cell: on a row, its ::before would become a cell of its own. -->
-    <td class="session-cell state-edge {row.now.kind === 'open' ? `state-${row.now.mark}` : ''}">
-      <a class="row-link session-link" href={sessionHref(session.id)}>
-        <span class="session-title">
+    <td class="recording-cell state-edge {row.now.kind === 'open' ? `state-${row.now.mark}` : ''}">
+      <a class="row-link recording-link" href={recordingHref(recording.id)}>
+        <span class="recording-title">
           <span class="harness-mark harness-{row.harness ?? 'unknown'}"></span>
           <strong>{row.client}</strong>
-          {#if row.detail?.prompt}<span class="session-prompt">{row.detail.prompt.text}</span
-            >{:else}<span class="session-prompt muted">no prompt yet</span>{/if}
+          {#if row.detail?.prompt}<span class="recording-prompt">{row.detail.prompt.text}</span
+            >{:else}<span class="recording-prompt muted">no prompt yet</span>{/if}
         </span>
-        <span class="session-meta mono">
-          {#if row.detail?.workdir}<span class="session-folder" title={row.detail.workdir}
+        <span class="recording-meta mono">
+          {#if row.detail?.workdir}<span class="recording-folder" title={row.detail.workdir}
               >{Board.folder(row.detail.workdir)}</span
             >{/if}
-          <span title="The session ID your client reported">{short(session.native_id)}</span>
-          <span class="provider-mark tiny {session.provider}" title={providerName(session.provider)}
-            >{providerMark(session.provider)}</span
+          <span title="The session ID your client reported">{short(recording.native_id)}</span>
+          <span
+            class="provider-mark tiny {recording.provider}"
+            title={providerName(recording.provider)}>{providerMark(recording.provider)}</span
           >
-          {#if session.error_count}<span class="session-errors"
-              >{num(session.error_count)} error{session.error_count === 1 ? '' : 's'}</span
+          {#if recording.error_count}<span class="recording-errors"
+              >{num(recording.error_count)} error{recording.error_count === 1 ? '' : 's'}</span
             >{/if}
         </span>
       </a>
     </td>
-    <td class="session-now mono">
+    <td class="recording-now mono">
       {#if row.now.kind === 'open'}<span class="now-open state-{row.now.mark}"
           ><StateGlyph mark={row.now.mark} />{row.now.label}</span
         >{:else if row.now.kind === 'recent'}<span class="now-recent"
           ><span class="recent-dot"></span>active {ago(row.now.at, now)}</span
         >{:else}<span class="muted" title={clock(row.now.at)}>{clock(row.now.at)}</span>{/if}
     </td>
-    <td class="numeric mono sized">{num(session.call_count)}{@render bar(row.requests)}</td>
-    <td class="numeric mono">{num(session.turn_count)}</td>
+    <td class="numeric mono sized">{num(recording.call_count)}{@render bar(row.requests)}</td>
+    <td class="numeric mono">{num(recording.turn_count)}</td>
     <td
       class="numeric mono sized"
       title="Provider reported; input includes cached context. Not subscription allowance or charges."
-      >{compactOrDash(session.tokens.input)}
-      <span class="muted">· {compactOrDash(session.tokens.output)}</span>{@render bar(
+      >{compactOrDash(recording.tokens.input)}
+      <span class="muted">· {compactOrDash(recording.tokens.output)}</span>{@render bar(
         row.tokens,
       )}</td
     >
-    <td class="numeric mono muted">{span(session.last_seen - session.first_seen)}</td>
+    <td class="numeric mono muted">{span(recording.last_seen - recording.first_seen)}</td>
   </tr>
 {/snippet}
 
 <Toolbar {scope} />
-<section class="panel list-panel sessions-panel">
+<section class="panel list-panel recordings-panel">
   <div class="list-content">
     {#if pending || shown || list.folded.length}
       <div class="table-scroll">
-        <table class="sessions-table" aria-busy={pending}>
+        <table class="recordings-table" aria-busy={pending}>
           {@render columns()}
           <thead
             ><tr
@@ -169,13 +170,13 @@
                 ><th colspan="6">{group.label}<span class="muted"> · {group.rows.length}</span></th
                 ></tr
               >
-              {#each group.rows as each (each.session.id)}{@render row(each)}{/each}
+              {#each group.rows as each (each.recording.id)}{@render row(each)}{/each}
             </tbody>
           {/each}
         </table>
       </div>
       {#if list.folded.length}
-        <details class="sessions-folded">
+        <details class="recordings-folded">
           <summary
             >{list.folded.length} single-call recording{list.folded.length === 1 ? '' : 's'} with no turns<span
               class="muted"
@@ -183,10 +184,10 @@
               · a client's own checks, most often; select to list them</span
             ></summary
           >
-          <table class="sessions-table">
+          <table class="recordings-table">
             {@render columns()}
             <tbody>
-              {#each list.folded as each (each.session.id)}{@render row(each)}{/each}
+              {#each list.folded as each (each.recording.id)}{@render row(each)}{/each}
             </tbody>
           </table>
         </details>
@@ -221,11 +222,11 @@
     color: var(--muted);
   }
   /* Fixed columns, so the folded table lines up with the one above it. */
-  .sessions-table {
+  .recordings-table {
     width: 100%;
     table-layout: fixed;
   }
-  .col-session {
+  .col-recording {
     width: auto;
   }
   .col-now {
@@ -243,14 +244,14 @@
   .col-active {
     width: 110px;
   }
-  .sessions-table td {
+  .recordings-table td {
     vertical-align: middle;
   }
   /* A row: who and what, then the state now, then how big it got. */
-  .session-cell {
+  .recording-cell {
     overflow: hidden;
   }
-  .session-link {
+  .recording-link {
     display: flex;
     flex-direction: column;
     /* The global row link centres its items; in a column that would centre them across. */
@@ -259,24 +260,24 @@
     min-width: 0;
     padding-left: 4px;
   }
-  .session-title {
+  .recording-title {
     display: flex;
     align-items: center;
     gap: 0;
     min-width: 0;
   }
-  .session-title strong {
+  .recording-title strong {
     flex: none;
     margin-right: 10px;
     font-weight: 600;
   }
-  .session-prompt {
+  .recording-prompt {
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
-  .session-meta {
+  .recording-meta {
     display: flex;
     align-items: center;
     gap: 10px;
@@ -284,16 +285,16 @@
     color: var(--muted);
     font-size: 11px;
   }
-  .session-folder {
+  .recording-folder {
     color: var(--ink);
   }
-  .session-errors {
+  .recording-errors {
     padding: 0 5px;
     border: 1px solid currentColor;
     border-radius: 2px;
     color: var(--error);
   }
-  .session-now {
+  .recording-now {
     font-size: 11.5px;
     white-space: nowrap;
   }
@@ -343,36 +344,36 @@
   .day-row .muted {
     font-weight: 400;
   }
-  .sessions-folded {
+  .recordings-folded {
     border-top: 1px solid var(--line);
   }
-  .sessions-folded summary {
+  .recordings-folded summary {
     padding: 10px 12px;
     color: var(--ink);
     font-size: 12px;
     cursor: pointer;
   }
-  .sessions-folded summary:hover {
+  .recordings-folded summary:hover {
     background: var(--row-hover);
   }
-  .sessions-folded[open] summary {
+  .recordings-folded[open] summary {
     border-bottom: 1px solid var(--line);
   }
   @media (max-width: 760px) {
-    .sessions-table th:nth-child(n + 3),
-    .sessions-table td:nth-child(n + 3),
-    .sessions-table col:nth-child(n + 3) {
+    .recordings-table th:nth-child(n + 3),
+    .recordings-table td:nth-child(n + 3),
+    .recordings-table col:nth-child(n + 3) {
       display: none;
     }
-    /* Narrow: two columns that share the width, the session taking what is left. */
-    .sessions-table {
+    /* Narrow: two columns that share the width, the recording taking what is left. */
+    .recordings-table {
       table-layout: auto;
     }
-    .session-cell {
+    .recording-cell {
       width: 100%;
       max-width: 0;
     }
-    .session-now {
+    .recording-now {
       white-space: normal;
     }
     .day-row th {
