@@ -242,14 +242,72 @@ pub enum ChannelEnd {
     Recovered,
 }
 
-/// How an agent process exited, as the host reported it.
+/// How an agent process exited, as the host reported it. Stored and sent as
+/// its [`ExitParts`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "snake_case", tag = "kind", content = "value")]
+#[serde(into = "ExitParts", try_from = "ExitParts")]
 pub enum ProcessExit {
     Code(i32),
     Signal(i32),
     /// The host could not say how the process exited.
     Unknown,
+}
+
+/// The kind of a [`ProcessExit`].
+#[derive(Display, EnumString, IntoStaticStr, VariantArray)]
+#[strum(serialize_all = "snake_case")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SerializeDisplay, DeserializeFromStr)]
+pub enum ExitKind {
+    Code,
+    Signal,
+    Unknown,
+}
+
+/// A [`ProcessExit`] as stored and sent: its kind, and the value a code or
+/// a signal carries.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ExitParts {
+    pub kind: ExitKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub value: Option<i32>,
+}
+
+/// Exit parts whose value does not fit their kind: a code or a signal
+/// without one, or an unknown exit with one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[error("a {kind} exit {}", if value.is_some() { "carries no value" } else { "needs a value" })]
+pub struct ExitMismatch {
+    pub kind: ExitKind,
+    pub value: Option<i32>,
+}
+
+impl From<ProcessExit> for ExitParts {
+    fn from(exit: ProcessExit) -> Self {
+        let (kind, value) = match exit {
+            ProcessExit::Code(code) => (ExitKind::Code, Some(code)),
+            ProcessExit::Signal(signal) => (ExitKind::Signal, Some(signal)),
+            ProcessExit::Unknown => (ExitKind::Unknown, None),
+        };
+        Self { kind, value }
+    }
+}
+
+impl TryFrom<ExitParts> for ProcessExit {
+    type Error = ExitMismatch;
+
+    fn try_from(parts: ExitParts) -> Result<Self, Self::Error> {
+        match (parts.kind, parts.value) {
+            (ExitKind::Code, Some(code)) => Ok(Self::Code(code)),
+            (ExitKind::Signal, Some(signal)) => Ok(Self::Signal(signal)),
+            (ExitKind::Unknown, None) => Ok(Self::Unknown),
+            (ExitKind::Code | ExitKind::Signal, None) | (ExitKind::Unknown, Some(_)) => {
+                Err(ExitMismatch {
+                    kind: parts.kind,
+                    value: parts.value,
+                })
+            }
+        }
+    }
 }
 
 /// How a run, one agent process Ren started and drove, ended. The process's
@@ -277,4 +335,43 @@ pub enum RunEnd {
     /// next prompt starts one again (a draft never asked anything and holding
     /// nothing is discarded instead).
     Idled,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ExitKind, ExitMismatch, ExitParts, ProcessExit};
+    use serde_json::json;
+
+    #[test]
+    fn an_exit_is_sent_as_its_kind_and_value() {
+        for (exit, wire) in [
+            (ProcessExit::Code(1), json!({ "kind": "code", "value": 1 })),
+            (
+                ProcessExit::Signal(9),
+                json!({ "kind": "signal", "value": 9 }),
+            ),
+            (ProcessExit::Unknown, json!({ "kind": "unknown" })),
+        ] {
+            assert_eq!(serde_json::to_value(exit).unwrap(), wire);
+            assert_eq!(serde_json::from_value::<ProcessExit>(wire).unwrap(), exit);
+        }
+    }
+
+    #[test]
+    fn parts_whose_value_does_not_fit_their_kind_are_refused() {
+        for (kind, value) in [
+            (ExitKind::Code, None),
+            (ExitKind::Signal, None),
+            (ExitKind::Unknown, Some(0)),
+        ] {
+            assert_eq!(
+                ProcessExit::try_from(ExitParts { kind, value }),
+                Err(ExitMismatch { kind, value })
+            );
+        }
+        assert!(serde_json::from_value::<ProcessExit>(json!({ "kind": "code" })).is_err());
+        assert!(
+            serde_json::from_value::<ProcessExit>(json!({ "kind": "exited", "value": 0 })).is_err()
+        );
+    }
 }

@@ -4,6 +4,7 @@
 // here at the boundary; the wording the Sessions view shows is pure and
 // tested in tests/signIn.test.ts.
 import { versioned } from './api.ts';
+import { processExit, type ProcessExit } from './exit.ts';
 import {
   assertNever,
   isRecord,
@@ -41,10 +42,6 @@ export type SignInState =
 
 /** The page a login asks the operator to open: always `https`. */
 export type SignInLink = string & { readonly __brand: 'SignInLink' };
-
-/** How a process exited. */
-export type ProcessExit =
-  { kind: 'code'; value: number } | { kind: 'signal'; value: number } | { kind: 'unknown' };
 
 /** How a login ended. Whether it signed the client in is the check after it. */
 export type LoginEnd =
@@ -103,21 +100,6 @@ const signInLink: Decoder<SignInLink> = (value, path) => {
   }
   if (url.protocol !== 'https:') throw new ShapeError(path, 'an https link');
   return text as SignInLink;
-};
-
-const processExit: Decoder<ProcessExit> = (value, path) => {
-  if (!isRecord(value)) throw new ShapeError(path, 'an object');
-  switch (value.kind) {
-    case 'code':
-    case 'signal': {
-      const number = value.value;
-      if (typeof number !== 'number' || !Number.isInteger(number))
-        throw new ShapeError(`${path}.value`, 'an integer');
-      return { kind: value.kind, value: number };
-    }
-    default:
-      return { kind: 'unknown' };
-  }
 };
 
 const loginEnd: Decoder<LoginEnd> = (value, path) => {

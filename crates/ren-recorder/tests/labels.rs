@@ -64,6 +64,7 @@ fn every_label_is_pinned() {
         capture::Omission,
         capture::ChannelEnd,
         capture::RunEnd,
+        capture::ExitKind,
         batch::ObservationKind,
         batch::HistoryChange,
         secrets::SecretKind,

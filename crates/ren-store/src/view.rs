@@ -27,8 +27,8 @@ use ren_recorder::inspection::{InspectionRecord, UsageRecord};
 use ren_recorder::routing::OperatorRevision;
 use ren_recorder::{
     capture::{
-        AttemptPhase, AttemptTerminal, BodyEnding, CallRejection, CallState, ChannelEnd,
-        ProcessExit, RunEnd, TerminalCause,
+        AttemptPhase, AttemptTerminal, BodyEnding, CallRejection, CallState, ChannelEnd, ExitKind,
+        ExitParts, ProcessExit, RunEnd, TerminalCause,
     },
     id::{AttachmentId, AttemptId, CallId, ChannelId, RecordingId, RunId, SessionId, TurnId},
     time::UnixMillis,
@@ -640,12 +640,15 @@ impl RunView {
     pub(super) fn from_row(row: &SqliteRow) -> Result<Self, StoreError> {
         let row = Columns(row);
         let value: Option<i32> = row.0.try_get("exit_value")?;
-        let exit = match (row.text("exit_kind")?.as_deref(), value) {
-            (Some("code"), Some(code)) => Some(ProcessExit::Code(code)),
-            (Some("signal"), Some(signal)) => Some(ProcessExit::Signal(signal)),
-            (Some("unknown"), None) => Some(ProcessExit::Unknown),
+        let exit = match (row.optional_label::<ExitKind>("exit_kind")?, value) {
+            (Some(Stored::Known(kind)), value) => Some(
+                ProcessExit::try_from(ExitParts { kind, value })
+                    .map_err(|_| StoreError::Corrupt("run exit"))?,
+            ),
             (None, None) => None,
-            (Some(_), _) | (None, Some(_)) => return Err(StoreError::Corrupt("run exit")),
+            (Some(Stored::Unknown(_)), _) | (None, Some(_)) => {
+                return Err(StoreError::Corrupt("run exit"));
+            }
         };
         Ok(Self {
             id: row.id("id")?,

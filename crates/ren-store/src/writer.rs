@@ -27,7 +27,7 @@ use ren_recorder::{
     retention::RetentionPolicy,
 };
 use ren_recorder::{
-    capture::{BodyEnding, CallState, ChannelEnd, ProcessExit, RunEnd},
+    capture::{BodyEnding, CallState, ChannelEnd, ExitParts, RunEnd},
     id::{CallId, ChannelId, IdSource, RecordingId, RunId, TurnId},
     routing::OperatorRevision,
     time::{Clock, Moment, UnixMillis},
@@ -891,12 +891,9 @@ impl MetadataTx<'_> {
                     .await?;
             }
             RunFact::Ended { end, exit } => {
-                let (kind, value) = match exit {
-                    Some(ProcessExit::Code(code)) => (Some("code"), Some(*code)),
-                    Some(ProcessExit::Signal(signal)) => (Some("signal"), Some(*signal)),
-                    Some(ProcessExit::Unknown) => (Some("unknown"), None),
-                    None => (None, None),
-                };
+                let parts = exit.map(ExitParts::from);
+                let kind = parts.map(|parts| parts.kind.label());
+                let value = parts.and_then(|parts| parts.value);
                 sqlx::query(
                     "UPDATE runs SET ended_at = ?, run_end = ?, exit_kind = ?, exit_value = ? WHERE id = ?",
                 )
