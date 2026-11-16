@@ -3417,6 +3417,7 @@ dependencies = [
  "futures-util",
  "ren-daemon",
  "ren-gateway",
+ "ren-git",
  "ren-harness",
  "ren-protocol",
  "ren-recorder",
