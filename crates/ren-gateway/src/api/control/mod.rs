@@ -275,7 +275,7 @@ impl ControlApi {
 
     /// A configured user; any other name is not found.
     fn user(&self, text: &str) -> Result<UserId, ControlRefusal> {
-        UserId::parse(text)
+        text.parse::<UserId>()
             .ok()
             .filter(|user| self.users.knows(user))
             .ok_or(ControlRefusal::NotFound)

@@ -817,7 +817,7 @@ mod tests {
         let key = OperatorKey::new("sk-FIXTURE").unwrap();
         assert!(!format!("{key:?}").contains("FIXTURE"));
         let entry = |provider: Provider, auth: UpstreamAuth| UpstreamEntry {
-            id: UpstreamId::parse("fixture").unwrap(),
+            id: "fixture".parse::<UpstreamId>().unwrap(),
             api: provider.native_api(),
             url: UpstreamUrl::parse("https://example.com").unwrap(),
             auth,

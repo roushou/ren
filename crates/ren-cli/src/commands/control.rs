@@ -19,7 +19,6 @@ use ren_recorder::{
     id::{CallId, RecordingId, RunId},
 };
 use std::process::ExitCode;
-use uuid::Uuid;
 
 /// Pause, block, and cancel through the running daemon (operator controls).
 #[derive(Args)]
@@ -107,7 +106,6 @@ struct PauseArgs {
 #[derive(Args)]
 struct NativeSessionArg {
     /// The client's native session id (a UUID).
-    #[arg(value_parser = NativeSessionArg::parse)]
     session: NativeSessionId,
 }
 
@@ -141,15 +139,6 @@ struct CancelArgs {
     /// Also block the call's session for this many seconds.
     #[arg(long)]
     block_session: Option<u64>,
-}
-
-impl NativeSessionArg {
-    fn parse(text: &str) -> Result<NativeSessionId, String> {
-        Uuid::try_parse(text)
-            .ok()
-            .and_then(NativeSessionId::new)
-            .ok_or_else(|| "a session id is a non-nil UUID".to_owned())
-    }
 }
 
 /// Where control requests go: this host's daemon, authorized by the control

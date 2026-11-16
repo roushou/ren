@@ -27,7 +27,7 @@ fn every_read() -> Vec<ReadRequest> {
     filtered.filter = CallFilter {
         recording: Some(session),
         client: Some(Harness::Codex),
-        user: Some(UserId::parse("alice").unwrap()),
+        user: Some("alice".parse::<UserId>().unwrap()),
         kind: Some(KindFilter::Model),
         provider: Some(Provider::OpenAi),
         model: Some(SearchText::new("gpt & co").unwrap()),

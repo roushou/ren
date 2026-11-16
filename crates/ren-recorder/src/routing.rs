@@ -21,7 +21,17 @@ impl ConfigRevision {
 /// An upstream entry's identifier from configuration: lowercase ASCII
 /// letters, digits, `-` and `_`, at most 64 bytes. Each provider has a default
 /// entry named after it.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize)]
+#[derive(
+    Debug,
+    Clone,
+    PartialEq,
+    Eq,
+    Hash,
+    PartialOrd,
+    Ord,
+    serde::Serialize,
+    serde_with::DeserializeFromStr,
+)]
 #[serde(transparent)]
 pub struct UpstreamId(Box<str>);
 
@@ -30,19 +40,6 @@ pub struct UpstreamId(Box<str>);
 pub struct InvalidUpstreamId;
 
 impl UpstreamId {
-    pub fn parse(id: &str) -> Result<Self, InvalidUpstreamId> {
-        let valid = !id.is_empty()
-            && id.len() <= 64
-            && id.bytes().all(|byte| {
-                byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-' || byte == b'_'
-            });
-        if valid {
-            Ok(Self(id.into()))
-        } else {
-            Err(InvalidUpstreamId)
-        }
-    }
-
     /// The id of a provider's native entry, which the gateway's upstream
     /// table builds for every provider.
     pub fn default_for(provider: Provider) -> Self {
@@ -58,14 +55,16 @@ impl std::str::FromStr for UpstreamId {
     type Err = InvalidUpstreamId;
 
     fn from_str(id: &str) -> Result<Self, Self::Err> {
-        Self::parse(id)
-    }
-}
-
-impl<'de> serde::Deserialize<'de> for UpstreamId {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let text = String::deserialize(deserializer)?;
-        Self::parse(&text).map_err(serde::de::Error::custom)
+        let valid = !id.is_empty()
+            && id.len() <= 64
+            && id.bytes().all(|byte| {
+                byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-' || byte == b'_'
+            });
+        if valid {
+            Ok(Self(id.into()))
+        } else {
+            Err(InvalidUpstreamId)
+        }
     }
 }
 

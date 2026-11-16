@@ -59,15 +59,19 @@ mod tests {
     #[test]
     fn each_user_and_the_unnamed_callers_have_their_own_limit() {
         let user = |name: &str, limit: Option<u32>| UserConfig {
-            id: UserId::parse(name).unwrap(),
-            tailscale_logins: vec![TailscaleLogin::parse(&format!("{name}@example.com")).unwrap()],
+            id: name.parse::<UserId>().unwrap(),
+            tailscale_logins: vec![
+                format!("{name}@example.com")
+                    .parse::<TailscaleLogin>()
+                    .unwrap(),
+            ],
             token_blake3: None,
             max_concurrent: limit.and_then(NonZeroU32::new),
         };
         let users = Users::new(vec![user("alice", Some(1)), user("bob", None)]).unwrap();
         let limits = UserLimits::new(&users, Some(1));
         let caller = |name: &str| Caller::User {
-            user: UserId::parse(name).unwrap(),
+            user: name.parse::<UserId>().unwrap(),
             proof: Proof::Token { login: None },
         };
         let alice = limits.admit(&caller("alice")).unwrap();

@@ -54,13 +54,13 @@ fn config(mock: &Mock, tokens: &Tokens) -> Config {
     Config {
         users: vec![
             UserConfig {
-                id: UserId::parse("alice").unwrap(),
-                tailscale_logins: vec![TailscaleLogin::parse("alice@example.com").unwrap()],
+                id: "alice".parse::<UserId>().unwrap(),
+                tailscale_logins: vec!["alice@example.com".parse::<TailscaleLogin>().unwrap()],
                 token_blake3: None,
                 max_concurrent: None,
             },
             UserConfig {
-                id: UserId::parse("bob").unwrap(),
+                id: "bob".parse::<UserId>().unwrap(),
                 tailscale_logins: vec![],
                 token_blake3: Some(TokenDigest::of(&tokens.bob)),
                 max_concurrent: None,
@@ -146,7 +146,7 @@ async fn every_call_records_its_caller_and_identity_never_reaches_the_provider()
     let reader = Reader::open(dir.path(), 1).await.unwrap();
     let query = CallQuery {
         filter: CallFilter {
-            user: Some(UserId::parse("bob").unwrap()),
+            user: Some("bob".parse::<UserId>().unwrap()),
             ..CallFilter::default()
         },
         ..CallQuery::default()
@@ -220,13 +220,13 @@ async fn an_entry_for_some_users_refuses_everyone_else_before_forwarding() {
     let tokens = tokens();
     let config = Config {
         upstreams: vec![UpstreamConfig {
-            id: UpstreamId::parse("team-key").unwrap(),
+            id: "team-key".parse::<UpstreamId>().unwrap(),
             provider: Provider::Anthropic,
             wire: None,
             base_url: format!("http://{}", mock.address),
             operator_key_env: TestGateway::OPERATOR_KEY_ENV.into(),
             ingress: EntryIngress::Direct,
-            users: Some(vec![UserId::parse("bob").unwrap()]),
+            users: Some(vec!["bob".parse::<UserId>().unwrap()]),
         }],
         ..config(&mock, &tokens)
     };

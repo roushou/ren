@@ -331,7 +331,7 @@ mod tests {
 
     #[test]
     fn user_blocks_expire_and_older_snapshots_have_none() {
-        let user = UserId::parse("alice").unwrap();
+        let user = "alice".parse::<UserId>().unwrap();
         let now = UnixMillis::from_millis(1_000);
         let blocked = OperatorState::default().apply(OperatorCommand::block_user(
             user.clone(),
@@ -340,7 +340,7 @@ mod tests {
         ));
         assert!(blocked.blocks_user(&user, now));
         assert!(!blocked.blocks_user(&user, UnixMillis::from_millis(61_000)));
-        assert!(!blocked.blocks_user(&UserId::parse("bob").unwrap(), now));
+        assert!(!blocked.blocks_user(&"bob".parse::<UserId>().unwrap(), now));
         let unblocked = blocked.apply(OperatorCommand::UnblockUser { user: user.clone() });
         assert!(!unblocked.blocks_user(&user, now));
         let json = serde_json::to_string(&blocked).unwrap();

@@ -26,7 +26,7 @@ fn upstreams() -> Vec<UpstreamSummary> {
             })
             .collect();
     entries.push(UpstreamSummary {
-        id: UpstreamId::parse("anthropic-key").unwrap(),
+        id: "anthropic-key".parse::<UpstreamId>().unwrap(),
         provider: Provider::Anthropic,
         auth: AuthKind::OperatorKey,
         users: EntryUsers::Anyone,
@@ -120,7 +120,7 @@ fn plans_admit_block_transform_and_fall_over() {
 fn a_call_sent_first_to_an_operator_key_entry_never_falls_over() {
     let policy = policy(RULES).unwrap();
     let operator = OperatorState::default();
-    let direct = UpstreamId::parse("anthropic-key").unwrap();
+    let direct = "anthropic-key".parse::<UpstreamId>().unwrap();
     let call = CallFacts {
         upstream: &direct,
         ..facts(Provider::Anthropic, Some("fixture-sonnet"))
@@ -135,8 +135,8 @@ fn a_call_sent_first_to_an_operator_key_entry_never_falls_over() {
 
 #[test]
 fn an_entry_for_some_users_refuses_others_and_never_takes_their_fallback() {
-    let alice = UserId::parse("alice").unwrap();
-    let bob = UserId::parse("bob").unwrap();
+    let alice = "alice".parse::<UserId>().unwrap();
+    let bob = "bob".parse::<UserId>().unwrap();
     let mut entries = upstreams();
     for entry in &mut entries {
         if entry.auth == AuthKind::OperatorKey {
@@ -145,7 +145,7 @@ fn an_entry_for_some_users_refuses_others_and_never_takes_their_fallback() {
     }
     let policy = Policy::new(toml::from_str(RULES).unwrap(), &entries).unwrap();
     let operator = OperatorState::default();
-    let key = UpstreamId::parse("anthropic-key").unwrap();
+    let key = "anthropic-key".parse::<UpstreamId>().unwrap();
     for (user, admitted) in [(Some(&alice), true), (Some(&bob), false), (None, false)] {
         let direct = CallFacts {
             upstream: &key,
@@ -197,8 +197,8 @@ reason = "fixture"
     )
     .unwrap();
     let operator = OperatorState::default();
-    let bob = UserId::parse("bob").unwrap();
-    let key = UpstreamId::parse("anthropic-key").unwrap();
+    let bob = "bob".parse::<UserId>().unwrap();
+    let key = "anthropic-key".parse::<UpstreamId>().unwrap();
     let blocked = |facts: CallFacts<'_>| match rules.plan(&facts, &operator).admission {
         Admission::Reject(Rejection::Blocked { rule, .. }) => Some(rule.as_str().to_owned()),
         Admission::Admit | Admission::Reject(_) => None,

@@ -24,7 +24,7 @@ fn every_route_is_pinned() {
     // Configured entries mount routes only when they opt in.
     let configured = |id: &str, api: Api, ingress| ConfiguredEntry {
         entry: UpstreamEntry {
-            id: UpstreamId::parse(id).unwrap(),
+            id: id.parse::<UpstreamId>().unwrap(),
             api,
             url: url(),
             auth: UpstreamAuth::OperatorKey(OperatorKey::new("fixture").unwrap()),

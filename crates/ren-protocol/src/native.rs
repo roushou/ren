@@ -5,8 +5,15 @@
 use crate::text::{WireText, WireTextError};
 use uuid::Uuid;
 
+/// Text that is not a native identifier: a non-nil UUID.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[error("a {kind} id is a non-nil UUID")]
+pub struct InvalidNativeId {
+    kind: &'static str,
+}
+
 macro_rules! native_id {
-    ($(#[$meta:meta])* $name:ident) => {
+    ($(#[$meta:meta])* $name:ident, $kind:literal) => {
         $(#[$meta])*
         #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
         #[serde(transparent)]
@@ -28,20 +35,34 @@ macro_rules! native_id {
                 self.0.hyphenated().fmt(f)
             }
         }
+
+        impl std::str::FromStr for $name {
+            type Err = InvalidNativeId;
+
+            fn from_str(text: &str) -> Result<Self, Self::Err> {
+                Uuid::try_parse(text)
+                    .ok()
+                    .and_then(Self::new)
+                    .ok_or(InvalidNativeId { kind: $kind })
+            }
+        }
     };
 }
 
 native_id!(
     /// A client's own session identifier.
-    NativeSessionId
+    NativeSessionId,
+    "session"
 );
 native_id!(
     /// A client's own turn or prompt identifier.
-    NativeTurnId
+    NativeTurnId,
+    "turn"
 );
 native_id!(
     /// A client's own thread identifier (Codex).
-    NativeThreadId
+    NativeThreadId,
+    "thread"
 );
 
 macro_rules! wire_id {
@@ -133,5 +154,28 @@ impl MessageHints {
 
     pub fn is_malformed(&self) -> bool {
         self.malformed == Malformed::Yes
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{InvalidNativeId, NativeSessionId, NativeTurnId};
+
+    #[test]
+    fn native_ids_parse_from_non_nil_uuids() {
+        let text = "0b6a3c1e-7f2d-4a8b-9c5e-1d2f3a4b5c6d";
+        let id: NativeSessionId = text.parse().unwrap();
+        assert_eq!(id.to_string(), text);
+        for bad in ["", "not-a-uuid", "00000000-0000-0000-0000-000000000000"] {
+            assert_eq!(
+                bad.parse::<NativeSessionId>(),
+                Err(InvalidNativeId { kind: "session" }),
+                "{bad:?}"
+            );
+        }
+        assert_eq!(
+            "nope".parse::<NativeTurnId>().unwrap_err().to_string(),
+            "a turn id is a non-nil UUID"
+        );
     }
 }

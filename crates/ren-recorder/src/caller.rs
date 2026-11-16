@@ -11,7 +11,9 @@ use strum::{Display, EnumString, IntoStaticStr, VariantArray};
 
 /// An operator-named user of the gateway, from configuration: lowercase
 /// ASCII letters, digits, `-` and `_`, at most 64 bytes.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, DeserializeFromStr,
+)]
 #[serde(transparent)]
 pub struct UserId(Box<str>);
 
@@ -20,7 +22,15 @@ pub struct UserId(Box<str>);
 pub struct InvalidUserId;
 
 impl UserId {
-    pub fn parse(id: &str) -> Result<Self, InvalidUserId> {
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::str::FromStr for UserId {
+    type Err = InvalidUserId;
+
+    fn from_str(id: &str) -> Result<Self, Self::Err> {
         let valid = !id.is_empty()
             && id.len() <= 64
             && id.bytes().all(|byte| {
@@ -32,25 +42,6 @@ impl UserId {
             Err(InvalidUserId)
         }
     }
-
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-impl std::str::FromStr for UserId {
-    type Err = InvalidUserId;
-
-    fn from_str(id: &str) -> Result<Self, Self::Err> {
-        Self::parse(id)
-    }
-}
-
-impl<'de> serde::Deserialize<'de> for UserId {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let text = String::deserialize(deserializer)?;
-        Self::parse(&text).map_err(serde::de::Error::custom)
-    }
 }
 
 impl std::fmt::Display for UserId {
@@ -61,7 +52,9 @@ impl std::fmt::Display for UserId {
 
 /// A tailnet login name, as Tailscale Serve reports it in
 /// `Tailscale-User-Login`: 1 to 256 visible ASCII characters.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, DeserializeFromStr,
+)]
 #[serde(transparent)]
 pub struct TailscaleLogin(Box<str>);
 
@@ -70,14 +63,6 @@ pub struct TailscaleLogin(Box<str>);
 pub struct InvalidTailscaleLogin;
 
 impl TailscaleLogin {
-    pub fn parse(login: &str) -> Result<Self, InvalidTailscaleLogin> {
-        if (1..=256).contains(&login.len()) && login.bytes().all(|byte| byte.is_ascii_graphic()) {
-            Ok(Self(login.into()))
-        } else {
-            Err(InvalidTailscaleLogin)
-        }
-    }
-
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -87,14 +72,11 @@ impl std::str::FromStr for TailscaleLogin {
     type Err = InvalidTailscaleLogin;
 
     fn from_str(login: &str) -> Result<Self, Self::Err> {
-        Self::parse(login)
-    }
-}
-
-impl<'de> serde::Deserialize<'de> for TailscaleLogin {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let text = String::deserialize(deserializer)?;
-        Self::parse(&text).map_err(serde::de::Error::custom)
+        if (1..=256).contains(&login.len()) && login.bytes().all(|byte| byte.is_ascii_graphic()) {
+            Ok(Self(login.into()))
+        } else {
+            Err(InvalidTailscaleLogin)
+        }
     }
 }
 
@@ -204,20 +186,20 @@ mod tests {
 
     #[test]
     fn ids_and_logins_parse_only_their_grammar() {
-        assert!(UserId::parse("alice-2_ci").is_ok());
+        assert!("alice-2_ci".parse::<UserId>().is_ok());
         for bad in ["", "Alice", "a b", "a/b", &"a".repeat(65)] {
-            assert!(UserId::parse(bad).is_err(), "{bad:?}");
+            assert!(bad.parse::<UserId>().is_err(), "{bad:?}");
         }
-        assert!(TailscaleLogin::parse("alice@example.com").is_ok());
+        assert!("alice@example.com".parse::<TailscaleLogin>().is_ok());
         for bad in ["", "a b", "é", &"a".repeat(257)] {
-            assert!(TailscaleLogin::parse(bad).is_err(), "{bad:?}");
+            assert!(bad.parse::<TailscaleLogin>().is_err(), "{bad:?}");
         }
     }
 
     #[test]
     fn a_caller_names_its_kind_client_and_login() {
-        let alice = UserId::parse("alice").unwrap();
-        let login = TailscaleLogin::parse("alice@example.com").unwrap();
+        let alice = "alice".parse::<UserId>().unwrap();
+        let login = "alice@example.com".parse::<TailscaleLogin>().unwrap();
         let cases = [
             (
                 Caller::User {

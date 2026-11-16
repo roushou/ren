@@ -55,7 +55,7 @@ fn config(mock: &Mock, policy: &str) -> Config {
         codex_base_url: format!("http://{}/backend-api/codex", mock.address),
         openai_base_url: format!("http://{}", mock.address),
         upstreams: vec![UpstreamConfig {
-            id: UpstreamId::parse("anthropic-key").unwrap(),
+            id: "anthropic-key".parse::<UpstreamId>().unwrap(),
             provider: Provider::Anthropic,
             wire: None,
             base_url: format!("http://{}/fallback", mock.address),
@@ -293,7 +293,7 @@ async fn a_chat_completions_entry_streams_and_records_model_usage_and_tool_calls
     let dir = tempfile::tempdir().unwrap();
     let mut config = config(&mock, "");
     config.upstreams[0] = UpstreamConfig {
-        id: UpstreamId::parse("deepseek-chat").unwrap(),
+        id: "deepseek-chat".parse::<UpstreamId>().unwrap(),
         provider: Provider::DeepSeek,
         wire: Some(Wire::OpenAiChatCompletions),
         base_url: format!("http://{}/chat", mock.address),
@@ -758,7 +758,7 @@ impl ren_gateway::Upstream for RefusingPrimary {
         request: ren_gateway::UpstreamRequest,
     ) -> Result<http::Response<ren_gateway::UpstreamBody>, ren_gateway::attempt::SendFailure> {
         self.sent.lock().unwrap().push(request.upstream.clone());
-        if request.upstream == UpstreamId::parse("anthropic").unwrap() {
+        if request.upstream == "anthropic".parse::<UpstreamId>().unwrap() {
             return Err(ren_gateway::attempt::SendFailure::Refused);
         }
         Ok(http::Response::new(ren_gateway::UpstreamBody::full("{}")))
