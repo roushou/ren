@@ -4,12 +4,12 @@
   clickable, and images are named, not loaded.
 -->
 <script lang="ts">
-  import { MarkdownTree } from './markdown.ts';
+  import { Markdown } from './markdown.ts';
   import MarkdownBlocks from './MarkdownBlocks.svelte';
 
   let { text }: { text: string } = $props();
 
-  const blocks = $derived(MarkdownTree.parse(text));
+  const markdown = $derived(Markdown.parse(text));
 </script>
 
-<div class="markdown"><MarkdownBlocks {blocks} /></div>
+<div class="markdown"><MarkdownBlocks blocks={markdown.blocks} /></div>

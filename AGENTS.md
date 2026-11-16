@@ -556,7 +556,7 @@ dependencies under "Crates" below. Read the code for current module ownership.
   the brief says of Ren; `Recipients` in `src/lib/briefing.svelte.ts`
   reads them, and `BriefingPanel.svelte` fills Redline's pane with them,
   sending through the same session routes),
-  `src/lib/markdown.ts` how Markdown is read (`MarkdownTree`: CommonMark with
+  `src/lib/markdown.ts` how Markdown is read (`Markdown`: CommonMark with
   GitHub's extensions, parsed by `mdast-util-from-markdown` into a typed tree
   with untrusted text made inert, rendered by `Markdown.svelte` without
   `{@html}`), and
