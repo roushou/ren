@@ -12,9 +12,9 @@ use crate::{
     query::{CallQuery, Cursor, KindFilter, PageLimit, Shelf, StatusFilter, TimeRange, ToolFilter},
     view::{
         AttachmentView, AttemptView, BodyPrefix, BodyView, CallDetail, CallPage, CallView,
-        ChannelView, Columns, ConversationView, DiskUsage, HistoryTarget, MessageView, ModelUsage,
+        ChannelView, Columns, ConversationView, DiskUsage, HistoryTarget, MessageView,
         OperatorActionView, RecordingView, RunEntryView, RunView, SessionView, StorageView,
-        TokenTotals, UsageBucket, UsageCounts, UsageView, UserUsage,
+        TokenTotals, UsageGroup, UsageView,
     },
     writer::BlobAccess,
 };
@@ -219,67 +219,23 @@ impl Reader {
     /// Calls, errors, and tokens of the calls started in `range`: in total,
     /// by the hour, by model, and by user.
     pub async fn usage(&self, range: TimeRange) -> Result<UsageView, StoreError> {
-        let select = |prefix: &str| {
-            let mut sql = QueryBuilder::<Sqlite>::new(prefix);
-            CallQuery::push_usage_columns(&mut sql);
-            sql.push(" FROM calls c WHERE 1 = 1");
-            range.push_started(&mut sql);
-            sql
-        };
-        let mut totals = select("SELECT ");
-        let totals = totals.build().fetch_one(&self.pool).await?;
-        let mut hours = select("SELECT (c.started_at / 3600000) * 3600000 AS start, ");
-        hours.push(" GROUP BY start ORDER BY start");
-        let hours = hours
-            .build()
-            .fetch_all(&self.pool)
-            .await?
-            .iter()
-            .map(|row| {
-                Ok(UsageBucket {
-                    start: Columns(row).time("start")?,
-                    usage: UsageCounts::from_row(row)?,
-                })
-            })
-            .collect::<Result<_, StoreError>>()?;
-        let mut models = select("SELECT c.provider, c.model, ");
-        models.push(
-            " GROUP BY c.provider, c.model ORDER BY input_tokens DESC NULLS LAST, calls DESC",
+        // One scan, grouped by hour, model, and user; the totals and each
+        // breakdown are summed from its groups.
+        let mut sql = QueryBuilder::<Sqlite>::new(
+            "SELECT (c.started_at / 3600000) * 3600000 AS start, c.provider, c.model, c.user, ",
         );
-        let models = models
+        CallQuery::push_usage_columns(&mut sql);
+        sql.push(" FROM calls c WHERE 1 = 1");
+        range.push_started(&mut sql);
+        sql.push(" GROUP BY start, c.provider, c.model, c.user");
+        let groups = sql
             .build()
             .fetch_all(&self.pool)
             .await?
             .iter()
-            .map(|row| {
-                let columns = Columns(row);
-                Ok(ModelUsage {
-                    provider: columns.label("provider")?,
-                    model: columns.text("model")?,
-                    usage: UsageCounts::from_row(row)?,
-                })
-            })
+            .map(UsageGroup::from_row)
             .collect::<Result<_, StoreError>>()?;
-        let mut users = select("SELECT c.user, ");
-        users.push(" GROUP BY c.user ORDER BY input_tokens DESC NULLS LAST, calls DESC");
-        let users = users
-            .build()
-            .fetch_all(&self.pool)
-            .await?
-            .iter()
-            .map(|row| {
-                Ok(UserUsage {
-                    user: Columns(row).text("user")?,
-                    usage: UsageCounts::from_row(row)?,
-                })
-            })
-            .collect::<Result<_, StoreError>>()?;
-        Ok(UsageView {
-            totals: UsageCounts::from_row(&totals)?,
-            hours,
-            models,
-            users,
-        })
+        Ok(UsageView::fold(groups))
     }
 
     /// The newest `limit` recorded operator commands, oldest first.
@@ -728,7 +684,7 @@ impl CallQuery {
     /// work. Input adds cached
     /// context where the provider reported it separately. A token SUM over
     /// calls that reported no usage is NULL: "not reported", not zero.
-    fn push_usage_columns(sql: &mut QueryBuilder<Sqlite>) {
+    pub(crate) fn push_usage_columns(sql: &mut QueryBuilder<Sqlite>) {
         // The failure test comes first: it is cheap, and false for most
         // calls, so the model-call test's digest lookup runs only for the
         // few that failed.
