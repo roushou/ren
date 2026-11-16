@@ -121,7 +121,7 @@ impl Held {
     }
 
     /// Removes `path`, a file or a folder, if it is there.
-    pub(crate) fn clear(path: &Path) -> Result<(), InstallError> {
+    fn clear(path: &Path) -> Result<(), InstallError> {
         match fs::symlink_metadata(path) {
             Ok(meta) if meta.is_dir() => fs::remove_dir_all(path).map_err(InstallError::file(path)),
             Ok(_) => fs::remove_file(path).map_err(InstallError::file(path)),

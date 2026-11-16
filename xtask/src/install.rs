@@ -838,8 +838,6 @@ impl InstallVps {
                 .args(["--user", "stop", SERVICE])
                 .run()?;
         }
-        // Kept by installs before rollback was automatic.
-        Held::clear(&layout.bin_dir.join("ren.previous"))?;
         Held::hold(&layout.binary, &layout.rollback, &layout.unit)
     }
 

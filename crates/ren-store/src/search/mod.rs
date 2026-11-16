@@ -95,7 +95,8 @@ impl Reader {
     }
 
     /// Calls whose digest has been derived: all finished calls, except while
-    /// history recorded before digests is being derived.
+    /// the recorder derives digests again for calls with none, or with one
+    /// from an older `CallDigest::VERSION`.
     pub async fn digested_count(&self) -> Result<u64, StoreError> {
         let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM call_digests")
             .fetch_one(&self.pool)

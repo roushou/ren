@@ -699,7 +699,7 @@ async fn the_recorder_derives_missing_digests_from_stored_bodies() {
     let (dir, _metrics, _reader) = harness.drain().await;
     let live = stored_digest(dir.path(), call).await.unwrap();
 
-    // As if recorded before digests existed.
+    // A call with no digest.
     let options =
         sqlx::sqlite::SqliteConnectOptions::new().filename(dir.path().join("ren.sqlite3"));
     let mut connection = sqlx::ConnectOptions::connect(&options).await.unwrap();

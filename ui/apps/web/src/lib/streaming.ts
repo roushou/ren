@@ -18,16 +18,12 @@ export interface CallProgress {
   thinking: boolean;
 }
 
-/** `thinking`, which a daemon before it was added leaves out. */
-const thinking = (value: unknown, path: string): boolean =>
-  value === undefined ? false : boolean(value, path);
-
 const callProgress = object<CallProgress>({
   call: CallId.decode,
   reply: string,
   cut: boolean,
   tools: array(string),
-  thinking,
+  thinking: boolean,
 });
 
 export class Streaming {
