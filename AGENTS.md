@@ -142,8 +142,9 @@ Modules carry no lint headers of their own. A module with submodules lives in
   starts and its program lookup on the agents' `PATH`), `ren_git::Git`
   (the one place Ren runs git), and `HostTools` (its
   `--version` probes), and the daemon's server
-  and supervisor task spawns. Outside the daemon, `ren-cli`'s build script (its
-  revision) and xtask's `Invocation` (a shell) run commands. Starting a process
+  and supervisor task spawns. Outside the daemon, `ren-git`'s `Git` (the one place
+  Ren runs git, which `ren-cli`'s build script reads its revision with) and
+  xtask's `Invocation` (a shell) run commands. Starting a process
   in any way (`spawn`, `status`, `output`) is disallowed. The recorder runs on `ObservationThread` (`ren_daemon::host`), a
   thread with its own runtime.
 - Integration-test crates (`crates/*/tests/*.rs`) act as a shell: each has one

@@ -6,10 +6,8 @@
 //! including `cargo install --git`, has git. Untracked files don't count as
 //! modifications: cargo writes one into its own git checkouts.
 
-use std::{
-    path::{Path, PathBuf},
-    process::Command,
-};
+use ren_git::{Git, HeadRef, Tree};
+use std::path::{Path, PathBuf};
 
 /// Where the revision comes from.
 enum Source {
@@ -22,7 +20,7 @@ enum Source {
 /// What the build script found.
 struct Revision {
     commit: String,
-    dirty: bool,
+    tree: Tree,
 }
 
 /// `.cargo_vcs_info.json`; `dirty` is present only when true.
@@ -59,16 +57,19 @@ impl Source {
                 let info: VcsInfo = serde_json::from_str(&text).ok()?;
                 Some(Revision {
                     commit: info.git.sha1,
-                    dirty: info.git.dirty,
+                    tree: if info.git.dirty {
+                        Tree::Modified
+                    } else {
+                        Tree::Clean
+                    },
                 })
             }
             Self::Git => {
-                Self::watch_git();
-                let commit = Self::git(&["rev-parse", "--verify", "HEAD"])?;
-                let status = Self::git(&["status", "--porcelain", "--untracked-files=no"])?;
+                let (git, dir) = (Git::inherited(), Path::new(Self::MANIFEST_DIR));
+                Self::watch_git(&git, dir);
                 Some(Revision {
-                    commit,
-                    dirty: !status.is_empty(),
+                    commit: git.head_commit(dir).ok()?.to_string(),
+                    tree: git.tree(dir).ok()?,
                 })
             }
         }
@@ -78,40 +79,17 @@ impl Source {
     /// index. Editing a tracked file without staging it changes neither, so
     /// the dirty flag can lag until the next rebuild of this package. Only
     /// existing files are watched: cargo reruns on every build for a missing one.
-    fn watch_git() {
-        let git_dir = Self::git(&["rev-parse", "--absolute-git-dir"]).map(PathBuf::from);
-        let common = Self::git(&["rev-parse", "--path-format=absolute", "--git-common-dir"])
-            .map(PathBuf::from);
-        let branch = Self::git(&["symbolic-ref", "-q", "HEAD"]);
-        let mut watched = Vec::new();
-        if let Some(git_dir) = &git_dir {
-            watched.extend(["HEAD", "index"].map(|file| git_dir.join(file)));
-        }
-        if let Some(common) = &common {
-            watched.push(common.join("packed-refs"));
-            watched.extend(branch.iter().map(|branch| common.join(branch)));
+    fn watch_git(git: &Git, dir: &Path) {
+        let Ok(dirs) = git.dirs(dir) else { return };
+        let mut watched: Vec<PathBuf> = ["HEAD", "index"].map(|file| dirs.own.join(file)).into();
+        watched.push(dirs.common.join("packed-refs"));
+        match git.head_ref(dir) {
+            Ok(HeadRef::Named(branch)) => watched.push(dirs.common.join(branch)),
+            Ok(HeadRef::Detached) | Err(_) => {}
         }
         for path in watched.iter().filter(|path| path.is_file()) {
             println!("cargo::rerun-if-changed={}", path.display());
         }
-    }
-
-    /// A git command's trimmed output, if it succeeds.
-    #[expect(
-        clippy::disallowed_methods,
-        reason = "the build reads its own checkout's revision with the builder's git"
-    )]
-    fn git(args: &[&str]) -> Option<String> {
-        let output = Command::new("git")
-            .arg("-C")
-            .arg(Self::MANIFEST_DIR)
-            .args(args)
-            .output()
-            .ok()?;
-        output
-            .status
-            .success()
-            .then(|| String::from_utf8_lossy(&output.stdout).trim().to_owned())
     }
 }
 
@@ -120,11 +98,11 @@ fn main() {
     let revision = match Source::find().revision() {
         Some(Revision {
             commit,
-            dirty: false,
+            tree: Tree::Clean,
         }) => commit,
         Some(Revision {
             commit,
-            dirty: true,
+            tree: Tree::Modified,
         }) => format!("{commit}-dirty"),
         None => "unknown".to_owned(),
     };

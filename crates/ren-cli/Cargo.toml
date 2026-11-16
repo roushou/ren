@@ -47,9 +47,10 @@ tracing.workspace = true
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 uuid.workspace = true
 
-# build.rs records the source revision (REN_REVISION) from git or from
-# cargo's packaging metadata.
+# build.rs records the source revision (REN_REVISION) from git (through
+# ren-git) or from cargo's packaging metadata.
 [build-dependencies]
+ren-git.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 

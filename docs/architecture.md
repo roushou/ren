@@ -222,7 +222,7 @@ The workspace has one crate per component. Each exposes one primary type at its
 root, and dependencies run one way; Cargo rejects cycles.
 
 ```text
-ren-cli      ─► ren-daemon, ren-gateway, ren-depot
+ren-cli      ─► ren-daemon, ren-gateway, ren-depot, ren-git (its build script)
 ren-daemon   ─► ren-gateway, ren-store, ren-supervisor, ren-depot, ren-git
 ren-gateway  ─► ren-harness, ren-recorder, ren-store, ren-supervisor
 ren-supervisor ─► ren-recorder, ren-harness, ren-protocol
@@ -265,8 +265,8 @@ xtask        ─► ren-daemon, ren-gateway, ren-recorder, ren-harness, ren-prot
   system clock, random IDs, `HostTools` (which runs a found program with
   `--version`), and `ProcessHost`, which with the
   daemon's server task spawn carry the only `disallowed_methods` exemptions besides
-  `HostEnv::capture`, `ren-git`'s `Git` (the one place Ren runs git), `ren-cli`'s
-  build script, and xtask's `Invocation`.
+  `HostEnv::capture`, `ren-git`'s `Git` (the one place Ren runs git) and xtask's
+  `Invocation`.
 - **Operator documents are opaque below the gateway.** The recorder and store carry
   an operator action as a revision, a command label, and serialized JSON documents.
   `ren-gateway` owns `OperatorState` and parses the stored snapshot on restore.
