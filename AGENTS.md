@@ -139,7 +139,7 @@ Modules carry no lint headers of their own. A module with submodules lives in
 - The only exemptions are the capability implementations themselves, marked with
   `#[expect(clippy::disallowed_methods, reason = "…")]`: `HostEnv::capture`, the
   daemon's `SystemClock`, `RandomIds`, `ProcessHost` (`ren_daemon::host`, its process
-  starts and its program lookup on the agents' `PATH`), `Git` (`ren_daemon::host`,
+  starts and its program lookup on the agents' `PATH`), `Git` (`ren_daemon::git`,
   the one place Ren runs git, found on a run's own search path), and `HostTools` (its
   `--version` probes), and the daemon's server
   and supervisor task spawns. Outside the daemon, `ren-cli`'s build script (its
@@ -363,14 +363,13 @@ dependencies under "Crates" below. Read the code for current module ownership.
   `Bounds`: the configured roots, the other places (`~/.config`), and the
   scratch folder Ren owns, where a run started without a folder
   (`StartPlace::Scratch`) gets a new git repository of its own, made by the
-  run's own git (a `Scratch`, untracked and why when it could not be); all resolved
+  run's own git (`AgentHost::make_scratch` answers a `Scratch`, untracked and
+  why when it could not be); all resolved
   by the host so links cannot escape; `files` ranks the paths of a run's folder for a prompt to
   name (`FileListing`, walked by the host's `AgentHost::files`); `project` finds the places a run can
   start in, each a `Project` of a `PlaceKind` (git repositories under the
   roots, not looked inside; other places' folders; earlier scratch
-  folders); `git` reads a folder's repository from what the host finds at
-  each path (`Repository`, its `Head`, a linked worktree's `.git` file) and
-  holds the `GitCommand`s Ren asks git to run; `models` lists each client's models through a short listing
+  folders, each with its `ProjectGit`, which the host reads); `models` lists each client's models through a short listing
   process and keeps the answer (`Supervisor::models`); `Client` and
   `ClientStatus` (`client`) say whether a run can start
   with each client here; `AgentHost` (`host`) is the port for resolving paths,
@@ -396,7 +395,7 @@ dependencies under "Crates" below. Read the code for current module ownership.
   `AgentHost::spawn_in_terminal` when it needs a terminal, and a pasted
   address is opened with `AgentHost::open_local`. What a login prints is
   cleaned of every answer typed into it.
-  `src/purity.rs` keeps `run`, `process`, `workdir`, `project`, `git`, `entries`, `files`,
+  `src/purity.rs` keeps `run`, `process`, `workdir`, `project`, `entries`, `files`,
   `session`, and `sign_in` free of runtime and I/O. The daemon constructs it when `[runs]`
   roots are configured, with `ProcessHost`; the gateway's control API serves it.
 - `crates/ren-gateway`: Ren's HTTP interface, with `Gateway` as its primary type.
@@ -466,7 +465,9 @@ dependencies under "Crates" below. Read the code for current module ownership.
   `ObservationThread`, `ProcessHost`, the supervisor's `AgentHost` (its
   logins on a pseudo-terminal through `pty-process`, echo off, and a pasted
   loopback address opened with one `GET`), and `HostTools`, the depot's
-  `ToolHost`. `tools` is the tool store on disk
+  `ToolHost`. `git` is `Git`, the one place Ren reads a folder's repository
+  (its `HEAD`, through a linked worktree's `.git` file) and runs the git on
+  a run's search path. `tools` is the tool store on disk
   (`ToolStore`, under `<data>/tools`): it carries out the depot's
   `InstallJob`s (downloading through its `Fetch` seam, `ReqwestFetch` in
   production, https only and capped in bytes; unpacking tar.gz, zip, and

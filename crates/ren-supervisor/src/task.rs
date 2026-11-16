@@ -12,7 +12,7 @@
 //! [`Supervisor`]: crate::Supervisor
 
 use crate::attachments::{AttachmentFolders, AttachmentUse};
-use crate::git::Scratch;
+use crate::host::Scratch;
 use crate::login::{SignInError, SignIns, StatusCheck};
 use crate::models::{Listings, ModelProbe, ModelsError, ModelsReply};
 use crate::process::{Process, ProcessEffect, Rest, Serving};

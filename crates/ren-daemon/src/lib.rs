@@ -6,6 +6,7 @@
 //! storage.
 
 pub mod config;
+mod git;
 pub mod host;
 pub mod tools;
 

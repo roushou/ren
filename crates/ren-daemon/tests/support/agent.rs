@@ -7,11 +7,11 @@
 //! real client, network, or credentials.
 
 use ren_harness::launch::LaunchPlan;
-use ren_supervisor::git::{Entry, Repository, Scratch};
 use ren_supervisor::{
     AgentHost, AgentProcess, FoundPath, KillSignal, KillSwitch, Look, PathKind, ProcessExit,
     RunTools, WalkLimits, Workdir,
 };
+use ren_supervisor::{ProjectGit, Scratch};
 use serde_json::{Value, json};
 use std::{
     io,
@@ -42,14 +42,13 @@ impl AgentHost for ScriptedHost {
         Ok(match dir.to_str() {
             Some("/work") => Look {
                 folders: vec!["acme".into(), "web".into()],
-                repository: Repository::None,
+                git: ProjectGit::None,
             },
             Some("/work/acme") => Look {
                 folders: vec![],
-                repository: Repository::find(dir, |path| match path.file_name() {
-                    Some(name) if name == ".git" => Entry::Folder,
-                    Some(_) | None => Entry::File("ref: refs/heads/main".into()),
-                }),
+                git: ProjectGit::Branch {
+                    name: "main".into(),
+                },
             },
             Some(_) | None => Look::default(),
         })

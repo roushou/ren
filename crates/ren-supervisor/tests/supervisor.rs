@@ -27,12 +27,12 @@ use ren_recorder::{
     time::{ManualClock, UnixMillis},
 };
 use ren_store::{Reader, Store, query::PageLimit, view::RunView};
-use ren_supervisor::git::{Entry, Repository, Scratch};
 use ren_supervisor::{
     AgentHost, AgentProcess, CommandError, FileQuery, FoundPath, KillSignal, KillSwitch, Look,
     PathKind, ProcessExit, RunCommand, RunRefused, RunState, RunTools, RunUpdate, StartError,
     Supervisor, SupervisorOptions, WalkLimits, Workdir,
 };
+use ren_supervisor::{ProjectGit, Scratch};
 use serde_json::{Value, json};
 use std::{
     io,
@@ -130,14 +130,13 @@ impl AgentHost for FakeHost {
         Ok(match dir.to_str() {
             Some("/work") => Look {
                 folders: vec!["acme".into(), "notes".into()],
-                repository: Repository::None,
+                git: ProjectGit::None,
             },
             Some("/work/acme") => Look {
                 folders: vec!["src".into()],
-                repository: Repository::find(dir, |path| match path.file_name() {
-                    Some(name) if name == ".git" => Entry::Folder,
-                    Some(_) | None => Entry::File("ref: refs/heads/main".into()),
-                }),
+                git: ProjectGit::Branch {
+                    name: "main".into(),
+                },
             },
             Some(_) | None => Look::default(),
         })

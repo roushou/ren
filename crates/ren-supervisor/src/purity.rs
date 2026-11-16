@@ -10,7 +10,6 @@ fn pure_modules_stay_free_of_runtime_and_io_dependencies() {
         ("attachments.rs", include_str!("attachments.rs")),
         ("workdir.rs", include_str!("workdir.rs")),
         ("project.rs", include_str!("project.rs")),
-        ("git.rs", include_str!("git.rs")),
         ("entries.rs", include_str!("entries.rs")),
         ("files.rs", include_str!("files.rs")),
         ("session.rs", include_str!("session.rs")),

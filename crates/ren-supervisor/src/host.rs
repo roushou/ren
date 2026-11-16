@@ -4,7 +4,6 @@
 
 use crate::{
     files::{FoundPath, WalkLimits},
-    git::Scratch,
     project::Look,
     run::ProcessExit,
     workdir::Workdir,
@@ -27,7 +26,7 @@ pub trait AgentHost: Send + Sync + 'static {
     fn resolve(&self, path: &Path) -> io::Result<PathBuf>;
 
     /// What `dir` holds: its folders (links not followed), and its git
-    /// repository, read with `Repository::find`.
+    /// repository.
     fn look(&self, dir: &Path) -> io::Result<Look>;
 
     /// The files and folders under `dir`, relative to it, leaving out what
@@ -107,6 +106,26 @@ pub trait AgentHost: Send + Sync + 'static {
     /// listens on, as the operator's browser would have: one `GET`, no
     /// redirects followed.
     fn open_local(&self, address: &LocalRedirect) -> BoxFuture<'static, io::Result<()>>;
+}
+
+/// How a scratch folder was made: a repository of its own, or a plain
+/// folder whose changes are not tracked, and why.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[must_use]
+pub enum Scratch {
+    Repository,
+    Untracked(Untracked),
+}
+
+/// Why a scratch folder is not a repository.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Untracked {
+    /// No `git` on the run's search path.
+    NoGit,
+    /// `git` was found but could not be started.
+    NotStarted,
+    /// `git init` ran and failed.
+    InitFailed(ProcessExit),
 }
 
 /// The tools a process starts with, as the host read them when it started.
