@@ -11,8 +11,9 @@ use ren_protocol::native::{NativeThreadId, NativeTurnId};
 pub use ren_recorder::capture::ProcessExit;
 use ren_recorder::capture::RunEnd;
 
-/// Where a run is in its life.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+/// Where a run is in its life. Written for the API and never read back:
+/// a queued prompt is written as its record, without its images' bytes.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 #[serde(tag = "phase", rename_all = "snake_case")]
 pub enum RunState {
     /// The process started; the conversation is not open yet.
@@ -579,7 +580,7 @@ mod tests {
     use ren_harness::drive::{
         ApprovalAsk, ApprovalId, Decision, DriveCommand, DriveEvent, RequestKind, TurnEnd,
     };
-    use ren_harness::prompt::Prompt;
+    use ren_harness::prompt::{Prompt, RecordedPrompt};
     use ren_protocol::native::{NativeThreadId, NativeTurnId};
     use ren_recorder::capture::RunEnd;
     use uuid::Uuid;
@@ -845,29 +846,42 @@ mod tests {
         );
     }
 
+    /// Each state is written under its phase; a queued prompt as its
+    /// record, which reads back as the prompt's own.
     #[test]
-    fn states_read_back_from_their_json() {
+    fn states_are_written_by_phase_with_a_queued_prompts_record() {
         let states = [
-            RunState::Starting,
-            RunState::Idle { thread: thread() },
-            RunState::Working {
-                thread: thread(),
-                turn: Some(turn()),
-                approvals: waiting_for(&["ap-1"]),
-                queued: None,
-            },
-            RunState::Stopping {
-                cause: StopCause::Shutdown,
-            },
-            RunState::Ended {
-                end: RunEnd::Exited,
-                exit: Some(ProcessExit::Code(1)),
-            },
+            (RunState::Starting, "starting"),
+            (RunState::Idle { thread: thread() }, "idle"),
+            (
+                RunState::Stopping {
+                    cause: StopCause::Shutdown,
+                },
+                "stopping",
+            ),
+            (
+                RunState::Ended {
+                    end: RunEnd::Exited,
+                    exit: Some(ProcessExit::Code(1)),
+                },
+                "ended",
+            ),
         ];
-        for state in states {
-            let json = serde_json::to_value(&state).unwrap();
-            assert_eq!(serde_json::from_value::<RunState>(json).unwrap(), state);
+        for (state, phase) in states {
+            assert_eq!(serde_json::to_value(&state).unwrap()["phase"], phase);
         }
+        let queued = Prompt::parse("then the docs".into()).unwrap();
+        let working = serde_json::to_value(RunState::Working {
+            thread: thread(),
+            turn: Some(turn()),
+            approvals: waiting_for(&["ap-1"]),
+            queued: Some(queued.clone()),
+        })
+        .unwrap();
+        assert_eq!(working["phase"], "working");
+        assert_eq!(working["queued"], "then the docs");
+        let record: RecordedPrompt = serde_json::from_value(working["queued"].clone()).unwrap();
+        assert_eq!(record, queued.record());
     }
 
     #[test]

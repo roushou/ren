@@ -251,7 +251,8 @@ dependencies under "Crates" below. Read the code for current module ownership.
   `DriveEvent` vocabulary, with `ItemRead`, what Ren reads of each item for
   every client, and the `Driver` over each client's codec), the prompt a
   run is sent (`prompt`: `Prompt`, its text and its `PromptImage`s, never
-  blank, `BlankPrompt` when it would be), its pure line
+  blank, `BlankPrompt` when it would be, written only as its
+  `RecordedPrompt`, its text and what each image is, which reads back), its pure line
   framing (`lines`), the models a client lists (`models`: `Model` by
   `ModelId`, read by `ModelListing` from a short listing process), and a
   run's `RunSettings` (`settings`: its model, `Effort`, and
