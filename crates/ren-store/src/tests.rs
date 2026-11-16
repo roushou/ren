@@ -2658,3 +2658,132 @@ async fn the_call_columns_migration_keeps_usage_tools_and_prompts() {
         ]
     );
 }
+
+/// The usage report from one grouped scan equals the report the store built
+/// before, with one query for the totals, the hours, the models, and the
+/// users, over calls that vary in hour, provider, model, user, status, and
+/// whether they reported usage.
+#[tokio::test]
+async fn usage_from_one_scan_matches_a_query_per_breakdown() {
+    use crate::{
+        query::TimeRange,
+        view::{ModelUsage, UsageBucket, UsageCounts, UsageView, UserUsage},
+    };
+    use ren_protocol::inspect::{InputAccounting, Usage};
+    use sqlx::{
+        Connection, QueryBuilder, Sqlite,
+        sqlite::{SqliteConnectOptions, SqliteConnection},
+    };
+
+    let mut fixture = Fixture::new().await;
+    let mut calls = Vec::new();
+    for i in 0..12_u64 {
+        if i % 4 == 0 {
+            fixture.clock.advance(Duration::from_secs(3600));
+        }
+        calls.push(
+            fixture
+                .record(CallSpec {
+                    provider: if i % 3 == 0 {
+                        Provider::Codex
+                    } else {
+                        Provider::Anthropic
+                    },
+                    status: if i % 5 == 0 { 500 } else { 200 },
+                    usage: (i % 4 != 3).then(|| Usage {
+                        input_tokens: Some(i * 10 + 1),
+                        cache_read_tokens: Some(i),
+                        cache_creation_tokens: Some(0),
+                        output_tokens: Some(i + 2),
+                        ..Usage::new(InputAccounting::ExcludesCache)
+                    }),
+                    ..CallSpec::default()
+                })
+                .await,
+        );
+    }
+    // The fixture records one model and no user; vary both.
+    let mut db = SqliteConnection::connect_with(
+        &SqliteConnectOptions::new().filename(fixture.dir.path().join("ren.sqlite3")),
+    )
+    .await
+    .unwrap();
+    for (i, call) in calls.iter().enumerate() {
+        sqlx::query("UPDATE calls SET model = ?, user = ? WHERE id = ?")
+            .bind([Some("acme-a"), Some("acme-b"), None][(i / 2) % 3])
+            .bind([Some("alice"), None][i % 2])
+            .bind(call.to_string())
+            .execute(&mut db)
+            .await
+            .unwrap();
+    }
+    db.close().await.unwrap();
+
+    let reader = &fixture.reader;
+    let select = |prefix: &str, suffix: &str| {
+        let mut sql = QueryBuilder::<Sqlite>::new(prefix);
+        CallQuery::push_usage_columns(&mut sql);
+        sql.push(" FROM calls c WHERE 1 = 1").push(suffix);
+        sql
+    };
+    let totals = select("SELECT ", "")
+        .build()
+        .fetch_one(&reader.pool)
+        .await
+        .unwrap();
+    let hours = select(
+        "SELECT (c.started_at / 3600000) * 3600000 AS start, ",
+        " GROUP BY start ORDER BY start",
+    )
+    .build()
+    .fetch_all(&reader.pool)
+    .await
+    .unwrap();
+    let models = select(
+        "SELECT c.provider, c.model, ",
+        " GROUP BY c.provider, c.model ORDER BY input_tokens DESC NULLS LAST, calls DESC",
+    )
+    .build()
+    .fetch_all(&reader.pool)
+    .await
+    .unwrap();
+    let users = select(
+        "SELECT c.user, ",
+        " GROUP BY c.user ORDER BY input_tokens DESC NULLS LAST, calls DESC",
+    )
+    .build()
+    .fetch_all(&reader.pool)
+    .await
+    .unwrap();
+    let per_breakdown = UsageView {
+        totals: UsageCounts::from_row(&totals).unwrap(),
+        hours: hours
+            .iter()
+            .map(|row| UsageBucket {
+                start: crate::view::Columns(row).time("start").unwrap(),
+                usage: UsageCounts::from_row(row).unwrap(),
+            })
+            .collect(),
+        models: models
+            .iter()
+            .map(|row| ModelUsage {
+                provider: crate::view::Columns(row).label("provider").unwrap(),
+                model: crate::view::Columns(row).text("model").unwrap(),
+                usage: UsageCounts::from_row(row).unwrap(),
+            })
+            .collect(),
+        users: users
+            .iter()
+            .map(|row| UserUsage {
+                user: crate::view::Columns(row).text("user").unwrap(),
+                usage: UsageCounts::from_row(row).unwrap(),
+            })
+            .collect(),
+    };
+    assert_eq!(per_breakdown.models.len(), 5, "provider and model pairs");
+    assert_eq!(per_breakdown.users.len(), 2);
+    assert_eq!(
+        reader.usage(TimeRange::default()).await.unwrap(),
+        per_breakdown
+    );
+}

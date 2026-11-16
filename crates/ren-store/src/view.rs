@@ -461,6 +461,24 @@ pub struct TokenTotals {
 }
 
 impl TokenTotals {
+    /// Two sets of calls' totals together. A count is summed where either
+    /// reported it, and stays "not reported" only where neither did, as
+    /// SQL's `SUM` over both sets would.
+    fn plus(self, other: Self) -> Self {
+        fn sum(left: Option<u64>, right: Option<u64>) -> Option<u64> {
+            match (left, right) {
+                (Some(left), Some(right)) => Some(left.saturating_add(right)),
+                (Some(only), None) | (None, Some(only)) => Some(only),
+                (None, None) => None,
+            }
+        }
+        Self {
+            input: sum(self.input, other.input),
+            output: sum(self.output, other.output),
+            cache_read: sum(self.cache_read, other.cache_read),
+        }
+    }
+
     pub(super) fn from_row(row: &SqliteRow) -> Result<Self, StoreError> {
         let row = Columns(row);
         Ok(Self {
@@ -481,6 +499,33 @@ pub struct UsageCounts {
 }
 
 impl UsageCounts {
+    /// No calls.
+    const NONE: Self = Self {
+        calls: 0,
+        errors: 0,
+        tokens: TokenTotals {
+            input: None,
+            output: None,
+            cache_read: None,
+        },
+    };
+
+    fn plus(self, other: Self) -> Self {
+        Self {
+            calls: self.calls.saturating_add(other.calls),
+            errors: self.errors.saturating_add(other.errors),
+            tokens: self.tokens.plus(other.tokens),
+        }
+    }
+
+    /// Most input first, calls that reported none last, then most calls.
+    fn heaviest_first(&self, other: &Self) -> std::cmp::Ordering {
+        let input = |counts: &Self| (counts.tokens.input.is_some(), counts.tokens.input);
+        input(other)
+            .cmp(&input(self))
+            .then(other.calls.cmp(&self.calls))
+    }
+
     pub(super) fn from_row(row: &SqliteRow) -> Result<Self, StoreError> {
         let columns = Columns(row);
         Ok(Self {
@@ -505,6 +550,76 @@ pub struct UsageView {
     /// (unlisted or unidentified callers, and calls recorded before callers
     /// were) are grouped under `null`.
     pub users: Vec<UserUsage>,
+}
+
+/// The calls of one hour by one provider's model and one user: a row of the
+/// usage scan, which [`UsageView::fold`] sums into the report.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct UsageGroup {
+    pub(super) start: UnixMillis,
+    pub(super) provider: Stored<Provider>,
+    pub(super) model: Option<String>,
+    pub(super) user: Option<String>,
+    pub(super) usage: UsageCounts,
+}
+
+impl UsageGroup {
+    pub(super) fn from_row(row: &SqliteRow) -> Result<Self, StoreError> {
+        let columns = Columns(row);
+        Ok(Self {
+            start: columns.time("start")?,
+            provider: columns.label("provider")?,
+            model: columns.text("model")?,
+            user: columns.text("user")?,
+            usage: UsageCounts::from_row(row)?,
+        })
+    }
+}
+
+impl UsageView {
+    /// The report from one scan's groups: their totals, the hours that had
+    /// calls (oldest first), and each model's and each user's usage (most
+    /// input first). Pure, so it is tested without a database.
+    pub(super) fn fold(groups: Vec<UsageGroup>) -> Self {
+        let mut totals = UsageCounts::NONE;
+        let mut hours = std::collections::BTreeMap::<UnixMillis, UsageCounts>::new();
+        let mut models: Vec<ModelUsage> = Vec::new();
+        let mut users: Vec<UserUsage> = Vec::new();
+        for group in groups {
+            totals = totals.plus(group.usage);
+            let hour = hours.entry(group.start).or_insert(UsageCounts::NONE);
+            *hour = hour.plus(group.usage);
+            match models
+                .iter_mut()
+                .find(|model| model.provider == group.provider && model.model == group.model)
+            {
+                Some(model) => model.usage = model.usage.plus(group.usage),
+                None => models.push(ModelUsage {
+                    provider: group.provider,
+                    model: group.model,
+                    usage: group.usage,
+                }),
+            }
+            match users.iter_mut().find(|user| user.user == group.user) {
+                Some(user) => user.usage = user.usage.plus(group.usage),
+                None => users.push(UserUsage {
+                    user: group.user,
+                    usage: group.usage,
+                }),
+            }
+        }
+        models.sort_by(|left, right| left.usage.heaviest_first(&right.usage));
+        users.sort_by(|left, right| left.usage.heaviest_first(&right.usage));
+        Self {
+            totals,
+            hours: hours
+                .into_iter()
+                .map(|(start, usage)| UsageBucket { start, usage })
+                .collect(),
+            models,
+            users,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -858,8 +973,82 @@ pub struct StorageView {
 
 #[cfg(test)]
 mod tests {
-    use super::{CallPage, RecordingView};
+    use super::{CallPage, RecordingView, TokenTotals, UsageCounts, UsageGroup, UsageView};
+    use ren_protocol::{label::Stored, route::Provider};
+    use ren_recorder::time::UnixMillis;
     use serde_json::{Value, json};
+
+    fn group(
+        hour: u64,
+        model: &str,
+        user: Option<&str>,
+        calls: u64,
+        input: Option<u64>,
+    ) -> UsageGroup {
+        UsageGroup {
+            start: UnixMillis::from_millis(hour * 3_600_000),
+            provider: Stored::Known(Provider::Anthropic),
+            model: Some(model.to_owned()),
+            user: user.map(str::to_owned),
+            usage: UsageCounts {
+                calls,
+                errors: 0,
+                tokens: TokenTotals {
+                    input,
+                    output: input,
+                    cache_read: None,
+                },
+            },
+        }
+    }
+
+    #[test]
+    fn no_groups_is_no_calls_with_tokens_not_reported() {
+        let empty = UsageView::fold(Vec::new());
+        assert_eq!(empty.totals, UsageCounts::NONE);
+        assert!(empty.hours.is_empty() && empty.models.is_empty() && empty.users.is_empty());
+    }
+
+    #[test]
+    fn groups_sum_by_hour_model_and_user_keeping_unreported_tokens_apart() {
+        let view = UsageView::fold(vec![
+            group(2, "acme-a", Some("alice"), 1, None),
+            group(1, "acme-b", None, 2, Some(5)),
+            group(1, "acme-a", Some("alice"), 3, Some(7)),
+            group(2, "acme-c", None, 9, None),
+        ]);
+        assert_eq!(view.totals.calls, 15);
+        assert_eq!(view.totals.tokens.input, Some(12));
+        assert_eq!(view.totals.tokens.cache_read, None, "no group reported it");
+        // Hours oldest first.
+        assert_eq!(
+            view.hours
+                .iter()
+                .map(|hour| (hour.start.as_millis() / 3_600_000, hour.usage.calls))
+                .collect::<Vec<_>>(),
+            [(1, 5), (2, 10)]
+        );
+        // Most input first; a model that reported none goes last however
+        // many calls it had.
+        assert_eq!(
+            view.models
+                .iter()
+                .map(|model| (model.model.as_deref(), model.usage.tokens.input))
+                .collect::<Vec<_>>(),
+            [
+                (Some("acme-a"), Some(7)),
+                (Some("acme-b"), Some(5)),
+                (Some("acme-c"), None)
+            ]
+        );
+        assert_eq!(
+            view.users
+                .iter()
+                .map(|user| (user.user.as_deref(), user.usage.calls))
+                .collect::<Vec<_>>(),
+            [(Some("alice"), 4), (None, 11)]
+        );
+    }
 
     /// What the read API sends for a call listing, every optional field
     /// present, and some labels this binary does not know.
