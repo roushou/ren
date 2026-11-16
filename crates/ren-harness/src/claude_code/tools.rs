@@ -50,7 +50,7 @@ impl ClaudeCodeTool {
 
     pub(crate) fn effects(tool: &ToolUse) -> Vec<ToolEffect> {
         let effect = |kind, name| ToolEffect::of(kind, tool, name);
-        match Self::from_label(&tool.name) {
+        match Self::from_label(tool.call.name()) {
             Some(Self::Read) => effect(EffectKind::ReadFile, "file_path"),
             Some(Self::Write | Self::Edit | Self::MultiEdit) => {
                 effect(EffectKind::WriteFile, "file_path")

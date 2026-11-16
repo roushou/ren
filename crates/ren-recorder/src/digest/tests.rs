@@ -4,6 +4,7 @@ use ren_protocol::activity::{
     ActivityLimitation, Reading, RequestActivity, ResponseActivity, ResultStatus, ToolInput,
     ToolResult, ToolUse,
 };
+use ren_protocol::{inspect::ToolCall, text::WireText};
 use serde_json::json;
 
 /// A synthetic key, assembled at run time so no token-shaped literal is in
@@ -20,7 +21,7 @@ fn reading(secret: &str) -> Reading {
                 format!("Deploy with {secret} please"),
             ],
             tool_results: vec![ToolResult {
-                id: "a".to_owned(),
+                id: ToolCallId::parse("a").unwrap(),
                 status: ResultStatus::Failed,
                 output: format!("export K={secret}\n{}", "x".repeat(5_000)),
             }],
@@ -29,9 +30,12 @@ fn reading(secret: &str) -> Reading {
         },
         response: ResponseActivity {
             tool_uses: vec![ToolUse {
-                id: Some("b".to_owned()),
-                kind: "tool_use".to_owned(),
-                name: "Bash".to_owned(),
+                call: ToolCall {
+                    id: Some(ToolCallId::parse("b").unwrap()),
+                    item: None,
+                    kind: WireText::new("tool_use").unwrap(),
+                    name: Some(WireText::new("Bash").unwrap()),
+                },
                 input: ToolInput::Json(
                     json!({ "command": format!("curl -H 'x-api-key: {secret}' api") }),
                 ),

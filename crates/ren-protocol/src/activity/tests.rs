@@ -1,5 +1,6 @@
 use super::*;
 use crate::encoding::ResponseFormat;
+use crate::native::ToolCallId;
 use serde_json::json;
 use std::io::Write;
 
@@ -91,7 +92,7 @@ fn messages_requests_yield_the_newest_user_input() {
     assert_eq!(
         activity.tool_results,
         [ToolResult {
-            id: "toolu_1".to_owned(),
+            id: ToolCallId::parse("toolu_1").unwrap(),
             status: ResultStatus::Failed,
             output: "exit 1".to_owned(),
         }]
@@ -155,8 +156,15 @@ fn messages_streams_assemble_tool_input_from_deltas() {
     .activity;
     assert_eq!(activity.reply, "Reading it.");
     assert_eq!(activity.tool_uses.len(), 2);
-    assert_eq!(activity.tool_uses[0].name, "Read");
-    assert_eq!(activity.tool_uses[0].id.as_deref(), Some("toolu_2"));
+    assert_eq!(activity.tool_uses[0].call.name(), "Read");
+    assert_eq!(
+        activity.tool_uses[0]
+            .call
+            .id
+            .as_ref()
+            .map(ToolCallId::as_str),
+        Some("toolu_2")
+    );
     assert_eq!(
         activity.tool_uses[0].input,
         ToolInput::Json(json!({ "file_path": "src/lib.rs" }))
@@ -189,7 +197,7 @@ fn messages_documents_read_content_blocks() {
         document.as_bytes(),
     );
     assert_eq!(activity.reply, "Done.");
-    assert_eq!(activity.tool_uses[0].kind, "tool_use");
+    assert_eq!(activity.tool_uses[0].call.kind.as_str(), "tool_use");
     assert!(activity.limitations.is_empty());
 }
 
@@ -270,7 +278,14 @@ fn responses_streams_read_done_items_or_the_terminal_response() {
         &[&terminal.as_bytes()[range]],
     )
     .activity;
-    assert_eq!(activity.tool_uses[0].id.as_deref(), Some("call_9"));
+    assert_eq!(
+        activity.tool_uses[0]
+            .call
+            .id
+            .as_ref()
+            .map(ToolCallId::as_str),
+        Some("call_9")
+    );
 }
 
 #[test]
@@ -582,7 +597,7 @@ fn chat_requests_yield_the_newest_user_input_and_tool_results() {
     assert_eq!(
         activity.tool_results,
         [ToolResult {
-            id: "call_1".into(),
+            id: ToolCallId::parse("call_1").unwrap(),
             status: ResultStatus::Unreported,
             output: "exit 1".into(),
         }]
@@ -633,7 +648,7 @@ fn chat_responses_keep_choices_apart_and_bound_tool_calls() {
         ResponseFormat::EventStream,
         &stream,
     );
-    assert_eq!(whole.tool_uses[1].name, "two");
+    assert_eq!(whole.tool_uses[1].call.name(), "two");
     assert_eq!(whole.tool_uses[1].input, ToolInput::Json(Value::Null));
     assert!(whole.limitations.is_empty());
 }
@@ -742,5 +757,5 @@ fn wire_indices_never_size_an_allocation() {
     );
     assert_eq!(chat.reply, "far");
     assert_eq!(chat.tool_uses.len(), 1);
-    assert_eq!(chat.tool_uses[0].name, "far");
+    assert_eq!(chat.tool_uses[0].call.name(), "far");
 }

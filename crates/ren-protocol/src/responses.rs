@@ -11,6 +11,7 @@ use super::{
         EventClass, InputAccounting, KindFamily, ModelOutcome, Observation, ToolCall, Usage,
     },
     json::{DecodeError, Field, Frame, JsonObject, Kind},
+    native::{OutputItemId, ToolCallId},
     sse::EventName,
     text::WireText,
 };
@@ -216,8 +217,8 @@ impl ResponsesUsage {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OutputItem {
     kind: Field<Kind<ItemKind>>,
-    id: Field<WireText>,
-    call_id: Field<WireText>,
+    id: Field<OutputItemId>,
+    call_id: Field<ToolCallId>,
     name: Field<WireText>,
 }
 
@@ -225,8 +226,8 @@ impl OutputItem {
     fn read(object: JsonObject<'_>) -> Self {
         Self {
             kind: object.label("type"),
-            id: object.identifier("id"),
-            call_id: object.identifier("call_id"),
+            id: object.parsed("id", OutputItemId::parse),
+            call_id: object.parsed("call_id", ToolCallId::parse),
             name: object.text("name"),
         }
     }
@@ -244,8 +245,8 @@ impl OutputItem {
                     out(Observation::MalformedField);
                 }
                 out(Observation::ToolCall(ToolCall {
-                    call_id: call_id.present(),
-                    item_id: id.present(),
+                    id: call_id.present(),
+                    item: id.present(),
                     kind: WireText::from_label(kind),
                     name: name.present(),
                 }));

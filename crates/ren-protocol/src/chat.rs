@@ -15,6 +15,7 @@ use super::{
         EventClass, InputAccounting, KindFamily, ModelOutcome, Observation, ToolCall, Usage,
     },
     json::{DecodeError, Field, Frame, JsonObject, Kind},
+    native::ToolCallId,
     text::WireText,
 };
 use serde_with::{DeserializeFromStr, SerializeDisplay};
@@ -161,7 +162,7 @@ impl ChatUsage {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ChatToolCall {
     kind: Field<Kind<ToolCallKind>>,
-    id: Field<WireText>,
+    id: Field<ToolCallId>,
     name: Field<WireText>,
 }
 
@@ -178,7 +179,7 @@ impl ChatToolCall {
         };
         Self {
             kind,
-            id: object.identifier("id"),
+            id: object.parsed("id", ToolCallId::parse),
             name: match object.object(member) {
                 Field::Present(member) => member.text("name"),
                 Field::Absent => Field::Absent,
@@ -209,8 +210,8 @@ impl ChatToolCall {
             }
         };
         out(Observation::ToolCall(ToolCall {
-            call_id: id.present(),
-            item_id: None,
+            id: id.present(),
+            item: None,
             kind: label,
             name: name.present(),
         }));

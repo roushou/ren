@@ -2,6 +2,7 @@ use super::*;
 use crate::view::{AttributionView, SessionHintView};
 use ren_harness::tools::InterpretedCall;
 use ren_protocol::activity::{Reading, RequestActivity, ResponseActivity};
+use ren_protocol::{inspect::ToolCall, native::ToolCallId, text::WireText};
 use ren_recorder::digest::{CallDigest, DigestBudget};
 use ren_recorder::secrets::SecretScanner;
 
@@ -119,16 +120,19 @@ fn view(n: u128, source: HintSource) -> CallView {
 
 fn tool(id: &str, name: &str, input: serde_json::Value) -> ToolUse {
     ToolUse {
-        id: Some(id.to_owned()),
-        kind: "tool_use".to_owned(),
-        name: name.to_owned(),
+        call: ToolCall {
+            id: Some(ToolCallId::parse(id).unwrap()),
+            item: None,
+            kind: WireText::new("tool_use").unwrap(),
+            name: Some(WireText::new(name).unwrap()),
+        },
         input: ToolInput::Json(input),
     }
 }
 
 fn result(id: &str, status: ResultStatus, output: &str) -> ToolResult {
     ToolResult {
-        id: id.to_owned(),
+        id: ToolCallId::parse(id).unwrap(),
         status,
         output: output.to_owned(),
     }

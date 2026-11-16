@@ -5,8 +5,11 @@ use super::{
     ActivityLimitation, ActivityLimits, Fields, RequestActivity, ResponseActivity, ResultStatus,
     ToolInput, ToolResult, ToolUse,
 };
+use crate::inspect::ToolCall;
 use crate::label::Labeled;
 use crate::messages::{BlockKind, EventKind};
+use crate::native::ToolCallId;
+use crate::text::WireText;
 use serde_json::{Map, Value};
 use serde_with::{DeserializeFromStr, SerializeDisplay};
 use std::collections::BTreeMap;
@@ -106,7 +109,7 @@ impl<'a> Request<'a> {
                 }
             }
             Some(UserBlockKind::ToolResult) => {
-                let Some(id) = Fields(block).str("tool_use_id") else {
+                let Some(id) = Fields(block).answers("tool_use_id") else {
                     activity
                         .limitations
                         .push(ActivityLimitation::UnexpectedShape);
@@ -117,7 +120,7 @@ impl<'a> Request<'a> {
                     Some(false) | None => ResultStatus::Succeeded,
                 };
                 activity.tool_results.push(ToolResult {
-                    id: id.to_owned(),
+                    id,
                     status,
                     output: Fields(block).text("content"),
                 });
@@ -131,8 +134,8 @@ impl<'a> Request<'a> {
 #[derive(Debug, Clone)]
 struct Block {
     kind: BlockKind,
-    id: Option<String>,
-    name: Option<String>,
+    id: Option<ToolCallId>,
+    name: Option<WireText>,
     /// A document's or a start event's input.
     input: Option<Value>,
     /// Streamed input JSON, concatenated.
@@ -248,8 +251,10 @@ impl Response {
         let kind = Fields(block).str("type").and_then(BlockKind::from_label)?;
         Some(Block {
             kind,
-            id: Fields(block).str("id").map(str::to_owned),
-            name: Fields(block).str("name").map(str::to_owned),
+            id: Fields(block)
+                .str("id")
+                .and_then(|id| ToolCallId::parse(id).ok()),
+            name: Fields(block).wire("name"),
             input: block.get("input").cloned(),
             partial_input: String::new(),
             text: Fields(block).str("text").unwrap_or_default().to_owned(),
@@ -303,9 +308,12 @@ impl Response {
                         ToolInput::parse(&block.partial_input)
                     };
                     activity.tool_uses.push(ToolUse {
-                        id: block.id,
-                        kind: block.kind.label().to_owned(),
-                        name: block.name.unwrap_or_default(),
+                        call: ToolCall {
+                            id: block.id,
+                            item: None,
+                            kind: WireText::from_label(block.kind),
+                            name: block.name,
+                        },
                         input,
                     });
                 }

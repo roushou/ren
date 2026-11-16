@@ -8,6 +8,7 @@ pub use replay::{Captured, RederivePass, StoredBody, StoredExchange, StoredRespo
 use crate::secrets::{Detection, SecretKind, SecretScanner};
 use ren_harness::tools::{CallPurpose, InterpretedCall, ToolEffect};
 use ren_protocol::activity::{ActivityLimitation, ResultStatus, ToolInput};
+use ren_protocol::native::{OutputItemId, ToolCallId};
 use serde::{Deserialize, Serialize};
 use serde_with::{DeserializeFromStr, SerializeDisplay};
 use strum::{Display, EnumString, IntoStaticStr, VariantArray};
@@ -211,15 +212,18 @@ impl CallDigest {
                     .iter()
                     .map(|effect| effect.target.as_str())
                     .collect();
-                tool_input.push(format!(
-                    "{} {} {}",
-                    used.tool.name,
-                    targets.join(" "),
-                    input
-                ));
+                let call = &used.tool.call;
+                tool_input.push(format!("{} {} {}", call.name(), targets.join(" "), input));
                 DigestTool {
-                    id: used.tool.id,
-                    name: used.tool.name,
+                    // The identifier a result answers, or else the item's
+                    // own, so a call that is never answered is still named.
+                    id: call
+                        .id
+                        .as_ref()
+                        .map(ToolCallId::as_str)
+                        .or(call.item.as_ref().map(OutputItemId::as_str))
+                        .map(str::to_owned),
+                    name: call.name().to_owned(),
                     input: Excerpt::cut(&input, budget.input_chars),
                     effects,
                 }
@@ -237,7 +241,7 @@ impl CallDigest {
                 let excerpt = Excerpt::cut(&output, budget.output_chars);
                 tool_output.push(output);
                 DigestResult {
-                    id: result.id,
+                    id: result.id.as_str().to_owned(),
                     status: result.status,
                     output: excerpt,
                 }

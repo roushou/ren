@@ -2,6 +2,7 @@
 //! appear on the wire. They are claims, never proof of identity, and have
 //! their own types, separate from Ren's own identities.
 
+use crate::text::{WireText, WireTextError};
 use uuid::Uuid;
 
 macro_rules! native_id {
@@ -41,6 +42,43 @@ native_id!(
 native_id!(
     /// A client's own thread identifier (Codex).
     NativeThreadId
+);
+
+macro_rules! wire_id {
+    ($(#[$meta:meta])* $name:ident) => {
+        $(#[$meta])*
+        #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+        pub struct $name(WireText);
+
+        impl $name {
+            /// An identifier read from the wire: never empty, bounded, and
+            /// free of control characters ([`WireText::identifier`]).
+            pub fn parse(text: &str) -> Result<Self, WireTextError> {
+                WireText::identifier(text).map(Self)
+            }
+
+            pub fn as_str(&self) -> &str {
+                self.0.as_str()
+            }
+        }
+
+        impl std::fmt::Display for $name {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.write_str(self.as_str())
+            }
+        }
+    };
+}
+
+wire_id!(
+    /// The identifier a client answers a tool call with: Anthropic's block
+    /// `id`, OpenAI's `call_id`, a Chat Completions call's `id`.
+    ToolCallId
+);
+wire_id!(
+    /// An OpenAI Responses output item's own `id`, distinct from the
+    /// [`ToolCallId`] the client answers with.
+    OutputItemId
 );
 
 /// The hints one WebSocket message carried, already parsed. Malformed hints

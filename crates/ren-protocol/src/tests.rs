@@ -8,6 +8,7 @@ use super::{
         ModelOutcome, TerminalEvent,
         pipeline::{BodyEnd, InspectionLimits, Protocol},
     },
+    native::{OutputItemId, ToolCallId},
     text::WireText,
 };
 use proptest::prelude::*;
@@ -99,7 +100,10 @@ fn anthropic_stream_reports_model_usage_tools_and_outcome() {
     let [call] = report.tool_calls() else {
         panic!("expected one tool call")
     };
-    assert_eq!(text(call.call_id.as_ref()), Some("toolu_fixture"));
+    assert_eq!(
+        call.id.as_ref().map(ToolCallId::as_str),
+        Some("toolu_fixture")
+    );
     assert_eq!(call.kind.as_str(), "tool_use");
     assert_eq!(text(call.name.as_ref()), Some("read_file"));
     assert_eq!(report.events().understood, 8);
@@ -233,8 +237,8 @@ fn responses_terminal_event_is_independent_of_http_completion() {
     let [call] = report.tool_calls() else {
         panic!("added and done describe one call")
     };
-    assert_eq!(text(call.item_id.as_ref()), Some("fc_1"));
-    assert_eq!(text(call.call_id.as_ref()), Some("call_1"));
+    assert_eq!(call.item.as_ref().map(OutputItemId::as_str), Some("fc_1"));
+    assert_eq!(call.id.as_ref().map(ToolCallId::as_str), Some("call_1"));
     let usage = report.usage().unwrap();
     assert_eq!(usage.accounting, InputAccounting::IncludesCache);
     assert_eq!(
@@ -767,7 +771,7 @@ fn chat_stream_reports_model_usage_tools_and_outcome() {
         .iter()
         .map(|call| {
             (
-                text(call.call_id.as_ref()),
+                call.id.as_ref().map(ToolCallId::as_str),
                 call.kind.as_str(),
                 text(call.name.as_ref()),
             )
@@ -786,7 +790,13 @@ fn chat_stream_reports_model_usage_tools_and_outcome() {
     let uses: Vec<_> = activity
         .tool_uses
         .iter()
-        .map(|call| (call.id.as_deref(), call.name.as_str(), call.input.clone()))
+        .map(|used| {
+            (
+                used.call.id.as_ref().map(ToolCallId::as_str),
+                used.call.name(),
+                used.input.clone(),
+            )
+        })
         .collect();
     assert_eq!(
         uses,

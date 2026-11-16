@@ -5,8 +5,11 @@ use super::{
     ActivityLimitation, ActivityLimits, Fields, RequestActivity, ResponseActivity, ResultStatus,
     ToolInput, ToolResult, ToolUse,
 };
+use crate::inspect::ToolCall;
 use crate::label::Labeled;
+use crate::native::OutputItemId;
 use crate::responses::{EventKind, ItemKind};
+use crate::text::WireText;
 use serde_json::{Map, Value};
 use serde_with::{DeserializeFromStr, SerializeDisplay};
 use strum::{Display, EnumString, IntoStaticStr, VariantArray};
@@ -86,14 +89,14 @@ impl<'a> Request<'a> {
         {
             let kind = Fields(item).str("type");
             if kind.and_then(ToolOutputKind::from_label).is_some() {
-                let Some(id) = Fields(item).str("call_id") else {
+                let Some(id) = Fields(item).answers("call_id") else {
                     activity
                         .limitations
                         .push(ActivityLimitation::UnexpectedShape);
                     continue;
                 };
                 activity.tool_results.push(ToolResult {
-                    id: id.to_owned(),
+                    id,
                     status: ResultStatus::Unreported,
                     output: Fields(item).text("output"),
                 });
@@ -284,15 +287,14 @@ impl Response {
                 | ItemKind::ToolSearchCall => ToolInput::Json(Value::Object(item.clone())),
             };
             activity.tool_uses.push(ToolUse {
-                id: Fields(item)
-                    .str("call_id")
-                    .or_else(|| Fields(item).str("id"))
-                    .map(str::to_owned),
-                kind: kind.label().to_owned(),
-                name: Fields(item)
-                    .str("name")
-                    .unwrap_or_else(|| kind.label())
-                    .to_owned(),
+                call: ToolCall {
+                    id: Fields(item).answers("call_id"),
+                    item: Fields(item)
+                        .str("id")
+                        .and_then(|id| OutputItemId::parse(id).ok()),
+                    kind: WireText::from_label(kind),
+                    name: Fields(item).wire("name"),
+                },
                 input,
             });
         }

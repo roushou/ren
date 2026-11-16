@@ -9,6 +9,7 @@ use super::{
         EventClass, InputAccounting, KindFamily, ModelOutcome, Observation, ToolCall, Usage,
     },
     json::{DecodeError, Field, Frame, JsonObject, Kind},
+    native::ToolCallId,
     sse::EventName,
     text::WireText,
 };
@@ -161,7 +162,7 @@ impl MessagesUsage {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ContentBlock {
     kind: Field<Kind<BlockKind>>,
-    id: Field<WireText>,
+    id: Field<ToolCallId>,
     name: Field<WireText>,
 }
 
@@ -169,7 +170,7 @@ impl ContentBlock {
     fn read(object: JsonObject<'_>) -> Self {
         Self {
             kind: object.label("type"),
-            id: object.identifier("id"),
+            id: object.parsed("id", ToolCallId::parse),
             name: object.text("name"),
         }
     }
@@ -182,8 +183,8 @@ impl ContentBlock {
                     out(Observation::MalformedField);
                 }
                 out(Observation::ToolCall(ToolCall {
-                    call_id: id.present(),
-                    item_id: None,
+                    id: id.present(),
+                    item: None,
                     kind: WireText::from_label(kind),
                     name: name.present(),
                 }));

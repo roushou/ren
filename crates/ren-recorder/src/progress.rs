@@ -50,7 +50,7 @@ impl Progress {
             tools: activity
                 .tool_uses
                 .iter()
-                .map(|tool| tool.name.clone())
+                .map(|tool| tool.call.name().to_owned())
                 .collect(),
             thinking,
         }
