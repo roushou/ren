@@ -20,11 +20,12 @@ use crate::{
     commands::{ClientCommand, CommandKind, Sigil},
     drive::{
         ApprovalAsk, ApprovalId, CommandIntent, CommandRefused, Decision, DriveCommand, DriveEvent,
-        DriveItem, ItemId, ItemKind, ItemPhase, ItemRead, ItemStatus, Opening, Prompt, RawLine,
-        Received, RequestKind, Retry, TurnEnd, Unreadable,
+        DriveItem, ItemId, ItemKind, ItemPhase, ItemRead, ItemStatus, Opening, RawLine, Received,
+        RequestKind, Retry, TurnEnd, Unreadable,
     },
     lines::{Framed, Line},
     models::{DefaultChoice, Listing, Model, ModelId, ModelListing},
+    prompt::Prompt,
     settings::{ApprovalPolicy, Midway, RunSettings, Setting, SettingsBook},
 };
 use ren_protocol::{
@@ -1143,10 +1144,11 @@ mod tests {
     use crate::{
         drive::{
             ApprovalAsk, ApprovalId, CommandRefused, Decision, DriveCommand, DriveEvent, ItemKind,
-            ItemPhase, ItemRead, ItemStatus, Opening, Prompt, Received, RequestKind, Retry,
-            TurnEnd, Unreadable,
+            ItemPhase, ItemRead, ItemStatus, Opening, Received, RequestKind, Retry, TurnEnd,
+            Unreadable,
         },
         lines::{Framed, Line},
+        prompt::Prompt,
     };
     use ren_protocol::native::NativeThreadId;
     use serde_json::{Value, json};
@@ -1239,11 +1241,11 @@ mod tests {
 
     #[test]
     fn sends_images_as_content_blocks_and_shows_them_on_the_echo() {
-        use crate::drive::PromptImage;
+        use crate::prompt::PromptImage;
         let mut codec = ready();
         let image = PromptImage::sample();
         let line = codec
-            .command(DriveCommand::Prompt(PromptImage::prompt("what is this")))
+            .command(DriveCommand::Prompt(Prompt::sample("what is this")))
             .unwrap()
             .remove(0);
         assert_eq!(
@@ -1280,7 +1282,7 @@ mod tests {
             json!({ "type": "result", "subtype": "success", "is_error": false }),
         );
         let alone = codec
-            .command(DriveCommand::Prompt(PromptImage::prompt("")))
+            .command(DriveCommand::Prompt(Prompt::sample("")))
             .unwrap()
             .remove(0);
         assert_eq!(

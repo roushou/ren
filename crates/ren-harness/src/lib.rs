@@ -2,7 +2,7 @@
 //! opencode) and what Ren knows about each. Each client is one module
 //! (`claude_code`, `codex`, `pi`, `opencode`) holding its own ways: its
 //! structured mode, launch plan, attribution headers, and tools. Each fills
-//! the shared types the rest of Ren reads (`drive`, `models`, `settings`,
+//! the shared types the rest of Ren reads (`drive`, `prompt`, `models`, `settings`,
 //! `launch`, `attribution`, `tools`), and [`Harness`] dispatches to them by
 //! `match`. See docs/architecture.md.
 //!
@@ -25,6 +25,7 @@ pub mod models;
 pub mod opencode;
 pub mod pi;
 pub mod profile;
+pub mod prompt;
 #[cfg(test)]
 mod purity;
 pub mod settings;

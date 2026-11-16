@@ -1,5 +1,5 @@
 //! The codecs (each client's structured mode and the parts they share), the
-//! driving vocabulary, line framing, and run settings stay free of I/O and
+//! driving vocabulary, the prompt, line framing, and run settings stay free of I/O and
 //! of the process and filesystem work the rest of the crate does (launching,
 //! the Pi extension cache, the host environment). The crate has no I/O
 //! manifest of its own to forbid that, so it is checked on the sources.
@@ -22,6 +22,7 @@ fn codecs_stay_free_of_io() {
         ("opencode/acp.rs", include_str!("opencode/acp.rs")),
         ("opencode/session.rs", include_str!("opencode/session.rs")),
         ("drive.rs", include_str!("drive.rs")),
+        ("prompt.rs", include_str!("prompt.rs")),
         ("lines.rs", include_str!("lines.rs")),
         ("settings.rs", include_str!("settings.rs")),
     ];

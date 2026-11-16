@@ -36,10 +36,11 @@ use ren_harness::sign_in::Console;
 use ren_harness::{
     Harness,
     attachment::{Attachment, Limits, NotAccepted, Offer},
-    drive::{Driver, Opening, Prompt, PromptImage},
+    drive::{Driver, Opening},
     endpoint::GatewayEndpoint,
     lines::{Framed, Line, LineLimit, Lines},
     models::{DefaultChoice, ModelId, ModelListing},
+    prompt::{Prompt, PromptImage},
     settings::{ApprovalPolicy, Midway, RunSettings},
 };
 use ren_protocol::label::Labeled;

@@ -476,7 +476,7 @@ mod tests {
         ));
         let turn = codex
             .command(crate::drive::DriveCommand::Prompt(
-                crate::drive::Prompt::parse("go".into()).unwrap(),
+                crate::prompt::Prompt::parse("go".into()).unwrap(),
             ))
             .unwrap()
             .remove(0);

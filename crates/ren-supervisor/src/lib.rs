@@ -221,7 +221,7 @@ pub enum SessionError {
 }
 
 /// A change to a run, as it happens.
-#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum RunUpdate {
     State { run: RunId, state: RunState },
@@ -257,7 +257,7 @@ pub struct Places {
 }
 
 /// One run as the supervisor holds it now.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct RunSnapshot {
     pub run: RunId,
     /// The session the run serves.
