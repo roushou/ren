@@ -1862,6 +1862,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "ren-git"
+version = "0.1.0"
+dependencies = [
+ "tempfile",
+ "thiserror",
+]
+
+[[package]]
 name = "ren-harness"
 version = "0.1.0"
 dependencies = [

@@ -1,0 +1,195 @@
+use super::{CommitId, Exit, Git, GitError, Head, HeadRef, Published, Repository, Tree};
+use std::path::Path;
+
+/// A repository at `dir` whose `HEAD` holds `head`, written by hand.
+fn written(dir: &Path, head: &str) {
+    std::fs::create_dir_all(dir.join(".git")).unwrap();
+    std::fs::write(dir.join(".git/HEAD"), head).unwrap();
+}
+
+fn branch(name: &str) -> Repository {
+    Repository::At(Head::Branch(name.into()))
+}
+
+#[test]
+fn a_repository_reads_as_its_head_says() {
+    let dir = tempfile::tempdir().unwrap();
+    let at = |head: &str| {
+        let folder = tempfile::tempdir_in(dir.path()).unwrap();
+        written(folder.path(), head);
+        Git::repository(folder.path())
+    };
+    assert_eq!(at("ref: refs/heads/feat/upload\n"), branch("feat/upload"));
+    assert_eq!(
+        at("ref: refs/remotes/origin/main"),
+        branch("refs/remotes/origin/main")
+    );
+    let Repository::At(Head::Detached(commit)) = at("0123456789ABCDEF0123456789abcdef01234567\n")
+    else {
+        panic!("a full SHA-1 id is a detached HEAD");
+    };
+    assert_eq!(commit.abbreviated(7), "0123456");
+    assert_eq!(commit.as_str(), "0123456789abcdef0123456789abcdef01234567");
+    assert!(matches!(
+        at(&"a".repeat(64)),
+        Repository::At(Head::Detached(_))
+    ));
+    for garbage in ["", "ref:", "ref: refs/heads/", "0123456", "garbage"] {
+        assert_eq!(at(garbage), Repository::Unreadable, "{garbage:?}");
+    }
+    assert_eq!(Git::repository(dir.path()), Repository::None);
+}
+
+#[test]
+fn a_linked_worktree_reads_head_through_its_gitdir_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let main = dir.path().join("main");
+    let linked = main.join(".git/worktrees/w");
+    std::fs::create_dir_all(&linked).unwrap();
+    std::fs::write(linked.join("HEAD"), "ref: refs/heads/feature\n").unwrap();
+    let worktree = dir.path().join("w");
+    std::fs::create_dir(&worktree).unwrap();
+
+    std::fs::write(worktree.join(".git"), "gitdir: ../main/.git/worktrees/w\n").unwrap();
+    assert_eq!(Git::repository(&worktree), branch("feature"));
+    std::fs::write(
+        worktree.join(".git"),
+        format!("gitdir:{}", linked.display()),
+    )
+    .unwrap();
+    assert_eq!(Git::repository(&worktree), branch("feature"));
+
+    // A `.git` that cannot be followed is unreadable, never no repository.
+    for text in ["nonsense", "gitdir:  \n", "gitdir: ../gone"] {
+        std::fs::write(worktree.join(".git"), text).unwrap();
+        assert_eq!(
+            Git::repository(&worktree),
+            Repository::Unreadable,
+            "{text:?}"
+        );
+    }
+    #[cfg(unix)]
+    {
+        std::fs::remove_file(worktree.join(".git")).unwrap();
+        std::os::unix::fs::symlink(main.join(".git"), worktree.join(".git")).unwrap();
+        assert_eq!(Git::repository(&worktree), Repository::Unreadable);
+    }
+}
+
+/// A fake `git` in a folder of its own under `dir`, running `body`.
+#[cfg(unix)]
+fn fake(dir: &Path, name: &str, body: &str) -> std::path::PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+    let bin = dir.join(name);
+    std::fs::create_dir(&bin).unwrap();
+    let program = bin.join("git");
+    std::fs::write(&program, format!("#!/bin/sh\n{body}\n")).unwrap();
+    std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+    bin
+}
+
+#[cfg(unix)]
+#[test]
+fn the_first_git_on_the_path_runs_and_failures_keep_their_exit() {
+    let dir = tempfile::tempdir().unwrap();
+    let works = fake(
+        dir.path(),
+        "works",
+        "[ \"$*\" = 'init --quiet' ] && touch made",
+    );
+    let fails = fake(dir.path(), "fails", "echo 'no such thing' >&2; exit 3");
+    let not_executable = dir.path().join("plain");
+    std::fs::create_dir(&not_executable).unwrap();
+    std::fs::write(not_executable.join("git"), "").unwrap();
+
+    let found = Git::find(&[not_executable, works.clone(), fails.clone()]).unwrap();
+    found.init(dir.path()).unwrap();
+    assert!(dir.path().join("made").is_file(), "git ran in the folder");
+
+    let failed = Git::find(&[fails]).unwrap().init(dir.path()).unwrap_err();
+    assert!(matches!(
+        failed,
+        GitError::Failed {
+            exit: Exit::Code(3),
+            ..
+        }
+    ));
+    assert_eq!(
+        failed.to_string(),
+        "`git init --quiet` exited with code 3: no such thing"
+    );
+    assert!(Git::find(&[dir.path().join("none")]).is_none());
+
+    let gone = Git {
+        program: dir.path().join("gone"),
+    };
+    assert!(matches!(
+        gone.init(dir.path()),
+        Err(GitError::NotStarted { .. })
+    ));
+}
+
+#[cfg(unix)]
+#[test]
+fn answers_are_read_from_gits_output() {
+    let dir = tempfile::tempdir().unwrap();
+    let full = "0123456789abcdef0123456789abcdef01234567";
+    let git = Git::find(&[fake(
+        dir.path(),
+        "answers",
+        &format!(
+            "case \"$*\" in
+  'rev-parse --verify HEAD') echo {full} ;;
+  'status --porcelain --untracked-files=no') echo ' M src/lib.rs' ;;
+  'branch --remotes --contains HEAD') ;;
+  'symbolic-ref -q HEAD') exit 1 ;;
+  'rev-parse --absolute-git-dir') echo /r/.git/worktrees/w ;;
+  'rev-parse --path-format=absolute --git-common-dir') echo /r/.git ;;
+esac"
+        ),
+    )])
+    .unwrap();
+    assert_eq!(
+        git.head_commit(dir.path()).unwrap(),
+        CommitId::parse(full).unwrap()
+    );
+    assert_eq!(git.tree(dir.path()).unwrap(), Tree::Modified);
+    assert_eq!(git.published(dir.path()).unwrap(), Published::LocalOnly);
+    assert_eq!(git.head_ref(dir.path()).unwrap(), HeadRef::Detached);
+    let dirs = git.dirs(dir.path()).unwrap();
+    assert_eq!(
+        (dirs.own.as_path(), dirs.common.as_path()),
+        (Path::new("/r/.git/worktrees/w"), Path::new("/r/.git"))
+    );
+
+    let odd = Git::find(&[fake(dir.path(), "odd", "echo not-a-commit")]).unwrap();
+    assert!(matches!(
+        odd.head_commit(dir.path()),
+        Err(GitError::Unexpected { .. })
+    ));
+}
+
+/// The real git, on a repository it made: what the build script and the
+/// installer ask of it. Skipped where no git is installed.
+#[test]
+fn the_real_git_answers_on_its_own_repository() {
+    let dir = tempfile::tempdir().unwrap();
+    let git = Git::inherited();
+    if git.init(dir.path()).is_err() {
+        return;
+    }
+    assert!(matches!(
+        git.head_ref(dir.path()).unwrap(),
+        HeadRef::Named(reference) if reference.starts_with("refs/heads/")
+    ));
+    // No commit yet.
+    assert!(git.head_commit(dir.path()).is_err());
+    let dirs = git.dirs(dir.path()).unwrap();
+    assert_eq!(dirs.own, dirs.common);
+    assert!(dirs.own.is_absolute() && dirs.own.ends_with(".git"));
+    assert_eq!(git.tree(dir.path()).unwrap(), Tree::Clean);
+    assert!(matches!(
+        Git::repository(dir.path()),
+        Repository::At(Head::Branch(_))
+    ));
+}

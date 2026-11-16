@@ -6,7 +6,7 @@ and exposing it, using the operator's own Anthropic and OpenAI subscriptions. On
 a laptop and a VPS reached through Tailscale.
 
 [`docs/architecture.md`](docs/architecture.md) describes how Ren is built and
-lists its known limitations. Section 4 below maps the nine crates and the `xtask` package.
+lists its known limitations. Section 4 below maps the ten crates and the `xtask` package.
 
 - All code follows the principles (section 2) and the workspace lints.
 - Never describe unbuilt functionality as working. Read the source before assuming
@@ -170,7 +170,7 @@ saturation, and persistence recovery.
 
 ## 4. Workspace map
 
-This map describes the code as it is: the nine crates, listed with their
+This map describes the code as it is: the ten crates, listed with their
 dependencies under "Crates" below. Read the code for current module ownership.
 
 - `docs/architecture.md`: how Ren is built, and its known limitations. The other
@@ -191,6 +191,15 @@ dependencies under "Crates" below. Read the code for current module ownership.
   the native identifiers and message hints the wire carries (`native`). Its
   manifest allows only pure dependencies, and a test keeps its sources free of
   I/O.
+- `crates/ren-git`: git as Ren reads and runs it, with `Git` as its primary
+  type: the git program found on a search path (`Git::find`) or this
+  process's own (`Git::inherited`), the commands Ren runs with it (`init`,
+  and the revision, tree, and references a checkout reports), and a folder's
+  repository read from disk without it (`Git::repository`: its `HEAD`,
+  through a linked worktree's `.git` file). It is the one place Ren reads or
+  runs git, and the one `disallowed_methods` exemption for it. It performs
+  filesystem and process I/O but has no async runtime, HTTP, database, or
+  CLI dependency.
 - `crates/ren-depot`: the tools Ren's agents run with, with `Depot` as its
   primary type: the package catalog (`package`: `Package`, `PackageId`,
   `ProgramName`, `Kind`, client, runtime, or utility, and `Origin`; the
@@ -605,6 +614,7 @@ directly.
 | ------------------------------------------ | --------------------------------------------------- | ----------------- |
 | `ren-protocol`                             | `CallInspector`                                     | none of ours      |
 | `ren-depot`                                | `Depot`, with its `ToolHost` port                   | none of ours      |
+| `ren-git`                                  | `Git`                                               | none of ours      |
 | `ren-harness`                              | `Harness` (`ClaudeCode`, `Codex`, `Pi`, `OpenCode`) | protocol, depot   |
 | `ren-recorder`                             | `Recorder`, with its `RecordSink` port              | protocol, harness |
 | `ren-store`                                | `Store`, which implements `RecordSink`              | recorder          |
