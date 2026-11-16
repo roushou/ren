@@ -139,8 +139,8 @@ Modules carry no lint headers of their own. A module with submodules lives in
 - The only exemptions are the capability implementations themselves, marked with
   `#[expect(clippy::disallowed_methods, reason = "…")]`: `HostEnv::capture`, the
   daemon's `SystemClock`, `RandomIds`, `ProcessHost` (`ren_daemon::host`, its process
-  starts and its program lookup on the agents' `PATH`), `Git` (`ren_daemon::git`,
-  the one place Ren runs git, found on a run's own search path), and `HostTools` (its
+  starts and its program lookup on the agents' `PATH`), `ren_git::Git`
+  (the one place Ren runs git), and `HostTools` (its
   `--version` probes), and the daemon's server
   and supervisor task spawns. Outside the daemon, `ren-cli`'s build script (its
   revision) and xtask's `Invocation` (a shell) run commands. Starting a process
@@ -474,9 +474,8 @@ dependencies under "Crates" below. Read the code for current module ownership.
   `ObservationThread`, `ProcessHost`, the supervisor's `AgentHost` (its
   logins on a pseudo-terminal through `pty-process`, echo off, and a pasted
   loopback address opened with one `GET`), and `HostTools`, the depot's
-  `ToolHost`. `git` is `Git`, the one place Ren reads a folder's repository
-  (its `HEAD`, through a linked worktree's `.git` file) and runs the git on
-  a run's search path. `tools` is the tool store on disk
+  `ToolHost`; it reads folders' repositories and makes scratch repositories
+  with `ren_git::Git`, the git on a run's search path. `tools` is the tool store on disk
   (`ToolStore`, under `<data>/tools`): it carries out the depot's
   `InstallJob`s (downloading through its `Fetch` seam, `ReqwestFetch` in
   production, https only and capped in bytes; unpacking tar.gz, zip, and

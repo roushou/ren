@@ -6,18 +6,18 @@
 //! random identities. Components receive them as values; nothing else calls
 //! `SystemTime::now`, `Instant::now`, or `Uuid::new_v4`.
 
-use crate::git::Git;
 use crate::tools::ToolStore;
 use ren_depot::toolset::Generation;
 use ren_depot::{ToolHost, package::ProgramName, source::Platform, version::ProbeFailure};
+use ren_git::{Git, GitError, Head, Repository};
 use ren_harness::{launch::LaunchPlan, pi::PiCache, sign_in::LocalRedirect};
 use ren_recorder::{
     id::IdSource,
     time::{Clock, Moment, Monotonic, UnixMillis},
 };
 use ren_supervisor::{
-    AgentHost, AgentProcess, FoundPath, KillSwitch, Look, PathKind, ProcessExit, RunTools, Scratch,
-    Untracked, WalkLimits, Workdir,
+    AgentHost, AgentProcess, FoundPath, KillSwitch, Look, PathKind, ProcessExit, ProjectGit,
+    RunTools, Scratch, Untracked, WalkLimits, Workdir,
 };
 use std::future::Future;
 use std::io;
@@ -381,7 +381,27 @@ impl ProcessHost {
         })
     }
 
-    pub(crate) fn exit(status: std::process::ExitStatus) -> ProcessExit {
+    /// A folder's repository, as the supervisor serves it.
+    fn project_git(repository: Repository) -> ProjectGit {
+        match repository {
+            Repository::None => ProjectGit::None,
+            Repository::At(Head::Branch(name)) => ProjectGit::Branch { name },
+            Repository::At(Head::Detached(commit)) => ProjectGit::Detached {
+                commit: commit.abbreviated(7).to_owned(),
+            },
+            Repository::Unreadable => ProjectGit::Unreadable,
+        }
+    }
+
+    fn git_exit(exit: ren_git::Exit) -> ProcessExit {
+        match exit {
+            ren_git::Exit::Code(code) => ProcessExit::Code(code),
+            ren_git::Exit::Signal(signal) => ProcessExit::Signal(signal),
+            ren_git::Exit::Unknown => ProcessExit::Unknown,
+        }
+    }
+
+    fn exit(status: std::process::ExitStatus) -> ProcessExit {
         #[cfg(unix)]
         {
             use std::os::unix::process::ExitStatusExt;
@@ -426,7 +446,7 @@ impl AgentHost for ProcessHost {
         }
         Ok(Look {
             folders,
-            git: Git::repository(dir),
+            git: Self::project_git(Git::repository(dir)),
         })
     }
 
@@ -518,9 +538,23 @@ impl AgentHost for ProcessHost {
     fn make_scratch(&self, dir: &Path, tools: &RunTools) -> io::Result<Scratch> {
         std::fs::create_dir(dir)?;
         // Without git the folder still works; its changes are not tracked.
-        Ok(match Git::find(self.search_dirs(tools)) {
-            Some(git) => git.init(dir),
-            None => Scratch::Untracked(Untracked::NoGit),
+        let Some(git) = Git::find(&self.search_dirs(tools)) else {
+            return Ok(Scratch::Untracked(Untracked::NoGit));
+        };
+        Ok(match git.init(dir) {
+            Ok(()) => Scratch::Repository,
+            Err(GitError::Failed { exit, .. }) => {
+                Scratch::Untracked(Untracked::InitFailed(Self::git_exit(exit)))
+            }
+            Err(error @ GitError::NotStarted { .. }) => {
+                tracing::debug!(%error, "cannot start git");
+                Scratch::Untracked(Untracked::NotStarted)
+            }
+            // `git init` prints nothing that is read.
+            Err(error @ GitError::Unexpected { .. }) => {
+                tracing::debug!(%error, "git init answered oddly");
+                Scratch::Untracked(Untracked::InitFailed(ProcessExit::Unknown))
+            }
         })
     }
 

@@ -1783,6 +1783,7 @@ dependencies = [
  "pty-process",
  "ren-depot",
  "ren-gateway",
+ "ren-git",
  "ren-harness",
  "ren-protocol",
  "ren-recorder",
