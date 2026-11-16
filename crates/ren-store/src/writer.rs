@@ -14,7 +14,7 @@ use ren_protocol::{
     route::Transport,
 };
 use ren_recorder::caller::{TailscaleLogin, UserId};
-use ren_recorder::digest::{CallDigest, StoredExchange};
+use ren_recorder::digest::{CallDigest, RederivePass, StoredExchange};
 use ren_recorder::{Committed, Observation, Pruned, RecordSink};
 use ren_recorder::{
     batch::{
@@ -1484,9 +1484,9 @@ impl RecordSink for Store {
     fn undigested(
         &mut self,
         version: u32,
-        limit: usize,
+        pass: RederivePass,
     ) -> impl Future<Output = Result<Vec<StoredExchange>, StoreError>> + Send {
-        self.bodies.undigested(version, limit)
+        self.bodies.undigested(version, pass)
     }
 
     fn close(self) -> impl Future<Output = Result<(), StoreError>> + Send {

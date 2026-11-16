@@ -3,7 +3,7 @@
 
 mod replay;
 
-pub use replay::{Captured, StoredBody, StoredExchange, StoredResponse};
+pub use replay::{Captured, RederivePass, StoredBody, StoredExchange, StoredResponse};
 
 use crate::secrets::{Detection, SecretKind, SecretScanner};
 use ren_harness::tools::{CallPurpose, InterpretedCall, ToolEffect};

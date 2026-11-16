@@ -34,7 +34,7 @@ use ren_recorder::batch::{BodyKey, HistorySubject};
 use ren_recorder::digest::CallDigest;
 use ren_recorder::{
     capture::{AttemptTerminal, BodyEnding, CallState, TerminalClass},
-    digest::{Captured, StoredBody, StoredExchange, StoredResponse},
+    digest::{Captured, RederivePass, StoredBody, StoredExchange, StoredResponse},
     id::{CallId, RecordingId, RunId, SessionId, TurnId},
 };
 use sqlx::{
@@ -1190,13 +1190,13 @@ impl Reader {
     pub(crate) async fn undigested(
         &self,
         version: u32,
-        limit: usize,
+        pass: RederivePass,
     ) -> Result<Vec<StoredExchange>, StoreError> {
         let calls: Vec<String> = sqlx::query_scalar(
             "SELECT c.id FROM calls c LEFT JOIN call_digests d ON d.call = c.id WHERE c.state <> 'open' AND (d.call IS NULL OR d.version < ?) ORDER BY c.started_at DESC, c.id DESC LIMIT ?",
         )
         .bind(i64::from(version))
-        .bind(i64::try_from(limit).unwrap_or(i64::MAX))
+        .bind(i64::try_from(pass.calls).unwrap_or(i64::MAX))
         .fetch_all(&self.pool)
         .await?;
         let mut exchanges = Vec::with_capacity(calls.len());
@@ -1246,6 +1246,9 @@ impl Reader {
                 request,
                 response,
             });
+            if pass.filled(&exchanges) {
+                break;
+            }
         }
         Ok(exchanges)
     }

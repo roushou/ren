@@ -5,7 +5,7 @@
 
 use crate::{
     batch::{Batch, ObservationKind},
-    digest::StoredExchange,
+    digest::{RederivePass, StoredExchange},
     id::{AttemptId, CallId, ChannelId},
     retention::RetentionPolicy,
     time::UnixMillis,
@@ -32,12 +32,12 @@ pub trait RecordSink: Send + 'static {
         now: UnixMillis,
     ) -> impl Future<Output = Result<Pruned, Self::Error>> + Send;
 
-    /// Up to `limit` finished calls whose digest is missing or older than
-    /// `version`, newest first, with their stored bodies.
+    /// Finished calls whose digest is missing or older than `version`,
+    /// newest first, with their stored bodies, as many as fit in `pass`.
     fn undigested(
         &mut self,
         version: u32,
-        limit: usize,
+        pass: RederivePass,
     ) -> impl Future<Output = Result<Vec<StoredExchange>, Self::Error>> + Send;
 
     /// Move buffered writes into durable files.

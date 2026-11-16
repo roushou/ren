@@ -29,6 +29,27 @@ pub struct StoredExchange {
     pub response: Option<StoredResponse>,
 }
 
+/// How much one pass of deriving digests again loads: at most `calls`
+/// calls, and none past the one whose stored bodies bring the pass to
+/// `bytes`. One call always fits, however large, so every call is reached.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RederivePass {
+    pub calls: usize,
+    pub bytes: usize,
+}
+
+impl RederivePass {
+    /// Whether `exchanges`, loaded in one pass, fill it, so more may wait.
+    pub fn filled(self, exchanges: &[StoredExchange]) -> bool {
+        exchanges.len() >= self.calls
+            || exchanges
+                .iter()
+                .map(StoredExchange::stored_bytes)
+                .fold(0_usize, usize::saturating_add)
+                >= self.bytes
+    }
+}
+
 /// A stored body: its captured prefix and how it ended.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StoredBody {
@@ -57,6 +78,16 @@ pub struct StoredResponse {
 }
 
 impl StoredExchange {
+    /// The bytes of its stored bodies.
+    pub fn stored_bytes(&self) -> usize {
+        let request = self.request.as_ref().map_or(0, |body| body.bytes.len());
+        let response = self
+            .response
+            .as_ref()
+            .map_or(0, |response| response.body.bytes.len());
+        request.saturating_add(response)
+    }
+
     /// The call's digest, derived from its stored bodies.
     pub fn digest(self, scanner: &SecretScanner) -> CallDigest {
         let harness = self.harness;
