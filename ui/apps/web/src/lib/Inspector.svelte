@@ -31,12 +31,12 @@
   let {
     call,
     close,
-    onsession,
+    onrecording,
     onupdate,
   }: {
     call: CallView;
     close: () => void;
-    onsession: (id: RecordingId) => void;
+    onrecording: (id: RecordingId) => void;
     onupdate: (record: CallView) => void;
   } = $props();
   /** The daemon's per-body capture limit, to tell a trimmed body from lost bytes. */
@@ -139,12 +139,12 @@
       title="Close · Esc"><Icon name="close" size={15} /></button
     >
   </div>
-  {#if current.session}{@const session = current.session}<button
+  {#if current.recording}{@const recording = current.recording}<button
       class="inspector-session text-button"
-      onclick={() => onsession(session)}
-      >Recording <span class="mono">{short(current.attribution.hint?.session ?? session)}</span
+      onclick={() => onrecording(recording)}
+      >Recording <span class="mono">{short(current.attribution.hint?.session ?? recording)}</span
       ><Icon name="arrow" size={12} /></button
-    >{:else}<p class="inspector-session muted">No reported session</p>{/if}
+    >{:else}<p class="inspector-session muted">No recording</p>{/if}
   <div class="chip-row drawer-chips" aria-label="Call state">
     {#each [modelChip(current), streamChip(current), captureChip(current, bodyLimit)] as chip}<span
         class="chip {chip.tone}"
@@ -380,7 +380,7 @@
           <dt>Caller</dt>
           <dd>{callerShown(current.caller).title}</dd>
           <dt>Recording</dt>
-          <dd>{current.session ?? 'Unassigned'}</dd>
+          <dd>{current.recording ?? 'Unassigned'}</dd>
           <dt>Ren turn</dt>
           <dd>{current.turn ?? 'Unassigned'}</dd>
           <dt>Attribution source</dt>

@@ -250,7 +250,7 @@ async fn a_direct_entry_has_routes_of_its_own_and_a_fallback_only_entry_has_none
     let call = &calls[0];
     assert_eq!(call.provider, Stored::Known(Provider::Anthropic));
     assert_eq!(call.wire, Some(Stored::Known(Wire::AnthropicMessages)));
-    assert!(call.session.is_some(), "Claude Code's headers are read");
+    assert!(call.recording.is_some(), "Claude Code's headers are read");
     let plan = call.plan.as_ref().unwrap();
     assert_eq!(plan["candidates"], serde_json::json!(["anthropic-key"]));
     assert_eq!(plan["fallback"], serde_json::Value::Null);
@@ -818,18 +818,18 @@ on_status = [529]
 }
 
 /// The sessions on `shelf` the read API lists, once `expected` many are.
-async fn sessions_on(gateway: &TestGateway, shelf: &str, expected: usize) -> serde_json::Value {
+async fn recordings_on(gateway: &TestGateway, shelf: &str, expected: usize) -> serde_json::Value {
     for _ in 0..100 {
         let listed = read(
             client()
-                .get(format!("{}/api/sessions?shelf={shelf}", gateway.base()))
+                .get(format!("{}/api/recordings?shelf={shelf}", gateway.base()))
                 .send()
                 .await
                 .unwrap(),
         )
         .await;
-        if listed["sessions"].as_array().map(Vec::len) == Some(expected) {
-            return listed["sessions"].clone();
+        if listed["recordings"].as_array().map(Vec::len) == Some(expected) {
+            return listed["recordings"].clone();
         }
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
@@ -837,29 +837,29 @@ async fn sessions_on(gateway: &TestGateway, shelf: &str, expected: usize) -> ser
 }
 
 #[tokio::test]
-async fn a_session_is_archived_unarchived_and_deleted_through_the_control_api() {
+async fn a_recording_is_archived_unarchived_and_deleted_through_the_control_api() {
     let mock = mock(upstream(StatusCode::OK, Arc::default())).await;
     let dir = tempfile::tempdir().unwrap();
     let gateway = TestGateway::start(&config(&mock, ""), dir.path()).await;
     assert_eq!(post(&gateway, "{}").await.status(), StatusCode::OK);
-    let listed = sessions_on(&gateway, "current", 1).await;
+    let listed = recordings_on(&gateway, "current", 1).await;
     let session = listed[0]["id"].as_str().unwrap().to_owned();
-    let edit = |change: &str| control(&gateway, &format!("history/sessions/{session}/{change}"));
+    let edit = |change: &str| control(&gateway, &format!("history/recordings/{session}/{change}"));
 
     let archived = edit("archive").send().await.unwrap();
     assert_eq!(archived.status(), StatusCode::ACCEPTED);
     let answer = read(archived).await;
     assert_eq!(answer["change"], "archive");
-    assert_eq!(answer["subject"]["kind"], "session");
-    sessions_on(&gateway, "current", 0).await;
-    let shelved = sessions_on(&gateway, "archived", 1).await;
+    assert_eq!(answer["subject"]["kind"], "recording");
+    recordings_on(&gateway, "current", 0).await;
+    let shelved = recordings_on(&gateway, "archived", 1).await;
     assert!(shelved[0]["archived_at"].is_u64());
 
     assert_eq!(
         edit("unarchive").send().await.unwrap().status(),
         StatusCode::ACCEPTED
     );
-    sessions_on(&gateway, "current", 1).await;
+    recordings_on(&gateway, "current", 1).await;
 
     // Unknown changes and subjects are not found, and browsers are refused.
     assert_eq!(
@@ -869,7 +869,7 @@ async fn a_session_is_archived_unarchived_and_deleted_through_the_control_api() 
     assert_eq!(
         control(
             &gateway,
-            "history/sessions/00000000-0000-0000-0000-00000000abcd/delete"
+            "history/recordings/00000000-0000-0000-0000-00000000abcd/delete"
         )
         .send()
         .await
@@ -891,8 +891,8 @@ async fn a_session_is_archived_unarchived_and_deleted_through_the_control_api() 
         edit("delete").send().await.unwrap().status(),
         StatusCode::ACCEPTED
     );
-    sessions_on(&gateway, "current", 0).await;
-    sessions_on(&gateway, "archived", 0).await;
+    recordings_on(&gateway, "current", 0).await;
+    recordings_on(&gateway, "archived", 0).await;
     gateway.stop().await;
     assert!(support::recorded(dir.path()).await.is_empty());
 }

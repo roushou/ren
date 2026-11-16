@@ -161,7 +161,7 @@ pub struct CallSummary {
     provider: String,
     endpoint: String,
     model: Option<String>,
-    session: Option<String>,
+    recording: Option<String>,
     status: Option<u16>,
     outcome: Option<String>,
     rejection: Option<String>,
@@ -196,7 +196,7 @@ impl CallSummary {
         id.get(..8).unwrap_or(id)
     }
 
-    /// `14:30:45  started   2903a122  anthropic messages  session dadfe1c5`
+    /// `14:30:45  started   2903a122  anthropic messages  recording dadfe1c5`
     pub fn started(&self, at: UnixMillis) -> String {
         let mut line = format!(
             "{}  started   {}  {} {}",
@@ -205,8 +205,8 @@ impl CallSummary {
             self.provider,
             self.endpoint
         );
-        if let Some(session) = &self.session {
-            let _ = write!(line, "  session {}", Self::short(session));
+        if let Some(recording) = &self.recording {
+            let _ = write!(line, "  recording {}", Self::short(recording));
         }
         line
     }
@@ -331,7 +331,7 @@ mod tests {
             "id": "2903a122-cd5b-4e63-b54f-2d95732c609e",
             "started_at": 1793974238191_u64, "ended_at": 1793974240123_u64,
             "provider": "anthropic", "endpoint": "messages", "model": "claude-opus-5-5",
-            "session": "dadfe1c5-d985-4bf8-9169-ae5da923ca89", "status": 200,
+            "recording": "dadfe1c5-d985-4bf8-9169-ae5da923ca89", "status": 200,
             "outcome": "completed", "rejection": null,
             "usage": { "input_tokens": 1234, "output_tokens": 56 },
             "state": "finished", "unrelated": [1, 2, 3]
@@ -340,7 +340,7 @@ mod tests {
         let at = UnixMillis::from_millis(1793974240123);
         assert_eq!(
             finished.started(UnixMillis::from_millis(1793974238191)),
-            "14:10:38  started   2903a122  anthropic messages  session dadfe1c5"
+            "14:10:38  started   2903a122  anthropic messages  recording dadfe1c5"
         );
         assert_eq!(
             finished.ended(at, Ending::Finished),
@@ -349,7 +349,7 @@ mod tests {
         let refused: CallSummary = serde_json::from_value(serde_json::json!({
             "id": "2903a122-cd5b-4e63-b54f-2d95732c609e",
             "started_at": 0, "ended_at": null, "provider": "codex", "endpoint": "responses",
-            "model": null, "session": null, "status": 503, "outcome": null,
+            "model": null, "recording": null, "status": 503, "outcome": null,
             "rejection": "paused", "usage": null
         }))
         .unwrap();

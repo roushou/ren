@@ -100,7 +100,7 @@ export class RecordingList {
   static row(session: RecordingView, input: RecordingListInput): RecordingRow {
     const harness = Board.harness(session.source);
     const open = input.open
-      .filter((call) => call.session === session.id)
+      .filter((call) => call.recording === session.id)
       .sort((a, b) => a.started_at - b.started_at);
     const phase = open.length ? Board.phase(open, input.now) : null;
     const chip = phase ? Board.phaseChip(phase, input.now) : null;

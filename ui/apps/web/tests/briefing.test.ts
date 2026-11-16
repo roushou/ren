@@ -141,7 +141,7 @@ test('the sessions offered are those running in the checkout, newest first', () 
         workdir: body.stored!.workdir,
         started_at: body.stored!.created_at,
         thread: null,
-        session: null,
+        recording: null,
         operator_session: id,
         ended_at: null,
         end: null,

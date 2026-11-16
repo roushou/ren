@@ -164,7 +164,7 @@ def scenario(provider, model):
             assert all(r["state"] == "finished" and r["outcome"] == "completed" for r in records)
             assert all(r["attribution"]["hint"]["source"] == "pi_extension_headers" for r in records)
             assert all(r["attribution"]["hint"]["session"] == session_id for r in records)
-            assert len({r["session"] for r in records}) == 1
+            assert len({r["recording"] for r in records}) == 1
             assert len({r["turn"] for r in records}) == 2 and all(r["turn"] for r in records)
             assert sum(len(r["tool_names"]) for r in records) == 2
             for database in ("ren.sqlite3", "blobs.sqlite3"):

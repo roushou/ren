@@ -1441,7 +1441,7 @@ async fn every_control_request_reaches_its_route() {
         },
         ControlRequest::Backup,
         ControlRequest::Edit {
-            subject: HistorySubject::Session(RecordingId::restore(id(4))),
+            subject: HistorySubject::Recording(RecordingId::restore(id(4))),
             change: HistoryChange::Archive,
         },
         ControlRequest::Edit {

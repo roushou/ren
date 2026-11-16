@@ -233,8 +233,8 @@ impl TimeRange {
 /// Filters for a call listing. Every field narrows the result.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct CallFilter {
-    /// Calls Ren grouped into this session.
-    pub session: Option<RecordingId>,
+    /// Calls Ren grouped into this recording.
+    pub recording: Option<RecordingId>,
     /// Calls attributed to this harness by its own headers or metadata.
     pub client: Option<Harness>,
     /// Calls a named user made.

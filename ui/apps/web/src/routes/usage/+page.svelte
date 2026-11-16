@@ -70,7 +70,7 @@
   const named = $derived(users.some((u) => u.user !== null));
   // Recordings active in the range, most input first.
   const sessions = $derived(
-    (current?.sessions ?? [])
+    (current?.recordings ?? [])
       .filter(
         (s) =>
           !current || range === 'all' || s.last_seen >= current.now - (byHour ? 864e5 : 7 * 864e5),

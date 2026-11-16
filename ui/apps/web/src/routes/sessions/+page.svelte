@@ -3,7 +3,7 @@
   import { onMount, tick, untrack } from 'svelte';
   import { SvelteMap } from 'svelte/reactivity';
   import { goto } from '$app/navigation';
-  import { ManagementApi, clock, short, type CallView } from '#lib/api.ts';
+  import { ManagementApi, clock, short, type CallView, type RecordingId } from '#lib/api.ts';
   import { ago } from '#lib/overview.ts';
   import { harnessLabel } from '#lib/activity.ts';
   import { callStatus, statusBadge, tokenSummary } from '#lib/display.ts';
@@ -200,7 +200,7 @@
   /** What the selected run shows. */
   let tab = $state<(typeof tabs)[number][0]>('conversation');
   /** The selected run's model calls, read when its Calls tab opens. */
-  let calls = $state.raw<{ session: string; calls: CallView[] } | null>(null);
+  let calls = $state.raw<{ recording: RecordingId; calls: CallView[] } | null>(null);
   /** Now, for how long ago runs started; moves every half minute. */
   let now = $state(Date.now());
   let newSession = $state<ReturnType<typeof NewSession>>();
@@ -245,10 +245,10 @@
     }
   }
 
-  async function readCalls(session: string) {
+  async function readCalls(recording: RecordingId) {
     try {
-      const page = await api.sessionCalls(session as never, null);
-      calls = { session, calls: page.calls };
+      const page = await api.recordingCalls(recording, null);
+      calls = { recording, calls: page.calls };
     } catch (error) {
       notice = message(error);
     }
@@ -925,9 +925,9 @@
   });
 
   $effect(() => {
-    // The Calls tab reads its session's calls when it opens.
-    const session = current?.recorded?.session ?? null;
-    if (tab === 'calls' && session && calls?.session !== session) void readCalls(session);
+    // The Calls tab reads the calls of its session's recording when it opens.
+    const recording = current?.recorded?.recording ?? null;
+    if (tab === 'calls' && recording && calls?.recording !== recording) void readCalls(recording);
   });
 
   $effect(() => {
@@ -1041,7 +1041,7 @@
         onselect: () => void act(() => client.toSession(target, { kind: 'stop' })),
       });
     }
-    const recording = current.recorded?.session;
+    const recording = current.recorded?.recording;
     if (recording)
       items.push({
         label: 'Open its calls',
@@ -1236,7 +1236,7 @@
 {/snippet}
 
 {#snippet callList()}
-  {#if !current?.recorded?.session}
+  {#if !current?.recorded?.recording}
     <p class="quiet-empty">No calls recorded yet.</p>
   {:else if !calls}
     <p class="quiet-empty">Reading calls…</p>
@@ -1265,7 +1265,7 @@
         {/each}
       </tbody>
     </table>
-    <a class="foot-link" href="/recordings/{current.recorded.session}"
+    <a class="foot-link" href="/recordings/{current.recorded.recording}"
       >Open its recording <Icon name="arrow" size={11} /></a
     >
   {/if}

@@ -24,7 +24,7 @@ function recorded(id: RunId, startedAt: number, ended: boolean) {
     workdir: '/work/acme',
     started_at: startedAt,
     thread,
-    session: null,
+    recording: null,
     ended_at: ended ? startedAt + 10 : null,
     end: ended ? 'stopped' : null,
     exit: null,

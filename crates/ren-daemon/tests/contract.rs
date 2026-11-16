@@ -104,7 +104,7 @@ async fn the_read_api_answers_as_the_ui_fixtures_pin() {
         }
     };
     // One call at a time, each recorded before the next starts: the store
-    // takes session and turn IDs as it commits, from the same sequence.
+    // takes recording and turn IDs as it commits, from the same sequence.
     for (sent, request) in requests.iter().enumerate() {
         let response = client()
             .post(format!("{}/anthropic/v1/messages", gateway.base()))
@@ -139,7 +139,7 @@ async fn the_read_api_answers_as_the_ui_fixtures_pin() {
         tokio::time::sleep(std::time::Duration::from_millis(20)).await;
     }
     let call = calls["calls"][0]["id"].as_str().unwrap().to_owned();
-    let session = calls["calls"][0]["session"].as_str().unwrap().to_owned();
+    let recording = calls["calls"][0]["recording"].as_str().unwrap().to_owned();
     let turn = calls["calls"][0]["turn"].as_str().unwrap().to_owned();
     let answers = [
         ("calls", calls.clone()),
@@ -148,19 +148,19 @@ async fn the_read_api_answers_as_the_ui_fixtures_pin() {
             "call_activity",
             read(format!("/api/calls/{call}/activity")).await,
         ),
-        ("sessions", read("/api/sessions".to_owned()).await),
+        ("recordings", read("/api/recordings".to_owned()).await),
         (
-            "session_calls",
-            read(format!("/api/sessions/{session}/calls")).await,
+            "recording_calls",
+            read(format!("/api/recordings/{recording}/calls")).await,
         ),
         (
             "turns",
-            read(format!("/api/sessions/{session}/turns")).await,
+            read(format!("/api/recordings/{recording}/turns")).await,
         ),
         ("turn", read(format!("/api/turns/{turn}")).await),
         (
             "report",
-            read(format!("/api/sessions/{session}/report")).await,
+            read(format!("/api/recordings/{recording}/report")).await,
         ),
         ("usage", read("/api/usage".to_owned()).await),
         ("search", read("/api/search?q=parser".to_owned()).await),
@@ -213,14 +213,14 @@ fn each_pinned_answer_decodes_as_its_read_and_round_trips() {
             ReadRequest::CallActivity(CallId::restore(id)),
         ),
         (
-            "sessions",
+            "recordings",
             ReadRequest::Recordings {
                 limit: PageLimit::DEFAULT,
                 shelf: Shelf::Current,
             },
         ),
         (
-            "session_calls",
+            "recording_calls",
             ReadRequest::RecordingCalls {
                 recording,
                 limit: PageLimit::DEFAULT,
@@ -241,7 +241,7 @@ fn each_pinned_answer_decodes_as_its_read_and_round_trips() {
             "search",
             ReadRequest::Search(SearchQuery {
                 terms: ren_store::search::SearchTerms::parse("parser").unwrap(),
-                session: None,
+                recording: None,
                 client: None,
                 field: None,
                 time: TimeRange::default(),
@@ -251,7 +251,7 @@ fn each_pinned_answer_decodes_as_its_read_and_round_trips() {
         (
             "exposures",
             ReadRequest::Exposures(ExposureQuery {
-                session: None,
+                recording: None,
                 time: TimeRange::default(),
                 limit: PageLimit::DEFAULT,
             }),

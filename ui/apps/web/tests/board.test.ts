@@ -36,10 +36,10 @@ function session(n: number, overrides: Partial<RecordingView> = {}): RecordingVi
   };
 }
 const open = (n: number, s: number, overrides: Partial<CallView> = {}) =>
-  callFixture(callId(n), { session: sid(s), started_at: ms(NOW - 5000), ...overrides });
+  callFixture(callId(n), { recording: sid(s), started_at: ms(NOW - 5000), ...overrides });
 const done = (n: number, s: number, overrides: Partial<CallView> = {}) =>
   finishedFixture(callId(n), {
-    session: sid(s),
+    recording: sid(s),
     started_at: ms(NOW - 20_000),
     ended_at: ms(NOW - 10_000),
     outcome: 'completed',
@@ -72,7 +72,7 @@ function activity(n: number, overrides: Partial<CallActivity> = {}): CallActivit
 function turn(n: number, s: number, calls: CallActivity[], overrides: Partial<TurnActivity> = {}) {
   return {
     turn: tid(n),
-    session: sid(s),
+    recording: sid(s),
     native_id: `turn-${n}` as TurnActivity['native_id'],
     client: 'claude_code',
     started_at: ms(NOW - 30_000),
@@ -375,8 +375,8 @@ test('the reader reads a turn again only when its calls change or text is still 
   const fetcher = (async (input: Parameters<typeof fetch>[0]) => {
     const path = String(input);
     reads.push(path.split('?')[0]);
-    if (path.startsWith('/api/sessions'))
-      return versioned({ sessions: [session(1, { last_seen: ms(Date.now()) })] });
+    if (path.startsWith('/api/recordings'))
+      return versioned({ recordings: [session(1, { last_seen: ms(Date.now()) })] });
     if (path.startsWith('/api/calls')) return versioned({ calls, next: null });
     const limitations = pending ? ['not_yet_derived'] : [];
     return versioned(turn(1, 1, [activity(1, { limitations: limitations as never })]));
@@ -406,8 +406,8 @@ test('the reader reads as far back as the window or the band, and pages through 
   const fetcher = (async (input: Parameters<typeof fetch>[0]) => {
     const path = String(input);
     paths.push(path);
-    if (path.startsWith('/api/sessions'))
-      return versioned({ sessions: [session(1, { last_seen: ms(Date.now()) })] });
+    if (path.startsWith('/api/recordings'))
+      return versioned({ recordings: [session(1, { last_seen: ms(Date.now()) })] });
     if (path.startsWith('/api/calls')) {
       const params = new URL(path, 'http://ui').searchParams;
       if (!params.has('from_ms')) return versioned({ calls: [], next: null });
@@ -427,7 +427,7 @@ test('the reader reads as far back as the window or the band, and pages through 
   const hour = await new LiveReader().read(fetcher, '1h');
   assert.equal(hour.key, 'live:1h');
   assert.ok(Date.now() - Number(froms()[0]?.get('from_ms')) >= LivePlace.windows['1h'].ms);
-  assert.deepEqual(hour.value?.truncated, { calls: false, sessions: false });
+  assert.deepEqual(hour.value?.truncated, { calls: false, recordings: false });
 
   // A window shorter than the band still reads the band's whole span.
   paths.length = 0;
@@ -515,8 +515,8 @@ test('the band shades what was not read', () => {
 test('a turn that cannot be read leaves the board readable', async () => {
   const fetcher = (async (input: Parameters<typeof fetch>[0]) => {
     const path = String(input);
-    if (path.startsWith('/api/sessions'))
-      return versioned({ sessions: [session(1, { last_seen: ms(Date.now()) })] });
+    if (path.startsWith('/api/recordings'))
+      return versioned({ recordings: [session(1, { last_seen: ms(Date.now()) })] });
     if (path.startsWith('/api/calls'))
       return versioned({
         calls: [done(1, 1, { started_at: ms(Date.now()), turn: tid(1) })],

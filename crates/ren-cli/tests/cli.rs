@@ -119,7 +119,7 @@ async fn history_keeps_direct_json_and_missing_ids_fail_on_stderr() {
     // Each prints the read API's body for the same read.
     for (name, empty) in [
         ("history", serde_json::json!({ "calls": [], "next": null })),
-        ("sessions", serde_json::json!({ "sessions": [] })),
+        ("recordings", serde_json::json!({ "recordings": [] })),
     ] {
         let output = cli(&["--data-dir", temp.path().to_str().unwrap(), name]);
         success(&output);
@@ -134,7 +134,7 @@ async fn history_keeps_direct_json_and_missing_ids_fail_on_stderr() {
     ]);
     assert_eq!(output.status.code(), Some(1));
     assert!(output.stdout.is_empty());
-    assert!(String::from_utf8_lossy(&output.stderr).contains("call, session, or body not found"));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("call, recording, or body not found"));
 }
 
 /// `cli` with HOME pointed at an empty directory, so no saved gateway or
@@ -233,7 +233,7 @@ async fn history_through_a_gateway_prints_what_local_storage_prints() {
     assert_eq!(calls, serde_json::to_value(stored.calls).unwrap());
     let id = calls[0]["id"].as_str().unwrap().to_owned();
     both(&["history", "--limit", "1"]);
-    let sessions = both(&["sessions"])["sessions"].clone();
+    let sessions = both(&["recordings"])["recordings"].clone();
     let session = sessions[0]["id"].as_str().unwrap().to_owned();
     let page = both(&["timeline", &session, "--limit", "1"]);
     let after = page["next"].as_str().unwrap().to_owned();

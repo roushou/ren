@@ -323,7 +323,7 @@ async fn a_call_is_relayed_message_for_message_and_recorded_with_its_terminal_ev
     );
     // The handshake's session, with the turn its message named.
     assert!(call.turn.is_some());
-    assert!(call.session.is_some());
+    assert!(call.recording.is_some());
 
     // Bodies are the messages back to back, framed by the message index.
     assert_eq!(

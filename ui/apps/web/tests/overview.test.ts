@@ -89,9 +89,9 @@ test('relative times', () => {
 
 const NOW = 100 * 3_600_000;
 const at = (hoursAgo: number) => (NOW - hoursAgo * 3_600_000) as never;
-const exposure = (n: number, session: number, kind: 'openai_key' | 'github_token') => ({
+const exposure = (n: number, recording: number, kind: 'openai_key' | 'github_token') => ({
   call: callId(n),
-  session: uuid(session) as never,
+  recording: uuid(recording) as never,
   turn: null,
   client: null,
   started_at: at(n),
@@ -133,7 +133,7 @@ test('attention ranks secrets, then failed work, then cut-off work, then bookkee
   );
   assert.equal(attention.worst, 'error');
   const [secrets, , , probes] = attention.groups;
-  // One session: the secrets link to its report, and say what and where.
+  // One recording: the secrets link to its report, and say what and where.
   assert.equal(secrets?.href, `/recordings/${uuid(9)}/report`);
   assert.match(secrets?.detail ?? '', /OpenAI API key in prompt · 1 recording · rotate them/);
   // Repeats fold into one line, with when each happened along the day.

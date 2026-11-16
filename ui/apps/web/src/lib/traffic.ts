@@ -72,7 +72,7 @@ export function listingQuery(url: URLSearchParams, keys: readonly string[], now:
 
 export interface Filters {
   q: string;
-  session: string;
+  recording: string;
   client: string;
   /** A named user of the gateway, not a harness. */
   user: string;
@@ -88,7 +88,7 @@ export interface Filters {
 }
 export const emptyFilters = (): Filters => ({
   q: '',
-  session: '',
+  recording: '',
   client: '',
   user: '',
   kind: 'model',
@@ -105,7 +105,7 @@ export function trafficParams(filters: Filters): string {
   const params = new URLSearchParams();
   for (const key of [
     'q',
-    'session',
+    'recording',
     'client',
     'user',
     'since',
@@ -137,7 +137,7 @@ export function filtersFromParams(params: URLSearchParams): Filters {
   const filters = emptyFilters();
   for (const key of [
     'q',
-    'session',
+    'recording',
     'client',
     'user',
     'provider',
@@ -162,7 +162,7 @@ export function filtersFromParams(params: URLSearchParams): Filters {
   return filters;
 }
 
-/** A run of calls shown under one heading on a session page. */
+/** A run of calls shown under one heading on a recording page. */
 export interface TurnGroup {
   id: string;
   label: string;
@@ -172,7 +172,7 @@ export interface TurnGroup {
 }
 
 /**
- * A session's calls grouped by turn, in order. Calls outside any turn that
+ * A recording's calls grouped by turn, in order. Calls outside any turn that
  * follow one another share one group, so a run of them is one heading, not
  * one per call.
  */

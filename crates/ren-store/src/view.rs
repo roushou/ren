@@ -215,7 +215,7 @@ pub struct CallView {
     pub endpoint: Stored<Endpoint>,
     pub method: Stored<Method>,
     pub config_revision: String,
-    pub session: Option<RecordingId>,
+    pub recording: Option<RecordingId>,
     pub turn: Option<TurnId>,
     pub attribution: AttributionView,
     /// Who made the call; absent for calls recorded before callers were.
@@ -246,7 +246,7 @@ pub struct CallView {
 impl CallView {
     /// Columns every call query selects, joined to the request body (`rq`) and
     /// the final attempt's response body (`rs`).
-    pub(super) const SELECT: &'static str = "SELECT c.id, c.channel, c.started_at, c.ended_at, c.provider, c.wire, c.endpoint, c.method, c.config_revision, c.session, c.turn, c.attribution, c.caller, c.user, c.tailscale_login, c.state, c.terminal, c.status, c.model, c.outcome, c.stop_reason, (SELECT json_group_array(name) FROM (SELECT t.name FROM call_tools t WHERE t.call = c.id ORDER BY t.position)) AS tool_names, c.input_accounting, c.input_tokens, c.output_tokens, c.cache_read_tokens, c.cache_creation_tokens, c.reasoning_tokens, c.capture_complete, c.rejection, c.operator_revision, c.plan, rq.observed_bytes AS rq_observed, rq.stored_bytes AS rq_stored, rq.ending AS rq_ending, rs.observed_bytes AS rs_observed, rs.stored_bytes AS rs_stored, rs.ending AS rs_ending, dp.purpose AS purpose FROM calls c LEFT JOIN bodies rq ON rq.owner = c.id AND rq.direction = 'request' LEFT JOIN bodies rs ON rs.owner = c.final_attempt AND rs.direction = 'response' LEFT JOIN call_digests dp ON dp.call = c.id";
+    pub(super) const SELECT: &'static str = "SELECT c.id, c.channel, c.started_at, c.ended_at, c.provider, c.wire, c.endpoint, c.method, c.config_revision, c.recording, c.turn, c.attribution, c.caller, c.user, c.tailscale_login, c.state, c.terminal, c.status, c.model, c.outcome, c.stop_reason, (SELECT json_group_array(name) FROM (SELECT t.name FROM call_tools t WHERE t.call = c.id ORDER BY t.position)) AS tool_names, c.input_accounting, c.input_tokens, c.output_tokens, c.cache_read_tokens, c.cache_creation_tokens, c.reasoning_tokens, c.capture_complete, c.rejection, c.operator_revision, c.plan, rq.observed_bytes AS rq_observed, rq.stored_bytes AS rq_stored, rq.ending AS rq_ending, rs.observed_bytes AS rs_observed, rs.stored_bytes AS rs_stored, rs.ending AS rs_ending, dp.purpose AS purpose FROM calls c LEFT JOIN bodies rq ON rq.owner = c.id AND rq.direction = 'request' LEFT JOIN bodies rs ON rs.owner = c.final_attempt AND rs.direction = 'response' LEFT JOIN call_digests dp ON dp.call = c.id";
 
     pub(super) fn from_row(row: &SqliteRow) -> Result<Self, StoreError> {
         let row = Columns(row);
@@ -260,7 +260,7 @@ impl CallView {
             endpoint: row.label("endpoint")?,
             method: row.label("method")?,
             config_revision: row.text("config_revision")?.unwrap_or_default(),
-            session: row.optional_id("session")?,
+            recording: row.optional_id("recording")?,
             turn: row.optional_id("turn")?,
             attribution: row.json("attribution")?.unwrap_or_default(),
             caller: CallerView::from_columns(&row)?,
@@ -428,7 +428,7 @@ pub struct CallPage {
     pub next: Option<Cursor>,
 }
 
-/// A group of calls a client attributed to one session.
+/// A group of calls a client attributed to one recording.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RecordingView {
     pub id: RecordingId,
@@ -444,7 +444,7 @@ pub struct RecordingView {
     /// Calls with an error status, a failed transport, or a failed model
     /// outcome: the same calls the `errors` status filter finds.
     pub error_count: u64,
-    /// Provider-reported tokens summed over the session's calls.
+    /// Provider-reported tokens summed over the recording's calls.
     pub tokens: TokenTotals,
 }
 
@@ -725,7 +725,7 @@ pub struct RunEntryView {
 /// What an archive or delete would touch, read before it is asked for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct HistoryTarget {
-    /// Calls of its sessions still open.
+    /// Calls of its recordings still open.
     pub open_calls: u64,
     /// Its runs that have not ended.
     pub running_runs: u64,
@@ -740,9 +740,9 @@ pub struct RunView {
     pub started_at: UnixMillis,
     /// The client's own conversation id, once it opened one.
     pub thread: Option<String>,
-    /// The session whose calls name the run's thread as their session: the
-    /// run's model traffic, once a call was recorded.
-    pub session: Option<RecordingId>,
+    /// The recording whose calls name the run's thread as their session:
+    /// the run's model traffic, once a call was recorded.
+    pub recording: Option<RecordingId>,
     /// The operator session the run served; `None` for a run recorded
     /// before sessions were, until the migration gave it one.
     pub operator_session: Option<SessionId>,
@@ -765,7 +765,7 @@ pub struct RunView {
 }
 
 impl RunView {
-    pub(super) const SELECT: &'static str = "SELECT id, operator_session, harness, workdir, started_at, thread, ended_at, run_end, exit_kind, exit_value, archived_at, model, effort, approvals, toolset_generation, (SELECT sessions.id FROM sessions WHERE sessions.native_id = runs.thread ORDER BY sessions.first_seen, sessions.id LIMIT 1) AS session FROM runs";
+    pub(super) const SELECT: &'static str = "SELECT id, operator_session, harness, workdir, started_at, thread, ended_at, run_end, exit_kind, exit_value, archived_at, model, effort, approvals, toolset_generation, (SELECT recordings.id FROM recordings WHERE recordings.native_id = runs.thread ORDER BY recordings.first_seen, recordings.id LIMIT 1) AS recording FROM runs";
 
     pub(super) fn from_row(row: &SqliteRow) -> Result<Self, StoreError> {
         let row = Columns(row);
@@ -786,7 +786,7 @@ impl RunView {
             workdir: row.text("workdir")?.ok_or(StoreError::Corrupt("run"))?,
             started_at: row.time("started_at")?,
             thread: row.text("thread")?,
-            session: row.optional_id("session")?,
+            recording: row.optional_id("recording")?,
             operator_session: row.optional_id("operator_session")?,
             ended_at: row.optional_time("ended_at")?,
             end: row.optional_label("run_end")?,
@@ -1064,7 +1064,7 @@ mod tests {
                 "endpoint": "messages",
                 "method": "post",
                 "config_revision": "r1",
-                "session": "00000000-0000-0000-0000-000000000003",
+                "recording": "00000000-0000-0000-0000-000000000003",
                 "turn": "00000000-0000-0000-0000-000000000004",
                 "attribution": {
                     "hint": {
@@ -1126,8 +1126,8 @@ mod tests {
             "error_count": 1,
             "tokens": { "input": 10, "output": null, "cache_read": 5 }
         });
-        let session: RecordingView = serde_json::from_value(sent.clone()).unwrap();
-        assert_eq!(session.source.known(), None);
-        assert_eq!(serde_json::to_value(&session).unwrap(), sent);
+        let recording: RecordingView = serde_json::from_value(sent.clone()).unwrap();
+        assert_eq!(recording.source.known(), None);
+        assert_eq!(serde_json::to_value(&recording).unwrap(), sent);
     }
 }

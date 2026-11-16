@@ -29,9 +29,9 @@ use strum::{Display, EnumString, IntoStaticStr, VariantArray};
 pub enum ToolName {
     SearchHistory,
     SearchCalls,
-    ListSessions,
-    SessionCalls,
-    SessionReport,
+    ListRecordings,
+    RecordingCalls,
+    RecordingReport,
     ListTurns,
     GetTurn,
     GetCall,
@@ -185,7 +185,7 @@ impl Field {
 #[serde(deny_unknown_fields)]
 struct SearchArgs {
     q: Option<String>,
-    session_id: Option<String>,
+    recording_id: Option<String>,
     client: Option<String>,
     user: Option<String>,
     kind: Option<String>,
@@ -204,7 +204,7 @@ struct SearchArgs {
 #[serde(deny_unknown_fields)]
 struct HistoryArgs {
     query: String,
-    session_id: Option<String>,
+    recording_id: Option<String>,
     client: Option<String>,
     field: Option<String>,
     from_ms: Option<u64>,
@@ -220,8 +220,8 @@ struct PageArgs {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct SessionArgs {
-    session_id: String,
+struct RecordingArgs {
+    recording_id: String,
     limit: Option<u32>,
     after: Option<String>,
 }
@@ -229,14 +229,14 @@ struct SessionArgs {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct TurnsArgs {
-    session_id: String,
+    recording_id: String,
     limit: Option<u32>,
 }
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ReportArgs {
-    session_id: String,
+    recording_id: String,
 }
 
 #[derive(Deserialize)]
@@ -262,7 +262,7 @@ struct BodyArgs {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ExposureArgs {
-    session_id: Option<String>,
+    recording_id: Option<String>,
     from_ms: Option<u64>,
     until_ms: Option<u64>,
     limit: Option<u32>,
@@ -294,7 +294,7 @@ impl ToolCall {
                             SearchTerms::MAX_BYTES
                         ))
                     })?,
-                    session: Field("session_id").optional_id(args.session_id)?,
+                    recording: Field("recording_id").optional_id(args.recording_id)?,
                     client: Field("client").label::<Harness>(args.client)?,
                     field: Field("field").label::<SearchField>(args.field)?,
                     time: Field::range(args.from_ms, args.until_ms)?,
@@ -307,7 +307,7 @@ impl ToolCall {
                     limit: Field("limit").limit(args.limit, Self::DEFAULT_ROWS)?,
                     after: Field("after").cursor(args.after)?,
                     filter: CallFilter {
-                        session: Field("session_id").optional_id(args.session_id)?,
+                        recording: Field("recording_id").optional_id(args.recording_id)?,
                         client: Field("client").label::<Harness>(args.client)?,
                         user: Field("user").user(args.user)?,
                         kind: Field("kind").label::<KindFilter>(args.kind)?,
@@ -327,29 +327,29 @@ impl ToolCall {
                     },
                 })
             }
-            ToolName::ListSessions => {
+            ToolName::ListRecordings => {
                 let args: PageArgs = Self::arguments(arguments)?;
                 ReadRequest::Recordings {
                     limit: Field("limit").limit(args.limit, Self::DEFAULT_ROWS)?,
                     shelf: Shelf::Current,
                 }
             }
-            ToolName::SessionCalls => {
-                let args: SessionArgs = Self::arguments(arguments)?;
+            ToolName::RecordingCalls => {
+                let args: RecordingArgs = Self::arguments(arguments)?;
                 ReadRequest::RecordingCalls {
-                    recording: Field("session_id").id(&args.session_id)?,
+                    recording: Field("recording_id").id(&args.recording_id)?,
                     limit: Field("limit").limit(args.limit, Self::MAX_ROWS)?,
                     after: Field("after").cursor(args.after)?,
                 }
             }
-            ToolName::SessionReport => {
+            ToolName::RecordingReport => {
                 let args: ReportArgs = Self::arguments(arguments)?;
-                ReadRequest::Report(Field("session_id").id(&args.session_id)?)
+                ReadRequest::Report(Field("recording_id").id(&args.recording_id)?)
             }
             ToolName::ListTurns => {
                 let args: TurnsArgs = Self::arguments(arguments)?;
                 ReadRequest::Turns {
-                    recording: Field("session_id").id(&args.session_id)?,
+                    recording: Field("recording_id").id(&args.recording_id)?,
                     limit: Field("limit").limit(args.limit, Self::DEFAULT_ROWS)?,
                 }
             }
@@ -384,7 +384,7 @@ impl ToolCall {
             ToolName::ListExposures => {
                 let args: ExposureArgs = Self::arguments(arguments)?;
                 ReadRequest::Exposures(ExposureQuery {
-                    session: Field("session_id").optional_id(args.session_id)?,
+                    recording: Field("recording_id").optional_id(args.recording_id)?,
                     time: Field::range(args.from_ms, args.until_ms)?,
                     limit: Field("limit").limit(args.limit, Self::DEFAULT_ROWS)?,
                 })
@@ -408,10 +408,10 @@ impl ToolName {
         let (title, description, properties, required) = match self {
             Self::SearchHistory => (
                 "Search history",
-                "Full-text search over what recorded calls contain: the user's prompts, the model's replies, and tool inputs (commands, file paths, patches) and outputs. Words must all match; \"quoted text\" matches as a phrase; punctuation separates words, so search a hyphenated name as a phrase. Returns {hits, indexed_calls}, newest call first; each hit has the call, session, turn, field, and a snippet with matches marked «like this». Use get_turn or get_call_activity on a hit for the rest. Calls are indexed shortly after they finish.",
+                "Full-text search over what recorded calls contain: the user's prompts, the model's replies, and tool inputs (commands, file paths, patches) and outputs. Words must all match; \"quoted text\" matches as a phrase; punctuation separates words, so search a hyphenated name as a phrase. Returns {hits, indexed_calls}, newest call first; each hit has the call, recording, turn, field, and a snippet with matches marked «like this». Use get_turn or get_call_activity on a hit for the rest. Calls are indexed shortly after they finish.",
                 json!({
                     "query": { "type": "string", "maxLength": SearchTerms::MAX_BYTES, "description": "Words and \"quoted phrases\" to find." },
-                    "session_id": Self::string("Only this Ren session, as list_sessions returns it."),
+                    "recording_id": Self::string("Only this recording, as list_recordings returns it."),
                     "client": Self::labels_property::<Harness>("Only calls from this coding agent."),
                     "field": Self::labels_property::<SearchField>("Only this part of a call."),
                     "from_ms": Self::time("Calls started at or after this time."),
@@ -425,7 +425,7 @@ impl ToolName {
                 "Find recorded calls, newest first. Filters combine with AND. `q` matches call IDs, reported models, and tool names (never bodies). Model and tool filters use the inspection saved when a call finishes. Returns {calls, next}; pass `next` as `after` for the next page.",
                 json!({
                     "q": Self::text("Text in a call ID, model, or tool name."),
-                    "session_id": Self::string("A Ren session ID, as list_sessions returns it."),
+                    "recording_id": Self::string("A recording ID, as list_recordings returns it."),
                     "client": Self::labels_property::<Harness>("The coding agent the call came from."),
                     "user": Self::string("A named user of the gateway, as its configuration names it: who made the call, not the coding agent."),
                     "kind": Self::labels_property::<KindFilter>("`model` for calls that ask a model for output; `other` for token counts, model listings, and WebSocket handshakes."),
@@ -441,36 +441,36 @@ impl ToolName {
                 }),
                 json!([]),
             ),
-            Self::ListSessions => (
-                "List sessions",
-                "Recent sessions, newest first, with their call, turn, and error counts and token totals.",
+            Self::ListRecordings => (
+                "List recordings",
+                "Recent recordings, newest first, with their call, turn, and error counts and token totals.",
                 json!({ "limit": Self::limit(ToolCall::DEFAULT_ROWS) }),
                 json!([]),
             ),
-            Self::SessionCalls => (
-                "Session calls",
-                "One session's calls, oldest first. Returns {calls, next}; pass `next` as `after` for the next page.",
+            Self::RecordingCalls => (
+                "Recording calls",
+                "One recording's calls, oldest first. Returns {calls, next}; pass `next` as `after` for the next page.",
                 json!({
-                    "session_id": Self::string("A Ren session ID, as list_sessions returns it."),
+                    "recording_id": Self::string("A recording ID, as list_recordings returns it."),
                     "limit": Self::limit(ToolCall::MAX_ROWS),
                     "after": Self::string("A previous answer's `next` value, unchanged."),
                 }),
-                json!(["session_id"]),
+                json!(["recording_id"]),
             ),
-            Self::SessionReport => (
-                "Session report",
-                "Why a session was slow or used many tokens, from its call records: per turn, context size at start and end, prompt-cache hit percent, tokens written to the cache, output tokens, and idle time before it; session totals; and findings: `cache_rebuild` (a call wrote most of the context to the cache again, with the idle time before it) and `context_growth` (the largest steps past the earlier peak). Token counts are provider-reported, not cost or subscription allowance. get_turn adds `large_tool_output` and `repeated_failure` findings.",
-                json!({ "session_id": Self::string("A Ren session ID, as list_sessions returns it.") }),
-                json!(["session_id"]),
+            Self::RecordingReport => (
+                "Recording report",
+                "Why a recording was slow or used many tokens, from its call records: per turn, context size at start and end, prompt-cache hit percent, tokens written to the cache, output tokens, and idle time before it; recording totals; and findings: `cache_rebuild` (a call wrote most of the context to the cache again, with the idle time before it) and `context_growth` (the largest steps past the earlier peak). Token counts are provider-reported, not cost or subscription allowance. get_turn adds `large_tool_output` and `repeated_failure` findings.",
+                json!({ "recording_id": Self::string("A recording ID, as list_recordings returns it.") }),
+                json!(["recording_id"]),
             ),
             Self::ListTurns => (
                 "List turns",
-                "A session's turns (one user prompt and everything the agent did for it), newest first: each turn's ID, start and end, call and error counts, tokens, and the start of its prompt. Turns are the client's own grouping; calls without one (Pi) have none.",
+                "A recording's turns (one user prompt and everything the agent did for it), newest first: each turn's ID, start and end, call and error counts, tokens, and the start of its prompt. Turns are the client's own grouping; calls without one (Pi) have none.",
                 json!({
-                    "session_id": Self::string("A Ren session ID, as list_sessions returns it."),
+                    "recording_id": Self::string("A recording ID, as list_recordings returns it."),
                     "limit": Self::limit(ToolCall::DEFAULT_ROWS),
                 }),
-                json!(["session_id"]),
+                json!(["recording_id"]),
             ),
             Self::GetTurn => (
                 "Get turn",
@@ -517,9 +517,9 @@ impl ToolName {
             ),
             Self::ListExposures => (
                 "List exposures",
-                "Credentials that recorded calls carried, newest first: API keys and tokens in well-known formats (Anthropic, OpenAI, GitHub, AWS, Google, Slack, Stripe), private key blocks, and JWTs, found in the user's input, tool input or output (all sent to the provider), or the model's reply. Each has the call, session, turn, field, the secret's format, a masked hint, a fingerprint (equal for the same secret), and how often it appeared. The secrets themselves are never stored or returned. A secret sent to a provider should be rotated: Ren cannot recall it.",
+                "Credentials that recorded calls carried, newest first: API keys and tokens in well-known formats (Anthropic, OpenAI, GitHub, AWS, Google, Slack, Stripe), private key blocks, and JWTs, found in the user's input, tool input or output (all sent to the provider), or the model's reply. Each has the call, recording, turn, field, the secret's format, a masked hint, a fingerprint (equal for the same secret), and how often it appeared. The secrets themselves are never stored or returned. A secret sent to a provider should be rotated: Ren cannot recall it.",
                 json!({
-                    "session_id": Self::string("Only this Ren session, as list_sessions returns it."),
+                    "recording_id": Self::string("Only this recording, as list_recordings returns it."),
                     "from_ms": Self::time("Calls started at or after this time."),
                     "until_ms": Self::time("Calls started at or before this time."),
                     "limit": Self::limit(ToolCall::DEFAULT_ROWS),
@@ -709,8 +709,8 @@ mod tests {
         );
         assert!(
             error(
-                ToolName::SessionCalls,
-                json!({ "session_id": "s", "after": "x" })
+                ToolName::RecordingCalls,
+                json!({ "recording_id": "s", "after": "x" })
             )
             .contains("Ren ID")
         );

@@ -153,7 +153,7 @@ const routes: { pattern: RegExp; route: Route }[] = [
   },
   {
     pattern: new RegExp(
-      `^/control/history/(?:sessions|runs)/${runId}/(?:archive|unarchive|delete)$`,
+      `^/control/history/(?:recordings|runs)/${runId}/(?:archive|unarchive|delete)$`,
     ),
     route: { method: 'POST', feed: false },
   },

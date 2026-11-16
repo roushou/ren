@@ -4,4 +4,7 @@
   let { data }: PageProps = $props();
 </script>
 
-{#key data.sessionId}<TrafficWorkbench snapshot={data.traffic} sessionId={data.sessionId} />{/key}
+{#key data.recordingId}<TrafficWorkbench
+    snapshot={data.traffic}
+    recordingId={data.recordingId}
+  />{/key}

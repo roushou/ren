@@ -321,8 +321,8 @@ dependencies under "Crates" below. Read the code for current module ownership.
   online backup, which holds the `SweepGate`. `ren.sqlite3` holds the
   observation log and query tables; `blobs.sqlite3` holds deduplicated,
   content-defined body chunks, in the format `chunk` defines (hash, codec,
-  encoding). Each operator session is in `operator_sessions` (not
-  `sessions`, which holds recordings), and each run names the session it
+  encoding). Each operator session is in `operator_sessions` and each
+  recording in `recordings`, and each run names the session it
   serves (`runs.operator_session`); `Reader::sessions` and `Reader::session`
   read them with their runs (`SessionView`); a session's attachments are in
   `attachments` (`Reader::attachments`), their files in the daemon's data folder. Each driven run's conversation is in `run_entries`, whole, and

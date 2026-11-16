@@ -1,5 +1,5 @@
 <!--
-  Archive, unarchive, or delete a recorded session, through this UI server's
+  Archive, unarchive, or delete a recording, through this UI server's
   control proxy. Shown only when the server drives runs (it holds the
   daemon's control token). A delete asks once more first.
 -->
@@ -10,10 +10,10 @@
   import { RunCommandError, RunsClient, type HistoryChange } from './runs.ts';
 
   let {
-    session,
+    recording,
     shelf,
   }: {
-    session: RecordingId;
+    recording: RecordingId;
     /** Whether it is archived, from the recording's own listing; null when
      * the page did not list it, and it is read here instead. */
     shelf: boolean | null;
@@ -29,8 +29,8 @@
 
   async function readShelf() {
     try {
-      const listed = await new ManagementApi().sessions(100, undefined, 'archived');
-      archived = listed.sessions.some((entry) => entry.id === session);
+      const listed = await new ManagementApi().recordings(100, undefined, 'archived');
+      archived = listed.recordings.some((entry) => entry.id === recording);
     } catch {
       archived = false;
     }
@@ -41,7 +41,7 @@
     notice = null;
     confirming = false;
     try {
-      await client.edit({ kind: 'session', id: session }, change);
+      await client.edit({ kind: 'recording', id: recording }, change);
       if (change === 'delete') {
         await goto('/recordings');
         return;
@@ -59,7 +59,7 @@
   });
 </script>
 
-<span class="session-actions">
+<span class="recording-actions">
   {#if notice}<span class="danger-text">{notice}</span>{/if}
   {#if confirming}
     <span class="danger-text">Delete this recording’s calls for good?</span>
@@ -84,7 +84,7 @@
 </span>
 
 <style>
-  .session-actions {
+  .recording-actions {
     display: inline-flex;
     align-items: center;
     gap: 6px;

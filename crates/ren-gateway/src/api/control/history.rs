@@ -1,7 +1,7 @@
 //! `/control/v1/history`: archiving, unarchiving, and deleting what was
-//! recorded of a session or a run.
+//! recorded: a recording or a run.
 //!
-//! - `POST /control/v1/history/sessions/{session}/{change}`
+//! - `POST /control/v1/history/recordings/{recording}/{change}`
 //! - `POST /control/v1/history/runs/{run}/{change}`
 //!
 //! `change` is `archive`, `unarchive`, or `delete`. An edit is recorded with
@@ -31,7 +31,7 @@ impl HistoryApi {
     pub fn router(self) -> Router {
         Router::new()
             .route(
-                "/control/v1/history/sessions/{session}/{change}",
+                "/control/v1/history/recordings/{recording}/{change}",
                 post(Self::recording),
             )
             .route("/control/v1/history/runs/{run}/{change}", post(Self::run))
@@ -40,10 +40,10 @@ impl HistoryApi {
 
     async fn recording(
         State(api): State<Arc<Self>>,
-        Path((session, change)): Path<(String, String)>,
+        Path((recording, change)): Path<(String, String)>,
         headers: HeaderMap,
     ) -> Response {
-        let subject = session.parse().map(HistorySubject::Session);
+        let subject = recording.parse().map(HistorySubject::Recording);
         api.edit(&headers, subject.ok(), &change).await
     }
 

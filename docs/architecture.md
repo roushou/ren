@@ -210,9 +210,10 @@ Three concepts keep that apart, each with one job:
 - A **recording** (`RecordingId`) is what Ren observed on the wire, grouped by
   the client conversation each call was attributed to: read-only, for any
   client, driven by Ren or not. A session links to its recordings and never
-  reuses their views. The read API, CLI, and MCP call recordings
-  sessions (`/api/v1/sessions`, `ren sessions`, `list_sessions`), as do the
-  stored labels and the operator state's session blocks.
+  reuses their views. The read API, CLI, MCP, and storage call them
+  recordings (`/api/recordings`, `ren recordings`, `list_recordings`, the
+  `recordings` table); "session" there means only the client's own session
+  ID, as in its attribution hints and the operator state's session blocks.
 
 ---
 
@@ -668,7 +669,7 @@ these as findings.
 - `seq` is the only order across calls. `at_mono` is monotonic time since daemon
   start; `at_wall` is for display only.
 
-**Query tables.** `channels`, `calls`, `attempts`, `sessions`, `turns`,
+**Query tables.** `channels`, `calls`, `attempts`, `recordings`, `turns`,
 `operator_actions` (the newest 10,000), the `operator_state` snapshot, `runs`
 (each agent run's harness, folder, the client's thread once opened, and its end
 and exit; a run's recording is the one its client named with that thread, as

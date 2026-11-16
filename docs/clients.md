@@ -103,7 +103,7 @@ nothing names a gateway and the local daemon fails its preflight, `run` says so
 and points to `ren init`; no command prompts on its own.
 
 A selected gateway skips local history/upstream checks; remote storage is
-queried through the API. Every history command (`history`, `sessions`, `timeline`,
+queried through the API. Every history command (`history`, `recordings`, `timeline`,
 `turns`, `turn`, `activity`, `search`, `exposures`, `report`, `inspect`),
 `ren tail`, `ren mcp`, and `ren control` use the same gateway; `--config` or `--data-dir`
 without `--gateway` keeps them on this host (see [History](api.md#cli) and

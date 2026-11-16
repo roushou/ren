@@ -30,7 +30,7 @@
 
 {#snippet scope()}
   <div class="scope-group scope-identity">
-    {#if turn}<span class="session-dot tone-{sessionTone(turn.session)}"></span>{/if}
+    {#if turn}<span class="session-dot tone-{sessionTone(turn.recording)}"></span>{/if}
     <strong class="mono" title="The turn ID your client reported"
       >{turn ? short(turn.native_id) : short(data.turnId)}</strong
     >
@@ -41,9 +41,9 @@
     >
   </div>
   {#if turn}<div class="scope-group end">
-      <a class="text-button" href={`/recordings/${encodeURIComponent(turn.session)}/report`}
+      <a class="text-button" href={`/recordings/${encodeURIComponent(turn.recording)}/report`}
         >Recording report <Icon name="arrow" size={12} /></a
-      ><a class="text-button" href={`/recordings/${encodeURIComponent(turn.session)}`}
+      ><a class="text-button" href={`/recordings/${encodeURIComponent(turn.recording)}`}
         >Recording calls <Icon name="arrow" size={12} /></a
       >
     </div>{/if}
@@ -140,7 +140,7 @@
       {#if findings.length}
         <section class="panel usage-panel" aria-labelledby="turn-findings-title">
           <header class="panel-heading"><h2 id="turn-findings-title">Findings</h2></header>
-          <FindingList {findings} session={turn.session} page="turn" />
+          <FindingList {findings} recording={turn.recording} page="turn" />
         </section>
       {/if}
 
@@ -203,7 +203,7 @@
                   title="What Ren could not read of this call's stored text; forwarding was not affected"
                   >{title(limitation)}</span
                 >{/each}
-              <a class="text-button end" href={callHref(turn.session, call.call)}
+              <a class="text-button end" href={callHref(turn.recording, call.call)}
                 >Inspect <Icon name="arrow" size={12} /></a
               >
             </header>

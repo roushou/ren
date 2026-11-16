@@ -486,15 +486,15 @@ mod tests {
     {
         use axum::{Json, Router, routing::get};
         use serde_json::json;
-        let session = "00000000-0000-0000-0000-000000000003";
+        let recording = "00000000-0000-0000-0000-000000000003";
         let router = Router::new()
             .route(
-                "/api/sessions",
+                "/api/recordings",
                 get(move || async move {
                     Json(json!({
                         "api_version": 1,
-                        "sessions": [{
-                            "id": session,
+                        "recordings": [{
+                            "id": recording,
                             "provider": "openai",
                             "source": "a_newer_source",
                             "native_id": "native",
@@ -527,7 +527,7 @@ mod tests {
                     Json(json!({
                         "api_version": 1,
                         "turn": "00000000-0000-0000-0000-000000000004",
-                        "session": session,
+                        "recording": recording,
                         "native_id": "prompt-1",
                         "client": "a_newer_client",
                         "files_read": [],
@@ -553,9 +553,9 @@ mod tests {
 
     #[tokio::test]
     async fn a_gateway_answers_reads_as_views() {
-        let (sessions, calls, turn) = against_gateway(|gateway| async move {
+        let (recordings, calls, turn) = against_gateway(|gateway| async move {
             let history = History::Remote(gateway);
-            let ReadResponse::Recordings { sessions } = history
+            let ReadResponse::Recordings { recordings } = history
                 .serve(&ReadRequest::Recordings {
                     limit: PageLimit::new(10).unwrap(),
                     shelf: Shelf::Current,
@@ -581,11 +581,11 @@ mod tests {
             else {
                 panic!("a turn")
             };
-            (sessions, calls, turn)
+            (recordings, calls, turn)
         })
         .await;
-        assert_eq!(sessions.len(), 1);
-        assert_eq!(sessions[0].source.label(), "a_newer_source");
+        assert_eq!(recordings.len(), 1);
+        assert_eq!(recordings[0].source.label(), "a_newer_source");
         assert!(calls.calls.is_empty() && calls.next.is_none());
         assert_eq!(turn.client.unwrap().label(), "a_newer_client");
     }

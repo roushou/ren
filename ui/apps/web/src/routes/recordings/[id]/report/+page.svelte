@@ -20,7 +20,7 @@
   const current = $derived(snapshot?.value ?? null);
   const report = $derived(current?.report);
   const totals = $derived(report?.totals);
-  const session = $derived(current?.session);
+  const session = $derived(current?.recording);
   const rows = $derived(current ? turnRows(current.report, current.turns) : []);
   const findings = $derived(report ? report.findings.map(findingLine) : []);
   const chart = $derived(new ContextChart(rows));
@@ -48,8 +48,8 @@
 {#snippet scope()}
   <div class="scope-group scope-identity">
     {#if session}<RecordingName {session} detail={current?.detail} />{:else}<span
-        class="session-dot tone-{sessionTone(data.sessionId)}"
-      ></span><strong class="mono">{short(data.sessionId)}</strong>{/if}
+        class="session-dot tone-{sessionTone(data.recordingId)}"
+      ></span><strong class="mono">{short(data.recordingId)}</strong>{/if}
     <span class="muted">Context and cache report</span>
   </div>
   <span
@@ -58,7 +58,7 @@
     ><Icon name="info" size={12} /> Provider-reported tokens</span
   >
   <div class="scope-group end">
-    <a class="text-button" href={`/recordings/${encodeURIComponent(data.sessionId)}`}
+    <a class="text-button" href={`/recordings/${encodeURIComponent(data.recordingId)}`}
       >Recording calls <Icon name="arrow" size={12} /></a
     ><a class="text-button" href="/recordings">All recordings <Icon name="arrow" size={12} /></a>
   </div>
@@ -188,7 +188,7 @@
             {/each}
           </ul>
         {:else if findings.length}
-          <FindingList {findings} session={data.sessionId} page="session" />
+          <FindingList {findings} recording={data.recordingId} page="recording" />
         {:else}
           <p class="quiet-empty">No cache rebuilds or large context steps in this recording.</p>
         {/if}
@@ -250,7 +250,7 @@
           </div>
         {:else}
           <p class="quiet-empty">
-            This session has no turns. Turns come from the client's own grouping; Pi sends none.
+            This recording has no turns. Turns come from the client's own grouping; Pi sends none.
           </p>
         {/if}
       </section>

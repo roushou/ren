@@ -154,7 +154,7 @@ impl Camera {
     }
 
     /// The newest item's id in a listing of the dev gateway's API, such as
-    /// `sessions` or `runs`.
+    /// `recordings` or `runs`.
     fn newest(&self, listing: &str) -> Option<String> {
         let answer = Invocation::new("curl")
             .args(["--silent", "--fail", "--max-time", "5"])
@@ -173,8 +173,7 @@ impl Camera {
     ) -> Result<Vec<PathBuf>, DevError> {
         fs::create_dir_all(&self.out).map_err(InstallError::file(&self.out))?;
         let newest = Newest {
-            // The read API still lists recordings as `sessions`.
-            recording: self.newest("sessions"),
+            recording: self.newest("recordings"),
             run: self.newest("runs"),
         };
         let mut written = Vec::new();

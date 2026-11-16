@@ -10,7 +10,7 @@
     "endpoint": "messages",
     "method": "POST",
     "config_revision": "<config revision>",
-    "session": "00000000-0000-0000-0000-000000000004",
+    "recording": "00000000-0000-0000-0000-000000000004",
     "turn": "00000000-0000-0000-0000-000000000005",
     "attribution": {
       "hint": {

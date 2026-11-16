@@ -838,10 +838,10 @@ async fn a_runs_lifecycle_is_recorded_and_read_back() {
         Some(Stored::Known(ren_harness::settings::ApprovalPolicy::Edits))
     );
     assert_eq!(ended.thread, Some(thread.to_string()));
-    let recording = reader.call(call_id).await.unwrap().call.session;
+    let recording = reader.call(call_id).await.unwrap().call.recording;
     assert!(recording.is_some());
     assert_eq!(
-        ended.session, recording,
+        ended.recording, recording,
         "the run's recording is its thread's"
     );
     assert_eq!(ended.end, Some(Stored::Known(RunEnd::Stopped)));

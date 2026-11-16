@@ -1,6 +1,6 @@
 {
   "api_version": 1,
-  "sessions": [
+  "recordings": [
     {
       "id": "00000000-0000-0000-0000-000000000004",
       "provider": "anthropic",
