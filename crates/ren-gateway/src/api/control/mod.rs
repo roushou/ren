@@ -197,9 +197,12 @@ impl ControlApi {
             .route("/control/v1/state", get(Self::state))
             .route("/control/v1/pause", post(Self::pause))
             .route("/control/v1/resume", post(Self::resume))
-            .route("/control/v1/sessions/{session}/block", post(Self::block))
             .route(
-                "/control/v1/sessions/{session}/unblock",
+                "/control/v1/client-sessions/{session}/block",
+                post(Self::block),
+            )
+            .route(
+                "/control/v1/client-sessions/{session}/unblock",
                 post(Self::unblock),
             )
             .route("/control/v1/users/{user}/block", post(Self::block_user))

@@ -323,7 +323,7 @@ async fn operator_state_survives_a_restart() {
         .await
         .unwrap();
     assert_eq!(paused.status(), StatusCode::OK);
-    let blocked = control(&daemon, &format!("sessions/{SESSION}/block"), "{}")
+    let blocked = control(&daemon, &format!("client-sessions/{SESSION}/block"), "{}")
         .await
         .unwrap();
     assert_eq!(blocked.status(), StatusCode::OK);

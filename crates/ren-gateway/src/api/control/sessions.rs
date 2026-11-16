@@ -9,9 +9,6 @@
 //!
 //! A session this daemon has not served since it started (one the store
 //! holds from before) is loaded from the store on its first request.
-//!
-//! `/control/v1/sessions/{id}/block` and `/unblock` are the operator
-//! state's: they take a client's own session id, not one of these.
 
 use super::request::{AnswerRequest, CreateRequest, PromptRequest};
 use super::runs::{FilesRequest, RunsApi, SettingsRequest};

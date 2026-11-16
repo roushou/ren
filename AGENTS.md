@@ -524,7 +524,7 @@ dependencies under "Crates" below. Read the code for current module ownership.
   read-only endpoints. It never forwards browser cookies or credentials, never reads
   storage directly, and never proxies inference. There are two exceptions.
   Runs and tools: with `REN_CONTROL_TOKEN_FILE` set, `/control/runs*`,
-  `/control/sessions*` (not the operator state's session blocks),
+  `/control/sessions*`,
   `/control/history/*`, and `/control/tools*` (`src/lib/server/control.ts`,
   `RunsProxy`) forward the Sessions and Tools views' same-origin JSON requests
   to the daemon's `/control/v1/runs*`, `/control/v1/sessions*`, its archive,

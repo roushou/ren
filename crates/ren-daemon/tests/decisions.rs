@@ -539,7 +539,7 @@ async fn pause_and_session_blocks_refuse_calls_and_are_recorded() {
         StatusCode::OK
     );
 
-    let blocked = control(&gateway, &format!("sessions/{SESSION}/block"))
+    let blocked = control(&gateway, &format!("client-sessions/{SESSION}/block"))
         .header("content-type", "application/json")
         .body(serde_json::json!({ "duration_seconds": 600 }).to_string())
         .send()
@@ -553,7 +553,7 @@ async fn pause_and_session_blocks_refuse_calls_and_are_recorded() {
     let reported: serde_json::Value = health(&gateway).await;
     assert_eq!(reported["operator"]["pause"]["state"], "running");
     assert_eq!(reported["operator"]["blocked_sessions"], 1);
-    control(&gateway, &format!("sessions/{SESSION}/unblock"))
+    control(&gateway, &format!("client-sessions/{SESSION}/unblock"))
         .send()
         .await
         .unwrap();
