@@ -177,8 +177,8 @@ impl Fixture {
         }
         if let Some(tool) = spec.tool {
             inspector.observe(Observation::ToolCall(ren_protocol::inspect::ToolCall {
-                call_id: Some(WireText::new("toolu_1").unwrap()),
-                item_id: None,
+                id: Some(ren_protocol::native::ToolCallId::parse("toolu_1").unwrap()),
+                item: None,
                 kind: WireText::new("tool_use").unwrap(),
                 name: Some(WireText::new(tool).unwrap()),
             }));
@@ -1408,9 +1408,12 @@ mod digests {
                     request: prompt(&format!("Why does the migration fail with {key}?")),
                     response: ResponseActivity {
                         tool_uses: vec![ToolUse {
-                            id: Some("t1".to_owned()),
-                            kind: "tool_use".to_owned(),
-                            name: "Bash".to_owned(),
+                            call: ren_protocol::inspect::ToolCall {
+                                id: Some(ren_protocol::native::ToolCallId::parse("t1").unwrap()),
+                                item: None,
+                                kind: WireText::new("tool_use").unwrap(),
+                                name: Some(WireText::new("Bash").unwrap()),
+                            },
                             input: ToolInput::Json(json!({ "command": "cargo xtask install-vps" })),
                         }],
                         ..ResponseActivity::default()
@@ -1425,7 +1428,7 @@ mod digests {
                 Reading {
                     request: RequestActivity {
                         tool_results: vec![ToolResult {
-                            id: "t1".to_owned(),
+                            id: ren_protocol::native::ToolCallId::parse("t1").unwrap(),
                             status: ResultStatus::Unreported,
                             output: "test migration ... FAILED".to_owned(),
                         }],

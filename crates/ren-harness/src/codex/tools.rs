@@ -40,7 +40,9 @@ impl CodexTool {
 
     pub(crate) fn effects(tool: &ToolUse) -> Vec<ToolEffect> {
         let effect = |kind, name| ToolEffect::of(kind, tool, name);
-        match Self::from_label(&tool.name).or_else(|| Self::from_label(&tool.kind)) {
+        match Self::from_label(tool.call.name())
+            .or_else(|| Self::from_label(tool.call.kind.as_str()))
+        {
             Some(Self::Shell | Self::ContainerExec | Self::LocalShellCall) => {
                 effect(EffectKind::RunCommand, "command")
             }

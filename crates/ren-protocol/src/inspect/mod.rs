@@ -8,6 +8,7 @@
 
 pub mod pipeline;
 
+use super::native::{OutputItemId, ToolCallId};
 use super::text::WireText;
 use serde_with::{DeserializeFromStr, SerializeDisplay};
 use strum::{Display, EnumString, IntoStaticStr, VariantArray};
@@ -165,39 +166,59 @@ impl Usage {
     }
 }
 
-/// A tool call the model requested. Requested is not executed: Ren never sees
-/// the client run a tool.
+/// A tool call the model requested, as the wire names it. Requested is not
+/// executed: Ren never sees the client run a tool. The activity reader pairs
+/// one with its input ([`ToolUse`]).
+///
+/// [`ToolUse`]: crate::activity::ToolUse
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ToolCall {
-    /// The identifier the client answers with (Anthropic `id`, OpenAI `call_id`).
-    pub call_id: Option<WireText>,
+    /// The identifier the client answers with.
+    pub id: Option<ToolCallId>,
     /// The provider's output item identifier (OpenAI `id`), when distinct.
-    pub item_id: Option<WireText>,
+    pub item: Option<OutputItemId>,
+    /// The native block or item type (`tool_use`, `function_call`, ...).
     pub kind: WireText,
     pub name: Option<WireText>,
 }
 
 impl ToolCall {
+    /// A call known only by its kind and name, as a client reports a tool it
+    /// ran rather than as the wire requested it. A name that is not wire
+    /// text is left out.
+    pub fn named(kind: WireText, name: &str) -> Self {
+        Self {
+            id: None,
+            item: None,
+            kind,
+            name: WireText::new(name).ok(),
+        }
+    }
+
     fn same_call(&self, other: &Self) -> bool {
-        let same = |left: &Option<WireText>, right: &Option<WireText>| {
-            left.as_ref()
-                .zip(right.as_ref())
-                .is_some_and(|(left, right)| left == right)
-        };
-        same(&self.call_id, &other.call_id) || same(&self.item_id, &other.item_id)
+        fn same<T: PartialEq>(left: Option<&T>, right: Option<&T>) -> bool {
+            left.zip(right).is_some_and(|(left, right)| left == right)
+        }
+        same(self.id.as_ref(), other.id.as_ref()) || same(self.item.as_ref(), other.item.as_ref())
     }
 
     /// Fill in what a later observation of the same call adds.
     fn absorb(&mut self, later: Self) {
-        if self.call_id.is_none() {
-            self.call_id = later.call_id;
+        if self.id.is_none() {
+            self.id = later.id;
         }
-        if self.item_id.is_none() {
-            self.item_id = later.item_id;
+        if self.item.is_none() {
+            self.item = later.item;
         }
         if later.name.is_some() {
             self.name = later.name;
         }
+    }
+
+    /// Its name, or its kind when the wire gave none: an OpenAI built-in
+    /// tool (`web_search_call`, `local_shell_call`) is named by its type.
+    pub fn name(&self) -> &str {
+        self.name.as_ref().unwrap_or(&self.kind).as_str()
     }
 }
 
@@ -406,7 +427,7 @@ impl Inspector {
     }
 
     fn tool_call(&mut self, call: ToolCall) {
-        if call.call_id.is_none() && call.item_id.is_none() {
+        if call.id.is_none() && call.item.is_none() {
             self.limit(Limitation::MalformedField);
             return;
         }
@@ -457,7 +478,11 @@ mod tests {
         Coverage, FormatSource, InputAccounting, Inspector, KindFamily, Limitation, ModelOutcome,
         Observation, ReportLimits, TerminalEvent, ToolCall, Usage,
     };
-    use crate::{label::Labeled, text::WireText};
+    use crate::{
+        label::Labeled,
+        native::{OutputItemId, ToolCallId},
+        text::WireText,
+    };
 
     fn text(value: &str) -> WireText {
         WireText::new(value).unwrap()
@@ -506,6 +531,16 @@ mod tests {
     }
 
     #[test]
+    fn a_tool_call_without_a_name_is_named_by_its_kind() {
+        let named = ToolCall::named(text("tool_use"), "Read");
+        assert_eq!(named.name(), "Read");
+        // Not wire text: left out, so the kind names it.
+        let unnamed = ToolCall::named(text("web_search_call"), "bad\u{7}name");
+        assert_eq!(unnamed.name, None);
+        assert_eq!(unnamed.name(), "web_search_call");
+    }
+
+    #[test]
     fn tool_calls_merge_by_either_identifier_and_are_bounded() {
         let limits = ReportLimits {
             max_tool_calls: 2,
@@ -514,8 +549,8 @@ mod tests {
         let mut inspector = Inspector::new(FormatSource::Declared, limits);
         let call = |call_id: Option<&str>, item_id: Option<&str>, name: Option<&str>| {
             Observation::ToolCall(ToolCall {
-                call_id: call_id.map(text),
-                item_id: item_id.map(text),
+                id: call_id.map(|id| ToolCallId::parse(id).unwrap()),
+                item: item_id.map(|id| OutputItemId::parse(id).unwrap()),
                 kind: text("function_call"),
                 name: name.map(text),
             })
@@ -535,8 +570,11 @@ mod tests {
         let report = inspector.finish();
         assert_eq!(report.tool_calls().len(), 2);
         let first = &report.tool_calls()[0];
-        assert_eq!(first.call_id.as_ref().map(WireText::as_str), Some("call_1"));
-        assert_eq!(first.item_id.as_ref().map(WireText::as_str), Some("item_1"));
+        assert_eq!(first.id.as_ref().map(ToolCallId::as_str), Some("call_1"));
+        assert_eq!(
+            first.item.as_ref().map(OutputItemId::as_str),
+            Some("item_1")
+        );
         assert_eq!(first.name.as_ref().map(WireText::as_str), Some("lookup"));
         assert_eq!(report.unknown_kinds().len(), 1);
         assert_eq!(report.unknown_kinds()[0].count, 2);

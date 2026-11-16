@@ -13,9 +13,12 @@ pub mod chat;
 pub mod openai;
 
 use crate::encoding::{Decompressor, ResponseEncoding};
+use crate::inspect::ToolCall;
 use crate::inspect::pipeline::{BodyEnd, Protocol};
 use crate::json::Frame;
+use crate::native::ToolCallId;
 use crate::sse::SseLimits;
+use crate::text::WireText;
 use serde_json::{Map, Value};
 use serde_with::{DeserializeFromStr, SerializeDisplay};
 use strum::{Display, EnumString, IntoStaticStr, VariantArray};
@@ -64,14 +67,10 @@ pub enum ToolInput {
     Text(String),
 }
 
-/// A tool call a response requested.
+/// A tool call a response requested, with its input.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ToolUse {
-    /// The identifier the client answers with.
-    pub id: Option<String>,
-    /// The native item or block type (`tool_use`, `function_call`, ...).
-    pub kind: String,
-    pub name: String,
+    pub call: ToolCall,
     pub input: ToolInput,
 }
 
@@ -79,7 +78,7 @@ pub struct ToolUse {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ToolResult {
     /// The tool call it answers.
-    pub id: String,
+    pub id: ToolCallId,
     pub status: ResultStatus,
     pub output: String,
 }
@@ -469,6 +468,16 @@ struct Fields<'a>(&'a Map<String, Value>);
 impl<'a> Fields<'a> {
     fn str(self, key: &str) -> Option<&'a str> {
         self.0.get(key).and_then(Value::as_str)
+    }
+
+    /// A string field as bounded wire text; text it refuses reads as absent.
+    fn wire(self, key: &str) -> Option<WireText> {
+        self.str(key).and_then(|text| WireText::new(text).ok())
+    }
+
+    /// The tool call a result answers.
+    fn answers(self, key: &str) -> Option<ToolCallId> {
+        self.str(key).and_then(|text| ToolCallId::parse(text).ok())
     }
 
     fn array(self, key: &str) -> &'a [Value] {

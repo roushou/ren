@@ -155,10 +155,13 @@ impl<'a> JsonObject<'a> {
 
     /// A bounded, non-empty identifier.
     pub fn identifier(&self, key: &str) -> Field<WireText> {
+        self.parsed(key, WireText::identifier)
+    }
+
+    /// A string field read by `parse`; text it refuses is malformed.
+    pub fn parsed<T, E>(&self, key: &str, parse: impl FnOnce(&str) -> Result<T, E>) -> Field<T> {
         match self.string(key) {
-            Field::Present(text) => {
-                WireText::identifier(text).map_or(Field::Malformed, Field::Present)
-            }
+            Field::Present(text) => parse(text).map_or(Field::Malformed, Field::Present),
             Field::Absent => Field::Absent,
             Field::Malformed => Field::Malformed,
         }

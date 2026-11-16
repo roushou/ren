@@ -19,6 +19,9 @@ use crate::prompt::Prompt;
 use crate::settings::{Midway, RunSettings};
 use crate::tools::ToolEffect;
 use ren_protocol::activity::{ToolInput, ToolUse};
+use ren_protocol::inspect::ToolCall;
+use ren_protocol::messages::BlockKind;
+use ren_protocol::text::WireText;
 
 use ren_protocol::native::{NativeThreadId, NativeTurnId};
 use serde_with::{DeserializeFromStr, SerializeDisplay};
@@ -564,9 +567,7 @@ impl ItemRead {
         status: ItemStatus,
     ) -> Self {
         let effects = harness.effects(&ToolUse {
-            id: None,
-            kind: "tool_use".to_owned(),
-            name: name.to_owned(),
+            call: ToolCall::named(WireText::from_label(BlockKind::ToolUse), name),
             input: ToolInput::Json(input.clone()),
         });
         let name = match (

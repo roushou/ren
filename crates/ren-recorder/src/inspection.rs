@@ -125,14 +125,11 @@ impl From<&Usage> for UsageRecord {
 
 impl From<&ToolCall> for ToolCallRecord {
     fn from(call: &ToolCall) -> Self {
-        let text = |value: &Option<ren_protocol::text::WireText>| {
-            value.as_ref().map(|text| text.as_str().to_owned())
-        };
         Self {
-            call_id: text(&call.call_id),
-            item_id: text(&call.item_id),
+            call_id: call.id.as_ref().map(|id| id.as_str().to_owned()),
+            item_id: call.item.as_ref().map(|id| id.as_str().to_owned()),
             kind: call.kind.as_str().to_owned(),
-            name: text(&call.name),
+            name: call.name.as_ref().map(|name| name.as_str().to_owned()),
         }
     }
 }

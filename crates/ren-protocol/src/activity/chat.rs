@@ -6,7 +6,10 @@ use super::{
     ToolInput, ToolResult, ToolUse,
 };
 use crate::chat::ToolCallKind;
+use crate::inspect::ToolCall;
 use crate::label::Labeled;
+use crate::native::ToolCallId;
+use crate::text::WireText;
 use serde_json::{Map, Value};
 use serde_with::{DeserializeFromStr, SerializeDisplay};
 use std::collections::BTreeMap;
@@ -77,14 +80,14 @@ impl<'a> Request<'a> {
                     }
                 }
                 Some(ChatRole::Tool) => {
-                    let Some(id) = fields.str("tool_call_id") else {
+                    let Some(id) = fields.answers("tool_call_id") else {
                         activity
                             .limitations
                             .push(ActivityLimitation::UnexpectedShape);
                         continue;
                     };
                     activity.tool_results.push(ToolResult {
-                        id: id.to_owned(),
+                        id,
                         status: ResultStatus::Unreported,
                         output: fields.text("content"),
                     });
@@ -111,9 +114,9 @@ impl<'a> Request<'a> {
 /// deltas that share its `index`.
 #[derive(Debug, Clone, Default)]
 struct Call {
-    id: Option<String>,
+    id: Option<ToolCallId>,
     kind: Option<ToolCallKind>,
-    name: Option<String>,
+    name: Option<WireText>,
     /// Arguments (or a custom tool's input), concatenated.
     input: String,
 }
@@ -121,8 +124,8 @@ struct Call {
 impl Call {
     /// Take what one delta (or a whole call) adds.
     fn absorb(&mut self, call: &Map<String, Value>) {
-        if let Some(id) = Fields(call).str("id") {
-            self.id = Some(id.to_owned());
+        if let Some(id) = Fields(call).answers("id") {
+            self.id = Some(id);
         }
         if let Some(kind) = Fields(call).str("type").and_then(ToolCallKind::from_label) {
             self.kind = Some(kind);
@@ -131,8 +134,8 @@ impl Call {
         let Some(member) = call.get(kind.member()).and_then(Value::as_object) else {
             return;
         };
-        if let Some(name) = Fields(member).str("name") {
-            self.name = Some(name.to_owned());
+        if let Some(name) = Fields(member).wire("name") {
+            self.name = Some(name);
         }
         self.input
             .push_str(Fields(member).str(kind.input()).unwrap_or_default());
@@ -146,9 +149,12 @@ impl Call {
             (ToolCallKind::Custom, _) => ToolInput::Text(self.input),
         };
         ToolUse {
-            id: self.id,
-            kind: kind.label().to_owned(),
-            name: self.name.unwrap_or_default(),
+            call: ToolCall {
+                id: self.id,
+                item: None,
+                kind: WireText::from_label(kind),
+                name: self.name,
+            },
             input,
         }
     }

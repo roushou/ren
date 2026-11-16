@@ -23,7 +23,7 @@ pub enum PiTool {
 impl PiTool {
     pub(crate) fn effects(tool: &ToolUse) -> Vec<ToolEffect> {
         let effect = |kind, name| ToolEffect::of(kind, tool, name);
-        match Self::from_label(&tool.name) {
+        match Self::from_label(tool.call.name()) {
             Some(Self::Read) => effect(EffectKind::ReadFile, "path"),
             Some(Self::Write | Self::Edit) => effect(EffectKind::WriteFile, "path"),
             Some(Self::Bash) => effect(EffectKind::RunCommand, "command"),
