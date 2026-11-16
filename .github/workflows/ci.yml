@@ -15,6 +15,48 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Which areas a pull request touches. Every other event (a push to main,
+  # the merge queue, a manual run) checks everything. The areas test each
+  # other: the read API's contract test compares against the UI's API
+  # fixtures, and the UI's label test reads each crate's labels.txt.
+  changes:
+    name: Changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      rust: ${{ github.event_name != 'pull_request' || steps.filter.outputs.rust == 'true' }}
+      ui: ${{ github.event_name != 'pull_request' || steps.filter.outputs.ui == 'true' }}
+      pi: ${{ github.event_name != 'pull_request' || steps.filter.outputs.pi == 'true' }}
+    steps:
+      - name: List the areas the pull request changes
+        id: filter
+        if: github.event_name == 'pull_request'
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            rust:
+              - '.github/workflows/**'
+              - '.cargo/**'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - 'clippy.toml'
+              - 'rustfmt.toml'
+              - 'rust-toolchain.toml'
+              - 'ren.example.toml'
+              - 'crates/**'
+              - 'xtask/**'
+              - 'ui/apps/web/tests/fixtures/api/**'
+            ui:
+              - '.github/workflows/**'
+              - 'ui/**'
+              - 'crates/*/tests/fixtures/labels.txt'
+            pi:
+              - '.github/workflows/**'
+              - 'crates/ren-harness/pi/**'
+
   dprint:
     name: dprint
     runs-on: ubuntu-latest
@@ -32,12 +74,16 @@ jobs:
 
   rust:
     name: Rust (${{ matrix.os }})
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        # macOS, the slowest runner, checks main after each merge; pull
+        # requests check on Linux only.
+        os: ${{ github.event_name == 'pull_request' && fromJSON('["ubuntu-latest"]') || fromJSON('["ubuntu-latest", "macos-latest"]') }}
     env:
       CARGO_TERM_COLOR: always
       RUST_BACKTRACE: 1
@@ -59,20 +105,18 @@ jobs:
       - name: Check formatting
         run: cargo fmt --all -- --check
 
-      - name: Check workspace
-        run: cargo check --workspace --locked
-
+      # Clippy checks the workspace as `cargo check` would, and the tests
+      # build the binaries the CLI's tests run.
       - name: Lint all targets
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
       - name: Test workspace
         run: cargo test --workspace --locked
 
-      - name: Build headless daemon
-        run: cargo build --workspace --locked
-
   ui:
-    name: UI and Pi contracts
+    name: UI
+    needs: changes
+    if: needs.changes.outputs.ui == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     defaults:
@@ -110,6 +154,43 @@ jobs:
       - name: Build UI
         run: bun run build
 
+  pi:
+    name: Pi contracts
+    needs: changes
+    if: needs.changes.outputs.pi == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: '26'
+          package-manager-cache: false
+
       - name: Test Pi extension contracts
-        working-directory: .
         run: node --test crates/ren-harness/pi/ren.test.mjs
+
+  # The one check to require: it passes when every job passed or was
+  # skipped because the change does not touch its area.
+  ci:
+    name: CI
+    if: always()
+    needs: [changes, dprint, rust, ui, pi]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Every job passed or was skipped
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          for result in $RESULTS; do
+            case "$result" in
+              success | skipped) ;;
+              *) echo "A job ended $result: $RESULTS"; exit 1 ;;
+            esac
+          done

@@ -763,6 +763,13 @@ A crate may include only files inside its own directory.
 Documentation-only changes don't require compiling; check the diff and that every
 referenced path exists.
 
+CI (`.github/workflows/ci.yml`) checks a pull request's areas only: Rust,
+the UI, and Pi each run when the change touches them (its `changes` job
+lists the paths, including the fixtures one area pins for the other), and
+dprint always. Rust runs on Linux for pull requests and on Linux and macOS
+for `main`. The `CI` job passes when every job passed or was skipped; it is
+the one check to require.
+
 ---
 
 ## 6. Working conventions
