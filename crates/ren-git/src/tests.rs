@@ -1,4 +1,4 @@
-use super::{CommitId, Exit, Git, GitError, Head, Published, Repository, Tree};
+use crate::{CommitId, Exit, Git, GitError, Head, Published, Repository, Tree};
 use std::path::Path;
 
 /// A repository at `dir` whose `HEAD` holds `head`, written by hand.
@@ -120,9 +120,10 @@ fn the_first_git_on_the_path_runs_and_failures_keep_their_exit() {
     );
     assert!(Git::find(&[dir.path().join("none")]).is_none());
 
-    let gone = Git {
-        program: dir.path().join("gone"),
-    };
+    // Found, then removed before it runs.
+    let removed = fake(dir.path(), "removed", "");
+    let gone = Git::find(std::slice::from_ref(&removed)).unwrap();
+    std::fs::remove_file(removed.join("git")).unwrap();
     assert!(matches!(
         gone.init(dir.path()),
         Err(GitError::NotStarted { .. })
