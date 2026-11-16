@@ -16,7 +16,7 @@
   import { bodyView, toolFields, type Card, type CardKind } from './body-view.ts';
   import { previewChips } from './display.ts';
   import { page } from '$app/state';
-  import Markdown from './Markdown.svelte';
+  import Markdown from 'markdown/Markdown.svelte';
   import { snapshotError } from './snapshots.ts';
   let {
     id,

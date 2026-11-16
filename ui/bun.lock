@@ -16,17 +16,33 @@
         "@sveltejs/adapter-node": "6.0.1",
         "@sveltejs/kit": "3.1.1",
         "@sveltejs/vite-plugin-svelte": "7.3.1",
-        "@types/mdast": "4.0.4",
         "@types/node": "26.6.6",
-        "mdast-util-from-markdown": "2.0.2",
-        "mdast-util-gfm": "3.1.0",
-        "micromark-extension-gfm": "3.0.0",
+        "markdown": "workspace:*",
         "redline": "workspace:*",
         "svelte": "5.57.3",
         "svelte-check": "4.7.8",
         "tsrs": "0.18.0-ts7.1.0-dev.20260929",
         "typescript": "6.0.3",
         "vite": "8.3.5",
+      },
+    },
+    "packages/markdown": {
+      "name": "markdown",
+      "version": "0.1.0",
+      "dependencies": {
+        "@types/mdast": "4.0.4",
+        "mdast-util-from-markdown": "2.0.2",
+        "mdast-util-gfm": "3.1.0",
+        "micromark-extension-gfm": "3.0.0",
+      },
+      "devDependencies": {
+        "@types/node": "26.6.6",
+        "svelte": "5.57.3",
+        "svelte-check": "4.7.8",
+        "typescript": "6.0.3",
+      },
+      "peerDependencies": {
+        "svelte": "^5.57.3",
       },
     },
     "packages/redline": {
@@ -195,6 +211,8 @@
     "longest-streak": ["longest-streak@3.1.0", "", {}, "sha512-9Ri+o0JYgehTaVBBDoMqIl8GXtbWg711O3srftcHhZ0dqnETqLaoIK0x17fUw9rFSlK/0NlsKe0Ahhyl5pXE2g=="],
 
     "magic-string": ["magic-string@0.30.21", "", { "dependencies": { "@jridgewell/sourcemap-codec": "^1.5.5" } }, "sha512-vd2F4YUyEXKGcLHoq+TEyCjxueSeHnFxyyjNp80yg0XV4vUhnDer/lvvlqM/arB5bXQN5K2/3oinyCRyx8T2CQ=="],
+
+    "markdown": ["markdown@workspace:packages/markdown"],
 
     "markdown-table": ["markdown-table@3.1.0", "", {}, "sha512-xpeSCdM+B+6P3ncfgaB7FoDbtJ30xAe6Z18TGT7AgXJsHqCElCICZovQqdRMm7kHgpTyYv36EupqewoFFSB8vw=="],
 

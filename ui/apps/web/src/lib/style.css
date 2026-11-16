@@ -41,6 +41,13 @@
   --redline-control-hover: var(--surface-hover);
   --redline-well: var(--surface-subtle);
   --redline-well-border: var(--line);
+  /* Markdown's theme (`markdown.css`), drawn in Ren's own tokens. */
+  --markdown-ink: var(--ink);
+  --markdown-muted: var(--muted);
+  --markdown-line: var(--line);
+  --markdown-inset: var(--surface-inset);
+  --markdown-link: var(--accent-text);
+  --markdown-accent: var(--accent);
   --success: #22805e;
   --error: #c44444;
   --error-soft: #fdf0ef;
@@ -1531,153 +1538,6 @@ tr.selected .row-link {
   margin: 0 12px 10px;
 }
 
-/* Captured Markdown: elements only, no HTML, no live links or images. */
-.markdown {
-  font-size: 13px;
-  line-height: 1.6;
-  overflow-wrap: anywhere;
-}
-.markdown > :first-child {
-  margin-top: 0;
-}
-.markdown > :last-child {
-  margin-bottom: 0;
-}
-.markdown p,
-.markdown ul,
-.markdown ol,
-.markdown blockquote,
-.markdown .md-code,
-.markdown .md-table {
-  margin: 0 0 10px;
-}
-.markdown ul,
-.markdown ol {
-  padding-left: 20px;
-}
-.markdown li > p {
-  margin: 0 0 4px;
-}
-.markdown .md-heading {
-  margin: 14px 0 6px;
-  font-weight: 650;
-  color: var(--ink);
-}
-.markdown .md-h1 {
-  font-size: 17px;
-}
-.markdown .md-h2 {
-  font-size: 15px;
-}
-.markdown .md-h3 {
-  font-size: 13.5px;
-}
-.markdown .md-h4,
-.markdown .md-h5,
-.markdown .md-h6 {
-  font-size: 13px;
-  color: var(--muted);
-}
-.markdown code {
-  padding: 1px 5px;
-  border-radius: 0;
-  background: var(--surface-inset);
-  font-size: 0.92em;
-}
-.markdown .md-code {
-  position: relative;
-  border: 1px solid var(--line);
-  border-radius: 0;
-  background: var(--surface-inset);
-}
-.markdown .md-code pre {
-  margin: 0;
-  padding: 10px 12px;
-  overflow-x: auto;
-  font-size: 12px;
-  line-height: 1.55;
-}
-.markdown .md-lang {
-  position: absolute;
-  top: 4px;
-  right: 8px;
-  color: var(--muted);
-  font-size: 10px;
-}
-.markdown blockquote {
-  padding-left: 10px;
-  border-left: 2px solid var(--line);
-  color: var(--muted);
-}
-.markdown hr {
-  border: 0;
-  border-top: 1px solid var(--line);
-  margin: 12px 0;
-}
-.markdown .md-table {
-  overflow-x: auto;
-}
-.markdown table {
-  border-collapse: collapse;
-  font-size: 12px;
-}
-.markdown th,
-.markdown td {
-  padding: 4px 8px;
-  border: 1px solid var(--line);
-  text-align: left;
-}
-.markdown .md-link {
-  color: var(--accent-text);
-  text-decoration: underline dotted;
-  cursor: help;
-}
-.markdown .md-href {
-  margin-left: 4px;
-  color: var(--muted);
-  font-size: 0.85em;
-}
-.markdown .md-href::before {
-  content: '(';
-}
-.markdown .md-href::after {
-  content: ')';
-}
-.markdown li.md-task {
-  list-style: none;
-  margin-left: -18px;
-}
-.markdown li.md-task > input {
-  float: left;
-  margin: 4px 6px 0 0;
-  accent-color: var(--accent);
-}
-.markdown .md-footnote {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  gap: 6px;
-  margin: 0 0 6px;
-  color: var(--muted);
-  font-size: 12px;
-}
-.markdown .md-footnote-label,
-.markdown .md-footnote-ref {
-  color: var(--muted);
-  font-size: 0.8em;
-}
-.markdown .md-footnote-ref::before {
-  content: '[';
-}
-.markdown .md-footnote-ref::after {
-  content: ']';
-}
-.markdown .md-image {
-  padding: 0 4px;
-  border: 1px dashed var(--line);
-  border-radius: 0;
-  color: var(--muted);
-}
-
 /* Chips: one colored word instead of a sentence. */
 .chip-row {
   display: flex;
@@ -2055,23 +1915,6 @@ td > .chip {
 .attempt-chips {
   justify-content: flex-end;
   margin: 0;
-}
-.markdown .md-tagged {
-  margin: 0 0 10px;
-  padding: 4px 8px;
-  border: 1px solid var(--line);
-  border-radius: 0;
-  color: var(--muted);
-}
-.markdown .md-tagged > summary {
-  cursor: pointer;
-  font-size: 11px;
-}
-.markdown .md-tagged[open] {
-  color: var(--ink);
-}
-.markdown .md-tagged[open] > summary {
-  margin-bottom: 6px;
 }
 .jump-latest {
   margin-left: auto;

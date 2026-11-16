@@ -13,7 +13,7 @@
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
   import { harnessLabel } from './activity.ts';
-  import Markdown from './Markdown.svelte';
+  import Markdown from 'markdown/Markdown.svelte';
   import Picker, { type PickerGroup } from './Picker.svelte';
   import SignInSheet from './SignInSheet.svelte';
   import Icon from './Icon.svelte';

@@ -7,7 +7,7 @@
   import { onDestroy, untrack } from 'svelte';
   import { prefersReducedMotion } from 'svelte/motion';
   import { Reveal } from './reveal.ts';
-  import Markdown from './Markdown.svelte';
+  import Markdown from 'markdown/Markdown.svelte';
 
   let { text, writing, cut }: { text: string; writing: boolean; cut: boolean } = $props();
 

@@ -4,7 +4,7 @@
   is named and not loaded.
 -->
 <script lang="ts">
-  import type { Inline } from './markdown.ts';
+  import type { Inline } from './tree.ts';
   import MarkdownInlines from './MarkdownInlines.svelte';
 
   let { inlines }: { inlines: readonly Inline[] } = $props();

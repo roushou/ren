@@ -7,7 +7,7 @@
  * The text is untrusted (captured model output, prompts), so this is where
  * it is made inert: raw HTML becomes text, a link keeps its address but is
  * not clickable, an image is named but never loaded, and nesting deeper than
- * `DEPTH` is kept as its source text, which bounds rendering recursion.
+ * `Markdown.DEPTH` is kept as its source text, which bounds rendering recursion.
  * Agents wrap injected context in tags on their own lines
  * (`<system-reminder>`); such a region is read as a `tagged` block, shown
  * folded under its name.
@@ -61,16 +61,34 @@ type Segment = { kind: 'markdown'; text: string } | { kind: 'tagged'; name: stri
 const TAG_OPEN = /^ {0,3}<([a-z][a-z0-9]*[-_][a-z0-9_-]{0,62})>(.*)$/;
 const FENCE = /^ {0,3}(`{3,}|~{3,})/;
 
-export class MarkdownTree {
+/** A Markdown text, read into blocks that render as elements only. */
+export class Markdown {
   /** Nesting deeper than this is kept as text. */
   static readonly DEPTH = 8;
 
-  /** `text` as blocks. */
-  static parse(text: string, depth = 0): Block[] {
-    return MarkdownTree.#segments(text).flatMap((segment): Block[] => {
+  readonly blocks: readonly Block[];
+
+  private constructor(blocks: readonly Block[]) {
+    this.blocks = blocks;
+  }
+
+  /** `text`, read. */
+  static parse(text: string): Markdown {
+    return new Markdown(Markdown.#read(text, 0));
+  }
+
+  /** One paragraph's inline spans, for text known to be a single line. */
+  static inline(text: string): Inline[] {
+    const [first] = Markdown.parse(text).blocks;
+    return first?.kind === 'paragraph' ? first.children : [];
+  }
+
+  /** `text` as blocks, `depth` levels down. */
+  static #read(text: string, depth: number): Block[] {
+    return Markdown.#segments(text).flatMap((segment): Block[] => {
       switch (segment.kind) {
         case 'markdown':
-          return new MarkdownTree(segment.text).#blocks(
+          return new Source(segment.text).blocks(
             fromMarkdown(segment.text, {
               extensions: [gfm()],
               mdastExtensions: [gfmFromMarkdown()],
@@ -83,9 +101,9 @@ export class MarkdownTree {
               kind: 'tagged',
               name: segment.name,
               children:
-                depth + 1 >= MarkdownTree.DEPTH
-                  ? MarkdownTree.#plain(segment.text)
-                  : MarkdownTree.parse(segment.text, depth + 1),
+                depth + 1 >= Markdown.DEPTH
+                  ? Source.plain(segment.text)
+                  : Markdown.#read(segment.text, depth + 1),
             },
           ];
         default: {
@@ -94,12 +112,6 @@ export class MarkdownTree {
         }
       }
     });
-  }
-
-  /** One paragraph's inline spans, for text known to be a single line. */
-  static inline(text: string): Inline[] {
-    const [first] = MarkdownTree.parse(text);
-    return first?.kind === 'paragraph' ? first.children : [];
   }
 
   /**
@@ -154,9 +166,13 @@ export class MarkdownTree {
     flush();
     return out;
   }
+}
 
+/** One Markdown source as it is read: its text, for what is kept as text,
+ * and its definitions, for references. */
+class Source {
   /** Text kept as it is, as one paragraph. */
-  static #plain(text: string): Block[] {
+  static plain(text: string): Block[] {
     return text.trim() ? [{ kind: 'paragraph', children: [{ kind: 'text', text }] }] : [];
   }
 
@@ -164,7 +180,7 @@ export class MarkdownTree {
   /** Link and image definitions, by identifier, for references. */
   readonly #definitions = new Map<string, Definition>();
 
-  private constructor(source: string) {
+  constructor(source: string) {
     this.#source = source;
   }
 
@@ -175,7 +191,7 @@ export class MarkdownTree {
     return start === undefined || end === undefined ? '' : this.#source.slice(start, end);
   }
 
-  #blocks(nodes: readonly RootContent[], depth: number): Block[] {
+  blocks(nodes: readonly RootContent[], depth: number): Block[] {
     for (const node of nodes) {
       if (node.type === 'definition') this.#definitions.set(node.identifier, node);
     }
@@ -184,9 +200,9 @@ export class MarkdownTree {
 
   /** Blocks nested one level down, or their text past the depth bound. */
   #nested(node: Nodes, children: readonly RootContent[], depth: number): Block[] {
-    return depth + 1 >= MarkdownTree.DEPTH
-      ? MarkdownTree.#plain(this.#text(node))
-      : this.#blocks(children, depth + 1);
+    return depth + 1 >= Markdown.DEPTH
+      ? Source.plain(this.#text(node))
+      : this.blocks(children, depth + 1);
   }
 
   #block(node: RootContent, depth: number): Block[] {
@@ -202,7 +218,7 @@ export class MarkdownTree {
       case 'blockquote':
         return [{ kind: 'quote', children: this.#nested(node, node.children, depth) }];
       case 'list':
-        if (depth + 1 >= MarkdownTree.DEPTH) return MarkdownTree.#plain(this.#text(node));
+        if (depth + 1 >= Markdown.DEPTH) return Source.plain(this.#text(node));
         return [
           {
             kind: 'list',
@@ -210,7 +226,7 @@ export class MarkdownTree {
             start: node.start ?? 1,
             items: node.children.map((item) => ({
               checked: item.checked ?? null,
-              children: this.#blocks(item.children, depth + 1),
+              children: this.blocks(item.children, depth + 1),
             })),
           },
         ];
@@ -245,16 +261,16 @@ export class MarkdownTree {
         // Read for references; not shown.
         return [];
       case 'html':
-        return MarkdownTree.#plain(node.value);
+        return Source.plain(node.value);
       default:
         // Anything else is kept as its source text, never dropped.
-        return MarkdownTree.#plain(this.#text(node));
+        return Source.plain(this.#text(node));
     }
   }
 
   /** Spans nested one level down, or their text past the depth bound. */
   #nestedInlines(node: Nodes, children: readonly PhrasingContent[], depth: number): Inline[] {
-    return depth + 1 >= MarkdownTree.DEPTH
+    return depth + 1 >= Markdown.DEPTH
       ? [{ kind: 'text', text: this.#text(node) }]
       : this.#inlines(children, depth + 1);
   }

@@ -1,9 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { MarkdownTree, type Block } from '../src/lib/markdown.ts';
+import { Markdown, type Block } from '../src/tree.ts';
 
-const parseMarkdown = (text: string) => MarkdownTree.parse(text);
-const parseInline = (text: string) => MarkdownTree.inline(text);
+const parseMarkdown = (text: string) => Markdown.parse(text).blocks;
+const parseInline = (text: string) => Markdown.inline(text);
 
 const text = (t: string) => ({ kind: 'text', text: t });
 
@@ -191,7 +191,7 @@ test('deep lists are bounded too, kept as their text', () => {
       block.items[0]?.children[0];
     if (block?.kind !== 'list') break;
   }
-  assert.ok(depth <= MarkdownTree.DEPTH, `${depth}`);
+  assert.ok(depth <= Markdown.DEPTH, `${depth}`);
 });
 
 test('a tag inside a code fence is code, not a fold', () => {
