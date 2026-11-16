@@ -185,6 +185,24 @@ export type TurnEnd =
   | { kind: 'failed'; message: string | null }
   | { kind: 'unknown'; status: string };
 
+/** Every kind of event the daemon relays, pinned to `ren-harness`'s `drive::DriveEventKind`. */
+export const driveEventKinds = [
+  'ready',
+  'turn_started',
+  'delta',
+  'item',
+  'approval',
+  'approval_resolved',
+  'turn_ended',
+  'error',
+  'refused',
+  'unsupported',
+  'unknown',
+  'unreadable',
+] as const;
+export type DriveEventKind = (typeof driveEventKinds)[number];
+const driveEventKind = label(driveEventKinds);
+
 /** What the agent reported, as the daemon relays it. Not stored. */
 export type DriveEvent =
   | { kind: 'ready'; thread: NativeThreadId }
@@ -426,7 +444,8 @@ const turnEnd: Decoder<TurnEnd> = (value, path) => {
 const driveEvent: Decoder<DriveEvent> = (value, path) => {
   if (!isRecord(value)) throw new ShapeError(path, 'an object');
   const at = (key: string) => `${path}.${key}`;
-  switch (value.kind) {
+  const kind = driveEventKind(value.kind, at('kind'));
+  switch (kind) {
     case 'ready':
       return { kind: 'ready', thread: branded<'NativeThreadId'>()(value.thread, at('thread')) };
     case 'turn_started':
@@ -482,8 +501,10 @@ const driveEvent: Decoder<DriveEvent> = (value, path) => {
       };
     case 'unsupported':
       return { kind: 'unsupported', method: string(value.method, at('method')) };
+    case 'unknown':
+    case 'unreadable':
     default:
-      return { kind: 'other', name: String(value.kind) };
+      return { kind: 'other', name: kind };
   }
 };
 

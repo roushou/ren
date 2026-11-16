@@ -68,6 +68,7 @@ fn every_label_is_pinned() {
         pi::PiTool,
         opencode::OpenCodeTool,
         drive::Decision,
+        drive::DriveEventKind,
         models::DefaultChoice,
         settings::Effort,
         settings::ApprovalPolicy,

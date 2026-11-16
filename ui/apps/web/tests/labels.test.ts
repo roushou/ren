@@ -78,6 +78,7 @@ const ui: [string, readonly string[]][] = [
   ['ren-harness commands::Sigil', runs.SIGILS],
   ['ren-supervisor ClientStatus', runs.clientStatuses],
   ['ren-harness drive::Decision', runs.decisions],
+  ['ren-harness drive::DriveEventKind', runs.driveEventKinds],
   ['ren-harness models::DefaultChoice', runs.modelChoices],
   ['ren-supervisor PlaceKind', runs.placeKinds],
   ['ren-recorder capture::RunEnd', runs.runEnds],

@@ -295,7 +295,7 @@ impl Reader {
     ) -> Result<Vec<SessionView>, StoreError> {
         let rows = sqlx::query(AssertSqlSafe(format!(
             "{} WHERE {} ORDER BY COALESCE((SELECT MAX(started_at) FROM runs WHERE runs.operator_session = operator_sessions.id), created_at) DESC, id DESC LIMIT ?",
-            SessionView::SELECT,
+            SessionView::select(),
             shelf.sessions(),
         )))
         .bind(i64::from(limit.get()))
@@ -317,7 +317,7 @@ impl Reader {
         let id = id.to_string();
         let Some(row) = sqlx::query(AssertSqlSafe(format!(
             "{} WHERE id = ?",
-            SessionView::SELECT
+            SessionView::select()
         )))
         .bind(&id)
         .fetch_optional(&self.pool)
