@@ -219,9 +219,8 @@ pub enum RunsError {
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct LiveRun {
     run: RunId,
-    /// The session it serves; an older daemon names none.
-    #[serde(default)]
-    session: Option<String>,
+    /// The session it serves.
+    session: String,
     harness: Stored<Harness>,
     workdir: String,
     state: LiveState,
@@ -230,9 +229,6 @@ pub struct LiveRun {
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 struct LiveState {
     phase: Phase,
-    /// The client's conversation, once it is open.
-    #[serde(default)]
-    thread: Option<String>,
     /// Approvals waiting for the operator, while working.
     #[serde(default)]
     approvals: Vec<Value>,
@@ -323,26 +319,12 @@ impl Runs {
 
 impl LiveRun {
     /// How to continue its conversation after the restart: by writing to
-    /// its session, which starts the client again and resumes it; from an
-    /// older daemon, which names no session, by resuming its thread.
+    /// its session, which starts the client again and resumes it.
     pub fn continuation(&self) -> String {
-        let client = match self.harness.known() {
-            Some(Harness::Codex) => Some("codex"),
-            Some(Harness::ClaudeCode) => Some("claude"),
-            Some(Harness::Pi) => Some("pi"),
-            Some(Harness::OpenCode) | None => None,
-        };
-        match (&self.session, client, &self.state.thread) {
-            (Some(session), _, _) => format!(
-                "write to its session to go on: from the Sessions page or `ren runs say {session} <prompt>`"
-            ),
-            (None, Some(client), Some(thread)) => format!(
-                "continue it from the Sessions page or `ren runs start {client} {} --resume {thread}`",
-                self.workdir
-            ),
-            (None, None, Some(_)) => "continue it from the Sessions page".to_owned(),
-            (None, Some(_) | None, None) => "its conversation had not opened".to_owned(),
-        }
+        format!(
+            "write to its session to go on: from the Sessions page or `ren runs say {} <prompt>`",
+            self.session
+        )
     }
 }
 
@@ -493,6 +475,7 @@ mod tests {
         }
         serde_json::json!({
             "run": format!("0193e0f1-0000-7000-8000-{n:012}"),
+            "session": format!("0193e0f1-0000-7000-a000-{n:012}"),
             "harness": harness,
             "workdir": format!("/home/op/acme-{n}"),
             "state": state,
@@ -632,12 +615,6 @@ mod tests {
             run(3, "opencode", "idle"),
             run(4, "codex", "starting"),
             run(5, "codex", "ended"),
-            // A daemon with sessions names each run's.
-            {
-                let mut served = run(6, "pi", "idle");
-                served["session"] = "0193e0f1-0000-7000-a000-000000000006".into();
-                served
-            },
         ]);
         let ending: Vec<_> = listed
             .ending()
@@ -647,11 +624,10 @@ mod tests {
         assert_eq!(
             ending,
             [
-                "codex run 0193e0f1-0000-7000-8000-000000000001 in /home/op/acme-1: idle; continue it from the Sessions page or `ren runs start codex /home/op/acme-1 --resume 0193e0f1-0000-7000-9000-000000000001`",
-                "claude_code run 0193e0f1-0000-7000-8000-000000000002 in /home/op/acme-2: idle; continue it from the Sessions page or `ren runs start claude /home/op/acme-2 --resume 0193e0f1-0000-7000-9000-000000000002`",
-                "opencode run 0193e0f1-0000-7000-8000-000000000003 in /home/op/acme-3: idle; continue it from the Sessions page",
-                "codex run 0193e0f1-0000-7000-8000-000000000004 in /home/op/acme-4: starting; its conversation had not opened",
-                "pi run 0193e0f1-0000-7000-8000-000000000006 in /home/op/acme-6: idle; write to its session to go on: from the Sessions page or `ren runs say 0193e0f1-0000-7000-a000-000000000006 <prompt>`",
+                "codex run 0193e0f1-0000-7000-8000-000000000001 in /home/op/acme-1: idle; write to its session to go on: from the Sessions page or `ren runs say 0193e0f1-0000-7000-a000-000000000001 <prompt>`",
+                "claude_code run 0193e0f1-0000-7000-8000-000000000002 in /home/op/acme-2: idle; write to its session to go on: from the Sessions page or `ren runs say 0193e0f1-0000-7000-a000-000000000002 <prompt>`",
+                "opencode run 0193e0f1-0000-7000-8000-000000000003 in /home/op/acme-3: idle; write to its session to go on: from the Sessions page or `ren runs say 0193e0f1-0000-7000-a000-000000000003 <prompt>`",
+                "codex run 0193e0f1-0000-7000-8000-000000000004 in /home/op/acme-4: starting; write to its session to go on: from the Sessions page or `ren runs say 0193e0f1-0000-7000-a000-000000000004 <prompt>`",
             ]
         );
     }

@@ -182,11 +182,12 @@ test('progress events parse at the boundary and keep a bounded, newest-last set'
   const { Streaming } = await import('../src/lib/streaming.ts');
   const call = '00000000-0000-4000-8000-000000000001';
   const update = Streaming.parse(
-    JSON.stringify({ call, reply: 'Hi', cut: false, tools: ['Bash'] }),
+    JSON.stringify({ call, reply: 'Hi', cut: false, tools: ['Bash'], thinking: false }),
   );
   assert.equal(update?.reply, 'Hi');
-  // A daemon that predates `thinking` leaves it out: not thinking.
   assert.equal(update?.thinking, false);
+  // Every field is required.
+  assert.equal(Streaming.parse(JSON.stringify({ call, reply: 'Hi', cut: false, tools: [] })), null);
   const thinking = Streaming.parse(
     JSON.stringify({ call, reply: '', cut: false, tools: [], thinking: true }),
   );
@@ -195,7 +196,10 @@ test('progress events parse at the boundary and keep a bounded, newest-last set'
     Streaming.parse(JSON.stringify({ call, reply: '', cut: false, tools: [], thinking: 'yes' })),
     null,
   );
-  assert.equal(Streaming.parse('{"call":"nope","reply":"x","cut":false,"tools":[]}'), null);
+  assert.equal(
+    Streaming.parse('{"call":"nope","reply":"x","cut":false,"tools":[],"thinking":false}'),
+    null,
+  );
   assert.equal(Streaming.parse('not json'), null);
   const calls = new Map();
   for (let n = 0; n < Streaming.MAX_CALLS + 5; n++) {

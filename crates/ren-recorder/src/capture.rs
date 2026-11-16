@@ -106,7 +106,7 @@ pub enum AttemptPhase {
 }
 
 /// The persisted form of an attempt's end. Cause and phase are absent when the
-/// record was written by the recorder's drop fallback or before they existed.
+/// recorder's drop fallback wrote the record, or the stored record has none.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 pub struct TerminalRecord {
     pub terminal: AttemptTerminal,

@@ -389,7 +389,7 @@ export interface CallView {
   operator_revision: number | null;
   /** Why the client sent it, once derived; null before then */
   purpose: Stored<CallPurpose> | null;
-  /** Null for calls recorded before callers were */
+  /** Null when no caller is stored for the call */
   caller: CallerView | null;
 }
 export interface ToolCallRecord {
@@ -480,8 +480,7 @@ export interface RecordingView {
   last_seen: UnixMillis;
   call_count: number;
   turn_count: number;
-  /** Null from a daemon older than recording totals. */
-  error_count: number | null;
+  error_count: number;
   /** Input includes cached context; null when no call reported usage. */
   tokens: TokenTotals;
   /** When the operator archived it, while it has no newer traffic. */

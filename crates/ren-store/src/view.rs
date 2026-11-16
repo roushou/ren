@@ -210,8 +210,7 @@ pub struct CallView {
     pub started_at: UnixMillis,
     pub ended_at: Option<UnixMillis>,
     pub provider: Stored<Provider>,
-    /// The wire format; absent when an older version's provider label was
-    /// unknown to the migration that filled it.
+    /// The wire format; absent when the store holds none for the call.
     pub wire: Option<Stored<Wire>>,
     pub endpoint: Stored<Endpoint>,
     pub method: Stored<Method>,
@@ -219,7 +218,7 @@ pub struct CallView {
     pub recording: Option<RecordingId>,
     pub turn: Option<TurnId>,
     pub attribution: AttributionView,
-    /// Who made the call; absent for calls recorded before callers were.
+    /// Who made the call; absent when the store holds no caller for it.
     pub caller: Option<CallerView>,
     pub state: Stored<CallState>,
     pub terminal: Option<Stored<AttemptTerminal>>,
@@ -548,8 +547,8 @@ pub struct UsageView {
     /// reported model are grouped under `null`.
     pub models: Vec<ModelUsage>,
     /// Each named user's usage, most input first. Calls no named user made
-    /// (unlisted or unidentified callers, and calls recorded before callers
-    /// were) are grouped under `null`.
+    /// (unlisted or unidentified callers, and calls with no stored caller)
+    /// are grouped under `null`.
     pub users: Vec<UserUsage>,
 }
 
@@ -744,8 +743,8 @@ pub struct RunView {
     /// The recording whose calls name the run's thread as their session:
     /// the run's model traffic, once a call was recorded.
     pub recording: Option<RecordingId>,
-    /// The operator session the run served; `None` for a run recorded
-    /// before sessions were, until the migration gave it one.
+    /// The operator session the run served; `None` when the store holds none
+    /// for the run.
     pub operator_session: Option<SessionId>,
     pub ended_at: Option<UnixMillis>,
     /// How the run ended; `None` while it runs.
@@ -755,13 +754,13 @@ pub struct RunView {
     /// When the operator archived it; it is listed as archived once ended.
     pub archived_at: Option<UnixMillis>,
     /// The model it started on, as its client names it; `None` is the
-    /// client's own (or a run recorded before settings were).
+    /// client's own.
     pub model: Option<String>,
     pub effort: Option<Stored<Effort>>,
     pub approvals: Option<Stored<ApprovalPolicy>>,
     /// The toolset generation on its search path: 0 when Ren had installed
-    /// none; `None` when unknown (the tool store was unreadable, or the run
-    /// was recorded before this was).
+    /// none; `None` when unknown: the tool store was unreadable, or the store
+    /// holds none for the run.
     pub toolset: Option<Generation>,
 }
 
@@ -969,7 +968,8 @@ pub struct StorageView {
     pub calls: u64,
     pub open_calls: u64,
     /// Calls whose digest the recorder has derived: every finished call,
-    /// except while history recorded before digests is derived.
+    /// except while it derives digests again for calls with none, or with
+    /// one from an older `CallDigest::VERSION`.
     pub digested_calls: u64,
     pub chunks: u64,
     /// Raw bytes all stored segments reference.

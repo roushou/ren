@@ -27,8 +27,6 @@ pub struct UiDeploy {
     dir: PathBuf,
     /// Where the deployed copy waits while a new one is checked.
     rollback: PathBuf,
-    /// Where installs kept the copy before rollback was automatic.
-    legacy: PathBuf,
     unit: PathBuf,
     env_file: PathBuf,
     node: PathBuf,
@@ -75,7 +73,6 @@ impl UiDeploy {
             staged: share.join("ren-ui.next"),
             dir: share.join("ren-ui"),
             rollback: share.join("ren-ui.rollback"),
-            legacy: share.join("ren-ui.previous"),
             unit: home.join(".config/systemd/user").join(Self::SERVICE),
             env_file: home.join(".config/ren/ui.env"),
             node: Self::program(env, "node")?,
@@ -184,8 +181,6 @@ impl UiDeploy {
                 .args(["--user", "stop", Self::SERVICE])
                 .run()?;
         }
-        // Kept by installs before rollback was automatic.
-        Held::clear(&self.legacy)?;
         let held = Held::hold(&self.dir, &self.rollback, &self.unit)?;
         Upgrade::attempt(
             held,
@@ -305,7 +300,6 @@ mod tests {
             staged: none.clone(),
             dir: none.clone(),
             rollback: none.clone(),
-            legacy: none.clone(),
             unit: none.clone(),
             env_file: none.clone(),
             node: PathBuf::from("/usr/local/bin/node"),

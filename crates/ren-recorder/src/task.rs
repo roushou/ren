@@ -116,8 +116,8 @@ impl<S: RecordSink> RecorderTask<S> {
         self.core.accept(record);
     }
 
-    /// Derive digests again from stored bodies: for calls recorded before
-    /// digests existed or by an older version. Returns the pause before the
+    /// Derive digests again from stored bodies: for calls with none, or with
+    /// one from an older [`CallDigest::VERSION`]. Returns the pause before the
     /// next pass: short while calls wait, long once none do.
     async fn rederive(&mut self) -> Duration {
         match self

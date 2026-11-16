@@ -1,6 +1,6 @@
 //! A finished call's stored bodies, replayed through the same readers that
 //! read them while they streamed, so a digest can be derived again: for calls
-//! recorded before digests existed, or by an older [`CallDigest::VERSION`].
+//! with none, or with one from an older [`CallDigest::VERSION`].
 
 use super::{CallDigest, DigestBudget};
 use crate::capture::BodyEnding;

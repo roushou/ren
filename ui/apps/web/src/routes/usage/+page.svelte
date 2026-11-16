@@ -260,7 +260,7 @@
                           href={`/traffic?user=${encodeURIComponent(user.user)}`}>{user.user}</a
                         >{:else}<span
                           class="subtle-label"
-                          title="Unlisted Tailscale logins, unidentified callers, and calls recorded before callers were"
+                          title="Unlisted Tailscale logins, unidentified callers, and calls with no stored caller"
                           >Not a named user</span
                         >{/if}</td
                     >

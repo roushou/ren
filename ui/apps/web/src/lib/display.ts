@@ -42,12 +42,11 @@ export interface CallerShown {
 }
 
 /**
- * Who made a call. A call recorded before callers were has no caller: that is
- * unknown, not unidentified.
+ * Who made a call. A call with no stored caller is unknown, not unidentified.
  */
 export function callerShown(caller: CallerView | null): CallerShown {
   if (caller === null)
-    return { label: 'Unknown', title: 'Recorded before Ren recorded callers', user: null };
+    return { label: 'Unknown', title: 'No caller is stored for this call', user: null };
   const user = caller.user ?? '?';
   const login = caller.login ?? '?';
   switch (caller.kind) {
