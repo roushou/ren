@@ -1,4 +1,4 @@
-use super::{CommitId, Exit, Git, GitError, Head, HeadRef, Published, Repository, Tree};
+use super::{CommitId, Exit, Git, GitError, Head, Published, Repository, Tree};
 use std::path::Path;
 
 /// A repository at `dir` whose `HEAD` holds `head`, written by hand.
@@ -155,11 +155,15 @@ esac"
     );
     assert_eq!(git.tree(dir.path()).unwrap(), Tree::Modified);
     assert_eq!(git.published(dir.path()).unwrap(), Published::LocalOnly);
-    assert_eq!(git.head_ref(dir.path()).unwrap(), HeadRef::Detached);
-    let dirs = git.dirs(dir.path()).unwrap();
+    // A detached linked worktree: its own HEAD and index, the shared
+    // packed references, and no branch file.
     assert_eq!(
-        (dirs.own.as_path(), dirs.common.as_path()),
-        (Path::new("/r/.git/worktrees/w"), Path::new("/r/.git"))
+        git.revision_files(dir.path()).unwrap(),
+        [
+            Path::new("/r/.git/worktrees/w/HEAD"),
+            Path::new("/r/.git/worktrees/w/index"),
+            Path::new("/r/.git/packed-refs"),
+        ]
     );
 
     let odd = Git::find(&[fake(dir.path(), "odd", "echo not-a-commit")]).unwrap();
@@ -178,15 +182,19 @@ fn the_real_git_answers_on_its_own_repository() {
     if git.init(dir.path()).is_err() {
         return;
     }
-    assert!(matches!(
-        git.head_ref(dir.path()).unwrap(),
-        HeadRef::Named(reference) if reference.starts_with("refs/heads/")
-    ));
     // No commit yet.
     assert!(git.head_commit(dir.path()).is_err());
-    let dirs = git.dirs(dir.path()).unwrap();
-    assert_eq!(dirs.own, dirs.common);
-    assert!(dirs.own.is_absolute() && dirs.own.ends_with(".git"));
+    let files = git.revision_files(dir.path()).unwrap();
+    let dot_git = std::fs::canonicalize(dir.path().join(".git")).unwrap();
+    assert_eq!(
+        files.get(..3).unwrap(),
+        ["HEAD", "index", "packed-refs"].map(|file| dot_git.join(file))
+    );
+    let [.., branch] = files.as_slice() else {
+        panic!("{files:?}");
+    };
+    assert_eq!(files.len(), 4, "on a branch: {files:?}");
+    assert!(branch.starts_with(dot_git.join("refs/heads")), "{branch:?}");
     assert_eq!(git.tree(dir.path()).unwrap(), Tree::Clean);
     assert!(matches!(
         Git::repository(dir.path()),

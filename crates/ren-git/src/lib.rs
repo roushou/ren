@@ -126,7 +126,7 @@ pub enum Published {
 
 /// The reference `HEAD` names, or none when detached.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum HeadRef {
+enum HeadRef {
     /// The full reference, such as `refs/heads/main`.
     Named(String),
     Detached,
@@ -135,9 +135,9 @@ pub enum HeadRef {
 /// A work tree's git folders, absolute: its own (`HEAD`, `index`), and the
 /// one its references live in, which differ in a linked worktree.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct GitDirs {
-    pub own: PathBuf,
-    pub common: PathBuf,
+struct GitDirs {
+    own: PathBuf,
+    common: PathBuf,
 }
 
 impl Git {
@@ -194,8 +194,27 @@ impl Git {
         })
     }
 
+    /// The files git rewrites when `dir`'s commit or staged tree changes:
+    /// its `HEAD` and index, the packed references, and the file of the
+    /// branch `HEAD` names. A file listed may not exist (a branch kept only
+    /// in `packed-refs`). Editing a tracked file without staging it changes
+    /// none of them.
+    pub fn revision_files(&self, dir: &Path) -> Result<Vec<PathBuf>, GitError> {
+        let dirs = self.dirs(dir)?;
+        let mut files = vec![
+            dirs.own.join("HEAD"),
+            dirs.own.join("index"),
+            dirs.common.join("packed-refs"),
+        ];
+        match self.head_ref(dir)? {
+            HeadRef::Named(reference) => files.push(dirs.common.join(reference)),
+            HeadRef::Detached => {}
+        }
+        Ok(files)
+    }
+
     /// The reference `dir`'s `HEAD` names.
-    pub fn head_ref(&self, dir: &Path) -> Result<HeadRef, GitError> {
+    fn head_ref(&self, dir: &Path) -> Result<HeadRef, GitError> {
         // `-q`: a detached `HEAD` exits 1, silently.
         match self.answer(dir, &["symbolic-ref", "-q", "HEAD"]) {
             Ok(reference) => Ok(HeadRef::Named(reference)),
@@ -208,7 +227,7 @@ impl Git {
     }
 
     /// `dir`'s git folders.
-    pub fn dirs(&self, dir: &Path) -> Result<GitDirs, GitError> {
+    fn dirs(&self, dir: &Path) -> Result<GitDirs, GitError> {
         Ok(GitDirs {
             own: self
                 .answer(dir, &["rev-parse", "--absolute-git-dir"])?

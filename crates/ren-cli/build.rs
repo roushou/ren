@@ -6,7 +6,7 @@
 //! including `cargo install --git`, has git. Untracked files don't count as
 //! modifications: cargo writes one into its own git checkouts.
 
-use ren_git::{Git, HeadRef, Tree};
+use ren_git::{Git, Tree};
 use std::path::{Path, PathBuf};
 
 /// Where the revision comes from.
@@ -75,19 +75,13 @@ impl Source {
         }
     }
 
-    /// A new commit moves HEAD or the branch it names; staging changes the
-    /// index. Editing a tracked file without staging it changes neither, so
-    /// the dirty flag can lag until the next rebuild of this package. Only
-    /// existing files are watched: cargo reruns on every build for a missing one.
+    /// Watches the files git rewrites for a new commit or a staged change.
+    /// Editing a tracked file without staging it changes none, so the dirty
+    /// flag can lag until the next rebuild of this package. Only existing
+    /// files are watched: cargo reruns on every build for a missing one.
     fn watch_git(git: &Git, dir: &Path) {
-        let Ok(dirs) = git.dirs(dir) else { return };
-        let mut watched: Vec<PathBuf> = ["HEAD", "index"].map(|file| dirs.own.join(file)).into();
-        watched.push(dirs.common.join("packed-refs"));
-        match git.head_ref(dir) {
-            Ok(HeadRef::Named(branch)) => watched.push(dirs.common.join(branch)),
-            Ok(HeadRef::Detached) | Err(_) => {}
-        }
-        for path in watched.iter().filter(|path| path.is_file()) {
+        let files = git.revision_files(dir).unwrap_or_default();
+        for path in files.iter().filter(|path| path.is_file()) {
             println!("cargo::rerun-if-changed={}", path.display());
         }
     }

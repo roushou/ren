@@ -195,7 +195,8 @@ dependencies under "Crates" below. Read the code for current module ownership.
 - `crates/ren-git`: git as Ren reads and runs it, with `Git` as its primary
   type: the git program found on a search path (`Git::find`) or this
   process's own (`Git::inherited`), the commands Ren runs with it (`init`,
-  and the revision, tree, and references a checkout reports), and a folder's
+  a checkout's commit, tree, and whether a remote holds it, and
+  `revision_files`, the files git rewrites for a new commit), and a folder's
   repository read from disk without it (`Git::repository`: its `HEAD`,
   through a linked worktree's `.git` file). It is the one place Ren reads or
   runs git, and the one `disallowed_methods` exemption for it. It performs
