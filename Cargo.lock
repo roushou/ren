@@ -1783,6 +1783,7 @@ dependencies = [
  "pty-process",
  "ren-depot",
  "ren-gateway",
+ "ren-git",
  "ren-harness",
  "ren-protocol",
  "ren-recorder",
@@ -1862,6 +1863,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "ren-git"
+version = "0.1.0"
+dependencies = [
+ "tempfile",
+ "thiserror",
+]
+
+[[package]]
 name = "ren-harness"
 version = "0.1.0"
 dependencies = [
@@ -1936,6 +1945,7 @@ dependencies = [
  "ren-daemon",
  "ren-depot",
  "ren-gateway",
+ "ren-git",
  "ren-harness",
  "ren-protocol",
  "ren-recorder",
@@ -3407,6 +3417,7 @@ dependencies = [
  "futures-util",
  "ren-daemon",
  "ren-gateway",
+ "ren-git",
  "ren-harness",
  "ren-protocol",
  "ren-recorder",

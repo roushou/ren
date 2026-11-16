@@ -41,6 +41,10 @@ impl Fetch for FakeFetch {
 
 /// Run a program just written, retrying while a process another test
 /// thread is starting still holds the file open ("text file busy").
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the test runs a program the tool store installed"
+)]
 fn run(program: impl AsRef<Path>) -> std::process::Output {
     for _ in 0..100 {
         match std::process::Command::new(program.as_ref()).output() {

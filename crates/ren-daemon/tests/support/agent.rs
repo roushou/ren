@@ -11,6 +11,7 @@ use ren_supervisor::{
     AgentHost, AgentProcess, FoundPath, KillSignal, KillSwitch, Look, PathKind, ProcessExit,
     RunTools, WalkLimits, Workdir,
 };
+use ren_supervisor::{ProjectGit, Scratch};
 use serde_json::{Value, json};
 use std::{
     io,
@@ -41,11 +42,13 @@ impl AgentHost for ScriptedHost {
         Ok(match dir.to_str() {
             Some("/work") => Look {
                 folders: vec!["acme".into(), "web".into()],
-                git: None,
+                git: ProjectGit::None,
             },
             Some("/work/acme") => Look {
                 folders: vec![],
-                git: Some(Some("ref: refs/heads/main".into())),
+                git: ProjectGit::Branch {
+                    name: "main".into(),
+                },
             },
             Some(_) | None => Look::default(),
         })
@@ -68,8 +71,8 @@ impl AgentHost for ScriptedHost {
         Ok(())
     }
 
-    fn make_scratch(&self, _dir: &Path) -> io::Result<()> {
-        Ok(())
+    fn make_scratch(&self, _dir: &Path, _tools: &RunTools) -> io::Result<Scratch> {
+        Ok(Scratch::Repository)
     }
 
     /// Attachments are real files, in the test's own data folder.

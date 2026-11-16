@@ -30,7 +30,7 @@ pub mod workdir;
 
 pub use client::{Client, ClientStatus};
 pub use files::{FileListing, FileMatch, FileQuery, FoundPath, PathKind, WalkLimits};
-pub use host::{AgentHost, AgentProcess, KillSignal, KillSwitch, RunTools};
+pub use host::{AgentHost, AgentProcess, KillSignal, KillSwitch, RunTools, Scratch, Untracked};
 pub use login::SignInError;
 pub use models::ModelsError;
 pub use project::{Look, PlaceKind, Project, ProjectGit, Search};

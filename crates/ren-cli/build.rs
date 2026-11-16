@@ -6,10 +6,8 @@
 //! including `cargo install --git`, has git. Untracked files don't count as
 //! modifications: cargo writes one into its own git checkouts.
 
-use std::{
-    path::{Path, PathBuf},
-    process::Command,
-};
+use ren_git::{CommitId, Git, Tree};
+use std::path::{Path, PathBuf};
 
 /// Where the revision comes from.
 enum Source {
@@ -21,8 +19,8 @@ enum Source {
 
 /// What the build script found.
 struct Revision {
-    commit: String,
-    dirty: bool,
+    commit: CommitId,
+    tree: Tree,
 }
 
 /// `.cargo_vcs_info.json`; `dirty` is present only when true.
@@ -58,56 +56,34 @@ impl Source {
                 let text = std::fs::read_to_string(path).ok()?;
                 let info: VcsInfo = serde_json::from_str(&text).ok()?;
                 Some(Revision {
-                    commit: info.git.sha1,
-                    dirty: info.git.dirty,
+                    commit: info.git.sha1.parse().ok()?,
+                    tree: if info.git.dirty {
+                        Tree::Modified
+                    } else {
+                        Tree::Clean
+                    },
                 })
             }
             Self::Git => {
-                Self::watch_git();
-                let commit = Self::git(&["rev-parse", "--verify", "HEAD"])?;
-                let status = Self::git(&["status", "--porcelain", "--untracked-files=no"])?;
+                let (git, dir) = (Git::inherited(), Path::new(Self::MANIFEST_DIR));
+                Self::watch_git(&git, dir);
                 Some(Revision {
-                    commit,
-                    dirty: !status.is_empty(),
+                    commit: git.head_commit(dir).ok()?,
+                    tree: git.tree(dir).ok()?,
                 })
             }
         }
     }
 
-    /// A new commit moves HEAD or the branch it names; staging changes the
-    /// index. Editing a tracked file without staging it changes neither, so
-    /// the dirty flag can lag until the next rebuild of this package. Only
-    /// existing files are watched: cargo reruns on every build for a missing one.
-    fn watch_git() {
-        let git_dir = Self::git(&["rev-parse", "--absolute-git-dir"]).map(PathBuf::from);
-        let common = Self::git(&["rev-parse", "--path-format=absolute", "--git-common-dir"])
-            .map(PathBuf::from);
-        let branch = Self::git(&["symbolic-ref", "-q", "HEAD"]);
-        let mut watched = Vec::new();
-        if let Some(git_dir) = &git_dir {
-            watched.extend(["HEAD", "index"].map(|file| git_dir.join(file)));
-        }
-        if let Some(common) = &common {
-            watched.push(common.join("packed-refs"));
-            watched.extend(branch.iter().map(|branch| common.join(branch)));
-        }
-        for path in watched.iter().filter(|path| path.is_file()) {
+    /// Watches the files git rewrites for a new commit or a staged change.
+    /// Editing a tracked file without staging it changes none, so the dirty
+    /// flag can lag until the next rebuild of this package. Only existing
+    /// files are watched: cargo reruns on every build for a missing one.
+    fn watch_git(git: &Git, dir: &Path) {
+        let files = git.revision_files(dir).unwrap_or_default();
+        for path in files.iter().filter(|path| path.is_file()) {
             println!("cargo::rerun-if-changed={}", path.display());
         }
-    }
-
-    /// A git command's trimmed output, if it succeeds.
-    fn git(args: &[&str]) -> Option<String> {
-        let output = Command::new("git")
-            .arg("-C")
-            .arg(Self::MANIFEST_DIR)
-            .args(args)
-            .output()
-            .ok()?;
-        output
-            .status
-            .success()
-            .then(|| String::from_utf8_lossy(&output.stdout).trim().to_owned())
     }
 }
 
@@ -116,11 +92,11 @@ fn main() {
     let revision = match Source::find().revision() {
         Some(Revision {
             commit,
-            dirty: false,
-        }) => commit,
+            tree: Tree::Clean,
+        }) => commit.to_string(),
         Some(Revision {
             commit,
-            dirty: true,
+            tree: Tree::Modified,
         }) => format!("{commit}-dirty"),
         None => "unknown".to_owned(),
     };

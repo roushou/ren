@@ -25,8 +25,8 @@ pub trait AgentHost: Send + Sync + 'static {
     /// The real, absolute path of `path`, with every link resolved.
     fn resolve(&self, path: &Path) -> io::Result<PathBuf>;
 
-    /// What `dir` holds: its folders (links not followed), and whether it
-    /// is a git repository, with its `HEAD`'s text when readable.
+    /// What `dir` holds: its folders (links not followed), and its git
+    /// repository.
     fn look(&self, dir: &Path) -> io::Result<Look>;
 
     /// The files and folders under `dir`, relative to it, leaving out what
@@ -40,9 +40,11 @@ pub trait AgentHost: Send + Sync + 'static {
     /// Create `dir` and the folders above it, where they are missing.
     fn make_dir(&self, dir: &Path) -> io::Result<()>;
 
-    /// Create `dir`, a new empty folder a scratch run works in, as a git
-    /// repository, so what the run changes can be read as changes.
-    fn make_scratch(&self, dir: &Path) -> io::Result<()>;
+    /// Create `dir`, a new empty folder a scratch run works in, and make
+    /// it a git repository with the git on `tools`' search path, so what
+    /// the run changes can be read as changes. A folder git could not
+    /// make a repository is still made, and says why.
+    fn make_scratch(&self, dir: &Path, tools: &RunTools) -> io::Result<Scratch>;
 
     /// Write `bytes` to `incoming`, a new file, then move it to `target`,
     /// making the folders above each where they are missing: `target`
@@ -104,6 +106,26 @@ pub trait AgentHost: Send + Sync + 'static {
     /// listens on, as the operator's browser would have: one `GET`, no
     /// redirects followed.
     fn open_local(&self, address: &LocalRedirect) -> BoxFuture<'static, io::Result<()>>;
+}
+
+/// How a scratch folder was made: a repository of its own, or a plain
+/// folder whose changes are not tracked, and why.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[must_use]
+pub enum Scratch {
+    Repository,
+    Untracked(Untracked),
+}
+
+/// Why a scratch folder is not a repository.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Untracked {
+    /// No `git` on the run's search path.
+    NoGit,
+    /// `git` was found but could not be started.
+    NotStarted,
+    /// `git init` ran and failed.
+    InitFailed(ProcessExit),
 }
 
 /// The tools a process starts with, as the host read them when it started.

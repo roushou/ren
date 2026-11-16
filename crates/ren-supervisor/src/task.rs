@@ -12,6 +12,7 @@
 //! [`Supervisor`]: crate::Supervisor
 
 use crate::attachments::{AttachmentFolders, AttachmentUse};
+use crate::host::Scratch;
 use crate::login::{SignInError, SignIns, StatusCheck};
 use crate::models::{Listings, ModelProbe, ModelsError, ModelsReply};
 use crate::process::{Process, ProcessEffect, Rest, Serving};
@@ -454,9 +455,16 @@ impl<H: AgentHost> SupervisorTask<H> {
                     id.get(id.len().saturating_sub(8)..).unwrap_or(&id)
                 ));
                 let making = folder.clone();
-                self.off_task(move |host| host.make_scratch(&making))
+                let made = self
+                    .off_task(move |host| host.make_scratch(&making, &host.tools()))
                     .await
                     .map_err(StartError::Scratch)?;
+                match made {
+                    Scratch::Repository => {}
+                    Scratch::Untracked(why) => {
+                        tracing::warn!(?folder, ?why, "a scratch folder is not a git repository");
+                    }
+                }
                 RequestedDir::parse(folder.to_str().ok_or(StartError::NoScratch)?)
                     .map_err(StartError::Workdir)?
             }

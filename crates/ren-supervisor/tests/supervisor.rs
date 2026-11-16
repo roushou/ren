@@ -32,6 +32,7 @@ use ren_supervisor::{
     PathKind, ProcessExit, RunCommand, RunRefused, RunState, RunTools, RunUpdate, StartError,
     Supervisor, SupervisorOptions, WalkLimits, Workdir,
 };
+use ren_supervisor::{ProjectGit, Scratch};
 use serde_json::{Value, json};
 use std::{
     io,
@@ -129,11 +130,13 @@ impl AgentHost for FakeHost {
         Ok(match dir.to_str() {
             Some("/work") => Look {
                 folders: vec!["acme".into(), "notes".into()],
-                git: None,
+                git: ProjectGit::None,
             },
             Some("/work/acme") => Look {
                 folders: vec!["src".into()],
-                git: Some(Some("ref: refs/heads/main".into())),
+                git: ProjectGit::Branch {
+                    name: "main".into(),
+                },
             },
             Some(_) | None => Look::default(),
         })
@@ -159,9 +162,9 @@ impl AgentHost for FakeHost {
         Ok(())
     }
 
-    fn make_scratch(&self, dir: &Path) -> io::Result<()> {
+    fn make_scratch(&self, dir: &Path, _tools: &RunTools) -> io::Result<Scratch> {
         self.made.lock().unwrap().push((dir.to_path_buf(), true));
-        Ok(())
+        Ok(Scratch::Repository)
     }
 
     fn place_file(&self, incoming: &Path, target: &Path, bytes: &[u8]) -> io::Result<()> {

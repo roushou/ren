@@ -6,7 +6,7 @@ and exposing it, using the operator's own Anthropic and OpenAI subscriptions. On
 a laptop and a VPS reached through Tailscale.
 
 [`docs/architecture.md`](docs/architecture.md) describes how Ren is built and
-lists its known limitations. Section 4 below maps the nine crates and the `xtask` package.
+lists its known limitations. Section 4 below maps the ten crates and the `xtask` package.
 
 - All code follows the principles (section 2) and the workspace lints.
 - Never describe unbuilt functionality as working. Read the source before assuming
@@ -139,9 +139,13 @@ Modules carry no lint headers of their own. A module with submodules lives in
 - The only exemptions are the capability implementations themselves, marked with
   `#[expect(clippy::disallowed_methods, reason = "…")]`: `HostEnv::capture`, the
   daemon's `SystemClock`, `RandomIds`, `ProcessHost` (`ren_daemon::host`, its process
-  starts and its program lookup on the agents' `PATH`), and `HostTools` (its
+  starts and its program lookup on the agents' `PATH`), `ren_git::Git`
+  (the one place Ren runs git), and `HostTools` (its
   `--version` probes), and the daemon's server
-  and supervisor task spawns. The recorder runs on `ObservationThread` (`ren_daemon::host`), a
+  and supervisor task spawns. Outside the daemon, `ren-git`'s `Git` (the one place
+  Ren runs git, which `ren-cli`'s build script reads its revision with) and
+  xtask's `Invocation` (a shell) run commands. Starting a process
+  in any way (`spawn`, `status`, `output`) is disallowed. The recorder runs on `ObservationThread` (`ren_daemon::host`), a
   thread with its own runtime.
 - Integration-test crates (`crates/*/tests/*.rs`) act as a shell: each has one
   crate-level `#![allow(...)]` with a reason, covering helpers outside `#[test]`
@@ -167,7 +171,7 @@ saturation, and persistence recovery.
 
 ## 4. Workspace map
 
-This map describes the code as it is: the nine crates, listed with their
+This map describes the code as it is: the ten crates, listed with their
 dependencies under "Crates" below. Read the code for current module ownership.
 
 - `docs/architecture.md`: how Ren is built, and its known limitations. The other
@@ -188,6 +192,16 @@ dependencies under "Crates" below. Read the code for current module ownership.
   the native identifiers and message hints the wire carries (`native`). Its
   manifest allows only pure dependencies, and a test keeps its sources free of
   I/O.
+- `crates/ren-git`: git as Ren reads and runs it, with `Git` as its primary
+  type: the git program found on a search path (`Git::find`) or this
+  process's own (`Git::inherited`), the commands Ren runs with it (`init`,
+  a checkout's commit, tree, and whether a remote holds it, and
+  `revision_files`, the files git rewrites for a new commit), and a folder's
+  repository read from disk without it (`Git::repository`: its `HEAD`,
+  through a linked worktree's `.git` file). It is the one place Ren reads or
+  runs git, and the one `disallowed_methods` exemption for it. It performs
+  filesystem and process I/O but has no async runtime, HTTP, database, or
+  CLI dependency.
 - `crates/ren-depot`: the tools Ren's agents run with, with `Depot` as its
   primary type: the package catalog (`package`: `Package`, `PackageId`,
   `ProgramName`, `Kind`, client, runtime, or utility, and `Origin`; the
@@ -359,12 +373,14 @@ dependencies under "Crates" below. Read the code for current module ownership.
   with each process's stdin queue, kill switch, and tap. `Workdir` (`workdir`) keeps runs inside
   `Bounds`: the configured roots, the other places (`~/.config`), and the
   scratch folder Ren owns, where a run started without a folder
-  (`StartPlace::Scratch`) gets a new git repository of its own; all resolved
+  (`StartPlace::Scratch`) gets a new git repository of its own, made by the
+  run's own git (`AgentHost::make_scratch` answers a `Scratch`, untracked and
+  why when it could not be); all resolved
   by the host so links cannot escape; `files` ranks the paths of a run's folder for a prompt to
   name (`FileListing`, walked by the host's `AgentHost::files`); `project` finds the places a run can
   start in, each a `Project` of a `PlaceKind` (git repositories under the
   roots, not looked inside; other places' folders; earlier scratch
-  folders); `models` lists each client's models through a short listing
+  folders, each with its `ProjectGit`, which the host reads); `models` lists each client's models through a short listing
   process and keeps the answer (`Supervisor::models`); `Client` and
   `ClientStatus` (`client`) say whether a run can start
   with each client here; `AgentHost` (`host`) is the port for resolving paths,
@@ -460,7 +476,8 @@ dependencies under "Crates" below. Read the code for current module ownership.
   `ObservationThread`, `ProcessHost`, the supervisor's `AgentHost` (its
   logins on a pseudo-terminal through `pty-process`, echo off, and a pasted
   loopback address opened with one `GET`), and `HostTools`, the depot's
-  `ToolHost`. `tools` is the tool store on disk
+  `ToolHost`; it reads folders' repositories and makes scratch repositories
+  with `ren_git::Git`, the git on a run's search path. `tools` is the tool store on disk
   (`ToolStore`, under `<data>/tools`): it carries out the depot's
   `InstallJob`s (downloading through its `Fetch` seam, `ReqwestFetch` in
   production, https only and capped in bytes; unpacking tar.gz, zip, and
@@ -598,6 +615,7 @@ directly.
 | ------------------------------------------ | --------------------------------------------------- | ----------------- |
 | `ren-protocol`                             | `CallInspector`                                     | none of ours      |
 | `ren-depot`                                | `Depot`, with its `ToolHost` port                   | none of ours      |
+| `ren-git`                                  | `Git`                                               | none of ours      |
 | `ren-harness`                              | `Harness` (`ClaudeCode`, `Codex`, `Pi`, `OpenCode`) | protocol, depot   |
 | `ren-recorder`                             | `Recorder`, with its `RecordSink` port              | protocol, harness |
 | `ren-store`                                | `Store`, which implements `RecordSink`              | recorder          |

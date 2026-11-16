@@ -4,6 +4,7 @@ members = [
   "crates/ren-daemon",
   "crates/ren-depot",
   "crates/ren-gateway",
+  "crates/ren-git",
   "crates/ren-harness",
   "crates/ren-protocol",
   "crates/ren-recorder",
@@ -17,6 +18,7 @@ default-members = [
   "crates/ren-daemon",
   "crates/ren-depot",
   "crates/ren-gateway",
+  "crates/ren-git",
   "crates/ren-harness",
   "crates/ren-protocol",
   "crates/ren-recorder",
@@ -53,6 +55,7 @@ proptest = { version = "1", default-features = false, features = ["std"] }
 ren-daemon = { path = "crates/ren-daemon", version = "0.1.0" }
 ren-depot = { path = "crates/ren-depot", version = "0.1.0" }
 ren-gateway = { path = "crates/ren-gateway", version = "0.1.0" }
+ren-git = { path = "crates/ren-git", version = "0.1.0" }
 ren-harness = { path = "crates/ren-harness", version = "0.1.0" }
 ren-protocol = { path = "crates/ren-protocol", version = "0.1.0" }
 ren-recorder = { path = "crates/ren-recorder", version = "0.1.0" }

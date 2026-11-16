@@ -1,0 +1,20 @@
+[package]
+name = "ren-git"
+version.workspace = true
+edition.workspace = true
+homepage.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Git as the Ren LLM gateway reads and runs it: a folder's repository read from disk, and the git program found on a search path."
+
+# The one place Ren reads or runs git. It performs filesystem and process
+# I/O, but has no async runtime, HTTP, database, or CLI dependency.
+[dependencies]
+thiserror.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

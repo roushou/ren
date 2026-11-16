@@ -20,6 +20,7 @@ use crate::{
 };
 use clap::Args;
 use ren_daemon::config::{Config, ConfigError};
+use ren_git::{Git, GitError, Published, Tree};
 use ren_harness::host::HostEnv;
 use std::{
     fs,
@@ -102,6 +103,8 @@ pub enum InstallError {
     Backup { data_dir: PathBuf },
     #[error("doctor reported a failed check; see `journalctl --user -u ren`")]
     Doctor,
+    #[error(transparent)]
+    Git(#[from] GitError),
     #[error(
         "tracked files differ from the commit; commit them, or pass --allow-dirty to deploy a -dirty build"
     )]
@@ -155,13 +158,6 @@ pub enum InstallError {
 enum Backup {
     Run,
     Skip,
-}
-
-/// Whether tracked files match the commit being installed.
-#[derive(Clone, Copy)]
-enum Tree {
-    Clean,
-    Modified,
 }
 
 /// Whether the installed daemon runs the build just installed.
@@ -494,29 +490,26 @@ impl InstallVps {
     /// commit is on no remote branch, so the deployed source is saved
     /// somewhere other than this host.
     fn check_tree(layout: &Layout, allow_dirty: bool) -> Result<Tree, InstallError> {
-        let git = || Invocation::new("git").arg("-C").arg(&layout.repo);
-        let status = git()
-            .args(["status", "--porcelain", "--untracked-files=no"])
-            .capture()?;
-        let tree = if status.trim().is_empty() {
-            Tree::Clean
-        } else if allow_dirty {
-            eprintln!("warning: tracked files differ from the commit; installing a -dirty build");
-            Tree::Modified
-        } else {
-            return Err(InstallError::Dirty);
+        let (git, repo) = (Git::inherited(), layout.repo.as_path());
+        let tree = match git.tree(repo)? {
+            Tree::Clean => Tree::Clean,
+            Tree::Modified if allow_dirty => {
+                eprintln!(
+                    "warning: tracked files differ from the commit; installing a -dirty build"
+                );
+                Tree::Modified
+            }
+            Tree::Modified => return Err(InstallError::Dirty),
         };
-        let commit = git().args(["rev-parse", "--short=12", "HEAD"]).capture()?;
-        let remotes = git()
-            .args(["branch", "--remotes", "--contains", "HEAD"])
-            .capture()?;
-        if remotes.trim().is_empty() {
-            eprintln!(
-                "warning: commit {} is on no remote branch; push it so the deployed source is saved",
-                commit.trim()
-            );
+        let commit = git.head_commit(repo)?;
+        let commit = commit.abbreviated(12);
+        match git.published(repo)? {
+            Published::OnRemote => {}
+            Published::LocalOnly => eprintln!(
+                "warning: commit {commit} is on no remote branch; push it so the deployed source is saved"
+            ),
         }
-        Self::step(&format!("Installing commit {}", commit.trim()));
+        Self::step(&format!("Installing commit {commit}"));
         Ok(tree)
     }
 
