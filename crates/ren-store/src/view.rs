@@ -190,15 +190,12 @@ pub struct CallerView {
 }
 
 impl CallerView {
-    fn from_columns(row: &Columns<'_>) -> Result<Option<Self>, StoreError> {
-        let Some(kind) = row.optional_label("caller")? else {
-            return Ok(None);
-        };
-        Ok(Some(Self {
-            kind,
+    fn from_columns(row: &Columns<'_>) -> Result<Self, StoreError> {
+        Ok(Self {
+            kind: row.label("caller")?,
             user: row.text("user")?,
             login: row.text("tailscale_login")?,
-        }))
+        })
     }
 }
 
@@ -210,16 +207,16 @@ pub struct CallView {
     pub started_at: UnixMillis,
     pub ended_at: Option<UnixMillis>,
     pub provider: Stored<Provider>,
-    /// The wire format; absent when the store holds none for the call.
-    pub wire: Option<Stored<Wire>>,
+    /// The wire format.
+    pub wire: Stored<Wire>,
     pub endpoint: Stored<Endpoint>,
     pub method: Stored<Method>,
     pub config_revision: String,
     pub recording: Option<RecordingId>,
     pub turn: Option<TurnId>,
     pub attribution: AttributionView,
-    /// Who made the call; absent when the store holds no caller for it.
-    pub caller: Option<CallerView>,
+    /// Who made the call.
+    pub caller: CallerView,
     pub state: Stored<CallState>,
     pub terminal: Option<Stored<AttemptTerminal>>,
     pub status: Option<u16>,
@@ -256,7 +253,7 @@ impl CallView {
             started_at: row.time("started_at")?,
             ended_at: row.optional_time("ended_at")?,
             provider: row.label("provider")?,
-            wire: row.optional_label("wire")?,
+            wire: row.label("wire")?,
             endpoint: row.label("endpoint")?,
             method: row.label("method")?,
             config_revision: row.text("config_revision")?.unwrap_or_default(),
@@ -300,7 +297,7 @@ pub struct AttemptView {
     /// The upstream entry's id.
     pub upstream: String,
     /// The upstream entry's provider.
-    pub provider: Option<Stored<Provider>>,
+    pub provider: Stored<Provider>,
     pub status: Option<u16>,
     pub response_format: Option<Stored<ResponseFormat>>,
     pub response_encoding: Option<Stored<ResponseEncoding>>,
@@ -329,7 +326,7 @@ impl AttemptView {
             started_at: row.time("started_at")?,
             ended_at: row.optional_time("ended_at")?,
             upstream: row.text("upstream")?.unwrap_or_default(),
-            provider: row.optional_label("provider")?,
+            provider: row.label("provider")?,
             status: row.0.try_get("status")?,
             response_format: row.optional_label("response_format")?,
             response_encoding: row.optional_label("response_encoding")?,
@@ -547,8 +544,7 @@ pub struct UsageView {
     /// reported model are grouped under `null`.
     pub models: Vec<ModelUsage>,
     /// Each named user's usage, most input first. Calls no named user made
-    /// (unlisted or unidentified callers, and calls with no stored caller)
-    /// are grouped under `null`.
+    /// (unlisted or unidentified callers) are grouped under `null`.
     pub users: Vec<UserUsage>,
 }
 
@@ -743,9 +739,8 @@ pub struct RunView {
     /// The recording whose calls name the run's thread as their session:
     /// the run's model traffic, once a call was recorded.
     pub recording: Option<RecordingId>,
-    /// The operator session the run served; `None` when the store holds none
-    /// for the run.
-    pub operator_session: Option<SessionId>,
+    /// The operator session the run served.
+    pub operator_session: SessionId,
     pub ended_at: Option<UnixMillis>,
     /// How the run ended; `None` while it runs.
     pub end: Option<Stored<RunEnd>>,
@@ -787,7 +782,7 @@ impl RunView {
             started_at: row.time("started_at")?,
             thread: row.text("thread")?,
             recording: row.optional_id("recording")?,
-            operator_session: row.optional_id("operator_session")?,
+            operator_session: row.id("operator_session")?,
             ended_at: row.optional_time("ended_at")?,
             end: row.optional_label("run_end")?,
             exit,
@@ -1115,7 +1110,7 @@ mod tests {
     #[test]
     fn a_call_page_reads_back_as_sent() {
         let page: CallPage = serde_json::from_value(call_page()).unwrap();
-        assert_eq!(page.calls[0].wire.as_ref().unwrap().known(), None);
+        assert_eq!(page.calls[0].wire.known(), None);
         assert_eq!(page.next, Some(page.calls[0].cursor()));
         assert_eq!(serde_json::to_value(&page).unwrap(), call_page());
     }

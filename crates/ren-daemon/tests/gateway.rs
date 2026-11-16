@@ -332,10 +332,7 @@ async fn native_streams_headers_and_query_survive_and_history_reopens() {
         assert_eq!(records.len(), 1);
         let record = &records[0];
         assert_eq!(record.provider, Stored::Known(provider));
-        assert_eq!(
-            record.wire,
-            Some(Stored::Known(provider.native_api().wire()))
-        );
+        assert_eq!(record.wire, Stored::Known(provider.native_api().wire()));
         assert!(record.capture_complete);
         assert_eq!(terminal(record), AttemptTerminal::BodyComplete);
         assert_eq!(

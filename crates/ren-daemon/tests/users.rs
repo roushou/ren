@@ -96,7 +96,7 @@ async fn post(gateway: &TestGateway, headers: &[(&str, &str)]) -> reqwest::Respo
 }
 
 fn caller(call: &CallView) -> (CallerKind, Option<&str>, Option<&str>) {
-    let caller = call.caller.as_ref().unwrap();
+    let caller = &call.caller;
     (
         caller.kind.known().unwrap(),
         caller.user.as_deref(),

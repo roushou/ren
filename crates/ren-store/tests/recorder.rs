@@ -158,13 +158,10 @@ async fn a_streamed_call_is_recorded_inspected_and_stored_completely() {
     );
     assert_eq!(detail.call.model.as_deref(), Some("claude-test"));
     assert_eq!(detail.call.stop_reason.as_deref(), Some("end_turn"));
-    assert_eq!(
-        detail.call.wire,
-        Some(Stored::Known(Wire::AnthropicMessages))
-    );
+    assert_eq!(detail.call.wire, Stored::Known(Wire::AnthropicMessages));
     assert_eq!(
         detail.attempts[0].provider,
-        Some(Stored::Known(Provider::Anthropic))
+        Stored::Known(Provider::Anthropic)
     );
     let inspection = detail.attempts[0].inspection.as_ref().unwrap();
     assert!(

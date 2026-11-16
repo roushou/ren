@@ -355,12 +355,7 @@ test("a client's quota probe is bookkeeping: grey, whatever its status", () => {
   assert.equal(bookkeeping(finishedFixture(callId(3))), false);
 });
 
-test('a caller reads as its user, its login, or unidentified, and an old call as unknown', () => {
-  assert.deepEqual(callerShown(null), {
-    label: 'Unknown',
-    title: 'No caller is stored for this call',
-    user: null,
-  });
+test('a caller reads as its user, its login, or unidentified', () => {
   const shown = (kind: string, user: string | null, login: string | null) =>
     callerShown({ kind: kind as never, user, login });
   assert.deepEqual(shown('user_tailscale', 'alice', 'alice@example.com'), {
