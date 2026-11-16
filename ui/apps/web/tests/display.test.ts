@@ -22,7 +22,7 @@ import {
   tokenSummary,
   previewChips,
   span,
-  sessionTone,
+  recordingTone,
   captureChip,
   trimmedAtLimit,
   bookkeeping,
@@ -268,7 +268,7 @@ test('a body preview reads as chips, with gaps spelled out', () => {
   );
 });
 
-test('spans read at a glance, and session colors are stable', () => {
+test('spans read at a glance, and recording colors are stable', () => {
   assert.deepEqual([45_000, 12 * 60_000, 83 * 60_000, 120 * 60_000].map(span), [
     '45 s',
     '12 min',
@@ -276,8 +276,8 @@ test('spans read at a glance, and session colors are stable', () => {
     '2 h',
   ]);
   const id = 'cecf7cbd-be7f-4563-9d85-3d5bea8fd082';
-  assert.equal(sessionTone(id), sessionTone(id));
-  assert.ok(sessionTone(id) >= 0 && sessionTone(id) < 8);
+  assert.equal(recordingTone(id), recordingTone(id));
+  assert.ok(recordingTone(id) >= 0 && recordingTone(id) < 8);
 });
 
 test('each provider has a name and a mark, and an unknown one is never shown as another', () => {

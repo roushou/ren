@@ -1,5 +1,5 @@
 // The overview page's pure logic: the health line, what needs attention,
-// and which sessions are active. No browser needed.
+// and which recordings are active. No browser needed.
 import type { CallView, ExposureView, Health, Storage, UsageView } from './api.ts';
 import { bytes, num, providerName } from './api.ts';
 import { searchFieldLabel, secretKindLabel } from './activity.ts';
@@ -495,7 +495,7 @@ export class Day {
   }
 }
 
-/** What the verdict line reads: health, what needs attention, and the sessions at work. */
+/** What the verdict line reads: health, what needs attention, and the recordings at work. */
 export interface VerdictInput {
   health: Health | null;
   items: HealthItem[];
@@ -504,7 +504,7 @@ export interface VerdictInput {
   active: number;
   /** Model calls in flight. */
   inFlight: number;
-  /** When the newest session was last seen; 0 for never. */
+  /** When the newest recording was last seen; 0 for never. */
   lastCall: number;
   now: number;
 }

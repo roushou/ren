@@ -1,5 +1,5 @@
 <script lang="ts">
-  // A session state's glyph: a shape per state, so it reads without colour.
+  // A recording state's glyph: a shape per state, so it reads without colour.
   // Its colour is the state's `--state` (style.css).
   import type { StateMark } from './board.ts';
 

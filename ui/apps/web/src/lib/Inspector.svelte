@@ -140,11 +140,11 @@
     >
   </div>
   {#if current.recording}{@const recording = current.recording}<button
-      class="inspector-session text-button"
+      class="inspector-recording text-button"
       onclick={() => onrecording(recording)}
       >Recording <span class="mono">{short(current.attribution.hint?.session ?? recording)}</span
       ><Icon name="arrow" size={12} /></button
-    >{:else}<p class="inspector-session muted">No recording</p>{/if}
+    >{:else}<p class="inspector-recording muted">No recording</p>{/if}
   <div class="chip-row drawer-chips" aria-label="Call state">
     {#each [modelChip(current), streamChip(current), captureChip(current, bodyLimit)] as chip}<span
         class="chip {chip.tone}"

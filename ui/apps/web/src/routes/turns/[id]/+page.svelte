@@ -2,7 +2,7 @@
   import Toolbar from '#lib/Toolbar.svelte';
   import { createArrival } from '#lib/snapshot.svelte.ts';
   import { num, short, clock, title } from '#lib/api.ts';
-  import { compactOrDash, date, span, sessionTone } from '#lib/display.ts';
+  import { compactOrDash, date, span, recordingTone } from '#lib/display.ts';
   import { callHref, effectLabel, findingLine, harnessLabel, omitted } from '#lib/activity.ts';
   import { Board } from '#lib/board.ts';
   import FindingList from '#lib/FindingList.svelte';
@@ -30,7 +30,7 @@
 
 {#snippet scope()}
   <div class="scope-group scope-identity">
-    {#if turn}<span class="session-dot tone-{sessionTone(turn.recording)}"></span>{/if}
+    {#if turn}<span class="recording-dot tone-{recordingTone(turn.recording)}"></span>{/if}
     <strong class="mono" title="The turn ID your client reported"
       >{turn ? short(turn.native_id) : short(data.turnId)}</strong
     >

@@ -1,27 +1,27 @@
-// The Recordings page's pure logic: what each row says about its session,
+// The Recordings page's pure logic: what each row says about its recording,
 // which rows fold away, and how the rest group by day. No browser, no
-// fetching; tested in tests/sessions.test.ts.
+// fetching; tested in tests/recordings.test.ts.
 import type { CallView, Excerpt, Harness, RecordingId, RecordingView } from './api.ts';
 import { providerName } from './api.ts';
 import { Board, type StateMark } from './board.ts';
 import type { Stored } from './decode.ts';
 import { date } from './display.ts';
 
-/** What a session's newest turn says it is about. */
+/** What a recording's newest turn says it is about. */
 export interface RecordingDetail {
   prompt: Excerpt | null;
   /** The directory the turn's commands change into, when they agree on one. */
   workdir: string | null;
 }
 
-/** A session's state right now: a call in flight, recent activity, or neither. */
+/** A recording's state right now: a call in flight, recent activity, or neither. */
 export type RecordingNow =
   | { kind: 'open'; label: string; mark: StateMark }
   | { kind: 'recent'; at: number }
   | { kind: 'quiet'; at: number };
 
 export interface RecordingRow {
-  session: RecordingView;
+  recording: RecordingView;
   harness: Stored<Harness> | null;
   client: string;
   /** Null until its newest turn is read, or when it has none. */
@@ -39,9 +39,9 @@ export interface DayGroup {
 }
 
 export interface RecordingListInput {
-  sessions: RecordingView[];
+  recordings: RecordingView[];
   details: ReadonlyMap<RecordingId, RecordingDetail>;
-  /** Model calls in flight, any session. */
+  /** Model calls in flight, any recording. */
   open: CallView[];
   now: number;
   query: string;
@@ -50,37 +50,37 @@ export interface RecordingListInput {
 }
 
 /**
- * The session list: rows that matter grouped by the day each was last seen,
- * newest first, and sessions of a single call with no turn (a client's
+ * The recording list: rows that matter grouped by the day each was last seen,
+ * newest first, and recordings of a single call with no turn (a client's
  * own check, most often) folded into one line under them.
  */
 export class RecordingList {
-  /** Seen this recently, a session counts as active. */
+  /** Seen this recently, a recording counts as active. */
   static readonly recentMs = 15 * 60_000;
 
   readonly groups: DayGroup[];
   readonly folded: RecordingRow[];
 
   constructor(input: RecordingListInput) {
-    const rows = input.sessions
-      .map((session) => RecordingList.row(session, input))
+    const rows = input.recordings
+      .map((recording) => RecordingList.row(recording, input))
       .filter((row) => RecordingList.matches(row, input.query));
-    const most = (pick: (session: RecordingView) => number) =>
-      Math.max(1, ...rows.map((row) => pick(row.session)));
-    const requests = most((session) => session.call_count);
-    const tokens = most((session) => session.tokens.input ?? 0);
+    const most = (pick: (recording: RecordingView) => number) =>
+      Math.max(1, ...rows.map((row) => pick(row.recording)));
+    const requests = most((recording) => recording.call_count);
+    const tokens = most((recording) => recording.tokens.input ?? 0);
     const scaled = rows
       .map((row) => ({
         ...row,
-        requests: row.session.call_count / requests,
-        tokens: (row.session.tokens.input ?? 0) / tokens,
+        requests: row.recording.call_count / requests,
+        tokens: (row.recording.tokens.input ?? 0) / tokens,
       }))
-      .sort((a, b) => b.session.last_seen - a.session.last_seen);
-    this.folded = scaled.filter((row) => RecordingList.trivial(row.session));
+      .sort((a, b) => b.recording.last_seen - a.recording.last_seen);
+    this.folded = scaled.filter((row) => RecordingList.trivial(row.recording));
     const groups = new Map<number, DayGroup>();
     for (const row of scaled) {
-      if (RecordingList.trivial(row.session)) continue;
-      const day = input.dayStart(row.session.last_seen);
+      if (RecordingList.trivial(row.recording)) continue;
+      const day = input.dayStart(row.recording.last_seen);
       const group = groups.get(day) ?? {
         key: String(day),
         label: RecordingList.dayLabel(day, input.now, input.dayStart),
@@ -92,28 +92,28 @@ export class RecordingList {
     this.groups = [...groups.values()];
   }
 
-  /** One call and no turn: a check or a count, not a session of work. */
-  static trivial(session: RecordingView): boolean {
-    return session.call_count <= 1 && session.turn_count === 0;
+  /** One call and no turn: a check or a count, not a recording of work. */
+  static trivial(recording: RecordingView): boolean {
+    return recording.call_count <= 1 && recording.turn_count === 0;
   }
 
-  static row(session: RecordingView, input: RecordingListInput): RecordingRow {
-    const harness = Board.harness(session.source);
+  static row(recording: RecordingView, input: RecordingListInput): RecordingRow {
+    const harness = Board.harness(recording.source);
     const open = input.open
-      .filter((call) => call.recording === session.id)
+      .filter((call) => call.recording === recording.id)
       .sort((a, b) => a.started_at - b.started_at);
     const phase = open.length ? Board.phase(open, input.now) : null;
     const chip = phase ? Board.phaseChip(phase, input.now) : null;
     return {
-      session,
+      recording,
       harness,
       client: Board.clientName(harness),
-      detail: input.details.get(session.id) ?? null,
+      detail: input.details.get(recording.id) ?? null,
       now: chip
         ? { kind: 'open', label: chip.label, mark: chip.mark }
-        : input.now - session.last_seen <= RecordingList.recentMs
-          ? { kind: 'recent', at: session.last_seen }
-          : { kind: 'quiet', at: session.last_seen },
+        : input.now - recording.last_seen <= RecordingList.recentMs
+          ? { kind: 'recent', at: recording.last_seen }
+          : { kind: 'quiet', at: recording.last_seen },
       requests: 0,
       tokens: 0,
     };
@@ -125,9 +125,9 @@ export class RecordingList {
     if (!needle) return true;
     return [
       row.client,
-      providerName(row.session.provider),
-      row.session.id,
-      row.session.native_id,
+      providerName(row.recording.provider),
+      row.recording.id,
+      row.recording.native_id,
       row.detail?.prompt?.text ?? '',
       row.detail?.workdir ?? '',
     ].some((text) => text.toLowerCase().includes(needle));

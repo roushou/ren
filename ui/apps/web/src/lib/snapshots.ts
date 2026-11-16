@@ -31,7 +31,7 @@ export async function readSnapshot<T>(key: string, read: () => Promise<T>): Prom
   }
 }
 
-// Keep stale data only for the same query, never across filters or sessions.
+// Keep stale data only for the same query, never across filters or recordings.
 export function retainSnapshot<T>(previous: Snapshot<T> | null, next: Snapshot<T>): Snapshot<T> {
   return next.value === null && previous?.key === next.key
     ? { ...previous, error: next.error }

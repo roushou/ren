@@ -587,18 +587,18 @@ pre {
   flex-direction: column;
   background: var(--canvas);
 }
-.sessions-panel {
+.recordings-panel {
   flex: 1;
 }
-/* A session row mixes one- and two-line cells: center them all on one line,
+/* A recording row mixes one- and two-line cells: center them all on one line,
    and keep right-aligned figures clear of the text column after them. */
-.sessions-panel th,
-.sessions-panel td {
+.recordings-panel th,
+.recordings-panel td {
   padding: 9px 14px;
   vertical-align: middle;
   white-space: nowrap;
 }
-.sessions-panel .numeric + :not(.numeric) {
+.recordings-panel .numeric + :not(.numeric) {
   padding-left: 32px;
 }
 .list-panel > :not(.list-content) {
@@ -1191,7 +1191,7 @@ tr.selected .row-link {
   height: 12px;
   border-left: 1px solid var(--line);
 }
-.inspector-session {
+.inspector-recording {
   margin: 0 12px 8px;
   font-size: 11px;
   flex-shrink: 0;
@@ -1853,7 +1853,7 @@ tr.call-row {
   .drawer-identity {
     margin: 0;
   }
-  .inspector-session {
+  .inspector-recording {
     margin-bottom: 4px;
   }
   .inspector-footer {
@@ -2156,8 +2156,8 @@ td > .chip {
   }
 }
 
-/* Session colors: a dot that groups a session's rows at a glance. */
-.session-dot {
+/* Recording colors: a dot that groups a recording's rows at a glance. */
+.recording-dot {
   display: inline-block;
   flex-shrink: 0;
   width: 8px;
@@ -2167,28 +2167,28 @@ td > .chip {
   background: var(--muted);
   vertical-align: middle;
 }
-.session-dot.tone-0 {
+.recording-dot.tone-0 {
   background: #d08770;
 }
-.session-dot.tone-1 {
+.recording-dot.tone-1 {
   background: #ebcb8b;
 }
-.session-dot.tone-2 {
+.recording-dot.tone-2 {
   background: #a3be8c;
 }
-.session-dot.tone-3 {
+.recording-dot.tone-3 {
   background: #88c0d0;
 }
-.session-dot.tone-4 {
+.recording-dot.tone-4 {
   background: #81a1c1;
 }
-.session-dot.tone-5 {
+.recording-dot.tone-5 {
   background: #b48ead;
 }
-.session-dot.tone-6 {
+.recording-dot.tone-6 {
   background: #8fbcbb;
 }
-.session-dot.tone-7 {
+.recording-dot.tone-7 {
   background: #bf616a;
 }
 th.numeric,
@@ -2219,14 +2219,14 @@ td.zero {
   color: var(--role-thinking);
   border-color: color-mix(in srgb, var(--role-thinking) 35%, transparent);
 }
-.session-line {
+.recording-line {
   display: flex;
   align-items: center;
   min-width: 0;
   min-height: 16px;
 }
-/* A long session name shrinks to an ellipsis; the caller after it keeps its width. */
-.session-line > .session-filter {
+/* A long recording name shrinks to an ellipsis; the caller after it keeps its width. */
+.recording-line > .recording-filter {
   min-width: 0;
   overflow: hidden;
 }
@@ -2510,7 +2510,7 @@ td.zero {
   padding: 10px 14px;
 }
 
-.session-filter {
+.recording-filter {
   display: inline-flex;
   align-items: center;
   padding: 0;
@@ -2524,7 +2524,7 @@ td.zero {
   flex: none;
   white-space: nowrap;
 }
-.session-filter:hover {
+.recording-filter:hover {
   color: var(--ink);
   text-decoration: underline;
 }
@@ -2564,7 +2564,7 @@ td.zero {
   margin-left: auto;
   border-left: 0;
 }
-/* The session select sits on the scope bar's line, at the height of the
+/* The recording select sits on the scope bar's line, at the height of the
    segmented controls beside it. */
 .scope .select-trigger {
   max-width: 260px;
@@ -2625,7 +2625,7 @@ td.zero {
   flex-shrink: 1;
 }
 
-/* Turn activity and session reports: rows and calls separated by 1px rules,
+/* Turn activity and recording reports: rows and calls separated by 1px rules,
    square throughout, like the other consoles. */
 .finding-list,
 .effect-list {
@@ -3010,7 +3010,7 @@ td.zero {
 }
 
 /*
- * Session states, shared by Live and the overview: one colour each, never a
+ * Recording states, shared by Live and the overview: one colour each, never a
  * client's, carried as `--state` by a `state-*` class.
  */
 .state-responding {
