@@ -25,7 +25,7 @@ pub struct PauseRequest {
     pub retry_after_seconds: u32,
 }
 
-/// `POST sessions/{native}/block` and `users/{user}/block`.
+/// `POST client-sessions/{native}/block` and `users/{user}/block`.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct BlockRequest {
@@ -224,8 +224,12 @@ impl ControlRequest {
             Self::State => "state".to_owned(),
             Self::Pause(_) => "pause".to_owned(),
             Self::Resume => "resume".to_owned(),
-            Self::BlockSession { session, .. } => format!("sessions/{}/block", session.as_uuid()),
-            Self::UnblockSession(session) => format!("sessions/{}/unblock", session.as_uuid()),
+            Self::BlockSession { session, .. } => {
+                format!("client-sessions/{}/block", session.as_uuid())
+            }
+            Self::UnblockSession(session) => {
+                format!("client-sessions/{}/unblock", session.as_uuid())
+            }
             Self::BlockUser { user, .. } => format!("users/{user}/block"),
             Self::UnblockUser(user) => format!("users/{user}/unblock"),
             Self::Cancel { call, .. } => format!("calls/{call}/cancel"),

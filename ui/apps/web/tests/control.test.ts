@@ -153,7 +153,7 @@ test('starting, listing, projects, models, answering, history edits, and the fee
   ]);
 });
 
-test('sessions map to their control routes, and a recording block is not proxied', async () => {
+test('sessions map to their control routes, and a client session block is not proxied', async () => {
   const seen: string[] = [];
   const daemon = host((url, init) => {
     seen.push(`${init.method} ${url.pathname}${url.search}`);
@@ -173,8 +173,10 @@ test('sessions map to their control routes, and a recording block is not proxied
   await proxy.respond(post(`/control/sessions/${run}/client`, { harness: 'pi' }));
   await proxy.respond(post(`/control/sessions/${run}/archive`, {}));
   await proxy.respond(post(`/control/sessions/${run}/approvals/ap-1`, { decision: 'accept' }));
-  const blocked = await proxy.respond(post(`/control/sessions/${run}/block`, {}));
-  assert.equal(blocked.status, 404);
+  for (const path of [`/control/sessions/${run}/block`, `/control/client-sessions/${run}/block`]) {
+    const blocked = await proxy.respond(post(path, {}));
+    assert.equal(blocked.status, 404, path);
+  }
   assert.deepEqual(seen, [
     'POST /control/v1/sessions',
     'GET /control/v1/sessions?shelf=archived&limit=5',
