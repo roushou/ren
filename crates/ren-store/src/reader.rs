@@ -729,18 +729,23 @@ impl CallQuery {
     /// context where the provider reported it separately. A token SUM over
     /// calls that reported no usage is NULL: "not reported", not zero.
     fn push_usage_columns(sql: &mut QueryBuilder<Sqlite>) {
-        sql.push("COUNT(c.id) AS calls, COALESCE(SUM(CASE WHEN ");
-        Self::push_model_call(sql);
-        sql.push(" AND (c.status >= 400 OR c.terminal IN (");
+        // The failure test comes first: it is cheap, and false for most
+        // calls, so the model-call test's digest lookup runs only for the
+        // few that failed.
+        sql.push(
+            "COUNT(c.id) AS calls, COALESCE(SUM(CASE WHEN (c.status >= 400 OR c.terminal IN (",
+        );
         Self::push_terminals(sql, TerminalClass::Failed);
         sql.push(") OR c.outcome = ")
             .push_bind(ModelOutcome::Failed.label())
-            .push(") THEN 1 ELSE 0 END), 0) AS errors, ")
-            .push("SUM(CASE WHEN c.usage IS NULL THEN NULL ELSE COALESCE(json_extract(c.usage, '$.input_tokens'), 0) + CASE WHEN json_extract(c.usage, '$.accounting') = ")
+            .push(") AND ");
+        Self::push_model_call(sql);
+        sql.push(" THEN 1 ELSE 0 END), 0) AS errors, ")
+            .push("SUM(CASE WHEN c.input_accounting IS NULL THEN NULL ELSE COALESCE(c.input_tokens, 0) + CASE WHEN c.input_accounting = ")
             .push_bind(InputAccounting::ExcludesCache.label())
-            .push(" THEN COALESCE(json_extract(c.usage, '$.cache_read_tokens'), 0) + COALESCE(json_extract(c.usage, '$.cache_creation_tokens'), 0) ELSE 0 END END) AS input_tokens, ")
-            .push("SUM(json_extract(c.usage, '$.output_tokens')) AS output_tokens, ")
-            .push("SUM(json_extract(c.usage, '$.cache_read_tokens')) AS cache_read_tokens");
+            .push(" THEN COALESCE(c.cache_read_tokens, 0) + COALESCE(c.cache_creation_tokens, 0) ELSE 0 END END) AS input_tokens, ")
+            .push("SUM(c.output_tokens) AS output_tokens, ")
+            .push("SUM(c.cache_read_tokens) AS cache_read_tokens");
     }
 
     /// Append this query's filters as WHERE clauses.
@@ -767,9 +772,12 @@ impl CallQuery {
                 .push(")) > 0");
         }
         if let Some(tool) = &filter.tool {
-            sql.push(" AND EXISTS (SELECT 1 FROM json_each(c.tool_names) t WHERE instr(lower(t.value), lower(")
-                .push_bind(tool.as_str().to_owned())
-                .push(")) > 0)");
+            // One scan of the tool names, not a lookup per call.
+            sql.push(
+                " AND c.id IN (SELECT t.call FROM call_tools t WHERE instr(lower(t.name), lower(",
+            )
+            .push_bind(tool.as_str().to_owned())
+            .push(")) > 0)");
         }
         if let Some(text) = &filter.text {
             let text = text.as_str().to_owned();
@@ -777,7 +785,7 @@ impl CallQuery {
                 .push_bind(text.clone())
                 .push(")) > 0 OR instr(lower(COALESCE(c.model, '')), lower(")
                 .push_bind(text.clone())
-                .push(")) > 0 OR EXISTS (SELECT 1 FROM json_each(c.tool_names) t WHERE instr(lower(t.value), lower(")
+                .push(")) > 0 OR c.id IN (SELECT t.call FROM call_tools t WHERE instr(lower(t.name), lower(")
                 .push_bind(text)
                 .push(")) > 0))");
         }
