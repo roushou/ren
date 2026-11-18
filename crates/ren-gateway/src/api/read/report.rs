@@ -382,12 +382,6 @@ impl From<ren_store::activity::report::Finding> for Finding {
             Source::SecretExposure(detail) => {
                 Self::Known(KnownFinding::SecretExposure(detail.into()))
             }
-            Source::Unknown(raw) => {
-                let mut fields = serde_json::Map::new();
-                fields.insert("kind".to_owned(), raw.kind().label().into());
-                fields.extend(raw.detail().clone());
-                Self::Unknown(fields)
-            }
         }
     }
 }

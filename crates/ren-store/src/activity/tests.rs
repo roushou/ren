@@ -400,16 +400,12 @@ mod report {
         assert_eq!(report.totals.calls, 8);
         assert_eq!(report.totals.calls_with_usage, 7);
         assert_eq!(report.totals.peak_context_tokens, 83_002);
-        let kinds: Vec<_> = report
-            .findings
-            .iter()
-            .map(|finding| finding.kind().known())
-            .collect();
+        let kinds: Vec<_> = report.findings.iter().map(Finding::kind).collect();
         assert_eq!(
             kinds,
             [
-                Some(report::FindingKind::ContextGrowth),
-                Some(report::FindingKind::CacheRebuild)
+                report::FindingKind::ContextGrowth,
+                report::FindingKind::CacheRebuild
             ]
         );
         let Finding::ContextGrowth(growth) = &report.findings[0] else {
@@ -437,10 +433,6 @@ mod report {
         assert_eq!(second.idle_before_ms, Some(3_569_000));
         // 82,000 read of 82,004 + 83,002 seen.
         assert_eq!(second.cache_hit_percent, Some(49));
-
-        let json = serde_json::to_value(&report).unwrap();
-        assert_eq!(json["findings"][1]["kind"], "cache_rebuild");
-        assert_eq!(json["findings"][1]["cache_written_tokens"], 82_000);
     }
 
     #[test]
@@ -484,28 +476,24 @@ mod report {
             ActivityBudget::DEFAULT,
             &ren_recorder::secrets::SecretScanner::new().unwrap(),
         );
-        let json = serde_json::to_value(&turn.findings).unwrap();
-        let first_call = CallId::restore(id(1)).to_string();
-        let failed_calls = vec![first_call.clone(); 3];
+        let first_call = CallId::restore(id(1));
         assert_eq!(
-            json,
-            json!([
-                {
-                    "kind": "large_tool_output",
-                    "call": first_call,
-                    "tool": "Read",
-                    "tool_call_id": "big",
-                    "target": "big.log",
-                    "output_chars": 25_000,
-                },
-                {
-                    "kind": "repeated_failure",
-                    "tool": "Bash",
-                    "target": "cargo test",
-                    "failures": 3,
-                    "calls": failed_calls,
-                },
-            ])
+            turn.findings,
+            [
+                Finding::LargeToolOutput(report::LargeToolOutput {
+                    call: first_call,
+                    tool: "Read".to_owned(),
+                    tool_call_id: Some("big".to_owned()),
+                    target: Some("big.log".to_owned()),
+                    output_chars: 25_000,
+                }),
+                Finding::RepeatedFailure(report::RepeatedFailure {
+                    tool: "Bash".to_owned(),
+                    target: Some("cargo test".to_owned()),
+                    failures: 3,
+                    calls: vec![first_call; 3],
+                }),
+            ]
         );
         assert_eq!(turn.calls[0].metrics.duration_ms, Some(500));
     }
@@ -536,8 +524,8 @@ fn secrets_a_turn_carried_are_findings_without_the_secret() {
     };
     let call = call.read();
     let turn = TurnActivity::assemble(head(), vec![call], 0, ActivityBudget::DEFAULT);
-    let json = serde_json::to_string(&turn.findings).unwrap();
-    assert!(!json.contains("api03"), "{json}");
+    let shown = format!("{:?}", turn.findings);
+    assert!(!shown.contains("api03"), "{shown}");
     let fields: Vec<_> = turn
         .findings
         .iter()
@@ -546,8 +534,7 @@ fn secrets_a_turn_carried_are_findings_without_the_secret() {
             other @ (Finding::CacheRebuild(_)
             | Finding::ContextGrowth(_)
             | Finding::LargeToolOutput(_)
-            | Finding::RepeatedFailure(_)
-            | Finding::Unknown(_)) => panic!("{other:?}"),
+            | Finding::RepeatedFailure(_)) => panic!("{other:?}"),
         })
         .collect();
     assert_eq!(fields, ["prompt", "tool_output"]);
@@ -585,48 +572,4 @@ fn failing_calls() -> Vec<ReadCall> {
         response: ResponseActivity::default(),
     };
     vec![first, second]
-}
-
-/// The turn view's JSON is what the read API returns, and reads back into
-/// the same view: pinned, so a change to the view's types cannot change it
-/// unnoticed.
-#[test]
-fn turn_views_round_trip_through_their_json() {
-    let scanner = SecretScanner::new().unwrap();
-    let turns = [worked_calls(), failing_calls()]
-        .map(|calls| assemble(head(), calls, 0, ActivityBudget::DEFAULT, &scanner));
-    let sent = include_str!("../../tests/fixtures/turn-activity.json");
-    let json = serde_json::to_string_pretty(&turns).unwrap();
-    assert_eq!(json.trim_end(), sent.trim_end());
-    let read: Vec<TurnActivity> = serde_json::from_str(sent).unwrap();
-    assert_eq!(read, turns);
-}
-
-/// Labels a newer daemon sends, and findings of a kind this binary does
-/// not know, are kept as sent rather than failing the read.
-#[test]
-fn turn_views_keep_labels_they_do_not_know() {
-    let mut sent: Vec<serde_json::Value> =
-        serde_json::from_str(include_str!("../../tests/fixtures/turn-activity.json")).unwrap();
-    let turn = &mut sent[0];
-    turn["client"] = json!("a_newer_client");
-    turn["findings"] = json!([{ "kind": "a_newer_finding", "call": "c", "size": 3 }]);
-    let call = &mut turn["calls"][0];
-    call["limitations"] = json!(["a_newer_limitation"]);
-    call["tool_calls"][0]["effects"][0]["kind"] = json!("a_newer_effect");
-    call["tool_calls"][0]["result"]["status"] = json!("a_newer_status");
-
-    let turns: Vec<TurnActivity> = serde_json::from_value(serde_json::json!(sent)).unwrap();
-    let turn = &turns[0];
-    assert_eq!(turn.client.as_ref().unwrap().label(), "a_newer_client");
-    let Finding::Unknown(finding) = &turn.findings[0] else {
-        panic!("{:?}", turn.findings[0]);
-    };
-    assert_eq!(finding.kind().label(), "a_newer_finding");
-    assert_eq!(finding.detail()["size"], json!(3));
-    let tool = &turn.calls[0].tool_calls[0];
-    assert_eq!(tool.effects[0].kind.known(), None);
-    assert_eq!(tool.result.as_ref().unwrap().status.known(), None);
-    assert_eq!(turn.calls[0].limitations[0].known(), None);
-    assert_eq!(serde_json::to_value(&turns).unwrap(), json!(sent));
 }

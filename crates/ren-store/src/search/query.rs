@@ -9,7 +9,6 @@ use ren_recorder::{
     id::{CallId, RecordingId, TurnId},
     time::UnixMillis,
 };
-use serde::{Deserialize, Serialize};
 use std::fmt;
 
 /// Why search text was refused.
@@ -95,7 +94,7 @@ pub struct ExposureQuery {
 }
 
 /// A secret one call carried, as listed: never the secret itself.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExposureView {
     pub call: CallId,
     pub recording: Option<RecordingId>,
@@ -110,7 +109,7 @@ pub struct ExposureView {
 }
 
 /// One matching document.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SearchHit {
     pub call: CallId,
     pub recording: Option<RecordingId>,
@@ -123,7 +122,7 @@ pub struct SearchHit {
 }
 
 /// Search results, and how much history the index covers.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SearchPage {
     pub hits: Vec<SearchHit>,
     /// Calls indexed: every finished call whose digest is derived.

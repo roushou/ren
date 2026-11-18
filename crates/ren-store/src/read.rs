@@ -10,7 +10,6 @@ use crate::search::{ExposureQuery, ExposureView, SearchPage, SearchQuery};
 use crate::view::{CallDetail, CallPage, ConversationView, RecordingView, RunView, UsageView};
 use crate::{Reader, StoreError};
 use ren_recorder::id::{CallId, RecordingId, RunId, TurnId};
-use serde::Serialize;
 
 /// A read of recorded history.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -50,8 +49,7 @@ pub enum ReadRequest {
 }
 
 /// What a [`ReadRequest`] returns.
-#[derive(Debug, Clone, PartialEq, Serialize)]
-#[serde(untagged)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum ReadResponse {
     Calls(CallPage),
     Call(Box<CallDetail>),

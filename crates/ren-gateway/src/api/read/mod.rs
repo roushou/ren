@@ -15,6 +15,8 @@ pub mod recordings;
 pub mod report;
 pub mod runs;
 pub mod search;
+#[cfg(test)]
+mod tests;
 pub mod usage;
 
 use activity::{CallActivity, TurnActivity, TurnSummary};
