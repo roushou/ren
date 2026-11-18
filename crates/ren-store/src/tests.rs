@@ -2150,7 +2150,7 @@ mod conversation {
             "phase": phase,
             "item": DriveItem {
                 id: serde_json::from_value(serde_json::json!(id)).unwrap(),
-                kind: ItemKind::AgentMessage,
+                kind: ItemKind::AgentMessage.into(),
                 read,
                 body: serde_json::Value::Null,
             },
@@ -2424,7 +2424,7 @@ mod conversation {
                             intent: ren_harness::drive::CommandIntent::Described {
                                 text: "Run the tests".into(),
                             },
-                            status: ItemStatus::InProgress,
+                            status: ItemStatus::InProgress.into(),
                             output: None,
                             exit_code: None,
                         },
@@ -2443,7 +2443,7 @@ mod conversation {
                             intent: ren_harness::drive::CommandIntent::Described {
                                 text: "Run the tests".into(),
                             },
-                            status: ItemStatus::Completed,
+                            status: ItemStatus::Completed.into(),
                             output: Some("ok".into()),
                             exit_code: Some(0),
                         },

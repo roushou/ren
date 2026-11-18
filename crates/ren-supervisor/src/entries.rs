@@ -71,7 +71,7 @@ impl Entries {
                         phase: ItemPhase::Completed,
                         item: DriveItem {
                             id,
-                            kind: ItemKind::AgentMessage,
+                            kind: ItemKind::AgentMessage.into(),
                             read: ItemRead::Reply { text },
                             // Nothing came but the text.
                             body: Default::default(),

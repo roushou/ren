@@ -201,7 +201,21 @@ export interface RunSnapshot {
 }
 
 /** Where an item's action stands; a status a newer daemon names is kept as text. */
-export type ItemStatus = 'in_progress' | 'completed' | 'failed' | 'declined' | (string & {});
+/** Where an item's action stands, pinned to `ren-harness`'s `drive::ItemStatus`; another is the client's own. */
+export const itemStatuses = ['in_progress', 'completed', 'failed', 'declined'] as const;
+export type ItemStatus = (typeof itemStatuses)[number] | (string & {});
+/** The kinds of items Ren reads, pinned to `ren-harness`'s `drive::ItemKind`; another is the client's own. */
+export const itemKinds = [
+  'user_message',
+  'agent_message',
+  'reasoning',
+  'plan',
+  'command_execution',
+  'file_change',
+  'mcp_tool_call',
+  'web_search',
+] as const;
+export type ItemKind = (typeof itemKinds)[number] | (string & {});
 
 /** What the daemon read from an item, the same for every client. */
 export type ItemRead =
@@ -227,7 +241,7 @@ export type ItemRead =
 /** One item of a turn: its kind and what the daemon read of it. */
 export interface DriveItem {
   id: ItemId;
-  kind: string;
+  kind: ItemKind;
   read: ItemRead;
 }
 

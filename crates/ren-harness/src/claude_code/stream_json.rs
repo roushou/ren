@@ -132,7 +132,7 @@ struct Asked {
 
 #[derive(Debug)]
 struct ToolCall {
-    kind: ItemKind,
+    kind: Stored<ItemKind>,
     read: ItemRead,
     block: Value,
 }
@@ -630,7 +630,7 @@ impl ClaudeStreamJson {
                 phase: ItemPhase::Completed,
                 item: DriveItem {
                     id: ItemId::new(uuid.to_owned()),
-                    kind: ItemKind::UserMessage,
+                    kind: ItemKind::UserMessage.into(),
                     read: ItemRead::Prompt {
                         text,
                         images: self.echoing.pop(),
@@ -680,14 +680,17 @@ impl ClaudeStreamJson {
                     exit_code: failed.then(|| Self::exit_code(output.as_deref())).flatten(),
                     command,
                     intent,
-                    status,
+                    status: Stored::Known(status),
                     output,
                 },
-                ItemRead::FileChange { paths, .. } => ItemRead::FileChange { paths, status },
+                ItemRead::FileChange { paths, .. } => ItemRead::FileChange {
+                    paths,
+                    status: Stored::Known(status),
+                },
                 ItemRead::Tool { name, effects, .. } => ItemRead::Tool {
                     name,
                     effects,
-                    status,
+                    status: Stored::Known(status),
                 },
                 other @ (ItemRead::Prompt { .. }
                 | ItemRead::Reply { .. }
@@ -785,7 +788,7 @@ impl ClaudeStreamJson {
                         phase: ItemPhase::Completed,
                         item: DriveItem {
                             id,
-                            kind: ItemKind::AgentMessage,
+                            kind: ItemKind::AgentMessage.into(),
                             read: ItemRead::Reply {
                                 text: block
                                     .get("text")
@@ -805,7 +808,7 @@ impl ClaudeStreamJson {
                         phase: ItemPhase::Completed,
                         item: DriveItem {
                             id,
-                            kind: ItemKind::Reasoning,
+                            kind: ItemKind::Reasoning.into(),
                             read: ItemRead::Reasoning,
                             // The signature is opaque to Ren and large.
                             body: json!({ "type": block["type"] }),
@@ -844,7 +847,7 @@ impl ClaudeStreamJson {
     }
 
     /// A tool call's kind and reading, from Claude Code's tool name.
-    fn tool(name: &str, input: &Value) -> (ItemKind, ItemRead) {
+    fn tool(name: &str, input: &Value) -> (Stored<ItemKind>, ItemRead) {
         let text = |key: &str| input.get(key).and_then(Value::as_str).map(str::to_owned);
         let other = |kind| {
             (
@@ -853,19 +856,19 @@ impl ClaudeStreamJson {
                     crate::Harness::ClaudeCode,
                     name,
                     input,
-                    ItemStatus::InProgress,
+                    ItemStatus::InProgress.into(),
                 ),
             )
         };
         match ClaudeCodeTool::from_label(name) {
             Some(ClaudeCodeTool::Bash) => (
-                ItemKind::CommandExecution,
+                ItemKind::CommandExecution.into(),
                 ItemRead::Command {
                     command: text("command").unwrap_or_default(),
                     intent: CommandIntent::described(
                         input.get("description").and_then(Value::as_str),
                     ),
-                    status: ItemStatus::InProgress,
+                    status: ItemStatus::InProgress.into(),
                     output: None,
                     exit_code: None,
                 },
@@ -876,16 +879,16 @@ impl ClaudeStreamJson {
                 | ClaudeCodeTool::MultiEdit
                 | ClaudeCodeTool::NotebookEdit,
             ) => (
-                ItemKind::FileChange,
+                ItemKind::FileChange.into(),
                 ItemRead::FileChange {
                     paths: text("file_path")
                         .or_else(|| text("notebook_path"))
                         .into_iter()
                         .collect(),
-                    status: ItemStatus::InProgress,
+                    status: ItemStatus::InProgress.into(),
                 },
             ),
-            Some(ClaudeCodeTool::WebSearch) => other(ItemKind::WebSearch),
+            Some(ClaudeCodeTool::WebSearch) => other(ItemKind::WebSearch.into()),
             Some(
                 ClaudeCodeTool::Read
                 | ClaudeCodeTool::Glob
@@ -893,9 +896,9 @@ impl ClaudeStreamJson {
                 | ClaudeCodeTool::Task
                 | ClaudeCodeTool::Agent
                 | ClaudeCodeTool::WebFetch,
-            ) => other(ItemKind::Other(name.to_owned())),
-            None if name.starts_with("mcp__") => other(ItemKind::McpToolCall),
-            None => other(ItemKind::Other(name.to_owned())),
+            ) => other(Stored::from_label(name)),
+            None if name.starts_with("mcp__") => other(ItemKind::McpToolCall.into()),
+            None => other(Stored::from_label(name)),
         }
     }
 
@@ -1226,11 +1229,11 @@ mod tests {
         assert!(matches!(
             call.events.as_slice(),
             [DriveEvent::Item { phase: ItemPhase::Started, item }]
-                if item.kind == ItemKind::CommandExecution
+                if item.kind == ItemKind::CommandExecution.into()
                     && item.read == ItemRead::Command {
                         command: "cargo test".into(),
                         intent: crate::drive::CommandIntent::Described { text: "Run tests".into() },
-                        status: ItemStatus::InProgress,
+                        status: ItemStatus::InProgress.into(),
                         output: None,
                         exit_code: None,
                     }
@@ -1249,7 +1252,7 @@ mod tests {
                 if item.id.as_str() == "toolu_1" && item.read == ItemRead::Command {
                     command: "cargo test".into(),
                     intent: crate::drive::CommandIntent::Described { text: "Run tests".into() },
-                    status: ItemStatus::Failed,
+                    status: ItemStatus::Failed.into(),
                     output: Some("Exit code 101\ntest failed".into()),
                     exit_code: Some(101),
                 }

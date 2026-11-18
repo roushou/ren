@@ -6,6 +6,7 @@ use ren_depot::source::Sha256;
 use ren_harness::attachment::{ByteSize, ImageFormat};
 use ren_harness::drive::{ApprovalId, ItemId, ItemKind, ItemStatus, RawLine, RequestKind};
 use ren_harness::tools::EffectKind;
+use ren_protocol::label::Stored;
 use ren_protocol::native::NativeThreadId;
 use ren_protocol::native::NativeTurnId;
 use serde::{Deserialize, Serialize};
@@ -193,7 +194,7 @@ pub struct DriveItem {
     #[ts(as = "String")]
     pub id: ItemId,
     #[ts(as = "String")]
-    pub kind: ItemKind,
+    pub kind: Stored<ItemKind>,
     pub read: ItemRead,
     pub body: serde_json::Value,
 }
@@ -243,14 +244,14 @@ pub enum ItemRead {
         #[serde(default, skip_serializing_if = "CommandIntent::is_unsaid")]
         intent: CommandIntent,
         #[ts(as = "String")]
-        status: ItemStatus,
+        status: Stored<ItemStatus>,
         output: Option<String>,
         exit_code: Option<i64>,
     },
     FileChange {
         paths: Vec<String>,
         #[ts(as = "String")]
-        status: ItemStatus,
+        status: Stored<ItemStatus>,
     },
     /// Any other tool the client used: its name as the client gave it (with
     /// what its input names, when Ren reads no effect from it), and what it
@@ -261,7 +262,7 @@ pub enum ItemRead {
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         effects: Vec<ToolEffect>,
         #[ts(as = "String")]
-        status: ItemStatus,
+        status: Stored<ItemStatus>,
     },
     /// An item Ren reads nothing from; its kind and body say what it is.
     Unread,
