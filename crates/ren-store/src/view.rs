@@ -725,7 +725,7 @@ pub struct HistoryTarget {
 }
 
 /// One agent run, as recorded.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RunView {
     pub id: RunId,
     pub harness: Stored<Harness>,
@@ -799,7 +799,7 @@ impl RunView {
 
 /// One session an operator works in, as recorded, with the runs (client
 /// processes) that served it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SessionView {
     pub id: SessionId,
     pub harness: Stored<Harness>,

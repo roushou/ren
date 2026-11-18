@@ -8,13 +8,12 @@ use ren_harness::{
     settings::{ApprovalPolicy, Midway},
     sign_in::SignInMethod,
 };
-use serde::Serialize;
 use serde_with::{DeserializeFromStr, SerializeDisplay};
 use strum::{Display, EnumString, IntoStaticStr, VariantArray};
 
 /// A client, whether a run can start with it here, whether it is signed
 /// in, and the approval policies it can run under.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Client {
     pub harness: Harness,
     pub status: ClientStatus,

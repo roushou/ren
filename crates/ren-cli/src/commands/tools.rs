@@ -92,7 +92,10 @@ impl ToolsCmd {
             ToolsAction::List(args) => {
                 let listing = toolbox.read_listing().await?;
                 if args.json {
-                    println!("{}", serde_json::to_string_pretty(&listing)?);
+                    // As the control API sends it.
+                    let sent =
+                        ren_gateway::api::control::body::tools::ToolListing::from(listing.clone());
+                    println!("{}", serde_json::to_string_pretty(&sent)?);
                 } else {
                     print!("{}", Self::table(&listing));
                 }

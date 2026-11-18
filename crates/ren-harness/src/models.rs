@@ -51,7 +51,7 @@ impl ModelId {
 }
 
 /// One model a client offers.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Model {
     pub id: ModelId,
     /// The name the client shows for it.

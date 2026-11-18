@@ -6,11 +6,10 @@
 
 use crate::{id::CallId, secrets::SecretScanner, time::Monotonic};
 use ren_protocol::activity::ResponseActivity;
-use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
 /// One update on a streaming call.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Progress {
     pub call: CallId,
     /// The end of the reply so far, with credentials in well-known formats

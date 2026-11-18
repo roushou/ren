@@ -9,4 +9,6 @@ pub mod operator;
 pub mod runs;
 pub mod sessions;
 pub mod sign_in;
+#[cfg(test)]
+mod tests;
 pub mod tools;

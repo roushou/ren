@@ -44,11 +44,11 @@ use ren_recorder::time::Clock;
 use ren_recorder::{Recorder, id::CallId, retention::RetentionPolicy};
 use ren_store::{Reader, StoreError, backup::Backup, query::QueryError, search::SearchError};
 use serde::Serialize;
-use ts_rs::TS;
 use std::sync::Arc;
 use storage::{CaptureLimits, Storage, StorageView};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use tokio_util::sync::CancellationToken;
+use ts_rs::TS;
 
 /// Resources and settings for the gateway's management and control routes.
 /// The host opens storage and supplies the token; the gateway owns HTTP handling.

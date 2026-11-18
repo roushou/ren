@@ -54,7 +54,7 @@ impl FileQuery {
 
 /// A path that matched, with where: the positions (in chars) of the
 /// path's characters the query matched, for drawing them.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FileMatch {
     pub path: String,
     pub kind: PathKind,

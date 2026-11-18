@@ -10,7 +10,6 @@ use ren_depot::{
     toolset::{Edit, Generation, PlanError},
 };
 use ren_harness::Harness;
-use serde::Serialize;
 use serde_with::{DeserializeFromStr, SerializeDisplay};
 use strum::{Display, EnumString, IntoStaticStr, VariantArray};
 
@@ -52,7 +51,7 @@ pub enum ToolboxError {
 
 /// Every package Ren knows, what this host has of each, and the toolset
 /// generations kept.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ToolListing {
     /// The platform Ren installs for here; `None` where it installs nothing.
     pub platform: Option<Platform>,
@@ -68,7 +67,7 @@ pub struct ToolListing {
 
 /// One package: one the catalog names, or one the current generation
 /// holds that the catalog no longer names.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ToolPackage {
     pub id: PackageId,
     /// Which catalog names it; `None` once it was taken out of the
@@ -89,7 +88,7 @@ pub struct ToolPackage {
 }
 
 /// A package's install in the current generation.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InstalledTool {
     pub version: semver::Version,
     pub sha256: String,
@@ -98,7 +97,7 @@ pub struct InstalledTool {
 }
 
 /// A package's program on the host's search path.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SystemTool {
     pub path: String,
     /// The version it reported, when Ren could read one.
@@ -121,7 +120,7 @@ pub enum GenerationState {
 }
 
 /// A generation kept in the store.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GenerationView {
     pub generation: Generation,
     pub state: GenerationState,
@@ -129,7 +128,7 @@ pub struct GenerationView {
 }
 
 /// One install a generation holds.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GenerationInstall {
     pub package: PackageId,
     pub version: semver::Version,
@@ -159,7 +158,7 @@ pub enum ChangeKind {
 }
 
 /// A change's result.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ToolChange {
     pub outcome: ChangeOutcome,
     /// The current generation after the change.
@@ -169,7 +168,7 @@ pub struct ToolChange {
 }
 
 /// One package's change.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PackageChange {
     pub change: ChangeKind,
     pub package: PackageId,
@@ -178,7 +177,7 @@ pub struct PackageChange {
 }
 
 /// An install that did not succeed.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InstallFailure {
     pub package: PackageId,
     pub version: semver::Version,
@@ -187,7 +186,7 @@ pub struct InstallFailure {
 }
 
 /// What a collection removed.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ToolCollection {
     pub generations: Vec<Generation>,
     pub installs: Vec<String>,
