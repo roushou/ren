@@ -157,7 +157,7 @@ enum FrameState {
 }
 
 impl ZstdStream {
-    /// Same window bound as the body preview: 8 MiB of history.
+    /// 8 MiB of history, for streamed and whole bodies alike.
     const WINDOW_LOG_MAX: u32 = 23;
     const OUTPUT_CHUNK: usize = 32 * 1024;
 }

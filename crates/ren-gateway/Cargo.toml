@@ -15,9 +15,7 @@ description = "HTTP forwarding, management, and control interface of the Ren LLM
 [dependencies]
 axum.workspace = true
 blake3.workspace = true
-brotli-decompressor.workspace = true
 bytes.workspace = true
-flate2.workspace = true
 futures-util.workspace = true
 h2 = "0.4.20"
 http.workspace = true
@@ -43,14 +41,15 @@ tokio-tungstenite.workspace = true
 tokio-util.workspace = true
 tracing.workspace = true
 uuid.workspace = true
-zstd.workspace = true
 
 [dev-dependencies]
 brotli.workspace = true
+flate2.workspace = true
 proptest.workspace = true
 tempfile.workspace = true
 tokio = { workspace = true, features = ["macros", "net", "rt-multi-thread", "sync", "time"] }
 toml.workspace = true
+zstd.workspace = true
 
 [lints]
 workspace = true
