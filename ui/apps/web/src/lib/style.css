@@ -820,8 +820,20 @@ kbd {
     monospace;
   border: 1px solid var(--control-border);
   border-radius: 2px;
-  padding: 0 3px;
+  /* 2px on top centres a lowercase letter, which sits on the baseline. */
+  padding: 2px 3px 0;
   color: var(--muted);
+  display: inline-grid;
+  place-items: center;
+  min-width: 15px;
+  height: 15px;
+  line-height: 1;
+}
+/* On an accent fill, the key reads in the button's own ink. */
+.primary kbd {
+  border-color: color-mix(in srgb, var(--on-accent) 45%, transparent);
+  color: var(--on-accent);
+  font-weight: 600;
 }
 .provider-select {
   max-width: 140px;
