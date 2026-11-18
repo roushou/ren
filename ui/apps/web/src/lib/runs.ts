@@ -97,6 +97,14 @@ import type { Waiting as WireWaiting } from './wire/Waiting.ts';
 import type { RunState as WireRunState } from './wire/RunState.ts';
 import type { ProjectGit as WireProjectGit } from './wire/ProjectGit.ts';
 import type { RunUpdate as WireRunUpdate } from './wire/RunUpdate.ts';
+import type { AnswerRequest as WireAnswerRequest } from './wire/AnswerRequest.ts';
+import type { ClientRequest as WireClientRequest } from './wire/ClientRequest.ts';
+import type { CreateRequest as WireCreateRequest } from './wire/CreateRequest.ts';
+import type { FolderRequest as WireFolderRequest } from './wire/FolderRequest.ts';
+import type { LoginAnswer as WireLoginAnswer } from './wire/LoginAnswer.ts';
+import type { PromptRequest as WirePromptRequest } from './wire/PromptRequest.ts';
+import type { SettingsRequest as WireSettingsRequest } from './wire/SettingsRequest.ts';
+import type { SignInStart as WireSignInStart } from './wire/SignInStart.ts';
 
 export type { ProcessExit };
 
@@ -987,12 +995,30 @@ export class RunsClient {
   /** Start `harness`'s own login; answers once it shows its link. */
   async startSignIn(harness: Drivable, method: SignInMethod): Promise<Login> {
     const path = `/control/runs/clients/${harness}/sign-in`;
-    return (await this.#send('POST', path, { method }, startedSignIn, undefined, 28_000)).login;
+    return (
+      await this.#send(
+        'POST',
+        path,
+        { method } satisfies WireSignInStart,
+        startedSignIn,
+        undefined,
+        28_000,
+      )
+    ).login;
   }
   /** Hand `harness`'s login what it waits for (a code, a key, or an address); answers once it ended and was checked. */
   async signInAnswer(harness: Drivable, answer: string): Promise<LoginOutcome> {
     const path = `/control/runs/clients/${harness}/sign-in/answer`;
-    return (await this.#send('POST', path, { answer }, finishedSignIn, undefined, 28_000)).outcome;
+    return (
+      await this.#send(
+        'POST',
+        path,
+        { answer } satisfies WireLoginAnswer,
+        finishedSignIn,
+        undefined,
+        28_000,
+      )
+    ).outcome;
   }
   /** Wait up to about 20 seconds for `harness`'s login to end and be checked. */
   async waitSignIn(harness: Drivable): Promise<Waited> {
@@ -1030,7 +1056,7 @@ export class RunsClient {
       ...(settings.model ? { model: settings.model } : {}),
       ...(settings.effort ? { effort: settings.effort } : {}),
       ...(settings.approvals ? { approvals: settings.approvals } : {}),
-    };
+    } satisfies WireCreateRequest;
     return (await this.#send('POST', '/control/sessions', body, createdSession)).session;
   }
   /** One command to a session: through its process, or a new one for a prompt. */
@@ -1055,27 +1081,37 @@ export class RunsClient {
             text: command.text,
             delivery: command.delivery,
             ...(command.attachments?.length ? { attachments: command.attachments } : {}),
-          },
+          } satisfies WirePromptRequest,
           null,
         );
       case 'settings': {
         const { model, effort, approvals } = command;
-        return this.#send('POST', `${base}/settings`, { model, effort, approvals }, null);
+        return this.#send(
+          'POST',
+          `${base}/settings`,
+          { model, effort, approvals } satisfies WireSettingsRequest,
+          null,
+        );
       }
       case 'client':
-        return this.#send('POST', `${base}/client`, { harness: command.harness }, null);
+        return this.#send(
+          'POST',
+          `${base}/client`,
+          { harness: command.harness } satisfies WireClientRequest,
+          null,
+        );
       case 'folder':
         return this.#send(
           'POST',
           `${base}/folder`,
-          command.dir === null ? {} : { dir: command.dir },
+          (command.dir === null ? {} : { dir: command.dir }) satisfies WireFolderRequest,
           null,
         );
       case 'answer':
         return this.#send(
           'POST',
           `${base}/approvals/${encodeURIComponent(command.approval)}`,
-          { decision: command.decision },
+          { decision: command.decision } satisfies WireAnswerRequest,
           null,
         );
       case 'unqueue':

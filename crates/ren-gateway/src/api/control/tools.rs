@@ -30,24 +30,32 @@ use ren_depot::{
 };
 use serde::Serialize;
 use std::{collections::BTreeSet, sync::Arc};
+use ts_rs::TS;
 
 pub(super) struct ToolsApi {
     pub control: Arc<ControlApi>,
     pub toolbox: Option<Arc<dyn Toolbox>>,
 }
 
-#[derive(serde::Deserialize)]
+/// Packages to add to and remove from the next generation.
+#[derive(serde::Deserialize, TS)]
 #[serde(deny_unknown_fields)]
+#[ts(export)]
 struct ChangeRequest {
     #[serde(default)]
+    #[ts(as = "Vec<String>")]
     add: BTreeSet<PackageId>,
     #[serde(default)]
+    #[ts(as = "Vec<String>")]
     remove: BTreeSet<PackageId>,
 }
 
-#[derive(serde::Deserialize)]
+/// The generation to make current again.
+#[derive(serde::Deserialize, TS)]
 #[serde(deny_unknown_fields)]
+#[ts(export)]
 struct RollbackRequest {
+    #[ts(as = "u64")]
     generation: Generation,
 }
 

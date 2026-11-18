@@ -31,6 +31,8 @@ import type { ToolChange as WireToolChange } from './wire/ToolChange.ts';
 import type { ToolCollection as WireToolCollection } from './wire/ToolCollection.ts';
 import type { ToolListing as WireToolListing } from './wire/ToolListing.ts';
 import type { ToolPackage as WireToolPackage } from './wire/ToolPackage.ts';
+import type { ChangeRequest as WireChangeRequest } from './wire/ChangeRequest.ts';
+import type { RollbackRequest as WireRollbackRequest } from './wire/RollbackRequest.ts';
 
 /** A package's name in Ren's catalog (`node`, `jq`). */
 export type PackageId = Brand<string, 'PackageId'>;
@@ -482,7 +484,7 @@ export class ToolPlan {
   }
 
   /** The edit `/control/tools/change` takes. */
-  body(): { add: PackageId[]; remove: PackageId[] } {
+  body(): { add: PackageId[]; remove: PackageId[] } & WireChangeRequest {
     return { add: [...this.add].sort(), remove: [...this.remove].sort() };
   }
 }
@@ -615,7 +617,12 @@ export class ToolsApi {
 
   /** Make the next generation hold what a kept `generation` held. */
   rollBack(generation: Generation): Promise<ToolChange> {
-    return this.#request('POST', '/control/tools/rollback', { generation }, change);
+    return this.#request(
+      'POST',
+      '/control/tools/rollback',
+      { generation } satisfies WireRollbackRequest,
+      change,
+    );
   }
 
   collect(): Promise<ToolCollection> {

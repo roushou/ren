@@ -20,20 +20,24 @@ use ren_harness::{
 };
 use ren_supervisor::SignInError;
 use std::sync::Arc;
+use ts_rs::TS;
 
 /// Starting a sign-in: how, or the client's usual way.
-#[derive(serde::Deserialize)]
+#[derive(serde::Deserialize, TS)]
 #[serde(deny_unknown_fields)]
-pub(super) struct StartRequest {
+#[ts(export, optional_fields = nullable)]
+pub(super) struct SignInStart {
     #[serde(default)]
+    #[ts(as = "Option<String>")]
     method: Option<SignInMethod>,
 }
 
 /// What the login waits for: the code the page showed, an API key, or the
 /// address the browser could not open. Not `Debug`: it is a secret.
-#[derive(serde::Deserialize)]
+#[derive(serde::Deserialize, TS)]
 #[serde(deny_unknown_fields)]
-pub(super) struct AnswerRequest {
+#[ts(export)]
+pub(super) struct LoginAnswer {
     answer: String,
 }
 
@@ -95,7 +99,7 @@ impl RunsApi {
         State(api): Api,
         headers: HeaderMap,
         Path(harness): Path<String>,
-        body: Result<Json<StartRequest>, JsonRejection>,
+        body: Result<Json<SignInStart>, JsonRejection>,
     ) -> Result<Response, ControlRefusal> {
         let supervisor = api.admit(&headers)?;
         let harness = Self::harness(&harness)?;
@@ -126,7 +130,7 @@ impl RunsApi {
         State(api): Api,
         headers: HeaderMap,
         Path(harness): Path<String>,
-        body: Result<Json<AnswerRequest>, JsonRejection>,
+        body: Result<Json<LoginAnswer>, JsonRejection>,
     ) -> Result<Response, ControlRefusal> {
         let supervisor = api.admit(&headers)?;
         let harness = Self::harness(&harness)?;

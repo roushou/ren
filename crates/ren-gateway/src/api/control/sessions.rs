@@ -59,6 +59,7 @@ use ren_supervisor::{
 use std::{convert::Infallible, sync::Arc, time::Duration};
 use tokio::sync::broadcast::error::RecvError;
 use tokio_util::sync::CancellationToken;
+use ts_rs::TS;
 
 /// The session routes' state: the control API's access check, the
 /// supervisor when runs are enabled, the store's reader for sessions it
@@ -72,15 +73,19 @@ pub(super) struct SessionsApi {
 
 type Api = State<Arc<SessionsApi>>;
 
-#[derive(serde::Deserialize)]
+/// A draft's new client.
+#[derive(serde::Deserialize, TS)]
 #[serde(deny_unknown_fields)]
+#[ts(export)]
 struct ClientRequest {
+    #[ts(as = "String")]
     harness: Harness,
 }
 
 /// A draft's new folder: `dir`, or a new scratch folder of its own.
-#[derive(serde::Deserialize)]
+#[derive(serde::Deserialize, TS)]
 #[serde(deny_unknown_fields)]
+#[ts(export, optional_fields = nullable)]
 struct FolderRequest {
     #[serde(default)]
     dir: Option<String>,
@@ -135,14 +140,17 @@ impl SettingsRequest {
 }
 
 /// The settings a run moves to; each left out is the client's own.
-#[derive(serde::Deserialize)]
+#[derive(serde::Deserialize, TS)]
 #[serde(deny_unknown_fields)]
+#[ts(export, optional_fields = nullable)]
 struct SettingsRequest {
     #[serde(default)]
     model: Option<String>,
     #[serde(default)]
+    #[ts(as = "Option<String>")]
     effort: Option<Effort>,
     #[serde(default)]
+    #[ts(as = "Option<String>")]
     approvals: Option<ApprovalPolicy>,
 }
 
