@@ -101,19 +101,23 @@ export const emptyFilters = (): Filters => ({
   from: '',
   until: '',
 });
+/** The filters written as text, each its own URL parameter. */
+export const TEXT_FILTERS = [
+  'q',
+  'recording',
+  'client',
+  'user',
+  'since',
+  'provider',
+  'model',
+  'tool',
+  'status',
+] as const;
+export type TextFilter = (typeof TEXT_FILTERS)[number];
+
 export function trafficParams(filters: Filters): string {
   const params = new URLSearchParams();
-  for (const key of [
-    'q',
-    'recording',
-    'client',
-    'user',
-    'since',
-    'provider',
-    'model',
-    'tool',
-    'status',
-  ] as const) {
+  for (const key of TEXT_FILTERS) {
     const value = filters[key].trim();
     if (value) params.set(key, value);
   }
@@ -135,17 +139,9 @@ export function trafficParams(filters: Filters): string {
 
 export function filtersFromParams(params: URLSearchParams): Filters {
   const filters = emptyFilters();
-  for (const key of [
-    'q',
-    'recording',
-    'client',
-    'user',
-    'provider',
-    'model',
-    'tool',
-    'status',
-  ] as const) {
-    filters[key] = params.get(key) ?? '';
+  for (const key of TEXT_FILTERS) {
+    // `since` is parsed below.
+    if (key !== 'since') filters[key] = params.get(key) ?? '';
   }
   filters.kind = parseKind(params.get('kind'));
   filters.since = parseSince(params.get('since')) ?? '';

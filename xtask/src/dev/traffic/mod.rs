@@ -8,10 +8,11 @@ mod settings;
 
 pub use settings::{Flow, Pace, Settings, SettingsError};
 
+use super::provider::Behaviour;
 use super::seed::{Call, Caller, Client, PROMPTS, Run, Scenario, Seeder, Side};
 use control::{Control, Stats};
 use futures_util::{StreamExt as _, stream::FuturesUnordered};
-use settings::{Reply, Sender};
+use settings::{Choice as _, Sender};
 use std::{
     future::Future,
     net::SocketAddr,
@@ -100,15 +101,7 @@ impl Traffic {
             Client::OpenCode => "gpt-5.5",
             Client::DeepSeek => "deepseek-chat",
         };
-        let ask = match reply {
-            Reply::Text => None,
-            Reply::Tools => Some("tools"),
-            Reply::Long => Some("long"),
-            Reply::Slow => Some("slow"),
-            Reply::Cut => Some("cut"),
-            Reply::Error => Some("error"),
-            Reply::RateLimited => Some("rate_limited"),
-        };
+        let ask = (reply != Behaviour::Text).then(|| reply.label());
         let caller = match sender {
             Sender::Alice => Caller::Login("alice@example.com"),
             Sender::Ci => Caller::Token(token.to_owned()),

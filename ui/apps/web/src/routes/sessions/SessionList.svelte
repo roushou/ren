@@ -26,6 +26,7 @@
   import { SvelteSet } from 'svelte/reactivity';
   import { slide } from 'svelte/transition';
   import { harnessLabel } from '#lib/activity.ts';
+  import type { Shelf } from '#lib/api.ts';
   import Icon from '#lib/Icon.svelte';
   import Skeleton from '#lib/Skeleton.svelte';
   import { ago } from '#lib/overview.ts';
@@ -37,7 +38,6 @@
     type DeskSession,
     type SessionFolder,
     type SessionId,
-    type Shelf,
   } from '#lib/runs.ts';
 
   let {

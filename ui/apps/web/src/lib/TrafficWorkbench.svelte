@@ -29,6 +29,8 @@
   } from './display.ts';
   import {
     type Filters,
+    type TextFilter,
+    TEXT_FILTERS,
     clientChoices,
     sinceChoices,
     emptyFilters,
@@ -258,12 +260,7 @@
     else if (key === 'until_ms') filters.until = '';
     else if (key === 'has_tools') filters.has_tools = false;
     else if (key === 'kind') filters.kind = 'model';
-    else if (
-      ['q', 'recording', 'client', 'since', 'provider', 'model', 'tool', 'status'].includes(key)
-    )
-      filters[
-        key as 'q' | 'recording' | 'client' | 'since' | 'provider' | 'model' | 'tool' | 'status'
-      ] = '';
+    else if ((TEXT_FILTERS as readonly string[]).includes(key)) filters[key as TextFilter] = '';
     applyFilters();
   }
   /** Narrow to one choice and apply at once. */

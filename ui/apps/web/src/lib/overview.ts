@@ -5,7 +5,7 @@ import { bytes, num, providerName } from './api.ts';
 import { searchFieldLabel, secretKindLabel } from './activity.ts';
 import { buildLabel, callStatus, compactOrDash, statusBadge, type Chip } from './display.ts';
 import { usagePoints, type UsagePoint } from './usage.ts';
-import { RecorderReport, type Severity } from './recorder.ts';
+import { RecorderReport, type Severity, type VerdictTone } from './recorder.ts';
 import { assertNever } from './decode.ts';
 
 /** A health chip and where to look when it is not fine. */
@@ -512,7 +512,7 @@ export interface VerdictInput {
  * by-design notes never colour it.
  */
 export class Verdict {
-  readonly tone: 'error' | 'warning' | 'success';
+  readonly tone: VerdictTone;
   readonly headline: string;
   readonly facts: string[];
   readonly problems: AttentionGroup[];

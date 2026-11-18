@@ -19,6 +19,9 @@ export type CaptureHealth =
 /** How much a counter, or a line of the overview, needs a look. */
 export type Severity = 'error' | 'warning' | 'neutral';
 
+/** How a verdict line reads: something is wrong, needs a look, or is fine. */
+export type VerdictTone = 'error' | 'warning' | 'success';
+
 /** A counter since startup that is not zero, and what it means. */
 export interface CounterNote {
   label: string;
@@ -98,7 +101,7 @@ export class RecorderReport {
   }
 
   /** The verdict line: a headline, its tone, and the facts behind it. */
-  get verdict(): { tone: 'error' | 'warning' | 'success'; headline: string; facts: string[] } {
+  get verdict(): { tone: VerdictTone; headline: string; facts: string[] } {
     const recorder = this.recorder;
     const queue = Math.max(
       recorder.queue.capacity ? recorder.queue.items / recorder.queue.capacity : 0,

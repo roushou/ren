@@ -3,7 +3,14 @@
   import { onMount, tick, untrack } from 'svelte';
   import { SvelteMap } from 'svelte/reactivity';
   import { goto } from '$app/navigation';
-  import { ManagementApi, clock, short, type CallView, type RecordingId } from '#lib/api.ts';
+  import {
+    ManagementApi,
+    clock,
+    short,
+    type CallView,
+    type RecordingId,
+    type Shelf,
+  } from '#lib/api.ts';
   import { ago } from '#lib/overview.ts';
   import { harnessLabel } from '#lib/activity.ts';
   import { callStatus, statusBadge, tokenSummary } from '#lib/display.ts';
@@ -30,7 +37,6 @@
     type HistoryChange,
     type Read,
     type RunId,
-    type Shelf,
     type RunSnapshot,
     type Waiting,
     Sessions,

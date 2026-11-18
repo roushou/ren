@@ -13,8 +13,8 @@
     Models,
     Setup,
     type ApprovalPolicy,
+    type ChosenSettings,
     type Drivable,
-    type Effort,
     type Midway,
     type ModelId,
     type RunModel,
@@ -40,11 +40,7 @@
     approvals: readonly Stored<ApprovalPolicy>[];
     listModels: (harness: Drivable) => Promise<RunModel[]>;
     busy: boolean;
-    onchange: (settings: {
-      model: ModelId | null;
-      effort: Effort | null;
-      approvals: ApprovalPolicy | null;
-    }) => void;
+    onchange: (settings: ChosenSettings) => void;
     /** The clients a draft can change to, and what to do with the one chosen. */
     choice?: {
       clients: readonly Drivable[];

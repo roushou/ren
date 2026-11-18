@@ -27,6 +27,12 @@ export interface Written {
 
 const space = /\s/;
 
+/** A run of text, `hit` where it matches what was typed. */
+export interface Marked {
+  text: string;
+  hit: boolean;
+}
+
 export class Mentions {
   /** The most commands offered at once. */
   static readonly COMMANDS = 50;
@@ -95,9 +101,9 @@ export class Mentions {
   }
 
   /** `path` cut into runs of matched and unmatched characters, for drawing the matches. */
-  static marked(path: string, positions: readonly number[]): { text: string; hit: boolean }[] {
+  static marked(path: string, positions: readonly number[]): Marked[] {
     const hits = new Set(positions);
-    const parts: { text: string; hit: boolean }[] = [];
+    const parts: Marked[] = [];
     Array.from(path).forEach((ch, index) => {
       const hit = hits.has(index);
       const last = parts[parts.length - 1];

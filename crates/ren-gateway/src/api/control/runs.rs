@@ -3,7 +3,7 @@
 //! start with (the projects, the clients, and each client's models), with
 //! each client's sign-in (`sign_in`). A run
 //! is driven through its session (`sessions`), whose routes share the
-//! requests and refusals here. Access is the control API's; with no run
+//! refusals here. Access is the control API's; with no run
 //! roots configured, every route answers `runs_disabled`.
 //!
 //! Live updates carry what the agent reported (its reply as it streams, its
@@ -25,13 +25,7 @@ use axum::{
     routing::{get, post},
 };
 use http::HeaderMap;
-use ren_harness::{
-    Harness,
-    commands::ClientCommand,
-    drive::CommandRefused,
-    models::ModelId,
-    settings::{ApprovalPolicy, Effort, RunSettings},
-};
+use ren_harness::{Harness, commands::ClientCommand, drive::CommandRefused};
 use ren_supervisor::{
     CommandError, CommandsError, ListingError, RunRefused, RunSnapshot, StartError, StartPlace,
     Supervisor, WorkdirError,
@@ -40,56 +34,12 @@ use std::{convert::Infallible, sync::Arc, time::Duration};
 use tokio::sync::broadcast::error::RecvError;
 use tokio_util::sync::CancellationToken;
 
-/// A search of a run's folder for a prompt to name a file: `q`, what was
-/// typed after `@`, and how many to answer.
-#[derive(serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(super) struct FilesRequest {
-    #[serde(default)]
-    pub(super) q: String,
-    #[serde(default)]
-    pub(super) limit: Option<usize>,
-}
-
 /// Which folder's commands to list: `dir`, or the scratch folder.
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct CommandsRequest {
     #[serde(default)]
     pub(super) dir: Option<String>,
-}
-
-impl FilesRequest {
-    pub(super) const LIMIT: usize = 20;
-    pub(super) const MOST: usize = 100;
-}
-
-impl SettingsRequest {
-    /// The settings asked for: a model must be one a client could name.
-    pub(super) fn settings(self) -> Result<RunSettings, ControlRefusal> {
-        let model = self
-            .model
-            .map(|model| model.parse::<ModelId>())
-            .transpose()
-            .map_err(|_| ControlRefusal::InvalidRequest)?;
-        Ok(RunSettings {
-            model,
-            effort: self.effort,
-            approvals: self.approvals,
-        })
-    }
-}
-
-/// The settings a run moves to; each left out is the client's own.
-#[derive(serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(super) struct SettingsRequest {
-    #[serde(default)]
-    pub(super) model: Option<String>,
-    #[serde(default)]
-    pub(super) effort: Option<Effort>,
-    #[serde(default)]
-    pub(super) approvals: Option<ApprovalPolicy>,
 }
 
 #[derive(serde::Serialize)]

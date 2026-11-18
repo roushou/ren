@@ -1,8 +1,10 @@
 <script lang="ts" module>
+  import type { Marked } from '#lib/mention.ts';
+
   /** One offer: its name (with the typed characters marked), what it is, and what it does. */
   export interface MenuEntry {
     key: string;
-    parts: { text: string; hit: boolean }[];
+    parts: Marked[];
     /** What follows the name, quieter: a command's arguments. */
     hint: string | null;
     /** What it is: skill, template, folder. */
