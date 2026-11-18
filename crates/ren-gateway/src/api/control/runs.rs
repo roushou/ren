@@ -36,10 +36,12 @@ use ren_supervisor::{
 use std::{convert::Infallible, sync::Arc, time::Duration};
 use tokio::sync::broadcast::error::RecvError;
 use tokio_util::sync::CancellationToken;
+use ts_rs::TS;
 
 /// Which folder's commands to list: `dir`, or the scratch folder.
-#[derive(serde::Deserialize)]
+#[derive(serde::Deserialize, TS)]
 #[serde(deny_unknown_fields)]
+#[ts(export, optional_fields)]
 pub(super) struct CommandsRequest {
     #[serde(default)]
     pub(super) dir: Option<String>,

@@ -92,25 +92,29 @@ struct FolderRequest {
 }
 
 /// Which sessions to list: the current ones (the default) or the archived.
-#[derive(serde::Deserialize)]
+#[derive(serde::Deserialize, TS)]
 #[serde(deny_unknown_fields)]
+#[ts(export, optional_fields)]
 struct ListRequest {
     #[serde(default)]
+    #[ts(as = "Option<String>")]
     shelf: Option<Shelf>,
     #[serde(default)]
     limit: Option<u32>,
 }
 
 /// An upload's name, as `?name=`.
-#[derive(serde::Deserialize)]
+#[derive(serde::Deserialize, TS)]
+#[ts(export, optional_fields)]
 struct AttachRequest {
     name: String,
 }
 
 /// A search of a run's folder for a prompt to name a file: `q`, what was
 /// typed after `@`, and how many to answer.
-#[derive(serde::Deserialize)]
+#[derive(serde::Deserialize, TS)]
 #[serde(deny_unknown_fields)]
+#[ts(export, optional_fields)]
 struct FilesRequest {
     #[serde(default)]
     q: String,

@@ -6,6 +6,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { CallId, ManagementApi, RecordingId, TurnId } from '../src/lib/api.ts';
+import { query } from '../src/lib/query.ts';
+import type { RawCallQuery, RawSearchQuery } from '../src/lib/api.ts';
 
 const fixture = (name: string): unknown =>
   JSON.parse(readFileSync(new URL(`./fixtures/api/${name}.json`, import.meta.url), 'utf8'));
@@ -34,7 +36,7 @@ const pinned: typeof fetch = async (input) => {
 
 test('every read the UI makes decodes the daemon’s pinned answers', async () => {
   const api = new ManagementApi(pinned);
-  const calls = await api.calls(new URLSearchParams());
+  const calls = await api.calls(query<RawCallQuery>({}));
   assert.equal(calls.calls.length, 2);
   const first = calls.calls[0];
   const callId = CallId.parse(first.id);
@@ -57,7 +59,7 @@ test('every read the UI makes decodes the daemon’s pinned answers', async () =
   assert.equal(report.turns.length, 1);
   await api.usage({});
 
-  const search = await api.search(new URLSearchParams({ q: 'parser' }));
+  const search = await api.search(query<RawSearchQuery>({ q: 'parser' }));
   assert.ok(search.hits.length > 0);
   assert.match(search.hits[0].snippet, /«parser»/);
   const exposures = await api.exposures();

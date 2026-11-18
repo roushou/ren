@@ -78,11 +78,19 @@ import type { DecodingPreview as WireDecodingPreview } from './wire/DecodingPrev
 import type { ErrorBody as WireErrorBody } from './wire/ErrorBody.ts';
 import type { Metrics as WireMetrics } from './wire/Metrics.ts';
 import type { RawPreview as WireRawPreview } from './wire/RawPreview.ts';
+import { query, type Query } from './query.ts';
+import type { RawCallQuery } from './wire/RawCallQuery.ts';
+import type { RawExposureQuery } from './wire/RawExposureQuery.ts';
+import type { RawPageQuery } from './wire/RawPageQuery.ts';
+import type { RawSearchQuery } from './wire/RawSearchQuery.ts';
+import type { RawShelfQuery } from './wire/RawShelfQuery.ts';
+import type { RawUsageQuery } from './wire/RawUsageQuery.ts';
 
 // Generated from the gateway's wire types (`wire/`, written by `cargo test`).
 // The decoders below are typed against them, so a changed field fails `check`.
 // Where the UI decodes a value further (labels, revisions), its own type keeps
 // the wire type's fields: `object<View, Wire>`.
+export type { RawCallQuery, RawSearchQuery };
 export type {
   CaptureLimits,
   DiskUsage,
@@ -1443,8 +1451,8 @@ export class ManagementApi {
     return this.#read('/api/storage', storage, signal);
   }
   /** Newest first. `query` holds the listing filters and `after`. */
-  calls(query: URLSearchParams, signal?: AbortSignal): Promise<CallPage> {
-    return this.#read(`/api/calls?${ManagementApi.#page(query)}`, callPage, signal);
+  calls(params: Query<RawCallQuery>, signal?: AbortSignal): Promise<CallPage> {
+    return this.#read(`/api/calls?${ManagementApi.#page(params)}`, callPage, signal);
   }
   call(id: CallId, signal?: AbortSignal): Promise<CallDetail> {
     return this.#read(`/api/calls/${id}`, callDetail, signal);
@@ -1454,23 +1462,22 @@ export class ManagementApi {
   }
   /** Totals, hours, and models for calls started within the range. */
   usage(range: { from_ms?: number; until_ms?: number }, signal?: AbortSignal): Promise<UsageView> {
-    const query = new URLSearchParams();
-    if (range.from_ms !== undefined) query.set('from_ms', String(Math.floor(range.from_ms)));
-    if (range.until_ms !== undefined) query.set('until_ms', String(Math.floor(range.until_ms)));
-    const suffix = query.size ? `?${query}` : '';
+    const params = query<RawUsageQuery>(range);
+    const suffix = params.size ? `?${params}` : '';
     return this.#read(`/api/usage${suffix}`, usageView, signal);
   }
   /** The most recently active recordings; `archived` lists those archived instead. */
   recordings(limit = 100, signal?: AbortSignal, shelf: Shelf = 'current'): Promise<Recordings> {
-    const query = shelf === 'archived' ? '&shelf=archived' : '';
-    return this.#read(`/api/recordings?limit=${limit}${query}`, recordings, signal);
+    const params = query<RawShelfQuery>({
+      limit,
+      shelf: shelf === 'archived' ? 'archived' : null,
+    });
+    return this.#read(`/api/recordings?${params}`, recordings, signal);
   }
   /** Oldest first. Only `after` is accepted besides the limit. */
   recordingCalls(id: RecordingId, after: string | null, signal?: AbortSignal): Promise<CallPage> {
-    const query = new URLSearchParams();
-    if (after) query.set('after', after);
     return this.#read(
-      `/api/recordings/${id}/calls?${ManagementApi.#page(query)}`,
+      `/api/recordings/${id}/calls?${ManagementApi.#page(query<RawPageQuery>({ after }))}`,
       callPage,
       signal,
     );
@@ -1478,7 +1485,8 @@ export class ManagementApi {
 
   /** A recording's turns, newest first, with the start of each prompt. */
   turns(id: RecordingId, limit = 100, signal?: AbortSignal): Promise<Turns> {
-    return this.#read(`/api/recordings/${id}/turns?limit=${limit}`, turns, signal);
+    const params = query<RawPageQuery>({ limit });
+    return this.#read(`/api/recordings/${id}/turns?${params}`, turns, signal);
   }
   /** Where a recording's context and cache tokens went, from its call records. */
   report(id: RecordingId, signal?: AbortSignal): Promise<RecordingReport> {
@@ -1489,23 +1497,22 @@ export class ManagementApi {
     return this.#read(`/api/turns/${id}`, turnActivity, signal);
   }
   /** Full-text search: `q`, and optionally `field`, `recording`, `client`, `limit`. */
-  search(query: URLSearchParams, signal?: AbortSignal): Promise<SearchPage> {
-    return this.#read(`/api/search?${query}`, searchPage, signal);
+  search(params: Query<RawSearchQuery>, signal?: AbortSignal): Promise<SearchPage> {
+    return this.#read(`/api/search?${params}`, searchPage, signal);
   }
   /** Credentials calls carried, newest first, from `from_ms` on. */
   exposures(from_ms?: number, signal?: AbortSignal): Promise<Exposures> {
-    const query = new URLSearchParams({ limit: '100' });
-    if (from_ms !== undefined) query.set('from_ms', String(Math.floor(from_ms)));
-    return this.#read(`/api/exposures?${query}`, exposures, signal);
+    const params = query<RawExposureQuery>({ limit: 100, from_ms });
+    return this.#read(`/api/exposures?${params}`, exposures, signal);
   }
 
   /** `limit` first, the caller's or 100, then the rest of the query. */
-  static #page(query: URLSearchParams): string {
-    const params = new URLSearchParams([
-      ['limit', query.get('limit') ?? '100'],
-      ...[...query].filter(([key]) => key !== 'limit'),
+  static #page(params: URLSearchParams): string {
+    const page = new URLSearchParams([
+      ['limit', params.get('limit') ?? '100'],
+      ...[...params].filter(([key]) => key !== 'limit'),
     ]);
-    return params.toString();
+    return page.toString();
   }
 
   async #read<T>(

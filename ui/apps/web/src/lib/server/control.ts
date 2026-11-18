@@ -22,6 +22,9 @@
  * Tailscale logins, as Tailscale Serve reports them.
  */
 import type { ProxyRefusal } from '../refusal.ts';
+import type { AttachRequest } from '../wire/AttachRequest.ts';
+import type { FilesRequest } from '../wire/FilesRequest.ts';
+import type { ListRequest } from '../wire/ListRequest.ts';
 
 /** Who may drive runs through this UI, parsed once from the environment. */
 export type RunsAccess =
@@ -115,7 +118,11 @@ const routes: { pattern: RegExp; route: Route }[] = [
   // Sessions: their listing and feed, one session, and what it is offered.
   {
     pattern: /^\/control\/sessions$/,
-    route: { method: 'GET', feed: false, query: ['shelf', 'limit'] },
+    route: {
+      method: 'GET',
+      feed: false,
+      query: ['shelf', 'limit'] satisfies (keyof ListRequest)[],
+    },
   },
   { pattern: /^\/control\/sessions\/events$/, route: { method: 'GET', feed: true } },
   { pattern: new RegExp(`^/control/sessions/${runId}$`), route: { method: 'GET', feed: false } },
@@ -125,7 +132,11 @@ const routes: { pattern: RegExp; route: Route }[] = [
   },
   {
     pattern: new RegExp(`^/control/sessions/${runId}/files$`),
-    route: { method: 'GET', feed: false, query: ['q', 'limit'] },
+    route: {
+      method: 'GET',
+      feed: false,
+      query: ['q', 'limit'] satisfies (keyof FilesRequest)[],
+    },
   },
   {
     pattern: new RegExp(
@@ -141,7 +152,13 @@ const routes: { pattern: RegExp; route: Route }[] = [
   // for thumbnails, and removed while unsent.
   {
     pattern: new RegExp(`^/control/sessions/${runId}/attachments$`),
-    route: { method: 'POST', feed: false, query: ['name'], body: 'image', timeout: 120_000 },
+    route: {
+      method: 'POST',
+      feed: false,
+      query: ['name'] satisfies (keyof AttachRequest)[],
+      body: 'image',
+      timeout: 120_000,
+    },
   },
   {
     pattern: new RegExp(`^/control/sessions/${runId}/attachments(?:/${runId})?$`),

@@ -105,6 +105,11 @@ import type { LoginAnswer as WireLoginAnswer } from './wire/LoginAnswer.ts';
 import type { PromptRequest as WirePromptRequest } from './wire/PromptRequest.ts';
 import type { SettingsRequest as WireSettingsRequest } from './wire/SettingsRequest.ts';
 import type { SignInStart as WireSignInStart } from './wire/SignInStart.ts';
+import { query } from './query.ts';
+import type { AttachRequest as WireAttachRequest } from './wire/AttachRequest.ts';
+import type { FilesRequest as WireFilesRequest } from './wire/FilesRequest.ts';
+import type { ListRequest as WireListRequest } from './wire/ListRequest.ts';
+import type { RawShelfQuery as WireRawShelfQuery } from './wire/RawShelfQuery.ts';
 
 export type { ProcessExit };
 
@@ -1051,7 +1056,7 @@ export class RunsClient {
   }
   /** Sessions on `shelf`, most recently active first. */
   async sessions(shelf: Shelf = 'current', signal?: AbortSignal): Promise<SessionBody[]> {
-    const path = `/control/sessions?shelf=${shelf}`;
+    const path = `/control/sessions?${query<WireListRequest>({ shelf })}`;
     return (await this.#send('GET', path, undefined, sessionList, signal)).sessions;
   }
   async session(session: SessionId, signal?: AbortSignal): Promise<SessionBody> {
@@ -1147,7 +1152,7 @@ export class RunsClient {
     bytes: ArrayBuffer,
   ): Promise<{ id: AttachmentId; read: AttachmentRead }> {
     const response = await this.#fetch(
-      `/control/sessions/${session}/attachments?${new URLSearchParams({ name })}`,
+      `/control/sessions/${session}/attachments?${query<WireAttachRequest>({ name })}`,
       {
         method: 'POST',
         cache: 'no-store',
@@ -1186,14 +1191,14 @@ export class RunsClient {
     const path = `/control/sessions/${session}/commands`;
     return (await this.#send('GET', path, undefined, clientCommands, signal)).commands;
   }
-  /** The paths of the session's folder that best match `query`. */
+  /** The paths of the session's folder that best match `typed`. */
   async sessionFiles(
     session: SessionId,
-    query: string,
+    typed: string,
     limit = 20,
     signal?: AbortSignal,
   ): Promise<FileMatch[]> {
-    const search = new URLSearchParams({ q: query, limit: String(limit) });
+    const search = query<WireFilesRequest>({ q: typed, limit });
     const path = `/control/sessions/${session}/files?${search}`;
     return (await this.#send('GET', path, undefined, fileMatches, signal)).files;
   }
@@ -1212,10 +1217,11 @@ export class RunsClient {
     shelf: Shelf = 'current',
     signal?: AbortSignal,
   ): Promise<RecordedRun[]> {
-    const query = shelf === 'archived' ? `&shelf=archived` : '';
-    return (
-      await this.#send('GET', `/api/runs?limit=${limit}${query}`, undefined, recordedRuns, signal)
-    ).runs;
+    const params = query<WireRawShelfQuery>({
+      limit,
+      shelf: shelf === 'archived' ? 'archived' : null,
+    });
+    return (await this.#send('GET', `/api/runs?${params}`, undefined, recordedRuns, signal)).runs;
   }
   /** A run's conversation, whole, as the daemon stored it. */
   async conversation(run: RunId, signal?: AbortSignal): Promise<StoredConversation> {
