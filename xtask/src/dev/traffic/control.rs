@@ -4,7 +4,8 @@
 //! slot configures it. Changes are JSON requests, which a cross-site form
 //! cannot send.
 
-use super::{Reply, Settings, Traffic};
+use super::{Settings, Traffic};
+use crate::dev::provider::Behaviour;
 use crate::dev::seed::Run;
 use axum::{
     Json, Router,
@@ -103,7 +104,7 @@ impl Control {
             }
         };
         if let Some(reply) = &request.reply {
-            match Reply::only(reply) {
+            match Behaviour::only(reply) {
                 Some(only) => settings.replies = only,
                 None => return (StatusCode::BAD_REQUEST, "unknown reply").into_response(),
             }

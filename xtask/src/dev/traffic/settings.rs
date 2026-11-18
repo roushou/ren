@@ -4,6 +4,7 @@
 //! generator and the fake provider read again on every call, so a change
 //! takes effect at once, with no restart.
 
+use crate::dev::provider::Behaviour;
 use crate::dev::seed::Client;
 use serde::{Deserialize, Serialize};
 use std::{fmt, str::FromStr, time::Duration};
@@ -52,18 +53,6 @@ pub trait Choice: Copy + Eq + fmt::Debug + 'static {
     fn label(self) -> &'static str;
 }
 
-/// What the fake provider replies, by the model it is asked for.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Reply {
-    Text,
-    Tools,
-    Long,
-    Slow,
-    Cut,
-    Error,
-    RateLimited,
-}
-
 /// Who sends a call.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Sender {
@@ -76,7 +65,7 @@ pub enum Sender {
     Unidentified,
 }
 
-impl Reply {
+impl Behaviour {
     /// Weights that give every call the reply labelled `label`.
     pub fn only(label: &str) -> Option<Weights<Self>> {
         let reply = Self::ALL
@@ -87,7 +76,9 @@ impl Reply {
     }
 }
 
-impl Choice for Reply {
+/// The replies traffic weighs; a title is asked for only by seeded side
+/// calls.
+impl Choice for Behaviour {
     const ALL: &'static [Self] = &[
         Self::Text,
         Self::Tools,
@@ -106,6 +97,7 @@ impl Choice for Reply {
             Self::Cut => "cut",
             Self::Error => "error",
             Self::RateLimited => "rate_limited",
+            Self::Title => "title",
         }
     }
 }
@@ -284,7 +276,7 @@ pub struct Settings {
     /// Calls a minute, 0 to [`Settings::MAX_RATE`].
     pub rate: u16,
     pub pace: Pace,
-    pub replies: Weights<Reply>,
+    pub replies: Weights<Behaviour>,
     pub harnesses: Weights<Client>,
     pub senders: Weights<Sender>,
 }
@@ -296,13 +288,13 @@ impl Default for Settings {
             rate: 12,
             pace: Pace::Normal,
             replies: Weights::of(&[
-                (Reply::Text, 60),
-                (Reply::Tools, 25),
-                (Reply::Long, 3),
-                (Reply::Slow, 5),
-                (Reply::Cut, 2),
-                (Reply::Error, 3),
-                (Reply::RateLimited, 2),
+                (Behaviour::Text, 60),
+                (Behaviour::Tools, 25),
+                (Behaviour::Long, 3),
+                (Behaviour::Slow, 5),
+                (Behaviour::Cut, 2),
+                (Behaviour::Error, 3),
+                (Behaviour::RateLimited, 2),
             ]),
             harnesses: Weights::of(&[
                 (Client::ClaudeCode, 45),
@@ -373,7 +365,7 @@ impl FromStr for Pace {
 
 #[cfg(test)]
 mod tests {
-    use super::{Client, Flow, Reply, Sender, Settings, Weights};
+    use super::{Behaviour, Client, Flow, Sender, Settings, Weights};
     use std::time::Duration;
 
     #[test]
@@ -387,9 +379,12 @@ mod tests {
 
     #[test]
     fn picks_follow_the_weights_and_are_spread() {
-        let weights = Weights::of(&[(Reply::Text, 3), (Reply::Error, 1)]);
-        let picks: Vec<Reply> = (0..400).filter_map(|n| weights.pick(n)).collect();
-        let errors = picks.iter().filter(|reply| **reply == Reply::Error).count();
+        let weights = Weights::of(&[(Behaviour::Text, 3), (Behaviour::Error, 1)]);
+        let picks: Vec<Behaviour> = (0..400).filter_map(|n| weights.pick(n)).collect();
+        let errors = picks
+            .iter()
+            .filter(|reply| **reply == Behaviour::Error)
+            .count();
         assert!((80..=120).contains(&errors), "{errors}");
         // Not one long run of the same choice.
         assert!(picks[..8].iter().any(|reply| *reply != picks[0]));
