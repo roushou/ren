@@ -691,7 +691,7 @@ async fn filters_and_cursors_page_through_calls() {
         count(
             reader
                 .calls(&query(CallFilter {
-                    tool: Some(SearchText::new("PATCH").unwrap()),
+                    tool: Some("PATCH".parse::<SearchText>().unwrap()),
                     ..CallFilter::default()
                 }))
                 .await
@@ -703,7 +703,7 @@ async fn filters_and_cursors_page_through_calls() {
         count(
             reader
                 .calls(&query(CallFilter {
-                    text: Some(SearchText::new("apply").unwrap()),
+                    text: Some("apply".parse::<SearchText>().unwrap()),
                     ..CallFilter::default()
                 }))
                 .await
@@ -727,7 +727,7 @@ async fn filters_and_cursors_page_through_calls() {
         count(
             reader
                 .calls(&query(CallFilter {
-                    model: Some(SearchText::new("nope").unwrap()),
+                    model: Some("nope".parse::<SearchText>().unwrap()),
                     ..CallFilter::default()
                 }))
                 .await
@@ -1294,7 +1294,7 @@ mod digests {
 
     fn query(text: &str) -> SearchQuery {
         SearchQuery {
-            terms: SearchTerms::parse(text).unwrap(),
+            terms: text.parse::<SearchTerms>().unwrap(),
             recording: None,
             client: None,
             field: None,

@@ -110,7 +110,7 @@ impl Field {
     fn text(self, value: Option<String>) -> Result<Option<SearchText>, ArgumentError> {
         Self::present(value)
             .map(|value| {
-                SearchText::new(&value).map_err(|_| {
+                value.parse::<SearchText>().map_err(|_| {
                     ArgumentError(format!(
                         "{} must be 1 to {} bytes",
                         self.0,
@@ -288,7 +288,7 @@ impl ToolCall {
             ToolName::SearchHistory => {
                 let args: HistoryArgs = Self::arguments(arguments)?;
                 ReadRequest::Search(SearchQuery {
-                    terms: SearchTerms::parse(&args.query).map_err(|_| {
+                    terms: args.query.parse::<SearchTerms>().map_err(|_| {
                         ArgumentError(format!(
                             "query must have 1 to {} bytes and at least one word",
                             SearchTerms::MAX_BYTES

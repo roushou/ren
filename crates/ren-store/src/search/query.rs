@@ -33,7 +33,20 @@ pub struct SearchTerms {
 impl SearchTerms {
     pub const MAX_BYTES: usize = 256;
 
-    pub fn parse(text: &str) -> Result<Self, SearchError> {
+    /// The FTS5 expression: each term a quoted string, all required.
+    pub fn expression(&self) -> String {
+        self.terms
+            .iter()
+            .map(|term| format!("\"{}\"", term.replace('"', "\"\"")))
+            .collect::<Vec<_>>()
+            .join(" AND ")
+    }
+}
+
+impl std::str::FromStr for SearchTerms {
+    type Err = SearchError;
+
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
         if text.len() > Self::MAX_BYTES {
             return Err(SearchError::Terms);
         }
@@ -55,15 +68,6 @@ impl SearchTerms {
             raw: text.trim().to_owned(),
             terms,
         })
-    }
-
-    /// The FTS5 expression: each term a quoted string, all required.
-    pub fn expression(&self) -> String {
-        self.terms
-            .iter()
-            .map(|term| format!("\"{}\"", term.replace('"', "\"\"")))
-            .collect::<Vec<_>>()
-            .join(" AND ")
     }
 }
 

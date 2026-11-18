@@ -240,7 +240,7 @@ fn each_pinned_answer_decodes_as_its_read_and_round_trips() {
         (
             "search",
             ReadRequest::Search(SearchQuery {
-                terms: ren_store::search::SearchTerms::parse("parser").unwrap(),
+                terms: "parser".parse::<ren_store::search::SearchTerms>().unwrap(),
                 recording: None,
                 client: None,
                 field: None,
