@@ -368,8 +368,8 @@ dependencies under "Crates" below. Read the code for current module ownership.
   changes go to `subscribe_sessions`; every request addresses a session,
   never a run. A client idle between turns is stopped
   after `IdleStop` (ten minutes in the daemon; its run ends `idled`), and its
-  session goes on. `RunState` (`run`) is the
-  pure lifecycle machine (starting, idle, working with its waiting approvals and the prompt queued
+  session goes on. `RunState` (`run`, written with its pinned `RunPhase`,
+  which install-vps reads) is the pure lifecycle machine (starting, idle, working with its waiting approvals and the prompt queued
   for after the turn (a `Delivery`: start, queue, or steer),
   stopping, ended with a `RunEnd`). Around it, `Process` (`process`) is one
   client process as Ren drives it (its run state, codec, settings, the first
@@ -431,7 +431,8 @@ dependencies under "Crates" below. Read the code for current module ownership.
   implementation, and the ingress with the shutdown drain, which also waits for
   upgraded channels. Use Axum's request, response, body, and WebSocket types
   directly; no framework-independent HTTP adapter layer. It also owns retry
-  eligibility (`retry`), operator state (`operator`), the named users and
+  eligibility (`retry`), operator state (`operator`, a pause written with
+  its pinned `PauseState`, which install-vps reads), the named users and
   how a request is matched to one (`user`: `Users::identify`, with
   `TokenDigest`, a user token's digest), each user's and the unnamed
   callers' concurrency limits (`limits`, with `ConcurrencyLimit`, 1 to

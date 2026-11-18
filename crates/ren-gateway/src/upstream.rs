@@ -292,8 +292,9 @@ impl UpstreamAuth {
 }
 
 /// Whether credentials were overridden for an attempt.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
-#[serde(rename_all = "snake_case")]
+#[derive(Display, EnumString, IntoStaticStr, VariantArray)]
+#[strum(serialize_all = "snake_case")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SerializeDisplay, DeserializeFromStr)]
 pub enum AuthOverride {
     None,
     /// Client credentials replaced by the entry's operator key.

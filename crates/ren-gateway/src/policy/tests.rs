@@ -342,6 +342,26 @@ reason = "r""#
 }
 
 #[test]
+fn a_step_is_configured_and_recorded_with_its_op_label() {
+    for step in [
+        r#"{ op = "set_header", name = "x-a", value = "1" }"#,
+        r#"{ op = "remove_header", name = "x-a" }"#,
+        r#"{ op = "json_set", path = "/a", value = 1 }"#,
+        r#"{ op = "json_remove", path = "/a" }"#,
+    ] {
+        let rules = format!(
+            "[[transform]]\nid = \"t\"\nmatch = {{ provider = \"anthropic\" }}\nsteps = [{step}]\nreason = \"r\"\n"
+        );
+        let config = toml::from_str::<PolicyConfig>(&rules).unwrap();
+        let step = &config.transform[0].steps[0];
+        assert!(
+            rules.contains(&format!("op = \"{}\"", step.op())),
+            "{rules}"
+        );
+    }
+}
+
+#[test]
 fn unparsable_steps_are_refused_as_the_configuration_loads() {
     for (step, expected) in [
         (

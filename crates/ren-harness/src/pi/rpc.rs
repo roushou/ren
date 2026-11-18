@@ -24,7 +24,7 @@ use crate::{
         Unreadable,
     },
     lines::{Framed, Line},
-    models::{DefaultChoice, Listing, Model, ModelId, ModelListing},
+    models::{DefaultChoice, Listing, ListingAnswer, Model, ModelId, ModelListing},
     prompt::Prompt,
     settings::{Effort, Midway, RunSettings, Setting, SettingsBook},
 };
@@ -780,6 +780,27 @@ impl PiRpc {
 #[derive(Debug)]
 pub struct PiCommands;
 
+impl PiRpc {
+    /// What `message` says to the request numbered `id`: a listing's
+    /// question.
+    pub(crate) fn answer_to<'a>(message: &'a Value, id: &str) -> ListingAnswer<'a> {
+        let kind = message
+            .get("type")
+            .and_then(Value::as_str)
+            .map(Stored::<PiEvent>::from_label);
+        if kind != Some(Stored::Known(PiEvent::Response))
+            || message.get("id").and_then(Value::as_str) != Some(id)
+        {
+            return ListingAnswer::NotMine;
+        }
+        if message.get("success").and_then(Value::as_bool) == Some(true) {
+            ListingAnswer::Answered(&message["data"])
+        } else {
+            ListingAnswer::Refused(message)
+        }
+    }
+}
+
 impl PiCommands {
     const ID: &'static str = "ren-commands";
 
@@ -790,17 +811,11 @@ impl PiCommands {
     }
 
     pub(crate) fn receive(&mut self, message: &Value) -> Listing<Vec<ClientCommand>> {
-        let answers = message.get("type").and_then(Value::as_str) == Some("response")
-            && message.get("id").and_then(Value::as_str) == Some(Self::ID);
-        if !answers {
-            return Listing::waiting();
+        match PiRpc::answer_to(message, Self::ID) {
+            ListingAnswer::NotMine => Listing::waiting(),
+            ListingAnswer::Refused(refusal) => Listing::Failed(ListingAnswer::reason(refusal)),
+            ListingAnswer::Answered(data) => Listing::Listed(PiRpc::listed(data)),
         }
-        if message.get("success").and_then(Value::as_bool) != Some(true) {
-            return Listing::Failed(
-                ModelListing::text(message, "error").unwrap_or_else(|| "refused".into()),
-            );
-        }
-        Listing::Listed(PiRpc::listed(&message["data"]))
     }
 }
 
@@ -838,18 +853,16 @@ impl PiModels {
     }
 
     pub(crate) fn receive(&mut self, message: &Value) -> Listing {
-        if message.get("type").and_then(Value::as_str) != Some("response") {
-            return Listing::waiting();
-        }
-        let succeeded = message.get("success").and_then(Value::as_bool) == Some(true);
-        match (message.get("id").and_then(Value::as_str), &mut self.listed) {
-            (Some(Self::MODELS), None) => {
-                if !succeeded {
-                    return Listing::Failed(
-                        ModelListing::text(message, "error").unwrap_or_else(|| "refused".into()),
-                    );
-                }
-                let Some(entries) = message["data"].get("models").and_then(Value::as_array) else {
+        match &mut self.listed {
+            None => {
+                let data = match PiRpc::answer_to(message, Self::MODELS) {
+                    ListingAnswer::NotMine => return Listing::waiting(),
+                    ListingAnswer::Refused(refusal) => {
+                        return Listing::Failed(ListingAnswer::reason(refusal));
+                    }
+                    ListingAnswer::Answered(data) => data,
+                };
+                let Some(entries) = data.get("models").and_then(Value::as_array) else {
                     return Listing::Failed("Pi listed no models".into());
                 };
                 self.listed = Some(entries.iter().filter_map(Self::model).collect());
@@ -857,12 +870,16 @@ impl PiModels {
                     &json!({ "id": Self::STATE, "type": "get_state" }),
                 )])
             }
-            (Some(Self::STATE), Some(listed)) => {
+            Some(listed) => {
+                let state = match PiRpc::answer_to(message, Self::STATE) {
+                    ListingAnswer::NotMine => return Listing::waiting(),
+                    ListingAnswer::Answered(state) => Some(state),
+                    // Without a readable state, nothing is marked.
+                    ListingAnswer::Refused(_) => None,
+                };
                 let mut models = std::mem::take(listed);
-                // Without a readable state, nothing is marked.
-                let state = &message["data"];
-                let current = Self::model(&state["model"]).filter(|_| succeeded);
-                if let Some(current) = current
+                if let Some(state) = state
+                    && let Some(current) = Self::model(&state["model"])
                     && let Some(model) = models.iter_mut().find(|model| model.id == current.id)
                 {
                     model.choice = DefaultChoice::Default;
@@ -872,7 +889,6 @@ impl PiModels {
                 }
                 Listing::Listed(models)
             }
-            (Some(_) | None, Some(_) | None) => Listing::waiting(),
         }
     }
 

@@ -20,6 +20,7 @@ ren-git.workspace = true
 ren-harness.workspace = true
 ren-protocol.workspace = true
 ren-recorder.workspace = true
+ren-supervisor.workspace = true
 reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true

@@ -45,11 +45,13 @@ use ren_recorder::{
     routing::UpstreamId,
     time::Clock,
 };
+use serde_with::{DeserializeFromStr, SerializeDisplay};
 use std::{
     collections::{HashMap, VecDeque},
     sync::{Arc, Mutex, PoisonError},
     time::Duration,
 };
+use strum::{Display, EnumString, IntoStaticStr, VariantArray};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore, mpsc};
 use tokio_tungstenite::{
     WebSocketStream,
@@ -58,8 +60,9 @@ use tokio_tungstenite::{
 use tokio_util::{sync::CancellationToken, task::task_tracker::TaskTrackerToken};
 
 /// Whether Codex Responses WebSocket handshakes are relayed.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "snake_case")]
+#[derive(Display, EnumString, IntoStaticStr, VariantArray)]
+#[strum(serialize_all = "snake_case")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SerializeDisplay, DeserializeFromStr)]
 pub enum WebSocketMode {
     Relay,
     /// Answer `426 Upgrade Required`; Codex uses HTTP/SSE for the session.

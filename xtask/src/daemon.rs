@@ -8,9 +8,11 @@ use crate::{
     progress::Progress,
 };
 use ren_gateway::ControlRefusal;
+use ren_gateway::operator::PauseState;
 use ren_harness::Harness;
 use ren_protocol::label::Stored;
 use ren_recorder::id::RunId;
+use ren_supervisor::RunPhase;
 use serde::Deserialize;
 use serde_json::Value;
 use std::fmt;
@@ -27,32 +29,14 @@ struct OperatorState {
     /// The operator state's revision: each pause or resume makes a new one.
     #[serde(default)]
     revision: Option<u64>,
-    pause: PauseState,
+    pause: PauseRecord,
 }
 
 #[derive(Deserialize)]
-struct PauseState {
-    state: Admission,
-}
-
-/// Whether the daemon admits new calls. Text this task does not know is kept,
-/// and treated as an operator's choice to leave alone.
-#[derive(Debug, PartialEq, Eq, Deserialize)]
-#[serde(from = "String")]
-pub enum Admission {
-    Running,
-    Paused,
-    Other(String),
-}
-
-impl From<String> for Admission {
-    fn from(text: String) -> Self {
-        match text.as_str() {
-            "running" => Self::Running,
-            "paused" => Self::Paused,
-            _ => Self::Other(text),
-        }
-    }
+struct PauseRecord {
+    /// Whether the daemon admits new calls. Text this task does not know is
+    /// kept, and treated as an operator's choice to leave alone.
+    state: Stored<PauseState>,
 }
 
 /// What an upgrade does next, from the daemon's state.
@@ -101,12 +85,10 @@ impl ControlState {
     /// The next step, from this state and the daemon's `runs`.
     pub fn quiesce(&self, runs: &Runs, policy: RunPolicy) -> Quiesce {
         let busy = self.busy(runs, policy);
-        match (self.admission(), busy.is_quiet()) {
-            (Admission::Running, true) => Quiesce::Pause,
-            (Admission::Paused | Admission::Other(_), true) => Quiesce::LeaveAlone,
-            (Admission::Running | Admission::Paused | Admission::Other(_), false) => {
-                Quiesce::Wait(busy)
-            }
+        match (self.admission().known(), busy.is_quiet()) {
+            (Some(PauseState::Running), true) => Quiesce::Pause,
+            (Some(PauseState::Paused) | None, true) => Quiesce::LeaveAlone,
+            (Some(PauseState::Running | PauseState::Paused) | None, false) => Quiesce::Wait(busy),
         }
     }
 
@@ -131,7 +113,7 @@ impl ControlState {
         self.running.len()
     }
 
-    pub fn admission(&self) -> &Admission {
+    pub fn admission(&self) -> &Stored<PauseState> {
         &self.state.pause.state
     }
 
@@ -144,7 +126,9 @@ impl ControlState {
     /// revision its pause made: nothing has changed admission since, so the
     /// pause is that install's, stranded, not an operator's.
     pub fn paused_by(&self, mark: Option<u64>) -> bool {
-        matches!(self.admission(), Admission::Paused) && mark.is_some() && self.revision() == mark
+        self.admission().known() == Some(PauseState::Paused)
+            && mark.is_some()
+            && self.revision() == mark
     }
 }
 
@@ -250,35 +234,11 @@ pub struct LiveRun {
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 struct LiveState {
-    phase: Phase,
+    /// Where the run is; unknown text is kept.
+    phase: Stored<RunPhase>,
     /// Approvals waiting for the operator, while working.
     #[serde(default)]
     approvals: Vec<Value>,
-}
-
-/// Where a run is in its life (`state.phase`); unknown text is kept.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
-#[serde(from = "String")]
-pub enum Phase {
-    Starting,
-    Idle,
-    Working,
-    Stopping,
-    Ended,
-    Other(String),
-}
-
-impl From<String> for Phase {
-    fn from(text: String) -> Self {
-        match text.as_str() {
-            "starting" => Self::Starting,
-            "idle" => Self::Idle,
-            "working" => Self::Working,
-            "stopping" => Self::Stopping,
-            "ended" => Self::Ended,
-            _ => Self::Other(text),
-        }
-    }
 }
 
 /// What restarting the daemon does to a run, by its phase.
@@ -294,13 +254,15 @@ enum Restart {
     Spares,
 }
 
-impl Phase {
+impl LiveState {
     /// A phase this task does not know is treated as mid-way, never as idle.
     fn restart(&self) -> Restart {
-        match self {
-            Self::Starting | Self::Working | Self::Stopping | Self::Other(_) => Restart::CutsOff,
-            Self::Idle => Restart::Ends,
-            Self::Ended => Restart::Spares,
+        match self.phase.known() {
+            Some(RunPhase::Starting | RunPhase::Working | RunPhase::Stopping) | None => {
+                Restart::CutsOff
+            }
+            Some(RunPhase::Idle) => Restart::Ends,
+            Some(RunPhase::Ended) => Restart::Spares,
         }
     }
 }
@@ -323,7 +285,7 @@ impl Runs {
             RunPolicy::Wait => self
                 .0
                 .iter()
-                .filter(|run| run.state.phase.restart() == Restart::CutsOff)
+                .filter(|run| run.state.restart() == Restart::CutsOff)
                 .cloned()
                 .collect(),
         }
@@ -340,7 +302,7 @@ impl Runs {
         Ending(
             self.0
                 .iter()
-                .filter(|run| run.state.phase.restart() != Restart::Spares)
+                .filter(|run| run.state.restart() != Restart::Spares)
                 .cloned()
                 .collect(),
         )
@@ -411,15 +373,23 @@ impl LiveRun {
 impl fmt::Display for LiveRun {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{} run {} in {}: ", self.harness, self.run, self.workdir)?;
-        match (&self.state.phase, self.state.approvals.len()) {
-            (Phase::Working, 0) => f.write_str("working"),
-            (Phase::Working, 1) => f.write_str("working, waiting for an approval"),
-            (Phase::Working, n) => write!(f, "working, waiting for {n} approvals"),
-            (Phase::Starting, _) => f.write_str("starting"),
-            (Phase::Idle, _) => f.write_str("idle"),
-            (Phase::Stopping, _) => f.write_str("stopping"),
-            (Phase::Ended, _) => f.write_str("ended"),
-            (Phase::Other(text), _) => f.write_str(text),
+        match (self.state.phase.known(), self.state.approvals.len()) {
+            (Some(RunPhase::Working), 1) => f.write_str("working, waiting for an approval"),
+            (Some(RunPhase::Working), n) if n > 1 => {
+                write!(f, "working, waiting for {n} approvals")
+            }
+            // The phase's label (or the unknown text) is what is printed.
+            (
+                Some(
+                    RunPhase::Working
+                    | RunPhase::Starting
+                    | RunPhase::Idle
+                    | RunPhase::Stopping
+                    | RunPhase::Ended,
+                )
+                | None,
+                _,
+            ) => write!(f, "{}", self.state.phase),
         }
     }
 }
@@ -492,21 +462,22 @@ mod tests {
         )
         .unwrap();
         assert_eq!(idle.running(), 0);
-        assert_eq!(idle.admission(), &Admission::Running);
+        assert_eq!(idle.admission(), &Stored::Known(PauseState::Running));
 
         let busy = ControlState::parse(
             r#"{"api_version":1,"state":{"revision":3,"pause":{"state":"paused","retry_after":30},"blocked_sessions":{}},"running":[{"call":"0193e0f1-0000-7000-8000-000000000001","transport":"http"},{"call":"0193e0f1-0000-7000-8000-000000000002","transport":"websocket"}]}"#,
         )
         .unwrap();
         assert_eq!(busy.running(), 2);
-        assert_eq!(busy.admission(), &Admission::Paused);
+        assert_eq!(busy.admission(), &Stored::Known(PauseState::Paused));
     }
 
     #[test]
     fn keeps_an_unknown_admission() {
         let state = ControlState::parse(r#"{"state":{"pause":{"state":"draining"}},"running":[]}"#)
             .unwrap();
-        assert_eq!(state.admission(), &Admission::Other("draining".to_owned()));
+        assert!(state.admission().known().is_none());
+        assert_eq!(state.admission().to_string(), "draining");
     }
 
     #[test]

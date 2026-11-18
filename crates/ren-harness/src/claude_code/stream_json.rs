@@ -25,7 +25,7 @@ use crate::{
         RequestKind, Retry, TurnEnd, Unreadable,
     },
     lines::{Framed, Line},
-    models::{DefaultChoice, Listing, Model, ModelId, ModelListing},
+    models::{DefaultChoice, Listing, ListingAnswer, Model, ModelId, ModelListing},
     prompt::Prompt,
     settings::{ApprovalPolicy, Midway, RunSettings, Setting, SettingsBook},
 };
@@ -1045,6 +1045,28 @@ pub struct ClaudeModels;
 #[derive(Debug)]
 pub struct ClaudeCommands;
 
+impl ClaudeStreamJson {
+    /// What `message` says to the control request `request`: a listing's
+    /// one question.
+    pub(crate) fn answer_to<'a>(message: &'a Value, request: &str) -> ListingAnswer<'a> {
+        let kind = message
+            .get("type")
+            .and_then(Value::as_str)
+            .map(Stored::<ClaudeMessageType>::from_label);
+        let response = &message["response"];
+        if kind != Some(Stored::Known(ClaudeMessageType::ControlResponse))
+            || response.get("request_id").and_then(Value::as_str) != Some(request)
+        {
+            return ListingAnswer::NotMine;
+        }
+        if response.get("subtype").and_then(Value::as_str) == Some("success") {
+            ListingAnswer::Answered(&response["response"])
+        } else {
+            ListingAnswer::Refused(response)
+        }
+    }
+}
+
 impl ClaudeCommands {
     const REQUEST: &'static str = "ren-commands";
 
@@ -1059,18 +1081,14 @@ impl ClaudeCommands {
     }
 
     pub(crate) fn receive(&mut self, message: &Value) -> Listing<Vec<ClientCommand>> {
-        let response = &message["response"];
-        let answers = message.get("type").and_then(Value::as_str) == Some("control_response")
-            && response.get("request_id").and_then(Value::as_str) == Some(Self::REQUEST);
-        if !answers {
-            return Listing::waiting();
-        }
-        if response.get("subtype").and_then(Value::as_str) != Some("success") {
-            return Listing::Failed(
-                ModelListing::text(response, "error").unwrap_or_else(|| "refused".into()),
-            );
-        }
-        Listing::Listed(ClaudeStreamJson::listed(&response["response"]))
+        let answer = match ClaudeStreamJson::answer_to(message, Self::REQUEST) {
+            ListingAnswer::NotMine => return Listing::waiting(),
+            ListingAnswer::Refused(refusal) => {
+                return Listing::Failed(ListingAnswer::reason(refusal));
+            }
+            ListingAnswer::Answered(answer) => answer,
+        };
+        Listing::Listed(ClaudeStreamJson::listed(answer))
     }
 }
 
@@ -1097,18 +1115,14 @@ impl ClaudeModels {
     }
 
     pub(crate) fn receive(&mut self, message: &Value) -> Listing {
-        let response = &message["response"];
-        let answers = message.get("type").and_then(Value::as_str) == Some("control_response")
-            && response.get("request_id").and_then(Value::as_str) == Some(Self::REQUEST);
-        if !answers {
-            return Listing::waiting();
-        }
-        if response.get("subtype").and_then(Value::as_str) != Some("success") {
-            return Listing::Failed(
-                ModelListing::text(response, "error").unwrap_or_else(|| "refused".into()),
-            );
-        }
-        let Some(entries) = response["response"].get("models").and_then(Value::as_array) else {
+        let answer = match ClaudeStreamJson::answer_to(message, Self::REQUEST) {
+            ListingAnswer::NotMine => return Listing::waiting(),
+            ListingAnswer::Refused(refusal) => {
+                return Listing::Failed(ListingAnswer::reason(refusal));
+            }
+            ListingAnswer::Answered(answer) => answer,
+        };
+        let Some(entries) = answer.get("models").and_then(Value::as_array) else {
             return Listing::Failed("Claude Code listed no models".into());
         };
         // The "default" entry stands for no choice; the first entry it

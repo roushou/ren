@@ -8,6 +8,8 @@
 //! the client, is never retried.
 
 use crate::attempt::SendFailure;
+use serde_with::{DeserializeFromStr, SerializeDisplay};
+use strum::{Display, EnumString, IntoStaticStr, VariantArray};
 
 /// What happened on the wire for one attempt.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -55,8 +57,10 @@ pub enum RetryDecision {
     Stop(StopReason),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
-#[serde(rename_all = "snake_case")]
+/// Why the call keeps an attempt's outcome.
+#[derive(Display, EnumString, IntoStaticStr, VariantArray)]
+#[strum(serialize_all = "snake_case")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SerializeDisplay, DeserializeFromStr)]
 pub enum StopReason {
     /// A response the policy does not fall over on: it goes to the client.
     PassThrough,

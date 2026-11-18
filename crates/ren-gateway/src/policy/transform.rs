@@ -8,6 +8,8 @@
 use http::{HeaderMap, HeaderName, HeaderValue};
 use ren_protocol::route::Endpoint;
 use serde_json::Value;
+use serde_with::{DeserializeFromStr, SerializeDisplay};
+use strum::{Display, EnumString, IntoStaticStr, VariantArray};
 
 /// One change to a request, parsed once when the configuration loads.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -148,8 +150,9 @@ pub enum StepError {
 }
 
 /// What happened when a step ran.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
-#[serde(rename_all = "snake_case")]
+#[derive(Display, EnumString, IntoStaticStr, VariantArray)]
+#[strum(serialize_all = "snake_case")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SerializeDisplay, DeserializeFromStr)]
 pub enum StepOutcome {
     Applied,
     /// The request already had the step's result.
@@ -162,13 +165,24 @@ pub enum StepOutcome {
     Encoded,
 }
 
+/// What a step does: the `op` it is configured and recorded with.
+#[derive(Display, EnumString, IntoStaticStr, VariantArray)]
+#[strum(serialize_all = "snake_case")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SerializeDisplay, DeserializeFromStr)]
+pub enum StepOp {
+    SetHeader,
+    RemoveHeader,
+    JsonSet,
+    JsonRemove,
+}
+
 /// One step's record: which rule, which step, and what happened. Header
 /// values are never recorded.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct StepRecord {
     pub rule: String,
     pub step: usize,
-    pub op: &'static str,
+    pub op: StepOp,
     /// The header name or JSON Pointer the step targets.
     pub target: String,
     pub outcome: StepOutcome,
@@ -245,12 +259,12 @@ impl TransformStep {
         }
     }
 
-    fn op(&self) -> &'static str {
+    pub fn op(&self) -> StepOp {
         match self {
-            Self::SetHeader { .. } => "set_header",
-            Self::RemoveHeader { .. } => "remove_header",
-            Self::JsonSet { .. } => "json_set",
-            Self::JsonRemove { .. } => "json_remove",
+            Self::SetHeader { .. } => StepOp::SetHeader,
+            Self::RemoveHeader { .. } => StepOp::RemoveHeader,
+            Self::JsonSet { .. } => StepOp::JsonSet,
+            Self::JsonRemove { .. } => StepOp::JsonRemove,
         }
     }
 

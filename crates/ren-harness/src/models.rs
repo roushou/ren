@@ -97,6 +97,26 @@ impl<T> Listing<T> {
     }
 }
 
+/// What a listing process's client said to the one request a listing waits
+/// on, read by each client's codec (`ClaudeStreamJson::answer_to`,
+/// `PiRpc::answer_to`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ListingAnswer<'a> {
+    /// Another message, or an answer to another request.
+    NotMine,
+    /// The request succeeded, with this payload.
+    Answered(&'a serde_json::Value),
+    /// The client refused the request.
+    Refused(&'a serde_json::Value),
+}
+
+impl ListingAnswer<'_> {
+    /// Why the client refused: its `error`, or "refused" when it gave none.
+    pub(crate) fn reason(refusal: &serde_json::Value) -> String {
+        ModelListing::text(refusal, "error").unwrap_or_else(|| "refused".into())
+    }
+}
+
 /// One listing process's codec, chosen by its harness.
 #[derive(Debug)]
 pub enum ModelListing {
@@ -283,6 +303,45 @@ mod tests {
             ),
             Listing::Failed("not signed in".into())
         );
+    }
+
+    #[test]
+    fn a_listing_waits_past_other_answers_and_fails_on_its_own_refusal() {
+        let (mut listing, first) = ModelListing::open(Harness::ClaudeCode, "0.1.0", "/work");
+        let id = sent(&first[0])["request_id"].clone();
+        assert_eq!(
+            feed(
+                &mut listing,
+                json!({ "type": "control_response", "response": {
+                    "subtype": "error", "request_id": "someone-else" } })
+            ),
+            Listing::Waiting(Vec::new())
+        );
+        assert_eq!(
+            feed(
+                &mut listing,
+                json!({ "type": "control_response", "response": {
+                    "subtype": "error", "request_id": id } })
+            ),
+            Listing::Failed("refused".into())
+        );
+
+        // Pi: a refused state still lists the models, none marked.
+        let (mut listing, _) = ModelListing::open(Harness::Pi, "0.1.0", "/work");
+        let state = feed(
+            &mut listing,
+            json!({ "id": "ren-models", "type": "response", "success": true,
+                    "data": { "models": [{ "provider": "acme", "id": "m1", "name": "M1" }] } }),
+        );
+        assert!(matches!(state, Listing::Waiting(lines) if lines.len() == 1));
+        let Listing::Listed(models) = feed(
+            &mut listing,
+            json!({ "id": "ren-state", "type": "response", "success": false, "error": "busy" }),
+        ) else {
+            panic!("not listed");
+        };
+        assert_eq!(models.len(), 1);
+        assert_eq!(models[0].choice, DefaultChoice::Other);
     }
 
     #[test]
