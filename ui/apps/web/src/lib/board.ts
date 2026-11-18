@@ -15,7 +15,7 @@ import type {
   TurnActivity,
   TurnId,
 } from './api.ts';
-import { clock, HARNESSES, providerName, RecordingId } from './api.ts';
+import { clock, harnesses, providerName, RecordingId } from './api.ts';
 import { findingLine, harnessLabel, resultBadge } from './activity.ts';
 import { assertNever, unrecognised, type Stored } from './decode.ts';
 import { callStatus, recordingTone, span, statusBadge, type Tone } from './display.ts';
@@ -1246,7 +1246,7 @@ export class Band {
   static label(by: BandBy, key: string): string {
     switch (by) {
       case 'client':
-        return (HARNESSES as readonly string[]).includes(key)
+        return (harnesses as readonly string[]).includes(key)
           ? harnessLabel(key as Harness)
           : 'Unknown client';
       case 'provider':
@@ -1280,7 +1280,7 @@ export class Band {
       (call.recording ? recordings.get(call.recording)?.source : undefined);
     if (source === undefined) return null;
     const harness = Board.harness(source);
-    return harness !== null && (HARNESSES as readonly string[]).includes(harness)
+    return harness !== null && (harnesses as readonly string[]).includes(harness)
       ? (harness as Harness)
       : null;
   }

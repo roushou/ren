@@ -4,7 +4,7 @@
 // standing, the change the operator stages before applying it, and how the
 // table groups packages. No browser APIs beyond the `fetch` handed in;
 // tested in tests/tools.test.ts.
-import { API_VERSION, HARNESSES, versioned, type Harness } from './api.ts';
+import { API_VERSION, harnesses, versioned, type Harness } from './api.ts';
 import {
   ShapeError,
   array,
@@ -145,7 +145,7 @@ const listing: Decoder<ToolListing> = versioned(
             unread: nullable(string),
           }),
         ),
-        needed_by: array(label(HARNESSES)),
+        needed_by: array(label(harnesses)),
       }),
     ),
     generations: array(

@@ -2,7 +2,7 @@
   import Toolbar from '#lib/Toolbar.svelte';
   import { page as location } from '$app/state';
   import { createArrival } from '#lib/snapshot.svelte.ts';
-  import { num, clock, parseSearchField, SEARCH_FIELDS, type SearchField } from '#lib/api.ts';
+  import { num, clock, parseSearchField, searchFields, type SearchField } from '#lib/api.ts';
   import { date, recordingTone } from '#lib/display.ts';
   import { searchFieldLabel, searchHitHref, snippetParts } from '#lib/activity.ts';
   import Icon from '#lib/Icon.svelte';
@@ -31,7 +31,7 @@
   );
   const fieldOptions: SegmentedOption<SearchField | ''>[] = [
     { value: '', label: 'Everything' },
-    ...SEARCH_FIELDS.map((field) => ({ value: field, label: searchFieldLabel(field) })),
+    ...searchFields.map((field) => ({ value: field, label: searchFieldLabel(field) })),
   ];
   const fieldHref = (field: SearchField | null) => {
     const query = new URLSearchParams();
