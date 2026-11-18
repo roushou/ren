@@ -6,6 +6,7 @@ use crate::activity::{
     ActivityBudget, CallActivity, Excerpt, ReadCall, TurnActivity, TurnHead, TurnSummary,
     report::RecordingReport,
 };
+use crate::millis::SqlMillis;
 use crate::search::ExposureQuery;
 use crate::{
     Store, StoreError,
@@ -89,7 +90,7 @@ impl Reader {
         sql.push(" WHERE 1 = 1");
         if let Some(cursor) = query.after {
             sql.push(" AND (c.started_at, c.id) < (")
-                .push_bind(i64::try_from(cursor.started_at.as_millis()).unwrap_or(i64::MAX))
+                .push_bind(SqlMillis::at(cursor.started_at))
                 .push(", ")
                 .push_bind(cursor.call.to_string())
                 .push(")");
@@ -109,11 +110,8 @@ impl Reader {
         after: Option<Cursor>,
     ) -> Result<CallPage, StoreError> {
         self.require_recording(recording).await?;
-        let (time, call) = after.map_or((-1, String::new()), |cursor| {
-            (
-                i64::try_from(cursor.started_at.as_millis()).unwrap_or(i64::MAX),
-                cursor.call.to_string(),
-            )
+        let (time, call) = after.map_or((SqlMillis::BEFORE_EPOCH, String::new()), |cursor| {
+            (SqlMillis::at(cursor.started_at), cursor.call.to_string())
         });
         let rows = sqlx::query(AssertSqlSafe(format!(
             "{} WHERE c.recording = ? AND (c.started_at, c.id) > (?, ?) ORDER BY c.started_at, c.id LIMIT ?",
@@ -1245,11 +1243,11 @@ impl TimeRange {
     pub(crate) fn push_started(self, sql: &mut QueryBuilder<Sqlite>) {
         if let Some(from) = self.from() {
             sql.push(" AND c.started_at >= ")
-                .push_bind(i64::try_from(from.as_millis()).unwrap_or(i64::MAX));
+                .push_bind(SqlMillis::at(from));
         }
         if let Some(until) = self.until() {
             sql.push(" AND c.started_at <= ")
-                .push_bind(i64::try_from(until.as_millis()).unwrap_or(i64::MAX));
+                .push_bind(SqlMillis::at(until));
         }
     }
 }

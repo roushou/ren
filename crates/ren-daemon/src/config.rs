@@ -2,9 +2,9 @@
 
 use ren_depot::{CatalogEntry, CatalogError, Depot};
 use ren_gateway::{
-    BufferOptions, ConfiguredEntry, ControlOptions, EntryIngress, GatewayConfig, InstanceOptions,
-    NativeUrls, OperatorKey, TransportTimeouts, UpstreamAuth, UpstreamEntry, UpstreamTable,
-    UpstreamUrl, WebSocketOptions,
+    BufferOptions, ConcurrencyLimit, ConfiguredEntry, ControlOptions, EntryIngress, GatewayConfig,
+    InstanceOptions, NativeUrls, OperatorKey, TimeoutSecs, TransportTimeouts, UpstreamAuth,
+    UpstreamEntry, UpstreamTable, UpstreamUrl, WebSocketOptions,
     policy::{EntryUsers, Policy, PolicyConfig},
     user::{UserConfig, Users},
 };
@@ -40,16 +40,10 @@ pub enum ConfigError {
     Version,
     #[error("listen must be loopback; use Tailscale Serve for private remote access")]
     PublicListener,
-    #[error("max_concurrent_requests and max_concurrent_unnamed must be between 1 and 1024")]
-    Concurrency,
-    #[error("timeouts must be between 1 and 3600 seconds")]
-    Timeout,
     #[error(transparent)]
     Capture(#[from] ren_recorder::CaptureOptionsError),
     #[error(transparent)]
     Retention(#[from] ren_recorder::retention::RetentionError),
-    #[error(transparent)]
-    WebSocket(#[from] ren_gateway::WebSocketOptionsError),
     #[error(transparent)]
     Buffer(#[from] ren_gateway::BufferOptionsError),
     #[error(transparent)]
@@ -110,14 +104,14 @@ pub struct Config {
     pub codex_base_url: String,
     pub openai_base_url: String,
     pub deepseek_base_url: String,
-    pub max_concurrent_requests: usize,
+    pub max_concurrent_requests: ConcurrencyLimit,
     /// Calls callers that are not named users may have running at once,
     /// together.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub max_concurrent_unnamed: Option<u32>,
-    pub connect_timeout_seconds: u64,
-    pub response_header_timeout_seconds: u64,
-    pub stream_idle_timeout_seconds: u64,
+    pub max_concurrent_unnamed: Option<ConcurrencyLimit>,
+    pub connect_timeout_seconds: TimeoutSecs,
+    pub response_header_timeout_seconds: TimeoutSecs,
+    pub stream_idle_timeout_seconds: TimeoutSecs,
     pub capture: CaptureOptions,
     pub retention: RetentionPolicy,
     pub websocket: WebSocketOptions,
@@ -289,11 +283,11 @@ impl Default for Config {
             codex_base_url: "https://chatgpt.com/backend-api/codex".into(),
             openai_base_url: "https://api.openai.com".into(),
             deepseek_base_url: "https://api.deepseek.com/anthropic".into(),
-            max_concurrent_requests: 32,
+            max_concurrent_requests: ConcurrencyLimit::saturating(32),
             max_concurrent_unnamed: None,
-            connect_timeout_seconds: 10,
-            response_header_timeout_seconds: 120,
-            stream_idle_timeout_seconds: 120,
+            connect_timeout_seconds: TimeoutSecs::saturating(10),
+            response_header_timeout_seconds: TimeoutSecs::saturating(120),
+            stream_idle_timeout_seconds: TimeoutSecs::saturating(120),
             capture: CaptureOptions::default(),
             retention: RetentionPolicy::default(),
             websocket: WebSocketOptions::default(),
@@ -389,9 +383,9 @@ impl Config {
             instance: self.instance,
             max_concurrent_requests: self.max_concurrent_requests,
             max_concurrent_unnamed: self.max_concurrent_unnamed,
-            connect_timeout: Duration::from_secs(self.connect_timeout_seconds),
-            response_header_timeout: Duration::from_secs(self.response_header_timeout_seconds),
-            stream_idle_timeout: Duration::from_secs(self.stream_idle_timeout_seconds),
+            connect_timeout: self.connect_timeout_seconds.duration(),
+            response_header_timeout: self.response_header_timeout_seconds.duration(),
+            stream_idle_timeout: self.stream_idle_timeout_seconds.duration(),
             capture: self.capture.clone(),
             retention: self.retention.clone(),
             websocket: self.websocket,
@@ -450,26 +444,8 @@ impl Config {
         if !self.listen.ip().is_loopback() {
             return Err(ConfigError::PublicListener);
         }
-        if !(1..=1024).contains(&self.max_concurrent_requests)
-            || self
-                .max_concurrent_unnamed
-                .is_some_and(|limit| !(1..=1024).contains(&limit))
-        {
-            return Err(ConfigError::Concurrency);
-        }
-        if [
-            self.connect_timeout_seconds,
-            self.response_header_timeout_seconds,
-            self.stream_idle_timeout_seconds,
-        ]
-        .iter()
-        .any(|value| !(1..=3600).contains(value))
-        {
-            return Err(ConfigError::Timeout);
-        }
         self.capture.validate()?;
         self.retention.validate()?;
-        self.websocket.validate()?;
         self.buffer.validate()?;
         self.runs.validate()?;
         self.tools.depot()?;
@@ -504,8 +480,8 @@ pub struct RuntimeConfig {
     policy: Policy,
     users: Users,
     instance: InstanceOptions,
-    max_concurrent_requests: usize,
-    max_concurrent_unnamed: Option<u32>,
+    max_concurrent_requests: ConcurrencyLimit,
+    max_concurrent_unnamed: Option<ConcurrencyLimit>,
     connect_timeout: Duration,
     response_header_timeout: Duration,
     stream_idle_timeout: Duration,
@@ -583,9 +559,10 @@ impl RuntimeConfig {
     /// returned.
     pub fn recorder_calls(&self) -> usize {
         self.max_concurrent_requests
+            .get()
             .saturating_mul(4)
             .saturating_mul(ren_gateway::policy::Candidates::MAX)
-            .saturating_add(self.websocket.max_channels.saturating_mul(2))
+            .saturating_add(self.websocket.max_channels.get().saturating_mul(2))
     }
     pub fn transport(&self) -> TransportTimeouts {
         TransportTimeouts {
@@ -594,7 +571,7 @@ impl RuntimeConfig {
         }
     }
     pub fn max_concurrent_requests(&self) -> usize {
-        self.max_concurrent_requests
+        self.max_concurrent_requests.get()
     }
     pub fn connect_timeout(&self) -> Duration {
         self.connect_timeout
@@ -755,13 +732,41 @@ mod tests {
     }
 
     #[test]
+    fn limits_and_timeouts_out_of_range_are_refused_as_the_file_loads() {
+        for (line, expected) in [
+            ("max_concurrent_requests = 0", "between 1 and 1024"),
+            ("max_concurrent_unnamed = 1025", "between 1 and 1024"),
+            ("connect_timeout_seconds = 0", "between 1 and 3600"),
+            ("stream_idle_timeout_seconds = 3601", "between 1 and 3600"),
+            ("[buffer]\nidle_timeout_seconds = 0", "between 1 and 3600"),
+            ("[websocket]\nmax_channels = 0", "between 1 and 1024"),
+            (
+                "[[users]]\nid = \"a\"\ntailscale_logins = [\"a@b\"]\nmax_concurrent = 2000",
+                "between 1 and 1024",
+            ),
+        ] {
+            let error = toml::from_str::<Config>(line).err().unwrap().to_string();
+            assert!(error.contains(expected), "{line}: {error}");
+        }
+        let config = toml::from_str::<Config>(
+            "max_concurrent_requests = 1024\nconnect_timeout_seconds = 3600",
+        )
+        .unwrap();
+        assert_eq!(config.max_concurrent_requests.get(), 1024);
+        assert_eq!(
+            config.connect_timeout_seconds.duration(),
+            Duration::from_secs(3600)
+        );
+    }
+
+    #[test]
     fn runtime_snapshot_is_independent_of_later_document_edits() {
         let mut config = Config::default();
         let revision = config.revision().unwrap();
         let runtime = config.resolve().unwrap();
         config.listen = "0.0.0.0:1".parse().unwrap();
-        config.max_concurrent_requests = 0;
-        config.connect_timeout_seconds = 0;
+        config.max_concurrent_requests = ConcurrencyLimit::saturating(2);
+        config.connect_timeout_seconds = TimeoutSecs::saturating(1);
         config.capture.queue_bytes = 0;
         config.retention.max_calls = 0;
         config.codex_base_url = "http://example.com".into();

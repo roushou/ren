@@ -351,7 +351,7 @@ async fn a_user_at_its_limit_gets_429_until_a_call_ends() {
     let dir = tempfile::tempdir().unwrap();
     let tokens = tokens();
     let mut config = config(&mock, &tokens);
-    config.users[1].max_concurrent = std::num::NonZeroU32::new(1);
+    config.users[1].max_concurrent = Some(ren_gateway::ConcurrencyLimit::saturating(1));
     let gateway = TestGateway::start(&config, dir.path()).await;
     let bob: &[(&str, &str)] = &[(UserToken::HEADER, tokens.bob.expose())];
 
@@ -406,8 +406,8 @@ async fn a_callers_own_limit_is_checked_before_the_gateways() {
     let dir = tempfile::tempdir().unwrap();
     let tokens = tokens();
     let mut config = config(&mock, &tokens);
-    config.max_concurrent_requests = 1;
-    config.users[1].max_concurrent = std::num::NonZeroU32::new(1);
+    config.max_concurrent_requests = ren_gateway::ConcurrencyLimit::saturating(1);
+    config.users[1].max_concurrent = Some(ren_gateway::ConcurrencyLimit::saturating(1));
     let gateway = TestGateway::start(&config, dir.path()).await;
     let bob: &[(&str, &str)] = &[(UserToken::HEADER, tokens.bob.expose())];
 

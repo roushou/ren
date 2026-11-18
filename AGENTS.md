@@ -336,7 +336,8 @@ dependencies under "Crates" below. Read the code for current module ownership.
   and exposure listings (`search`, `Reader::search` and `Reader::exposures`) over
   the digests the recorder derives for each finished call (`call_digests`,
   `call_exposures`, and `search_texts` with its FTS5 index, in `ren.sqlite3`;
-  `RecordSink::undigested` lists calls to derive again), and implements the recorder's `RecordSink`. It owns the versioned migrations for
+  `RecordSink::undigested` lists calls to derive again), and implements the recorder's `RecordSink`;
+  every time it binds goes through `SqlMillis` (`millis`). It owns the versioned migrations for
   `ren.sqlite3` (`crates/ren-store/migrations`); never edit one that has
   shipped. Every history read is a `ReadRequest` that `Reader::serve` answers
   (`read`), and `ReadRequest::decode` reads the API's body back as the same
@@ -433,7 +434,9 @@ dependencies under "Crates" below. Read the code for current module ownership.
   eligibility (`retry`), operator state (`operator`), the named users and
   how a request is matched to one (`user`: `Users::identify`, with
   `TokenDigest`, a user token's digest), each user's and the unnamed
-  callers' concurrency limits (`limits`), the `Controls` that hold
+  callers' concurrency limits (`limits`, with `ConcurrencyLimit`, 1 to
+  1024, which every configured limit is; `TimeoutSecs`, in `timeout`, is
+  every configured timeout, 1 to 3600 seconds), the `Controls` that hold
   it with the running-call registry (`control`), the `Build` and the
   instance's environment (`instance`) that `/health` reports (`build`), and
   pure call planning

@@ -23,6 +23,7 @@ use crate::{
     control::{Cancel, Controls, Registered},
     policy::{Admission, CallFacts, Policy, Rejection},
 };
+use crate::{limits::ConcurrencyLimit, timeout::TimeoutSecs};
 use axum::extract::ws::{self, WebSocket};
 use bytes::Bytes;
 use futures_util::{
@@ -73,43 +74,25 @@ pub struct WebSocketOptions {
     /// Upgraded sockets open at once. Handshakes beyond it get `426`. Calls on
     /// a socket count against the gateway's call limit, so an idle socket
     /// holds no call admission.
-    pub max_channels: usize,
+    pub max_channels: ConcurrencyLimit,
     /// A side of a channel silent this long is pinged; silent twice this
     /// long, the channel is closed as unresponsive.
-    pub keepalive_seconds: u64,
+    pub keepalive_seconds: TimeoutSecs,
 }
 
 impl Default for WebSocketOptions {
     fn default() -> Self {
         Self {
             mode: WebSocketMode::Relay,
-            max_channels: 16,
-            keepalive_seconds: 30,
+            max_channels: ConcurrencyLimit::saturating(16),
+            keepalive_seconds: TimeoutSecs::saturating(30),
         }
     }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-pub enum WebSocketOptionsError {
-    #[error("websocket.max_channels must be between 1 and 1024")]
-    MaxChannels,
-    #[error("websocket.keepalive_seconds must be between 1 and 3600")]
-    Keepalive,
 }
 
 impl WebSocketOptions {
-    pub fn validate(&self) -> Result<(), WebSocketOptionsError> {
-        if !(1..=1024).contains(&self.max_channels) {
-            return Err(WebSocketOptionsError::MaxChannels);
-        }
-        if !(1..=3600).contains(&self.keepalive_seconds) {
-            return Err(WebSocketOptionsError::Keepalive);
-        }
-        Ok(())
-    }
-
     pub fn keepalive(&self) -> Duration {
-        Duration::from_secs(self.keepalive_seconds)
+        self.keepalive_seconds.duration()
     }
 }
 
@@ -918,26 +901,24 @@ impl ChannelSetup {
 
 #[cfg(test)]
 mod tests {
-    use super::{WebSocketMode, WebSocketOptions, WebSocketOptionsError};
+    use super::{WebSocketMode, WebSocketOptions};
     use std::time::Duration;
 
     #[test]
-    fn options_parse_and_validate() {
+    fn options_parse_with_their_ranges() {
         let options: WebSocketOptions =
             toml::from_str("mode = \"refuse\"\nmax_channels = 2\nkeepalive_seconds = 45").unwrap();
         assert_eq!(options.mode, WebSocketMode::Refuse);
+        assert_eq!(options.max_channels.get(), 2);
         assert_eq!(options.keepalive(), Duration::from_secs(45));
-        assert!(options.validate().is_ok());
         assert!(toml::from_str::<WebSocketOptions>("enabled = true").is_err());
-        let none = WebSocketOptions {
-            max_channels: 0,
-            ..WebSocketOptions::default()
+        let refused = |toml: &str| {
+            toml::from_str::<WebSocketOptions>(toml)
+                .unwrap_err()
+                .to_string()
         };
-        assert_eq!(none.validate(), Err(WebSocketOptionsError::MaxChannels));
-        let never = WebSocketOptions {
-            keepalive_seconds: 0,
-            ..WebSocketOptions::default()
-        };
-        assert_eq!(never.validate(), Err(WebSocketOptionsError::Keepalive));
+        assert!(refused("max_channels = 0").contains("between 1 and 1024"));
+        assert!(refused("max_channels = 1025").contains("between 1 and 1024"));
+        assert!(refused("keepalive_seconds = 0").contains("between 1 and 3600"));
     }
 }

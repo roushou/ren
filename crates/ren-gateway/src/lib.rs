@@ -58,6 +58,7 @@ mod relay;
 pub mod reply;
 pub mod retry;
 mod route;
+mod timeout;
 pub mod tools;
 pub mod upstream;
 pub mod user;
@@ -69,14 +70,16 @@ pub use build::Build;
 pub use headers::HeaderPolicy;
 pub use ingress::{Ingress, IngressError, Shutdown, Stopped};
 pub use instance::{Environment, InstanceOptions};
+pub use limits::{ConcurrencyLimit, ConcurrencyOutOfRange};
 pub use route::{Accepts, BoundRoute, Forward, Route};
+pub use timeout::{TimeoutOutOfRange, TimeoutSecs};
 pub use upstream::{
     AuthOverride, ConfiguredEntry, Connected, EntryIngress, NativeUrls, OperatorKey,
     ReqwestUpstream, Socket, TransportTimeouts, Upstream, UpstreamAuth, UpstreamBody,
     UpstreamConfigError, UpstreamEntry, UpstreamHandshake, UpstreamRequest, UpstreamSocket,
     UpstreamTable, UpstreamTableError, UpstreamUrl,
 };
-pub use websocket::{WebSocketMode, WebSocketOptions, WebSocketOptionsError};
+pub use websocket::{WebSocketMode, WebSocketOptions};
 
 use crate::{
     api::{ApiState, ControlApi, ReadSources},
@@ -122,7 +125,7 @@ use tokio_util::sync::CancellationToken;
 #[derive(Debug, Clone)]
 pub struct GatewayConfig {
     /// Calls forwarded at once; more are rejected with `503`.
-    pub max_concurrent_requests: usize,
+    pub max_concurrent_requests: ConcurrencyLimit,
     /// Longest wait for a response head after dispatch, and on WebSocket for
     /// a call's first upstream message.
     pub response_header_timeout: Duration,
@@ -139,7 +142,7 @@ pub struct GatewayConfig {
     pub users: user::Users,
     /// Calls every caller that is not a named user may have running at
     /// once, together; unlimited beyond the global limit when absent.
-    pub max_concurrent_unnamed: Option<u32>,
+    pub max_concurrent_unnamed: Option<ConcurrencyLimit>,
 }
 
 /// Why the gateway answered instead of the provider.
@@ -389,8 +392,8 @@ impl<U: Upstream> Gateway<U> {
         shutdown: Shutdown,
     ) -> Self {
         Self {
-            admission: Arc::new(Semaphore::new(config.max_concurrent_requests)),
-            channels: Arc::new(Semaphore::new(config.websocket.max_channels)),
+            admission: config.max_concurrent_requests.semaphore(),
+            channels: config.websocket.max_channels.semaphore(),
             user_limits: UserLimits::new(&config.users, config.max_concurrent_unnamed),
             buffer: RequestBuffer::new(config.buffer),
             config,

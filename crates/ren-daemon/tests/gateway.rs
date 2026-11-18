@@ -466,7 +466,7 @@ async fn admission_is_held_until_the_stream_ends_and_shutdown_aborts_it_at_the_d
     .await;
     let dir = tempfile::tempdir().unwrap();
     let mut config = config(&upstream);
-    config.max_concurrent_requests = 1;
+    config.max_concurrent_requests = ren_gateway::ConcurrencyLimit::saturating(1);
     let gateway = TestGateway::start(&config, dir.path()).await;
     let url = format!("http://{}/codex/responses", gateway.address());
     let response = client().post(&url).body("{}").send().await.unwrap();
@@ -624,7 +624,7 @@ async fn response_header_deadline_is_bounded_and_does_not_leak_request_urls() {
         mock(Router::new().fallback(|| async { std::future::pending::<StatusCode>().await })).await;
     let dir = tempfile::tempdir().unwrap();
     let mut config = config(&upstream);
-    config.response_header_timeout_seconds = 1;
+    config.response_header_timeout_seconds = ren_gateway::TimeoutSecs::saturating(1);
     let gateway = TestGateway::start(&config, dir.path()).await;
     let response = timeout(
         Duration::from_secs(3),
@@ -1545,7 +1545,7 @@ async fn a_failed_send_on_a_reused_connection_is_acceptance_unknown() {
         codex_base_url: format!("http://{address}"),
         ..Config::default()
     };
-    config.response_header_timeout_seconds = 3;
+    config.response_header_timeout_seconds = ren_gateway::TimeoutSecs::saturating(3);
     let gateway = TestGateway::start(&config, dir.path()).await;
     let url = format!("{}/codex/models", gateway.base());
     let first = client().get(&url).send().await.unwrap();
@@ -1578,7 +1578,7 @@ async fn a_quiet_stream_times_out_as_idle_not_as_a_broken_stream() {
     .await;
     let dir = tempfile::tempdir().unwrap();
     let mut config = config(&upstream);
-    config.stream_idle_timeout_seconds = 1;
+    config.stream_idle_timeout_seconds = ren_gateway::TimeoutSecs::saturating(1);
     let gateway = TestGateway::start(&config, dir.path()).await;
     let response = client()
         .post(format!("{}/codex/responses", gateway.base()))

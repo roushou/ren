@@ -11,6 +11,7 @@
 //! any header, including `Tailscale-User-Login`; identity guards against
 //! other machines, not against this one.
 
+use crate::limits::ConcurrencyLimit;
 use http::HeaderMap;
 use ren_harness::endpoint::UserToken;
 use ren_recorder::{
@@ -18,7 +19,7 @@ use ren_recorder::{
     id::IdSource,
 };
 use serde_with::{DeserializeFromStr, SerializeDisplay};
-use std::{collections::HashMap, num::NonZeroU32};
+use std::collections::HashMap;
 
 /// The BLAKE3 digest of a user token, as configuration holds it: 64
 /// lowercase hexadecimal digits.
@@ -87,7 +88,7 @@ pub struct UserConfig {
     /// Calls the user may have running at once, at most 1024; unlimited
     /// beyond the gateway's own limit when omitted.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub max_concurrent: Option<NonZeroU32>,
+    pub max_concurrent: Option<ConcurrencyLimit>,
 }
 
 /// Why the configured users are not a valid set.
@@ -101,8 +102,6 @@ pub enum UsersError {
     DuplicateToken(UserId, UserId),
     #[error("user {0} has neither a Tailscale login nor a token, so no request can be it")]
     NoProof(UserId),
-    #[error("user {0}: max_concurrent must be between 1 and 1024")]
-    Concurrency(UserId),
 }
 
 /// Why a request's identity was refused.
@@ -144,12 +143,6 @@ impl Users {
             }
             if config.tailscale_logins.is_empty() && config.token_blake3.is_none() {
                 return Err(UsersError::NoProof(config.id.clone()));
-            }
-            if config
-                .max_concurrent
-                .is_some_and(|limit| limit.get() > 1024)
-            {
-                return Err(UsersError::Concurrency(config.id.clone()));
             }
             for login in &config.tailscale_logins {
                 if by_login.insert(login.clone(), config.id.clone()).is_some() {
