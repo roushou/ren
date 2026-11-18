@@ -13,8 +13,7 @@ use ren_recorder::capture::RunEnd;
 
 /// Where a run is in its life. Written for the API and never read back:
 /// a queued prompt is written as its record, without its images' bytes.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
-#[serde(tag = "phase", rename_all = "snake_case")]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RunState {
     /// The process started; the conversation is not open yet.
     Starting,
@@ -27,7 +26,6 @@ pub enum RunState {
         turn: Option<NativeTurnId>,
         approvals: Approvals,
         /// The operator's next prompt, sent as the turn ends.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
         queued: Option<Prompt>,
     },
     /// Ren asked the process to end and waits for it to exit.
@@ -41,12 +39,11 @@ pub enum RunState {
 
 /// Approvals waiting for the operator, in the order the agent asked, each
 /// with what it asks for.
-#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(transparent)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Approvals(Vec<Waiting>);
 
 /// One approval waiting for an answer.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Waiting {
     pub approval: ApprovalId,
     pub ask: ApprovalAsk,
@@ -92,8 +89,7 @@ impl Approvals {
 }
 
 /// Why Ren is stopping a run.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "snake_case")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StopCause {
     Operator,
     Shutdown,
@@ -614,7 +610,7 @@ mod tests {
     use ren_harness::drive::{
         ApprovalAsk, ApprovalId, Decision, DriveCommand, DriveEvent, RequestKind, TurnEnd,
     };
-    use ren_harness::prompt::{Prompt, RecordedPrompt};
+    use ren_harness::prompt::Prompt;
     use ren_protocol::native::{NativeThreadId, NativeTurnId};
     use ren_recorder::capture::RunEnd;
     use uuid::Uuid;
@@ -628,7 +624,7 @@ mod tests {
     }
 
     #[test]
-    fn a_run_state_is_written_with_its_phase_label() {
+    fn a_run_state_has_its_phase() {
         for (state, phase) in [
             (RunState::Starting, RunPhase::Starting),
             (RunState::Idle { thread: thread() }, RunPhase::Idle),
@@ -656,10 +652,6 @@ mod tests {
             ),
         ] {
             assert_eq!(state.phase(), phase);
-            assert_eq!(
-                serde_json::to_value(&state).unwrap()["phase"],
-                phase.to_string()
-            );
         }
     }
 
@@ -914,44 +906,6 @@ mod tests {
             exited.state,
             "a shutdown does not rewrite an end already recorded"
         );
-    }
-
-    /// Each state is written under its phase; a queued prompt as its
-    /// record, which reads back as the prompt's own.
-    #[test]
-    fn states_are_written_by_phase_with_a_queued_prompts_record() {
-        let states = [
-            (RunState::Starting, "starting"),
-            (RunState::Idle { thread: thread() }, "idle"),
-            (
-                RunState::Stopping {
-                    cause: StopCause::Shutdown,
-                },
-                "stopping",
-            ),
-            (
-                RunState::Ended {
-                    end: RunEnd::Exited,
-                    exit: Some(ProcessExit::Code(1)),
-                },
-                "ended",
-            ),
-        ];
-        for (state, phase) in states {
-            assert_eq!(serde_json::to_value(&state).unwrap()["phase"], phase);
-        }
-        let queued = Prompt::parse("then the docs".into()).unwrap();
-        let working = serde_json::to_value(RunState::Working {
-            thread: thread(),
-            turn: Some(turn()),
-            approvals: waiting_for(&["ap-1"]),
-            queued: Some(queued.clone()),
-        })
-        .unwrap();
-        assert_eq!(working["phase"], "working");
-        assert_eq!(working["queued"], "then the docs");
-        let record: RecordedPrompt = serde_json::from_value(working["queued"].clone()).unwrap();
-        assert_eq!(record, queued.record());
     }
 
     #[test]

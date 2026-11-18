@@ -11,17 +11,20 @@ use serde_with::{DeserializeFromStr, SerializeDisplay};
 use strum::{Display, EnumString, IntoStaticStr, VariantArray};
 
 pub mod control;
-mod live;
+pub mod health;
+pub mod live;
 mod params;
 pub mod preview;
+pub mod read;
 mod route;
+mod storage;
 
 pub(crate) use control::ControlApi;
 pub use control::{ControlOptions, ControlRefusal, ControlToken};
 pub use route::ApiRead;
 
 use crate::build::Build;
-use crate::{build::InstanceOptions, control::Controls, operator::Pause, user::Users};
+use crate::{build::InstanceOptions, control::Controls, user::Users};
 use axum::{
     Json, Router,
     extract::{
@@ -31,20 +34,21 @@ use axum::{
     response::{IntoResponse, Response, Sse, sse::KeepAlive},
     routing::get,
 };
+use health::{Health, OperatorSummary, RecorderMetrics};
 use http::{HeaderValue, StatusCode, Uri, header};
 use live::LiveFeed;
 use params::RawLiveQuery;
 use preview::Previewer;
 use ren_protocol::direction::Direction;
 use ren_recorder::time::Clock;
-use ren_recorder::{Recorder, RecorderMetrics, id::CallId, retention::RetentionPolicy};
-use ren_store::{
-    Reader, StoreError, backup::Backup, query::QueryError, search::SearchError, view::StorageView,
-};
+use ren_recorder::{Recorder, id::CallId, retention::RetentionPolicy};
+use ren_store::{Reader, StoreError, backup::Backup, query::QueryError, search::SearchError};
 use serde::Serialize;
 use std::sync::Arc;
+use storage::{CaptureLimits, Storage, StorageView};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use tokio_util::sync::CancellationToken;
+use ts_rs::TS;
 
 /// Resources and settings for the gateway's management and control routes.
 /// The host opens storage and supplies the token; the gateway owns HTTP handling.
@@ -96,10 +100,11 @@ impl ApiState {
     }
 }
 
-/// `/api/caller`'s answer.
-#[derive(Serialize)]
+/// `/api/caller`'s answer: how the gateway identifies the request's caller.
+#[derive(Serialize, TS)]
+#[ts(export)]
 struct CallerBody {
-    caller: ren_recorder::caller::Caller,
+    caller: read::calls::CallerView,
 }
 
 /// A response body tagged with the API version.
@@ -132,49 +137,19 @@ pub enum ErrorCode {
     IdentityRefused,
 }
 
-#[derive(Serialize)]
-struct Health<'a> {
-    status: HealthStatus,
-    build: &'a Build,
-    /// Production or development, as configured.
-    instance: InstanceOptions,
-    /// Whether new calls are admitted, read-only: changing it takes the
-    /// control API.
-    operator: OperatorSummary,
-    recorder: RecorderMetrics,
-}
-
-/// The operator state as `/health` reports it: the pause, and how many
-/// session and user blocks are in force now.
-#[derive(Serialize)]
-struct OperatorSummary {
-    pause: Pause,
-    blocked_sessions: usize,
-    blocked_users: usize,
-}
-
-#[derive(Serialize)]
+/// `/api/metrics`'s answer.
+#[derive(Serialize, TS)]
+#[ts(export)]
 struct Metrics {
     recorder: RecorderMetrics,
     storage: StorageView,
 }
 
-#[derive(Serialize)]
-struct Storage<'a> {
-    policy: &'a RetentionPolicy,
-    usage: StorageView,
-    capture: CaptureLimits,
-}
-
-/// What capture keeps of each call, so a reader can tell a body trimmed at
-/// the limit (by design) from one that lost bytes.
-#[derive(Serialize)]
-struct CaptureLimits {
-    body_limit_bytes: usize,
-}
-
-#[derive(Serialize)]
+/// A failed read's body: its code; a client keeps codes it does not know.
+#[derive(Serialize, TS)]
+#[ts(export)]
 struct ErrorBody {
+    #[ts(as = "String")]
     error: ErrorCode,
 }
 
@@ -315,18 +290,18 @@ impl ApiState {
             code,
             Self::versioned(Health {
                 status,
-                build: &state.build,
-                instance: state.instance,
+                build: (&state.build).into(),
+                instance: state.instance.into(),
                 operator: {
                     let snapshot = state.controls.snapshot();
                     let now = state.clock.now().wall;
                     OperatorSummary {
-                        pause: snapshot.pause(),
+                        pause: snapshot.pause().into(),
                         blocked_sessions: snapshot.blocked_sessions(now),
                         blocked_users: snapshot.blocked_users(now),
                     }
                 },
-                recorder,
+                recorder: recorder.into(),
             }),
         )
             .into_response()
@@ -335,8 +310,8 @@ impl ApiState {
     async fn metrics(State(state): State<Arc<Self>>) -> Result<Response, ApiError> {
         let storage = state.reader.storage().await?;
         Ok(Self::versioned(Metrics {
-            recorder: state.recorder.metrics(),
-            storage,
+            recorder: state.recorder.metrics().into(),
+            storage: storage.into(),
         })
         .into_response())
     }
@@ -351,14 +326,17 @@ impl ApiState {
             .users
             .identify(&headers)
             .map_err(|_| ApiError::IdentityRefused)?;
-        Ok(Self::versioned(CallerBody { caller }).into_response())
+        Ok(Self::versioned(CallerBody {
+            caller: (&caller).into(),
+        })
+        .into_response())
     }
 
     async fn storage(State(state): State<Arc<Self>>) -> Result<Response, ApiError> {
         let usage = state.reader.storage().await?;
         Ok(Self::versioned(Storage {
-            policy: &state.retention,
-            usage,
+            policy: (&state.retention).into(),
+            usage: usage.into(),
             capture: CaptureLimits {
                 body_limit_bytes: state.recorder.body_limit_bytes(),
             },
@@ -369,7 +347,10 @@ impl ApiState {
     /// Any history read: the URI says which, the reader answers.
     async fn read(State(state): State<Arc<Self>>, uri: Uri) -> Result<Response, ApiError> {
         let ApiRead(request) = ApiRead::parse(&uri)?;
-        Ok(Self::versioned(state.reader.serve(&request).await?).into_response())
+        Ok(
+            Self::versioned(read::ReadBody::from(state.reader.serve(&request).await?))
+                .into_response(),
+        )
     }
 
     async fn body(

@@ -132,7 +132,7 @@ impl Columns<'_> {
 }
 
 /// A body's capture accounting.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BodyView {
     /// Bytes the relay saw; unknown until the body's end is recorded.
     pub observed_bytes: Option<u64>,
@@ -165,13 +165,13 @@ impl BodyView {
 }
 
 /// Attribution as stored, keeping unknown labels.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, Deserialize)]
 pub struct AttributionView {
     pub hint: Option<SessionHintView>,
     pub issues: Vec<Stored<HintIssue>>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct SessionHintView {
     pub source: Stored<HintSource>,
     pub session: String,
@@ -180,7 +180,7 @@ pub struct SessionHintView {
 }
 
 /// Who made a call, as recorded.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CallerView {
     pub kind: Stored<CallerKind>,
     /// The named user it proved to be.
@@ -200,7 +200,7 @@ impl CallerView {
 }
 
 /// One call, as listed.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct CallView {
     pub id: CallId,
     pub channel: ChannelId,
@@ -288,7 +288,7 @@ impl CallView {
 }
 
 /// One upstream attempt of a call.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct AttemptView {
     pub id: AttemptId,
     pub ordinal: u32,
@@ -343,7 +343,7 @@ impl AttemptView {
 }
 
 /// A call with its attempts and log.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct CallDetail {
     pub call: CallView,
     pub transport: Stored<Transport>,
@@ -358,7 +358,7 @@ pub struct CallDetail {
 }
 
 /// One client connection or exchange.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ChannelView {
     pub id: ChannelId,
     pub transport: Stored<Transport>,
@@ -391,7 +391,7 @@ impl ChannelView {
 }
 
 /// Where one WebSocket message sits inside a body.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MessageView {
     pub direction: Stored<Direction>,
     pub offset: u64,
@@ -418,7 +418,7 @@ impl MessageView {
 }
 
 /// One page of calls.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct CallPage {
     pub calls: Vec<CallView>,
     /// Pass as `after` for the next page; absent on the last page.
@@ -426,7 +426,7 @@ pub struct CallPage {
 }
 
 /// A group of calls a client attributed to one recording.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RecordingView {
     pub id: RecordingId,
     pub provider: Stored<Provider>,
@@ -450,7 +450,7 @@ pub struct RecordingView {
 /// provider accounts it, because cached context is most of a coding agent's
 /// input; `cache_read` is the part of it read from the provider's cache.
 /// Token counts are not subscription allowance or charges.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TokenTotals {
     pub input: Option<u64>,
     pub output: Option<u64>,
@@ -487,7 +487,7 @@ impl TokenTotals {
 }
 
 /// Calls, errors, and tokens over some set of calls.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct UsageCounts {
     pub calls: u64,
     /// The calls the `errors` status filter finds.
@@ -534,7 +534,7 @@ impl UsageCounts {
 }
 
 /// Usage over a time range, by the hour, by model, and by user.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UsageView {
     pub totals: UsageCounts,
     /// Hours that had calls, oldest first, keyed by the hour's start (UTC).
@@ -618,25 +618,22 @@ impl UsageView {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct UsageBucket {
     pub start: UnixMillis,
-    #[serde(flatten)]
     pub usage: UsageCounts,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ModelUsage {
     pub provider: Stored<Provider>,
     pub model: Option<String>,
-    #[serde(flatten)]
     pub usage: UsageCounts,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UserUsage {
     pub user: Option<String>,
-    #[serde(flatten)]
     pub usage: UsageCounts,
 }
 
@@ -694,7 +691,7 @@ impl OperatorActionView {
 
 /// A run's conversation, whole: its entries, and those of the runs before
 /// it that continued the same client conversation, oldest first.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ConversationView {
     pub entries: Vec<RunEntryView>,
     /// Older entries were left out: the conversation holds more than one
@@ -704,7 +701,7 @@ pub struct ConversationView {
 
 /// One entry of a run's conversation: an event as its client reported it,
 /// in the order it came.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct RunEntryView {
     pub run: RunId,
     pub seq: u64,
@@ -728,7 +725,7 @@ pub struct HistoryTarget {
 }
 
 /// One agent run, as recorded.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RunView {
     pub id: RunId,
     pub harness: Stored<Harness>,
@@ -802,7 +799,7 @@ impl RunView {
 
 /// One session an operator works in, as recorded, with the runs (client
 /// processes) that served it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SessionView {
     pub id: SessionId,
     pub harness: Stored<Harness>,
@@ -973,10 +970,9 @@ pub struct StorageView {
 
 #[cfg(test)]
 mod tests {
-    use super::{CallPage, RecordingView, TokenTotals, UsageCounts, UsageGroup, UsageView};
+    use super::{TokenTotals, UsageCounts, UsageGroup, UsageView};
     use ren_protocol::{label::Stored, route::Provider};
     use ren_recorder::time::UnixMillis;
-    use serde_json::{Value, json};
 
     fn group(
         hour: u64,
@@ -1048,86 +1044,5 @@ mod tests {
                 .collect::<Vec<_>>(),
             [(Some("alice"), 4), (None, 11)]
         );
-    }
-
-    /// What the read API sends for a call listing, every optional field
-    /// present, and some labels this binary does not know.
-    fn call_page() -> Value {
-        json!({
-            "calls": [{
-                "id": "00000000-0000-0000-0000-000000000001",
-                "channel": "00000000-0000-0000-0000-000000000002",
-                "started_at": 1000,
-                "ended_at": 1500,
-                "provider": "anthropic",
-                "wire": "a_newer_wire",
-                "endpoint": "messages",
-                "method": "post",
-                "config_revision": "r1",
-                "recording": "00000000-0000-0000-0000-000000000003",
-                "turn": "00000000-0000-0000-0000-000000000004",
-                "attribution": {
-                    "hint": {
-                        "source": "claude_code_headers",
-                        "session": "s",
-                        "turn": "t",
-                        "thread": null
-                    },
-                    "issues": []
-                },
-                "caller": { "kind": "user_token", "user": "acme", "login": null },
-                "state": "a_newer_state",
-                "terminal": "completed",
-                "status": 200,
-                "model": "model",
-                "outcome": "completed",
-                "stop_reason": "end_turn",
-                "tool_names": ["Read"],
-                "usage": {
-                    "accounting": "excludes_cache",
-                    "input_tokens": 10,
-                    "output_tokens": 20,
-                    "cache_read_tokens": 30,
-                    "cache_creation_tokens": 40,
-                    "reasoning_tokens": null
-                },
-                "capture_complete": true,
-                "request": { "observed_bytes": 100, "stored_bytes": 100, "ending": "ended" },
-                "response": { "observed_bytes": null, "stored_bytes": 0, "ending": "open" },
-                "rejection": null,
-                "operator_revision": 3,
-                "plan": { "candidates": ["a"] },
-                "purpose": "work"
-            }],
-            "next": "1000:00000000-0000-0000-0000-000000000001"
-        })
-    }
-
-    #[test]
-    fn a_call_page_reads_back_as_sent() {
-        let page: CallPage = serde_json::from_value(call_page()).unwrap();
-        assert_eq!(page.calls[0].wire.known(), None);
-        assert_eq!(page.next, Some(page.calls[0].cursor()));
-        assert_eq!(serde_json::to_value(&page).unwrap(), call_page());
-    }
-
-    #[test]
-    fn a_session_reads_back_as_sent() {
-        let sent = json!({
-            "id": "00000000-0000-0000-0000-000000000003",
-            "provider": "openai",
-            "source": "a_newer_source",
-            "native_id": "native",
-            "first_seen": 1000,
-            "last_seen": 2000,
-            "archived_at": 1500,
-            "call_count": 4,
-            "turn_count": 2,
-            "error_count": 1,
-            "tokens": { "input": 10, "output": null, "cache_read": 5 }
-        });
-        let recording: RecordingView = serde_json::from_value(sent.clone()).unwrap();
-        assert_eq!(recording.source.known(), None);
-        assert_eq!(serde_json::to_value(&recording).unwrap(), sent);
     }
 }

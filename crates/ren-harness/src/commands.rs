@@ -68,14 +68,13 @@ impl CommandListing {
 }
 
 /// One command a running client offers.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ClientCommand {
     /// Its name as the client lists it, without the sigil.
     pub name: String,
     /// What it does, in the client's words; empty when it gives none.
     pub description: String,
     /// What it takes after its name (`<file or PR>`), when the client says.
-    #[serde(default)]
     pub hint: Option<String>,
     pub kind: CommandKind,
     /// How a prompt names it.
@@ -139,11 +138,6 @@ mod tests {
             sigil: Sigil::Dollar,
         };
         assert_eq!(command.invocation(), "$review");
-        assert_eq!(
-            serde_json::to_value(&command).unwrap(),
-            serde_json::json!({ "name": "review", "description": "", "hint": null,
-                                "kind": "skill", "sigil": "$" })
-        );
     }
 
     /// Feed `answers` to a listing of `harness` in `/work/acme`, one line

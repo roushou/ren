@@ -123,7 +123,7 @@ pub struct Supervisor {
 
 /// A session as the supervisor serves it: what it is, where it stands,
 /// and its newest process, whose state the run feed carries.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SessionSnapshot {
     pub session: SessionId,
     pub harness: Harness,
@@ -227,8 +227,7 @@ pub enum SessionError {
 }
 
 /// A change to a run, as it happens.
-#[derive(Debug, Clone, PartialEq, serde::Serialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
+#[derive(Debug, Clone, PartialEq)]
 pub enum RunUpdate {
     State { run: RunId, state: RunState },
     Event { run: RunId, event: DriveEvent },
@@ -255,7 +254,7 @@ pub enum StartPlace {
 
 /// Where runs can start: every place, and the folder scratch runs get
 /// theirs in.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Places {
     pub projects: Vec<Project>,
     /// None when runs cannot start in scratch here.
@@ -263,7 +262,7 @@ pub struct Places {
 }
 
 /// One run as the supervisor holds it now.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RunSnapshot {
     pub run: RunId,
     /// The session the run serves.

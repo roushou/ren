@@ -2,11 +2,13 @@
 //! decoded into typed events whatever their fragmentation, and the line a
 //! call event prints. It performs no I/O.
 
+use ren_gateway::api::live::{Gone, Lagged};
+use ren_gateway::api::read::calls::Observation;
 use ren_protocol::{
     label::Stored,
     sse::{EventName, SseFramer, SseLimits, SseOutput},
 };
-use ren_recorder::{Observation, batch::ObservationKind, id::CallId, time::UnixMillis};
+use ren_recorder::{batch::ObservationKind, id::CallId, time::UnixMillis};
 use serde::Deserialize;
 use std::fmt::Write as _;
 
@@ -29,16 +31,6 @@ pub enum LiveEvent {
 /// Decodes the feed's bytes, split however the network splits them.
 pub struct LiveDecoder {
     framer: SseFramer,
-}
-
-#[derive(Deserialize)]
-struct Gone {
-    oldest_retained: u64,
-}
-
-#[derive(Deserialize)]
-struct Lagged {
-    resume_from: u64,
 }
 
 impl Default for LiveDecoder {

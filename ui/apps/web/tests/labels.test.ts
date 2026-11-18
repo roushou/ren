@@ -79,6 +79,8 @@ const ui: [string, readonly string[]][] = [
   ['ren-supervisor ClientStatus', runs.clientStatuses],
   ['ren-harness drive::Decision', runs.decisions],
   ['ren-harness drive::DriveEventKind', runs.driveEventKinds],
+  ['ren-harness drive::ItemKind', runs.itemKinds],
+  ['ren-harness drive::ItemStatus', runs.itemStatuses],
   ['ren-harness models::DefaultChoice', runs.modelChoices],
   ['ren-supervisor PlaceKind', runs.placeKinds],
   ['ren-recorder capture::RunEnd', runs.runEnds],

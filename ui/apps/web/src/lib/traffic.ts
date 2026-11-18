@@ -1,5 +1,7 @@
 import { harnesses, type CallId, type CallView } from './api.ts';
 import { harnessLabel } from './activity.ts';
+import { changed, picked, type Query } from './query.ts';
+import type { RawCallQuery } from './wire/RawCallQuery.ts';
 
 /**
  * The call the inspector shows. A finished live observation of the same call
@@ -56,18 +58,17 @@ export function sinceStart(since: Since, now: number): number {
  * The listing's API query from the page URL: filters pass through, `kind`
  * defaults to model calls, and `since` becomes `from_ms` as of `now`.
  */
-export function listingQuery(url: URLSearchParams, keys: readonly string[], now: number) {
-  const params = new URLSearchParams();
-  for (const key of keys) {
-    const value = url.get(key);
-    if (value) params.set(key, value);
-  }
+export function listingQuery(
+  url: URLSearchParams,
+  keys: readonly (keyof RawCallQuery & string)[],
+  now: number,
+): Query<RawCallQuery> {
   const kind = parseKind(url.get('kind'));
-  if (kind === 'all') params.delete('kind');
-  else params.set('kind', kind);
   const since = parseSince(url.get('since'));
-  if (since) params.set('from_ms', String(sinceStart(since, now)));
-  return params;
+  return changed(picked<RawCallQuery>(url, keys), {
+    kind: kind === 'all' ? null : kind,
+    ...(since ? { from_ms: sinceStart(since, now) } : {}),
+  });
 }
 
 export interface Filters {

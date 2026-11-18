@@ -12,12 +12,95 @@ import {
   nullable,
   object,
   string,
-  unrecognised,
   ShapeError,
   type Brand,
   type Decoder,
   type Stored,
+  type AnyDecoder,
+  tagValue,
+  tagged,
+  type Variant,
 } from './decode.ts';
+import type { Build as WireBuild } from './wire/Build.ts';
+import type { EventCountsRecord as WireEventCountsRecord } from './wire/EventCountsRecord.ts';
+import type { Excerpt as WireExcerpt } from './wire/Excerpt.ts';
+import type { InspectionRecord as WireInspectionRecord } from './wire/InspectionRecord.ts';
+import type { Observation as WireObservation } from './wire/Observation.ts';
+import type { ToolCallRecord as WireToolCallRecord } from './wire/ToolCallRecord.ts';
+import type { UnknownKindRecord as WireUnknownKindRecord } from './wire/UnknownKindRecord.ts';
+import type { UsageRecord as WireUsageRecord } from './wire/UsageRecord.ts';
+import type { AttemptView as WireAttemptView } from './wire/AttemptView.ts';
+import type { AttributionView as WireAttributionView } from './wire/AttributionView.ts';
+import type { BodyView as WireBodyView } from './wire/BodyView.ts';
+import type { CallActivity as WireCallActivity } from './wire/CallActivity.ts';
+import type { CallDetail as WireCallDetail } from './wire/CallDetail.ts';
+import type { CallMetrics as WireCallMetrics } from './wire/CallMetrics.ts';
+import type { CallPage as WireCallPage } from './wire/CallPage.ts';
+import type { CallView as WireCallView } from './wire/CallView.ts';
+import type { CallerView as WireCallerView } from './wire/CallerView.ts';
+import type { ChannelView as WireChannelView } from './wire/ChannelView.ts';
+import type { EffectView as WireEffectView } from './wire/EffectView.ts';
+import type { ExposureView as WireExposureView } from './wire/ExposureView.ts';
+import type { Finding as WireFinding } from './wire/Finding.ts';
+import type { MessageView as WireMessageView } from './wire/MessageView.ts';
+import type { ModelUsage as WireModelUsage } from './wire/ModelUsage.ts';
+import type { RecordingReport as WireRecordingReport } from './wire/RecordingReport.ts';
+import type { RecordingView as WireRecordingView } from './wire/RecordingView.ts';
+import type { ReportTotals as WireReportTotals } from './wire/ReportTotals.ts';
+import type { ResultView as WireResultView } from './wire/ResultView.ts';
+import type { SearchHit as WireSearchHit } from './wire/SearchHit.ts';
+import type { SearchPage as WireSearchPage } from './wire/SearchPage.ts';
+import type { SessionHintView as WireSessionHintView } from './wire/SessionHintView.ts';
+import type { TokenTotals as WireTokenTotals } from './wire/TokenTotals.ts';
+import type { ToolCallView as WireToolCallView } from './wire/ToolCallView.ts';
+import type { TurnActivity as WireTurnActivity } from './wire/TurnActivity.ts';
+import type { TurnMetrics as WireTurnMetrics } from './wire/TurnMetrics.ts';
+import type { TurnSummary as WireTurnSummary } from './wire/TurnSummary.ts';
+import type { UsageBucket as WireUsageBucket } from './wire/UsageBucket.ts';
+import type { UsageCounts as WireUsageCounts } from './wire/UsageCounts.ts';
+import type { UsageView as WireUsageView } from './wire/UsageView.ts';
+import type { UserUsage as WireUserUsage } from './wire/UserUsage.ts';
+import type { CaptureLimits } from './wire/CaptureLimits.ts';
+import type { DedupMetrics } from './wire/DedupMetrics.ts';
+import type { DiskUsage } from './wire/DiskUsage.ts';
+import type { FileUsage } from './wire/FileUsage.ts';
+import type { Health as WireHealth } from './wire/Health.ts';
+import type { InstanceOptions } from './wire/InstanceOptions.ts';
+import type { OmissionMetrics } from './wire/OmissionMetrics.ts';
+import type { OperatorSummary as WireOperatorSummary } from './wire/OperatorSummary.ts';
+import type { Pause as WirePause } from './wire/Pause.ts';
+import type { QueueMetrics } from './wire/QueueMetrics.ts';
+import type { RecorderMetrics } from './wire/RecorderMetrics.ts';
+import type { RetentionPolicy } from './wire/RetentionPolicy.ts';
+import type { Storage } from './wire/Storage.ts';
+import type { StorageView } from './wire/StorageView.ts';
+import type { BodyPreview as WireBodyPreview } from './wire/BodyPreview.ts';
+import type { DecodingPreview as WireDecodingPreview } from './wire/DecodingPreview.ts';
+import type { ErrorBody as WireErrorBody } from './wire/ErrorBody.ts';
+import type { Metrics as WireMetrics } from './wire/Metrics.ts';
+import type { RawPreview as WireRawPreview } from './wire/RawPreview.ts';
+import { query, type Query } from './query.ts';
+import type { RawCallQuery } from './wire/RawCallQuery.ts';
+import type { RawExposureQuery } from './wire/RawExposureQuery.ts';
+import type { RawPageQuery } from './wire/RawPageQuery.ts';
+import type { RawSearchQuery } from './wire/RawSearchQuery.ts';
+import type { RawShelfQuery } from './wire/RawShelfQuery.ts';
+import type { RawUsageQuery } from './wire/RawUsageQuery.ts';
+
+// Generated from the gateway's wire types (`wire/`, written by `cargo test`).
+// The decoders below are typed against them, so a changed field fails `check`.
+// Where the UI decodes a value further (labels, revisions), its own type keeps
+// the wire type's fields: `object<View, Wire>`.
+export type { RawCallQuery, RawSearchQuery };
+export type {
+  CaptureLimits,
+  DiskUsage,
+  FileUsage,
+  RecorderMetrics,
+  RetentionPolicy,
+  Storage,
+  StorageView,
+};
 
 /** The management API version this UI understands. */
 export const API_VERSION = 1;
@@ -521,53 +604,6 @@ export interface UsageView {
   models: ModelUsage[];
   users: UserUsage[];
 }
-export interface FileUsage {
-  page_size: number;
-  page_count: number;
-  freelist_count: number;
-}
-export interface StorageView {
-  /** The search index is part of the metadata file. */
-  disk: { metadata: FileUsage; blobs: FileUsage };
-  calls: number;
-  open_calls: number;
-  /** Calls whose activity is derived: every finished call, once derived. */
-  digested_calls: number;
-  chunks: number;
-  /** Raw bytes all stored segments reference. */
-  referenced_bytes: number;
-  /** Raw bytes of the distinct chunks. */
-  unique_bytes: number;
-  /** Bytes the chunks occupy after compression. */
-  compressed_bytes: number;
-}
-export interface RetentionPolicy {
-  enabled: boolean;
-  max_age_seconds: number;
-  max_calls: number;
-  max_storage_bytes: number;
-}
-export interface RecorderMetrics {
-  queue: { items: number; capacity: number; bytes: number; byte_capacity: number };
-  omissions: {
-    policy_limit_bytes: number;
-    queue_bytes_bytes: number;
-    queue_slots_bytes: number;
-    storage_failure_bytes: number;
-    unattributed_bytes: number;
-    unrecorded_calls: number;
-  };
-  storage_errors: number;
-  retention_errors: number;
-  pruned_calls: number;
-  pruned_chunks: number;
-  commits: number;
-  last_commit_ms: number;
-  max_commit_ms: number;
-  lag_ms: number;
-  dedup: { referenced_bytes: number; new_bytes: number; compressed_bytes: number };
-  recovered_calls: number;
-}
 /** What a daemon binary was compiled from (`/health` `build.revision`). */
 export type Revision =
   | { kind: 'commit'; commit: string; tree: 'clean' | 'modified' }
@@ -579,14 +615,13 @@ export interface Build {
   revision: Revision;
 }
 /** Whether new calls are admitted; reported read-only by `/health`. */
-export type Pause =
-  | { state: 'running' }
-  | { state: 'paused'; retry_after: number }
-  | { state: 'unknown'; text: string };
+export type Pause = WirePause | { state: 'unknown'; text: string };
 export interface OperatorSummary {
   pause: Pause;
   /** Session blocks in force now. */
   blocked_sessions: number;
+  /** User blocks in force now. */
+  blocked_users: number;
 }
 export interface Health {
   status: Stored<HealthStatus>;
@@ -599,16 +634,6 @@ export interface Health {
 export interface Metrics {
   recorder: RecorderMetrics;
   storage: StorageView;
-}
-export interface Storage {
-  policy: RetentionPolicy;
-  usage: StorageView;
-  /** What capture keeps of each body. */
-  capture: CaptureLimits;
-}
-export interface CaptureLimits {
-  /** Bytes stored per body; past this, the rest is left out by design. */
-  body_limit_bytes: number;
 }
 /** Which part of a listing: what is current, or what was archived. */
 export type Shelf = 'current' | 'archived';
@@ -634,12 +659,12 @@ export interface BodyPreview {
 
 // Decoders, one per view.
 const millis = brandedCount<'UnixMillis'>();
-const bodyView = object<BodyView>({
+const bodyView = object<BodyView, WireBodyView>({
   observed_bytes: nullable(count),
   stored_bytes: count,
   ending: label(bodyEndings),
 });
-const usage = object<Usage>({
+const usage = object<Usage, WireUsageRecord>({
   accounting: label(inputAccountings),
   input_tokens: nullable(count),
   output_tokens: nullable(count),
@@ -647,7 +672,7 @@ const usage = object<Usage>({
   cache_creation_tokens: nullable(count),
   reasoning_tokens: nullable(count),
 });
-const callView = object<CallView>({
+const callView = object<CallView, WireCallView>({
   id: CallId.decode,
   channel: ChannelId.decode,
   started_at: millis,
@@ -658,9 +683,9 @@ const callView = object<CallView>({
   config_revision: string,
   recording: nullable(RecordingId.decode),
   turn: nullable(TurnId.decode),
-  attribution: object<Attribution>({
+  attribution: object<Attribution, WireAttributionView>({
     hint: nullable(
-      object<SessionHint>({
+      object<SessionHint, WireSessionHintView>({
         source: label(hintSources),
         session: branded<'NativeSessionId'>(),
         turn: nullable(branded<'NativeTurnId'>()),
@@ -683,13 +708,13 @@ const callView = object<CallView>({
   rejection: nullable(label(callRejections)),
   operator_revision: nullable(count),
   purpose: nullable(label(callPurposes)),
-  caller: object<CallerView>({
+  caller: object<CallerView, WireCallerView>({
     kind: label(callerKinds),
     user: nullable(string),
     login: nullable(string),
   }),
 });
-const inspection = object<InspectionRecord>({
+const inspection = object<InspectionRecord, WireInspectionRecord>({
   coverage: label(coverages),
   format: label(formatSources),
   limitations: array(label(limitations)),
@@ -699,7 +724,7 @@ const inspection = object<InspectionRecord>({
   stop_reason: nullable(string),
   usage: nullable(usage),
   tool_calls: array(
-    object<ToolCallRecord>({
+    object<ToolCallRecord, WireToolCallRecord>({
       call_id: nullable(string),
       item_id: nullable(string),
       kind: string,
@@ -707,19 +732,19 @@ const inspection = object<InspectionRecord>({
     }),
   ),
   unknown_kinds: array(
-    object<InspectionRecord['unknown_kinds'][number]>({
+    object<InspectionRecord['unknown_kinds'][number], WireUnknownKindRecord>({
       family: label(kindFamilies),
       kind: string,
       count,
     }),
   ),
-  events: object<InspectionRecord['events']>({
+  events: object<InspectionRecord['events'], WireEventCountsRecord>({
     understood: count,
     unknown: count,
     malformed: count,
   }),
 });
-export const observationView = object<ObservationView>({
+export const observationView = object<ObservationView, WireObservation>({
   seq: brandedCount<'ObservationSeq'>(),
   at: millis,
   kind: label(observationKinds),
@@ -727,10 +752,10 @@ export const observationView = object<ObservationView>({
   call: nullable(CallId.decode),
   attempt: nullable(AttemptId.decode),
 });
-const callDetail = object<CallDetail>({
+const callDetail = object<CallDetail, WireCallDetail>({
   call: callView,
   transport: label(transports),
-  channel: object<ChannelView>({
+  channel: object<ChannelView, WireChannelView>({
     id: ChannelId.decode,
     transport: label(transports),
     opened_at: millis,
@@ -741,7 +766,7 @@ const callDetail = object<CallDetail>({
     unattributed_bytes: count,
   }),
   attempts: array(
-    object<AttemptView>({
+    object<AttemptView, WireAttemptView>({
       id: AttemptId.decode,
       ordinal: count,
       started_at: millis,
@@ -760,7 +785,7 @@ const callDetail = object<CallDetail>({
   ),
   observations: array(observationView),
   messages: array(
-    object<MessageView>({
+    object<MessageView, WireMessageView>({
       direction: label(['request', 'response'] as const),
       offset: count,
       len: count,
@@ -769,20 +794,20 @@ const callDetail = object<CallDetail>({
     }),
   ),
 });
-const callPage = object<CallPage>({
+const callPage = object<CallPage, WireCallPage>({
   calls: array(callView),
   next: nullable(branded<'PageCursor'>()),
 });
 function tokenTotals(value: unknown, path: string): TokenTotals {
-  return object<TokenTotals>({
+  return object<TokenTotals, WireTokenTotals>({
     input: nullable(count),
     output: nullable(count),
     cache_read: nullable(count),
   })(value, path);
 }
-const recordings = object<Recordings>({
+const recordings = object<Recordings, { recordings: WireRecordingView[] }>({
   recordings: array(
-    object<RecordingView>({
+    object<RecordingView, WireRecordingView>({
       id: RecordingId.decode,
       provider: label(providers),
       source: label(hintSources),
@@ -802,21 +827,21 @@ const usageCounts = {
   errors: count,
   tokens: (value: unknown, path: string) => tokenTotals(value, path),
 };
-const usageView = object<UsageView>({
-  totals: object<UsageCounts>(usageCounts),
-  hours: array(object<UsageBucket>({ start: millis, ...usageCounts })),
+const usageView = object<UsageView, WireUsageView>({
+  totals: object<UsageCounts, WireUsageCounts>(usageCounts),
+  hours: array(object<UsageBucket, WireUsageBucket>({ start: millis, ...usageCounts })),
   models: array(
-    object<ModelUsage>({
+    object<ModelUsage, WireModelUsage>({
       provider: label(providers),
       model: nullable(string),
       ...usageCounts,
     }),
   ),
-  users: array(object<UserUsage>({ user: nullable(string), ...usageCounts })),
+  users: array(object<UserUsage, WireUserUsage>({ user: nullable(string), ...usageCounts })),
 });
 const fileUsage = object<FileUsage>({ page_size: count, page_count: count, freelist_count: count });
 const storageView = object<StorageView>({
-  disk: object<StorageView['disk']>({
+  disk: object<DiskUsage>({
     metadata: fileUsage,
     blobs: fileUsage,
   }),
@@ -829,13 +854,13 @@ const storageView = object<StorageView>({
   compressed_bytes: count,
 });
 const recorderMetrics = object<RecorderMetrics>({
-  queue: object<RecorderMetrics['queue']>({
+  queue: object<QueueMetrics>({
     items: count,
     capacity: count,
     bytes: count,
     byte_capacity: count,
   }),
-  omissions: object<RecorderMetrics['omissions']>({
+  omissions: object<OmissionMetrics>({
     policy_limit_bytes: count,
     queue_bytes_bytes: count,
     queue_slots_bytes: count,
@@ -851,7 +876,7 @@ const recorderMetrics = object<RecorderMetrics>({
   last_commit_ms: count,
   max_commit_ms: count,
   lag_ms: count,
-  dedup: object<RecorderMetrics['dedup']>({
+  dedup: object<DedupMetrics>({
     referenced_bytes: count,
     new_bytes: count,
     compressed_bytes: count,
@@ -860,7 +885,7 @@ const recorderMetrics = object<RecorderMetrics>({
 });
 const commitPattern = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 /** `<commit>`, `<commit>-dirty`, or `unknown`; anything else is kept as text. */
-export const revision: Decoder<Revision> = (value, path) => {
+export const revision: Decoder<Revision, string> = (value, path) => {
   const text = string(value, path);
   if (text === 'unknown') return { kind: 'unknown' };
   const dirty = text.endsWith('-dirty');
@@ -869,24 +894,34 @@ export const revision: Decoder<Revision> = (value, path) => {
     ? { kind: 'commit', commit, tree: dirty ? 'modified' : 'clean' }
     : { kind: 'unrecognized', text };
 };
-const build = object<Build>({ version: string, revision });
-const pause: Decoder<Pause> = (value, path) => {
-  if (!isRecord(value)) throw new ShapeError(path, 'an object');
-  const state = string(value.state, `${path}.state`);
-  if (state === 'running') return { state };
-  if (state === 'paused')
-    return { state, retry_after: count(value.retry_after, `${path}.retry_after`) };
-  return { state: 'unknown', text: state };
-};
-const operatorSummary = object<OperatorSummary>({ pause, blocked_sessions: count });
-const health = object<Health>({
+const build = object<Build, WireBuild>({ version: string, revision });
+const pause = tagged<Pause, WirePause, 'state'>(
+  'state',
+  {
+    running: object<Variant<WirePause, 'state', 'running'>>({ state: tagValue('running') }),
+    paused: object<Variant<WirePause, 'state', 'paused'>>({
+      state: tagValue('paused'),
+      retry_after: count,
+    }),
+  },
+  (value, path) => {
+    if (!isRecord(value)) throw new ShapeError(path, 'an object');
+    return { state: 'unknown', text: string(value.state, `${path}.state`) };
+  },
+);
+const operatorSummary = object<OperatorSummary, WireOperatorSummary>({
+  pause,
+  blocked_sessions: count,
+  blocked_users: count,
+});
+const health = object<Health, WireHealth>({
   status: label(healthStatuses),
   build,
-  instance: object<Health['instance']>({ environment: label(environments) }),
+  instance: object<Health['instance'], InstanceOptions>({ environment: label(environments) }),
   operator: operatorSummary,
   recorder: recorderMetrics,
 });
-const metrics = object<Metrics>({ recorder: recorderMetrics, storage: storageView });
+const metrics = object<Metrics, WireMetrics>({ recorder: recorderMetrics, storage: storageView });
 const storage = object<Storage>({
   policy: object<RetentionPolicy>({
     enabled: boolean,
@@ -897,26 +932,26 @@ const storage = object<Storage>({
   usage: storageView,
   capture: object<CaptureLimits>({ body_limit_bytes: count }),
 });
-const bodyPreview = object<BodyPreview>({
+const bodyPreview = object<BodyPreview, WireBodyPreview>({
   observed_bytes: nullable(count),
   stored_bytes: count,
   ending: label(bodyEndings),
   captured_bytes: count,
   extent: label(previewExtents),
-  raw: object<BodyPreview['raw']>({
+  raw: object<BodyPreview['raw'], WireRawPreview>({
     text: string,
     format: label(rawFormats),
     truncated: boolean,
   }),
   text: nullable(string),
   text_end: label(textEnds),
-  decoding: object<BodyPreview['decoding']>({
+  decoding: object<BodyPreview['decoding'], WireDecodingPreview>({
     applied: label(previewDecodings),
     integrity: label(decodeIntegrities),
     truncated: boolean,
   }),
 });
-const errorBody = object<{ error: Stored<ErrorCode> }>({ error: label(errorCodes) });
+const errorBody = object<{ error: Stored<ErrorCode> }, WireErrorBody>({ error: label(errorCodes) });
 
 /** The daemon speaks a management API version this UI does not understand. */
 export class ApiVersionError extends Error {
@@ -1014,7 +1049,10 @@ export interface ToolEffect {
   target: string;
 }
 /** What a tool does, as Ren reads it: on the wire, or in a driven run. */
-export const toolEffect = object<ToolEffect>({ kind: label(effectKinds), target: string });
+export const toolEffect = object<ToolEffect, WireEffectView>({
+  kind: label(effectKinds),
+  target: string,
+});
 /** A tool result as the client reported it. */
 export interface ToolResultView {
   status: Stored<ResultStatus>;
@@ -1159,8 +1197,8 @@ export interface RecordingReport {
   omitted_calls: number;
 }
 
-const excerpt = object<Excerpt>({ text: string, omitted_chars: count });
-const callMetrics = object<CallMetrics>({
+const excerpt = object<Excerpt, WireExcerpt>({ text: string, omitted_chars: count });
+const callMetrics = object<CallMetrics, WireCallMetrics>({
   context_tokens: nullable(count),
   cache_read_tokens: nullable(count),
   cache_written_tokens: nullable(count),
@@ -1168,7 +1206,7 @@ const callMetrics = object<CallMetrics>({
   request_bytes: nullable(count),
   duration_ms: nullable(count),
 });
-const callActivity = object<CallActivity>({
+const callActivity = object<CallActivity, WireCallActivity>({
   call: CallId.decode,
   started_at: millis,
   ended_at: nullable(millis),
@@ -1178,73 +1216,90 @@ const callActivity = object<CallActivity>({
   metrics: callMetrics,
   prompt: nullable(excerpt),
   tool_calls: array(
-    object<ToolCallActivity>({
+    object<ToolCallActivity, WireToolCallView>({
       id: nullable(string),
       name: string,
       effects: array(toolEffect),
       input: excerpt,
-      result: nullable(object<ToolResultView>({ status: label(resultStatuses), output: excerpt })),
+      result: nullable(
+        object<ToolResultView, WireResultView>({ status: label(resultStatuses), output: excerpt }),
+      ),
     }),
   ),
   earlier_results: count,
   reply: nullable(excerpt),
   limitations: array(label(activityLimitations)),
 });
+/** The parts of a call that search and secret findings name. */
+export const searchFields = ['prompt', 'reply', 'tool_input', 'tool_output'] as const;
+export type SearchField = (typeof searchFields)[number];
 /** A finding by its `kind`; an unknown kind keeps only its label. */
-const finding: Decoder<Finding> = (value, path) => {
-  const kind = label(findingKinds)(isRecord(value) ? value.kind : undefined, `${path}.kind`);
-  switch (kind) {
-    case 'cache_rebuild':
-      return object<Extract<Finding, { kind: 'cache_rebuild' }>>({
-        kind: () => 'cache_rebuild',
-        call: CallId.decode,
-        turn: nullable(TurnId.decode),
-        cache_read_tokens: count,
-        cache_written_tokens: count,
-        earlier_peak_tokens: count,
-        idle_before_ms: nullable(count),
-      })(value, path);
-    case 'context_growth':
-      return object<Extract<Finding, { kind: 'context_growth' }>>({
-        kind: () => 'context_growth',
-        call: CallId.decode,
-        turn: nullable(TurnId.decode),
-        earlier_peak_tokens: count,
-        context_tokens: count,
-      })(value, path);
-    case 'large_tool_output':
-      return object<Extract<Finding, { kind: 'large_tool_output' }>>({
-        kind: () => 'large_tool_output',
-        call: CallId.decode,
-        tool: string,
-        tool_call_id: nullable(string),
-        target: nullable(string),
-        output_chars: count,
-      })(value, path);
-    case 'repeated_failure':
-      return object<Extract<Finding, { kind: 'repeated_failure' }>>({
-        kind: () => 'repeated_failure',
-        tool: string,
-        target: nullable(string),
-        failures: count,
-        calls: array(CallId.decode),
-      })(value, path);
-    case 'secret_exposure':
-      return object<Extract<Finding, { kind: 'secret_exposure' }>>({
-        kind: () => 'secret_exposure',
-        call: CallId.decode,
-        turn: nullable(TurnId.decode),
-        field: label(searchFields),
-        secret: label(secretKinds),
-        hint: string,
-        fingerprint: string,
-        count: count,
-      })(value, path);
-    default:
-      return { kind: 'unrecognized', text: unrecognised(kind) };
-  }
-};
-const turnActivity = object<TurnActivity>({
+const finding = tagged<Finding, WireFinding, 'kind'>(
+  'kind',
+  {
+    cache_rebuild: object<
+      Extract<Finding, { kind: 'cache_rebuild' }>,
+      Extract<WireFinding, { kind: 'cache_rebuild' }>
+    >({
+      kind: tagValue('cache_rebuild'),
+      call: CallId.decode,
+      turn: nullable(TurnId.decode),
+      cache_read_tokens: count,
+      cache_written_tokens: count,
+      earlier_peak_tokens: count,
+      idle_before_ms: nullable(count),
+    }),
+    context_growth: object<
+      Extract<Finding, { kind: 'context_growth' }>,
+      Extract<WireFinding, { kind: 'context_growth' }>
+    >({
+      kind: tagValue('context_growth'),
+      call: CallId.decode,
+      turn: nullable(TurnId.decode),
+      earlier_peak_tokens: count,
+      context_tokens: count,
+    }),
+    large_tool_output: object<
+      Extract<Finding, { kind: 'large_tool_output' }>,
+      Extract<WireFinding, { kind: 'large_tool_output' }>
+    >({
+      kind: tagValue('large_tool_output'),
+      call: CallId.decode,
+      tool: string,
+      tool_call_id: nullable(string),
+      target: nullable(string),
+      output_chars: count,
+    }),
+    repeated_failure: object<
+      Extract<Finding, { kind: 'repeated_failure' }>,
+      Extract<WireFinding, { kind: 'repeated_failure' }>
+    >({
+      kind: tagValue('repeated_failure'),
+      tool: string,
+      target: nullable(string),
+      failures: count,
+      calls: array(CallId.decode),
+    }),
+    secret_exposure: object<
+      Extract<Finding, { kind: 'secret_exposure' }>,
+      Extract<WireFinding, { kind: 'secret_exposure' }>
+    >({
+      kind: tagValue('secret_exposure'),
+      call: CallId.decode,
+      turn: nullable(TurnId.decode),
+      field: label(searchFields),
+      secret: label(secretKinds),
+      hint: string,
+      fingerprint: string,
+      count: count,
+    }),
+  },
+  (value, path) => {
+    const kind = label(findingKinds)(isRecord(value) ? value.kind : undefined, `${path}.kind`);
+    return { kind: 'unrecognized', text: kind };
+  },
+);
+const turnActivity = object<TurnActivity, WireTurnActivity>({
   turn: TurnId.decode,
   recording: RecordingId.decode,
   native_id: branded<'NativeTurnId'>(),
@@ -1262,9 +1317,9 @@ const turnActivity = object<TurnActivity>({
   calls: array(callActivity),
   omitted_calls: count,
 });
-const turns = object<Turns>({
+const turns = object<Turns, { turns: WireTurnSummary[] }>({
   turns: array(
-    object<TurnSummary>({
+    object<TurnSummary, WireTurnSummary>({
       turn: TurnId.decode,
       native_id: branded<'NativeTurnId'>(),
       started_at: millis,
@@ -1276,8 +1331,6 @@ const turns = object<Turns>({
     }),
   ),
 });
-export const searchFields = ['prompt', 'reply', 'tool_input', 'tool_output'] as const;
-export type SearchField = (typeof searchFields)[number];
 /** A `?field=` value: a known search field, or null for any other text or none. */
 export function parseSearchField(text: string | null): SearchField | null {
   return searchFields.find((field) => field === text) ?? null;
@@ -1297,9 +1350,9 @@ export interface SearchPage {
   /** Calls indexed so far; fewer than retained while the daemon backfills. */
   indexed_calls: number;
 }
-const searchPage = object<SearchPage>({
+const searchPage = object<SearchPage, WireSearchPage>({
   hits: array(
-    object<SearchHit>({
+    object<SearchHit, WireSearchHit>({
       call: CallId.decode,
       recording: nullable(RecordingId.decode),
       turn: nullable(TurnId.decode),
@@ -1327,9 +1380,9 @@ export interface ExposureView {
 export interface Exposures {
   exposures: ExposureView[];
 }
-const exposures = object<Exposures>({
+const exposures = object<Exposures, { exposures: WireExposureView[] }>({
   exposures: array(
-    object<ExposureView>({
+    object<ExposureView, WireExposureView>({
       call: CallId.decode,
       recording: nullable(RecordingId.decode),
       turn: nullable(TurnId.decode),
@@ -1343,9 +1396,9 @@ const exposures = object<Exposures>({
     }),
   ),
 });
-const recordingReport = object<RecordingReport>({
+const recordingReport = object<RecordingReport, WireRecordingReport>({
   recording: RecordingId.decode,
-  totals: object<ReportTotals>({
+  totals: object<ReportTotals, WireReportTotals>({
     calls: count,
     calls_with_usage: count,
     peak_context_tokens: count,
@@ -1356,7 +1409,7 @@ const recordingReport = object<RecordingReport>({
     cache_hit_percent: nullable(count),
   }),
   turns: array(
-    object<TurnMetrics>({
+    object<TurnMetrics, WireTurnMetrics>({
       turn: TurnId.decode,
       started_at: millis,
       ended_at: nullable(millis),
@@ -1375,7 +1428,7 @@ const recordingReport = object<RecordingReport>({
 
 /** Check the version envelope, then decode the fields beside it. */
 export const versioned =
-  <T>(decode: Decoder<T>): Decoder<T> =>
+  <T, R>(decode: Decoder<T, R>): Decoder<T, R> =>
   (value, path) => {
     const found = isRecord(value) ? value.api_version : undefined;
     if (found !== API_VERSION) throw new ApiVersionError(found);
@@ -1402,8 +1455,8 @@ export class ManagementApi {
     return this.#read('/api/storage', storage, signal);
   }
   /** Newest first. `query` holds the listing filters and `after`. */
-  calls(query: URLSearchParams, signal?: AbortSignal): Promise<CallPage> {
-    return this.#read(`/api/calls?${ManagementApi.#page(query)}`, callPage, signal);
+  calls(params: Query<RawCallQuery>, signal?: AbortSignal): Promise<CallPage> {
+    return this.#read(`/api/calls?${ManagementApi.#page(params)}`, callPage, signal);
   }
   call(id: CallId, signal?: AbortSignal): Promise<CallDetail> {
     return this.#read(`/api/calls/${id}`, callDetail, signal);
@@ -1413,23 +1466,22 @@ export class ManagementApi {
   }
   /** Totals, hours, and models for calls started within the range. */
   usage(range: { from_ms?: number; until_ms?: number }, signal?: AbortSignal): Promise<UsageView> {
-    const query = new URLSearchParams();
-    if (range.from_ms !== undefined) query.set('from_ms', String(Math.floor(range.from_ms)));
-    if (range.until_ms !== undefined) query.set('until_ms', String(Math.floor(range.until_ms)));
-    const suffix = query.size ? `?${query}` : '';
+    const params = query<RawUsageQuery>(range);
+    const suffix = params.size ? `?${params}` : '';
     return this.#read(`/api/usage${suffix}`, usageView, signal);
   }
   /** The most recently active recordings; `archived` lists those archived instead. */
   recordings(limit = 100, signal?: AbortSignal, shelf: Shelf = 'current'): Promise<Recordings> {
-    const query = shelf === 'archived' ? '&shelf=archived' : '';
-    return this.#read(`/api/recordings?limit=${limit}${query}`, recordings, signal);
+    const params = query<RawShelfQuery>({
+      limit,
+      shelf: shelf === 'archived' ? 'archived' : null,
+    });
+    return this.#read(`/api/recordings?${params}`, recordings, signal);
   }
   /** Oldest first. Only `after` is accepted besides the limit. */
   recordingCalls(id: RecordingId, after: string | null, signal?: AbortSignal): Promise<CallPage> {
-    const query = new URLSearchParams();
-    if (after) query.set('after', after);
     return this.#read(
-      `/api/recordings/${id}/calls?${ManagementApi.#page(query)}`,
+      `/api/recordings/${id}/calls?${ManagementApi.#page(query<RawPageQuery>({ after }))}`,
       callPage,
       signal,
     );
@@ -1437,7 +1489,8 @@ export class ManagementApi {
 
   /** A recording's turns, newest first, with the start of each prompt. */
   turns(id: RecordingId, limit = 100, signal?: AbortSignal): Promise<Turns> {
-    return this.#read(`/api/recordings/${id}/turns?limit=${limit}`, turns, signal);
+    const params = query<RawPageQuery>({ limit });
+    return this.#read(`/api/recordings/${id}/turns?${params}`, turns, signal);
   }
   /** Where a recording's context and cache tokens went, from its call records. */
   report(id: RecordingId, signal?: AbortSignal): Promise<RecordingReport> {
@@ -1448,28 +1501,27 @@ export class ManagementApi {
     return this.#read(`/api/turns/${id}`, turnActivity, signal);
   }
   /** Full-text search: `q`, and optionally `field`, `recording`, `client`, `limit`. */
-  search(query: URLSearchParams, signal?: AbortSignal): Promise<SearchPage> {
-    return this.#read(`/api/search?${query}`, searchPage, signal);
+  search(params: Query<RawSearchQuery>, signal?: AbortSignal): Promise<SearchPage> {
+    return this.#read(`/api/search?${params}`, searchPage, signal);
   }
   /** Credentials calls carried, newest first, from `from_ms` on. */
   exposures(from_ms?: number, signal?: AbortSignal): Promise<Exposures> {
-    const query = new URLSearchParams({ limit: '100' });
-    if (from_ms !== undefined) query.set('from_ms', String(Math.floor(from_ms)));
-    return this.#read(`/api/exposures?${query}`, exposures, signal);
+    const params = query<RawExposureQuery>({ limit: 100, from_ms });
+    return this.#read(`/api/exposures?${params}`, exposures, signal);
   }
 
   /** `limit` first, the caller's or 100, then the rest of the query. */
-  static #page(query: URLSearchParams): string {
-    const params = new URLSearchParams([
-      ['limit', query.get('limit') ?? '100'],
-      ...[...query].filter(([key]) => key !== 'limit'),
+  static #page(params: URLSearchParams): string {
+    const page = new URLSearchParams([
+      ['limit', params.get('limit') ?? '100'],
+      ...[...params].filter(([key]) => key !== 'limit'),
     ]);
-    return params.toString();
+    return page.toString();
   }
 
   async #read<T>(
     path: string,
-    decode: Decoder<T>,
+    decode: AnyDecoder<T>,
     signal: AbortSignal | undefined,
     acceptance: Acceptance = 'success_only',
   ): Promise<T> {

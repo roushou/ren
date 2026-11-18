@@ -132,7 +132,7 @@ enum Stopped {
 
 #[derive(Debug)]
 struct ToolCall {
-    kind: ItemKind,
+    kind: Stored<ItemKind>,
     read: ItemRead,
     start: Value,
 }
@@ -541,7 +541,7 @@ impl PiRpc {
                     phase: ItemPhase::Completed,
                     item: DriveItem {
                         id: self.item(format!("user:{stamp}")),
-                        kind: ItemKind::UserMessage,
+                        kind: ItemKind::UserMessage.into(),
                         read: ItemRead::Prompt { text, images },
                         body: DriveItem::without_image_bytes(body.clone()),
                     },
@@ -596,7 +596,7 @@ impl PiRpc {
                     phase: ItemPhase::Completed,
                     item: DriveItem {
                         id: self.block(streaming, "text", index),
-                        kind: ItemKind::AgentMessage,
+                        kind: ItemKind::AgentMessage.into(),
                         read: ItemRead::Reply {
                             text: Self::text(block, "text").unwrap_or_default(),
                         },
@@ -607,7 +607,7 @@ impl PiRpc {
                     phase: ItemPhase::Completed,
                     item: DriveItem {
                         id: self.block(streaming, "thinking", index),
-                        kind: ItemKind::Reasoning,
+                        kind: ItemKind::Reasoning.into(),
                         read: ItemRead::Reasoning,
                         // The signature is opaque to Ren and large.
                         body: json!({ "type": "thinking" }),
@@ -651,29 +651,34 @@ impl PiRpc {
     }
 
     /// A tool call's kind and reading, from Pi's tool name.
-    fn tool(name: &str, args: &Value) -> (ItemKind, ItemRead) {
+    fn tool(name: &str, args: &Value) -> (Stored<ItemKind>, ItemRead) {
         let text = |key: &str| args.get(key).and_then(Value::as_str).map(str::to_owned);
         match PiTool::from_label(name) {
             Some(PiTool::Bash) => (
-                ItemKind::CommandExecution,
+                ItemKind::CommandExecution.into(),
                 ItemRead::Command {
                     command: text("command").unwrap_or_default(),
                     intent: CommandIntent::Unsaid,
-                    status: ItemStatus::InProgress,
+                    status: ItemStatus::InProgress.into(),
                     output: None,
                     exit_code: None,
                 },
             ),
             Some(PiTool::Edit | PiTool::Write) => (
-                ItemKind::FileChange,
+                ItemKind::FileChange.into(),
                 ItemRead::FileChange {
                     paths: text("path").into_iter().collect(),
-                    status: ItemStatus::InProgress,
+                    status: ItemStatus::InProgress.into(),
                 },
             ),
             Some(PiTool::Read | PiTool::Grep | PiTool::Find | PiTool::Ls) | None => (
-                ItemKind::Other(name.to_owned()),
-                ItemRead::tool(crate::Harness::Pi, name, args, ItemStatus::InProgress),
+                Stored::from_label(name),
+                ItemRead::tool(
+                    crate::Harness::Pi,
+                    name,
+                    args,
+                    ItemStatus::InProgress.into(),
+                ),
             ),
         }
     }
@@ -697,7 +702,7 @@ impl PiRpc {
             } => ItemRead::Command {
                 command,
                 intent,
-                status,
+                status: Stored::Known(status),
                 output: result
                     .get("content")
                     .and_then(Value::as_array)
@@ -711,11 +716,14 @@ impl PiRpc {
                 // Pi's bash tool reports no exit code apart from its text.
                 exit_code: None,
             },
-            ItemRead::FileChange { paths, .. } => ItemRead::FileChange { paths, status },
+            ItemRead::FileChange { paths, .. } => ItemRead::FileChange {
+                paths,
+                status: Stored::Known(status),
+            },
             ItemRead::Tool { name, effects, .. } => ItemRead::Tool {
                 name,
                 effects,
-                status,
+                status: Stored::Known(status),
             },
             other @ (ItemRead::Prompt { .. }
             | ItemRead::Reply { .. }
@@ -784,6 +792,7 @@ mod tests {
         lines::{Framed, Line},
         prompt::Prompt,
     };
+    use ren_protocol::label::Stored;
     use ren_protocol::native::{NativeThreadId, NativeTurnId};
     use serde_json::{Value, json};
     use uuid::Uuid;
@@ -1009,7 +1018,7 @@ mod tests {
         ] {
             events.extend(feed(&mut codec, message).events);
         }
-        let reads: Vec<(ItemPhase, ItemKind, ItemRead, String)> = events
+        let reads: Vec<(ItemPhase, Stored<ItemKind>, ItemRead, String)> = events
             .iter()
             .filter_map(|event| {
                 if let DriveEvent::Item { phase, item } = event {
@@ -1030,7 +1039,7 @@ mod tests {
             vec![
                 (
                     ItemPhase::Completed,
-                    ItemKind::UserMessage,
+                    ItemKind::UserMessage.into(),
                     ItemRead::Prompt {
                         text: "fix the test".into(),
                         images: Vec::new(),
@@ -1039,13 +1048,13 @@ mod tests {
                 ),
                 (
                     ItemPhase::Completed,
-                    ItemKind::Reasoning,
+                    ItemKind::Reasoning.into(),
                     ItemRead::Reasoning,
                     at("assistant:0:thinking:0"),
                 ),
                 (
                     ItemPhase::Completed,
-                    ItemKind::AgentMessage,
+                    ItemKind::AgentMessage.into(),
                     ItemRead::Reply {
                         text: "Running the tests.".into()
                     },
@@ -1053,11 +1062,11 @@ mod tests {
                 ),
                 (
                     ItemPhase::Started,
-                    ItemKind::CommandExecution,
+                    ItemKind::CommandExecution.into(),
                     ItemRead::Command {
                         command: "cargo test".into(),
                         intent: crate::drive::CommandIntent::Unsaid,
-                        status: ItemStatus::InProgress,
+                        status: ItemStatus::InProgress.into(),
                         output: None,
                         exit_code: None,
                     },
@@ -1065,11 +1074,11 @@ mod tests {
                 ),
                 (
                     ItemPhase::Completed,
-                    ItemKind::CommandExecution,
+                    ItemKind::CommandExecution.into(),
                     ItemRead::Command {
                         command: "cargo test".into(),
                         intent: crate::drive::CommandIntent::Unsaid,
-                        status: ItemStatus::Completed,
+                        status: ItemStatus::Completed.into(),
                         output: Some("ok".into()),
                         exit_code: None,
                     },
@@ -1077,25 +1086,25 @@ mod tests {
                 ),
                 (
                     ItemPhase::Started,
-                    ItemKind::FileChange,
+                    ItemKind::FileChange.into(),
                     ItemRead::FileChange {
                         paths: vec!["src/lib.rs".into()],
-                        status: ItemStatus::InProgress,
+                        status: ItemStatus::InProgress.into(),
                     },
                     "call_2".into(),
                 ),
                 (
                     ItemPhase::Completed,
-                    ItemKind::FileChange,
+                    ItemKind::FileChange.into(),
                     ItemRead::FileChange {
                         paths: vec!["src/lib.rs".into()],
-                        status: ItemStatus::Failed,
+                        status: ItemStatus::Failed.into(),
                     },
                     "call_2".into(),
                 ),
                 (
                     ItemPhase::Started,
-                    ItemKind::Other("grep".into()),
+                    Stored::from_label("grep"),
                     // What it does is read, so its name is Pi's alone.
                     ItemRead::Tool {
                         name: "grep".into(),
@@ -1103,7 +1112,7 @@ mod tests {
                             kind: crate::tools::EffectKind::Search,
                             target: "TODO".into(),
                         }],
-                        status: ItemStatus::InProgress,
+                        status: ItemStatus::InProgress.into(),
                     },
                     "call_3".into(),
                 ),

@@ -75,6 +75,8 @@ fn every_label_is_pinned() {
         settings::Midway,
         sign_in::SignInMethod,
         drive::RequestKind,
+        drive::ItemKind,
+        drive::ItemStatus,
         commands::CommandKind,
         commands::Sigil,
         attachment::ImageFormat,

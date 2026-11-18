@@ -230,7 +230,9 @@ async fn history_through_a_gateway_prints_what_local_storage_prints() {
         .calls(&CallQuery::default())
         .await
         .unwrap();
-    assert_eq!(calls, serde_json::to_value(stored.calls).unwrap());
+    let sent: Vec<ren_gateway::api::read::calls::CallView> =
+        stored.calls.into_iter().map(Into::into).collect();
+    assert_eq!(calls, serde_json::to_value(sent).unwrap());
     let id = calls[0]["id"].as_str().unwrap().to_owned();
     both(&["history", "--limit", "1"]);
     let sessions = both(&["recordings"])["recordings"].clone();

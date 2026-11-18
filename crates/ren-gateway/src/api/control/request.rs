@@ -17,16 +17,19 @@ use ren_recorder::{
 };
 use ren_supervisor::Delivery;
 use serde::{Deserialize, Serialize};
+use ts_rs::TS;
 
 /// `POST pause`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
 #[serde(deny_unknown_fields)]
 pub struct PauseRequest {
     pub retry_after_seconds: u32,
 }
 
 /// `POST client-sessions/{native}/block` and `users/{user}/block`.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, optional_fields = nullable)]
 #[serde(default, deny_unknown_fields)]
 pub struct BlockRequest {
     /// How long the block lasts; absent means until unblocked.
@@ -35,7 +38,8 @@ pub struct BlockRequest {
 }
 
 /// `POST calls/{call}/cancel`.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, optional_fields = nullable)]
 #[serde(default, deny_unknown_fields)]
 pub struct CancelRequest {
     /// Also block the call's session this long, so its client does not retry
@@ -45,9 +49,11 @@ pub struct CancelRequest {
 }
 
 /// `POST sessions`: a new session.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
 #[serde(deny_unknown_fields)]
 pub struct CreateRequest {
+    #[ts(as = "String")]
     pub harness: Harness,
     /// The folder, inside a root or another place; left out, the session
     /// gets a new folder of its own in scratch.
@@ -56,11 +62,14 @@ pub struct CreateRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(as = "Option<String>")]
     pub effort: Option<Effort>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(as = "Option<String>")]
     pub approvals: Option<ApprovalPolicy>,
     /// A client conversation to go on with, begun elsewhere.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(as = "Option<String>")]
     pub resume: Option<uuid::Uuid>,
 }
 
@@ -79,7 +88,8 @@ impl CreateRequest {
 }
 
 /// `POST sessions/{session}/prompt`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
 #[serde(deny_unknown_fields)]
 pub struct PromptRequest {
     /// May be blank when attachments go.
@@ -87,6 +97,7 @@ pub struct PromptRequest {
     pub text: String,
     /// The session's attachments to send with it, by id.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[ts(as = "Vec<String>")]
     pub attachments: Vec<AttachmentId>,
     /// How it goes: start a turn (the default), queue it for after the
     /// running turn, or steer the running turn with it.
@@ -94,6 +105,7 @@ pub struct PromptRequest {
         default = "PromptRequest::start",
         skip_serializing_if = "PromptRequest::starts"
     )]
+    #[ts(as = "String")]
     pub delivery: Delivery,
 }
 
@@ -118,9 +130,11 @@ impl PromptRequest {
 }
 
 /// `POST sessions/{session}/approvals/{approval}`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
 #[serde(deny_unknown_fields)]
 pub struct AnswerRequest {
+    #[ts(as = "String")]
     pub decision: Decision,
 }
 

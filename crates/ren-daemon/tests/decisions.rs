@@ -370,7 +370,11 @@ async fn a_chat_completions_entry_streams_and_records_model_usage_and_tool_calls
         .await
         .unwrap();
     reader.close().await;
-    let activity = serde_json::to_value(&activity).unwrap();
+    // As the read API sends it.
+    let activity = serde_json::to_value(ren_gateway::api::read::activity::CallActivity::from(
+        activity,
+    ))
+    .unwrap();
     assert_eq!(activity["model"], "fixture-chat");
     assert_eq!(activity["tool_calls"][0]["name"], "read_file");
     assert!(

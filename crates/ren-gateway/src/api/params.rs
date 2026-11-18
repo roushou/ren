@@ -7,6 +7,7 @@ use ren_store::query::{
 use ren_store::search::{ExposureQuery, SearchQuery, SearchTerms};
 use serde::Deserialize;
 use std::str::FromStr;
+use ts_rs::TS;
 
 /// A label filter as sent: blank means absent, and anything else must be
 /// one of the filter's labels.
@@ -24,38 +25,49 @@ impl RawLabel {
 }
 
 /// `GET /api/calls` parameters.
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Deserialize, TS)]
 #[serde(deny_unknown_fields, default)]
+#[ts(export, optional_fields)]
 pub(super) struct RawCallQuery {
     limit: Option<u32>,
     after: Option<String>,
+    #[ts(as = "Option<String>")]
     recording: RawLabel,
+    #[ts(as = "Option<String>")]
     client: RawLabel,
+    #[ts(as = "Option<String>")]
     user: RawLabel,
+    #[ts(as = "Option<String>")]
     kind: RawLabel,
+    #[ts(as = "Option<String>")]
     provider: RawLabel,
     model: Option<String>,
     tool: Option<String>,
     q: Option<String>,
+    #[ts(as = "Option<String>")]
     status: RawLabel,
+    #[ts(as = "Option<String>")]
     has_tools: RawLabel,
     from_ms: Option<u64>,
     until_ms: Option<u64>,
 }
 
 /// `limit` and `after` alone.
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Deserialize, TS)]
 #[serde(deny_unknown_fields)]
+#[ts(export, optional_fields)]
 pub(super) struct RawPageQuery {
     pub limit: Option<u32>,
     pub after: Option<String>,
 }
 
 /// `GET /api/recordings` and `/api/runs` parameters: a page of one shelf.
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Deserialize, TS)]
 #[serde(deny_unknown_fields, default)]
+#[ts(export, optional_fields)]
 pub(super) struct RawShelfQuery {
     limit: Option<u32>,
+    #[ts(as = "Option<String>")]
     shelf: RawLabel,
 }
 
@@ -69,8 +81,9 @@ impl RawShelfQuery {
 }
 
 /// `GET /api/usage` parameters: an inclusive range of call start times.
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Deserialize, TS)]
 #[serde(deny_unknown_fields)]
+#[ts(export, optional_fields)]
 pub(super) struct RawUsageQuery {
     from_ms: Option<u64>,
     until_ms: Option<u64>,
@@ -88,12 +101,16 @@ impl TryFrom<RawUsageQuery> for TimeRange {
 }
 
 /// `GET /api/search` parameters.
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Deserialize, TS)]
 #[serde(deny_unknown_fields, default)]
+#[ts(export, optional_fields)]
 pub(super) struct RawSearchQuery {
     q: Option<String>,
+    #[ts(as = "Option<String>")]
     recording: RawLabel,
+    #[ts(as = "Option<String>")]
     client: RawLabel,
+    #[ts(as = "Option<String>")]
     field: RawLabel,
     from_ms: Option<u64>,
     until_ms: Option<u64>,
@@ -119,9 +136,11 @@ impl TryFrom<RawSearchQuery> for SearchQuery {
 }
 
 /// `GET /api/exposures` parameters.
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Deserialize, TS)]
 #[serde(deny_unknown_fields, default)]
+#[ts(export, optional_fields)]
 pub(super) struct RawExposureQuery {
+    #[ts(as = "Option<String>")]
     recording: RawLabel,
     from_ms: Option<u64>,
     until_ms: Option<u64>,
@@ -144,8 +163,9 @@ impl TryFrom<RawExposureQuery> for ExposureQuery {
 }
 
 /// `GET /api/live` parameters.
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Deserialize, TS)]
 #[serde(deny_unknown_fields)]
+#[ts(export, optional_fields)]
 pub(super) struct RawLiveQuery {
     pub after: Option<u64>,
     /// Also send progress events on streaming calls.

@@ -15,6 +15,8 @@ settings::ApprovalPolicy: ask edits auto
 settings::Midway: steer model effort approvals
 sign_in::SignInMethod: claude_subscription anthropic_console chatgpt anthropic_api_key openai_api_key
 drive::RequestKind: initialize thread_start thread_resume turn_start turn_interrupt turn_steer configure list_commands
+drive::ItemKind: user_message agent_message reasoning plan command_execution file_change mcp_tool_call web_search
+drive::ItemStatus: in_progress completed failed declined
 commands::CommandKind: command skill template
 commands::Sigil: / $
 attachment::ImageFormat: png jpeg gif webp

@@ -15,6 +15,7 @@ use serde::Serialize;
 use serde_with::{DeserializeFromStr, SerializeDisplay};
 use std::io::Read;
 use strum::{Display, EnumString, IntoStaticStr, VariantArray};
+use ts_rs::TS;
 
 /// How the raw bytes are shown.
 #[derive(Display, EnumString, IntoStaticStr, VariantArray)]
@@ -75,32 +76,42 @@ pub enum DecodeIntegrity {
     Failed,
 }
 
-#[derive(Debug, Serialize)]
+/// A body's preview, as `/api/calls/{id}/body/{direction}` answers.
+#[derive(Debug, Serialize, TS)]
+#[ts(export)]
 pub struct BodyPreview {
     /// Unknown while the body is still being received.
     pub observed_bytes: Option<u64>,
     pub stored_bytes: u64,
+    #[ts(as = "String")]
     pub ending: Stored<BodyEnding>,
     /// Bytes in this preview.
     pub captured_bytes: usize,
+    #[ts(as = "String")]
     pub extent: PreviewExtent,
     pub raw: RawPreview,
     pub text: Option<String>,
+    #[ts(as = "String")]
     pub text_end: TextEnd,
     pub decoding: DecodingPreview,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, TS)]
+#[ts(export)]
 pub struct RawPreview {
     pub text: String,
+    #[ts(as = "String")]
     pub format: RawFormat,
     /// Hex output stops at the raw display limit.
     pub truncated: bool,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, TS)]
+#[ts(export)]
 pub struct DecodingPreview {
+    #[ts(as = "String")]
     pub applied: PreviewDecoding,
+    #[ts(as = "String")]
     pub integrity: DecodeIntegrity,
     /// Decoded output stops at the text limit.
     pub truncated: bool,

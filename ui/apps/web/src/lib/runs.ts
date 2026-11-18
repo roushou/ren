@@ -47,6 +47,11 @@ import {
   type Brand,
   type Decoder,
   type Stored,
+  type AnyDecoder,
+  absentAs,
+  tagValue,
+  tagged,
+  type Variant,
 } from './decode.ts';
 import {
   AttachmentId,
@@ -60,6 +65,56 @@ import {
 } from './attachments.ts';
 import { Refusals, type Refusal } from './refusal.ts';
 import { processExit, type ProcessExit } from './exit.ts';
+import type { ApprovalAsk as WireApprovalAsk } from './wire/ApprovalAsk.ts';
+import type { CommandIntent as WireCommandIntent } from './wire/CommandIntent.ts';
+import type { CommandPart as WireCommandPart } from './wire/CommandPart.ts';
+import type { ConversationView as WireConversationView } from './wire/ConversationView.ts';
+import type { DriveEvent as WireDriveEvent } from './wire/DriveEvent.ts';
+import type { DriveItem as WireDriveItem } from './wire/DriveItem.ts';
+import type { ItemRead as WireItemRead } from './wire/ItemRead.ts';
+import type { TurnEnd as WireTurnEnd } from './wire/TurnEnd.ts';
+import type { RunEntryView as WireRunEntryView } from './wire/RunEntryView.ts';
+import type { RunView as WireRunView } from './wire/RunView.ts';
+import type { Client as WireClient } from './wire/Client.ts';
+import type { ClientCommand as WireClientCommand } from './wire/ClientCommand.ts';
+import type { ClientsBody as WireClientsBody } from './wire/ClientsBody.ts';
+import type { CommandsBody as WireCommandsBody } from './wire/CommandsBody.ts';
+import type { Created as WireCreated } from './wire/Created.ts';
+import type { FileMatch as WireFileMatch } from './wire/FileMatch.ts';
+import type { FilesBody as WireFilesBody } from './wire/FilesBody.ts';
+import type { Model as WireModel } from './wire/Model.ts';
+import type { ModelsBody as WireModelsBody } from './wire/ModelsBody.ts';
+import type { OneSession as WireOneSession } from './wire/OneSession.ts';
+import type { Places as WirePlaces } from './wire/Places.ts';
+import type { Project as WireProject } from './wire/Project.ts';
+import type { RunSettings as WireRunSettings } from './wire/RunSettings.ts';
+import type { RunSnapshot as WireRunSnapshot } from './wire/RunSnapshot.ts';
+import type { RunsBody as WireRunsBody } from './wire/RunsBody.ts';
+import type { SessionBody as WireSessionBody } from './wire/SessionBody.ts';
+import type { SessionSnapshot as WireSessionSnapshot } from './wire/SessionSnapshot.ts';
+import type { SessionState as WireSessionState } from './wire/SessionState.ts';
+import type { SessionView as WireSessionView } from './wire/SessionView.ts';
+import type { SessionsBody as WireSessionsBody } from './wire/SessionsBody.ts';
+import type { Waiting as WireWaiting } from './wire/Waiting.ts';
+import type { RunState as WireRunState } from './wire/RunState.ts';
+import type { ProjectGit as WireProjectGit } from './wire/ProjectGit.ts';
+import type { RunUpdate as WireRunUpdate } from './wire/RunUpdate.ts';
+import type { AnswerRequest as WireAnswerRequest } from './wire/AnswerRequest.ts';
+import type { ClientRequest as WireClientRequest } from './wire/ClientRequest.ts';
+import type { CreateRequest as WireCreateRequest } from './wire/CreateRequest.ts';
+import type { FolderRequest as WireFolderRequest } from './wire/FolderRequest.ts';
+import type { LoginAnswer as WireLoginAnswer } from './wire/LoginAnswer.ts';
+import type { PromptRequest as WirePromptRequest } from './wire/PromptRequest.ts';
+import type { SettingsRequest as WireSettingsRequest } from './wire/SettingsRequest.ts';
+import type { SignInStart as WireSignInStart } from './wire/SignInStart.ts';
+import { query } from './query.ts';
+import type { AttachRequest as WireAttachRequest } from './wire/AttachRequest.ts';
+import type { FilesRequest as WireFilesRequest } from './wire/FilesRequest.ts';
+import type { ListRequest as WireListRequest } from './wire/ListRequest.ts';
+import type { RawShelfQuery as WireRawShelfQuery } from './wire/RawShelfQuery.ts';
+import type { ItemPhase as WireItemPhase } from './wire/ItemPhase.ts';
+import type { RecordedPrompt as WireRecordedPrompt } from './wire/RecordedPrompt.ts';
+import type { Retry as WireRetry } from './wire/Retry.ts';
 
 export type { ProcessExit };
 
@@ -111,7 +166,7 @@ export interface ChosenSettings {
   effort: Effort | null;
   approvals: ApprovalPolicy | null;
 }
-const runSettings = object<RunSettings>({
+const runSettings = object<RunSettings, WireRunSettings>({
   model: nullable(branded<'ModelId'>()),
   effort: nullable(label(EFFORTS)),
   approvals: nullable(label(APPROVAL_POLICIES)),
@@ -156,7 +211,21 @@ export interface RunSnapshot {
 }
 
 /** Where an item's action stands; a status a newer daemon names is kept as text. */
-export type ItemStatus = 'in_progress' | 'completed' | 'failed' | 'declined' | (string & {});
+/** Where an item's action stands, pinned to `ren-harness`'s `drive::ItemStatus`; another is the client's own. */
+export const itemStatuses = ['in_progress', 'completed', 'failed', 'declined'] as const;
+export type ItemStatus = (typeof itemStatuses)[number] | (string & {});
+/** The kinds of items Ren reads, pinned to `ren-harness`'s `drive::ItemKind`; another is the client's own. */
+export const itemKinds = [
+  'user_message',
+  'agent_message',
+  'reasoning',
+  'plan',
+  'command_execution',
+  'file_change',
+  'mcp_tool_call',
+  'web_search',
+] as const;
+export type ItemKind = (typeof itemKinds)[number] | (string & {});
 
 /** What the daemon read from an item, the same for every client. */
 export type ItemRead =
@@ -182,7 +251,7 @@ export type ItemRead =
 /** One item of a turn: its kind and what the daemon read of it. */
 export interface DriveItem {
   id: ItemId;
-  kind: string;
+  kind: ItemKind;
   read: ItemRead;
 }
 
@@ -208,7 +277,6 @@ export const driveEventKinds = [
   'unreadable',
 ] as const;
 export type DriveEventKind = (typeof driveEventKinds)[number];
-const driveEventKind = label(driveEventKinds);
 
 /** What the agent reported, as the daemon relays it. Not stored. */
 export type DriveEvent =
@@ -254,72 +322,83 @@ export type HistorySubject = { kind: 'recording'; id: RecordingId } | { kind: 'r
 /** What a history edit does. */
 export type HistoryChange = 'archive' | 'unarchive' | 'delete';
 
-const optionalString: Decoder<string | null> = (value, path) =>
+const optionalString: Decoder<string | null, string | null | undefined> = (value, path) =>
   value === undefined || value === null ? null : string(value, path);
 
 /** A queued prompt's text: text alone, or with images, `{text, images}`. */
-const queuedText: Decoder<string | null> = (value, path) =>
+const queuedText: Decoder<string | null, WireRecordedPrompt | null | undefined> = (value, path) =>
   isRecord(value) ? string(value.text, `${path}.text`) : optionalString(value, path);
 
-const integer: Decoder<number> = (value, path) => {
+const integer: Decoder<number, number> = (value, path) => {
   if (typeof value !== 'number' || !Number.isInteger(value))
     throw new ShapeError(path, 'an integer');
   return value;
 };
 
-const approvalAsk: Decoder<ApprovalAsk> = (value, path) => {
-  if (!isRecord(value)) throw new ShapeError(path, 'an object');
-  switch (value.kind) {
-    case 'command':
-      return {
-        kind: 'command',
-        command: optionalString(value.command, `${path}.command`),
-        cwd: optionalString(value.cwd, `${path}.cwd`),
-        reason: optionalString(value.reason, `${path}.reason`),
-      };
-    case 'file_change':
-      return { kind: 'file_change', reason: optionalString(value.reason, `${path}.reason`) };
-    case 'tool':
-      return {
-        kind: 'tool',
-        tool: string(value.tool, `${path}.tool`),
-        detail: optionalString(value.detail, `${path}.detail`),
-      };
-    default:
-      return { kind: 'unrecognized', text: String(value.kind) };
-  }
-};
+type AskOf<K> = Extract<ApprovalAsk, { kind: K }>;
+type SentAsk<K> = Variant<WireApprovalAsk, 'kind', K>;
+const approvalAsk = tagged<ApprovalAsk, WireApprovalAsk, 'kind'>(
+  'kind',
+  {
+    command: object<AskOf<'command'>, SentAsk<'command'>>({
+      kind: tagValue('command'),
+      command: optionalString,
+      cwd: optionalString,
+      reason: optionalString,
+    }),
+    file_change: object<AskOf<'file_change'>, SentAsk<'file_change'>>({
+      kind: tagValue('file_change'),
+      reason: optionalString,
+    }),
+    tool: object<AskOf<'tool'>, SentAsk<'tool'>>({
+      kind: tagValue('tool'),
+      tool: string,
+      detail: optionalString,
+    }),
+  },
+  (value, path) => {
+    if (!isRecord(value)) throw new ShapeError(path, 'an object');
+    return { kind: 'unrecognized', text: String(value.kind) };
+  },
+);
 
-const waiting = object<Waiting>({ approval: branded<'ApprovalId'>(), ask: approvalAsk });
+const waiting = object<Waiting, WireWaiting>({
+  approval: branded<'ApprovalId'>(),
+  ask: approvalAsk,
+});
 
-const runState: Decoder<RunState> = (value, path) => {
-  if (!isRecord(value)) throw new ShapeError(path, 'an object');
-  const thread = () => branded<'NativeThreadId'>()(value.thread, `${path}.thread`);
-  switch (value.phase) {
-    case 'starting':
-      return { phase: 'starting' };
-    case 'idle':
-      return { phase: 'idle', thread: thread() };
-    case 'working':
-      return {
-        phase: 'working',
-        thread: thread(),
-        turn: nullable(branded<'NativeTurnId'>())(value.turn ?? null, `${path}.turn`),
-        approvals: array(waiting)(value.approvals ?? [], `${path}.approvals`),
-        queued: queuedText(value.queued, `${path}.queued`),
-      };
-    case 'stopping':
-      return { phase: 'stopping', cause: label(stopCauses)(value.cause, `${path}.cause`) };
-    case 'ended':
-      return {
-        phase: 'ended',
-        end: label(runEnds)(value.end, `${path}.end`),
-        exit: value.exit == null ? null : processExit(value.exit, `${path}.exit`),
-      };
-    default:
-      return { phase: 'unrecognized', text: String(value.phase) };
-  }
-};
+type PhaseOf<K> = Extract<RunState, { phase: K }>;
+type SentPhase<K> = Variant<WireRunState, 'phase', K>;
+const runState = tagged<RunState, WireRunState, 'phase'>(
+  'phase',
+  {
+    starting: object<PhaseOf<'starting'>, SentPhase<'starting'>>({ phase: tagValue('starting') }),
+    idle: object<PhaseOf<'idle'>, SentPhase<'idle'>>({
+      phase: tagValue('idle'),
+      thread: branded<'NativeThreadId'>(),
+    }),
+    working: object<PhaseOf<'working'>, SentPhase<'working'>>({
+      phase: tagValue('working'),
+      thread: branded<'NativeThreadId'>(),
+      turn: absentAs(nullable(branded<'NativeTurnId'>()), null),
+      approvals: absentAs(array(waiting), []),
+      queued: queuedText,
+    }),
+    stopping: object<PhaseOf<'stopping'>, SentPhase<'stopping'>>({
+      phase: tagValue('stopping'),
+      cause: label(stopCauses),
+    }),
+    ended: object<PhaseOf<'ended'>, SentPhase<'ended'>>({
+      phase: tagValue('ended'),
+      end: label(runEnds),
+      exit: absentAs(nullable(processExit), null),
+    }),
+  },
+  (value, path) => {
+    if (!isRecord(value)) throw new ShapeError(path, 'an object');
+    return { phase: 'unrecognized', text: String(value.phase) };
+  },
+);
 
 /** One part of a command as its client read it (Codex's `commandActions`). */
 export type CommandPart =
@@ -335,96 +414,98 @@ export type CommandIntent =
   | { said: 'described'; text: string }
   | { said: 'parts'; parts: CommandPart[] };
 
-const commandPart: Decoder<CommandPart> = (value, path) => {
-  if (!isRecord(value)) return { part: 'unknown', command: null };
-  const at = (key: string) => `${path}.${key}`;
-  const command = () => string(value.command, at('command'));
-  switch (value.part) {
-    case 'read':
-      return {
-        part: 'read',
-        command: command(),
-        path: string(value.path, at('path')),
-        name: string(value.name, at('name')),
-      };
-    case 'list_files':
-      return {
-        part: 'list_files',
-        command: command(),
-        path: optionalString(value.path, at('path')),
-      };
-    case 'search':
-      return {
-        part: 'search',
-        command: command(),
-        query: optionalString(value.query, at('query')),
-        path: optionalString(value.path, at('path')),
-      };
-    case 'unknown':
-      return { part: 'unknown', command: command() };
-    default: {
-      const raw = isRecord(value.raw) ? value.raw.command : value.command;
-      return { part: 'unknown', command: typeof raw === 'string' ? raw : null };
-    }
-  }
+type PartOf<K> = Extract<CommandPart, { part: K }>;
+type SentPart<K> = Variant<WireCommandPart, 'part', K>;
+/** A part Ren could not read: the command its client gave, when it gave one. */
+const unreadPart = (value: unknown): CommandPart => {
+  const raw = isRecord(value) ? (isRecord(value.raw) ? value.raw.command : value.command) : null;
+  return { part: 'unknown', command: typeof raw === 'string' ? raw : null };
 };
+const commandPart = tagged<CommandPart, WireCommandPart, 'part'>(
+  'part',
+  {
+    read: object<PartOf<'read'>, SentPart<'read'>>({
+      part: tagValue('read'),
+      command: string,
+      path: string,
+      name: string,
+    }),
+    list_files: object<PartOf<'list_files'>, SentPart<'list_files'>>({
+      part: tagValue('list_files'),
+      command: string,
+      path: optionalString,
+    }),
+    search: object<PartOf<'search'>, SentPart<'search'>>({
+      part: tagValue('search'),
+      command: string,
+      query: optionalString,
+      path: optionalString,
+    }),
+    unknown: object<PartOf<'unknown'>, SentPart<'unknown'>>({
+      part: tagValue('unknown'),
+      command: string,
+    }),
+    unrecognized: unreadPart,
+  },
+  unreadPart,
+);
 
-const commandIntent: Decoder<CommandIntent> = (value, path) => {
-  if (!isRecord(value)) return { said: 'unsaid' };
-  switch (value.said) {
-    case 'described':
-      return { said: 'described', text: string(value.text, `${path}.text`) };
-    case 'parts':
-      return { said: 'parts', parts: array(commandPart)(value.parts, `${path}.parts`) };
-    default:
-      return { said: 'unsaid' };
-  }
-};
+type IntentOf<K> = Extract<CommandIntent, { said: K }>;
+type SentIntent<K> = Variant<WireCommandIntent, 'said', K>;
+const commandIntent = tagged<CommandIntent, WireCommandIntent, 'said'>(
+  'said',
+  {
+    unsaid: object<IntentOf<'unsaid'>, SentIntent<'unsaid'>>({ said: tagValue('unsaid') }),
+    described: object<IntentOf<'described'>, SentIntent<'described'>>({
+      said: tagValue('described'),
+      text: string,
+    }),
+    parts: object<IntentOf<'parts'>, SentIntent<'parts'>>({
+      said: tagValue('parts'),
+      parts: array(commandPart),
+    }),
+  },
+  () => ({ said: 'unsaid' }),
+);
 
-const itemRead: Decoder<ItemRead> = (value, path) => {
-  if (!isRecord(value)) return { as: 'unread' };
-  const at = (key: string) => `${path}.${key}`;
-  const status = () => string(value.status, at('status'));
-  switch (value.as) {
-    case 'prompt':
-      return {
-        as: 'prompt',
-        text: string(value.text, at('text')),
-        images: array(attachmentRead)(value.images ?? [], at('images')),
-      };
-    case 'reply':
-    case 'plan':
-      return { as: value.as, text: string(value.text, at('text')) };
-    case 'reasoning':
-      return { as: 'reasoning' };
-    case 'command':
-      return {
-        as: 'command',
-        command: string(value.command, at('command')),
-        intent: commandIntent(value.intent, at('intent')),
-        status: status(),
-        output: optionalString(value.output, at('output')),
-        exit_code: value.exit_code == null ? null : integer(value.exit_code, at('exit_code')),
-      };
-    case 'file_change':
-      return {
-        as: 'file_change',
-        paths: array(string)(value.paths, at('paths')),
-        status: status(),
-      };
-    case 'tool':
-      return {
-        as: 'tool',
-        name: string(value.name, at('name')),
-        effects: array(toolEffect)(value.effects ?? [], at('effects')),
-        status: status(),
-      };
-    default:
-      return { as: 'unread' };
-  }
-};
+type ReadOf<K> = Extract<ItemRead, { as: K }>;
+type SentRead<K> = Variant<WireItemRead, 'as', K>;
+const itemRead = tagged<ItemRead, WireItemRead, 'as'>(
+  'as',
+  {
+    prompt: object<ReadOf<'prompt'>, SentRead<'prompt'>>({
+      as: tagValue('prompt'),
+      text: string,
+      images: absentAs(array(attachmentRead), []),
+    }),
+    reply: object<ReadOf<'reply'>, SentRead<'reply'>>({ as: tagValue('reply'), text: string }),
+    reasoning: object<ReadOf<'reasoning'>, SentRead<'reasoning'>>({ as: tagValue('reasoning') }),
+    plan: object<ReadOf<'plan'>, SentRead<'plan'>>({ as: tagValue('plan'), text: string }),
+    command: object<ReadOf<'command'>, SentRead<'command'>>({
+      as: tagValue('command'),
+      command: string,
+      intent: absentAs(commandIntent, { said: 'unsaid' }),
+      status: string,
+      output: optionalString,
+      exit_code: absentAs(nullable(integer), null),
+    }),
+    file_change: object<ReadOf<'file_change'>, SentRead<'file_change'>>({
+      as: tagValue('file_change'),
+      paths: array(string),
+      status: string,
+    }),
+    tool: object<ReadOf<'tool'>, SentRead<'tool'>>({
+      as: tagValue('tool'),
+      name: string,
+      effects: absentAs(array(toolEffect), []),
+      status: string,
+    }),
+    unread: object<ReadOf<'unread'>, SentRead<'unread'>>({ as: tagValue('unread') }),
+  },
+  () => ({ as: 'unread' }),
+);
 
-const runSnapshot = object<RunSnapshot>({
+const runSnapshot = object<RunSnapshot, WireRunSnapshot>({
   run: RunId.decode,
   harness: label(harnesses),
   workdir: string,
@@ -432,101 +513,124 @@ const runSnapshot = object<RunSnapshot>({
   settings: runSettings,
 });
 
-const turnEnd: Decoder<TurnEnd> = (value, path) => {
-  if (!isRecord(value)) throw new ShapeError(path, 'an object');
-  switch (value.kind) {
-    case 'completed':
-    case 'interrupted':
-      return { kind: value.kind };
-    case 'failed':
-      return { kind: 'failed', message: optionalString(value.message, `${path}.message`) };
-    default:
-      return { kind: 'unknown', status: String(value.status ?? value.kind) };
-  }
-};
+type EndOf<K> = Extract<TurnEnd, { kind: K }>;
+type SentEnd<K> = Variant<WireTurnEnd, 'kind', K>;
+const turnEnd = tagged<TurnEnd, WireTurnEnd, 'kind'>(
+  'kind',
+  {
+    completed: object<EndOf<'completed'>, SentEnd<'completed'>>({ kind: tagValue('completed') }),
+    interrupted: object<EndOf<'interrupted'>, SentEnd<'interrupted'>>({
+      kind: tagValue('interrupted'),
+    }),
+    failed: object<EndOf<'failed'>, SentEnd<'failed'>>({
+      kind: tagValue('failed'),
+      message: optionalString,
+    }),
+    unknown: object<EndOf<'unknown'>, SentEnd<'unknown'>>({
+      kind: tagValue('unknown'),
+      status: string,
+    }),
+  },
+  (value, path) => {
+    if (!isRecord(value)) throw new ShapeError(path, 'an object');
+    return { kind: 'unknown', status: String(value.status ?? value.kind) };
+  },
+);
 
-const driveEvent: Decoder<DriveEvent> = (value, path) => {
-  if (!isRecord(value)) throw new ShapeError(path, 'an object');
-  const at = (key: string) => `${path}.${key}`;
-  const kind = driveEventKind(value.kind, at('kind'));
-  switch (kind) {
-    case 'ready':
-      return { kind: 'ready', thread: branded<'NativeThreadId'>()(value.thread, at('thread')) };
-    case 'turn_started':
-      return { kind: 'turn_started', turn: branded<'NativeTurnId'>()(value.turn, at('turn')) };
-    case 'delta':
-      return {
-        kind: 'delta',
-        item: branded<'ItemId'>()(value.item, at('item')),
-        text: string(value.text, at('text')),
-      };
-    case 'item': {
-      const item = value.item;
-      if (!isRecord(item)) throw new ShapeError(at('item'), 'an object');
-      const phase = value.phase === 'completed' ? 'completed' : 'started';
-      return {
-        kind: 'item',
-        phase,
-        item: {
-          id: branded<'ItemId'>()(item.id, at('item.id')),
-          kind: string(item.kind, at('item.kind')),
-          read: itemRead(item.read, at('item.read')),
-        },
-      };
-    }
-    case 'approval':
-      return {
-        kind: 'approval',
-        approval: branded<'ApprovalId'>()(value.approval, at('approval')),
-        ask: approvalAsk(value.ask, at('ask')),
-      };
-    case 'approval_resolved':
-      return {
-        kind: 'approval_resolved',
-        approval: branded<'ApprovalId'>()(value.approval, at('approval')),
-      };
-    case 'turn_ended':
-      return {
-        kind: 'turn_ended',
-        turn: branded<'NativeTurnId'>()(value.turn, at('turn')),
-        end: turnEnd(value.end, at('end')),
-      };
-    case 'error':
-      return {
-        kind: 'error',
-        message: string(value.message, at('message')),
-        retry: value.retry === 'will_retry' ? 'will_retry' : 'final',
-      };
-    case 'refused':
-      return {
-        kind: 'refused',
-        request: String(value.request),
-        message: string(value.message, at('message')),
-      };
-    case 'unsupported':
-      return { kind: 'unsupported', method: string(value.method, at('method')) };
-    case 'unknown':
-    case 'unreadable':
-    default:
-      return { kind: 'other', name: kind };
-  }
-};
+/** An item's phase; anything but `completed` reads as started. */
+const itemPhase: Decoder<'started' | 'completed', WireItemPhase> = (value) =>
+  value === 'completed' ? 'completed' : 'started';
+/** Whether the agent retries after an error; anything but `will_retry` is final. */
+const retry: Decoder<'will_retry' | 'final', WireRetry> = (value) =>
+  value === 'will_retry' ? 'will_retry' : 'final';
+type EventOf<K> = Extract<DriveEvent, { kind: K }>;
+type SentEvent<K> = Variant<WireDriveEvent, 'kind', K>;
+const driveEvent = tagged<DriveEvent, WireDriveEvent, 'kind'>(
+  'kind',
+  {
+    ready: object<EventOf<'ready'>, SentEvent<'ready'>>({
+      kind: tagValue('ready'),
+      thread: branded<'NativeThreadId'>(),
+    }),
+    turn_started: object<EventOf<'turn_started'>, SentEvent<'turn_started'>>({
+      kind: tagValue('turn_started'),
+      turn: branded<'NativeTurnId'>(),
+    }),
+    delta: object<EventOf<'delta'>, SentEvent<'delta'>>({
+      kind: tagValue('delta'),
+      item: branded<'ItemId'>(),
+      text: string,
+    }),
+    item: object<EventOf<'item'>, SentEvent<'item'>>({
+      kind: tagValue('item'),
+      phase: itemPhase,
+      item: object<DriveItem, WireDriveItem>({
+        id: branded<'ItemId'>(),
+        kind: string,
+        read: itemRead,
+      }),
+    }),
+    approval: object<EventOf<'approval'>, SentEvent<'approval'>>({
+      kind: tagValue('approval'),
+      approval: branded<'ApprovalId'>(),
+      ask: approvalAsk,
+    }),
+    approval_resolved: object<EventOf<'approval_resolved'>, SentEvent<'approval_resolved'>>({
+      kind: tagValue('approval_resolved'),
+      approval: branded<'ApprovalId'>(),
+    }),
+    turn_ended: object<EventOf<'turn_ended'>, SentEvent<'turn_ended'>>({
+      kind: tagValue('turn_ended'),
+      turn: branded<'NativeTurnId'>(),
+      end: turnEnd,
+    }),
+    error: object<EventOf<'error'>, SentEvent<'error'>>({
+      kind: tagValue('error'),
+      message: string,
+      retry,
+    }),
+    refused: object<EventOf<'refused'>, SentEvent<'refused'>>({
+      kind: tagValue('refused'),
+      request: string,
+      message: string,
+    }),
+    unsupported: object<EventOf<'unsupported'>, SentEvent<'unsupported'>>({
+      kind: tagValue('unsupported'),
+      method: string,
+    }),
+    // Unknown and unreadable lines are shown by their kind only.
+    unknown: () => ({ kind: 'other', name: 'unknown' }),
+    unreadable: () => ({ kind: 'other', name: 'unreadable' }),
+  },
+  (value, path) => {
+    if (!isRecord(value)) throw new ShapeError(path, 'an object');
+    return { kind: 'other', name: string(value.kind, `${path}.kind`) };
+  },
+);
 
 /** One `run` event of the update feed. */
-export const runUpdate: Decoder<RunUpdate> = (value, path) => {
-  if (!isRecord(value)) throw new ShapeError(path, 'an object');
-  const run = RunId.decode(value.run, `${path}.run`);
-  switch (value.kind) {
-    case 'state':
-      return { kind: 'state', run, state: runState(value.state, `${path}.state`) };
-    case 'event':
-      return { kind: 'event', run, event: driveEvent(value.event, `${path}.event`) };
-    default:
-      throw new ShapeError(`${path}.kind`, 'state or event');
-  }
-};
+type UpdateOf<K> = Extract<RunUpdate, { kind: K }>;
+type SentUpdate<K> = Variant<WireRunUpdate, 'kind', K>;
+export const runUpdate = tagged<RunUpdate, WireRunUpdate, 'kind'>(
+  'kind',
+  {
+    state: object<UpdateOf<'state'>, SentUpdate<'state'>>({
+      kind: tagValue('state'),
+      run: RunId.decode,
+      state: runState,
+    }),
+    event: object<UpdateOf<'event'>, SentUpdate<'event'>>({
+      kind: tagValue('event'),
+      run: RunId.decode,
+      event: driveEvent,
+    }),
+  },
+  (_value, path) => {
+    throw new ShapeError(`${path}.kind`, 'state or event');
+  },
+);
 
-const recordedRun = object<RecordedRun>({
+const recordedRun = object<RecordedRun, WireRunView>({
   id: RunId.decode,
   harness: label(harnesses),
   workdir: string,
@@ -542,7 +646,9 @@ const recordedRun = object<RecordedRun>({
   approvals: nullable(label(APPROVAL_POLICIES)),
 });
 
-const liveRuns = versioned(object<{ runs: RunSnapshot[] }>({ runs: array(runSnapshot) }));
+const liveRuns = versioned(
+  object<{ runs: RunSnapshot[] }, WireRunsBody>({ runs: array(runSnapshot) }),
+);
 
 /** Whether a prompt has gone out in a session: a draft's client can still change. */
 export const SESSION_PHASES = ['draft', 'active'] as const;
@@ -593,18 +699,21 @@ export interface SessionBody {
   served: ServedSession | null;
 }
 
-const servedSession = object<ServedSession>({
+const servedSession = object<ServedSession, WireSessionSnapshot>({
   session: SessionId.decode,
   harness: label(harnesses),
   workdir: string,
   settings: runSettings,
-  state: object<SessionState>({ shelf: label(shelves), phase: label(SESSION_PHASES) }),
+  state: object<SessionState, WireSessionState>({
+    shelf: label(shelves),
+    phase: label(SESSION_PHASES),
+  }),
   process: nullable(RunId.decode),
   // A daemon that does not say takes no images.
   images: (value, path) => (value === undefined ? 'never' : label(IMAGE_TAKING)(value, path)),
 });
 
-const storedSession = object<StoredSession>({
+const storedSession = object<StoredSession, WireSessionView>({
   id: SessionId.decode,
   harness: label(harnesses),
   workdir: string,
@@ -618,16 +727,20 @@ const storedSession = object<StoredSession>({
   runs: array(recordedRun),
 });
 
-const sessionBody = object<SessionBody>({
+const sessionBody = object<SessionBody, WireSessionBody>({
   session: SessionId.decode,
   stored: nullable(storedSession),
   served: nullable(servedSession),
 });
 const sessionList = versioned(
-  object<{ sessions: SessionBody[] }>({ sessions: array(sessionBody) }),
+  object<{ sessions: SessionBody[] }, WireSessionsBody>({ sessions: array(sessionBody) }),
 );
-const oneSession = versioned(object<{ session: SessionBody }>({ session: sessionBody }));
-const createdSession = versioned(object<{ session: SessionId }>({ session: SessionId.decode }));
+const oneSession = versioned(
+  object<{ session: SessionBody }, WireOneSession>({ session: sessionBody }),
+);
+const createdSession = versioned(
+  object<{ session: SessionId }, WireCreated>({ session: SessionId.decode }),
+);
 /** A project's repository, as its `HEAD` reads. */
 export type ProjectGit =
   | { kind: 'branch'; name: string }
@@ -660,23 +773,30 @@ export interface RunPlaces {
   scratch: string | null;
 }
 
-const projectGit: Decoder<ProjectGit> = (value, path) => {
-  if (!isRecord(value)) throw new ShapeError(path, 'an object');
-  switch (value.kind) {
-    case 'branch':
-      return { kind: 'branch', name: string(value.name, `${path}.name`) };
-    case 'detached':
-      return { kind: 'detached', commit: string(value.commit, `${path}.commit`) };
-    case 'none':
-      return { kind: 'none' };
-    default:
-      return { kind: 'unreadable' };
-  }
-};
+type GitOf<K> = Extract<ProjectGit, { kind: K }>;
+type SentGit<K> = Variant<WireProjectGit, 'kind', K>;
+const projectGit = tagged<ProjectGit, WireProjectGit, 'kind'>(
+  'kind',
+  {
+    branch: object<GitOf<'branch'>, SentGit<'branch'>>({ kind: tagValue('branch'), name: string }),
+    detached: object<GitOf<'detached'>, SentGit<'detached'>>({
+      kind: tagValue('detached'),
+      commit: string,
+    }),
+    unreadable: object<GitOf<'unreadable'>, SentGit<'unreadable'>>({
+      kind: tagValue('unreadable'),
+    }),
+    none: object<GitOf<'none'>, SentGit<'none'>>({ kind: tagValue('none') }),
+  },
+  (value, path) => {
+    if (!isRecord(value)) throw new ShapeError(path, 'an object');
+    return { kind: 'unreadable' };
+  },
+);
 const runProjects = versioned(
-  object<RunPlaces>({
+  object<RunPlaces, WirePlaces>({
     projects: array(
-      object<RunProject>({
+      object<RunProject, WireProject>({
         path: string,
         name: string,
         shown: string,
@@ -687,7 +807,9 @@ const runProjects = versioned(
     scratch: nullable(string),
   }),
 );
-const recordedRuns = versioned(object<{ runs: RecordedRun[] }>({ runs: array(recordedRun) }));
+const recordedRuns = versioned(
+  object<{ runs: RecordedRun[] }, { runs: WireRunView[] }>({ runs: array(recordedRun) }),
+);
 
 export const clientStatuses = ['ready', 'not_installed'] as const;
 /** Whether a run can start with a client on the daemon's host. */
@@ -708,9 +830,9 @@ export interface RunClient {
 }
 
 const runClients = versioned(
-  object<{ clients: RunClient[] }>({
+  object<{ clients: RunClient[] }, WireClientsBody>({
     clients: array(
-      object<RunClient>({
+      object<RunClient, WireClient>({
         harness: label(harnesses),
         status: label(clientStatuses),
         approvals: array(label(APPROVAL_POLICIES)),
@@ -743,9 +865,9 @@ export interface RunModel {
 }
 
 const runModels = versioned(
-  object<{ models: RunModel[] }>({
+  object<{ models: RunModel[] }, WireModelsBody>({
     models: array(
-      object<RunModel>({
+      object<RunModel, WireModel>({
         id: branded<'ModelId'>(),
         name: string,
         description: nullable(string),
@@ -779,9 +901,9 @@ export interface ClientCommand {
 }
 
 const clientCommands = versioned(
-  object<{ commands: ClientCommand[] }>({
+  object<{ commands: ClientCommand[] }, WireCommandsBody>({
     commands: array(
-      object<ClientCommand>({
+      object<ClientCommand, WireClientCommand>({
         name: string,
         description: string,
         hint: nullable(string),
@@ -804,9 +926,9 @@ export interface FileMatch {
 }
 
 const fileMatches = versioned(
-  object<{ files: FileMatch[] }>({
+  object<{ files: FileMatch[] }, WireFilesBody>({
     files: array(
-      object<FileMatch>({
+      object<FileMatch, WireFileMatch>({
         path: string,
         kind: label(PATH_KINDS),
         positions: array(count),
@@ -817,9 +939,9 @@ const fileMatches = versioned(
 
 const versionedRecordedRun = versioned(recordedRun);
 const storedConversation = versioned(
-  object<StoredConversation>({
+  object<StoredConversation, WireConversationView>({
     entries: array(
-      object<StoredConversation['entries'][number]>({
+      object<StoredConversation['entries'][number], WireRunEntryView>({
         run: RunId.decode,
         seq: count,
         event: (value, path) => driveEvent(value, path),
@@ -926,12 +1048,30 @@ export class RunsClient {
   /** Start `harness`'s own login; answers once it shows its link. */
   async startSignIn(harness: Drivable, method: SignInMethod): Promise<Login> {
     const path = `/control/runs/clients/${harness}/sign-in`;
-    return (await this.#send('POST', path, { method }, startedSignIn, undefined, 28_000)).login;
+    return (
+      await this.#send(
+        'POST',
+        path,
+        { method } satisfies WireSignInStart,
+        startedSignIn,
+        undefined,
+        28_000,
+      )
+    ).login;
   }
   /** Hand `harness`'s login what it waits for (a code, a key, or an address); answers once it ended and was checked. */
   async signInAnswer(harness: Drivable, answer: string): Promise<LoginOutcome> {
     const path = `/control/runs/clients/${harness}/sign-in/answer`;
-    return (await this.#send('POST', path, { answer }, finishedSignIn, undefined, 28_000)).outcome;
+    return (
+      await this.#send(
+        'POST',
+        path,
+        { answer } satisfies WireLoginAnswer,
+        finishedSignIn,
+        undefined,
+        28_000,
+      )
+    ).outcome;
   }
   /** Wait up to about 20 seconds for `harness`'s login to end and be checked. */
   async waitSignIn(harness: Drivable): Promise<Waited> {
@@ -950,7 +1090,7 @@ export class RunsClient {
   }
   /** Sessions on `shelf`, most recently active first. */
   async sessions(shelf: Shelf = 'current', signal?: AbortSignal): Promise<SessionBody[]> {
-    const path = `/control/sessions?shelf=${shelf}`;
+    const path = `/control/sessions?${query<WireListRequest>({ shelf })}`;
     return (await this.#send('GET', path, undefined, sessionList, signal)).sessions;
   }
   async session(session: SessionId, signal?: AbortSignal): Promise<SessionBody> {
@@ -969,7 +1109,7 @@ export class RunsClient {
       ...(settings.model ? { model: settings.model } : {}),
       ...(settings.effort ? { effort: settings.effort } : {}),
       ...(settings.approvals ? { approvals: settings.approvals } : {}),
-    };
+    } satisfies WireCreateRequest;
     return (await this.#send('POST', '/control/sessions', body, createdSession)).session;
   }
   /** One command to a session: through its process, or a new one for a prompt. */
@@ -994,27 +1134,37 @@ export class RunsClient {
             text: command.text,
             delivery: command.delivery,
             ...(command.attachments?.length ? { attachments: command.attachments } : {}),
-          },
+          } satisfies WirePromptRequest,
           null,
         );
       case 'settings': {
         const { model, effort, approvals } = command;
-        return this.#send('POST', `${base}/settings`, { model, effort, approvals }, null);
+        return this.#send(
+          'POST',
+          `${base}/settings`,
+          { model, effort, approvals } satisfies WireSettingsRequest,
+          null,
+        );
       }
       case 'client':
-        return this.#send('POST', `${base}/client`, { harness: command.harness }, null);
+        return this.#send(
+          'POST',
+          `${base}/client`,
+          { harness: command.harness } satisfies WireClientRequest,
+          null,
+        );
       case 'folder':
         return this.#send(
           'POST',
           `${base}/folder`,
-          command.dir === null ? {} : { dir: command.dir },
+          (command.dir === null ? {} : { dir: command.dir }) satisfies WireFolderRequest,
           null,
         );
       case 'answer':
         return this.#send(
           'POST',
           `${base}/approvals/${encodeURIComponent(command.approval)}`,
-          { decision: command.decision },
+          { decision: command.decision } satisfies WireAnswerRequest,
           null,
         );
       case 'unqueue':
@@ -1036,7 +1186,7 @@ export class RunsClient {
     bytes: ArrayBuffer,
   ): Promise<{ id: AttachmentId; read: AttachmentRead }> {
     const response = await this.#fetch(
-      `/control/sessions/${session}/attachments?${new URLSearchParams({ name })}`,
+      `/control/sessions/${session}/attachments?${query<WireAttachRequest>({ name })}`,
       {
         method: 'POST',
         cache: 'no-store',
@@ -1075,14 +1225,14 @@ export class RunsClient {
     const path = `/control/sessions/${session}/commands`;
     return (await this.#send('GET', path, undefined, clientCommands, signal)).commands;
   }
-  /** The paths of the session's folder that best match `query`. */
+  /** The paths of the session's folder that best match `typed`. */
   async sessionFiles(
     session: SessionId,
-    query: string,
+    typed: string,
     limit = 20,
     signal?: AbortSignal,
   ): Promise<FileMatch[]> {
-    const search = new URLSearchParams({ q: query, limit: String(limit) });
+    const search = query<WireFilesRequest>({ q: typed, limit });
     const path = `/control/sessions/${session}/files?${search}`;
     return (await this.#send('GET', path, undefined, fileMatches, signal)).files;
   }
@@ -1101,10 +1251,11 @@ export class RunsClient {
     shelf: Shelf = 'current',
     signal?: AbortSignal,
   ): Promise<RecordedRun[]> {
-    const query = shelf === 'archived' ? `&shelf=archived` : '';
-    return (
-      await this.#send('GET', `/api/runs?limit=${limit}${query}`, undefined, recordedRuns, signal)
-    ).runs;
+    const params = query<WireRawShelfQuery>({
+      limit,
+      shelf: shelf === 'archived' ? 'archived' : null,
+    });
+    return (await this.#send('GET', `/api/runs?${params}`, undefined, recordedRuns, signal)).runs;
   }
   /** A run's conversation, whole, as the daemon stored it. */
   async conversation(run: RunId, signal?: AbortSignal): Promise<StoredConversation> {
@@ -1124,7 +1275,7 @@ export class RunsClient {
     method: 'GET' | 'POST' | 'DELETE',
     path: string,
     body: unknown,
-    decode: Decoder<T> | null,
+    decode: AnyDecoder<T> | null,
     signal?: AbortSignal,
     wait = 15_000,
   ): Promise<T> {

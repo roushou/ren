@@ -20,6 +20,7 @@ use crate::settings::{Midway, RunSettings};
 use crate::tools::ToolEffect;
 use ren_protocol::activity::{ToolInput, ToolUse};
 use ren_protocol::inspect::ToolCall;
+use ren_protocol::label::Stored;
 use ren_protocol::messages::BlockKind;
 use ren_protocol::text::WireText;
 
@@ -405,7 +406,7 @@ pub enum ItemPhase {
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct DriveItem {
     pub id: ItemId,
-    pub kind: ItemKind,
+    pub kind: Stored<ItemKind>,
     pub read: ItemRead,
     pub body: serde_json::Value,
 }
@@ -468,13 +469,13 @@ pub enum ItemRead {
         /// stored before Ren read it.
         #[serde(default, skip_serializing_if = "CommandIntent::is_unsaid")]
         intent: CommandIntent,
-        status: ItemStatus,
+        status: Stored<ItemStatus>,
         output: Option<String>,
         exit_code: Option<i64>,
     },
     FileChange {
         paths: Vec<String>,
-        status: ItemStatus,
+        status: Stored<ItemStatus>,
     },
     /// Any other tool the client used: its name as the client gave it (with
     /// what its input names, when Ren reads no effect from it), and what it
@@ -484,7 +485,7 @@ pub enum ItemRead {
         name: String,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         effects: Vec<ToolEffect>,
-        status: ItemStatus,
+        status: Stored<ItemStatus>,
     },
     /// An item Ren reads nothing from; its kind and body say what it is.
     Unread,
@@ -548,16 +549,17 @@ pub enum CommandPart {
     Unrecognized { raw: serde_json::Value },
 }
 
-/// Where an item's action stands.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// Where an item's action stands. Read as `Stored<ItemStatus>`, which
+/// keeps a status Ren does not know as the client named it.
+#[derive(Display, EnumString, IntoStaticStr, VariantArray)]
+#[strum(serialize_all = "snake_case")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SerializeDisplay, DeserializeFromStr)]
 pub enum ItemStatus {
     InProgress,
     Completed,
     Failed,
     /// The operator or a policy refused it.
     Declined,
-    /// A status Ren does not know, as the client named it.
-    Other(String),
 }
 
 impl ItemRead {
@@ -579,7 +581,7 @@ impl ItemRead {
         harness: Harness,
         name: &str,
         input: &serde_json::Value,
-        status: ItemStatus,
+        status: Stored<ItemStatus>,
     ) -> Self {
         let effects = harness.effects(&ToolUse {
             call: ToolCall::named(WireText::from_label(BlockKind::ToolUse), name),
@@ -612,35 +614,11 @@ impl ItemStatus {
     }
 }
 
-/// Known statuses by their snake_case name; any other name is kept.
-impl<'de> serde::Deserialize<'de> for ItemStatus {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let name = String::deserialize(deserializer)?;
-        Ok(match name.as_str() {
-            "in_progress" => Self::InProgress,
-            "completed" => Self::Completed,
-            "failed" => Self::Failed,
-            "declined" => Self::Declined,
-            _ => Self::Other(name),
-        })
-    }
-}
-
-impl serde::Serialize for ItemStatus {
-    /// Known statuses by their snake_case name; others by the client's own.
-    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.serialize_str(match self {
-            Self::InProgress => "in_progress",
-            Self::Completed => "completed",
-            Self::Failed => "failed",
-            Self::Declined => "declined",
-            Self::Other(status) => status,
-        })
-    }
-}
-
-/// The kinds of items Ren reads. Others keep the client's own name.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// The kinds of items Ren reads. Read as `Stored<ItemKind>`, which keeps
+/// any other kind as the client named it.
+#[derive(Display, EnumString, IntoStaticStr, VariantArray)]
+#[strum(serialize_all = "snake_case")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SerializeDisplay, DeserializeFromStr)]
 pub enum ItemKind {
     UserMessage,
     AgentMessage,
@@ -650,49 +628,6 @@ pub enum ItemKind {
     FileChange,
     McpToolCall,
     WebSearch,
-    Other(String),
-}
-
-impl ItemKind {
-    /// The snake_case name a known kind serializes as.
-    fn known(name: &str) -> Option<Self> {
-        Some(match name {
-            "user_message" => Self::UserMessage,
-            "agent_message" => Self::AgentMessage,
-            "reasoning" => Self::Reasoning,
-            "plan" => Self::Plan,
-            "command_execution" => Self::CommandExecution,
-            "file_change" => Self::FileChange,
-            "mcp_tool_call" => Self::McpToolCall,
-            "web_search" => Self::WebSearch,
-            _ => return None,
-        })
-    }
-}
-
-/// Known kinds by their snake_case name; any other name is kept.
-impl<'de> serde::Deserialize<'de> for ItemKind {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let name = String::deserialize(deserializer)?;
-        Ok(Self::known(&name).unwrap_or(Self::Other(name)))
-    }
-}
-
-impl serde::Serialize for ItemKind {
-    /// Known kinds by their snake_case name; others by the client's own.
-    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.serialize_str(match self {
-            Self::UserMessage => "user_message",
-            Self::AgentMessage => "agent_message",
-            Self::Reasoning => "reasoning",
-            Self::Plan => "plan",
-            Self::CommandExecution => "command_execution",
-            Self::FileChange => "file_change",
-            Self::McpToolCall => "mcp_tool_call",
-            Self::WebSearch => "web_search",
-            Self::Other(kind) => kind,
-        })
-    }
 }
 
 /// What an approval asks for.
@@ -757,6 +692,7 @@ mod tests {
         ItemId, ItemKind, ItemPhase, ItemRead, ItemStatus, RawLine, RequestKind, Retry, TurnEnd,
         Unreadable,
     };
+    use ren_protocol::label::Stored;
 
     /// Every event's `kind` tag, as serde writes it, is its kind's label:
     /// the store keeps the label beside the event and finds entries by it.
@@ -782,7 +718,7 @@ mod tests {
                 phase: ItemPhase::Started,
                 item: DriveItem {
                     id: item,
-                    kind: ItemKind::UserMessage,
+                    kind: ItemKind::UserMessage.into(),
                     read: ItemRead::Prompt {
                         text: "fix the acme widget".to_owned(),
                         images: Vec::new(),
@@ -878,7 +814,7 @@ mod tests {
                     },
                 ],
             },
-            status: ItemStatus::Completed,
+            status: ItemStatus::Completed.into(),
             output: None,
             exit_code: Some(0),
         };
@@ -902,7 +838,7 @@ mod tests {
             Harness::ClaudeCode,
             "Read",
             &serde_json::json!({ "file_path": "/work/acme/a.rs", "offset": 10 }),
-            ItemStatus::InProgress,
+            ItemStatus::InProgress.into(),
         );
         assert_eq!(
             read,
@@ -912,21 +848,21 @@ mod tests {
                     kind: EffectKind::ReadFile,
                     target: "/work/acme/a.rs".into(),
                 }],
-                status: ItemStatus::InProgress,
+                status: ItemStatus::InProgress.into(),
             }
         );
         let unknown = ItemRead::tool(
             Harness::ClaudeCode,
             "TodoWrite",
             &serde_json::json!({ "description": "plan the fix" }),
-            ItemStatus::Completed,
+            ItemStatus::Completed.into(),
         );
         assert_eq!(
             unknown,
             ItemRead::Tool {
                 name: "TodoWrite plan the fix".into(),
                 effects: Vec::new(),
-                status: ItemStatus::Completed,
+                status: ItemStatus::Completed.into(),
             }
         );
         let older: ItemRead = serde_json::from_value(serde_json::json!({
@@ -949,13 +885,13 @@ mod tests {
                 phase: ItemPhase::Completed,
                 item: DriveItem {
                     id: ItemId::new("cmd_1".into()),
-                    kind: ItemKind::CommandExecution,
+                    kind: ItemKind::CommandExecution.into(),
                     read: ItemRead::Command {
                         command: "cargo test".into(),
                         intent: CommandIntent::Described {
                             text: "Run the tests".into(),
                         },
-                        status: ItemStatus::Other("queued".into()),
+                        status: Stored::from_label("queued"),
                         output: Some("ok".into()),
                         exit_code: Some(0),
                     },
@@ -966,7 +902,7 @@ mod tests {
                 phase: ItemPhase::Started,
                 item: DriveItem {
                     id: ItemId::new("x".into()),
-                    kind: ItemKind::Other("hologram".into()),
+                    kind: Stored::from_label("hologram"),
                     read: ItemRead::Unread,
                     body: serde_json::Value::Null,
                 },

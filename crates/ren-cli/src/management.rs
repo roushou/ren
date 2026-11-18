@@ -11,13 +11,14 @@
 use crate::client::{ClientError, GatewayChoice};
 use ren_gateway::api::ErrorCode;
 use ren_gateway::api::control::request::{ControlFeed, ControlMethod, ControlRequest};
+use ren_gateway::api::read::ReadBody;
 use ren_gateway::{ApiRead, ControlRefusal, ControlToken};
 use ren_harness::{endpoint::GatewayEndpoint, host::HostEnv};
 use ren_protocol::direction::Direction;
 use ren_protocol::label::{Labeled, Stored};
 use ren_recorder::id::CallId;
 use ren_store::Reader;
-use ren_store::read::{ReadRequest, ReadResponse};
+use ren_store::read::ReadRequest;
 use reqwest::{Method, StatusCode};
 use serde_json::{Map, Value};
 use std::time::Duration;
@@ -31,17 +32,18 @@ pub enum Target {
 }
 
 /// Where history is read: this host's storage, or a gateway's read API.
-/// Both answer a [`ReadRequest`] with the same typed [`ReadResponse`]: the
-/// API's body is the reader's response, decoded by the request.
+/// Both answer a [`ReadRequest`] with the gateway's [`ReadBody`]: this host's
+/// reader's response converted as the API converts it, or the API's body
+/// decoded by the request.
 pub enum History {
     Local(Reader),
     Remote(Management),
 }
 
 impl History {
-    pub async fn serve(&self, request: &ReadRequest) -> Result<ReadResponse, ManagementError> {
+    pub async fn serve(&self, request: &ReadRequest) -> Result<ReadBody, ManagementError> {
         match self {
-            Self::Local(reader) => Ok(reader.serve(request).await?),
+            Self::Local(reader) => Ok(reader.serve(request).await?.into()),
             Self::Remote(gateway) => gateway.serve(request).await,
         }
     }
@@ -352,11 +354,9 @@ impl Management {
 
     /// One history read, through the read API, decoded as the read's
     /// response.
-    pub async fn serve(&self, request: &ReadRequest) -> Result<ReadResponse, ManagementError> {
+    pub async fn serve(&self, request: &ReadRequest) -> Result<ReadBody, ManagementError> {
         let body = self.read(&ApiRead(request.clone()).uri()).await?;
-        request
-            .decode(Value::Object(body))
-            .map_err(ManagementError::Answer)
+        ReadBody::decode(request, Value::Object(body)).map_err(ManagementError::Answer)
     }
 
     /// A successful read's body, without `api_version`. `uri` is a path and
@@ -435,6 +435,7 @@ impl Management {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ren_gateway::api::read::Recordings;
     use ren_store::query::{CallQuery, PageLimit, Shelf};
 
     #[test]
@@ -555,7 +556,7 @@ mod tests {
     async fn a_gateway_answers_reads_as_views() {
         let (recordings, calls, turn) = against_gateway(|gateway| async move {
             let history = History::Remote(gateway);
-            let ReadResponse::Recordings { recordings } = history
+            let ReadBody::Recordings(Recordings { recordings }) = history
                 .serve(&ReadRequest::Recordings {
                     limit: PageLimit::new(10).unwrap(),
                     shelf: Shelf::Current,
@@ -565,14 +566,14 @@ mod tests {
             else {
                 panic!("a recording listing")
             };
-            let ReadResponse::Calls(calls) = history
+            let ReadBody::Calls(calls) = history
                 .serve(&ReadRequest::Calls(CallQuery::default()))
                 .await
                 .unwrap()
             else {
                 panic!("a call page")
             };
-            let ReadResponse::Turn(turn) = history
+            let ReadBody::Turn(turn) = history
                 .serve(&ReadRequest::Turn(
                     "00000000-0000-0000-0000-000000000004".parse().unwrap(),
                 ))

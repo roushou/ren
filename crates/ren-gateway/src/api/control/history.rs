@@ -12,7 +12,7 @@
 
 use super::{ControlApi, ControlRefusal};
 use axum::{
-    Json, Router,
+    Router,
     extract::{Path, State},
     response::{IntoResponse, Response},
     routing::post,
@@ -92,11 +92,10 @@ impl HistoryApi {
         slot.record(actor, subject, change);
         (
             StatusCode::ACCEPTED,
-            Json(serde_json::json!({
-                "api_version": ControlApi::API_VERSION,
-                "subject": subject,
-                "change": change,
-            })),
+            ControlApi::answer(super::body::history::HistoryEdit {
+                subject: subject.into(),
+                change,
+            }),
         )
             .into_response()
     }

@@ -17,10 +17,22 @@ import {
   object,
   string,
   type Brand,
-  type Decoder,
   type Stored,
+  type AnyDecoder,
 } from './decode.ts';
 import { Refusals, type Refusal } from './refusal.ts';
+import type { GenerationInstall as WireGenerationInstall } from './wire/GenerationInstall.ts';
+import type { GenerationView as WireGenerationView } from './wire/GenerationView.ts';
+import type { InstallFailure as WireInstallFailure } from './wire/InstallFailure.ts';
+import type { InstalledTool as WireInstalledTool } from './wire/InstalledTool.ts';
+import type { PackageChange as WirePackageChange } from './wire/PackageChange.ts';
+import type { SystemTool as WireSystemTool } from './wire/SystemTool.ts';
+import type { ToolChange as WireToolChange } from './wire/ToolChange.ts';
+import type { ToolCollection as WireToolCollection } from './wire/ToolCollection.ts';
+import type { ToolListing as WireToolListing } from './wire/ToolListing.ts';
+import type { ToolPackage as WireToolPackage } from './wire/ToolPackage.ts';
+import type { ChangeRequest as WireChangeRequest } from './wire/ChangeRequest.ts';
+import type { RollbackRequest as WireRollbackRequest } from './wire/RollbackRequest.ts';
 
 /** A package's name in Ren's catalog (`node`, `jq`). */
 export type PackageId = Brand<string, 'PackageId'>;
@@ -125,21 +137,23 @@ const packageId = branded<'PackageId'>();
 const version = branded<'Version'>();
 const generation = brandedCount<'Generation'>();
 
-const listing: Decoder<ToolListing> = versioned(
-  object<ToolListing>({
+const listing = versioned(
+  object<ToolListing, WireToolListing>({
     platform: nullable(label(platforms)),
     generation,
     bin: nullable(string),
     packages: array(
-      object<ToolPackage>({
+      object<ToolPackage, WireToolPackage>({
         id: packageId,
         origin: nullable(label(origins)),
         kind: nullable(label(KINDS)),
         program: string,
         release: nullable(version),
-        installed: nullable(object<InstalledTool>({ version, sha256: string, dir: string })),
+        installed: nullable(
+          object<InstalledTool, WireInstalledTool>({ version, sha256: string, dir: string }),
+        ),
         system: nullable(
-          object<SystemTool>({
+          object<SystemTool, WireSystemTool>({
             path: string,
             version: nullable(version),
             unread: nullable(string),
@@ -149,21 +163,23 @@ const listing: Decoder<ToolListing> = versioned(
       }),
     ),
     generations: array(
-      object<GenerationView>({
+      object<GenerationView, WireGenerationView>({
         generation,
         state: label(generationStates),
-        installs: array(object<GenerationInstall>({ package: packageId, version })),
+        installs: array(
+          object<GenerationInstall, WireGenerationInstall>({ package: packageId, version }),
+        ),
       }),
     ),
   }),
 );
 
-const change: Decoder<ToolChange> = versioned(
-  object<ToolChange>({
+const change = versioned(
+  object<ToolChange, WireToolChange>({
     outcome: label(outcomes),
     generation,
     changes: array(
-      object<PackageChange>({
+      object<PackageChange, WirePackageChange>({
         change: label(changeKinds),
         package: packageId,
         from: nullable(version),
@@ -171,7 +187,7 @@ const change: Decoder<ToolChange> = versioned(
       }),
     ),
     failures: array(
-      object<InstallFailure>({
+      object<InstallFailure, WireInstallFailure>({
         package: packageId,
         version,
         stage: label(stages),
@@ -181,8 +197,11 @@ const change: Decoder<ToolChange> = versioned(
   }),
 );
 
-const collection: Decoder<ToolCollection> = versioned(
-  object<ToolCollection>({ generations: array(generation), installs: array(string) }),
+const collection = versioned(
+  object<ToolCollection, WireToolCollection>({
+    generations: array(generation),
+    installs: array(string),
+  }),
 );
 
 /** Where a package stands on the daemon's host. */
@@ -465,7 +484,7 @@ export class ToolPlan {
   }
 
   /** The edit `/control/tools/change` takes. */
-  body(): { add: PackageId[]; remove: PackageId[] } {
+  body(): { add: PackageId[]; remove: PackageId[] } & WireChangeRequest {
     return { add: [...this.add].sort(), remove: [...this.remove].sort() };
   }
 }
@@ -598,7 +617,12 @@ export class ToolsApi {
 
   /** Make the next generation hold what a kept `generation` held. */
   rollBack(generation: Generation): Promise<ToolChange> {
-    return this.#request('POST', '/control/tools/rollback', { generation }, change);
+    return this.#request(
+      'POST',
+      '/control/tools/rollback',
+      { generation } satisfies WireRollbackRequest,
+      change,
+    );
   }
 
   collect(): Promise<ToolCollection> {
@@ -609,7 +633,7 @@ export class ToolsApi {
     method: 'GET' | 'POST',
     path: string,
     body: unknown,
-    decode: Decoder<T>,
+    decode: AnyDecoder<T>,
     signal?: AbortSignal,
   ): Promise<T> {
     const response = await this.#fetch(path, {

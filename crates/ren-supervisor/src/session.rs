@@ -34,8 +34,7 @@ pub enum SessionPhase {
 }
 
 /// Where a session stands.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(tag = "shelf", content = "phase", rename_all = "snake_case")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SessionState {
     /// Listed with the current sessions.
     Open(SessionPhase),

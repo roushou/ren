@@ -22,7 +22,7 @@ pub struct Look {
 }
 
 /// A place a run can start in.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Project {
     /// The absolute path to start a run in.
     pub path: String,
@@ -48,8 +48,7 @@ pub enum PlaceKind {
 }
 
 /// A project's repository, as its `HEAD` reads.
-#[derive(Debug, Clone, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum ProjectGit {
     /// On a branch.
     Branch { name: String },

@@ -9,11 +9,9 @@ use crate::run::ProcessExit;
 use ren_harness::sign_in::{
     DeviceCode, LocalRedirect, LoginEvent, SignInFlow, SignInLink, Standing, StatedMethod,
 };
-use serde::Serialize;
 
 /// What Ren knows of a client's sign-in here.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SignInState {
     /// Ren cannot check this client's sign-in: it offers no command Ren
     /// reads, or it is not installed.
@@ -41,13 +39,11 @@ impl From<Standing> for SignInState {
 }
 
 /// One run of a client's login.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Login {
     /// Started; its link has not been printed yet.
     Starting {
         /// How it goes once it has: for the machine, not shown.
-        #[serde(skip)]
         flow: SignInFlow,
         said: Option<String>,
     },
@@ -95,8 +91,7 @@ pub enum Awaiting {
 
 /// How a login ended. Whether the client is signed in after it is what the
 /// status check that follows says, not this.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-#[serde(tag = "end", rename_all = "snake_case")]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LoginEnd {
     /// The login exited by itself, having last said `said`.
     Exited {
@@ -270,15 +265,14 @@ impl Login {
 }
 
 /// Where a waited-on login stands: still going, or ended and checked.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Waited {
     Going { login: Login },
     Done { outcome: LoginOutcome },
 }
 
 /// A login's end, and the client's sign-in as checked after it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LoginOutcome {
     pub end: LoginEnd,
     pub state: SignInState,

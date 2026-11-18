@@ -25,6 +25,8 @@ import { readSnapshot, snapshotError, type Snapshot } from './snapshots.ts';
 import { Arrival, type Arriving } from './arrival.ts';
 import { Band, Board, LivePlace, type LiveWindow } from './board.ts';
 import { RecordingList, type RecordingDetail } from './recordings.ts';
+import { changed, query } from './query.ts';
+import type { RawCallQuery, RawSearchQuery } from './api.ts';
 
 export interface GatewayData {
   health: Health;
@@ -46,7 +48,7 @@ export interface TrafficData {
 }
 
 /** Listing filters `/api/calls` accepts, besides `limit`. */
-const callFilters = [
+const callFilters: readonly (keyof RawCallQuery & string)[] = [
   'q',
   'recording',
   'client',
@@ -112,8 +114,12 @@ export function usageSnapshot(fetcher: typeof fetch, rawRange: string | null) {
   return Arrival.read(`usage?${range}`, async (): Promise<UsageData> => {
     const now = Date.now();
     const from = rangeStart(range, now, localDayStart);
-    const bookkeeping = new URLSearchParams({ status: 'errors', kind: 'other', limit: '100' });
-    if (from !== undefined) bookkeeping.set('from_ms', String(from));
+    const bookkeeping = query<RawCallQuery>({
+      status: 'errors',
+      kind: 'other',
+      limit: 100,
+      from_ms: from,
+    });
     const [usage, recordings, bookkeepingErrors] = await Promise.all([
       api.usage({ from_ms: from }),
       api.recordings(100),
@@ -162,10 +168,10 @@ export function overviewSnapshot(fetcher: typeof fetch, live: LiveReader) {
   return Arrival.read('overview', async (): Promise<OverviewData> => {
     const now = Date.now();
     const day = 24 * 3_600_000;
-    const since = String(now - day);
+    const since = now - day;
     const listing = (status: string, kind: string) =>
       api
-        .calls(new URLSearchParams({ status, kind, limit: '100', from_ms: since }))
+        .calls(query<RawCallQuery>({ status, kind, limit: 100, from_ms: since }))
         .then((page) => page.calls);
     const [usage, previous, failed, stopped, bookkeeping, recordings, exposures, board] =
       await Promise.all([
@@ -175,7 +181,7 @@ export function overviewSnapshot(fetcher: typeof fetch, live: LiveReader) {
         listing('interrupted', 'model'),
         listing('errors', 'other'),
         api.recordings(100),
-        api.exposures(Number(since)).then((page) => page.exposures),
+        api.exposures(since).then((page) => page.exposures),
         live.read(fetcher, '15m'),
       ]);
     return {
@@ -223,7 +229,7 @@ export class RecordingsReader {
       const [listing, open] = await Promise.all([
         api.recordings(100, undefined, shelf),
         api
-          .calls(new URLSearchParams({ status: 'active', kind: 'model', limit: '100' }))
+          .calls(query<RawCallQuery>({ status: 'active', kind: 'model', limit: 100 }))
           .then((page) => page.calls),
       ]);
       const wanted = listing.recordings
@@ -342,10 +348,7 @@ export async function trafficSnapshot(
     }
     const params = listingQuery(named, callFilters, Date.now());
     const hiding = params.get('kind') === 'model';
-    const hiddenQuery = new URLSearchParams(params);
-    hiddenQuery.set('kind', 'other');
-    hiddenQuery.set('limit', '100');
-    hiddenQuery.delete('after');
+    const hiddenQuery = changed(params, { kind: 'other', limit: 100, after: null });
     const [page, recordings, hidden] = await Promise.all([
       api.calls(params),
       api.recordings(100),
@@ -446,11 +449,10 @@ export function searchSnapshot(fetcher: typeof fetch, url: URL) {
   const key = new URLSearchParams({ q, field: field ?? '' });
   return Arrival.read(`/search?${key}`, async (): Promise<SearchData> => {
     if (!q) return { q, field, page: null, details: new Map(), recordings: [] };
-    const query = new URLSearchParams({ q, limit: '50' });
-    if (field) query.set('field', field);
+    const params = query<RawSearchQuery>({ q, limit: 50, field });
     // The recordings only name the hits: without them, the hits still show.
     const [page, listing] = await Promise.all([
-      api.search(query),
+      api.search(params),
       api.recordings(100).catch(() => ({ recordings: [] })),
     ]);
     const details = await RecordingDetails.shared.read(
@@ -522,18 +524,19 @@ export class RecentCalls {
   ): Promise<{ calls: CallView[]; complete: number }> {
     const from = now - spanMs;
     const cutoff = this.cutoff(now, spanMs);
-    const open = api.calls(new URLSearchParams({ kind: 'model', status: 'active', limit: '100' }));
+    const open = api.calls(query<RawCallQuery>({ kind: 'model', status: 'active', limit: 100 }));
     const fresh: CallView[] = [];
     let after: PageCursor | null = null;
     let full = false;
     for (let page = 0; page < RecentCalls.maxPages; page++) {
-      const query = new URLSearchParams({
-        kind: 'model',
-        from_ms: String(cutoff),
-        limit: String(RecentCalls.pageLimit),
-      });
-      if (after) query.set('after', after);
-      const listing = await api.calls(query);
+      const listing = await api.calls(
+        query<RawCallQuery>({
+          kind: 'model',
+          from_ms: cutoff,
+          limit: RecentCalls.pageLimit,
+          after,
+        }),
+      );
       fresh.push(...listing.calls);
       after = listing.next;
       if (!after) break;

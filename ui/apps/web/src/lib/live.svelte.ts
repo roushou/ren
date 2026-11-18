@@ -4,6 +4,8 @@ import { LiveFollow, type LiveAction, type LiveEvent, type LiveState } from './l
 import { assertNever } from './decode.ts';
 import type { ObservationSeq } from './api.ts';
 import { Streaming, type CallProgress } from './streaming.ts';
+import { query } from './query.ts';
+import type { RawLiveQuery } from './wire/RawLiveQuery.ts';
 
 export interface LiveHooks {
   /** Refresh page data. */
@@ -95,10 +97,10 @@ export class LiveConnection {
       this.dispatch({ kind: 'unsupported' });
       return;
     }
-    const query = new URLSearchParams();
-    if (after !== null) query.set('after', String(after));
-    if (this.#hooks.progress) query.set('progress', 'true');
-    const search = query.toString();
+    const search = query<RawLiveQuery>({
+      after,
+      progress: this.#hooks.progress ? true : null,
+    }).toString();
     const source = new EventSource(search ? `/api/live?${search}` : '/api/live');
     this.#source = source;
     // Events from a source we already replaced or closed are dropped here.

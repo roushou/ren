@@ -194,9 +194,9 @@ async fn the_read_api_answers_as_the_ui_fixtures_pin() {
     );
 }
 
-/// Each pinned answer reads back, through `ReadRequest::decode`, as the
-/// typed response that read returns, and serializes to the same JSON: the
-/// CLI and MCP get the reader's values through a gateway too.
+/// Each pinned answer reads back, through `ReadBody::decode`, as the
+/// gateway's typed body for that read, and serializes to the same JSON: the
+/// CLI and MCP read those types from a gateway too.
 #[test]
 fn each_pinned_answer_decodes_as_its_read_and_round_trips() {
     use ren_recorder::id::{CallId, RecordingId, TurnId};
@@ -262,8 +262,7 @@ fn each_pinned_answer_decodes_as_its_read_and_round_trips() {
             &std::fs::read(fixtures().join(format!("{name}.json"))).unwrap(),
         )
         .unwrap();
-        let decoded = read
-            .decode(pinned.clone())
+        let decoded = ren_gateway::api::read::ReadBody::decode(&read, pinned.clone())
             .unwrap_or_else(|error| panic!("{name}: {error}"));
         pinned.as_object_mut().unwrap().remove("api_version");
         assert_eq!(serde_json::to_value(&decoded).unwrap(), pinned, "{name}");

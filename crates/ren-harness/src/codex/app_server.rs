@@ -729,17 +729,17 @@ impl CodexAppServer {
         Uuid::try_parse(id).ok().and_then(NativeTurnId::new)
     }
 
-    fn item_kind(kind: &str) -> ItemKind {
+    fn item_kind(kind: &str) -> Stored<ItemKind> {
         match kind {
-            "userMessage" => ItemKind::UserMessage,
-            "agentMessage" => ItemKind::AgentMessage,
-            "reasoning" => ItemKind::Reasoning,
-            "plan" => ItemKind::Plan,
-            "commandExecution" => ItemKind::CommandExecution,
-            "fileChange" => ItemKind::FileChange,
-            "mcpToolCall" => ItemKind::McpToolCall,
-            "webSearch" => ItemKind::WebSearch,
-            other => ItemKind::Other(other.to_owned()),
+            "userMessage" => ItemKind::UserMessage.into(),
+            "agentMessage" => ItemKind::AgentMessage.into(),
+            "reasoning" => ItemKind::Reasoning.into(),
+            "plan" => ItemKind::Plan.into(),
+            "commandExecution" => ItemKind::CommandExecution.into(),
+            "fileChange" => ItemKind::FileChange.into(),
+            "mcpToolCall" => ItemKind::McpToolCall.into(),
+            "webSearch" => ItemKind::WebSearch.into(),
+            other => Stored::from_label(other),
         }
     }
 
@@ -789,18 +789,18 @@ impl CodexAppServer {
     }
     /// What Ren reads of an item, from the fields Codex's schema gives each
     /// kind. A field that is missing or of another type reads as absent.
-    fn item_read(kind: &ItemKind, body: &Value, phase: ItemPhase) -> ItemRead {
+    fn item_read(kind: &Stored<ItemKind>, body: &Value, phase: ItemPhase) -> ItemRead {
         let text = |key: &str| body.get(key).and_then(Value::as_str).map(str::to_owned);
         let status = || match body.get("status").and_then(Value::as_str) {
-            Some("inProgress") => ItemStatus::InProgress,
-            Some("completed") => ItemStatus::Completed,
-            Some("failed") => ItemStatus::Failed,
-            Some("declined") => ItemStatus::Declined,
-            Some(other) => ItemStatus::Other(other.to_owned()),
-            None => ItemStatus::of(phase),
+            Some("inProgress") => ItemStatus::InProgress.into(),
+            Some("completed") => ItemStatus::Completed.into(),
+            Some("failed") => ItemStatus::Failed.into(),
+            Some("declined") => ItemStatus::Declined.into(),
+            Some(other) => Stored::from_label(other),
+            None => ItemStatus::of(phase).into(),
         };
-        match kind {
-            ItemKind::UserMessage => ItemRead::Prompt {
+        match kind.known() {
+            Some(ItemKind::UserMessage) => ItemRead::Prompt {
                 text: body
                     .get("content")
                     .and_then(Value::as_array)
@@ -813,21 +813,21 @@ impl CodexAppServer {
                     .unwrap_or_default(),
                 images: Vec::new(),
             },
-            ItemKind::AgentMessage => ItemRead::Reply {
+            Some(ItemKind::AgentMessage) => ItemRead::Reply {
                 text: text("text").unwrap_or_default(),
             },
-            ItemKind::Reasoning => ItemRead::Reasoning,
-            ItemKind::Plan => ItemRead::Plan {
+            Some(ItemKind::Reasoning) => ItemRead::Reasoning,
+            Some(ItemKind::Plan) => ItemRead::Plan {
                 text: text("text").unwrap_or_default(),
             },
-            ItemKind::CommandExecution => ItemRead::Command {
+            Some(ItemKind::CommandExecution) => ItemRead::Command {
                 command: text("command").unwrap_or_default(),
                 intent: Self::command_intent(body.get("commandActions")),
                 status: status(),
                 output: text("aggregatedOutput"),
                 exit_code: body.get("exitCode").and_then(Value::as_i64),
             },
-            ItemKind::FileChange => ItemRead::FileChange {
+            Some(ItemKind::FileChange) => ItemRead::FileChange {
                 paths: body
                     .get("changes")
                     .and_then(Value::as_array)
@@ -841,12 +841,12 @@ impl CodexAppServer {
                     .unwrap_or_default(),
                 status: status(),
             },
-            ItemKind::McpToolCall => ItemRead::Tool {
+            Some(ItemKind::McpToolCall) => ItemRead::Tool {
                 name: text("tool").unwrap_or_else(|| "MCP tool".to_owned()),
                 effects: Vec::new(),
                 status: status(),
             },
-            ItemKind::WebSearch => ItemRead::Tool {
+            Some(ItemKind::WebSearch) => ItemRead::Tool {
                 name: "web search".to_owned(),
                 effects: text("query")
                     .map(|target| crate::tools::ToolEffect {
@@ -857,7 +857,7 @@ impl CodexAppServer {
                     .collect(),
                 status: status(),
             },
-            ItemKind::Other(_) => ItemRead::Unread,
+            None => ItemRead::Unread,
         }
     }
 }
@@ -1117,10 +1117,10 @@ mod tests {
         assert!(matches!(
             item.events.as_slice(),
             [DriveEvent::Item { phase: ItemPhase::Completed, item }]
-                if item.kind == ItemKind::CommandExecution && item.read == ItemRead::Command {
+                if item.kind == ItemKind::CommandExecution.into() && item.read == ItemRead::Command {
                     command: "cargo build".into(),
                     intent: CommandIntent::Unsaid,
-                    status: ItemStatus::Completed,
+                    status: ItemStatus::Completed.into(),
                     output: None,
                     exit_code: Some(0),
                 }

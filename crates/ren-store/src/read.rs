@@ -1,8 +1,7 @@
 //! Every history read as one typed request, served by [`Reader::serve`]. The
-//! HTTP API, the CLI on this host, and the MCP server all ask through it, so
-//! they answer with the same values: a response serializes to the API's
-//! JSON body, and [`ReadRequest::decode`] reads that body back, so a client
-//! of the API gets the same typed values the reader returns.
+//! HTTP API, the CLI on this host, and the MCP server all ask through it; the
+//! gateway converts each response into the read API's body
+//! (`ren_gateway::api::read`).
 
 use crate::activity::report::RecordingReport;
 use crate::activity::{ActivityBudget, CallActivity, TurnActivity, TurnSummary};
@@ -11,7 +10,6 @@ use crate::search::{ExposureQuery, ExposureView, SearchPage, SearchQuery};
 use crate::view::{CallDetail, CallPage, ConversationView, RecordingView, RunView, UsageView};
 use crate::{Reader, StoreError};
 use ren_recorder::id::{CallId, RecordingId, RunId, TurnId};
-use serde::{Deserialize, Serialize};
 
 /// A read of recorded history.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -50,10 +48,8 @@ pub enum ReadRequest {
     Conversation(RunId),
 }
 
-/// What a [`ReadRequest`] returns. Serialized, each is the API's JSON body
-/// for that read (before the API adds its version).
-#[derive(Debug, Clone, PartialEq, Serialize)]
-#[serde(untagged)]
+/// What a [`ReadRequest`] returns.
+#[derive(Debug, Clone, PartialEq)]
 pub enum ReadResponse {
     Calls(CallPage),
     Call(Box<CallDetail>),
@@ -77,60 +73,6 @@ pub enum ReadResponse {
     },
     Run(Box<RunView>),
     Conversation(ConversationView),
-}
-
-/// The read API's body for a recording listing.
-#[derive(Deserialize)]
-struct Recordings {
-    recordings: Vec<RecordingView>,
-}
-
-#[derive(Deserialize)]
-struct Turns {
-    turns: Vec<TurnSummary>,
-}
-
-#[derive(Deserialize)]
-struct Exposures {
-    exposures: Vec<ExposureView>,
-}
-
-#[derive(Deserialize)]
-struct Runs {
-    runs: Vec<RunView>,
-}
-
-impl ReadRequest {
-    /// The API's JSON body for this read, parsed into what the read returns.
-    /// Fields the body has beyond the response (its `api_version`) are
-    /// ignored.
-    pub fn decode(&self, body: serde_json::Value) -> Result<ReadResponse, serde_json::Error> {
-        Ok(match self {
-            Self::Calls(_) | Self::RecordingCalls { .. } => {
-                ReadResponse::Calls(serde_json::from_value(body)?)
-            }
-            Self::Call(_) => ReadResponse::Call(serde_json::from_value(body)?),
-            Self::Recordings { .. } => ReadResponse::Recordings {
-                recordings: serde_json::from_value::<Recordings>(body)?.recordings,
-            },
-            Self::Turns { .. } => ReadResponse::Turns {
-                turns: serde_json::from_value::<Turns>(body)?.turns,
-            },
-            Self::Turn(_) => ReadResponse::Turn(serde_json::from_value(body)?),
-            Self::CallActivity(_) => ReadResponse::CallActivity(serde_json::from_value(body)?),
-            Self::Report(_) => ReadResponse::Report(serde_json::from_value(body)?),
-            Self::Usage(_) => ReadResponse::Usage(serde_json::from_value(body)?),
-            Self::Search(_) => ReadResponse::Search(serde_json::from_value(body)?),
-            Self::Exposures(_) => ReadResponse::Exposures {
-                exposures: serde_json::from_value::<Exposures>(body)?.exposures,
-            },
-            Self::Runs { .. } => ReadResponse::Runs {
-                runs: serde_json::from_value::<Runs>(body)?.runs,
-            },
-            Self::Run(_) => ReadResponse::Run(serde_json::from_value(body)?),
-            Self::Conversation(_) => ReadResponse::Conversation(serde_json::from_value(body)?),
-        })
-    }
 }
 
 impl Reader {

@@ -870,7 +870,7 @@ impl OpenCodeAcp {
             phase: ItemPhase::Completed,
             item: DriveItem {
                 id,
-                kind: ItemKind::UserMessage,
+                kind: ItemKind::UserMessage.into(),
                 read: ItemRead::Prompt {
                     text: echo.text,
                     images: echo.images,
@@ -938,14 +938,13 @@ impl OpenCodeAcp {
             | ItemKind::CommandExecution
             | ItemKind::FileChange
             | ItemKind::McpToolCall
-            | ItemKind::WebSearch
-            | ItemKind::Other(_) => ItemRead::Reasoning,
+            | ItemKind::WebSearch => ItemRead::Reasoning,
         };
         received.events.push(DriveEvent::Item {
             phase: ItemPhase::Completed,
             item: DriveItem {
                 id: streaming.id,
-                kind: streaming.kind,
+                kind: Stored::Known(streaming.kind),
                 read,
                 body: Value::Null,
             },
@@ -1019,7 +1018,7 @@ impl OpenCodeAcp {
                     phase: ItemPhase::Completed,
                     item: DriveItem {
                         id: self.item("plan".into()),
-                        kind: ItemKind::Plan,
+                        kind: ItemKind::Plan.into(),
                         read: ItemRead::Plan { text },
                         body: update.clone(),
                     },
@@ -1066,14 +1065,13 @@ impl OpenCodeAcp {
                 | ItemKind::CommandExecution
                 | ItemKind::FileChange
                 | ItemKind::McpToolCall
-                | ItemKind::WebSearch
-                | ItemKind::Other(_) => ItemRead::Reasoning,
+                | ItemKind::WebSearch => ItemRead::Reasoning,
             };
             received.events.push(DriveEvent::Item {
                 phase: ItemPhase::Started,
                 item: DriveItem {
                     id: id.clone(),
-                    kind: kind.clone(),
+                    kind: kind.into(),
                     read,
                     body: Value::Null,
                 },
@@ -1190,17 +1188,17 @@ impl OpenCodeAcp {
     }
 
     /// What Ren reads of a tool call, by opencode's kind for it.
-    fn tool_read(call: &ToolCall, phase: ItemPhase) -> (ItemKind, ItemRead) {
+    fn tool_read(call: &ToolCall, phase: ItemPhase) -> (Stored<ItemKind>, ItemRead) {
         let status = match call.status.as_deref() {
-            Some("pending" | "in_progress") => ItemStatus::InProgress,
-            Some("completed") => ItemStatus::Completed,
-            Some("failed") => ItemStatus::Failed,
-            Some(other) => ItemStatus::Other(other.to_owned()),
-            None => ItemStatus::of(phase),
+            Some("pending" | "in_progress") => ItemStatus::InProgress.into(),
+            Some("completed") => ItemStatus::Completed.into(),
+            Some("failed") => ItemStatus::Failed.into(),
+            Some(other) => Stored::from_label(other),
+            None => ItemStatus::of(phase).into(),
         };
         match call.kind.as_ref().and_then(Stored::known) {
             Some(AcpToolKind::Execute) => (
-                ItemKind::CommandExecution,
+                ItemKind::CommandExecution.into(),
                 ItemRead::Command {
                     command: Self::text(&call.input, "command")
                         .or_else(|| call.title.clone())
@@ -1219,11 +1217,15 @@ impl OpenCodeAcp {
                 } else {
                     call.paths.clone()
                 };
-                (ItemKind::FileChange, ItemRead::FileChange { paths, status })
+                (
+                    ItemKind::FileChange.into(),
+                    ItemRead::FileChange { paths, status },
+                )
             }
             Some(_) | None => (
-                ItemKind::Other(
-                    call.kind
+                Stored::from_label(
+                    &call
+                        .kind
                         .as_ref()
                         .map_or_else(|| "tool".to_owned(), ToString::to_string),
                 ),
@@ -1251,8 +1253,7 @@ impl OpenCodeAcp {
             | ItemKind::CommandExecution
             | ItemKind::FileChange
             | ItemKind::McpToolCall
-            | ItemKind::WebSearch
-            | ItemKind::Other(_) => "item",
+            | ItemKind::WebSearch => "item",
         }
     }
 
@@ -1625,7 +1626,7 @@ mod tests {
         else {
             panic!("reasoning starts");
         };
-        assert_eq!(item.kind, ItemKind::Reasoning);
+        assert_eq!(item.kind, ItemKind::Reasoning.into());
 
         let call = feed(
             &mut codec,
@@ -1649,7 +1650,7 @@ mod tests {
         else {
             panic!("{:?}", call.events);
         };
-        assert_eq!(reasoning.kind, ItemKind::Reasoning);
+        assert_eq!(reasoning.kind, ItemKind::Reasoning.into());
         assert_eq!(command.id.as_str(), format!("{turn}:call_1"));
         let done = feed(
             &mut codec,
@@ -1676,7 +1677,7 @@ mod tests {
                 intent: crate::drive::CommandIntent::Described {
                     text: "List the folder".into()
                 },
-                status: ItemStatus::Completed,
+                status: ItemStatus::Completed.into(),
                 output: Some("a.txt\n".into()),
                 exit_code: Some(0),
             }
@@ -1696,7 +1697,7 @@ mod tests {
             item.read,
             ItemRead::FileChange {
                 paths: vec!["/work/acme/x.txt".into()],
-                status: ItemStatus::Completed
+                status: ItemStatus::Completed.into()
             }
         );
 

@@ -71,7 +71,7 @@ struct Running {
 }
 
 /// A running call, as the control API lists it.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RunningCall {
     pub call: CallId,
     pub transport: Transport,

@@ -44,7 +44,7 @@ pub enum BackupError {
 }
 
 /// What one backup wrote.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BackupReport {
     /// The backup, a data directory a reader can open.
     pub directory: PathBuf,

@@ -38,7 +38,7 @@ const storage = (used: number, budget: number, enabled = true): Storage => {
 test('a healthy daemon is one green line', () => {
   const health: Health = {
     ...healthFixture(),
-    operator: { pause: { state: 'running' }, blocked_sessions: 0 },
+    operator: { pause: { state: 'running' }, blocked_sessions: 0, blocked_users: 0 },
   };
   assert.deepEqual(labels(healthLine(health, storage(100, 1000), null)), [
     ['Daemon reachable', 'success'],
@@ -53,7 +53,11 @@ test('each problem says what is wrong, and where to look', () => {
     ...healthFixture({
       omissions: { ...recorderFixture().omissions, unrecorded_calls: 2 },
     }),
-    operator: { pause: { state: 'paused', retry_after: 30 }, blocked_sessions: 2 },
+    operator: {
+      pause: { state: 'paused', retry_after: 30 },
+      blocked_sessions: 2,
+      blocked_users: 0,
+    },
   };
   const line = healthLine(health, storage(950, 1000), null);
   assert.deepEqual(labels(line), [
