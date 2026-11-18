@@ -14,7 +14,7 @@ pub mod openai;
 
 use crate::encoding::{Decompressor, ResponseEncoding};
 use crate::inspect::ToolCall;
-use crate::inspect::pipeline::{BodyEnd, Protocol};
+use crate::inspect::{BodyEnd, Protocol};
 use crate::json::Frame;
 use crate::native::ToolCallId;
 use crate::sse::SseLimits;

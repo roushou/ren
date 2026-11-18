@@ -25,7 +25,8 @@ use ren_harness::{Harness, tools::InterpretedCall};
 use ren_protocol::{
     CallInspector,
     activity::{ActivityLimits, Reading, RequestReader, ResponseActivity},
-    inspect::pipeline::{InspectionLimits, Protocol},
+    inspect::Protocol,
+    pipeline::InspectionLimits,
     route::Endpoint,
 };
 use std::{collections::HashMap, sync::Arc};

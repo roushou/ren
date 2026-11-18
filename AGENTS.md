@@ -180,9 +180,9 @@ dependencies under "Crates" below. Read the code for current module ownership.
 - `crates/ren-protocol`: sans-IO native protocol understanding, with
   `CallInspector` as its primary type: SSE framing, Anthropic Messages, OpenAI
   Responses, and OpenAI Chat Completions (`chat`) wire vocabularies,
-  incremental decompression, per-call inspection
-  (`inspect`, whose `pipeline` also reads WebSocket messages and hands every
-  frame to the response's activity reader as it streams), WebSocket message
+  incremental decompression, per-call inspection (`inspect`, driven for
+  one call by `pipeline`, which also reads WebSocket messages and hands
+  every frame to the response's activity reader as it streams), WebSocket message
   classification, and the activity reader (`activity`: a request's newest user
   input, gathered by `RequestReader`, and a response's tool calls with their
   inputs and its reply, read by `ResponseReader`; `Reading` pairs the two).

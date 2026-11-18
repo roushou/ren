@@ -11,7 +11,8 @@ use ren_protocol::{
     CallInspector,
     activity::{ActivityLimits, Reading, RequestReader, ResponseActivity},
     encoding::{ResponseEncoding, ResponseFormat},
-    inspect::pipeline::{BodyEnd, InspectionLimits, Protocol},
+    inspect::{BodyEnd, Protocol},
+    pipeline::InspectionLimits,
     route::Endpoint,
 };
 use std::ops::Range;

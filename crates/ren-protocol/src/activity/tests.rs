@@ -5,7 +5,7 @@ use serde_json::json;
 use std::io::Write;
 
 use crate::CallInspector;
-use crate::inspect::pipeline::{InspectionLimits, ResponseReading};
+use crate::pipeline::{InspectionLimits, ResponseReading};
 
 /// A request, gathered whole and read.
 fn request(protocol: Protocol, bytes: &[u8]) -> RequestActivity {
@@ -443,7 +443,7 @@ proptest::proptest! {
             protocol,
             format,
             encoding,
-            crate::inspect::pipeline::InspectionLimits::default(),
+            crate::pipeline::InspectionLimits::default(),
         );
         let mut points: Vec<usize> = cuts.iter().map(|cut| cut % (bytes.len() + 1)).collect();
         points.sort_unstable();
@@ -452,7 +452,7 @@ proptest::proptest! {
             inspector.feed(&bytes[from..point.max(from)]);
             from = point.max(from);
         }
-        let streamed = inspector.finish(crate::inspect::pipeline::BodyEnd::Complete).activity;
+        let streamed = inspector.finish(crate::inspect::BodyEnd::Complete).activity;
         proptest::prop_assert!(!stored.reply.is_empty());
         proptest::prop_assert_eq!(streamed, stored);
     }
@@ -473,7 +473,7 @@ proptest::proptest! {
             protocol,
             format,
             ResponseEncoding::Identity,
-            crate::inspect::pipeline::InspectionLimits::default(),
+            crate::pipeline::InspectionLimits::default(),
         );
         let mut points: Vec<usize> = cuts.iter().map(|cut| cut % (bytes.len() + 1)).collect();
         points.sort_unstable();
@@ -485,7 +485,7 @@ proptest::proptest! {
             proptest::prop_assert!(stored.reply.starts_with(&so_far.reply), "{:?} is not a prefix of {:?}", so_far.reply, stored.reply);
             proptest::prop_assert!(so_far.tool_uses.len() <= stored.tool_uses.len());
         }
-        let streamed = inspector.finish(crate::inspect::pipeline::BodyEnd::Complete).activity;
+        let streamed = inspector.finish(crate::inspect::BodyEnd::Complete).activity;
         proptest::prop_assert_eq!(streamed, stored);
     }
 }
@@ -525,7 +525,7 @@ proptest::proptest! {
             gathered.feed(&bytes[from..point.max(from)]);
             from = point.max(from);
         }
-        let gathered = gathered.finish(crate::inspect::pipeline::BodyEnd::Complete);
+        let gathered = gathered.finish(crate::inspect::BodyEnd::Complete);
         proptest::prop_assert_eq!(&gathered.user_text, &["Now try «this»".to_owned()]);
         proptest::prop_assert_eq!(gathered, stored);
     }
@@ -540,7 +540,7 @@ fn a_gathered_request_says_what_it_missed() {
     };
     let mut over = RequestReader::new(Protocol::Messages, limits);
     over.feed(request.as_bytes());
-    let over = over.finish(crate::inspect::pipeline::BodyEnd::Complete);
+    let over = over.finish(crate::inspect::BodyEnd::Complete);
     assert!(over.limitations.contains(&ActivityLimitation::Truncated));
     assert!(over.user_text.is_empty());
 
@@ -548,7 +548,7 @@ fn a_gathered_request_says_what_it_missed() {
     cut.feed(&request.as_bytes()[..5]);
     cut.gap();
     cut.feed(&request.as_bytes()[5..]);
-    let cut = cut.finish(crate::inspect::pipeline::BodyEnd::Complete);
+    let cut = cut.finish(crate::inspect::BodyEnd::Complete);
     assert!(cut.limitations.contains(&ActivityLimitation::CaptureGap));
 
     // A WebSocket call's request is its one message.
@@ -559,7 +559,7 @@ fn a_gathered_request_says_what_it_missed() {
     let mut message = RequestReader::new(Protocol::Responses, ActivityLimits::default());
     message.message();
     message.feed(create.as_bytes());
-    let message = message.finish(crate::inspect::pipeline::BodyEnd::Complete);
+    let message = message.finish(crate::inspect::BodyEnd::Complete);
     assert_eq!(message.user_text, ["Run it"]);
 }
 
