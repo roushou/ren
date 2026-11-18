@@ -822,7 +822,7 @@ mod tests {
     }
 
     fn prompt(text: &str) -> DriveCommand {
-        DriveCommand::Prompt(Prompt::parse(text.into()).unwrap())
+        DriveCommand::Prompt(Prompt::try_from(text.to_owned()).unwrap())
     }
 
     fn opening() -> Opening {
@@ -1317,7 +1317,7 @@ mod tests {
         let _ = started(&mut codec, "go");
         let steer = codec
             .command(DriveCommand::Steer(
-                Prompt::parse("stop and test".into()).unwrap(),
+                Prompt::try_from("stop and test".to_owned()).unwrap(),
             ))
             .unwrap()
             .remove(0);

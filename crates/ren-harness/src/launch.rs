@@ -385,7 +385,7 @@ mod tests {
 
     #[test]
     fn drives_opencode_over_acp_with_its_policy_as_permission_rules() {
-        let gateway = GatewayEndpoint::parse("http://127.0.0.1:8787").unwrap();
+        let gateway = "http://127.0.0.1:8787".parse::<GatewayEndpoint>().unwrap();
         let config = |plan: &super::LaunchPlan| -> serde_json::Value {
             serde_json::from_str(plan.environment[super::LaunchPlan::OPENCODE_CONFIG].expose())
                 .unwrap()
@@ -424,7 +424,7 @@ mod tests {
 
     #[test]
     fn drives_codex_app_server_over_stdio_through_the_gateway() {
-        let gateway = GatewayEndpoint::parse("http://127.0.0.1:8787").unwrap();
+        let gateway = "http://127.0.0.1:8787".parse::<GatewayEndpoint>().unwrap();
         let driven = Harness::Codex.drive(&gateway, &opening());
         let launched = Harness::Codex.launch(&gateway);
         let command = driven.command(None, &[]);
@@ -442,7 +442,7 @@ mod tests {
 
     #[test]
     fn drives_pi_in_rpc_mode_with_rens_extension_through_the_gateway() {
-        let gateway = GatewayEndpoint::parse("http://127.0.0.1:8787").unwrap();
+        let gateway = "http://127.0.0.1:8787".parse::<GatewayEndpoint>().unwrap();
         let driven = Harness::Pi.drive(&gateway, &opening());
         assert_eq!(Harness::Pi.driven_program(), "pi");
         assert!(driven.loads_pi_extension());
@@ -474,7 +474,7 @@ mod tests {
 
     #[test]
     fn drives_claude_code_in_stream_json_print_mode_through_the_gateway() {
-        let gateway = GatewayEndpoint::parse("http://127.0.0.1:8787").unwrap();
+        let gateway = "http://127.0.0.1:8787".parse::<GatewayEndpoint>().unwrap();
         let command = Harness::ClaudeCode
             .drive(&gateway, &opening())
             .command(None, &[]);
@@ -524,7 +524,7 @@ mod tests {
 
     #[test]
     fn keeps_arguments_literal_and_auth_out_of_overrides() {
-        let gateway = GatewayEndpoint::parse("http://[::1]:8787").unwrap();
+        let gateway = "http://[::1]:8787".parse::<GatewayEndpoint>().unwrap();
         for harness in [
             Harness::ClaudeCode,
             Harness::Codex,
@@ -565,7 +565,9 @@ mod tests {
 
     #[test]
     fn opencode_gets_only_base_urls_for_its_native_providers() {
-        let gateway = GatewayEndpoint::parse("https://ren.example.ts.net").unwrap();
+        let gateway = "https://ren.example.ts.net"
+            .parse::<GatewayEndpoint>()
+            .unwrap();
         let plan = Harness::OpenCode.launch(&gateway);
         assert_eq!(plan.executable, "opencode");
         assert!(plan.arguments.is_empty());
@@ -596,7 +598,7 @@ mod tests {
 
     #[test]
     fn pi_dry_run_and_execution_share_one_argument_list() {
-        let gateway = GatewayEndpoint::parse("http://[::1]:8787").unwrap();
+        let gateway = "http://[::1]:8787".parse::<GatewayEndpoint>().unwrap();
         let plan = Harness::Pi.launch(&gateway);
         let json = serde_json::to_value(&plan).unwrap();
         assert_eq!(
@@ -612,7 +614,7 @@ mod tests {
 
     #[test]
     fn a_user_token_reaches_each_client_and_never_a_dry_run() {
-        let gateway = GatewayEndpoint::parse("http://[::1]:8787").unwrap();
+        let gateway = "http://[::1]:8787".parse::<GatewayEndpoint>().unwrap();
         let token = UserToken::from_random(7, 9);
         let env = HostEnv::from_pairs([("ANTHROPIC_CUSTOM_HEADERS", "X-Team: a")]);
         let sent = |harness: Harness| {

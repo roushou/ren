@@ -1070,7 +1070,7 @@ mod tests {
     }
 
     fn prompt(text: &str) -> DriveCommand {
-        DriveCommand::Prompt(Prompt::parse(text.into()).unwrap())
+        DriveCommand::Prompt(Prompt::try_from(text.to_owned()).unwrap())
     }
 
     /// A codec whose conversation is open, as after `initialize`.
@@ -1623,7 +1623,9 @@ mod tests {
         use crate::settings::{ApprovalPolicy, Effort, Midway, RunSettings};
         let mut codec = ready();
         assert_eq!(
-            codec.command(DriveCommand::Steer(Prompt::parse("x".into()).unwrap())),
+            codec.command(DriveCommand::Steer(
+                Prompt::try_from("x".to_owned()).unwrap()
+            )),
             Err(CommandRefused::NotOffered(Midway::Steer))
         );
         let lines = codec

@@ -562,7 +562,7 @@ mod served {
     }
 
     fn prompt() -> Prompt {
-        Prompt::parse("fix it".to_owned()).unwrap()
+        Prompt::try_from("fix it".to_owned()).unwrap()
     }
 
     #[test]

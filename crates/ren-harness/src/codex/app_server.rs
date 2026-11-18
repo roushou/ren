@@ -1033,7 +1033,7 @@ mod tests {
     }
 
     fn prompt(text: &str) -> DriveCommand {
-        DriveCommand::Prompt(Prompt::parse(text.into()).unwrap())
+        DriveCommand::Prompt(Prompt::try_from(text.to_owned()).unwrap())
     }
 
     #[test]
@@ -1552,7 +1552,9 @@ mod tests {
         use crate::settings::{ApprovalPolicy, Effort, RunSettings};
         let mut codec = ready();
         assert_eq!(
-            codec.command(DriveCommand::Steer(Prompt::parse("x".into()).unwrap())),
+            codec.command(DriveCommand::Steer(
+                Prompt::try_from("x".to_owned()).unwrap()
+            )),
             Err(CommandRefused::NoTurn)
         );
         let _ = codec.command(prompt("fix the build")).unwrap();
@@ -1562,7 +1564,7 @@ mod tests {
         );
         let steer = codec
             .command(DriveCommand::Steer(
-                Prompt::parse("use the old API".into()).unwrap(),
+                Prompt::try_from("use the old API".to_owned()).unwrap(),
             ))
             .unwrap()
             .remove(0);

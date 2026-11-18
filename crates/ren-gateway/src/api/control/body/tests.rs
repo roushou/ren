@@ -62,7 +62,7 @@ fn a_working_run_writes_its_approvals_and_its_queued_prompt_as_its_record() {
         thread: thread(),
         turn: Some(turn()),
         approvals: waiting_for("ap-1"),
-        queued: Some(Prompt::parse("then the docs".into()).unwrap()),
+        queued: Some(Prompt::try_from("then the docs".to_owned()).unwrap()),
     });
     assert_eq!(working["approvals"][0]["approval"], "ap-1");
     assert_eq!(working["approvals"][0]["ask"]["kind"], "file_change");

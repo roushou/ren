@@ -445,7 +445,7 @@ fn options() -> SupervisorOptions {
         scratch: Some(PathBuf::from("/scratch")),
         home: Some(PathBuf::from("/home/op")),
         warmup: ren_supervisor::Warmup::WhenAsked,
-        gateway: GatewayEndpoint::parse("http://127.0.0.1:8787").unwrap(),
+        gateway: "http://127.0.0.1:8787".parse::<GatewayEndpoint>().unwrap(),
         version: "0.1.0".into(),
         line_limit: LineLimit::DEFAULT,
         idle: ren_supervisor::IdleStop::Never,
@@ -702,7 +702,7 @@ async fn state(
 }
 
 fn prompt() -> RunCommand {
-    RunCommand::Prompt(Prompt::parse("edit src".into()).unwrap())
+    RunCommand::Prompt(Prompt::try_from("edit src".to_owned()).unwrap())
 }
 
 #[tokio::test]
@@ -721,7 +721,7 @@ async fn runs_a_turn_through_an_approval_and_stops() {
             Harness::Codex,
             "/work/acme",
             Conversation::New,
-            Some(Prompt::parse("edit src".into()).unwrap()),
+            Some(Prompt::try_from("edit src".to_owned()).unwrap()),
         ),
     )
     .await
@@ -981,7 +981,7 @@ async fn drives_claude_code_through_a_turn_in_the_conversation_ren_names() {
             Harness::ClaudeCode,
             "/work/acme",
             Conversation::New,
-            Some(Prompt::parse("edit src".into()).unwrap()),
+            Some(Prompt::try_from("edit src".to_owned()).unwrap()),
         ),
     )
     .await
@@ -1390,7 +1390,7 @@ async fn a_scratch_run_gets_a_new_repository_of_its_own() {
 }
 
 fn prompt_text(text: &str) -> Prompt {
-    Prompt::parse(text.into()).unwrap()
+    Prompt::try_from(text.to_owned()).unwrap()
 }
 
 /// What a session starts with: its client in `dir`, on the client's own

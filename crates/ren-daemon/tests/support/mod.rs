@@ -293,7 +293,9 @@ impl TestGateway {
                         scratch: Some(std::path::PathBuf::from("/scratch")),
                         home: Some(std::path::PathBuf::from("/work")),
                         warmup: ren_supervisor::Warmup::WhenAsked,
-                        gateway: GatewayEndpoint::parse(&format!("http://{address}")).unwrap(),
+                        gateway: format!("http://{address}")
+                            .parse::<GatewayEndpoint>()
+                            .unwrap(),
                         version: "0.0.0-test".into(),
                         line_limit: LineLimit::DEFAULT,
                         idle: ren_supervisor::IdleStop::Never,

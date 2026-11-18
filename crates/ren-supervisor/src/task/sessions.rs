@@ -269,7 +269,7 @@ impl<H: AgentHost> SupervisorTask<H> {
             .get(&session)
             .ok_or(SessionError::NoSuchSession(session))?;
         if attachments.is_empty() {
-            return Prompt::parse(text)
+            return Prompt::try_from(text)
                 .map(Composing::Ready)
                 .map_err(|_| SessionError::BlankPrompt);
         }
