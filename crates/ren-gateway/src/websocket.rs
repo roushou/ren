@@ -519,25 +519,8 @@ impl Relay {
 
     /// The `error` event a refused `response.create` is answered with.
     fn refusal(rejection: &Rejection) -> Frame {
-        let (code, message) = match rejection {
-            Rejection::Paused { .. } => ("ren_paused", "Ren is paused by its operator".to_owned()),
-            Rejection::SessionBlocked => (
-                "ren_session_blocked",
-                "this session is blocked by the Ren operator".to_owned(),
-            ),
-            Rejection::UserBlocked => (
-                "ren_user_blocked",
-                "this user is blocked by the Ren operator".to_owned(),
-            ),
-            Rejection::Blocked { rule, reason } => (
-                "ren_blocked",
-                format!("blocked by Ren policy rule {}: {reason}", rule.as_str()),
-            ),
-            Rejection::UserNotAllowed { upstream } => (
-                "ren_user_not_allowed",
-                format!("upstream {upstream} is not open to this caller"),
-            ),
-        };
+        let code = rejection.code().wire();
+        let message = rejection.message();
         let event = serde_json::json!({
             "type": "error",
             "error": { "type": code, "code": code, "message": message },

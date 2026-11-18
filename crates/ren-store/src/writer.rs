@@ -27,6 +27,7 @@ use ren_recorder::{
         OperatorAction, ResponseHead, RunEntry, RunFact, RunRecord, Segment, SessionFact,
         SessionRecord, Stamp, StartAttempt,
     },
+    id::AttemptId,
     inspection::InspectionRecord,
     retention::RetentionPolicy,
 };
@@ -574,7 +575,7 @@ impl MetadataTx<'_> {
     async fn append<P: serde::Serialize>(
         &mut self,
         stamp: &Stamp,
-        attempt: Option<String>,
+        attempt: Option<AttemptId>,
         kind: ObservationKind,
         payload: &P,
     ) -> Result<Observation, StoreError> {
@@ -594,7 +595,7 @@ impl MetadataTx<'_> {
         at: Moment,
         channel: ChannelId,
         call: Option<CallId>,
-        attempt: Option<String>,
+        attempt: Option<AttemptId>,
         kind: ObservationKind,
         payload: &P,
     ) -> Result<Observation, StoreError> {
@@ -605,7 +606,7 @@ impl MetadataTx<'_> {
             .bind(i64::try_from(mono).unwrap_or(i64::MAX))
             .bind(channel.to_string())
             .bind(call.map(|call| call.to_string()))
-            .bind(attempt.clone())
+            .bind(attempt.map(|attempt| attempt.to_string()))
             .bind(kind.label())
             .bind(Self::LOG_SCHEMA)
             .bind(payload)
@@ -617,7 +618,7 @@ impl MetadataTx<'_> {
             kind: Stored::Known(kind),
             channel,
             call,
-            attempt: attempt.and_then(|id| id.parse().ok()),
+            attempt,
         })
     }
 
@@ -1283,7 +1284,7 @@ impl MetadataTx<'_> {
             .await?;
         self.append(
             stamp,
-            Some(start.attempt.to_string()),
+            Some(start.attempt),
             ObservationKind::AttemptStarted,
             start,
         )
@@ -1306,7 +1307,7 @@ impl MetadataTx<'_> {
             .await?;
         self.append(
             stamp,
-            Some(head.attempt.to_string()),
+            Some(head.attempt),
             ObservationKind::ResponseHead,
             head,
         )
@@ -1414,7 +1415,7 @@ impl MetadataTx<'_> {
         }
         self.append(
             stamp,
-            Some(finish.attempt.to_string()),
+            Some(finish.attempt),
             ObservationKind::AttemptFinished,
             finish,
         )

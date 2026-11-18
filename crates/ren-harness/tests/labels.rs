@@ -85,6 +85,7 @@ fn every_label_is_pinned() {
         pi::PiEvent,
         opencode::AcpMethod,
         opencode::AcpUpdate,
+        opencode::AcpToolKind,
     ];
     let pinned = include_str!("fixtures/labels.txt");
     assert!(

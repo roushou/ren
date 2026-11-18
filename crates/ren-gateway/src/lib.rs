@@ -55,6 +55,7 @@ pub mod policy;
 #[cfg(test)]
 mod purity;
 mod relay;
+pub mod reply;
 pub mod retry;
 mod route;
 pub mod tools;
@@ -87,6 +88,7 @@ use crate::{
     control::{Cancel, Controls},
     limits::{AtLimit, UserLimits},
     policy::{Admission, CallFacts, CallPlan, Policy, Rejection, RequestJson, StepRecord},
+    reply::RenCode,
     user::IdentifyError,
 };
 use axum::{
@@ -199,7 +201,7 @@ impl IntoResponse for GatewayError {
                 ..
             }) => RenReply {
                 status: self.status(),
-                code: "operator_cancelled",
+                code: RenCode::OperatorCancelled,
                 message: self.to_string(),
                 retry: ClientRetry::Never,
             }
@@ -226,43 +228,29 @@ enum ClientRetry {
 #[derive(Debug)]
 struct RenReply {
     status: StatusCode,
-    code: &'static str,
+    code: RenCode,
     message: String,
     retry: ClientRetry,
 }
 
 impl RenReply {
     fn rejected(rejection: &Rejection) -> Self {
-        match rejection {
-            Rejection::Paused { retry_after } => Self {
-                status: StatusCode::SERVICE_UNAVAILABLE,
-                code: "paused",
-                message: "Ren is paused by its operator".into(),
-                retry: ClientRetry::After(retry_after.get()),
+        Self {
+            status: match rejection {
+                Rejection::Paused { .. } => StatusCode::SERVICE_UNAVAILABLE,
+                Rejection::SessionBlocked
+                | Rejection::UserBlocked
+                | Rejection::Blocked { .. }
+                | Rejection::UserNotAllowed { .. } => StatusCode::FORBIDDEN,
             },
-            Rejection::SessionBlocked => Self {
-                status: StatusCode::FORBIDDEN,
-                code: "session_blocked",
-                message: "this session is blocked by the Ren operator".into(),
-                retry: ClientRetry::Never,
-            },
-            Rejection::UserBlocked => Self {
-                status: StatusCode::FORBIDDEN,
-                code: "user_blocked",
-                message: "this user is blocked by the Ren operator".into(),
-                retry: ClientRetry::Never,
-            },
-            Rejection::Blocked { rule, reason } => Self {
-                status: StatusCode::FORBIDDEN,
-                code: "blocked",
-                message: format!("blocked by Ren policy rule {}: {reason}", rule.as_str()),
-                retry: ClientRetry::Never,
-            },
-            Rejection::UserNotAllowed { upstream } => Self {
-                status: StatusCode::FORBIDDEN,
-                code: "user_not_allowed",
-                message: format!("upstream {upstream} is not open to this caller"),
-                retry: ClientRetry::Never,
+            code: rejection.code(),
+            message: rejection.message(),
+            retry: match rejection {
+                Rejection::Paused { retry_after } => ClientRetry::After(retry_after.get()),
+                Rejection::SessionBlocked
+                | Rejection::UserBlocked
+                | Rejection::Blocked { .. }
+                | Rejection::UserNotAllowed { .. } => ClientRetry::Never,
             },
         }
     }
@@ -270,7 +258,7 @@ impl RenReply {
     fn user_busy() -> Self {
         Self {
             status: StatusCode::TOO_MANY_REQUESTS,
-            code: "user_busy",
+            code: RenCode::UserBusy,
             message: "this caller already has as many calls running as Ren allows it".into(),
             retry: ClientRetry::After(1),
         }
@@ -279,7 +267,7 @@ impl RenReply {
     fn unidentified(refused: &IdentifyError) -> Self {
         Self {
             status: StatusCode::UNAUTHORIZED,
-            code: "identity_refused",
+            code: RenCode::IdentityRefused,
             message: refused.to_string(),
             retry: ClientRetry::Never,
         }
@@ -289,27 +277,29 @@ impl RenReply {
         let (status, code, retry) = match refusal {
             UploadRefusal::Shutdown => (
                 StatusCode::SERVICE_UNAVAILABLE,
-                "shutting_down",
+                RenCode::ShuttingDown,
                 ClientRetry::After(1),
             ),
             UploadRefusal::Buffer(BufferRefusal::TooLarge) => (
                 StatusCode::PAYLOAD_TOO_LARGE,
-                "too_large",
+                RenCode::TooLarge,
                 ClientRetry::Never,
             ),
             UploadRefusal::Buffer(BufferRefusal::BufferFull) => (
                 StatusCode::SERVICE_UNAVAILABLE,
-                "buffer_full",
+                RenCode::BufferFull,
                 ClientRetry::After(1),
             ),
             UploadRefusal::Buffer(BufferRefusal::UploadTimeout) => (
                 StatusCode::REQUEST_TIMEOUT,
-                "upload_timeout",
+                RenCode::UploadTimeout,
                 ClientRetry::After(1),
             ),
-            UploadRefusal::Buffer(BufferRefusal::UploadFailed) => {
-                (StatusCode::BAD_REQUEST, "upload_failed", ClientRetry::Never)
-            }
+            UploadRefusal::Buffer(BufferRefusal::UploadFailed) => (
+                StatusCode::BAD_REQUEST,
+                RenCode::UploadFailed,
+                ClientRetry::Never,
+            ),
         };
         Self {
             status,
@@ -327,7 +317,7 @@ impl IntoResponse for RenReply {
     fn into_response(self) -> Response {
         let body = serde_json::json!({
             "type": "error",
-            "error": { "type": format!("ren_{}", self.code), "message": self.message },
+            "error": { "type": self.code.wire(), "message": self.message },
         });
         let mut response = (self.status, axum::Json(body)).into_response();
         let headers = response.headers_mut();

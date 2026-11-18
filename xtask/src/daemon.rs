@@ -7,6 +7,7 @@ use crate::{
     invocation::{Invocation, InvocationError},
     progress::Progress,
 };
+use ren_gateway::ControlRefusal;
 use ren_harness::Harness;
 use ren_protocol::label::Stored;
 use ren_recorder::id::RunId;
@@ -224,7 +225,7 @@ pub struct Runs(Vec<LiveRun>);
 #[serde(untagged)]
 enum RunsAnswer {
     Listed { runs: Vec<LiveRun> },
-    Refused { error: String },
+    Refused { error: Stored<ControlRefusal> },
 }
 
 /// Why `ren runs ls` gave no list.
@@ -233,7 +234,7 @@ pub enum RunsError {
     #[error(transparent)]
     Json(#[from] serde_json::Error),
     #[error("the control API refused: {0}")]
-    Refused(String),
+    Refused(Stored<ControlRefusal>),
 }
 
 /// One run, as far as a restart concerns it.
@@ -308,9 +309,9 @@ impl Runs {
     pub fn parse(json: &str) -> Result<Self, RunsError> {
         match serde_json::from_str(json)? {
             RunsAnswer::Listed { runs } => Ok(Self(runs)),
-            RunsAnswer::Refused { error } => match error.as_str() {
-                "runs_disabled" => Ok(Self::default()),
-                _ => Err(RunsError::Refused(error)),
+            RunsAnswer::Refused { error } => match error.known() {
+                Some(ControlRefusal::RunsDisabled) => Ok(Self::default()),
+                Some(_) | None => Err(RunsError::Refused(error)),
             },
         }
     }
@@ -740,7 +741,9 @@ mod tests {
         );
         assert!(matches!(
             Runs::parse(r#"{"api_version":1,"error":"unauthorized"}"#),
-            Err(RunsError::Refused(error)) if error == "unauthorized"
+            Err(RunsError::Refused(Stored::Known(
+                ControlRefusal::Unauthorized
+            )))
         ));
         assert!(matches!(Runs::parse("not json"), Err(RunsError::Json(_))));
     }

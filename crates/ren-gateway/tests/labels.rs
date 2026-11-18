@@ -53,7 +53,7 @@ macro_rules! table {
 
 #[test]
 fn every_label_is_pinned() {
-    use ren_gateway::{api, instance, tools, upstream};
+    use ren_gateway::{api, instance, reply, tools, upstream};
     let table = table![
         api::HealthStatus,
         api::ErrorCode,
@@ -64,6 +64,7 @@ fn every_label_is_pinned() {
         api::preview::TextEnd,
         api::preview::DecodeIntegrity,
         upstream::EntryIngress,
+        reply::RenCode,
         instance::Environment,
         tools::GenerationState,
         tools::ChangeOutcome,

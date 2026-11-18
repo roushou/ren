@@ -438,7 +438,10 @@ dependencies under "Crates" below. Read the code for current module ownership.
   pure call planning
   (`policy`: block, transform, and fallback rules validated at load, with
   protected headers and body paths), and the call's way through its
-  candidates (`call`: `CallRun`, which `Gateway::forward` carries out).
+  candidates (`call`: `CallRun`, which `Gateway::forward` carries out),
+  and the codes it refuses a call with over HTTP and WebSocket alike
+  (`reply`: `RenCode`, `ren_`-prefixed on the wire and pinned in
+  `tests/fixtures/labels.txt`).
   `src/purity.rs` keeps `attempt`, `call`, `channel`, `retry`, `operator`,
   and `user` free of runtime, I/O, storage, and shell-module
   dependencies. Management receives `Reader`, `Backup`, retention settings, and

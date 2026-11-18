@@ -15,6 +15,7 @@
 //! Claude Code reports no turn identifier that matches the prompt id its
 //! model requests carry, so a driven turn's id is its prompt's message id.
 
+use super::tools::ClaudeCodeTool;
 use crate::{
     codec::{ApprovalBook, EchoQueue, Envelope, RequestLedger, Stop, TurnSlot},
     commands::{ClientCommand, CommandKind, Sigil},
@@ -29,7 +30,7 @@ use crate::{
     settings::{ApprovalPolicy, Midway, RunSettings, Setting, SettingsBook},
 };
 use ren_protocol::{
-    label::Stored,
+    label::{Labeled, Stored},
     native::{NativeThreadId, NativeTurnId},
 };
 use serde_json::{Value, json};
@@ -845,8 +846,19 @@ impl ClaudeStreamJson {
     /// A tool call's kind and reading, from Claude Code's tool name.
     fn tool(name: &str, input: &Value) -> (ItemKind, ItemRead) {
         let text = |key: &str| input.get(key).and_then(Value::as_str).map(str::to_owned);
-        match name {
-            "Bash" => (
+        let other = |kind| {
+            (
+                kind,
+                ItemRead::tool(
+                    crate::Harness::ClaudeCode,
+                    name,
+                    input,
+                    ItemStatus::InProgress,
+                ),
+            )
+        };
+        match ClaudeCodeTool::from_label(name) {
+            Some(ClaudeCodeTool::Bash) => (
                 ItemKind::CommandExecution,
                 ItemRead::Command {
                     command: text("command").unwrap_or_default(),
@@ -858,7 +870,12 @@ impl ClaudeStreamJson {
                     exit_code: None,
                 },
             ),
-            "Edit" | "Write" | "MultiEdit" | "NotebookEdit" => (
+            Some(
+                ClaudeCodeTool::Edit
+                | ClaudeCodeTool::Write
+                | ClaudeCodeTool::MultiEdit
+                | ClaudeCodeTool::NotebookEdit,
+            ) => (
                 ItemKind::FileChange,
                 ItemRead::FileChange {
                     paths: text("file_path")
@@ -868,21 +885,17 @@ impl ClaudeStreamJson {
                     status: ItemStatus::InProgress,
                 },
             ),
-            other => (
-                if other == "WebSearch" {
-                    ItemKind::WebSearch
-                } else if other.starts_with("mcp__") {
-                    ItemKind::McpToolCall
-                } else {
-                    ItemKind::Other(other.to_owned())
-                },
-                ItemRead::tool(
-                    crate::Harness::ClaudeCode,
-                    other,
-                    input,
-                    ItemStatus::InProgress,
-                ),
-            ),
+            Some(ClaudeCodeTool::WebSearch) => other(ItemKind::WebSearch),
+            Some(
+                ClaudeCodeTool::Read
+                | ClaudeCodeTool::Glob
+                | ClaudeCodeTool::Grep
+                | ClaudeCodeTool::Task
+                | ClaudeCodeTool::Agent
+                | ClaudeCodeTool::WebFetch,
+            ) => other(ItemKind::Other(name.to_owned())),
+            None if name.starts_with("mcp__") => other(ItemKind::McpToolCall),
+            None => other(ItemKind::Other(name.to_owned())),
         }
     }
 

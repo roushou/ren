@@ -14,6 +14,7 @@
 //! with. Dialogs an extension opens (`extension_ui_request`) are cancelled:
 //! Ren provides no interface for them.
 
+use super::tools::PiTool;
 use crate::{
     codec::{EchoQueue, Envelope, RequestLedger, Stop, TurnMint, TurnSlot},
     commands::{ClientCommand, CommandKind, Sigil},
@@ -27,7 +28,10 @@ use crate::{
     prompt::Prompt,
     settings::{Effort, Midway, RunSettings, Setting, SettingsBook},
 };
-use ren_protocol::{label::Stored, native::NativeThreadId};
+use ren_protocol::{
+    label::{Labeled, Stored},
+    native::NativeThreadId,
+};
 use serde_json::{Value, json};
 use serde_with::{DeserializeFromStr, SerializeDisplay};
 use std::collections::BTreeMap;
@@ -650,8 +654,8 @@ impl PiRpc {
     /// A tool call's kind and reading, from Pi's tool name.
     fn tool(name: &str, args: &Value) -> (ItemKind, ItemRead) {
         let text = |key: &str| args.get(key).and_then(Value::as_str).map(str::to_owned);
-        match name {
-            "bash" => (
+        match PiTool::from_label(name) {
+            Some(PiTool::Bash) => (
                 ItemKind::CommandExecution,
                 ItemRead::Command {
                     command: text("command").unwrap_or_default(),
@@ -661,16 +665,16 @@ impl PiRpc {
                     exit_code: None,
                 },
             ),
-            "edit" | "write" => (
+            Some(PiTool::Edit | PiTool::Write) => (
                 ItemKind::FileChange,
                 ItemRead::FileChange {
                     paths: text("path").into_iter().collect(),
                     status: ItemStatus::InProgress,
                 },
             ),
-            other => (
-                ItemKind::Other(other.to_owned()),
-                ItemRead::tool(crate::Harness::Pi, other, args, ItemStatus::InProgress),
+            Some(PiTool::Read | PiTool::Grep | PiTool::Find | PiTool::Ls) | None => (
+                ItemKind::Other(name.to_owned()),
+                ItemRead::tool(crate::Harness::Pi, name, args, ItemStatus::InProgress),
             ),
         }
     }

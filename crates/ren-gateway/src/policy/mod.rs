@@ -15,6 +15,7 @@ pub use transform::{RequestJson, StepOutcome, StepRecord, TransformStep};
 
 use crate::{
     operator::{OperatorState, Pause, RetryAfter},
+    reply::RenCode,
     retry::RetryPolicy,
 };
 use ren_protocol::{
@@ -277,6 +278,32 @@ impl Rejection {
             Self::UserBlocked => CallRejection::UserBlocked,
             Self::Blocked { .. } => CallRejection::Blocked,
             Self::UserNotAllowed { .. } => CallRejection::UserNotAllowed,
+        }
+    }
+
+    /// The code Ren answers the client with, over either transport.
+    pub(crate) fn code(&self) -> RenCode {
+        match self {
+            Self::Paused { .. } => RenCode::Paused,
+            Self::SessionBlocked => RenCode::SessionBlocked,
+            Self::UserBlocked => RenCode::UserBlocked,
+            Self::Blocked { .. } => RenCode::Blocked,
+            Self::UserNotAllowed { .. } => RenCode::UserNotAllowed,
+        }
+    }
+
+    /// What Ren tells the client, over either transport.
+    pub(crate) fn message(&self) -> String {
+        match self {
+            Self::Paused { .. } => "Ren is paused by its operator".into(),
+            Self::SessionBlocked => "this session is blocked by the Ren operator".into(),
+            Self::UserBlocked => "this user is blocked by the Ren operator".into(),
+            Self::Blocked { rule, reason } => {
+                format!("blocked by Ren policy rule {}: {reason}", rule.as_str())
+            }
+            Self::UserNotAllowed { upstream } => {
+                format!("upstream {upstream} is not open to this caller")
+            }
         }
     }
 }
