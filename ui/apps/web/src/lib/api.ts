@@ -18,16 +18,35 @@ import {
   type Decoder,
   type Stored,
 } from './decode.ts';
+import type { Build as WireBuild } from './wire/Build.ts';
 import type { CaptureLimits } from './wire/CaptureLimits.ts';
+import type { DedupMetrics } from './wire/DedupMetrics.ts';
 import type { DiskUsage } from './wire/DiskUsage.ts';
 import type { FileUsage } from './wire/FileUsage.ts';
+import type { Health as WireHealth } from './wire/Health.ts';
+import type { InstanceOptions } from './wire/InstanceOptions.ts';
+import type { OmissionMetrics } from './wire/OmissionMetrics.ts';
+import type { OperatorSummary as WireOperatorSummary } from './wire/OperatorSummary.ts';
+import type { Pause as WirePause } from './wire/Pause.ts';
+import type { QueueMetrics } from './wire/QueueMetrics.ts';
+import type { RecorderMetrics } from './wire/RecorderMetrics.ts';
 import type { RetentionPolicy } from './wire/RetentionPolicy.ts';
 import type { Storage } from './wire/Storage.ts';
 import type { StorageView } from './wire/StorageView.ts';
 
-// Generated from the daemon's Rust types (`wire/`, written by `cargo test`);
-// the decoders below are typed against them, so a changed field fails `check`.
-export type { CaptureLimits, DiskUsage, FileUsage, RetentionPolicy, Storage, StorageView };
+// Generated from the gateway's wire types (`wire/`, written by `cargo test`).
+// The decoders below are typed against them, so a changed field fails `check`.
+// Where the UI decodes a value further (labels, revisions), its own type keeps
+// the wire type's fields: `object<View, Wire>`.
+export type {
+  CaptureLimits,
+  DiskUsage,
+  FileUsage,
+  RecorderMetrics,
+  RetentionPolicy,
+  Storage,
+  StorageView,
+};
 
 /** The management API version this UI understands. */
 export const API_VERSION = 1;
@@ -531,27 +550,6 @@ export interface UsageView {
   models: ModelUsage[];
   users: UserUsage[];
 }
-export interface RecorderMetrics {
-  queue: { items: number; capacity: number; bytes: number; byte_capacity: number };
-  omissions: {
-    policy_limit_bytes: number;
-    queue_bytes_bytes: number;
-    queue_slots_bytes: number;
-    storage_failure_bytes: number;
-    unattributed_bytes: number;
-    unrecorded_calls: number;
-  };
-  storage_errors: number;
-  retention_errors: number;
-  pruned_calls: number;
-  pruned_chunks: number;
-  commits: number;
-  last_commit_ms: number;
-  max_commit_ms: number;
-  lag_ms: number;
-  dedup: { referenced_bytes: number; new_bytes: number; compressed_bytes: number };
-  recovered_calls: number;
-}
 /** What a daemon binary was compiled from (`/health` `build.revision`). */
 export type Revision =
   | { kind: 'commit'; commit: string; tree: 'clean' | 'modified' }
@@ -563,14 +561,13 @@ export interface Build {
   revision: Revision;
 }
 /** Whether new calls are admitted; reported read-only by `/health`. */
-export type Pause =
-  | { state: 'running' }
-  | { state: 'paused'; retry_after: number }
-  | { state: 'unknown'; text: string };
+export type Pause = WirePause | { state: 'unknown'; text: string };
 export interface OperatorSummary {
   pause: Pause;
   /** Session blocks in force now. */
   blocked_sessions: number;
+  /** User blocks in force now. */
+  blocked_users: number;
 }
 export interface Health {
   status: Stored<HealthStatus>;
@@ -803,13 +800,13 @@ const storageView = object<StorageView>({
   compressed_bytes: count,
 });
 const recorderMetrics = object<RecorderMetrics>({
-  queue: object<RecorderMetrics['queue']>({
+  queue: object<QueueMetrics>({
     items: count,
     capacity: count,
     bytes: count,
     byte_capacity: count,
   }),
-  omissions: object<RecorderMetrics['omissions']>({
+  omissions: object<OmissionMetrics>({
     policy_limit_bytes: count,
     queue_bytes_bytes: count,
     queue_slots_bytes: count,
@@ -825,7 +822,7 @@ const recorderMetrics = object<RecorderMetrics>({
   last_commit_ms: count,
   max_commit_ms: count,
   lag_ms: count,
-  dedup: object<RecorderMetrics['dedup']>({
+  dedup: object<DedupMetrics>({
     referenced_bytes: count,
     new_bytes: count,
     compressed_bytes: count,
@@ -843,7 +840,7 @@ export const revision: Decoder<Revision> = (value, path) => {
     ? { kind: 'commit', commit, tree: dirty ? 'modified' : 'clean' }
     : { kind: 'unrecognized', text };
 };
-const build = object<Build>({ version: string, revision });
+const build = object<Build, WireBuild>({ version: string, revision });
 const pause: Decoder<Pause> = (value, path) => {
   if (!isRecord(value)) throw new ShapeError(path, 'an object');
   const state = string(value.state, `${path}.state`);
@@ -852,11 +849,15 @@ const pause: Decoder<Pause> = (value, path) => {
     return { state, retry_after: count(value.retry_after, `${path}.retry_after`) };
   return { state: 'unknown', text: state };
 };
-const operatorSummary = object<OperatorSummary>({ pause, blocked_sessions: count });
-const health = object<Health>({
+const operatorSummary = object<OperatorSummary, WireOperatorSummary>({
+  pause,
+  blocked_sessions: count,
+  blocked_users: count,
+});
+const health = object<Health, WireHealth>({
   status: label(healthStatuses),
   build,
-  instance: object<Health['instance']>({ environment: label(environments) }),
+  instance: object<Health['instance'], InstanceOptions>({ environment: label(environments) }),
   operator: operatorSummary,
   recorder: recorderMetrics,
 });

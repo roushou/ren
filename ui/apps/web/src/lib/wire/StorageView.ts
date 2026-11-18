@@ -6,9 +6,7 @@ import type { DiskUsage } from "./DiskUsage.ts";
  */
 export type StorageView = { disk: DiskUsage, calls: number, open_calls: number, 
 /**
- * Calls whose digest the recorder has derived: every finished call,
- * except while it derives digests again for calls with none, or with
- * one from an older `CallDigest::VERSION`.
+ * Calls whose activity is derived: every finished call, once derived.
  */
 digested_calls: number, chunks: number, 
 /**

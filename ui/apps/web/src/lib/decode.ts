@@ -54,14 +54,28 @@ export const array =
     return value.map((item, index) => decode(item, `${path}[${index}]`));
   };
 
-/** Decode the listed fields; fields a newer daemon adds are ignored. */
+/**
+ * `T`'s field decoders when `T` and `W` have the same field names; otherwise
+ * a type naming the fields only one of them has, so the mismatch is the error.
+ */
+type Fields<T, W> = [Exclude<keyof T, keyof W> | Exclude<keyof W, keyof T>] extends [never]
+  ? { [K in keyof T]-?: Decoder<T[K]> }
+  : { mismatched_fields: Exclude<keyof T, keyof W> | Exclude<keyof W, keyof T> };
+
+/**
+ * Decode the listed fields; fields a newer daemon adds are ignored. `W` is the
+ * daemon's generated wire type (`wire/`) when the decoded type `T` differs from
+ * it (labels kept as `Stored`, text parsed): `T` must still have exactly its
+ * fields.
+ */
 export const object =
-  <T>(shape: { [K in keyof T]-?: Decoder<T[K]> }): Decoder<T> =>
+  <T, W = T>(shape: Fields<T, W>): Decoder<T> =>
   (value, path) => {
     if (!isRecord(value)) throw new ShapeError(path, 'an object');
     const result: Partial<T> = {};
-    for (const key of Object.keys(shape) as (keyof T & string)[]) {
-      result[key] = shape[key](value[key], path ? `${path}.${key}` : key);
+    const fields = shape as { [K in keyof T]-?: Decoder<T[K]> };
+    for (const key of Object.keys(fields) as (keyof T & string)[]) {
+      result[key] = fields[key](value[key], path ? `${path}.${key}` : key);
     }
     return result as T;
   };

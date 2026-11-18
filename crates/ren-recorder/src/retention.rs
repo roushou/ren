@@ -5,11 +5,9 @@
 //! deduplication means deleting a call frees only the chunks nothing else uses.
 
 use serde::{Deserialize, Serialize};
-use ts_rs::TS;
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
-#[ts(export)]
 pub struct RetentionPolicy {
     pub enabled: bool,
     pub max_age_seconds: u64,

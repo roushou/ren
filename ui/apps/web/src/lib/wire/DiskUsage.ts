@@ -2,7 +2,7 @@
 import type { FileUsage } from "./FileUsage.ts";
 
 /**
- * Disk usage of the store's files, as retention measures it. The search
- * index is part of the metadata file.
+ * Disk usage of the store's files. The search index is part of the
+ * metadata file.
  */
 export type DiskUsage = { metadata: FileUsage, blobs: FileUsage, };
