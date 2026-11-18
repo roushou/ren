@@ -15,6 +15,7 @@
 //! `tools_disabled`.
 
 use super::{ControlApi, ControlRefusal};
+use crate::api::Versioned;
 use crate::tools::{ToolChange, ToolCollection, ToolListing, Toolbox, ToolboxError};
 use axum::{
     Json, Router,
@@ -48,13 +49,6 @@ struct ChangeRequest {
 #[serde(deny_unknown_fields)]
 struct RollbackRequest {
     generation: Generation,
-}
-
-#[derive(Serialize)]
-struct Versioned<T> {
-    api_version: u32,
-    #[serde(flatten)]
-    body: T,
 }
 
 /// Why a tools request was refused, beyond access.

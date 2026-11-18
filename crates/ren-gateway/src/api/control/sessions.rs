@@ -11,7 +11,7 @@
 //! holds from before) is loaded from the store on its first request.
 
 use super::request::{AnswerRequest, CreateRequest, PromptRequest};
-use super::runs::{FilesRequest, RunsApi, SettingsRequest};
+use super::runs::RunsApi;
 use super::{ControlApi, ControlRefusal};
 use axum::{
     Json, Router,
@@ -34,7 +34,7 @@ use ren_harness::{
     },
     drive::ApprovalId,
     models::ModelId,
-    settings::RunSettings,
+    settings::{ApprovalPolicy, Effort, RunSettings},
 };
 use ren_protocol::label::Stored;
 use ren_protocol::native::NativeThreadId;
@@ -95,6 +95,50 @@ struct ListRequest {
 #[derive(serde::Deserialize)]
 struct AttachRequest {
     name: String,
+}
+
+/// A search of a run's folder for a prompt to name a file: `q`, what was
+/// typed after `@`, and how many to answer.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FilesRequest {
+    #[serde(default)]
+    q: String,
+    #[serde(default)]
+    limit: Option<usize>,
+}
+
+impl FilesRequest {
+    const LIMIT: usize = 20;
+    const MOST: usize = 100;
+}
+
+impl SettingsRequest {
+    /// The settings asked for: a model must be one a client could name.
+    fn settings(self) -> Result<RunSettings, ControlRefusal> {
+        let model = self
+            .model
+            .map(|model| model.parse::<ModelId>())
+            .transpose()
+            .map_err(|_| ControlRefusal::InvalidRequest)?;
+        Ok(RunSettings {
+            model,
+            effort: self.effort,
+            approvals: self.approvals,
+        })
+    }
+}
+
+/// The settings a run moves to; each left out is the client's own.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SettingsRequest {
+    #[serde(default)]
+    model: Option<String>,
+    #[serde(default)]
+    effort: Option<Effort>,
+    #[serde(default)]
+    approvals: Option<ApprovalPolicy>,
 }
 
 /// One session: as the store holds it (with its runs), and as the
