@@ -127,6 +127,16 @@ pub struct CallerView {
     pub login: Option<String>,
 }
 
+impl From<&ren_recorder::caller::Caller> for CallerView {
+    fn from(caller: &ren_recorder::caller::Caller) -> Self {
+        Self {
+            kind: caller.kind().into(),
+            user: caller.user().map(|user| user.as_str().to_owned()),
+            login: caller.login().map(|login| login.as_str().to_owned()),
+        }
+    }
+}
+
 impl From<ren_store::view::CallerView> for CallerView {
     fn from(value: ren_store::view::CallerView) -> Self {
         let ren_store::view::CallerView { kind, user, login } = value;

@@ -6,11 +6,12 @@
 //! to the login's stdin: it is never logged, recorded, or answered with.
 //! Access is the control API's, as for the other run routes.
 
+use super::body::sign_in::{Cancelled, LoginBody, OutcomeBody, SignInBody, WaitedBody};
 use super::{ControlApi, ControlRefusal, runs::RunsApi};
 use axum::{
     Json,
     extract::{Path, State, rejection::JsonRejection},
-    response::{IntoResponse, Response},
+    response::Response,
 };
 use http::HeaderMap;
 use ren_harness::{
@@ -82,12 +83,10 @@ impl RunsApi {
             .check_sign_in(harness)
             .await
             .map_err(Self::sign_in_refused)?;
-        Ok(Json(serde_json::json!({
-            "api_version": ControlApi::API_VERSION,
-            "harness": harness,
-            "sign_in": state,
+        Ok(ControlApi::answer(SignInBody {
+            harness,
+            sign_in: state.into(),
         }))
-        .into_response())
     }
 
     /// `POST …/sign-in`: start the client's login, answering with its link
@@ -113,13 +112,11 @@ impl RunsApi {
             .sign_in(harness, method)
             .await
             .map_err(Self::sign_in_refused)?;
-        Ok(Json(serde_json::json!({
-            "api_version": ControlApi::API_VERSION,
-            "harness": harness,
-            "method": method,
-            "login": login,
+        Ok(ControlApi::answer(LoginBody {
+            harness,
+            method,
+            login: login.into(),
         }))
-        .into_response())
     }
 
     /// `POST …/sign-in/answer`: hand the running login what it waits for (the
@@ -139,12 +136,10 @@ impl RunsApi {
             .answer_sign_in(harness, answer)
             .await
             .map_err(Self::sign_in_refused)?;
-        Ok(Json(serde_json::json!({
-            "api_version": ControlApi::API_VERSION,
-            "harness": harness,
-            "outcome": outcome,
+        Ok(ControlApi::answer(OutcomeBody {
+            harness,
+            outcome: outcome.into(),
         }))
-        .into_response())
     }
 
     /// `POST …/sign-in/wait`: wait for the login to end and the client's
@@ -162,12 +157,10 @@ impl RunsApi {
             .wait_sign_in(harness, Self::WAIT)
             .await
             .map_err(Self::sign_in_refused)?;
-        Ok(Json(serde_json::json!({
-            "api_version": ControlApi::API_VERSION,
-            "harness": harness,
-            "waited": waited,
+        Ok(ControlApi::answer(WaitedBody {
+            harness,
+            waited: waited.into(),
         }))
-        .into_response())
     }
 
     /// `POST …/sign-in/cancel`: stop the running login.
@@ -182,9 +175,6 @@ impl RunsApi {
             .cancel_sign_in(harness)
             .await
             .map_err(Self::sign_in_refused)?;
-        Ok(
-            Json(serde_json::json!({ "api_version": ControlApi::API_VERSION, "ok": true }))
-                .into_response(),
-        )
+        Ok(ControlApi::answer(Cancelled { ok: true }))
     }
 }

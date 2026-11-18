@@ -10,6 +10,11 @@
 //! A session this daemon has not served since it started (one the store
 //! holds from before) is loaded from the store on its first request.
 
+use super::body::runs::Skipped;
+use super::body::sessions::{
+    Accepted, Attached, AttachmentEntry, AttachmentsBody, Created, FilesBody, OneSession,
+    SessionBody, SessionsBody,
+};
 use super::request::{AnswerRequest, CreateRequest, PromptRequest};
 use super::runs::RunsApi;
 use super::{ControlApi, ControlRefusal};
@@ -49,7 +54,7 @@ use ren_store::{
 };
 use ren_supervisor::{
     AttachmentUse, Create, FileQuery, KeptAttachment, RunCommand, SessionError, SessionPhase,
-    SessionRefused, SessionSeed, SessionSnapshot, SessionState, Shelving, StartPlace, Supervisor,
+    SessionRefused, SessionSeed, SessionState, Shelving, StartPlace, Supervisor,
 };
 use std::{convert::Infallible, sync::Arc, time::Duration};
 use tokio::sync::broadcast::error::RecvError;
@@ -139,17 +144,6 @@ struct SettingsRequest {
     effort: Option<Effort>,
     #[serde(default)]
     approvals: Option<ApprovalPolicy>,
-}
-
-/// One session: as the store holds it (with its runs), and as the
-/// supervisor serves it now. Either may be missing: the store records a
-/// new session a moment after it is made, and the supervisor serves a
-/// stored one only once asked.
-#[derive(serde::Serialize)]
-struct SessionBody {
-    session: SessionId,
-    stored: Option<SessionView>,
-    served: Option<SessionSnapshot>,
 }
 
 impl SessionsApi {
@@ -368,11 +362,7 @@ impl SessionsApi {
     }
 
     fn done() -> Response {
-        (
-            StatusCode::ACCEPTED,
-            Json(serde_json::json!({ "api_version": ControlApi::API_VERSION })),
-        )
-            .into_response()
+        (StatusCode::ACCEPTED, ControlApi::answer(Accepted {})).into_response()
     }
 
     /// Carry out `command` in `session`, loading it from the store first.
@@ -420,8 +410,8 @@ impl SessionsApi {
                     .position(|snapshot| snapshot.session == stored.id);
                 SessionBody {
                     session: stored.id,
-                    served: at.map(|at| served.remove(at)),
-                    stored: Some(stored),
+                    served: at.map(|at| served.remove(at).into()),
+                    stored: Some(stored.into()),
                 }
             })
             .collect();
@@ -445,16 +435,12 @@ impl SessionsApi {
                 fresh.push(SessionBody {
                     session: snapshot.session,
                     stored: None,
-                    served: Some(snapshot),
+                    served: Some(snapshot.into()),
                 });
             }
         }
         fresh.append(&mut sessions);
-        Ok(Json(serde_json::json!({
-            "api_version": ControlApi::API_VERSION,
-            "sessions": fresh,
-        }))
-        .into_response())
+        Ok(ControlApi::answer(SessionsBody { sessions: fresh }))
     }
 
     async fn one(
@@ -478,11 +464,13 @@ impl SessionsApi {
         if stored.is_none() && served.is_none() {
             return Err(ControlRefusal::NotFound);
         }
-        Ok(Json(serde_json::json!({
-            "api_version": ControlApi::API_VERSION,
-            "session": SessionBody { session, stored, served },
+        Ok(ControlApi::answer(OneSession {
+            session: SessionBody {
+                session,
+                stored: stored.map(Into::into),
+                served: served.map(Into::into),
+            },
         }))
-        .into_response())
     }
 
     async fn create(
@@ -510,14 +498,7 @@ impl SessionsApi {
             })
             .await
             .map_err(Self::refused)?;
-        Ok((
-            StatusCode::CREATED,
-            Json(serde_json::json!({
-                "api_version": ControlApi::API_VERSION,
-                "session": session,
-            })),
-        )
-            .into_response())
+        Ok((StatusCode::CREATED, ControlApi::answer(Created { session })).into_response())
     }
 
     async fn prompt(
@@ -739,11 +720,9 @@ impl SessionsApi {
             .session_files(session, FileQuery::parse(&request.q), limit)
             .await
             .map_err(Self::refused)?;
-        Ok(Json(serde_json::json!({
-            "api_version": ControlApi::API_VERSION,
-            "files": files,
+        Ok(ControlApi::answer(FilesBody {
+            files: files.into_iter().map(Into::into).collect(),
         }))
-        .into_response())
     }
 
     /// Keep the request's body, an image named by `name`, with the session,
@@ -773,10 +752,12 @@ impl SessionsApi {
             .map_err(Self::refused)?;
         Ok((
             StatusCode::CREATED,
-            Json(serde_json::json!({
-                "api_version": ControlApi::API_VERSION,
-                "attachment": { "id": attachment, "read": read },
-            })),
+            ControlApi::answer(Attached {
+                attachment: AttachmentEntry {
+                    id: attachment,
+                    read: read.into(),
+                },
+            }),
         )
             .into_response())
     }
@@ -795,21 +776,9 @@ impl SessionsApi {
             .attachments(session)
             .await
             .map_err(Self::refused)?;
-        let attachments: Vec<serde_json::Value> = kept
-            .into_iter()
-            .map(|kept| {
-                serde_json::json!({
-                    "id": kept.id,
-                    "read": kept.read,
-                    "sent": matches!(kept.used, AttachmentUse::Sent),
-                })
-            })
-            .collect();
-        Ok(Json(serde_json::json!({
-            "api_version": ControlApi::API_VERSION,
-            "attachments": attachments,
+        Ok(ControlApi::answer(AttachmentsBody {
+            attachments: kept.into_iter().map(Into::into).collect(),
         }))
-        .into_response())
     }
 
     /// One of the session's attachments: its bytes, as the image it is.
@@ -873,10 +842,13 @@ impl SessionsApi {
                 let event = tokio::select! {
                     () = shutdown.cancelled() => return None,
                     received = receiver.recv() => match received {
-                        Ok(snapshot) => Event::default().event("session").json_data(&snapshot).ok()?,
+                        Ok(snapshot) => Event::default()
+                            .event("session")
+                            .json_data(super::body::sessions::SessionSnapshot::from(snapshot))
+                            .ok()?,
                         Err(RecvError::Lagged(skipped)) => Event::default()
                             .event("lagged")
-                            .json_data(serde_json::json!({ "skipped": skipped }))
+                            .json_data(Skipped { skipped })
                             .ok()?,
                         Err(RecvError::Closed) => return None,
                     },

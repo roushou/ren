@@ -9,7 +9,7 @@
 
 use super::HealthStatus;
 use crate::{build, operator};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 /// `/health`'s answer.
@@ -71,10 +71,10 @@ pub(super) struct OperatorSummary {
 }
 
 /// Whether new calls are admitted.
-#[derive(Serialize, TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case", tag = "state")]
 #[ts(export)]
-pub(super) enum Pause {
+pub enum Pause {
     Running,
     /// Every new call gets `503` with this `retry-after`, in seconds.
     Paused {

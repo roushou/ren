@@ -11,6 +11,9 @@
 //! streamed pieces as the run's conversation; its model traffic is recorded
 //! like any other client's.
 
+use super::body::runs::{
+    ClientsBody, CommandsBody, ModelsBody, Places, RunUpdate, RunsBody, Skipped,
+};
 use super::{ControlApi, ControlRefusal};
 use axum::{
     Json, Router,
@@ -27,8 +30,8 @@ use axum::{
 use http::HeaderMap;
 use ren_harness::{Harness, commands::ClientCommand, drive::CommandRefused};
 use ren_supervisor::{
-    CommandError, CommandsError, ListingError, RunRefused, RunSnapshot, StartError, StartPlace,
-    Supervisor, WorkdirError,
+    CommandError, CommandsError, ListingError, RunRefused, StartError, StartPlace, Supervisor,
+    WorkdirError,
 };
 use std::{convert::Infallible, sync::Arc, time::Duration};
 use tokio::sync::broadcast::error::RecvError;
@@ -40,12 +43,6 @@ use tokio_util::sync::CancellationToken;
 pub(super) struct CommandsRequest {
     #[serde(default)]
     pub(super) dir: Option<String>,
-}
-
-#[derive(serde::Serialize)]
-struct Runs {
-    api_version: u32,
-    runs: Vec<RunSnapshot>,
 }
 
 impl From<StartError> for ControlRefusal {
@@ -162,11 +159,9 @@ impl RunsApi {
             .runs()
             .await
             .map_err(|_| ControlRefusal::Unavailable)?;
-        Ok(Json(Runs {
-            api_version: ControlApi::API_VERSION,
-            runs,
-        })
-        .into_response())
+        Ok(ControlApi::answer(RunsBody {
+            runs: runs.into_iter().map(Into::into).collect(),
+        }))
     }
 
     async fn projects(State(api): Api, headers: HeaderMap) -> Result<Response, ControlRefusal> {
@@ -175,12 +170,7 @@ impl RunsApi {
             .projects()
             .await
             .map_err(|_| ControlRefusal::Unavailable)?;
-        Ok(Json(serde_json::json!({
-            "api_version": ControlApi::API_VERSION,
-            "projects": projects.projects,
-            "scratch": projects.scratch,
-        }))
-        .into_response())
+        Ok(ControlApi::answer(Places::from(projects)))
     }
 
     async fn clients(State(api): Api, headers: HeaderMap) -> Result<Response, ControlRefusal> {
@@ -189,11 +179,9 @@ impl RunsApi {
             .clients()
             .await
             .map_err(|_| ControlRefusal::Unavailable)?;
-        Ok(Json(serde_json::json!({
-            "api_version": ControlApi::API_VERSION,
-            "clients": clients,
+        Ok(ControlApi::answer(ClientsBody {
+            clients: clients.into_iter().map(Into::into).collect(),
         }))
-        .into_response())
     }
 
     async fn models(
@@ -209,12 +197,10 @@ impl RunsApi {
             ControlRefusal::ModelsUnavailable.explained(Some(error.to_string()))
         };
         Ok(match supervisor.models(harness).await {
-            Ok(models) => Json(serde_json::json!({
-                "api_version": ControlApi::API_VERSION,
-                "harness": harness,
-                "models": models,
-            }))
-            .into_response(),
+            Ok(models) => ControlApi::answer(ModelsBody {
+                harness,
+                models: models.into_iter().map(Into::into).collect(),
+            }),
             Err(ListingError::NoRoot) => ControlRefusal::RunsDisabled.into_response(),
             Err(ListingError::Gone) => ControlRefusal::Unavailable.into_response(),
             Err(
@@ -273,22 +259,9 @@ impl RunsApi {
 
     /// The answer listing `commands`, each with what a prompt writes to run it.
     pub(super) fn commands_body(commands: Vec<ClientCommand>) -> Response {
-        let commands: Vec<serde_json::Value> = commands
-            .into_iter()
-            .map(|command| {
-                let invocation = command.invocation();
-                let mut value = serde_json::json!(command);
-                if let serde_json::Value::Object(fields) = &mut value {
-                    fields.insert("invocation".into(), invocation.into());
-                }
-                value
-            })
-            .collect();
-        Json(serde_json::json!({
-            "api_version": ControlApi::API_VERSION,
-            "commands": commands,
-        }))
-        .into_response()
+        ControlApi::answer(CommandsBody {
+            commands: commands.into_iter().map(Into::into).collect(),
+        })
     }
 
     /// Updates from now on, as `run` events; `lagged` when the feed fell
@@ -303,10 +276,13 @@ impl RunsApi {
                 let event = tokio::select! {
                     () = shutdown.cancelled() => return None,
                     received = receiver.recv() => match received {
-                        Ok(update) => Event::default().event("run").json_data(&update).ok()?,
+                        Ok(update) => Event::default()
+                            .event("run")
+                            .json_data(RunUpdate::from(update))
+                            .ok()?,
                         Err(RecvError::Lagged(skipped)) => Event::default()
                             .event("lagged")
-                            .json_data(serde_json::json!({ "skipped": skipped }))
+                            .json_data(Skipped { skipped })
                             .ok()?,
                         Err(RecvError::Closed) => return None,
                     },

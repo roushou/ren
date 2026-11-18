@@ -11,6 +11,7 @@
 //!   the CLI reads it there. Loopback alone is not trusted, because Serve
 //!   forwards tagged devices and Funnel traffic to loopback without identity.
 
+pub mod body;
 mod history;
 mod refusal;
 pub mod request;
@@ -19,7 +20,8 @@ mod sessions;
 mod sign_in;
 mod tools;
 
-use crate::control::{Controls, RunningCall};
+use crate::api::Versioned;
+use crate::control::Controls;
 use crate::operator::{OperatorCommand, OperatorState, RetryAfter};
 use crate::user::Users;
 use axum::{
@@ -108,13 +110,6 @@ pub(crate) struct ControlApi {
     /// The named users an operator can block.
     users: Users,
     backup: Backup,
-}
-
-#[derive(serde::Serialize)]
-struct StateBody<'a> {
-    api_version: u32,
-    state: &'a OperatorState,
-    running: Vec<RunningCall>,
 }
 
 impl ControlApi {
@@ -238,10 +233,22 @@ impl ControlApi {
     }
 
     fn respond(&self, state: &OperatorState) -> Response {
-        Json(StateBody {
+        Self::answer(body::operator::StateBody {
+            state: state.into(),
+            running: self
+                .controls
+                .running()
+                .into_iter()
+                .map(Into::into)
+                .collect(),
+        })
+    }
+
+    /// A body, tagged with the control API's version.
+    pub(super) fn answer<T: serde::Serialize>(body: T) -> Response {
+        Json(Versioned {
             api_version: Self::API_VERSION,
-            state,
-            running: self.controls.running(),
+            body,
         })
         .into_response()
     }
@@ -396,8 +403,9 @@ impl ControlApi {
                     chunks_copied = report.chunks_copied,
                     "backup written"
                 );
-                Json(serde_json::json!({ "api_version": Self::API_VERSION, "backup": report }))
-                    .into_response()
+                Self::answer(body::history::BackupBody {
+                    backup: report.into(),
+                })
             }
             Err(BackupError::Running) => ControlRefusal::BackupRunning.into_response(),
             Err(error @ BackupError::Incomplete(_)) => {

@@ -6,13 +6,12 @@
 
 use super::ControlApi;
 use crate::control::ControlError;
-use axum::{
-    Json,
-    response::{IntoResponse, Response},
-};
+use axum::response::{IntoResponse, Response};
 use http::StatusCode;
+use serde::{Deserialize, Serialize};
 use serde_with::{DeserializeFromStr, SerializeDisplay};
 use strum::{Display, EnumString, IntoStaticStr, VariantArray};
+use ts_rs::TS;
 
 /// A control API error code.
 #[derive(Display, EnumString, IntoStaticStr, VariantArray)]
@@ -191,11 +190,10 @@ impl ControlRefusal {
     pub(crate) fn explained(self, message: Option<String>) -> Response {
         (
             self.status(),
-            Json(serde_json::json!({
-                "api_version": ControlApi::API_VERSION,
-                "error": self,
-                "message": message,
-            })),
+            ControlApi::answer(Refused {
+                error: self,
+                message,
+            }),
         )
             .into_response()
     }
@@ -205,10 +203,25 @@ impl IntoResponse for ControlRefusal {
     fn into_response(self) -> Response {
         (
             self.status(),
-            Json(serde_json::json!({ "api_version": ControlApi::API_VERSION, "error": self })),
+            ControlApi::answer(Refused {
+                error: self,
+                message: None,
+            }),
         )
             .into_response()
     }
+}
+
+/// A refused request's body: its code, and a message where the route
+/// explains more.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct Refused {
+    /// The refusal's code; a client keeps codes it does not know.
+    #[ts(as = "String")]
+    pub error: ControlRefusal,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
 }
 
 impl From<ControlError> for ControlRefusal {

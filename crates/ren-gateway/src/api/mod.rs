@@ -11,8 +11,8 @@ use serde_with::{DeserializeFromStr, SerializeDisplay};
 use strum::{Display, EnumString, IntoStaticStr, VariantArray};
 
 pub mod control;
-mod health;
-mod live;
+pub mod health;
+pub mod live;
 mod params;
 pub mod preview;
 pub mod read;
@@ -44,6 +44,7 @@ use ren_recorder::time::Clock;
 use ren_recorder::{Recorder, id::CallId, retention::RetentionPolicy};
 use ren_store::{Reader, StoreError, backup::Backup, query::QueryError, search::SearchError};
 use serde::Serialize;
+use ts_rs::TS;
 use std::sync::Arc;
 use storage::{CaptureLimits, Storage, StorageView};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
@@ -99,10 +100,11 @@ impl ApiState {
     }
 }
 
-/// `/api/caller`'s answer.
-#[derive(Serialize)]
+/// `/api/caller`'s answer: how the gateway identifies the request's caller.
+#[derive(Serialize, TS)]
+#[ts(export)]
 struct CallerBody {
-    caller: ren_recorder::caller::Caller,
+    caller: read::calls::CallerView,
 }
 
 /// A response body tagged with the API version.
@@ -319,7 +321,10 @@ impl ApiState {
             .users
             .identify(&headers)
             .map_err(|_| ApiError::IdentityRefused)?;
-        Ok(Self::versioned(CallerBody { caller }).into_response())
+        Ok(Self::versioned(CallerBody {
+            caller: (&caller).into(),
+        })
+        .into_response())
     }
 
     async fn storage(State(state): State<Arc<Self>>) -> Result<Response, ApiError> {

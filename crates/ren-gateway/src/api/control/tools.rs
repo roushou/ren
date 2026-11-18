@@ -14,9 +14,9 @@
 //! Access is the control API's. Without a toolbox every route answers
 //! `tools_disabled`.
 
+use super::body::tools as body;
 use super::{ControlApi, ControlRefusal};
-use crate::api::Versioned;
-use crate::tools::{ToolChange, ToolCollection, ToolListing, Toolbox, ToolboxError};
+use crate::tools::{Toolbox, ToolboxError};
 use axum::{
     Json, Router,
     extract::{State, rejection::JsonRejection},
@@ -99,20 +99,17 @@ impl ToolsApi {
         self.toolbox.clone().ok_or(Untooled::Disabled)
     }
 
-    fn answer<T: Serialize>(result: Result<T, ToolboxError>) -> Response {
+    /// The toolbox's answer as its wire type `W`, or why it failed.
+    fn answer<T, W: From<T> + Serialize>(result: Result<T, ToolboxError>) -> Response {
         match result {
-            Ok(body) => Json(Versioned {
-                api_version: ControlApi::API_VERSION,
-                body,
-            })
-            .into_response(),
+            Ok(body) => ControlApi::answer(W::from(body)),
             Err(error) => Untooled::Toolbox(error).into_response(),
         }
     }
 
     async fn listing(State(api): State<Arc<Self>>, headers: HeaderMap) -> Response {
         match api.toolbox(&headers) {
-            Ok(toolbox) => Self::answer::<ToolListing>(toolbox.listing().await),
+            Ok(toolbox) => Self::answer::<_, body::ToolListing>(toolbox.listing().await),
             Err(refused) => refused.into_response(),
         }
     }
@@ -133,7 +130,7 @@ impl ToolsApi {
             add: request.add,
             remove: request.remove,
         };
-        Self::answer::<ToolChange>(toolbox.change(edit).await)
+        Self::answer::<_, body::ToolChange>(toolbox.change(edit).await)
     }
 
     async fn roll_back(
@@ -148,12 +145,12 @@ impl ToolsApi {
         let Ok(Json(request)) = body else {
             return ControlRefusal::InvalidRequest.into_response();
         };
-        Self::answer::<ToolChange>(toolbox.roll_back(request.generation).await)
+        Self::answer::<_, body::ToolChange>(toolbox.roll_back(request.generation).await)
     }
 
     async fn collect(State(api): State<Arc<Self>>, headers: HeaderMap) -> Response {
         match api.toolbox(&headers) {
-            Ok(toolbox) => Self::answer::<ToolCollection>(toolbox.collect().await),
+            Ok(toolbox) => Self::answer::<_, body::ToolCollection>(toolbox.collect().await),
             Err(refused) => refused.into_response(),
         }
     }

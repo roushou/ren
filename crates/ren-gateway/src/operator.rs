@@ -216,6 +216,16 @@ impl OperatorState {
     }
 
     /// How many sessions are blocked at `now`.
+    /// Every session block, by the session it blocks, expired ones included.
+    pub fn session_blocks(&self) -> &BTreeMap<NativeSessionId, BlockedUntil> {
+        &self.blocked_sessions
+    }
+
+    /// Every user block, by the user it blocks, expired ones included.
+    pub fn user_blocks(&self) -> &BTreeMap<UserId, BlockedUntil> {
+        &self.blocked_users
+    }
+
     pub fn blocked_sessions(&self, now: UnixMillis) -> usize {
         self.blocked_sessions
             .keys()

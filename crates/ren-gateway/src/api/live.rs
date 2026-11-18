@@ -11,22 +11,24 @@
 //! begun, and whether the model is thinking). They carry no id, are never replayed, and a feed that falls
 //! behind skips some; the finished call is the record.
 
+use super::read::calls::Observation;
 use axum::response::sse::Event;
-use ren_recorder::{Observation, progress::Progress};
+use ren_recorder::id::CallId;
 use ren_store::{Reader, query::PageLimit};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::{collections::VecDeque, convert::Infallible};
 use tokio::sync::broadcast::{self, error::RecvError};
 use tokio_util::sync::CancellationToken;
+use ts_rs::TS;
 
 pub(super) struct LiveFeed {
     reader: Reader,
-    receiver: broadcast::Receiver<Observation>,
+    receiver: broadcast::Receiver<ren_recorder::Observation>,
     /// Updates on streaming calls, when the client asked for them.
-    progress: Option<broadcast::Receiver<Progress>>,
+    progress: Option<broadcast::Receiver<ren_recorder::progress::Progress>>,
     shutdown: CancellationToken,
     last: u64,
-    pending: VecDeque<Observation>,
+    pending: VecDeque<ren_recorder::Observation>,
     phase: Phase,
 }
 
@@ -39,14 +41,57 @@ enum Phase {
     Done,
 }
 
-#[derive(Serialize)]
-struct Gone {
-    oldest_retained: u64,
+/// The `gone` event: the position asked to resume from is no longer
+/// retained, and the feed ends.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct Gone {
+    pub oldest_retained: u64,
 }
 
-#[derive(Serialize)]
-struct Lagged {
-    resume_from: u64,
+/// The `lagged` event: the feed fell behind and ends; resume from this
+/// position.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct Lagged {
+    pub resume_from: u64,
+}
+
+/// The `progress` event: one update on a streaming call.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct Progress {
+    #[ts(as = "String")]
+    pub call: CallId,
+    /// The end of the reply so far, with credentials in well-known formats
+    /// redacted.
+    pub reply: String,
+    /// Whether the reply so far is longer than `reply`, which keeps its end.
+    pub cut: bool,
+    /// The tools the response has begun to call, in order.
+    pub tools: Vec<String>,
+    /// Whether the model is thinking: the response so far ends inside a
+    /// thinking block or reasoning item, whose text is not shown.
+    pub thinking: bool,
+}
+
+impl From<ren_recorder::progress::Progress> for Progress {
+    fn from(progress: ren_recorder::progress::Progress) -> Self {
+        let ren_recorder::progress::Progress {
+            call,
+            reply,
+            cut,
+            tools,
+            thinking,
+        } = progress;
+        Self {
+            call,
+            reply,
+            cut,
+            tools,
+            thinking,
+        }
+    }
 }
 
 impl LiveFeed {
@@ -54,8 +99,8 @@ impl LiveFeed {
 
     pub fn new(
         reader: Reader,
-        receiver: broadcast::Receiver<Observation>,
-        progress: Option<broadcast::Receiver<Progress>>,
+        receiver: broadcast::Receiver<ren_recorder::Observation>,
+        progress: Option<broadcast::Receiver<ren_recorder::progress::Progress>>,
         shutdown: CancellationToken,
         after: Option<u64>,
     ) -> Self {
@@ -90,7 +135,7 @@ impl LiveFeed {
                 if let Ok(event) = Event::default()
                     .event("observation")
                     .id(observation.seq.to_string())
-                    .json_data(&observation)
+                    .json_data(Observation::from(observation))
                 {
                     return Some(event);
                 }
@@ -150,7 +195,10 @@ impl LiveFeed {
                         },
                         received = update => match received {
                             Ok(update) => {
-                                if let Ok(event) = Event::default().event("progress").json_data(&update) {
+                                if let Ok(event) = Event::default()
+                                    .event("progress")
+                                    .json_data(Progress::from(update))
+                                {
                                     return Some(event);
                                 }
                             }
