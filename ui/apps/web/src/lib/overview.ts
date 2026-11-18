@@ -5,7 +5,7 @@ import { bytes, num, providerName } from './api.ts';
 import { searchFieldLabel, secretKindLabel } from './activity.ts';
 import { buildLabel, callStatus, compactOrDash, statusBadge, type Chip } from './display.ts';
 import { usagePoints, type UsagePoint } from './usage.ts';
-import { RecorderReport } from './recorder.ts';
+import { RecorderReport, type Severity } from './recorder.ts';
 import { assertNever } from './decode.ts';
 
 /** A health chip and where to look when it is not fine. */
@@ -125,9 +125,6 @@ export function ago(ms: number, now: number): string {
   if (hours < 48) return `${hours} h ago`;
   return `${Math.round(hours / 24)} days ago`;
 }
-
-/** How much a line of the overview needs you. */
-export type Severity = 'error' | 'warning' | 'neutral';
 
 /**
  * One kind of trouble in the last day, with its repeats folded into a count

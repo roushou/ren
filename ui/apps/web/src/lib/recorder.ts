@@ -16,14 +16,14 @@ export type CaptureHealth =
   | { kind: 'lost'; calls: number; bytes: number }
   | { kind: 'healthy' };
 
-/** How much a counter needs a look. */
-export type CounterSeverity = 'error' | 'warning' | 'neutral';
+/** How much a counter, or a line of the overview, needs a look. */
+export type Severity = 'error' | 'warning' | 'neutral';
 
 /** A counter since startup that is not zero, and what it means. */
 export interface CounterNote {
   label: string;
   value: string;
-  severity: CounterSeverity;
+  severity: Severity;
   detail: string;
 }
 
@@ -59,7 +59,7 @@ export class RecorderReport {
     this.recorder = recorder;
     this.health = RecorderReport.capture(recorder);
     const counters = RecorderReport.counters(recorder);
-    const rank: Record<CounterSeverity, number> = { error: 0, warning: 1, neutral: 2 };
+    const rank: Record<Severity, number> = { error: 0, warning: 1, neutral: 2 };
     this.notes = counters
       .filter((counter) => counter.amount > 0)
       .sort((a, b) => rank[a.note.severity] - rank[b.note.severity])

@@ -4,7 +4,7 @@
 //! each run is one process of its client serving it. On this host the
 //! daemon's control token is read from its data directory; through a gateway,
 //! the daemon authorizes the Tailscale identity that Serve adds.
-use crate::commands::{control::ControlTarget, history::TargetArgs};
+use crate::commands::{Client, control::ControlTarget, history::TargetArgs};
 use crate::context::Context;
 use crate::management::Target;
 use crate::style::Tone;
@@ -59,27 +59,6 @@ enum RunsAction {
     Watch(WatchArgs),
     /// Recorded runs, newest first, from history.
     History(HistoryArgs),
-}
-
-/// The clients a run can drive.
-#[derive(Clone, Copy, ValueEnum)]
-enum Client {
-    Codex,
-    /// Claude Code.
-    Claude,
-    Pi,
-    Opencode,
-}
-
-impl From<Client> for Harness {
-    fn from(client: Client) -> Self {
-        match client {
-            Client::Codex => Self::Codex,
-            Client::Claude => Self::ClaudeCode,
-            Client::Pi => Self::Pi,
-            Client::Opencode => Self::OpenCode,
-        }
-    }
 }
 
 #[derive(Args)]

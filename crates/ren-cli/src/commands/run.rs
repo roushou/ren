@@ -1,8 +1,9 @@
+use crate::commands::Client;
 use crate::context::Context;
 use crate::doctor;
 use crate::{client::GatewayChoice, style::Tone};
 use anyhow::Result;
-use clap::{Args, ValueEnum};
+use clap::Args;
 use ren_harness::{Harness, endpoint::UserToken};
 use std::{ffi::OsString, process::ExitCode};
 
@@ -21,25 +22,6 @@ pub struct RunCmd {
     /// Client arguments, passed verbatim after --.
     #[arg(last = true)]
     args: Vec<OsString>,
-}
-/// The command-line names of the harnesses `run` can launch.
-#[derive(Clone, Copy, ValueEnum)]
-enum Client {
-    Claude,
-    Codex,
-    Pi,
-    Opencode,
-}
-
-impl From<Client> for Harness {
-    fn from(client: Client) -> Self {
-        match client {
-            Client::Claude => Self::ClaudeCode,
-            Client::Codex => Self::Codex,
-            Client::Pi => Self::Pi,
-            Client::Opencode => Self::OpenCode,
-        }
-    }
 }
 
 impl RunCmd {

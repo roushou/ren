@@ -11,7 +11,7 @@ pub use settings::{Flow, Pace, Settings, SettingsError};
 use super::seed::{Call, Caller, Client, PROMPTS, Run, Scenario, Seeder, Side};
 use control::{Control, Stats};
 use futures_util::{StreamExt as _, stream::FuturesUnordered};
-use settings::{Harness, Reply, Sender};
+use settings::{Reply, Sender};
 use std::{
     future::Future,
     net::SocketAddr,
@@ -90,15 +90,15 @@ impl Traffic {
     /// every weight at 0. A turn that asks for tools calls one to three of
     /// them, each answered in the next call, then ends with a reply.
     pub fn turn(n: u64, run: Run, settings: &Settings, token: &str) -> Option<Vec<Call>> {
-        let harness = settings.harnesses.pick(n)?;
+        let client = settings.harnesses.pick(n)?;
         let sender = settings.senders.pick(n.wrapping_add(0x5bd1))?;
         let reply = settings.replies.pick(n.wrapping_add(0x2f71))?;
-        let (client, model) = match harness {
-            Harness::ClaudeCode => (Client::ClaudeCode, "claude-opus-5-5"),
-            Harness::Codex => (Client::Codex, "gpt-5.5-codex"),
-            Harness::Pi => (Client::Pi, "claude-sonnet-5-5"),
-            Harness::Opencode => (Client::OpenCode, "gpt-5.5"),
-            Harness::Deepseek => (Client::DeepSeek, "deepseek-chat"),
+        let model = match client {
+            Client::ClaudeCode => "claude-opus-5-5",
+            Client::Codex => "gpt-5.5-codex",
+            Client::Pi => "claude-sonnet-5-5",
+            Client::OpenCode => "gpt-5.5",
+            Client::DeepSeek => "deepseek-chat",
         };
         let ask = match reply {
             Reply::Text => None,
@@ -115,22 +115,22 @@ impl Traffic {
             Sender::Unlisted => Caller::Login("carol@example.com"),
             Sender::Unidentified => Caller::Unidentified,
         };
-        let index = Harness::index(harness);
+        let index = Client::index(client);
         // Each harness keeps a session for about eight of its calls.
         let session = 5000 + u32::try_from(n / 40).unwrap_or(0) * 8 + index;
         let turn = 100_000 + u32::try_from(n % 100_000).unwrap_or(0);
         let prompt = PROMPTS[usize::try_from(n).unwrap_or(0) % PROMPTS.len()];
         // About one Claude Code call in ten is a side call with no turn, as
         // in real use: a title, or a quota probe.
-        let side = match (harness, n % 20) {
-            (Harness::ClaudeCode, 7) => Some(Side::Title),
-            (Harness::ClaudeCode, 15) => Some(Side::QuotaProbe),
+        let side = match (client, n % 20) {
+            (Client::ClaudeCode, 7) => Some(Side::Title),
+            (Client::ClaudeCode, 15) => Some(Side::QuotaProbe),
             (
-                Harness::ClaudeCode
-                | Harness::Codex
-                | Harness::Pi
-                | Harness::Opencode
-                | Harness::Deepseek,
+                Client::ClaudeCode
+                | Client::Codex
+                | Client::Pi
+                | Client::OpenCode
+                | Client::DeepSeek,
                 _,
             ) => None,
         };
@@ -308,14 +308,14 @@ impl Traffic {
     }
 }
 
-impl Harness {
+impl Client {
     fn index(self) -> u32 {
         match self {
             Self::ClaudeCode => 0,
             Self::Codex => 1,
             Self::Pi => 2,
-            Self::Opencode => 3,
-            Self::Deepseek => 4,
+            Self::OpenCode => 3,
+            Self::DeepSeek => 4,
         }
     }
 }
