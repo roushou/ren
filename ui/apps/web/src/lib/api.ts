@@ -17,6 +17,8 @@ import {
   type Brand,
   type Decoder,
   type Stored,
+  wire,
+  type StrayVariants,
 } from './decode.ts';
 import type { Build as WireBuild } from './wire/Build.ts';
 import type { EventCountsRecord as WireEventCountsRecord } from './wire/EventCountsRecord.ts';
@@ -71,6 +73,11 @@ import type { RecorderMetrics } from './wire/RecorderMetrics.ts';
 import type { RetentionPolicy } from './wire/RetentionPolicy.ts';
 import type { Storage } from './wire/Storage.ts';
 import type { StorageView } from './wire/StorageView.ts';
+import type { BodyPreview as WireBodyPreview } from './wire/BodyPreview.ts';
+import type { DecodingPreview as WireDecodingPreview } from './wire/DecodingPreview.ts';
+import type { ErrorBody as WireErrorBody } from './wire/ErrorBody.ts';
+import type { Metrics as WireMetrics } from './wire/Metrics.ts';
+import type { RawPreview as WireRawPreview } from './wire/RawPreview.ts';
 
 // Generated from the gateway's wire types (`wire/`, written by `cargo test`).
 // The decoders below are typed against them, so a changed field fails `check`.
@@ -887,6 +894,7 @@ const pause: Decoder<Pause> = (value, path) => {
     return { state, retry_after: count(value.retry_after, `${path}.retry_after`) };
   return { state: 'unknown', text: state };
 };
+wire<StrayVariants<Pause, WirePause, 'state', 'unknown'>>();
 const operatorSummary = object<OperatorSummary, WireOperatorSummary>({
   pause,
   blocked_sessions: count,
@@ -899,7 +907,7 @@ const health = object<Health, WireHealth>({
   operator: operatorSummary,
   recorder: recorderMetrics,
 });
-const metrics = object<Metrics>({ recorder: recorderMetrics, storage: storageView });
+const metrics = object<Metrics, WireMetrics>({ recorder: recorderMetrics, storage: storageView });
 const storage = object<Storage>({
   policy: object<RetentionPolicy>({
     enabled: boolean,
@@ -910,26 +918,26 @@ const storage = object<Storage>({
   usage: storageView,
   capture: object<CaptureLimits>({ body_limit_bytes: count }),
 });
-const bodyPreview = object<BodyPreview>({
+const bodyPreview = object<BodyPreview, WireBodyPreview>({
   observed_bytes: nullable(count),
   stored_bytes: count,
   ending: label(bodyEndings),
   captured_bytes: count,
   extent: label(previewExtents),
-  raw: object<BodyPreview['raw']>({
+  raw: object<BodyPreview['raw'], WireRawPreview>({
     text: string,
     format: label(rawFormats),
     truncated: boolean,
   }),
   text: nullable(string),
   text_end: label(textEnds),
-  decoding: object<BodyPreview['decoding']>({
+  decoding: object<BodyPreview['decoding'], WireDecodingPreview>({
     applied: label(previewDecodings),
     integrity: label(decodeIntegrities),
     truncated: boolean,
   }),
 });
-const errorBody = object<{ error: Stored<ErrorCode> }>({ error: label(errorCodes) });
+const errorBody = object<{ error: Stored<ErrorCode> }, WireErrorBody>({ error: label(errorCodes) });
 
 /** The daemon speaks a management API version this UI does not understand. */
 export class ApiVersionError extends Error {

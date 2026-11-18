@@ -73,6 +73,30 @@ import type { ItemRead as WireItemRead } from './wire/ItemRead.ts';
 import type { TurnEnd as WireTurnEnd } from './wire/TurnEnd.ts';
 import type { RunEntryView as WireRunEntryView } from './wire/RunEntryView.ts';
 import type { RunView as WireRunView } from './wire/RunView.ts';
+import type { Client as WireClient } from './wire/Client.ts';
+import type { ClientCommand as WireClientCommand } from './wire/ClientCommand.ts';
+import type { ClientsBody as WireClientsBody } from './wire/ClientsBody.ts';
+import type { CommandsBody as WireCommandsBody } from './wire/CommandsBody.ts';
+import type { Created as WireCreated } from './wire/Created.ts';
+import type { FileMatch as WireFileMatch } from './wire/FileMatch.ts';
+import type { FilesBody as WireFilesBody } from './wire/FilesBody.ts';
+import type { Model as WireModel } from './wire/Model.ts';
+import type { ModelsBody as WireModelsBody } from './wire/ModelsBody.ts';
+import type { OneSession as WireOneSession } from './wire/OneSession.ts';
+import type { Places as WirePlaces } from './wire/Places.ts';
+import type { Project as WireProject } from './wire/Project.ts';
+import type { RunSettings as WireRunSettings } from './wire/RunSettings.ts';
+import type { RunSnapshot as WireRunSnapshot } from './wire/RunSnapshot.ts';
+import type { RunsBody as WireRunsBody } from './wire/RunsBody.ts';
+import type { SessionBody as WireSessionBody } from './wire/SessionBody.ts';
+import type { SessionSnapshot as WireSessionSnapshot } from './wire/SessionSnapshot.ts';
+import type { SessionState as WireSessionState } from './wire/SessionState.ts';
+import type { SessionView as WireSessionView } from './wire/SessionView.ts';
+import type { SessionsBody as WireSessionsBody } from './wire/SessionsBody.ts';
+import type { Waiting as WireWaiting } from './wire/Waiting.ts';
+import type { RunState as WireRunState } from './wire/RunState.ts';
+import type { ProjectGit as WireProjectGit } from './wire/ProjectGit.ts';
+import type { RunUpdate as WireRunUpdate } from './wire/RunUpdate.ts';
 
 export type { ProcessExit };
 
@@ -124,7 +148,7 @@ export interface ChosenSettings {
   effort: Effort | null;
   approvals: ApprovalPolicy | null;
 }
-const runSettings = object<RunSettings>({
+const runSettings = object<RunSettings, WireRunSettings>({
   model: nullable(branded<'ModelId'>()),
   effort: nullable(label(EFFORTS)),
   approvals: nullable(label(APPROVAL_POLICIES)),
@@ -304,7 +328,10 @@ const approvalAsk: Decoder<ApprovalAsk> = (value, path) => {
 };
 wire<StrayVariants<ApprovalAsk, WireApprovalAsk, 'kind', 'unrecognized'>>();
 
-const waiting = object<Waiting>({ approval: branded<'ApprovalId'>(), ask: approvalAsk });
+const waiting = object<Waiting, WireWaiting>({
+  approval: branded<'ApprovalId'>(),
+  ask: approvalAsk,
+});
 
 const runState: Decoder<RunState> = (value, path) => {
   if (!isRecord(value)) throw new ShapeError(path, 'an object');
@@ -334,6 +361,7 @@ const runState: Decoder<RunState> = (value, path) => {
       return { phase: 'unrecognized', text: String(value.phase) };
   }
 };
+wire<StrayVariants<RunState, WireRunState, 'phase', 'unrecognized'>>();
 
 /** One part of a command as its client read it (Codex's `commandActions`). */
 export type CommandPart =
@@ -441,7 +469,7 @@ const itemRead: Decoder<ItemRead> = (value, path) => {
 };
 wire<StrayVariants<ItemRead, WireItemRead, 'as'>>();
 
-const runSnapshot = object<RunSnapshot>({
+const runSnapshot = object<RunSnapshot, WireRunSnapshot>({
   run: RunId.decode,
   harness: label(harnesses),
   workdir: string,
@@ -545,6 +573,7 @@ export const runUpdate: Decoder<RunUpdate> = (value, path) => {
       throw new ShapeError(`${path}.kind`, 'state or event');
   }
 };
+wire<StrayVariants<RunUpdate, WireRunUpdate, 'kind'>>();
 
 const recordedRun = object<RecordedRun, WireRunView>({
   id: RunId.decode,
@@ -562,7 +591,9 @@ const recordedRun = object<RecordedRun, WireRunView>({
   approvals: nullable(label(APPROVAL_POLICIES)),
 });
 
-const liveRuns = versioned(object<{ runs: RunSnapshot[] }>({ runs: array(runSnapshot) }));
+const liveRuns = versioned(
+  object<{ runs: RunSnapshot[] }, WireRunsBody>({ runs: array(runSnapshot) }),
+);
 
 /** Whether a prompt has gone out in a session: a draft's client can still change. */
 export const SESSION_PHASES = ['draft', 'active'] as const;
@@ -613,18 +644,21 @@ export interface SessionBody {
   served: ServedSession | null;
 }
 
-const servedSession = object<ServedSession>({
+const servedSession = object<ServedSession, WireSessionSnapshot>({
   session: SessionId.decode,
   harness: label(harnesses),
   workdir: string,
   settings: runSettings,
-  state: object<SessionState>({ shelf: label(shelves), phase: label(SESSION_PHASES) }),
+  state: object<SessionState, WireSessionState>({
+    shelf: label(shelves),
+    phase: label(SESSION_PHASES),
+  }),
   process: nullable(RunId.decode),
   // A daemon that does not say takes no images.
   images: (value, path) => (value === undefined ? 'never' : label(IMAGE_TAKING)(value, path)),
 });
 
-const storedSession = object<StoredSession>({
+const storedSession = object<StoredSession, WireSessionView>({
   id: SessionId.decode,
   harness: label(harnesses),
   workdir: string,
@@ -638,16 +672,20 @@ const storedSession = object<StoredSession>({
   runs: array(recordedRun),
 });
 
-const sessionBody = object<SessionBody>({
+const sessionBody = object<SessionBody, WireSessionBody>({
   session: SessionId.decode,
   stored: nullable(storedSession),
   served: nullable(servedSession),
 });
 const sessionList = versioned(
-  object<{ sessions: SessionBody[] }>({ sessions: array(sessionBody) }),
+  object<{ sessions: SessionBody[] }, WireSessionsBody>({ sessions: array(sessionBody) }),
 );
-const oneSession = versioned(object<{ session: SessionBody }>({ session: sessionBody }));
-const createdSession = versioned(object<{ session: SessionId }>({ session: SessionId.decode }));
+const oneSession = versioned(
+  object<{ session: SessionBody }, WireOneSession>({ session: sessionBody }),
+);
+const createdSession = versioned(
+  object<{ session: SessionId }, WireCreated>({ session: SessionId.decode }),
+);
 /** A project's repository, as its `HEAD` reads. */
 export type ProjectGit =
   | { kind: 'branch'; name: string }
@@ -693,10 +731,11 @@ const projectGit: Decoder<ProjectGit> = (value, path) => {
       return { kind: 'unreadable' };
   }
 };
+wire<StrayVariants<ProjectGit, WireProjectGit, 'kind'>>();
 const runProjects = versioned(
-  object<RunPlaces>({
+  object<RunPlaces, WirePlaces>({
     projects: array(
-      object<RunProject>({
+      object<RunProject, WireProject>({
         path: string,
         name: string,
         shown: string,
@@ -730,9 +769,9 @@ export interface RunClient {
 }
 
 const runClients = versioned(
-  object<{ clients: RunClient[] }>({
+  object<{ clients: RunClient[] }, WireClientsBody>({
     clients: array(
-      object<RunClient>({
+      object<RunClient, WireClient>({
         harness: label(harnesses),
         status: label(clientStatuses),
         approvals: array(label(APPROVAL_POLICIES)),
@@ -765,9 +804,9 @@ export interface RunModel {
 }
 
 const runModels = versioned(
-  object<{ models: RunModel[] }>({
+  object<{ models: RunModel[] }, WireModelsBody>({
     models: array(
-      object<RunModel>({
+      object<RunModel, WireModel>({
         id: branded<'ModelId'>(),
         name: string,
         description: nullable(string),
@@ -801,9 +840,9 @@ export interface ClientCommand {
 }
 
 const clientCommands = versioned(
-  object<{ commands: ClientCommand[] }>({
+  object<{ commands: ClientCommand[] }, WireCommandsBody>({
     commands: array(
-      object<ClientCommand>({
+      object<ClientCommand, WireClientCommand>({
         name: string,
         description: string,
         hint: nullable(string),
@@ -826,9 +865,9 @@ export interface FileMatch {
 }
 
 const fileMatches = versioned(
-  object<{ files: FileMatch[] }>({
+  object<{ files: FileMatch[] }, WireFilesBody>({
     files: array(
-      object<FileMatch>({
+      object<FileMatch, WireFileMatch>({
         path: string,
         kind: label(PATH_KINDS),
         positions: array(count),

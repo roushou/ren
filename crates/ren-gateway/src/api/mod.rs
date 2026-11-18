@@ -137,14 +137,19 @@ pub enum ErrorCode {
     IdentityRefused,
 }
 
-#[derive(Serialize)]
+/// `/api/metrics`'s answer.
+#[derive(Serialize, TS)]
+#[ts(export)]
 struct Metrics {
     recorder: RecorderMetrics,
     storage: StorageView,
 }
 
-#[derive(Serialize)]
+/// A failed read's body: its code; a client keeps codes it does not know.
+#[derive(Serialize, TS)]
+#[ts(export)]
 struct ErrorBody {
+    #[ts(as = "String")]
     error: ErrorCode,
 }
 

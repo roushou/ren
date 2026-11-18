@@ -6,6 +6,7 @@
  */
 import { CallId } from './api.ts';
 import { array, boolean, object, string } from './decode.ts';
+import type { Progress as WireProgress } from './wire/Progress.ts';
 
 export interface CallProgress {
   call: CallId;
@@ -18,7 +19,7 @@ export interface CallProgress {
   thinking: boolean;
 }
 
-const callProgress = object<CallProgress>({
+const callProgress = object<CallProgress, WireProgress>({
   call: CallId.decode,
   reply: string,
   cut: boolean,

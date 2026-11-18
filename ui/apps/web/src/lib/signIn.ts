@@ -16,7 +16,18 @@ import {
   ShapeError,
   type Decoder,
   type Stored,
+  wire,
+  type StrayVariants,
 } from './decode.ts';
+import type { LoginBody as WireLoginBody } from './wire/LoginBody.ts';
+import type { LoginOutcome as WireLoginOutcome } from './wire/LoginOutcome.ts';
+import type { OutcomeBody as WireOutcomeBody } from './wire/OutcomeBody.ts';
+import type { SignInBody as WireSignInBody } from './wire/SignInBody.ts';
+import type { WaitedBody as WireWaitedBody } from './wire/WaitedBody.ts';
+import type { SignInState as WireSignInState } from './wire/SignInState.ts';
+import type { LoginEnd as WireLoginEnd } from './wire/LoginEnd.ts';
+import type { Login as WireLogin } from './wire/Login.ts';
+import type { Waited as WireWaited } from './wire/Waited.ts';
 
 export const SIGN_IN_METHODS = [
   'claude_subscription',
@@ -89,6 +100,7 @@ export const signInState: Decoder<SignInState> = (value, path) => {
       return { kind: 'unrecognized', label: kind };
   }
 };
+wire<StrayVariants<SignInState, WireSignInState, 'kind', 'unrecognized'>>();
 
 const signInLink: Decoder<SignInLink> = (value, path) => {
   const text = string(value, path);
@@ -121,6 +133,7 @@ const loginEnd: Decoder<LoginEnd> = (value, path) => {
       return { end: 'unrecognized', label: end };
   }
 };
+wire<StrayVariants<LoginEnd, WireLoginEnd, 'end', 'unrecognized'>>();
 
 export const login: Decoder<Login> = (value, path) => {
   if (!isRecord(value)) throw new ShapeError(path, 'an object');
@@ -152,12 +165,18 @@ export const login: Decoder<Login> = (value, path) => {
       throw new ShapeError(`${path}.kind`, 'a login state');
   }
 };
+wire<StrayVariants<Login, WireLogin, 'kind'>>();
 
 export const startedSignIn = versioned(
-  object<{ method: Stored<SignInMethod>; login: Login }>({ method: signInMethod, login }),
+  object<{ method: Stored<SignInMethod>; login: Login }, WireLoginBody>({
+    method: signInMethod,
+    login,
+  }),
 );
-export const checkedSignIn = versioned(object<{ sign_in: SignInState }>({ sign_in: signInState }));
-const loginOutcome = object<LoginOutcome>({ end: loginEnd, state: signInState });
+export const checkedSignIn = versioned(
+  object<{ sign_in: SignInState }, WireSignInBody>({ sign_in: signInState }),
+);
+const loginOutcome = object<LoginOutcome, WireLoginOutcome>({ end: loginEnd, state: signInState });
 const waited: Decoder<Waited> = (value, path) => {
   if (!isRecord(value)) throw new ShapeError(path, 'an object');
   switch (value.kind) {
@@ -169,10 +188,11 @@ const waited: Decoder<Waited> = (value, path) => {
       throw new ShapeError(`${path}.kind`, 'going or done');
   }
 };
-export const waitedSignIn = versioned(object<{ waited: Waited }>({ waited }));
+wire<StrayVariants<Waited, WireWaited, 'kind'>>();
+export const waitedSignIn = versioned(object<{ waited: Waited }, WireWaitedBody>({ waited }));
 export const finishedSignIn = versioned(
-  object<{ outcome: LoginOutcome }>({
-    outcome: object<LoginOutcome>({ end: loginEnd, state: signInState }),
+  object<{ outcome: LoginOutcome }, WireOutcomeBody>({
+    outcome: object<LoginOutcome, WireLoginOutcome>({ end: loginEnd, state: signInState }),
   }),
 );
 
