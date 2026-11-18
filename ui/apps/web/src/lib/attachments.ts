@@ -14,6 +14,9 @@ import {
   type Decoder,
   type Stored,
 } from './decode.ts';
+import type { Attachment as WireAttachment } from './wire/Attachment.ts';
+import type { Dimensions as WireDimensions } from './wire/Dimensions.ts';
+import type { Image as WireImage } from './wire/Image.ts';
 
 export type AttachmentId = Brand<string, 'AttachmentId'>;
 export const AttachmentId = new Uuid<'AttachmentId'>();
@@ -34,18 +37,25 @@ export interface AttachmentRead {
   sha256: string;
 }
 
-const dimensions = object<{ width: number; height: number }>({ width: count, height: count });
-const kind = object<{ format: Stored<ImageFormat>; dimensions: { width: number; height: number } }>(
-  { format: label(IMAGE_FORMATS), dimensions },
-);
+const dimensions = object<{ width: number; height: number }, WireDimensions>({
+  width: count,
+  height: count,
+});
+const kind = object<
+  { format: Stored<ImageFormat>; dimensions: { width: number; height: number } },
+  WireImage
+>({ format: label(IMAGE_FORMATS), dimensions });
 
 export const attachmentRead: Decoder<AttachmentRead> = (value, path) => {
-  const read = object<{
-    name: string;
-    kind: { format: Stored<ImageFormat>; dimensions: { width: number; height: number } };
-    size: number;
-    sha256: string;
-  }>({ name: string, kind, size: count, sha256: string })(value, path);
+  const read = object<
+    {
+      name: string;
+      kind: { format: Stored<ImageFormat>; dimensions: { width: number; height: number } };
+      size: number;
+      sha256: string;
+    },
+    WireAttachment
+  >({ name: string, kind, size: count, sha256: string })(value, path);
   return {
     name: read.name,
     format: read.kind.format,

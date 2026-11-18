@@ -1888,6 +1888,7 @@ dependencies = [
  "tempfile",
  "thiserror",
  "toml",
+ "ts-rs",
  "url",
  "uuid",
 ]

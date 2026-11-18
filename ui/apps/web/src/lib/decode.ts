@@ -58,9 +58,35 @@ export const array =
  * `T`'s field decoders when every field of `T` is one of `W`'s; otherwise a
  * type naming the fields `W` lacks, so the mismatch is the error.
  */
-type Fields<T, W> = [Exclude<keyof T, keyof W>] extends [never]
+type Fields<T, W> = [StrayFields<T, W>] extends [never]
   ? { [K in keyof T]-?: Decoder<T[K]> }
-  : { missing_on_wire: Exclude<keyof T, keyof W> };
+  : { missing_on_wire: StrayFields<T, W> };
+
+/** The fields of a decoded type `T` that its wire type `W` does not send. */
+export type StrayFields<T, W> = Exclude<keyof T, keyof W>;
+
+/**
+ * The variants of a decoded union `T`, by their `Tag`, that its wire union
+ * `W` does not send, or that read a field `W`'s variant of that tag does not
+ * send. `Own` are the decoder's own variants (unknown or unreadable input).
+ */
+export type StrayVariants<T, W, Tag extends PropertyKey, Own = never> =
+  T extends Record<Tag, infer K>
+    ? K extends Own
+      ? never
+      : [Extract<W, Record<Tag, K>>] extends [never]
+        ? K
+        : [StrayFields<T, Extract<W, Record<Tag, K>>>] extends [never]
+          ? never
+          : K
+    : never;
+
+/**
+ * Ties a hand-written decoder to the wire type it reads, at no runtime cost:
+ * `wire<StrayFields<…>>()` or `wire<StrayVariants<…>>()` type-checks only when
+ * nothing is stray, and otherwise names what is.
+ */
+export const wire = <_Stray extends never>(): void => undefined;
 
 /**
  * Decode the listed fields; fields a newer daemon adds are ignored. `W` is the

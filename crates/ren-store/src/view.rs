@@ -768,7 +768,6 @@ pub struct RunEntryView {
     pub started_at: UnixMillis,
     /// The client's turn it belongs to, once one started.
     pub turn: Option<String>,
-    #[ts(as = "serde_json::Value")]
     pub event: DriveEvent,
 }
 

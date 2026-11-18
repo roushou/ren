@@ -43,10 +43,13 @@ import {
   object,
   string,
   unrecognised,
+  wire,
   ShapeError,
   type Brand,
   type Decoder,
   type Stored,
+  type StrayFields,
+  type StrayVariants,
 } from './decode.ts';
 import {
   AttachmentId,
@@ -60,7 +63,14 @@ import {
 } from './attachments.ts';
 import { Refusals, type Refusal } from './refusal.ts';
 import { processExit, type ProcessExit } from './exit.ts';
+import type { ApprovalAsk as WireApprovalAsk } from './wire/ApprovalAsk.ts';
+import type { CommandIntent as WireCommandIntent } from './wire/CommandIntent.ts';
+import type { CommandPart as WireCommandPart } from './wire/CommandPart.ts';
 import type { ConversationView as WireConversationView } from './wire/ConversationView.ts';
+import type { DriveEvent as WireDriveEvent } from './wire/DriveEvent.ts';
+import type { DriveItem as WireDriveItem } from './wire/DriveItem.ts';
+import type { ItemRead as WireItemRead } from './wire/ItemRead.ts';
+import type { TurnEnd as WireTurnEnd } from './wire/TurnEnd.ts';
 import type { RunEntryView as WireRunEntryView } from './wire/RunEntryView.ts';
 import type { RunView as WireRunView } from './wire/RunView.ts';
 
@@ -292,6 +302,7 @@ const approvalAsk: Decoder<ApprovalAsk> = (value, path) => {
       return { kind: 'unrecognized', text: String(value.kind) };
   }
 };
+wire<StrayVariants<ApprovalAsk, WireApprovalAsk, 'kind', 'unrecognized'>>();
 
 const waiting = object<Waiting>({ approval: branded<'ApprovalId'>(), ask: approvalAsk });
 
@@ -371,6 +382,7 @@ const commandPart: Decoder<CommandPart> = (value, path) => {
     }
   }
 };
+wire<StrayVariants<CommandPart, WireCommandPart, 'part'>>();
 
 const commandIntent: Decoder<CommandIntent> = (value, path) => {
   if (!isRecord(value)) return { said: 'unsaid' };
@@ -383,6 +395,7 @@ const commandIntent: Decoder<CommandIntent> = (value, path) => {
       return { said: 'unsaid' };
   }
 };
+wire<StrayVariants<CommandIntent, WireCommandIntent, 'said'>>();
 
 const itemRead: Decoder<ItemRead> = (value, path) => {
   if (!isRecord(value)) return { as: 'unread' };
@@ -426,6 +439,7 @@ const itemRead: Decoder<ItemRead> = (value, path) => {
       return { as: 'unread' };
   }
 };
+wire<StrayVariants<ItemRead, WireItemRead, 'as'>>();
 
 const runSnapshot = object<RunSnapshot>({
   run: RunId.decode,
@@ -447,6 +461,7 @@ const turnEnd: Decoder<TurnEnd> = (value, path) => {
       return { kind: 'unknown', status: String(value.status ?? value.kind) };
   }
 };
+wire<StrayVariants<TurnEnd, WireTurnEnd, 'kind'>>();
 
 const driveEvent: Decoder<DriveEvent> = (value, path) => {
   if (!isRecord(value)) throw new ShapeError(path, 'an object');
@@ -514,6 +529,8 @@ const driveEvent: Decoder<DriveEvent> = (value, path) => {
       return { kind: 'other', name: kind };
   }
 };
+wire<StrayVariants<DriveEvent, WireDriveEvent, 'kind', 'other'>>();
+wire<StrayFields<DriveItem, WireDriveItem>>();
 
 /** One `run` event of the update feed. */
 export const runUpdate: Decoder<RunUpdate> = (value, path) => {

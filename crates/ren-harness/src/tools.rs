@@ -19,11 +19,13 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use serde_with::{DeserializeFromStr, SerializeDisplay};
 use strum::{Display, EnumString, IntoStaticStr, VariantArray};
+use ts_rs::TS;
 
 /// What a tool call does to the workspace, as its input states it.
 #[derive(Display, EnumString, IntoStaticStr, VariantArray)]
 #[strum(serialize_all = "snake_case")]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SerializeDisplay, DeserializeFromStr)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SerializeDisplay, DeserializeFromStr, TS)]
+#[ts(type = "string")]
 pub enum EffectKind {
     ReadFile,
     WriteFile,
@@ -35,7 +37,7 @@ pub enum EffectKind {
 }
 
 /// One effect with its target: a path, command, pattern, task, or URL.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct ToolEffect {
     pub kind: EffectKind,
     pub target: String,
