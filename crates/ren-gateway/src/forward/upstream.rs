@@ -218,7 +218,18 @@ impl std::fmt::Debug for UpstreamUrl {
 }
 
 impl UpstreamUrl {
-    pub fn parse(base: &str) -> Result<Self, UpstreamConfigError> {
+    fn request_url(&self, path: &str, query: Option<&str>) -> Url {
+        let mut url = self.0.clone();
+        url.set_path(&format!("{}{}", self.0.path().trim_end_matches('/'), path));
+        url.set_query(query);
+        url
+    }
+}
+
+impl std::str::FromStr for UpstreamUrl {
+    type Err = UpstreamConfigError;
+
+    fn from_str(base: &str) -> Result<Self, Self::Err> {
         let base = Url::parse(base).map_err(|_| UpstreamConfigError("invalid upstream URL"))?;
         SecureBase::new(base)
             .map(|base| Self(base.into()))
@@ -230,13 +241,6 @@ impl UpstreamUrl {
                     "upstreams require HTTPS, except loopback HTTP for local testing",
                 ),
             })
-    }
-
-    fn request_url(&self, path: &str, query: Option<&str>) -> Url {
-        let mut url = self.0.clone();
-        url.set_path(&format!("{}{}", self.0.path().trim_end_matches('/'), path));
-        url.set_query(query);
-        url
     }
 }
 
@@ -745,27 +749,29 @@ mod tests {
             "https://example.com?token=SECRET",
             "https://example.com/#SECRET",
         ] {
-            let error = UpstreamUrl::parse(base).err().unwrap();
+            let error = base.parse::<UpstreamUrl>().err().unwrap();
             assert!(!format!("{error:?}").contains("SECRET"));
         }
     }
 
     #[test]
     fn cleartext_is_only_allowed_for_loopback() {
-        assert!(UpstreamUrl::parse("http://example.com").is_err());
+        assert!("http://example.com".parse::<UpstreamUrl>().is_err());
         for base in [
             "http://127.0.0.1:1234",
             "http://[::1]:1234",
             "http://localhost:1234",
             "https://example.com/prefix/",
         ] {
-            assert!(UpstreamUrl::parse(base).is_ok());
+            assert!(base.parse::<UpstreamUrl>().is_ok());
         }
     }
 
     #[test]
     fn targets_preserve_base_prefixes_and_native_queries() {
-        let base = UpstreamUrl::parse("https://example.com/backend-api/codex/").unwrap();
+        let base = "https://example.com/backend-api/codex/"
+            .parse::<UpstreamUrl>()
+            .unwrap();
         let url = base.request_url("/responses", Some("beta=true&value=a%2Fb"));
         assert_eq!(
             url.as_str(),
@@ -776,7 +782,7 @@ mod tests {
 
     #[test]
     fn each_provider_resolves_to_its_own_base() {
-        let url = |text: &str| UpstreamUrl::parse(text).unwrap();
+        let url = |text: &str| text.parse::<UpstreamUrl>().unwrap();
         let table = UpstreamTable::new(
             NativeUrls {
                 anthropic: url("https://a.example"),
@@ -806,7 +812,7 @@ mod tests {
         let entry = |provider: Provider, auth: UpstreamAuth| UpstreamEntry {
             id: "fixture".parse::<UpstreamId>().unwrap(),
             api: provider.native_api(),
-            url: UpstreamUrl::parse("https://example.com").unwrap(),
+            url: "https://example.com".parse::<UpstreamUrl>().unwrap(),
             auth,
         };
         let anthropic = entry(Provider::Anthropic, UpstreamAuth::OperatorKey(key.clone()));

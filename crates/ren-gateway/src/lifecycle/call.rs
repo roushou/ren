@@ -105,7 +105,7 @@ impl CallRun {
                 }
             }
             Dispatched::Failed(failure) => {
-                if falls_over(WireFact::from(failure)) {
+                if falls_over(WireFact::of_failure(failure)) {
                     CallStep::FallOver {
                         refused: Refused::Failure(failure),
                         next,

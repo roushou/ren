@@ -20,7 +20,7 @@ use ren_recorder::routing::UpstreamId;
 
 #[test]
 fn every_route_is_pinned() {
-    let url = || UpstreamUrl::parse("https://example.com").unwrap();
+    let url = || "https://example.com".parse::<UpstreamUrl>().unwrap();
     // Configured entries mount routes only when they opt in.
     let configured = |id: &str, api: Api, ingress| ConfiguredEntry {
         entry: UpstreamEntry {

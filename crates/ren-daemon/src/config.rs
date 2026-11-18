@@ -348,7 +348,7 @@ impl Config {
                 let entry = UpstreamEntry {
                     id: upstream.id.clone(),
                     api: upstream.api()?,
-                    url: UpstreamUrl::parse(&upstream.base_url).map_err(|source| {
+                    url: upstream.base_url.parse::<UpstreamUrl>().map_err(|source| {
                         ConfigError::UpstreamUrl {
                             id: upstream.id.to_string(),
                             source,
@@ -365,10 +365,10 @@ impl Config {
             .collect::<Result<Vec<_>, ConfigError>>()?;
         let upstreams = UpstreamTable::new(
             NativeUrls {
-                anthropic: UpstreamUrl::parse(&self.anthropic_base_url)?,
-                codex: UpstreamUrl::parse(&self.codex_base_url)?,
-                openai: UpstreamUrl::parse(&self.openai_base_url)?,
-                deepseek: UpstreamUrl::parse(&self.deepseek_base_url)?,
+                anthropic: self.anthropic_base_url.parse::<UpstreamUrl>()?,
+                codex: self.codex_base_url.parse::<UpstreamUrl>()?,
+                openai: self.openai_base_url.parse::<UpstreamUrl>()?,
+                deepseek: self.deepseek_base_url.parse::<UpstreamUrl>()?,
             },
             extra,
         )?;
