@@ -19,10 +19,9 @@ use ren_recorder::{
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error as _};
 use serde_with::{DeserializeFromStr, SerializeDisplay};
 use strum::{Display, EnumString, IntoStaticStr, VariantArray};
-use ts_rs::TS;
 
 /// One call's numbers.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CallMetrics {
     /// The prompt the model saw, in tokens: new input plus what was read
     /// from and written to the cache.
@@ -80,11 +79,9 @@ pub enum FindingKind {
 
 /// A call read less than half of the earlier peak context from the cache
 /// and wrote at least half of it, and at least [`FindingKind::REBUILD_TOKENS`].
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CacheRebuild {
-    #[ts(as = "String")]
     pub call: CallId,
-    #[ts(as = "Option<String>")]
     pub turn: Option<TurnId>,
     pub cache_read_tokens: u64,
     pub cache_written_tokens: u64,
@@ -96,21 +93,18 @@ pub struct CacheRebuild {
 
 /// A call's context passed the recording's earlier peak by at least
 /// [`FindingKind::GROWTH_TOKENS`].
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ContextGrowth {
-    #[ts(as = "String")]
     pub call: CallId,
-    #[ts(as = "Option<String>")]
     pub turn: Option<TurnId>,
     pub earlier_peak_tokens: u64,
     pub context_tokens: u64,
 }
 
 /// A tool result of at least [`FindingKind::LARGE_OUTPUT_CHARS`].
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LargeToolOutput {
     /// The call whose response requested the tool.
-    #[ts(as = "String")]
     pub call: CallId,
     pub tool: String,
     pub tool_call_id: Option<String>,
@@ -121,39 +115,31 @@ pub struct LargeToolOutput {
 
 /// At least [`FindingKind::REPEATED_FAILURES`] reported failures of one tool on
 /// one target in a turn.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RepeatedFailure {
     pub tool: String,
     pub target: Option<String>,
     pub failures: u64,
     /// The calls that requested the failed tool calls, in order.
-    #[ts(as = "Vec<String>")]
     pub calls: Vec<CallId>,
 }
 
 /// A credential a call carried: in the user's input, a tool's input or
 /// output (all sent to the provider), or the model's reply. Never the
 /// secret itself: its format, a masked hint, and a fingerprint.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SecretExposure {
-    #[ts(as = "String")]
     pub call: CallId,
-    #[ts(as = "Option<String>")]
     pub turn: Option<TurnId>,
-    #[ts(as = "String")]
     pub field: Stored<SearchField>,
-    #[ts(as = "String")]
     pub secret: Stored<SecretKind>,
     pub hint: String,
     pub fingerprint: String,
     pub count: u64,
 }
 
-/// One finding, serialized with its `kind` label first. Its TypeScript
-/// shape names the known kinds by their [`FindingKind`] labels (pinned in
-/// `tests/fixtures/labels.txt`); a reader keeps any other kind itself.
-#[derive(Debug, Clone, PartialEq, Eq, TS)]
-#[ts(tag = "kind", rename_all = "snake_case")]
+/// One finding, serialized with its `kind` label first.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Finding {
     CacheRebuild(CacheRebuild),
     ContextGrowth(ContextGrowth),
@@ -162,7 +148,6 @@ pub enum Finding {
     SecretExposure(SecretExposure),
     /// A finding of a kind this binary does not know, read from a newer
     /// one: kept as read.
-    #[ts(skip)]
     Unknown(RawFinding),
 }
 
@@ -267,13 +252,10 @@ impl<'de> Deserialize<'de> for Finding {
 }
 
 /// One turn's row in a recording report.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TurnMetrics {
-    #[ts(as = "String")]
     pub turn: TurnId,
-    #[ts(as = "u64")]
     pub started_at: UnixMillis,
-    #[ts(as = "Option<u64>")]
     pub ended_at: Option<UnixMillis>,
     pub call_count: u64,
     /// Time between the recording's previous call ending and this turn.
@@ -287,7 +269,7 @@ pub struct TurnMetrics {
 }
 
 /// Totals over a recording's calls that reported usage.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct ReportTotals {
     pub calls: u64,
     pub calls_with_usage: u64,
@@ -300,9 +282,8 @@ pub struct ReportTotals {
 }
 
 /// A recording's context and cost measurements, from its call records alone.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RecordingReport {
-    #[ts(as = "String")]
     pub recording: RecordingId,
     pub totals: ReportTotals,
     pub turns: Vec<TurnMetrics>,

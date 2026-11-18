@@ -15,13 +15,11 @@ use serde_with::{DeserializeFromStr, SerializeDisplay};
 use sha2::Digest;
 use std::fmt;
 use strum::{Display, EnumString, IntoStaticStr, VariantArray};
-use ts_rs::TS;
 
 /// An image format Ren sends to clients.
 #[derive(Display, EnumString, IntoStaticStr, VariantArray)]
 #[strum(serialize_all = "snake_case")]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SerializeDisplay, DeserializeFromStr, TS)]
-#[ts(type = "string")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SerializeDisplay, DeserializeFromStr)]
 pub enum ImageFormat {
     Png,
     Jpeg,
@@ -59,20 +57,9 @@ impl ImageFormat {
 
 /// A count of bytes.
 #[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    PartialOrd,
-    Ord,
-    Hash,
-    serde::Serialize,
-    serde::Deserialize,
-    TS,
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
 )]
 #[serde(transparent)]
-#[ts(type = "number")]
 pub struct ByteSize(u64);
 
 impl ByteSize {
@@ -107,7 +94,7 @@ impl fmt::Display for ByteSize {
 }
 
 /// An image's size in pixels: never zero on either side.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize, TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(try_from = "RawDimensions")]
 pub struct Dimensions {
     width: u32,
@@ -166,7 +153,7 @@ impl fmt::Display for Dimensions {
 }
 
 /// An image Ren read: its format and its size.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize, TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct Image {
     format: ImageFormat,
     dimensions: Dimensions,
@@ -188,7 +175,7 @@ impl Image {
 }
 
 /// What an attachment is.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize, TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum AttachmentKind {
     Image(Image),
@@ -197,9 +184,8 @@ pub enum AttachmentKind {
 /// An attachment's name, for showing it: the last part of the name it was
 /// uploaded with, without control characters. Never a path, never `.` or
 /// `..`, never empty, and at most [`AttachmentName::MAX_BYTES`].
-#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize)]
 #[serde(transparent)]
-#[ts(type = "string")]
 pub struct AttachmentName(String);
 
 impl AttachmentName {
@@ -375,13 +361,12 @@ pub enum PromptLimitError {
 /// One file uploaded to go with a prompt, read and known to be what it
 /// says. Ren's identity for it is the store's; this is what it is. Read
 /// back from JSON through [`Attachment::restore`].
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(try_from = "StoredAttachment")]
 pub struct Attachment {
     name: AttachmentName,
     kind: AttachmentKind,
     size: ByteSize,
-    #[ts(as = "String")]
     sha256: Sha256,
 }
 

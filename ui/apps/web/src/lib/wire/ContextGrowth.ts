@@ -2,6 +2,6 @@
 
 /**
  * A call's context passed the recording's earlier peak by at least
- * [`FindingKind::GROWTH_TOKENS`].
+ * `FindingKind::GROWTH_TOKENS`.
  */
 export type ContextGrowth = { call: string, turn: string | null, earlier_peak_tokens: number, context_tokens: number, };

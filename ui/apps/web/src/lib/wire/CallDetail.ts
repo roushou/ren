@@ -3,7 +3,7 @@ import type { AttemptView } from "./AttemptView.ts";
 import type { CallView } from "./CallView.ts";
 import type { ChannelView } from "./ChannelView.ts";
 import type { MessageView } from "./MessageView.ts";
-import type { JsonValue } from "./serde_json/JsonValue.ts";
+import type { Observation } from "./Observation.ts";
 
 /**
  * A call with its attempts and log.
@@ -13,7 +13,7 @@ export type CallDetail = { call: CallView, transport: string,
  * The channel that carried the call: for WebSocket, the upgraded socket
  * shared with the channel's other calls.
  */
-channel: ChannelView, attempts: Array<AttemptView>, observations: Array<JsonValue>, 
+channel: ChannelView, attempts: Array<AttemptView>, observations: Array<Observation>, 
 /**
  * WebSocket message boundaries in the call's request body and its final
  * attempt's response body, in body order. Empty for HTTP.

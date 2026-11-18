@@ -2,7 +2,7 @@
 
 /**
  * A call read less than half of the earlier peak context from the cache
- * and wrote at least half of it, and at least [`FindingKind::REBUILD_TOKENS`].
+ * and wrote at least half of it, and at least `FindingKind::REBUILD_TOKENS`.
  */
 export type CacheRebuild = { call: string, turn: string | null, cache_read_tokens: number, cache_written_tokens: number, 
 /**

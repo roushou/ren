@@ -26,7 +26,6 @@ use ren_protocol::text::WireText;
 use ren_protocol::native::{NativeThreadId, NativeTurnId};
 use serde_with::{DeserializeFromStr, SerializeDisplay};
 use strum::{Display, EnumString, IntoStaticStr, VariantArray};
-use ts_rs::TS;
 
 /// How a driven process's one conversation is opened.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -177,9 +176,8 @@ pub enum DriveCommand {
 
 /// An approval request, named as the client named it within one process.
 #[derive(
-    Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, SerializeDisplay, DeserializeFromStr, TS,
+    Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, SerializeDisplay, DeserializeFromStr,
 )]
-#[ts(type = "string")]
 pub struct ApprovalId(pub(crate) String);
 
 impl ApprovalId {
@@ -238,8 +236,7 @@ pub enum Decision {
 /// A request Ren sent to a driven client.
 #[derive(Display, EnumString, IntoStaticStr, VariantArray)]
 #[strum(serialize_all = "snake_case")]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SerializeDisplay, DeserializeFromStr, TS)]
-#[ts(type = "string")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SerializeDisplay, DeserializeFromStr)]
 pub enum RequestKind {
     Initialize,
     ThreadStart,
@@ -257,7 +254,7 @@ pub enum RequestKind {
 /// ([`DriveEventKind`]) is the `kind` tag it is stored and sent with; a test
 /// keeps serde's tag and the label the same.
 #[derive(
-    Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, strum::EnumDiscriminants, TS,
+    Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, strum::EnumDiscriminants,
 )]
 #[serde(tag = "kind", rename_all = "snake_case")]
 #[strum_discriminants(name(DriveEventKind), vis(pub))]
@@ -274,11 +271,9 @@ pub enum RequestKind {
 pub enum DriveEvent {
     /// The conversation is open and takes prompts.
     Ready {
-        #[ts(as = "String")]
         thread: NativeThreadId,
     },
     TurnStarted {
-        #[ts(as = "String")]
         turn: NativeTurnId,
     },
     /// Streamed text of the reply item `item`.
@@ -300,7 +295,6 @@ pub enum DriveEvent {
         approval: ApprovalId,
     },
     TurnEnded {
-        #[ts(as = "String")]
         turn: NativeTurnId,
         end: TurnEnd,
     },
@@ -331,7 +325,7 @@ pub enum DriveEvent {
 }
 
 /// Whether the client said it would retry after an error.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Retry {
     WillRetry,
@@ -339,7 +333,7 @@ pub enum Retry {
 }
 
 /// Why a line could not be read.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "reason", rename_all = "snake_case")]
 pub enum Unreadable {
     NotJson,
@@ -357,8 +351,7 @@ pub enum Unreadable {
 }
 
 /// A line exactly as the client wrote it.
-#[derive(Debug, Clone, PartialEq, Eq, TS)]
-#[ts(type = "string")]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RawLine(Vec<u8>);
 
 /// Serialized as text, with invalid UTF-8 replaced; the bytes stay kept.
@@ -386,9 +379,8 @@ impl RawLine {
 }
 
 /// An item of a turn, named as the client named it.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(transparent)]
-#[ts(type = "string")]
 pub struct ItemId(String);
 
 impl ItemId {
@@ -401,7 +393,7 @@ impl ItemId {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ItemPhase {
     Started,
@@ -410,7 +402,7 @@ pub enum ItemPhase {
 
 /// One item of a turn: its kind, what Ren read of it, and the client's own
 /// body for it.
-#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct DriveItem {
     pub id: ItemId,
     pub kind: ItemKind,
@@ -452,7 +444,7 @@ impl DriveItem {
 
 /// What Ren read from an item, the same for every client, so consumers never
 /// parse a client's own body. Each client's codec fills it.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "as", rename_all = "snake_case")]
 pub enum ItemRead {
     /// The operator's prompt, as the client echoed it, with what each
@@ -500,7 +492,7 @@ pub enum ItemRead {
 
 /// What a command is for, in its client's terms: Ren reads nothing into
 /// the command's own text.
-#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize, TS)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "said", rename_all = "snake_case")]
 pub enum CommandIntent {
     /// Its client said nothing of it.
@@ -530,7 +522,7 @@ impl CommandIntent {
 }
 
 /// One part of a command as its client read it, with the part's own text.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "part", rename_all = "snake_case")]
 pub enum CommandPart {
     /// It reads the file at `path`, named `name`.
@@ -557,8 +549,7 @@ pub enum CommandPart {
 }
 
 /// Where an item's action stands.
-#[derive(Debug, Clone, PartialEq, Eq, TS)]
-#[ts(type = "string")]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ItemStatus {
     InProgress,
     Completed,
@@ -649,8 +640,7 @@ impl serde::Serialize for ItemStatus {
 }
 
 /// The kinds of items Ren reads. Others keep the client's own name.
-#[derive(Debug, Clone, PartialEq, Eq, TS)]
-#[ts(type = "string")]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ItemKind {
     UserMessage,
     AgentMessage,
@@ -706,7 +696,7 @@ impl serde::Serialize for ItemKind {
 }
 
 /// What an approval asks for.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ApprovalAsk {
     /// Run a command.
@@ -725,7 +715,7 @@ pub enum ApprovalAsk {
 }
 
 /// How a turn ended, as the client reported it.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum TurnEnd {
     Completed,

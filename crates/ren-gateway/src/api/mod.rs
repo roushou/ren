@@ -15,6 +15,7 @@ mod health;
 mod live;
 mod params;
 pub mod preview;
+pub mod read;
 mod route;
 mod storage;
 
@@ -336,7 +337,10 @@ impl ApiState {
     /// Any history read: the URI says which, the reader answers.
     async fn read(State(state): State<Arc<Self>>, uri: Uri) -> Result<Response, ApiError> {
         let ApiRead(request) = ApiRead::parse(&uri)?;
-        Ok(Self::versioned(state.reader.serve(&request).await?).into_response())
+        Ok(
+            Self::versioned(read::ReadBody::from(state.reader.serve(&request).await?))
+                .into_response(),
+        )
     }
 
     async fn body(

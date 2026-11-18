@@ -37,7 +37,6 @@ use ren_recorder::{
 use serde::{Deserialize, Serialize};
 use sqlx::{Row, sqlite::SqliteRow};
 use std::str::FromStr;
-use ts_rs::TS;
 
 /// Typed column access with corruption reported as [`StoreError::Corrupt`].
 pub(super) struct Columns<'r>(pub(super) &'r SqliteRow);
@@ -133,13 +132,12 @@ impl Columns<'_> {
 }
 
 /// A body's capture accounting.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BodyView {
     /// Bytes the relay saw; unknown until the body's end is recorded.
     pub observed_bytes: Option<u64>,
     /// Bytes committed to storage. Less than observed means bytes were omitted.
     pub stored_bytes: u64,
-    #[ts(as = "String")]
     pub ending: Stored<BodyEnding>,
 }
 
@@ -167,16 +165,14 @@ impl BodyView {
 }
 
 /// Attribution as stored, keeping unknown labels.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct AttributionView {
     pub hint: Option<SessionHintView>,
-    #[ts(as = "Vec<String>")]
     pub issues: Vec<Stored<HintIssue>>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SessionHintView {
-    #[ts(as = "String")]
     pub source: Stored<HintSource>,
     pub session: String,
     pub turn: Option<String>,
@@ -184,9 +180,8 @@ pub struct SessionHintView {
 }
 
 /// Who made a call, as recorded.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CallerView {
-    #[ts(as = "String")]
     pub kind: Stored<CallerKind>,
     /// The named user it proved to be.
     pub user: Option<String>,
@@ -205,51 +200,36 @@ impl CallerView {
 }
 
 /// One call, as listed.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CallView {
-    #[ts(as = "String")]
     pub id: CallId,
-    #[ts(as = "String")]
     pub channel: ChannelId,
-    #[ts(as = "u64")]
     pub started_at: UnixMillis,
-    #[ts(as = "Option<u64>")]
     pub ended_at: Option<UnixMillis>,
-    #[ts(as = "String")]
     pub provider: Stored<Provider>,
     /// The wire format.
-    #[ts(as = "String")]
     pub wire: Stored<Wire>,
-    #[ts(as = "String")]
     pub endpoint: Stored<Endpoint>,
-    #[ts(as = "String")]
     pub method: Stored<Method>,
     pub config_revision: String,
-    #[ts(as = "Option<String>")]
     pub recording: Option<RecordingId>,
-    #[ts(as = "Option<String>")]
     pub turn: Option<TurnId>,
     pub attribution: AttributionView,
     /// Who made the call.
     pub caller: CallerView,
-    #[ts(as = "String")]
     pub state: Stored<CallState>,
-    #[ts(as = "Option<String>")]
     pub terminal: Option<Stored<AttemptTerminal>>,
     pub status: Option<u16>,
     pub model: Option<String>,
-    #[ts(as = "Option<String>")]
     pub outcome: Option<Stored<ModelOutcome>>,
     pub stop_reason: Option<String>,
     pub tool_names: Vec<String>,
-    #[ts(as = "Option<serde_json::Value>")]
     pub usage: Option<UsageRecord>,
     /// Both bodies ended and were stored without omissions.
     pub capture_complete: bool,
     pub request: Option<BodyView>,
     pub response: Option<BodyView>,
     /// Why Ren answered without forwarding; absent for a forwarded call.
-    #[ts(as = "Option<String>")]
     pub rejection: Option<Stored<CallRejection>>,
     /// The operator state revision the call was planned against.
     pub operator_revision: Option<u64>,
@@ -257,7 +237,6 @@ pub struct CallView {
     pub plan: Option<serde_json::Value>,
     /// Why the client sent it (work, or a check of its own such as Claude
     /// Code's quota probe), from the call's digest; absent until derived.
-    #[ts(as = "Option<String>")]
     pub purpose: Option<Stored<CallPurpose>>,
 }
 
@@ -309,36 +288,26 @@ impl CallView {
 }
 
 /// One upstream attempt of a call.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AttemptView {
-    #[ts(as = "String")]
     pub id: AttemptId,
     pub ordinal: u32,
-    #[ts(as = "u64")]
     pub started_at: UnixMillis,
-    #[ts(as = "Option<u64>")]
     pub ended_at: Option<UnixMillis>,
     /// The upstream entry's id.
     pub upstream: String,
     /// The upstream entry's provider.
-    #[ts(as = "String")]
     pub provider: Stored<Provider>,
     pub status: Option<u16>,
-    #[ts(as = "Option<String>")]
     pub response_format: Option<Stored<ResponseFormat>>,
-    #[ts(as = "Option<String>")]
     pub response_encoding: Option<Stored<ResponseEncoding>>,
-    #[ts(as = "Option<String>")]
     pub terminal: Option<Stored<AttemptTerminal>>,
     /// Why it ended, where the terminal alone does not say.
-    #[ts(as = "Option<String>")]
     pub terminal_cause: Option<Stored<TerminalCause>>,
     /// How far it had got when it ended.
-    #[ts(as = "Option<String>")]
     pub terminal_phase: Option<Stored<AttemptPhase>>,
     pub response: Option<BodyView>,
     pub inspection_version: Option<u32>,
-    #[ts(as = "Option<serde_json::Value>")]
     pub inspection: Option<InspectionRecord>,
     /// What Ren changed in this attempt's request, as recorded.
     pub changes: Option<serde_json::Value>,
@@ -374,16 +343,14 @@ impl AttemptView {
 }
 
 /// A call with its attempts and log.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CallDetail {
     pub call: CallView,
-    #[ts(as = "String")]
     pub transport: Stored<Transport>,
     /// The channel that carried the call: for WebSocket, the upgraded socket
     /// shared with the channel's other calls.
     pub channel: ChannelView,
     pub attempts: Vec<AttemptView>,
-    #[ts(as = "Vec<serde_json::Value>")]
     pub observations: Vec<Observation>,
     /// WebSocket message boundaries in the call's request body and its final
     /// attempt's response body, in body order. Empty for HTTP.
@@ -391,18 +358,13 @@ pub struct CallDetail {
 }
 
 /// One client connection or exchange.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ChannelView {
-    #[ts(as = "String")]
     pub id: ChannelId,
-    #[ts(as = "String")]
     pub transport: Stored<Transport>,
-    #[ts(as = "u64")]
     pub opened_at: UnixMillis,
     /// When a WebSocket channel ended; absent while open, and for HTTP.
-    #[ts(as = "Option<u64>")]
     pub closed_at: Option<UnixMillis>,
-    #[ts(as = "Option<String>")]
     pub ending: Option<Stored<ChannelEnd>>,
     pub close_code: Option<u16>,
     /// Messages forwarded while no call was open: counted, not stored.
@@ -429,15 +391,12 @@ impl ChannelView {
 }
 
 /// Where one WebSocket message sits inside a body.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MessageView {
-    #[ts(as = "String")]
     pub direction: Stored<Direction>,
     pub offset: u64,
     pub len: u64,
-    #[ts(as = "String")]
     pub payload: Stored<Payload>,
-    #[ts(as = "u64")]
     pub at: UnixMillis,
 }
 
@@ -459,30 +418,23 @@ impl MessageView {
 }
 
 /// One page of calls.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CallPage {
     pub calls: Vec<CallView>,
     /// Pass as `after` for the next page; absent on the last page.
-    #[ts(as = "Option<String>")]
     pub next: Option<Cursor>,
 }
 
 /// A group of calls a client attributed to one recording.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RecordingView {
-    #[ts(as = "String")]
     pub id: RecordingId,
-    #[ts(as = "String")]
     pub provider: Stored<Provider>,
-    #[ts(as = "String")]
     pub source: Stored<HintSource>,
     pub native_id: String,
-    #[ts(as = "u64")]
     pub first_seen: UnixMillis,
-    #[ts(as = "u64")]
     pub last_seen: UnixMillis,
     /// When the operator archived it, while it has no newer traffic.
-    #[ts(as = "Option<u64>")]
     pub archived_at: Option<UnixMillis>,
     pub call_count: u64,
     pub turn_count: u64,
@@ -498,7 +450,7 @@ pub struct RecordingView {
 /// provider accounts it, because cached context is most of a coding agent's
 /// input; `cache_read` is the part of it read from the provider's cache.
 /// Token counts are not subscription allowance or charges.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TokenTotals {
     pub input: Option<u64>,
     pub output: Option<u64>,
@@ -535,7 +487,7 @@ impl TokenTotals {
 }
 
 /// Calls, errors, and tokens over some set of calls.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UsageCounts {
     pub calls: u64,
     /// The calls the `errors` status filter finds.
@@ -582,7 +534,7 @@ impl UsageCounts {
 }
 
 /// Usage over a time range, by the hour, by model, and by user.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UsageView {
     pub totals: UsageCounts,
     /// Hours that had calls, oldest first, keyed by the hour's start (UTC).
@@ -666,24 +618,22 @@ impl UsageView {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UsageBucket {
-    #[ts(as = "u64")]
     pub start: UnixMillis,
     #[serde(flatten)]
     pub usage: UsageCounts,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ModelUsage {
-    #[ts(as = "String")]
     pub provider: Stored<Provider>,
     pub model: Option<String>,
     #[serde(flatten)]
     pub usage: UsageCounts,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UserUsage {
     pub user: Option<String>,
     #[serde(flatten)]
@@ -744,7 +694,7 @@ impl OperatorActionView {
 
 /// A run's conversation, whole: its entries, and those of the runs before
 /// it that continued the same client conversation, oldest first.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ConversationView {
     pub entries: Vec<RunEntryView>,
     /// Older entries were left out: the conversation holds more than one
@@ -754,17 +704,14 @@ pub struct ConversationView {
 
 /// One entry of a run's conversation: an event as its client reported it,
 /// in the order it came.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RunEntryView {
-    #[ts(as = "String")]
     pub run: RunId,
     pub seq: u64,
     /// When it was last reported: an item reported again (finished,
     /// completed) is the same entry, as it last stood.
-    #[ts(as = "u64")]
     pub at: UnixMillis,
     /// When it was first reported: an item's start.
-    #[ts(as = "u64")]
     pub started_at: UnixMillis,
     /// The client's turn it belongs to, once one started.
     pub turn: Option<String>,
@@ -781,46 +728,34 @@ pub struct HistoryTarget {
 }
 
 /// One agent run, as recorded.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RunView {
-    #[ts(as = "String")]
     pub id: RunId,
-    #[ts(as = "String")]
     pub harness: Stored<Harness>,
     pub workdir: String,
-    #[ts(as = "u64")]
     pub started_at: UnixMillis,
     /// The client's own conversation id, once it opened one.
     pub thread: Option<String>,
     /// The recording whose calls name the run's thread as their session:
     /// the run's model traffic, once a call was recorded.
-    #[ts(as = "Option<String>")]
     pub recording: Option<RecordingId>,
     /// The operator session the run served.
-    #[ts(as = "String")]
     pub operator_session: SessionId,
-    #[ts(as = "Option<u64>")]
     pub ended_at: Option<UnixMillis>,
     /// How the run ended; `None` while it runs.
-    #[ts(as = "Option<String>")]
     pub end: Option<Stored<RunEnd>>,
     /// How its process exited, when one did.
-    #[ts(as = "Option<serde_json::Value>")]
     pub exit: Option<ProcessExit>,
     /// When the operator archived it; it is listed as archived once ended.
-    #[ts(as = "Option<u64>")]
     pub archived_at: Option<UnixMillis>,
     /// The model it started on, as its client names it; `None` is the
     /// client's own.
     pub model: Option<String>,
-    #[ts(as = "Option<String>")]
     pub effort: Option<Stored<Effort>>,
-    #[ts(as = "Option<String>")]
     pub approvals: Option<Stored<ApprovalPolicy>>,
     /// The toolset generation on its search path: 0 when Ren had installed
     /// none; `None` when unknown: the tool store was unreadable, or the store
     /// holds none for the run.
-    #[ts(as = "Option<serde_json::Value>")]
     pub toolset: Option<Generation>,
 }
 
@@ -985,7 +920,7 @@ pub struct BodyPrefix {
 }
 
 /// Real disk usage of one database file.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct FileUsage {
     pub page_size: u64,
     pub page_count: u64,
@@ -1002,7 +937,7 @@ impl FileUsage {
 
 /// Disk usage of the store's files, as retention measures it. The search
 /// index is part of the metadata file.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct DiskUsage {
     pub metadata: FileUsage,
     pub blobs: FileUsage,
@@ -1018,7 +953,7 @@ impl DiskUsage {
 }
 
 /// What is retained, and how well chunk deduplication works on it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct StorageView {
     pub disk: DiskUsage,
     pub calls: u64,

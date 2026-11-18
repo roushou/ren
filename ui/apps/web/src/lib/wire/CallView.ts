@@ -2,6 +2,7 @@
 import type { AttributionView } from "./AttributionView.ts";
 import type { BodyView } from "./BodyView.ts";
 import type { CallerView } from "./CallerView.ts";
+import type { UsageRecord } from "./UsageRecord.ts";
 import type { JsonValue } from "./serde_json/JsonValue.ts";
 
 /**
@@ -15,7 +16,7 @@ wire: string, endpoint: string, method: string, config_revision: string, recordi
 /**
  * Who made the call.
  */
-caller: CallerView, state: string, terminal: string | null, status: number | null, model: string | null, outcome: string | null, stop_reason: string | null, tool_names: Array<string>, usage: JsonValue | null, 
+caller: CallerView, state: string, terminal: string | null, status: number | null, model: string | null, outcome: string | null, stop_reason: string | null, tool_names: Array<string>, usage: UsageRecord | null, 
 /**
  * Both bodies ended and were stored without omissions.
  */

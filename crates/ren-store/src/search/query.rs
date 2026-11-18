@@ -11,7 +11,6 @@ use ren_recorder::{
 };
 use serde::{Deserialize, Serialize};
 use std::fmt;
-use ts_rs::TS;
 
 /// Why search text was refused.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
@@ -96,21 +95,14 @@ pub struct ExposureQuery {
 }
 
 /// A secret one call carried, as listed: never the secret itself.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ExposureView {
-    #[ts(as = "String")]
     pub call: CallId,
-    #[ts(as = "Option<String>")]
     pub recording: Option<RecordingId>,
-    #[ts(as = "Option<String>")]
     pub turn: Option<TurnId>,
-    #[ts(as = "Option<String>")]
     pub client: Option<Stored<Harness>>,
-    #[ts(as = "u64")]
     pub started_at: UnixMillis,
-    #[ts(as = "String")]
     pub field: Stored<SearchField>,
-    #[ts(as = "String")]
     pub kind: Stored<SecretKind>,
     pub hint: String,
     pub fingerprint: String,
@@ -118,26 +110,20 @@ pub struct ExposureView {
 }
 
 /// One matching document.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SearchHit {
-    #[ts(as = "String")]
     pub call: CallId,
-    #[ts(as = "Option<String>")]
     pub recording: Option<RecordingId>,
-    #[ts(as = "Option<String>")]
     pub turn: Option<TurnId>,
-    #[ts(as = "Option<String>")]
     pub client: Option<Stored<Harness>>,
-    #[ts(as = "u64")]
     pub started_at: UnixMillis,
-    #[ts(as = "String")]
     pub field: Stored<SearchField>,
     /// The matching text around the match, terms marked «like this».
     pub snippet: String,
 }
 
 /// Search results, and how much history the index covers.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SearchPage {
     pub hits: Vec<SearchHit>,
     /// Calls indexed: every finished call whose digest is derived.
