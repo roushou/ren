@@ -955,7 +955,7 @@ export class RunsClient {
     const path = `/control/sessions/${session}`;
     return (await this.#send('GET', path, undefined, oneSession, signal)).session;
   }
-  /** A new session in `dir` (null: a scratch folder of its own); its client starts at once. */
+  /** A new draft in `dir` (null: a scratch folder of its own); its client starts with its first prompt. */
   async createSession(
     harness: Drivable,
     dir: string | null,
@@ -986,6 +986,8 @@ export class RunsClient {
           approvals: ApprovalPolicy | null;
         }
       | { kind: 'client'; harness: Drivable }
+      /** A draft's folder; null: a new scratch folder of its own. */
+      | { kind: 'folder'; dir: string | null }
       | { kind: 'answer'; approval: ApprovalId; decision: Decision }
       | { kind: 'unqueue' | 'interrupt' | 'stop' | 'archive' | 'unarchive' | 'delete' },
   ): Promise<void> {
@@ -1008,6 +1010,13 @@ export class RunsClient {
       }
       case 'client':
         return this.#send('POST', `${base}/client`, { harness: command.harness }, null);
+      case 'folder':
+        return this.#send(
+          'POST',
+          `${base}/folder`,
+          command.dir === null ? {} : { dir: command.dir },
+          null,
+        );
       case 'answer':
         return this.#send(
           'POST',
@@ -1411,6 +1420,14 @@ export interface RunControls {
   /** The approvals waiting for an answer, oldest first. */
   approvals: Waiting[];
 }
+
+/** A session with no client running: a prompt starts one; nothing else is asked of it. */
+export const UNSTARTED: RunControls = {
+  prompt: true,
+  interrupt: false,
+  stop: false,
+  approvals: [],
+};
 
 /** How a run's state reads in the sidebar and header. */
 export interface PhaseMark {
@@ -1966,54 +1983,41 @@ export class Sessions {
   }
 
   /**
-   * A draft in `dir` (null: any scratch folder) that was never asked
-   * anything, the newest, for a new session there to reuse instead of
-   * making another; null when there is none.
+   * The newest draft never asked anything, in any folder, for a new session
+   * to reuse instead of making another (a draft's folder can change); null
+   * when there is none.
    */
-  static unused(
-    bodies: readonly SessionBody[],
-    live: readonly RunSnapshot[],
-    scratch: string | null,
-    dir: string | null,
-  ): SessionId | null {
-    const here = (workdir: string) =>
-      dir === null ? scratch !== null && workdir.startsWith(`${scratch}/`) : workdir === dir;
+  static unused(bodies: readonly SessionBody[], live: readonly RunSnapshot[]): DeskSession | null {
     const drafts = bodies
       .map((body) => Sessions.desk(body, live))
-      .filter(
-        (session): session is DeskSession =>
-          session !== null && Sessions.untouched(session) && here(session.workdir),
-      );
+      .filter((session): session is DeskSession => session !== null && Sessions.untouched(session));
     const newest = (session: DeskSession) => session.activeAt ?? Number.MAX_SAFE_INTEGER;
-    return drafts.toSorted((a, b) => newest(b) - newest(a))[0]?.session ?? null;
+    return drafts.toSorted((a, b) => newest(b) - newest(a))[0] ?? null;
   }
 
   /**
-   * How to make `session` again, a draft never asked anything that Ren
-   * discarded while it was open: its client, its folder (null: a scratch
-   * folder of its own, as it had), and the settings it had that are known
-   * here. Null for any other session, or a client Ren cannot drive.
+   * Where a new session starts: the folder of the session last active that
+   * was asked something, as a run root's or another place's folder; null
+   * for a scratch folder of its own, as the last one had or when there is
+   * none. `undefined` when neither is possible: no session to follow and no
+   * scratch folder.
    */
-  static renewal(
-    session: DeskSession,
+  static start(
+    bodies: readonly SessionBody[],
+    live: readonly RunSnapshot[],
     scratch: string | null,
-  ): {
-    harness: Drivable;
-    dir: string | null;
-    settings: { model: ModelId | null; effort: Effort | null; approvals: ApprovalPolicy | null };
-  } | null {
-    const harness = Runs.drivable(session.harness);
-    if (!Sessions.untouched(session) || !harness) return null;
-    const { model, effort, approvals } = session.settings;
-    return {
-      harness,
-      dir: scratch && session.workdir.startsWith(`${scratch}/`) ? null : session.workdir,
-      settings: {
-        model,
-        effort: EFFORTS.find((level) => level === effort) ?? null,
-        approvals: APPROVAL_POLICIES.find((policy) => policy === approvals) ?? null,
-      },
-    };
+  ): string | null | undefined {
+    const asked = bodies
+      .map((body) => Sessions.desk(body, live))
+      .filter((session): session is DeskSession => session !== null && !Sessions.untouched(session))
+      .toSorted((a, b) => (b.activeAt ?? 0) - (a.activeAt ?? 0))[0];
+    if (asked && !(scratch && Sessions.inScratch(asked.workdir, scratch))) return asked.workdir;
+    return scratch === null && !asked ? undefined : null;
+  }
+
+  /** Whether `workdir` is a scratch folder of its own, under `scratch`. */
+  static inScratch(workdir: string, scratch: string | null): boolean {
+    return scratch !== null && workdir.startsWith(`${scratch}/`);
   }
 
   /** The session one of whose runs is `run`, for links to a run. */

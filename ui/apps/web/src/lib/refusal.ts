@@ -99,6 +99,8 @@ export class Refusals {
         return 'The client could not be started; is it installed on the daemon’s host?';
       case 'models_unavailable':
         return 'The client could not list its models.';
+      case 'commands_unavailable':
+        return 'The client could not list its commands.';
       // What the run's state refuses.
       case 'starting':
         return 'The run is still opening its conversation.';
@@ -120,6 +122,8 @@ export class Refusals {
         return 'The client is not in a state to take that now.';
       case 'client_fixed':
         return 'The session has been asked something, so its client stays.';
+      case 'folder_fixed':
+        return 'The session has been asked something, so its folder stays.';
       case 'archived':
         return 'The session is archived; unarchive it first.';
       case 'not_archived':

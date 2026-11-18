@@ -140,6 +140,7 @@ impl Shown {
                 | ObservationKind::SessionCreated
                 | ObservationKind::SessionConfigured
                 | ObservationKind::SessionClientChosen
+                | ObservationKind::SessionFolderChosen
                 | ObservationKind::SessionArchived
                 | ObservationKind::SessionUnarchived
                 | ObservationKind::SessionAttached

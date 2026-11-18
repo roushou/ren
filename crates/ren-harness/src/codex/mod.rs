@@ -12,6 +12,6 @@ mod launch;
 mod profile;
 mod tools;
 
-pub use app_server::{CodexAppServer, CodexMethod, CodexModels};
+pub use app_server::{CodexAppServer, CodexCommands, CodexMethod, CodexModels};
 pub use auth::CodexAuth;
 pub use tools::CodexTool;

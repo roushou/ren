@@ -14,6 +14,7 @@
     Runs,
     RunsClient,
     Transcript,
+    UNSTARTED,
     runUpdate,
     type Decision,
     type DeskRun,
@@ -60,7 +61,7 @@
   import Markdown from 'markdown/Markdown.svelte';
   import ActionMenu, { type ActionItem } from '#lib/ActionMenu.svelte';
   import { assertNever } from '#lib/decode.ts';
-  import NewSession from './NewSession.svelte';
+  import FolderPicker from './FolderPicker.svelte';
   import SignInSheet from '#lib/SignInSheet.svelte';
   import { SignIns } from '#lib/signIn.ts';
   import RunSettingsBar from './RunSettingsBar.svelte';
@@ -143,8 +144,8 @@
     };
   });
   const runState = $derived(current ? Desk.state(current) : null);
-  const controls = $derived(runState ? Runs.controls(runState) : null);
-  const mark = $derived(runState ? Runs.mark(runState) : null);
+  /** What can be asked of it: of its client, or, with none running, a prompt. */
+  const controls = $derived(runState ? Runs.controls(runState) : session ? UNSTARTED : null);
   /**
    * How the session stands, in its header: while its client runs, when it
    * could not start, or that it is a draft. Resting, it says nothing: the
@@ -203,7 +204,6 @@
   let calls = $state.raw<{ recording: RecordingId; calls: CallView[] } | null>(null);
   /** Now, for how long ago runs started; moves every half minute. */
   let now = $state(Date.now());
-  let newSession = $state<ReturnType<typeof NewSession>>();
   let busy = $state(false);
   let notice = $state<string | null>(null);
   let conversation = $state<HTMLElement>();
@@ -413,31 +413,6 @@
     });
   }
 
-  /**
-   * The open draft, never asked anything, whose client `run` just ended
-   * resting idle: Ren discards such a draft, so once the lists no longer
-   * hold it, it is made again in the same place on the same client and
-   * settings, keeping what was written in it. A draft Ren kept (holding an
-   * image) stays as it is.
-   */
-  async function renew(run: RunId) {
-    const open = session;
-    if (!open || open.run !== run) return;
-    const plan = Sessions.renewal(open, scratch);
-    if (!plan) return;
-    const target = open.session;
-    const gone = await until(() => !listed(target, sessions) && !listed(target, archivedSessions));
-    if (!gone || chosen !== target) return;
-    await act(async () => {
-      const made = await client.createSession(plan.harness, plan.dir, plan.settings);
-      const written = drafts.get(target);
-      if (written) drafts.set(made, written);
-      drafts.delete(target);
-      await Promise.all([readSessions(), readLive()]);
-      if (chosen === target) select(made, 'replace');
-    });
-  }
-
   /** The client and settings last chosen here: a new session starts with them. */
   let remembered = $state<Remembered>(untrack(() => Memory.parse(data.remembered)));
 
@@ -447,28 +422,54 @@
     document.cookie = Memory.cookie(next);
   }
 
-  /** A session in `dir` at once (null: a scratch folder of its own), opened:
-   * on the client last chosen, with the settings kept for it that still
-   * apply; or the draft there that was never asked anything. */
-  async function create(dir: string | null) {
-    // A draft there that was never asked anything is opened instead.
-    const unused = Sessions.unused(sessions, live, scratch, dir);
-    if (unused) {
-      select(unused);
-      return;
-    }
+  /**
+   * A new session, opened with its prompt ready to write: a draft, which
+   * runs no client until its first prompt. In `dir` (null: a new scratch
+   * folder of its own), or where the last session asked something worked.
+   * A draft never asked anything is reused, moved there, rather than
+   * another made; a new one is on the client last chosen, with the settings
+   * kept for it that still apply.
+   */
+  async function newDraft(dir?: string | null) {
+    const place = dir === undefined ? Sessions.start(sessions, live, scratch) : dir;
+    const unused = Sessions.unused(sessions, live);
     await act(async () => {
-      const harness = remembered.harness;
-      // The daemon keeps each client's models; without them, the client's own.
-      const models = await client.models(harness).catch(() => []);
-      const policies = clients.find((entry) => entry.harness === harness)?.approvals ?? [];
-      const made = await client.createSession(
-        harness,
-        dir,
-        Memory.settings(remembered, harness, models, policies),
-      );
-      await Promise.all([readSessions(), readLive()]);
-      select(made);
+      if (unused) {
+        const here =
+          place === undefined ||
+          (place === null ? Sessions.inScratch(unused.workdir, scratch) : unused.workdir === place);
+        if (!here) {
+          await client.toSession(unused.session, { kind: 'folder', dir: place });
+          await readSessions();
+        }
+        select(unused.session);
+      } else {
+        const harness = remembered.harness;
+        // The daemon keeps each client's models; without them, the client's own.
+        const models = await client.models(harness).catch(() => []);
+        const policies = clients.find((entry) => entry.harness === harness)?.approvals ?? [];
+        // With no session to follow and no scratch folder, the first place offered.
+        const folder = place === undefined ? (offered[0]?.path ?? null) : place;
+        const made = await client.createSession(
+          harness,
+          folder,
+          Memory.settings(remembered, harness, models, policies),
+        );
+        await Promise.all([readSessions(), readLive()]);
+        select(made);
+      }
+      await tick();
+      composer?.focus();
+    });
+  }
+
+  /** Move the open draft to `dir` (null: a new scratch folder of its own). */
+  function moveDraft(dir: string | null) {
+    const target = chosen;
+    if (!target) return;
+    void act(async () => {
+      await client.toSession(target, { kind: 'folder', dir });
+      await readSessions();
     });
   }
 
@@ -487,8 +488,7 @@
     switch (event.key) {
       case 'n':
         event.preventDefault();
-        select(null);
-        void tick().then(() => newSession?.open());
+        void newDraft();
         break;
       case 'j':
       case 'k': {
@@ -610,7 +610,11 @@
   const mention = $derived(Mentions.at(draft, Math.min(caret, draft.length)));
   const offering = $derived(mention && mention.start !== dismissed ? mention : null);
   /** Each run's commands, as its client listed them. */
-  const commandLists = new SvelteMap<RunId, ClientCommand[]>();
+  /** Each session's commands, by its client and folder, as its client lists them. */
+  const commandLists = new SvelteMap<string, ClientCommand[]>();
+  const commandsKey = $derived(
+    session ? `${session.session} ${session.harness} ${session.workdir}` : null,
+  );
   let commandsNote = $state<string | null>(null);
   /** The newest file search's answer, with what it searched for. */
   let found = $state<{ session: SessionId; query: string; files: FileMatch[] } | null>(null);
@@ -619,23 +623,25 @@
   const menuId = 'composer-offers';
 
   $effect(() => {
-    // The run's commands, read when a word first asks for them; asked again
-    // while the client has listed none, as it lists them once it opens.
-    const run = selected;
+    // The session's commands, read as it opens, before any `/`: its running
+    // client's list, or what its client offers in its folder (listed once
+    // per client and folder by starting it briefly there). An empty list is
+    // asked again when a word asks for commands.
+    const key = commandsKey;
     const target = chosen;
+    const harness = session?.harness;
     const asking = offering?.kind === 'command' ? offering.start : null;
-    if (!run || !target || asking === null) return;
-    if ((untrack(() => commandLists.get(run))?.length ?? 0) > 0) return;
+    if (!key || !target || !harness) return;
+    const known = untrack(() => commandLists.get(key));
+    if (known && (known.length > 0 || asking === null)) return;
     commandsNote = 'Reading the commands…';
     const abort = new AbortController();
     client
       .sessionCommands(target, abort.signal)
       .then((commands) => {
-        commandLists.set(run, commands);
+        commandLists.set(key, commands);
         commandsNote =
-          commands.length > 0
-            ? null
-            : `${harnessLabel(current?.harness ?? 'codex')} lists its commands once the conversation opens.`;
+          commands.length > 0 ? null : `${harnessLabel(harness)} offers no commands here.`;
       })
       .catch((error: unknown) => {
         if (!abort.signal.aborted) commandsNote = message(error);
@@ -667,8 +673,8 @@
   });
 
   const offeredCommands = $derived(
-    offering?.kind === 'command' && selected
-      ? Mentions.commands(commandLists.get(selected) ?? [], offering)
+    offering?.kind === 'command'
+      ? Mentions.commands(commandLists.get(commandsKey ?? '') ?? [], offering)
       : [],
   );
   const offeredFiles = $derived(
@@ -985,7 +991,6 @@
           live = Runs.update(live, update);
         }
         if (update.state.phase === 'ended' || update.state.phase === 'idle') void readSessions();
-        if (update.state.phase === 'ended' && update.state.end === 'idled') void renew(update.run);
         return;
       }
       transcripts.set(
@@ -1032,7 +1037,7 @@
 
   /** The run's other actions, least risky first; destructive ones last. */
   const menu = $derived.by((): ActionItem[] => {
-    if (!current || !controls || !session) return [];
+    if (!controls || !session) return [];
     const items: ActionItem[] = [];
     const target = session.session;
     if (data.runsControl && controls.stop) {
@@ -1041,7 +1046,7 @@
         onselect: () => void act(() => client.toSession(target, { kind: 'stop' })),
       });
     }
-    const recording = current.recorded?.recording;
+    const recording = current?.recorded?.recording;
     if (recording)
       items.push({
         label: 'Open its calls',
@@ -1331,11 +1336,10 @@
         select(null);
       }}
       onselect={(next) => select(next)}
-      oncreate={(dir) => void create(dir)}
+      oncreate={(dir) => void newDraft(dir)}
       onnew={() => {
         starting = true;
-        select(null);
-        void tick().then(() => newSession?.open());
+        void newDraft();
       }}
     />
   </aside>
@@ -1349,26 +1353,24 @@
         select(null);
       }}><span class="pane-back-icon"><Icon name="chevron" size={14} /></span>Sessions</button
     >
-    {#if !current || !runState || !mark || !controls}
+    {#if !session || !controls}
       {#if data.runsControl && chosen && !session && listing === 'pending'}
         {@render sessionOutline()}
       {:else if data.runsControl}
-        {#if chosen && !session}<p class="lost muted">
-            This session is not listed. Start another below.
-          </p>{/if}
-        <NewSession
-          bind:this={newSession}
-          {offered}
-          {scratch}
-          runs={folders.flatMap((folder) =>
-            folder.sessions.map((entry) => ({
-              workdir: entry.workdir,
-              started_at: entry.runs[0]?.started_at ?? null,
-            })),
-          )}
-          {busy}
-          oncreate={(dir) => void create(dir)}
-        />
+        <div class="empty-state">
+          <h2>{chosen ? 'This session is not listed' : 'No session open'}</h2>
+          <p>
+            Open one from the list, or start a new one: write its first prompt, and its client
+            starts with it.
+          </p>
+          <button
+            class="button primary"
+            type="button"
+            disabled={busy}
+            onclick={() => void newDraft()}
+            ><Icon name="spark" size={12} />New session <kbd>n</kbd></button
+          >
+        </div>
         {#if notice}<div class="notice danger" role="alert">
             <Icon name="alert" size={14} /><span>{notice}</span>
           </div>{/if}
@@ -1387,9 +1389,9 @@
     {:else}
       <header class="run-head">
         <div class="run-heading">
-          <h2 class="run-title" title={firstPrompt(current) ?? undefined}>
-            {title({ run: current.run, asked: session?.asked }) ??
-              `New ${harnessLabel(current.harness)} session`}
+          <h2 class="run-title" title={(current && firstPrompt(current)) ?? undefined}>
+            {title({ run: current?.run ?? null, asked: session.asked }) ??
+              `New ${harnessLabel(session.harness)} session`}
           </h2>
           <p class="run-facts">
             {#if headerMark}<span class="state tone-{headerMark.tone}"
@@ -1482,13 +1484,21 @@
                 </section>
               {/each}
             {/if}
-            {#if runState.phase === 'working' && !controls.approvals.length}<div
+            {#if runState?.phase === 'working' && !controls.approvals.length}<div
                 class="entry tool muted working"
               >
                 <span class="phase-dot tone-live"></span> Working…
               </div>{/if}
-            {#if transcript?.read && !transcript.entries.length && runState.phase === 'idle'}
+            {#if transcript?.read && !transcript.entries.length && runState?.phase === 'idle'}
               <p class="quiet-empty">The conversation is open. Say what to do.</p>
+            {:else if !current}
+              <p class="quiet-empty">
+                Write the first prompt: {harnessLabel(session.harness)} starts with it, in {Runs.place(
+                  session.workdir,
+                  scratch,
+                  offered,
+                )}.
+              </p>
             {/if}
           </div>
         </div>
@@ -1517,7 +1527,7 @@
       {#if notice}<div class="notice danger" role="alert">
           <Icon name="alert" size={14} /><span>{notice}</span>
         </div>{/if}
-      {#if data.runsControl && compose && !(compose.kind === 'closed' && runState.phase === 'ended')}
+      {#if data.runsControl && compose && !(compose.kind === 'closed' && runState?.phase === 'ended')}
         {#if compose.kind === 'during' && compose.queued}
           <div class="queued" role="status">
             <span class="queued-label">After this turn</span>
@@ -1536,12 +1546,12 @@
             >
           </div>
         {/if}
-        {#if client_ && signedOut && Runs.drivable(current.harness)}
-          {@const harness = Runs.drivable(current.harness)}
+        {#if client_ && signedOut && Runs.drivable(session.harness)}
+          {@const harness = Runs.drivable(session.harness)}
           <div class="signed-out" role="status">
             <span
               ><Icon name="lock" size={12} />
-              {harnessLabel(current.harness)} is signed out on the daemon’s host, so nothing can be sent.
+              {harnessLabel(session.harness)} is signed out on the daemon’s host, so nothing can be sent.
               Signed in some other way? Check again.</span
             >
             {#if harness}
@@ -1615,14 +1625,14 @@
               heading={offering.kind === 'file'
                 ? 'Files in the run’s folder'
                 : offering.sigil === '$'
-                  ? `${harnessLabel(current.harness)} skills`
-                  : `${harnessLabel(current.harness)} commands`}
+                  ? `${harnessLabel(session.harness)} skills`
+                  : `${harnessLabel(session.harness)} commands`}
               {entries}
               {active}
               note={offering.kind === 'file'
                 ? (filesNote ?? (found ? null : 'Searching…'))
                 : (commandsNote ??
-                  ((commandLists.get(selected ?? ('' as RunId))?.length ?? 0) > 0
+                  ((commandLists.get(commandsKey ?? '')?.length ?? 0) > 0
                     ? 'No command matches.'
                     : null))}
               onpick={pick}
@@ -1658,28 +1668,43 @@
             rows="3"
             disabled={compose.kind === 'closed'}
             placeholder={signedOut
-              ? `${harnessLabel(current.harness)} is signed out. Write your prompt now; it sends once ${harnessLabel(current.harness)} is signed in.`
+              ? `${harnessLabel(session.harness)} is signed out. Write your prompt now; it sends once ${harnessLabel(session.harness)} is signed in.`
               : compose.kind === 'start'
-                ? `Ask ${harnessLabel(current.harness)} to do something. Enter sends, ↑ recalls an earlier prompt.`
+                ? `Ask ${harnessLabel(session.harness)} to do something. Enter sends, ↑ recalls an earlier prompt.`
                 : compose.kind === 'during'
                   ? compose.steer
                     ? `Enter queues for after this turn; ${navigatorKey}+Enter sends it into the turn now.`
-                    : `Enter queues for after this turn; ${harnessLabel(current.harness)} reads it then.`
+                    : `Enter queues for after this turn; ${harnessLabel(session.harness)} reads it then.`
                   : compose.kind === 'continue'
-                    ? `Write to ${harnessLabel(current.harness)} to go on.`
+                    ? `Write to ${harnessLabel(session.harness)} to go on.`
                     : compose.reason}
             aria-label="Prompt"></textarea>
           <div class="composer-bar">
-            {#if Runs.drivable(current.harness) && client_ && session}
+            {#if session.phase === 'draft' && session.shelf === 'open'}
+              <FolderPicker
+                workdir={session.workdir}
+                {offered}
+                {scratch}
+                runs={folders.flatMap((folder) =>
+                  folder.sessions.map((entry) => ({
+                    workdir: entry.workdir,
+                    started_at: entry.runs[0]?.started_at ?? null,
+                  })),
+                )}
+                disabled={busy ? 'Waiting for the last change' : null}
+                onchange={moveDraft}
+              />
+            {/if}
+            {#if Runs.drivable(session.harness) && client_}
               <RunSettingsBar
-                harness={Runs.drivable(current.harness) ?? 'codex'}
+                harness={Runs.drivable(session.harness) ?? 'codex'}
                 settings={session.settings}
                 midway={Sessions.running(session) ? client_.midway : MIDWAY}
                 approvals={client_.approvals}
                 listModels={(harness) => client.models(harness)}
                 {busy}
                 onchange={(settings) => {
-                  const harness = Runs.drivable(current.harness);
+                  const harness = Runs.drivable(session.harness);
                   if (harness) remember(Memory.set(remembered, harness, settings));
                   if (chosen)
                     void act(async () => {
@@ -1743,13 +1768,13 @@
                   title="Add it to the turn that is running"
                   onclick={() => void send('steer')}>Send now</button
                 >{/if}
-              {#if signedOut && Runs.drivable(current.harness) && (client_?.sign_in_methods.length ?? 0) > 0}
+              {#if signedOut && Runs.drivable(session.harness) && (client_?.sign_in_methods.length ?? 0) > 0}
                 <!-- Signed out: the one action that leads on is signing in. -->
                 <button
                   class="button primary"
                   type="button"
-                  onclick={() => (signingIn = Runs.drivable(current.harness))}
-                  ><Icon name="lock" size={12} />Sign in to {harnessLabel(current.harness)}</button
+                  onclick={() => (signingIn = Runs.drivable(session.harness))}
+                  ><Icon name="lock" size={12} />Sign in to {harnessLabel(session.harness)}</button
                 >
               {:else}
                 <button
@@ -1759,7 +1784,7 @@
                     tray.uploading() ||
                     compose.kind === 'closed' ||
                     signedOut}
-                  title={signedOut ? `Sign ${harnessLabel(current.harness)} in to send` : null}
+                  title={signedOut ? `Sign ${harnessLabel(session.harness)} in to send` : null}
                   >{compose.kind === 'during'
                     ? 'Queue'
                     : compose.kind === 'continue'

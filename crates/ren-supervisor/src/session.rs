@@ -2,10 +2,11 @@
 //! out, active after, and archived when the operator shelves it. Pure: the
 //! supervisor applies each input and carries out what it returns.
 //!
-//! A session is not its process. Its client starts, idles, and ends any
-//! number of times (`run`); the session goes on until it is archived, and
-//! comes back when it is written to again. A draft whose client stops after
-//! resting idle, never asked anything and holding nothing, is discarded.
+//! A session is not its process. Its client starts with its first prompt,
+//! idles, and ends any number of times (`run`); the session goes on until
+//! it is archived, and comes back when it is written to again. A draft runs
+//! no client until it is asked something, and its client and folder can
+//! change until then.
 
 use crate::attachments::Attached;
 use crate::files::FileListing;
@@ -17,7 +18,6 @@ use ren_harness::prompt::Prompt;
 use ren_harness::settings::RunSettings;
 use ren_protocol::native::NativeThreadId;
 use ren_recorder::batch::SessionFact;
-use ren_recorder::capture::RunEnd;
 use ren_recorder::id::{RunId, SessionId};
 use serde_with::{DeserializeFromStr, SerializeDisplay};
 use strum::{Display, EnumString, IntoStaticStr, VariantArray};
@@ -48,20 +48,12 @@ pub enum SessionState {
 pub enum SessionInput {
     /// The operator chose the client it works with.
     ChooseClient(Harness),
+    /// The operator chose the folder it works in.
+    ChooseFolder,
     /// A prompt went out to its client.
     Prompted,
     Archive,
     Unarchive,
-    /// Its client stopped after resting idle, holding what it holds.
-    Idled(Holding),
-}
-
-/// Whether a session holds anything of the operator's besides its
-/// settings: an image uploaded to it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Holding {
-    Nothing,
-    Attachments,
 }
 
 /// The operator shelving a session, or taking it back.
@@ -85,12 +77,11 @@ impl Shelving {
 pub enum SessionAction {
     /// Run with this client from its first process on.
     UseClient(Harness),
+    /// Work in the folder chosen from its first process on.
+    UseFolder,
     /// End the client process serving the session, if one runs: nothing is
     /// served while it is shelved.
     StopProcess,
-    /// Delete it: a draft left before it was asked anything, holding
-    /// nothing, is not kept.
-    Discard,
 }
 
 /// Why an input was refused in the session's state.
@@ -98,6 +89,8 @@ pub enum SessionAction {
 pub enum SessionRefused {
     #[error("the session's client is fixed once a prompt went out")]
     ClientFixed,
+    #[error("the session's folder is fixed once a prompt went out")]
+    FolderFixed,
     #[error("the session is archived")]
     Archived,
     #[error("the session is not archived")]
@@ -120,21 +113,6 @@ impl SessionState {
         Self::Open(SessionPhase::Active)
     }
 
-    /// Its client stopped after resting idle, holding `holding`. Every
-    /// session takes that; a draft never asked anything and holding nothing
-    /// is discarded.
-    pub fn idled(self, holding: Holding) -> (Self, Vec<SessionAction>) {
-        match (self, holding) {
-            (Self::Open(SessionPhase::Draft), Holding::Nothing) => {
-                (self, vec![SessionAction::Discard])
-            }
-            // Asked something, holding an image, or shelved by the
-            // operator, it is kept: its next prompt starts a client again.
-            (Self::Open(SessionPhase::Draft), Holding::Attachments)
-            | (Self::Open(SessionPhase::Active) | Self::Archived(_), _) => (self, Vec::new()),
-        }
-    }
-
     /// The state after `input`, and what to do for it.
     pub fn apply(self, input: SessionInput) -> Result<(Self, Vec<SessionAction>), SessionRefused> {
         match (self, input) {
@@ -145,6 +123,13 @@ impl SessionState {
                 Err(SessionRefused::ClientFixed)
             }
             (Self::Archived(_), SessionInput::ChooseClient(_)) => Err(SessionRefused::Archived),
+            (Self::Open(SessionPhase::Draft), SessionInput::ChooseFolder) => {
+                Ok((self, vec![SessionAction::UseFolder]))
+            }
+            (Self::Open(SessionPhase::Active), SessionInput::ChooseFolder) => {
+                Err(SessionRefused::FolderFixed)
+            }
+            (Self::Archived(_), SessionInput::ChooseFolder) => Err(SessionRefused::Archived),
             // Written to, a session is current again, as a recording with
             // new traffic is.
             (Self::Open(_) | Self::Archived(_), SessionInput::Prompted) => {
@@ -156,9 +141,6 @@ impl SessionState {
             (Self::Archived(_), SessionInput::Archive) => Err(SessionRefused::Archived),
             (Self::Archived(phase), SessionInput::Unarchive) => Ok((Self::Open(phase), Vec::new())),
             (Self::Open(_), SessionInput::Unarchive) => Err(SessionRefused::NotArchived),
-            (Self::Open(_) | Self::Archived(_), SessionInput::Idled(holding)) => {
-                Ok(self.idled(holding))
-            }
         }
     }
 }
@@ -180,8 +162,6 @@ pub(crate) enum SessionEffect {
     StopProcess,
     /// Start a process for it, sent `first` once its conversation opens.
     StartProcess { first: Option<Prompt> },
-    /// Stop serving it and delete it.
-    Discard,
 }
 
 /// How many turns of a session ended: a folder walk begun before a turn
@@ -273,6 +253,10 @@ impl Session {
         self.harness
     }
 
+    pub(crate) fn workdir(&self) -> &Workdir {
+        &self.workdir
+    }
+
     pub(crate) fn process(&self) -> Option<RunId> {
         self.process
     }
@@ -351,8 +335,9 @@ impl Session {
         Ok(effects)
     }
 
-    /// The operator chose a draft's client: its process goes, with its
-    /// conversation and settings, and one of the new client starts.
+    /// The operator chose a draft's client: any process of the old one
+    /// goes, with its conversation and settings; the new client starts with
+    /// the first prompt.
     pub(crate) fn choose_client(
         &mut self,
         harness: Harness,
@@ -364,6 +349,29 @@ impl Session {
             .map_err(SessionError::Refused)?;
         let mut effects = Self::recording(Some(SessionFact::ClientChosen { harness }), room)?;
         self.state = state;
+        effects.extend(self.act(actions));
+        Ok(effects)
+    }
+
+    /// The operator chose a draft's folder: any process goes, with its
+    /// conversation and its folder's listing; the next starts there.
+    pub(crate) fn choose_folder(
+        &mut self,
+        workdir: Workdir,
+        room: Room,
+    ) -> Result<Vec<SessionEffect>, SessionError> {
+        let (state, actions) = self
+            .state
+            .apply(SessionInput::ChooseFolder)
+            .map_err(SessionError::Refused)?;
+        let mut effects = Self::recording(
+            Some(SessionFact::FolderChosen {
+                workdir: workdir.as_str().to_owned(),
+            }),
+            room,
+        )?;
+        self.state = state;
+        self.workdir = workdir;
         effects.extend(self.act(actions));
         Ok(effects)
     }
@@ -386,28 +394,6 @@ impl Session {
         self.state = state;
         effects.extend(self.act(actions));
         Ok(effects)
-    }
-
-    /// Process `run` ended as `end`. Its newest, ended for resting idle:
-    /// a draft never asked anything and holding nothing is discarded.
-    pub(crate) fn process_ended(&mut self, run: RunId, end: RunEnd) -> Vec<SessionEffect> {
-        match (self.process == Some(run), end) {
-            (true, RunEnd::Idled) => {
-                let (state, actions) = self.state.idled(self.attached.holding());
-                self.state = state;
-                self.act(actions)
-            }
-            (
-                true | false,
-                RunEnd::SpawnFailed
-                | RunEnd::OpenRefused
-                | RunEnd::Exited
-                | RunEnd::Stopped
-                | RunEnd::Drained
-                | RunEnd::Recovered
-                | RunEnd::Idled,
-            ) => Vec::new(),
-        }
     }
 
     /// A turn started in its process: the conversation that process
@@ -459,18 +445,21 @@ impl Session {
             .into_iter()
             .flat_map(|action| match action {
                 SessionAction::UseClient(harness) => {
-                    // The old client's process goes, with its conversation
-                    // and settings; one of the new client starts.
+                    // Any process of the old client goes, with its
+                    // conversation and settings.
                     self.harness = harness;
                     self.settings = RunSettings::default();
                     self.thread = None;
-                    vec![
-                        SessionEffect::StopProcess,
-                        SessionEffect::StartProcess { first: None },
-                    ]
+                    vec![SessionEffect::StopProcess]
+                }
+                SessionAction::UseFolder => {
+                    // The folder is set by the caller; any process and
+                    // conversation of the old one go.
+                    self.thread = None;
+                    self.files = None;
+                    vec![SessionEffect::StopProcess]
                 }
                 SessionAction::StopProcess => vec![SessionEffect::StopProcess],
-                SessionAction::Discard => vec![SessionEffect::Discard],
             })
             .collect()
     }
@@ -545,37 +534,6 @@ mod tests {
     }
 
     #[test]
-    fn a_draft_left_idle_holding_nothing_is_discarded_and_any_other_kept() {
-        assert_eq!(
-            SessionState::NEW.apply(SessionInput::Idled(Holding::Nothing)),
-            Ok((SessionState::NEW, vec![SessionAction::Discard]))
-        );
-        let kept = [
-            (SessionState::NEW, Holding::Attachments),
-            (SessionState::Open(SessionPhase::Active), Holding::Nothing),
-            (
-                SessionState::Open(SessionPhase::Active),
-                Holding::Attachments,
-            ),
-            (
-                SessionState::Archived(SessionPhase::Draft),
-                Holding::Nothing,
-            ),
-            (
-                SessionState::Archived(SessionPhase::Active),
-                Holding::Nothing,
-            ),
-        ];
-        for (state, holding) in kept {
-            assert_eq!(
-                state.apply(SessionInput::Idled(holding)),
-                Ok((state, Vec::new())),
-                "{state:?} holding {holding:?}"
-            );
-        }
-    }
-
-    #[test]
     fn writing_to_an_archived_session_brings_it_back_active() {
         let state = after(
             SessionState::NEW,
@@ -591,12 +549,6 @@ mod served {
     use crate::files::{FoundPath, PathKind};
     use crate::workdir::{Bounds, Roots};
     use std::path::PathBuf;
-
-    fn run(n: u128) -> RunId {
-        RunId::restore(uuid::Uuid::from_u128(
-            0x0190_f3a0_0000_7000_8000_0000_0000_0000 | n,
-        ))
-    }
 
     fn draft() -> Session {
         let bounds = Bounds::new(
@@ -652,7 +604,47 @@ mod served {
     }
 
     #[test]
-    fn choosing_a_client_resets_what_the_old_one_had_and_starts_the_new_one() {
+    fn choosing_a_draft_folder_moves_it_and_starts_nothing() {
+        let mut session = draft();
+        session.turn_started(Some(NativeThreadId::new(uuid::Uuid::from_u128(7)).unwrap()));
+        let bounds = Bounds::new(
+            Roots::new(vec![PathBuf::from("/work")]).unwrap(),
+            Vec::new(),
+            None,
+            None,
+        )
+        .unwrap();
+        let elsewhere = Workdir::confirm(&bounds, PathBuf::from("/work/other")).unwrap();
+        let effects = session
+            .choose_folder(elsewhere.clone(), Room::Recordable)
+            .unwrap();
+        assert!(matches!(
+            effects.as_slice(),
+            [
+                SessionEffect::Record(SessionFact::FolderChosen { workdir }),
+                SessionEffect::StopProcess,
+            ] if workdir == "/work/other"
+        ));
+        let launch = session.launch(None);
+        assert_eq!(launch.workdir, elsewhere);
+        assert_eq!(
+            launch.resume, None,
+            "the old folder's conversation stays there"
+        );
+        assert!(matches!(
+            session.choose_folder(elsewhere.clone(), Room::Full),
+            Err(SessionError::Unrecorded)
+        ));
+        // Once asked something, its folder is fixed.
+        session.prompted(Room::Recordable).unwrap();
+        assert!(matches!(
+            session.choose_folder(elsewhere, Room::Recordable),
+            Err(SessionError::Refused(SessionRefused::FolderFixed))
+        ));
+    }
+
+    #[test]
+    fn choosing_a_client_resets_what_the_old_one_had_and_starts_nothing() {
         let mut session = draft();
         session.turn_started(Some(NativeThreadId::new(uuid::Uuid::from_u128(7)).unwrap()));
         session.took(RunSettings {
@@ -670,7 +662,6 @@ mod served {
                     harness: Harness::Pi
                 }),
                 SessionEffect::StopProcess,
-                SessionEffect::StartProcess { first: None }
             ]
         ));
         let launch = session.launch(None);
@@ -683,23 +674,6 @@ mod served {
             session.choose_client(Harness::Codex, Room::Recordable),
             Err(SessionError::Refused(SessionRefused::ClientFixed))
         ));
-    }
-
-    #[test]
-    fn only_its_newest_process_resting_idle_discards_an_unused_draft() {
-        let mut session = draft();
-        session.started(run(1));
-        session.started(run(2));
-        assert!(session.process_ended(run(1), RunEnd::Idled).is_empty());
-        assert!(session.process_ended(run(2), RunEnd::Stopped).is_empty());
-        assert!(matches!(
-            session.process_ended(run(2), RunEnd::Idled).as_slice(),
-            [SessionEffect::Discard]
-        ));
-        let mut asked = draft();
-        asked.started(run(3));
-        asked.prompted(Room::Recordable).unwrap();
-        assert!(asked.process_ended(run(3), RunEnd::Idled).is_empty());
     }
 
     #[test]

@@ -14,7 +14,10 @@
 use super::{ControlApi, ControlRefusal};
 use axum::{
     Json, Router,
-    extract::{Path, State, rejection::JsonRejection},
+    extract::{
+        Path, Query, State,
+        rejection::{JsonRejection, QueryRejection},
+    },
     response::{
         IntoResponse, Response,
         sse::{Event, KeepAlive, Sse},
@@ -30,7 +33,8 @@ use ren_harness::{
     settings::{ApprovalPolicy, Effort, RunSettings},
 };
 use ren_supervisor::{
-    CommandError, ModelsError, RunRefused, RunSnapshot, StartError, Supervisor, WorkdirError,
+    CommandError, CommandsError, ListingError, RunRefused, RunSnapshot, StartError, StartPlace,
+    Supervisor, WorkdirError,
 };
 use std::{convert::Infallible, sync::Arc, time::Duration};
 use tokio::sync::broadcast::error::RecvError;
@@ -45,6 +49,14 @@ pub(super) struct FilesRequest {
     pub(super) q: String,
     #[serde(default)]
     pub(super) limit: Option<usize>,
+}
+
+/// Which folder's commands to list: `dir`, or the scratch folder.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct CommandsRequest {
+    #[serde(default)]
+    pub(super) dir: Option<String>,
 }
 
 impl FilesRequest {
@@ -153,6 +165,10 @@ impl RunsApi {
             .route("/control/v1/runs/projects", get(Self::projects))
             .route("/control/v1/runs/clients", get(Self::clients))
             .route(
+                "/control/v1/runs/clients/{harness}/commands",
+                get(Self::client_commands),
+            )
+            .route(
                 "/control/v1/runs/clients/{harness}/models",
                 get(Self::models),
             )
@@ -239,7 +255,7 @@ impl RunsApi {
         let harness = harness
             .parse::<Harness>()
             .map_err(|_| ControlRefusal::NotFound)?;
-        let unlisted = |error: ModelsError| {
+        let unlisted = |error: ListingError| {
             ControlRefusal::ModelsUnavailable.explained(Some(error.to_string()))
         };
         Ok(match supervisor.models(harness).await {
@@ -249,15 +265,60 @@ impl RunsApi {
                 "models": models,
             }))
             .into_response(),
-            Err(ModelsError::NoRoot) => ControlRefusal::RunsDisabled.into_response(),
-            Err(ModelsError::Gone) => ControlRefusal::Unavailable.into_response(),
+            Err(ListingError::NoRoot) => ControlRefusal::RunsDisabled.into_response(),
+            Err(ListingError::Gone) => ControlRefusal::Unavailable.into_response(),
             Err(
-                error @ (ModelsError::Spawn
-                | ModelsError::Refused(_)
-                | ModelsError::Exited
-                | ModelsError::TimedOut),
+                error @ (ListingError::Spawn
+                | ListingError::Refused(_)
+                | ListingError::Exited
+                | ListingError::TimedOut),
             ) => unlisted(error),
         })
+    }
+
+    /// What `harness` offers a prompt in a folder (`dir`, or scratch),
+    /// with no session: as the installed client last listed it there, or
+    /// listed now by starting it briefly in that folder.
+    async fn client_commands(
+        State(api): Api,
+        headers: HeaderMap,
+        Path(harness): Path<String>,
+        query: Result<Query<CommandsRequest>, QueryRejection>,
+    ) -> Result<Response, ControlRefusal> {
+        let supervisor = api.admit(&headers)?;
+        let harness = harness
+            .parse::<Harness>()
+            .map_err(|_| ControlRefusal::NotFound)?;
+        let Query(request) = query.map_err(|_| ControlRefusal::InvalidRequest)?;
+        let place = match request.dir {
+            Some(dir) => StartPlace::Folder(dir),
+            None => StartPlace::Scratch,
+        };
+        Ok(match supervisor.client_commands(harness, place).await {
+            Ok(commands) => Self::commands_body(commands),
+            Err(error) => Self::commands_refused(error),
+        })
+    }
+
+    /// Why commands could not be read, as the API answers it.
+    pub(super) fn commands_refused(error: CommandsError) -> Response {
+        match error {
+            CommandsError::NoSuchSession(_) => ControlRefusal::NotFound.into_response(),
+            CommandsError::Place(error) => ControlRefusal::from(error).into_response(),
+            CommandsError::NotInstalled(_) => ControlRefusal::NotInstalled.into_response(),
+            CommandsError::Listing(ListingError::NoRoot) => {
+                ControlRefusal::RunsDisabled.into_response()
+            }
+            CommandsError::Listing(ListingError::Gone) | CommandsError::Gone => {
+                ControlRefusal::Unavailable.into_response()
+            }
+            CommandsError::Listing(
+                error @ (ListingError::Spawn
+                | ListingError::Refused(_)
+                | ListingError::Exited
+                | ListingError::TimedOut),
+            ) => ControlRefusal::CommandsUnavailable.explained(Some(error.to_string())),
+        }
     }
 
     /// The answer listing `commands`, each with what a prompt writes to run it.

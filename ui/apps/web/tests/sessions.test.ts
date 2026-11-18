@@ -159,61 +159,39 @@ test('a session is named by what it was first asked, as stored', async () => {
   assert.equal(b!.asked, null);
 });
 
-test('a new session reuses the draft in its folder that was never asked anything', async () => {
+test('a new session reuses the newest draft never asked anything, in any folder', async () => {
   const bodies = await sessions();
-  // acme's draft (never prompted) is reused; scratch's served draft too.
-  assert.equal(Sessions.unused(bodies, [], '/scratch', '/work/acme'), sessionB);
-  assert.equal(Sessions.unused(bodies, [], '/scratch', null), sessionC);
-  // Another folder has none, and without scratch no scratch draft is offered.
-  assert.equal(Sessions.unused(bodies, [], '/scratch', '/work/other'), null);
-  assert.equal(Sessions.unused(bodies, [], null, null), null);
-  // An archived draft is not reused.
-  const archived = bodies.map((body) =>
+  // The served draft not yet stored is the newest; acme's stored one is next.
+  assert.equal(Sessions.unused(bodies, [])?.session, sessionC);
+  const withoutC = bodies.filter((body) => body.session !== sessionC);
+  assert.equal(Sessions.unused(withoutC, [])?.session, sessionB);
+  // An archived draft is not reused, nor a session asked something.
+  const archived = withoutC.map((body) =>
     body.session === sessionB && body.stored
       ? { ...body, stored: { ...body.stored, archived_at: 1 as never } }
       : body,
   );
-  assert.equal(Sessions.unused(archived, [], '/scratch', '/work/acme'), null);
+  assert.equal(Sessions.unused(archived, []), null);
 });
 
-test('a draft never asked anything is made again where it was, with its known settings', async () => {
+test('a new session starts where the last session asked something worked', async () => {
   const bodies = await sessions();
-  const desk = (id: SessionId, edit: (body: SessionBody) => SessionBody = (body) => body) =>
-    Sessions.desk(edit(bodies.find((body) => body.session === id)!), [])!;
-  // In its folder, on its client.
-  assert.deepEqual(Sessions.renewal(desk(sessionB), '/scratch'), {
-    harness: 'claude_code',
-    dir: '/work/acme',
-    settings: { model: null, effort: null, approvals: null },
-  });
-  // A scratch draft gets a scratch folder of its own again.
-  assert.equal(Sessions.renewal(desk(sessionC), '/scratch')?.dir, null);
-  assert.equal(Sessions.renewal(desk(sessionC), null)?.dir, '/scratch/scratch-1');
-  // Its settings, those known here.
-  const configured = desk(sessionC, (body) => ({
-    ...body,
-    served: body.served && {
-      ...body.served,
-      settings: {
-        model: 'pi-fast' as never,
-        effort: 'later_level' as never,
-        approvals: 'edits',
-      },
-    },
-  }));
-  assert.deepEqual(Sessions.renewal(configured, '/scratch')?.settings, {
-    model: 'pi-fast',
-    effort: null,
-    approvals: 'edits',
-  });
-  // Not a session that was asked something, nor an archived draft.
-  assert.equal(Sessions.renewal(desk(sessionA), '/scratch'), null);
-  const archived = desk(sessionB, (body) => ({
-    ...body,
-    stored: body.stored && { ...body.stored, archived_at: 1 as never },
-  }));
-  assert.equal(Sessions.untouched(archived), false);
-  assert.equal(Sessions.renewal(archived, '/scratch'), null);
+  // acme's session was asked something; the drafts were not.
+  assert.equal(Sessions.start(bodies, [], '/scratch'), '/work/acme');
+  const drafts = bodies.filter((body) => body.session !== sessionA);
+  // With none asked anything: a scratch folder of its own, where there is scratch.
+  assert.equal(Sessions.start(drafts, [], '/scratch'), null);
+  assert.equal(Sessions.start(drafts, [], null), undefined);
+  // The last one asked worked in scratch: a scratch folder of its own again.
+  const inScratch = bodies.map((body) =>
+    body.session === sessionA && body.stored
+      ? { ...body, stored: { ...body.stored, workdir: '/scratch/scratch-9' } }
+      : body,
+  );
+  assert.equal(Sessions.start(inScratch, [], '/scratch'), null);
+  assert.equal(Sessions.inScratch('/scratch/scratch-9', '/scratch'), true);
+  assert.equal(Sessions.inScratch('/scratch', '/scratch'), false);
+  assert.equal(Sessions.inScratch('/work/acme', null), false);
 });
 
 test('a run leads to its session', async () => {

@@ -245,7 +245,7 @@ impl ClaudeStreamJson {
     }
 
     /// The commands in Claude Code's answer to `initialize`.
-    fn listed(answer: &Value) -> Vec<ClientCommand> {
+    pub(crate) fn listed(answer: &Value) -> Vec<ClientCommand> {
         answer
             .get("commands")
             .and_then(Value::as_array)
@@ -1025,6 +1025,41 @@ impl ClaudeStreamJson {
 /// Claude Code's answer to `initialize`. The listing keeps no session.
 #[derive(Debug)]
 pub struct ClaudeModels;
+
+/// A listing process's side of `claude -p` for a folder's commands: its
+/// answer to `initialize` lists them, Claude Code's own and those of the
+/// folder it runs in.
+#[derive(Debug)]
+pub struct ClaudeCommands;
+
+impl ClaudeCommands {
+    const REQUEST: &'static str = "ren-commands";
+
+    /// The codec, and the first line to send.
+    pub fn open() -> (Self, Line) {
+        let line = Line::json(&json!({
+            "type": "control_request",
+            "request_id": Self::REQUEST,
+            "request": { "subtype": "initialize" },
+        }));
+        (Self, line)
+    }
+
+    pub(crate) fn receive(&mut self, message: &Value) -> Listing<Vec<ClientCommand>> {
+        let response = &message["response"];
+        let answers = message.get("type").and_then(Value::as_str) == Some("control_response")
+            && response.get("request_id").and_then(Value::as_str) == Some(Self::REQUEST);
+        if !answers {
+            return Listing::waiting();
+        }
+        if response.get("subtype").and_then(Value::as_str) != Some("success") {
+            return Listing::Failed(
+                ModelListing::text(response, "error").unwrap_or_else(|| "refused".into()),
+            );
+        }
+        Listing::Listed(ClaudeStreamJson::listed(&response["response"]))
+    }
+}
 
 impl ClaudeModels {
     const REQUEST: &'static str = "ren-models";

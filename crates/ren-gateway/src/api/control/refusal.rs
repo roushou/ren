@@ -62,6 +62,8 @@ pub enum ControlRefusal {
     SpawnFailed,
     /// The client's model listing failed.
     ModelsUnavailable,
+    /// The client's command listing failed.
+    CommandsUnavailable,
 
     // Runs and sessions: what the run's state refuses.
     Starting,
@@ -78,6 +80,7 @@ pub enum ControlRefusal {
     /// The client's protocol is not in a state to take it.
     Protocol,
     ClientFixed,
+    FolderFixed,
     Archived,
     NotArchived,
     NoProcess,
@@ -143,6 +146,7 @@ impl ControlRefusal {
             | Self::NoImages
             | Self::Protocol
             | Self::ClientFixed
+            | Self::FolderFixed
             | Self::Archived
             | Self::NotArchived
             | Self::NoProcess
@@ -171,7 +175,9 @@ impl ControlRefusal {
             | Self::AttachmentStorage
             | Self::ToolsFailed => StatusCode::INTERNAL_SERVER_ERROR,
             Self::ToolsUnsupported => StatusCode::NOT_IMPLEMENTED,
-            Self::SpawnFailed | Self::ModelsUnavailable => StatusCode::BAD_GATEWAY,
+            Self::SpawnFailed | Self::ModelsUnavailable | Self::CommandsUnavailable => {
+                StatusCode::BAD_GATEWAY
+            }
             Self::Unavailable
             | Self::Unrecorded
             | Self::BackupIncomplete

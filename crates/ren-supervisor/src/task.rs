@@ -13,12 +13,13 @@
 
 use crate::attachments::{AttachmentFolders, AttachmentUse};
 use crate::host::Scratch;
+use crate::listing::{CommandKey, ListingError, ListingProbe, ListingReply, Listings};
 use crate::login::{SignInError, SignIns, StatusCheck};
-use crate::models::{Listings, ModelProbe, ModelsError, ModelsReply};
 use crate::process::{Process, ProcessEffect, Rest, Serving};
 use crate::{
-    Create, IdleStop, Places, Reply, Request, RunSnapshot, RunUpdate, SessionError, SessionRequest,
-    SessionSeed, SessionSnapshot, SignInRequest, StartError, StartPlace, Warmup,
+    CommandsAsked, CommandsError, Create, IdleStop, Places, Reply, Request, RunSnapshot, RunUpdate,
+    SessionError, SessionRequest, SessionSeed, SessionSnapshot, SignInRequest, StartError,
+    StartPlace, Warmup,
     client::{Client, ClientStatus},
     files::{FileListing, FileMatch, FileQuery, FoundPath},
     host::{AgentHost, AgentProcess, KillSwitch},
@@ -36,10 +37,11 @@ use ren_harness::sign_in::Console;
 use ren_harness::{
     Harness,
     attachment::{Attachment, Limits, NotAccepted, Offer},
+    commands::{ClientCommand, CommandListing},
     drive::{Driver, Opening},
     endpoint::GatewayEndpoint,
     lines::{Framed, Line, LineLimit, Lines},
-    models::{DefaultChoice, ModelId, ModelListing},
+    models::{DefaultChoice, Model, ModelId, ModelListing},
     prompt::{Prompt, PromptImage},
     settings::{ApprovalPolicy, Midway, RunSettings},
 };
@@ -47,11 +49,11 @@ use ren_protocol::label::Labeled;
 use ren_protocol::native::NativeThreadId;
 use ren_recorder::{
     Recorder, RunSession, RunTap, SessionSlot,
-    batch::{Actor, HistoryChange, HistorySubject, SessionFact},
+    batch::SessionFact,
     id::{AttachmentId, IdSource, RunId, SessionId},
 };
 use std::{
-    collections::{BTreeMap, BTreeSet, HashMap},
+    collections::{BTreeMap, HashMap},
     sync::Arc,
 };
 use tokio::{
@@ -83,6 +85,11 @@ pub struct SupervisorTask<H> {
 /// carry out what it says.
 struct Live {
     process: Process,
+    /// Where what its client lists is kept: the installed client and the
+    /// folder it runs in; `None` when the client was not found.
+    book: Option<CommandKey>,
+    /// The commands last kept from it, so each list is kept once.
+    booked: Vec<ClientCommand>,
     /// Lines queued for its stdin; `None` once its stdin is closed.
     stdin: Option<mpsc::Sender<Line>>,
     kill: Option<KillSwitch>,
@@ -146,11 +153,11 @@ struct Served {
     /// The default model each client listed, for a client that is started
     /// on it by name when none is chosen.
     defaults: HashMap<Harness, ModelId>,
-    /// Unused drafts Ren discarded: the store may still hold one until the
-    /// recorder reaches its delete, and it is not served again from there.
-    discarded: BTreeSet<SessionId>,
     /// Each client's models, listed or being listed.
-    listings: Listings,
+    listings: Listings<Harness, Vec<Model>>,
+    /// What each installed client offers in each folder: kept from its
+    /// runs, or listed by starting it briefly there.
+    commands: Listings<CommandKey, Vec<ClientCommand>, CommandsError>,
     /// Each client's sign-in, and the checks and logins running.
     sign_ins: SignIns,
     /// Who asked for the clients while sign-in checks were running.
@@ -206,6 +213,7 @@ impl<H: AgentHost> SupervisorTask<H> {
                             let effects = live.process.receive(frame);
                             turned.extend(self.carry_out(live, effects, &mut served.idles));
                         }
+                        Self::book(live, &mut served.commands);
                         let (session, harness) = (live.process.session(), live.process.harness());
                         let failed = Self::turned(served.sessions.get_mut(&session), turned);
                         // A failed turn may be a sign-in that ran out:
@@ -223,7 +231,13 @@ impl<H: AgentHost> SupervisorTask<H> {
                     {
                         served.defaults.insert(harness, listed.id.clone());
                     }
-                    served.listings.finish(harness, outcome);
+                    // A client that lists no models (not signed in yet) is
+                    // asked again next time.
+                    served.listings.finish(harness, outcome, |models| !models.is_empty());
+                }
+                Some((key, outcome)) = served.commands.running.next(), if !served.commands.running.is_empty() => {
+                    // A folder whose client lists no commands is kept too.
+                    served.commands.finish(key, outcome, |_| true);
                 }
                 Some((harness, state)) = served.sign_ins.checks.next(), if !served.sign_ins.checks.is_empty() => {
                     served.sign_ins.checked(harness, state);
@@ -272,7 +286,6 @@ impl<H: AgentHost> SupervisorTask<H> {
                         let effects = live.process.exited(exit);
                         self.carry_out(live, effects, &mut served.idles);
                     }
-                    self.ended(run, &mut served).await;
                 }
                 else => break,
             }
@@ -321,6 +334,7 @@ impl<H: AgentHost> SupervisorTask<H> {
             Request::Models { harness, reply } => {
                 self.models(harness, reply, &mut served.listings);
             }
+            Request::Commands { asked, reply } => self.commands(asked, reply, served),
             Request::List { reply } => {
                 let _ = reply.send(
                     served
@@ -551,6 +565,8 @@ impl<H: AgentHost> SupervisorTask<H> {
                 let (process, effects) = Process::unstarted(serving);
                 let mut live = Live {
                     process,
+                    book: None,
+                    booked: Vec::new(),
                     stdin: None,
                     kill: None,
                     tap: Some(tap),
@@ -573,8 +589,18 @@ impl<H: AgentHost> SupervisorTask<H> {
                 .boxed(),
         );
         let (process, effects) = Process::opening(serving, codec, opening_lines, first);
+        let book = self
+            .host
+            .client_stamp(harness.profile().program, &tools)
+            .map(|stamp| CommandKey {
+                harness,
+                stamp,
+                folder: workdir.as_path().to_path_buf(),
+            });
         let mut live = Live {
             process,
+            book,
+            booked: Vec::new(),
             stdin: Some(queue),
             kill: Some(kill),
             tap: Some(tap),
@@ -615,8 +641,8 @@ impl<H: AgentHost> SupervisorTask<H> {
     }
 
     /// Carry out `serving`'s effects, with the slot its fact records in
-    /// (each change records at most one), and serve it again unless it was
-    /// discarded. A process it started, or why it did not start.
+    /// (each change records at most one), and serve it again. A process it
+    /// started, or why it did not start.
     async fn carry_out_session(
         &self,
         session: SessionId,
@@ -626,7 +652,6 @@ impl<H: AgentHost> SupervisorTask<H> {
         served: &mut Served,
     ) -> Option<Result<RunId, StartError>> {
         let mut started = None;
-        let mut discard = false;
         for effect in effects {
             match effect {
                 SessionEffect::Record(fact) => match slot.take() {
@@ -649,18 +674,10 @@ impl<H: AgentHost> SupervisorTask<H> {
                         .await,
                     );
                 }
-                SessionEffect::Discard => discard = true,
             }
         }
-        let kept = if discard {
-            self.discard(session, serving, served)
-        } else {
-            Some(serving)
-        };
-        if let Some(serving) = kept {
-            self.publish_session(session, &serving);
-            served.sessions.insert(session, serving);
-        }
+        self.publish_session(session, &serving);
+        served.sessions.insert(session, serving);
         started
     }
 
@@ -687,6 +704,13 @@ impl<H: AgentHost> SupervisorTask<H> {
                 reply,
             } => {
                 let _ = reply.send(self.choose_client(session, harness, served).await);
+            }
+            SessionRequest::ChooseFolder {
+                session,
+                place,
+                reply,
+            } => {
+                let _ = reply.send(self.choose_folder(session, place, served).await);
             }
             SessionRequest::Shelve {
                 session,
@@ -755,17 +779,6 @@ impl<H: AgentHost> SupervisorTask<H> {
                     .iter()
                     .map(|(session, serving)| serving.snapshot(*session))
                     .collect()));
-            }
-            SessionRequest::Commands { session, reply } => {
-                let _ = reply.send(if served.sessions.contains_key(&session) {
-                    Ok(served
-                        .process(session)
-                        .and_then(|run| served.runs.get(&run))
-                        .map(|live| live.process.commands().to_vec())
-                        .unwrap_or_default())
-                } else {
-                    Err(SessionError::NoSuchSession(session))
-                });
             }
             SessionRequest::Files {
                 session,
@@ -882,16 +895,12 @@ impl<H: AgentHost> SupervisorTask<H> {
                 settings: settings.clone(),
             },
         )?;
-        // Its client starts now, so its commands are there before the first
-        // prompt. One that cannot start is kept, ended, as its process.
+        // Its client starts with its first prompt; until then its commands
+        // are read from the command book.
         let new = Session::new(harness, workdir, settings, resume);
-        let start = vec![SessionEffect::StartProcess { first: None }];
-        if let Some(Err(error)) = self
-            .carry_out_session(session, new, start, None, served)
-            .await
-        {
-            tracing::debug!(%session, %error, "a new session's client did not start");
-        }
+        let _ = self
+            .carry_out_session(session, new, Vec::new(), None, served)
+            .await;
         Ok(session)
     }
 
@@ -1020,9 +1029,6 @@ impl<H: AgentHost> SupervisorTask<H> {
         if served.sessions.contains_key(&seed.session) {
             return Ok(());
         }
-        if served.discarded.contains(&seed.session) {
-            return Err(SessionError::NoSuchSession(seed.session));
-        }
         let requested = RequestedDir::parse(&seed.workdir)
             .map_err(|error| SessionError::Start(StartError::Workdir(error)))?;
         let workdir = self.confirm(&requested).map_err(SessionError::Start)?;
@@ -1118,6 +1124,26 @@ impl<H: AgentHost> SupervisorTask<H> {
             })
     }
 
+    async fn choose_folder(
+        &self,
+        session: SessionId,
+        place: StartPlace,
+        served: &mut Served,
+    ) -> Result<(), SessionError> {
+        if !served.sessions.contains_key(&session) {
+            return Err(SessionError::NoSuchSession(session));
+        }
+        let workdir = self.place(place).await.map_err(SessionError::Start)?;
+        let Some(mut serving) = served.sessions.remove(&session) else {
+            return Err(SessionError::NoSuchSession(session));
+        };
+        let (slot, room) = self.room();
+        let outcome = serving.choose_folder(workdir, room);
+        self.settle_session(session, serving, outcome, slot, served)
+            .await
+            .map(|_| ())
+    }
+
     async fn shelve(
         &self,
         session: SessionId,
@@ -1153,70 +1179,6 @@ impl<H: AgentHost> SupervisorTask<H> {
                 Err(refused)
             }
         }
-    }
-
-    /// After `run` ended, its session takes that in: a draft never asked
-    /// anything and holding nothing, whose newest process stopped after
-    /// resting idle, is discarded.
-    async fn ended(&self, run: RunId, served: &mut Served) {
-        let Some(live) = served.runs.get(&run) else {
-            return;
-        };
-        let RunState::Ended { end, .. } = *live.process.state() else {
-            return;
-        };
-        let session = live.process.session();
-        let Some(serving) = served.sessions.get_mut(&session) else {
-            return;
-        };
-        let effects = serving.process_ended(run, end);
-        if effects.is_empty() {
-            return;
-        }
-        if let Some(serving) = served.sessions.remove(&session) {
-            let _ = self
-                .carry_out_session(session, serving, effects, None, served)
-                .await;
-        }
-    }
-
-    /// Delete `session`, a draft never asked anything, as the operator's
-    /// delete would: it stops being served, and the store deletes it and its
-    /// ended runs when the recorder reaches the edit, after the run's end.
-    /// Without room to record that, it is kept and served as it was.
-    fn discard(
-        &self,
-        session: SessionId,
-        serving: Session,
-        served: &mut Served,
-    ) -> Option<Session> {
-        let Some(slot) = self.recorder.history_slot() else {
-            tracing::debug!(%session, "no room to record an unused draft's discard; it is kept");
-            return Some(serving);
-        };
-        if let Some(folders) = &self.attachments {
-            let folder = folders.session(session);
-            let removing = self.off_task(move |host| host.remove_tree(&folder));
-            served.replies.push(
-                async move {
-                    if let Err(error) = removing.await {
-                        tracing::warn!(%session, %error, "cannot remove an unused draft's attachments folder");
-                    }
-                }
-                .boxed(),
-            );
-        }
-        served
-            .runs
-            .retain(|_, live| live.process.session() != session);
-        served.discarded.insert(session);
-        slot.record(
-            Actor::Ren,
-            HistorySubject::OperatorSession(session),
-            HistoryChange::Delete,
-        );
-        tracing::debug!(%session, "an unused draft was discarded");
-        None
     }
 
     /// Stop `run`, the process serving `session`, if one runs.
@@ -1363,8 +1325,119 @@ impl<H: AgentHost> SupervisorTask<H> {
         }
     }
 
+    /// Keep what a running client lists, when it lists something new.
+    fn book(
+        live: &mut Live,
+        commands: &mut Listings<CommandKey, Vec<ClientCommand>, CommandsError>,
+    ) {
+        let listed = live.process.commands();
+        if listed.is_empty() || listed == live.booked.as_slice() {
+            return;
+        }
+        if let Some(key) = &live.book {
+            live.booked = listed.to_vec();
+            commands.keep(key.clone(), live.booked.clone());
+        }
+    }
+
+    /// Answer what a session's client, or a client in a folder, offers a
+    /// prompt: a running client's own list, what the installed client last
+    /// listed in that folder, or a listing started now.
+    fn commands(
+        &self,
+        asked: CommandsAsked,
+        reply: ListingReply<Vec<ClientCommand>, CommandsError>,
+        served: &mut Served,
+    ) {
+        let (harness, folder) = match asked {
+            CommandsAsked::Session(session) => {
+                let Some(serving) = served.sessions.get(&session) else {
+                    let _ = reply.send(Err(CommandsError::NoSuchSession(session)));
+                    return;
+                };
+                let running = served
+                    .process(session)
+                    .and_then(|run| served.runs.get(&run))
+                    .map(|live| live.process.commands())
+                    .filter(|listed| !listed.is_empty());
+                if let Some(listed) = running {
+                    let _ = reply.send(Ok(listed.to_vec()));
+                    return;
+                }
+                (serving.harness(), serving.workdir().clone())
+            }
+            CommandsAsked::Client { harness, place } => match self.listing_folder(place) {
+                Ok(folder) => (harness, folder),
+                Err(error) => {
+                    let _ = reply.send(Err(CommandsError::Place(error)));
+                    return;
+                }
+            },
+        };
+        let Some(stamp) = self
+            .host
+            .client_stamp(harness.profile().program, &self.host.tools())
+        else {
+            let _ = reply.send(Err(CommandsError::NotInstalled(harness)));
+            return;
+        };
+        let key = CommandKey {
+            harness,
+            stamp,
+            folder: folder.as_path().to_path_buf(),
+        };
+        let Some(reply) = served.commands.ask(&key, reply) else {
+            return;
+        };
+        match self.command_probe(harness, &folder) {
+            Ok(listing) => served.commands.start(key, reply, listing),
+            Err(error) => {
+                let _ = reply.send(Err(error.into()));
+            }
+        }
+    }
+
+    /// The folder a listing runs in for `place`: a folder in bounds, or the
+    /// scratch folder itself, never a new one.
+    fn listing_folder(&self, place: StartPlace) -> Result<Workdir, StartError> {
+        match place {
+            StartPlace::Folder(dir) => {
+                self.confirm(&RequestedDir::parse(&dir).map_err(StartError::Workdir)?)
+            }
+            StartPlace::Scratch => {
+                let scratch = self.bounds.scratch().ok_or(StartError::NoScratch)?;
+                Workdir::confirm(&self.bounds, scratch.to_path_buf()).map_err(StartError::Workdir)
+            }
+        }
+    }
+
+    /// A listing process of `harness` in `folder`, asked for its commands.
+    fn command_probe(
+        &self,
+        harness: Harness,
+        folder: &Workdir,
+    ) -> Result<BoxFuture<'static, Result<Vec<ClientCommand>, ListingError>>, ListingError> {
+        let plan = harness.list_models(&self.gateway);
+        let (mut listing, first) =
+            CommandListing::open(harness, &self.version, &folder.as_path().to_string_lossy());
+        let process = self
+            .host
+            .spawn(&plan, folder, &self.host.tools())
+            .map_err(|error| {
+                tracing::debug!(%harness, %error, "cannot start a client to list its commands");
+                ListingError::Spawn
+            })?;
+        Ok(ListingProbe::run(
+            move |frame| listing.receive(frame),
+            first,
+            process,
+            self.line_limit,
+        )
+        .boxed())
+    }
+
     /// List the models of every client installed here, with no one waiting.
-    fn warm(&self, listings: &mut Listings) {
+    fn warm(&self, listings: &mut Listings<Harness, Vec<Model>>) {
         for harness in Harness::ALL {
             if !self.installed(*harness) {
                 continue;
@@ -1378,8 +1451,13 @@ impl<H: AgentHost> SupervisorTask<H> {
 
     /// Answer from the listings, or start the client briefly in the first
     /// root to list its models.
-    fn models(&self, harness: Harness, reply: ModelsReply, listings: &mut Listings) {
-        let Some(reply) = listings.ask(harness, reply) else {
+    fn models(
+        &self,
+        harness: Harness,
+        reply: ListingReply<Vec<Model>>,
+        listings: &mut Listings<Harness, Vec<Model>>,
+    ) {
+        let Some(reply) = listings.ask(&harness, reply) else {
             return;
         };
         match self.probe(harness) {
@@ -1393,27 +1471,32 @@ impl<H: AgentHost> SupervisorTask<H> {
     fn probe(
         &self,
         harness: Harness,
-    ) -> Result<BoxFuture<'static, Result<Vec<ren_harness::models::Model>, ModelsError>>, ModelsError>
-    {
+    ) -> Result<BoxFuture<'static, Result<Vec<Model>, ListingError>>, ListingError> {
         let plan = harness.list_models(&self.gateway);
         let root = self
             .bounds
             .roots()
             .iter()
             .next()
-            .ok_or(ModelsError::NoRoot)?;
+            .ok_or(ListingError::NoRoot)?;
         let workdir =
-            Workdir::confirm(&self.bounds, root.to_path_buf()).map_err(|_| ModelsError::NoRoot)?;
-        let (listing, first) =
+            Workdir::confirm(&self.bounds, root.to_path_buf()).map_err(|_| ListingError::NoRoot)?;
+        let (mut listing, first) =
             ModelListing::open(harness, &self.version, &workdir.as_path().to_string_lossy());
         let process = self
             .host
             .spawn(&plan, &workdir, &self.host.tools())
             .map_err(|error| {
                 tracing::debug!(%harness, %error, "cannot start a client to list its models");
-                ModelsError::Spawn
+                ListingError::Spawn
             })?;
-        Ok(ModelProbe::run(listing, first, process, self.line_limit).boxed())
+        Ok(ListingProbe::run(
+            move |frame| listing.receive(frame),
+            first,
+            process,
+            self.line_limit,
+        )
+        .boxed())
     }
 
     /// Carry out what `live`'s process asked for, with its handles. What

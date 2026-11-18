@@ -88,6 +88,8 @@ struct FakeHost {
     /// A folder whose agents never read their stdin, through a pipe too
     /// small for a single line.
     deaf: Option<PathBuf>,
+    /// The installed clients' version, as their stamp's size.
+    version: Arc<Mutex<u64>>,
 }
 
 impl FakeHost {
@@ -101,6 +103,7 @@ impl FakeHost {
             walked: Arc::default(),
             files: Arc::default(),
             deaf: None,
+            version: Arc::new(Mutex::new(1)),
         }
     }
 }
@@ -109,6 +112,20 @@ impl AgentHost for FakeHost {
     fn finds(&self, program: &str) -> bool {
         // Codex is installed here; Claude Code is not.
         program == "codex"
+    }
+
+    /// Every client is found to start; its stamp's size is the version
+    /// the test set.
+    fn client_stamp(
+        &self,
+        program: &str,
+        _tools: &RunTools,
+    ) -> Option<ren_supervisor::ClientStamp> {
+        Some(ren_supervisor::ClientStamp::new(
+            PathBuf::from("/bin").join(program),
+            *self.version.lock().unwrap(),
+            None,
+        ))
     }
 
     fn resolve(&self, path: &Path) -> io::Result<PathBuf> {
@@ -697,9 +714,15 @@ async fn runs_a_turn_through_an_approval_and_stops() {
     let supervisor = &supervised.supervisor;
     let mut updates = supervisor.subscribe();
 
+    // The client starts with the first prompt.
     let (session, run) = start(
         supervisor,
-        starting(Harness::Codex, "/work/acme", Conversation::New, None),
+        starting(
+            Harness::Codex,
+            "/work/acme",
+            Conversation::New,
+            Some(Prompt::parse("edit src".into()).unwrap()),
+        ),
     )
     .await
     .unwrap();
@@ -711,20 +734,17 @@ async fn runs_a_turn_through_an_approval_and_stops() {
         tools_given.lock().unwrap()[0].generation(),
         Some(Generation::from(4))
     );
-    state(&mut updates, |s| matches!(s, RunState::Idle { .. })).await;
-
-    supervisor.send(session, prompt()).await.unwrap();
+    let waiting = state(
+        &mut updates,
+        |s| matches!(s, RunState::Working { approvals, .. } if !approvals.is_empty()),
+    )
+    .await;
     assert!(matches!(
         supervisor.send(session, prompt()).await,
         Err(ren_supervisor::SessionError::Command(
             CommandError::Refused(RunRefused::Busy)
         ))
     ));
-    let waiting = state(
-        &mut updates,
-        |s| matches!(s, RunState::Working { approvals, .. } if !approvals.is_empty()),
-    )
-    .await;
     let RunState::Working { approvals, .. } = waiting else {
         unreachable!()
     };
@@ -814,15 +834,23 @@ async fn a_failed_spawn_is_reported_and_kept() {
     host.spawn_fails = true;
     let supervised = supervise(host).await;
     let supervisor = &supervised.supervisor;
-    // The session is kept, its process ended as it began.
-    let (_, run) = start(
-        supervisor,
-        starting(Harness::Codex, "/work/acme", Conversation::New, None),
-    )
-    .await
-    .unwrap();
+    // A session starts no client until its first prompt; that prompt's
+    // process fails to start, and is kept, ended as it began.
+    let session = supervisor
+        .create(create(Harness::Codex, "/work/acme"))
+        .await
+        .unwrap();
+    assert!(supervisor.runs().await.unwrap().is_empty());
+    assert!(matches!(
+        supervisor
+            .send(session, RunCommand::Prompt(prompt_text("go")))
+            .await,
+        Err(ren_supervisor::SessionError::Start(
+            StartError::Spawn { .. }
+        ))
+    ));
     let runs = supervisor.runs().await.unwrap();
-    assert_eq!(runs[0].run, run);
+    assert_eq!(runs.len(), 1);
     assert_eq!(
         runs[0].state,
         RunState::Ended {
@@ -949,7 +977,12 @@ async fn drives_claude_code_through_a_turn_in_the_conversation_ren_names() {
 
     let (session, _) = start(
         supervisor,
-        starting(Harness::ClaudeCode, "/work/acme", Conversation::New, None),
+        starting(
+            Harness::ClaudeCode,
+            "/work/acme",
+            Conversation::New,
+            Some(Prompt::parse("edit src".into()).unwrap()),
+        ),
     )
     .await
     .unwrap();
@@ -960,22 +993,18 @@ async fn drives_claude_code_through_a_turn_in_the_conversation_ren_names() {
         .position(|argument| argument == "--session-id")
         .map(|at| arguments[at + 1].clone())
         .expect("Ren names the conversation");
-    let RunState::Idle { thread } =
-        state(&mut updates, |s| matches!(s, RunState::Idle { .. })).await
-    else {
-        unreachable!()
-    };
-    assert_eq!(thread.to_string(), named);
-
-    supervisor.send(session, prompt()).await.unwrap();
     let waiting = state(
         &mut updates,
         |s| matches!(s, RunState::Working { turn: Some(_), approvals, .. } if !approvals.is_empty()),
     )
     .await;
-    let RunState::Working { approvals, .. } = waiting else {
+    let RunState::Working {
+        thread, approvals, ..
+    } = waiting
+    else {
         unreachable!()
     };
+    assert_eq!(thread.to_string(), named);
     let waiting = approvals.first().unwrap();
     assert_eq!(
         waiting.ask,
@@ -1079,7 +1108,6 @@ async fn a_first_prompt_goes_out_once_the_conversation_opens() {
 
 #[tokio::test]
 async fn a_sessions_folder_is_walked_once_until_a_turn_ends() {
-    use ren_supervisor::SessionError;
     let host = FakeHost::new(Script::Codex);
     let walked = host.walked.clone();
     let supervised = supervise(host).await;
@@ -1089,7 +1117,6 @@ async fn a_sessions_folder_is_walked_once_until_a_turn_ends() {
         .create(create(Harness::Codex, "/work/acme"))
         .await
         .unwrap();
-    state(&mut updates, |s| matches!(s, RunState::Idle { .. })).await;
     let found = supervisor
         .session_files(session, FileQuery::parse("lease"), 5)
         .await
@@ -1126,7 +1153,7 @@ async fn a_sessions_folder_is_walked_once_until_a_turn_ends() {
     let unknown = ren_recorder::id::SessionId::restore(uuid::Uuid::from_u128(99));
     assert!(matches!(
         supervisor.session_commands(unknown).await,
-        Err(SessionError::NoSuchSession(_))
+        Err(ren_supervisor::CommandsError::NoSuchSession(_))
     ));
 }
 
@@ -1138,27 +1165,32 @@ async fn an_agent_that_never_reads_its_stdin_holds_up_no_other_session() {
     let supervisor = &supervised.supervisor;
     let mut updates = supervisor.subscribe();
     let bounded = Duration::from_secs(5);
+    let deaf = supervisor
+        .create(create(Harness::Codex, "/work/notes"))
+        .await
+        .unwrap();
+    let heard = supervisor
+        .create(create(Harness::Codex, "/work/acme"))
+        .await
+        .unwrap();
     // Its opening lines do not fit its pipe: they wait in its queue.
-    let deaf = tokio::time::timeout(
+    tokio::time::timeout(
         bounded,
-        supervisor.create(create(Harness::Codex, "/work/notes")),
+        supervisor.send(deaf, RunCommand::Prompt(prompt_text("go"))),
     )
     .await
-    .expect("creating does not wait on the agent's stdin")
+    .expect("prompting does not wait on the agent's stdin")
     .unwrap();
-    let heard = tokio::time::timeout(
+    tokio::time::timeout(
         bounded,
-        supervisor.create(create(Harness::Codex, "/work/acme")),
+        supervisor.send(heard, RunCommand::Prompt(prompt_text("go"))),
     )
     .await
     .expect("another session is served")
     .unwrap();
-    tokio::time::timeout(
-        bounded,
-        state(&mut updates, |s| matches!(s, RunState::Idle { .. })),
-    )
-    .await
-    .expect("the other session's client opens");
+    tokio::time::timeout(bounded, state(&mut updates, working))
+        .await
+        .expect("the other session's client works");
     let sessions = supervisor.sessions().await.unwrap();
     assert!(sessions.iter().any(|session| session.session == deaf));
     assert!(sessions.iter().any(|session| session.session == heard));
@@ -1291,7 +1323,7 @@ async fn a_failed_listing_is_reported_and_asked_again() {
     let supervisor = &supervised.supervisor;
     assert_eq!(
         supervisor.models(Harness::Codex).await,
-        Err(ren_supervisor::ModelsError::Exited)
+        Err(ren_supervisor::ListingError::Exited)
     );
     let _ = supervisor.models(Harness::Codex).await;
     assert_eq!(spawned.lock().unwrap().len(), 2);
@@ -1384,23 +1416,22 @@ fn starting(
     )
 }
 
-/// A session made and sent its first prompt, and the process its client
-/// started.
+/// A session made and sent its first prompt (`go` when none is given),
+/// and the process its client started for it.
 async fn start(
     supervisor: &Supervisor,
     (create, first): (ren_supervisor::Create, Option<ren_harness::prompt::Prompt>),
 ) -> Result<(ren_recorder::id::SessionId, ren_recorder::id::RunId), ren_supervisor::SessionError> {
     let session = supervisor.create(create).await?;
-    if let Some(first) = first {
-        supervisor.send(session, RunCommand::Prompt(first)).await?;
-    }
+    let first = first.unwrap_or_else(|| prompt_text("go"));
+    supervisor.send(session, RunCommand::Prompt(first)).await?;
     let run = supervisor
         .sessions()
         .await?
         .into_iter()
         .find(|served| served.session == session)
         .and_then(|served| served.process)
-        .expect("a session's client is started as it is made");
+        .expect("a session's client starts with its first prompt");
     Ok((session, run))
 }
 
@@ -1443,26 +1474,16 @@ async fn a_session_goes_on_across_its_processes() {
         .create(create(Harness::Codex, "/work/acme"))
         .await
         .unwrap();
-    // Its client starts at once: a draft with a process, open, before any prompt.
-    state(&mut updates, |s| matches!(s, RunState::Idle { .. })).await;
+    // A draft runs no client: its skills are listed by starting the client
+    // briefly in its folder.
     let draft = only_session(supervisor).await;
     assert_eq!(draft.state, SessionState::Open(SessionPhase::Draft));
-    let first = draft.process.unwrap();
+    assert_eq!(draft.process, None);
     assert_eq!(changes.recv().await.unwrap().session, session);
-    let commands = tokio::time::timeout(Duration::from_secs(5), async {
-        loop {
-            let commands = supervisor.session_commands(session).await.unwrap();
-            if !commands.is_empty() {
-                return commands;
-            }
-            tokio::task::yield_now().await;
-        }
-    })
-    .await
-    .expect("the skills are listed before the first prompt");
+    let commands = supervisor.session_commands(session).await.unwrap();
     assert_eq!(commands[0].invocation(), "$release-notes");
 
-    // The first prompt goes to that process, and fixes the client.
+    // The first prompt starts its client, and fixes it.
     supervisor
         .send(session, RunCommand::Prompt(prompt_text("edit src")))
         .await
@@ -1470,7 +1491,7 @@ async fn a_session_goes_on_across_its_processes() {
     state(&mut updates, working).await;
     let active = only_session(supervisor).await;
     assert_eq!(active.state, SessionState::Open(SessionPhase::Active));
-    assert_eq!(active.process, Some(first));
+    let first = active.process.unwrap();
     assert!(matches!(
         supervisor.choose_client(session, Harness::Pi).await,
         Err(SessionError::Refused(SessionRefused::ClientFixed))
@@ -1532,8 +1553,7 @@ async fn a_session_goes_on_across_its_processes() {
 }
 
 #[tokio::test]
-async fn a_conversation_no_turn_ran_in_is_not_resumed() {
-    use ren_supervisor::{SessionPhase, SessionState};
+async fn the_first_prompt_opens_a_conversation_the_next_process_resumes() {
     let host = FakeHost::new(Script::Claude);
     let spawned = host.spawned.clone();
     let supervised = supervise(host).await;
@@ -1543,16 +1563,6 @@ async fn a_conversation_no_turn_ran_in_is_not_resumed() {
         .create(create(Harness::ClaudeCode, "/work/acme"))
         .await
         .unwrap();
-    // The draft's client opens a conversation, and stops before any turn:
-    // Claude Code keeps no conversation without one.
-    state(&mut updates, |s| matches!(s, RunState::Idle { .. })).await;
-    supervisor.send(session, RunCommand::Stop).await.unwrap();
-    state(&mut updates, |s| matches!(s, RunState::Ended { .. })).await;
-    assert_eq!(
-        only_session(supervisor).await.state,
-        SessionState::Open(SessionPhase::Draft)
-    );
-
     // The first prompt starts a new conversation rather than resuming one.
     supervisor
         .send(session, RunCommand::Prompt(prompt_text("edit src")))
@@ -1560,9 +1570,9 @@ async fn a_conversation_no_turn_ran_in_is_not_resumed() {
         .unwrap();
     state(&mut updates, working).await;
     let arguments = |at: usize| spawned.lock().unwrap()[at].0.clone();
-    let second = arguments(1);
-    assert!(second.iter().any(|argument| argument == "--session-id"));
-    assert!(!second.iter().any(|argument| argument == "--resume"));
+    let first = arguments(0);
+    assert!(first.iter().any(|argument| argument == "--session-id"));
+    assert!(!first.iter().any(|argument| argument == "--resume"));
 
     // Once a turn ran in it, the next process resumes it.
     supervisor.send(session, RunCommand::Stop).await.unwrap();
@@ -1572,7 +1582,7 @@ async fn a_conversation_no_turn_ran_in_is_not_resumed() {
         .await
         .unwrap();
     state(&mut updates, working).await;
-    assert!(arguments(2).iter().any(|argument| argument == "--resume"));
+    assert!(arguments(1).iter().any(|argument| argument == "--resume"));
 }
 
 /// A PNG header of `width` by `height` pixels.
@@ -1598,7 +1608,6 @@ async fn a_sessions_attachments_are_kept_read_removed_and_go_with_it() {
         .create(create(Harness::Codex, "/work/acme"))
         .await
         .unwrap();
-    state(&mut updates, |s| matches!(s, RunState::Idle { .. })).await;
 
     // Read from its bytes, kept in the session's folder under its name.
     let (shot, read) = supervisor
@@ -1679,6 +1688,11 @@ async fn a_sessions_attachments_are_kept_read_removed_and_go_with_it() {
     assert_eq!(supervisor.attachment(stored, shot).await.unwrap().0, read);
 
     // Deleted, its folder goes with it; a running one is not deleted.
+    supervisor
+        .send(session, RunCommand::Prompt(prompt_text("go")))
+        .await
+        .unwrap();
+    state(&mut updates, working).await;
     assert!(matches!(
         supervisor.forget(session).await,
         Err(SessionError::Running)
@@ -1708,7 +1722,6 @@ async fn a_prompt_takes_the_sessions_images_and_they_stay_once_sent() {
         .create(create(Harness::Codex, "/work/acme"))
         .await
         .unwrap();
-    state(&mut updates, |s| matches!(s, RunState::Idle { .. })).await;
     assert_eq!(only_session(supervisor).await.images, ImageTaking::Always);
     let (shot, _) = supervisor
         .attach(session, "shot.png".into(), png(4, 4))
@@ -1751,7 +1764,7 @@ async fn a_prompt_takes_the_sessions_images_and_they_stay_once_sent() {
         Err(SessionError::AttachmentSent(_))
     ));
 
-    // OpenCode that has not said it takes images refuses one.
+    // A running OpenCode that has not said it takes images refuses one.
     let open = supervise(FakeHost::new(Script::OpenCode)).await;
     let mut opened = open.supervisor.subscribe();
     let other = open
@@ -1759,6 +1772,11 @@ async fn a_prompt_takes_the_sessions_images_and_they_stay_once_sent() {
         .create(create(Harness::OpenCode, "/work/acme"))
         .await
         .unwrap();
+    open.supervisor
+        .send(other, RunCommand::Prompt(prompt_text("go")))
+        .await
+        .unwrap();
+    state(&mut opened, |s| matches!(s, RunState::Working { .. })).await;
     state(&mut opened, |s| matches!(s, RunState::Idle { .. })).await;
     assert_eq!(
         only_session(&open.supervisor).await.images,
@@ -1826,8 +1844,6 @@ async fn a_draft_changes_client_and_a_stored_session_is_adopted() {
         })
         .await
         .unwrap();
-    state(&mut updates, |s| matches!(s, RunState::Idle { .. })).await;
-    let first = only_session(supervisor).await.process.unwrap();
     supervisor
         .choose_client(session, Harness::Pi)
         .await
@@ -1840,8 +1856,8 @@ async fn a_draft_changes_client_and_a_stored_session_is_adopted() {
         "its settings were Codex's"
     );
     assert_eq!(chosen.state, SessionState::Open(SessionPhase::Draft));
-    assert_ne!(chosen.process, Some(first));
-    assert_eq!(spawned.lock().unwrap().len(), 2);
+    assert_eq!(chosen.process, None, "a draft starts no client");
+    assert!(spawned.lock().unwrap().is_empty());
 
     // A session the store holds is served again, resuming its thread.
     let stored = ren_recorder::id::SessionId::restore(uuid::Uuid::from_u128(0x77));
@@ -1892,12 +1908,24 @@ async fn an_idle_client_is_stopped_and_its_session_goes_on() {
         .create(create(Harness::Codex, "/work/acme"))
         .await
         .unwrap();
-    // Holding an image, the draft is the operator's: it is kept.
+    // Its turn done and idle, its client is stopped once its timer runs out.
     supervisor
-        .attach(session, "shot.png".into(), png(2, 2))
+        .send(session, RunCommand::Prompt(prompt_text("edit src")))
         .await
         .unwrap();
-    // Opened and idle, it is stopped once its timer runs out.
+    let RunState::Working { approvals, .. } = state(&mut updates, working).await else {
+        unreachable!()
+    };
+    supervisor
+        .send(
+            session,
+            RunCommand::Answer {
+                approval: approvals.iter().next().unwrap().approval.clone(),
+                decision: ren_harness::drive::Decision::Accept,
+            },
+        )
+        .await
+        .unwrap();
     state(&mut updates, |s| matches!(s, RunState::Idle { .. })).await;
     let ended = state(&mut updates, |s| matches!(s, RunState::Ended { .. })).await;
     assert!(
@@ -1913,7 +1941,7 @@ async fn an_idle_client_is_stopped_and_its_session_goes_on() {
     // The session goes on: a prompt starts its client again.
     assert_eq!(
         only_session(supervisor).await.state,
-        SessionState::Open(SessionPhase::Draft)
+        SessionState::Open(SessionPhase::Active)
     );
     supervisor
         .send(session, RunCommand::Prompt(prompt_text("go on")))
@@ -1929,55 +1957,78 @@ async fn an_idle_client_is_stopped_and_its_session_goes_on() {
 }
 
 #[tokio::test]
-async fn a_draft_left_idle_unasked_is_discarded_with_its_run() {
-    use ren_supervisor::{IdleStop, SessionError};
-    let supervised = supervise_with(
-        FakeHost::new(Script::Codex),
-        SupervisorOptions {
-            idle: IdleStop::After(Duration::from_millis(50)),
-            ..options()
-        },
-    )
-    .await;
+async fn a_draft_runs_no_client_and_its_commands_are_listed_once_per_client_and_folder() {
+    use ren_supervisor::{CommandsError, SessionError, SessionRefused, StartPlace};
+    let host = FakeHost::new(Script::Codex);
+    let (spawned, version) = (host.spawned.clone(), host.version.clone());
+    let supervised = supervise(host).await;
     let supervisor = &supervised.supervisor;
     let mut updates = supervisor.subscribe();
     let session = supervisor
         .create(create(Harness::Codex, "/work/acme"))
         .await
         .unwrap();
-    let ended = state(&mut updates, RunState::is_ended).await;
-    assert!(
-        matches!(
-            ended,
-            RunState::Ended {
-                end: ren_recorder::capture::RunEnd::Idled,
-                ..
-            }
-        ),
-        "{ended:?}"
+    let spawns = || spawned.lock().unwrap().len();
+    assert_eq!(only_session(supervisor).await.process, None);
+    assert_eq!(spawns(), 0, "a draft starts no client");
+
+    // Its commands are listed by starting the client briefly in its folder,
+    // once: the same client in the same folder answers from what it listed.
+    let listed = supervisor.session_commands(session).await.unwrap();
+    assert_eq!(listed[0].invocation(), "$release-notes");
+    assert_eq!(spawns(), 1);
+    assert_eq!(spawned.lock().unwrap()[0].1, PathBuf::from("/work/acme"));
+    assert_eq!(supervisor.session_commands(session).await.unwrap(), listed);
+    let here = StartPlace::Folder("/work/acme".into());
+    assert_eq!(
+        supervisor
+            .client_commands(Harness::Codex, here.clone())
+            .await
+            .unwrap(),
+        listed
     );
-    // No longer served: a prompt to it finds nothing.
-    assert!(supervisor.sessions().await.unwrap().is_empty());
+    assert_eq!(spawns(), 1, "kept for the client and folder");
+    // Another folder, or another version of the client, is listed again.
+    supervisor
+        .client_commands(Harness::Codex, StartPlace::Folder("/work/other".into()))
+        .await
+        .unwrap();
+    assert_eq!(spawns(), 2);
+    *version.lock().unwrap() = 2;
+    supervisor
+        .client_commands(Harness::Codex, here)
+        .await
+        .unwrap();
+    assert_eq!(spawns(), 3);
     assert!(matches!(
         supervisor
-            .send(session, RunCommand::Prompt(prompt_text("too late")))
+            .client_commands(Harness::Codex, StartPlace::Folder("/etc".into()))
             .await,
-        Err(SessionError::NoSuchSession(gone)) if gone == session
+        Err(CommandsError::Place(_))
     ));
-    // Nor served again from what the store held before it deleted it.
-    let seed = ren_supervisor::SessionSeed {
-        session,
-        harness: Harness::Codex,
-        workdir: "/work/acme".into(),
-        settings: ren_harness::settings::RunSettings::default(),
-        thread: None,
-        state: ren_supervisor::SessionState::NEW,
-        attachments: Vec::new(),
-    };
+
+    // A draft moves to another folder, starting nothing.
+    supervisor
+        .choose_folder(session, StartPlace::Folder("/work/other".into()))
+        .await
+        .unwrap();
+    let moved = only_session(supervisor).await;
+    assert_eq!(moved.workdir, PathBuf::from("/work/other"));
+    assert_eq!(moved.process, None);
+    // Its first prompt starts its client there; then its folder is fixed.
+    supervisor
+        .send(session, RunCommand::Prompt(prompt_text("edit src")))
+        .await
+        .unwrap();
+    state(&mut updates, working).await;
+    let (_, workdir) = spawned.lock().unwrap().last().cloned().unwrap();
+    assert_eq!(workdir, PathBuf::from("/work/other"));
     assert!(matches!(
-        supervisor.adopt(seed).await,
-        Err(SessionError::NoSuchSession(gone)) if gone == session
+        supervisor
+            .choose_folder(session, StartPlace::Folder("/work/acme".into()))
+            .await,
+        Err(SessionError::Refused(SessionRefused::FolderFixed))
     ));
-    // Nor stored: the session and its one run are deleted.
-    assert!(supervised.stored_sessions().await.is_empty());
+    // A running client's own list is the session's.
+    assert_eq!(supervisor.session_commands(session).await.unwrap(), listed);
 }

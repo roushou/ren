@@ -257,7 +257,7 @@
             </li>
           {/each}
         {:else}
-          {#if !typedValue && !note}<li class="group" role="presentation">Nothing matches</li>{/if}
+          {#if !typedValue && !note}<li class="empty" role="presentation">Nothing matches</li>{/if}
         {/each}
       </ul>
       {#if note}<p class="note muted">{note}</p>{/if}
@@ -419,10 +419,23 @@
     cursor: not-allowed;
     color: var(--muted);
   }
+  /* A group's label is a section heading, not a choice: set apart by a
+     rule, and set smaller and bolder than the choices. Its text keeps its
+     case: a heading may be a path. */
   li.group {
-    padding: 8px 10px 4px;
+    padding: 10px 10px 4px;
+    font-size: 10.5px;
+    font-weight: 600;
+    color: var(--muted);
+  }
+  li.empty {
+    padding: 8px 10px;
     font-size: 11px;
     color: var(--muted);
+  }
+  li.group:not(:first-child) {
+    margin-top: 4px;
+    border-top: 1px solid var(--popover-border);
   }
   .toggle {
     padding: 8px 10px;

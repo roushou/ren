@@ -13,5 +13,7 @@ mod stream_json;
 mod tools;
 
 pub use auth::ClaudeAuth;
-pub use stream_json::{ClaudeMessageType, ClaudeModels, ClaudeStreamJson, ClaudeSystemSubtype};
+pub use stream_json::{
+    ClaudeCommands, ClaudeMessageType, ClaudeModels, ClaudeStreamJson, ClaudeSystemSubtype,
+};
 pub use tools::ClaudeCodeTool;

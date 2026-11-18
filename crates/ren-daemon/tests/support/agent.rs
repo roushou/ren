@@ -34,6 +34,18 @@ impl AgentHost for ScriptedHost {
         true
     }
 
+    fn client_stamp(
+        &self,
+        program: &str,
+        _tools: &ren_supervisor::RunTools,
+    ) -> Option<ren_supervisor::ClientStamp> {
+        Some(ren_supervisor::ClientStamp::new(
+            std::path::PathBuf::from("/bin").join(program),
+            1,
+            None,
+        ))
+    }
+
     fn resolve(&self, path: &Path) -> io::Result<PathBuf> {
         Ok(path.to_path_buf())
     }
@@ -316,6 +328,10 @@ async fn serve(
             let id = message["id"].clone();
             match message["method"].as_str() {
                 Some("initialize") => send(&mut out, json!({ "id": id, "result": {} })).await,
+                // A folder with no skills.
+                Some("skills/list") => {
+                    send(&mut out, json!({ "id": id, "result": { "data": [] } })).await;
+                }
                 Some("model/list") => {
                     send(
                         &mut out,
