@@ -24,8 +24,8 @@ pub mod digest;
 pub mod id;
 pub mod inspection;
 mod item;
-pub mod metrics;
-pub mod options;
+mod metrics;
+mod options;
 pub mod progress;
 #[cfg(test)]
 mod purity;
@@ -38,8 +38,8 @@ mod tap;
 mod task;
 pub mod time;
 
-pub use metrics::RecorderMetrics;
-pub use options::{CaptureOptions, CaptureOptionsError};
+pub use metrics::{DedupMetrics, OmissionMetrics, QueueMetrics, RecorderMetrics};
+pub use options::{CaptureOptions, CaptureOptionsError, CaptureSplit};
 pub use sink::{Committed, Observation, Pruned, RecordSink};
 pub use tap::{
     AttemptRequest, AttemptStart, AttemptTap, CallStart, CallTap, ChannelTap, Head, HistorySlot,
@@ -54,7 +54,7 @@ use crate::{
     time::Clock,
 };
 use item::Shared;
-use metrics::{Counters, QueueMetrics};
+use metrics::Counters;
 use recording::RecorderCore;
 use std::sync::{Arc, atomic::Ordering};
 use tokio::sync::broadcast;

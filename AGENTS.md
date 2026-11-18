@@ -106,7 +106,7 @@ Ren-specific applications:
   events keep an `Unknown(Raw…)` variant. `#[serde(other)]` loses the value, so don't
   use it on wire data.
 - **Sans-IO core:** SSE framing, native protocol parsing, inspection, attempt
-  lifecycle transitions, retry eligibility (`ren_gateway::retry`), operator
+  lifecycle transitions, retry eligibility (`ren_gateway::lifecycle::retry`), operator
   state (`ren_gateway::operator`), call planning and transforms (`policy`), retention decisions,
   and history query building. Framing
   stays independent of JSON and of providers.
@@ -115,14 +115,15 @@ Ren-specific applications:
   parsing and Axum handlers.
 - **Capabilities:** components receive `Clock` (`ren_recorder::time`) and
   `IdSource` (`ren_recorder::id`) instead of reading the host clock or generating random IDs. The
-  gateway receives an `Upstream` (`ren_gateway::upstream`) and the shared
+  gateway receives an `Upstream` (`ren_gateway::Upstream`) and the shared
   `Controls` (`ren_gateway::control`). Environment variables (operator API keys) are read once into
   `HostEnv` (`ren_harness::host`), captured once in `main` and carried by the CLI
   `Context`;
   configuration, the Pi cache, launch, and doctor receive it. The recorder writes
   through its `RecordSink` port (`ren_recorder::RecordSink`), which `Store` implements.
 - **Lifecycles** are pure state machines, one per transport (`HttpAttempt` in
-  `ren_gateway::attempt`, and `WsChannel` in `ren_gateway::channel`, which owns
+  `ren_gateway::lifecycle::attempt`, and `WsChannel` in
+  `ren_gateway::lifecycle::channel`, which owns
   its calls' states), with explicit terminals that include interrupted and unknown outcomes.
 
 ### Lints
@@ -131,7 +132,10 @@ The strict lints are workspace-wide, in root `Cargo.toml` `[workspace.lints.clip
 They deny, among others, wildcard enum arms and imports, `unwrap`/`expect`/`panic!`
 outside tests, `as` conversions, excessive bools, and the ambient calls listed in
 `clippy.toml` (host clocks, random UUIDs, environment variables, task spawning,
-starting processes).
+starting processes). `[workspace.lints.rust]` denies `unnameable_types`: a
+public type reachable through a public signature lives in a public module
+or is re-exported, so a module is private unless something outside its
+crate names it by path.
 Modules carry no lint headers of their own. A module with submodules lives in
 `name/mod.rs`, never `name.rs` beside a `name/` directory
 (`self_named_module_files`).
@@ -140,7 +144,7 @@ Modules carry no lint headers of their own. A module with submodules lives in
   `#[expect(clippy::disallowed_methods, reason = "…")]`: `HostEnv::capture`, the
   daemon's `SystemClock`, `RandomIds`, `ProcessHost` (`ren_daemon::host`, its process
   starts and its program lookup on the agents' `PATH`), `ren_git::Git`
-  (the one place Ren runs git), and `HostTools` (its
+  (the one place Ren runs git), and `HostTools` (`ren_daemon::tools`, its
   `--version` probes), and the daemon's server
   and supervisor task spawns. Outside the daemon, `ren-git`'s `Git` (the one place
   Ren runs git, which `ren-cli`'s build script reads its revision with) and
@@ -179,9 +183,9 @@ dependencies under "Crates" below. Read the code for current module ownership.
 - `crates/ren-protocol`: sans-IO native protocol understanding, with
   `CallInspector` as its primary type: SSE framing, Anthropic Messages, OpenAI
   Responses, and OpenAI Chat Completions (`chat`) wire vocabularies,
-  incremental decompression, per-call inspection
-  (`inspect`, whose `pipeline` also reads WebSocket messages and hands every
-  frame to the response's activity reader as it streams), WebSocket message
+  incremental decompression, per-call inspection (`inspect`, driven for
+  one call by `pipeline`, which also reads WebSocket messages and hands
+  every frame to the response's activity reader as it streams), WebSocket message
   classification, and the activity reader (`activity`: a request's newest user
   input, gathered by `RequestReader`, and a response's tool calls with their
   inputs and its reply, read by `ResponseReader`; `Reading` pairs the two).
@@ -360,7 +364,7 @@ dependencies under "Crates" below. Read the code for current module ownership.
   `client_commands` for a client in a folder and no session (the commands
   each installed client offers in each folder, kept by `CommandKey`, its
   program's `ClientStamp` from `AgentHost::client_stamp`, and listed on a
-  miss by a short `CommandListing` process in `listing`, beside the models), and
+  miss by a short `CommandListing` process in `task::listing`, beside the models), and
   `attach`, `attachment`, and `detach` keep its images in a folder of its
   own under the attachments folder (`attachments`: `AttachmentFolders`,
   written through `AgentHost::place_file`, `<data>/attachments` in the
@@ -400,7 +404,8 @@ dependencies under "Crates" below. Read the code for current module ownership.
   with the run), doing blocking work off the task (`AgentHost::blocking`,
   Tokio's blocking pool in `ProcessHost`), and starting processes, which tests
   fill with
-  scripted in-memory agents. `SupervisorTask` is the shell: one task reads every
+  scripted in-memory agents. `SupervisorTask` (`task`; what it does for sessions is in
+  `task::sessions`, and for the clients in `task::clients`) is the shell: one task reads every
   agent's stdout, writes its stdin through a bounded queue per agent, and waits for its exit, records each run
   through the recorder's `RunTap` (a run without room to be recorded does not
   start), with every event of its conversation as `entries` keeps it (no
@@ -408,7 +413,7 @@ dependencies under "Crates" below. Read the code for current module ownership.
   run when the last handle is dropped. A client's sign-in on the host is
   read and run through the client's own commands: `sign_in` holds the pure
   `SignInState` and the `Login` machine (starting, awaiting its code, its
-  approval, its key, or its redirect, finishing, ended), and `login` its shell (`StatusCheck`, `LoginTalk`, and
+  approval, its key, or its redirect, finishing, ended), and `task::login` its shell (`StatusCheck`, `LoginTalk`, and
   `SignIns`, one login per client, checked after each login and after a
   failed turn), behind `Supervisor::check_sign_in`, `sign_in`,
   `answer_sign_in`, `wait_sign_in`, and `cancel_sign_in`; a login is started
@@ -421,17 +426,19 @@ dependencies under "Crates" below. Read the code for current module ownership.
   roots are configured, with `ProcessHost`; the gateway's control API serves it.
 - `crates/ren-gateway`: Ren's HTTP interface, with `Gateway` as its primary type.
   It owns forwarding, management, and control routes on one listener, assembled
-  by `Gateway::router` or `Gateway::into_ingress`. Forwarding uses a declarative
-  route table, the header policy, request buffering with a global
-  byte budget, the typed upstream entries with their credential override, the
-  candidate loop that carries out `CallRun`, the relay that drives the pure
-  `HttpAttempt` machine
-  (`attempt`), the WebSocket relay that drives `WsChannel` (`channel`), the
-  `Upstream` seam (HTTP send and WebSocket connect) with its Reqwest
-  implementation, and the ingress with the shutdown drain, which also waits for
-  upgraded channels. Use Axum's request, response, body, and WebSocket types
+  by `Gateway::router` or `Gateway::into_ingress`. Forwarding is the
+  `forward` module: a declarative route table (`route`), the header policy
+  (`headers`), request buffering with a global byte budget (`buffer`), the
+  typed upstream entries with their credential override and the `Upstream`
+  seam (HTTP send and WebSocket connect) with its Reqwest implementation
+  (`upstream`), the candidate loop that carries out `CallRun` (`forward`
+  itself), the relay that drives the pure `HttpAttempt` machine (`relay`),
+  the WebSocket relay that drives `WsChannel` (`websocket`), and the ingress
+  with the shutdown drain, which also waits for upgraded channels
+  (`ingress`). The pure machines it drives are in `lifecycle`: `attempt`
+  (`HttpAttempt`), `channel` (`WsChannel`), `call`, and `retry`. Use Axum's request, response, body, and WebSocket types
   directly; no framework-independent HTTP adapter layer. It also owns retry
-  eligibility (`retry`), operator state (`operator`, a pause written with
+  eligibility (`lifecycle::retry`), operator state (`operator`, a pause written with
   its pinned `PauseState`, which install-vps reads), the named users and
   how a request is matched to one (`user`: `Users::identify`, with
   `TokenDigest`, a user token's digest), each user's and the unnamed
@@ -439,16 +446,16 @@ dependencies under "Crates" below. Read the code for current module ownership.
   1024, which every configured limit is; `TimeoutSecs`, in `timeout`, is
   every configured timeout, 1 to 3600 seconds), the `Controls` that hold
   it with the running-call registry (`control`), the `Build` and the
-  instance's environment (`instance`) that `/health` reports (`build`), and
+  instance's environment that `/health` reports (`build`), and
   pure call planning
   (`policy`: block, transform, and fallback rules validated at load, with
   protected headers and body paths), and the call's way through its
-  candidates (`call`: `CallRun`, which `Gateway::forward` carries out),
+  candidates (`lifecycle::call`: `CallRun`, which `Gateway::forward` carries out),
   and the codes it refuses a call with over HTTP and WebSocket alike
   (`reply`: `RenCode`, `ren_`-prefixed on the wire and pinned in
   `tests/fixtures/labels.txt`).
-  `src/purity.rs` keeps `attempt`, `call`, `channel`, `retry`, `operator`,
-  and `user` free of runtime, I/O, storage, and shell-module
+  `src/purity.rs` keeps `lifecycle` (`attempt`, `call`, `channel`,
+  `retry`), `operator`, and `user` free of runtime, I/O, storage, and shell-module
   dependencies. Management receives `Reader`, `Backup`, retention settings, and
   control credentials through `ManagementSetup`; SQL stays in `ren-store`, and
   forwarding records only through the recorder.
@@ -489,12 +496,13 @@ dependencies under "Crates" below. Read the code for current module ownership.
   coordinates HTTP shutdown before capture drain. It defines no
   HTTP routes or handlers and has no production Axum dependency. `config` turns
   `Config` into a `RuntimeConfig`. `host` holds `SystemClock`, `RandomIds`,
-  `ObservationThread`, `ProcessHost`, the supervisor's `AgentHost` (its
-  logins on a pseudo-terminal through `pty-process`, echo off, and a pasted
-  loopback address opened with one `GET`), and `HostTools`, the depot's
-  `ToolHost`; it reads folders' repositories and makes scratch repositories
+  and `ObservationThread`, and in `host::process` `ProcessHost`, the
+  supervisor's `AgentHost` (its logins on a pseudo-terminal through
+  `pty-process`, echo off, and a pasted loopback address opened with one
+  `GET`), which reads folders' repositories and makes scratch repositories
   with `ren_git::Git`, the git on a run's search path. `tools` is the tool store on disk
-  (`ToolStore`, under `<data>/tools`): it carries out the depot's
+  (`ToolStore`, under `<data>/tools`, and `HostTools`, the depot's
+  `ToolHost`, in `tools::host`): it carries out the depot's
   `InstallJob`s (downloading through its `Fetch` seam, `ReqwestFetch` in
   production, https only and capped in bytes; unpacking tar.gz, zip, and
   bare releases, refusing entries that reach outside their folder), and

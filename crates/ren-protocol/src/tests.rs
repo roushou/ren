@@ -4,11 +4,11 @@ use super::{
     CallInspector,
     encoding::{ResponseEncoding, ResponseFormat},
     inspect::{
-        Coverage, FormatSource, InputAccounting, InspectionReport, KindFamily, Limitation,
-        ModelOutcome, TerminalEvent,
-        pipeline::{BodyEnd, InspectionLimits, Protocol},
+        BodyEnd, Coverage, FormatSource, InputAccounting, InspectionReport, KindFamily, Limitation,
+        ModelOutcome, Protocol, TerminalEvent,
     },
     native::{OutputItemId, ToolCallId},
+    pipeline::InspectionLimits,
     text::WireText,
 };
 use proptest::prelude::*;
@@ -502,7 +502,7 @@ fn sources_stay_free_of_runtime_and_io() {
         ("direction.rs", include_str!("direction.rs")),
         ("encoding.rs", include_str!("encoding.rs")),
         ("inspect/mod.rs", include_str!("inspect/mod.rs")),
-        ("inspect/pipeline.rs", include_str!("inspect/pipeline.rs")),
+        ("pipeline.rs", include_str!("pipeline.rs")),
         ("json.rs", include_str!("json.rs")),
         ("label.rs", include_str!("label.rs")),
         ("messages.rs", include_str!("messages.rs")),
@@ -728,7 +728,7 @@ fn read_chunks(
     encoding: ResponseEncoding,
     chunks: &[&[u8]],
     end: BodyEnd,
-) -> super::inspect::pipeline::ResponseReading {
+) -> super::pipeline::ResponseReading {
     let mut inspector = CallInspector::new(
         Protocol::ChatCompletions,
         format,

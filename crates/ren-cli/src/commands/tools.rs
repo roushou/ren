@@ -6,10 +6,7 @@
 use crate::context::Context;
 use anyhow::{Context as _, Result, bail};
 use clap::{Args, Subcommand};
-use ren_daemon::{
-    host::HostTools,
-    tools::{HostToolbox, ToolStore, fetch::ReqwestFetch},
-};
+use ren_daemon::tools::{HostToolbox, HostTools, ToolStore, fetch::ReqwestFetch};
 use ren_depot::{
     package::{Origin, PackageId},
     toolset::{Edit, Generation},

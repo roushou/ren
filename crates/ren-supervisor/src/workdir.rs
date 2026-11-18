@@ -144,7 +144,7 @@ impl RequestedDir {
 }
 
 impl Workdir {
-    /// `resolved` is what the host made of a [`RequestedDir`]; it must lie
+    /// `resolved` is what the host made of a `RequestedDir`; it must lie
     /// inside a root, another place, or the scratch folder.
     pub fn confirm(bounds: &Bounds, resolved: PathBuf) -> Result<Self, WorkdirError> {
         if !resolved.is_absolute() {

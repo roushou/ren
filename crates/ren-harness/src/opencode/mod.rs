@@ -9,10 +9,12 @@ mod acp;
 mod auth;
 mod headers;
 mod launch;
+mod listing;
 mod profile;
 mod session;
 mod tools;
 
-pub use acp::{AcpMethod, AcpToolKind, AcpUpdate, OpenCodeAcp, OpenCodeCommands, OpenCodeModels};
+pub use acp::{AcpMethod, AcpToolKind, AcpUpdate, OpenCodeAcp};
 pub use auth::OpenCodeAuth;
+pub use listing::{OpenCodeCommands, OpenCodeModels};
 pub use tools::OpenCodeTool;

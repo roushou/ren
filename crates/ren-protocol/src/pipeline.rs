@@ -7,39 +7,21 @@
 //! [`CallInspector::finish`]. Nothing is spliced across a gap, and HTTP body
 //! completion stays independent of model completion.
 
-use super::{EventClass, FormatSource, InspectionReport, Inspector, Limitation, ReportLimits};
 use crate::activity::{ActivityLimits, ResponseActivity, ResponseReader};
+use crate::inspect::{
+    BodyEnd, EventClass, FormatSource, InspectionReport, Inspector, Limitation, Protocol,
+    ReportLimits,
+};
 use crate::json::Frame;
 use crate::{
     chat,
     encoding::{DecodeFailure, Decompressor, ResponseEncoding, ResponseFormat},
     messages, responses,
-    route::Endpoint,
     sse::{EventName, SseFramer, SseLimits, SseOutput, StreamEnd},
 };
 
-/// The native protocol of an inspectable endpoint.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Protocol {
-    /// Anthropic Messages (`/v1/messages`).
-    Messages,
-    /// OpenAI Responses, public or Codex (`/responses`).
-    Responses,
-    /// OpenAI Chat Completions (`/v1/chat/completions`).
-    ChatCompletions,
-}
-
+/// How each protocol's frames are decoded and shown to the inspector.
 impl Protocol {
-    /// The protocol an endpoint's responses use, if Ren inspects it.
-    pub fn for_endpoint(endpoint: Endpoint) -> Option<Self> {
-        match endpoint {
-            Endpoint::Messages => Some(Self::Messages),
-            Endpoint::Responses => Some(Self::Responses),
-            Endpoint::ChatCompletions => Some(Self::ChatCompletions),
-            Endpoint::CountTokens | Endpoint::Models | Endpoint::ResponsesCompact => None,
-        }
-    }
-
     fn observe_event(self, name: EventName<'_>, frame: &Frame, inspector: &mut Inspector) {
         let class = match self {
             Self::Messages => match messages::Event::decode(name, frame) {
@@ -76,15 +58,6 @@ impl Protocol {
         };
         inspector.count(class);
     }
-}
-
-/// How the HTTP body ended.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum BodyEnd {
-    /// End of body observed (EOF or complete framing).
-    Complete,
-    /// The body was cut off: disconnect, cancellation, or error.
-    Unfinished,
 }
 
 /// Bounds for one call's inspection. These bound inspection work only; they

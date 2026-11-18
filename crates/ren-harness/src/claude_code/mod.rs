@@ -8,12 +8,12 @@
 mod auth;
 mod headers;
 mod launch;
+mod listing;
 mod profile;
 mod stream_json;
 mod tools;
 
 pub use auth::ClaudeAuth;
-pub use stream_json::{
-    ClaudeCommands, ClaudeMessageType, ClaudeModels, ClaudeStreamJson, ClaudeSystemSubtype,
-};
+pub use listing::{ClaudeCommands, ClaudeModels};
+pub use stream_json::{ClaudeMessageType, ClaudeStreamJson, ClaudeSystemSubtype};
 pub use tools::ClaudeCodeTool;

@@ -12,38 +12,40 @@
 
 mod attachments;
 pub use attachments::{AttachmentUse, KeptAttachment};
-pub mod client;
+mod client;
 mod entries;
-pub mod files;
-pub mod host;
-mod listing;
-mod login;
+mod files;
+mod host;
 mod process;
-pub mod project;
+mod project;
 #[cfg(test)]
 mod purity;
-pub mod run;
-pub mod session;
-pub mod sign_in;
+mod run;
+mod session;
+mod sign_in;
 mod task;
-pub mod workdir;
+mod workdir;
 
 pub use client::{Client, ClientStatus};
 pub use files::{FileListing, FileMatch, FileQuery, FoundPath, PathKind, WalkLimits};
 pub use host::{
     AgentHost, AgentProcess, ClientStamp, KillSignal, KillSwitch, RunTools, Scratch, Untracked,
 };
-pub use listing::ListingError;
-pub use login::SignInError;
 pub use project::{Look, PlaceKind, Project, ProjectGit, Search};
 pub use run::{
-    Approvals, Delivery, ProcessExit, RunCommand, RunPhase, RunRefused, RunState, Waiting,
+    Approvals, Delivery, ProcessExit, RunAction, RunCommand, RunEvent, RunPhase, RunRefused,
+    RunState, StopCause, Transition, Waiting,
 };
 pub use session::{
     SessionAction, SessionInput, SessionPhase, SessionRefused, SessionState, Shelving,
 };
-pub use sign_in::{Login, LoginEnd, LoginOutcome, SignInState, Waited};
+pub use sign_in::{
+    Awaiting, Login, LoginEnd, LoginInput, LoginOutcome, LoginRefused, SignInState, Waited,
+};
 pub use task::SupervisorTask;
+pub use task::listing::ListingError;
+pub use task::login::SignInError;
+use task::{listing, login};
 pub use workdir::{Bounds, Roots, Workdir, WorkdirError};
 
 use attachments::AttachmentFolders;

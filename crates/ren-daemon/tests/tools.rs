@@ -12,12 +12,9 @@
 mod support;
 
 use axum::Router;
-use ren_daemon::{
-    host::HostTools,
-    tools::{
-        HostToolbox, ToolStore,
-        fetch::{ByteLimit, Fetch},
-    },
+use ren_daemon::tools::{
+    HostToolbox, HostTools, ToolStore,
+    fetch::{ByteLimit, Fetch},
 };
 use ren_depot::{
     Depot,

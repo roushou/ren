@@ -14,7 +14,7 @@
 //! - errors: [`ControlError`].
 
 use crate::{
-    channel::CallSlot,
+    lifecycle::channel::CallSlot,
     operator::{OperatorCommand, OperatorState},
 };
 use ren_protocol::{native::NativeSessionId, route::Transport};

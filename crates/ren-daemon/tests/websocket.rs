@@ -20,7 +20,7 @@ use http::{HeaderMap, StatusCode};
 use ren_daemon::config::Config;
 use ren_gateway::{
     Connected, Stopped, Upstream, UpstreamBody, UpstreamHandshake, UpstreamRequest, UpstreamSocket,
-    attempt::SendFailure,
+    lifecycle::attempt::SendFailure,
 };
 use ren_protocol::{direction::Direction, label::Stored, route::Method};
 use ren_recorder::capture::{AttemptPhase, AttemptTerminal, ChannelEnd, TerminalCause};

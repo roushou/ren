@@ -835,6 +835,12 @@ kbd {
   color: var(--on-accent);
   font-weight: 600;
 }
+/* On an accent fill, the key reads in the button's own ink. */
+.primary kbd {
+  border-color: color-mix(in srgb, var(--on-accent) 45%, transparent);
+  color: var(--on-accent);
+  font-weight: 600;
+}
 .provider-select {
   max-width: 140px;
   font-size: 11px;

@@ -7,7 +7,7 @@
 //! state, so anything that may have been accepted, or that already reached
 //! the client, is never retried.
 
-use crate::attempt::SendFailure;
+use crate::lifecycle::attempt::SendFailure;
 use serde_with::{DeserializeFromStr, SerializeDisplay};
 use strum::{Display, EnumString, IntoStaticStr, VariantArray};
 
@@ -102,7 +102,7 @@ impl RetryPolicy {
 #[cfg(test)]
 mod tests {
     use super::{Delivery, RetryDecision, RetryPolicy, StopReason, WireFact};
-    use crate::attempt::SendFailure;
+    use crate::lifecycle::attempt::SendFailure;
 
     #[test]
     fn the_d2_table_holds() {

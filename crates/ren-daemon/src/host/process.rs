@@ -1,227 +1,18 @@
-//! The host's clocks, randomness, and the observation plane's thread, as the
-//! daemon hands them to components.
-//!
-//! These are the production implementations of the recorder's `Clock` and
-//! `IdSource` ports, and the only code that reads the host clocks or mints
-//! random identities. Components receive them as values; nothing else calls
-//! `SystemTime::now`, `Instant::now`, or `Uuid::new_v4`.
+//! Agent processes on this host: the production [`AgentHost`], which
+//! starts, signs in, and kills client processes, and does the task's
+//! filesystem and git work off its thread.
 
 use crate::tools::ToolStore;
 use ren_depot::toolset::Generation;
-use ren_depot::{ToolHost, package::ProgramName, source::Platform, version::ProbeFailure};
 use ren_git::{Git, GitError, Head, Repository};
 use ren_harness::{launch::LaunchPlan, pi::PiCache, sign_in::LocalRedirect};
-use ren_recorder::{
-    id::IdSource,
-    time::{Clock, Moment, Monotonic, UnixMillis},
-};
 use ren_supervisor::{
     AgentHost, AgentProcess, ClientStamp, FoundPath, KillSwitch, Look, PathKind, ProcessExit,
     ProjectGit, RunTools, Scratch, Untracked, WalkLimits, Workdir,
 };
-use std::future::Future;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use std::time::{Instant, SystemTime};
-use tokio::sync::oneshot;
-use uuid::Uuid;
-
-/// The depot's view of this host: programs on a search path, and their
-/// versions, read by running them briefly. The search path is passed in
-/// (from `HostEnv`), never read here.
-#[derive(Debug, Clone)]
-pub struct HostTools {
-    search_path: Vec<PathBuf>,
-}
-
-impl HostTools {
-    /// How often, and how many times, a probe checks whether its program
-    /// has exited: 60 checks 50 ms apart, about three seconds in all.
-    const POLL: std::time::Duration = std::time::Duration::from_millis(50);
-    const POLLS: u32 = 60;
-    /// The most of a probe's output that is read.
-    const OUTPUT_LIMIT: u64 = 64 * 1024;
-
-    pub fn new(search_path: Vec<PathBuf>) -> Self {
-        Self { search_path }
-    }
-
-    /// The platform this binary was built for, if Ren installs tools there.
-    pub fn platform() -> Option<Platform> {
-        Platform::of(std::env::consts::OS, std::env::consts::ARCH)
-    }
-
-    fn executable(path: &Path) -> bool {
-        std::fs::metadata(path).is_ok_and(|metadata| {
-            if !metadata.is_file() {
-                return false;
-            }
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                metadata.permissions().mode() & 0o111 != 0
-            }
-            #[cfg(not(unix))]
-            {
-                true
-            }
-        })
-    }
-
-    fn output(child: &mut std::process::Child) -> String {
-        use std::io::Read as _;
-        let mut bytes = Vec::new();
-        if let Some(stdout) = child.stdout.take() {
-            let _ = stdout.take(Self::OUTPUT_LIMIT).read_to_end(&mut bytes);
-        }
-        String::from_utf8_lossy(&bytes).into_owned()
-    }
-}
-
-impl ToolHost for HostTools {
-    fn locate(&self, program: &ProgramName) -> Option<PathBuf> {
-        self.search_path.iter().find_map(|dir| {
-            #[cfg(windows)]
-            let file = dir.join(format!("{program}.exe"));
-            #[cfg(not(windows))]
-            let file = dir.join(program.as_str());
-            Self::executable(&file).then_some(file)
-        })
-    }
-
-    fn probe(&self, path: &Path, args: &[&str]) -> Result<String, ProbeFailure> {
-        let mut command = std::process::Command::new(path);
-        command
-            .args(args)
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null());
-        #[expect(
-            clippy::disallowed_methods,
-            reason = "the host runs a program it found to read its version"
-        )]
-        let mut child = command.spawn().map_err(|_| ProbeFailure::NotStarted)?;
-        for _ in 0..Self::POLLS {
-            match child.try_wait() {
-                Ok(Some(status)) if status.success() => return Ok(Self::output(&mut child)),
-                Ok(Some(_)) | Err(_) => break,
-                Ok(None) => std::thread::sleep(Self::POLL),
-            }
-        }
-        let timed_out = matches!(child.try_wait(), Ok(None));
-        let _ = child.kill();
-        let _ = child.wait();
-        Err(if timed_out {
-            ProbeFailure::TimedOut
-        } else {
-            ProbeFailure::Failed
-        })
-    }
-}
-
-/// The host's clocks. Monotonic time counts from [`SystemClock::start`].
-#[derive(Debug, Clone, Copy)]
-pub struct SystemClock {
-    origin: Instant,
-}
-
-impl SystemClock {
-    #[expect(
-        clippy::disallowed_methods,
-        reason = "the one sanctioned reader of the host's monotonic clock"
-    )]
-    pub fn start() -> Self {
-        Self {
-            origin: Instant::now(),
-        }
-    }
-}
-
-impl Clock for SystemClock {
-    /// A host clock set before 1970 reads as the epoch: wall time is for
-    /// display only, while ordering and durations use monotonic time.
-    #[expect(
-        clippy::disallowed_methods,
-        reason = "the one sanctioned reader of the host's wall clock"
-    )]
-    fn now(&self) -> Moment {
-        Moment {
-            wall: UnixMillis::try_from(SystemTime::now()).unwrap_or(UnixMillis::EPOCH),
-            monotonic: Monotonic::from_elapsed(self.origin.elapsed()),
-        }
-    }
-}
-
-/// Random version 4 UUIDs.
-#[derive(Debug, Default, Clone, Copy)]
-pub struct RandomIds;
-
-impl IdSource for RandomIds {
-    #[expect(
-        clippy::disallowed_methods,
-        reason = "the one sanctioned source of random identities"
-    )]
-    fn next_uuid(&self) -> Uuid {
-        Uuid::new_v4()
-    }
-}
-
-/// The observation plane's own thread and runtime. The recorder runs there,
-/// so cutting chunks, inspecting, deriving digests, and writing storage never
-/// occupy a worker that forwards traffic, however much work they take.
-#[must_use = "the observation task stops when this handle is aborted"]
-pub struct ObservationThread<T> {
-    output: oneshot::Receiver<T>,
-    stop: Option<oneshot::Sender<()>>,
-}
-
-impl<T: Send + 'static> ObservationThread<T> {
-    /// Run `task` on a current-thread runtime of a new thread.
-    pub fn start<F>(task: F) -> io::Result<Self>
-    where
-        F: Future<Output = T> + Send + 'static,
-    {
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .thread_name("ren-observation")
-            .build()?;
-        let (output_sender, output) = oneshot::channel();
-        let (stop, stopped) = oneshot::channel::<()>();
-        std::thread::Builder::new()
-            .name("ren-observation".to_owned())
-            .spawn(move || {
-                runtime.block_on(async move {
-                    tokio::select! {
-                        result = task => {
-                            let _ = output_sender.send(result);
-                        }
-                        // Only an explicit stop ends it early; a dropped
-                        // handle lets the task finish on its own.
-                        Ok(()) = stopped => {}
-                    }
-                });
-            })?;
-        Ok(Self {
-            output,
-            stop: Some(stop),
-        })
-    }
-
-    /// The task's output, once it finishes. `None` when it stopped without
-    /// one: it panicked, or it was stopped.
-    pub async fn join(&mut self) -> Option<T> {
-        (&mut self.output).await.ok()
-    }
-
-    /// Stop the task at its next await point; [`Self::join`] then returns
-    /// `None`.
-    pub fn abort(&mut self) {
-        if let Some(stop) = self.stop.take() {
-            let _ = stop.send(());
-        }
-    }
-}
 
 /// Starts agent processes on this host: the production [`AgentHost`]. Each
 /// process works in its run's directory with piped stdin and stdout; stderr
@@ -752,17 +543,11 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::{HostTools, ProcessHost, RandomIds, SystemClock};
+    use super::ProcessHost;
     use crate::tools::ToolStore;
-    use ren_depot::{
-        Depot, ToolHost,
-        package::PackageId,
-        provision::{Found, Provision},
-        source::Platform,
-        toolset::Toolset,
-        version::{ObservedVersion, ProbeFailure},
-    };
+    use ren_depot::{Depot, source::Platform, toolset::Toolset};
     use ren_supervisor::RunTools;
+    use ren_supervisor::{AgentHost, FileListing, PathKind, WalkLimits};
 
     #[cfg(unix)]
     fn script(dir: &std::path::Path, name: &str, body: &str, mode: u32) -> std::path::PathBuf {
@@ -771,35 +556,6 @@ mod tests {
         std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(mode)).unwrap();
         path
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn host_tools_find_executables_on_their_path_and_read_versions() {
-        let first = tempfile::tempdir().unwrap();
-        let second = tempfile::tempdir().unwrap();
-        // Not executable here, so the next folder's `node` is the one found.
-        script(first.path(), "node", "echo v1.0.0", 0o644);
-        let node = script(second.path(), "node", "echo v22.17.1", 0o755);
-        script(second.path(), "jq", "exit 3", 0o755);
-        let tools = HostTools::new(vec![first.path().into(), second.path().into()]);
-        let depot = Depot::builtin().unwrap();
-        let provision = |id: PackageId| depot.provision(&tools, depot.package(&id).unwrap());
-        assert_eq!(
-            provision(PackageId::NODE),
-            Provision::System(Found {
-                path: node,
-                version: ObservedVersion::Read("22.17.1".parse().unwrap()),
-            })
-        );
-        assert!(matches!(
-            provision(PackageId::JQ),
-            Provision::System(Found {
-                version: ObservedVersion::Unread(ProbeFailure::Failed),
-                ..
-            })
-        ));
-        assert_eq!(provision(PackageId::BUN), Provision::Missing);
     }
 
     #[cfg(unix)]
@@ -879,19 +635,6 @@ mod tests {
         assert!(without.make_scratch(&made, &RunTools::Empty).is_err());
     }
 
-    #[cfg(unix)]
-    #[test]
-    fn a_probe_that_does_not_answer_times_out() {
-        let dir = tempfile::tempdir().unwrap();
-        let slow = script(dir.path(), "slow", "exec sleep 30", 0o755);
-        let tools = HostTools::new(vec![dir.path().into()]);
-        assert_eq!(
-            tools.probe(&slow, &["--version"]),
-            Err(ProbeFailure::TimedOut)
-        );
-    }
-    use ren_supervisor::{AgentHost, FileListing, PathKind, WalkLimits};
-
     #[test]
     fn a_folders_files_leave_out_what_git_ignores_and_hidden_ones() {
         let dir = tempfile::tempdir().unwrap();
@@ -944,48 +687,6 @@ mod tests {
             .unwrap();
         assert_eq!(shallow.len(), 2);
         assert!(shallow.iter().all(|found| !found.path.contains('/')));
-    }
-    use ren_recorder::{
-        id::{AttemptId, IdSource},
-        time::{Clock, UnixMillis},
-    };
-
-    #[test]
-    fn system_clock_is_monotonic() {
-        let clock = SystemClock::start();
-        let first = clock.now();
-        let second = clock.now();
-        assert!(second.monotonic >= first.monotonic);
-        assert!(first.wall > UnixMillis::EPOCH);
-    }
-
-    #[test]
-    fn random_ids_are_distinct_and_round_trip_through_text() {
-        let source: &dyn IdSource = &RandomIds;
-        let first = AttemptId::generate(source);
-        let second = AttemptId::generate(source);
-        assert_ne!(first, second);
-        assert_eq!(first.to_string().parse::<AttemptId>(), Ok(first));
-    }
-
-    #[tokio::test(flavor = "current_thread")]
-    async fn work_on_the_observation_thread_never_stalls_the_callers_runtime() {
-        // A task that blocks its thread, as heavy parsing would.
-        let mut thread = super::ObservationThread::start(async {
-            std::thread::sleep(std::time::Duration::from_millis(300));
-            std::thread::current().name().map(str::to_owned)
-        })
-        .unwrap();
-        // Meanwhile this single-threaded runtime keeps running timers.
-        let mut ticks = 0;
-        let output = loop {
-            tokio::select! {
-                output = thread.join() => break output,
-                () = tokio::time::sleep(std::time::Duration::from_millis(10)) => ticks += 1,
-            }
-        };
-        assert_eq!(output, Some(Some("ren-observation".to_owned())));
-        assert!(ticks >= 10, "the caller's runtime stalled: {ticks} ticks");
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -1061,14 +762,5 @@ mod tests {
             "visit: https://example.com/a\nPaste code > Login failed: bad\n"
         );
         assert_eq!(process.exit.await, ProcessExit::Code(1));
-    }
-
-    #[tokio::test(flavor = "current_thread")]
-    async fn a_stopped_task_ends_without_output() {
-        let mut stopped = super::ObservationThread::start(std::future::pending::<()>()).unwrap();
-        stopped.abort();
-        assert_eq!(stopped.join().await, None);
-        let mut finished = super::ObservationThread::start(async { 7 }).unwrap();
-        assert_eq!(finished.join().await, Some(7));
     }
 }

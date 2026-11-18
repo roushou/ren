@@ -1,7 +1,7 @@
 use super::{AttemptCell, Dispatch, ObservedUpload};
 use crate::{
-    attempt::{HttpEvent, SendFailure, StreamFailure},
-    upstream::UpstreamBody,
+    forward::upstream::UpstreamBody,
+    lifecycle::attempt::{HttpEvent, SendFailure, StreamFailure},
 };
 use axum::body::Body;
 use bytes::Bytes;

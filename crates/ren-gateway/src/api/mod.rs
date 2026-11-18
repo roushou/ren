@@ -21,7 +21,7 @@ pub use control::{ControlOptions, ControlRefusal, ControlToken};
 pub use route::ApiRead;
 
 use crate::build::Build;
-use crate::{control::Controls, instance::InstanceOptions, operator::Pause, user::Users};
+use crate::{build::InstanceOptions, control::Controls, operator::Pause, user::Users};
 use axum::{
     Json, Router,
     extract::{

@@ -1,15 +1,15 @@
 //! The inspection contract: native decoders emit [`Observation`]s, and only
 //! [`Inspector`] turns them into an [`InspectionReport`].
-//! [`pipeline::CallInspector`] drives decoding and inspection for one call.
+//! [`CallInspector`](crate::CallInspector) drives decoding and inspection
+//! for one call.
 //!
 //! Reports describe what the captured bytes show. They never claim that a tool
 //! ran, that the client received the response, or that a subscription
 //! allowance was charged.
 
-pub mod pipeline;
-
 use super::native::{OutputItemId, ToolCallId};
 use super::text::WireText;
+use crate::route::Endpoint;
 use serde_with::{DeserializeFromStr, SerializeDisplay};
 use strum::{Display, EnumString, IntoStaticStr, VariantArray};
 
@@ -470,6 +470,38 @@ impl Inspector {
         }
         self.report
     }
+}
+
+/// The native protocol of an inspectable endpoint.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Protocol {
+    /// Anthropic Messages (`/v1/messages`).
+    Messages,
+    /// OpenAI Responses, public or Codex (`/responses`).
+    Responses,
+    /// OpenAI Chat Completions (`/v1/chat/completions`).
+    ChatCompletions,
+}
+
+impl Protocol {
+    /// The protocol an endpoint's responses use, if Ren inspects it.
+    pub fn for_endpoint(endpoint: Endpoint) -> Option<Self> {
+        match endpoint {
+            Endpoint::Messages => Some(Self::Messages),
+            Endpoint::Responses => Some(Self::Responses),
+            Endpoint::ChatCompletions => Some(Self::ChatCompletions),
+            Endpoint::CountTokens | Endpoint::Models | Endpoint::ResponsesCompact => None,
+        }
+    }
+}
+
+/// How the HTTP body ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BodyEnd {
+    /// End of body observed (EOF or complete framing).
+    Complete,
+    /// The body was cut off: disconnect, cancellation, or error.
+    Unfinished,
 }
 
 #[cfg(test)]

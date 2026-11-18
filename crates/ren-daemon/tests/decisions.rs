@@ -756,10 +756,13 @@ impl ren_gateway::Upstream for RefusingPrimary {
     async fn send(
         &self,
         request: ren_gateway::UpstreamRequest,
-    ) -> Result<http::Response<ren_gateway::UpstreamBody>, ren_gateway::attempt::SendFailure> {
+    ) -> Result<
+        http::Response<ren_gateway::UpstreamBody>,
+        ren_gateway::lifecycle::attempt::SendFailure,
+    > {
         self.sent.lock().unwrap().push(request.upstream.clone());
         if request.upstream == "anthropic".parse::<UpstreamId>().unwrap() {
-            return Err(ren_gateway::attempt::SendFailure::Refused);
+            return Err(ren_gateway::lifecycle::attempt::SendFailure::Refused);
         }
         Ok(http::Response::new(ren_gateway::UpstreamBody::full("{}")))
     }
@@ -767,7 +770,7 @@ impl ren_gateway::Upstream for RefusingPrimary {
     async fn connect(
         &self,
         _handshake: ren_gateway::UpstreamHandshake,
-    ) -> Result<ren_gateway::Connected, ren_gateway::attempt::SendFailure> {
+    ) -> Result<ren_gateway::Connected, ren_gateway::lifecycle::attempt::SendFailure> {
         panic!("this scenario sends no WebSocket handshake")
     }
 }

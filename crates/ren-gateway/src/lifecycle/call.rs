@@ -7,10 +7,10 @@
 //! client, so falling over never repeats a delivered response, and only
 //! [`RetryPolicy`] decides which outcomes may fall over.
 //!
-//! [`HttpAttempt`]: crate::attempt::HttpAttempt
+//! [`HttpAttempt`]: crate::lifecycle::attempt::HttpAttempt
 
-use crate::attempt::SendFailure;
-use crate::retry::{Delivery, RetryDecision, RetryPolicy, WireFact};
+use crate::lifecycle::attempt::SendFailure;
+use crate::lifecycle::retry::{Delivery, RetryDecision, RetryPolicy, WireFact};
 
 /// Where a call is among its candidates. A step consumes it, so a stale
 /// position cannot be reused.

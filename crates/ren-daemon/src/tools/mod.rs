@@ -15,8 +15,10 @@
 
 mod archive;
 pub mod fetch;
+mod host;
 mod toolbox;
 
+pub use host::HostTools;
 pub use toolbox::HostToolbox;
 
 use archive::Download;

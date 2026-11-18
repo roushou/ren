@@ -3,7 +3,7 @@
 //! machine returns. Every byte passes through unchanged; capture only copies.
 
 use super::upstream::UpstreamBody;
-use crate::attempt::{
+use crate::lifecycle::attempt::{
     AttemptAction, AttemptEnd, Canceller, EndKind, HttpAttempt, HttpEvent, IllegalTransition,
 };
 use axum::body::Body;

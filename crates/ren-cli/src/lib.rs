@@ -5,11 +5,11 @@ pub mod client;
 mod commands;
 mod context;
 pub mod doctor;
-pub mod management;
+mod management;
 pub mod mcp;
-pub mod service;
+mod service;
 pub mod style;
-pub mod tail;
+mod tail;
 
 use crate::context::Context;
 use crate::style::{Terminal, Tone};

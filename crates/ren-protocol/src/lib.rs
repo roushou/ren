@@ -25,13 +25,14 @@ pub mod json;
 pub mod label;
 pub mod messages;
 pub mod native;
+pub mod pipeline;
 pub mod responses;
 pub mod route;
 pub mod sse;
 pub mod text;
 pub mod websocket;
 
-pub use inspect::pipeline::CallInspector;
+pub use pipeline::CallInspector;
 
 #[cfg(test)]
 mod tests;

@@ -10,7 +10,8 @@ pub mod host;
 pub mod tools;
 
 use crate::config::RuntimeConfig;
-use crate::host::{HostTools, ObservationThread, ProcessHost, RandomIds, SystemClock};
+use crate::host::{ObservationThread, ProcessHost, RandomIds, SystemClock};
+use crate::tools::HostTools;
 use crate::tools::{HostToolbox, ToolStore, fetch::ReqwestFetch};
 use ren_gateway::{
     Build, ControlToken, Gateway, ManagementSetup, ReqwestUpstream, Shutdown, Stopped,

@@ -51,11 +51,18 @@ macro_rules! table {
     }};
 }
 
+/// Table names are the module paths the vocabularies were pinned under,
+/// which the UI's labels test reads; these keep them for types that moved.
+mod instance {
+    pub use ren_gateway::Environment;
+}
+mod upstream {
+    pub use ren_gateway::{AuthOverride, EntryIngress};
+}
+
 #[test]
 fn every_label_is_pinned() {
-    use ren_gateway::{
-        WebSocketMode, api, instance, operator, policy, reply, retry, tools, upstream,
-    };
+    use ren_gateway::{WebSocketMode, api, lifecycle::retry, operator, policy, reply, tools};
     let table = table![
         api::HealthStatus,
         api::ErrorCode,
