@@ -3,7 +3,7 @@ use crate::Cli;
 use crate::client::GatewayChoice;
 use crate::style::{Styling, Tone};
 use ren_daemon::config::{Config, ToolsOptions};
-use ren_daemon::host::HostTools;
+use ren_daemon::tools::HostTools;
 use ren_depot::{
     Surveyed, ToolHost,
     package::{Kind, PackageId, Requirement},

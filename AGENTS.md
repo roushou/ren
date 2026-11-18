@@ -141,7 +141,7 @@ Modules carry no lint headers of their own. A module with submodules lives in
   `#[expect(clippy::disallowed_methods, reason = "…")]`: `HostEnv::capture`, the
   daemon's `SystemClock`, `RandomIds`, `ProcessHost` (`ren_daemon::host`, its process
   starts and its program lookup on the agents' `PATH`), `ren_git::Git`
-  (the one place Ren runs git), and `HostTools` (its
+  (the one place Ren runs git), and `HostTools` (`ren_daemon::tools`, its
   `--version` probes), and the daemon's server
   and supervisor task spawns. Outside the daemon, `ren-git`'s `Git` (the one place
   Ren runs git, which `ren-cli`'s build script reads its revision with) and
@@ -493,12 +493,13 @@ dependencies under "Crates" below. Read the code for current module ownership.
   coordinates HTTP shutdown before capture drain. It defines no
   HTTP routes or handlers and has no production Axum dependency. `config` turns
   `Config` into a `RuntimeConfig`. `host` holds `SystemClock`, `RandomIds`,
-  `ObservationThread`, `ProcessHost`, the supervisor's `AgentHost` (its
-  logins on a pseudo-terminal through `pty-process`, echo off, and a pasted
-  loopback address opened with one `GET`), and `HostTools`, the depot's
-  `ToolHost`; it reads folders' repositories and makes scratch repositories
+  and `ObservationThread`, and in `host::process` `ProcessHost`, the
+  supervisor's `AgentHost` (its logins on a pseudo-terminal through
+  `pty-process`, echo off, and a pasted loopback address opened with one
+  `GET`), which reads folders' repositories and makes scratch repositories
   with `ren_git::Git`, the git on a run's search path. `tools` is the tool store on disk
-  (`ToolStore`, under `<data>/tools`): it carries out the depot's
+  (`ToolStore`, under `<data>/tools`, and `HostTools`, the depot's
+  `ToolHost`, in `tools::host`): it carries out the depot's
   `InstallJob`s (downloading through its `Fetch` seam, `ReqwestFetch` in
   production, https only and capped in bytes; unpacking tar.gz, zip, and
   bare releases, refusing entries that reach outside their folder), and

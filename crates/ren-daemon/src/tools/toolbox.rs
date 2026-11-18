@@ -2,8 +2,8 @@
 //! store, the configured catalog, and its search path. The CLI uses it too,
 //! so `ren tools` and `/control/v1/tools` answer alike.
 
+use super::HostTools;
 use super::{Changed, ToolStore, ToolStoreError, fetch::Fetch};
-use crate::host::HostTools;
 use futures_util::{FutureExt as _, future::BoxFuture};
 use ren_depot::{
     Depot, Surveyed,
