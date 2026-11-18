@@ -12,14 +12,14 @@ import {
   nullable,
   object,
   string,
-  unrecognised,
   ShapeError,
   type Brand,
   type Decoder,
   type Stored,
-  wire,
-  type StrayVariants,
   type AnyDecoder,
+  tagValue,
+  tagged,
+  type Variant,
 } from './decode.ts';
 import type { Build as WireBuild } from './wire/Build.ts';
 import type { EventCountsRecord as WireEventCountsRecord } from './wire/EventCountsRecord.ts';
@@ -895,15 +895,20 @@ export const revision: Decoder<Revision, string> = (value, path) => {
     : { kind: 'unrecognized', text };
 };
 const build = object<Build, WireBuild>({ version: string, revision });
-const pause: Decoder<Pause, WirePause> = (value, path) => {
-  if (!isRecord(value)) throw new ShapeError(path, 'an object');
-  const state = string(value.state, `${path}.state`);
-  if (state === 'running') return { state };
-  if (state === 'paused')
-    return { state, retry_after: count(value.retry_after, `${path}.retry_after`) };
-  return { state: 'unknown', text: state };
-};
-wire<StrayVariants<Pause, WirePause, 'state', 'unknown'>>();
+const pause = tagged<Pause, WirePause, 'state'>(
+  'state',
+  {
+    running: object<Variant<WirePause, 'state', 'running'>>({ state: tagValue('running') }),
+    paused: object<Variant<WirePause, 'state', 'paused'>>({
+      state: tagValue('paused'),
+      retry_after: count,
+    }),
+  },
+  (value, path) => {
+    if (!isRecord(value)) throw new ShapeError(path, 'an object');
+    return { state: 'unknown', text: string(value.state, `${path}.state`) };
+  },
+);
 const operatorSummary = object<OperatorSummary, WireOperatorSummary>({
   pause,
   blocked_sessions: count,
@@ -1225,75 +1230,75 @@ const callActivity = object<CallActivity, WireCallActivity>({
   reply: nullable(excerpt),
   limitations: array(label(activityLimitations)),
 });
+/** The parts of a call that search and secret findings name. */
+export const searchFields = ['prompt', 'reply', 'tool_input', 'tool_output'] as const;
+export type SearchField = (typeof searchFields)[number];
 /** A finding by its `kind`; an unknown kind keeps only its label. */
-const finding: Decoder<Finding, WireFinding> = (value, path) => {
-  const kind = label(findingKinds)(isRecord(value) ? value.kind : undefined, `${path}.kind`);
-  switch (kind) {
-    case 'cache_rebuild':
-      return object<
-        Extract<Finding, { kind: 'cache_rebuild' }>,
-        Extract<WireFinding, { kind: 'cache_rebuild' }>
-      >({
-        kind: () => 'cache_rebuild',
-        call: CallId.decode,
-        turn: nullable(TurnId.decode),
-        cache_read_tokens: count,
-        cache_written_tokens: count,
-        earlier_peak_tokens: count,
-        idle_before_ms: nullable(count),
-      })(value, path);
-    case 'context_growth':
-      return object<
-        Extract<Finding, { kind: 'context_growth' }>,
-        Extract<WireFinding, { kind: 'context_growth' }>
-      >({
-        kind: () => 'context_growth',
-        call: CallId.decode,
-        turn: nullable(TurnId.decode),
-        earlier_peak_tokens: count,
-        context_tokens: count,
-      })(value, path);
-    case 'large_tool_output':
-      return object<
-        Extract<Finding, { kind: 'large_tool_output' }>,
-        Extract<WireFinding, { kind: 'large_tool_output' }>
-      >({
-        kind: () => 'large_tool_output',
-        call: CallId.decode,
-        tool: string,
-        tool_call_id: nullable(string),
-        target: nullable(string),
-        output_chars: count,
-      })(value, path);
-    case 'repeated_failure':
-      return object<
-        Extract<Finding, { kind: 'repeated_failure' }>,
-        Extract<WireFinding, { kind: 'repeated_failure' }>
-      >({
-        kind: () => 'repeated_failure',
-        tool: string,
-        target: nullable(string),
-        failures: count,
-        calls: array(CallId.decode),
-      })(value, path);
-    case 'secret_exposure':
-      return object<
-        Extract<Finding, { kind: 'secret_exposure' }>,
-        Extract<WireFinding, { kind: 'secret_exposure' }>
-      >({
-        kind: () => 'secret_exposure',
-        call: CallId.decode,
-        turn: nullable(TurnId.decode),
-        field: label(searchFields),
-        secret: label(secretKinds),
-        hint: string,
-        fingerprint: string,
-        count: count,
-      })(value, path);
-    default:
-      return { kind: 'unrecognized', text: unrecognised(kind) };
-  }
-};
+const finding = tagged<Finding, WireFinding, 'kind'>(
+  'kind',
+  {
+    cache_rebuild: object<
+      Extract<Finding, { kind: 'cache_rebuild' }>,
+      Extract<WireFinding, { kind: 'cache_rebuild' }>
+    >({
+      kind: tagValue('cache_rebuild'),
+      call: CallId.decode,
+      turn: nullable(TurnId.decode),
+      cache_read_tokens: count,
+      cache_written_tokens: count,
+      earlier_peak_tokens: count,
+      idle_before_ms: nullable(count),
+    }),
+    context_growth: object<
+      Extract<Finding, { kind: 'context_growth' }>,
+      Extract<WireFinding, { kind: 'context_growth' }>
+    >({
+      kind: tagValue('context_growth'),
+      call: CallId.decode,
+      turn: nullable(TurnId.decode),
+      earlier_peak_tokens: count,
+      context_tokens: count,
+    }),
+    large_tool_output: object<
+      Extract<Finding, { kind: 'large_tool_output' }>,
+      Extract<WireFinding, { kind: 'large_tool_output' }>
+    >({
+      kind: tagValue('large_tool_output'),
+      call: CallId.decode,
+      tool: string,
+      tool_call_id: nullable(string),
+      target: nullable(string),
+      output_chars: count,
+    }),
+    repeated_failure: object<
+      Extract<Finding, { kind: 'repeated_failure' }>,
+      Extract<WireFinding, { kind: 'repeated_failure' }>
+    >({
+      kind: tagValue('repeated_failure'),
+      tool: string,
+      target: nullable(string),
+      failures: count,
+      calls: array(CallId.decode),
+    }),
+    secret_exposure: object<
+      Extract<Finding, { kind: 'secret_exposure' }>,
+      Extract<WireFinding, { kind: 'secret_exposure' }>
+    >({
+      kind: tagValue('secret_exposure'),
+      call: CallId.decode,
+      turn: nullable(TurnId.decode),
+      field: label(searchFields),
+      secret: label(secretKinds),
+      hint: string,
+      fingerprint: string,
+      count: count,
+    }),
+  },
+  (value, path) => {
+    const kind = label(findingKinds)(isRecord(value) ? value.kind : undefined, `${path}.kind`);
+    return { kind: 'unrecognized', text: kind };
+  },
+);
 const turnActivity = object<TurnActivity, WireTurnActivity>({
   turn: TurnId.decode,
   recording: RecordingId.decode,
@@ -1326,8 +1331,6 @@ const turns = object<Turns, { turns: WireTurnSummary[] }>({
     }),
   ),
 });
-export const searchFields = ['prompt', 'reply', 'tool_input', 'tool_output'] as const;
-export type SearchField = (typeof searchFields)[number];
 /** A `?field=` value: a known search field, or null for any other text or none. */
 export function parseSearchField(text: string | null): SearchField | null {
   return searchFields.find((field) => field === text) ?? null;

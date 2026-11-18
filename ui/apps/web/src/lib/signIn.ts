@@ -16,8 +16,10 @@ import {
   ShapeError,
   type Decoder,
   type Stored,
-  wire,
-  type StrayVariants,
+  absentAs,
+  tagValue,
+  tagged,
+  type Variant,
 } from './decode.ts';
 import type { LoginBody as WireLoginBody } from './wire/LoginBody.ts';
 import type { LoginOutcome as WireLoginOutcome } from './wire/LoginOutcome.ts';
@@ -84,23 +86,32 @@ export interface LoginOutcome {
   state: SignInState;
 }
 
-export const signInState: Decoder<SignInState, WireSignInState> = (value, path) => {
-  if (!isRecord(value)) throw new ShapeError(path, 'an object');
-  const kind = string(value.kind, `${path}.kind`);
-  switch (kind) {
-    case 'not_checked':
-    case 'checking':
-    case 'signed_out':
-      return { kind };
-    case 'signed_in':
-      return { kind, method: string(value.method, `${path}.method`) };
-    case 'unknown':
-      return { kind, reason: string(value.reason, `${path}.reason`) };
-    default:
-      return { kind: 'unrecognized', label: kind };
-  }
-};
-wire<StrayVariants<SignInState, WireSignInState, 'kind', 'unrecognized'>>();
+type StateOf<K> = Extract<SignInState, { kind: K }>;
+type SentState<K> = Variant<WireSignInState, 'kind', K>;
+export const signInState = tagged<SignInState, WireSignInState, 'kind'>(
+  'kind',
+  {
+    not_checked: object<StateOf<'not_checked'>, SentState<'not_checked'>>({
+      kind: tagValue('not_checked'),
+    }),
+    checking: object<StateOf<'checking'>, SentState<'checking'>>({ kind: tagValue('checking') }),
+    signed_in: object<StateOf<'signed_in'>, SentState<'signed_in'>>({
+      kind: tagValue('signed_in'),
+      method: string,
+    }),
+    signed_out: object<StateOf<'signed_out'>, SentState<'signed_out'>>({
+      kind: tagValue('signed_out'),
+    }),
+    unknown: object<StateOf<'unknown'>, SentState<'unknown'>>({
+      kind: tagValue('unknown'),
+      reason: string,
+    }),
+  },
+  (value, path) => {
+    if (!isRecord(value)) throw new ShapeError(path, 'an object');
+    return { kind: 'unrecognized', label: string(value.kind, `${path}.kind`) };
+  },
+);
 
 const signInLink: Decoder<SignInLink, string> = (value, path) => {
   const text = string(value, path);
@@ -114,58 +125,69 @@ const signInLink: Decoder<SignInLink, string> = (value, path) => {
   return text as SignInLink;
 };
 
-const loginEnd: Decoder<LoginEnd, WireLoginEnd> = (value, path) => {
-  if (!isRecord(value)) throw new ShapeError(path, 'an object');
-  const end = string(value.end, `${path}.end`);
-  switch (end) {
-    case 'exited':
-      return {
-        end,
-        exit: processExit(value.exit, `${path}.exit`),
-        said: nullable(string)(value.said, `${path}.said`),
-      };
-    case 'cancelled':
-    case 'timed_out':
-      return { end };
-    case 'broken':
-      return { end, said: nullable(string)(value.said ?? null, `${path}.said`) };
-    default:
-      return { end: 'unrecognized', label: end };
-  }
-};
-wire<StrayVariants<LoginEnd, WireLoginEnd, 'end', 'unrecognized'>>();
+/** What a login last said; left out by a daemon that had nothing. */
+const said = absentAs(nullable(string), null);
+type EndOf<K> = Extract<LoginEnd, { end: K }>;
+type SentEnd<K> = Variant<WireLoginEnd, 'end', K>;
+const loginEnd = tagged<LoginEnd, WireLoginEnd, 'end'>(
+  'end',
+  {
+    exited: object<EndOf<'exited'>, SentEnd<'exited'>>({
+      end: tagValue('exited'),
+      exit: processExit,
+      said: nullable(string),
+    }),
+    cancelled: object<EndOf<'cancelled'>, SentEnd<'cancelled'>>({ end: tagValue('cancelled') }),
+    timed_out: object<EndOf<'timed_out'>, SentEnd<'timed_out'>>({ end: tagValue('timed_out') }),
+    broken: object<EndOf<'broken'>, SentEnd<'broken'>>({ end: tagValue('broken'), said }),
+  },
+  (value, path) => {
+    if (!isRecord(value)) throw new ShapeError(path, 'an object');
+    return { end: 'unrecognized', label: string(value.end, `${path}.end`) };
+  },
+);
 
-export const login: Decoder<Login, WireLogin> = (value, path) => {
-  if (!isRecord(value)) throw new ShapeError(path, 'an object');
-  const said = () => nullable(string)(value.said ?? null, `${path}.said`);
-  switch (value.kind) {
-    case 'starting':
-      return { kind: 'starting', said: said() };
-    case 'awaiting_code':
-    case 'awaiting_redirect':
-      return { kind: value.kind, link: signInLink(value.link, `${path}.link`), said: said() };
-    case 'finishing':
-      return {
-        kind: 'finishing',
-        link: nullable(signInLink)(value.link ?? null, `${path}.link`),
-        said: said(),
-      };
-    case 'awaiting_key':
-      return { kind: 'awaiting_key', said: said() };
-    case 'awaiting_approval':
-      return {
-        kind: 'awaiting_approval',
-        link: signInLink(value.link, `${path}.link`),
-        code: nullable(string)(value.code ?? null, `${path}.code`),
-        said: said(),
-      };
-    case 'ended':
-      return { kind: 'ended', end: loginEnd(value, path) };
-    default:
-      throw new ShapeError(`${path}.kind`, 'a login state');
-  }
-};
-wire<StrayVariants<Login, WireLogin, 'kind'>>();
+type LoginOf<K> = Extract<Login, { kind: K }>;
+type SentLogin<K> = Variant<WireLogin, 'kind', K>;
+export const login = tagged<Login, WireLogin, 'kind'>(
+  'kind',
+  {
+    starting: object<LoginOf<'starting'>, SentLogin<'starting'>>({
+      kind: tagValue('starting'),
+      said,
+    }),
+    awaiting_code: object<LoginOf<'awaiting_code'>, SentLogin<'awaiting_code'>>({
+      kind: tagValue('awaiting_code'),
+      link: signInLink,
+      said,
+    }),
+    awaiting_approval: object<LoginOf<'awaiting_approval'>, SentLogin<'awaiting_approval'>>({
+      kind: tagValue('awaiting_approval'),
+      link: signInLink,
+      code: absentAs(nullable(string), null),
+      said,
+    }),
+    awaiting_key: object<LoginOf<'awaiting_key'>, SentLogin<'awaiting_key'>>({
+      kind: tagValue('awaiting_key'),
+      said,
+    }),
+    awaiting_redirect: object<LoginOf<'awaiting_redirect'>, SentLogin<'awaiting_redirect'>>({
+      kind: tagValue('awaiting_redirect'),
+      link: signInLink,
+      said,
+    }),
+    finishing: object<LoginOf<'finishing'>, SentLogin<'finishing'>>({
+      kind: tagValue('finishing'),
+      link: absentAs(nullable(signInLink), null),
+      said,
+    }),
+    // The end's own fields sit beside the login's `kind`.
+    ended: (value, path) => ({ kind: 'ended', end: loginEnd(value, path) }),
+  },
+  (_value, path) => {
+    throw new ShapeError(`${path}.kind`, 'a login state');
+  },
+);
 
 export const startedSignIn = versioned(
   object<{ method: Stored<SignInMethod>; login: Login }, WireLoginBody>({
@@ -177,18 +199,21 @@ export const checkedSignIn = versioned(
   object<{ sign_in: SignInState }, WireSignInBody>({ sign_in: signInState }),
 );
 const loginOutcome = object<LoginOutcome, WireLoginOutcome>({ end: loginEnd, state: signInState });
-const waited: Decoder<Waited, WireWaited> = (value, path) => {
-  if (!isRecord(value)) throw new ShapeError(path, 'an object');
-  switch (value.kind) {
-    case 'going':
-      return { kind: 'going', login: login(value.login, `${path}.login`) };
-    case 'done':
-      return { kind: 'done', outcome: loginOutcome(value.outcome, `${path}.outcome`) };
-    default:
-      throw new ShapeError(`${path}.kind`, 'going or done');
-  }
-};
-wire<StrayVariants<Waited, WireWaited, 'kind'>>();
+type WaitOf<K> = Extract<Waited, { kind: K }>;
+type SentWait<K> = Variant<WireWaited, 'kind', K>;
+const waited = tagged<Waited, WireWaited, 'kind'>(
+  'kind',
+  {
+    going: object<WaitOf<'going'>, SentWait<'going'>>({ kind: tagValue('going'), login }),
+    done: object<WaitOf<'done'>, SentWait<'done'>>({
+      kind: tagValue('done'),
+      outcome: loginOutcome,
+    }),
+  },
+  (_value, path) => {
+    throw new ShapeError(`${path}.kind`, 'going or done');
+  },
+);
 export const waitedSignIn = versioned(object<{ waited: Waited }, WireWaitedBody>({ waited }));
 export const finishedSignIn = versioned(
   object<{ outcome: LoginOutcome }, WireOutcomeBody>({

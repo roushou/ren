@@ -43,14 +43,15 @@ import {
   object,
   string,
   unrecognised,
-  wire,
   ShapeError,
   type Brand,
   type Decoder,
   type Stored,
-  type StrayFields,
-  type StrayVariants,
   type AnyDecoder,
+  absentAs,
+  tagValue,
+  tagged,
+  type Variant,
 } from './decode.ts';
 import {
   AttachmentId,
@@ -111,6 +112,9 @@ import type { AttachRequest as WireAttachRequest } from './wire/AttachRequest.ts
 import type { FilesRequest as WireFilesRequest } from './wire/FilesRequest.ts';
 import type { ListRequest as WireListRequest } from './wire/ListRequest.ts';
 import type { RawShelfQuery as WireRawShelfQuery } from './wire/RawShelfQuery.ts';
+import type { ItemPhase as WireItemPhase } from './wire/ItemPhase.ts';
+import type { RecordedPrompt as WireRecordedPrompt } from './wire/RecordedPrompt.ts';
+import type { Retry as WireRetry } from './wire/Retry.ts';
 
 export type { ProcessExit };
 
@@ -273,7 +277,6 @@ export const driveEventKinds = [
   'unreadable',
 ] as const;
 export type DriveEventKind = (typeof driveEventKinds)[number];
-const driveEventKind = label(driveEventKinds);
 
 /** What the agent reported, as the daemon relays it. Not stored. */
 export type DriveEvent =
@@ -319,11 +322,11 @@ export type HistorySubject = { kind: 'recording'; id: RecordingId } | { kind: 'r
 /** What a history edit does. */
 export type HistoryChange = 'archive' | 'unarchive' | 'delete';
 
-const optionalString: Decoder<string | null> = (value, path) =>
+const optionalString: Decoder<string | null, string | null | undefined> = (value, path) =>
   value === undefined || value === null ? null : string(value, path);
 
 /** A queued prompt's text: text alone, or with images, `{text, images}`. */
-const queuedText: Decoder<string | null> = (value, path) =>
+const queuedText: Decoder<string | null, WireRecordedPrompt | null | undefined> = (value, path) =>
   isRecord(value) ? string(value.text, `${path}.text`) : optionalString(value, path);
 
 const integer: Decoder<number, number> = (value, path) => {
@@ -332,64 +335,70 @@ const integer: Decoder<number, number> = (value, path) => {
   return value;
 };
 
-const approvalAsk: Decoder<ApprovalAsk, WireApprovalAsk> = (value, path) => {
-  if (!isRecord(value)) throw new ShapeError(path, 'an object');
-  switch (value.kind) {
-    case 'command':
-      return {
-        kind: 'command',
-        command: optionalString(value.command, `${path}.command`),
-        cwd: optionalString(value.cwd, `${path}.cwd`),
-        reason: optionalString(value.reason, `${path}.reason`),
-      };
-    case 'file_change':
-      return { kind: 'file_change', reason: optionalString(value.reason, `${path}.reason`) };
-    case 'tool':
-      return {
-        kind: 'tool',
-        tool: string(value.tool, `${path}.tool`),
-        detail: optionalString(value.detail, `${path}.detail`),
-      };
-    default:
-      return { kind: 'unrecognized', text: String(value.kind) };
-  }
-};
-wire<StrayVariants<ApprovalAsk, WireApprovalAsk, 'kind', 'unrecognized'>>();
+type AskOf<K> = Extract<ApprovalAsk, { kind: K }>;
+type SentAsk<K> = Variant<WireApprovalAsk, 'kind', K>;
+const approvalAsk = tagged<ApprovalAsk, WireApprovalAsk, 'kind'>(
+  'kind',
+  {
+    command: object<AskOf<'command'>, SentAsk<'command'>>({
+      kind: tagValue('command'),
+      command: optionalString,
+      cwd: optionalString,
+      reason: optionalString,
+    }),
+    file_change: object<AskOf<'file_change'>, SentAsk<'file_change'>>({
+      kind: tagValue('file_change'),
+      reason: optionalString,
+    }),
+    tool: object<AskOf<'tool'>, SentAsk<'tool'>>({
+      kind: tagValue('tool'),
+      tool: string,
+      detail: optionalString,
+    }),
+  },
+  (value, path) => {
+    if (!isRecord(value)) throw new ShapeError(path, 'an object');
+    return { kind: 'unrecognized', text: String(value.kind) };
+  },
+);
 
 const waiting = object<Waiting, WireWaiting>({
   approval: branded<'ApprovalId'>(),
   ask: approvalAsk,
 });
 
-const runState: Decoder<RunState, WireRunState> = (value, path) => {
-  if (!isRecord(value)) throw new ShapeError(path, 'an object');
-  const thread = () => branded<'NativeThreadId'>()(value.thread, `${path}.thread`);
-  switch (value.phase) {
-    case 'starting':
-      return { phase: 'starting' };
-    case 'idle':
-      return { phase: 'idle', thread: thread() };
-    case 'working':
-      return {
-        phase: 'working',
-        thread: thread(),
-        turn: nullable(branded<'NativeTurnId'>())(value.turn ?? null, `${path}.turn`),
-        approvals: array(waiting)(value.approvals ?? [], `${path}.approvals`),
-        queued: queuedText(value.queued, `${path}.queued`),
-      };
-    case 'stopping':
-      return { phase: 'stopping', cause: label(stopCauses)(value.cause, `${path}.cause`) };
-    case 'ended':
-      return {
-        phase: 'ended',
-        end: label(runEnds)(value.end, `${path}.end`),
-        exit: value.exit == null ? null : processExit(value.exit, `${path}.exit`),
-      };
-    default:
-      return { phase: 'unrecognized', text: String(value.phase) };
-  }
-};
-wire<StrayVariants<RunState, WireRunState, 'phase', 'unrecognized'>>();
+type PhaseOf<K> = Extract<RunState, { phase: K }>;
+type SentPhase<K> = Variant<WireRunState, 'phase', K>;
+const runState = tagged<RunState, WireRunState, 'phase'>(
+  'phase',
+  {
+    starting: object<PhaseOf<'starting'>, SentPhase<'starting'>>({ phase: tagValue('starting') }),
+    idle: object<PhaseOf<'idle'>, SentPhase<'idle'>>({
+      phase: tagValue('idle'),
+      thread: branded<'NativeThreadId'>(),
+    }),
+    working: object<PhaseOf<'working'>, SentPhase<'working'>>({
+      phase: tagValue('working'),
+      thread: branded<'NativeThreadId'>(),
+      turn: absentAs(nullable(branded<'NativeTurnId'>()), null),
+      approvals: absentAs(array(waiting), []),
+      queued: queuedText,
+    }),
+    stopping: object<PhaseOf<'stopping'>, SentPhase<'stopping'>>({
+      phase: tagValue('stopping'),
+      cause: label(stopCauses),
+    }),
+    ended: object<PhaseOf<'ended'>, SentPhase<'ended'>>({
+      phase: tagValue('ended'),
+      end: label(runEnds),
+      exit: absentAs(nullable(processExit), null),
+    }),
+  },
+  (value, path) => {
+    if (!isRecord(value)) throw new ShapeError(path, 'an object');
+    return { phase: 'unrecognized', text: String(value.phase) };
+  },
+);
 
 /** One part of a command as its client read it (Codex's `commandActions`). */
 export type CommandPart =
@@ -405,97 +414,96 @@ export type CommandIntent =
   | { said: 'described'; text: string }
   | { said: 'parts'; parts: CommandPart[] };
 
-const commandPart: Decoder<CommandPart, WireCommandPart> = (value, path) => {
-  if (!isRecord(value)) return { part: 'unknown', command: null };
-  const at = (key: string) => `${path}.${key}`;
-  const command = () => string(value.command, at('command'));
-  switch (value.part) {
-    case 'read':
-      return {
-        part: 'read',
-        command: command(),
-        path: string(value.path, at('path')),
-        name: string(value.name, at('name')),
-      };
-    case 'list_files':
-      return {
-        part: 'list_files',
-        command: command(),
-        path: optionalString(value.path, at('path')),
-      };
-    case 'search':
-      return {
-        part: 'search',
-        command: command(),
-        query: optionalString(value.query, at('query')),
-        path: optionalString(value.path, at('path')),
-      };
-    case 'unknown':
-      return { part: 'unknown', command: command() };
-    default: {
-      const raw = isRecord(value.raw) ? value.raw.command : value.command;
-      return { part: 'unknown', command: typeof raw === 'string' ? raw : null };
-    }
-  }
+type PartOf<K> = Extract<CommandPart, { part: K }>;
+type SentPart<K> = Variant<WireCommandPart, 'part', K>;
+/** A part Ren could not read: the command its client gave, when it gave one. */
+const unreadPart = (value: unknown): CommandPart => {
+  const raw = isRecord(value) ? (isRecord(value.raw) ? value.raw.command : value.command) : null;
+  return { part: 'unknown', command: typeof raw === 'string' ? raw : null };
 };
-wire<StrayVariants<CommandPart, WireCommandPart, 'part'>>();
+const commandPart = tagged<CommandPart, WireCommandPart, 'part'>(
+  'part',
+  {
+    read: object<PartOf<'read'>, SentPart<'read'>>({
+      part: tagValue('read'),
+      command: string,
+      path: string,
+      name: string,
+    }),
+    list_files: object<PartOf<'list_files'>, SentPart<'list_files'>>({
+      part: tagValue('list_files'),
+      command: string,
+      path: optionalString,
+    }),
+    search: object<PartOf<'search'>, SentPart<'search'>>({
+      part: tagValue('search'),
+      command: string,
+      query: optionalString,
+      path: optionalString,
+    }),
+    unknown: object<PartOf<'unknown'>, SentPart<'unknown'>>({
+      part: tagValue('unknown'),
+      command: string,
+    }),
+    unrecognized: unreadPart,
+  },
+  unreadPart,
+);
 
-const commandIntent: Decoder<CommandIntent, WireCommandIntent> = (value, path) => {
-  if (!isRecord(value)) return { said: 'unsaid' };
-  switch (value.said) {
-    case 'described':
-      return { said: 'described', text: string(value.text, `${path}.text`) };
-    case 'parts':
-      return { said: 'parts', parts: array(commandPart)(value.parts, `${path}.parts`) };
-    default:
-      return { said: 'unsaid' };
-  }
-};
-wire<StrayVariants<CommandIntent, WireCommandIntent, 'said'>>();
+type IntentOf<K> = Extract<CommandIntent, { said: K }>;
+type SentIntent<K> = Variant<WireCommandIntent, 'said', K>;
+const commandIntent = tagged<CommandIntent, WireCommandIntent, 'said'>(
+  'said',
+  {
+    unsaid: object<IntentOf<'unsaid'>, SentIntent<'unsaid'>>({ said: tagValue('unsaid') }),
+    described: object<IntentOf<'described'>, SentIntent<'described'>>({
+      said: tagValue('described'),
+      text: string,
+    }),
+    parts: object<IntentOf<'parts'>, SentIntent<'parts'>>({
+      said: tagValue('parts'),
+      parts: array(commandPart),
+    }),
+  },
+  () => ({ said: 'unsaid' }),
+);
 
-const itemRead: Decoder<ItemRead, WireItemRead> = (value, path) => {
-  if (!isRecord(value)) return { as: 'unread' };
-  const at = (key: string) => `${path}.${key}`;
-  const status = () => string(value.status, at('status'));
-  switch (value.as) {
-    case 'prompt':
-      return {
-        as: 'prompt',
-        text: string(value.text, at('text')),
-        images: array(attachmentRead)(value.images ?? [], at('images')),
-      };
-    case 'reply':
-    case 'plan':
-      return { as: value.as, text: string(value.text, at('text')) };
-    case 'reasoning':
-      return { as: 'reasoning' };
-    case 'command':
-      return {
-        as: 'command',
-        command: string(value.command, at('command')),
-        intent: commandIntent(value.intent, at('intent')),
-        status: status(),
-        output: optionalString(value.output, at('output')),
-        exit_code: value.exit_code == null ? null : integer(value.exit_code, at('exit_code')),
-      };
-    case 'file_change':
-      return {
-        as: 'file_change',
-        paths: array(string)(value.paths, at('paths')),
-        status: status(),
-      };
-    case 'tool':
-      return {
-        as: 'tool',
-        name: string(value.name, at('name')),
-        effects: array(toolEffect)(value.effects ?? [], at('effects')),
-        status: status(),
-      };
-    default:
-      return { as: 'unread' };
-  }
-};
-wire<StrayVariants<ItemRead, WireItemRead, 'as'>>();
+type ReadOf<K> = Extract<ItemRead, { as: K }>;
+type SentRead<K> = Variant<WireItemRead, 'as', K>;
+const itemRead = tagged<ItemRead, WireItemRead, 'as'>(
+  'as',
+  {
+    prompt: object<ReadOf<'prompt'>, SentRead<'prompt'>>({
+      as: tagValue('prompt'),
+      text: string,
+      images: absentAs(array(attachmentRead), []),
+    }),
+    reply: object<ReadOf<'reply'>, SentRead<'reply'>>({ as: tagValue('reply'), text: string }),
+    reasoning: object<ReadOf<'reasoning'>, SentRead<'reasoning'>>({ as: tagValue('reasoning') }),
+    plan: object<ReadOf<'plan'>, SentRead<'plan'>>({ as: tagValue('plan'), text: string }),
+    command: object<ReadOf<'command'>, SentRead<'command'>>({
+      as: tagValue('command'),
+      command: string,
+      intent: absentAs(commandIntent, { said: 'unsaid' }),
+      status: string,
+      output: optionalString,
+      exit_code: absentAs(nullable(integer), null),
+    }),
+    file_change: object<ReadOf<'file_change'>, SentRead<'file_change'>>({
+      as: tagValue('file_change'),
+      paths: array(string),
+      status: string,
+    }),
+    tool: object<ReadOf<'tool'>, SentRead<'tool'>>({
+      as: tagValue('tool'),
+      name: string,
+      effects: absentAs(array(toolEffect), []),
+      status: string,
+    }),
+    unread: object<ReadOf<'unread'>, SentRead<'unread'>>({ as: tagValue('unread') }),
+  },
+  () => ({ as: 'unread' }),
+);
 
 const runSnapshot = object<RunSnapshot, WireRunSnapshot>({
   run: RunId.decode,
@@ -505,103 +513,122 @@ const runSnapshot = object<RunSnapshot, WireRunSnapshot>({
   settings: runSettings,
 });
 
-const turnEnd: Decoder<TurnEnd, WireTurnEnd> = (value, path) => {
-  if (!isRecord(value)) throw new ShapeError(path, 'an object');
-  switch (value.kind) {
-    case 'completed':
-    case 'interrupted':
-      return { kind: value.kind };
-    case 'failed':
-      return { kind: 'failed', message: optionalString(value.message, `${path}.message`) };
-    default:
-      return { kind: 'unknown', status: String(value.status ?? value.kind) };
-  }
-};
-wire<StrayVariants<TurnEnd, WireTurnEnd, 'kind'>>();
+type EndOf<K> = Extract<TurnEnd, { kind: K }>;
+type SentEnd<K> = Variant<WireTurnEnd, 'kind', K>;
+const turnEnd = tagged<TurnEnd, WireTurnEnd, 'kind'>(
+  'kind',
+  {
+    completed: object<EndOf<'completed'>, SentEnd<'completed'>>({ kind: tagValue('completed') }),
+    interrupted: object<EndOf<'interrupted'>, SentEnd<'interrupted'>>({
+      kind: tagValue('interrupted'),
+    }),
+    failed: object<EndOf<'failed'>, SentEnd<'failed'>>({
+      kind: tagValue('failed'),
+      message: optionalString,
+    }),
+    unknown: object<EndOf<'unknown'>, SentEnd<'unknown'>>({
+      kind: tagValue('unknown'),
+      status: string,
+    }),
+  },
+  (value, path) => {
+    if (!isRecord(value)) throw new ShapeError(path, 'an object');
+    return { kind: 'unknown', status: String(value.status ?? value.kind) };
+  },
+);
 
-const driveEvent: Decoder<DriveEvent, WireDriveEvent> = (value, path) => {
-  if (!isRecord(value)) throw new ShapeError(path, 'an object');
-  const at = (key: string) => `${path}.${key}`;
-  const kind = driveEventKind(value.kind, at('kind'));
-  switch (kind) {
-    case 'ready':
-      return { kind: 'ready', thread: branded<'NativeThreadId'>()(value.thread, at('thread')) };
-    case 'turn_started':
-      return { kind: 'turn_started', turn: branded<'NativeTurnId'>()(value.turn, at('turn')) };
-    case 'delta':
-      return {
-        kind: 'delta',
-        item: branded<'ItemId'>()(value.item, at('item')),
-        text: string(value.text, at('text')),
-      };
-    case 'item': {
-      const item = value.item;
-      if (!isRecord(item)) throw new ShapeError(at('item'), 'an object');
-      const phase = value.phase === 'completed' ? 'completed' : 'started';
-      return {
-        kind: 'item',
-        phase,
-        item: {
-          id: branded<'ItemId'>()(item.id, at('item.id')),
-          kind: string(item.kind, at('item.kind')),
-          read: itemRead(item.read, at('item.read')),
-        },
-      };
-    }
-    case 'approval':
-      return {
-        kind: 'approval',
-        approval: branded<'ApprovalId'>()(value.approval, at('approval')),
-        ask: approvalAsk(value.ask, at('ask')),
-      };
-    case 'approval_resolved':
-      return {
-        kind: 'approval_resolved',
-        approval: branded<'ApprovalId'>()(value.approval, at('approval')),
-      };
-    case 'turn_ended':
-      return {
-        kind: 'turn_ended',
-        turn: branded<'NativeTurnId'>()(value.turn, at('turn')),
-        end: turnEnd(value.end, at('end')),
-      };
-    case 'error':
-      return {
-        kind: 'error',
-        message: string(value.message, at('message')),
-        retry: value.retry === 'will_retry' ? 'will_retry' : 'final',
-      };
-    case 'refused':
-      return {
-        kind: 'refused',
-        request: String(value.request),
-        message: string(value.message, at('message')),
-      };
-    case 'unsupported':
-      return { kind: 'unsupported', method: string(value.method, at('method')) };
-    case 'unknown':
-    case 'unreadable':
-    default:
-      return { kind: 'other', name: kind };
-  }
-};
-wire<StrayVariants<DriveEvent, WireDriveEvent, 'kind', 'other'>>();
-wire<StrayFields<DriveItem, WireDriveItem>>();
+/** An item's phase; anything but `completed` reads as started. */
+const itemPhase: Decoder<'started' | 'completed', WireItemPhase> = (value) =>
+  value === 'completed' ? 'completed' : 'started';
+/** Whether the agent retries after an error; anything but `will_retry` is final. */
+const retry: Decoder<'will_retry' | 'final', WireRetry> = (value) =>
+  value === 'will_retry' ? 'will_retry' : 'final';
+type EventOf<K> = Extract<DriveEvent, { kind: K }>;
+type SentEvent<K> = Variant<WireDriveEvent, 'kind', K>;
+const driveEvent = tagged<DriveEvent, WireDriveEvent, 'kind'>(
+  'kind',
+  {
+    ready: object<EventOf<'ready'>, SentEvent<'ready'>>({
+      kind: tagValue('ready'),
+      thread: branded<'NativeThreadId'>(),
+    }),
+    turn_started: object<EventOf<'turn_started'>, SentEvent<'turn_started'>>({
+      kind: tagValue('turn_started'),
+      turn: branded<'NativeTurnId'>(),
+    }),
+    delta: object<EventOf<'delta'>, SentEvent<'delta'>>({
+      kind: tagValue('delta'),
+      item: branded<'ItemId'>(),
+      text: string,
+    }),
+    item: object<EventOf<'item'>, SentEvent<'item'>>({
+      kind: tagValue('item'),
+      phase: itemPhase,
+      item: object<DriveItem, WireDriveItem>({
+        id: branded<'ItemId'>(),
+        kind: string,
+        read: itemRead,
+      }),
+    }),
+    approval: object<EventOf<'approval'>, SentEvent<'approval'>>({
+      kind: tagValue('approval'),
+      approval: branded<'ApprovalId'>(),
+      ask: approvalAsk,
+    }),
+    approval_resolved: object<EventOf<'approval_resolved'>, SentEvent<'approval_resolved'>>({
+      kind: tagValue('approval_resolved'),
+      approval: branded<'ApprovalId'>(),
+    }),
+    turn_ended: object<EventOf<'turn_ended'>, SentEvent<'turn_ended'>>({
+      kind: tagValue('turn_ended'),
+      turn: branded<'NativeTurnId'>(),
+      end: turnEnd,
+    }),
+    error: object<EventOf<'error'>, SentEvent<'error'>>({
+      kind: tagValue('error'),
+      message: string,
+      retry,
+    }),
+    refused: object<EventOf<'refused'>, SentEvent<'refused'>>({
+      kind: tagValue('refused'),
+      request: string,
+      message: string,
+    }),
+    unsupported: object<EventOf<'unsupported'>, SentEvent<'unsupported'>>({
+      kind: tagValue('unsupported'),
+      method: string,
+    }),
+    // Unknown and unreadable lines are shown by their kind only.
+    unknown: () => ({ kind: 'other', name: 'unknown' }),
+    unreadable: () => ({ kind: 'other', name: 'unreadable' }),
+  },
+  (value, path) => {
+    if (!isRecord(value)) throw new ShapeError(path, 'an object');
+    return { kind: 'other', name: string(value.kind, `${path}.kind`) };
+  },
+);
 
 /** One `run` event of the update feed. */
-export const runUpdate: Decoder<RunUpdate, WireRunUpdate> = (value, path) => {
-  if (!isRecord(value)) throw new ShapeError(path, 'an object');
-  const run = RunId.decode(value.run, `${path}.run`);
-  switch (value.kind) {
-    case 'state':
-      return { kind: 'state', run, state: runState(value.state, `${path}.state`) };
-    case 'event':
-      return { kind: 'event', run, event: driveEvent(value.event, `${path}.event`) };
-    default:
-      throw new ShapeError(`${path}.kind`, 'state or event');
-  }
-};
-wire<StrayVariants<RunUpdate, WireRunUpdate, 'kind'>>();
+type UpdateOf<K> = Extract<RunUpdate, { kind: K }>;
+type SentUpdate<K> = Variant<WireRunUpdate, 'kind', K>;
+export const runUpdate = tagged<RunUpdate, WireRunUpdate, 'kind'>(
+  'kind',
+  {
+    state: object<UpdateOf<'state'>, SentUpdate<'state'>>({
+      kind: tagValue('state'),
+      run: RunId.decode,
+      state: runState,
+    }),
+    event: object<UpdateOf<'event'>, SentUpdate<'event'>>({
+      kind: tagValue('event'),
+      run: RunId.decode,
+      event: driveEvent,
+    }),
+  },
+  (_value, path) => {
+    throw new ShapeError(`${path}.kind`, 'state or event');
+  },
+);
 
 const recordedRun = object<RecordedRun, WireRunView>({
   id: RunId.decode,
@@ -746,20 +773,26 @@ export interface RunPlaces {
   scratch: string | null;
 }
 
-const projectGit: Decoder<ProjectGit, WireProjectGit> = (value, path) => {
-  if (!isRecord(value)) throw new ShapeError(path, 'an object');
-  switch (value.kind) {
-    case 'branch':
-      return { kind: 'branch', name: string(value.name, `${path}.name`) };
-    case 'detached':
-      return { kind: 'detached', commit: string(value.commit, `${path}.commit`) };
-    case 'none':
-      return { kind: 'none' };
-    default:
-      return { kind: 'unreadable' };
-  }
-};
-wire<StrayVariants<ProjectGit, WireProjectGit, 'kind'>>();
+type GitOf<K> = Extract<ProjectGit, { kind: K }>;
+type SentGit<K> = Variant<WireProjectGit, 'kind', K>;
+const projectGit = tagged<ProjectGit, WireProjectGit, 'kind'>(
+  'kind',
+  {
+    branch: object<GitOf<'branch'>, SentGit<'branch'>>({ kind: tagValue('branch'), name: string }),
+    detached: object<GitOf<'detached'>, SentGit<'detached'>>({
+      kind: tagValue('detached'),
+      commit: string,
+    }),
+    unreadable: object<GitOf<'unreadable'>, SentGit<'unreadable'>>({
+      kind: tagValue('unreadable'),
+    }),
+    none: object<GitOf<'none'>, SentGit<'none'>>({ kind: tagValue('none') }),
+  },
+  (value, path) => {
+    if (!isRecord(value)) throw new ShapeError(path, 'an object');
+    return { kind: 'unreadable' };
+  },
+);
 const runProjects = versioned(
   object<RunPlaces, WirePlaces>({
     projects: array(

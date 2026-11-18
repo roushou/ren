@@ -80,29 +80,6 @@ type Fields<T, W> = [StrayFields<T, W>] extends [never]
 export type StrayFields<T, W> = Exclude<keyof T, keyof W>;
 
 /**
- * The variants of a decoded union `T`, by their `Tag`, that its wire union
- * `W` does not send, or that read a field `W`'s variant of that tag does not
- * send. `Own` are the decoder's own variants (unknown or unreadable input).
- */
-export type StrayVariants<T, W, Tag extends PropertyKey, Own = never> =
-  T extends Record<Tag, infer K>
-    ? K extends Own
-      ? never
-      : [Extract<W, Record<Tag, K>>] extends [never]
-        ? K
-        : [StrayFields<T, Extract<W, Record<Tag, K>>>] extends [never]
-          ? never
-          : K
-    : never;
-
-/**
- * Ties a hand-written decoder to the wire type it reads, at no runtime cost:
- * `wire<StrayFields<…>>()` or `wire<StrayVariants<…>>()` type-checks only when
- * nothing is stray, and otherwise names what is.
- */
-export const wire = <_Stray extends never>(): void => undefined;
-
-/**
  * Decode the listed fields; fields a newer daemon adds are ignored. `W` is the
  * daemon's generated wire type (`wire/`) when the decoded type `T` differs from
  * it (labels kept as `Stored`, ids branded, text parsed): every field `T` reads
@@ -119,6 +96,47 @@ export const object =
     }
     return result as T;
   };
+
+/** The tags the variants of a wire union `W` carry in their `Tag` field. */
+export type Tags<W, Tag extends PropertyKey> =
+  W extends Record<Tag, infer K extends string> ? K : never;
+
+/** The variant of a wire union `W` whose `Tag` is `K`. */
+export type Variant<W, Tag extends PropertyKey, K> = Extract<W, Record<Tag, K>>;
+
+/**
+ * A union decoded by its `tag` field. `cases` has one decoder for each tag
+ * the wire union `W` sends, accepting that variant, so a case written as
+ * `object<View, Variant<W, Tag, K>>` checks the variant's field names and
+ * types, and a tag the daemon adds fails `check` until it has a case.
+ * `otherwise` reads anything else: a tag a newer daemon sends, or a value
+ * that is not an object.
+ */
+export const tagged =
+  <T, W, Tag extends string>(
+    tag: Tag,
+    cases: { [K in Tags<W, Tag>]: Decoder<T, Variant<W, Tag, K>> },
+    otherwise: (value: unknown, path: string) => T,
+  ): Decoder<T, W> =>
+  (value, path) => {
+    const found = isRecord(value) ? value[tag] : undefined;
+    const known = cases as Record<string, AnyDecoder<T> | undefined>;
+    const decode =
+      typeof found === 'string' && Object.hasOwn(known, found) ? known[found] : undefined;
+    return decode ? decode(value, path) : otherwise(value, path);
+  };
+
+/** A case's tag, written into the variant it decodes. */
+export const tagValue =
+  <const K extends string>(tag: K): Decoder<K, K> =>
+  () =>
+    tag;
+
+/** `decode`, or `absent` when the field is left out. */
+export const absentAs =
+  <T, R>(decode: Decoder<T, R>, absent: T): Decoder<T, R | undefined> =>
+  (value, path) =>
+    value === undefined ? absent : decode(value, path);
 
 /** Recognised labels narrow to their literal type; any other text is kept. */
 export const label = <const T extends string>(values: readonly T[]): Decoder<Stored<T>, string> => {
