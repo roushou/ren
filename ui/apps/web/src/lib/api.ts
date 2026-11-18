@@ -19,6 +19,13 @@ import {
   type Stored,
 } from './decode.ts';
 import type { Build as WireBuild } from './wire/Build.ts';
+import type { EventCountsRecord as WireEventCountsRecord } from './wire/EventCountsRecord.ts';
+import type { Excerpt as WireExcerpt } from './wire/Excerpt.ts';
+import type { InspectionRecord as WireInspectionRecord } from './wire/InspectionRecord.ts';
+import type { Observation as WireObservation } from './wire/Observation.ts';
+import type { ToolCallRecord as WireToolCallRecord } from './wire/ToolCallRecord.ts';
+import type { UnknownKindRecord as WireUnknownKindRecord } from './wire/UnknownKindRecord.ts';
+import type { UsageRecord as WireUsageRecord } from './wire/UsageRecord.ts';
 import type { AttemptView as WireAttemptView } from './wire/AttemptView.ts';
 import type { AttributionView as WireAttributionView } from './wire/AttributionView.ts';
 import type { BodyView as WireBodyView } from './wire/BodyView.ts';
@@ -641,7 +648,7 @@ const bodyView = object<BodyView, WireBodyView>({
   stored_bytes: count,
   ending: label(bodyEndings),
 });
-const usage = object<Usage>({
+const usage = object<Usage, WireUsageRecord>({
   accounting: label(inputAccountings),
   input_tokens: nullable(count),
   output_tokens: nullable(count),
@@ -691,7 +698,7 @@ const callView = object<CallView, WireCallView>({
     login: nullable(string),
   }),
 });
-const inspection = object<InspectionRecord>({
+const inspection = object<InspectionRecord, WireInspectionRecord>({
   coverage: label(coverages),
   format: label(formatSources),
   limitations: array(label(limitations)),
@@ -701,7 +708,7 @@ const inspection = object<InspectionRecord>({
   stop_reason: nullable(string),
   usage: nullable(usage),
   tool_calls: array(
-    object<ToolCallRecord>({
+    object<ToolCallRecord, WireToolCallRecord>({
       call_id: nullable(string),
       item_id: nullable(string),
       kind: string,
@@ -709,19 +716,19 @@ const inspection = object<InspectionRecord>({
     }),
   ),
   unknown_kinds: array(
-    object<InspectionRecord['unknown_kinds'][number]>({
+    object<InspectionRecord['unknown_kinds'][number], WireUnknownKindRecord>({
       family: label(kindFamilies),
       kind: string,
       count,
     }),
   ),
-  events: object<InspectionRecord['events']>({
+  events: object<InspectionRecord['events'], WireEventCountsRecord>({
     understood: count,
     unknown: count,
     malformed: count,
   }),
 });
-export const observationView = object<ObservationView>({
+export const observationView = object<ObservationView, WireObservation>({
   seq: brandedCount<'ObservationSeq'>(),
   at: millis,
   kind: label(observationKinds),
@@ -1168,7 +1175,7 @@ export interface RecordingReport {
   omitted_calls: number;
 }
 
-const excerpt = object<Excerpt>({ text: string, omitted_chars: count });
+const excerpt = object<Excerpt, WireExcerpt>({ text: string, omitted_chars: count });
 const callMetrics = object<CallMetrics, WireCallMetrics>({
   context_tokens: nullable(count),
   cache_read_tokens: nullable(count),

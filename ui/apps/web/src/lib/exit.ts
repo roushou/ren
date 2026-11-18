@@ -1,7 +1,8 @@
 // How a process exited (the Rust `ProcessExit`), as the control API sends a
 // run's end and a login's: its kind, and the value a code or a signal
 // carries. Parsed here at the boundary, once for every reader.
-import { isRecord, ShapeError, type Decoder } from './decode.ts';
+import { isRecord, ShapeError, wire, type Decoder, type StrayFields } from './decode.ts';
+import type { ProcessExit as WireProcessExit } from './wire/ProcessExit.ts';
 
 /** The kinds of exit, pinned to `ren-recorder`'s `capture::ExitKind`. */
 export const exitKinds = ['code', 'signal', 'unknown'] as const;
@@ -27,3 +28,4 @@ export const processExit: Decoder<ProcessExit> = (value, path) => {
       return { kind: 'unknown' };
   }
 };
+wire<StrayFields<Extract<ProcessExit, { kind: 'code' }>, WireProcessExit>>();
