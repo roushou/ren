@@ -9,11 +9,13 @@ mod auth;
 mod cache;
 mod headers;
 mod launch;
+mod listing;
 mod profile;
 mod rpc;
 mod tools;
 
 pub use auth::PiAuth;
 pub use cache::{PiCache, PiCacheError};
-pub use rpc::{PiCommands, PiEvent, PiModels, PiRpc};
+pub use listing::{PiCommands, PiModels};
+pub use rpc::{PiEvent, PiRpc};
 pub use tools::PiTool;
