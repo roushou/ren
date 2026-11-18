@@ -19,6 +19,37 @@ import {
   type Stored,
 } from './decode.ts';
 import type { Build as WireBuild } from './wire/Build.ts';
+import type { AttemptView as WireAttemptView } from './wire/AttemptView.ts';
+import type { AttributionView as WireAttributionView } from './wire/AttributionView.ts';
+import type { BodyView as WireBodyView } from './wire/BodyView.ts';
+import type { CallActivity as WireCallActivity } from './wire/CallActivity.ts';
+import type { CallDetail as WireCallDetail } from './wire/CallDetail.ts';
+import type { CallMetrics as WireCallMetrics } from './wire/CallMetrics.ts';
+import type { CallPage as WireCallPage } from './wire/CallPage.ts';
+import type { CallView as WireCallView } from './wire/CallView.ts';
+import type { CallerView as WireCallerView } from './wire/CallerView.ts';
+import type { ChannelView as WireChannelView } from './wire/ChannelView.ts';
+import type { EffectView as WireEffectView } from './wire/EffectView.ts';
+import type { ExposureView as WireExposureView } from './wire/ExposureView.ts';
+import type { Finding as WireFinding } from './wire/Finding.ts';
+import type { MessageView as WireMessageView } from './wire/MessageView.ts';
+import type { ModelUsage as WireModelUsage } from './wire/ModelUsage.ts';
+import type { RecordingReport as WireRecordingReport } from './wire/RecordingReport.ts';
+import type { RecordingView as WireRecordingView } from './wire/RecordingView.ts';
+import type { ReportTotals as WireReportTotals } from './wire/ReportTotals.ts';
+import type { ResultView as WireResultView } from './wire/ResultView.ts';
+import type { SearchHit as WireSearchHit } from './wire/SearchHit.ts';
+import type { SearchPage as WireSearchPage } from './wire/SearchPage.ts';
+import type { SessionHintView as WireSessionHintView } from './wire/SessionHintView.ts';
+import type { TokenTotals as WireTokenTotals } from './wire/TokenTotals.ts';
+import type { ToolCallView as WireToolCallView } from './wire/ToolCallView.ts';
+import type { TurnActivity as WireTurnActivity } from './wire/TurnActivity.ts';
+import type { TurnMetrics as WireTurnMetrics } from './wire/TurnMetrics.ts';
+import type { TurnSummary as WireTurnSummary } from './wire/TurnSummary.ts';
+import type { UsageBucket as WireUsageBucket } from './wire/UsageBucket.ts';
+import type { UsageCounts as WireUsageCounts } from './wire/UsageCounts.ts';
+import type { UsageView as WireUsageView } from './wire/UsageView.ts';
+import type { UserUsage as WireUserUsage } from './wire/UserUsage.ts';
 import type { CaptureLimits } from './wire/CaptureLimits.ts';
 import type { DedupMetrics } from './wire/DedupMetrics.ts';
 import type { DiskUsage } from './wire/DiskUsage.ts';
@@ -605,7 +636,7 @@ export interface BodyPreview {
 
 // Decoders, one per view.
 const millis = brandedCount<'UnixMillis'>();
-const bodyView = object<BodyView>({
+const bodyView = object<BodyView, WireBodyView>({
   observed_bytes: nullable(count),
   stored_bytes: count,
   ending: label(bodyEndings),
@@ -618,7 +649,7 @@ const usage = object<Usage>({
   cache_creation_tokens: nullable(count),
   reasoning_tokens: nullable(count),
 });
-const callView = object<CallView>({
+const callView = object<CallView, WireCallView>({
   id: CallId.decode,
   channel: ChannelId.decode,
   started_at: millis,
@@ -629,9 +660,9 @@ const callView = object<CallView>({
   config_revision: string,
   recording: nullable(RecordingId.decode),
   turn: nullable(TurnId.decode),
-  attribution: object<Attribution>({
+  attribution: object<Attribution, WireAttributionView>({
     hint: nullable(
-      object<SessionHint>({
+      object<SessionHint, WireSessionHintView>({
         source: label(hintSources),
         session: branded<'NativeSessionId'>(),
         turn: nullable(branded<'NativeTurnId'>()),
@@ -654,7 +685,7 @@ const callView = object<CallView>({
   rejection: nullable(label(callRejections)),
   operator_revision: nullable(count),
   purpose: nullable(label(callPurposes)),
-  caller: object<CallerView>({
+  caller: object<CallerView, WireCallerView>({
     kind: label(callerKinds),
     user: nullable(string),
     login: nullable(string),
@@ -698,10 +729,10 @@ export const observationView = object<ObservationView>({
   call: nullable(CallId.decode),
   attempt: nullable(AttemptId.decode),
 });
-const callDetail = object<CallDetail>({
+const callDetail = object<CallDetail, WireCallDetail>({
   call: callView,
   transport: label(transports),
-  channel: object<ChannelView>({
+  channel: object<ChannelView, WireChannelView>({
     id: ChannelId.decode,
     transport: label(transports),
     opened_at: millis,
@@ -712,7 +743,7 @@ const callDetail = object<CallDetail>({
     unattributed_bytes: count,
   }),
   attempts: array(
-    object<AttemptView>({
+    object<AttemptView, WireAttemptView>({
       id: AttemptId.decode,
       ordinal: count,
       started_at: millis,
@@ -731,7 +762,7 @@ const callDetail = object<CallDetail>({
   ),
   observations: array(observationView),
   messages: array(
-    object<MessageView>({
+    object<MessageView, WireMessageView>({
       direction: label(['request', 'response'] as const),
       offset: count,
       len: count,
@@ -740,20 +771,20 @@ const callDetail = object<CallDetail>({
     }),
   ),
 });
-const callPage = object<CallPage>({
+const callPage = object<CallPage, WireCallPage>({
   calls: array(callView),
   next: nullable(branded<'PageCursor'>()),
 });
 function tokenTotals(value: unknown, path: string): TokenTotals {
-  return object<TokenTotals>({
+  return object<TokenTotals, WireTokenTotals>({
     input: nullable(count),
     output: nullable(count),
     cache_read: nullable(count),
   })(value, path);
 }
-const recordings = object<Recordings>({
+const recordings = object<Recordings, { recordings: WireRecordingView[] }>({
   recordings: array(
-    object<RecordingView>({
+    object<RecordingView, WireRecordingView>({
       id: RecordingId.decode,
       provider: label(providers),
       source: label(hintSources),
@@ -773,17 +804,17 @@ const usageCounts = {
   errors: count,
   tokens: (value: unknown, path: string) => tokenTotals(value, path),
 };
-const usageView = object<UsageView>({
-  totals: object<UsageCounts>(usageCounts),
-  hours: array(object<UsageBucket>({ start: millis, ...usageCounts })),
+const usageView = object<UsageView, WireUsageView>({
+  totals: object<UsageCounts, WireUsageCounts>(usageCounts),
+  hours: array(object<UsageBucket, WireUsageBucket>({ start: millis, ...usageCounts })),
   models: array(
-    object<ModelUsage>({
+    object<ModelUsage, WireModelUsage>({
       provider: label(providers),
       model: nullable(string),
       ...usageCounts,
     }),
   ),
-  users: array(object<UserUsage>({ user: nullable(string), ...usageCounts })),
+  users: array(object<UserUsage, WireUserUsage>({ user: nullable(string), ...usageCounts })),
 });
 const fileUsage = object<FileUsage>({ page_size: count, page_count: count, freelist_count: count });
 const storageView = object<StorageView>({
@@ -989,7 +1020,10 @@ export interface ToolEffect {
   target: string;
 }
 /** What a tool does, as Ren reads it: on the wire, or in a driven run. */
-export const toolEffect = object<ToolEffect>({ kind: label(effectKinds), target: string });
+export const toolEffect = object<ToolEffect, WireEffectView>({
+  kind: label(effectKinds),
+  target: string,
+});
 /** A tool result as the client reported it. */
 export interface ToolResultView {
   status: Stored<ResultStatus>;
@@ -1135,7 +1169,7 @@ export interface RecordingReport {
 }
 
 const excerpt = object<Excerpt>({ text: string, omitted_chars: count });
-const callMetrics = object<CallMetrics>({
+const callMetrics = object<CallMetrics, WireCallMetrics>({
   context_tokens: nullable(count),
   cache_read_tokens: nullable(count),
   cache_written_tokens: nullable(count),
@@ -1143,7 +1177,7 @@ const callMetrics = object<CallMetrics>({
   request_bytes: nullable(count),
   duration_ms: nullable(count),
 });
-const callActivity = object<CallActivity>({
+const callActivity = object<CallActivity, WireCallActivity>({
   call: CallId.decode,
   started_at: millis,
   ended_at: nullable(millis),
@@ -1153,12 +1187,14 @@ const callActivity = object<CallActivity>({
   metrics: callMetrics,
   prompt: nullable(excerpt),
   tool_calls: array(
-    object<ToolCallActivity>({
+    object<ToolCallActivity, WireToolCallView>({
       id: nullable(string),
       name: string,
       effects: array(toolEffect),
       input: excerpt,
-      result: nullable(object<ToolResultView>({ status: label(resultStatuses), output: excerpt })),
+      result: nullable(
+        object<ToolResultView, WireResultView>({ status: label(resultStatuses), output: excerpt }),
+      ),
     }),
   ),
   earlier_results: count,
@@ -1170,7 +1206,10 @@ const finding: Decoder<Finding> = (value, path) => {
   const kind = label(findingKinds)(isRecord(value) ? value.kind : undefined, `${path}.kind`);
   switch (kind) {
     case 'cache_rebuild':
-      return object<Extract<Finding, { kind: 'cache_rebuild' }>>({
+      return object<
+        Extract<Finding, { kind: 'cache_rebuild' }>,
+        Extract<WireFinding, { kind: 'cache_rebuild' }>
+      >({
         kind: () => 'cache_rebuild',
         call: CallId.decode,
         turn: nullable(TurnId.decode),
@@ -1180,7 +1219,10 @@ const finding: Decoder<Finding> = (value, path) => {
         idle_before_ms: nullable(count),
       })(value, path);
     case 'context_growth':
-      return object<Extract<Finding, { kind: 'context_growth' }>>({
+      return object<
+        Extract<Finding, { kind: 'context_growth' }>,
+        Extract<WireFinding, { kind: 'context_growth' }>
+      >({
         kind: () => 'context_growth',
         call: CallId.decode,
         turn: nullable(TurnId.decode),
@@ -1188,7 +1230,10 @@ const finding: Decoder<Finding> = (value, path) => {
         context_tokens: count,
       })(value, path);
     case 'large_tool_output':
-      return object<Extract<Finding, { kind: 'large_tool_output' }>>({
+      return object<
+        Extract<Finding, { kind: 'large_tool_output' }>,
+        Extract<WireFinding, { kind: 'large_tool_output' }>
+      >({
         kind: () => 'large_tool_output',
         call: CallId.decode,
         tool: string,
@@ -1197,7 +1242,10 @@ const finding: Decoder<Finding> = (value, path) => {
         output_chars: count,
       })(value, path);
     case 'repeated_failure':
-      return object<Extract<Finding, { kind: 'repeated_failure' }>>({
+      return object<
+        Extract<Finding, { kind: 'repeated_failure' }>,
+        Extract<WireFinding, { kind: 'repeated_failure' }>
+      >({
         kind: () => 'repeated_failure',
         tool: string,
         target: nullable(string),
@@ -1205,7 +1253,10 @@ const finding: Decoder<Finding> = (value, path) => {
         calls: array(CallId.decode),
       })(value, path);
     case 'secret_exposure':
-      return object<Extract<Finding, { kind: 'secret_exposure' }>>({
+      return object<
+        Extract<Finding, { kind: 'secret_exposure' }>,
+        Extract<WireFinding, { kind: 'secret_exposure' }>
+      >({
         kind: () => 'secret_exposure',
         call: CallId.decode,
         turn: nullable(TurnId.decode),
@@ -1219,7 +1270,7 @@ const finding: Decoder<Finding> = (value, path) => {
       return { kind: 'unrecognized', text: unrecognised(kind) };
   }
 };
-const turnActivity = object<TurnActivity>({
+const turnActivity = object<TurnActivity, WireTurnActivity>({
   turn: TurnId.decode,
   recording: RecordingId.decode,
   native_id: branded<'NativeTurnId'>(),
@@ -1237,9 +1288,9 @@ const turnActivity = object<TurnActivity>({
   calls: array(callActivity),
   omitted_calls: count,
 });
-const turns = object<Turns>({
+const turns = object<Turns, { turns: WireTurnSummary[] }>({
   turns: array(
-    object<TurnSummary>({
+    object<TurnSummary, WireTurnSummary>({
       turn: TurnId.decode,
       native_id: branded<'NativeTurnId'>(),
       started_at: millis,
@@ -1272,9 +1323,9 @@ export interface SearchPage {
   /** Calls indexed so far; fewer than retained while the daemon backfills. */
   indexed_calls: number;
 }
-const searchPage = object<SearchPage>({
+const searchPage = object<SearchPage, WireSearchPage>({
   hits: array(
-    object<SearchHit>({
+    object<SearchHit, WireSearchHit>({
       call: CallId.decode,
       recording: nullable(RecordingId.decode),
       turn: nullable(TurnId.decode),
@@ -1302,9 +1353,9 @@ export interface ExposureView {
 export interface Exposures {
   exposures: ExposureView[];
 }
-const exposures = object<Exposures>({
+const exposures = object<Exposures, { exposures: WireExposureView[] }>({
   exposures: array(
-    object<ExposureView>({
+    object<ExposureView, WireExposureView>({
       call: CallId.decode,
       recording: nullable(RecordingId.decode),
       turn: nullable(TurnId.decode),
@@ -1318,9 +1369,9 @@ const exposures = object<Exposures>({
     }),
   ),
 });
-const recordingReport = object<RecordingReport>({
+const recordingReport = object<RecordingReport, WireRecordingReport>({
   recording: RecordingId.decode,
-  totals: object<ReportTotals>({
+  totals: object<ReportTotals, WireReportTotals>({
     calls: count,
     calls_with_usage: count,
     peak_context_tokens: count,
@@ -1331,7 +1382,7 @@ const recordingReport = object<RecordingReport>({
     cache_hit_percent: nullable(count),
   }),
   turns: array(
-    object<TurnMetrics>({
+    object<TurnMetrics, WireTurnMetrics>({
       turn: TurnId.decode,
       started_at: millis,
       ended_at: nullable(millis),

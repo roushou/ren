@@ -55,18 +55,18 @@ export const array =
   };
 
 /**
- * `T`'s field decoders when `T` and `W` have the same field names; otherwise
- * a type naming the fields only one of them has, so the mismatch is the error.
+ * `T`'s field decoders when every field of `T` is one of `W`'s; otherwise a
+ * type naming the fields `W` lacks, so the mismatch is the error.
  */
-type Fields<T, W> = [Exclude<keyof T, keyof W> | Exclude<keyof W, keyof T>] extends [never]
+type Fields<T, W> = [Exclude<keyof T, keyof W>] extends [never]
   ? { [K in keyof T]-?: Decoder<T[K]> }
-  : { mismatched_fields: Exclude<keyof T, keyof W> | Exclude<keyof W, keyof T> };
+  : { missing_on_wire: Exclude<keyof T, keyof W> };
 
 /**
  * Decode the listed fields; fields a newer daemon adds are ignored. `W` is the
  * daemon's generated wire type (`wire/`) when the decoded type `T` differs from
- * it (labels kept as `Stored`, text parsed): `T` must still have exactly its
- * fields.
+ * it (labels kept as `Stored`, ids branded, text parsed): every field `T` reads
+ * must still be one the daemon sends.
  */
 export const object =
   <T, W = T>(shape: Fields<T, W>): Decoder<T> =>

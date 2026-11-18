@@ -60,6 +60,9 @@ import {
 } from './attachments.ts';
 import { Refusals, type Refusal } from './refusal.ts';
 import { processExit, type ProcessExit } from './exit.ts';
+import type { ConversationView as WireConversationView } from './wire/ConversationView.ts';
+import type { RunEntryView as WireRunEntryView } from './wire/RunEntryView.ts';
+import type { RunView as WireRunView } from './wire/RunView.ts';
 
 export type { ProcessExit };
 
@@ -526,7 +529,7 @@ export const runUpdate: Decoder<RunUpdate> = (value, path) => {
   }
 };
 
-const recordedRun = object<RecordedRun>({
+const recordedRun = object<RecordedRun, WireRunView>({
   id: RunId.decode,
   harness: label(harnesses),
   workdir: string,
@@ -687,7 +690,9 @@ const runProjects = versioned(
     scratch: nullable(string),
   }),
 );
-const recordedRuns = versioned(object<{ runs: RecordedRun[] }>({ runs: array(recordedRun) }));
+const recordedRuns = versioned(
+  object<{ runs: RecordedRun[] }, { runs: WireRunView[] }>({ runs: array(recordedRun) }),
+);
 
 export const clientStatuses = ['ready', 'not_installed'] as const;
 /** Whether a run can start with a client on the daemon's host. */
@@ -817,9 +822,9 @@ const fileMatches = versioned(
 
 const versionedRecordedRun = versioned(recordedRun);
 const storedConversation = versioned(
-  object<StoredConversation>({
+  object<StoredConversation, WireConversationView>({
     entries: array(
-      object<StoredConversation['entries'][number]>({
+      object<StoredConversation['entries'][number], WireRunEntryView>({
         run: RunId.decode,
         seq: count,
         event: (value, path) => driveEvent(value, path),

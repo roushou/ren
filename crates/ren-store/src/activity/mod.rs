@@ -28,6 +28,7 @@ use ren_recorder::{
 use report::{CallMetrics, Finding, FindingKind, LargeToolOutput, RepeatedFailure, SecretExposure};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
+use ts_rs::TS;
 
 /// How much text each part of an activity view keeps.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -49,16 +50,19 @@ impl ActivityBudget {
 }
 
 /// A tool result, as the client reported it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct ResultView {
+    #[ts(as = "String")]
     pub status: Stored<ResultStatus>,
+    #[ts(as = "serde_json::Value")]
     pub output: Excerpt,
 }
 
 /// What a tool's input names, as a view: a known kind of effect, or the
 /// label of one this binary does not know.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct EffectView {
+    #[ts(as = "String")]
     pub kind: Stored<EffectKind>,
     pub target: String,
 }
@@ -74,45 +78,59 @@ impl From<ToolEffect> for EffectView {
 
 /// A tool call a response requested, and its result when a later request in
 /// the turn carried one.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 pub struct ToolCallView {
     pub id: Option<String>,
     pub name: String,
     pub effects: Vec<EffectView>,
+    #[ts(as = "serde_json::Value")]
     pub input: Excerpt,
     /// `None` when no request in the turn answered it.
     pub result: Option<ResultView>,
 }
 
 /// What one call shows.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 pub struct CallActivity {
+    #[ts(as = "String")]
     pub call: CallId,
+    #[ts(as = "u64")]
     pub started_at: UnixMillis,
+    #[ts(as = "Option<u64>")]
     pub ended_at: Option<UnixMillis>,
     pub model: Option<String>,
     pub status: Option<u16>,
+    #[ts(as = "Option<String>")]
     pub outcome: Option<Stored<ren_protocol::inspect::ModelOutcome>>,
     pub metrics: CallMetrics,
     /// The user's own words, when this request starts with them.
+    #[ts(as = "Option<serde_json::Value>")]
     pub prompt: Option<Excerpt>,
     pub tool_calls: Vec<ToolCallView>,
     /// Results this request carried for tool calls outside the turn.
     pub earlier_results: u64,
+    #[ts(as = "Option<serde_json::Value>")]
     pub reply: Option<Excerpt>,
+    #[ts(as = "Vec<String>")]
     pub limitations: Vec<Stored<ActivityLimitation>>,
 }
 
 /// One turn's activity.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 pub struct TurnActivity {
+    #[ts(as = "String")]
     pub turn: TurnId,
+    #[ts(as = "String")]
     pub recording: RecordingId,
     /// The client's turn identifier.
     pub native_id: String,
+    #[ts(as = "Option<String>")]
     pub client: Option<Stored<Harness>>,
+    #[ts(as = "Option<u64>")]
     pub started_at: Option<UnixMillis>,
+    #[ts(as = "Option<u64>")]
     pub ended_at: Option<UnixMillis>,
+    #[ts(as = "Option<serde_json::Value>")]
     pub prompt: Option<Excerpt>,
     pub files_read: Vec<String>,
     pub files_written: Vec<String>,
@@ -130,15 +148,19 @@ pub struct TurnActivity {
 }
 
 /// One turn, as a recording lists it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct TurnSummary {
+    #[ts(as = "String")]
     pub turn: TurnId,
     pub native_id: String,
+    #[ts(as = "u64")]
     pub started_at: UnixMillis,
+    #[ts(as = "Option<u64>")]
     pub ended_at: Option<UnixMillis>,
     pub call_count: u64,
     pub error_count: u64,
     pub tokens: TokenTotals,
+    #[ts(as = "Option<serde_json::Value>")]
     pub prompt: Option<Excerpt>,
 }
 

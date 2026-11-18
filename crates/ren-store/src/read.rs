@@ -12,6 +12,7 @@ use crate::view::{CallDetail, CallPage, ConversationView, RecordingView, RunView
 use crate::{Reader, StoreError};
 use ren_recorder::id::{CallId, RecordingId, RunId, TurnId};
 use serde::{Deserialize, Serialize};
+use ts_rs::TS;
 
 /// A read of recorded history.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -52,8 +53,15 @@ pub enum ReadRequest {
 
 /// What a [`ReadRequest`] returns. Serialized, each is the API's JSON body
 /// for that read (before the API adds its version).
-#[derive(Debug, Clone, PartialEq, Serialize)]
+///
+/// ts-rs writes it and every type it holds to the UI
+/// (`ui/apps/web/src/lib/wire`). Values from other crates are written as
+/// their wire form at each field (`#[ts(as = …)]`): ids, labels, and cursors
+/// as text, times as numbers, and the recorder's and harness's structured
+/// values as JSON the UI decodes itself.
+#[derive(Debug, Clone, PartialEq, Serialize, TS)]
 #[serde(untagged)]
+#[ts(export)]
 pub enum ReadResponse {
     Calls(CallPage),
     Call(Box<CallDetail>),
