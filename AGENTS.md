@@ -361,7 +361,7 @@ dependencies under "Crates" below. Read the code for current module ownership.
   `client_commands` for a client in a folder and no session (the commands
   each installed client offers in each folder, kept by `CommandKey`, its
   program's `ClientStamp` from `AgentHost::client_stamp`, and listed on a
-  miss by a short `CommandListing` process in `listing`, beside the models), and
+  miss by a short `CommandListing` process in `task::listing`, beside the models), and
   `attach`, `attachment`, and `detach` keep its images in a folder of its
   own under the attachments folder (`attachments`: `AttachmentFolders`,
   written through `AgentHost::place_file`, `<data>/attachments` in the
@@ -401,7 +401,8 @@ dependencies under "Crates" below. Read the code for current module ownership.
   with the run), doing blocking work off the task (`AgentHost::blocking`,
   Tokio's blocking pool in `ProcessHost`), and starting processes, which tests
   fill with
-  scripted in-memory agents. `SupervisorTask` is the shell: one task reads every
+  scripted in-memory agents. `SupervisorTask` (`task`; what it does for sessions is in
+  `task::sessions`, and for the clients in `task::clients`) is the shell: one task reads every
   agent's stdout, writes its stdin through a bounded queue per agent, and waits for its exit, records each run
   through the recorder's `RunTap` (a run without room to be recorded does not
   start), with every event of its conversation as `entries` keeps it (no
@@ -409,7 +410,7 @@ dependencies under "Crates" below. Read the code for current module ownership.
   run when the last handle is dropped. A client's sign-in on the host is
   read and run through the client's own commands: `sign_in` holds the pure
   `SignInState` and the `Login` machine (starting, awaiting its code, its
-  approval, its key, or its redirect, finishing, ended), and `login` its shell (`StatusCheck`, `LoginTalk`, and
+  approval, its key, or its redirect, finishing, ended), and `task::login` its shell (`StatusCheck`, `LoginTalk`, and
   `SignIns`, one login per client, checked after each login and after a
   failed turn), behind `Supervisor::check_sign_in`, `sign_in`,
   `answer_sign_in`, `wait_sign_in`, and `cancel_sign_in`; a login is started

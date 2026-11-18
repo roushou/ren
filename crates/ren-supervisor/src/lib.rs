@@ -16,8 +16,6 @@ pub mod client;
 mod entries;
 pub mod files;
 pub mod host;
-mod listing;
-mod login;
 mod process;
 pub mod project;
 #[cfg(test)]
@@ -33,8 +31,6 @@ pub use files::{FileListing, FileMatch, FileQuery, FoundPath, PathKind, WalkLimi
 pub use host::{
     AgentHost, AgentProcess, ClientStamp, KillSignal, KillSwitch, RunTools, Scratch, Untracked,
 };
-pub use listing::ListingError;
-pub use login::SignInError;
 pub use project::{Look, PlaceKind, Project, ProjectGit, Search};
 pub use run::{
     Approvals, Delivery, ProcessExit, RunCommand, RunPhase, RunRefused, RunState, Waiting,
@@ -44,6 +40,9 @@ pub use session::{
 };
 pub use sign_in::{Login, LoginEnd, LoginOutcome, SignInState, Waited};
 pub use task::SupervisorTask;
+pub use task::listing::ListingError;
+pub use task::login::SignInError;
+use task::{listing, login};
 pub use workdir::{Bounds, Roots, Workdir, WorkdirError};
 
 use attachments::AttachmentFolders;
