@@ -204,7 +204,7 @@ impl PiRpc {
     }
 
     /// The commands in Pi's answer to `get_commands`.
-    fn listed(data: &Value) -> Vec<ClientCommand> {
+    pub(crate) fn listed(data: &Value) -> Vec<ClientCommand> {
         data.get("commands")
             .and_then(Value::as_array)
             .into_iter()
@@ -767,6 +767,36 @@ impl PiRpc {
             }
             _ => {}
         }
+    }
+}
+
+/// A listing process's side of `pi --mode rpc` for a folder's commands: its
+/// answer to `get_commands`, its extensions' commands, prompt templates,
+/// and skills as the folder it runs in has them.
+#[derive(Debug)]
+pub struct PiCommands;
+
+impl PiCommands {
+    const ID: &'static str = "ren-commands";
+
+    /// The codec, and the first line to send.
+    pub fn open() -> (Self, Line) {
+        let line = Line::json(&json!({ "id": Self::ID, "type": "get_commands" }));
+        (Self, line)
+    }
+
+    pub(crate) fn receive(&mut self, message: &Value) -> Listing<Vec<ClientCommand>> {
+        let answers = message.get("type").and_then(Value::as_str) == Some("response")
+            && message.get("id").and_then(Value::as_str) == Some(Self::ID);
+        if !answers {
+            return Listing::waiting();
+        }
+        if message.get("success").and_then(Value::as_bool) != Some(true) {
+            return Listing::Failed(
+                ModelListing::text(message, "error").unwrap_or_else(|| "refused".into()),
+            );
+        }
+        Listing::Listed(PiRpc::listed(&message["data"]))
     }
 }
 

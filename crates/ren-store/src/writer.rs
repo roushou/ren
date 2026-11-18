@@ -777,6 +777,13 @@ impl MetadataTx<'_> {
                     .execute(&mut *self.tx)
                     .await?;
             }
+            SessionFact::FolderChosen { workdir } => {
+                sqlx::query("UPDATE operator_sessions SET workdir = ? WHERE id = ?")
+                    .bind(workdir)
+                    .bind(record.session.to_string())
+                    .execute(&mut *self.tx)
+                    .await?;
+            }
             SessionFact::Archived | SessionFact::Unarchived => {
                 let archived = match record.fact {
                     SessionFact::Archived => Some(at),
@@ -784,6 +791,7 @@ impl MetadataTx<'_> {
                     | SessionFact::Created { .. }
                     | SessionFact::Configured { .. }
                     | SessionFact::ClientChosen { .. }
+                    | SessionFact::FolderChosen { .. }
                     | SessionFact::Attached { .. }
                     | SessionFact::Detached { .. }
                     | SessionFact::AttachmentsSent { .. } => None,
@@ -1082,10 +1090,11 @@ impl MetadataTx<'_> {
             .await?
             .rows_affected();
         if gone > 0 {
-            sqlx::query("DELETE FROM observations WHERE call IS NULL AND kind IN (?, ?, ?, ?, ?, ?, ?, ?) AND json_extract(payload, '$.session') = ?")
+            sqlx::query("DELETE FROM observations WHERE call IS NULL AND kind IN (?, ?, ?, ?, ?, ?, ?, ?, ?) AND json_extract(payload, '$.session') = ?")
                 .bind(ObservationKind::SessionCreated.label())
                 .bind(ObservationKind::SessionConfigured.label())
                 .bind(ObservationKind::SessionClientChosen.label())
+                .bind(ObservationKind::SessionFolderChosen.label())
                 .bind(ObservationKind::SessionArchived.label())
                 .bind(ObservationKind::SessionUnarchived.label())
                 .bind(ObservationKind::SessionAttached.label())

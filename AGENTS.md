@@ -254,7 +254,9 @@ dependencies under "Crates" below. Read the code for current module ownership.
   blank, `BlankPrompt` when it would be, written only as its
   `RecordedPrompt`, its text and what each image is, which reads back), its pure line
   framing (`lines`), the models a client lists (`models`: `Model` by
-  `ModelId`, read by `ModelListing` from a short listing process), and a
+  `ModelId`, read by `ModelListing` from a short listing process; the
+  commands a client offers in a folder are read the same way by
+  `CommandListing`, in `commands`), and a
   run's `RunSettings` (`settings`: its model, `Effort`, and
   `ApprovalPolicy`, and `Midway`, what each client takes mid-run: steering
   and which settings change from the next turn; `RunSettings::change_to` is what a change
@@ -346,12 +348,17 @@ dependencies under "Crates" below. Read the code for current module ownership.
   active after, archived on the shelf; see `docs/architecture.md`,
   "Sessions, runs, and recordings"). The
   task holds sessions and their processes together: `Supervisor::create`
-  starts a session's client at once, `send` carries a command through its
-  process or, for a prompt with none running, through a new one that resumes
-  its conversation, `choose_client` replaces a draft's client, `shelve`
+  makes a draft, which runs no client until its first prompt, `send`
+  carries a command through its process or, for a prompt with none running,
+  through a new one that resumes its conversation, `choose_client` and
+  `choose_folder` change a draft's client and folder, `shelve`
   archives (stopping its process) or unarchives, `adopt` serves a session the
   store holds, `forget` stops serving one being deleted, and `session_commands` and `session_files` serve its composer
-  (the folder's listing is the session's, kept until a turn ends), and
+  (the folder's listing is the session's, kept until a turn ends), with
+  `client_commands` for a client in a folder and no session (the commands
+  each installed client offers in each folder, kept by `CommandKey`, its
+  program's `ClientStamp` from `AgentHost::client_stamp`, and listed on a
+  miss by a short `CommandListing` process in `listing`, beside the models), and
   `attach`, `attachment`, and `detach` keep its images in a folder of its
   own under the attachments folder (`attachments`: `AttachmentFolders`,
   written through `AgentHost::place_file`, `<data>/attachments` in the
@@ -359,9 +366,7 @@ dependencies under "Crates" below. Read the code for current module ownership.
   changes go to `subscribe_sessions`; every request addresses a session,
   never a run. A client idle between turns is stopped
   after `IdleStop` (ten minutes in the daemon; its run ends `idled`), and its
-  session goes on, unless it is a draft never asked anything and holding no
-  attachment: that one is discarded (`SessionAction::Discard`, recorded as
-  a delete by `Actor::Ren`). `RunState` (`run`) is the
+  session goes on. `RunState` (`run`) is the
   pure lifecycle machine (starting, idle, working with its waiting approvals and the prompt queued
   for after the turn (a `Delivery`: start, queue, or steer),
   stopping, ended with a `RunEnd`). Around it, `Process` (`process`) is one

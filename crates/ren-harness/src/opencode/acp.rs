@@ -1216,7 +1216,7 @@ impl OpenCodeAcp {
     }
 
     /// The commands in an `available_commands_update`.
-    fn listed_commands(update: &Value) -> Vec<ClientCommand> {
+    pub(crate) fn listed_commands(update: &Value) -> Vec<ClientCommand> {
         update
             .get("availableCommands")
             .and_then(Value::as_array)
@@ -1235,6 +1235,114 @@ impl OpenCodeAcp {
                 })
             })
             .collect()
+    }
+}
+
+/// One `opencode acp` listing process for a folder's commands: a session
+/// opened there only for the commands opencode lists to it, then deleted.
+#[derive(Debug)]
+pub struct OpenCodeCommands {
+    /// The folder the throwaway session opens in: absolute, as ACP requires.
+    folder: String,
+    step: CommandStep,
+    /// The throwaway session, once opencode named it.
+    session: Option<String>,
+    /// The commands, once opencode listed them to the session.
+    commands: Option<Vec<ClientCommand>>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CommandStep {
+    Initializing,
+    Opening,
+    Deleting,
+}
+
+impl OpenCodeCommands {
+    const INITIALIZE: u64 = 0;
+    const NEW: u64 = 1;
+    const DELETE: u64 = 2;
+
+    /// A codec for a freshly started listing process in `folder`, and its
+    /// first line.
+    pub fn open(version: &str, folder: &str) -> (Self, Line) {
+        let (_, line) = OpenCodeModels::open(version, folder);
+        (
+            Self {
+                folder: folder.to_owned(),
+                step: CommandStep::Initializing,
+                session: None,
+                commands: None,
+            },
+            line,
+        )
+    }
+
+    pub(crate) fn receive(&mut self, message: &Value) -> Listing<Vec<ClientCommand>> {
+        if message.get("method").and_then(Value::as_str) == Some(AcpMethod::SessionUpdate.label()) {
+            let update = &message["params"]["update"];
+            let commands = update.get("sessionUpdate").and_then(Value::as_str)
+                == Some(AcpUpdate::AvailableCommandsUpdate.label());
+            if commands {
+                self.commands = Some(OpenCodeAcp::listed_commands(update));
+            }
+            return self.delete_when_listed();
+        }
+        if message.get("method").is_some() {
+            return Listing::waiting();
+        }
+        let id = message.get("id").and_then(Value::as_u64);
+        if let Some(error) = message.get("error") {
+            if self.step == CommandStep::Deleting {
+                // Listed whether or not the session could be deleted.
+                return Listing::Listed(self.commands.take().unwrap_or_default());
+            }
+            return Listing::Failed(
+                ModelListing::text(error, "message").unwrap_or_else(|| "opencode refused".into()),
+            );
+        }
+        match (self.step, id) {
+            (CommandStep::Initializing, Some(Self::INITIALIZE)) => {
+                self.step = CommandStep::Opening;
+                Listing::Waiting(vec![Line::json(&json!({
+                    "jsonrpc": "2.0",
+                    "id": Self::NEW,
+                    "method": AcpMethod::SessionNew.label(),
+                    "params": { "cwd": self.folder, "mcpServers": [] },
+                }))])
+            }
+            (CommandStep::Opening, Some(Self::NEW)) => {
+                self.session = ModelListing::text(&message["result"], "sessionId");
+                if self.session.is_none() {
+                    return Listing::Listed(self.commands.take().unwrap_or_default());
+                }
+                self.delete_when_listed()
+            }
+            (CommandStep::Deleting, Some(Self::DELETE)) => {
+                Listing::Listed(self.commands.take().unwrap_or_default())
+            }
+            (CommandStep::Initializing | CommandStep::Opening | CommandStep::Deleting, _) => {
+                Listing::waiting()
+            }
+        }
+    }
+
+    /// Once the session is named and its commands listed, delete it.
+    fn delete_when_listed(&mut self) -> Listing<Vec<ClientCommand>> {
+        if self.step == CommandStep::Opening
+            && self.commands.is_some()
+            && let Some(session) = &self.session
+        {
+            let line = Line::json(&json!({
+                "jsonrpc": "2.0",
+                "id": Self::DELETE,
+                "method": AcpMethod::SessionDelete.label(),
+                "params": { "sessionId": session },
+            }));
+            self.step = CommandStep::Deleting;
+            return Listing::Waiting(vec![line]);
+        }
+        Listing::waiting()
     }
 }
 

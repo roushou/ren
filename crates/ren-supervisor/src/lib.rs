@@ -16,8 +16,8 @@ pub mod client;
 mod entries;
 pub mod files;
 pub mod host;
+mod listing;
 mod login;
-mod models;
 mod process;
 pub mod project;
 #[cfg(test)]
@@ -30,9 +30,11 @@ pub mod workdir;
 
 pub use client::{Client, ClientStatus};
 pub use files::{FileListing, FileMatch, FileQuery, FoundPath, PathKind, WalkLimits};
-pub use host::{AgentHost, AgentProcess, KillSignal, KillSwitch, RunTools, Scratch, Untracked};
+pub use host::{
+    AgentHost, AgentProcess, ClientStamp, KillSignal, KillSwitch, RunTools, Scratch, Untracked,
+};
+pub use listing::ListingError;
 pub use login::SignInError;
-pub use models::ModelsError;
 pub use project::{Look, PlaceKind, Project, ProjectGit, Search};
 pub use run::{Approvals, Delivery, ProcessExit, RunCommand, RunRefused, RunState, Waiting};
 pub use session::{
@@ -342,6 +344,11 @@ pub(crate) enum SessionRequest {
         harness: Harness,
         reply: Reply<()>,
     },
+    ChooseFolder {
+        session: SessionId,
+        place: StartPlace,
+        reply: Reply<()>,
+    },
     Shelve {
         session: SessionId,
         shelving: Shelving,
@@ -354,10 +361,6 @@ pub(crate) enum SessionRequest {
     },
     List {
         reply: Reply<Vec<SessionSnapshot>>,
-    },
-    Commands {
-        session: SessionId,
-        reply: Reply<Vec<ClientCommand>>,
     },
     Files {
         session: SessionId,
@@ -411,10 +414,35 @@ pub(crate) enum Request {
     },
     Models {
         harness: Harness,
-        reply: models::ModelsReply,
+        reply: listing::ListingReply<Vec<Model>>,
+    },
+    Commands {
+        asked: CommandsAsked,
+        reply: listing::ListingReply<Vec<ClientCommand>, CommandsError>,
     },
     Session(SessionRequest),
     SignIn(SignInRequest),
+}
+
+/// Whose commands are asked for.
+pub(crate) enum CommandsAsked {
+    Session(SessionId),
+    Client { harness: Harness, place: StartPlace },
+}
+
+/// Why a client's commands could not be read.
+#[derive(Debug, thiserror::Error)]
+pub enum CommandsError {
+    #[error("no session {0}")]
+    NoSuchSession(SessionId),
+    #[error(transparent)]
+    Place(StartError),
+    #[error("{0} is not installed here")]
+    NotInstalled(Harness),
+    #[error(transparent)]
+    Listing(#[from] ListingError),
+    #[error("the supervisor has stopped")]
+    Gone,
 }
 
 /// A request about a client's sign-in, answered by the task's loop.
@@ -561,13 +589,34 @@ impl Supervisor {
 
     /// The models `harness` offers, as it lists them itself. The first
     /// non-empty answer is kept for as long as the supervisor runs.
-    pub async fn models(&self, harness: Harness) -> Result<Vec<Model>, ModelsError> {
+    pub async fn models(&self, harness: Harness) -> Result<Vec<Model>, ListingError> {
         let (reply, answer) = oneshot::channel();
         self.requests
             .send(Request::Models { harness, reply })
             .await
-            .map_err(|_| ModelsError::Gone)?;
-        answer.await.map_err(|_| ModelsError::Gone)?
+            .map_err(|_| ListingError::Gone)?;
+        answer.await.map_err(|_| ListingError::Gone)?
+    }
+
+    /// What `harness` offers a prompt in `place`, with no session: as the
+    /// installed client last listed it there, or listed now by starting it
+    /// briefly in that folder. Scratch is the scratch folder itself.
+    pub async fn client_commands(
+        &self,
+        harness: Harness,
+        place: StartPlace,
+    ) -> Result<Vec<ClientCommand>, CommandsError> {
+        self.commands(CommandsAsked::Client { harness, place })
+            .await
+    }
+
+    async fn commands(&self, asked: CommandsAsked) -> Result<Vec<ClientCommand>, CommandsError> {
+        let (reply, answer) = oneshot::channel();
+        self.requests
+            .send(Request::Commands { asked, reply })
+            .await
+            .map_err(|_| CommandsError::Gone)?;
+        answer.await.map_err(|_| CommandsError::Gone)?
     }
 
     async fn sign_in_request<T>(
@@ -674,7 +723,7 @@ impl Supervisor {
         answer.await.map_err(|_| SessionError::Gone)?
     }
 
-    /// A new session, its client started in it.
+    /// A new session, a draft: its client starts with its first prompt.
     pub async fn create(&self, create: Create) -> Result<SessionId, SessionError> {
         self.ask(|reply| SessionRequest::Create { create, reply })
             .await
@@ -698,8 +747,9 @@ impl Supervisor {
         .await
     }
 
-    /// Work with `harness` instead, while the session is a draft: its
-    /// process is replaced, and its settings go back to the client's own.
+    /// Work with `harness` instead, while the session is a draft: any
+    /// process of the old client goes, and its settings go back to the
+    /// client's own.
     pub async fn choose_client(
         &self,
         session: SessionId,
@@ -708,6 +758,21 @@ impl Supervisor {
         self.ask(|reply| SessionRequest::ChooseClient {
             session,
             harness,
+            reply,
+        })
+        .await
+    }
+
+    /// Work in `place` instead, while the session is a draft: any process
+    /// goes, with its conversation; the next starts there.
+    pub async fn choose_folder(
+        &self,
+        session: SessionId,
+        place: StartPlace,
+    ) -> Result<(), SessionError> {
+        self.ask(|reply| SessionRequest::ChooseFolder {
+            session,
+            place,
             reply,
         })
         .await
@@ -741,14 +806,14 @@ impl Supervisor {
         self.ask(|reply| SessionRequest::List { reply }).await
     }
 
-    /// What the session's client offers a prompt: none while no process
-    /// has opened its conversation.
+    /// What the session's client offers a prompt: as its running client
+    /// lists them, else as the installed client last listed them in its
+    /// folder, or listed now by starting it briefly there.
     pub async fn session_commands(
         &self,
         session: SessionId,
-    ) -> Result<Vec<ClientCommand>, SessionError> {
-        self.ask(|reply| SessionRequest::Commands { session, reply })
-            .await
+    ) -> Result<Vec<ClientCommand>, CommandsError> {
+        self.commands(CommandsAsked::Session(session)).await
     }
 
     /// The `limit` paths of the session's folder that best match `query`,

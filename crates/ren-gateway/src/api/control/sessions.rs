@@ -73,6 +73,14 @@ struct ClientRequest {
     harness: Harness,
 }
 
+/// A draft's new folder: `dir`, or a new scratch folder of its own.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FolderRequest {
+    #[serde(default)]
+    dir: Option<String>,
+}
+
 /// Which sessions to list: the current ones (the default) or the archived.
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -116,6 +124,7 @@ impl SessionsApi {
                 post(Self::settings),
             )
             .route("/control/v1/sessions/{session}/client", post(Self::client))
+            .route("/control/v1/sessions/{session}/folder", post(Self::folder))
             .route(
                 "/control/v1/sessions/{session}/approvals/{approval}",
                 post(Self::answer),
@@ -164,6 +173,7 @@ impl SessionsApi {
         match error {
             SessionError::NoSuchSession(_) => ControlRefusal::NotFound,
             SessionError::Refused(SessionRefused::ClientFixed) => ControlRefusal::ClientFixed,
+            SessionError::Refused(SessionRefused::FolderFixed) => ControlRefusal::FolderFixed,
             SessionError::Refused(SessionRefused::Archived) => ControlRefusal::Archived,
             SessionError::Refused(SessionRefused::NotArchived) => ControlRefusal::NotArchived,
             SessionError::NoProcess => ControlRefusal::NoProcess,
@@ -557,6 +567,27 @@ impl SessionsApi {
         Ok(Self::done())
     }
 
+    /// Move a draft to another folder, or a new scratch folder of its own.
+    async fn folder(
+        State(api): Api,
+        headers: HeaderMap,
+        Path(session): Path<String>,
+        body: Result<Json<FolderRequest>, JsonRejection>,
+    ) -> Result<Response, ControlRefusal> {
+        let supervisor = api.admit(&headers)?;
+        let session = Self::session(&session)?;
+        let place = match RunsApi::body(body)?.dir {
+            Some(dir) => StartPlace::Folder(dir),
+            None => StartPlace::Scratch,
+        };
+        api.load(supervisor, session).await?;
+        supervisor
+            .choose_folder(session, place)
+            .await
+            .map_err(Self::refused)?;
+        Ok(Self::done())
+    }
+
     async fn shelve(
         &self,
         headers: &HeaderMap,
@@ -629,8 +660,8 @@ impl SessionsApi {
         Ok(Self::done())
     }
 
-    /// What the session's client offers a prompt; none until a process
-    /// has opened its conversation.
+    /// What the session's client offers a prompt: its running client's
+    /// list, else what the installed client lists in its folder.
     async fn commands(
         State(api): Api,
         headers: HeaderMap,
@@ -639,11 +670,10 @@ impl SessionsApi {
         let supervisor = api.admit(&headers)?;
         let session = Self::session(&session)?;
         api.load(supervisor, session).await?;
-        let commands = supervisor
-            .session_commands(session)
-            .await
-            .map_err(Self::refused)?;
-        Ok(RunsApi::commands_body(commands))
+        Ok(match supervisor.session_commands(session).await {
+            Ok(commands) => RunsApi::commands_body(commands),
+            Err(error) => RunsApi::commands_refused(error),
+        })
     }
 
     /// The paths of the session's folder that best match what was typed.

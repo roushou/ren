@@ -76,20 +76,21 @@ pub enum DefaultChoice {
     Other,
 }
 
-/// Where a listing stands after one line from the client.
+/// Where a listing stands after one line from the client: of its models
+/// unless said otherwise, or of its commands for a folder.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[must_use]
-pub enum Listing {
+pub enum Listing<T = Vec<Model>> {
     /// Still waiting; write these lines to the client's stdin first.
     Waiting(Vec<Line>),
-    /// The client's models, in the order it lists them.
-    Listed(Vec<Model>),
+    /// What the client listed, in its order.
+    Listed(T),
     /// The client refused the request, or answered with something Ren could
     /// not read.
     Failed(String),
 }
 
-impl Listing {
+impl<T> Listing<T> {
     /// Nothing to send yet.
     pub(crate) fn waiting() -> Self {
         Self::Waiting(Vec::new())

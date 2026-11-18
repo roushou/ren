@@ -248,13 +248,20 @@ async fn a_session_is_started_prompted_approved_and_stopped_through_the_control_
         .await;
     assert_eq!(status, StatusCode::CREATED, "{body}");
     let session = body["session"].as_str().unwrap().to_owned();
+    // A draft runs no client: its first prompt starts one.
+    let (_, made) = control.get(&format!("/sessions/{session}")).await;
+    assert!(made["session"]["served"]["process"].is_null(), "{made}");
+    let (status, _) = control
+        .post(
+            &format!("/sessions/{session}/prompt"),
+            json!({ "text": "edit src" }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::ACCEPTED);
     let made = control
         .until_session(&session, |s| !s["served"]["process"].is_null())
         .await;
     let run = made["served"]["process"].as_str().unwrap().to_owned();
-    control
-        .until_run(&run, |state| state["phase"] == "idle")
-        .await;
     // A running run is not deleted (once its start is recorded, it is found).
     let refused = tokio::time::timeout(Duration::from_secs(5), async {
         loop {
@@ -274,13 +281,6 @@ async fn a_session_is_started_prompted_approved_and_stopped_through_the_control_
         (StatusCode::CONFLICT, &json!("run_running"))
     );
 
-    let (status, _) = control
-        .post(
-            &format!("/sessions/{session}/prompt"),
-            json!({ "text": "edit src" }),
-        )
-        .await;
-    assert_eq!(status, StatusCode::ACCEPTED);
     let (status, body) = control
         .post(
             &format!("/sessions/{session}/prompt"),
@@ -562,6 +562,13 @@ async fn a_session_without_a_folder_starts_in_a_scratch_folder_of_its_own() {
         .await;
     assert_eq!(status, StatusCode::CREATED, "{body}");
     let session = body["session"].as_str().unwrap().to_owned();
+    let (status, _) = control
+        .post(
+            &format!("/sessions/{session}/prompt"),
+            json!({ "text": "go" }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::ACCEPTED);
     let made = control
         .until_session(&session, |s| !s["served"]["process"].is_null())
         .await;
@@ -720,6 +727,13 @@ async fn a_session_is_deleted_once_its_process_has_stopped() {
         .await;
     assert_eq!(status, StatusCode::CREATED, "{body}");
     let session = body["session"].as_str().unwrap().to_owned();
+    let (status, _) = control
+        .post(
+            &format!("/sessions/{session}/prompt"),
+            json!({ "text": "go" }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::ACCEPTED);
     let made = control
         .until_session(&session, |s| {
             !s["stored"].is_null() && !s["served"]["process"].is_null()
@@ -727,7 +741,7 @@ async fn a_session_is_deleted_once_its_process_has_stopped() {
         .await;
     let process = made["served"]["process"].as_str().unwrap().to_owned();
     control
-        .until_run(&process, |state| state["phase"] == "idle")
+        .until_run(&process, |state| state["phase"] == "working")
         .await;
 
     let (status, body) = control
@@ -796,21 +810,16 @@ async fn a_session_is_created_driven_continued_archived_and_served_again_after_a
     assert_eq!(status, StatusCode::CREATED, "{body}");
     let session = body["session"].as_str().unwrap().to_owned();
 
-    // Its client starts at once; the store records it a moment later.
+    // A draft runs no client; the store records it a moment later.
     let made = control
-        .until_session(&session, |s| {
-            !s["stored"].is_null() && !s["served"]["process"].is_null()
-        })
+        .until_session(&session, |s| !s["stored"].is_null())
         .await;
     assert_eq!(
         made["served"]["state"],
         json!({ "shelf": "open", "phase": "draft" })
     );
+    assert!(made["served"]["process"].is_null(), "{made}");
     assert_eq!(made["stored"]["workdir"], "/work/acme");
-    let first = made["served"]["process"].as_str().unwrap().to_owned();
-    control
-        .until_run(&first, |state| state["phase"] == "idle")
-        .await;
     let (status, body) = control
         .get(&format!("/sessions/{session}/files?q=upl"))
         .await;
@@ -822,7 +831,7 @@ async fn a_session_is_created_driven_continued_archived_and_served_again_after_a
         (StatusCode::OK, json!([]))
     );
 
-    // A prompt goes through its process and fixes its client.
+    // Its first prompt starts its client and fixes it.
     let (status, body) = control
         .post(
             &format!("/sessions/{session}/prompt"),
@@ -830,6 +839,10 @@ async fn a_session_is_created_driven_continued_archived_and_served_again_after_a
         )
         .await;
     assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+    let started = control
+        .until_session(&session, |s| !s["served"]["process"].is_null())
+        .await;
+    let first = started["served"]["process"].as_str().unwrap().to_owned();
     control
         .until_run(&first, |state| {
             state["phase"] == "working"
@@ -1231,12 +1244,10 @@ async fn an_image_is_uploaded_read_removed_kept_across_a_restart_and_deleted_wit
         .await;
     assert_eq!(status, StatusCode::CREATED, "{body}");
     let session = body["session"].as_str().unwrap().to_owned();
-    let made = control
-        .until_session(&session, |s| {
-            !s["stored"].is_null() && !s["served"]["process"].is_null()
-        })
+    // A draft takes images before its client starts.
+    control
+        .until_session(&session, |s| !s["stored"].is_null())
         .await;
-    let process = made["served"]["process"].as_str().unwrap().to_owned();
 
     // Uploaded, read from its bytes, and kept in the session's folder.
     let (status, body) = control
@@ -1320,6 +1331,10 @@ async fn an_image_is_uploaded_read_removed_kept_across_a_restart_and_deleted_wit
         )
         .await;
     assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+    let started = control
+        .until_session(&session, |s| !s["served"]["process"].is_null())
+        .await;
+    let process = started["served"]["process"].as_str().unwrap().to_owned();
     let (status, listed) = control
         .get(&format!("/sessions/{session}/attachments"))
         .await;
@@ -1512,5 +1527,73 @@ async fn every_control_request_reaches_its_route() {
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK, "{feed:?}");
     }
+    gateway.stop().await;
+}
+
+#[tokio::test]
+async fn a_draft_moves_folder_and_a_clients_commands_are_read_without_a_session() {
+    let upstream = mock(Router::new()).await;
+    let dir = tempfile::tempdir().unwrap();
+    let gateway = TestGateway::with_runs(
+        &config(&upstream),
+        dir.path(),
+        vec![PathBuf::from("/work")],
+        ScriptedHost,
+    )
+    .await;
+    let control = Control::new(&gateway);
+
+    // What a client offers a prompt in a folder, before any session.
+    let (status, body) = control
+        .get("/runs/clients/codex/commands?dir=/work/acme")
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["commands"], json!([]));
+    let (status, body) = control.get("/runs/clients/codex/commands?dir=/etc").await;
+    assert_eq!(
+        (status, body["error"].clone()),
+        (StatusCode::BAD_REQUEST, json!("invalid_directory"))
+    );
+    let (status, _) = control.get("/runs/clients/gemini/commands").await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+
+    // A draft moves to another folder; its first prompt fixes it there.
+    let (status, body) = control
+        .post(
+            "/sessions",
+            json!({ "harness": "codex", "dir": "/work/acme" }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    let session = body["session"].as_str().unwrap().to_owned();
+    let (status, body) = control
+        .post(
+            &format!("/sessions/{session}/folder"),
+            json!({ "dir": "/work/other" }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+    let moved = control
+        .until_session(&session, |s| s["stored"]["workdir"] == "/work/other")
+        .await;
+    assert_eq!(moved["served"]["workdir"], "/work/other");
+    assert!(moved["served"]["process"].is_null());
+    let (status, _) = control
+        .post(
+            &format!("/sessions/{session}/prompt"),
+            json!({ "text": "go" }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::ACCEPTED);
+    let (status, body) = control
+        .post(
+            &format!("/sessions/{session}/folder"),
+            json!({ "dir": "/work/acme" }),
+        )
+        .await;
+    assert_eq!(
+        (status, body["error"].clone()),
+        (StatusCode::CONFLICT, json!("folder_fixed"))
+    );
     gateway.stop().await;
 }

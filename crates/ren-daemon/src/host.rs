@@ -16,8 +16,8 @@ use ren_recorder::{
     time::{Clock, Moment, Monotonic, UnixMillis},
 };
 use ren_supervisor::{
-    AgentHost, AgentProcess, FoundPath, KillSwitch, Look, PathKind, ProcessExit, ProjectGit,
-    RunTools, Scratch, Untracked, WalkLimits, Workdir,
+    AgentHost, AgentProcess, ClientStamp, FoundPath, KillSwitch, Look, PathKind, ProcessExit,
+    ProjectGit, RunTools, Scratch, Untracked, WalkLimits, Workdir,
 };
 use std::future::Future;
 use std::io;
@@ -499,6 +499,23 @@ impl AgentHost for ProcessHost {
         )]
         let path = std::env::var_os("PATH");
         path.is_some_and(|path| std::env::split_paths(&path).any(|dir| dir.join(program).is_file()))
+    }
+
+    fn client_stamp(&self, program: &str, tools: &RunTools) -> Option<ClientStamp> {
+        // The program a process with these tools would start: the first on
+        // its search path, read through its links.
+        let found = self
+            .search_dirs(tools)
+            .into_iter()
+            .map(|dir| dir.join(program))
+            .find(|file| file.is_file())?;
+        let path = std::fs::canonicalize(&found).ok()?;
+        let metadata = std::fs::metadata(&path).ok()?;
+        Some(ClientStamp::new(
+            path,
+            metadata.len(),
+            metadata.modified().ok(),
+        ))
     }
 
     fn make_dir(&self, dir: &Path) -> io::Result<()> {

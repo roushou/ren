@@ -13,6 +13,6 @@ mod profile;
 mod session;
 mod tools;
 
-pub use acp::{AcpMethod, AcpUpdate, OpenCodeAcp, OpenCodeModels};
+pub use acp::{AcpMethod, AcpUpdate, OpenCodeAcp, OpenCodeCommands, OpenCodeModels};
 pub use auth::OpenCodeAuth;
 pub use tools::OpenCodeTool;

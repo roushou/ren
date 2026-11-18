@@ -314,6 +314,10 @@ pub enum SessionFact {
     ClientChosen {
         harness: Harness,
     },
+    /// The operator chose another folder while it was a draft.
+    FolderChosen {
+        workdir: String,
+    },
     Archived,
     Unarchived,
     /// The operator uploaded `attachment`, read as `read`, to go with a
@@ -338,6 +342,7 @@ impl SessionFact {
             Self::Created { .. } => ObservationKind::SessionCreated,
             Self::Configured { .. } => ObservationKind::SessionConfigured,
             Self::ClientChosen { .. } => ObservationKind::SessionClientChosen,
+            Self::FolderChosen { .. } => ObservationKind::SessionFolderChosen,
             Self::Archived => ObservationKind::SessionArchived,
             Self::Unarchived => ObservationKind::SessionUnarchived,
             Self::Attached { .. } => ObservationKind::SessionAttached,
@@ -457,6 +462,8 @@ pub enum ObservationKind {
     SessionConfigured,
     /// A draft session's client changed.
     SessionClientChosen,
+    /// A draft session's folder changed.
+    SessionFolderChosen,
     SessionArchived,
     SessionUnarchived,
     /// An attachment was uploaded to a session.

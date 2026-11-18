@@ -279,6 +279,16 @@ impl CodexAppServer {
     fn list_skills(&mut self, result: &Value) {
         self.skills.clear();
         self.skill_paths.clear();
+        for (skill, path) in Self::skills(result) {
+            self.skill_paths.insert(skill.name.clone(), path);
+            self.skills.push(skill);
+        }
+    }
+
+    /// Each enabled skill in an answer to `skills/list`, once by name, with
+    /// the path of its file.
+    fn skills(result: &Value) -> Vec<(ClientCommand, String)> {
+        let mut listed: Vec<(ClientCommand, String)> = Vec::new();
         let skills = result
             .get("data")
             .and_then(Value::as_array)
@@ -299,7 +309,7 @@ impl CodexAppServer {
                 continue;
             };
             if skill.get("enabled").and_then(Value::as_bool) == Some(false)
-                || self.skill_paths.contains_key(&name)
+                || listed.iter().any(|(known, _)| known.name == name)
             {
                 continue;
             }
@@ -308,15 +318,18 @@ impl CodexAppServer {
                 .or_else(|| text(skill.get("shortDescription")))
                 .or_else(|| text(skill.get("description")))
                 .unwrap_or_default();
-            self.skill_paths.insert(name.clone(), path);
-            self.skills.push(ClientCommand {
-                name,
-                description,
-                hint: None,
-                kind: CommandKind::Skill,
-                sigil: Sigil::Dollar,
-            });
+            listed.push((
+                ClientCommand {
+                    name,
+                    description,
+                    hint: None,
+                    kind: CommandKind::Skill,
+                    sigil: Sigil::Dollar,
+                },
+                path,
+            ));
         }
+        listed
     }
 
     /// Asks for the skills of the thread's folder.
@@ -931,6 +944,75 @@ struct CommandApproval {
 #[derive(Deserialize)]
 struct FileChangeApproval {
     reason: Option<String>,
+}
+
+/// A listing process's side of `codex app-server` for a folder's skills:
+/// `initialize`, then `skills/list` for that folder.
+#[derive(Debug)]
+pub struct CodexCommands {
+    /// The folder whose skills are listed.
+    folder: String,
+    waiting: CodexListStep,
+}
+
+impl CodexCommands {
+    const INITIALIZE: u64 = 0;
+    const SKILLS: u64 = 1;
+
+    /// The codec, and the first line to send. `version` is Ren's own version.
+    pub fn open(version: &str, folder: &str) -> (Self, Line) {
+        let (_, line) = CodexModels::open(version);
+        (
+            Self {
+                folder: folder.to_owned(),
+                waiting: CodexListStep::Initialize,
+            },
+            line,
+        )
+    }
+
+    pub(crate) fn receive(&mut self, message: &Value) -> Listing<Vec<ClientCommand>> {
+        let Some(id) = message.get("id").and_then(Value::as_u64) else {
+            return Listing::waiting();
+        };
+        if message.get("method").is_some() {
+            // A request from the server: a listing answers none.
+            return Listing::Waiting(vec![Line::json(&json!({
+                "id": message["id"],
+                "error": { "code": METHOD_NOT_FOUND, "message": "Ren is only listing skills" },
+            }))]);
+        }
+        if let Some(error) = message.get("error") {
+            return Listing::Failed(
+                ModelListing::text(error, "message").unwrap_or_else(|| "refused".into()),
+            );
+        }
+        match self.waiting {
+            CodexListStep::Initialize if id == Self::INITIALIZE => {
+                self.waiting = CodexListStep::List(Self::SKILLS);
+                Listing::Waiting(vec![
+                    Line::json(&json!({ "method": CodexMethod::Initialized.label() })),
+                    Line::json(&json!({
+                        "id": Self::SKILLS,
+                        "method": CodexMethod::SkillsList.label(),
+                        "params": { "cwds": [self.folder] },
+                    })),
+                ])
+            }
+            CodexListStep::List(request) if id == request => {
+                self.waiting = CodexListStep::Done;
+                Listing::Listed(
+                    CodexAppServer::skills(&message["result"])
+                        .into_iter()
+                        .map(|(skill, _)| skill)
+                        .collect(),
+                )
+            }
+            CodexListStep::Initialize | CodexListStep::List(_) | CodexListStep::Done => {
+                Listing::waiting()
+            }
+        }
+    }
 }
 
 /// A listing process's side of `codex app-server`: `initialize`, then

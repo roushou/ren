@@ -37,6 +37,10 @@ pub trait AgentHost: Send + Sync + 'static {
     /// Whether `program` is on the path a started process searches.
     fn finds(&self, program: &str) -> bool;
 
+    /// The installed client a process with `tools` would start as
+    /// `program`, as its file is now; `None` when it is not found.
+    fn client_stamp(&self, program: &str, tools: &RunTools) -> Option<ClientStamp>;
+
     /// Create `dir` and the folders above it, where they are missing.
     fn make_dir(&self, dir: &Path) -> io::Result<()>;
 
@@ -126,6 +130,26 @@ pub enum Untracked {
     NotStarted,
     /// `git init` ran and failed.
     InitFailed(ProcessExit),
+}
+
+/// An installed client as its program's file is: where the program
+/// resolves to, links followed, its size, and when it was last written. A
+/// new version, installed or updated by the client itself, is a new stamp.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct ClientStamp {
+    path: PathBuf,
+    len: u64,
+    modified: Option<std::time::SystemTime>,
+}
+
+impl ClientStamp {
+    pub fn new(path: PathBuf, len: u64, modified: Option<std::time::SystemTime>) -> Self {
+        Self {
+            path,
+            len,
+            modified,
+        }
+    }
 }
 
 /// The tools a process starts with, as the host read them when it started.
