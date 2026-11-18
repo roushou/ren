@@ -132,7 +132,10 @@ The strict lints are workspace-wide, in root `Cargo.toml` `[workspace.lints.clip
 They deny, among others, wildcard enum arms and imports, `unwrap`/`expect`/`panic!`
 outside tests, `as` conversions, excessive bools, and the ambient calls listed in
 `clippy.toml` (host clocks, random UUIDs, environment variables, task spawning,
-starting processes).
+starting processes). `[workspace.lints.rust]` denies `unnameable_types`: a
+public type reachable through a public signature lives in a public module
+or is re-exported, so a module is private unless something outside its
+crate names it by path.
 Modules carry no lint headers of their own. A module with submodules lives in
 `name/mod.rs`, never `name.rs` beside a `name/` directory
 (`self_named_module_files`).

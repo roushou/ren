@@ -61,7 +61,7 @@ pub use api::{ApiRead, ControlOptions, ControlRefusal, ControlToken, ManagementS
 pub use build::{Build, Environment, InstanceOptions};
 pub use forward::GatewayError;
 pub use forward::buffer::{
-    BufferOptions, BufferOptionsError, BufferRefusal, RequestBuffer, RequestLimits,
+    BufferOptions, BufferOptionsError, BufferRefusal, Buffered, RequestBuffer, RequestLimits,
 };
 pub use forward::headers::HeaderPolicy;
 pub use forward::ingress::{Ingress, IngressError, Shutdown, Stopped};
