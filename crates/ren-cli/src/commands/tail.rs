@@ -12,7 +12,7 @@ use crate::tail::{CallSummary, ClockTime, LiveDecoder, LiveEvent, Shown};
 use anyhow::Result;
 use clap::Args;
 use ren_gateway::api::read::ReadBody;
-use ren_recorder::Observation;
+use ren_gateway::api::read::calls::Observation;
 use ren_store::read::ReadRequest;
 use std::{process::ExitCode, time::Duration};
 

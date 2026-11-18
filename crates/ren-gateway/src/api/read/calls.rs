@@ -673,7 +673,7 @@ impl From<ren_recorder::inspection::EventCountsRecord> for EventCountsRecord {
 /// One committed row of the observation log, as published to live
 /// subscribers and read back by the store, and as `/api/live` clients read
 /// it.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct Observation {
     pub seq: u64,
