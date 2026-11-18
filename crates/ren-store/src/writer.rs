@@ -2,6 +2,7 @@
 
 use super::chunk::{ChunkHash, EncodedChunk};
 use crate::Reader;
+use crate::millis::SqlMillis;
 use crate::{
     StoreError,
     view::{DiskUsage, FileUsage},
@@ -27,6 +28,7 @@ use ren_recorder::{
         OperatorAction, ResponseHead, RunEntry, RunFact, RunRecord, Segment, SessionFact,
         SessionRecord, Stamp, StartAttempt,
     },
+    id::AttemptId,
     inspection::InspectionRecord,
     retention::RetentionPolicy,
 };
@@ -291,7 +293,7 @@ impl Store {
         for run in &open {
             sqlx::query("UPDATE runs SET run_end = ?, ended_at = ? WHERE id = ?")
                 .bind(RunEnd::Recovered.label())
-                .bind(i64::try_from(now.wall.as_millis()).unwrap_or(i64::MAX))
+                .bind(SqlMillis::at(now.wall))
                 .bind(run)
                 .execute(&mut *tx.tx)
                 .await?;
@@ -574,7 +576,7 @@ impl MetadataTx<'_> {
     async fn append<P: serde::Serialize>(
         &mut self,
         stamp: &Stamp,
-        attempt: Option<String>,
+        attempt: Option<AttemptId>,
         kind: ObservationKind,
         payload: &P,
     ) -> Result<Observation, StoreError> {
@@ -594,18 +596,17 @@ impl MetadataTx<'_> {
         at: Moment,
         channel: ChannelId,
         call: Option<CallId>,
-        attempt: Option<String>,
+        attempt: Option<AttemptId>,
         kind: ObservationKind,
         payload: &P,
     ) -> Result<Observation, StoreError> {
         let payload = serde_json::to_string(payload)?;
-        let mono = u64::try_from(at.monotonic.since_origin().as_millis()).unwrap_or(u64::MAX);
         let seq: u64 = sqlx::query_scalar("INSERT INTO observations(at_wall, at_mono, channel, call, attempt, kind, schema, payload) VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING seq")
-            .bind(i64::try_from(at.wall.as_millis()).unwrap_or(i64::MAX))
-            .bind(i64::try_from(mono).unwrap_or(i64::MAX))
+            .bind(SqlMillis::at(at.wall))
+            .bind(SqlMillis::span(at.monotonic.since_origin()))
             .bind(channel.to_string())
             .bind(call.map(|call| call.to_string()))
-            .bind(attempt.clone())
+            .bind(attempt.map(|attempt| attempt.to_string()))
             .bind(kind.label())
             .bind(Self::LOG_SCHEMA)
             .bind(payload)
@@ -617,7 +618,7 @@ impl MetadataTx<'_> {
             kind: Stored::Known(kind),
             channel,
             call,
-            attempt: attempt.and_then(|id| id.parse().ok()),
+            attempt,
         })
     }
 
@@ -711,7 +712,7 @@ impl MetadataTx<'_> {
         sqlx::query(
             "INSERT INTO operator_actions(at_wall, revision, actor, command) VALUES (?, ?, ?, ?)",
         )
-        .bind(i64::try_from(action.at.wall.as_millis()).unwrap_or(i64::MAX))
+        .bind(SqlMillis::at(action.at.wall))
         .bind(i64::try_from(action.revision.get()).unwrap_or(i64::MAX))
         .bind(serde_json::to_string(&action.actor)?)
         .bind(action.command.as_str())
@@ -739,7 +740,7 @@ impl MetadataTx<'_> {
     }
 
     async fn session(&mut self, record: &SessionRecord) -> Result<Observation, StoreError> {
-        let at = i64::try_from(record.at.wall.as_millis()).unwrap_or(i64::MAX);
+        let at = SqlMillis::at(record.at.wall);
         match &record.fact {
             SessionFact::Created {
                 harness,
@@ -853,7 +854,7 @@ impl MetadataTx<'_> {
 
     async fn run(&mut self, record: &RunRecord) -> Result<Observation, StoreError> {
         let id = record.run.to_string();
-        let at = i64::try_from(record.at.wall.as_millis()).unwrap_or(i64::MAX);
+        let at = SqlMillis::at(record.at.wall);
         match &record.fact {
             RunFact::Started {
                 session,
@@ -962,7 +963,7 @@ impl MetadataTx<'_> {
             "INSERT INTO run_entries(run, seq, at, started_at, turn, item, kind, event, prompt) VALUES (?1, (SELECT COALESCE(MAX(seq), 0) + 1 FROM run_entries WHERE run = ?1), ?2, ?2, ?3, ?4, ?5, ?6, ?7) ON CONFLICT(run, item) WHERE item IS NOT NULL DO UPDATE SET at = excluded.at, kind = excluded.kind, event = excluded.event, prompt = excluded.prompt",
         )
         .bind(&run)
-        .bind(i64::try_from(entry.at.wall.as_millis()).unwrap_or(i64::MAX))
+        .bind(SqlMillis::at(entry.at.wall))
         .bind(entry.turn.map(|turn| turn.to_string()))
         .bind(item)
         .bind(kind.label())
@@ -978,7 +979,7 @@ impl MetadataTx<'_> {
     /// its thread too, and a recording's to the runs that worked in it, so
     /// the two never disagree.
     async fn history(&mut self, edit: &HistoryEdit) -> Result<Observation, StoreError> {
-        let at = i64::try_from(edit.at.wall.as_millis()).unwrap_or(i64::MAX);
+        let at = SqlMillis::at(edit.at.wall);
         let (recordings, runs) = self.subjects(edit.subject).await?;
         match edit.change {
             HistoryChange::Archive | HistoryChange::Unarchive => {
@@ -1153,7 +1154,7 @@ impl MetadataTx<'_> {
             .bind(i64::try_from(mark.offset).unwrap_or(i64::MAX))
             .bind(i64::try_from(mark.len).unwrap_or(i64::MAX))
             .bind(mark.payload.label())
-            .bind(i64::try_from(mark.at.as_millis()).unwrap_or(i64::MAX))
+            .bind(SqlMillis::at(mark.at))
             .execute(&mut *self.tx)
             .await?;
         Ok(())
@@ -1161,7 +1162,7 @@ impl MetadataTx<'_> {
 
     async fn close_channel(&mut self, close: &CloseChannel) -> Result<Observation, StoreError> {
         sqlx::query("UPDATE channels SET closed_at = ?, ending = ?, close_code = ?, unattributed_messages = ?, unattributed_bytes = ? WHERE id = ?")
-            .bind(i64::try_from(close.at.wall.as_millis()).unwrap_or(i64::MAX))
+            .bind(SqlMillis::at(close.at.wall))
             .bind(close.end.label())
             .bind(close.close_code.map(u32::from))
             .bind(i64::try_from(close.unattributed.messages).unwrap_or(i64::MAX))
@@ -1182,7 +1183,7 @@ impl MetadataTx<'_> {
 
     async fn open_call(&mut self, open: &OpenCall) -> Result<Observation, StoreError> {
         let stamp = &open.stamp;
-        let at = i64::try_from(stamp.at.wall.as_millis()).unwrap_or(i64::MAX);
+        let at = SqlMillis::at(stamp.at.wall);
         sqlx::query("INSERT OR IGNORE INTO channels(id, transport, opened_at, provider) VALUES (?, ?, ?, ?)")
             .bind(stamp.channel.to_string())
             .bind(open.transport.label())
@@ -1262,7 +1263,7 @@ impl MetadataTx<'_> {
         .bind(start.attempt.to_string())
         .bind(stamp.call.to_string())
         .bind(start.ordinal)
-        .bind(i64::try_from(stamp.at.wall.as_millis()).unwrap_or(i64::MAX))
+        .bind(SqlMillis::at(stamp.at.wall))
         .bind(start.upstream.as_str())
         .bind(start.provider.label())
         .bind(start.changes.as_ref().map(|changes| changes.as_str()))
@@ -1283,7 +1284,7 @@ impl MetadataTx<'_> {
             .await?;
         self.append(
             stamp,
-            Some(start.attempt.to_string()),
+            Some(start.attempt),
             ObservationKind::AttemptStarted,
             start,
         )
@@ -1306,7 +1307,7 @@ impl MetadataTx<'_> {
             .await?;
         self.append(
             stamp,
-            Some(head.attempt.to_string()),
+            Some(head.attempt),
             ObservationKind::ResponseHead,
             head,
         )
@@ -1360,7 +1361,7 @@ impl MetadataTx<'_> {
 
     async fn finish_attempt(&mut self, finish: &FinishAttempt) -> Result<Observation, StoreError> {
         let stamp = &finish.stamp;
-        let ended = i64::try_from(stamp.at.wall.as_millis()).unwrap_or(i64::MAX);
+        let ended = SqlMillis::at(stamp.at.wall);
         let inspection = finish.inspection.as_deref();
         sqlx::query("UPDATE attempts SET terminal = ?, terminal_cause = ?, terminal_phase = ?, ended_at = ?, inspection = ?, inspection_version = ? WHERE id = ?")
             .bind(finish.end.terminal.label())
@@ -1414,7 +1415,7 @@ impl MetadataTx<'_> {
         }
         self.append(
             stamp,
-            Some(finish.attempt.to_string()),
+            Some(finish.attempt),
             ObservationKind::AttemptFinished,
             finish,
         )
@@ -1428,7 +1429,7 @@ impl MetadataTx<'_> {
         // Complete only when every body of the call ended and was fully stored.
         sqlx::query("UPDATE calls SET state = ?, ended_at = ?, rejection = ?, capture_complete = (SELECT COALESCE(MIN(b.ending = ? AND b.stored_bytes = b.observed_bytes), 0) FROM bodies b WHERE (b.owner = calls.id AND b.direction = ?) OR b.owner IN (SELECT id FROM attempts WHERE call = calls.id)) WHERE id = ?")
             .bind(CallState::Finished.label())
-            .bind(i64::try_from(stamp.at.wall.as_millis()).unwrap_or(i64::MAX))
+            .bind(SqlMillis::at(stamp.at.wall))
             .bind(finish.rejection.map(Labeled::label))
             .bind(BodyEnding::Ended.label())
             .bind(Direction::Request.label())

@@ -165,6 +165,40 @@ pub enum AcpUpdate {
     SessionInfoUpdate,
 }
 
+/// The kind ACP gives a tool call (its `ToolKind`); a kind Ren does not know
+/// stays unknown.
+#[derive(Display, EnumString, IntoStaticStr, VariantArray)]
+#[strum(serialize_all = "snake_case")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SerializeDisplay, DeserializeFromStr)]
+pub enum AcpToolKind {
+    Read,
+    Edit,
+    Delete,
+    Move,
+    Search,
+    Execute,
+    Think,
+    Fetch,
+    SwitchMode,
+    Other,
+}
+
+impl AcpToolKind {
+    /// Whether a call of this kind changes files in the workspace.
+    fn changes_files(self) -> bool {
+        match self {
+            Self::Edit | Self::Delete | Self::Move => true,
+            Self::Read
+            | Self::Search
+            | Self::Execute
+            | Self::Think
+            | Self::Fetch
+            | Self::SwitchMode
+            | Self::Other => false,
+        }
+    }
+}
+
 /// A request Ren sent, and what it was for.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Sent {
@@ -211,8 +245,8 @@ struct ToolCall {
     /// The tool's name, as opencode names it.
     name: String,
     title: Option<String>,
-    /// opencode's kind for it (`execute`, `edit`, `read`, …).
-    kind: String,
+    /// opencode's kind for it, once it has said.
+    kind: Option<Stored<AcpToolKind>>,
     status: Option<String>,
     input: Value,
     paths: Vec<String>,
@@ -560,13 +594,17 @@ impl OpenCodeAcp {
         }
         let input = &tool["rawInput"];
         let title = Self::text(tool, "title");
-        let ask = match tool.get("kind").and_then(Value::as_str) {
-            Some("execute") => ApprovalAsk::Command {
+        let kind = tool
+            .get("kind")
+            .and_then(Value::as_str)
+            .map(Stored::<AcpToolKind>::from_label);
+        let ask = match kind.as_ref().and_then(Stored::known) {
+            Some(AcpToolKind::Execute) => ApprovalAsk::Command {
                 command: Self::text(input, "command").or(title),
                 cwd: Self::text(input, "cwd"),
                 reason: None,
             },
-            Some("edit" | "delete" | "move") => ApprovalAsk::FileChange { reason: title },
+            Some(kind) if kind.changes_files() => ApprovalAsk::FileChange { reason: title },
             Some(_) | None => ApprovalAsk::Tool {
                 tool: Self::text(tool, "name")
                     .or_else(|| title.clone())
@@ -1072,7 +1110,7 @@ impl OpenCodeAcp {
         let call = self.tools.entry(id.clone()).or_insert_with(|| ToolCall {
             name: String::new(),
             title: None,
-            kind: String::new(),
+            kind: None,
             status: None,
             input: Value::Null,
             paths: Vec::new(),
@@ -1086,7 +1124,7 @@ impl OpenCodeAcp {
             call.title = Some(title);
         }
         if let Some(kind) = Self::text(update, "kind") {
-            call.kind = kind;
+            call.kind = Some(Stored::from_label(&kind));
         }
         if let Some(status) = Self::text(update, "status") {
             call.status = Some(status);
@@ -1161,8 +1199,8 @@ impl OpenCodeAcp {
             Some(other) => ItemStatus::Other(other.to_owned()),
             None => ItemStatus::of(phase),
         };
-        match call.kind.as_str() {
-            "execute" => (
+        match call.kind.as_ref().and_then(Stored::known) {
+            Some(AcpToolKind::Execute) => (
                 ItemKind::CommandExecution,
                 ItemRead::Command {
                     command: Self::text(&call.input, "command")
@@ -1176,7 +1214,7 @@ impl OpenCodeAcp {
                     exit_code: call.exit,
                 },
             ),
-            "edit" | "delete" | "move" => {
+            Some(kind) if kind.changes_files() => {
                 let paths = if call.paths.is_empty() {
                     Self::text(&call.input, "path").into_iter().collect()
                 } else {
@@ -1184,8 +1222,12 @@ impl OpenCodeAcp {
                 };
                 (ItemKind::FileChange, ItemRead::FileChange { paths, status })
             }
-            other => (
-                ItemKind::Other(if other.is_empty() { "tool" } else { other }.to_owned()),
+            Some(_) | None => (
+                ItemKind::Other(
+                    call.kind
+                        .as_ref()
+                        .map_or_else(|| "tool".to_owned(), ToString::to_string),
+                ),
                 ItemRead::tool(
                     crate::Harness::OpenCode,
                     &if call.name.is_empty() {

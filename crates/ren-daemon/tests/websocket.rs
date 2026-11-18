@@ -601,7 +601,7 @@ async fn a_client_that_stops_answering_pings_is_closed_and_frees_its_channel() {
     let dir = tempfile::tempdir().unwrap();
     let config = Config {
         websocket: ren_gateway::WebSocketOptions {
-            max_channels: 1,
+            max_channels: ren_gateway::ConcurrencyLimit::saturating(1),
             ..Default::default()
         },
         ..base_config()
@@ -647,9 +647,9 @@ async fn a_client_that_stops_answering_pings_is_closed_and_frees_its_channel() {
 async fn a_call_whose_upstream_goes_quiet_ends_as_stalled() {
     let dir = tempfile::tempdir().unwrap();
     let config = Config {
-        stream_idle_timeout_seconds: 5,
+        stream_idle_timeout_seconds: ren_gateway::TimeoutSecs::saturating(5),
         websocket: ren_gateway::WebSocketOptions {
-            keepalive_seconds: 3600,
+            keepalive_seconds: ren_gateway::TimeoutSecs::saturating(3600),
             ..Default::default()
         },
         ..base_config()

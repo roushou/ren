@@ -36,7 +36,9 @@ pub use host::{
 pub use listing::ListingError;
 pub use login::SignInError;
 pub use project::{Look, PlaceKind, Project, ProjectGit, Search};
-pub use run::{Approvals, Delivery, ProcessExit, RunCommand, RunRefused, RunState, Waiting};
+pub use run::{
+    Approvals, Delivery, ProcessExit, RunCommand, RunPhase, RunRefused, RunState, Waiting,
+};
 pub use session::{
     SessionAction, SessionInput, SessionPhase, SessionRefused, SessionState, Shelving,
 };

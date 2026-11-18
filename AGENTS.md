@@ -277,7 +277,8 @@ dependencies under "Crates" below. Read the code for current module ownership.
   `SignInLink` it prints, a device login's `DeviceCode`, and the
   `SignInAnswer` handed back, a secret never shown; each client's in its
   module's `auth`); the gateway URL a harness is pointed at and the
-  `UserToken` it presents there (`endpoint`); and `HostEnv` (`host`), the
+  `UserToken` it presents there (`endpoint`, with `SecureBase`, the HTTPS
+  or loopback-HTTP base URL rule the gateway's upstreams share); and `HostEnv` (`host`), the
   host environment that launching and configuration read. The four codecs
   are composed of shared parts (`codec`: `Envelope`, a line read as JSON;
   `JsonRpc::classify`; `RequestLedger`, the requests sent and waiting;
@@ -335,7 +336,8 @@ dependencies under "Crates" below. Read the code for current module ownership.
   and exposure listings (`search`, `Reader::search` and `Reader::exposures`) over
   the digests the recorder derives for each finished call (`call_digests`,
   `call_exposures`, and `search_texts` with its FTS5 index, in `ren.sqlite3`;
-  `RecordSink::undigested` lists calls to derive again), and implements the recorder's `RecordSink`. It owns the versioned migrations for
+  `RecordSink::undigested` lists calls to derive again), and implements the recorder's `RecordSink`;
+  every time it binds goes through `SqlMillis` (`millis`). It owns the versioned migrations for
   `ren.sqlite3` (`crates/ren-store/migrations`); never edit one that has
   shipped. Every history read is a `ReadRequest` that `Reader::serve` answers
   (`read`), and `ReadRequest::decode` reads the API's body back as the same
@@ -366,8 +368,8 @@ dependencies under "Crates" below. Read the code for current module ownership.
   changes go to `subscribe_sessions`; every request addresses a session,
   never a run. A client idle between turns is stopped
   after `IdleStop` (ten minutes in the daemon; its run ends `idled`), and its
-  session goes on. `RunState` (`run`) is the
-  pure lifecycle machine (starting, idle, working with its waiting approvals and the prompt queued
+  session goes on. `RunState` (`run`, written with its pinned `RunPhase`,
+  which install-vps reads) is the pure lifecycle machine (starting, idle, working with its waiting approvals and the prompt queued
   for after the turn (a `Delivery`: start, queue, or steer),
   stopping, ended with a `RunEnd`). Around it, `Process` (`process`) is one
   client process as Ren drives it (its run state, codec, settings, the first
@@ -429,16 +431,22 @@ dependencies under "Crates" below. Read the code for current module ownership.
   implementation, and the ingress with the shutdown drain, which also waits for
   upgraded channels. Use Axum's request, response, body, and WebSocket types
   directly; no framework-independent HTTP adapter layer. It also owns retry
-  eligibility (`retry`), operator state (`operator`), the named users and
+  eligibility (`retry`), operator state (`operator`, a pause written with
+  its pinned `PauseState`, which install-vps reads), the named users and
   how a request is matched to one (`user`: `Users::identify`, with
   `TokenDigest`, a user token's digest), each user's and the unnamed
-  callers' concurrency limits (`limits`), the `Controls` that hold
+  callers' concurrency limits (`limits`, with `ConcurrencyLimit`, 1 to
+  1024, which every configured limit is; `TimeoutSecs`, in `timeout`, is
+  every configured timeout, 1 to 3600 seconds), the `Controls` that hold
   it with the running-call registry (`control`), the `Build` and the
   instance's environment (`instance`) that `/health` reports (`build`), and
   pure call planning
   (`policy`: block, transform, and fallback rules validated at load, with
   protected headers and body paths), and the call's way through its
-  candidates (`call`: `CallRun`, which `Gateway::forward` carries out).
+  candidates (`call`: `CallRun`, which `Gateway::forward` carries out),
+  and the codes it refuses a call with over HTTP and WebSocket alike
+  (`reply`: `RenCode`, `ren_`-prefixed on the wire and pinned in
+  `tests/fixtures/labels.txt`).
   `src/purity.rs` keeps `attempt`, `call`, `channel`, `retry`, `operator`,
   and `user` free of runtime, I/O, storage, and shell-module
   dependencies. Management receives `Reader`, `Backup`, retention settings, and
@@ -518,8 +526,9 @@ dependencies under "Crates" below. Read the code for current module ownership.
   whether stdout and stderr are colored (a terminal, `NO_COLOR`,
   `CLICOLOR_FORCE`, `TERM=dumb`); JSON and piped output stay plain. `build.rs` records the
   source revision (`REN_REVISION`) for `--version`, `/health`, and `doctor`. `Cli::run`
-  prints errors itself, so they are styled too. `doctor` and `service` are the doctor report and the
-  service definitions. Refactors preserve existing flags, output
+  prints errors itself, so they are styled too. `doctor` and `service` are the doctor report (its
+  check names a `CheckId` vocabulary, pinned, since other tools read them)
+  and the service definitions. Refactors preserve existing flags, output
   formats, exports, and client passthrough. Its integration tests run the built
   binary (`CARGO_BIN_EXE_ren`).
 - `ui`: a Bun workspace (`apps/*`, `packages/*`) whose app, `ui/apps/web`, is an

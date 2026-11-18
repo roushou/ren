@@ -457,7 +457,7 @@ async fn the_control_api_refuses_browsers_strangers_and_missing_tokens() {
     let mock = mock(upstream(StatusCode::OK, Arc::default())).await;
     let dir = tempfile::tempdir().unwrap();
     let mut config = config(&mock, "");
-    config.control.tailscale_logins = vec!["operator@example.com".into()];
+    config.control.tailscale_logins = vec!["operator@example.com".parse().unwrap()];
     let gateway = TestGateway::start(&config, dir.path()).await;
     let state = format!("{}/control/v1/state", gateway.base());
     let status =

@@ -14,6 +14,7 @@
 pub mod activity;
 pub mod backup;
 pub mod chunk;
+mod millis;
 pub mod query;
 pub mod read;
 mod reader;

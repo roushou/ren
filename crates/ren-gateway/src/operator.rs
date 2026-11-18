@@ -6,7 +6,9 @@
 use ren_protocol::native::NativeSessionId;
 use ren_recorder::routing::OperatorRevision;
 use ren_recorder::{caller::UserId, id::CallId, time::UnixMillis};
+use serde_with::{DeserializeFromStr, SerializeDisplay};
 use std::{collections::BTreeMap, time::Duration};
+use strum::{Display, EnumString, IntoStaticStr, VariantArray};
 
 /// Why a stored operator state could not be restored. Either stops startup:
 /// starting unpaused and unblocked must not happen silently.
@@ -67,6 +69,26 @@ pub enum Pause {
     Paused {
         retry_after: RetryAfter,
     },
+}
+
+/// Whether new calls are admitted, without what a pause carries: `Pause`'s
+/// `state` as it is written, which other tools read (`cargo xtask
+/// install-vps` waits on it).
+#[derive(Display, EnumString, IntoStaticStr, VariantArray)]
+#[strum(serialize_all = "snake_case")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SerializeDisplay, DeserializeFromStr)]
+pub enum PauseState {
+    Running,
+    Paused,
+}
+
+impl Pause {
+    pub fn state(&self) -> PauseState {
+        match self {
+            Self::Running => PauseState::Running,
+            Self::Paused { .. } => PauseState::Paused,
+        }
+    }
 }
 
 /// How long a session or user block lasts.
@@ -253,12 +275,30 @@ impl OperatorState {
 #[cfg(test)]
 mod tests {
     use super::{
-        OperatorCommand, OperatorRevision, OperatorState, Pause, RestoreError, RetryAfter,
+        OperatorCommand, OperatorRevision, OperatorState, Pause, PauseState, RestoreError,
+        RetryAfter,
     };
     use ren_protocol::native::NativeSessionId;
     use ren_recorder::{caller::UserId, time::UnixMillis};
     use std::time::Duration;
     use uuid::Uuid;
+
+    #[test]
+    fn a_pause_is_written_with_its_state_label() {
+        let paused = Pause::Paused {
+            retry_after: RetryAfter::seconds(30).unwrap(),
+        };
+        for (pause, state) in [
+            (Pause::Running, PauseState::Running),
+            (paused, PauseState::Paused),
+        ] {
+            assert_eq!(pause.state(), state);
+            assert_eq!(
+                serde_json::to_value(pause).unwrap()["state"],
+                state.to_string()
+            );
+        }
+    }
 
     #[test]
     fn commands_make_revisions_and_blocks_expire() {

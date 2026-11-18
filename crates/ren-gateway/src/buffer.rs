@@ -8,6 +8,7 @@
 //! once, never a wait. There is no pass-through mode, because it would bypass
 //! policy. The permit is held for as long as the call holds its bytes.
 
+use crate::timeout::TimeoutSecs;
 use axum::body::Body;
 use bytes::{Bytes, BytesMut};
 use http::HeaderMap;
@@ -78,9 +79,9 @@ pub struct BufferOptions {
     /// Request bytes held at once across every call.
     pub budget_bytes: usize,
     /// Longest gap between two pieces of an upload.
-    pub idle_timeout_seconds: u64,
+    pub idle_timeout_seconds: TimeoutSecs,
     /// Longest time to receive a whole upload.
-    pub total_timeout_seconds: u64,
+    pub total_timeout_seconds: TimeoutSecs,
 }
 
 impl Default for BufferOptions {
@@ -88,8 +89,8 @@ impl Default for BufferOptions {
         Self {
             request_limits: RequestLimits::default(),
             budget_bytes: 1024 * 1024 * 1024,
-            idle_timeout_seconds: 30,
-            total_timeout_seconds: 300,
+            idle_timeout_seconds: TimeoutSecs::saturating(30),
+            total_timeout_seconds: TimeoutSecs::saturating(300),
         }
     }
 }
@@ -100,8 +101,6 @@ pub enum BufferOptionsError {
     RequestLimit,
     #[error("buffer.budget_bytes must be at most 4 GiB")]
     Budget,
-    #[error("buffer timeouts must be between 1 and 3600 seconds")]
-    Timeout,
 }
 
 impl BufferOptions {
@@ -118,12 +117,6 @@ impl BufferOptions {
             .all(|limit| (1024..=self.budget_bytes).contains(limit))
         {
             return Err(BufferOptionsError::RequestLimit);
-        }
-        if [self.idle_timeout_seconds, self.total_timeout_seconds]
-            .iter()
-            .any(|seconds| !(1..=3600).contains(seconds))
-        {
-            return Err(BufferOptionsError::Timeout);
         }
         Ok(())
     }
@@ -180,8 +173,8 @@ impl RequestBuffer {
         Self {
             budget: Arc::new(Semaphore::new(options.budget_bytes)),
             limits: options.request_limits,
-            idle: Duration::from_secs(options.idle_timeout_seconds),
-            total: Duration::from_secs(options.total_timeout_seconds),
+            idle: options.idle_timeout_seconds.duration(),
+            total: options.total_timeout_seconds.duration(),
         }
     }
 
@@ -341,7 +334,9 @@ struct ModelField {
 
 #[cfg(test)]
 mod tests {
-    use super::{BufferOptions, BufferRefusal, RequestBuffer, RequestLimits, RequestRead};
+    use super::{
+        BufferOptions, BufferRefusal, RequestBuffer, RequestLimits, RequestRead, TimeoutSecs,
+    };
     use axum::body::Body;
     use bytes::Bytes;
     use http::HeaderMap;
@@ -351,8 +346,8 @@ mod tests {
         RequestBuffer::new(BufferOptions {
             request_limits: RequestLimits::all(limit),
             budget_bytes: budget,
-            idle_timeout_seconds: 1,
-            total_timeout_seconds: 2,
+            idle_timeout_seconds: TimeoutSecs::saturating(1),
+            total_timeout_seconds: TimeoutSecs::saturating(2),
         })
     }
 

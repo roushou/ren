@@ -53,12 +53,14 @@ macro_rules! table {
 
 #[test]
 fn every_label_is_pinned() {
-    use ren_cli::mcp;
+    use ren_cli::{doctor, mcp};
     let table = table![
         mcp::ModernVersion,
         mcp::LegacyVersion,
         mcp::Method,
         mcp::ToolName,
+        doctor::Status,
+        doctor::CheckId,
     ];
     let pinned = include_str!("fixtures/labels.txt");
     assert!(

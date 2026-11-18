@@ -136,6 +136,29 @@ pub enum RunCommand {
     Stop,
 }
 
+/// Where a run is, without what each state carries: `RunState`'s `phase`
+/// as it is written, which other tools read (`cargo xtask install-vps`
+/// waits on it).
+#[derive(strum::Display, strum::EnumString, strum::IntoStaticStr, strum::VariantArray)]
+#[strum(serialize_all = "snake_case")]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    serde_with::SerializeDisplay,
+    serde_with::DeserializeFromStr,
+)]
+pub enum RunPhase {
+    Starting,
+    Idle,
+    Working,
+    Stopping,
+    Ended,
+}
+
 /// How a prompt goes to a run.
 #[derive(strum::Display, strum::EnumString, strum::IntoStaticStr, strum::VariantArray)]
 #[strum(serialize_all = "snake_case")]
@@ -223,6 +246,16 @@ pub enum RunRefused {
 }
 
 impl RunState {
+    pub fn phase(&self) -> RunPhase {
+        match self {
+            Self::Starting => RunPhase::Starting,
+            Self::Idle { .. } => RunPhase::Idle,
+            Self::Working { .. } => RunPhase::Working,
+            Self::Stopping { .. } => RunPhase::Stopping,
+            Self::Ended { .. } => RunPhase::Ended,
+        }
+    }
+
     /// The state after `event`, or why it does not apply.
     pub fn apply(&self, event: RunEvent) -> Result<Transition, RunRefused> {
         match event {
@@ -575,7 +608,8 @@ impl RunState {
 #[cfg(test)]
 mod tests {
     use super::{
-        Approvals, ProcessExit, RunAction, RunCommand, RunEvent, RunRefused, RunState, StopCause,
+        Approvals, ProcessExit, RunAction, RunCommand, RunEvent, RunPhase, RunRefused, RunState,
+        StopCause,
     };
     use ren_harness::drive::{
         ApprovalAsk, ApprovalId, Decision, DriveCommand, DriveEvent, RequestKind, TurnEnd,
@@ -591,6 +625,42 @@ mod tests {
 
     fn turn() -> NativeTurnId {
         NativeTurnId::new(Uuid::from_u128(2)).unwrap()
+    }
+
+    #[test]
+    fn a_run_state_is_written_with_its_phase_label() {
+        for (state, phase) in [
+            (RunState::Starting, RunPhase::Starting),
+            (RunState::Idle { thread: thread() }, RunPhase::Idle),
+            (
+                RunState::Working {
+                    thread: thread(),
+                    turn: None,
+                    approvals: Approvals::default(),
+                    queued: None,
+                },
+                RunPhase::Working,
+            ),
+            (
+                RunState::Stopping {
+                    cause: StopCause::Operator,
+                },
+                RunPhase::Stopping,
+            ),
+            (
+                RunState::Ended {
+                    end: RunEnd::Stopped,
+                    exit: None,
+                },
+                RunPhase::Ended,
+            ),
+        ] {
+            assert_eq!(state.phase(), phase);
+            assert_eq!(
+                serde_json::to_value(&state).unwrap()["phase"],
+                phase.to_string()
+            );
+        }
     }
 
     fn approval(id: &str) -> ApprovalId {

@@ -62,7 +62,9 @@ impl RunCmd {
         for check in &report.checks {
             // A development gateway is always named, so it is never mistaken
             // for the installed one.
-            if check.status != doctor::Status::Ok || check.name == "instance" {
+            if check.status != doctor::Status::Ok
+                || check.name == doctor::CheckName::Check(doctor::CheckId::Instance)
+            {
                 let name = format!("{}:", check.name);
                 eprintln!(
                     "{} {}",

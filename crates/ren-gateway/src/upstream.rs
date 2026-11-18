@@ -13,13 +13,13 @@ use axum::body::Body;
 use bytes::Bytes;
 use http_body::{Frame, SizeHint};
 use http_body_util::{BodyExt, BodyStream, StreamBody, combinators::UnsyncBoxBody};
+use ren_harness::endpoint::{SecureBase, SecureBaseError};
 use ren_protocol::route::{Api, Provider, Wire};
 use ren_recorder::routing::UpstreamId;
 use reqwest::{Client, Url};
 use serde_with::{DeserializeFromStr, SerializeDisplay};
 use std::{
     future::Future,
-    net::IpAddr,
     pin::Pin,
     task::{Context, Poll},
     time::Duration,
@@ -220,30 +220,16 @@ impl std::fmt::Debug for UpstreamUrl {
 impl UpstreamUrl {
     pub fn parse(base: &str) -> Result<Self, UpstreamConfigError> {
         let base = Url::parse(base).map_err(|_| UpstreamConfigError("invalid upstream URL"))?;
-        if !base.username().is_empty()
-            || base.password().is_some()
-            || base.query().is_some()
-            || base.fragment().is_some()
-        {
-            return Err(UpstreamConfigError(
-                "upstream URLs must not contain credentials, queries, or fragments",
-            ));
-        }
-        let loopback = base.host_str().is_some_and(|host| {
-            host == "localhost"
-                || host
-                    .trim_matches(['[', ']'])
-                    .parse::<IpAddr>()
-                    .is_ok_and(|ip| ip.is_loopback())
-        });
-        if base.host_str().is_none()
-            || !(base.scheme() == "https" || (base.scheme() == "http" && loopback))
-        {
-            return Err(UpstreamConfigError(
-                "upstreams require HTTPS, except loopback HTTP for local testing",
-            ));
-        }
-        Ok(Self(base))
+        SecureBase::new(base)
+            .map(|base| Self(base.into()))
+            .map_err(|refused| match refused {
+                SecureBaseError::Embedded => UpstreamConfigError(
+                    "upstream URLs must not contain credentials, queries, or fragments",
+                ),
+                SecureBaseError::Insecure => UpstreamConfigError(
+                    "upstreams require HTTPS, except loopback HTTP for local testing",
+                ),
+            })
     }
 
     fn request_url(&self, path: &str, query: Option<&str>) -> Url {
@@ -306,8 +292,9 @@ impl UpstreamAuth {
 }
 
 /// Whether credentials were overridden for an attempt.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
-#[serde(rename_all = "snake_case")]
+#[derive(Display, EnumString, IntoStaticStr, VariantArray)]
+#[strum(serialize_all = "snake_case")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SerializeDisplay, DeserializeFromStr)]
 pub enum AuthOverride {
     None,
     /// Client credentials replaced by the entry's operator key.

@@ -9,7 +9,7 @@ use axum::{Router, body::Body, response::Response, routing::get};
 use ren_cli::{
     Cli,
     client::{GatewayChoice, GatewaySource},
-    doctor::{Report, Status},
+    doctor::{CheckId, CheckName, Report, Status},
 };
 use ren_daemon::{Daemon, config::Config};
 use ren_gateway::build::{Revision, Tree};
@@ -62,12 +62,9 @@ async fn explicit_gateway_ignores_unused_local_upstreams() {
     let gateway = endpoint.url("/").to_string();
     let report = Report::local(&HostEnv::default(), Some(&config), None, &flag(&gateway)).await;
     assert!(report.success());
-    assert!(
-        report
-            .checks
-            .iter()
-            .any(|c| c.name == "upstream config" && c.status == Status::Skipped)
-    );
+    assert!(report.checks.iter().any(
+        |c| c.name == CheckName::Check(CheckId::UpstreamConfig) && c.status == Status::Skipped
+    ));
     assert!(!serde_json::to_string(&report).unwrap().contains("SECRET"));
     let data = dir.path().join("must-not-exist");
     // Serving does consume the local settings and must reject them before storage opens.
@@ -161,7 +158,7 @@ async fn doctor_reports_how_the_gateway_records_this_caller() {
         report
             .checks
             .iter()
-            .find(|check| check.name == "caller")
+            .find(|check| check.name == CheckName::Check(CheckId::Caller))
             .map(|check| (check.status, check.message.clone()))
             .unwrap()
     };
@@ -205,10 +202,9 @@ async fn distinguishes_capture_loss_from_storage_failure() {
         let report = Report::gateway(&endpoint, &HostEnv::default()).await;
         assert_eq!(report.success(), storage_errors == 0);
         assert!(
-            report
-                .checks
-                .iter()
-                .any(|c| c.name == "capture" && c.status == Status::Warning)
+            report.checks.iter().any(
+                |c| c.name == CheckName::Check(CheckId::Capture) && c.status == Status::Warning
+            )
         );
         task.abort();
     }
@@ -263,7 +259,11 @@ async fn reports_whether_the_daemon_runs_this_build() {
             .route("/api/storage", get(|| async { STORAGE }));
         let (endpoint, task) = mock(app).await;
         let report = Report::gateway(&endpoint, &HostEnv::default()).await;
-        let check = report.checks.iter().find(|c| c.name == "build").unwrap();
+        let check = report
+            .checks
+            .iter()
+            .find(|c| c.name == CheckName::Check(CheckId::Build))
+            .unwrap();
         assert_eq!(check.status, status, "{}", check.message);
         assert!(check.message.contains(message), "{}", check.message);
         // A build mismatch never fails the gateway check.
@@ -352,7 +352,8 @@ async fn launch_preserves_arguments_credentials_and_exit_status_without_editing_
         report
             .checks
             .iter()
-            .any(|c| c.name == "local storage" && c.status == Status::Skipped)
+            .any(|c| c.name == CheckName::Check(CheckId::LocalStorage)
+                && c.status == Status::Skipped)
     );
     let config = temp.path().join("ren.toml");
     std::fs::write(
@@ -372,7 +373,7 @@ async fn launch_preserves_arguments_credentials_and_exit_status_without_editing_
         local_report
             .checks
             .iter()
-            .any(|c| c.name == "local storage" && c.status == Status::Ok)
+            .any(|c| c.name == CheckName::Check(CheckId::LocalStorage) && c.status == Status::Ok)
     );
 
     std::fs::write(&fake, "#!/bin/sh\nkill -TERM $$\n").unwrap();

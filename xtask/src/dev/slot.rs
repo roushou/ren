@@ -230,7 +230,7 @@ impl Slot {
                     id: user("ci")?,
                     tailscale_logins: vec![],
                     token_blake3: Some(TokenDigest::of(&Self::ci_token())),
-                    max_concurrent: std::num::NonZeroU32::new(4),
+                    max_concurrent: Some(ren_gateway::ConcurrencyLimit::saturating(4)),
                 },
             ],
             upstreams: vec![

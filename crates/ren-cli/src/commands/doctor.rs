@@ -1,4 +1,8 @@
-use crate::{client::GatewayChoice, context::Context, doctor::Report};
+use crate::{
+    client::GatewayChoice,
+    context::Context,
+    doctor::{CheckId, Report},
+};
 use anyhow::Result;
 use clap::Args;
 use std::process::ExitCode;
@@ -25,7 +29,7 @@ impl DoctorCmd {
                 )
                 .await
             }
-            Err(error) => Report::failed("gateway URL", error.to_string()),
+            Err(error) => Report::failed(CheckId::GatewayUrl, error.to_string()),
         };
         report.print(self.json, ctx.terminal.stdout)?;
         Ok(if report.success() {
