@@ -10,6 +10,7 @@ import {
   type RecordingId,
   type SearchField,
   type SearchPage,
+  type Shelf,
   type RecordingReport,
   type RecordingView,
   type Storage,
@@ -215,10 +216,7 @@ export class RecordingsReader {
   }
 
   /** The recordings on `shelf`: current, or archived. */
-  read(
-    fetcher: typeof fetch,
-    shelf: 'current' | 'archived' = 'current',
-  ): Promise<Arriving<RecordingsData>> {
+  read(fetcher: typeof fetch, shelf: Shelf = 'current'): Promise<Arriving<RecordingsData>> {
     const api = new ManagementApi(fetcher);
     // Keyed by shelf: a refresh keeps its rows, but the other shelf is another query.
     return Arrival.read(`recordings:${shelf}`, async (): Promise<RecordingsData> => {

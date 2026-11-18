@@ -610,6 +610,8 @@ export interface CaptureLimits {
   /** Bytes stored per body; past this, the rest is left out by design. */
   body_limit_bytes: number;
 }
+/** Which part of a listing: what is current, or what was archived. */
+export type Shelf = 'current' | 'archived';
 export interface Recordings {
   recordings: RecordingView[];
 }
@@ -1418,11 +1420,7 @@ export class ManagementApi {
     return this.#read(`/api/usage${suffix}`, usageView, signal);
   }
   /** The most recently active recordings; `archived` lists those archived instead. */
-  recordings(
-    limit = 100,
-    signal?: AbortSignal,
-    shelf: 'current' | 'archived' = 'current',
-  ): Promise<Recordings> {
+  recordings(limit = 100, signal?: AbortSignal, shelf: Shelf = 'current'): Promise<Recordings> {
     const query = shelf === 'archived' ? '&shelf=archived' : '';
     return this.#read(`/api/recordings?limit=${limit}${query}`, recordings, signal);
   }

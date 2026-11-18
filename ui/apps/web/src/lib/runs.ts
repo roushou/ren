@@ -12,6 +12,7 @@ import {
   type Harness,
   type NativeThreadId,
   type NativeTurnId,
+  type Shelf,
   type ToolEffect,
   type UnixMillis,
 } from './api.ts';
@@ -103,6 +104,12 @@ export interface RunSettings {
   model: ModelId | null;
   effort: Stored<Effort> | null;
   approvals: Stored<ApprovalPolicy> | null;
+}
+/** Settings as chosen in this UI; each null is the client's own. */
+export interface ChosenSettings {
+  model: ModelId | null;
+  effort: Effort | null;
+  approvals: ApprovalPolicy | null;
 }
 const runSettings = object<RunSettings>({
   model: nullable(branded<'ModelId'>()),
@@ -240,9 +247,6 @@ export interface RecordedRun {
   effort: Stored<Effort> | null;
   approvals: Stored<ApprovalPolicy> | null;
 }
-
-/** Which part of a listing: what is current, or what was archived. */
-export type Shelf = 'current' | 'archived';
 
 /** What an archive or delete applies to. */
 export type HistorySubject = { kind: 'recording'; id: RecordingId } | { kind: 'run'; id: RunId };
@@ -957,11 +961,7 @@ export class RunsClient {
   async createSession(
     harness: Drivable,
     dir: string | null,
-    settings: {
-      model?: ModelId | null;
-      effort?: Effort | null;
-      approvals?: ApprovalPolicy | null;
-    } = {},
+    settings: Partial<ChosenSettings> = {},
   ): Promise<SessionId> {
     const body = {
       harness,
@@ -977,12 +977,7 @@ export class RunsClient {
     session: SessionId,
     command:
       | { kind: 'prompt'; text: string; delivery: Delivery; attachments?: AttachmentId[] }
-      | {
-          kind: 'settings';
-          model: ModelId | null;
-          effort: Effort | null;
-          approvals: ApprovalPolicy | null;
-        }
+      | ({ kind: 'settings' } & ChosenSettings)
       | { kind: 'client'; harness: Drivable }
       /** A draft's folder; null: a new scratch folder of its own. */
       | { kind: 'folder'; dir: string | null }
@@ -2094,11 +2089,7 @@ export class Setup {
 
   /** The settings to start again with: labels this UI does not know are
    * left to the client. */
-  static known(settings: RunSettings): {
-    model: ModelId | null;
-    effort: Effort | null;
-    approvals: ApprovalPolicy | null;
-  } {
+  static known(settings: RunSettings): ChosenSettings {
     return {
       model: settings.model,
       effort: EFFORTS.find((level) => level === settings.effort) ?? null,
@@ -2188,11 +2179,7 @@ export class Memory {
   }
 
   /** `remembered`, with `settings` the last chosen for `harness`; none is the client's own. */
-  static set(
-    remembered: Remembered,
-    harness: Drivable,
-    settings: { model: ModelId | null; effort: Effort | null; approvals: ApprovalPolicy | null },
-  ): Remembered {
+  static set(remembered: Remembered, harness: Drivable, settings: ChosenSettings): Remembered {
     return {
       ...remembered,
       settings: {

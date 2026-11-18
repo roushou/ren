@@ -804,7 +804,7 @@ export interface FeedItem {
   /** Stable while the item lasts, so an update never animates it in again. */
   key: string;
   recording: RecordingView | null;
-  tone: 'neutral' | 'success' | 'warning' | 'error';
+  tone: Exclude<Tone, 'live'>;
   text: string;
   detail: string | null;
   /** When it happened; for a pinned item, when it began. */
