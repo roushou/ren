@@ -170,7 +170,7 @@ impl ContentBlock {
     fn read(object: JsonObject<'_>) -> Self {
         Self {
             kind: object.label("type"),
-            id: object.parsed("id", ToolCallId::parse),
+            id: object.parsed("id", str::parse),
             name: object.text("name"),
         }
     }

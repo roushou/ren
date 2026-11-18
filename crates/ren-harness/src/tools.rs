@@ -276,7 +276,7 @@ impl InterpretedCall {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ren_protocol::{inspect::ToolCall, native::ToolCallId, text::WireText};
+    use ren_protocol::{inspect::ToolCall, text::WireText};
     use serde_json::json;
 
     fn tool(name: &str, kind: &str, input: ToolInput) -> ToolUse {
@@ -430,7 +430,7 @@ mod tests {
     #[test]
     fn codex_exit_codes_decide_unreported_statuses() {
         let result = |output: &str, status| ToolResult {
-            id: ToolCallId::parse("c").unwrap(),
+            id: "c".parse().unwrap(),
             status,
             output: output.to_owned(),
         };
@@ -468,7 +468,7 @@ mod tests {
                     "Make the tests pass".to_owned(),
                 ],
                 tool_results: vec![ToolResult {
-                    id: ToolCallId::parse("a").unwrap(),
+                    id: "a".parse().unwrap(),
                     status: ResultStatus::Unreported,
                     output: "Exit code: 2\nfailed".to_owned(),
                 }],
@@ -595,7 +595,7 @@ mod tests {
         );
 
         let result = |output: &str, status| ToolResult {
-            id: ToolCallId::parse("c").unwrap(),
+            id: "c".parse().unwrap(),
             status,
             output: output.to_owned(),
         };

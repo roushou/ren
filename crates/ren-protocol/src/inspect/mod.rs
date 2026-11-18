@@ -581,8 +581,8 @@ mod tests {
         let mut inspector = Inspector::new(FormatSource::Declared, limits);
         let call = |call_id: Option<&str>, item_id: Option<&str>, name: Option<&str>| {
             Observation::ToolCall(ToolCall {
-                id: call_id.map(|id| ToolCallId::parse(id).unwrap()),
-                item: item_id.map(|id| OutputItemId::parse(id).unwrap()),
+                id: call_id.map(|id| id.parse().unwrap()),
+                item: item_id.map(|id| id.parse().unwrap()),
                 kind: text("function_call"),
                 name: name.map(text),
             })

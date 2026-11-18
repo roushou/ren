@@ -21,7 +21,7 @@ fn reading(secret: &str) -> Reading {
                 format!("Deploy with {secret} please"),
             ],
             tool_results: vec![ToolResult {
-                id: ToolCallId::parse("a").unwrap(),
+                id: "a".parse().unwrap(),
                 status: ResultStatus::Failed,
                 output: format!("export K={secret}\n{}", "x".repeat(5_000)),
             }],
@@ -31,7 +31,7 @@ fn reading(secret: &str) -> Reading {
         response: ResponseActivity {
             tool_uses: vec![ToolUse {
                 call: ToolCall {
-                    id: Some(ToolCallId::parse("b").unwrap()),
+                    id: Some("b".parse().unwrap()),
                     item: None,
                     kind: WireText::new("tool_use").unwrap(),
                     name: Some(WireText::new("Bash").unwrap()),

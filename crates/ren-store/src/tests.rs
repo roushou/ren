@@ -177,7 +177,7 @@ impl Fixture {
         }
         if let Some(tool) = spec.tool {
             inspector.observe(Observation::ToolCall(ren_protocol::inspect::ToolCall {
-                id: Some(ren_protocol::native::ToolCallId::parse("toolu_1").unwrap()),
+                id: Some("toolu_1".parse().unwrap()),
                 item: None,
                 kind: WireText::new("tool_use").unwrap(),
                 name: Some(WireText::new(tool).unwrap()),
@@ -1409,7 +1409,7 @@ mod digests {
                     response: ResponseActivity {
                         tool_uses: vec![ToolUse {
                             call: ren_protocol::inspect::ToolCall {
-                                id: Some(ren_protocol::native::ToolCallId::parse("t1").unwrap()),
+                                id: Some("t1".parse().unwrap()),
                                 item: None,
                                 kind: WireText::new("tool_use").unwrap(),
                                 name: Some(WireText::new("Bash").unwrap()),
@@ -1428,7 +1428,7 @@ mod digests {
                 Reading {
                     request: RequestActivity {
                         tool_results: vec![ToolResult {
-                            id: ren_protocol::native::ToolCallId::parse("t1").unwrap(),
+                            id: "t1".parse().unwrap(),
                             status: ResultStatus::Unreported,
                             output: "test migration ... FAILED".to_owned(),
                         }],

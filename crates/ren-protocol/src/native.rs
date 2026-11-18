@@ -72,14 +72,18 @@ macro_rules! wire_id {
         pub struct $name(WireText);
 
         impl $name {
-            /// An identifier read from the wire: never empty, bounded, and
-            /// free of control characters ([`WireText::identifier`]).
-            pub fn parse(text: &str) -> Result<Self, WireTextError> {
-                WireText::identifier(text).map(Self)
-            }
-
             pub fn as_str(&self) -> &str {
                 self.0.as_str()
+            }
+        }
+
+        /// An identifier read from the wire: never empty, bounded, and free
+        /// of control characters ([`WireText::identifier`]).
+        impl std::str::FromStr for $name {
+            type Err = WireTextError;
+
+            fn from_str(text: &str) -> Result<Self, Self::Err> {
+                WireText::identifier(text).map(Self)
             }
         }
 

@@ -226,8 +226,8 @@ impl OutputItem {
     fn read(object: JsonObject<'_>) -> Self {
         Self {
             kind: object.label("type"),
-            id: object.parsed("id", OutputItemId::parse),
-            call_id: object.parsed("call_id", ToolCallId::parse),
+            id: object.parsed("id", str::parse),
+            call_id: object.parsed("call_id", str::parse),
             name: object.text("name"),
         }
     }

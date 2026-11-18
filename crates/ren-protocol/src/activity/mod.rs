@@ -477,7 +477,7 @@ impl<'a> Fields<'a> {
 
     /// The tool call a result answers.
     fn answers(self, key: &str) -> Option<ToolCallId> {
-        self.str(key).and_then(|text| ToolCallId::parse(text).ok())
+        self.str(key).and_then(|text| text.parse().ok())
     }
 
     fn array(self, key: &str) -> &'a [Value] {

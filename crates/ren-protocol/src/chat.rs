@@ -179,7 +179,7 @@ impl ChatToolCall {
         };
         Self {
             kind,
-            id: object.parsed("id", ToolCallId::parse),
+            id: object.parsed("id", str::parse),
             name: match object.object(member) {
                 Field::Present(member) => member.text("name"),
                 Field::Absent => Field::Absent,

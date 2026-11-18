@@ -7,7 +7,6 @@ use super::{
 };
 use crate::inspect::ToolCall;
 use crate::label::Labeled;
-use crate::native::OutputItemId;
 use crate::responses::{EventKind, ItemKind};
 use crate::text::WireText;
 use serde_json::{Map, Value};
@@ -289,9 +288,7 @@ impl Response {
             activity.tool_uses.push(ToolUse {
                 call: ToolCall {
                     id: Fields(item).answers("call_id"),
-                    item: Fields(item)
-                        .str("id")
-                        .and_then(|id| OutputItemId::parse(id).ok()),
+                    item: Fields(item).str("id").and_then(|id| id.parse().ok()),
                     kind: WireText::from_label(kind),
                     name: Fields(item).wire("name"),
                 },

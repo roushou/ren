@@ -92,7 +92,7 @@ fn messages_requests_yield_the_newest_user_input() {
     assert_eq!(
         activity.tool_results,
         [ToolResult {
-            id: ToolCallId::parse("toolu_1").unwrap(),
+            id: "toolu_1".parse().unwrap(),
             status: ResultStatus::Failed,
             output: "exit 1".to_owned(),
         }]
@@ -597,7 +597,7 @@ fn chat_requests_yield_the_newest_user_input_and_tool_results() {
     assert_eq!(
         activity.tool_results,
         [ToolResult {
-            id: ToolCallId::parse("call_1").unwrap(),
+            id: "call_1".parse().unwrap(),
             status: ResultStatus::Unreported,
             output: "exit 1".into(),
         }]
