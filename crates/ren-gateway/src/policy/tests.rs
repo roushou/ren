@@ -342,6 +342,61 @@ reason = "r""#
 }
 
 #[test]
+fn unparsable_steps_are_refused_as_the_configuration_loads() {
+    for (step, expected) in [
+        (
+            r#"{ op = "set_header", name = "bad name", value = "x" }"#,
+            "not valid HTTP",
+        ),
+        (
+            r#"{ op = "set_header", name = "x-ok", value = "a\nb" }"#,
+            "not valid HTTP",
+        ),
+        (r#"{ op = "remove_header", name = "" }"#, "not valid HTTP"),
+        (
+            r#"{ op = "json_remove", path = "temperature" }"#,
+            "JSON Pointer",
+        ),
+        (
+            r#"{ op = "json_set", path = "", value = 1 }"#,
+            "JSON Pointer",
+        ),
+    ] {
+        let rules = format!(
+            "[[transform]]\nid = \"t\"\nmatch = {{ provider = \"anthropic\" }}\nsteps = [{step}]\nreason = \"r\"\n"
+        );
+        let error = toml::from_str::<PolicyConfig>(&rules)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains(expected), "{step}: {error}");
+    }
+}
+
+#[test]
+fn a_pointer_splits_once_into_its_parent_and_unescaped_key() {
+    let config = r#"[[transform]]
+id = "t"
+match = { provider = "anthropic" }
+steps = [{ op = "json_set", path = "/a~1b/c~0d", value = 1 }]
+reason = "r""#;
+    let policy = policy(config).unwrap();
+    let plan = policy.plan(&facts(Provider::Anthropic, None), &OperatorState::default());
+    let mut headers = HeaderMap::new();
+    let mut body = RequestJson::new(br#"{"a/b":{}}"#);
+    assert_eq!(
+        plan.transforms[0].steps[0].apply(&mut headers, &mut body),
+        StepOutcome::Applied
+    );
+    assert_eq!(
+        String::from_utf8(body.changed().unwrap()).unwrap(),
+        r#"{"a/b":{"c~d":1}}"#
+    );
+    // The configuration reads back as it was written.
+    let written = toml::to_string(&toml::from_str::<PolicyConfig>(config).unwrap()).unwrap();
+    assert!(written.contains(r#"path = "/a~1b/c~0d""#), "{written}");
+}
+
+#[test]
 fn transforms_change_only_what_they_name_and_keep_key_order() {
     let policy = policy(RULES).unwrap();
     let plan = policy.plan(&facts(Provider::Anthropic, None), &OperatorState::default());

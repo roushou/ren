@@ -130,7 +130,7 @@ pub struct Users {
 }
 
 impl Users {
-    const LOGIN_HEADER: &'static str = "tailscale-user-login";
+    pub(crate) const LOGIN_HEADER: &'static str = "tailscale-user-login";
 
     pub fn new(configs: Vec<UserConfig>) -> Result<Self, UsersError> {
         let mut by_login = HashMap::new();

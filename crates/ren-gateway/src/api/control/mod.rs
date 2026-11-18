@@ -35,7 +35,7 @@ use ren_protocol::native::NativeSessionId;
 use ren_recorder::{
     Recorder,
     batch::Actor,
-    caller::UserId,
+    caller::{TailscaleLogin, UserId},
     id::{CallId, IdSource},
     time::Clock,
 };
@@ -54,24 +54,7 @@ pub struct ControlOptions {
     /// Tailscale logins (as Tailscale Serve reports them in
     /// `Tailscale-User-Login`) allowed to use the control API. Empty means
     /// the control API answers loopback requests only.
-    pub tailscale_logins: Vec<String>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-#[error("control.tailscale_logins entries must be 1 to 256 visible characters")]
-pub struct ControlOptionsError;
-
-impl ControlOptions {
-    pub fn validate(&self) -> Result<(), ControlOptionsError> {
-        let valid = |login: &String| {
-            (1..=256).contains(&login.len()) && login.bytes().all(|byte| byte.is_ascii_graphic())
-        };
-        if self.tailscale_logins.iter().all(valid) {
-            Ok(())
-        } else {
-            Err(ControlOptionsError)
-        }
-    }
+    pub tailscale_logins: Vec<TailscaleLogin>,
 }
 
 /// A per-run secret that authorizes control requests without a Tailscale
@@ -121,7 +104,7 @@ pub(crate) struct ControlApi {
     recorder: Recorder,
     clock: Arc<dyn Clock>,
     token: ControlToken,
-    logins: Vec<String>,
+    logins: Vec<TailscaleLogin>,
     /// The named users an operator can block.
     users: Users,
     backup: Backup,
@@ -144,7 +127,7 @@ impl ControlApi {
         recorder: Recorder,
         clock: Arc<dyn Clock>,
         token: ControlToken,
-        logins: Vec<String>,
+        logins: Vec<TailscaleLogin>,
         users: Users,
         backup: Backup,
     ) -> Self {
@@ -231,10 +214,14 @@ impl ControlApi {
         if headers.contains_key(header::ORIGIN) || headers.contains_key("sec-fetch-site") {
             return Err(ControlRefusal::CrossSite);
         }
-        if let Some(login) = headers.get("tailscale-user-login") {
-            let login = login.to_str().map_err(|_| ControlRefusal::Forbidden)?;
-            return if self.logins.iter().any(|allowed| allowed == login) {
-                Ok(Actor::Tailscale(login.to_owned()))
+        if let Some(login) = headers.get(Users::LOGIN_HEADER) {
+            let login = login
+                .to_str()
+                .ok()
+                .and_then(|login| login.parse::<TailscaleLogin>().ok())
+                .ok_or(ControlRefusal::Forbidden)?;
+            return if self.logins.contains(&login) {
+                Ok(Actor::Tailscale(login))
             } else {
                 Err(ControlRefusal::Forbidden)
             };
@@ -477,12 +464,15 @@ mod tests {
     use super::ControlOptions;
 
     #[test]
-    fn logins_validate() {
-        let options = |login: &str| ControlOptions {
-            tailscale_logins: vec![login.into()],
+    fn logins_are_parsed_as_the_configuration_loads() {
+        let options = |login: &str| {
+            toml::from_str::<ControlOptions>(&format!("tailscale_logins = [{login:?}]"))
         };
-        assert!(options("me@example.com").validate().is_ok());
-        assert!(options("").validate().is_err());
-        assert!(options("two words").validate().is_err());
+        assert_eq!(
+            options("me@example.com").unwrap().tailscale_logins[0].as_str(),
+            "me@example.com"
+        );
+        assert!(options("").is_err());
+        assert!(options("two words").is_err());
     }
 }

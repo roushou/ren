@@ -11,7 +11,7 @@
 
 mod transform;
 
-pub use transform::{RequestJson, StepOutcome, StepRecord, TransformStep};
+pub use transform::{JsonPointer, RequestJson, StepError, StepOutcome, StepRecord, TransformStep};
 
 use crate::{
     operator::{OperatorState, Pause, RetryAfter},

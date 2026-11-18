@@ -53,8 +53,6 @@ pub enum ConfigError {
     #[error(transparent)]
     Buffer(#[from] ren_gateway::BufferOptionsError),
     #[error(transparent)]
-    Control(#[from] ren_gateway::ControlOptionsError),
-    #[error(transparent)]
     Attachments(#[from] ren_harness::attachment::AttachmentOptionsError),
     #[error("upstream {id}: {source}")]
     UpstreamUrl {
@@ -473,7 +471,6 @@ impl Config {
         self.retention.validate()?;
         self.websocket.validate()?;
         self.buffer.validate()?;
-        self.control.validate()?;
         self.runs.validate()?;
         self.tools.depot()?;
         Ok(())

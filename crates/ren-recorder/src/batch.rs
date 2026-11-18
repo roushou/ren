@@ -8,7 +8,7 @@
 //! call's data.
 
 use super::inspection::InspectionRecord;
-use crate::caller::Caller;
+use crate::caller::{Caller, TailscaleLogin};
 use crate::digest::CallDigest;
 use crate::{
     capture::{BodyEnding, CallRejection, ChannelEnd, ProcessExit, RunEnd, TerminalRecord},
@@ -214,7 +214,7 @@ pub enum Actor {
     /// A request on the loopback listener (the CLI or a local tool).
     Loopback,
     /// A Tailscale Serve user, by login name.
-    Tailscale(String),
+    Tailscale(TailscaleLogin),
     /// Ren itself, by its own rule: a draft session left unused is
     /// discarded.
     Ren,

@@ -9,25 +9,127 @@ use http::{HeaderMap, HeaderName, HeaderValue};
 use ren_protocol::route::Endpoint;
 use serde_json::Value;
 
-/// One change to a request.
+/// One change to a request, parsed once when the configuration loads.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "snake_case", tag = "op", deny_unknown_fields)]
+#[serde(try_from = "StepConfig", into = "StepConfig")]
 pub enum TransformStep {
     SetHeader {
-        name: String,
-        value: String,
+        name: HeaderName,
+        value: HeaderValue,
     },
     RemoveHeader {
-        name: String,
+        name: HeaderName,
     },
-    /// Set the value at a JSON Pointer (RFC 6901). The parent must exist.
+    /// Set the value at a JSON Pointer. The parent must exist.
     JsonSet {
-        path: String,
+        path: JsonPointer,
         value: Value,
     },
     JsonRemove {
-        path: String,
+        path: JsonPointer,
     },
+}
+
+/// A step as the configuration writes it.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case", tag = "op", deny_unknown_fields)]
+enum StepConfig {
+    SetHeader { name: String, value: String },
+    RemoveHeader { name: String },
+    JsonSet { path: String, value: Value },
+    JsonRemove { path: String },
+}
+
+impl TryFrom<StepConfig> for TransformStep {
+    type Error = StepError;
+
+    fn try_from(step: StepConfig) -> Result<Self, StepError> {
+        let header = |name: &str| {
+            HeaderName::from_bytes(name.as_bytes()).map_err(|_| StepError::InvalidHeader)
+        };
+        Ok(match step {
+            StepConfig::SetHeader { name, value } => Self::SetHeader {
+                name: header(&name)?,
+                value: HeaderValue::from_str(&value).map_err(|_| StepError::InvalidHeader)?,
+            },
+            StepConfig::RemoveHeader { name } => Self::RemoveHeader {
+                name: header(&name)?,
+            },
+            StepConfig::JsonSet { path, value } => Self::JsonSet {
+                path: path.parse()?,
+                value,
+            },
+            StepConfig::JsonRemove { path } => Self::JsonRemove {
+                path: path.parse()?,
+            },
+        })
+    }
+}
+
+impl From<TransformStep> for StepConfig {
+    fn from(step: TransformStep) -> Self {
+        match step {
+            TransformStep::SetHeader { name, value } => Self::SetHeader {
+                name: name.as_str().to_owned(),
+                // Parsed from a `str`, so its bytes are UTF-8.
+                value: String::from_utf8_lossy(value.as_bytes()).into_owned(),
+            },
+            TransformStep::RemoveHeader { name } => Self::RemoveHeader {
+                name: name.as_str().to_owned(),
+            },
+            TransformStep::JsonSet { path, value } => Self::JsonSet {
+                path: path.text,
+                value,
+            },
+            TransformStep::JsonRemove { path } => Self::JsonRemove { path: path.text },
+        }
+    }
+}
+
+/// A JSON Pointer (RFC 6901) a body step targets, split once into its
+/// parent pointer and its last key, unescaped.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct JsonPointer {
+    /// As written.
+    text: String,
+    /// The parent, still escaped, as `Value::pointer_mut` takes it.
+    parent_end: usize,
+    key: String,
+}
+
+impl std::str::FromStr for JsonPointer {
+    type Err = StepError;
+
+    fn from_str(text: &str) -> Result<Self, StepError> {
+        let Some(parent_end) = text.rfind('/') else {
+            return Err(StepError::InvalidPath);
+        };
+        if !text.starts_with('/') {
+            return Err(StepError::InvalidPath);
+        }
+        Ok(Self {
+            key: text[parent_end + 1..].replace("~1", "/").replace("~0", "~"),
+            parent_end,
+            text: text.to_owned(),
+        })
+    }
+}
+
+impl JsonPointer {
+    pub fn as_str(&self) -> &str {
+        &self.text
+    }
+
+    fn parent(&self) -> &str {
+        &self.text[..self.parent_end]
+    }
+
+    /// Whether this pointer is `protected` or below it.
+    fn within(&self, protected: &str) -> bool {
+        self.text
+            .strip_prefix(protected)
+            .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
+    }
 }
 
 /// Why a step cannot be configured.
@@ -113,22 +215,18 @@ impl TransformStep {
         }
     }
 
+    /// Refuse a step that would touch a protected header, or a body path
+    /// protected on any of `endpoints`.
     pub(super) fn check(&self, endpoints: &[Endpoint]) -> Result<(), StepError> {
         match self {
-            Self::SetHeader { name, value } => {
-                let name = Self::header(name)?;
-                HeaderValue::from_str(value).map_err(|_| StepError::InvalidHeader)?;
-                Self::unprotected_header(&name)
+            Self::SetHeader { name, .. } | Self::RemoveHeader { name } => {
+                Self::unprotected_header(name)
             }
-            Self::RemoveHeader { name } => Self::unprotected_header(&Self::header(name)?),
             Self::JsonSet { path, .. } | Self::JsonRemove { path } => {
-                if !path.starts_with('/') {
-                    return Err(StepError::InvalidPath);
-                }
                 let protected = endpoints.iter().any(|endpoint| {
-                    Self::protected_paths(*endpoint).iter().any(|protected| {
-                        path == protected || path.starts_with(&format!("{protected}/"))
-                    })
+                    Self::protected_paths(*endpoint)
+                        .iter()
+                        .any(|protected| path.within(protected))
                 });
                 if protected {
                     Err(StepError::ProtectedPath)
@@ -137,10 +235,6 @@ impl TransformStep {
                 }
             }
         }
-    }
-
-    fn header(name: &str) -> Result<HeaderName, StepError> {
-        HeaderName::from_bytes(name.as_bytes()).map_err(|_| StepError::InvalidHeader)
     }
 
     fn unprotected_header(name: &HeaderName) -> Result<(), StepError> {
@@ -162,40 +256,38 @@ impl TransformStep {
 
     fn target(&self) -> &str {
         match self {
-            Self::SetHeader { name, .. } | Self::RemoveHeader { name } => name,
-            Self::JsonSet { path, .. } | Self::JsonRemove { path } => path,
+            Self::SetHeader { name, .. } | Self::RemoveHeader { name } => name.as_str(),
+            Self::JsonSet { path, .. } | Self::JsonRemove { path } => path.as_str(),
         }
     }
 
-    /// Run the step. Checked steps never fail here; an unusable body is an
+    /// Run the step. A parsed step cannot fail; an unusable body is an
     /// outcome, not an error.
     pub fn apply(&self, headers: &mut HeaderMap, body: &mut RequestJson) -> StepOutcome {
         match self {
             Self::SetHeader { name, value } => {
-                let (Ok(name), Ok(value)) = (Self::header(name), HeaderValue::from_str(value))
-                else {
-                    return StepOutcome::Unchanged;
-                };
-                if headers.get(&name) == Some(&value) && headers.get_all(&name).iter().count() == 1
-                {
+                if headers.get(name) == Some(value) && headers.get_all(name).iter().count() == 1 {
                     StepOutcome::Unchanged
                 } else {
-                    headers.insert(name, value);
+                    headers.insert(name.clone(), value.clone());
                     StepOutcome::Applied
                 }
             }
-            Self::RemoveHeader { name } => match Self::header(name) {
-                Ok(name) if headers.remove(&name).is_some() => StepOutcome::Applied,
-                Ok(_) | Err(_) => StepOutcome::Unchanged,
-            },
+            Self::RemoveHeader { name } => {
+                if headers.remove(name).is_some() {
+                    StepOutcome::Applied
+                } else {
+                    StepOutcome::Unchanged
+                }
+            }
             Self::JsonSet { path, value } => body.edit(|document| {
-                let (parent, key) = Self::split(path);
-                match document.pointer_mut(parent) {
+                let key = &path.key;
+                match document.pointer_mut(path.parent()) {
                     Some(Value::Object(map)) => {
-                        if map.get(&key) == Some(value) {
+                        if map.get(key) == Some(value) {
                             StepOutcome::Unchanged
                         } else {
-                            map.insert(key, value.clone());
+                            map.insert(key.clone(), value.clone());
                             StepOutcome::Applied
                         }
                     }
@@ -217,10 +309,10 @@ impl TransformStep {
                 }
             }),
             Self::JsonRemove { path } => body.edit(|document| {
-                let (parent, key) = Self::split(path);
-                match document.pointer_mut(parent) {
+                let key = &path.key;
+                match document.pointer_mut(path.parent()) {
                     Some(Value::Object(map)) => {
-                        if map.shift_remove(&key).is_some() {
+                        if map.shift_remove(key).is_some() {
                             StepOutcome::Applied
                         } else {
                             StepOutcome::Unchanged
@@ -240,12 +332,6 @@ impl TransformStep {
                 }
             }),
         }
-    }
-
-    /// Split a checked JSON Pointer into its parent pointer and unescaped last key.
-    fn split(path: &str) -> (&str, String) {
-        let (parent, key) = path.rsplit_once('/').unwrap_or(("", path));
-        (parent, key.replace("~1", "/").replace("~0", "~"))
     }
 
     pub fn record(
