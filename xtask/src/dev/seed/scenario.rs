@@ -91,7 +91,7 @@ impl Run {
 }
 
 /// The headers of one harness's session.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(in crate::dev) enum Client {
     ClaudeCode,
     Codex,

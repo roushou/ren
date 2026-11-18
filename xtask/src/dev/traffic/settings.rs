@@ -4,6 +4,7 @@
 //! generator and the fake provider read again on every call, so a change
 //! takes effect at once, with no restart.
 
+use crate::dev::seed::Client;
 use serde::{Deserialize, Serialize};
 use std::{fmt, str::FromStr, time::Duration};
 
@@ -63,16 +64,6 @@ pub enum Reply {
     RateLimited,
 }
 
-/// Which harness's headers a call carries.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Harness {
-    ClaudeCode,
-    Codex,
-    Pi,
-    Opencode,
-    Deepseek,
-}
-
 /// Who sends a call.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Sender {
@@ -119,21 +110,21 @@ impl Choice for Reply {
     }
 }
 
-impl Choice for Harness {
+impl Choice for Client {
     const ALL: &'static [Self] = &[
         Self::ClaudeCode,
         Self::Codex,
         Self::Pi,
-        Self::Opencode,
-        Self::Deepseek,
+        Self::OpenCode,
+        Self::DeepSeek,
     ];
     fn label(self) -> &'static str {
         match self {
             Self::ClaudeCode => "claude_code",
             Self::Codex => "codex",
             Self::Pi => "pi",
-            Self::Opencode => "opencode",
-            Self::Deepseek => "deepseek",
+            Self::OpenCode => "opencode",
+            Self::DeepSeek => "deepseek",
         }
     }
 }
@@ -294,7 +285,7 @@ pub struct Settings {
     pub rate: u16,
     pub pace: Pace,
     pub replies: Weights<Reply>,
-    pub harnesses: Weights<Harness>,
+    pub harnesses: Weights<Client>,
     pub senders: Weights<Sender>,
 }
 
@@ -314,11 +305,11 @@ impl Default for Settings {
                 (Reply::RateLimited, 2),
             ]),
             harnesses: Weights::of(&[
-                (Harness::ClaudeCode, 45),
-                (Harness::Codex, 30),
-                (Harness::Pi, 10),
-                (Harness::Opencode, 10),
-                (Harness::Deepseek, 5),
+                (Client::ClaudeCode, 45),
+                (Client::Codex, 30),
+                (Client::Pi, 10),
+                (Client::OpenCode, 10),
+                (Client::DeepSeek, 5),
             ]),
             senders: Weights::of(&[
                 (Sender::Alice, 30),
@@ -382,7 +373,7 @@ impl FromStr for Pace {
 
 #[cfg(test)]
 mod tests {
-    use super::{Flow, Harness, Reply, Sender, Settings, Weights};
+    use super::{Client, Flow, Reply, Sender, Settings, Weights};
     use std::time::Duration;
 
     #[test]
@@ -409,13 +400,10 @@ mod tests {
     fn a_mix_edits_only_the_named_weights_and_refuses_bad_ones() {
         let harnesses = Settings::default().harnesses;
         let edited = harnesses.with("pi=0, codex=90").unwrap();
+        assert_eq!((edited.get(Client::Pi), edited.get(Client::Codex)), (0, 90));
         assert_eq!(
-            (edited.get(Harness::Pi), edited.get(Harness::Codex)),
-            (0, 90)
-        );
-        assert_eq!(
-            edited.get(Harness::ClaudeCode),
-            harnesses.get(Harness::ClaudeCode)
+            edited.get(Client::ClaudeCode),
+            harnesses.get(Client::ClaudeCode)
         );
         assert!(harnesses.with("vim=1").is_err());
         assert!(harnesses.with("pi=101").is_err());
