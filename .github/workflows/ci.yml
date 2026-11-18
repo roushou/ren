@@ -49,6 +49,7 @@ jobs:
               - 'crates/**'
               - 'xtask/**'
               - 'ui/apps/web/tests/fixtures/api/**'
+              - 'ui/apps/web/src/lib/wire/**'
             ui:
               - '.github/workflows/**'
               - 'ui/**'
@@ -112,6 +113,13 @@ jobs:
 
       - name: Test workspace
         run: cargo test --workspace --locked
+
+      # The tests write the UI's wire types (`.cargo/config.toml`); the
+      # committed files must match what the Rust types generate.
+      - name: Check generated UI wire types
+        run: |
+          git add --intent-to-add ui/apps/web/src/lib/wire
+          git diff --exit-code -- ui/apps/web/src/lib/wire
 
   ui:
     name: UI

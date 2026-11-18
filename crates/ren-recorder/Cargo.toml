@@ -26,6 +26,7 @@ strum.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["macros", "sync", "time"] }
 tracing.workspace = true
+ts-rs.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]

@@ -75,6 +75,9 @@ tokio-tungstenite = { version = "0.29", default-features = false, features = ["h
 tokio-util = { version = "0.7", features = ["rt"] }
 toml = "1.1"
 tracing = "0.1"
+# Generates the UI's TypeScript wire types from the Rust types that
+# serialize them (`.cargo/config.toml` sets where and how).
+ts-rs = "12.0"
 uuid = { version = "1.29", features = ["serde"] }
 zstd = { version = "0.14", default-features = false }
 

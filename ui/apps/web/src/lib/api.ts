@@ -18,6 +18,16 @@ import {
   type Decoder,
   type Stored,
 } from './decode.ts';
+import type { CaptureLimits } from './wire/CaptureLimits.ts';
+import type { DiskUsage } from './wire/DiskUsage.ts';
+import type { FileUsage } from './wire/FileUsage.ts';
+import type { RetentionPolicy } from './wire/RetentionPolicy.ts';
+import type { Storage } from './wire/Storage.ts';
+import type { StorageView } from './wire/StorageView.ts';
+
+// Generated from the daemon's Rust types (`wire/`, written by `cargo test`);
+// the decoders below are typed against them, so a changed field fails `check`.
+export type { CaptureLimits, DiskUsage, FileUsage, RetentionPolicy, Storage, StorageView };
 
 /** The management API version this UI understands. */
 export const API_VERSION = 1;
@@ -521,32 +531,6 @@ export interface UsageView {
   models: ModelUsage[];
   users: UserUsage[];
 }
-export interface FileUsage {
-  page_size: number;
-  page_count: number;
-  freelist_count: number;
-}
-export interface StorageView {
-  /** The search index is part of the metadata file. */
-  disk: { metadata: FileUsage; blobs: FileUsage };
-  calls: number;
-  open_calls: number;
-  /** Calls whose activity is derived: every finished call, once derived. */
-  digested_calls: number;
-  chunks: number;
-  /** Raw bytes all stored segments reference. */
-  referenced_bytes: number;
-  /** Raw bytes of the distinct chunks. */
-  unique_bytes: number;
-  /** Bytes the chunks occupy after compression. */
-  compressed_bytes: number;
-}
-export interface RetentionPolicy {
-  enabled: boolean;
-  max_age_seconds: number;
-  max_calls: number;
-  max_storage_bytes: number;
-}
 export interface RecorderMetrics {
   queue: { items: number; capacity: number; bytes: number; byte_capacity: number };
   omissions: {
@@ -599,16 +583,6 @@ export interface Health {
 export interface Metrics {
   recorder: RecorderMetrics;
   storage: StorageView;
-}
-export interface Storage {
-  policy: RetentionPolicy;
-  usage: StorageView;
-  /** What capture keeps of each body. */
-  capture: CaptureLimits;
-}
-export interface CaptureLimits {
-  /** Bytes stored per body; past this, the rest is left out by design. */
-  body_limit_bytes: number;
 }
 /** Which part of a listing: what is current, or what was archived. */
 export type Shelf = 'current' | 'archived';
@@ -816,7 +790,7 @@ const usageView = object<UsageView>({
 });
 const fileUsage = object<FileUsage>({ page_size: count, page_count: count, freelist_count: count });
 const storageView = object<StorageView>({
-  disk: object<StorageView['disk']>({
+  disk: object<DiskUsage>({
     metadata: fileUsage,
     blobs: fileUsage,
   }),

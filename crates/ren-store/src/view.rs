@@ -37,6 +37,7 @@ use ren_recorder::{
 use serde::{Deserialize, Serialize};
 use sqlx::{Row, sqlite::SqliteRow};
 use std::str::FromStr;
+use ts_rs::TS;
 
 /// Typed column access with corruption reported as [`StoreError::Corrupt`].
 pub(super) struct Columns<'r>(pub(super) &'r SqliteRow);
@@ -920,7 +921,8 @@ pub struct BodyPrefix {
 }
 
 /// Real disk usage of one database file.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, TS)]
+#[ts(export)]
 pub struct FileUsage {
     pub page_size: u64,
     pub page_count: u64,
@@ -937,7 +939,8 @@ impl FileUsage {
 
 /// Disk usage of the store's files, as retention measures it. The search
 /// index is part of the metadata file.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, TS)]
+#[ts(export)]
 pub struct DiskUsage {
     pub metadata: FileUsage,
     pub blobs: FileUsage,
@@ -953,7 +956,8 @@ impl DiskUsage {
 }
 
 /// What is retained, and how well chunk deduplication works on it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, TS)]
+#[ts(export)]
 pub struct StorageView {
     pub disk: DiskUsage,
     pub calls: u64,

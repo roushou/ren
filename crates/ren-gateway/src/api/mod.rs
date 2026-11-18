@@ -45,6 +45,7 @@ use serde::Serialize;
 use std::sync::Arc;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use tokio_util::sync::CancellationToken;
+use ts_rs::TS;
 
 /// Resources and settings for the gateway's management and control routes.
 /// The host opens storage and supplies the token; the gateway owns HTTP handling.
@@ -159,7 +160,9 @@ struct Metrics {
     storage: StorageView,
 }
 
-#[derive(Serialize)]
+/// `/api/storage`'s answer.
+#[derive(Serialize, TS)]
+#[ts(export)]
 struct Storage<'a> {
     policy: &'a RetentionPolicy,
     usage: StorageView,
@@ -168,8 +171,10 @@ struct Storage<'a> {
 
 /// What capture keeps of each call, so a reader can tell a body trimmed at
 /// the limit (by design) from one that lost bytes.
-#[derive(Serialize)]
+#[derive(Serialize, TS)]
+#[ts(export)]
 struct CaptureLimits {
+    /// Bytes stored per body; past this, the rest is left out by design.
     body_limit_bytes: usize,
 }
 
