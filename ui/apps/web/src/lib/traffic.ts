@@ -1,4 +1,4 @@
-import { HARNESSES, type CallId, type CallView } from './api.ts';
+import { harnesses, type CallId, type CallView } from './api.ts';
 import { harnessLabel } from './activity.ts';
 
 /**
@@ -27,7 +27,7 @@ export const sinceChoices: { since: Since; label: string; title: string }[] = [
   { since: '24h', label: '24h', title: 'Last 24 hours' },
   { since: '7d', label: '7d', title: 'Last 7 days' },
 ];
-export const clientChoices = HARNESSES.map((client) => ({ client, label: harnessLabel(client) }));
+export const clientChoices = harnesses.map((client) => ({ client, label: harnessLabel(client) }));
 
 export function parseKind(text: string | null): KindChoice {
   return text === 'all' || text === 'other' ? text : 'model';

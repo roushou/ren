@@ -933,10 +933,6 @@ impl FileUsage {
             .saturating_sub(self.freelist_count)
             .saturating_mul(self.page_size)
     }
-
-    pub fn free_bytes(self) -> u64 {
-        self.freelist_count.saturating_mul(self.page_size)
-    }
 }
 
 /// Disk usage of the store's files, as retention measures it. The search

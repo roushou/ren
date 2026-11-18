@@ -955,7 +955,6 @@ export class ApiError extends Error {
 // and where a recording's context and cache tokens went.
 export const harnesses = ['claude_code', 'codex', 'pi', 'opencode'] as const;
 export type Harness = (typeof harnesses)[number];
-export const HARNESSES = harnesses;
 export const effectKinds = [
   'read_file',
   'write_file',
@@ -1277,7 +1276,6 @@ const turns = object<Turns>({
 });
 export const searchFields = ['prompt', 'reply', 'tool_input', 'tool_output'] as const;
 export type SearchField = (typeof searchFields)[number];
-export const SEARCH_FIELDS = searchFields;
 /** A `?field=` value: a known search field, or null for any other text or none. */
 export function parseSearchField(text: string | null): SearchField | null {
   return searchFields.find((field) => field === text) ?? null;

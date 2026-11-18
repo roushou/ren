@@ -5,7 +5,7 @@
 // No browser APIs beyond the `fetch` handed in; tested in tests/runs.test.ts.
 import {
   API_VERSION,
-  HARNESSES,
+  harnesses,
   RecordingId,
   toolEffect,
   versioned,
@@ -422,7 +422,7 @@ const itemRead: Decoder<ItemRead> = (value, path) => {
 
 const runSnapshot = object<RunSnapshot>({
   run: RunId.decode,
-  harness: label(HARNESSES),
+  harness: label(harnesses),
   workdir: string,
   state: runState,
   settings: runSettings,
@@ -524,7 +524,7 @@ export const runUpdate: Decoder<RunUpdate> = (value, path) => {
 
 const recordedRun = object<RecordedRun>({
   id: RunId.decode,
-  harness: label(HARNESSES),
+  harness: label(harnesses),
   workdir: string,
   started_at: brandedCount<'UnixMillis'>(),
   thread: nullable(branded<'NativeThreadId'>()),
@@ -591,7 +591,7 @@ export interface SessionBody {
 
 const servedSession = object<ServedSession>({
   session: SessionId.decode,
-  harness: label(HARNESSES),
+  harness: label(harnesses),
   workdir: string,
   settings: runSettings,
   state: object<SessionState>({ shelf: label(shelves), phase: label(SESSION_PHASES) }),
@@ -602,7 +602,7 @@ const servedSession = object<ServedSession>({
 
 const storedSession = object<StoredSession>({
   id: SessionId.decode,
-  harness: label(HARNESSES),
+  harness: label(harnesses),
   workdir: string,
   created_at: brandedCount<'UnixMillis'>(),
   model: nullable(branded<'ModelId'>()),
@@ -624,8 +624,6 @@ const sessionList = versioned(
 );
 const oneSession = versioned(object<{ session: SessionBody }>({ session: sessionBody }));
 const createdSession = versioned(object<{ session: SessionId }>({ session: SessionId.decode }));
-/** One change on the session feed: the session as served. */
-export const sessionUpdate: Decoder<ServedSession> = servedSession;
 /** A project's repository, as its `HEAD` reads. */
 export type ProjectGit =
   | { kind: 'branch'; name: string }
@@ -709,7 +707,7 @@ const runClients = versioned(
   object<{ clients: RunClient[] }>({
     clients: array(
       object<RunClient>({
-        harness: label(HARNESSES),
+        harness: label(harnesses),
         status: label(clientStatuses),
         approvals: array(label(APPROVAL_POLICIES)),
         midway: array(label(MIDWAY)),
