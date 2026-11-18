@@ -17,8 +17,8 @@ import {
   object,
   string,
   type Brand,
-  type Decoder,
   type Stored,
+  type AnyDecoder,
 } from './decode.ts';
 import { Refusals, type Refusal } from './refusal.ts';
 import type { GenerationInstall as WireGenerationInstall } from './wire/GenerationInstall.ts';
@@ -137,7 +137,7 @@ const packageId = branded<'PackageId'>();
 const version = branded<'Version'>();
 const generation = brandedCount<'Generation'>();
 
-const listing: Decoder<ToolListing> = versioned(
+const listing = versioned(
   object<ToolListing, WireToolListing>({
     platform: nullable(label(platforms)),
     generation,
@@ -174,7 +174,7 @@ const listing: Decoder<ToolListing> = versioned(
   }),
 );
 
-const change: Decoder<ToolChange> = versioned(
+const change = versioned(
   object<ToolChange, WireToolChange>({
     outcome: label(outcomes),
     generation,
@@ -197,7 +197,7 @@ const change: Decoder<ToolChange> = versioned(
   }),
 );
 
-const collection: Decoder<ToolCollection> = versioned(
+const collection = versioned(
   object<ToolCollection, WireToolCollection>({
     generations: array(generation),
     installs: array(string),
@@ -633,7 +633,7 @@ export class ToolsApi {
     method: 'GET' | 'POST',
     path: string,
     body: unknown,
-    decode: Decoder<T>,
+    decode: AnyDecoder<T>,
     signal?: AbortSignal,
   ): Promise<T> {
     const response = await this.#fetch(path, {

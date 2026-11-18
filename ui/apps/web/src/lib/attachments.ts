@@ -50,7 +50,7 @@ const kind = object<
   WireImage
 >({ format: label(IMAGE_FORMATS), dimensions });
 
-export const attachmentRead: Decoder<AttachmentRead> = (value, path) => {
+export const attachmentRead: Decoder<AttachmentRead, WireAttachment> = (value, path) => {
   const read = object<
     {
       name: string;

@@ -20,46 +20,60 @@ export class ShapeError extends Error {
   }
 }
 
-export type Decoder<T> = (value: unknown, path: string) => T;
+declare const reads: unique symbol;
+/**
+ * Decodes JSON into `T`. `R` is the JSON it accepts: `string` for a string,
+ * `T | null` once nullable, and so on, or `unknown` for a hand-written decoder
+ * that says nothing. `object<View, Wire>` checks each field's `R` against the
+ * type the daemon sends the field as, so a decoder that would refuse what is
+ * sent (another type, or `null`) fails `check`.
+ */
+export type Decoder<T, R = unknown> = ((value: unknown, path: string) => T) & {
+  readonly [reads]?: (sent: R) => void;
+};
+
+/** Any decoder of `T`, whatever JSON it accepts: for code that only runs one. */
+export type AnyDecoder<T> = Decoder<T, never>;
 
 export const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
 
-export const string: Decoder<string> = (value, path) => {
+export const string: Decoder<string, string> = (value, path) => {
   if (typeof value !== 'string') throw new ShapeError(path, 'a string');
   return value;
 };
 
-export const boolean: Decoder<boolean> = (value, path) => {
+export const boolean: Decoder<boolean, boolean> = (value, path) => {
   if (typeof value !== 'boolean') throw new ShapeError(path, 'a boolean');
   return value;
 };
 
 /** A non-negative integer: counts, sizes, ordinals, and status codes. */
-export const count: Decoder<number> = (value, path) => {
+export const count: Decoder<number, number> = (value, path) => {
   if (typeof value !== 'number' || !Number.isInteger(value) || value < 0)
     throw new ShapeError(path, 'a non-negative integer');
   return value;
 };
 
 export const nullable =
-  <T>(decode: Decoder<T>): Decoder<T | null> =>
+  <T, R>(decode: Decoder<T, R>): Decoder<T | null, R | null> =>
   (value, path) =>
     value === null ? null : decode(value, path);
 
 export const array =
-  <T>(decode: Decoder<T>): Decoder<T[]> =>
+  <T, R>(decode: Decoder<T, R>): Decoder<T[], R[]> =>
   (value, path) => {
     if (!Array.isArray(value)) throw new ShapeError(path, 'an array');
     return value.map((item, index) => decode(item, `${path}[${index}]`));
   };
 
 /**
- * `T`'s field decoders when every field of `T` is one of `W`'s; otherwise a
- * type naming the fields `W` lacks, so the mismatch is the error.
+ * `T`'s field decoders when every field of `T` is one of `W`'s, each one
+ * accepting what `W` sends that field as; otherwise a type naming the fields
+ * `W` lacks, so the mismatch is the error.
  */
 type Fields<T, W> = [StrayFields<T, W>] extends [never]
-  ? { [K in keyof T]-?: Decoder<T[K]> }
+  ? { [K in keyof T]-?: Decoder<T[K], K extends keyof W ? W[K] : unknown> }
   : { missing_on_wire: StrayFields<T, W> };
 
 /** The fields of a decoded type `T` that its wire type `W` does not send. */
@@ -95,11 +109,11 @@ export const wire = <_Stray extends never>(): void => undefined;
  * must still be one the daemon sends.
  */
 export const object =
-  <T, W = T>(shape: Fields<T, W>): Decoder<T> =>
+  <T, W = T>(shape: Fields<T, W>): Decoder<T, W> =>
   (value, path) => {
     if (!isRecord(value)) throw new ShapeError(path, 'an object');
     const result: Partial<T> = {};
-    const fields = shape as { [K in keyof T]-?: Decoder<T[K]> };
+    const fields = shape as { [K in keyof T]-?: Decoder<T[K], unknown> };
     for (const key of Object.keys(fields) as (keyof T & string)[]) {
       result[key] = fields[key](value[key], path ? `${path}.${key}` : key);
     }
@@ -107,7 +121,7 @@ export const object =
   };
 
 /** Recognised labels narrow to their literal type; any other text is kept. */
-export const label = <const T extends string>(values: readonly T[]): Decoder<Stored<T>> => {
+export const label = <const T extends string>(values: readonly T[]): Decoder<Stored<T>, string> => {
   const known = new Set<string>(values);
   return (value, path) => {
     const text = string(value, path);
@@ -117,13 +131,13 @@ export const label = <const T extends string>(values: readonly T[]): Decoder<Sto
 
 /** Opaque text with its own type, such as a native identifier or a cursor. */
 export const branded =
-  <B extends string>(): Decoder<Brand<string, B>> =>
+  <B extends string>(): Decoder<Brand<string, B>, string> =>
   (value, path) =>
     string(value, path) as Brand<string, B>;
 
 /** A count with its own type, such as a timestamp or a sequence number. */
 export const brandedCount =
-  <B extends string>(): Decoder<Brand<number, B>> =>
+  <B extends string>(): Decoder<Brand<number, B>, number> =>
   (value, path) =>
     count(value, path) as Brand<number, B>;
 
@@ -135,7 +149,7 @@ export class Uuid<B extends string> {
   parse(raw: string | null | undefined): Brand<string, B> | null {
     return raw && uuidPattern.test(raw) ? (raw.toLowerCase() as Brand<string, B>) : null;
   }
-  readonly decode: Decoder<Brand<string, B>> = (value, path) => {
+  readonly decode: Decoder<Brand<string, B>, string> = (value, path) => {
     const id = this.parse(string(value, path));
     if (id === null) throw new ShapeError(path, 'a UUID');
     return id;

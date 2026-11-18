@@ -168,7 +168,7 @@ export function overviewSnapshot(fetcher: typeof fetch, live: LiveReader) {
   return Arrival.read('overview', async (): Promise<OverviewData> => {
     const now = Date.now();
     const day = 24 * 3_600_000;
-    const since = String(now - day);
+    const since = now - day;
     const listing = (status: string, kind: string) =>
       api
         .calls(query<RawCallQuery>({ status, kind, limit: 100, from_ms: since }))
@@ -181,7 +181,7 @@ export function overviewSnapshot(fetcher: typeof fetch, live: LiveReader) {
         listing('interrupted', 'model'),
         listing('errors', 'other'),
         api.recordings(100),
-        api.exposures(Number(since)).then((page) => page.exposures),
+        api.exposures(since).then((page) => page.exposures),
         live.read(fetcher, '15m'),
       ]);
     return {

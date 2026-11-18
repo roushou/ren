@@ -84,7 +84,7 @@ export interface LoginOutcome {
   state: SignInState;
 }
 
-export const signInState: Decoder<SignInState> = (value, path) => {
+export const signInState: Decoder<SignInState, WireSignInState> = (value, path) => {
   if (!isRecord(value)) throw new ShapeError(path, 'an object');
   const kind = string(value.kind, `${path}.kind`);
   switch (kind) {
@@ -102,7 +102,7 @@ export const signInState: Decoder<SignInState> = (value, path) => {
 };
 wire<StrayVariants<SignInState, WireSignInState, 'kind', 'unrecognized'>>();
 
-const signInLink: Decoder<SignInLink> = (value, path) => {
+const signInLink: Decoder<SignInLink, string> = (value, path) => {
   const text = string(value, path);
   let url: URL;
   try {
@@ -114,7 +114,7 @@ const signInLink: Decoder<SignInLink> = (value, path) => {
   return text as SignInLink;
 };
 
-const loginEnd: Decoder<LoginEnd> = (value, path) => {
+const loginEnd: Decoder<LoginEnd, WireLoginEnd> = (value, path) => {
   if (!isRecord(value)) throw new ShapeError(path, 'an object');
   const end = string(value.end, `${path}.end`);
   switch (end) {
@@ -135,7 +135,7 @@ const loginEnd: Decoder<LoginEnd> = (value, path) => {
 };
 wire<StrayVariants<LoginEnd, WireLoginEnd, 'end', 'unrecognized'>>();
 
-export const login: Decoder<Login> = (value, path) => {
+export const login: Decoder<Login, WireLogin> = (value, path) => {
   if (!isRecord(value)) throw new ShapeError(path, 'an object');
   const said = () => nullable(string)(value.said ?? null, `${path}.said`);
   switch (value.kind) {
@@ -177,7 +177,7 @@ export const checkedSignIn = versioned(
   object<{ sign_in: SignInState }, WireSignInBody>({ sign_in: signInState }),
 );
 const loginOutcome = object<LoginOutcome, WireLoginOutcome>({ end: loginEnd, state: signInState });
-const waited: Decoder<Waited> = (value, path) => {
+const waited: Decoder<Waited, WireWaited> = (value, path) => {
   if (!isRecord(value)) throw new ShapeError(path, 'an object');
   switch (value.kind) {
     case 'going':

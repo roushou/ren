@@ -50,6 +50,7 @@ import {
   type Stored,
   type StrayFields,
   type StrayVariants,
+  type AnyDecoder,
 } from './decode.ts';
 import {
   AttachmentId,
@@ -325,13 +326,13 @@ const optionalString: Decoder<string | null> = (value, path) =>
 const queuedText: Decoder<string | null> = (value, path) =>
   isRecord(value) ? string(value.text, `${path}.text`) : optionalString(value, path);
 
-const integer: Decoder<number> = (value, path) => {
+const integer: Decoder<number, number> = (value, path) => {
   if (typeof value !== 'number' || !Number.isInteger(value))
     throw new ShapeError(path, 'an integer');
   return value;
 };
 
-const approvalAsk: Decoder<ApprovalAsk> = (value, path) => {
+const approvalAsk: Decoder<ApprovalAsk, WireApprovalAsk> = (value, path) => {
   if (!isRecord(value)) throw new ShapeError(path, 'an object');
   switch (value.kind) {
     case 'command':
@@ -360,7 +361,7 @@ const waiting = object<Waiting, WireWaiting>({
   ask: approvalAsk,
 });
 
-const runState: Decoder<RunState> = (value, path) => {
+const runState: Decoder<RunState, WireRunState> = (value, path) => {
   if (!isRecord(value)) throw new ShapeError(path, 'an object');
   const thread = () => branded<'NativeThreadId'>()(value.thread, `${path}.thread`);
   switch (value.phase) {
@@ -404,7 +405,7 @@ export type CommandIntent =
   | { said: 'described'; text: string }
   | { said: 'parts'; parts: CommandPart[] };
 
-const commandPart: Decoder<CommandPart> = (value, path) => {
+const commandPart: Decoder<CommandPart, WireCommandPart> = (value, path) => {
   if (!isRecord(value)) return { part: 'unknown', command: null };
   const at = (key: string) => `${path}.${key}`;
   const command = () => string(value.command, at('command'));
@@ -439,7 +440,7 @@ const commandPart: Decoder<CommandPart> = (value, path) => {
 };
 wire<StrayVariants<CommandPart, WireCommandPart, 'part'>>();
 
-const commandIntent: Decoder<CommandIntent> = (value, path) => {
+const commandIntent: Decoder<CommandIntent, WireCommandIntent> = (value, path) => {
   if (!isRecord(value)) return { said: 'unsaid' };
   switch (value.said) {
     case 'described':
@@ -452,7 +453,7 @@ const commandIntent: Decoder<CommandIntent> = (value, path) => {
 };
 wire<StrayVariants<CommandIntent, WireCommandIntent, 'said'>>();
 
-const itemRead: Decoder<ItemRead> = (value, path) => {
+const itemRead: Decoder<ItemRead, WireItemRead> = (value, path) => {
   if (!isRecord(value)) return { as: 'unread' };
   const at = (key: string) => `${path}.${key}`;
   const status = () => string(value.status, at('status'));
@@ -504,7 +505,7 @@ const runSnapshot = object<RunSnapshot, WireRunSnapshot>({
   settings: runSettings,
 });
 
-const turnEnd: Decoder<TurnEnd> = (value, path) => {
+const turnEnd: Decoder<TurnEnd, WireTurnEnd> = (value, path) => {
   if (!isRecord(value)) throw new ShapeError(path, 'an object');
   switch (value.kind) {
     case 'completed':
@@ -518,7 +519,7 @@ const turnEnd: Decoder<TurnEnd> = (value, path) => {
 };
 wire<StrayVariants<TurnEnd, WireTurnEnd, 'kind'>>();
 
-const driveEvent: Decoder<DriveEvent> = (value, path) => {
+const driveEvent: Decoder<DriveEvent, WireDriveEvent> = (value, path) => {
   if (!isRecord(value)) throw new ShapeError(path, 'an object');
   const at = (key: string) => `${path}.${key}`;
   const kind = driveEventKind(value.kind, at('kind'));
@@ -588,7 +589,7 @@ wire<StrayVariants<DriveEvent, WireDriveEvent, 'kind', 'other'>>();
 wire<StrayFields<DriveItem, WireDriveItem>>();
 
 /** One `run` event of the update feed. */
-export const runUpdate: Decoder<RunUpdate> = (value, path) => {
+export const runUpdate: Decoder<RunUpdate, WireRunUpdate> = (value, path) => {
   if (!isRecord(value)) throw new ShapeError(path, 'an object');
   const run = RunId.decode(value.run, `${path}.run`);
   switch (value.kind) {
@@ -745,7 +746,7 @@ export interface RunPlaces {
   scratch: string | null;
 }
 
-const projectGit: Decoder<ProjectGit> = (value, path) => {
+const projectGit: Decoder<ProjectGit, WireProjectGit> = (value, path) => {
   if (!isRecord(value)) throw new ShapeError(path, 'an object');
   switch (value.kind) {
     case 'branch':
@@ -1241,7 +1242,7 @@ export class RunsClient {
     method: 'GET' | 'POST' | 'DELETE',
     path: string,
     body: unknown,
-    decode: Decoder<T> | null,
+    decode: AnyDecoder<T> | null,
     signal?: AbortSignal,
     wait = 15_000,
   ): Promise<T> {

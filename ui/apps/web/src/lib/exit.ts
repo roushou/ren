@@ -11,14 +11,14 @@ export type ExitKind = (typeof exitKinds)[number];
 export type ProcessExit =
   { kind: 'code'; value: number } | { kind: 'signal'; value: number } | { kind: 'unknown' };
 
-const integer: Decoder<number> = (value, path) => {
+const integer: Decoder<number, number> = (value, path) => {
   if (typeof value !== 'number' || !Number.isInteger(value))
     throw new ShapeError(path, 'an integer');
   return value;
 };
 
 /** An exit; a kind this UI does not know reads as an unknown exit. */
-export const processExit: Decoder<ProcessExit> = (value, path) => {
+export const processExit: Decoder<ProcessExit, WireProcessExit> = (value, path) => {
   if (!isRecord(value)) throw new ShapeError(path, 'an object');
   switch (value.kind) {
     case 'code':

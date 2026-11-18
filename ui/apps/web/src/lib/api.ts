@@ -19,6 +19,7 @@ import {
   type Stored,
   wire,
   type StrayVariants,
+  type AnyDecoder,
 } from './decode.ts';
 import type { Build as WireBuild } from './wire/Build.ts';
 import type { EventCountsRecord as WireEventCountsRecord } from './wire/EventCountsRecord.ts';
@@ -884,7 +885,7 @@ const recorderMetrics = object<RecorderMetrics>({
 });
 const commitPattern = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 /** `<commit>`, `<commit>-dirty`, or `unknown`; anything else is kept as text. */
-export const revision: Decoder<Revision> = (value, path) => {
+export const revision: Decoder<Revision, string> = (value, path) => {
   const text = string(value, path);
   if (text === 'unknown') return { kind: 'unknown' };
   const dirty = text.endsWith('-dirty');
@@ -894,7 +895,7 @@ export const revision: Decoder<Revision> = (value, path) => {
     : { kind: 'unrecognized', text };
 };
 const build = object<Build, WireBuild>({ version: string, revision });
-const pause: Decoder<Pause> = (value, path) => {
+const pause: Decoder<Pause, WirePause> = (value, path) => {
   if (!isRecord(value)) throw new ShapeError(path, 'an object');
   const state = string(value.state, `${path}.state`);
   if (state === 'running') return { state };
@@ -1225,7 +1226,7 @@ const callActivity = object<CallActivity, WireCallActivity>({
   limitations: array(label(activityLimitations)),
 });
 /** A finding by its `kind`; an unknown kind keeps only its label. */
-const finding: Decoder<Finding> = (value, path) => {
+const finding: Decoder<Finding, WireFinding> = (value, path) => {
   const kind = label(findingKinds)(isRecord(value) ? value.kind : undefined, `${path}.kind`);
   switch (kind) {
     case 'cache_rebuild':
@@ -1424,7 +1425,7 @@ const recordingReport = object<RecordingReport, WireRecordingReport>({
 
 /** Check the version envelope, then decode the fields beside it. */
 export const versioned =
-  <T>(decode: Decoder<T>): Decoder<T> =>
+  <T, R>(decode: Decoder<T, R>): Decoder<T, R> =>
   (value, path) => {
     const found = isRecord(value) ? value.api_version : undefined;
     if (found !== API_VERSION) throw new ApiVersionError(found);
@@ -1517,7 +1518,7 @@ export class ManagementApi {
 
   async #read<T>(
     path: string,
-    decode: Decoder<T>,
+    decode: AnyDecoder<T>,
     signal: AbortSignal | undefined,
     acceptance: Acceptance = 'success_only',
   ): Promise<T> {
