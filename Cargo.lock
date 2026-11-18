@@ -1828,7 +1828,6 @@ dependencies = [
  "axum",
  "blake3",
  "brotli",
- "brotli-decompressor",
  "bytes",
  "flate2",
  "futures-util",

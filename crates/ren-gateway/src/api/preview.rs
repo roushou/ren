@@ -5,12 +5,15 @@
 //! inspection always uses the recorded encoding. Decoded output is bounded, so a
 //! small compressed prefix cannot expand without limit.
 
-use ren_protocol::{encoding::ResponseEncoding, label::Stored};
+use ren_protocol::{
+    encoding::{BodyReader, ResponseEncoding},
+    label::Stored,
+};
 use ren_recorder::capture::BodyEnding;
 use ren_store::{PrefixLimit, view::BodyPrefix};
 use serde::Serialize;
 use serde_with::{DeserializeFromStr, SerializeDisplay};
-use std::io::{self, Read};
+use std::io::Read;
 use strum::{Display, EnumString, IntoStaticStr, VariantArray};
 
 /// How the raw bytes are shown.
@@ -296,18 +299,12 @@ impl Compression {
         }
     }
 
-    fn reader(self, bytes: &[u8]) -> io::Result<Box<dyn Read + '_>> {
+    /// The encoding the body is read with.
+    fn encoding(self) -> ResponseEncoding {
         match self {
-            Self::Gzip => Ok(Box::new(flate2::read::MultiGzDecoder::new(bytes))),
-            Self::Zstd => {
-                let mut decoder = zstd::stream::read::Decoder::with_buffer(bytes)?;
-                decoder.window_log_max(23)?;
-                Ok(Box::new(decoder))
-            }
-            Self::Brotli => Ok(Box::new(brotli_decompressor::Decompressor::new(
-                bytes,
-                32 * 1024,
-            ))),
+            Self::Gzip => ResponseEncoding::Gzip,
+            Self::Zstd => ResponseEncoding::Zstd,
+            Self::Brotli => ResponseEncoding::Brotli,
         }
     }
 
@@ -315,17 +312,19 @@ impl Compression {
     /// is bounded by the limit, not by the compressed input.
     fn decode(self, bytes: &[u8], limit: usize) -> Decoded {
         let mut output = Vec::new();
-        let result = self.reader(bytes).and_then(|reader| {
-            reader
+        let read = match BodyReader::new(self.encoding(), bytes) {
+            Ok(reader) => reader
                 .take(u64::try_from(limit).unwrap_or(u64::MAX).saturating_add(1))
                 .read_to_end(&mut output)
-        });
+                .is_ok(),
+            Err(_) => false,
+        };
         let truncated = output.len() > limit;
         output.truncate(limit);
-        let integrity = match result {
-            Ok(_) => DecodeIntegrity::Verified,
-            Err(_) if !output.is_empty() => DecodeIntegrity::Prefix,
-            Err(_) => DecodeIntegrity::Failed,
+        let integrity = match (read, output.is_empty()) {
+            (true, _) => DecodeIntegrity::Verified,
+            (false, false) => DecodeIntegrity::Prefix,
+            (false, true) => DecodeIntegrity::Failed,
         };
         Decoded {
             bytes: output,
