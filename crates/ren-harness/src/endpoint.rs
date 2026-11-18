@@ -4,6 +4,56 @@ use crate::host::HostEnv;
 use std::net::{IpAddr, SocketAddr};
 use url::Url;
 
+/// A base URL Ren may send requests to: no credentials, query, or
+/// fragment, and HTTPS, or plain HTTP only to a loopback host. Both the
+/// gateway a harness is pointed at and an upstream are one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SecureBase(Url);
+
+/// Why a base URL was refused. The input is never echoed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum SecureBaseError {
+    #[error("it carries credentials, a query, or a fragment")]
+    Embedded,
+    #[error("it needs HTTPS, except HTTP to a loopback host")]
+    Insecure,
+}
+
+impl SecureBase {
+    pub fn new(url: Url) -> Result<Self, SecureBaseError> {
+        if !url.username().is_empty()
+            || url.password().is_some()
+            || url.query().is_some()
+            || url.fragment().is_some()
+        {
+            return Err(SecureBaseError::Embedded);
+        }
+        let loopback = url.host_str().is_some_and(|host| {
+            host == "localhost"
+                || host
+                    .trim_matches(['[', ']'])
+                    .parse::<IpAddr>()
+                    .is_ok_and(|ip| ip.is_loopback())
+        });
+        if url.host_str().is_none()
+            || !(url.scheme() == "https" || (url.scheme() == "http" && loopback))
+        {
+            return Err(SecureBaseError::Insecure);
+        }
+        Ok(Self(url))
+    }
+
+    pub fn url(&self) -> &Url {
+        &self.0
+    }
+}
+
+impl From<SecureBase> for Url {
+    fn from(base: SecureBase) -> Self {
+        base.0
+    }
+}
+
 /// A validated gateway root URL.
 #[derive(Debug, Clone)]
 pub struct GatewayEndpoint(Url);
@@ -41,28 +91,17 @@ impl GatewayEndpoint {
             return Err(GatewayEndpointError::Whitespace);
         }
         let url = Url::parse(value).map_err(|_| GatewayEndpointError::Invalid)?;
-        if !url.username().is_empty()
-            || url.password().is_some()
-            || url.query().is_some()
-            || url.fragment().is_some()
-            || url.path() != "/"
-        {
+        if url.path() != "/" {
             return Err(GatewayEndpointError::NotRoot);
         }
-        let loopback = url.host_str().is_some_and(|host| {
-            host == "localhost"
-                || host
-                    .trim_matches(['[', ']'])
-                    .parse::<IpAddr>()
-                    .is_ok_and(|ip| ip.is_loopback())
-        });
-        if url.host_str().is_none()
-            || !(url.scheme() == "https" || (url.scheme() == "http" && loopback))
-            || url.port() == Some(0)
-        {
+        let url = SecureBase::new(url).map_err(|refused| match refused {
+            SecureBaseError::Embedded => GatewayEndpointError::NotRoot,
+            SecureBaseError::Insecure => GatewayEndpointError::Insecure,
+        })?;
+        if url.url().port() == Some(0) {
             return Err(GatewayEndpointError::Insecure);
         }
-        Ok(Self(url))
+        Ok(Self(url.into()))
     }
 
     /// The root URL as text, for saving and display.
@@ -132,7 +171,34 @@ impl std::fmt::Debug for UserToken {
 
 #[cfg(test)]
 mod tests {
-    use super::{GatewayEndpoint, UserToken};
+    use super::{GatewayEndpoint, SecureBase, SecureBaseError, UserToken};
+    use url::Url;
+
+    #[test]
+    fn a_secure_base_is_https_or_http_to_a_loopback_host() {
+        let base = |text: &str| SecureBase::new(Url::parse(text).unwrap());
+        for allowed in [
+            "https://api.example.com/v1",
+            "http://localhost:8080/",
+            "http://127.0.0.2:9/",
+            "http://[::1]:9/",
+        ] {
+            assert!(base(allowed).is_ok(), "{allowed}");
+        }
+        assert_eq!(
+            base("http://api.example.com/"),
+            Err(SecureBaseError::Insecure)
+        );
+        assert_eq!(base("ftp://localhost/"), Err(SecureBaseError::Insecure));
+        for embedded in [
+            "https://user:pw@api.example.com/",
+            "https://api.example.com/?key=1",
+            "https://api.example.com/#x",
+        ] {
+            assert_eq!(base(embedded), Err(SecureBaseError::Embedded), "{embedded}");
+        }
+    }
+
     #[test]
     fn validates_without_echoing_sensitive_inputs() {
         for value in [

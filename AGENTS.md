@@ -277,7 +277,8 @@ dependencies under "Crates" below. Read the code for current module ownership.
   `SignInLink` it prints, a device login's `DeviceCode`, and the
   `SignInAnswer` handed back, a secret never shown; each client's in its
   module's `auth`); the gateway URL a harness is pointed at and the
-  `UserToken` it presents there (`endpoint`); and `HostEnv` (`host`), the
+  `UserToken` it presents there (`endpoint`, with `SecureBase`, the HTTPS
+  or loopback-HTTP base URL rule the gateway's upstreams share); and `HostEnv` (`host`), the
   host environment that launching and configuration read. The four codecs
   are composed of shared parts (`codec`: `Envelope`, a line read as JSON;
   `JsonRpc::classify`; `RequestLedger`, the requests sent and waiting;
@@ -521,8 +522,9 @@ dependencies under "Crates" below. Read the code for current module ownership.
   whether stdout and stderr are colored (a terminal, `NO_COLOR`,
   `CLICOLOR_FORCE`, `TERM=dumb`); JSON and piped output stay plain. `build.rs` records the
   source revision (`REN_REVISION`) for `--version`, `/health`, and `doctor`. `Cli::run`
-  prints errors itself, so they are styled too. `doctor` and `service` are the doctor report and the
-  service definitions. Refactors preserve existing flags, output
+  prints errors itself, so they are styled too. `doctor` and `service` are the doctor report (its
+  check names a `CheckId` vocabulary, pinned, since other tools read them)
+  and the service definitions. Refactors preserve existing flags, output
   formats, exports, and client passthrough. Its integration tests run the built
   binary (`CARGO_BIN_EXE_ren`).
 - `ui`: a Bun workspace (`apps/*`, `packages/*`) whose app, `ui/apps/web`, is an
