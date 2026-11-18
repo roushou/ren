@@ -545,7 +545,7 @@ mod tests {
             );
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let root = format!("http://{}", listener.local_addr().unwrap());
-        let gateway = Management::new(GatewayEndpoint::parse(&root).unwrap()).unwrap();
+        let gateway = Management::new(root.parse::<GatewayEndpoint>().unwrap()).unwrap();
         tokio::select! {
             served = axum::serve(listener, router).into_future() => panic!("{served:?}"),
             answer = reads(gateway) => answer,

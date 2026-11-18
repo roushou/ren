@@ -122,7 +122,11 @@ impl TryFrom<RawSearchQuery> for SearchQuery {
 
     fn try_from(raw: RawSearchQuery) -> Result<Self, Self::Error> {
         Ok(SearchQuery {
-            terms: SearchTerms::parse(raw.q.as_deref().unwrap_or_default())?,
+            terms: raw
+                .q
+                .as_deref()
+                .unwrap_or_default()
+                .parse::<SearchTerms>()?,
             recording: raw.recording.parse()?,
             client: raw.client.parse()?,
             field: raw.field.parse()?,
@@ -186,7 +190,8 @@ impl TryFrom<RawCallQuery> for CallQuery {
     type Error = QueryError;
 
     fn try_from(raw: RawCallQuery) -> Result<Self, Self::Error> {
-        let text = |value: Option<String>| value.as_deref().map(SearchText::new).transpose();
+        let text =
+            |value: Option<String>| value.as_deref().map(str::parse::<SearchText>).transpose();
         Ok(Self {
             limit: raw.limit.map_or(Ok(PageLimit::DEFAULT), PageLimit::new)?,
             after: raw.after.as_deref().map(Cursor::from_str).transpose()?,

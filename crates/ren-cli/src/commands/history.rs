@@ -185,7 +185,7 @@ pub struct SearchCmd {
 impl SearchCmd {
     pub async fn run(self, ctx: &Context) -> Result<ExitCode> {
         let request = ReadRequest::Search(SearchQuery {
-            terms: SearchTerms::parse(&self.text.join(" "))?,
+            terms: self.text.join(" ").parse::<SearchTerms>()?,
             recording: self.recording,
             client: self.client,
             field: self.field,

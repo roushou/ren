@@ -30,8 +30,9 @@ const STORAGE: &str = r#"{"api_version":1,"policy":{"enabled":true,"max_age_seco
 
 async fn mock(app: Router) -> (GatewayEndpoint, tokio::task::JoinHandle<()>) {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let endpoint =
-        GatewayEndpoint::parse(&format!("http://{}", listener.local_addr().unwrap())).unwrap();
+    let endpoint = format!("http://{}", listener.local_addr().unwrap())
+        .parse::<GatewayEndpoint>()
+        .unwrap();
     let task = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
     (endpoint, task)
 }
@@ -39,7 +40,7 @@ async fn mock(app: Router) -> (GatewayEndpoint, tokio::task::JoinHandle<()>) {
 /// A gateway chosen with --gateway.
 fn flag(gateway: &str) -> GatewayChoice {
     GatewayChoice::Selected {
-        endpoint: GatewayEndpoint::parse(gateway).unwrap(),
+        endpoint: gateway.parse::<GatewayEndpoint>().unwrap(),
         source: GatewaySource::Flag,
     }
 }

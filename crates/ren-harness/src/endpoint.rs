@@ -79,13 +79,28 @@ impl GatewayEndpoint {
         listen: SocketAddr,
     ) -> Result<Self, GatewayEndpointError> {
         match explicit {
-            Some(value) => Self::parse(value),
+            Some(value) => value.parse(),
             None if listen.port() == 0 => Err(GatewayEndpointError::EphemeralListener),
-            None => Self::parse(&format!("http://{listen}")),
+            None => format!("http://{listen}").parse(),
         }
     }
 
-    pub fn parse(value: &str) -> Result<Self, GatewayEndpointError> {
+    /// The root URL as text, for saving and display.
+    pub fn root(&self) -> &str {
+        self.0.as_str()
+    }
+
+    pub fn url(&self, path: &str) -> Url {
+        let mut url = self.0.clone();
+        url.set_path(path);
+        url
+    }
+}
+
+impl std::str::FromStr for GatewayEndpoint {
+    type Err = GatewayEndpointError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
         // Reject inputs before URL normalization can hide whitespace or a suffix.
         if value.chars().any(|c| c.is_control() || c.is_whitespace()) {
             return Err(GatewayEndpointError::Whitespace);
@@ -102,17 +117,6 @@ impl GatewayEndpoint {
             return Err(GatewayEndpointError::Insecure);
         }
         Ok(Self(url.into()))
-    }
-
-    /// The root URL as text, for saving and display.
-    pub fn root(&self) -> &str {
-        self.0.as_str()
-    }
-
-    pub fn url(&self, path: &str) -> Url {
-        let mut url = self.0.clone();
-        url.set_path(path);
-        url
     }
 }
 
@@ -210,7 +214,7 @@ mod tests {
             "https://exa\nmple.com",
             "http://localhost:0",
         ] {
-            let error = GatewayEndpoint::parse(value).err().unwrap();
+            let error = value.parse::<GatewayEndpoint>().err().unwrap();
             assert!(!format!("{error:?}").contains("SECRET"));
         }
         for value in [
@@ -218,7 +222,7 @@ mod tests {
             "http://[::1]:8787/",
             "https://ren.example.ts.net",
         ] {
-            assert!(GatewayEndpoint::parse(value).is_ok());
+            assert!(value.parse::<GatewayEndpoint>().is_ok());
         }
     }
 

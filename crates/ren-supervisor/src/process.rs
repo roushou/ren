@@ -487,7 +487,7 @@ mod tests {
     }
 
     fn prompt(text: &str) -> Prompt {
-        Prompt::parse(text.to_owned()).unwrap()
+        Prompt::try_from(text.to_owned()).unwrap()
     }
 
     #[test]

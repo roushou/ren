@@ -269,7 +269,7 @@ impl<H: AgentHost> SupervisorTask<H> {
             .get(&session)
             .ok_or(SessionError::NoSuchSession(session))?;
         if attachments.is_empty() {
-            return Prompt::parse(text)
+            return Prompt::try_from(text)
                 .map(Composing::Ready)
                 .map_err(|_| SessionError::BlankPrompt);
         }
@@ -379,7 +379,9 @@ impl<H: AgentHost> SupervisorTask<H> {
         if served.sessions.contains_key(&seed.session) {
             return Ok(());
         }
-        let requested = RequestedDir::parse(&seed.workdir)
+        let requested = seed
+            .workdir
+            .parse::<RequestedDir>()
             .map_err(|error| SessionError::Start(StartError::Workdir(error)))?;
         let workdir = self.confirm(&requested).map_err(SessionError::Start)?;
         let session = seed.session;
@@ -626,7 +628,7 @@ impl<H: AgentHost> SupervisorTask<H> {
     /// scratch folder of its own.
     pub(super) async fn place(&self, place: StartPlace) -> Result<Workdir, StartError> {
         let requested = match place {
-            StartPlace::Folder(dir) => RequestedDir::parse(&dir).map_err(StartError::Workdir)?,
+            StartPlace::Folder(dir) => dir.parse::<RequestedDir>().map_err(StartError::Workdir)?,
             StartPlace::Scratch => {
                 let scratch = self.bounds.scratch().ok_or(StartError::NoScratch)?;
                 // Its last eight hex digits: random for real ids, and
@@ -647,7 +649,10 @@ impl<H: AgentHost> SupervisorTask<H> {
                         tracing::warn!(?folder, ?why, "a scratch folder is not a git repository");
                     }
                 }
-                RequestedDir::parse(folder.to_str().ok_or(StartError::NoScratch)?)
+                folder
+                    .to_str()
+                    .ok_or(StartError::NoScratch)?
+                    .parse::<RequestedDir>()
                     .map_err(StartError::Workdir)?
             }
         };

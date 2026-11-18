@@ -123,7 +123,15 @@ impl Bounds {
 }
 
 impl RequestedDir {
-    pub fn parse(raw: &str) -> Result<Self, WorkdirError> {
+    pub fn as_path(&self) -> &Path {
+        &self.0
+    }
+}
+
+impl std::str::FromStr for RequestedDir {
+    type Err = WorkdirError;
+
+    fn from_str(raw: &str) -> Result<Self, Self::Err> {
         let path = PathBuf::from(raw);
         if !path.is_absolute() {
             return Err(WorkdirError::Relative);
@@ -136,10 +144,6 @@ impl RequestedDir {
             return Err(WorkdirError::Unnormalized);
         }
         Ok(Self(path.components().collect()))
-    }
-
-    pub fn as_path(&self) -> &Path {
-        &self.0
     }
 }
 
@@ -187,15 +191,18 @@ mod tests {
 
     #[test]
     fn reads_requests_lexically() {
-        assert!(RequestedDir::parse("/home/op/dev/acme").is_ok());
-        assert_eq!(RequestedDir::parse("dev/acme"), Err(WorkdirError::Relative));
+        assert!("/home/op/dev/acme".parse::<RequestedDir>().is_ok());
         assert_eq!(
-            RequestedDir::parse("/home/op/dev/../.ssh"),
+            "dev/acme".parse::<RequestedDir>(),
+            Err(WorkdirError::Relative)
+        );
+        assert_eq!(
+            "/home/op/dev/../.ssh".parse::<RequestedDir>(),
             Err(WorkdirError::Unnormalized)
         );
         // `.` changes nothing, and is dropped.
         assert_eq!(
-            RequestedDir::parse("/home/op/./dev").unwrap().as_path(),
+            "/home/op/./dev".parse::<RequestedDir>().unwrap().as_path(),
             std::path::Path::new("/home/op/dev")
         );
     }

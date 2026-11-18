@@ -177,7 +177,7 @@ impl Fixture {
         }
         if let Some(tool) = spec.tool {
             inspector.observe(Observation::ToolCall(ren_protocol::inspect::ToolCall {
-                id: Some(ren_protocol::native::ToolCallId::parse("toolu_1").unwrap()),
+                id: Some("toolu_1".parse().unwrap()),
                 item: None,
                 kind: WireText::new("tool_use").unwrap(),
                 name: Some(WireText::new(tool).unwrap()),
@@ -691,7 +691,7 @@ async fn filters_and_cursors_page_through_calls() {
         count(
             reader
                 .calls(&query(CallFilter {
-                    tool: Some(SearchText::new("PATCH").unwrap()),
+                    tool: Some("PATCH".parse::<SearchText>().unwrap()),
                     ..CallFilter::default()
                 }))
                 .await
@@ -703,7 +703,7 @@ async fn filters_and_cursors_page_through_calls() {
         count(
             reader
                 .calls(&query(CallFilter {
-                    text: Some(SearchText::new("apply").unwrap()),
+                    text: Some("apply".parse::<SearchText>().unwrap()),
                     ..CallFilter::default()
                 }))
                 .await
@@ -727,7 +727,7 @@ async fn filters_and_cursors_page_through_calls() {
         count(
             reader
                 .calls(&query(CallFilter {
-                    model: Some(SearchText::new("nope").unwrap()),
+                    model: Some("nope".parse::<SearchText>().unwrap()),
                     ..CallFilter::default()
                 }))
                 .await
@@ -1294,7 +1294,7 @@ mod digests {
 
     fn query(text: &str) -> SearchQuery {
         SearchQuery {
-            terms: SearchTerms::parse(text).unwrap(),
+            terms: text.parse::<SearchTerms>().unwrap(),
             recording: None,
             client: None,
             field: None,
@@ -1409,7 +1409,7 @@ mod digests {
                     response: ResponseActivity {
                         tool_uses: vec![ToolUse {
                             call: ren_protocol::inspect::ToolCall {
-                                id: Some(ren_protocol::native::ToolCallId::parse("t1").unwrap()),
+                                id: Some("t1".parse().unwrap()),
                                 item: None,
                                 kind: WireText::new("tool_use").unwrap(),
                                 name: Some(WireText::new("Bash").unwrap()),
@@ -1428,7 +1428,7 @@ mod digests {
                 Reading {
                     request: RequestActivity {
                         tool_results: vec![ToolResult {
-                            id: ren_protocol::native::ToolCallId::parse("t1").unwrap(),
+                            id: "t1".parse().unwrap(),
                             status: ResultStatus::Unreported,
                             output: "test migration ... FAILED".to_owned(),
                         }],

@@ -31,7 +31,7 @@ impl InitCmd {
             Some(value) => value,
             None => Self::ask(&config, ctx.terminal.stderr)?,
         };
-        let gateway = GatewayEndpoint::parse(&value)?;
+        let gateway = value.parse::<GatewayEndpoint>()?;
         let report = Report::gateway(&gateway, &ctx.env).await;
         report.print(false, ctx.terminal.stdout)?;
         if !report.success() {

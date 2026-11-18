@@ -24,8 +24,10 @@ pub enum WireFact {
     },
 }
 
-impl From<SendFailure> for WireFact {
-    fn from(failure: SendFailure) -> Self {
+impl WireFact {
+    /// What a failure to send says about the wire. Several failures read as
+    /// the same fact, so this is not a lossless conversion.
+    pub fn of_failure(failure: SendFailure) -> Self {
         match failure {
             SendFailure::NotSent | SendFailure::Refused => Self::NotAccepted,
             SendFailure::SendFailed | SendFailure::HeaderTimeout => Self::AcceptanceUnknown,
@@ -166,14 +168,20 @@ mod tests {
 
     #[test]
     fn only_a_refused_connection_is_not_sent() {
-        assert_eq!(WireFact::from(SendFailure::NotSent), WireFact::NotAccepted);
-        assert_eq!(WireFact::from(SendFailure::Refused), WireFact::NotAccepted);
         assert_eq!(
-            WireFact::from(SendFailure::SendFailed),
+            WireFact::of_failure(SendFailure::NotSent),
+            WireFact::NotAccepted
+        );
+        assert_eq!(
+            WireFact::of_failure(SendFailure::Refused),
+            WireFact::NotAccepted
+        );
+        assert_eq!(
+            WireFact::of_failure(SendFailure::SendFailed),
             WireFact::AcceptanceUnknown
         );
         assert_eq!(
-            WireFact::from(SendFailure::HeaderTimeout),
+            WireFact::of_failure(SendFailure::HeaderTimeout),
             WireFact::AcceptanceUnknown
         );
     }

@@ -251,9 +251,7 @@ impl Response {
         let kind = Fields(block).str("type").and_then(BlockKind::from_label)?;
         Some(Block {
             kind,
-            id: Fields(block)
-                .str("id")
-                .and_then(|id| ToolCallId::parse(id).ok()),
+            id: Fields(block).str("id").and_then(|id| id.parse().ok()),
             name: Fields(block).wire("name"),
             input: block.get("input").cloned(),
             partial_input: String::new(),

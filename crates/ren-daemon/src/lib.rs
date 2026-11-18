@@ -312,7 +312,7 @@ impl Daemon {
             home: config.run_places().home.clone(),
             // The new-run form then offers each client's models at once.
             warmup: Warmup::AtStart,
-            gateway: GatewayEndpoint::parse(&format!("http://{address}"))?,
+            gateway: format!("http://{address}").parse::<GatewayEndpoint>()?,
             version: env!("CARGO_PKG_VERSION").to_owned(),
             line_limit: LineLimit::DEFAULT,
             idle: ren_supervisor::IdleStop::DEFAULT,

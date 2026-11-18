@@ -660,7 +660,7 @@ mod tests {
     }
 
     fn prompt() -> RunCommand {
-        RunCommand::Prompt(Prompt::parse("fix it".into()).unwrap())
+        RunCommand::Prompt(Prompt::try_from("fix it".to_owned()).unwrap())
     }
 
     fn agent(state: &RunState, event: DriveEvent) -> RunState {
@@ -921,7 +921,7 @@ mod tests {
     }
 
     fn text(text: &str) -> Prompt {
-        Prompt::parse(text.into()).unwrap()
+        Prompt::try_from(text.to_owned()).unwrap()
     }
 
     fn running() -> RunState {

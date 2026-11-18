@@ -1365,7 +1365,7 @@ mod tests {
     }
 
     fn prompt(text: &str) -> DriveCommand {
-        DriveCommand::Prompt(Prompt::parse(text.into()).unwrap())
+        DriveCommand::Prompt(Prompt::try_from(text.to_owned()).unwrap())
     }
 
     /// The prompt request sent for `text`.
@@ -1877,12 +1877,16 @@ mod tests {
     fn steering_adds_to_the_running_turn_and_other_requests_are_refused() {
         let mut codec = ready();
         assert_eq!(
-            codec.command(DriveCommand::Steer(Prompt::parse("also".into()).unwrap())),
+            codec.command(DriveCommand::Steer(
+                Prompt::try_from("also".to_owned()).unwrap()
+            )),
             Err(CommandRefused::NoTurn)
         );
         let request = prompted(&mut codec, "work");
         assert_eq!(
-            codec.command(DriveCommand::Steer(Prompt::parse("also".into()).unwrap())),
+            codec.command(DriveCommand::Steer(
+                Prompt::try_from("also".to_owned()).unwrap()
+            )),
             Err(CommandRefused::TurnNotStarted)
         );
         let _ = feed(
@@ -1890,7 +1894,9 @@ mod tests {
             update(json!({ "sessionUpdate": "agent_thought_chunk", "content": { "text": "…" } })),
         );
         let lines = codec
-            .command(DriveCommand::Steer(Prompt::parse("also".into()).unwrap()))
+            .command(DriveCommand::Steer(
+                Prompt::try_from("also".to_owned()).unwrap(),
+            ))
             .unwrap();
         let steer = sent(&lines[0]);
         assert_eq!(steer["method"], "_session/steering");

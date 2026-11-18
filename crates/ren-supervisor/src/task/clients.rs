@@ -228,7 +228,7 @@ impl<H: AgentHost> SupervisorTask<H> {
     pub(super) fn listing_folder(&self, place: StartPlace) -> Result<Workdir, StartError> {
         match place {
             StartPlace::Folder(dir) => {
-                self.confirm(&RequestedDir::parse(&dir).map_err(StartError::Workdir)?)
+                self.confirm(&dir.parse::<RequestedDir>().map_err(StartError::Workdir)?)
             }
             StartPlace::Scratch => {
                 let scratch = self.bounds.scratch().ok_or(StartError::NoScratch)?;

@@ -154,11 +154,16 @@ impl RecordedPrompt {
 #[error("a prompt cannot be blank")]
 pub struct BlankPrompt;
 
-impl Prompt {
-    pub fn parse(text: String) -> Result<Self, BlankPrompt> {
+impl TryFrom<String> for Prompt {
+    type Error = BlankPrompt;
+
+    /// Text alone, refused when blank.
+    fn try_from(text: String) -> Result<Self, Self::Error> {
         Self::with_images(text, Vec::new())
     }
+}
 
+impl Prompt {
     /// `text` with `images`; the text may be blank when images go.
     pub fn with_images(text: String, images: Vec<PromptImage>) -> Result<Self, BlankPrompt> {
         if text.trim().is_empty() && images.is_empty() {
@@ -204,10 +209,10 @@ mod tests {
 
     #[test]
     fn a_prompt_with_images_shows_what_they_are_never_their_bytes() {
-        assert_eq!(Prompt::parse("  ".into()), Err(BlankPrompt));
+        assert_eq!(Prompt::try_from("  ".to_owned()), Err(BlankPrompt));
         let images = Prompt::sample("");
         assert_eq!(images.as_str(), "");
-        let text = serde_json::to_value(Prompt::parse("go".into()).unwrap()).unwrap();
+        let text = serde_json::to_value(Prompt::try_from("go".to_owned()).unwrap()).unwrap();
         assert_eq!(text, "go");
         let shown = serde_json::to_value(Prompt::sample("look")).unwrap();
         assert_eq!(shown["text"], "look");
@@ -220,7 +225,10 @@ mod tests {
     /// shape; a blank one is refused.
     #[test]
     fn a_recorded_prompt_reads_back_as_it_was_written() {
-        for sent in [Prompt::parse("go".into()).unwrap(), Prompt::sample("look")] {
+        for sent in [
+            Prompt::try_from("go".to_owned()).unwrap(),
+            Prompt::sample("look"),
+        ] {
             let written = serde_json::to_value(&sent).unwrap();
             let read: RecordedPrompt = serde_json::from_value(written.clone()).unwrap();
             assert_eq!(read, sent.record());

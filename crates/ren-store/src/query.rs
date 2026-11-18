@@ -111,15 +111,19 @@ pub struct SearchText(Box<str>);
 impl SearchText {
     pub const MAX_BYTES: usize = 128;
 
-    pub fn new(text: &str) -> Result<Self, QueryError> {
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::str::FromStr for SearchText {
+    type Err = QueryError;
+
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
         let text = text.trim();
         (!text.is_empty() && text.len() <= Self::MAX_BYTES)
             .then(|| Self(text.into()))
             .ok_or(QueryError::SearchText)
-    }
-
-    pub fn as_str(&self) -> &str {
-        &self.0
     }
 }
 
@@ -278,9 +282,9 @@ mod tests {
         assert_eq!(PageLimit::new(0), Err(QueryError::Limit));
         assert_eq!(PageLimit::new(1001), Err(QueryError::Limit));
         assert!(PageLimit::new(1000).is_ok());
-        assert_eq!(SearchText::new("  "), Err(QueryError::SearchText));
+        assert_eq!("  ".parse::<SearchText>(), Err(QueryError::SearchText));
         assert_eq!(
-            SearchText::new(&"x".repeat(129)),
+            "x".repeat(129).parse::<SearchText>(),
             Err(QueryError::SearchText)
         );
         let cursor: Cursor = "12:00000000-0000-0000-0000-000000000001".parse().unwrap();

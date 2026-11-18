@@ -90,7 +90,7 @@ impl ClientConfig {
         let gateway = file
             .gateway
             .as_deref()
-            .map(GatewayEndpoint::parse)
+            .map(str::parse::<GatewayEndpoint>)
             .transpose()
             .map_err(|reason| ClientError::Gateway {
                 origin: GatewaySource::ClientConfig(path.clone()),
@@ -182,7 +182,7 @@ impl GatewayChoice {
     /// gateway. A `client.toml` that cannot be located or read is an error
     /// only when nothing earlier names a gateway.
     pub fn select(flag: Option<&str>, env: &HostEnv) -> Result<Self, ClientError> {
-        let named = |value: &str, source: GatewaySource| match GatewayEndpoint::parse(value) {
+        let named = |value: &str, source: GatewaySource| match value.parse::<GatewayEndpoint>() {
             Ok(endpoint) => Ok(Self::Selected { endpoint, source }),
             Err(reason) => Err(ClientError::Gateway {
                 origin: source,
@@ -250,7 +250,11 @@ mod tests {
 
         ClientConfig::load(file.clone())
             .unwrap()
-            .with_gateway(GatewayEndpoint::parse("https://file.example.ts.net:8443").unwrap())
+            .with_gateway(
+                "https://file.example.ts.net:8443"
+                    .parse::<GatewayEndpoint>()
+                    .unwrap(),
+            )
             .save()
             .unwrap();
         let choice = GatewayChoice::select(None, &none).unwrap();
@@ -322,7 +326,11 @@ mod tests {
         let file = dir.path().join("nested/ren/client.toml");
         ClientConfig::load(file.clone())
             .unwrap()
-            .with_gateway(GatewayEndpoint::parse("https://vps.example.ts.net:8443").unwrap())
+            .with_gateway(
+                "https://vps.example.ts.net:8443"
+                    .parse::<GatewayEndpoint>()
+                    .unwrap(),
+            )
             .save()
             .unwrap();
         let mode = std::fs::metadata(&file).unwrap().permissions().mode();
