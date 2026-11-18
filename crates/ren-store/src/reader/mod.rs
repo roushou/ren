@@ -571,6 +571,9 @@ impl Reader {
     }
 
     pub async fn storage(&self) -> Result<StorageView, StoreError> {
+        // Before the connection below is held: with every connection of the
+        // pool held so, this would wait for one that is never released.
+        let digested_calls = self.digested_count().await?;
         let mut connection = self.pool.acquire().await?;
         let disk = DiskUsage::measure(&mut connection).await?;
         let calls =
@@ -588,7 +591,7 @@ impl Reader {
             disk,
             calls: calls.try_get("calls")?,
             open_calls: calls.try_get("open")?,
-            digested_calls: self.digested_count().await?,
+            digested_calls,
             chunks: chunks.try_get("chunks")?,
             referenced_bytes: referenced,
             unique_bytes: chunks.try_get("unique_bytes")?,
