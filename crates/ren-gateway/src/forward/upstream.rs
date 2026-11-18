@@ -6,9 +6,9 @@
 //! through [`Upstream::connect`] and yields an upgraded socket or the refusal.
 //! Tests substitute a scripted upstream; the daemon uses [`ReqwestUpstream`].
 
-use crate::attempt::{SendFailure, StreamFailure};
+use crate::forward::route::{BoundRoute, Forward, Route};
+use crate::lifecycle::attempt::{SendFailure, StreamFailure};
 use crate::policy::EntryUsers;
-use crate::route::{BoundRoute, Forward, Route};
 use axum::body::Body;
 use bytes::Bytes;
 use http_body::{Frame, SizeHint};
@@ -692,7 +692,7 @@ mod tests {
         AuthOverride, NativeUrls, OperatorKey, ReqwestUpstream, UpstreamAuth, UpstreamEntry,
         UpstreamTable, UpstreamUrl,
     };
-    use crate::attempt::SendFailure;
+    use crate::lifecycle::attempt::SendFailure;
     use ren_protocol::route::{Provider, Wire};
     use ren_recorder::routing::UpstreamId;
 

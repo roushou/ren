@@ -16,9 +16,9 @@ pub use transform::{
 };
 
 use crate::{
+    lifecycle::retry::RetryPolicy,
     operator::{OperatorState, Pause, RetryAfter},
     reply::RenCode,
-    retry::RetryPolicy,
 };
 use ren_protocol::{
     native::NativeSessionId,

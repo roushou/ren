@@ -3,10 +3,16 @@
 //!
 //! The binary's package works out the revision when it is compiled and
 //! hands the gateway a [`Build`]; the gateway only reports it.
+//!
+//! It also reports what kind of instance it is ([`Environment`]): a
+//! production instance or a development one (such as `cargo xtask dev`'s
+//! slot). The gateway is the authority; the UI and the CLI show what
+//! `/health` reports.
 
 use serde::{Deserialize, Serialize};
 use serde_with::{DeserializeFromStr, SerializeDisplay};
 use std::{fmt, str::FromStr};
+use strum::{Display, EnumString, IntoStaticStr, VariantArray};
 
 /// A package version and the source revision it was compiled from.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -180,6 +186,27 @@ impl FromStr for Revision {
         let commit = commit.parse().map_err(|_| RevisionError(text.to_owned()))?;
         Ok(Self::Commit { commit, tree })
     }
+}
+
+/// The kind of instance a gateway is.
+#[derive(Display, EnumString, IntoStaticStr, VariantArray)]
+#[strum(serialize_all = "snake_case")]
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Hash, SerializeDisplay, DeserializeFromStr,
+)]
+pub enum Environment {
+    /// Real traffic. The default.
+    #[default]
+    Production,
+    /// Fake or test traffic, for development.
+    Development,
+}
+
+/// The `[instance]` configuration section.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct InstanceOptions {
+    pub environment: Environment,
 }
 
 #[cfg(test)]

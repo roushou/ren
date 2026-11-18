@@ -19,8 +19,8 @@
 
 use super::{ingress::Shutdown, upstream::UpstreamSocket};
 use crate::{
-    channel::{CallSlot, Deadlines, Owner, Side, WsAction, WsChannel, WsEvent},
     control::{Cancel, Controls, Registered},
+    lifecycle::channel::{CallSlot, Deadlines, Owner, Side, WsAction, WsChannel, WsEvent},
     policy::{Admission, CallFacts, Policy, Rejection},
 };
 use crate::{limits::ConcurrencyLimit, timeout::TimeoutSecs};
@@ -611,7 +611,7 @@ impl Relay {
                 transition.actions
             }
             // A message read just before the other side ended the channel.
-            Err(crate::channel::IllegalTransition::AfterEnd { end }) => {
+            Err(crate::lifecycle::channel::IllegalTransition::AfterEnd { end }) => {
                 *machine = WsChannel::Ended(end);
                 Vec::new()
             }

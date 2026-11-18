@@ -106,7 +106,7 @@ Ren-specific applications:
   events keep an `Unknown(Raw…)` variant. `#[serde(other)]` loses the value, so don't
   use it on wire data.
 - **Sans-IO core:** SSE framing, native protocol parsing, inspection, attempt
-  lifecycle transitions, retry eligibility (`ren_gateway::retry`), operator
+  lifecycle transitions, retry eligibility (`ren_gateway::lifecycle::retry`), operator
   state (`ren_gateway::operator`), call planning and transforms (`policy`), retention decisions,
   and history query building. Framing
   stays independent of JSON and of providers.
@@ -115,14 +115,15 @@ Ren-specific applications:
   parsing and Axum handlers.
 - **Capabilities:** components receive `Clock` (`ren_recorder::time`) and
   `IdSource` (`ren_recorder::id`) instead of reading the host clock or generating random IDs. The
-  gateway receives an `Upstream` (`ren_gateway::upstream`) and the shared
+  gateway receives an `Upstream` (`ren_gateway::Upstream`) and the shared
   `Controls` (`ren_gateway::control`). Environment variables (operator API keys) are read once into
   `HostEnv` (`ren_harness::host`), captured once in `main` and carried by the CLI
   `Context`;
   configuration, the Pi cache, launch, and doctor receive it. The recorder writes
   through its `RecordSink` port (`ren_recorder::RecordSink`), which `Store` implements.
 - **Lifecycles** are pure state machines, one per transport (`HttpAttempt` in
-  `ren_gateway::attempt`, and `WsChannel` in `ren_gateway::channel`, which owns
+  `ren_gateway::lifecycle::attempt`, and `WsChannel` in
+  `ren_gateway::lifecycle::channel`, which owns
   its calls' states), with explicit terminals that include interrupted and unknown outcomes.
 
 ### Lints
@@ -421,17 +422,19 @@ dependencies under "Crates" below. Read the code for current module ownership.
   roots are configured, with `ProcessHost`; the gateway's control API serves it.
 - `crates/ren-gateway`: Ren's HTTP interface, with `Gateway` as its primary type.
   It owns forwarding, management, and control routes on one listener, assembled
-  by `Gateway::router` or `Gateway::into_ingress`. Forwarding uses a declarative
-  route table, the header policy, request buffering with a global
-  byte budget, the typed upstream entries with their credential override, the
-  candidate loop that carries out `CallRun`, the relay that drives the pure
-  `HttpAttempt` machine
-  (`attempt`), the WebSocket relay that drives `WsChannel` (`channel`), the
-  `Upstream` seam (HTTP send and WebSocket connect) with its Reqwest
-  implementation, and the ingress with the shutdown drain, which also waits for
-  upgraded channels. Use Axum's request, response, body, and WebSocket types
+  by `Gateway::router` or `Gateway::into_ingress`. Forwarding is the
+  `forward` module: a declarative route table (`route`), the header policy
+  (`headers`), request buffering with a global byte budget (`buffer`), the
+  typed upstream entries with their credential override and the `Upstream`
+  seam (HTTP send and WebSocket connect) with its Reqwest implementation
+  (`upstream`), the candidate loop that carries out `CallRun` (`forward`
+  itself), the relay that drives the pure `HttpAttempt` machine (`relay`),
+  the WebSocket relay that drives `WsChannel` (`websocket`), and the ingress
+  with the shutdown drain, which also waits for upgraded channels
+  (`ingress`). The pure machines it drives are in `lifecycle`: `attempt`
+  (`HttpAttempt`), `channel` (`WsChannel`), `call`, and `retry`. Use Axum's request, response, body, and WebSocket types
   directly; no framework-independent HTTP adapter layer. It also owns retry
-  eligibility (`retry`), operator state (`operator`, a pause written with
+  eligibility (`lifecycle::retry`), operator state (`operator`, a pause written with
   its pinned `PauseState`, which install-vps reads), the named users and
   how a request is matched to one (`user`: `Users::identify`, with
   `TokenDigest`, a user token's digest), each user's and the unnamed
@@ -439,16 +442,16 @@ dependencies under "Crates" below. Read the code for current module ownership.
   1024, which every configured limit is; `TimeoutSecs`, in `timeout`, is
   every configured timeout, 1 to 3600 seconds), the `Controls` that hold
   it with the running-call registry (`control`), the `Build` and the
-  instance's environment (`instance`) that `/health` reports (`build`), and
+  instance's environment that `/health` reports (`build`), and
   pure call planning
   (`policy`: block, transform, and fallback rules validated at load, with
   protected headers and body paths), and the call's way through its
-  candidates (`call`: `CallRun`, which `Gateway::forward` carries out),
+  candidates (`lifecycle::call`: `CallRun`, which `Gateway::forward` carries out),
   and the codes it refuses a call with over HTTP and WebSocket alike
   (`reply`: `RenCode`, `ren_`-prefixed on the wire and pinned in
   `tests/fixtures/labels.txt`).
-  `src/purity.rs` keeps `attempt`, `call`, `channel`, `retry`, `operator`,
-  and `user` free of runtime, I/O, storage, and shell-module
+  `src/purity.rs` keeps `lifecycle` (`attempt`, `call`, `channel`,
+  `retry`), `operator`, and `user` free of runtime, I/O, storage, and shell-module
   dependencies. Management receives `Reader`, `Backup`, retention settings, and
   control credentials through `ManagementSetup`; SQL stays in `ren-store`, and
   forwarding records only through the recorder.

@@ -3,8 +3,8 @@ use super::{
     Rejection, RequestJson, StepOutcome, UpstreamSummary,
 };
 use crate::{
+    lifecycle::retry::{Delivery, RetryDecision, WireFact},
     operator::{OperatorCommand, OperatorState, RetryAfter},
-    retry::{Delivery, RetryDecision, WireFact},
 };
 use http::HeaderMap;
 use ren_protocol::{

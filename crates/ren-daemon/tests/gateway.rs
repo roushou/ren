@@ -17,7 +17,7 @@ use http::StatusCode;
 use ren_daemon::config::Config;
 use ren_gateway::{
     Connected, Stopped, Upstream, UpstreamBody, UpstreamHandshake, UpstreamRequest, WebSocketMode,
-    attempt::SendFailure,
+    lifecycle::attempt::SendFailure,
 };
 use ren_protocol::{
     direction::Direction,
@@ -1723,9 +1723,12 @@ async fn a_declared_length_delivered_whole_is_a_complete_body_even_before_the_st
     let upstream = Arc::new(ScriptedUpstream {
         seen: std::sync::Mutex::new(Vec::new()),
         answer: || {
-            let body = futures_util::stream::iter([Ok::<_, ren_gateway::attempt::StreamFailure>(
-                http_body::Frame::data(Bytes::from_static(b"{\"input_tokens\":18208}")),
-            )])
+            let body = futures_util::stream::iter([Ok::<
+                _,
+                ren_gateway::lifecycle::attempt::StreamFailure,
+            >(http_body::Frame::data(
+                Bytes::from_static(b"{\"input_tokens\":18208}"),
+            ))])
             .chain(futures_util::stream::pending());
             Ok(http::Response::builder()
                 .header("content-type", "application/json")
