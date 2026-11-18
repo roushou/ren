@@ -134,9 +134,11 @@ loopback or behind private Tailscale access, like the daemon.
 
 The Sessions view (`/sessions`) starts and drives sessions (Codex, Claude Code, Pi, or OpenCode in a folder
 under the daemon's `[runs]` roots; see [sessions](../docs/api.md#sessions)): a sidebar of
-folders and their sessions, each folder's `+` making one there at once, the conversation (its
-recorded turns, then what streams in), its approvals with what each asks, and a prompt box whose
-bar holds its settings (and, for a draft, its client). `/runs` links lead here. Sessions, and archiving, unarchiving, and deleting
+folders and their sessions, the conversation (its recorded turns, then what
+streams in), its approvals with what each asks, and a prompt box whose bar holds
+its settings. New session (`n`), or a folder's `+`, opens a draft with its
+prompt ready: its client starts with the first prompt, and until then its bar
+also holds its folder and its client. `/runs` links lead here. Sessions, and archiving, unarchiving, and deleting
 recordings and runs, are the only things the UI changes, and only when the UI
 server is given the daemon's control token file:
 
@@ -149,7 +151,7 @@ The UI server reads the token from the file on each request (the daemon writes a
 new one when it starts), so it never reaches the browser, and it forwards only
 these to the daemon's control API: `/control/sessions*` to
 `/control/v1/sessions*` (list, create, prompt, answer, configure, choose a
-draft's client, interrupt, stop, archive, unarchive, delete, the composer's
+draft's client and folder, interrupt, stop, archive, unarchive, delete, the composer's
 commands and files, and the update feed), `/control/runs*` to the reads of
 `/control/v1/runs*` (live runs and their feed, places, clients, and models), and
 `/control/history/*` to archiving, unarchiving, and deleting a recording or run. A request must come from the UI's

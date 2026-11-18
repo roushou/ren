@@ -682,8 +682,7 @@ command line.
 
 A client sitting idle between turns for ten minutes is stopped: its run ends
 `idled` (shown as Resting), and its session goes on, its next prompt starting
-the client again to resume the conversation. A draft never asked anything and
-holding no image is discarded instead.
+the client again to resume the conversation.
 
 In the web UI's conversation, the steps between two things the agent said
 (commands, other tools, file changes) fold into one line of what they did,
@@ -694,18 +693,23 @@ written otherwise. A group stays open while a step in it runs or after one
 failed, and opens to a row per step; a command's row opens to the command
 exactly as run and its output.
 
+In the web UI, New session (or `n`) opens a draft with its prompt ready to
+write, in the folder the last session asked something worked in (or a
+scratch folder of its own), on the client last chosen. The draft runs no
+client: its folder and client change from chips beside the prompt, and its
+client starts with the first prompt. A draft never asked anything is reused
+rather than another made, and a folder's `+` opens it in that folder.
+
 In the web UI, what is written while a turn runs is queued for after it (Enter),
 shown under the conversation, and can be taken back to edit; it can instead go
 into the running turn (Ctrl+Enter or Send now) where the client takes that. Typing `/` at the start of a prompt
-offers the client's own commands and skills (`$` offers Codex's skills
-anywhere), and `@` the run's folder's files; ↑ and ↓ choose, Tab or Enter
+offers the client's own commands and skills, read as the session opens, even
+before its client runs (`$` offers Codex's skills anywhere), and `@` the
+session's folder's files; ↑ and ↓ choose, Tab or Enter
 inserts, Esc closes. Each session keeps its own draft, ↑ and ↓ recall its earlier prompts, and writing to one whose
 client stopped continues it. The model, effort, and approvals
-change from the next turn, and a draft (no prompt sent yet) can change its
-client; a folder's `+` makes a session there at once. A draft never asked
-anything is listed only while it is open, and is discarded once its client
-has sat idle for ten minutes; one open on the page then is made again in the
-same place, keeping what was typed.
+change from the next turn. A draft never asked anything is listed only while
+it is open.
 
 Refusals: `400` `invalid_directory` (not absolute, contains `..`, or outside
 every root once links are resolved), `400` `directory_not_found`, `502` `spawn_failed` (the
