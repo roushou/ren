@@ -80,6 +80,11 @@
         return { tag: 'dev', what: 'A development gateway, not the installed service' };
       case 'canary':
         return { tag: 'canary', what: "The canary: main's tip on a copy of production's history" };
+      case 'preview':
+        return {
+          tag: 'preview',
+          what: "A preview: one workspace's branch on a copy of production's history",
+        };
       default:
         return null;
     }
