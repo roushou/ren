@@ -83,7 +83,7 @@
       case 'preview':
         return {
           tag: 'preview',
-          what: "A preview: one workspace's branch on a copy of production's history",
+          what: "A preview: one worktree's branch on a copy of production's history",
         };
       default:
         return null;

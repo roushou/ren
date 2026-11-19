@@ -1,7 +1,7 @@
 //! Work items, pure: what an operator marked to be done (a [`WorkOrder`]:
 //! the page it was marked on, its marks, and what was on screen besides),
 //! and the lifecycle that carries it to production ([`WorkState`]): queued,
-//! sent to a session that works on it in a workspace of its own, landed on
+//! sent to a session that works on it in a worktree of its own, landed on
 //! `main` as a commit, shipped in the build production runs, or dismissed.
 //! Transitions are a pure function of the state and an event; an event the
 //! state does not take is a typed error, never a silent no-op.
@@ -256,7 +256,7 @@ impl Landing {
 pub enum WorkState {
     /// Marked, waiting to be sent; queued items can be sent together.
     Queued,
-    /// A session works on it, in a workspace of its own.
+    /// A session works on it, in a worktree of its own.
     Sent { session: SessionId },
     /// Its change is on `main`, as this commit.
     Landed { session: SessionId, commit: Commit },

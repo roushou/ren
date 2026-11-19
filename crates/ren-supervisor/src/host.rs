@@ -7,7 +7,7 @@ use crate::{
     place::Look,
     run::ProcessExit,
     workdir::Workdir,
-    workspace::Workspace,
+    worktree::Worktree,
 };
 use futures_util::future::BoxFuture;
 use ren_depot::toolset::Generation;
@@ -113,7 +113,7 @@ pub trait AgentHost: Send + Sync + 'static {
 
     /// Make `folder` a worktree of the repository at `repo` on a new
     /// branch `branch`, and `data` its data folder. None by default: a host
-    /// that makes no workspaces.
+    /// that makes no worktrees.
     fn make_worktree(
         &self,
         repo: &Path,
@@ -126,11 +126,11 @@ pub trait AgentHost: Send + Sync + 'static {
         Err(io::ErrorKind::Unsupported.into())
     }
 
-    /// Remove `workspace`: stop its preview's units, then remove its
+    /// Remove `worktree`: stop its preview's units, then remove its
     /// worktree and its data folder, and its branch once merged. A worktree
     /// holding changes not committed is kept, and the error says so.
-    fn remove_worktree(&self, workspace: &Workspace, tools: &RunTools) -> io::Result<()> {
-        let _ = (workspace, tools);
+    fn remove_worktree(&self, worktree: &Worktree, tools: &RunTools) -> io::Result<()> {
+        let _ = (worktree, tools);
         Err(io::ErrorKind::Unsupported.into())
     }
 

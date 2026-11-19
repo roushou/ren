@@ -1,15 +1,15 @@
-//! `cargo xtask preview`: this workspace's branch, built and run on a copy
+//! `cargo xtask preview`: this worktree's branch, built and run on a copy
 //! of production's history, so its change can be judged on the page it was
 //! marked on, beside production's (docs/plans/self-build.md, phase 5).
 //!
-//! Run in a workspace Ren made: its runs are told the workspace
-//! (`REN_WORKSPACE`), its ports (`REN_WORKSPACE_PORTS`), and its data folder
-//! (`REN_WORKSPACE_DATA`). The preview's daemon takes the slot's first port
-//! and its UI the next, as `ren-preview-<workspace>-*` units; its build, data,
+//! Run in a worktree Ren made: its runs are told the worktree
+//! (`REN_WORKTREE`), its ports (`REN_WORKTREE_PORTS`), and its data folder
+//! (`REN_WORKTREE_DATA`). The preview's daemon takes the slot's first port
+//! and its UI the next, as `ren-preview-<worktree>-*` units; its build, data,
 //! and configuration live in `<data>/preview`. Each sent work item the
 //! branch's commits name (`Work-Item: <id>`), and each one given, records the
 //! preview, so the Work view opens the marked page on it. Removing the
-//! workspace stops it.
+//! worktree stops it.
 
 use crate::{
     file::{FileError, FileMode},
@@ -33,13 +33,13 @@ use ren_recorder::{
     work::{Landing, PreviewUrl, WorkStateKind},
 };
 use ren_release::Revision;
-use ren_supervisor::Workspace;
+use ren_supervisor::Worktree;
 use std::{
     fs,
     path::{Path, PathBuf},
 };
 
-/// This workspace's branch, on a copy of production's history.
+/// This worktree's branch, on a copy of production's history.
 #[derive(Args)]
 pub struct Preview {
     #[command(subcommand)]
@@ -90,10 +90,10 @@ struct TargetArgs {
 #[derive(Debug, thiserror::Error)]
 pub enum PreviewError {
     #[error(
-        "{0} is not set: run `cargo xtask preview` in a workspace Ren made, whose runs are told it"
+        "{0} is not set: run `cargo xtask preview` in a worktree Ren made, whose runs are told it"
     )]
-    NotAWorkspace(&'static str),
-    #[error("{0} is not a workspace Ren made (`<worktrees>/<repo>-<slot>`)")]
+    NotAWorktree(&'static str),
+    #[error("{0} is not a worktree Ren made (`<worktrees>/<repo>-<slot>`)")]
     NotRens(String),
     #[error("the built ren reports no revision: {0:?}")]
     Revision(String),
@@ -113,29 +113,29 @@ pub enum PreviewError {
     Publish(#[from] PublishError),
 }
 
-/// The workspace, as Ren made it: read from `REN_WORKSPACE` alone, and
-/// checked to be a folder of Ren's worktrees named as a workspace. Its data
+/// The worktree, as Ren made it: read from `REN_WORKTREE` alone, and
+/// checked to be a folder of Ren's worktrees named as a worktree. Its data
 /// folder and ports are the ones Ren gives that slot, never taken from
 /// other variables, so a preview only ever replaces its own data.
 struct PreviewPlace {
-    workspace: Workspace,
+    worktree: Worktree,
 }
 
 impl PreviewPlace {
-    /// The workspace Ren told this run it works in.
+    /// The worktree Ren told this run it works in.
     fn read(env: &HostEnv) -> Result<Self, PreviewError> {
         let folder = env
-            .absolute_path("REN_WORKSPACE")
-            .ok_or(PreviewError::NotAWorkspace("REN_WORKSPACE"))?;
-        let workspace = folder
+            .absolute_path("REN_WORKTREE")
+            .ok_or(PreviewError::NotAWorktree("REN_WORKTREE"))?;
+        let worktree = folder
             .parent()
-            .and_then(|root| Workspace::of(root, &folder))
+            .and_then(|root| Worktree::of(root, &folder))
             .ok_or_else(|| PreviewError::NotRens(folder.display().to_string()))?;
-        Ok(Self { workspace })
+        Ok(Self { worktree })
     }
 
     fn name(&self) -> String {
-        self.workspace
+        self.worktree
             .folder()
             .file_name()
             .and_then(|name| name.to_str())
@@ -144,16 +144,16 @@ impl PreviewPlace {
     }
 
     fn replica(&self) -> Replica {
-        Replica::preview(&self.name(), self.ports().0, &self.workspace.data())
+        Replica::preview(&self.name(), self.ports().0, &self.worktree.data())
     }
 
     fn root(&self) -> PathBuf {
-        self.workspace.data().join("preview")
+        self.worktree.data().join("preview")
     }
 
     /// The slot's first two ports: its daemon's, then its UI's.
     fn ports(&self) -> (u16, u16) {
-        let (first, _) = self.workspace.ports();
+        let (first, _) = self.worktree.ports();
         (first, first.saturating_add(1))
     }
 }
@@ -163,33 +163,33 @@ impl Preview {
     const HISTORY: u32 = 200;
 
     pub fn run(self, env: &HostEnv) -> Result<(), PreviewError> {
-        let workspace = PreviewPlace::read(env)?;
+        let worktree = PreviewPlace::read(env)?;
         let repo = Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()
             .map_or_else(|| PathBuf::from("."), Path::to_path_buf);
         match self.action {
-            PreviewAction::Up(args) => Self::up(env, &workspace, &repo, &args),
-            PreviewAction::Down(args) => Self::down(env, &workspace, &repo, &args),
+            PreviewAction::Up(args) => Self::up(env, &worktree, &repo, &args),
+            PreviewAction::Down(args) => Self::down(env, &worktree, &repo, &args),
         }
     }
 
     fn up(
         env: &HostEnv,
-        workspace: &PreviewPlace,
+        worktree: &PreviewPlace,
         repo: &Path,
         args: &UpArgs,
     ) -> Result<(), PreviewError> {
         let production = ProductionPlace::new(env, args.target.of)?;
-        let replica = workspace.replica();
-        let (ren, revision) = Self::build(env, workspace, repo)?;
+        let replica = worktree.replica();
+        let (ren, revision) = Self::build(env, worktree, repo)?;
         let backup = production.backup()?;
         replica.replace_data(&backup)?;
         let keys = replica.configure(&production)?;
         let publish = Self::tailscale(env, args.publish)?.map(|tailscale| {
-            let (gateway, ui) = workspace.ports();
+            let (gateway, ui) = worktree.ports();
             (tailscale, gateway, ui)
         });
-        let reached = replica.start(env, &ren, &workspace.root().join("ui"), &keys, publish)?;
+        let reached = replica.start(env, &ren, &worktree.root().join("ui"), &keys, publish)?;
         let ui: PreviewUrl = reached
             .ui
             .parse()
@@ -220,15 +220,15 @@ impl Preview {
 
     fn down(
         env: &HostEnv,
-        workspace: &PreviewPlace,
+        worktree: &PreviewPlace,
         repo: &Path,
         args: &DownArgs,
     ) -> Result<(), PreviewError> {
         let production = ProductionPlace::new(env, args.target.of)?;
-        let replica = workspace.replica();
+        let replica = worktree.replica();
         replica.stop()?;
         if let Some(tailscale) = Self::tailscale(env, args.publish)? {
-            replica.unpublish(tailscale, workspace.ports())?;
+            replica.unpublish(tailscale, worktree.ports())?;
         }
         let listed = production.work_items()?.unwrap_or_default();
         for item in Self::addressed(&production, repo, &args.work)? {
@@ -238,7 +238,7 @@ impl Preview {
                     && entry
                         .preview
                         .as_ref()
-                        .is_some_and(|preview| preview.ui.port() == Some(workspace.ports().1))
+                        .is_some_and(|preview| preview.ui.port() == Some(worktree.ports().1))
             });
             if previewed {
                 production.move_work(
@@ -255,7 +255,7 @@ impl Preview {
     /// and the revision the binary reports.
     fn build(
         env: &HostEnv,
-        workspace: &PreviewPlace,
+        worktree: &PreviewPlace,
         repo: &Path,
     ) -> Result<(PathBuf, Revision), PreviewError> {
         let cargo = env
@@ -267,7 +267,7 @@ impl Preview {
             .arg("--manifest-path")
             .arg(repo.join("Cargo.toml"))
             .run()?;
-        let root = workspace.root();
+        let root = worktree.root();
         fs::create_dir_all(root.join("bin")).map_err(FileError::at(&root))?;
         // Copied, so a later build never replaces the binary under the unit.
         let built = repo.join("target/debug/ren");
@@ -321,7 +321,7 @@ impl Preview {
         }
         let home = env
             .absolute_path("HOME")
-            .ok_or(PreviewError::NotAWorkspace("HOME"))?;
+            .ok_or(PreviewError::NotAWorktree("HOME"))?;
         let saved = Publish::default().resolve(&Publish::path(&home))?;
         Ok(Some(if saved.sudo_tailscale {
             TailscaleCli::Sudo
@@ -338,12 +338,12 @@ mod tests {
     use std::path::Path;
 
     #[test]
-    fn a_preview_takes_its_workspace_from_where_ren_made_it() {
+    fn a_preview_takes_its_worktree_from_where_ren_made_it() {
         // The data and ports variables are not read: the slot gives them.
         let env = HostEnv::from_pairs([
-            ("REN_WORKSPACE", "/data/worktrees/ren-3"),
-            ("REN_WORKSPACE_PORTS", "1-2"),
-            ("REN_WORKSPACE_DATA", "/home/op"),
+            ("REN_WORKTREE", "/data/worktrees/ren-3"),
+            ("REN_WORKTREE_PORTS", "1-2"),
+            ("REN_WORKTREE_DATA", "/home/op"),
         ]);
         let place = PreviewPlace::read(&env).unwrap();
         assert_eq!(place.name(), "ren-3");
@@ -354,13 +354,13 @@ mod tests {
         );
         for folder in ["/data/worktrees/notes", "/home/op"] {
             assert!(matches!(
-                PreviewPlace::read(&HostEnv::from_pairs([("REN_WORKSPACE", folder)])),
+                PreviewPlace::read(&HostEnv::from_pairs([("REN_WORKTREE", folder)])),
                 Err(PreviewError::NotRens(_))
             ));
         }
         assert!(matches!(
             PreviewPlace::read(&HostEnv::from_pairs([])),
-            Err(PreviewError::NotAWorkspace("REN_WORKSPACE"))
+            Err(PreviewError::NotAWorktree("REN_WORKTREE"))
         ));
     }
 }

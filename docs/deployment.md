@@ -423,10 +423,10 @@ history, its `release.json`, and never a promotion.
 
 ### Previews
 
-`cargo xtask preview` runs one workspace's branch on a copy of production's
+`cargo xtask preview` runs one worktree's branch on a copy of production's
 history, so its change is judged on the page it was marked on, beside
-production's. It runs in a workspace Ren made: it reads `REN_WORKSPACE`,
-which the workspace's runs are told, refuses a folder that is not one of
+production's. It runs in a worktree Ren made: it reads `REN_WORKTREE`,
+which the worktree's runs are told, refuses a folder that is not one of
 Ren's worktrees named `<repo>-<slot>`, and takes the data folder and ports
 Ren gives that slot. A brief asks the agent to start one once its change is
 ready:
@@ -438,20 +438,20 @@ cargo xtask preview down --publish # stop, unpublish, take it off the work items
 
 `up` builds the branch (debug) into `<data>/preview`, backs up production's
 history with production's own `ren`, and starts the build as a replica, as
-the canary is: `ren-preview-<workspace>-daemon` on the slot's first port and
-`ren-preview-<workspace>-ui` on the next, with production's configuration but
+the canary is: `ren-preview-<worktree>-daemon` on the slot's first port and
+`ren-preview-<worktree>-ui` on the next, with production's configuration but
 `environment = "preview"`, no runs, no operator key, and a UI that only reads.
 `--publish` publishes both on the tailnet on the same port numbers, with the
 install's saved Tailscale choice. It then records the preview on every sent
 work item the branch's recent commits name (`Work-Item: <id>`), and on each
 `--work <id>`: the Work view opens the marked page on it beside production's.
-`--of dev` copies the dev slot instead. Deleting the workspace's session
+`--of dev` copies the dev slot instead. Deleting the worktree's session
 stops its preview with it, and takes it off the session's work items.
 
 ### Projects
 
 A repository declares how Ren builds, serves, checks, and quiesces it in
-`.ren/project.toml` at its root, and a workspace of it then gets checks and
+`.ren/project.toml` at its root, and a worktree of it then gets checks and
 a preview as Ren's own do:
 
 ```toml
@@ -478,8 +478,9 @@ run = ["./deploy.sh", "production"]
 ```
 
 Every command is an argv, never a shell line. Arguments and values may
-name the workspace's first port `{port}`, another `{port+N}` (within its
-100), its data folder `{data}`, and its folder `{workspace}`.
+name the worktree's first port `{port}`, another `{port+N}` (within its
+100), its data folder `{data}`, and its folder `{worktree}` (`{workspace}`,
+its name before the rename, still reads the same).
 
 Every step, the serve unit's included, runs with Ren's toolset (`ren
 tools`, see [clients.md](clients.md#tools-for-agents)) first on its `PATH`,
@@ -516,13 +517,13 @@ before collecting.
 
 ```sh
 ren project check                  # run the declared checks; fails when one does
-ren project preview up --publish   # build, serve on the workspace's ports, record
+ren project preview up --publish   # build, serve on the worktree's ports, record
 ren project preview down --publish # quiesce, stop, take it off the work items
 ```
 
-`check` runs in the workspace it is started in (or `--dir`; outside a
-workspace a step that names a port does not run). `preview up` runs the
-build steps, starts the serve step as `ren-preview-<workspace>-serve` (with
+`check` runs in the worktree it is started in (or `--dir`; outside a
+worktree a step that names a port does not run). `preview up` runs the
+build steps, starts the serve step as `ren-preview-<worktree>-serve` (with
 the caller's `PATH`, so programs installed in your home are found), waits
 for its health path, and records the preview on the sent work items the
 branch's commits name (`Work-Item: <id>`) or `--work` gives, through this
@@ -530,7 +531,7 @@ host's daemon. With `--publish` it publishes the port its page opens on, as
 `install-vps` does: a free port is published, and one Serve already uses
 for anything else, or exposes through Funnel, is refused; `down` removes
 the route only while it still points at the preview. Like Ren's, it works
-in a workspace read from `REN_WORKSPACE` alone. Deleting the workspace's
+in a worktree read from `REN_WORKTREE` alone. Deleting the worktree's
 session stops it and takes it off its work items. The dev slot's fake
 projects declare one: a static page served by Python, deployed by copying
 it into a folder under the canary's data.
@@ -563,7 +564,7 @@ canary`. Each pass and each promotion also closes the project's work items
 as Ren's canary does: a sent item lands when a commit on `main` names it
 (`Work-Item: <id>`), and a landed item ships once production runs a build
 that holds it (in the next pass after it lands). A pass fetches the project's `main` (`--remote`, `--branch`) and checks its
-tip out, detached, in a workspace the factory keeps for the project, in
+tip out, detached, in a worktree the factory keeps for the project, in
 Ren's worktrees folder, so its slot's ports are its own. It runs the build
 steps, starts the serve step there and waits for its health path, then
 runs each declared check against it; a check that cannot run fails. The
@@ -581,7 +582,7 @@ When it promotes (a passed build that follows the one deployed), the
 contract's `[deploy]` step runs in the checked build, and production is then
 that commit; a deploy that fails is marked and not tried again unless you
 promote it. A project that declares no deploy step is never promoted. The
-canary stays served on its workspace's port until the next pass.
+canary stays served on its worktree's port until the next pass.
 
 ### Manual steps
 

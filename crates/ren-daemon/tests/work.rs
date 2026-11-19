@@ -186,7 +186,7 @@ async fn a_work_item_goes_from_queued_to_shipped_through_the_api() {
     let not_a_url = json!({ "preview": { "ui": "javascript:alert(1)", "revision": COMMIT } });
     let (status, _) = send(&gateway, &format!("/work/{item}/preview"), Some(not_a_url)).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
-    // Deleting the session removes its workspace, and so its preview: the
+    // Deleting the session removes its worktree, and so its preview: the
     // item no longer links to it.
     let (status, body) = send(
         &gateway,

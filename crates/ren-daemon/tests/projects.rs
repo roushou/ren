@@ -197,7 +197,7 @@ async fn sessions_and_work_items_belong_to_the_project_they_are_for() {
     let (_, body) = create(json!({ "harness": "codex", "dir": "/work/acme" })).await;
     let in_repository = body["session"].as_str().unwrap().to_owned();
     let (status, body) =
-        create(json!({ "harness": "codex", "project": "acme", "workspace": "folder" })).await;
+        create(json!({ "harness": "codex", "project": "acme", "checkout": "folder" })).await;
     assert_eq!(status, StatusCode::CREATED, "{body}");
     let by_name = body["session"].as_str().unwrap().to_owned();
     let (_, body) = create(json!({ "harness": "codex" })).await;
@@ -290,7 +290,7 @@ async fn a_session_in_a_worktree_is_listed_with_it() {
     let (status, body) = send(
         &gateway,
         "/sessions",
-        Some(json!({ "harness": "codex", "project": "acme", "workspace": "folder" })),
+        Some(json!({ "harness": "codex", "project": "acme", "checkout": "folder" })),
     )
     .await;
     assert_eq!(status, StatusCode::CREATED, "{body}");

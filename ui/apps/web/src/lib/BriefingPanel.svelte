@@ -284,7 +284,7 @@
 
   /** A new session in `checkout`, with `text` as its first prompt. */
   async function start(checkout: string, text: string): Promise<SessionId> {
-    // A workspace of its own: a worktree of the checkout, its own branch,
+    // A worktree of the checkout of its own: its own branch,
     // ports, and data folder.
     const made = await client.createSession(harness, checkout, { approvals }, 'worktree');
     await client.toSession(made, { kind: 'prompt', text, delivery: 'start' });

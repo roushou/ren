@@ -1,5 +1,5 @@
 //! Text that names the place a step runs for: `{port}`, `{port+N}`,
-//! `{data}`, and `{workspace}`, parsed once into literal pieces and
+//! `{data}`, and `{worktree}`, parsed once into literal pieces and
 //! placeholders. `{{` and `}}` are a literal brace.
 
 use crate::Place;
@@ -22,20 +22,20 @@ enum Placeholder {
     /// The place's first port, plus this many.
     Port(u16),
     Data,
-    Workspace,
+    Worktree,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum TemplateError {
     #[error(
-        "{0:?} names no placeholder Ren knows (`{{port}}`, `{{port+N}}`, `{{data}}`, `{{workspace}}`)"
+        "{0:?} names no placeholder Ren knows (`{{port}}`, `{{port+N}}`, `{{data}}`, `{{worktree}}`)"
     )]
     Placeholder(String),
     #[error("an unclosed or stray brace in {0:?}; write `{{{{` or `}}}}` for a brace")]
     Brace(String),
     #[error("port +{0} is past the place's ports")]
     PortRange(u16),
-    #[error("a port is named outside a workspace, which has none")]
+    #[error("a port is named outside a worktree, which has none")]
     NoPorts,
     #[error("the place's folder is not text: {0}")]
     Path(String),
@@ -90,7 +90,9 @@ impl Placeholder {
         match name {
             "port" => Ok(Self::Port(0)),
             "data" => Ok(Self::Data),
-            "workspace" => Ok(Self::Workspace),
+            // `{workspace}`, its name before the rename, is read the same
+            // for contracts written before it.
+            "worktree" | "workspace" => Ok(Self::Worktree),
             other => other
                 .strip_prefix("port+")
                 .and_then(|offset| offset.parse().ok())
@@ -121,7 +123,7 @@ impl Template {
                     text.push_str(&port.to_string());
                 }
                 Piece::Place(Placeholder::Data) => text.push_str(&path(&place.data)?),
-                Piece::Place(Placeholder::Workspace) => text.push_str(&path(&place.workspace)?),
+                Piece::Place(Placeholder::Worktree) => text.push_str(&path(&place.worktree)?),
             }
         }
         Ok(text)
@@ -137,7 +139,7 @@ mod tests {
     #[test]
     fn placeholders_expand_and_braces_escape() {
         let place = Place {
-            workspace: PathBuf::from("/w/acme-1"),
+            worktree: PathBuf::from("/w/acme-1"),
             data: PathBuf::from("/w/.data/acme-1"),
             ports: Some((20_000, 20_099)),
         };
@@ -145,9 +147,10 @@ mod tests {
         assert_eq!(expand("plain"), "plain");
         assert_eq!(expand("{port}:{port+2}"), "20000:20002");
         assert_eq!(
-            expand("{workspace}/x and {data}"),
+            expand("{worktree}/x and {data}"),
             "/w/acme-1/x and /w/.data/acme-1"
         );
+        assert_eq!(expand("{workspace}/x"), expand("{worktree}/x"));
         assert_eq!(expand("{{\"a\": 1}}"), "{\"a\": 1}");
         for text in ["{home}", "{port+}", "{port-1}", "{port", "a}b"] {
             assert!(text.parse::<Template>().is_err(), "{text}");

@@ -4,7 +4,7 @@
 //! production's: its own loopback ports and data folder, its own
 //! `[instance] environment`, no runs, and a placeholder for each operator
 //! key, so it forwards no operator-keyed call. Its UI only reads. The
-//! canary is one (`cargo xtask canary`); each workspace's preview is
+//! canary is one (`cargo xtask canary`); each worktree's preview is
 //! another (`cargo xtask preview`).
 
 use crate::{
@@ -373,7 +373,7 @@ impl Replica {
         })
     }
 
-    /// The preview of the workspace `name`: its daemon on the workspace's
+    /// The preview of the worktree `name`: its daemon on the worktree's
     /// first port and its UI on the next, in `<data>/preview`.
     pub fn preview(name: &str, first_port: u16, data: &Path) -> Self {
         let root = data.join("preview");
@@ -652,15 +652,15 @@ operator_key_env = "ACME_ANTHROPIC_KEY"
     }
 
     #[test]
-    fn a_preview_runs_as_the_units_its_workspace_stops() {
-        let workspace = ren_supervisor::Workspace::of(
+    fn a_preview_runs_as_the_units_its_worktree_stops() {
+        let worktree = ren_supervisor::Worktree::of(
             Path::new("/data/worktrees"),
             Path::new("/data/worktrees/ren-3"),
         )
         .unwrap();
-        let preview = Replica::preview("ren-3", 20_200, &workspace.data());
+        let preview = Replica::preview("ren-3", 20_200, &worktree.data());
         let names = preview.units().map(|unit| unit.name);
-        assert_eq!(names, workspace.preview_units()[..2]);
+        assert_eq!(names, worktree.preview_units()[..2]);
     }
 
     #[test]

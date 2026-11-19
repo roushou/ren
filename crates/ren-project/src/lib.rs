@@ -1,6 +1,6 @@
 //! A project's contract with Ren (docs/plans/self-build.md, phase 6), pure:
 //! how a repository is built, served, checked, and quiesced, declared in
-//! [`ProjectContract::FILE`] (`.ren/project.toml`), so a workspace of it gets checks
+//! [`ProjectContract::FILE`] (`.ren/project.toml`), so a worktree of it gets checks
 //! and a preview as Ren's own do.
 //!
 //! ```toml
@@ -38,7 +38,8 @@
 //! Every command is an argv, never a shell line. Arguments and values may
 //! name the place a step runs for ([`Place`]): `{port}` (its first port),
 //! `{port+N}` (another of its ports), `{data}` (its data folder), and
-//! `{workspace}` (its folder). The contract is parsed once
+//! `{worktree}` (its folder; `{workspace}`, its old name, is read the
+//! same). The contract is parsed once
 //! ([`ProjectContract::read`]); an unknown placeholder is refused there, and
 //! a port past the place's range when a step is expanded.
 
@@ -87,12 +88,12 @@ pub struct NamedCheck {
     step: Step,
 }
 
-/// Where a step runs: a workspace's folder, data folder, and ports.
+/// Where a step runs: a worktree's folder, data folder, and ports.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Place {
-    pub workspace: PathBuf,
+    pub worktree: PathBuf,
     pub data: PathBuf,
-    /// Its ports, first and last; none outside a workspace, where a step
+    /// Its ports, first and last; none outside a worktree, where a step
     /// that names a port does not expand.
     pub ports: Option<(u16, u16)>,
 }
@@ -361,12 +362,12 @@ run = ["npm", "test"]
 run = ["curl", "-fsS", "-X", "POST", "http://127.0.0.1:{port}/drain"]
 
 [deploy]
-run = ["./deploy.sh", "{workspace}"]
+run = ["./deploy.sh", "{worktree}"]
 "#;
 
     fn place() -> Place {
         Place {
-            workspace: PathBuf::from("/data/worktrees/acme-web-2"),
+            worktree: PathBuf::from("/data/worktrees/acme-web-2"),
             data: PathBuf::from("/data/worktrees/.data/acme-web-2"),
             ports: Some((20_100, 20_199)),
         }

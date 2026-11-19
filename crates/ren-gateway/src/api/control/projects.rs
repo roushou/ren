@@ -9,7 +9,7 @@
 //! - `POST /control/v1/projects/{name}/archive` and `/unarchive`: `202`.
 //! - `POST /control/v1/projects/{name}/adopt`: assign it the sessions no
 //!   project owns whose folder is in its repository, or is one of its
-//!   workspaces; `202` with the sessions it took.
+//!   worktrees; `202` with the sessions it took.
 //!
 //! Each is recorded with the recorder, after everything queued before it.
 //! The store keeps the first project to take a name or a repository, so two
@@ -30,7 +30,7 @@ use ren_recorder::{
     project::{Factory, ProjectName, ProjectRegistration, RepositoryPath},
 };
 use ren_store::{Reader, view::ProjectView};
-use ren_supervisor::{Supervisor, Workspace};
+use ren_supervisor::{Supervisor, Worktree};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use ts_rs::TS;
@@ -38,7 +38,7 @@ use ts_rs::TS;
 pub(super) struct ProjectsApi {
     pub control: Arc<ControlApi>,
     pub reader: Reader,
-    /// Where workspaces are, to tell a project's workspaces apart.
+    /// Where worktrees are, to tell a project's worktrees apart.
     pub supervisor: Option<Supervisor>,
 }
 
@@ -113,19 +113,19 @@ impl ProjectRoster {
         }
     }
 
-    /// Whether `workdir` is a workspace of `project`'s repository, in the
-    /// worktrees folder `root`. Workspaces are named for their repository's
+    /// Whether `workdir` is a worktree of `project`'s repository, in the
+    /// worktrees folder `root`. Worktrees are named for their repository's
     /// folder, so one shared with another project's repository says
     /// nothing.
-    fn workspace_of(&self, project: &ProjectView, root: &std::path::Path, workdir: &str) -> bool {
+    fn worktree_of(&self, project: &ProjectView, root: &std::path::Path, workdir: &str) -> bool {
         let repository = project.repository.as_path();
         let shared = self.0.iter().any(|other| {
             other.id != project.id
                 && other.repository.as_path().file_name() == repository.file_name()
         });
         !shared
-            && Workspace::of(root, std::path::Path::new(workdir))
-                .is_some_and(|workspace| workspace.is_of(repository))
+            && Worktree::of(root, std::path::Path::new(workdir))
+                .is_some_and(|worktree| worktree.is_of(repository))
     }
 }
 
@@ -279,7 +279,7 @@ impl ProjectsApi {
         let mut sessions = Vec::new();
         for (session, workdir) in unassigned {
             let ours = project.repository.holds(&workdir)
-                || root.is_some_and(|root| roster.workspace_of(project, root, &workdir));
+                || root.is_some_and(|root| roster.worktree_of(project, root, &workdir));
             if !ours {
                 continue;
             }

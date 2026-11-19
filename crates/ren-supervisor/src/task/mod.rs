@@ -34,7 +34,7 @@ use crate::{
     run::{ProcessExit, RunCommand, RunState},
     session::{Launch, Room, Session, TurnsEnded},
     workdir::{Bounds, RequestedDir, Workdir},
-    workspace::Workspace,
+    worktree::Worktree,
 };
 use futures_util::{
     FutureExt, StreamExt,
@@ -87,7 +87,7 @@ pub struct SupervisorTask<H> {
     /// Where sessions' attachments are kept; `None`: they take none.
     pub(crate) attachments: Option<AttachmentFolders>,
     pub(crate) attachment_limits: Limits,
-    pub(crate) workspace_env: Vec<(String, String)>,
+    pub(crate) worktree_env: Vec<(String, String)>,
 }
 
 /// One process the task drives: its pure lifecycle, and the handles that
@@ -458,16 +458,16 @@ impl<H: AgentHost> SupervisorTask<H> {
             },
         };
         let mut plan = harness.drive(&self.gateway, &opening);
-        // A workspace's runs are told its folder, ports, and data folder.
-        if let Some(workspace) = self
+        // A worktree's runs are told its folder, ports, and data folder.
+        if let Some(worktree) = self
             .bounds
             .worktrees()
-            .and_then(|root| Workspace::of(root, workdir.as_path()))
+            .and_then(|root| Worktree::of(root, workdir.as_path()))
         {
-            for (name, value) in &self.workspace_env {
+            for (name, value) in &self.worktree_env {
                 plan.environment.insert(name.clone(), value.clone().into());
             }
-            for (name, value) in workspace.env() {
+            for (name, value) in worktree.env() {
                 plan.environment.insert(name.to_owned(), value.into());
             }
         }

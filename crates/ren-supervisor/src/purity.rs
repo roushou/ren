@@ -10,7 +10,7 @@ fn pure_modules_stay_free_of_runtime_and_io_dependencies() {
         ("journal/mod.rs", include_str!("journal/mod.rs")),
         ("attachments.rs", include_str!("attachments.rs")),
         ("workdir.rs", include_str!("workdir.rs")),
-        ("workspace.rs", include_str!("workspace.rs")),
+        ("worktree.rs", include_str!("worktree.rs")),
         ("place.rs", include_str!("place.rs")),
         ("entries.rs", include_str!("entries.rs")),
         ("files.rs", include_str!("files.rs")),

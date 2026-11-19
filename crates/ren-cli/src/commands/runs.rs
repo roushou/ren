@@ -11,7 +11,7 @@ use crate::style::Tone;
 use anyhow::{Result, bail};
 use clap::{Args, Subcommand, ValueEnum};
 use ren_gateway::api::control::request::{
-    AnswerRequest, ControlFeed, ControlRequest, CreateRequest, PromptRequest, WorkspaceKind,
+    AnswerRequest, Checkout, ControlFeed, ControlRequest, CreateRequest, PromptRequest,
 };
 use ren_harness::Harness;
 use ren_harness::drive::Decision;
@@ -76,10 +76,10 @@ struct StartArgs {
     #[arg(long)]
     prompt: Option<String>,
     /// Where in the folder it works: `folder`, the folder itself (the
-    /// default), or `worktree`, a workspace of its own: a new worktree of the
-    /// repository in the folder, on a branch of its own.
+    /// default), or `worktree`, a new worktree of its own of the repository
+    /// in the folder, on a branch of its own.
     #[arg(long, value_name = "WHERE")]
-    workspace: Option<WorkspaceKind>,
+    checkout: Option<Checkout>,
 }
 
 #[derive(Args)]
@@ -197,7 +197,7 @@ impl RunsCmd {
     async fn start(control: &ControlTarget, args: StartArgs, dir: String) -> Result<ExitCode> {
         let mut create = CreateRequest::new(Harness::from(args.client), Some(dir));
         create.resume = args.resume;
-        create.workspace = args.workspace;
+        create.checkout = args.checkout;
         let made = control.send(&ControlRequest::Create(create)).await?;
         if !made.status.is_success() {
             return Ok(made.report()?);

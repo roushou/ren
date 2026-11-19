@@ -65,17 +65,17 @@ test('the brief lists each noted mark with what it points at', () => {
   assert.equal(Briefing.routeFile('/'), 'ui/apps/web/src/routes/+page.svelte');
 });
 
-test('a new session works on its brief in the workspace Ren made for it', () => {
-  const brief = Briefing.brief(page, ren, [mark(1, 'Move it to the end.')], 'workspace');
+test('a new session works on its brief in the worktree Ren made for it', () => {
+  const brief = Briefing.brief(page, ren, [mark(1, 'Move it to the end.')], 'worktree');
   assert.equal(
     brief.split('\n').at(-1),
-    "Answer what the notes ask without changing anything. If a note asks for a change, make it here: this session works in a workspace of its own, a worktree of the repository on a branch of its own. Run the project's checks and commit on that branch. Don't install or restart anything: I'll review the branch.",
+    "Answer what the notes ask without changing anything. If a note asks for a change, make it here: this session works in a worktree of its own, made from the repository on a branch of its own. Run the project's checks and commit on that branch. Don't install or restart anything: I'll review the branch.",
   );
 });
 
-test('a new session gets a workspace, and an open one works where it is', () => {
+test('a new session gets a worktree, and an open one works where it is', () => {
   const session = { session: 'a' as SessionId } as DeskSession;
-  assert.equal(Briefing.place({ kind: 'new' }), 'workspace');
+  assert.equal(Briefing.place({ kind: 'new' }), 'worktree');
   assert.equal(Briefing.place({ kind: 'session', session }), 'session');
 });
 
@@ -194,7 +194,7 @@ test('without a route or a build, the brief says nothing of either', () => {
     page,
     { route: null, revision: null },
     [mark(1, 'Move it.')],
-    'workspace',
+    'worktree',
   );
   assert.ok(brief.includes('dark theme.\n\n1. Move it.'));
 });

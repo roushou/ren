@@ -67,7 +67,7 @@ fn every_label_is_pinned() {
         api::HealthStatus,
         api::ErrorCode,
         api::ControlRefusal,
-        api::control::request::WorkspaceKind,
+        api::control::request::Checkout,
         api::preview::RawFormat,
         api::preview::PreviewDecoding,
         api::preview::PreviewExtent,

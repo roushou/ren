@@ -1,7 +1,7 @@
 <!--
   A project's work: what was marked to be done on its pages, from queued
   to shipped. Queued items can be picked and sent together, as one brief,
-  to a new session in a workspace of its own in the project's repository
+  to a new session in a worktree of its own in the project's repository
   (Ren's source checkout for Ren's); each row says where its item stands,
   and the one picked shows its marks, what else was on screen, and the
   brief it makes.
@@ -81,7 +81,7 @@
         : null,
   );
 
-  /** The picked items, as one brief, to a new session in a workspace of
+  /** The picked items, as one brief, to a new session in a worktree of
    * its own in their project's repository (Ren's own checkout for Ren's);
    * each item is sent to it. */
   async function send() {
@@ -97,7 +97,7 @@
           : await runs.createProjectSession(harness, batchProject.name);
       await runs.toSession(session, {
         kind: 'prompt',
-        text: Work.batch(batch, 'workspace', batchProject),
+        text: Work.batch(batch, 'worktree', batchProject),
         delivery: 'start',
       });
       for (const item of batch) await work.move(item.id, { kind: 'send', session });
