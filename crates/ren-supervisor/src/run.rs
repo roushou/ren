@@ -132,6 +132,26 @@ pub enum RunCommand {
     Stop,
 }
 
+/// Whether a run's process outlives the daemon: `held` by a run host, so a
+/// restart leaves it going and the next daemon takes it up, or `bound` to
+/// the daemon, which ends it as it stops.
+#[derive(strum::Display, strum::EnumString, strum::IntoStaticStr, strum::VariantArray)]
+#[strum(serialize_all = "snake_case")]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    serde_with::SerializeDisplay,
+    serde_with::DeserializeFromStr,
+)]
+pub enum RunTenure {
+    Bound,
+    Held,
+}
+
 /// Where a run is, without what each state carries: `RunState`'s `phase`
 /// as it is written, which other tools read (`cargo xtask install-vps`
 /// waits on it).

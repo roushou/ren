@@ -13,6 +13,7 @@ import {
   type Shelf,
   type RecordingReport,
   type RecordingView,
+  type ReleaseView,
   type Storage,
   type TurnActivity,
   type TurnId,
@@ -31,6 +32,8 @@ import type { RawCallQuery, RawSearchQuery } from './api.ts';
 export interface GatewayData {
   health: Health;
   storage: Storage;
+  /** Null until the factory has run, and from a gateway that predates `/api/release`. */
+  release: ReleaseView | null;
 }
 /** A `?call=` deep link to a call that is not on the current page. */
 export type OffPageSelection =
@@ -67,8 +70,12 @@ export function gatewaySnapshot(fetcher: typeof fetch) {
   const api = new ManagementApi(fetcher);
   return readSnapshot('gateway', async (): Promise<GatewayData> => {
     // Health reads recorder counters, not storage, so the two run together.
-    const [health, storage] = await Promise.all([api.health(), api.storage()]);
-    return { health, storage };
+    const [health, storage, release] = await Promise.all([
+      api.health(),
+      api.storage(),
+      api.release().catch(() => null),
+    ]);
+    return { health, storage, release };
   });
 }
 export interface RecorderData {

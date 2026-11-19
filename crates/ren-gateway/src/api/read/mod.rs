@@ -1,5 +1,6 @@
 //! The read API's bodies: what `/api/calls`, `/api/recordings`, `/api/turns`,
-//! `/api/usage`, `/api/search`, `/api/exposures`, and `/api/runs` send.
+//! `/api/usage`, `/api/search`, `/api/exposures`, `/api/runs`, and
+//! `/api/work` send.
 //!
 //! These types are the API's contract. Each is converted once from the store
 //! or harness type it reports, with every field named, so a change there does
@@ -18,6 +19,7 @@ pub mod search;
 #[cfg(test)]
 mod tests;
 pub mod usage;
+pub mod work;
 
 use activity::{CallActivity, TurnActivity, TurnSummary};
 use calls::{CallDetail, CallPage};
@@ -29,11 +31,13 @@ use search::{ExposureView, SearchPage};
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 use usage::UsageView;
+use work::{WorkItemView, WorkItems};
 
-/// What a read answers, before the API adds its version.
-#[derive(Debug, Clone, PartialEq, Serialize, TS)]
+/// What a read answers, before the API adds its version. Never decoded as
+/// a whole: a client knows the read it asked for, and decodes that read's
+/// member ([`ReadBody::decode`]), so it is not a wire type of its own.
+#[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(untagged)]
-#[ts(export)]
 pub enum ReadBody {
     Calls(CallPage),
     Call(Box<CallDetail>),
@@ -48,6 +52,8 @@ pub enum ReadBody {
     Runs(Runs),
     Run(Box<RunView>),
     Conversation(ConversationView),
+    WorkItems(WorkItems),
+    WorkItem(Box<WorkItemView>),
 }
 
 /// A recording listing.
@@ -104,6 +110,10 @@ impl From<ReadResponse> for ReadBody {
             }),
             ReadResponse::Run(run) => Self::Run(Box::new((*run).into())),
             ReadResponse::Conversation(conversation) => Self::Conversation(conversation.into()),
+            ReadResponse::WorkItems { work } => Self::WorkItems(WorkItems {
+                work: work.into_iter().map(Into::into).collect(),
+            }),
+            ReadResponse::WorkItem(item) => Self::WorkItem(Box::new((*item).into())),
         }
     }
 }
@@ -131,6 +141,8 @@ impl ReadBody {
             ReadRequest::Runs { .. } => Self::Runs(serde_json::from_value(body)?),
             ReadRequest::Run(_) => Self::Run(serde_json::from_value(body)?),
             ReadRequest::Conversation(_) => Self::Conversation(serde_json::from_value(body)?),
+            ReadRequest::WorkItems { .. } => Self::WorkItems(serde_json::from_value(body)?),
+            ReadRequest::WorkItem(_) => Self::WorkItem(serde_json::from_value(body)?),
         })
     }
 }

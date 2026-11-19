@@ -83,6 +83,8 @@ pub enum ConfigError {
         "runs.roots entries must be absolute paths, and runs.places and runs.scratch absolute or under ~/"
     )]
     RunRoot,
+    #[error("[runs] workspace_env names must be non-empty, without `=`, and not REN_WORKSPACE*")]
+    WorkspaceEnv,
 }
 
 /// Where operator keys come from while resolving.
@@ -170,6 +172,58 @@ pub struct RunsOptions {
     /// Where scratch runs each get a new folder. Absolute or `~/…`; by
     /// default `$XDG_DATA_HOME/ren/scratch`, else `~/.local/share/ren/scratch`.
     pub scratch: Option<PathBuf>,
+    /// Whether runs outlive the daemon, held by run hosts.
+    pub hold: RunHold,
+    /// Variables every run in a workspace gets, such as a compiler cache
+    /// (`RUSTC_WRAPPER = "sccache"`). Ren's own `REN_WORKSPACE*` win.
+    pub workspace_env: std::collections::BTreeMap<String, String>,
+}
+
+/// Whether a run's client process outlives the daemon that started it.
+#[derive(strum::Display, strum::EnumString, strum::IntoStaticStr, strum::VariantArray)]
+#[strum(serialize_all = "snake_case")]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Default,
+    PartialEq,
+    Eq,
+    Hash,
+    serde_with::SerializeDisplay,
+    serde_with::DeserializeFromStr,
+)]
+pub enum RunHold {
+    /// Held in systemd user units when the daemon itself runs under
+    /// systemd on Linux and `systemd-run` is on the search path; bound to
+    /// the daemon otherwise.
+    #[default]
+    Auto,
+    /// Always held in systemd user units.
+    Systemd,
+    /// Bound to the daemon: drained as it stops.
+    Off,
+}
+
+impl RunHold {
+    /// How run hosts are started on a host whose environment is `env`, or
+    /// `None` when runs are bound to the daemon.
+    pub fn launcher(self, env: &HostEnv) -> Option<crate::host::Launcher> {
+        match self {
+            Self::Off => None,
+            Self::Systemd => Some(crate::host::Launcher::Systemd),
+            Self::Auto => {
+                let systemd = cfg!(target_os = "linux")
+                    // Set by systemd for the services it runs.
+                    && env.get("INVOCATION_ID").is_some()
+                    && env
+                        .search_path()
+                        .iter()
+                        .any(|dir| dir.join("systemd-run").is_file());
+                systemd.then_some(crate::host::Launcher::Systemd)
+            }
+        }
+    }
 }
 
 /// The `[runs]` paths with the home resolved, as the supervisor takes them.
@@ -183,6 +237,12 @@ pub struct RunPlaces {
 impl RunsOptions {
     pub fn validate(&self) -> Result<(), ConfigError> {
         let anchored = |path: &PathBuf| path.is_absolute() || path.starts_with("~");
+        let names = self.workspace_env.keys().all(|name| {
+            !name.is_empty() && !name.contains(['=', '\0']) && !name.starts_with("REN_WORKSPACE")
+        });
+        if !names {
+            return Err(ConfigError::WorkspaceEnv);
+        }
         if self.roots.iter().all(|root| root.is_absolute())
             && self.places.iter().chain(&self.scratch).all(anchored)
         {
@@ -405,6 +465,10 @@ impl Config {
                 Keys::Env(env) => env.search_path(),
                 Keys::Unchecked => Vec::new(),
             },
+            run_hold: match keys {
+                Keys::Env(env) => self.runs.hold.launcher(env),
+                Keys::Unchecked => None,
+            },
             depot,
             revision: self.revision()?,
         })
@@ -499,6 +563,8 @@ pub struct RuntimeConfig {
     pi_cache: Option<PiCache>,
     /// The host's search path, which a run's toolset folder is put before.
     agent_path: Vec<PathBuf>,
+    /// How run hosts are started; `None` binds runs to the daemon.
+    run_hold: Option<crate::host::Launcher>,
     /// The packages Ren knows: the built-in catalog with `[tools]`.
     depot: Depot,
     revision: String,
@@ -530,6 +596,10 @@ impl RuntimeConfig {
     }
     pub fn agent_path(&self) -> &[PathBuf] {
         &self.agent_path
+    }
+    /// How run hosts are started; `None` binds runs to the daemon.
+    pub fn run_hold(&self) -> Option<crate::host::Launcher> {
+        self.run_hold
     }
     pub fn depot(&self) -> &Depot {
         &self.depot
@@ -637,6 +707,29 @@ mod tests {
             Err(ConfigError::Tools(ren_depot::CatalogError::Client(_)))
         ));
         assert!(toml::from_str::<Config>(&entry.replace("https://", "http://")).is_err());
+    }
+
+    #[test]
+    fn workspace_variables_may_not_be_rens_own_or_unnameable() {
+        for names in [
+            "REN_WORKSPACE_PORTS = \"1\"",
+            "\"\" = \"x\"",
+            "\"A=B\" = \"x\"",
+        ] {
+            let config: Config = toml::from_str(&format!(
+                "[runs]\nroots = [\"/home/op/dev\"]\nworkspace_env = {{ {names} }}\n"
+            ))
+            .unwrap();
+            assert!(
+                matches!(config.runs.validate(), Err(ConfigError::WorkspaceEnv)),
+                "{names}"
+            );
+        }
+        let config: Config = toml::from_str(
+            "[runs]\nroots = [\"/home/op/dev\"]\nworkspace_env = { RUSTC_WRAPPER = \"sccache\" }\n",
+        )
+        .unwrap();
+        assert!(config.runs.validate().is_ok());
     }
 
     #[test]

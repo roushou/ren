@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { goto, preloadCode, refreshAll } from '$app/navigation';
+  import { beforeNavigate, goto, preloadCode, refreshAll } from '$app/navigation';
   import { page, navigating } from '$app/state';
   import { createSettled, createSnapshot } from '#lib/snapshot.svelte.ts';
   import { Workbench, setWorkbench } from '#lib/workbench.svelte.ts';
@@ -15,6 +15,8 @@
   import { addressView } from '#lib/address.svelte.ts';
   import { GatewayPlace, type Network } from '#lib/place.ts';
   import { RecorderReport } from '#lib/recorder.ts';
+  import { ReleaseLine } from '#lib/release.ts';
+  import { PageEvidence } from '#lib/work.ts';
   import CopyButton from '#lib/CopyButton.svelte';
   import DevToolbar from '#lib/DevToolbar.svelte';
   import RedlineLayer from 'redline/RedlineLayer.svelte';
@@ -35,11 +37,66 @@
   // Hydrated: from here on, pages that can take their data pending render
   // at once on a navigation, with their own outline (`Arrival`).
   onMount(() => Arrival.stream());
+  /** What this page logged and read, carried by a work item marked on it. */
+  const evidence = new PageEvidence();
+  beforeNavigate(({ from, to }) => {
+    if (from?.url.pathname !== to?.url.pathname) evidence.reset();
+  });
+  onMount(() => {
+    const origin = window.location.origin;
+    // The page's reads of the daemon's API, as the browser timed them.
+    const reads = new PerformanceObserver((list) => {
+      for (const entry of list.getEntries()) {
+        const read = PageEvidence.readOf(entry.name, origin);
+        if (read) evidence.read(read);
+      }
+    });
+    reads.observe({ type: 'resource', buffered: true });
+    const failed = (event: ErrorEvent) => evidence.error(event.message);
+    const rejected = (event: PromiseRejectionEvent) => evidence.error(String(event.reason));
+    window.addEventListener('error', failed);
+    window.addEventListener('unhandledrejection', rejected);
+    // What the page itself logs as an error (Svelte's included), kept as text.
+    const log = console.error;
+    console.error = (...args: unknown[]) => {
+      evidence.error(
+        args.map((arg) => (arg instanceof Error ? arg.message : String(arg))).join(' '),
+      );
+      log(...args);
+    };
+    return () => {
+      reads.disconnect();
+      window.removeEventListener('error', failed);
+      window.removeEventListener('unhandledrejection', rejected);
+      console.error = log;
+    };
+  });
   const gateway = createSnapshot(() => data.gateway);
   const health = $derived(gateway.current.value?.health);
-  // The gateway says whether it is a development instance; the UI only shows it.
+  // The gateway says what kind of instance it is; the UI only shows it.
   const development = $derived(health?.instance.environment === 'development');
+  /** The tag on the wordmark of an instance that is not production. */
+  const marked = $derived.by(() => {
+    switch (health?.instance.environment) {
+      case 'development':
+        return { tag: 'dev', what: 'A development gateway, not the installed service' };
+      case 'canary':
+        return { tag: 'canary', what: "The canary: main's tip on a copy of production's history" };
+      case 'preview':
+        return {
+          tag: 'preview',
+          what: "A preview: one workspace's branch on a copy of production's history",
+        };
+      default:
+        return null;
+    }
+  });
   const storage = $derived(gateway.current.value?.storage);
+  /** Where the release stands, once the factory has run against this gateway. */
+  const release = $derived.by(() => {
+    const view = gateway.current.value?.release;
+    return view ? ReleaseLine.of(view) : null;
+  });
   /** The tab row, which scrolls sideways on a phone. */
   let tabs = $state<HTMLElement>();
   // Keep the current view's tab in sight when the row is narrower than its tabs.
@@ -174,13 +231,13 @@
   <header class="workbench-header">
     <a
       class="brand"
-      class:development
+      class:marked
       href="/"
-      aria-label={development ? 'Ren overview, development gateway' : 'Ren overview'}
-      title={development ? 'A development gateway, not the installed service' : undefined}
+      aria-label={marked ? `Ren overview, ${marked.tag} gateway` : 'Ren overview'}
+      title={marked?.what}
       ><span class="flaps" aria-hidden="true"
         ><span class="flap">R</span><span class="flap">E</span><span class="flap">N</span
-        >{#if development}<span class="dev-badge">dev</span>{/if}</span
+        >{#if marked}<span class="instance-badge">{marked.tag}</span>{/if}</span
       ></a
     >
     <nav class="workbench-tabs" aria-label="Workbench views" bind:this={tabs}>
@@ -234,6 +291,17 @@
         href="/tools"
         class:active={tab === 'tools'}
         aria-current={tab === 'tools' ? 'page' : undefined}><Icon name="tool" size={14} />Tools</a
+      >
+      <a
+        href="/work"
+        class:active={tab === 'work'}
+        aria-current={tab === 'work' ? 'page' : undefined}><Icon name="pencil" size={14} />Work</a
+      >
+      <a
+        href="/release"
+        class:active={tab === 'release'}
+        aria-current={tab === 'release' ? 'page' : undefined}
+        ><Icon name="branch" size={14} />Release</a
       >
       <a
         href="/recorder"
@@ -317,6 +385,12 @@
             ? RecorderReport.lossText(capture)
             : 'No capture loss recorded'}</button
     >
+    {#if release}<span
+        class="release-status"
+        class:warning={release.tone === 'warning'}
+        class:error={release.tone === 'bad'}
+        title={release.detail}>{release.text}</span
+      >{/if}
     <span class="status-context mono"
       >{selected && (view === 'traffic' || view === 'recording')
         ? `${short(selected.id)} · ${captureState(selected, gateway.current.value?.storage.capture?.body_limit_bytes ?? null).toLowerCase()}`
@@ -353,5 +427,6 @@
         {recipients}
         source={page.data.redlineSource}
         revision={health?.build.revision ?? null}
+        {evidence}
       />{/if}{/if}
 </div>

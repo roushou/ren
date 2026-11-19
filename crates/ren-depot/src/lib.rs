@@ -168,6 +168,7 @@ mod tests {
             PackageId::JQ,
             PackageId::FD,
             PackageId::RIPGREP,
+            PackageId::SCCACHE,
         ] {
             assert!(depot.package(&id).is_some(), "{id}");
         }
@@ -188,7 +189,10 @@ mod tests {
                 }
             })
             .collect();
-        assert_eq!(installable, ["node", "bun", "jq", "fd", "ripgrep"]);
+        assert_eq!(
+            installable,
+            ["node", "bun", "jq", "fd", "ripgrep", "sccache"]
+        );
     }
 
     #[test]

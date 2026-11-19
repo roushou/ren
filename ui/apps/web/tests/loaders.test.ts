@@ -53,19 +53,40 @@ test('background failure retains only the matching snapshot and recovery clears 
   assert.deepEqual(retainSnapshot(previous, recovered).value, ['new']);
 });
 
-test('gateway reads health and storage together and accept degraded recorder health', async () => {
+test('gateway reads health, storage, and the release together and accept degraded recorder health', async () => {
   const calls: string[] = [];
   const result = await gatewaySnapshot(async (input) => {
     calls.push(path(input));
-    return path(input) === '/health'
-      ? versioned(healthBody({ storage_errors: 1 }), { status: 503 })
-      : versioned(storageFixture());
+    switch (path(input)) {
+      case '/health':
+        return versioned(healthBody({ storage_errors: 1 }), { status: 503 });
+      case '/api/release':
+        return versioned({ release: null });
+      default:
+        return versioned(storageFixture());
+    }
   });
-  assert.deepEqual(calls, ['/health', '/api/storage']);
+  assert.deepEqual(calls, ['/health', '/api/storage', '/api/release']);
   assert.ok(result.value);
   assert.equal(result.value.health.status, 'degraded');
   assert.equal(result.value.health.recorder.storage_errors, 1);
   assert.equal(result.value.storage.policy.max_calls, 100);
+  assert.equal(result.value.release, null);
+});
+
+test('a gateway without the release route still gives a snapshot', async () => {
+  const result = await gatewaySnapshot(async (input) => {
+    switch (path(input)) {
+      case '/health':
+        return versioned(healthBody());
+      case '/api/release':
+        return versioned({ error: 'not_found' }, { status: 404 });
+      default:
+        return versioned(storageFixture());
+    }
+  });
+  assert.ok(result.value);
+  assert.equal(result.value.release, null);
 });
 
 test('the gateway names its environment', async () => {

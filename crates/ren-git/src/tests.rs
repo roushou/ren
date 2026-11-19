@@ -1,4 +1,7 @@
-use crate::{CommitId, Exit, Git, GitError, Head, NotACommitId, Published, Repository, Tree};
+use crate::{
+    Branch, BranchRemoval, CommitId, Exit, Git, GitError, Head, NotACommitId, NotARevision,
+    Published, Repository, Revision, Tree,
+};
 use std::path::Path;
 
 /// A repository at `dir` whose `HEAD` holds `head`, written by hand.
@@ -52,6 +55,27 @@ fn a_commit_id_parses_only_whole() {
         &"g".repeat(40),
     ] {
         assert_eq!(text.parse::<CommitId>(), Err(NotACommitId(text.to_owned())));
+    }
+}
+
+#[test]
+fn a_revision_is_never_an_option_or_a_path() {
+    for text in ["origin/main", "HEAD~1", "v0.1.0", "0123456789abcdef"] {
+        assert_eq!(text.parse::<Revision>().unwrap().as_str(), text);
+    }
+    for text in [
+        "",
+        "-n",
+        "--output=x",
+        "main:Cargo.toml",
+        "main branch",
+        "a\nb",
+    ] {
+        assert_eq!(
+            text.parse::<Revision>(),
+            Err(NotARevision(text.to_owned())),
+            "{text:?}"
+        );
     }
 }
 
@@ -198,6 +222,40 @@ esac"
         ]
     );
 
+    let at = Git::find(&[fake(
+        dir.path(),
+        "at",
+        &format!(
+            "case \"$*\" in
+  'rev-parse --verify --quiet origin/main^{{commit}}') echo {full} ;;
+  'ls-tree -r -z --name-only --full-tree {full}') printf 'docs/a b.md\\0Cargo.toml\\0' ;;
+  'cat-file blob {full}:docs/a b.md') printf 'line\\n\\0bytes' ;;
+  *) exit 128 ;;
+esac"
+        ),
+    )])
+    .unwrap();
+    let commit = at
+        .commit_of(dir.path(), &"origin/main".parse().unwrap())
+        .unwrap();
+    assert_eq!(commit, full.parse::<CommitId>().unwrap());
+    assert_eq!(
+        at.files_at(dir.path(), &commit).unwrap(),
+        ["docs/a b.md", "Cargo.toml"]
+    );
+    assert_eq!(
+        at.file_at(dir.path(), &commit, "docs/a b.md").unwrap(),
+        b"line\n\0bytes",
+        "a file's bytes as they are, not trimmed"
+    );
+    assert!(matches!(
+        at.file_at(dir.path(), &commit, "missing"),
+        Err(GitError::Failed {
+            exit: Exit::Code(128),
+            ..
+        })
+    ));
+
     let odd = Git::find(&[fake(dir.path(), "odd", "echo not-a-commit")]).unwrap();
     assert!(matches!(
         odd.head_commit(dir.path()),
@@ -233,4 +291,124 @@ fn the_real_git_answers_on_its_own_repository() {
         Git::repository(dir.path()),
         Repository::At(Head::Branch(_))
     ));
+}
+
+#[test]
+fn a_branch_name_is_one_git_takes() {
+    for name in ["ren/1a2b3c4d", "feat/self-build", "main"] {
+        assert_eq!(name.parse::<Branch>().unwrap().as_str(), name);
+    }
+    for name in [
+        "", "-x", "/x", "x/", "x.", "a..b", "a b", "a:b", "a~1", "x.lock", "a//b", "a@{1}",
+    ] {
+        assert!(name.parse::<Branch>().is_err(), "{name:?}");
+    }
+}
+
+/// `file` written and committed in `dir`, by a fixed author.
+fn commit(dir: &Path, file: &str) {
+    std::fs::write(dir.join(file), file).unwrap();
+    let author = crate::Author {
+        name: "Ren".into(),
+        email: "ren@example.com".into(),
+    };
+    Git::inherited().commit_all(dir, file, &author).unwrap();
+}
+
+/// The real git, making, keeping, and removing worktrees. Skipped where no
+/// git is installed.
+#[test]
+fn worktrees_are_made_on_a_new_branch_and_removed_only_when_clean() {
+    let _turn = turn();
+    let dir = tempfile::tempdir().unwrap();
+    let repo = dir.path().join("repo");
+    std::fs::create_dir(&repo).unwrap();
+    let git = Git::inherited();
+    if git.init(&repo).is_err() {
+        return;
+    }
+    commit(&repo, "README.md");
+    let branch: Branch = "ren/1a2b3c4d".parse().unwrap();
+    let tree = dir.path().join("tree");
+    git.add_worktree(&repo, &tree, &branch).unwrap();
+    assert_eq!(
+        Git::repository(&tree),
+        Repository::At(Head::Branch("ren/1a2b3c4d".into()))
+    );
+    // Changes not committed keep it.
+    std::fs::write(tree.join("notes.txt"), "draft").unwrap();
+    assert!(git.remove_worktree(&tree).is_err());
+    assert!(tree.join("notes.txt").is_file());
+    std::fs::remove_file(tree.join("notes.txt")).unwrap();
+    git.remove_worktree(&tree).unwrap();
+    assert!(!tree.exists());
+    // Nothing on it but what main has: merged, and deleted.
+    assert_eq!(
+        git.delete_merged(&repo, &branch).unwrap(),
+        BranchRemoval::Deleted
+    );
+
+    // A branch with its own commit is kept.
+    let kept: Branch = "ren/5e6f7a8b".parse().unwrap();
+    git.add_worktree(&repo, &tree, &kept).unwrap();
+    commit(&tree, "change.txt");
+    git.remove_worktree(&tree).unwrap();
+    assert_eq!(
+        git.delete_merged(&repo, &kept).unwrap(),
+        BranchRemoval::Unmerged
+    );
+}
+
+/// The real git: what a fetch brings is checked out in a detached worktree
+/// of Ren's own, moved on by the next fetch, and counted behind. Skipped
+/// where no git is installed.
+#[test]
+fn a_fetched_branch_is_checked_out_detached_and_counted() {
+    let _turn = turn();
+    let dir = tempfile::tempdir().unwrap();
+    let (origin, local) = (dir.path().join("origin"), dir.path().join("local"));
+    std::fs::create_dir(&origin).unwrap();
+    std::fs::create_dir(&local).unwrap();
+    let git = Git::inherited();
+    if git.init(&origin).is_err() {
+        return;
+    }
+    git.init(&local).unwrap();
+    commit(&origin, "README.md");
+    let main = git.head_commit(&origin).unwrap();
+    let Repository::At(Head::Branch(name)) = Git::repository(&origin) else {
+        panic!("origin is on a branch");
+    };
+    let branch: Branch = name.parse().unwrap();
+    let remote = origin.to_str().unwrap();
+    assert_eq!(git.fetch(&local, remote, &branch).unwrap(), main);
+
+    let tree = dir.path().join("factory");
+    git.check_out_detached(&local, &tree, &main).unwrap();
+    assert_eq!(git.head_commit(&tree).unwrap(), main);
+    assert_eq!(
+        Git::repository(&tree),
+        Repository::At(Head::Detached(main.clone()))
+    );
+
+    commit(&origin, "CHANGELOG.md");
+    commit(&origin, "LICENSE");
+    let tip = git.fetch(&local, remote, &branch).unwrap();
+    assert_eq!(git.commits_between(&local, &main, &tip).unwrap(), 2);
+    assert_eq!(git.commits_between(&local, &tip, &main).unwrap(), 0);
+    let log = git.log(&local, &tip, 2).unwrap();
+    assert_eq!(log.len(), 2);
+    assert_eq!(log[0].0, tip);
+    assert_eq!(log[0].1.trim(), "LICENSE");
+    assert_eq!(log[1].1.trim(), "CHANGELOG.md");
+    assert!(git.contains(&local, &tip, &main).unwrap());
+    assert!(git.contains(&local, &tip, &tip).unwrap());
+    assert!(!git.contains(&local, &main, &tip).unwrap());
+    let absent: crate::CommitId = "0123456789012345678901234567890123456789".parse().unwrap();
+    assert!(!git.contains(&local, &tip, &absent).unwrap());
+    // What a build left in the worktree does not hold the next checkout.
+    std::fs::write(tree.join("README.md"), "built over").unwrap();
+    git.check_out_detached(&local, &tree, &tip).unwrap();
+    assert_eq!(git.head_commit(&tree).unwrap(), tip);
+    assert!(tree.join("LICENSE").is_file());
 }

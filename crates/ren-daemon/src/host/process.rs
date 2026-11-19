@@ -2,13 +2,15 @@
 //! starts, signs in, and kills client processes, and does the task's
 //! filesystem and git work off its thread.
 
+use super::HeldRuns;
 use crate::tools::ToolStore;
 use ren_depot::toolset::Generation;
 use ren_git::{Git, GitError, Head, Repository};
 use ren_harness::{launch::LaunchPlan, pi::PiCache, sign_in::LocalRedirect};
+use ren_recorder::id::RunId;
 use ren_supervisor::{
-    AgentHost, AgentProcess, ClientStamp, FoundPath, KillSwitch, Look, PathKind, ProcessExit,
-    ProjectGit, RunTools, Scratch, Untracked, WalkLimits, Workdir,
+    AgentHost, AgentProcess, ClientStamp, FoundPath, HeldRun, KillSwitch, Look, PathKind,
+    ProcessExit, ProjectGit, RunTools, Scratch, Tenure, Untracked, WalkLimits, Workdir, Workspace,
 };
 use std::io;
 use std::path::{Path, PathBuf};
@@ -24,6 +26,9 @@ pub struct ProcessHost {
     /// The host's search path, which a toolset's folder goes before.
     search_path: Vec<PathBuf>,
     tools: ToolStore<()>,
+    /// Where runs are held through run hosts; `None` starts every run
+    /// bound to the daemon.
+    held: Option<HeldRuns>,
 }
 
 impl ProcessHost {
@@ -32,7 +37,31 @@ impl ProcessHost {
             pi,
             search_path,
             tools,
+            held: None,
         }
+    }
+
+    /// This host, holding runs through run hosts as `held` says.
+    pub fn holding(mut self, held: HeldRuns) -> Self {
+        self.held = Some(held);
+        self
+    }
+
+    /// `plan`'s command, its search path set when a toolset goes first.
+    fn command(&self, plan: &LaunchPlan, tools: &RunTools) -> io::Result<std::process::Command> {
+        let extension = if plan.loads_pi_extension() {
+            let cache = self.pi.as_ref().ok_or_else(|| {
+                io::Error::other("set XDG_CACHE_HOME or HOME for the Pi extension cache")
+            })?;
+            Some(cache.materialize().map_err(io::Error::other)?)
+        } else {
+            None
+        };
+        let mut command = plan.command(extension.as_deref(), &[]);
+        if let Some(path) = self.search_path_with(tools)? {
+            command.env("PATH", path);
+        }
+        Ok(command)
     }
 
     /// The search path a process with `tools` gets: their folder, then the
@@ -102,6 +131,7 @@ impl ProcessHost {
             stdout,
             exit,
             kill,
+            tenure: Tenure::Bound,
         })
     }
 
@@ -127,6 +157,13 @@ impl ProcessHost {
             }
         };
         (Box::pin(exit), kill)
+    }
+
+    /// Its held runs, when it holds runs.
+    fn holder(&self) -> io::Result<&HeldRuns> {
+        self.held
+            .as_ref()
+            .ok_or_else(|| io::ErrorKind::Unsupported.into())
     }
 
     /// The size of a login's terminal: wide, so a long link stays on one line.
@@ -169,6 +206,7 @@ impl ProcessHost {
             stdout: Box::new(read),
             exit,
             kill,
+            tenure: Tenure::Bound,
         })
     }
 
@@ -366,6 +404,49 @@ impl AgentHost for ProcessHost {
         })
     }
 
+    fn make_worktree(
+        &self,
+        repo: &Path,
+        folder: &Path,
+        data: &Path,
+        branch: &str,
+        tools: &RunTools,
+    ) -> io::Result<()> {
+        let git = Git::find(&self.search_dirs(tools))
+            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "no git on the runs' path"))?;
+        let branch = branch
+            .parse::<ren_git::Branch>()
+            .map_err(io::Error::other)?;
+        git.add_worktree(repo, folder, &branch)
+            .map_err(io::Error::other)?;
+        std::fs::create_dir_all(data)
+    }
+
+    fn remove_worktree(&self, workspace: &Workspace, tools: &RunTools) -> io::Result<()> {
+        Self::stop_preview(workspace);
+        let (folder, data) = (workspace.folder(), workspace.data());
+        let (folder, data) = (folder.as_path(), data.as_path());
+        let git = Git::find(&self.search_dirs(tools))
+            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "no git on the runs' path"))?;
+        let branch = match Git::repository(folder) {
+            Repository::At(Head::Branch(branch)) => branch.parse::<ren_git::Branch>().ok(),
+            Repository::At(Head::Detached(_)) | Repository::None | Repository::Unreadable => None,
+        };
+        let main = git.main_worktree(folder).map_err(io::Error::other)?;
+        git.remove_worktree(folder).map_err(io::Error::other)?;
+        match std::fs::remove_dir_all(data) {
+            Err(error) if error.kind() != io::ErrorKind::NotFound => return Err(error),
+            Ok(()) | Err(_) => {}
+        }
+        if let Some(branch) = branch {
+            let kept = git
+                .delete_merged(&main, &branch)
+                .map_err(io::Error::other)?;
+            tracing::debug!(%branch, ?kept, "a workspace's branch");
+        }
+        Ok(())
+    }
+
     fn tools(&self) -> RunTools {
         match self.tools.current() {
             Ok(toolset) if toolset.generation() == Generation::NONE => RunTools::Empty,
@@ -386,19 +467,49 @@ impl AgentHost for ProcessHost {
         workdir: &Workdir,
         tools: &RunTools,
     ) -> io::Result<AgentProcess> {
-        let extension = if plan.loads_pi_extension() {
-            let cache = self.pi.as_ref().ok_or_else(|| {
-                io::Error::other("set XDG_CACHE_HOME or HOME for the Pi extension cache")
-            })?;
-            Some(cache.materialize().map_err(io::Error::other)?)
-        } else {
-            None
-        };
-        let mut command = plan.command(extension.as_deref(), &[]);
-        if let Some(path) = self.search_path_with(tools)? {
-            command.env("PATH", path);
-        }
+        let command = self.command(plan, tools)?;
         Self::start(command, workdir.as_path(), Stderr::Discarded)
+    }
+
+    fn start_run(
+        &self,
+        run: RunId,
+        plan: &LaunchPlan,
+        workdir: &Workdir,
+        tools: &RunTools,
+    ) -> io::Result<AgentProcess> {
+        let Some(held) = &self.held else {
+            return self.spawn(plan, workdir, tools);
+        };
+        let mut command = self.command(plan, tools)?;
+        command.current_dir(workdir.as_path());
+        // A run host does not start with the daemon's environment: the
+        // search path the daemon's own runs get is given to it.
+        if command.get_envs().all(|(key, _)| key != "PATH") {
+            command.env(
+                "PATH",
+                std::env::join_paths(self.search_dirs(tools)).map_err(io::Error::other)?,
+            );
+        }
+        held.start(run, &command)
+    }
+
+    fn held(&self) -> io::Result<Vec<HeldRun>> {
+        self.held.as_ref().map_or(Ok(Vec::new()), HeldRuns::list)
+    }
+
+    fn spool(&self, run: RunId, from: u64, to: u64) -> io::Result<Vec<u8>> {
+        self.holder()?.spool(run, from, to)
+    }
+
+    fn rejoin(&self, run: RunId, from: u64) -> io::Result<AgentProcess> {
+        self.holder()?.rejoin(run, from)
+    }
+
+    fn release(&self, run: RunId) {
+        if let Some(held) = &self.held {
+            held.release(run);
+        }
     }
 
     fn spawn_with_stderr(
@@ -537,6 +648,28 @@ where
             Poll::Ready(Ok(()))
         } else {
             Poll::Pending
+        }
+    }
+}
+
+impl ProcessHost {
+    /// Stops a workspace's preview (`cargo xtask preview`), if one runs:
+    /// its units are named for the workspace, and stopping one that does
+    /// not exist (or a host without systemd) changes nothing.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "stopping a removed workspace's preview units, by their exact names"
+    )]
+    fn stop_preview(workspace: &Workspace) {
+        let stopped = std::process::Command::new("systemctl")
+            .args(["--user", "stop"])
+            .args(workspace.preview_units())
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
+        if let Err(error) = stopped {
+            tracing::debug!(%error, "no systemctl to stop a workspace's preview");
         }
     }
 }

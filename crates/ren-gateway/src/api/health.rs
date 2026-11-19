@@ -9,6 +9,7 @@
 
 use super::HealthStatus;
 use crate::{build, operator};
+use ren_release::Revision;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
@@ -34,11 +35,11 @@ pub(super) struct Build {
     version: String,
     /// `<commit>`, `<commit>-dirty`, or `unknown`.
     #[ts(type = "string")]
-    revision: build::Revision,
+    revision: Revision,
 }
 
-impl From<&build::Build> for Build {
-    fn from(build: &build::Build) -> Self {
+impl From<&ren_release::Build> for Build {
+    fn from(build: &ren_release::Build) -> Self {
         Self {
             version: build.version().to_owned(),
             revision: build.revision().clone(),

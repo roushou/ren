@@ -50,7 +50,7 @@ impl Page {
         Self::Tools,
     ];
 
-    fn name(self) -> &'static str {
+    pub fn name(self) -> &'static str {
         match self {
             Self::Overview => "overview",
             Self::Live => "live",
@@ -87,6 +87,16 @@ impl Page {
             Self::Tools => Some("/tools".into()),
         }
     }
+}
+
+/// What one round of screenshots took.
+#[derive(Debug, Default)]
+pub struct Shots {
+    pub written: Vec<PathBuf>,
+    /// Pages that did not load in time or did not capture.
+    pub failed: Vec<Page>,
+    /// Pages with nothing to show yet (no recording).
+    pub skipped: Vec<Page>,
 }
 
 /// Takes screenshots of one UI.
@@ -163,24 +173,25 @@ impl Camera {
         answer[listing][0]["id"].as_str().map(str::to_owned)
     }
 
-    /// Capture `pages` at `width`×`height`; returns the files written.
-    pub fn shoot(
-        &self,
-        pages: &[Page],
-        (width, height): (u16, u16),
-    ) -> Result<Vec<PathBuf>, DevError> {
+    /// Capture `pages` at `width`×`height`.
+    pub fn shoot(&self, pages: &[Page], (width, height): (u16, u16)) -> Result<Shots, DevError> {
         fs::create_dir_all(&self.out).map_err(FileError::at(&self.out))?;
         let newest = Newest {
             recording: self.newest("recordings"),
             run: self.newest("runs"),
         };
-        let mut written = Vec::new();
+        let mut shots = Shots::default();
         for page in pages {
             let Some(path) = page.path(&newest) else {
                 println!("skipped {}: no recording yet", page.name());
+                shots.skipped.push(*page);
                 continue;
             };
             let file = self.out.join(format!("{}.png", page.name()));
+            // An earlier round's file would read as this round's capture.
+            if file.exists() {
+                fs::remove_file(&file).map_err(FileError::at(&file))?;
+            }
             // `timeout` bounds a page that would never settle.
             let taken = Invocation::new("timeout")
                 .arg("60")
@@ -196,12 +207,13 @@ impl Camera {
                 .succeeds(Echo::Hide)?;
             if taken && file.is_file() {
                 println!("{}", file.display());
-                written.push(file);
+                shots.written.push(file);
             } else {
                 println!("failed {}", page.name());
+                shots.failed.push(*page);
             }
         }
-        Ok(written)
+        Ok(shots)
     }
 }
 

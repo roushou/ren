@@ -15,7 +15,7 @@ use crate::{
     view::{
         AttachmentView, AttemptView, BodyPrefix, BodyView, CallDetail, CallPage, CallView,
         ChannelView, Columns, DiskUsage, MessageView, OperatorActionView, RecordingView, RunView,
-        SessionView, StorageView, UsageGroup, UsageView,
+        SessionView, StorageView, UsageGroup, UsageView, WorkItemView,
     },
     writer::BlobAccess,
 };
@@ -28,7 +28,7 @@ use ren_recorder::Observation;
 use ren_recorder::batch::BodyKey;
 use ren_recorder::{
     capture::CallState,
-    id::{CallId, RecordingId, RunId, SessionId},
+    id::{CallId, RecordingId, RunId, SessionId, WorkItemId},
 };
 use sqlx::{
     AssertSqlSafe, QueryBuilder, Row, Sqlite, SqlitePool,
@@ -373,6 +373,39 @@ impl Reader {
     }
 
     /// One run, if it was recorded.
+    /// Work items on `shelf`, most recently changed first.
+    pub async fn work_items(
+        &self,
+        limit: PageLimit,
+        shelf: Shelf,
+    ) -> Result<Vec<WorkItemView>, StoreError> {
+        sqlx::query(AssertSqlSafe(format!(
+            "{} WHERE {} ORDER BY updated_at DESC, id DESC LIMIT ?",
+            WorkItemView::SELECT,
+            shelf.work(),
+        )))
+        .bind(i64::from(limit.get()))
+        .fetch_all(&self.pool)
+        .await?
+        .iter()
+        .map(WorkItemView::from_row)
+        .collect()
+    }
+
+    /// One work item, if it was recorded.
+    pub async fn work_item(&self, id: WorkItemId) -> Result<Option<WorkItemView>, StoreError> {
+        sqlx::query(AssertSqlSafe(format!(
+            "{} WHERE id = ?",
+            WorkItemView::SELECT
+        )))
+        .bind(id.to_string())
+        .fetch_optional(&self.pool)
+        .await?
+        .as_ref()
+        .map(WorkItemView::from_row)
+        .transpose()
+    }
+
     pub async fn run(&self, id: RunId) -> Result<Option<RunView>, StoreError> {
         sqlx::query(AssertSqlSafe(format!("{} WHERE id = ?", RunView::SELECT)))
             .bind(id.to_string())
@@ -571,6 +604,9 @@ impl Reader {
     }
 
     pub async fn storage(&self) -> Result<StorageView, StoreError> {
+        // Before the connection below is held: with every connection of the
+        // pool held so, this would wait for one that is never released.
+        let digested_calls = self.digested_count().await?;
         let mut connection = self.pool.acquire().await?;
         let disk = DiskUsage::measure(&mut connection).await?;
         let calls =
@@ -588,7 +624,7 @@ impl Reader {
             disk,
             calls: calls.try_get("calls")?,
             open_calls: calls.try_get("open")?,
-            digested_calls: self.digested_count().await?,
+            digested_calls,
             chunks: chunks.try_get("chunks")?,
             referenced_bytes: referenced,
             unique_bytes: chunks.try_get("unique_bytes")?,

@@ -10,7 +10,8 @@
  * session can start in, and the clients and models it can start with), and
  * its `/control/v1/history` routes (archiving, unarchiving, and deleting a
  * recording or a run), and its `/control/v1/tools` routes (the host's tools
- * for agents: their listing, a change, a rollback, and a collection). Never inference,
+ * for agents: their listing, a change, a rollback, and a collection), and its
+ * `/control/v1/work` routes (queuing a work item and moving one on). Never inference,
  * reads of history, the operator state's session blocks, or the rest of the
  * control API.
  *
@@ -182,6 +183,14 @@ const routes: { pattern: RegExp; route: Route }[] = [
     route: { method: 'POST', feed: false, timeout: 15 * 60_000 },
   },
   { pattern: /^\/control\/tools\/rollback$/, route: { method: 'POST', feed: false } },
+  // The Release view's Promote: a request the factory's next pass carries out.
+  { pattern: /^\/control\/release\/promote$/, route: { method: 'POST', feed: false } },
+  // Work items: queued from a Redline pane, and moved on.
+  { pattern: /^\/control\/work$/, route: { method: 'POST', feed: false } },
+  {
+    pattern: new RegExp(`^/control/work/${runId}/(?:send|land|ship|dismiss)$`),
+    route: { method: 'POST', feed: false },
+  },
   { pattern: /^\/control\/tools\/gc$/, route: { method: 'POST', feed: false, timeout: 60_000 } },
 ];
 /** Creating a session is the one POST to the session listing's own path. */

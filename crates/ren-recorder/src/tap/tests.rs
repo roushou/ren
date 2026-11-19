@@ -100,6 +100,7 @@ impl Queue {
                 Record::Close(close) => Sent::Close(close.end),
                 other @ (Record::Operator(_)
                 | Record::Session(_)
+                | Record::Work(_)
                 | Record::Run(_)
                 | Record::RunEntry(_)
                 | Record::History(_)) => panic!("unexpected record {other:?}"),

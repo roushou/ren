@@ -1,0 +1,41 @@
+{
+  "api_version": 1,
+  "work": [
+    {
+      "id": "00000000-0000-0000-0000-00000000000b",
+      "created_at": 1800000000000,
+      "updated_at": 1800000000000,
+      "title": "Show each recording's turn count",
+      "order": {
+        "page": {
+          "path": "/recordings",
+          "route": "/recordings",
+          "title": "Ren - Recordings",
+          "width": 1440,
+          "height": 900,
+          "theme": "light",
+          "revision": "62e9e9e0000000000000000000000000000000ff"
+        },
+        "marks": [
+          {
+            "selector": "[aria-label=\"Recordings\"] table > tbody > tr",
+            "text": "acme-api",
+            "source": null,
+            "width": 640,
+            "height": 28,
+            "note": "Show each recording's turn count"
+          }
+        ],
+        "evidence": {
+          "console": ["TypeError: turns is undefined"],
+          "reads": ["/api/recordings?limit=100"]
+        }
+      },
+      "state": "queued",
+      "session": null,
+      "landed": null,
+      "shipped": null,
+      "preview": null
+    }
+  ]
+}

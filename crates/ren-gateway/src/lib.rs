@@ -30,7 +30,7 @@
 //!   configuration revision, buffer, policy, upstream entries);
 //! - capabilities: an [`Upstream`], a [`Recorder`], the shared [`Controls`],
 //!   a [`Clock`], and the `Reader` and `Backup` in [`ManagementSetup`],
-//!   which also names the running [`Build`] that `/health` reports;
+//!   which also names the running [`ren_release::Build`] that `/health` reports;
 //! - inputs: inference requests on the upstream table's routes, management reads, and controls;
 //! - outputs: provider responses, management data, and HTTP error responses;
 //! - lifecycle: [`Shutdown`] drains, then aborts, through [`Ingress`].
@@ -57,8 +57,10 @@ mod timeout;
 pub mod tools;
 pub mod user;
 
-pub use api::{ApiRead, ControlOptions, ControlRefusal, ControlToken, ManagementSetup};
-pub use build::{Build, Environment, InstanceOptions};
+pub use api::{
+    ApiRead, ControlOptions, ControlRefusal, ControlToken, ManagementSetup, ReleaseFolder,
+};
+pub use build::{Environment, InstanceOptions};
 pub use forward::GatewayError;
 pub use forward::buffer::{
     BufferOptions, BufferOptionsError, BufferRefusal, Buffered, RequestBuffer, RequestLimits,
@@ -161,12 +163,14 @@ impl<U: Upstream> Gateway<U> {
     /// All HTTP routes. Tests can drive this same router without a connection.
     pub fn router(self: Arc<Self>, management: ManagementSetup) -> Router {
         let reader = management.reader.clone();
+        let release = management.release.clone();
         let api = ApiState::new(
             ReadSources {
                 reader: management.reader,
                 retention: management.retention,
                 build: management.build,
                 instance: management.instance,
+                release: management.release,
             },
             self.recorder.clone(),
             self.controls.clone(),
@@ -186,6 +190,12 @@ impl<U: Upstream> Gateway<U> {
         let feeds_end = self.shutdown.drain_token();
         self.forwarding_router()
             .merge(api.router())
-            .merge(control.router(reader, management.runs, management.tools, feeds_end))
+            .merge(control.router(
+                reader,
+                management.runs,
+                management.tools,
+                release,
+                feeds_end,
+            ))
     }
 }

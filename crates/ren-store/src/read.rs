@@ -7,9 +7,11 @@ use crate::activity::report::RecordingReport;
 use crate::activity::{ActivityBudget, CallActivity, TurnActivity, TurnSummary};
 use crate::query::{CallQuery, Cursor, PageLimit, Shelf, TimeRange};
 use crate::search::{ExposureQuery, ExposureView, SearchPage, SearchQuery};
-use crate::view::{CallDetail, CallPage, ConversationView, RecordingView, RunView, UsageView};
+use crate::view::{
+    CallDetail, CallPage, ConversationView, RecordingView, RunView, UsageView, WorkItemView,
+};
 use crate::{Reader, StoreError};
-use ren_recorder::id::{CallId, RecordingId, RunId, TurnId};
+use ren_recorder::id::{CallId, RecordingId, RunId, TurnId, WorkItemId};
 
 /// A read of recorded history.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -46,6 +48,12 @@ pub enum ReadRequest {
     Run(RunId),
     /// A run's conversation, whole, with the runs before it on its thread.
     Conversation(RunId),
+    /// Work items, most recently changed first.
+    WorkItems {
+        limit: PageLimit,
+        shelf: Shelf,
+    },
+    WorkItem(WorkItemId),
 }
 
 /// What a [`ReadRequest`] returns.
@@ -73,6 +81,11 @@ pub enum ReadResponse {
     },
     Run(Box<RunView>),
     Conversation(ConversationView),
+    /// Serialized as the read API's `work`.
+    WorkItems {
+        work: Vec<WorkItemView>,
+    },
+    WorkItem(Box<WorkItemView>),
 }
 
 impl Reader {
@@ -120,6 +133,12 @@ impl Reader {
                     .await?
                     .ok_or(StoreError::NotFound)?,
             ),
+            ReadRequest::WorkItems { limit, shelf } => ReadResponse::WorkItems {
+                work: self.work_items(*limit, *shelf).await?,
+            },
+            ReadRequest::WorkItem(item) => ReadResponse::WorkItem(Box::new(
+                self.work_item(*item).await?.ok_or(StoreError::NotFound)?,
+            )),
         })
     }
 }

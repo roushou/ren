@@ -95,6 +95,10 @@ export class Refusals {
         return 'That client asks for nothing, so it takes no approval policy.';
       case 'no_scratch':
         return 'The daemon has no scratch folder for a session without one.';
+      case 'no_workspace':
+        return 'A workspace could not be made there: is the folder a git repository with a commit?';
+      case 'workspaces_full':
+        return 'Every workspace slot is taken; delete a session that has a workspace first.';
       case 'spawn_failed':
         return 'The client could not be started; is it installed on the daemon’s host?';
       case 'models_unavailable':
@@ -185,6 +189,12 @@ export class Refusals {
         return 'The daemon refused the change.';
       case 'tools_failed':
         return 'The daemon could not read or write its tool store. Its log says why.';
+      case 'invalid_order':
+        return 'A work item needs at least one mark with a note, within its limits.';
+      case 'work_state':
+        return 'That work item is past this step already.';
+      case 'not_promotable':
+        return "That is not the canary's build, or it did not pass its checks.";
       default:
         return `Refused: ${unrecognised(code)}.`;
     }

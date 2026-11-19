@@ -53,6 +53,11 @@ impl UiBuild {
         })
     }
 
+    /// The Node on PATH, which runs a built UI.
+    pub fn node_on(env: &HostEnv) -> Result<PathBuf, UiBuildError> {
+        Self::program(env, "node")
+    }
+
     /// The first executable `name` on PATH, as an absolute path.
     fn program(env: &HostEnv, name: &'static str) -> Result<PathBuf, UiBuildError> {
         env.get("PATH")

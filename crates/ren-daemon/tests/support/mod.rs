@@ -7,9 +7,8 @@ pub mod agent;
 
 use axum::Router;
 use ren_daemon::config::Config;
-use ren_gateway::build::Revision;
 use ren_gateway::{
-    Build, ControlToken, Gateway, Ingress, IngressError, ManagementSetup, ReqwestUpstream,
+    ControlToken, Gateway, Ingress, IngressError, ManagementSetup, ReleaseFolder, ReqwestUpstream,
     Shutdown, Stopped, Upstream, control::Controls,
 };
 use ren_harness::{endpoint::GatewayEndpoint, lines::LineLimit};
@@ -20,6 +19,7 @@ use ren_recorder::{
     id::{CallId, SequentialIds},
     time::{ManualClock, UnixMillis},
 };
+use ren_release::{Build, Revision};
 use ren_store::{
     Reader, Store, StoreError,
     backup::Backup,
@@ -291,6 +291,8 @@ impl TestGateway {
                         roots,
                         places: Vec::new(),
                         scratch: Some(std::path::PathBuf::from("/scratch")),
+                        worktrees: Some(std::path::PathBuf::from("/worktrees")),
+                        workspace_env: Vec::new(),
                         home: Some(std::path::PathBuf::from("/work")),
                         warmup: ren_supervisor::Warmup::WhenAsked,
                         gateway: format!("http://{address}")
@@ -332,6 +334,7 @@ impl TestGateway {
             instance: runtime.instance(),
             runs: supervisor,
             tools,
+            release: ReleaseFolder::in_data(dir),
         });
         let ingress = Ingress::new(listener, router.clone());
         let server = tokio::spawn(ingress.serve(shutdown.clone(), Self::DRAIN_DEADLINE));

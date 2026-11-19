@@ -20,6 +20,7 @@ use ren_recorder::id::RunId;
 use ren_recorder::id::SessionId;
 use ren_supervisor::ClientStatus;
 use ren_supervisor::PlaceKind;
+use ren_supervisor::RunTenure;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use ts_rs::TS;
@@ -40,6 +41,9 @@ pub struct RunSnapshot {
     pub state: RunState,
     /// What it was started with; each left out is the client's own.
     pub settings: RunSettings,
+    /// Whether it outlives the daemon: `held` by a run host, or `bound`.
+    #[ts(as = "String")]
+    pub tenure: RunTenure,
 }
 
 impl From<ren_supervisor::RunSnapshot> for RunSnapshot {
@@ -51,6 +55,7 @@ impl From<ren_supervisor::RunSnapshot> for RunSnapshot {
             workdir,
             state,
             settings,
+            tenure,
         } = value;
         Self {
             run,
@@ -59,6 +64,7 @@ impl From<ren_supervisor::RunSnapshot> for RunSnapshot {
             workdir,
             state: state.into(),
             settings: settings.into(),
+            tenure,
         }
     }
 }

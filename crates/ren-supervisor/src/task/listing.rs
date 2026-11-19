@@ -151,6 +151,7 @@ impl ListingProbe {
             mut stdout,
             exit,
             kill,
+            tenure: _,
         } = process;
         let talk = Self::talk(&mut listing, first, &mut stdin, &mut stdout, limit);
         let outcome = tokio::time::timeout(Self::TIMEOUT, talk)

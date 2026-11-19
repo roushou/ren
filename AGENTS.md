@@ -99,7 +99,8 @@ Ren-specific applications:
   `#[strum(to_string = "…")]` on its variant. Never add `#[serde(rename…)]`, which
   would be a second table. Every label is pinned in its crate's `tests/fixtures/labels.txt`
   (`tests/labels.rs`); add a new vocabulary there, and treat a changed line as a
-  storage format change. Labels read from storage or the wire use `Stored<T>`,
+  storage format change: a label may be added, and removing one is a breaking
+  change (`cargo xtask compat`, section 5). Labels read from storage or the wire use `Stored<T>`,
   which keeps unknown text.
 - **Keep the unknown:** wire enums for Anthropic Messages, OpenAI Responses, OpenAI
   Chat Completions, and SSE
@@ -143,7 +144,9 @@ Modules carry no lint headers of their own. A module with submodules lives in
 - The only exemptions are the capability implementations themselves, marked with
   `#[expect(clippy::disallowed_methods, reason = "…")]`: `HostEnv::capture`, the
   daemon's `SystemClock`, `RandomIds`, `ProcessHost` (`ren_daemon::host`, its process
-  starts and its program lookup on the agents' `PATH`), `ren_git::Git`
+  starts and its program lookup on the agents' `PATH`), `HeldRuns` and
+  `RunHost` (`ren_daemon::host::held`: starting a run host, and the one client
+  it holds), `ren_git::Git`
   (the one place Ren runs git), and `HostTools` (`ren_daemon::tools`, its
   `--version` probes), and the daemon's server
   and supervisor task spawns. Outside the daemon, `ren-git`'s `Git` (the one place
@@ -199,13 +202,32 @@ dependencies under "Crates" below. Read the code for current module ownership.
 - `crates/ren-git`: git as Ren reads and runs it, with `Git` as its primary
   type: the git program found on a search path (`Git::find`) or this
   process's own (`Git::inherited`), the commands Ren runs with it (`init`,
-  a checkout's commit, tree, and whether a remote holds it, and
-  `revision_files`, the files git rewrites for a new commit), and a folder's
+  a checkout's commit, tree, and whether a remote holds it,
+  `revision_files`, the files git rewrites for a new commit, and a
+  `Revision`'s commit and files, `Git::commit_of`, `files_at`, and
+  `file_at`; worktrees made on a new `Branch` and removed only when clean,
+  `Git::add_worktree` and `remove_worktree`, a branch deleted only once
+  merged, `delete_merged`, and `commit_all`, as a fixed `Author`), and a folder's
   repository read from disk without it (`Git::repository`: its `HEAD`,
   through a linked worktree's `.git` file). It is the one place Ren reads or
   runs git, and the one `disallowed_methods` exemption for it. It performs
   filesystem and process I/O but has no async runtime, HTTP, database, or
   CLI dependency.
+- `crates/ren-project`: a project's contract with Ren (`ProjectContract`,
+  read from `ren-project.toml`): its build, serve, check, and quiesce steps,
+  each an argv with the environment it adds, never a shell line, whose
+  values name the `Place` a step runs for through a parsed `Template`
+  (`{port}`, `{port+N}`, `{data}`, `{workspace}`; an unknown placeholder is
+  refused as the contract is read, a port past the place's range as a step
+  expands). Sans-IO; `ren project` (`crates/ren-cli/src/commands/project.rs`,
+  the one place the CLI runs a project's steps) runs its checks,
+  previews a workspace of it, and runs its canary and promotion
+  (`commands/project/canary.rs`: `ProjectFactory`, with its release in
+  `<data>/projects/<name>`).
+- `crates/ren-release`: how a build of Ren moves from `main` to production,
+  sans-IO: which build an instance runs (`Build`, its `Revision`, `Commit`,
+  and `Tree`, and how two compare, `Comparison`). Its manifest allows only
+  pure dependencies.
 - `crates/ren-depot`: the tools Ren's agents run with, with `Depot` as its
   primary type: the package catalog (`package`: `Package`, `PackageId`,
   `ProgramName`, `Kind`, client, runtime, or utility, and `Origin`; the
@@ -314,7 +336,10 @@ dependencies under "Crates" below. Read the code for current module ownership.
   owns what is recorded: Ren's identities and `IdSource` (`id`), `Clock`
   (`time`), terminals and other recorded facts (`capture`), routing facts and
   `OperatorRevision` (`routing`), who called (`caller`: `UserId`,
-  `TailscaleLogin`, and `Caller`), batches (`batch`), the content-defined
+  `TailscaleLogin`, and `Caller`), work items (`work`, pure: `WorkOrder`, what
+  was marked, checked by `WorkOrder::checked`, and the `WorkState` machine,
+  queued to shipped, whose `apply` refuses an event a state does not take;
+  `WorkSlot` records each `WorkFact`), batches (`batch`), the content-defined
   `Chunker` (`chunk`), the stored inspection format (`inspection`), and
   `RetentionPolicy` (`retention`), and credential detection and redaction
   (`secrets`: `SecretScanner`, well-known formats only, never storing a secret),
@@ -343,7 +368,14 @@ dependencies under "Crates" below. Read the code for current module ownership.
   `RecordSink::undigested` lists calls to derive again), and implements the recorder's `RecordSink`;
   every time it binds goes through `SqlMillis` (`millis`). It owns the versioned migrations for
   `ren.sqlite3` (`crates/ren-store/migrations`); never edit one that has
-  shipped. Every history read is a `ReadRequest` that `Reader::serve` answers
+  shipped. Each is pinned by the checksum a store keeps for it
+  (`tests/fixtures/migrations.txt`), and each has a store fixture, the rows
+  a store held at that migration (`tests/fixtures/stores/<version>.sql`,
+  written once through the recorder by the ignored
+  `write_the_newest_store_fixture`); `tests/upgrade.rs` opens every fixture
+  with today's migrations and serves every read from it. A new migration
+  only adds: what it stops using is removed by a later one, declared as a
+  breaking change. Every history read is a `ReadRequest` that `Reader::serve` answers
   (`read`), and `ReadRequest::decode` reads the API's body back as the same
   typed `ReadResponse`; the API, the CLI, and MCP all ask through it. Its tests include
   `tests/recorder.rs`, the recorder against the real store.
@@ -410,7 +442,19 @@ dependencies under "Crates" below. Read the code for current module ownership.
   through the recorder's `RunTap` (a run without room to be recorded does not
   start), with every event of its conversation as `entries` keeps it (no
   streamed pieces; a reply cut off kept as far as it came), and drains every
-  run when the last handle is dropped. A client's sign-in on the host is
+  run bound to the daemon when the last handle is dropped. A run a run host
+  holds (`AgentHost::start_run` answers a `Tenure`, `Held` with a journal)
+  outlives the daemon (`task::held`): what the daemon gives its process goes
+  into its journal first (`journal`, pure: the start its codec was opened
+  with, how far its output was read, the operator's commands with prompts
+  kept whole, idle stops), each stdin line waiting for the entries queued
+  before it; as the daemon stops it is detached, not ended; as the next
+  starts, `AgentHost::held` lists it, a `Replay` feeds its journal and its
+  host's spool through the same `Process` machine with effects discarded,
+  and `AgentHost::rejoin` takes it up where the last daemon left it, its
+  session served again once adopted. A journal that breaks drains its run
+  like a bound one; one that cannot be replayed is stopped as recovered.
+  Each run's `RunSnapshot::tenure` says which (`RunTenure`). A client's sign-in on the host is
   read and run through the client's own commands: `sign_in` holds the pure
   `SignInState` and the `Login` machine (starting, awaiting its code, its
   approval, its key, or its redirect, finishing, ended), and `task::login` its shell (`StatusCheck`, `LoginTalk`, and
@@ -421,7 +465,14 @@ dependencies under "Crates" below. Read the code for current module ownership.
   `AgentHost::spawn_in_terminal` when it needs a terminal, and a pasted
   address is opened with `AgentHost::open_local`. What a login prints is
   cleaned of every answer typed into it.
-  `src/purity.rs` keeps `run`, `process`, `workdir`, `project`, `entries`, `files`,
+  A session started with `StartPlace::Worktree` works in a workspace of
+  its own (`workspace`, pure): a worktree of the repository named, made by
+  `AgentHost::make_worktree` in the worktrees folder as `<repo>-<slot>` on
+  `ren/<repo>-<slot>-<id>`, its slot (the lowest free) giving it 100 ports
+  and a data folder, which its runs are told as `REN_WORKSPACE*` beside the
+  operator's `workspace_env`; forgetting the session removes it
+  (`AgentHost::remove_worktree`) unless it holds changes not committed.
+  `src/purity.rs` keeps `run`, `process`, `journal`, `workdir`, `workspace`, `project`, `entries`, `files`,
   `session`, and `sign_in` free of runtime and I/O. The daemon constructs it when `[runs]`
   roots are configured, with `ProcessHost`; the gateway's control API serves it.
 - `crates/ren-gateway`: Ren's HTTP interface, with `Gateway` as its primary type.
@@ -445,8 +496,11 @@ dependencies under "Crates" below. Read the code for current module ownership.
   callers' concurrency limits (`limits`, with `ConcurrencyLimit`, 1 to
   1024, which every configured limit is; `TimeoutSecs`, in `timeout`, is
   every configured timeout, 1 to 3600 seconds), the `Controls` that hold
-  it with the running-call registry (`control`), the `Build` and the
-  instance's environment that `/health` reports (`build`), and
+  it with the running-call registry (`control`), the instance's
+  environment that `/health` reports beside its `ren_release::Build`
+  (`build`), what the factory keeps for the Release view (`api::release`:
+  `ReleaseFolder`, Ren's release, the canary's shots, project releases, and
+  the operator's promotion request), and
   pure call planning
   (`policy`: block, transform, and fallback rules validated at load, with
   protected headers and body paths), and the call's way through its
@@ -500,7 +554,16 @@ dependencies under "Crates" below. Read the code for current module ownership.
   supervisor's `AgentHost` (its logins on a pseudo-terminal through
   `pty-process`, echo off, and a pasted loopback address opened with one
   `GET`), which reads folders' repositories and makes scratch repositories
-  with `ren_git::Git`, the git on a run's search path. `tools` is the tool store on disk
+  with `ren_git::Git`, the git on a run's search path, and, in `host::held`,
+  the run hosts that hold runs through a restart (`[runs] hold`, `RunHold`):
+  `HeldRuns` starts each, `ren run-host <folder>` (`RunHost`, the hidden
+  command), in a systemd user unit of its own (`ren-run-<run>`, outside
+  `ren.service`) and attaches to it without spawning a task; the host keeps
+  the client's stdin open and its output in the run folder's spool, writes
+  its exit, and serves one daemon at a time over a socket whose frames
+  (`frame`, pure, kept when unknown: a host may be an older build) are a
+  cross-version surface. The daemon lists held runs before opening the
+  store (`Store::open_holding`). `tools` is the tool store on disk
   (`ToolStore`, under `<data>/tools`, and `HostTools`, the depot's
   `ToolHost`, in `tools::host`): it carries out the depot's
   `InstallJob`s (downloading through its `Fetch` seam, `ReqwestFetch` in
@@ -577,7 +640,11 @@ dependencies under "Crates" below. Read the code for current module ownership.
   `REN_SOURCE_DIR`, a brief can go to, where its change is made, and what
   the brief says of Ren; `Recipients` in `src/lib/briefing.svelte.ts`
   reads them, and `BriefingPanel.svelte` fills Redline's pane with them,
-  sending through the same session routes),
+  sending through the same session routes and recording each brief as a
+  work item first), `src/lib/work.ts` work items (`WorkApi` through
+  `/api/work` and `/control/work`, the order a pane makes, `PageEvidence`,
+  what a page logged and read, kept by the layout, and `Work.batch`, one
+  brief for several items, which the Work view, `src/routes/work`, sends),
   `Markdown.svelte` from `ui/packages/markdown` draws Markdown, and
   `src/lib/server/runsStart.ts` makes the Sessions page's first reads on the UI
   server, with the browser's Tailscale login and never its cookies, so the
@@ -609,6 +676,20 @@ dependencies under "Crates" below. Read the code for current module ownership.
   Pi owns provider authentication, refresh, payload conversion, and retries.
 - `xtask`: repository tasks run with `cargo xtask` (alias in `.cargo/config.toml`),
   with `Xtask` as its primary type; unpublished and outside `default-members`.
+  `cargo xtask compat --base <revision> [--message <file>]` is the
+  compatibility gate (`compat`; `docs/plans/self-build.md`, phase 1): it
+  compares the store's migration pins, store fixtures, and new migrations,
+  every crate's labels, and the API's wire types with the base revision
+  (read through `ren_git`), and refuses a break the message does not declare
+  with a `!` and a `BREAKING CHANGE:` footer. Wire types are parsed from the
+  files ts-rs writes and compared by structure (`compat::api`): a type
+  reached from one of the gateway's request types
+  (`crates/ren-gateway/tests/fixtures/requests.txt`, kept whole by
+  `tests/api_owner.rs`) must still read what older clients send, and any
+  other must still hold what they read. Its comparison is pure and
+  unit-tested (`compat::contract`, `compat::api`), and the Compatibility
+  workflow runs it on every pull
+  request (again when its title or body is edited) and push to main.
   `cargo xtask install-vps` installs or upgrades Ren from a checkout as a
   systemd user service and can publish it with Tailscale Serve; it restarts a
   running daemon only between calls and between runs' turns, paused (a pause
@@ -622,9 +703,29 @@ dependencies under "Crates" below. Read the code for current module ownership.
   shares with the dev slot sits beside it, each with its own error:
   running commands (`invocation`), writing files (`file`), progress lines
   (`progress`), Tailscale (`tailscale`: its status, and publishing a port
-  with Serve), the daemon a restart waits on (`daemon`: the installed
-  `ren`'s output, the wait, and the runs that end), and building the UI
-  (`ui`). Its parsing of Tailscale status and of the installed `ren`'s
+  with Serve or removing one that still points where it did), the daemon a
+  restart waits on (`daemon`: the installed `ren`'s output, the wait, and
+  the runs that end), building the UI (`ui`), transient user units and the
+  listeners they answer on (`unit`: `TransientUnit`, `Listener`), and builds
+  made once per commit (`builds`: `Builds`, `StoredBuild`, which
+  `install-vps --build` installs).
+  `replica`: Ren on a copy of production's history (`ProductionPlace`,
+  production and its work item API, and `Replica`, the canary's and each
+  preview's instance). `cargo xtask preview` (`preview`) runs a workspace's
+  branch as a replica on the workspace's ports and records it on the work
+  items the branch names; `ren_supervisor::Workspace::preview_units` names
+  the units, which removing the workspace stops.
+  `cargo xtask canary` is the factory's canary and promotion (`canary`;
+  `docs/deployment.md#canary-and-promotion`, `docs/plans/self-build.md`,
+  phase 4): a pass fetches `main` into Ren's own worktree and goes on with
+  that commit's xtask, builds it once, starts it as `ren-canary-*` units on a
+  fresh backup of production's history (`canary::instance`: production, or
+  with `--of dev` the dev slot, and the canary's derived configuration),
+  checks it (`canary::checks`: doctor, a sweep of every read, kept whole by a
+  test that matches every `ReadRequest`, and every page through the dev
+  slot's camera), writes the `ren_release::Release` to production's data
+  folder, and promotes under the operator's policy; `enable` runs it on a
+  timer. Its parsing of Tailscale status and of the installed `ren`'s
   output, its UI unit rendering, its saved flags, and the upgrade's wait,
   pause, and build-check decisions are unit-tested; the commands it runs
   are exercised only by running it.
@@ -656,6 +757,8 @@ directly.
 | `ren-protocol`                             | `CallInspector`                                     | none of ours      |
 | `ren-depot`                                | `Depot`, with its `ToolHost` port                   | none of ours      |
 | `ren-git`                                  | `Git`                                               | none of ours      |
+| `ren-release`                              | `Release`                                           | protocol          |
+| `ren-project`                              | `ProjectContract`                                   | none of ours      |
 | `ren-harness`                              | `Harness` (`ClaudeCode`, `Codex`, `Pi`, `OpenCode`) | protocol, depot   |
 | `ren-recorder`                             | `Recorder`, with its `RecordSink` port              | protocol, harness |
 | `ren-store`                                | `Store`, which implements `RecordSink`              | recorder          |
@@ -747,6 +850,18 @@ cargo check --workspace --locked
 cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo test --workspace --locked
 ```
+
+A change to what an existing install depends on (the store's migrations and
+their fixtures, a crate's labels, or the API's wire types) is checked
+against the base it will land on:
+
+```sh
+cargo xtask compat --base origin/main --message <file with the change's message>
+```
+
+A new migration gets its pin (the failing `every_migration_is_pinned` prints
+it) and its store fixture, written once with
+`cargo test -p ren-store --test upgrade -- --ignored`.
 
 UI changes, in `ui`, the workspace root, whose scripts run each member's (Bun
 from `package.json`, Node 22.17+):

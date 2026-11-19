@@ -65,6 +65,61 @@ fn normalized(mut value: serde_json::Value) -> serde_json::Value {
     value
 }
 
+/// An order marked on the recordings page, with what else was on screen.
+fn work_order() -> serde_json::Value {
+    serde_json::json!({
+        "page": {
+            "path": "/recordings",
+            "route": "/recordings",
+            "title": "Ren - Recordings",
+            "width": 1440,
+            "height": 900,
+            "theme": "light",
+            "revision": "62e9e9e0000000000000000000000000000000ff",
+        },
+        "marks": [{
+            "selector": "[aria-label=\"Recordings\"] table > tbody > tr",
+            "text": "acme-api",
+            "source": null,
+            "width": 640,
+            "height": 28,
+            "note": "Show each recording's turn count",
+        }],
+        "evidence": {
+            "console": ["TypeError: turns is undefined"],
+            "reads": ["/api/recordings?limit=100"],
+        },
+    })
+}
+
+/// A release whose canary build passed, one commit ahead of production,
+/// waiting for the operator.
+fn release() -> ren_release::Release {
+    use ren_release::{
+        Assessment, Attempt, Canary, Check, CheckKind, Lineage, Outcome, Policy, Release, Verdict,
+    };
+    let main = "62e9e9e0000000000000000000000000000000ff";
+    let checks = vec![
+        Check::new(CheckKind::Doctor, Outcome::Passed),
+        Check::new(CheckKind::Reads, Outcome::Passed),
+        Check::new(CheckKind::Pages, Outcome::Passed),
+    ];
+    Release::assess(
+        Assessment {
+            main: main.parse().unwrap(),
+            production: "07f4bb7c1e2a3b4c5d6e7f8091a2b3c4d5e6f708".parse().unwrap(),
+            behind: Some(1),
+            canary: Some((
+                Canary::new(main.parse().unwrap(), Verdict::ren(checks)),
+                Lineage::Ahead,
+                Attempt::Untried,
+            )),
+        },
+        Policy::Manual,
+        "03:00".parse().unwrap(),
+    )
+}
+
 fn fixtures() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../ui/apps/web/tests/fixtures/api")
 }
@@ -165,6 +220,59 @@ async fn the_read_api_answers_as_the_ui_fixtures_pin() {
         ("usage", read("/api/usage".to_owned()).await),
         ("search", read("/api/search?q=parser".to_owned()).await),
         ("exposures", read("/api/exposures".to_owned()).await),
+        ("work", {
+            let queued = client()
+                .post(format!("{base}/control/v1/work"))
+                .bearer_auth(TestGateway::CONTROL_TOKEN)
+                .header("content-type", "application/json")
+                .body(work_order().to_string())
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(queued.status(), http::StatusCode::CREATED);
+            let mut listed = serde_json::Value::Null;
+            for _ in 0..200 {
+                listed = read("/api/work".to_owned()).await;
+                if listed["work"]
+                    .as_array()
+                    .is_some_and(|work| !work.is_empty())
+                {
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            }
+            listed
+        }),
+        ("release", {
+            // None until the factory writes one, then as it wrote it.
+            assert_eq!(
+                read("/api/release".to_owned()).await["release"],
+                serde_json::Value::Null
+            );
+            std::fs::write(
+                dir.path().join(ren_release::Release::FILE),
+                serde_json::to_vec(&release()).unwrap(),
+            )
+            .unwrap();
+            let shots = dir.path().join(ren_release::ShotName::FOLDER);
+            std::fs::create_dir_all(&shots).unwrap();
+            std::fs::write(shots.join("overview.png"), b"\x89PNG").unwrap();
+            let project = dir
+                .path()
+                .join(ren_release::Release::PROJECTS)
+                .join("acme-web");
+            std::fs::create_dir_all(&project).unwrap();
+            std::fs::write(
+                project.join(ren_release::Release::FILE),
+                serde_json::to_vec(&release()).unwrap(),
+            )
+            .unwrap();
+            read("/api/release".to_owned()).await
+        }),
+        (
+            "release_projects",
+            read("/api/release/projects".to_owned()).await,
+        ),
     ];
     gateway.stop().await;
 

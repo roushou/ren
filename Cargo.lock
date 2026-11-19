@@ -1787,13 +1787,16 @@ dependencies = [
  "ren-harness",
  "ren-protocol",
  "ren-recorder",
+ "ren-release",
  "ren-store",
  "ren-supervisor",
  "reqwest",
  "rustix",
  "serde",
  "serde_json",
+ "serde_with",
  "sha2 0.11.1",
+ "strum",
  "tar",
  "tempfile",
  "thiserror",
@@ -1840,6 +1843,7 @@ dependencies = [
  "ren-harness",
  "ren-protocol",
  "ren-recorder",
+ "ren-release",
  "ren-store",
  "ren-supervisor",
  "reqwest",
@@ -1893,6 +1897,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "ren-project"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "thiserror",
+ "toml",
+]
+
+[[package]]
 name = "ren-protocol"
 version = "0.1.0"
 dependencies = [
@@ -1922,6 +1935,7 @@ dependencies = [
  "ren-depot",
  "ren-harness",
  "ren-protocol",
+ "ren-release",
  "serde",
  "serde_json",
  "serde_with",
@@ -1930,6 +1944,18 @@ dependencies = [
  "tokio",
  "tracing",
  "uuid",
+]
+
+[[package]]
+name = "ren-release"
+version = "0.1.0"
+dependencies = [
+ "ren-protocol",
+ "serde",
+ "serde_json",
+ "serde_with",
+ "strum",
+ "thiserror",
 ]
 
 [[package]]
@@ -1947,9 +1973,12 @@ dependencies = [
  "ren-gateway",
  "ren-git",
  "ren-harness",
+ "ren-project",
  "ren-protocol",
  "ren-recorder",
+ "ren-release",
  "ren-store",
+ "ren-supervisor",
  "reqwest",
  "serde",
  "serde_json",
@@ -1974,6 +2003,7 @@ dependencies = [
  "ren-harness",
  "ren-protocol",
  "ren-recorder",
+ "ren-release",
  "serde",
  "serde_json",
  "serde_with",
@@ -3451,8 +3481,11 @@ dependencies = [
  "ren-gateway",
  "ren-git",
  "ren-harness",
+ "ren-project",
  "ren-protocol",
  "ren-recorder",
+ "ren-release",
+ "ren-store",
  "ren-supervisor",
  "reqwest",
  "serde",

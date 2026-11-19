@@ -7,10 +7,12 @@ use crate::{
     project::Look,
     run::ProcessExit,
     workdir::Workdir,
+    workspace::Workspace,
 };
 use futures_util::future::BoxFuture;
 use ren_depot::toolset::Generation;
 use ren_harness::{launch::LaunchPlan, sign_in::LocalRedirect};
+use ren_recorder::id::RunId;
 use std::{
     io,
     path::{Path, PathBuf},
@@ -73,6 +75,70 @@ pub trait AgentHost: Send + Sync + 'static {
         workdir: &Workdir,
         tools: &RunTools,
     ) -> io::Result<AgentProcess>;
+
+    /// Start `run`'s client process, as [`Self::spawn`] does. A host that
+    /// can keep the process going when the daemon stops starts it under a
+    /// run host and says so in its [`Tenure`]; the default starts it bound
+    /// to the daemon.
+    fn start_run(
+        &self,
+        run: RunId,
+        plan: &LaunchPlan,
+        workdir: &Workdir,
+        tools: &RunTools,
+    ) -> io::Result<AgentProcess> {
+        let _ = run;
+        self.spawn(plan, workdir, tools)
+    }
+
+    /// The runs whose run hosts kept them going while no daemon ran, each
+    /// with its journal. None by default: a host that holds no runs.
+    fn held(&self) -> io::Result<Vec<HeldRun>> {
+        Ok(Vec::new())
+    }
+
+    /// Bytes `from..to` of a held run's spool, everything its client wrote;
+    /// fewer when the spool holds fewer.
+    fn spool(&self, run: RunId, from: u64, to: u64) -> io::Result<Vec<u8>> {
+        let _ = (run, from, to);
+        Err(io::ErrorKind::Unsupported.into())
+    }
+
+    /// Take up a held run again: its client's output from byte `from` of
+    /// its spool, its stdin, its exit, and its journal to go on with.
+    fn rejoin(&self, run: RunId, from: u64) -> io::Result<AgentProcess> {
+        let _ = (run, from);
+        Err(io::ErrorKind::Unsupported.into())
+    }
+
+    /// Make `folder` a worktree of the repository at `repo` on a new
+    /// branch `branch`, and `data` its data folder. None by default: a host
+    /// that makes no workspaces.
+    fn make_worktree(
+        &self,
+        repo: &Path,
+        folder: &Path,
+        data: &Path,
+        branch: &str,
+        tools: &RunTools,
+    ) -> io::Result<()> {
+        let _ = (repo, folder, data, branch, tools);
+        Err(io::ErrorKind::Unsupported.into())
+    }
+
+    /// Remove `workspace`: stop its preview's units, then remove its
+    /// worktree and its data folder, and its branch once merged. A worktree
+    /// holding changes not committed is kept, and the error says so.
+    fn remove_worktree(&self, workspace: &Workspace, tools: &RunTools) -> io::Result<()> {
+        let _ = (workspace, tools);
+        Err(io::ErrorKind::Unsupported.into())
+    }
+
+    /// `run` has ended and its end is recorded: what its host kept of it
+    /// can go. Nothing to do by default.
+    fn release(&self, run: RunId) {
+        let _ = run;
+    }
 
     /// Start `plan`, one of a client's own short commands (its status or
     /// login), as [`Self::spawn`] does, but with its stdout and stderr read
@@ -187,13 +253,36 @@ impl RunTools {
     }
 }
 
-/// A started agent process: its pipes, its exit, and the means to end it.
+/// A started agent process: its pipes, its exit, the means to end it, and
+/// whether it outlives the daemon.
 pub struct AgentProcess {
     pub stdin: Box<dyn AsyncWrite + Send + Unpin>,
     pub stdout: Box<dyn AsyncRead + Send + Unpin>,
     /// Resolves once the process has exited.
     pub exit: BoxFuture<'static, ProcessExit>,
     pub kill: KillSwitch,
+    pub tenure: Tenure,
+}
+
+/// Whether a process outlives the daemon that started it.
+pub enum Tenure {
+    /// It ends with the daemon, which drains it as it stops.
+    Bound,
+    /// A run host keeps it going when the daemon stops, and keeps every
+    /// byte it writes. The daemon appends what it gives the process to
+    /// `journal`, so the next daemon can take it up exactly where this one
+    /// left it.
+    Held {
+        journal: Box<dyn AsyncWrite + Send + Unpin>,
+    },
+}
+
+/// A run a run host kept going while no daemon ran.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HeldRun {
+    pub run: RunId,
+    /// Its journal, as the daemon before left it.
+    pub journal: Vec<u8>,
 }
 
 /// Ends a process when fired. The process's `exit` resolves afterwards.

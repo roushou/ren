@@ -43,7 +43,7 @@ test('the brief lists each noted mark with what it points at', () => {
     page,
     ren,
     [mark(1, 'Move it to the end.'), mark(2, '  ')],
-    'worktree',
+    'session',
   );
   assert.equal(
     brief,
@@ -59,29 +59,24 @@ test('the brief lists each noted mark with what it points at', () => {
       '   - Source: `src/routes/sessions/+page.svelte:861`',
       '   - Size: 62×18',
       '',
-      "Answer what the notes ask without changing anything. If a note asks for a change, make it on a new branch, `redline/move-it-to-the-end`, in a git worktree of this repository, not in the checkout itself, since other sessions are open there, and run the project's checks. Don't install or restart anything: I'll review the branch.",
+      "Answer what the notes ask without changing anything. If a note asks for a change, make it on a new branch, `redline/move-it-to-the-end`, in a git worktree of this repository unless you already work in one, never in a checkout other sessions share, and run the project's checks. Don't install or restart anything: I'll review the branch.",
     ].join('\n'),
   );
   assert.equal(Briefing.routeFile('/'), 'ui/apps/web/src/routes/+page.svelte');
 });
 
-test('alone in the checkout, a change is made there and the checkout switched back', () => {
-  const brief = Briefing.brief(page, ren, [mark(1, 'Move it to the end.')], 'checkout');
+test('a new session works on its brief in the workspace Ren made for it', () => {
+  const brief = Briefing.brief(page, ren, [mark(1, 'Move it to the end.')], 'workspace');
   assert.equal(
     brief.split('\n').at(-1),
-    "Answer what the notes ask without changing anything. If a note asks for a change, make it on a new branch, `redline/move-it-to-the-end`, in this checkout, since no other session is open here; if `git status` shows uncommitted changes, use a git worktree of this repository instead. Run the project's checks, commit, and switch the checkout back to the branch it was on. Don't install or restart anything: I'll review the branch.",
+    "Answer what the notes ask without changing anything. If a note asks for a change, make it here: this session works in a workspace of its own, a worktree of the repository on a branch of its own. Run the project's checks and commit on that branch. Don't install or restart anything: I'll review the branch.",
   );
 });
 
-test('a worktree is asked for only when another session is open in the checkout', () => {
-  const session = (id: string) => ({ session: id as SessionId }) as DeskSession;
-  const [a, b] = [session('a'), session('b')];
-  // A new session: any open one is another.
-  assert.equal(Briefing.place({ kind: 'new' }, []), 'checkout');
-  assert.equal(Briefing.place({ kind: 'new' }, [a]), 'worktree');
-  // An open session: itself does not count.
-  assert.equal(Briefing.place({ kind: 'session', session: a }, [a]), 'checkout');
-  assert.equal(Briefing.place({ kind: 'session', session: a }, [a, b]), 'worktree');
+test('a new session gets a workspace, and an open one works where it is', () => {
+  const session = { session: 'a' as SessionId } as DeskSession;
+  assert.equal(Briefing.place({ kind: 'new' }), 'workspace');
+  assert.equal(Briefing.place({ kind: 'session', session }), 'session');
 });
 
 test('the build is named when the daemon says what it was built from', () => {
@@ -196,7 +191,7 @@ test('without a route or a build, the brief says nothing of either', () => {
     page,
     { route: null, revision: null },
     [mark(1, 'Move it.')],
-    'checkout',
+    'workspace',
   );
   assert.ok(brief.includes('dark theme.\n\n1. Move it.'));
 });

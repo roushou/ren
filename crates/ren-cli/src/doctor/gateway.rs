@@ -3,10 +3,7 @@
 
 use super::{CheckId, Report, Status};
 use crate::Cli;
-use ren_gateway::{
-    Environment,
-    build::{Build, Comparison, Revision},
-};
+use ren_gateway::Environment;
 use ren_harness::{
     endpoint::{GatewayEndpoint, UserToken},
     host::HostEnv,
@@ -14,6 +11,7 @@ use ren_harness::{
 use ren_protocol::label::Stored;
 use ren_recorder::caller::CallerKind;
 use ren_recorder::retention::RetentionPolicy;
+use ren_release::{Build, Comparison, Revision};
 use serde::{Deserialize, de::DeserializeOwned};
 use std::time::Duration;
 
@@ -266,6 +264,16 @@ impl Report {
                 CheckId::Instance,
                 Status::Ok,
                 "a development instance (such as the dev slot), not a production gateway",
+            ),
+            Some(Some(Environment::Preview)) => self.add(
+                CheckId::Instance,
+                Status::Ok,
+                "a preview: one workspace's branch on a copy of production's history, not a production gateway",
+            ),
+            Some(Some(Environment::Canary)) => self.add(
+                CheckId::Instance,
+                Status::Ok,
+                "the canary: main's tip on a copy of production's history, not a production gateway",
             ),
             Some(None) => self.add(
                 CheckId::Instance,

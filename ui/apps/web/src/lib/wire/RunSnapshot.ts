@@ -13,4 +13,8 @@ session: string, harness: string, workdir: string, state: RunState,
 /**
  * What it was started with; each left out is the client's own.
  */
-settings: RunSettings, };
+settings: RunSettings, 
+/**
+ * Whether it outlives the daemon: `held` by a run host, or `bound`.
+ */
+tenure: string, };

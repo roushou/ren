@@ -37,13 +37,14 @@ mod sink;
 mod tap;
 mod task;
 pub mod time;
+pub mod work;
 
 pub use metrics::{DedupMetrics, OmissionMetrics, QueueMetrics, RecorderMetrics};
 pub use options::{CaptureOptions, CaptureOptionsError, CaptureSplit};
 pub use sink::{Committed, Observation, Pruned, RecordSink};
 pub use tap::{
     AttemptRequest, AttemptStart, AttemptTap, CallStart, CallTap, ChannelTap, Head, HistorySlot,
-    OperatorSlot, ResponseTap, RunSession, RunTap, RunUnrecorded, SessionSlot,
+    OperatorSlot, ResponseTap, RunSession, RunTap, RunUnrecorded, SessionSlot, WorkSlot,
 };
 pub use task::RecorderTask;
 
@@ -200,6 +201,12 @@ impl Recorder {
         SessionSlot::reserve(self.shared.clone())
     }
 
+    /// A slot to record one fact about a work item, or `None` when the
+    /// recorder has no room.
+    pub fn work_slot(&self) -> Option<WorkSlot> {
+        WorkSlot::reserve(self.shared.clone())
+    }
+
     /// Record the start of `run`, serving `session` (recorded first when it
     /// is new), `harness` working in `workdir`, and reserve its end record.
     /// Never blocks; without room the run must not start.
@@ -221,6 +228,13 @@ impl Recorder {
             settings,
             toolset,
         )
+    }
+
+    /// Take up `run` again, which a previous daemon detached from: its run
+    /// host kept it going. Recorded as rejoined; without room, it is not
+    /// taken up.
+    pub fn rejoin(&self, run: crate::id::RunId) -> Result<RunTap, RunUnrecorded> {
+        RunTap::rejoin(self.shared.clone(), run)
     }
 
     /// Reserve the end record of a WebSocket channel whose handshake call

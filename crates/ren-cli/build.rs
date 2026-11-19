@@ -1,6 +1,6 @@
 //! Records the source revision this binary is compiled from as
 //! `REN_REVISION`: `<commit>`, `<commit>-dirty`, or `unknown`
-//! (`ren_gateway::build::Revision` parses it).
+//! (`ren_release::Revision` parses it).
 //!
 //! A packaged crate (crates.io) carries `.cargo_vcs_info.json`; a checkout,
 //! including `cargo install --git`, has git. Untracked files don't count as

@@ -5,9 +5,10 @@ use crate::item::{Item, Shared};
 use crate::{
     batch::{
         HistoryChange, HistoryEdit, HistorySubject, OperatorAction, Recorded, SessionFact,
-        SessionRecord,
+        SessionRecord, WorkFact, WorkRecord,
     },
-    id::SessionId,
+    id::{SessionId, WorkItemId},
+    work::WorkOrder,
 };
 use std::sync::Arc;
 use tokio::sync::{OwnedSemaphorePermit, mpsc::OwnedPermit};
@@ -116,6 +117,48 @@ impl SessionSlot {
             record: SessionRecord {
                 at: self.shared.clock.now(),
                 session,
+                fact,
+            },
+            _slot: self.permit,
+        });
+    }
+}
+
+/// A reserved slot for one fact about a work item, recorded when it is used.
+pub struct WorkSlot {
+    shared: Arc<Shared>,
+    slot: OwnedPermit<Item>,
+    permit: OwnedSemaphorePermit,
+}
+
+impl WorkSlot {
+    pub(crate) fn reserve(shared: Arc<Shared>) -> Option<Self> {
+        let (slot, permit) = shared.reserve_close()?;
+        Some(Self {
+            shared,
+            slot,
+            permit,
+        })
+    }
+
+    /// Queue `order` as a new work item, and return its id.
+    pub fn queue(self, order: WorkOrder) -> WorkItemId {
+        let item = WorkItemId::generate(self.shared.ids.as_ref());
+        self.record(
+            item,
+            WorkFact::Queued {
+                order: Box::new(order),
+            },
+        );
+        item
+    }
+
+    /// Record `fact` about `item`, after everything queued before.
+    pub fn record(self, item: WorkItemId, fact: WorkFact) {
+        self.slot.send(Item::Work {
+            record: WorkRecord {
+                at: self.shared.clock.now(),
+                item,
                 fact,
             },
             _slot: self.permit,

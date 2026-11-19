@@ -189,6 +189,15 @@ impl Shelf {
         }
     }
 
+    /// The SQL condition a work item meets on this shelf: one shipped or
+    /// dismissed is done, and archived; every other is current.
+    pub(crate) fn work(self) -> &'static str {
+        match self {
+            Self::Current => "state NOT IN ('shipped', 'dismissed')",
+            Self::Archived => "state IN ('shipped', 'dismissed')",
+        }
+    }
+
     /// The SQL condition a run meets on this shelf: a running run is always
     /// current.
     pub(crate) fn runs(self) -> &'static str {

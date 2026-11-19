@@ -1,0 +1,39 @@
+{
+  "api_version": 1,
+  "projects": [
+    {
+      "name": "acme-web",
+      "release": {
+        "main": "62e9e9e0000000000000000000000000000000ff",
+        "production": "07f4bb7c1e2a3b4c5d6e7f8091a2b3c4d5e6f708",
+        "behind": 1,
+        "canary": {
+          "commit": "62e9e9e0000000000000000000000000000000ff",
+          "passed": true,
+          "checks": [
+            {
+              "check": "doctor",
+              "name": null,
+              "passed": true,
+              "detail": null
+            },
+            {
+              "check": "reads",
+              "name": null,
+              "passed": true,
+              "detail": null
+            },
+            {
+              "check": "pages",
+              "name": null,
+              "passed": true,
+              "detail": null
+            }
+          ]
+        },
+        "policy": "manual",
+        "decision": "awaiting_operator"
+      }
+    }
+  ]
+}
