@@ -238,10 +238,10 @@ The dev slot exists (`cargo xtask dev`). Each instance names itself with
      slot's copied history with its preview tag, was recorded on that
      workspace's two items (the Work view showed "On the branch"), and
      stopped when the session was deleted.
+   - Deleting a workspace's session takes its preview off the session's
+     work items too, so no link leads to a port nothing serves.
    - Not built: a screenshot with the marks (a page cannot capture itself
-     without the browser asking, or a library), and clearing a preview from
-     its items when its workspace goes; the link then fails until the item
-     lands.
+     without the browser asking, or a library).
 6. **Projects.** Built: a project's contract, checks, previews, canary,
    and promotion. Not surfaced in the UI, and with no timer of its own.
    - A repository declares in `ren-project.toml` how it is built, served,

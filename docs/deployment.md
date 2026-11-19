@@ -421,9 +421,11 @@ history, its `release.json`, and never a promotion.
 
 `cargo xtask preview` runs one workspace's branch on a copy of production's
 history, so its change is judged on the page it was marked on, beside
-production's. It runs in a workspace Ren made (it reads `REN_WORKSPACE`,
-`REN_WORKSPACE_PORTS`, and `REN_WORKSPACE_DATA`, which the workspace's runs
-are told), and a brief asks the agent to start one once its change is ready:
+production's. It runs in a workspace Ren made: it reads `REN_WORKSPACE`,
+which the workspace's runs are told, refuses a folder that is not one of
+Ren's worktrees named `<repo>-<slot>`, and takes the data folder and ports
+Ren gives that slot. A brief asks the agent to start one once its change is
+ready:
 
 ```sh
 cargo xtask preview up --publish   # build, copy production's history, start, record
@@ -440,7 +442,7 @@ install's saved Tailscale choice. It then records the preview on every sent
 work item the branch's recent commits name (`Work-Item: <id>`), and on each
 `--work <id>`: the Work view opens the marked page on it beside production's.
 `--of dev` copies the dev slot instead. Deleting the workspace's session
-stops its preview with it.
+stops its preview with it, and takes it off the session's work items.
 
 ### Projects
 
@@ -481,11 +483,16 @@ ren project preview down --publish # quiesce, stop, take it off the work items
 
 `check` runs in the workspace it is started in (or `--dir`; outside a
 workspace a step that names a port does not run). `preview up` runs the
-build steps, starts the serve step as `ren-preview-<workspace>-serve`, waits
-for its health path, publishes the port its page opens on with
-`--publish`, and records the preview on the sent work items the branch's
-commits name (`Work-Item: <id>`) or `--work` gives, through this host's
-daemon. Deleting the workspace's session stops it. The dev slot's fake
+build steps, starts the serve step as `ren-preview-<workspace>-serve` (with
+the caller's `PATH`, so programs installed in your home are found), waits
+for its health path, and records the preview on the sent work items the
+branch's commits name (`Work-Item: <id>`) or `--work` gives, through this
+host's daemon. With `--publish` it publishes the port its page opens on, as
+`install-vps` does: a free port is published, and one Serve already uses
+for anything else, or exposes through Funnel, is refused; `down` removes
+the route only while it still points at the preview. Like Ren's, it works
+in a workspace read from `REN_WORKSPACE` alone. Deleting the workspace's
+session stops it and takes it off its work items. The dev slot's fake
 projects declare one: a static page served by Python, deployed by copying
 it into a folder under the canary's data.
 
