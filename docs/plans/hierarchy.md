@@ -197,7 +197,14 @@ Records outside the tree stay, and each says why it is outside:
    clears it, and switching between those two keeps it. A project's page
    links its calls and recordings.
 
-   Left for later rounds: a project's workspaces.
+   A project's page lists its workspaces
+   (`/api/projects/{name}/workspaces`): each current session of the
+   project's that works in a worktree of its repository, with the folder's
+   name, its port range and data folder, what its session was first asked,
+   whether a run is under way, and the open work items it took up (each
+   opening in the drawer, with its preview). They are read from the
+   sessions' folders, so no separate list is kept; a shipped item is
+   archived and leaves its workspace's row.
 
 Each phase is verified in the dev slot, whose fake projects are registered
 as projects (and the slot's checkout as `Ren`), and by the compatibility

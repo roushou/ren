@@ -82,6 +82,8 @@ pub(crate) struct ReadSources {
     pub build: Build,
     pub instance: InstanceOptions,
     pub release: ReleaseFolder,
+    /// Where workspaces are made, when runs are on.
+    pub worktrees: Option<std::path::PathBuf>,
 }
 
 /// What the read API reads from. It never writes.
@@ -94,6 +96,8 @@ pub(crate) struct ApiState {
     build: Build,
     instance: InstanceOptions,
     release: ReleaseFolder,
+    /// Where workspaces are made, when runs are on.
+    worktrees: Option<std::path::PathBuf>,
     previews: Arc<Semaphore>,
     exports: Arc<Semaphore>,
     shutdown: CancellationToken,
@@ -243,8 +247,10 @@ impl ApiState {
             build,
             instance,
             release,
+            worktrees,
         } = sources;
         Self {
+            worktrees,
             reader,
             recorder,
             controls,
@@ -273,6 +279,10 @@ impl ApiState {
             .route("/api/projects", get(Self::projects))
             .route("/api/projects/{name}", get(Self::project))
             .route("/api/projects/{name}/release", get(Self::project_release))
+            .route(
+                "/api/projects/{name}/workspaces",
+                get(Self::project_workspaces),
+            )
             .route(
                 "/api/projects/{name}/release/shots/{shot}",
                 get(Self::project_shot),

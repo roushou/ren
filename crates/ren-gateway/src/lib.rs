@@ -171,6 +171,10 @@ impl<U: Upstream> Gateway<U> {
                 build: management.build,
                 instance: management.instance,
                 release: management.release,
+                worktrees: management
+                    .runs
+                    .as_ref()
+                    .and_then(|runs| runs.worktrees().map(std::path::Path::to_path_buf)),
             },
             self.recorder.clone(),
             self.controls.clone(),

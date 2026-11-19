@@ -1,8 +1,8 @@
 <!--
   A project (docs/plans/hierarchy.md): what it is, where its release
-  stands, its work items by state, and the runs of the sessions working for
-  it. Each item opens in Work, each run in Sessions, and Ren's release in
-  full in Release.
+  stands, its work items by state, the workspaces its sessions work in, and
+  their runs. Each item opens in a drawer, each workspace and run in
+  Sessions, and Ren's release in full in Release.
 -->
 <script lang="ts">
   import Toolbar from '#lib/Toolbar.svelte';
@@ -11,7 +11,7 @@
   import { onMount, tick } from 'svelte';
   import { goto, invalidateAll } from '$app/navigation';
   import { page } from '$app/state';
-  import { WorkApi, WorkError, type WorkItem } from '#lib/work.ts';
+  import { Work, WorkApi, WorkError, type WorkItem } from '#lib/work.ts';
   import { ago } from '#lib/overview.ts';
   import { harnessLabel } from '#lib/activity.ts';
   import { ProjectBoard } from '#lib/projects.ts';
@@ -176,6 +176,49 @@
         {/each}
       </ul>
     {/each}
+
+    <h2>Workspaces</h2>
+    {#if !data.workspaces.length}
+      <p class="empty">
+        No session works in a worktree of {project.name}. Sending work makes one.
+      </p>
+    {:else}
+      <ul class="rows workspaces">
+        {#each data.workspaces as workspace (workspace.session)}
+          <li>
+            <span class="workspace">
+              <a href={`/sessions?session=${workspace.session}`}
+                ><span class="mono">{workspace.name}</span></a
+              >
+              <span class="muted asked">{workspace.prompt ?? 'not asked anything yet'}</span>
+              {#each workspace.work as item (item.id)}
+                <span class="taken">
+                  <span class="work-state state-{item.state}">{Work.state(item.state)}</span>
+                  <a
+                    href={`?item=${item.id}`}
+                    data-sveltekit-reset="false"
+                    onclick={() => (opened = true)}>{item.title}</a
+                  >
+                  {#if item.preview}<a
+                      class="muted"
+                      href={item.preview}
+                      target="_blank"
+                      rel="noopener">preview up</a
+                    >{/if}
+                </span>
+              {/each}
+            </span>
+            <span class="muted mono" title={`Data in ${workspace.data}`}
+              >ports {workspace.ports[0]}–{workspace.ports[1]}</span
+            >
+            <span class="muted">
+              {#if workspace.running}<span class="live"><span class="dot"></span>running</span
+                >{:else}idle{/if}
+            </span>
+          </li>
+        {/each}
+      </ul>
+    {/if}
 
     <h2 class="with-links">
       Runs
@@ -458,6 +501,29 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+  .rows.workspaces li {
+    grid-template-columns: minmax(0, 1fr) 140px 90px;
+  }
+  .rows.workspaces li > :first-child {
+    white-space: normal;
+  }
+  .workspace {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .asked {
+    font-size: 12px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .taken {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    font-size: 12px;
   }
   .when {
     text-align: right;

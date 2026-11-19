@@ -87,6 +87,18 @@ impl AgentHost for ScriptedHost {
         Ok(Scratch::Repository)
     }
 
+    /// A worktree made in name only: nothing is written.
+    fn make_worktree(
+        &self,
+        _repo: &Path,
+        _folder: &Path,
+        _data: &Path,
+        _branch: &str,
+        _tools: &RunTools,
+    ) -> io::Result<()> {
+        Ok(())
+    }
+
     /// Attachments are real files, in the test's own data folder.
     fn place_file(&self, incoming: &Path, target: &Path, bytes: &[u8]) -> io::Result<()> {
         for dir in [incoming.parent(), target.parent()].into_iter().flatten() {

@@ -191,3 +191,41 @@ test("an item's project decides its brief, and a batch is one project's", () => 
   });
   assert.equal(Work.oneProject([item('a', 'acme-id'), item('b', null)], projects), null);
 });
+
+test("a project's workspaces decode, its sessions' worktrees with their ports", async () => {
+  const seen: string[] = [];
+  const answer = {
+    api_version: 1,
+    workspaces: [
+      {
+        name: 'acme-1',
+        folder: '/data/worktrees/acme-1',
+        data: '/data/worktrees/.data/acme-1',
+        ports: [20000, 20099],
+        session: '0190f3a0-0000-7000-8000-00000000a001',
+        prompt: 'fix the order list sorting',
+        running: true,
+        work: [
+          {
+            id: '0190f3a0-0000-7000-8000-00000000000b',
+            title: 'Sort orders by date',
+            state: 'sent',
+            preview: 'http://127.0.0.1:20000',
+          },
+        ],
+      },
+    ],
+  };
+  const fetcher = (async (input: RequestInfo | URL) => {
+    seen.push(String(input));
+    return Response.json(answer);
+  }) as typeof fetch;
+  const [workspace] = await new WorkApi(fetcher).workspaces('acme web');
+  assert.deepEqual(seen, ['/api/projects/acme%20web/workspaces']);
+  assert.deepEqual(workspace?.ports, [20000, 20099]);
+  assert.equal(workspace?.work[0]?.state, 'sent');
+  const malformed = { ...answer, workspaces: [{ ...answer.workspaces[0], ports: [20000] }] };
+  await assert.rejects(
+    new WorkApi((async () => Response.json(malformed)) as typeof fetch).workspaces('acme'),
+  );
+});

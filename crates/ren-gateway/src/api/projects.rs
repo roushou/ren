@@ -8,6 +8,9 @@
 //!   the pages its canary captured and any promotion asked for.
 //! - `GET /api/projects/{name}/release/shots/{shot}`: one captured page,
 //!   as PNG; only Ren's canary captures pages.
+//! - `GET /api/projects/{name}/workspaces`: the workspaces its current
+//!   sessions work in, each with its slot's ports and data folder, whether
+//!   a run is under way in it, the work items it serves, and their preview.
 //!
 //! They join the store's projects with the release files the factory
 //! writes, so they are served here rather than as a store read.
@@ -20,12 +23,15 @@ use axum::{
 use http::header;
 use ren_protocol::label::Stored;
 use ren_recorder::{
-    id::ProjectId,
+    id::{ProjectId, SessionId, WorkItemId},
     project::{Factory, ProjectName, RepositoryPath},
     time::UnixMillis,
+    work::{PreviewUrl, WorkStateKind},
 };
 use ren_release::ShotName;
+use ren_store::query::{PageLimit, Shelf};
 use ren_store::view::{ProjectActivity, ProjectView, WorkCounts};
+use ren_supervisor::Workspace;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use ts_rs::TS;
@@ -62,6 +68,49 @@ pub struct ProjectBody {
     pub running: u64,
     /// None until its canary has run.
     pub release: Option<ReleaseView>,
+}
+
+/// `/api/projects/{name}/workspaces`' answer.
+#[derive(Debug, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ProjectWorkspaces {
+    pub workspaces: Vec<WorkspaceBody>,
+}
+
+/// One workspace: a worktree of the project's repository a session works
+/// in, with the ports and data folder its slot holds.
+#[derive(Debug, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct WorkspaceBody {
+    /// `<repo>-<slot>`, the worktree's folder name.
+    pub name: String,
+    pub folder: String,
+    /// Its data folder, as its runs are told (`REN_WORKSPACE_DATA`).
+    pub data: String,
+    /// Its ports, first and last, as its runs are told.
+    pub ports: (u16, u16),
+    #[ts(as = "String")]
+    pub session: SessionId,
+    /// The first line of the session's first prompt; none until it is asked.
+    pub prompt: Option<String>,
+    /// Whether one of its runs has not ended.
+    pub running: bool,
+    /// The work items its session took up.
+    pub work: Vec<WorkspaceWork>,
+}
+
+/// A work item a workspace's session took up, with its preview, if up.
+#[derive(Debug, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct WorkspaceWork {
+    #[ts(as = "String")]
+    pub id: WorkItemId,
+    pub title: String,
+    #[ts(as = "String")]
+    pub state: Stored<WorkStateKind>,
+    /// Where the preview of its change is served, while one is up.
+    #[ts(as = "Option<String>")]
+    pub preview: Option<PreviewUrl>,
 }
 
 /// A project's work items, counted by state.
@@ -169,6 +218,56 @@ impl ApiState {
             .map_err(|_| ApiError::NotFound)?;
         let bytes = state.release.shot(&shot).await?.ok_or(ApiError::NotFound)?;
         Ok(([(header::CONTENT_TYPE, "image/png")], bytes).into_response())
+    }
+
+    /// The workspaces a project's current sessions work in. None when runs
+    /// are off, since no workspace is made then.
+    pub(super) async fn project_workspaces(
+        State(state): State<Arc<Self>>,
+        Path(name): Path<String>,
+    ) -> Result<Response, ApiError> {
+        let project = state.named(&name).await?;
+        let Some(root) = state.worktrees.as_deref() else {
+            return Ok(Self::versioned(ProjectWorkspaces {
+                workspaces: Vec::new(),
+            })
+            .into_response());
+        };
+        let sessions = state
+            .reader
+            .sessions(PageLimit::LARGEST, Shelf::Current, Some(&project.name))
+            .await?;
+        let work = state
+            .reader
+            .work_items(PageLimit::LARGEST, Shelf::Current, Some(&project.name))
+            .await?;
+        let workspaces = sessions
+            .into_iter()
+            .filter_map(|session| {
+                let workspace = Workspace::of(root, std::path::Path::new(&session.workdir))?;
+                let folder = workspace.folder();
+                Some(WorkspaceBody {
+                    name: folder.file_name()?.to_str()?.to_owned(),
+                    folder: folder.to_str()?.to_owned(),
+                    data: workspace.data().to_str()?.to_owned(),
+                    ports: workspace.ports(),
+                    session: session.id,
+                    prompt: session.first_prompt.clone(),
+                    running: session.runs.iter().any(|run| run.ended_at.is_none()),
+                    work: work
+                        .iter()
+                        .filter(|item| item.session == Some(session.id))
+                        .map(|item| WorkspaceWork {
+                            id: item.id,
+                            title: item.title.clone(),
+                            state: item.state.clone(),
+                            preview: item.preview.as_ref().map(|preview| preview.ui.clone()),
+                        })
+                        .collect(),
+                })
+            })
+            .collect();
+        Ok(Self::versioned(ProjectWorkspaces { workspaces }).into_response())
     }
 
     async fn named(&self, name: &str) -> Result<ProjectView, ApiError> {

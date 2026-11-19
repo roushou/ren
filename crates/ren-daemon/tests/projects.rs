@@ -258,3 +258,79 @@ async fn sessions_and_work_items_belong_to_the_project_they_are_for() {
     );
     assert_eq!(owner(dir.path(), &scratch, |_| true).await, None);
 }
+
+#[tokio::test]
+async fn a_projects_workspaces_are_its_sessions_worktrees() {
+    let upstream = mock(Router::new()).await;
+    let dir = tempfile::tempdir().unwrap();
+    let gateway = TestGateway::with_runs(
+        &config(&upstream),
+        dir.path(),
+        vec![PathBuf::from("/work")],
+        ScriptedHost,
+    )
+    .await;
+    let (status, _) = send(
+        &gateway,
+        "/projects",
+        Some(json!({ "name": "acme", "repository": "/work/acme", "factory": "contract" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    settled(dir.path(), |projects| !projects.is_empty()).await;
+    // One session in a workspace of its own, one in the folder itself.
+    let (status, body) = send(
+        &gateway,
+        "/sessions",
+        Some(json!({ "harness": "codex", "project": "acme" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    let in_workspace = body["session"].as_str().unwrap().to_owned();
+    send(
+        &gateway,
+        "/sessions",
+        Some(json!({ "harness": "codex", "project": "acme", "workspace": "folder" })),
+    )
+    .await;
+    let read = || async {
+        let response = client()
+            .get(format!("{}/api/projects/acme/workspaces", gateway.base()))
+            .send()
+            .await
+            .unwrap();
+        assert!(response.status().is_success());
+        serde_json::from_slice::<Value>(&response.bytes().await.unwrap()).unwrap()
+    };
+    let mut listed = Value::Null;
+    for _ in 0..200 {
+        listed = read().await;
+        if listed["workspaces"]
+            .as_array()
+            .is_some_and(|all| !all.is_empty())
+        {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    let workspaces = listed["workspaces"].as_array().unwrap();
+    assert_eq!(workspaces.len(), 1, "{listed}");
+    assert_eq!(workspaces[0]["session"], in_workspace.as_str());
+    assert_eq!(workspaces[0]["name"], "acme-1");
+    assert_eq!(workspaces[0]["ports"], json!([20000, 20099]));
+    assert!(
+        workspaces[0]["data"]
+            .as_str()
+            .unwrap()
+            .ends_with(".data/acme-1")
+    );
+    let missing = client()
+        .get(format!(
+            "{}/api/projects/acme-none/workspaces",
+            gateway.base()
+        ))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(missing.status(), StatusCode::NOT_FOUND);
+}
