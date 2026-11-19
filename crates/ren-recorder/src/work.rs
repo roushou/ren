@@ -216,11 +216,23 @@ impl Landing {
     /// The trailer's key.
     pub const TRAILER: &str = "Work-Item";
 
-    /// The items `message` names, once each, in the order named. A line is
-    /// a trailer when it is the key, a colon, and an id, wherever it is.
+    /// The items `message` names, once each, in the order named.
     pub fn read(commit: Commit, message: &str) -> Self {
-        let mut items = Vec::new();
-        for line in message.lines() {
+        Self {
+            commit,
+            items: Self::named([message], &[]),
+        }
+    }
+
+    /// The items `given`, then those `messages` name, once each, in that
+    /// order: what a branch's commits address. A line is a trailer when it
+    /// is the key, a colon, and ids, wherever it is.
+    pub fn named<'a>(
+        messages: impl IntoIterator<Item = &'a str>,
+        given: &[WorkItemId],
+    ) -> Vec<WorkItemId> {
+        let mut items = given.to_vec();
+        for line in messages.into_iter().flat_map(str::lines) {
             let Some((key, value)) = line.trim().split_once(':') else {
                 continue;
             };
@@ -235,7 +247,7 @@ impl Landing {
                 }
             }
         }
-        Self { commit, items }
+        items
     }
 }
 

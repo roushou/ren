@@ -302,17 +302,8 @@ impl Preview {
         };
         let git = Git::inherited();
         let head = git.head_commit(repo)?;
-        let mut named: Vec<WorkItemId> = given.to_vec();
-        for (commit, message) in git.log(repo, &head, Self::HISTORY)? {
-            let Ok(commit) = commit.as_str().parse() else {
-                continue;
-            };
-            for item in Landing::read(commit, &message).items {
-                if !named.contains(&item) {
-                    named.push(item);
-                }
-            }
-        }
+        let log = git.log(repo, &head, Self::HISTORY)?;
+        let named = Landing::named(log.iter().map(|(_, message)| message.as_str()), given);
         Ok(named
             .into_iter()
             .filter(|item| {

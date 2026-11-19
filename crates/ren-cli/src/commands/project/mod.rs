@@ -363,17 +363,8 @@ impl ProjectCmd {
         let listed = Self::listed(ctx, args).await?;
         let git = Git::inherited();
         let head = git.head_commit(dir)?;
-        let mut named = args.work.clone();
-        for (commit, message) in git.log(dir, &head, 200)? {
-            let Ok(commit) = commit.as_str().parse() else {
-                continue;
-            };
-            for item in Landing::read(commit, &message).items {
-                if !named.contains(&item) {
-                    named.push(item);
-                }
-            }
-        }
+        let log = git.log(dir, &head, 200)?;
+        let named = Landing::named(log.iter().map(|(_, message)| message.as_str()), &args.work);
         Ok(named
             .into_iter()
             .filter(|item| {
