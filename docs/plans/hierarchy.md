@@ -1,0 +1,186 @@
+# Plan: hierarchy
+
+Ren's domain has no hierarchy, so its UI has none either. The topbar has 11
+links (Overview, Live, Sessions, Traffic, Recordings, Search, Usage, Tools,
+Work, Release, Recorder), each a flat list of one kind of record, because
+the API serves flat lists and nothing in the model says what owns what. The
+factory built in [self-build.md](self-build.md) runs a loop (a project's
+work is queued, sent to an agent, previewed, landed, checked, and promoted),
+but no record names the project the loop is for, so the loop cannot be
+shown as one.
+
+This plan adds that record and the links under it, then the API that serves
+the tree. The UI is redesigned on top of it, as its last phase. Each phase
+says whether it is built. Record every deviation here, with its reason.
+
+The principle: **every record Ren keeps either belongs to a project, or is
+explicitly unowned and says why.** Nesting in the UI follows ownership in
+the data. It is never invented in the view.
+
+## What Ren keeps today
+
+| Record                | Where                                                     | Owned by                                                                                |
+| --------------------- | --------------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| Operator session      | `operator_sessions`                                       | nothing: it keeps a folder (`workdir`) and a client                                     |
+| Run                   | `runs`                                                    | its session (`operator_session`)                                                        |
+| Recording, turn, call | `recordings`, `turns`, `calls`                            | a client's conversation (`native_id`), which a run's `thread` names when Ren started it |
+| Work item             | `work_items`                                              | nothing; once sent, it names the session that took it up (`operator_session`)           |
+| Ren's release         | `<data>/release.json`, written by `cargo xtask canary`    | nothing: there is one                                                                   |
+| A project's release   | `<data>/projects/<folder>/release.json`, by `ren project` | a repository's folder name                                                              |
+| A project's contract  | `.ren/project.toml` in its repository                     | the repository                                                                          |
+| Toolset               | `<data>/tools`                                            | the host                                                                                |
+
+So the links that exist are **run → session** and **work item → session**,
+and **call → run** through the client's conversation. Nothing points up from
+a session, and a "project" exists only as a folder name the CLI is handed
+(`--dir`). Two repositories with the same folder name share a release
+folder. Ren's own release takes a separate code path and has its own tab,
+although Ren is the first project the factory builds.
+
+## The tree
+
+```text
+Project                       a repository Ren builds (Ren is one)
+ ├─ Release                   main, the canary's verdict, production, the decision
+ ├─ Workspace                 a worktree of it, with its slot's ports and data
+ └─ Work item                 queued → sent → landed → shipped (or dismissed)
+     └─ Session               the agent conversation that does it
+         └─ Run               one client process
+             └─ Turn → Call   what the gateway recorded
+```
+
+Records outside the tree stay, and each says why it is outside:
+
+- **A scratch session** (a folder of its own, outside any project) belongs
+  to no project. It stays a session, listed with the sessions that have none.
+- **Traffic from clients Ren did not start** (a `claude` pointed at the
+  gateway by hand) belongs to no run. The gateway exists for it, so it is
+  first-class, under Inspect, never forced into a project.
+- **The toolset, usage, and the recorder's health** belong to the host.
+
+## Decisions
+
+1. **A project is a stored, registered record, not a folder name.** The new
+   `projects` table holds one row per project: a `ProjectId` (its own type),
+   a unique `ProjectName` (a slug the operator picks, which names it in the
+   CLI and in URLs), the repository's canonical absolute path (unique too),
+   the remote and branch its canary follows (`origin`, `main` unless given),
+   its factory, and `created_at` / `archived_at`. It is registered
+   explicitly (`ren project add --dir <repo> [--name]`,
+   `POST /control/v1/projects`), never inferred from a folder a session
+   happens to open.
+2. **How a project is built is a closed enum, `Factory`.** `Contract` reads
+   `.ren/project.toml` and runs `ren project canary`. `Ren` is Ren itself:
+   its canary is `cargo xtask canary` against a replica of production's
+   data, which a contract cannot express yet, and it is promoted by
+   `install-vps`. Each variant owns where its release is kept: `Contract`
+   in `<data>/projects/<name>/`, keyed by the registered name rather than a
+   folder name; `Ren` where it already is (`<data>/release.json`), so
+   production's file does not move.
+3. **Ownership points up, once, and is set when the record is made.**
+   - `operator_sessions.project`: a session made in a project's repository,
+     or in a workspace of it (`<repo>-<slot>` of that repository), names
+     the project, resolved when the session is created. A session may also
+     be asked for by project (`"project": "<name>"`, a workspace of it)
+     rather than by folder. A scratch session has none.
+   - `work_items.project`: queueing a work item names its project. Redline
+     marks pages of Ren's UI, so it defaults to Ren, and a page marked on a
+     project's preview names that project. Sending it opens its session in
+     that project.
+   - Runs, turns, and calls get no new column: a run's project is its
+     session's, and a call's run is the one whose `thread` names its
+     conversation (a recording's `native_id`), as the store's activity reader already joins.
+4. **Existing rows stay unowned, and are shown as unowned.** The migration
+   cannot know which project an old session or work item was for, so both
+   columns are nullable. A null reads as `Unassigned`, a typed state of its
+   own, never rounded up to Ren. `ren project add` offers to assign a
+   project's unassigned sessions whose folder is in its repository or one
+   of its workspaces, since the folder says so. Work items are assigned by
+   hand, because their marked page does not say which repository it was for.
+5. **The API serves the tree, with collections under a project.** The flat
+   reads stay, for Inspect, and gain a project filter. Project-scoped reads
+   are added. `/api/release` and `/api/release/projects` fold into a
+   project's own release read. This is a declared break: the UI and CLI
+   change with it.
+6. **The UI follows the tree.** There are three top-level destinations,
+   with depth under each. The navigation is decided from the operator's
+   tasks against this data, and rendered on dev-slot data before review. It
+   is not drawn here.
+
+| Today's link                                | Becomes                                                                                             |
+| ------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| Overview                                    | **Projects**: each project, what is in flight, and what waits on the operator                       |
+| Work, Release                               | a project's work items and release                                                                  |
+| Sessions                                    | a work item's or project's sessions; sessions with no project are listed apart                      |
+| Live, Traffic, Recordings, Search, Recorder | **Inspect**: one place over recorded calls, opened already scoped from a session, run, or work item |
+| Tools, Usage, the recorder's health         | **Host**                                                                                            |
+
+## Phases
+
+1. **The project record.** Not built.
+   - Ownership of the types: `ProjectId` joins the other identities in
+     `ren-recorder` (`id`). `ProjectName`, `Factory`, and the stored
+     project go in a `ren-recorder` `project` module beside `work`, since
+     the store and gateway consume them. `ren-project` stays the contract.
+     Labels (`factory`: `ren`, `contract`) are pinned in `labels.txt`.
+   - Migration `0004_projects.sql` adds `projects`. It only adds, so the
+     compatibility gate passes without a declaration. Its fixture is pinned
+     with the others.
+   - `ren project add | list | archive`, and `POST`/`DELETE
+     /control/v1/projects`. `ren project canary | promote | release` take
+     `--project <name>` and resolve it through the registry, replacing
+     `--dir`. A contract project's release folder moves from its folder
+     name to its registered name. Only dev-slot data has one today, so no
+     fallback is kept.
+   - `install-vps` registers its checkout as the `Ren` project, named `ren`,
+     if no project has that repository.
+2. **Ownership.** Not built.
+   - Migration `0005_ownership.sql` adds nullable
+     `operator_sessions.project` and `work_items.project`, with indexes.
+   - Session creation resolves the project from its folder (decision 3) and
+     accepts `"project"`. Queueing a work item takes `project`, defaulting
+     to Ren from Redline. Sending checks that the session belongs to the
+     same project.
+   - `ren project add` offers the assignment in decision 4.
+3. **The API.** Not built.
+   - Reads: `ReadRequest::Projects` and `ReadRequest::Project`. A project
+     view holds its work items counted by state, its release summary, its
+     sessions with a run starting or working, and its workspaces.
+     `WorkItems`, sessions, and `Runs` gain a project filter.
+   - `/api/projects/{name}/release` replaces both release reads, as a
+     declared break (`feat!` and a `BREAKING CHANGE:` footer). The Release
+     view and `ren release` read it.
+   - Wire types are generated for the UI as today.
+4. **The UI.** Not built.
+   - First, an audit: the operator's tasks in the loop, the screen that
+     serves each today, and the gaps. Then the navigation in decision 6,
+     rendered on the dev slot (with Ren and the fake projects registered)
+     and shown before it is built out.
+   - The 11 links go. Today's pages survive as views inside the tree or in
+     Inspect, not as top-level destinations.
+
+Each phase is verified in the dev slot, whose fake projects are registered
+as projects (and the slot's checkout as `Ren`), and by the compatibility
+gate against `main`.
+
+## Open questions
+
+- **Ren's canary as a contract.** `Factory::Ren` exists because the
+  contract cannot say "check against a replica of production's data".
+  Teaching it that, so Ren is a `Contract` project like any other, would
+  remove the variant. It is not needed for the tree.
+- **Where sessions with no project live.** Sessions with no project are
+  listed apart. Whether that list sits under Inspect or Host is decided by
+  the UI audit.
+- **One repository per project.** A project spanning several repositories,
+  or several projects in one monorepo, is not modelled. The repository
+  path is unique per project until a case asks otherwise.
+- **Renames.** Whether a project's name can change, given that it keys its
+  release folder and appears in URLs. It cannot change until a case asks.
+- **Per-project usage.** Usage could be attributed to a project through
+  run → session → project. Host keeps the global view until the UI audit
+  asks for more.
+
+## Deviations
+
+None yet.
