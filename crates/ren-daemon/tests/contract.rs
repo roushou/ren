@@ -233,7 +233,10 @@ async fn the_read_api_answers_as_the_ui_fixtures_pin() {
             let mut listed = serde_json::Value::Null;
             for _ in 0..200 {
                 listed = read("/api/work".to_owned()).await;
-                if listed["work"].as_array().is_some_and(|work| !work.is_empty()) {
+                if listed["work"]
+                    .as_array()
+                    .is_some_and(|work| !work.is_empty())
+                {
                     break;
                 }
                 tokio::time::sleep(std::time::Duration::from_millis(20)).await;

@@ -396,6 +396,16 @@ fn a_fetched_branch_is_checked_out_detached_and_counted() {
     let tip = git.fetch(&local, remote, &branch).unwrap();
     assert_eq!(git.commits_between(&local, &main, &tip).unwrap(), 2);
     assert_eq!(git.commits_between(&local, &tip, &main).unwrap(), 0);
+    let log = git.log(&local, &tip, 2).unwrap();
+    assert_eq!(log.len(), 2);
+    assert_eq!(log[0].0, tip);
+    assert_eq!(log[0].1.trim(), "LICENSE");
+    assert_eq!(log[1].1.trim(), "CHANGELOG.md");
+    assert!(git.contains(&local, &tip, &main).unwrap());
+    assert!(git.contains(&local, &tip, &tip).unwrap());
+    assert!(!git.contains(&local, &main, &tip).unwrap());
+    let absent: crate::CommitId = "0123456789012345678901234567890123456789".parse().unwrap();
+    assert!(!git.contains(&local, &tip, &absent).unwrap());
     // What a build left in the worktree does not hold the next checkout.
     std::fs::write(tree.join("README.md"), "built over").unwrap();
     git.check_out_detached(&local, &tree, &tip).unwrap();

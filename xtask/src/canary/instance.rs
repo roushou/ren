@@ -117,6 +117,11 @@ impl ProductionPlace {
         }
     }
 
+    /// Where production's daemon listens.
+    pub fn listen(&self) -> SocketAddr {
+        self.listen
+    }
+
     fn ren(&self) -> Invocation {
         Invocation::new(&self.binary)
             .arg("--config")

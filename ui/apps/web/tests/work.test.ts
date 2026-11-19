@@ -51,6 +51,10 @@ test('a brief names its work item and what else was on screen', async () => {
   assert.match(brief, /workspace of its own/);
   const preview = Work.brief(null, Work.wire(item.order), 'workspace');
   assert.doesNotMatch(preview, /This is work item/);
+  // The change names the item in its commits and pull request, so Ren
+  // knows when it lands.
+  assert.match(brief, new RegExp(`End each commit message with \`Work-Item: ${item.id}\``));
+  assert.match(preview, /the work item's `Work-Item:` line/);
 });
 
 test('several items make one brief, each under its page, closed once', async () => {
@@ -73,6 +77,7 @@ test('several items make one brief, each under its page, closed once', async () 
   assert.match(brief, /## 2\. Move the archive button/);
   assert.match(brief, /Marked on `\/sessions`/);
   assert.equal(brief.match(/Don't install or restart anything/g)?.length, 1);
+  assert.match(brief, new RegExp(`\`Work-Item: ${first.id}\` and \`Work-Item: ${second.id}\``));
 });
 
 test("a page's evidence is bounded, deduplicated, and of its own origin's API", () => {

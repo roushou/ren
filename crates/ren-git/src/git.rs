@@ -218,6 +218,58 @@ impl Git {
         }
     }
 
+    /// The newest `limit` commits reachable from `tip`, newest first, each
+    /// with its whole message.
+    pub fn log(
+        &self,
+        dir: &Path,
+        tip: &CommitId,
+        limit: u32,
+    ) -> Result<Vec<(CommitId, String)>, GitError> {
+        let count = format!("--max-count={limit}");
+        let args = ["log", count.as_str(), "--format=%H%x00%B%x01", tip.as_str()];
+        let output = String::from_utf8_lossy(&self.output(dir, &args)?).into_owned();
+        output
+            .split('\u{1}')
+            .map(str::trim_start)
+            .filter(|entry| !entry.is_empty())
+            .map(|entry| {
+                let (id, message) = entry.split_once('\0').unwrap_or((entry, ""));
+                id.parse()
+                    .map(|id| (id, message.to_owned()))
+                    .map_err(|_| GitError::Unexpected {
+                        args: args.join(" "),
+                        output: entry.to_owned(),
+                    })
+            })
+            .collect()
+    }
+
+    /// Whether `ancestor` is `descendant` or in its history; a commit this
+    /// repository does not have is in no history.
+    pub fn contains(
+        &self,
+        dir: &Path,
+        descendant: &CommitId,
+        ancestor: &CommitId,
+    ) -> Result<bool, GitError> {
+        let args = [
+            "merge-base",
+            "--is-ancestor",
+            ancestor.as_str(),
+            descendant.as_str(),
+        ];
+        match self.answer(dir, &args) {
+            Ok(_) => Ok(true),
+            // 1: not an ancestor; 128: a commit it does not have.
+            Err(GitError::Failed {
+                exit: Exit::Code(1 | 128),
+                ..
+            }) => Ok(false),
+            Err(error) => Err(error),
+        }
+    }
+
     /// How many commits `to` has that `from` does not.
     pub fn commits_between(
         &self,

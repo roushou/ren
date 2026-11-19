@@ -16,10 +16,12 @@
 
 mod checks;
 mod instance;
+mod work;
 
 use self::{
     checks::Checks,
     instance::{CanaryInstance, Production, ProductionPlace},
+    work::WorkLedger,
 };
 use crate::{
     builds::{Builds, BuildsError, StoredBuild},
@@ -64,6 +66,9 @@ enum CanaryAction {
     /// Install the canary's build into production now, whatever the policy
     /// says, once it has passed.
     Promote(TargetArgs),
+    /// Close work items: land those main's commits name, and ship those
+    /// production's build holds. Every pass does this too.
+    Work(WorkArgs),
     /// Stop the canary and remove its routes.
     Down(PublishArgs),
     /// Run a pass on a systemd user timer.
@@ -89,6 +94,15 @@ struct TargetArgs {
     /// The instance the canary copies and promotes into.
     #[arg(long, value_enum, default_value_t = Production::Installed)]
     of: Production,
+}
+
+#[derive(Args)]
+struct WorkArgs {
+    #[command(flatten)]
+    target: TargetArgs,
+    /// The commit main is at; by default, this checkout's.
+    #[arg(long, value_name = "COMMIT")]
+    main: Option<CommitId>,
 }
 
 #[derive(Args, Clone, Copy)]
@@ -145,6 +159,8 @@ pub enum CanaryError {
     DevPromotion,
     #[error("cannot write the release: {0}")]
     Json(serde_json::Error),
+    #[error("production's work items: {0}")]
+    WorkAnswer(String),
     #[error(transparent)]
     Git(#[from] GitError),
     #[error(transparent)]
@@ -315,6 +331,7 @@ impl Factory {
         if release.decision() == &Stored::Known(Decision::Promote) {
             self.promote(env, &production, &commit, &build)?;
         }
+        WorkLedger::new(&production).close(self, &id)?;
         let keep: Vec<Commit> = [Some(commit), Self::running(&production)]
             .into_iter()
             .flatten()
@@ -539,6 +556,16 @@ impl Canary {
                 Source::Checkout => factory.pass(env, &args),
             },
             CanaryAction::Promote(target) => factory.promote_now(env, target),
+            CanaryAction::Work(args) => {
+                let production = ProductionPlace::new(env, args.target.of)?;
+                let main = match args.main {
+                    Some(main) => main,
+                    None => factory.git.head_commit(&factory.repo)?,
+                };
+                let closed = WorkLedger::new(&production).close(&factory, &main)?;
+                println!("{} landed, {} shipped", closed.landed, closed.shipped);
+                Ok(())
+            }
             CanaryAction::Down(publish) => {
                 CanaryInstance::new(env)?.stop()?;
                 if let Some(tailscale) = factory.tailscale(publish)? {

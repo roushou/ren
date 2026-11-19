@@ -333,8 +333,20 @@ export class Work {
     const framing = Briefing.framing(ren, marks, place);
     return Redline.brief(page, marks, {
       about: [...framing.about, ...(id ? [`This is work item ${Redline.code(id)}.`] : []), ...Work.evidence(order.evidence)],
-      closing: framing.closing,
+      closing: Work.closing(framing.closing, id ? [id] : []),
     });
+  }
+
+  /** The closing paragraph, with how the change names the items it does,
+   * so Ren knows when it lands on main: a `Work-Item:` trailer per item,
+   * in each commit and in the pull request's description, which a squash
+   * merge keeps. Before an item is queued, its id is not known yet. */
+  static closing(closing: string | null, ids: readonly WorkItemId[]): string | null {
+    if (!closing) return null;
+    const lines = ids.length
+      ? ids.map((id) => Redline.code(`Work-Item: ${id}`)).join(' and ')
+      : `the work item's ${Redline.code('Work-Item:')} line`;
+    return `${closing} End each commit message with ${lines}, and put the same in the pull request's description: that is how Ren knows when the change lands.`;
   }
 
   /** One brief for several queued items: each item's marks under its page,
@@ -359,7 +371,10 @@ export class Work {
     const all = items.flatMap((item) => Work.#parts(Work.wire(item.order)).marks);
     const first = items[0];
     const closing = first
-      ? Briefing.framing(Work.#parts(Work.wire(first.order)).ren, all, place).closing
+      ? Work.closing(
+          Briefing.framing(Work.#parts(Work.wire(first.order)).ren, all, place).closing,
+          items.map((item) => item.id),
+        )
       : null;
     return [
       `Redline: ${items.length} work items`,

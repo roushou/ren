@@ -6,7 +6,7 @@
 //! Transitions are a pure function of the state and an event; an event the
 //! state does not take is a typed error, never a silent no-op.
 
-use crate::id::SessionId;
+use crate::id::{SessionId, WorkItemId};
 use ren_release::{Commit, Revision};
 use serde::{Deserialize, Serialize};
 use serde_with::{DeserializeFromStr, SerializeDisplay};
@@ -138,6 +138,43 @@ impl WorkOrder {
             .first()
             .and_then(|mark| mark.note.trim().lines().next())
             .unwrap_or("Work")
+    }
+}
+
+/// A commit on `main` and the work items it names as landing: each a
+/// `Work-Item: <id>` trailer in its message, as a brief asks an agent to
+/// write in its commits and its pull request's description, so a squash
+/// merge keeps it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Landing {
+    pub commit: Commit,
+    pub items: Vec<WorkItemId>,
+}
+
+impl Landing {
+    /// The trailer's key.
+    pub const TRAILER: &str = "Work-Item";
+
+    /// The items `message` names, once each, in the order named. A line is
+    /// a trailer when it is the key, a colon, and an id, wherever it is.
+    pub fn read(commit: Commit, message: &str) -> Self {
+        let mut items = Vec::new();
+        for line in message.lines() {
+            let Some((key, value)) = line.trim().split_once(':') else {
+                continue;
+            };
+            if !key.trim().eq_ignore_ascii_case(Self::TRAILER) {
+                continue;
+            }
+            for id in value.split([',', ' ']).filter(|part| !part.is_empty()) {
+                if let Ok(id) = id.trim().trim_matches('`').parse::<WorkItemId>()
+                    && !items.contains(&id)
+                {
+                    items.push(id);
+                }
+            }
+        }
+        Self { commit, items }
     }
 }
 
@@ -327,6 +364,25 @@ mod tests {
         assert_eq!(kept.evidence.console.len(), WorkOrder::EVIDENCE);
         assert_eq!(kept.evidence.console[0], "error 10");
         assert!(kept.evidence.reads[0].len() <= WorkOrder::TEXT);
+    }
+
+    #[test]
+    fn a_commit_names_the_work_items_it_lands_in_its_trailers() {
+        use super::Landing;
+        use crate::id::WorkItemId;
+        let a = "0193e0f1-0000-7000-8000-000000000001";
+        let b = "0193e0f1-0000-7000-8000-000000000002";
+        let message = format!(
+            "feat: show turn counts (#70)\n\nBody text.\n\nWork-Item: {a}\nwork-item: `{b}`, {a}\nWork-Item: not-an-id\nCo-Authored-By: Someone <x@example.com>\n"
+        );
+        let landing = Landing::read(COMMIT.parse().unwrap(), &message);
+        let ids: Vec<WorkItemId> = [a, b].iter().map(|id| id.parse().unwrap()).collect();
+        assert_eq!(landing.items, ids);
+        assert!(
+            Landing::read(COMMIT.parse().unwrap(), "fix: nothing named")
+                .items
+                .is_empty()
+        );
     }
 
     #[test]
