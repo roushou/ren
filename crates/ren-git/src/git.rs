@@ -79,9 +79,11 @@ impl Git {
         Repository::read(dir)
     }
 
-    /// Make `dir` a new, empty repository.
+    /// Make `dir` a new, empty repository, on `main` (the branch a canary
+    /// follows unless told otherwise), whatever git's own default is.
     pub fn init(&self, dir: &Path) -> Result<(), GitError> {
-        self.answer(dir, &["init", "--quiet"]).map(drop)
+        self.answer(dir, &["init", "--quiet", "--initial-branch=main"])
+            .map(drop)
     }
 
     /// The commit `dir`'s `HEAD` is at.
