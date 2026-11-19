@@ -2,13 +2,15 @@
 //! starts, signs in, and kills client processes, and does the task's
 //! filesystem and git work off its thread.
 
+use super::HeldRuns;
 use crate::tools::ToolStore;
 use ren_depot::toolset::Generation;
 use ren_git::{Git, GitError, Head, Repository};
 use ren_harness::{launch::LaunchPlan, pi::PiCache, sign_in::LocalRedirect};
+use ren_recorder::id::RunId;
 use ren_supervisor::{
-    AgentHost, AgentProcess, ClientStamp, FoundPath, KillSwitch, Look, PathKind, ProcessExit,
-    ProjectGit, RunTools, Scratch, Tenure, Untracked, WalkLimits, Workdir,
+    AgentHost, AgentProcess, ClientStamp, FoundPath, HeldRun, KillSwitch, Look, PathKind,
+    ProcessExit, ProjectGit, RunTools, Scratch, Tenure, Untracked, WalkLimits, Workdir,
 };
 use std::io;
 use std::path::{Path, PathBuf};
@@ -24,6 +26,9 @@ pub struct ProcessHost {
     /// The host's search path, which a toolset's folder goes before.
     search_path: Vec<PathBuf>,
     tools: ToolStore<()>,
+    /// Where runs are held through run hosts; `None` starts every run
+    /// bound to the daemon.
+    held: Option<HeldRuns>,
 }
 
 impl ProcessHost {
@@ -32,7 +37,31 @@ impl ProcessHost {
             pi,
             search_path,
             tools,
+            held: None,
         }
+    }
+
+    /// This host, holding runs through run hosts as `held` says.
+    pub fn holding(mut self, held: HeldRuns) -> Self {
+        self.held = Some(held);
+        self
+    }
+
+    /// `plan`'s command, its search path set when a toolset goes first.
+    fn command(&self, plan: &LaunchPlan, tools: &RunTools) -> io::Result<std::process::Command> {
+        let extension = if plan.loads_pi_extension() {
+            let cache = self.pi.as_ref().ok_or_else(|| {
+                io::Error::other("set XDG_CACHE_HOME or HOME for the Pi extension cache")
+            })?;
+            Some(cache.materialize().map_err(io::Error::other)?)
+        } else {
+            None
+        };
+        let mut command = plan.command(extension.as_deref(), &[]);
+        if let Some(path) = self.search_path_with(tools)? {
+            command.env("PATH", path);
+        }
+        Ok(command)
     }
 
     /// The search path a process with `tools` gets: their folder, then the
@@ -128,6 +157,13 @@ impl ProcessHost {
             }
         };
         (Box::pin(exit), kill)
+    }
+
+    /// Its held runs, when it holds runs.
+    fn holder(&self) -> io::Result<&HeldRuns> {
+        self.held
+            .as_ref()
+            .ok_or_else(|| io::ErrorKind::Unsupported.into())
     }
 
     /// The size of a login's terminal: wide, so a long link stays on one line.
@@ -388,19 +424,49 @@ impl AgentHost for ProcessHost {
         workdir: &Workdir,
         tools: &RunTools,
     ) -> io::Result<AgentProcess> {
-        let extension = if plan.loads_pi_extension() {
-            let cache = self.pi.as_ref().ok_or_else(|| {
-                io::Error::other("set XDG_CACHE_HOME or HOME for the Pi extension cache")
-            })?;
-            Some(cache.materialize().map_err(io::Error::other)?)
-        } else {
-            None
-        };
-        let mut command = plan.command(extension.as_deref(), &[]);
-        if let Some(path) = self.search_path_with(tools)? {
-            command.env("PATH", path);
-        }
+        let command = self.command(plan, tools)?;
         Self::start(command, workdir.as_path(), Stderr::Discarded)
+    }
+
+    fn start_run(
+        &self,
+        run: RunId,
+        plan: &LaunchPlan,
+        workdir: &Workdir,
+        tools: &RunTools,
+    ) -> io::Result<AgentProcess> {
+        let Some(held) = &self.held else {
+            return self.spawn(plan, workdir, tools);
+        };
+        let mut command = self.command(plan, tools)?;
+        command.current_dir(workdir.as_path());
+        // A run host does not start with the daemon's environment: the
+        // search path the daemon's own runs get is given to it.
+        if command.get_envs().all(|(key, _)| key != "PATH") {
+            command.env(
+                "PATH",
+                std::env::join_paths(self.search_dirs(tools)).map_err(io::Error::other)?,
+            );
+        }
+        held.start(run, &command)
+    }
+
+    fn held(&self) -> io::Result<Vec<HeldRun>> {
+        self.held.as_ref().map_or(Ok(Vec::new()), HeldRuns::list)
+    }
+
+    fn spool(&self, run: RunId, from: u64, to: u64) -> io::Result<Vec<u8>> {
+        self.holder()?.spool(run, from, to)
+    }
+
+    fn rejoin(&self, run: RunId, from: u64) -> io::Result<AgentProcess> {
+        self.holder()?.rejoin(run, from)
+    }
+
+    fn release(&self, run: RunId) {
+        if let Some(held) = &self.held {
+            held.release(run);
+        }
     }
 
     fn spawn_with_stderr(

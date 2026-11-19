@@ -13,7 +13,7 @@ use crate::{
     tailscale::{Route, ServeStatus, TailscaleCli, TailscaleError},
     ui::UiBuild,
 };
-use ren_daemon::config::{Config, RunsOptions, ToolsOptions, UpstreamConfig};
+use ren_daemon::config::{Config, RunHold, RunsOptions, ToolsOptions, UpstreamConfig};
 use ren_gateway::{
     ControlToken, EntryIngress, Environment, InstanceOptions,
     user::{TokenDigest, UserConfig},
@@ -260,6 +260,9 @@ impl Slot {
                 roots: vec![self.work_dir.clone()],
                 places: vec![self.places_dir.clone()],
                 scratch: Some(self.scratch_dir.clone()),
+                // Held as the installed service holds them, so a restart
+                // of the slot leaves its runs going.
+                hold: RunHold::Auto,
             },
             tools: toml::from_str::<ToolsOptions>(Self::TOOLS).map_err(|_| DevError::Config)?,
             ..Config::default()

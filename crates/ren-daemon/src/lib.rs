@@ -10,7 +10,7 @@ pub mod host;
 pub mod tools;
 
 use crate::config::RuntimeConfig;
-use crate::host::{ObservationThread, ProcessHost, RandomIds, SystemClock};
+use crate::host::{HeldRuns, ObservationThread, ProcessHost, RandomIds, SystemClock};
 use crate::tools::HostTools;
 use crate::tools::{HostToolbox, ToolStore, fetch::ReqwestFetch};
 use ren_gateway::{
@@ -156,7 +156,20 @@ impl Daemon {
         // handed to components as capabilities.
         let clock: Arc<dyn Clock> = Arc::new(SystemClock::start());
         let ids: Arc<dyn IdSource> = Arc::new(RandomIds);
-        let (store, recovery) = Store::open(data_dir, clock.as_ref(), ids.clone()).await?;
+        let held = Self::held(config, data_dir);
+        // The runs run hosts kept going are left open, to be taken up.
+        let holding: Vec<_> = match &held {
+            Some(held) => held
+                .list()
+                .inspect_err(|error| tracing::warn!(%error, "could not list the held runs"))
+                .unwrap_or_default()
+                .into_iter()
+                .map(|held| held.run)
+                .collect(),
+            None => Vec::new(),
+        };
+        let (store, recovery) =
+            Store::open_holding(data_dir, clock.as_ref(), ids.clone(), &holding).await?;
         let operator = match &recovery.operator {
             None => OperatorState::default(),
             Some(stored) => OperatorState::restore(stored.revision, &stored.document)?,
@@ -191,7 +204,7 @@ impl Daemon {
         )?;
         let mut worker =
             ObservationThread::start(task.run()).map_err(DaemonError::ObservationThread)?;
-        let runs = match Self::runs(config, data_dir, address, &recorder, &ids) {
+        let runs = match Self::runs(config, data_dir, address, &recorder, &ids, held) {
             Ok(runs) => runs,
             Err(error) => {
                 drop(recorder);
@@ -301,6 +314,7 @@ impl Daemon {
         address: SocketAddr,
         recorder: &Recorder,
         ids: &Arc<dyn IdSource>,
+        held: Option<HeldRuns>,
     ) -> Result<Option<(Supervisor, SupervisorTask<ProcessHost>)>> {
         if config.runs().roots.is_empty() {
             return Ok(None);
@@ -319,16 +333,40 @@ impl Daemon {
             attachments: Some(data_dir.join(Self::ATTACHMENTS)),
             attachment_limits: config.attachment_limits(),
         };
+        let host = ProcessHost::new(
+            config.pi_cache().cloned(),
+            config.agent_path().to_vec(),
+            ToolStore::without_downloads(data_dir.join(ToolStore::FOLDER)),
+        );
+        let host = match held {
+            Some(held) => host.holding(held),
+            None => host,
+        };
         Ok(Some(Supervisor::new(
             options,
-            ProcessHost::new(
-                config.pi_cache().cloned(),
-                config.agent_path().to_vec(),
-                ToolStore::without_downloads(data_dir.join(ToolStore::FOLDER)),
-            ),
+            host,
             ids.clone(),
             recorder.clone(),
         )?))
+    }
+
+    /// Where runs are held through run hosts, when runs are configured and
+    /// held here. A run host runs this same executable.
+    fn held(config: &RuntimeConfig, data_dir: &std::path::Path) -> Option<HeldRuns> {
+        if config.runs().roots.is_empty() {
+            return None;
+        }
+        let launcher = config.run_hold()?;
+        let program = std::env::current_exe()
+            .inspect_err(
+                |error| tracing::warn!(%error, "runs are not held: no path to this executable"),
+            )
+            .ok()?;
+        Some(HeldRuns::new(
+            data_dir.join(HeldRuns::FOLDER),
+            launcher,
+            program,
+        ))
     }
 
     /// The host's tools for the control API, or none when downloads cannot

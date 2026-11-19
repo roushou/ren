@@ -604,6 +604,7 @@ impl<H: AgentHost> SupervisorTask<H> {
                     if let Some(tap) = live.tap.take() {
                         tap.end(end, exit);
                     }
+                    self.host.release(run);
                 }
                 ProcessEffect::TurnStarted { conversation } => {
                     turned.push(Turned::Started { conversation });

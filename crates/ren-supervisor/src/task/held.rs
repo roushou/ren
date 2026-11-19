@@ -224,6 +224,7 @@ impl<H: AgentHost> SupervisorTask<H> {
                 if let Ok(tap) = self.recorder.rejoin(run) {
                     tap.end(ren_recorder::capture::RunEnd::Recovered, None);
                 }
+                self.host.release(run);
             }
         }
     }

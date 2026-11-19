@@ -60,6 +60,8 @@ enum Command {
     Users(commands::users::UsersCmd),
     Tools(commands::tools::ToolsCmd),
     Mcp(commands::mcp::McpCmd),
+    #[command(hide = true)]
+    RunHost(commands::run_host::RunHostCmd),
 }
 
 impl Cli {
@@ -111,6 +113,7 @@ impl Cli {
             Command::Users(cmd) => cmd.run(&ctx),
             Command::Tools(cmd) => cmd.run(&ctx).await,
             Command::Mcp(cmd) => cmd.run(&ctx).await,
+            Command::RunHost(cmd) => cmd.run().await,
         }
     }
 }

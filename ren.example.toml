@@ -79,6 +79,12 @@ tailscale_logins = []
 # them, or a folder under one, and drives it through the control API. Runs are
 # off while this is empty. Absolute paths; links are resolved.
 roots = []
+# Whether runs outlive the daemon. "auto" holds each run's client in a systemd
+# user unit of its own (ren-run-<run>) when the daemon itself runs under
+# systemd on Linux, so restarting or upgrading the daemon leaves runs working,
+# mid-turn; the next daemon takes them up. "systemd" always holds them; "off"
+# ends them with the daemon.
+hold = "auto"
 
 [attachments]
 # Images uploaded to a session to go with a prompt (PNG, JPEG, GIF, WebP),

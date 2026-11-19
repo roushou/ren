@@ -110,6 +110,12 @@ pub trait AgentHost: Send + Sync + 'static {
         Err(io::ErrorKind::Unsupported.into())
     }
 
+    /// `run` has ended and its end is recorded: what its host kept of it
+    /// can go. Nothing to do by default.
+    fn release(&self, run: RunId) {
+        let _ = run;
+    }
+
     /// Start `plan`, one of a client's own short commands (its status or
     /// login), as [`Self::spawn`] does, but with its stdout and stderr read
     /// together as the process's `stdout`, so what it says on either is read.
