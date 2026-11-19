@@ -202,7 +202,7 @@
                 {#if item.session}<a
                     class="session-link"
                     href={Sessions.deskHref(data.project.name, { session: item.session })}
-                    onclick={(event) => event.stopPropagation()}>Session</a
+                    onclick={(event) => event.stopPropagation()}>Open session</a
                   >{/if}
               </td>
               <td class="numeric mono">{ago(item.updated_at, now)}</td>

@@ -188,4 +188,17 @@ test('approvals come from working runs, each named by its session and project', 
   assert.ok(board.pending);
   // A run whose session is not listed still asks, for no project.
   assert.equal(new ProjectBoard([], [], [working] as never, []).approvals[0]?.project, null);
+  // A project's own board holds its sessions' approvals alone, and its work.
+  const acme = project('acme-web', { id: 'acme-id' });
+  const other = project('acme-api', { id: 'api-id' });
+  assert.equal(ProjectBoard.of(acme, [], [working] as never, sessions).approvals.length, 1);
+  assert.equal(ProjectBoard.of(other, [], [working] as never, sessions).approvals.length, 0);
+  const item = (id: string, owner: string | null) =>
+    ({ id, project: owner, state: 'queued' }) as never;
+  assert.deepEqual(
+    ProjectBoard.of(acme, [item('a', 'acme-id'), item('b', 'api-id')], [], []).work.map(
+      (entry) => entry.id,
+    ),
+    ['a'],
+  );
 });

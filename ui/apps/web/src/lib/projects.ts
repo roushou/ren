@@ -47,22 +47,38 @@ export class ProjectBoard {
   readonly live: readonly RunSnapshot[];
   /** The current sessions, for the project each running one works for. */
   readonly sessions: readonly SessionBody[];
+  /** The one project the board is for, by name; null for every project. */
+  readonly only: string | null;
 
   constructor(
     projects: readonly Project[],
     work: readonly WorkItem[],
     live: readonly RunSnapshot[] = [],
     sessions: readonly SessionBody[] = [],
+    only: string | null = null,
   ) {
     this.projects = projects;
     this.work = work;
     this.live = live;
     this.sessions = sessions;
+    this.only = only;
   }
 
-  /** Every approval a running session waits on, oldest run first. */
+  /** The board of `project` alone: its work (Ren's holds the items from
+   * before projects), and the approvals its sessions wait on. */
+  static of(
+    project: Project,
+    work: readonly WorkItem[],
+    live: readonly RunSnapshot[],
+    sessions: readonly SessionBody[],
+  ): ProjectBoard {
+    return new ProjectBoard([project], Work.of(work, project), live, sessions, project.name);
+  }
+
+  /** Every approval a running session waits on, oldest run first; on a
+   * project's board, its sessions' alone. */
   get approvals(): Approval[] {
-    return this.live.flatMap((run) => {
+    const all = this.live.flatMap((run) => {
       if (run.state.phase !== 'working') return [];
       const stored = this.sessions.find((body) => body.session === run.session)?.stored ?? null;
       return run.state.approvals.map((waiting) => ({
@@ -73,6 +89,7 @@ export class ProjectBoard {
         prompt: stored?.first_prompt ?? null,
       }));
     });
+    return this.only === null ? all : all.filter((waiting) => waiting.project === this.only);
   }
 
   /** The projects being built: unarchived, Ren itself first, then by name. */
