@@ -325,7 +325,7 @@ impl ApiState {
 
     /// Where the release stands, as the factory last wrote it.
     async fn release(State(state): State<Arc<Self>>) -> Result<Response, ApiError> {
-        let release = state.release.read()?;
+        let release = state.release.read().await?;
         Ok(Self::versioned(ReleaseBody {
             release: release.as_ref().map(ReleaseView::from),
         })

@@ -44,9 +44,10 @@ impl ReleaseFile {
     }
 
     /// The release, or none while the factory has written none. The file is
-    /// small and written whole, so it is read in one go.
-    pub(super) fn read(&self) -> Result<Option<Release>, ReleaseFileError> {
-        let bytes = match std::fs::read(&self.path) {
+    /// small and written whole, so it is read in one go, off the runtime's
+    /// threads.
+    pub(super) async fn read(&self) -> Result<Option<Release>, ReleaseFileError> {
+        let bytes = match tokio::fs::read(&self.path).await {
             Ok(bytes) => bytes,
             Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
             Err(source) => {
