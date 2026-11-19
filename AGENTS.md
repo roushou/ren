@@ -213,6 +213,10 @@ dependencies under "Crates" below. Read the code for current module ownership.
   runs git, and the one `disallowed_methods` exemption for it. It performs
   filesystem and process I/O but has no async runtime, HTTP, database, or
   CLI dependency.
+- `crates/ren-release`: how a build of Ren moves from `main` to production,
+  sans-IO: which build an instance runs (`Build`, its `Revision`, `Commit`,
+  and `Tree`, and how two compare, `Comparison`). Its manifest allows only
+  pure dependencies.
 - `crates/ren-depot`: the tools Ren's agents run with, with `Depot` as its
   primary type: the package catalog (`package`: `Package`, `PackageId`,
   `ProgramName`, `Kind`, client, runtime, or utility, and `Origin`; the
@@ -478,8 +482,9 @@ dependencies under "Crates" below. Read the code for current module ownership.
   callers' concurrency limits (`limits`, with `ConcurrencyLimit`, 1 to
   1024, which every configured limit is; `TimeoutSecs`, in `timeout`, is
   every configured timeout, 1 to 3600 seconds), the `Controls` that hold
-  it with the running-call registry (`control`), the `Build` and the
-  instance's environment that `/health` reports (`build`), and
+  it with the running-call registry (`control`), the instance's
+  environment that `/health` reports beside its `ren_release::Build`
+  (`build`), and
   pure call planning
   (`policy`: block, transform, and fallback rules validated at load, with
   protected headers and body paths), and the call's way through its
@@ -712,6 +717,7 @@ directly.
 | `ren-protocol`                             | `CallInspector`                                     | none of ours      |
 | `ren-depot`                                | `Depot`, with its `ToolHost` port                   | none of ours      |
 | `ren-git`                                  | `Git`                                               | none of ours      |
+| `ren-release`                              | `Release`                                           | none of ours      |
 | `ren-harness`                              | `Harness` (`ClaudeCode`, `Codex`, `Pi`, `OpenCode`) | protocol, depot   |
 | `ren-recorder`                             | `Recorder`, with its `RecordSink` port              | protocol, harness |
 | `ren-store`                                | `Store`, which implements `RecordSink`              | recorder          |

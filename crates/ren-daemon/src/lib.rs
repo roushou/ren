@@ -14,7 +14,7 @@ use crate::host::{HeldRuns, ObservationThread, ProcessHost, RandomIds, SystemClo
 use crate::tools::HostTools;
 use crate::tools::{HostToolbox, ToolStore, fetch::ReqwestFetch};
 use ren_gateway::{
-    Build, ControlToken, Gateway, ManagementSetup, ReqwestUpstream, Shutdown, Stopped,
+    ControlToken, Gateway, ManagementSetup, ReqwestUpstream, Shutdown, Stopped,
     control::Controls,
     operator::{OperatorState, Pause, RestoreError},
 };
@@ -26,6 +26,7 @@ use ren_harness::{
 use ren_recorder::CaptureOptionsError;
 use ren_recorder::secrets::SecretScanner;
 use ren_recorder::{Recorder, RecorderSetup, id::IdSource, time::Clock};
+use ren_release::Build;
 use ren_store::StoreError;
 use ren_store::{Reader, Store, backup::Backup};
 use ren_supervisor::{Supervisor, SupervisorError, SupervisorOptions, SupervisorTask, Warmup};

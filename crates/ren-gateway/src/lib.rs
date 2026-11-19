@@ -30,7 +30,7 @@
 //!   configuration revision, buffer, policy, upstream entries);
 //! - capabilities: an [`Upstream`], a [`Recorder`], the shared [`Controls`],
 //!   a [`Clock`], and the `Reader` and `Backup` in [`ManagementSetup`],
-//!   which also names the running [`Build`] that `/health` reports;
+//!   which also names the running [`ren_release::Build`] that `/health` reports;
 //! - inputs: inference requests on the upstream table's routes, management reads, and controls;
 //! - outputs: provider responses, management data, and HTTP error responses;
 //! - lifecycle: [`Shutdown`] drains, then aborts, through [`Ingress`].
@@ -58,7 +58,7 @@ pub mod tools;
 pub mod user;
 
 pub use api::{ApiRead, ControlOptions, ControlRefusal, ControlToken, ManagementSetup};
-pub use build::{Build, Environment, InstanceOptions};
+pub use build::{Environment, InstanceOptions};
 pub use forward::GatewayError;
 pub use forward::buffer::{
     BufferOptions, BufferOptionsError, BufferRefusal, Buffered, RequestBuffer, RequestLimits,

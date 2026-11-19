@@ -25,6 +25,7 @@ ren-depot.workspace = true
 ren-harness.workspace = true
 ren-protocol.workspace = true
 ren-recorder.workspace = true
+ren-release.workspace = true
 ren-store.workspace = true
 ren-supervisor.workspace = true
 reqwest.workspace = true

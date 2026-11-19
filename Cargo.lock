@@ -1787,6 +1787,7 @@ dependencies = [
  "ren-harness",
  "ren-protocol",
  "ren-recorder",
+ "ren-release",
  "ren-store",
  "ren-supervisor",
  "reqwest",
@@ -1842,6 +1843,7 @@ dependencies = [
  "ren-harness",
  "ren-protocol",
  "ren-recorder",
+ "ren-release",
  "ren-store",
  "ren-supervisor",
  "reqwest",
@@ -1935,6 +1937,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "ren-release"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "serde_with",
+ "thiserror",
+]
+
+[[package]]
 name = "ren-rs"
 version = "0.1.0"
 dependencies = [
@@ -1951,6 +1963,7 @@ dependencies = [
  "ren-harness",
  "ren-protocol",
  "ren-recorder",
+ "ren-release",
  "ren-store",
  "ren-supervisor",
  "reqwest",

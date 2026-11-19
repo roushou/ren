@@ -23,7 +23,6 @@ pub(crate) use control::ControlApi;
 pub use control::{ControlOptions, ControlRefusal, ControlToken};
 pub use route::ApiRead;
 
-use crate::build::Build;
 use crate::{build::InstanceOptions, control::Controls, user::Users};
 use axum::{
     Json, Router,
@@ -42,6 +41,7 @@ use preview::Previewer;
 use ren_protocol::direction::Direction;
 use ren_recorder::time::Clock;
 use ren_recorder::{Recorder, id::CallId, retention::RetentionPolicy};
+use ren_release::Build;
 use ren_store::{Reader, StoreError, backup::Backup, query::QueryError, search::SearchError};
 use serde::Serialize;
 use std::sync::Arc;
