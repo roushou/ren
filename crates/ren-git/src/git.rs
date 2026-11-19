@@ -1,4 +1,4 @@
-use crate::{CommitId, Exit, GitError, NotACommitId, Repository, Revision};
+use crate::{Branch, CommitId, Exit, GitError, NotACommitId, Repository, Revision};
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
@@ -21,6 +21,14 @@ pub enum Tree {
 pub enum Published {
     OnRemote,
     LocalOnly,
+}
+
+/// What became of a branch asked to go once merged.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BranchRemoval {
+    Deleted,
+    /// It holds commits its upstream (or `HEAD`) does not: kept.
+    Unmerged,
 }
 
 /// The reference `HEAD` names, or none when detached.
@@ -123,6 +131,53 @@ impl Git {
     pub fn file_at(&self, dir: &Path, commit: &CommitId, path: &str) -> Result<Vec<u8>, GitError> {
         let object = format!("{commit}:{path}");
         self.output(dir, &["cat-file", "blob", object.as_str()])
+    }
+
+    /// A new worktree of `repo` at `path`, on a new branch `branch` from
+    /// `repo`'s `HEAD`.
+    pub fn add_worktree(&self, repo: &Path, path: &Path, branch: &Branch) -> Result<(), GitError> {
+        let path = Self::text(path)?;
+        self.answer(
+            repo,
+            &["worktree", "add", "--quiet", "-b", branch.as_str(), path],
+        )
+        .map(drop)
+    }
+
+    /// Remove the worktree at `path`, from its repository. One holding
+    /// changes not committed is refused, and kept.
+    pub fn remove_worktree(&self, path: &Path) -> Result<(), GitError> {
+        let dirs = self.dirs(path)?;
+        let main = dirs
+            .common
+            .parent()
+            .ok_or_else(|| GitError::Unexpected {
+                args: "rev-parse --git-common-dir".into(),
+                output: dirs.common.display().to_string(),
+            })?
+            .to_path_buf();
+        let path = Self::text(path)?;
+        self.answer(&main, &["worktree", "remove", path]).map(drop)
+    }
+
+    /// Delete `branch` of `repo` if it is merged; keep it otherwise.
+    pub fn delete_merged(&self, repo: &Path, branch: &Branch) -> Result<BranchRemoval, GitError> {
+        match self.answer(repo, &["branch", "--delete", "--quiet", branch.as_str()]) {
+            Ok(_) => Ok(BranchRemoval::Deleted),
+            // `git branch -d` exits 1 for a branch not fully merged.
+            Err(GitError::Failed {
+                exit: Exit::Code(1),
+                ..
+            }) => Ok(BranchRemoval::Unmerged),
+            Err(error) => Err(error),
+        }
+    }
+
+    fn text(path: &Path) -> Result<&str, GitError> {
+        path.to_str().ok_or_else(|| GitError::Unexpected {
+            args: "a path".into(),
+            output: path.display().to_string(),
+        })
     }
 
     /// Whether `dir`'s tracked files differ from its commit.

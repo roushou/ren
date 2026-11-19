@@ -1,6 +1,6 @@
 use crate::{
-    CommitId, Exit, Git, GitError, Head, NotACommitId, NotARevision, Published, Repository,
-    Revision, Tree,
+    Branch, BranchRemoval, CommitId, Exit, Git, GitError, Head, NotACommitId, NotARevision,
+    Published, Repository, Revision, Tree,
 };
 use std::path::Path;
 
@@ -291,4 +291,78 @@ fn the_real_git_answers_on_its_own_repository() {
         Git::repository(dir.path()),
         Repository::At(Head::Branch(_))
     ));
+}
+
+#[test]
+fn a_branch_name_is_one_git_takes() {
+    for name in ["ren/1a2b3c4d", "feat/self-build", "main"] {
+        assert_eq!(name.parse::<Branch>().unwrap().as_str(), name);
+    }
+    for name in [
+        "", "-x", "/x", "x/", "x.", "a..b", "a b", "a:b", "a~1", "x.lock", "a//b", "a@{1}",
+    ] {
+        assert!(name.parse::<Branch>().is_err(), "{name:?}");
+    }
+}
+
+/// `git` with a fixed author, for a test's own commits.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "a test makes the commits a worktree needs"
+)]
+fn commit(dir: &Path, file: &str) {
+    std::fs::write(dir.join(file), file).unwrap();
+    for args in [vec!["add", file], vec!["commit", "--quiet", "-m", file]] {
+        let status = std::process::Command::new("git")
+            .args(["-c", "user.name=Ren", "-c", "user.email=ren@example.com"])
+            .args(&args)
+            .current_dir(dir)
+            .status()
+            .unwrap();
+        assert!(status.success(), "{args:?}");
+    }
+}
+
+/// The real git, making, keeping, and removing worktrees. Skipped where no
+/// git is installed.
+#[test]
+fn worktrees_are_made_on_a_new_branch_and_removed_only_when_clean() {
+    let _turn = turn();
+    let dir = tempfile::tempdir().unwrap();
+    let repo = dir.path().join("repo");
+    std::fs::create_dir(&repo).unwrap();
+    let git = Git::inherited();
+    if git.init(&repo).is_err() {
+        return;
+    }
+    commit(&repo, "README.md");
+    let branch: Branch = "ren/1a2b3c4d".parse().unwrap();
+    let tree = dir.path().join("tree");
+    git.add_worktree(&repo, &tree, &branch).unwrap();
+    assert_eq!(
+        Git::repository(&tree),
+        Repository::At(Head::Branch("ren/1a2b3c4d".into()))
+    );
+    // Changes not committed keep it.
+    std::fs::write(tree.join("notes.txt"), "draft").unwrap();
+    assert!(git.remove_worktree(&tree).is_err());
+    assert!(tree.join("notes.txt").is_file());
+    std::fs::remove_file(tree.join("notes.txt")).unwrap();
+    git.remove_worktree(&tree).unwrap();
+    assert!(!tree.exists());
+    // Nothing on it but what main has: merged, and deleted.
+    assert_eq!(
+        git.delete_merged(&repo, &branch).unwrap(),
+        BranchRemoval::Deleted
+    );
+
+    // A branch with its own commit is kept.
+    let kept: Branch = "ren/5e6f7a8b".parse().unwrap();
+    git.add_worktree(&repo, &tree, &kept).unwrap();
+    commit(&tree, "change.txt");
+    git.remove_worktree(&tree).unwrap();
+    assert_eq!(
+        git.delete_merged(&repo, &kept).unwrap(),
+        BranchRemoval::Unmerged
+    );
 }
