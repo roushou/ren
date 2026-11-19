@@ -37,8 +37,19 @@
   onMount(() => Arrival.stream());
   const gateway = createSnapshot(() => data.gateway);
   const health = $derived(gateway.current.value?.health);
-  // The gateway says whether it is a development instance; the UI only shows it.
+  // The gateway says what kind of instance it is; the UI only shows it.
   const development = $derived(health?.instance.environment === 'development');
+  /** The tag on the wordmark of an instance that is not production. */
+  const marked = $derived.by(() => {
+    switch (health?.instance.environment) {
+      case 'development':
+        return { tag: 'dev', what: 'A development gateway, not the installed service' };
+      case 'canary':
+        return { tag: 'canary', what: "The canary: main's tip on a copy of production's history" };
+      default:
+        return null;
+    }
+  });
   const storage = $derived(gateway.current.value?.storage);
   /** The tab row, which scrolls sideways on a phone. */
   let tabs = $state<HTMLElement>();
@@ -174,13 +185,13 @@
   <header class="workbench-header">
     <a
       class="brand"
-      class:development
+      class:marked
       href="/"
-      aria-label={development ? 'Ren overview, development gateway' : 'Ren overview'}
-      title={development ? 'A development gateway, not the installed service' : undefined}
+      aria-label={marked ? `Ren overview, ${marked.tag} gateway` : 'Ren overview'}
+      title={marked?.what}
       ><span class="flaps" aria-hidden="true"
         ><span class="flap">R</span><span class="flap">E</span><span class="flap">N</span
-        >{#if development}<span class="dev-badge">dev</span>{/if}</span
+        >{#if marked}<span class="instance-badge">{marked.tag}</span>{/if}</span
       ></a
     >
     <nav class="workbench-tabs" aria-label="Workbench views" bind:this={tabs}>

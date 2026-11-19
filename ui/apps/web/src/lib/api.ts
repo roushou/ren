@@ -327,7 +327,7 @@ export type MessagePayload = (typeof messagePayloads)[number];
 export type ObservationKind = (typeof observationKinds)[number];
 export const healthStatuses = ['ok', 'degraded'] as const;
 /** What the gateway says it is: the installed service, or a development one. */
-export const environments = ['production', 'development'] as const;
+export const environments = ['production', 'development', 'canary'] as const;
 export type Environment = (typeof environments)[number];
 export type HealthStatus = (typeof healthStatuses)[number];
 export const errorCodes = [

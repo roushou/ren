@@ -249,13 +249,14 @@ pre {
   border-bottom: 1px solid var(--line);
   flex-shrink: 0;
 }
-/* A development gateway's wordmark: framed, with a dev tag on the frame. */
-.brand.development .flaps {
+/* A wordmark of an instance that is not production (dev, canary): framed,
+   with its tag on the frame. */
+.brand.marked .flaps {
   position: relative;
   outline: 2px solid var(--warning);
   outline-offset: 2px;
 }
-.dev-badge {
+.instance-badge {
   position: absolute;
   right: -9px;
   bottom: -11px;

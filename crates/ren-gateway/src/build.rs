@@ -1,7 +1,7 @@
 //! What kind of instance a gateway is ([`Environment`]), as `/health`
 //! reports it beside its build ([`ren_release::Build`]): a production
-//! instance or a development one (such as `cargo xtask dev`'s slot). The
-//! gateway is the authority; the UI and the CLI show what
+//! instance, a development one (such as `cargo xtask dev`'s slot), or the
+//! canary. The gateway is the authority; the UI and the CLI show what
 //! `/health` reports.
 
 use serde_with::{DeserializeFromStr, SerializeDisplay};
@@ -19,6 +19,9 @@ pub enum Environment {
     Production,
     /// Fake or test traffic, for development.
     Development,
+    /// The tip of `main` checked on a copy of production's history before
+    /// production takes it (`cargo xtask canary`).
+    Canary,
 }
 
 /// The `[instance]` configuration section.
