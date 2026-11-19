@@ -5,8 +5,10 @@
 //! its control token, as an operator's would; production's daemon checks it
 //! against the item's state.
 
-use super::{CanaryError, Factory, instance::ProductionPlace};
-use crate::{file::FileError, invocation::Invocation, progress::Progress};
+use super::{CanaryError, Factory};
+use crate::{
+    file::FileError, invocation::Invocation, progress::Progress, replica::ProductionPlace,
+};
 use ren_gateway::ControlToken;
 use ren_git::CommitId;
 use ren_protocol::label::Stored;

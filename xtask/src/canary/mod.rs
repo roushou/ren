@@ -15,14 +15,9 @@
 //! `enable` runs a pass on a systemd user timer.
 
 mod checks;
-mod instance;
 mod work;
 
-use self::{
-    checks::Checks,
-    instance::{CanaryInstance, Production, ProductionPlace},
-    work::WorkLedger,
-};
+use self::{checks::Checks, work::WorkLedger};
 use crate::{
     builds::{Builds, BuildsError, StoredBuild},
     dev::DevError,
@@ -30,11 +25,11 @@ use crate::{
     install::{InstallError, InstallVps, publish::Publish},
     invocation::{Invocation, InvocationError},
     progress::Progress,
+    replica::{Production, ProductionPlace, Replica, ReplicaError},
     tailscale::{TailscaleCli, TailscaleError},
     ui::UiBuildError,
 };
 use clap::{Args, Subcommand, ValueEnum};
-use ren_daemon::config::ConfigError;
 use ren_daemon::host::SystemClock;
 use ren_git::{Branch, CommitId, Git, GitError, Tree};
 use ren_harness::host::HostEnv;
@@ -46,7 +41,6 @@ use ren_release::{
 };
 use std::{
     fs,
-    net::SocketAddr,
     path::{Path, PathBuf},
 };
 
@@ -133,22 +127,6 @@ enum Source {
 pub enum CanaryError {
     #[error("{0} is not set")]
     MissingEnv(&'static str),
-    #[error("invalid configuration {}: {source}", path.display())]
-    Config {
-        path: PathBuf,
-        #[source]
-        source: ConfigError,
-    },
-    #[error("the canary's configuration does not write; this is a bug in `xtask canary`")]
-    Derive,
-    #[error("production does not answer on {0}; the canary copies a running production")]
-    ProductionDown(SocketAddr),
-    #[error("production's backup failed; see `journalctl --user -u ren`")]
-    Backup(PathBuf),
-    #[error("the canary did not answer on {0} in time; see `journalctl --user -u 'ren-canary-*'`")]
-    NotReady(SocketAddr),
-    #[error("Tailscale reports no MagicDNS name for this node")]
-    NoDnsName,
     #[error("tracked files differ from the commit; the canary checks only a clean commit")]
     Dirty,
     #[error("{0} is not a commit the release reads")]
@@ -157,10 +135,10 @@ pub enum CanaryError {
     NothingToPromote(&'static str),
     #[error("the dev slot is never promoted into")]
     DevPromotion,
-    #[error("cannot write the release: {0}")]
-    Json(serde_json::Error),
     #[error("production's work items: {0}")]
     WorkAnswer(String),
+    #[error(transparent)]
+    Replica(#[from] ReplicaError),
     #[error(transparent)]
     Git(#[from] GitError),
     #[error(transparent)]
@@ -210,6 +188,10 @@ impl Factory {
     const REMOTE: &str = "origin";
     const MAIN: &str = "main";
     const TIMER: &str = "ren-canary";
+    /// The canary's tailnet HTTPS ports, with `--publish`, beside the
+    /// installed service's and the dev slot's (9443 and 9444).
+    const GATEWAY_PORT: u16 = 9445;
+    const UI_PORT: u16 = 9446;
 
     fn new(env: &HostEnv) -> Result<Self, CanaryError> {
         let home = env
@@ -312,16 +294,21 @@ impl Factory {
         let id = self.git.head_commit(&self.repo)?;
         let commit = Self::commit(&id)?;
         let production = ProductionPlace::new(env, args.target.of)?;
-        let canary = CanaryInstance::new(env)?;
+        let canary = Replica::canary(env)?;
         let build = self.builds.make(env, &self.cargo, &self.repo, &commit)?;
         let backup = production.backup()?;
         canary.replace_data(&backup)?;
         let keys = canary.configure(&production)?;
-        canary.start(env, &build, &keys, self.tailscale(args.publish)?)?;
+        let publish = self
+            .tailscale(args.publish)?
+            .map(|tailscale| (tailscale, Self::GATEWAY_PORT, Self::UI_PORT));
+        let reached = canary.start(env, &build.ren(), &build.ui(), &keys, publish)?;
+        println!("\nCanary: {}\n", reached.ui);
         let verdict = Checks {
             env,
             canary: &canary,
             build: &build,
+            shots: self.home.join(".local/share/ren-canary/shots"),
         }
         .run();
         let checked = CanaryBuild::new(commit.clone(), verdict);
@@ -567,9 +554,10 @@ impl Canary {
                 Ok(())
             }
             CanaryAction::Down(publish) => {
-                CanaryInstance::new(env)?.stop()?;
+                let canary = Replica::canary(env)?;
+                canary.stop()?;
                 if let Some(tailscale) = factory.tailscale(publish)? {
-                    CanaryInstance::unpublish(tailscale)?;
+                    canary.unpublish(tailscale, (Factory::GATEWAY_PORT, Factory::UI_PORT))?;
                 }
                 Ok(())
             }

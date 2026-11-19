@@ -8,6 +8,7 @@ mod file;
 mod install;
 mod invocation;
 mod progress;
+mod replica;
 mod tailscale;
 mod ui;
 mod unit;

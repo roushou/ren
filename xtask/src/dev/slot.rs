@@ -63,13 +63,13 @@ impl Unit {
             Self::Provider | Self::Ui | Self::Traffic => KillMode::ControlGroup,
         };
         TransientUnit {
-            name,
-            description,
+            name: name.to_owned(),
+            description: description.to_owned(),
             kill,
         }
     }
 
-    pub fn name(self) -> &'static str {
+    pub fn name(self) -> String {
         self.unit().name
     }
 

@@ -12,12 +12,12 @@ use std::{
 };
 
 /// One transient unit.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TransientUnit {
     /// Its name, without `.service`.
-    pub name: &'static str,
+    pub name: String,
     /// What `systemctl status` describes it as.
-    pub description: &'static str,
+    pub description: String,
     pub kill: KillMode,
 }
 
@@ -41,18 +41,18 @@ impl KillMode {
 }
 
 impl TransientUnit {
-    fn service(self) -> String {
+    fn service(&self) -> String {
         format!("{}.service", self.name)
     }
 
-    pub fn active(self) -> Result<bool, InvocationError> {
+    pub fn active(&self) -> Result<bool, InvocationError> {
         Invocation::new("systemctl")
             .args(["--user", "is-active", "--quiet"])
             .arg(self.service())
             .succeeds(Echo::Hide)
     }
 
-    pub fn stop(self) -> Result<(), InvocationError> {
+    pub fn stop(&self) -> Result<(), InvocationError> {
         if self.active()? {
             Invocation::new("systemctl")
                 .args(["--user", "stop"])
@@ -69,7 +69,7 @@ impl TransientUnit {
 
     /// Run `command` as this unit, with `environment`, until stopped.
     pub fn start(
-        self,
+        &self,
         dir: Option<&Path>,
         command: &[&Path],
         args: &[String],

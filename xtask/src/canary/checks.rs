@@ -4,13 +4,13 @@
 //! headless browser ([`CheckKind::Pages`]). Each becomes one [`Check`]; a
 //! check that cannot run fails, so none is left out of the verdict.
 
-use super::instance::CanaryInstance;
 use crate::{
     builds::StoredBuild,
     daemon::{CheckStatus, DoctorReport},
     dev::shot::{Camera, Page},
     invocation::Invocation,
     progress::Progress,
+    replica::Replica,
 };
 use ren_harness::host::HostEnv;
 use ren_release::{Check, CheckKind, Outcome, Verdict};
@@ -19,8 +19,10 @@ use std::net::SocketAddr;
 /// Runs the checks against one canary.
 pub struct Checks<'a> {
     pub env: &'a HostEnv,
-    pub canary: &'a CanaryInstance,
+    pub canary: &'a Replica,
     pub build: &'a StoredBuild,
+    /// Where its pages' captures are kept.
+    pub shots: std::path::PathBuf,
 }
 
 /// The read API, swept: each listing, then each read of one item the
@@ -46,7 +48,7 @@ impl Checks<'_> {
                 let outcome = match kind {
                     CheckKind::Doctor => self.doctor(),
                     CheckKind::Reads => ReadSweep {
-                        gateway: CanaryInstance::DAEMON,
+                        gateway: self.canary.daemon(),
                     }
                     .run(),
                     CheckKind::Pages => self.pages(),
@@ -66,7 +68,7 @@ impl Checks<'_> {
     fn doctor(&self) -> Outcome {
         let report = self
             .canary
-            .ren(self.build)
+            .ren(&self.build.ren())
             .args(["doctor", "--json"])
             .json("ren doctor --json", DoctorReport::parse);
         let report = match report {
@@ -104,9 +106,9 @@ impl Checks<'_> {
     fn pages(&self) -> Outcome {
         let camera = Camera::new(
             self.env,
-            CanaryInstance::UI,
-            CanaryInstance::DAEMON,
-            self.canary.shots.clone(),
+            self.canary.ui(),
+            self.canary.daemon(),
+            self.shots.clone(),
         );
         let shots = camera.and_then(|camera| camera.shoot(&Page::ALL, (1440, 900)));
         match shots {
