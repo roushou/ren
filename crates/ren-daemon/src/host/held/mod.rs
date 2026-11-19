@@ -106,6 +106,33 @@ impl HeldRuns {
         }
     }
 
+    /// The systemd unit a run's host runs in, under [`Launcher::Systemd`].
+    pub fn unit(run: RunId) -> String {
+        format!("ren-run-{run}")
+    }
+
+    /// The runs whose folders are under `root`, by their names: what
+    /// stopping their hosts needs, whatever state the folders are in.
+    pub fn folders(root: &Path) -> io::Result<Vec<RunId>> {
+        let entries = match std::fs::read_dir(root) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(error) => return Err(error),
+        };
+        let mut runs = Vec::new();
+        for entry in entries {
+            if let Some(run) = entry?
+                .file_name()
+                .to_str()
+                .and_then(|name| name.parse::<uuid::Uuid>().ok())
+            {
+                runs.push(RunId::restore(run));
+            }
+        }
+        runs.sort();
+        Ok(runs)
+    }
+
     fn folder(&self, run: RunId) -> PathBuf {
         self.root.join(run.to_string())
     }
@@ -210,7 +237,7 @@ impl HeldRuns {
             Launcher::Systemd => {
                 let output = std::process::Command::new("systemd-run")
                     .args(["--user", "--quiet", "--collect"])
-                    .arg(format!("--unit=ren-run-{run}"))
+                    .arg(format!("--unit={}", Self::unit(run)))
                     // The client's own processes go with it when its host is
                     // stopped; SIGTERM goes to the host first.
                     .arg("--property=KillMode=mixed")

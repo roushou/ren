@@ -288,7 +288,7 @@ impl Dev {
                 slot.status()
             }
             DevAction::Down(args) => {
-                Slot::down()?;
+                Slot::new(env)?.down()?;
                 Slot::unpublish(args.cli(env)?)
             }
             DevAction::Reset => {

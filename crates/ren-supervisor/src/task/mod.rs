@@ -387,6 +387,10 @@ impl<H: AgentHost> SupervisorTask<H> {
                             workdir: live.process.workdir().as_path().to_path_buf(),
                             state: live.process.state().clone(),
                             settings: live.process.settings().clone(),
+                            tenure: match live.held {
+                                Some(_) => crate::run::RunTenure::Held,
+                                None => crate::run::RunTenure::Bound,
+                            },
                         })
                         .collect(),
                 );

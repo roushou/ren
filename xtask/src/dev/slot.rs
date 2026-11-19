@@ -14,6 +14,7 @@ use crate::{
     ui::UiBuild,
 };
 use ren_daemon::config::{Config, RunHold, RunsOptions, ToolsOptions, UpstreamConfig};
+use ren_daemon::host::HeldRuns;
 use ren_gateway::{
     ControlToken, EntryIngress, Environment, InstanceOptions,
     user::{TokenDigest, UserConfig},
@@ -578,10 +579,22 @@ program_at = "acme-lint"
         self.config.with_file_name("traffic.toml")
     }
 
-    pub fn down() -> Result<(), DevError> {
+    /// Stop the slot's units, then its runs' run hosts, which outlive its
+    /// daemon: each in a unit of its own, named for the run.
+    pub fn down(&self) -> Result<(), DevError> {
         for unit in Unit::ALL {
             Progress(&format!("Stopping {}", unit.name())).show();
             unit.stop()?;
+        }
+        let runs = self.data_dir.join(HeldRuns::FOLDER);
+        for run in HeldRuns::folders(&runs).map_err(FileError::at(&runs))? {
+            let unit = format!("{}.service", HeldRuns::unit(run));
+            Invocation::new("systemctl")
+                .args(["--user", "stop", &unit])
+                .succeeds(Echo::Hide)?;
+            Invocation::new("systemctl")
+                .args(["--user", "reset-failed", &unit])
+                .succeeds(Echo::Hide)?;
         }
         Ok(())
     }
@@ -614,7 +627,7 @@ program_at = "acme-lint"
     /// Stop the slot and remove its data. Only the slot's own directory is
     /// removed, and only if it is the one this slot names.
     pub fn wipe(&self) -> Result<(), DevError> {
-        Self::down()?;
+        self.down()?;
         if self.data_dir.ends_with(".local/state/ren-dev") && self.data_dir.exists() {
             Progress(&format!("Removing {}", self.data_dir.display())).show();
             fs::remove_dir_all(&self.data_dir).map_err(FileError::at(&self.data_dir))?;

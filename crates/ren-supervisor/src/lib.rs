@@ -36,7 +36,7 @@ pub use host::{
 pub use project::{Look, PlaceKind, Project, ProjectGit, Search};
 pub use run::{
     Approvals, Delivery, ProcessExit, RunAction, RunCommand, RunEvent, RunPhase, RunRefused,
-    RunState, StopCause, Transition, Waiting,
+    RunState, RunTenure, StopCause, Transition, Waiting,
 };
 pub use session::{
     SessionAction, SessionInput, SessionPhase, SessionRefused, SessionState, Shelving,
@@ -274,6 +274,8 @@ pub struct RunSnapshot {
     pub state: RunState,
     /// What it was started with; each left out is the client's own.
     pub settings: RunSettings,
+    /// Whether it outlives the daemon.
+    pub tenure: RunTenure,
 }
 
 /// Why the supervisor could not be set up.
