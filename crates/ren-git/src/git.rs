@@ -1,4 +1,4 @@
-use crate::{CommitId, Exit, GitError, NotACommitId, Repository};
+use crate::{CommitId, Exit, GitError, NotACommitId, Repository, Revision};
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
@@ -79,6 +79,50 @@ impl Git {
                 args: args.join(" "),
                 output,
             })
+    }
+
+    /// The commit `revision` names in `dir`'s repository.
+    pub fn commit_of(&self, dir: &Path, revision: &Revision) -> Result<CommitId, GitError> {
+        let named = format!("{revision}^{{commit}}");
+        let args = ["rev-parse", "--verify", "--quiet", named.as_str()];
+        let output = self.answer(dir, &args)?;
+        output
+            .parse()
+            .map_err(|_: NotACommitId| GitError::Unexpected {
+                args: args.join(" "),
+                output,
+            })
+    }
+
+    /// The files `commit` holds, by their paths from the repository's root,
+    /// `/`-separated as git writes them.
+    pub fn files_at(&self, dir: &Path, commit: &CommitId) -> Result<Vec<String>, GitError> {
+        let args = [
+            "ls-tree",
+            "-r",
+            "-z",
+            "--name-only",
+            "--full-tree",
+            commit.as_str(),
+        ];
+        let output = self.output(dir, &args)?;
+        output
+            .split(|byte| *byte == 0)
+            .filter(|name| !name.is_empty())
+            .map(|name| {
+                String::from_utf8(name.to_vec()).map_err(|_| GitError::Unexpected {
+                    args: args.join(" "),
+                    output: String::from_utf8_lossy(name).into_owned(),
+                })
+            })
+            .collect()
+    }
+
+    /// The bytes of the file at `path` (from the repository's root,
+    /// `/`-separated) as `commit` holds it.
+    pub fn file_at(&self, dir: &Path, commit: &CommitId, path: &str) -> Result<Vec<u8>, GitError> {
+        let object = format!("{commit}:{path}");
+        self.output(dir, &["cat-file", "blob", object.as_str()])
     }
 
     /// Whether `dir`'s tracked files differ from its commit.
@@ -168,13 +212,20 @@ impl Git {
     /// `git <args>` in `dir`: its trimmed standard output, once it exits
     /// successfully.
     fn answer(&self, dir: &Path, args: &[&str]) -> Result<String, GitError> {
+        let output = self.output(dir, args)?;
+        Ok(String::from_utf8_lossy(&output).trim().to_owned())
+    }
+
+    /// `git <args>` in `dir`: its standard output as it wrote it, once it
+    /// exits successfully.
+    fn output(&self, dir: &Path, args: &[&str]) -> Result<Vec<u8>, GitError> {
         let joined = || args.join(" ");
         let output = self.run(dir, args).map_err(|source| GitError::NotStarted {
             args: joined(),
             source,
         })?;
         if output.status.success() {
-            return Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned());
+            return Ok(output.stdout);
         }
         let stderr = String::from_utf8_lossy(&output.stderr);
         let stderr = stderr.trim();

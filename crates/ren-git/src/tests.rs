@@ -1,4 +1,7 @@
-use crate::{CommitId, Exit, Git, GitError, Head, NotACommitId, Published, Repository, Tree};
+use crate::{
+    CommitId, Exit, Git, GitError, Head, NotACommitId, NotARevision, Published, Repository,
+    Revision, Tree,
+};
 use std::path::Path;
 
 /// A repository at `dir` whose `HEAD` holds `head`, written by hand.
@@ -52,6 +55,27 @@ fn a_commit_id_parses_only_whole() {
         &"g".repeat(40),
     ] {
         assert_eq!(text.parse::<CommitId>(), Err(NotACommitId(text.to_owned())));
+    }
+}
+
+#[test]
+fn a_revision_is_never_an_option_or_a_path() {
+    for text in ["origin/main", "HEAD~1", "v0.1.0", "0123456789abcdef"] {
+        assert_eq!(text.parse::<Revision>().unwrap().as_str(), text);
+    }
+    for text in [
+        "",
+        "-n",
+        "--output=x",
+        "main:Cargo.toml",
+        "main branch",
+        "a\nb",
+    ] {
+        assert_eq!(
+            text.parse::<Revision>(),
+            Err(NotARevision(text.to_owned())),
+            "{text:?}"
+        );
     }
 }
 
@@ -197,6 +221,40 @@ esac"
             Path::new("/r/.git/packed-refs"),
         ]
     );
+
+    let at = Git::find(&[fake(
+        dir.path(),
+        "at",
+        &format!(
+            "case \"$*\" in
+  'rev-parse --verify --quiet origin/main^{{commit}}') echo {full} ;;
+  'ls-tree -r -z --name-only --full-tree {full}') printf 'docs/a b.md\\0Cargo.toml\\0' ;;
+  'cat-file blob {full}:docs/a b.md') printf 'line\\n\\0bytes' ;;
+  *) exit 128 ;;
+esac"
+        ),
+    )])
+    .unwrap();
+    let commit = at
+        .commit_of(dir.path(), &"origin/main".parse().unwrap())
+        .unwrap();
+    assert_eq!(commit, full.parse::<CommitId>().unwrap());
+    assert_eq!(
+        at.files_at(dir.path(), &commit).unwrap(),
+        ["docs/a b.md", "Cargo.toml"]
+    );
+    assert_eq!(
+        at.file_at(dir.path(), &commit, "docs/a b.md").unwrap(),
+        b"line\n\0bytes",
+        "a file's bytes as they are, not trimmed"
+    );
+    assert!(matches!(
+        at.file_at(dir.path(), &commit, "missing"),
+        Err(GitError::Failed {
+            exit: Exit::Code(128),
+            ..
+        })
+    ));
 
     let odd = Git::find(&[fake(dir.path(), "odd", "echo not-a-commit")]).unwrap();
     assert!(matches!(

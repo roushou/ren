@@ -9,7 +9,7 @@ mod repository;
 
 pub use error::{Exit, GitError};
 pub use git::{Git, Published, Tree};
-pub use repository::{CommitId, Head, NotACommitId, Repository};
+pub use repository::{CommitId, Head, NotACommitId, NotARevision, Repository, Revision};
 
 #[cfg(test)]
 mod tests;

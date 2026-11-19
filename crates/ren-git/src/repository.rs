@@ -30,6 +30,18 @@ pub struct CommitId(String);
 #[error("not a full commit id: {0:?}")]
 pub struct NotACommitId(pub String);
 
+/// A revision as git reads one: a commit id, a branch or tag, or an
+/// expression such as `origin/main` or `HEAD~1`. Never an option (no
+/// leading `-`), and never a path in a revision (no `:`), so it is passed to
+/// git as it is. Parsed from text with [`str::parse`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Revision(String);
+
+/// Text that cannot name a revision, kept as it was.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("not a revision git reads as one: {0:?}")]
+pub struct NotARevision(pub String);
+
 impl Repository {
     /// `dir`'s repository, read from disk. Its `.git` is a folder, or in a
     /// linked worktree a file naming the git folder (`gitdir: <path>`).
@@ -110,6 +122,35 @@ impl CommitId {
 
     pub fn as_str(&self) -> &str {
         &self.0
+    }
+}
+
+impl std::str::FromStr for Revision {
+    type Err = NotARevision;
+
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        let readable = !text.is_empty()
+            && !text.starts_with('-')
+            && !text
+                .chars()
+                .any(|char| char == ':' || char.is_whitespace() || char.is_control());
+        if readable {
+            Ok(Self(text.to_owned()))
+        } else {
+            Err(NotARevision(text.to_owned()))
+        }
+    }
+}
+
+impl Revision {
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::fmt::Display for Revision {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
     }
 }
 
