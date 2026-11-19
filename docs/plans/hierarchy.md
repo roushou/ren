@@ -179,9 +179,14 @@ Records outside the tree stay, and each says why it is outside:
    its project and the session's first prompt, to approve, decline, or
    open. A UI that only reads shows none.
 
+   A work item opens in a drawer over its project's page (`?item=` in the
+   address: Escape, the scrim, or Back close it), with the same detail the
+   Work view shows beside its list (`WorkItemDetail`).
+
    Left for later rounds: Inspect scoped to a project (calls are tied to
-   runs only through their conversation), a work item opened in a drawer
-   over its project, and a project's workspaces.
+   runs only through their conversation), a project's workspaces, and a
+   brief that names the item's own project: it still reads every marked
+   page as one of Ren's own.
 
 Each phase is verified in the dev slot, whose fake projects are registered
 as projects (and the slot's checkout as `Ren`), and by the compatibility

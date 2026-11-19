@@ -7,8 +7,7 @@
 -->
 <script lang="ts">
   import Toolbar from '#lib/Toolbar.svelte';
-  import Icon from '#lib/Icon.svelte';
-  import Markdown from 'markdown/Markdown.svelte';
+  import WorkItemDetail from '#lib/WorkItemDetail.svelte';
   import Picker, { type PickerGroup } from '#lib/Picker.svelte';
   import { goto, invalidateAll } from '$app/navigation';
   import { page } from '$app/state';
@@ -179,7 +178,7 @@
                 >
               </td>
               <td>
-                <span class="state state-{item.state}">{Work.state(item.state)}</span>
+                <span class="work-state state-{item.state}">{Work.state(item.state)}</span>
                 {#if item.session}<a
                     class="session-link"
                     href={`/sessions?session=${item.session}`}
@@ -222,63 +221,7 @@
   </div>
   <aside class="work-detail" aria-label="Work item">
     {#if shown}
-      <header>
-        <span class="state state-{shown.state}">{Work.state(shown.state)}</span>
-        <h2>{shown.title}</h2>
-        <p class="meta mono">
-          <a href={shown.order.page.path}>{shown.order.page.path}</a> · {shown.order.page
-            .width}×{shown.order.page.height}, {shown.order.page.theme}
-        </p>
-        {#if shown.state === 'sent'}
-          <p class="compare">
-            {#if Work.previewed(shown)}<a
-                class="button small"
-                href={Work.previewed(shown)}
-                target="_blank"
-                rel="noopener">On the branch</a
-              >{:else}<span
-                class="muted"
-                title="The agent starts one with `cargo xtask preview up --publish` in its workspace"
-                >No preview yet</span
-              >{/if}
-            <a class="button small" href={shown.order.page.path} target="_blank" rel="noopener"
-              >In production</a
-            >
-          </p>
-        {/if}
-        {#if shown.landed}<p class="meta mono">Landed as {shown.landed.slice(0, 12)}</p>{/if}
-        {#if shown.shipped?.kind === 'commit'}<p class="meta mono">
-            Shipped in production's build of {shown.shipped.commit.slice(0, 12)}
-          </p>{/if}
-        {#if shown.state === 'queued' || shown.state === 'sent'}
-          <button class="button small" onclick={() => void dismiss(shown)}
-            ><Icon name="close" size={11} />Dismiss</button
-          >
-        {/if}
-      </header>
-      <h3>Marks</h3>
-      <ol class="marks">
-        {#each shown.order.marks as mark, index (index)}
-          <li>
-            <p class="note">{mark.note}</p>
-            <p class="meta mono">{mark.selector}{mark.text ? ` · “${mark.text}”` : ''}</p>
-          </li>
-        {/each}
-      </ol>
-      {#if shown.order.evidence.console.length}
-        <h3>Errors on the page</h3>
-        <ul class="evidence mono">
-          {#each shown.order.evidence.console as line, index (index)}<li>{line}</li>{/each}
-        </ul>
-      {/if}
-      {#if shown.order.evidence.reads.length}
-        <h3>Reads behind it</h3>
-        <ul class="evidence mono">
-          {#each shown.order.evidence.reads as read, index (index)}<li>{read}</li>{/each}
-        </ul>
-      {/if}
-      <h3>Brief</h3>
-      <div class="brief"><Markdown text={Work.batch([shown], 'workspace')} /></div>
+      <WorkItemDetail item={shown} ondismiss={(item) => void dismiss(item)} />
     {:else}
       <p class="empty">Pick a work item to see what was marked.</p>
     {/if}
@@ -344,25 +287,6 @@
   .errors {
     color: var(--error);
   }
-  .state {
-    font-size: 11px;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-  }
-  .state-queued {
-    color: var(--warning);
-  }
-  .state-sent,
-  .state-landed {
-    color: var(--accent);
-  }
-  .state-shipped {
-    color: var(--success);
-  }
-  .state-dismissed {
-    color: var(--muted);
-  }
   .session-link {
     margin-left: 8px;
     font-size: 12px;
@@ -391,57 +315,6 @@
     min-width: 0;
     overflow: auto;
     padding: 12px 16px;
-  }
-  .work-detail header {
-    display: flex;
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 4px;
-    padding-bottom: 12px;
-    border-bottom: 1px solid var(--line);
-  }
-  .work-detail h2 {
-    font-size: 15px;
-    margin: 0;
-  }
-  .work-detail h3 {
-    font-size: 11px;
-    font-weight: 600;
-    color: var(--muted);
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    margin: 16px 0 6px;
-  }
-  .compare {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    margin: 4px 0;
-  }
-  .marks {
-    margin: 0;
-    padding-left: 18px;
-  }
-  .marks li + li {
-    margin-top: 8px;
-  }
-  .note {
-    margin: 0;
-    white-space: pre-wrap;
-  }
-  .evidence {
-    margin: 0;
-    padding-left: 18px;
-    font-size: 11px;
-    overflow-wrap: anywhere;
-  }
-  .brief {
-    border: 1px solid var(--line);
-    padding: 8px 12px;
-    font-size: 12px;
-  }
-  .brief :global(.markdown p) {
-    white-space: pre-wrap;
   }
   .empty {
     color: var(--muted);

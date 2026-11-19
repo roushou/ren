@@ -3032,3 +3032,24 @@ td.zero {
 .redline-count {
   font-weight: 700;
 }
+
+/* A work item's state, as the Work view and a project's page name it. */
+.work-state {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.work-state.state-queued {
+  color: var(--warning);
+}
+.work-state.state-sent,
+.work-state.state-landed {
+  color: var(--accent);
+}
+.work-state.state-shipped {
+  color: var(--success);
+}
+.work-state.state-dismissed {
+  color: var(--muted);
+}

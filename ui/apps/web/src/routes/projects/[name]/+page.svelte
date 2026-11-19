@@ -7,7 +7,11 @@
 <script lang="ts">
   import Toolbar from '#lib/Toolbar.svelte';
   import Icon from '#lib/Icon.svelte';
-  import { onMount } from 'svelte';
+  import WorkItemDetail from '#lib/WorkItemDetail.svelte';
+  import { onMount, tick } from 'svelte';
+  import { goto, invalidateAll } from '$app/navigation';
+  import { page } from '$app/state';
+  import { WorkApi, WorkError, type WorkItem } from '#lib/work.ts';
   import { ago } from '#lib/overview.ts';
   import { harnessLabel } from '#lib/activity.ts';
   import { ProjectBoard } from '#lib/projects.ts';
@@ -18,6 +22,39 @@
   const project = $derived(data.project);
   const groups = $derived(ProjectBoard.groups(data.work));
   const view = $derived(project.release ? new ReleasePage(project.release, null) : null);
+
+  /** The work item open in the drawer, as the address names it. */
+  const shown = $derived(
+    data.work.find((item) => item.id === page.url.searchParams.get('item')) ?? null,
+  );
+  let drawer = $state<HTMLElement>();
+  let failed = $state<string | null>(null);
+  $effect(() => {
+    // Opening an item moves focus into the drawer.
+    if (shown) void tick().then(() => drawer?.focus());
+  });
+  /** Whether this page opened the drawer, so closing it steps back. */
+  let opened = false;
+  const close = async () => {
+    if (opened) {
+      opened = false;
+      history.back();
+    } else {
+      // Arrived at with the item in the address: close in place.
+      await goto(page.url.pathname, { replace: true, reset: false });
+    }
+  };
+  const work = new WorkApi(fetch);
+
+  async function dismiss(item: WorkItem) {
+    failed = null;
+    try {
+      await work.move(item.id, { kind: 'dismiss' });
+      await invalidateAll();
+    } catch (failure) {
+      failed = failure instanceof WorkError ? failure.message : 'The work item was not dismissed.';
+    }
+  }
 
   let now = $state(Date.now());
   onMount(() => {
@@ -39,114 +76,210 @@
   </div>
 {/snippet}
 
+<svelte:window
+  onkeydown={(event) => {
+    if (shown && event.key === 'Escape') void close();
+  }}
+/>
+
 <Toolbar {scope} />
 
-<section class="project" aria-label={project.name}>
-  <h2 id="release">Release</h2>
-  {#if view}
-    {@const release = view.release}
-    {@const [decision, tone] = ReleaseLine.decision(release)}
-    <div class="lanes" aria-label="Builds">
-      <div class="lane">
-        <span class="lane-label">Main</span>
-        <span class="lane-commit mono">{ReleasePage.short(release.main)}</span>
-        <span class="lane-note">its tip, as the canary last fetched it</span>
+<div class="frame">
+  <section class="project" aria-label={project.name}>
+    <h2 id="release">Release</h2>
+    {#if view}
+      {@const release = view.release}
+      {@const [decision, tone] = ReleaseLine.decision(release)}
+      <div class="lanes" aria-label="Builds">
+        <div class="lane">
+          <span class="lane-label">Main</span>
+          <span class="lane-commit mono">{ReleasePage.short(release.main)}</span>
+          <span class="lane-note">its tip, as the canary last fetched it</span>
+        </div>
+        <div class="lane">
+          <span class="lane-label">Canary</span>
+          <span class="lane-commit mono">{ReleasePage.short(release.canary?.commit ?? null)}</span>
+          <span
+            class="lane-note"
+            class:ok={release.canary?.passed}
+            class:bad={release.canary && !release.canary.passed}
+            >{release.canary ? (release.canary.passed ? 'passed' : 'failed') : 'none checked'}</span
+          >
+        </div>
+        <div class="lane">
+          <span class="lane-label">Production</span>
+          <span class="lane-commit mono">{ReleasePage.short(view.production)}</span>
+          <span class="lane-note">{view.behind}</span>
+        </div>
+        <div class="lane">
+          <span class="lane-label">Promotion · {release.policy}</span>
+          <span class="tone-{tone}">{decision}</span>
+          {#if project.factory === 'ren'}
+            <a class="lane-note" href="/release">The full release, with the canary's pages</a>
+          {:else}
+            <span class="lane-note mono">ren project promote --project {project.name}</span>
+          {/if}
+        </div>
       </div>
-      <div class="lane">
-        <span class="lane-label">Canary</span>
-        <span class="lane-commit mono">{ReleasePage.short(release.canary?.commit ?? null)}</span>
-        <span
-          class="lane-note"
-          class:ok={release.canary?.passed}
-          class:bad={release.canary && !release.canary.passed}
-          >{release.canary ? (release.canary.passed ? 'passed' : 'failed') : 'none checked'}</span
+      {#if release.canary}
+        <ul class="checks" aria-label="Canary checks">
+          {#each release.canary.checks as check, index (index)}
+            <li class:failed={!check.passed}>
+              <Icon name={check.passed ? 'check' : 'alert'} size={13} />
+              <span class="check-name">{check.name ?? check.check}</span>
+              {#if check.detail}<span class="check-detail mono">{check.detail}</span>{/if}
+            </li>
+          {/each}
+        </ul>
+      {/if}
+    {:else}
+      <p class="empty">
+        No canary has run yet: <code
+          >{project.factory === 'ren'
+            ? 'cargo xtask canary run'
+            : `ren project canary --project ${project.name}`}</code
         >
+      </p>
+    {/if}
+
+    <h2>Work</h2>
+    {#if !groups.length}
+      <p class="empty">No work items for {project.name} yet. Redline marks them.</p>
+    {/if}
+    {#each groups as group (group.state)}
+      <div class="group state-{group.state}">
+        <span class="dot"></span><strong>{group.label}</strong>
+        <span class="muted">{group.items.length}</span>
+        <span class="muted note">{group.note}</span>
       </div>
-      <div class="lane">
-        <span class="lane-label">Production</span>
-        <span class="lane-commit mono">{ReleasePage.short(view.production)}</span>
-        <span class="lane-note">{view.behind}</span>
-      </div>
-      <div class="lane">
-        <span class="lane-label">Promotion · {release.policy}</span>
-        <span class="tone-{tone}">{decision}</span>
-        {#if project.factory === 'ren'}
-          <a class="lane-note" href="/release">The full release, with the canary's pages</a>
-        {:else}
-          <span class="lane-note mono">ren project promote --project {project.name}</span>
-        {/if}
-      </div>
-    </div>
-    {#if release.canary}
-      <ul class="checks" aria-label="Canary checks">
-        {#each release.canary.checks as check, index (index)}
-          <li class:failed={!check.passed}>
-            <Icon name={check.passed ? 'check' : 'alert'} size={13} />
-            <span class="check-name">{check.name ?? check.check}</span>
-            {#if check.detail}<span class="check-detail mono">{check.detail}</span>{/if}
+      <ul class="rows">
+        {#each group.items as item (item.id)}
+          <li>
+            <a
+              href={`?item=${item.id}`}
+              data-sveltekit-reset="false"
+              onclick={() => (opened = true)}
+              aria-current={shown?.id === item.id ? 'true' : undefined}>{item.title}</a
+            >
+            <span class="muted mono">{item.order.page.path}</span>
+            <span class="muted">
+              {#if item.preview}<a href={item.preview.ui} target="_blank" rel="noopener"
+                  >preview up</a
+                >{:else if item.landed}{ReleasePage.short(item.landed)}{:else if item.session}<a
+                  href={`/sessions?session=${item.session}`}>its session</a
+                >{/if}
+            </span>
+            <span class="muted when">{ago(item.updated_at, now)}</span>
+          </li>
+        {/each}
+      </ul>
+    {/each}
+
+    <h2>Runs</h2>
+    {#if !data.runs.length}
+      <p class="empty">No session has run for {project.name} yet.</p>
+    {:else}
+      <ul class="rows">
+        {#each data.runs as run (run.id)}
+          <li>
+            <a href={`/sessions?run=${run.id}`}
+              >{harnessLabel(run.harness)} in <span class="mono">{run.workdir}</span></a
+            >
+            <span class="muted">
+              {#if run.ended_at === null}<span class="live"><span class="dot"></span>running</span
+                >{:else}ended{/if}
+            </span>
+            <span class="muted when">{ago(run.started_at, now)}</span>
           </li>
         {/each}
       </ul>
     {/if}
-  {:else}
-    <p class="empty">
-      No canary has run yet: <code
-        >{project.factory === 'ren'
-          ? 'cargo xtask canary run'
-          : `ren project canary --project ${project.name}`}</code
-      >
-    </p>
+  </section>
+  {#if shown}
+    <button
+      class="scrim"
+      aria-label="Close the work item"
+      tabindex="-1"
+      onclick={() => void close()}
+    ></button>
+    <aside
+      class="drawer"
+      role="dialog"
+      aria-modal="true"
+      aria-label={shown.title}
+      tabindex="-1"
+      bind:this={drawer}
+    >
+      <div class="drawer-bar">
+        <span class="muted">{project.name}</span>
+        <a class="button small" href={`/work?item=${shown.id}`}>Open in Work</a>
+        <button class="button small" aria-label="Close" onclick={() => void close()}
+          ><Icon name="close" size={12} /></button
+        >
+      </div>
+      {#if failed}<p class="error" role="alert">{failed}</p>{/if}
+      <div class="drawer-body">
+        <WorkItemDetail item={shown} ondismiss={(item) => void dismiss(item)} />
+      </div>
+    </aside>
   {/if}
-
-  <h2>Work</h2>
-  {#if !groups.length}
-    <p class="empty">No work items for {project.name} yet. Redline marks them.</p>
-  {/if}
-  {#each groups as group (group.state)}
-    <div class="group state-{group.state}">
-      <span class="dot"></span><strong>{group.label}</strong>
-      <span class="muted">{group.items.length}</span>
-      <span class="muted note">{group.note}</span>
-    </div>
-    <ul class="rows">
-      {#each group.items as item (item.id)}
-        <li>
-          <a href={`/work?item=${item.id}`}>{item.title}</a>
-          <span class="muted mono">{item.order.page.path}</span>
-          <span class="muted">
-            {#if item.preview}<a href={item.preview.ui} target="_blank" rel="noopener">preview up</a
-              >{:else if item.landed}{ReleasePage.short(item.landed)}{:else if item.session}<a
-                href={`/sessions?session=${item.session}`}>its session</a
-              >{/if}
-          </span>
-          <span class="muted when">{ago(item.updated_at, now)}</span>
-        </li>
-      {/each}
-    </ul>
-  {/each}
-
-  <h2>Runs</h2>
-  {#if !data.runs.length}
-    <p class="empty">No session has run for {project.name} yet.</p>
-  {:else}
-    <ul class="rows">
-      {#each data.runs as run (run.id)}
-        <li>
-          <a href={`/sessions?run=${run.id}`}
-            >{harnessLabel(run.harness)} in <span class="mono">{run.workdir}</span></a
-          >
-          <span class="muted">
-            {#if run.ended_at === null}<span class="live"><span class="dot"></span>running</span
-              >{:else}ended{/if}
-          </span>
-          <span class="muted when">{ago(run.started_at, now)}</span>
-        </li>
-      {/each}
-    </ul>
-  {/if}
-</section>
+</div>
 
 <style>
+  .frame {
+    position: relative;
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+  }
+  .scrim {
+    position: absolute;
+    inset: 0;
+    border: 0;
+    padding: 0;
+    background: rgb(16 18 27 / 0.28);
+    cursor: default;
+  }
+  .drawer {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: min(560px, 100%);
+    display: flex;
+    flex-direction: column;
+    background: var(--surface);
+    border-left: 1px solid var(--popover-border);
+    box-shadow: var(--popover-shadow);
+    outline: none;
+  }
+  .drawer-bar {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--line);
+    background: var(--surface-subtle);
+  }
+  .drawer-bar .muted {
+    margin-right: auto;
+    font-size: 12px;
+  }
+  .drawer-body {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+    padding: 12px 16px;
+  }
+  .error {
+    margin: 0;
+    padding: 8px 16px;
+    color: var(--error);
+  }
+  .rows a[aria-current] {
+    font-weight: 600;
+  }
   .project {
     flex: 1;
     min-height: 0;
