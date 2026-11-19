@@ -696,6 +696,12 @@ dependencies under "Crates" below. Read the code for current module ownership.
   listeners they answer on (`unit`: `TransientUnit`, `Listener`), and builds
   made once per commit (`builds`: `Builds`, `StoredBuild`, which
   `install-vps --build` installs).
+  `replica`: Ren on a copy of production's history (`ProductionPlace`,
+  production and its work item API, and `Replica`, the canary's and each
+  preview's instance). `cargo xtask preview` (`preview`) runs a workspace's
+  branch as a replica on the workspace's ports and records it on the work
+  items the branch names; `ren_supervisor::Workspace::preview_units` names
+  the units, which removing the workspace stops.
   `cargo xtask canary` is the factory's canary and promotion (`canary`;
   `docs/deployment.md#canary-and-promotion`, `docs/plans/self-build.md`,
   phase 4): a pass fetches `main` into Ren's own worktree and goes on with

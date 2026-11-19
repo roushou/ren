@@ -195,8 +195,8 @@ The dev slot exists (`cargo xtask dev`). Each instance names itself with
    - Not run: a promotion into the installed service and the timer. They
      install into production, which stays a step the operator asks for;
      the install's own steps are the ones `install-vps` has always run.
-5. **Work items and Redline.** Work items built, from a mark to the
-   build that ships it; previews and screenshots are not built.
+5. **Work items and Redline.** Built, but for screenshots: work items,
+   from a mark to the build that ships it, and previews of their change.
    - A work item is what was marked to be done: the page (its path, route,
      size, theme, and the build that served it), the noted marks, and what
      else was on screen (the errors the page logged and the API reads
@@ -227,8 +227,21 @@ The dev slot exists (`cargo xtask dev`). Each instance names itself with
      naming a sent item: the item landed as that commit and shipped in the
      slot's build, in one pass; an item landed earlier shipped in a later
      pass. Both ended on the Work view's archived shelf.
-   - Next: a preview opens the marked page on the branch's build beside
-     production's; a screenshot travels with the marks.
+   - A preview runs a workspace's branch on a copy of production's
+     history (`cargo xtask preview up`, which a brief asks the agent to
+     run): the canary's replica, on the workspace slot's first two ports,
+     recorded on the sent work items the branch names, so the Work view
+     opens the marked page on the branch and in production side by side.
+     Deleting the workspace's session stops it.
+   - Verified with the dev slot as production: a preview of this branch,
+     run as the dev workspace `acme-web-1`, served `/recordings` on the
+     slot's copied history with its preview tag, was recorded on that
+     workspace's two items (the Work view showed "On the branch"), and
+     stopped when the session was deleted.
+   - Not built: a screenshot with the marks (a page cannot capture itself
+     without the browser asking, or a library), and clearing a preview from
+     its items when its workspace goes; the link then fails until the item
+     lands.
 6. **Projects.** Not built. A project declares its build, run, checks, and
    quiesce steps, and gets workspaces, previews, canary, and promotion as
    Ren does.
@@ -305,6 +318,10 @@ things faster. Each phase is useful on its own.
   trace of a branch on `main`, so the change names its items itself, in a
   `Work-Item:` trailer the brief asks for. It works for any merge style and
   any host, and needs only git.
+- **A preview is a replica, run by the agent.** The canary's instance
+  became `Replica`, which a preview reuses on its workspace's ports; the
+  agent starts it from its workspace, which already holds the branch and
+  its build, rather than production building branches.
 - **The gate is its own workflow.** It reads the pull request's title and
   body, so it runs again when they are edited, which would otherwise
   rerun all of CI.

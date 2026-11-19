@@ -417,6 +417,31 @@ it was enabled in; follow a pass with `journalctl --user -u ren-canary`.
 `--of dev` rehearses all of it with the dev slot as production: its fake
 history, its `release.json`, and never a promotion.
 
+### Previews
+
+`cargo xtask preview` runs one workspace's branch on a copy of production's
+history, so its change is judged on the page it was marked on, beside
+production's. It runs in a workspace Ren made (it reads `REN_WORKSPACE`,
+`REN_WORKSPACE_PORTS`, and `REN_WORKSPACE_DATA`, which the workspace's runs
+are told), and a brief asks the agent to start one once its change is ready:
+
+```sh
+cargo xtask preview up --publish   # build, copy production's history, start, record
+cargo xtask preview down --publish # stop, unpublish, take it off the work items
+```
+
+`up` builds the branch (debug) into `<data>/preview`, backs up production's
+history with production's own `ren`, and starts the build as a replica, as
+the canary is: `ren-preview-<workspace>-daemon` on the slot's first port and
+`ren-preview-<workspace>-ui` on the next, with production's configuration but
+`environment = "preview"`, no runs, no operator key, and a UI that only reads.
+`--publish` publishes both on the tailnet on the same port numbers, with the
+install's saved Tailscale choice. It then records the preview on every sent
+work item the branch's recent commits name (`Work-Item: <id>`), and on each
+`--work <id>`: the Work view opens the marked page on it beside production's.
+`--of dev` copies the dev slot instead. Deleting the workspace's session
+stops its preview with it.
+
 ### Manual steps
 
 Build on the VPS with Rust and `cargo build --release --locked`, or copy an

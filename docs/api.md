@@ -408,6 +408,12 @@ session in a workspace of its own.
   `409` `work_state`: only a queued or sent item is sent or dismissed, only a
   sent one lands, only a landed one ships; shipped and dismissed are final.
   A session that was never recorded is `404` `not_found`.
+- `POST /control/v1/work/{work-item-id}/preview` records a preview of a sent
+  item's change, `{preview: {ui, revision}}`, where `ui` is an `http` or
+  `https` origin with no path (`400` `invalid_request` otherwise), or clears
+  it with `{preview: null}`; the item's state stays `sent` (`409`
+  `work_state` for any other state). `cargo xtask preview` records it
+  ([previews](deployment.md#previews)).
 
 Ren lands and ships items itself ([canary and
 promotion](deployment.md#canary-and-promotion)): a brief asks for a
@@ -420,7 +426,8 @@ answer `404` until it is.
 
 `/api/work` lists each item with its `order` as it was queued, its `state`
 (`queued`, `sent`, `landed`, `shipped`, or `dismissed`), and its `session`,
-`landed` commit, and `shipped` revision once known. Each change is recorded
+`landed` commit, `shipped` revision, and `preview` (`{ui, revision}`) once
+known. Each change is recorded
 (a `work_queued`, `work_sent`, `work_landed`, `work_shipped`, or
 `work_dismissed` observation).
 
