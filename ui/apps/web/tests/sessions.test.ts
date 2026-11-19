@@ -246,3 +246,36 @@ test('a session in a worktree Ren made carries it, with its ports', async () => 
     new RunsClient((async () => Response.json(malformed)) as unknown as typeof fetch).sessions(),
   );
 });
+
+test("a desk holds its project's sessions, and Scratch those of none", async () => {
+  const acme = { id: 'p-acme', name: 'acme', repository: '/work/acme' };
+  const web = { id: 'p-web', name: 'acme-web', repository: '/work/acme-web' };
+  const bodies = await sessions();
+  const owned = bodies.map((body) =>
+    body.session === sessionA && body.stored
+      ? { ...body, stored: { ...body.stored, project: acme.id } }
+      : body,
+  );
+  const ids = (list: SessionBody[]) => list.map((body) => body.session);
+  assert.deepEqual(ids(Sessions.within(owned, { kind: 'project', project: acme })), [sessionA]);
+  // Stored for no project, and served in a scratch folder: Scratch's.
+  assert.deepEqual(ids(Sessions.within(owned, { kind: 'scratch', projects: [acme, web] })), [
+    sessionB,
+    sessionC,
+  ]);
+  // Not stored yet: told by its folder, the repository or a worktree of it.
+  const fresh = (workdir: string, worktree: string | null): SessionBody => ({
+    session: sessionC,
+    stored: null,
+    served: { ...owned[2]!.served!, workdir },
+    worktree: worktree ? { name: worktree, data: '/d', ports: [20000, 20099] } : null,
+  });
+  assert.equal(Sessions.projectOf(fresh('/work/acme', null), [acme, web]), acme);
+  assert.equal(Sessions.projectOf(fresh('/w/acme-web-3', 'acme-web-3'), [acme, web]), web);
+  assert.equal(Sessions.projectOf(fresh('/scratch/s-1', null), [acme, web]), null);
+  assert.equal(
+    Sessions.deskHref('acme web', { session: sessionA }),
+    `/projects/acme%20web/sessions?session=${sessionA}`,
+  );
+  assert.equal(Sessions.deskHref(null), '/scratch');
+});

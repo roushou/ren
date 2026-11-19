@@ -165,6 +165,11 @@ export class WorkApi {
     return (await this.#request('GET', path, undefined, workItems, signal)).work;
   }
 
+  /** One work item, by id. */
+  async item(id: WorkItemId, signal?: AbortSignal): Promise<WorkItem> {
+    return this.#request('GET', `/api/work/${id}`, undefined, workItem, signal);
+  }
+
   /** Queue `order`, and return the new item's id. */
   async queue(order: WireWorkOrder): Promise<WorkItemId> {
     return (await this.#request('POST', '/control/work', order, workAnswer)).id;
@@ -452,6 +457,30 @@ export class Work {
     return project && project.factory !== 'ren'
       ? { kind: 'other', name: project.name }
       : { kind: 'ren' };
+  }
+
+  /** The items among `items` that are `project`'s: Ren's holds those from
+   * before projects too, as their briefs name Ren. */
+  static of(items: readonly WorkItem[], project: Project): WorkItem[] {
+    return items.filter(
+      (item) => item.project === project.id || (item.project === null && project.factory === 'ren'),
+    );
+  }
+
+  /** The project whose Work page holds `item`: its own, or Ren (from
+   * `projects`) for one from before projects; null when neither is known. */
+  static home(item: WorkItem, projects: readonly Project[]): Project | null {
+    return item.project === null
+      ? (projects.find((project) => project.archived_at === null && project.factory === 'ren') ??
+          null)
+      : (projects.find((project) => project.id === item.project) ?? null);
+  }
+
+  /** The Work page of the project named `project`, with `query`. */
+  static href(project: string, query: Record<string, string> = {}): string {
+    const search = new URLSearchParams(query).toString();
+    const path = `/projects/${encodeURIComponent(project)}/work`;
+    return search ? `${path}?${search}` : path;
   }
 
   /** The one project `items` are all for, or null when they mix. */

@@ -170,7 +170,7 @@
               {#if item.preview}<a href={item.preview.ui} target="_blank" rel="noopener"
                   >preview up</a
                 >{:else if item.landed}{ReleasePage.short(item.landed)}{:else if item.session}<a
-                  href={`/sessions?session=${item.session}`}>its session</a
+                  href={Sessions.deskHref(project.name, { session: item.session })}>its session</a
                 >{/if}
             </span>
             <span class="muted when">{ago(item.updated_at, now)}</span>
@@ -188,7 +188,7 @@
           {@const taken = data.work.filter((item) => item.session === session.session)}
           <li>
             <span class="session">
-              <a href={`/sessions?session=${session.session}`}
+              <a href={Sessions.deskHref(project.name, { session: session.session })}
                 >{session.asked ?? 'Not asked anything yet'}</a
               >
               <span class="muted where">
@@ -243,7 +243,7 @@
       <ul class="rows">
         {#each data.runs as run (run.id)}
           <li>
-            <a href={`/sessions?run=${run.id}`}
+            <a href={Sessions.deskHref(project.name, { run: run.id })}
               >{harnessLabel(run.harness)} in <span class="mono">{run.workdir}</span></a
             >
             <span class="muted">
@@ -273,7 +273,7 @@
     >
       <div class="drawer-bar">
         <span class="muted">{project.name}</span>
-        <a class="button small" href={`/work?item=${shown.id}`}>Open in Work</a>
+        <a class="button small" href={Work.href(project.name, { item: shown.id })}>Open in Work</a>
         <button class="button small" aria-label="Close" onclick={() => void close()}
           ><Icon name="close" size={12} /></button
         >

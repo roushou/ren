@@ -181,7 +181,7 @@ Records outside the tree stay, and each says why it is outside:
 
    A work item opens in a drawer over its project's page (`?item=` in the
    address: Escape, the scrim, or Back close it), with the same detail the
-   Work view shows beside its list (`WorkItemDetail`).
+   project's Work page shows beside its list (`WorkItemDetail`).
 
    A work item's brief names its own project: Ren's (and every item from
    before projects) names its route's file and build and previews with
@@ -205,6 +205,18 @@ Records outside the tree stay, and each says why it is outside:
    Deviation: the plan named them the project's workspaces; "workspace"
    usually means something bigger than a project, so the concept is
    renamed to worktree, in its own change after this one.
+
+   Work and Sessions are folded into each project: inside a project the
+   row under the header holds its own pages, Overview, Work
+   (`/projects/{name}/work`) and Sessions (`/projects/{name}/sessions`).
+   The session desk is one component with a scope: a project's desk holds
+   the sessions working for it and starts new ones in its repository;
+   Scratch (`/scratch`), beside Projects and Release, holds those that work
+   for no project (scratch folders, and folders no project is registered
+   for). Ren's Work holds the items from before projects, as their briefs
+   name Ren. `/work?item=` and `/sessions?session=` (or `?run=`) lead to
+   where the item or session now is; `/work` and `/sessions` alone lead to
+   Projects.
 
 Each phase is verified in the dev slot, whose fake projects are registered
 as projects (and the slot's checkout as `Ren`), and by the compatibility
@@ -291,14 +303,17 @@ gate against `main`.
   `--project` lookups for `canary` and `promote`, which build a repository
   on this host, still read the store beside the daemon. `ren release`
   takes `--project`, Ren's by default.
-- **Phase 4: Work, Sessions, and Release stay pages under Projects.**
-  Decision 6 put them inside a project. A project's page lists its work
-  and runs and links into them, while the pages themselves still list
-  every project's; moving each inside its project is a later round, from
-  the real page, so nothing they do is lost on the way.
+- **Phase 4: Work and Sessions moved inside each project in a second
+  round; Release stays.** Decision 6 put them inside a project. The first
+  round kept them as pages listing every project's, linked from a
+  project's page; the second moved each, whole, under its project, so
+  nothing they do was lost. Sessions of no project needed a home the
+  decision did not give: Scratch, beside Projects. Release stays Ren's
+  full release under Projects; every project's release is on its page.
+- **Phase 4: a project's pages are Overview, Work, and Sessions.** The
+  mockups had tabs and the first round one page of sections; with Work and
+  Sessions whole pages (a list beside its detail, and the session desk),
+  they are pages of their own, and the overview keeps the sections.
 - **Phase 4: Overview stays, under Inspect.** It is the gateway's traffic
   at a glance, not the factory's, so `/` became Projects and Overview moved
   to `/overview`.
-- **Phase 4: a project's page is one page of sections.** The mockups had
-  tabs; with its release, work, and runs each short, sections read in one
-  scroll, and the tabs wait until a section outgrows it.

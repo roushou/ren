@@ -93,9 +93,10 @@ test('the board puts Ren first, and gathers what waits on the operator', () => {
     board.previews.map((item) => item.id),
     ['d'],
   );
+  // An item from before projects is Ren's.
   assert.deepEqual(board.queued, [
     { project: 'acme', count: 2 },
-    { project: null, count: 1 },
+    { project: 'ren', count: 1 },
   ]);
   assert.ok(board.pending);
   assert.equal(new ProjectBoard([], []).pending, false);

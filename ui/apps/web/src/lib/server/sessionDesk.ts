@@ -1,7 +1,7 @@
 import { Memory, type RunsStart } from '#lib/runs.ts';
 import { RunsStartRead } from '#lib/server/runsStart.ts';
 import { Arrival } from '#lib/arrival.ts';
-import type { PageServerLoad } from './$types';
+import type { ServerLoadEvent } from '@sveltejs/kit';
 
 /**
  * What this server read for the page: everything it starts with, nothing
@@ -29,17 +29,32 @@ class OpeningRead {
   }
 }
 
-// A first load renders with what runs, places, and clients are now; the feed
-// keeps it current from there. The URL is not read here, so choosing a run
-// does not read everything again.
-export const load: PageServerLoad = async ({ request, parent, cookies, isDataRequest }) => {
-  const { runsControl } = await parent();
+/** What a session desk's server reads, wherever the desk is. */
+export type DeskServerData = {
+  opening: Opening;
   /** The choices last started with, as this browser kept them. */
-  const remembered = cookies.get(Memory.COOKIE) ?? null;
-  const opening: Opening = !runsControl
-    ? { kind: 'off' }
-    : isDataRequest
-      ? await OpeningRead.within(RunsStartRead.read(request))
-      : { kind: 'read', start: await RunsStartRead.read(request) };
-  return { opening, remembered };
+  remembered: string | null;
 };
+
+/**
+ * A session desk's server read: a first load renders with what runs,
+ * places, and clients are now; the feed keeps it current from there. The
+ * URL is not read here, so choosing a run does not read everything again.
+ */
+export class SessionDeskServer {
+  static async load({
+    request,
+    parent,
+    cookies,
+    isDataRequest,
+  }: ServerLoadEvent<Record<string, string>, Record<string, unknown>>): Promise<DeskServerData> {
+    const { runsControl } = (await parent()) as { runsControl: boolean };
+    const remembered = cookies.get(Memory.COOKIE) ?? null;
+    const opening: Opening = !runsControl
+      ? { kind: 'off' }
+      : isDataRequest
+        ? await OpeningRead.within(RunsStartRead.read(request))
+        : { kind: 'read', start: await RunsStartRead.read(request) };
+    return { opening, remembered };
+  }
+}

@@ -4,15 +4,17 @@
  * are tested without a browser.
  *
  * Three destinations hold every view: Projects (the factory: each
- * project, and the sessions, work, and releases under them), Inspect
- * (everything recorded), and Host (this machine). The header names the
- * three; under it, the current destination's own pages.
+ * project, with its work and sessions under it, Scratch for sessions that
+ * work for none, and Ren's release), Inspect (everything recorded), and
+ * Host (this machine). The header names the three; under it, the current
+ * destination's own pages, or inside a project, the project's.
  */
 
 /** A view of the workbench, one per page. */
 export type View =
   | 'projects'
   | 'project'
+  | 'scratch'
   | 'overview'
   | 'live'
   | 'sessions'
@@ -28,10 +30,12 @@ export type View =
   | 'release'
   | 'recorder';
 
-/** A page of a destination: a project's page sits under Projects, and a
- * recording's report and turns under Recordings. */
+/** A page of a destination, or of a project: a recording's report and
+ * turns sit under Recordings. */
 export type Tab =
   | 'projects'
+  | 'project'
+  | 'scratch'
   | 'sessions'
   | 'work'
   | 'release'
@@ -74,12 +78,16 @@ export class Views {
         return 'projects';
       case '/projects/[name]':
         return 'project';
+      case '/projects/[name]/work':
+        return 'work';
+      case '/projects/[name]/sessions':
+        return 'sessions';
+      case '/scratch':
+        return 'scratch';
       case '/overview':
         return 'overview';
       case '/live':
         return 'live';
-      case '/sessions':
-        return 'sessions';
       case '/recordings':
         return 'recordings';
       case '/recordings/[id]':
@@ -94,8 +102,6 @@ export class Views {
         return 'usage';
       case '/tools':
         return 'tools';
-      case '/work':
-        return 'work';
       case '/release':
         return 'release';
       case '/recorder':
@@ -108,13 +114,13 @@ export class Views {
   /** The page `view` is shown under. */
   static tab(view: View): Tab {
     switch (view) {
-      case 'project':
-        return 'projects';
       case 'recording':
       case 'report':
       case 'turn':
         return 'recordings';
       case 'projects':
+      case 'project':
+      case 'scratch':
       case 'overview':
       case 'live':
       case 'sessions':
@@ -138,6 +144,8 @@ export class Views {
   static destination(tab: Tab): Destination {
     switch (tab) {
       case 'projects':
+      case 'project':
+      case 'scratch':
       case 'sessions':
       case 'work':
       case 'release':
@@ -159,16 +167,25 @@ export class Views {
     }
   }
 
-  /** A destination's pages, in the order its row shows them. */
-  static pages(destination: Destination): readonly PageLink[] {
+  /** A destination's pages, in the order its row shows them; inside the
+   * project named `project`, the project's own. */
+  static pages(destination: Destination, project: string | null = null): readonly PageLink[] {
     switch (destination) {
-      case 'projects':
+      case 'projects': {
+        if (project !== null) {
+          const base = `/projects/${encodeURIComponent(project)}`;
+          return [
+            { tab: 'project', href: base, label: 'Overview' },
+            { tab: 'work', href: `${base}/work`, label: 'Work' },
+            { tab: 'sessions', href: `${base}/sessions`, label: 'Sessions' },
+          ];
+        }
         return [
           { tab: 'projects', href: '/', label: 'Projects' },
-          { tab: 'work', href: '/work', label: 'Work' },
-          { tab: 'sessions', href: '/sessions', label: 'Sessions' },
+          { tab: 'scratch', href: '/scratch', label: 'Scratch' },
           { tab: 'release', href: '/release', label: 'Release' },
         ];
+      }
       case 'inspect':
         return [
           { tab: 'overview', href: '/overview', label: 'Overview' },
@@ -197,6 +214,8 @@ export class Views {
       case 'recordings':
         return true;
       case 'projects':
+      case 'project':
+      case 'scratch':
       case 'sessions':
       case 'work':
       case 'release':
@@ -228,6 +247,8 @@ export class Views {
         return 'Projects';
       case 'project':
         return 'Project';
+      case 'scratch':
+        return 'Scratch';
       case 'overview':
         return 'Overview';
       case 'live':

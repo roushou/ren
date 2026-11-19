@@ -355,6 +355,20 @@ pre {
   color: var(--ink);
   border-bottom-color: var(--accent);
 }
+/* Inside a project: whose pages the row shows, ahead of them. */
+.page-row .crumb {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  padding: 0 14px;
+  font-size: 12px;
+  border-right: 1px solid var(--line);
+}
+.page-row .crumb a {
+  padding: 0;
+  border: 0;
+}
 /* An Inspect page narrowed to one project, under its row of pages. */
 .scope-row {
   display: flex;

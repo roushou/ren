@@ -75,11 +75,12 @@ impl Page {
     }
 
     /// The page's path: the newest recording for `Recording`, the newest
-    /// run's session (if any) for `Sessions`.
+    /// run's session (if any) for `Sessions`, which leads to its project's
+    /// desk, else Scratch; Work is the dev slot's acme-web's.
     fn path(self, newest: &Newest) -> Option<String> {
         match self {
             Self::Projects => Some("/".into()),
-            Self::Work => Some("/work".into()),
+            Self::Work => Some("/projects/acme-web/work".into()),
             Self::Release => Some("/release".into()),
             Self::Overview => Some("/overview".into()),
             Self::Live => Some("/live".into()),
@@ -95,7 +96,7 @@ impl Page {
                 newest
                     .run
                     .as_ref()
-                    .map_or_else(|| "/sessions".into(), |id| format!("/sessions?run={id}")),
+                    .map_or_else(|| "/scratch".into(), |id| format!("/sessions?run={id}")),
             ),
             Self::Tools => Some("/tools".into()),
         }
@@ -248,7 +249,7 @@ mod tests {
                     assert_eq!(page.path(&some).as_deref(), Some("/recordings/s1"));
                 }
                 Page::Sessions => {
-                    assert_eq!(page.path(&none).as_deref(), Some("/sessions"));
+                    assert_eq!(page.path(&none).as_deref(), Some("/scratch"));
                     assert_eq!(page.path(&some).as_deref(), Some("/sessions?run=r1"));
                 }
                 Page::Projects
