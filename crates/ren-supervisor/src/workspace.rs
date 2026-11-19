@@ -100,12 +100,14 @@ impl Workspace {
         format!("ren/{}-{id}", self.name)
     }
 
-    /// The transient units its preview runs as (`cargo xtask preview`),
-    /// stopped when the workspace is removed: its UI's, then its daemon's.
-    pub fn preview_units(&self) -> [String; 2] {
+    /// The transient units its preview runs as, stopped when the workspace
+    /// is removed: Ren's own (`cargo xtask preview`: its UI's, then its
+    /// daemon's), and a project's (`ren project preview`: its serve step).
+    pub fn preview_units(&self) -> [String; 3] {
         [
             format!("ren-preview-{}-ui", self.name),
             format!("ren-preview-{}-daemon", self.name),
+            format!("ren-preview-{}-serve", self.name),
         ]
     }
 
@@ -134,7 +136,11 @@ mod tests {
         assert_eq!(workspace.branch("1a2b3c4d"), "ren/ren-3-1a2b3c4d");
         assert_eq!(
             workspace.preview_units(),
-            ["ren-preview-ren-3-ui", "ren-preview-ren-3-daemon"]
+            [
+                "ren-preview-ren-3-ui",
+                "ren-preview-ren-3-daemon",
+                "ren-preview-ren-3-serve"
+            ]
         );
         assert_eq!(
             workspace.env(),

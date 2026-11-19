@@ -607,7 +607,7 @@ operator_key_env = "ACME_ANTHROPIC_KEY"
         .unwrap();
         let preview = Replica::preview("ren-3", 20_200, &workspace.data());
         let names = preview.units().map(|unit| unit.name);
-        assert_eq!(names, workspace.preview_units());
+        assert_eq!(names, workspace.preview_units()[..2]);
     }
 
     #[test]

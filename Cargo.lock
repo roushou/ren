@@ -1897,6 +1897,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "ren-project"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "thiserror",
+ "toml",
+]
+
+[[package]]
 name = "ren-protocol"
 version = "0.1.0"
 dependencies = [
@@ -1964,6 +1973,7 @@ dependencies = [
  "ren-gateway",
  "ren-git",
  "ren-harness",
+ "ren-project",
  "ren-protocol",
  "ren-recorder",
  "ren-release",
