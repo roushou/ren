@@ -32,9 +32,10 @@ use ren_recorder::{
         ExitParts, ProcessExit, RunEnd, TerminalCause,
     },
     id::{
-        AttachmentId, AttemptId, CallId, ChannelId, RecordingId, RunId, SessionId, TurnId,
-        WorkItemId,
+        AttachmentId, AttemptId, CallId, ChannelId, ProjectId, RecordingId, RunId, SessionId,
+        TurnId, WorkItemId,
     },
+    project::{Factory, ProjectName, RepositoryPath},
     time::UnixMillis,
     work::{WorkOrder, WorkPreview, WorkState, WorkStateKind},
 };
@@ -1049,6 +1050,44 @@ mod tests {
                 .collect::<Vec<_>>(),
             [(Some("alice"), 4), (None, 11)]
         );
+    }
+}
+
+/// One registered project.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProjectView {
+    pub id: ProjectId,
+    pub name: ProjectName,
+    pub repository: RepositoryPath,
+    pub factory: Stored<Factory>,
+    pub created_at: UnixMillis,
+    /// When it was archived, while it is.
+    pub archived_at: Option<UnixMillis>,
+}
+
+impl ProjectView {
+    pub(super) const SELECT: &'static str =
+        "SELECT id, name, repository, factory, created_at, archived_at FROM projects";
+
+    pub(super) fn from_row(row: &SqliteRow) -> Result<Self, StoreError> {
+        let row = Columns(row);
+        let corrupt = || StoreError::Corrupt("project");
+        Ok(Self {
+            id: row.id("id")?,
+            name: row
+                .text("name")?
+                .ok_or_else(corrupt)?
+                .parse()
+                .map_err(|_| corrupt())?,
+            repository: row
+                .text("repository")?
+                .ok_or_else(corrupt)?
+                .parse()
+                .map_err(|_| corrupt())?,
+            factory: row.label("factory")?,
+            created_at: row.time("created_at")?,
+            archived_at: row.optional_time("archived_at")?,
+        })
     }
 }
 

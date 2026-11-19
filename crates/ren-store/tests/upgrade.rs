@@ -419,6 +419,12 @@ impl Reads {
                 assert!(item.state().is_some(), "work item state");
             }
         }
+        // Stores before projects hold none.
+        for project in reader.projects().await.unwrap() {
+            let named = reader.project_named(&project.name).await.unwrap();
+            assert_eq!(named.map(|named| named.id), Some(project.id));
+            assert!(project.factory.known().is_some(), "project factory");
+        }
         reader
             .observations_after(0, PageLimit::DEFAULT)
             .await
@@ -430,7 +436,8 @@ impl Reads {
 /// What the fixture holds: a session whose run is driven through a turn,
 /// with the turn's model calls (one carrying a secret), a WebSocket call, a
 /// rate-limited call, an interrupted one, a refused one, an image attached,
-/// an operator action, and a second run archived.
+/// an operator action, a second run archived, work items, and two
+/// projects, one archived.
 struct Scenario {
     clock: Arc<ManualClock>,
     ids: Arc<SequentialIds>,
@@ -565,6 +572,34 @@ impl Scenario {
         self.archived_run(session);
         self.later(1_000);
         self.work(session);
+        self.later(1_000);
+        self.projects();
+    }
+
+    /// Two projects registered, one of them archived.
+    fn projects(&self) {
+        use ren_recorder::{
+            batch::ProjectFact,
+            project::{Factory, ProjectRegistration},
+        };
+        let register = |name: &str, repository: &str, factory: Factory| {
+            self.recorder
+                .project_slot()
+                .unwrap()
+                .register(ProjectRegistration {
+                    name: name.parse().unwrap(),
+                    repository: repository.parse().unwrap(),
+                    factory,
+                })
+        };
+        register("ren", "/home/op/ren", Factory::Ren);
+        self.later(1_000);
+        let api = register("acme-api", "/home/op/dev/acme-api", Factory::Contract);
+        self.later(1_000);
+        self.recorder
+            .project_slot()
+            .unwrap()
+            .record(api, ProjectFact::Archived);
     }
 
     /// Two work items: one carried from queued to shipped by the session,

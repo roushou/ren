@@ -2296,6 +2296,72 @@ mod conversation {
     }
 
     #[tokio::test]
+    async fn a_name_or_repository_is_one_projects_and_archiving_comes_and_goes() {
+        use ren_recorder::{
+            batch::{ProjectFact, ProjectRecord},
+            id::ProjectId,
+            project::{Factory, ProjectRegistration},
+        };
+        let mut fixture = Fixture::new().await;
+        let registration = |name: &str, repository: &str| ProjectFact::Registered {
+            registration: ProjectRegistration {
+                name: name.parse().unwrap(),
+                repository: repository.parse().unwrap(),
+                factory: Factory::Contract,
+            },
+        };
+        let first = ProjectId::generate(fixture.ids.as_ref());
+        let same_name = ProjectId::generate(fixture.ids.as_ref());
+        let same_repository = ProjectId::generate(fixture.ids.as_ref());
+        let mut batch = Batch::default();
+        // Registered at once: the first keeps the name and the repository,
+        // and the others are not stored, without failing the batch.
+        for (project, fact) in [
+            (first, registration("acme-web", "/dev/acme-web")),
+            (same_name, registration("acme-web", "/dev/other")),
+            (same_repository, registration("other", "/dev/acme-web")),
+            (first, ProjectFact::Archived),
+        ] {
+            batch.push(Op::Project(ProjectRecord {
+                at: fixture.clock.now(),
+                project,
+                fact,
+            }));
+        }
+        fixture.store.commit(&batch).await.unwrap();
+        let projects = fixture.reader.projects().await.unwrap();
+        assert_eq!(projects.len(), 1);
+        assert_eq!(projects[0].id, first);
+        assert!(projects[0].archived_at.is_some());
+        let named = fixture
+            .reader
+            .project_named(&"acme-web".parse().unwrap())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(named.repository.to_string(), "/dev/acme-web");
+        assert_eq!(
+            fixture
+                .reader
+                .project_at(&"/dev/acme-web".parse().unwrap())
+                .await
+                .unwrap()
+                .map(|project| project.id),
+            Some(first)
+        );
+
+        let mut batch = Batch::default();
+        batch.push(Op::Project(ProjectRecord {
+            at: fixture.clock.now(),
+            project: first,
+            fact: ProjectFact::Unarchived,
+        }));
+        fixture.store.commit(&batch).await.unwrap();
+        let projects = fixture.reader.projects().await.unwrap();
+        assert_eq!(projects[0].archived_at, None);
+    }
+
+    #[tokio::test]
     async fn a_session_is_named_by_the_first_line_of_its_first_prompt() {
         use ren_recorder::{
             batch::{SessionFact, SessionRecord},

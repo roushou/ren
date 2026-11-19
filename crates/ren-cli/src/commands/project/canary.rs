@@ -20,11 +20,12 @@ use ren_gateway::api::release::{ReleaseBody, ReleaseView};
 use ren_git::{Branch, CommitId, Git};
 use ren_project::{Place, ProjectContract};
 use ren_protocol::label::Stored;
-use ren_recorder::time::Clock as _;
+use ren_recorder::{project::Factory, time::Clock as _};
 use ren_release::{
     Assessment, Attempt, Canary, Check, CheckKind, Commit, Decision, Lineage, MinuteOfDay, Outcome,
     Release, ReleaseOptions, Revision, Tree, Verdict,
 };
+use ren_store::view::ProjectView;
 use ren_supervisor::{Slot, Workspace};
 use serde::{Deserialize, Serialize};
 use std::{fs, path::PathBuf, process::ExitCode};
@@ -79,18 +80,22 @@ impl ProjectFactory {
     const RELEASE: &str = "release.json";
     const CANARY: &str = "canary.json";
 
-    pub(super) fn new(ctx: &Context, dir: Option<PathBuf>) -> Result<Self> {
-        let repo = match dir {
-            Some(dir) => dir,
-            None => std::env::current_dir()?,
-        };
-        let repo =
-            fs::canonicalize(&repo).with_context(|| format!("no folder {}", repo.display()))?;
-        let name = repo
-            .file_name()
-            .and_then(|name| name.to_str())
-            .context("the project's folder has no name")?
-            .to_owned();
+    /// The factory of `project`, a registered one built by its contract.
+    pub(super) fn new(ctx: &Context, project: &ProjectView) -> Result<Self> {
+        match project.factory {
+            Stored::Known(Factory::Contract) => {}
+            Stored::Known(Factory::Ren) => bail!(
+                "{} is Ren itself: its canary is `cargo xtask canary`, and `install-vps` promotes it",
+                project.name
+            ),
+            Stored::Unknown(ref label) => bail!(
+                "{} is built by {}, which this ren does not know",
+                project.name,
+                label.as_str()
+            ),
+        }
+        let repo = project.repository.as_path().to_path_buf();
+        let name = project.name.to_string();
         let config = ctx.config()?;
         let data = ctx.data_dir(&config)?;
         let home = ctx.env.absolute_path("HOME").context("HOME is not set")?;

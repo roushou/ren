@@ -117,7 +117,7 @@ Records outside the tree stay, and each says why it is outside:
 
 ## Phases
 
-1. **The project record.** Not built.
+1. **The project record.** Built.
    - Ownership of the types: `ProjectId` joins the other identities in
      `ren-recorder` (`id`). `ProjectName`, `Factory`, and the stored
      project go in a `ren-recorder` `project` module beside `work`, since
@@ -183,4 +183,29 @@ gate against `main`.
 
 ## Deviations
 
-None yet.
+- **Phase 1: the remote and branch a canary follows stay flags.** The doc
+  had the project record hold them. They stay `ren project canary
+  --remote` and `--branch`, so `ren-recorder` takes no dependency on
+  `ren-git` for its `Branch` type; a project record can gain them when a
+  timer runs canaries unattended.
+- **Phase 1: the CLI reads projects from the store.** The read API serves
+  projects in phase 3. Until then `ren project list`, and the `--project`
+  lookups, read the store directly beside the running daemon, as other
+  read-only commands can. Registering still goes through the control API.
+- **Phase 1: adding a project registered just so is done.** `ren project
+  add` with the same name, repository, and factory as a registered project
+  succeeds without a request, so `install-vps` and the dev slot register on
+  every run. A different project with the name or repository is refused.
+- **Phase 1: registration is checked, then recorded.** Writes are
+  recorded asynchronously, so the gateway checks the name and repository
+  against the store before it records one, and the store keeps the first
+  project to take either (`ON CONFLICT DO NOTHING`) if two are accepted at
+  once. `ren project add` waits for its project to be stored and fails if
+  another took the name meanwhile.
+- **Phase 1: "project" already named a place.** `GET
+  /control/v1/runs/projects` lists the folders a session can start in, as
+  the wire type `Project` (`ren-supervisor`'s `Project`): a place found
+  under the configured roots, not a registered project. Renaming it would
+  change the API, so phase 1 names its new types apart
+  (`RegisterProjectRequest`, `ProjectAnswer`); phase 2, where a session is
+  asked for by project, renames that listing to places.

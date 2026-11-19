@@ -12,7 +12,11 @@ use crate::caller::{Caller, TailscaleLogin};
 use crate::digest::CallDigest;
 use crate::{
     capture::{BodyEnding, CallRejection, ChannelEnd, ProcessExit, RunEnd, TerminalRecord},
-    id::{AttachmentId, AttemptId, CallId, ChannelId, RecordingId, RunId, SessionId, WorkItemId},
+    id::{
+        AttachmentId, AttemptId, CallId, ChannelId, ProjectId, RecordingId, RunId, SessionId,
+        WorkItemId,
+    },
+    project::ProjectRegistration,
     routing::{ConfigRevision, OperatorRevision, UpstreamId},
     time::{Moment, UnixMillis},
     work::{WorkOrder, WorkPreview, WorkStateKind},
@@ -103,6 +107,7 @@ impl Batch {
                     | Op::Operator(_)
                     | Op::Session(_)
                     | Op::Work(_)
+                    | Op::Project(_)
                     | Op::Run(_)
                     | Op::RunEntry(_)
                     | Op::History(_) => true,
@@ -198,6 +203,7 @@ pub enum Op {
     Operator(OperatorAction),
     Session(SessionRecord),
     Work(WorkRecord),
+    Project(ProjectRecord),
     Run(RunRecord),
     /// One entry of a run's conversation. It is stored, not logged: the
     /// run feed carries it live.
@@ -420,6 +426,42 @@ impl WorkFact {
     }
 }
 
+/// A fact about a project, when it happened. Not tied to a channel or
+/// call.
+#[derive(Debug, Clone, Serialize)]
+pub struct ProjectRecord {
+    #[serde(skip)]
+    pub at: Moment,
+    pub project: ProjectId,
+    #[serde(flatten)]
+    pub fact: ProjectFact,
+}
+
+/// What happened to a project.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "snake_case", tag = "fact")]
+pub enum ProjectFact {
+    /// The operator registered it. The store keeps the first project to
+    /// take a name or a repository; a later one that names either again is
+    /// not stored, so the gateway checks before it records one.
+    Registered {
+        #[serde(flatten)]
+        registration: ProjectRegistration,
+    },
+    Archived,
+    Unarchived,
+}
+
+impl ProjectFact {
+    pub fn kind(&self) -> ObservationKind {
+        match self {
+            Self::Registered { .. } => ObservationKind::ProjectRegistered,
+            Self::Archived => ObservationKind::ProjectArchived,
+            Self::Unarchived => ObservationKind::ProjectUnarchived,
+        }
+    }
+}
+
 /// A fact about a run, when it happened. Not tied to a channel or call.
 #[derive(Debug, Clone, Serialize)]
 pub struct RunRecord {
@@ -563,6 +605,10 @@ pub enum ObservationKind {
     WorkDismissed,
     /// A work item's preview went up or down.
     WorkPreviewed,
+    /// The operator registered a project. Not tied to a call.
+    ProjectRegistered,
+    ProjectArchived,
+    ProjectUnarchived,
 }
 
 /// Where an operation belongs and when it happened. Every observation has it.

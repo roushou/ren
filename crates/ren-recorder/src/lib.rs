@@ -27,6 +27,7 @@ mod item;
 mod metrics;
 mod options;
 pub mod progress;
+pub mod project;
 #[cfg(test)]
 mod purity;
 mod recording;
@@ -44,7 +45,8 @@ pub use options::{CaptureOptions, CaptureOptionsError, CaptureSplit};
 pub use sink::{Committed, Observation, Pruned, RecordSink};
 pub use tap::{
     AttemptRequest, AttemptStart, AttemptTap, CallStart, CallTap, ChannelTap, Head, HistorySlot,
-    OperatorSlot, ResponseTap, RunSession, RunTap, RunUnrecorded, SessionSlot, WorkSlot,
+    OperatorSlot, ProjectSlot, ResponseTap, RunSession, RunTap, RunUnrecorded, SessionSlot,
+    WorkSlot,
 };
 pub use task::RecorderTask;
 
@@ -205,6 +207,12 @@ impl Recorder {
     /// recorder has no room.
     pub fn work_slot(&self) -> Option<WorkSlot> {
         WorkSlot::reserve(self.shared.clone())
+    }
+
+    /// A slot to record one fact about a project, or `None` when the
+    /// recorder has no room.
+    pub fn project_slot(&self) -> Option<ProjectSlot> {
+        ProjectSlot::reserve(self.shared.clone())
     }
 
     /// Record the start of `run`, serving `session` (recorded first when it

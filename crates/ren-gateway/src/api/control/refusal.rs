@@ -130,6 +130,12 @@ pub enum ControlRefusal {
     // Release.
     /// The commit is not the canary's, or its build did not pass.
     NotPromotable,
+
+    // Projects.
+    /// A name, repository, or factory that is not one.
+    InvalidProject,
+    /// Another project holds the name or the repository.
+    ProjectTaken,
 }
 
 impl ControlRefusal {
@@ -176,7 +182,8 @@ impl ControlRefusal {
             | Self::ToolsBusy
             | Self::ToolsCollected
             | Self::WorkState
-            | Self::NotPromotable => StatusCode::CONFLICT,
+            | Self::NotPromotable
+            | Self::ProjectTaken => StatusCode::CONFLICT,
             Self::AttachmentTooLarge => StatusCode::PAYLOAD_TOO_LARGE,
             Self::BlankPrompt
             | Self::TooManyAttachments
@@ -186,7 +193,8 @@ impl ControlRefusal {
             | Self::AttachmentUnreadable
             | Self::AttachmentTooWide
             | Self::ToolsRefused
-            | Self::InvalidOrder => StatusCode::UNPROCESSABLE_ENTITY,
+            | Self::InvalidOrder
+            | Self::InvalidProject => StatusCode::UNPROCESSABLE_ENTITY,
             Self::Unrecordable
             | Self::BackupFailed
             | Self::Unreadable

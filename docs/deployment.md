@@ -538,15 +538,30 @@ session stops it and takes it off its work items. The dev slot's fake
 projects declare one: a static page served by Python, deployed by copying
 it into a folder under the canary's data.
 
-A project gets a canary and promotion too:
+A project Ren builds is registered first, by name
+([the plan](plans/hierarchy.md)); `install-vps` registers its checkout as
+`ren`, Ren itself, and the dev slot registers its fake projects:
 
 ```sh
-ren project canary --dir ~/dev/acme   # fetch main, build, serve, check, deploy by policy
-ren project promote --dir ~/dev/acme  # deploy the canary's passed build now
-ren project release --dir ~/dev/acme  # main, production, the canary, and the decision
+ren project add --dir ~/dev/acme    # its folder's name unless --name; --factory contract by default
+ren project list                    # name, factory, repository, archived
+ren project archive acme            # keeps its name and repository; not built
+ren project unarchive acme
 ```
 
-A pass fetches the project's `main` (`--remote`, `--branch`) and checks its
+Adding a project already registered just so does nothing; a name or a
+repository another project holds is refused. Then it gets a canary and
+promotion too, by `--project`, or the project whose repository is the
+current folder:
+
+```sh
+ren project canary --project acme   # fetch main, build, serve, check, deploy by policy
+ren project promote --project acme  # deploy the canary's passed build now
+ren project release --project acme  # main, production, the canary, and the decision
+```
+
+Ren itself (`--factory ren`) is refused there: its canary is `cargo xtask
+canary`. A pass fetches the project's `main` (`--remote`, `--branch`) and checks its
 tip out, detached, in a workspace the factory keeps for the project, in
 Ren's worktrees folder, so its slot's ports are its own. It runs the build
 steps, starts the serve step there and waits for its health path, then
@@ -554,7 +569,7 @@ runs each declared check against it; a check that cannot run fails. The
 verdict, the build last deployed (none before the first promotion), and the
 operator's policy make the project's release, kept in
 `<data>/projects/<name>`. The policy is the project's table in
-`~/.config/ren/release.toml`, by its folder's name, manual unless named:
+`~/.config/ren/release.toml`, by its registered name, manual unless named:
 
 ```toml
 [projects.acme]

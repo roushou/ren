@@ -395,6 +395,29 @@ the install's steps, since an install restarts the daemon. `404`
 `not_found` before any pass; `409` `not_promotable` unless the commit is the
 canary's and its build passed. The UI's Release view sends it.
 
+### Projects
+
+A project is a repository Ren builds, registered by the operator
+([the plan](plans/hierarchy.md), phase 1). A project is never inferred
+from a folder: `ren project add` registers one, and `install-vps`
+registers its checkout as `ren`.
+
+- `POST /control/v1/projects` registers one: `{name, repository, factory}`,
+  where `name` is 1 to 64 lowercase letters, digits, and inner hyphens,
+  `repository` the canonical absolute path of its folder on the daemon's
+  host, and `factory` `ren` (Ren itself) or `contract` (built by its
+  `.ren/project.toml`); anything else is `422` `invalid_project`. A name
+  or a repository another project holds, archived or not, is `409`
+  `project_taken`, with which project in `message`. The answer is `201`
+  `{api_version, id, name}`.
+- `POST /control/v1/projects/{name}/archive` and `/unarchive`: `202`
+  `{api_version, id, name}`; `409` `archived` or `not_archived` when it
+  already is or is not, `404` `not_found` for a name no project has. An
+  archived project keeps its name and repository.
+
+A project is stored a moment after it is accepted. The read API does not
+list projects yet (phase 3); `ren project list` reads them from the store.
+
 ### Work items
 
 A work item is what an operator marked to be done, carried from queued to

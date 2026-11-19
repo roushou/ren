@@ -194,6 +194,7 @@ fn lifecycle(batch: &Batch) -> Vec<ObservationKind> {
             | Op::Operator(_)
             | Op::Session(_)
             | Op::Work(_)
+            | Op::Project(_)
             | Op::Run(_)
             | Op::History(_)
             | Op::RunEntry(_)
@@ -216,6 +217,7 @@ fn digest(batch: &Batch) -> Option<&CallDigest> {
         | Op::Operator(_)
         | Op::Session(_)
         | Op::Work(_)
+        | Op::Project(_)
         | Op::Run(_)
         | Op::History(_)
         | Op::RunEntry(_) => None,
@@ -235,6 +237,7 @@ fn inspection(batch: &Batch) -> Option<&InspectionRecord> {
         | Op::Operator(_)
         | Op::Session(_)
         | Op::Work(_)
+        | Op::Project(_)
         | Op::Run(_)
         | Op::History(_)
         | Op::RunEntry(_)

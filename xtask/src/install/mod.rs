@@ -392,6 +392,7 @@ impl InstallVps {
         let replaced = Self::replace(&layout, &built, backup, tree);
         Self::release(&layout, quiesced.admission);
         replaced?;
+        Self::register(&layout);
         let dns = match publish.https_port {
             Some(port) => {
                 let dns = tailscale.publish(port, &format!("http://{}", config.listen))?;
@@ -578,6 +579,32 @@ impl InstallVps {
     const POLL: Duration = Duration::from_secs(2);
     /// The `retry-after` clients get while the daemon is replaced.
     const RETRY_AFTER: &str = "10";
+
+    /// Registers this checkout as the project `ren`, built as Ren itself
+    /// (docs/plans/hierarchy.md), unless it is already. The install is done
+    /// by now, so a refusal (another project holds the name or the
+    /// repository) is reported, not failed.
+    fn register(layout: &Layout) {
+        let registered = layout
+            .ren(&layout.binary)
+            .args([
+                "project",
+                "add",
+                "--name",
+                "ren",
+                "--factory",
+                "ren",
+                "--dir",
+            ])
+            .arg(&layout.repo)
+            .capture();
+        match registered {
+            Ok(said) => Progress(said.trim()).show(),
+            Err(error) => {
+                println!("warning: this checkout is not registered as project ren: {error}");
+            }
+        }
+    }
 
     fn control_state(layout: &Layout) -> Result<ControlState, InstallError> {
         Ok(layout

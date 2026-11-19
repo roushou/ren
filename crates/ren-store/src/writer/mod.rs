@@ -3,6 +3,7 @@
 //! attempts, bodies) and `runs` (operator, sessions, runs, history).
 
 mod calls;
+mod project;
 mod runs;
 mod work;
 
@@ -651,6 +652,7 @@ impl MetadataTx<'_> {
             Op::Operator(action) => self.operator(action).await.map(Some),
             Op::Session(record) => self.session(record).await.map(Some),
             Op::Work(record) => self.work(record).await.map(Some),
+            Op::Project(record) => self.project(record).await.map(Some),
             Op::Run(record) => self.run(record).await.map(Some),
             Op::History(edit) => self.history(edit).await.map(Some),
             Op::RunEntry(entry) => self.run_entry(entry).await.map(|()| None),

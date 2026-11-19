@@ -14,8 +14,8 @@ use crate::{
     query::{CallQuery, Cursor, PageLimit, Shelf, TimeRange},
     view::{
         AttachmentView, AttemptView, BodyPrefix, BodyView, CallDetail, CallPage, CallView,
-        ChannelView, Columns, DiskUsage, MessageView, OperatorActionView, RecordingView, RunView,
-        SessionView, StorageView, UsageGroup, UsageView, WorkItemView,
+        ChannelView, Columns, DiskUsage, MessageView, OperatorActionView, ProjectView,
+        RecordingView, RunView, SessionView, StorageView, UsageGroup, UsageView, WorkItemView,
     },
     writer::BlobAccess,
 };
@@ -29,6 +29,7 @@ use ren_recorder::batch::BodyKey;
 use ren_recorder::{
     capture::CallState,
     id::{CallId, RecordingId, RunId, SessionId, WorkItemId},
+    project::{ProjectName, RepositoryPath},
 };
 use sqlx::{
     AssertSqlSafe, QueryBuilder, Row, Sqlite, SqlitePool,
@@ -403,6 +404,53 @@ impl Reader {
         .await?
         .as_ref()
         .map(WorkItemView::from_row)
+        .transpose()
+    }
+
+    /// Every registered project, archived ones too, by name.
+    pub async fn projects(&self) -> Result<Vec<ProjectView>, StoreError> {
+        sqlx::query(AssertSqlSafe(format!(
+            "{} ORDER BY name",
+            ProjectView::SELECT
+        )))
+        .fetch_all(&self.pool)
+        .await?
+        .iter()
+        .map(ProjectView::from_row)
+        .collect()
+    }
+
+    /// The project named `name`, if one is registered.
+    pub async fn project_named(
+        &self,
+        name: &ProjectName,
+    ) -> Result<Option<ProjectView>, StoreError> {
+        self.project_where("name", name.as_str()).await
+    }
+
+    /// The project whose repository is `repository`, if one is registered.
+    pub async fn project_at(
+        &self,
+        repository: &RepositoryPath,
+    ) -> Result<Option<ProjectView>, StoreError> {
+        self.project_where("repository", &repository.to_string())
+            .await
+    }
+
+    async fn project_where(
+        &self,
+        column: &'static str,
+        value: &str,
+    ) -> Result<Option<ProjectView>, StoreError> {
+        sqlx::query(AssertSqlSafe(format!(
+            "{} WHERE {column} = ?",
+            ProjectView::SELECT
+        )))
+        .bind(value)
+        .fetch_optional(&self.pool)
+        .await?
+        .as_ref()
+        .map(ProjectView::from_row)
         .transpose()
     }
 

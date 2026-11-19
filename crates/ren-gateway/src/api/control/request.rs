@@ -4,6 +4,7 @@
 //! clients cannot drift apart; `crates/ren-daemon/tests/contract.rs` sends
 //! each one to the router.
 
+use crate::api::control::projects::RegisterProjectRequest;
 use crate::api::read::work::{WorkOrderBody, WorkPreviewBody};
 use ren_harness::{
     Harness,
@@ -15,6 +16,7 @@ use ren_recorder::{
     batch::{HistoryChange, HistorySubject},
     caller::UserId,
     id::{AttachmentId, CallId, SessionId, WorkItemId},
+    project::ProjectName,
 };
 use ren_release::{Commit, Revision};
 use ren_supervisor::Delivery;
@@ -304,6 +306,10 @@ pub enum ControlRequest {
         item: WorkItemId,
         change: WorkChange,
     },
+    /// Register a project.
+    RegisterProject(RegisterProjectRequest),
+    ArchiveProject(ProjectName),
+    UnarchiveProject(ProjectName),
 }
 
 /// Whether a request reads or changes.
@@ -352,6 +358,9 @@ impl ControlRequest {
             | Self::Stop(_)
             | Self::QueueWork(_)
             | Self::Promote(_)
+            | Self::RegisterProject(_)
+            | Self::ArchiveProject(_)
+            | Self::UnarchiveProject(_)
             | Self::Work { .. } => ControlMethod::Post,
         }
     }
@@ -391,6 +400,9 @@ impl ControlRequest {
             Self::Stop(session) => format!("sessions/{session}/stop"),
             Self::QueueWork(_) => "work".to_owned(),
             Self::Promote(_) => "release/promote".to_owned(),
+            Self::RegisterProject(_) => "projects".to_owned(),
+            Self::ArchiveProject(name) => format!("projects/{name}/archive"),
+            Self::UnarchiveProject(name) => format!("projects/{name}/unarchive"),
             Self::Work { item, change } => format!("work/{item}/{}", change.path()),
         }
     }
@@ -408,6 +420,7 @@ impl ControlRequest {
             Self::Answer { answer, .. } => serde_json::to_vec(answer).map(Some),
             Self::QueueWork(order) => serde_json::to_vec(order).map(Some),
             Self::Promote(promote) => serde_json::to_vec(promote).map(Some),
+            Self::RegisterProject(project) => serde_json::to_vec(project).map(Some),
             Self::Work { change, .. } => match change {
                 WorkChange::Send(send) => serde_json::to_vec(send).map(Some),
                 WorkChange::Land(land) => serde_json::to_vec(land).map(Some),
@@ -425,7 +438,9 @@ impl ControlRequest {
             | Self::Sessions
             | Self::Projects
             | Self::Interrupt(_)
-            | Self::Stop(_) => Ok(None),
+            | Self::Stop(_)
+            | Self::ArchiveProject(_)
+            | Self::UnarchiveProject(_) => Ok(None),
         }
     }
 }

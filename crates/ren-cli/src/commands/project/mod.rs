@@ -1,7 +1,9 @@
-//! `ren project`: a project's declared contract (`.ren/project.toml`) at
-//! work on this host: its checks (`check`), and a preview of a workspace's
-//! branch (`preview up`, `preview down`), as Ren's own (`cargo xtask
-//! preview`) runs for Ren.
+//! `ren project`: the projects this host's daemon has registered (`add`,
+//! `list`, `archive`, `unarchive`), and a project's declared contract
+//! (`.ren/project.toml`) at work on this host: its checks (`check`), a
+//! preview of a workspace's branch (`preview up`, `preview down`), as Ren's
+//! own (`cargo xtask preview`) runs for Ren, and a registered project's
+//! canary and promotion.
 //!
 //! A preview builds the workspace, starts its serve step as the transient
 //! unit `ren-preview-<workspace>-serve` on the workspace's ports, waits for
@@ -16,8 +18,12 @@
 //! This module is the one place the CLI runs a project's declared steps.
 
 mod canary;
+mod registry;
 
-use self::canary::ProjectFactory;
+use self::{
+    canary::ProjectFactory,
+    registry::{AddArgs, NameArgs, ProjectArgs, Registry},
+};
 use super::history::TargetArgs;
 use crate::{context::Context, management::Management};
 use anyhow::{Context as _, Result, anyhow, bail};
@@ -60,6 +66,14 @@ pub struct ProjectCmd {
 
 #[derive(Subcommand)]
 enum ProjectAction {
+    /// Register a repository as a project.
+    Add(AddArgs),
+    /// The registered projects.
+    List,
+    /// Archive a project: it keeps its name and repository, and is not
+    /// built.
+    Archive(NameArgs),
+    Unarchive(NameArgs),
     /// Run the checks `.ren/project.toml` declares, in order; fails when one
     /// does.
     Check(CheckArgs),
@@ -72,26 +86,19 @@ enum ProjectAction {
     /// check it, and deploy it if the operator's policy says so.
     Canary(CanaryArgs),
     /// Deploy the canary's checked build now, whatever the policy says.
-    Promote(DirArgs),
+    Promote(ProjectArgs),
     /// Where the project's release stands.
-    Release(DirArgs),
+    Release(ProjectArgs),
 }
 
 #[derive(Args)]
 struct CanaryArgs {
     #[command(flatten)]
-    dir: DirArgs,
+    project: ProjectArgs,
     #[arg(long, default_value = "origin")]
     remote: String,
     #[arg(long, default_value = "main")]
     branch: String,
-}
-
-#[derive(Args)]
-struct DirArgs {
-    /// The project's repository; by default the current folder.
-    #[arg(long)]
-    dir: Option<PathBuf>,
 }
 
 #[derive(Args)]
@@ -140,18 +147,29 @@ struct Steps {
 impl ProjectCmd {
     pub async fn run(self, ctx: &Context) -> Result<ExitCode> {
         match self.action {
+            ProjectAction::Add(args) => Registry::add(ctx, args).await,
+            ProjectAction::List => Registry::list(ctx).await,
+            ProjectAction::Archive(args) => Registry::archive(ctx, args).await,
+            ProjectAction::Unarchive(args) => Registry::unarchive(ctx, args).await,
             ProjectAction::Check(args) => Self::check(ctx, args),
             ProjectAction::Preview { action } => match action {
                 PreviewAction::Up(args) => Self::up(ctx, args).await,
                 PreviewAction::Down(args) => Self::down(ctx, args).await,
             },
             ProjectAction::Canary(args) => {
-                ProjectFactory::new(ctx, args.dir.dir)?
+                let project = Registry::resolve(ctx, &args.project).await?;
+                ProjectFactory::new(ctx, &project)?
                     .pass(ctx, &args.remote, &args.branch)
                     .await
             }
-            ProjectAction::Promote(args) => ProjectFactory::new(ctx, args.dir)?.promote(ctx),
-            ProjectAction::Release(args) => ProjectFactory::new(ctx, args.dir)?.show(),
+            ProjectAction::Promote(args) => {
+                let project = Registry::resolve(ctx, &args).await?;
+                ProjectFactory::new(ctx, &project)?.promote(ctx)
+            }
+            ProjectAction::Release(args) => {
+                let project = Registry::resolve(ctx, &args).await?;
+                ProjectFactory::new(ctx, &project)?.show()
+            }
         }
     }
 
