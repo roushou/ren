@@ -1,4 +1,5 @@
 //! `cargo xtask`: repository tasks, run from a checkout.
+mod compat;
 mod daemon;
 mod dev;
 mod file;
@@ -18,6 +19,7 @@ use std::process::ExitCode;
 enum Xtask {
     InstallVps(install::InstallVps),
     Dev(dev::Dev),
+    Compat(compat::Compat),
 }
 
 /// Why a task failed.
@@ -27,6 +29,8 @@ enum TaskError {
     Install(#[from] install::InstallError),
     #[error(transparent)]
     Dev(#[from] dev::DevError),
+    #[error(transparent)]
+    Compat(#[from] compat::CompatError),
 }
 
 impl Xtask {
@@ -34,6 +38,7 @@ impl Xtask {
         match self {
             Self::InstallVps(task) => Ok(task.run(env)?),
             Self::Dev(task) => Ok(task.run(env)?),
+            Self::Compat(task) => Ok(task.run()?),
         }
     }
 }
