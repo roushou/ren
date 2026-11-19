@@ -1,12 +1,14 @@
 <!--
   Projects: the factory's home (docs/plans/hierarchy.md). Each registered
-  project with its open work, its runs, and where its release stands; and,
+  project with its open work, its sessions, and where its release stands
+  (a row opens the project; each cell its page); and,
   beside them, what waits on the operator across every project: a canary to
   promote, a preview to check, work still queued.
 -->
 <script lang="ts">
   import Toolbar from '#lib/Toolbar.svelte';
   import PendingPanel from '#lib/PendingPanel.svelte';
+  import { goto } from '$app/navigation';
   import { ProjectBoard } from '#lib/projects.ts';
   import { ReleaseLine } from '#lib/release.ts';
   import type { PageProps } from './$types';
@@ -14,6 +16,13 @@
   let { data }: PageProps = $props();
   const board = $derived(new ProjectBoard(data.projects, data.work, data.live, data.sessions));
   const running = $derived(board.active.reduce((sum, project) => sum + project.running, 0));
+
+  /** A click on a project's row opens it, unless it was on one of the
+   * row's own links. */
+  function open(event: MouseEvent, href: string) {
+    if (event.target instanceof Element && event.target.closest('a, button')) return;
+    void goto(href);
+  }
 </script>
 
 {#snippet scope()}
@@ -45,15 +54,19 @@
               <th>Project</th>
               <th>Release</th>
               <th>Work</th>
-              <th>Runs</th>
+              <th>Sessions</th>
             </tr>
           </thead>
           <tbody>
             {#each board.active as project (project.id)}
               {@const line = project.release ? ReleaseLine.of(project.release) : null}
-              <tr>
+              {@const href = ProjectBoard.href(project.name)}
+              <!-- The row is a larger target for the project's own link, which
+                   is what the keyboard reaches. -->
+              <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+              <tr class="project-row" onclick={(event) => open(event, href)}>
                 <td>
-                  <a class="name" href={ProjectBoard.href(project.name)}>{project.name}</a>
+                  <a class="name" {href}>{project.name}</a>
                   <span class="muted mono path">{project.repository}</span>
                   {#if project.factory === 'ren'}<span class="tag">Ren itself</span>{/if}
                 </td>
@@ -66,13 +79,18 @@
                     <span class="muted">No canary yet</span>
                   {/if}
                 </td>
-                <td>{ProjectBoard.openWork(project)}</td>
+                <td><a class="cell" href={`${href}/work`}>{ProjectBoard.openWork(project)}</a></td>
                 <td>
-                  {#if project.running}
-                    <span class="live"><span class="dot"></span>{project.running} running</span>
-                  {:else}
-                    <span class="muted">none</span>
-                  {/if}
+                  <a class="cell" href={`${href}/sessions`}>
+                    {#if project.running}
+                      <span class="live"><span class="dot"></span>{project.running} running</span>
+                      <span class="muted">· {project.sessions} open</span>
+                    {:else if project.sessions}
+                      {project.sessions} open
+                    {:else}
+                      <span class="muted">none</span>
+                    {/if}
+                  </a>
                 </td>
               </tr>
             {/each}
@@ -144,6 +162,18 @@
   .name {
     font-weight: 600;
     color: var(--ink);
+  }
+  .project-row {
+    cursor: pointer;
+  }
+  .project-row:hover td {
+    background: var(--surface-hover);
+  }
+  .cell {
+    color: var(--ink);
+  }
+  .cell:hover {
+    color: var(--accent-text);
   }
   .path {
     display: block;
