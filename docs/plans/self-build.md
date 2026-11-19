@@ -182,6 +182,10 @@ The dev slot exists (`cargo xtask dev`). Each instance names itself with
      a user timer.
    - The release is written to production's data folder; `/api/release`
      serves it, `ren release` prints it, and the UI's status line shows
+   - The UI's Release view shows the builds side by side, the canary's
+     checks and the pages it captured, the decision with a Promote (a
+     request the factory's next pass carries out), the work each build
+     shipped or waits to ship, and each project's release.
      how far production is behind `main` and the canary's verdict.
    - Verified with the dev slot as production (`--of dev`): a pass built
      the commit once, copied the slot's history, started the canary (its
@@ -243,7 +247,7 @@ The dev slot exists (`cargo xtask dev`). Each instance names itself with
    - Not built: a screenshot with the marks (a page cannot capture itself
      without the browser asking, or a library).
 6. **Projects.** Built: a project's contract, checks, previews, canary,
-   and promotion. Not surfaced in the UI, and with no timer of its own.
+   and promotion, shown in the Release view; with no timer of its own.
    - A repository declares in `ren-project.toml` how it is built, served,
      checked, and quiesced (`ren-project`, sans-IO): argv steps whose
      values name the workspace's ports, data, and folder through parsed
@@ -271,10 +275,8 @@ The dev slot exists (`cargo xtask dev`). Each instance names itself with
      automatic policy a new commit was checked and deployed in one pass; a
      commit whose check failed was not deployed, leaving production one
      commit behind.
-   - Not built: the project's release in the UI and the read API (it is in
-     `<data>/projects/<name>`, and `ren project release` prints it), and a
-     timer for project passes (run `ren project canary` from any
-     scheduler).
+   - Not built: a timer for project passes (run `ren project canary` from
+     any scheduler).
 
 Phases 1 and 2 come first: without them, upgrading automatically only breaks
 things faster. Each phase is useful on its own.

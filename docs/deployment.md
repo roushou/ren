@@ -385,7 +385,14 @@ Chromium (as `dev shot` finds it; the captures are kept in
 where the release stands to production's data folder (`release.json`): `main`'s
 tip, the build production runs and how many commits it is behind, the
 canary's build and each check, and the decision. `/api/release` serves it,
-`ren release` prints it, and the UI's status line shows it.
+`ren release` prints it, the UI's status line shows it, and its Release view
+shows all of it: the three builds, each check, the pages the canary
+captured (kept in production's data folder, `release-shots`), what the
+policy decided, the work items production's build shipped and those on
+`main` waiting for it, and each project's release. The view's Promote asks
+for the canary's passed build; the next pass installs it, as `canary
+promote` would, and drops a request that is no longer the canary's passed
+build. With `canary enable`, that is within one timer period.
 
 When the build passed and follows production's commit, the policy in
 `~/.config/ren/release.toml` decides:
