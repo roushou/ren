@@ -9,28 +9,40 @@ import { unrecognised } from './decode.ts';
 export type ReleaseTone = 'ok' | 'warning' | 'bad';
 
 /** The status line's release entry: short text, its tone, and the detail on hover. */
-export interface ReleaseLine {
-  text: string;
-  tone: ReleaseTone;
-  detail: string;
-}
+export class ReleaseLine {
+  readonly text: string;
+  readonly tone: ReleaseTone;
+  readonly detail: string;
 
-/** A commit as people read it: its first 12 digits. */
-const commit = (id: string) => id.slice(0, 12);
-
-const revisionText = (revision: Revision) => {
-  switch (revision.kind) {
-    case 'commit':
-      return revision.tree === 'clean' ? commit(revision.commit) : `${commit(revision.commit)}, modified`;
-    case 'unknown':
-      return 'unknown';
-    case 'unrecognized':
-      return revision.text;
+  constructor(text: string, tone: ReleaseTone, detail: string) {
+    this.text = text;
+    this.tone = tone;
+    this.detail = detail;
   }
-};
 
-export const ReleaseLine = {
-  of(release: ReleaseView): ReleaseLine {
+  /** A commit as people read it: its first 12 digits. */
+  static #commit(id: string): string {
+    return id.slice(0, 12);
+  }
+
+  static #revision(revision: Revision): string {
+    switch (revision.kind) {
+      case 'commit':
+        return revision.tree === 'clean'
+          ? ReleaseLine.#commit(revision.commit)
+          : `${ReleaseLine.#commit(revision.commit)}, modified`;
+      case 'unknown':
+        return 'unknown';
+      case 'unrecognized':
+        return revision.text;
+      default: {
+        const never: never = revision;
+        return never;
+      }
+    }
+  }
+
+  static of(release: ReleaseView): ReleaseLine {
     const behind =
       release.behind === null
         ? 'Production not counted against main'
@@ -50,16 +62,16 @@ export const ReleaseLine = {
           .join('\n  ')
       : '';
     const detail = [
-      `main ${commit(release.main)}`,
-      `production ${revisionText(release.production)}`,
-      canary ? `canary ${commit(canary.commit)}\n  ${checks}` : 'canary: none checked',
+      `main ${ReleaseLine.#commit(release.main)}`,
+      `production ${ReleaseLine.#revision(release.production)}`,
+      canary ? `canary ${ReleaseLine.#commit(canary.commit)}\n  ${checks}` : 'canary: none checked',
       `promotion (${release.policy}): ${decision}`,
     ].join('\n');
-    return { text: `${behind} · ${verdict}`, tone, detail };
-  },
+    return new ReleaseLine(`${behind} · ${verdict}`, tone, detail);
+  }
 
   /** What promotion decided, as a sentence, and the tone it is drawn in. */
-  decision(release: ReleaseView): [string, ReleaseTone] {
+  static decision(release: ReleaseView): [string, ReleaseTone] {
     switch (release.decision) {
       case 'promote':
         return ["production takes the canary's build now", 'ok'];
@@ -82,5 +94,5 @@ export const ReleaseLine = {
       default:
         return [unrecognised(release.decision), 'warning'];
     }
-  },
-};
+  }
+}

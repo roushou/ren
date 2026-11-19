@@ -273,11 +273,14 @@
   });
   const noted = $derived(Redline.noted(desk.marks));
   /** The work item the marks make: the page, the noted marks, and what
-   * else was on screen as the pane opened. */
-  const order = $derived(
-    Work.order(context, { route: page.route.id, revision }, noted, evidence.snapshot()),
-  );
-  const brief = $derived(Work.brief(null, order, Briefing.place(destination)));
+   * else was on screen until now. Read when the item is kept, since the
+   * page's evidence grows without telling the pane (an error logged after
+   * the last mark is the one the marks are about). */
+  const order = () =>
+    Work.order(context, { route: page.route.id, revision }, noted, evidence.snapshot());
+  /** The brief as the pane previews it, with what was on screen as the
+   * marks last changed. */
+  const brief = $derived(Work.brief(null, order(), Briefing.place(destination)));
 
   /** A new session in `checkout`, with `text` as its first prompt. */
   async function start(checkout: string, text: string): Promise<SessionId> {
@@ -344,8 +347,9 @@
     try {
       // Recorded first, so the brief names it and it is kept even if the
       // send fails; it stays queued until a session takes it up.
-      const item = await work.queue(order);
-      const text = Work.brief(item, order, Briefing.place(destination));
+      const kept = order();
+      const item = await work.queue(kept);
+      const text = Work.brief(item, kept, Briefing.place(destination));
       const target =
         destination.kind === 'new'
           ? await start(source, text)
@@ -376,7 +380,7 @@
     }
     sending = true;
     try {
-      const item: WorkItemId = await work.queue(order);
+      const item: WorkItemId = await work.queue(order());
       desk.clear();
       desk.toggle();
       await goto(`/work?item=${item}`);

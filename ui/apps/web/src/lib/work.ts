@@ -277,24 +277,24 @@ export class PageEvidence {
   }
 }
 
-/** A revision as the daemon writes it. */
-const revisionText = (value: Revision | null): string | null => {
-  if (!value) return null;
-  switch (value.kind) {
-    case 'commit':
-      return value.tree === 'modified' ? `${value.commit}-dirty` : value.commit;
-    case 'unknown':
-      return 'unknown';
-    case 'unrecognized':
-      return value.text;
-    default: {
-      const never: never = value;
-      return never;
+export class Work {
+  /** A revision as the daemon writes it. */
+  static #revision(value: Revision | null): string | null {
+    if (!value) return null;
+    switch (value.kind) {
+      case 'commit':
+        return value.tree === 'modified' ? `${value.commit}-dirty` : value.commit;
+      case 'unknown':
+        return 'unknown';
+      case 'unrecognized':
+        return value.text;
+      default: {
+        const never: never = value;
+        return never;
+      }
     }
   }
-};
 
-export class Work {
   /** The order a Redline pane sends: the page, its noted marks, and what
    * else was on screen. */
   static order(page: PageContext, ren: RenPage, marks: readonly Mark[], evidence: Evidence): WireWorkOrder {
@@ -306,7 +306,7 @@ export class Work {
         width: Math.round(page.width),
         height: Math.round(page.height),
         theme: page.theme,
-        revision: revisionText(ren.revision),
+        revision: Work.#revision(ren.revision),
       },
       marks: Redline.noted(marks).map((mark) => ({
         selector: mark.target.selector,
@@ -416,7 +416,7 @@ export class Work {
         width: page.width,
         height: page.height,
         theme: page.theme,
-        revision: revisionText(page.revision),
+        revision: Work.#revision(page.revision),
       },
       marks: order.marks,
       evidence: order.evidence,
