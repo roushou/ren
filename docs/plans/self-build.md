@@ -242,9 +242,26 @@ The dev slot exists (`cargo xtask dev`). Each instance names itself with
      without the browser asking, or a library), and clearing a preview from
      its items when its workspace goes; the link then fails until the item
      lands.
-6. **Projects.** Not built. A project declares its build, run, checks, and
-   quiesce steps, and gets workspaces, previews, canary, and promotion as
-   Ren does.
+6. **Projects.** Its first step built: a project's contract, checks, and
+   previews. Canary and promotion for other projects are not built.
+   - A repository declares in `ren-project.toml` how it is built, served,
+     checked, and quiesced (`ren-project`, sans-IO): argv steps whose
+     values name the workspace's ports, data, and folder through parsed
+     placeholders.
+   - `ren project check` runs its checks in a workspace; `ren project
+     preview up` builds it, serves it on the workspace's ports as
+     `ren-preview-<workspace>-serve`, and records the preview on the work
+     items the branch names, as `cargo xtask preview` does for Ren.
+     Deleting the workspace stops it.
+   - Verified in the dev slot, whose fake projects now declare a contract:
+     in a new `acme-web` workspace, its check passed, its preview served
+     the page on the slot's first port and was recorded on the session's
+     work item, and deleting the session stopped it.
+   - Not built: a project's canary and promotion. Ren's are its own
+     (`install-vps`, a systemd service of a known shape); a project's
+     production is wherever it deploys, so its canary would run its checks
+     against a build of `main`, and its promotion would be a declared
+     `deploy` step under the same policy.
 
 Phases 1 and 2 come first: without them, upgrading automatically only breaks
 things faster. Each phase is useful on its own.
@@ -322,6 +339,10 @@ things faster. Each phase is useful on its own.
   became `Replica`, which a preview reuses on its workspace's ports; the
   agent starts it from its workspace, which already holds the branch and
   its build, rather than production building branches.
+- **Ren keeps its own steps.** Ren's preview and canary stay in xtask:
+  they copy production's history and drive two processes, more than a
+  contract's serve step says. A project's contract covers one process
+  served on its workspace's ports.
 - **The gate is its own workflow.** It reads the pull request's title and
   body, so it runs again when they are edited, which would otherwise
   rerun all of CI.

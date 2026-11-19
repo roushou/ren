@@ -442,6 +442,49 @@ work item the branch's recent commits name (`Work-Item: <id>`), and on each
 `--of dev` copies the dev slot instead. Deleting the workspace's session
 stops its preview with it.
 
+### Projects
+
+A repository declares how Ren builds, serves, checks, and quiesces it in
+`ren-project.toml` at its root, and a workspace of it then gets checks and
+a preview as Ren's own do:
+
+```toml
+[[build]]
+run = ["npm", "ci"]
+
+[serve]
+run = ["node", "build/index.js"]
+env = { PORT = "{port}", HOST = "127.0.0.1" }
+open = "http://127.0.0.1:{port}"
+health = "/health"
+
+[[check]]
+name = "tests"
+run = ["npm", "test"]
+
+[quiesce]
+run = ["curl", "-fsS", "-X", "POST", "http://127.0.0.1:{port}/drain"]
+```
+
+Every command is an argv, never a shell line. Arguments and values may
+name the workspace's first port `{port}`, another `{port+N}` (within its
+100), its data folder `{data}`, and its folder `{workspace}`.
+
+```sh
+ren project check                  # run the declared checks; fails when one does
+ren project preview up --publish   # build, serve on the workspace's ports, record
+ren project preview down --publish # quiesce, stop, take it off the work items
+```
+
+`check` runs in the workspace it is started in (or `--dir`; outside a
+workspace a step that names a port does not run). `preview up` runs the
+build steps, starts the serve step as `ren-preview-<workspace>-serve`, waits
+for its health path, publishes the port its page opens on with
+`--publish`, and records the preview on the sent work items the branch's
+commits name (`Work-Item: <id>`) or `--work` gives, through this host's
+daemon. Deleting the workspace's session stops it. The dev slot's fake
+projects declare one: a static page served by Python.
+
 ### Manual steps
 
 Build on the VPS with Rust and `cargo build --release --locked`, or copy an
