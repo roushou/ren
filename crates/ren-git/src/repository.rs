@@ -189,6 +189,11 @@ impl std::str::FromStr for Revision {
 }
 
 impl Revision {
+    /// What the last fetch brought: `FETCH_HEAD`.
+    pub(crate) fn fetched() -> Self {
+        Self("FETCH_HEAD".to_owned())
+    }
+
     pub fn as_str(&self) -> &str {
         &self.0
     }

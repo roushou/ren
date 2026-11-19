@@ -173,6 +173,67 @@ impl Git {
         .map(drop)
     }
 
+    /// Fetch `branch` from `remote` into `repo`, and return the commit it
+    /// names there now.
+    pub fn fetch(&self, repo: &Path, remote: &str, branch: &Branch) -> Result<CommitId, GitError> {
+        self.answer(repo, &["fetch", "--quiet", remote, branch.as_str()])?;
+        self.commit_of(repo, &Revision::fetched())
+    }
+
+    /// Check `commit` out at `path`, detached: a new worktree of `repo` when
+    /// `path` is none yet, else the worktree there, whatever it held. For
+    /// a worktree Ren alone uses, such as the one it builds `main` in.
+    pub fn check_out_detached(
+        &self,
+        repo: &Path,
+        path: &Path,
+        commit: &CommitId,
+    ) -> Result<(), GitError> {
+        if path.exists() {
+            self.answer(
+                path,
+                &[
+                    "checkout",
+                    "--quiet",
+                    "--force",
+                    "--detach",
+                    commit.as_str(),
+                ],
+            )
+            .map(drop)
+        } else {
+            let text = Self::text(path)?;
+            self.answer(
+                repo,
+                &[
+                    "worktree",
+                    "add",
+                    "--quiet",
+                    "--detach",
+                    text,
+                    commit.as_str(),
+                ],
+            )
+            .map(drop)
+        }
+    }
+
+    /// How many commits `to` has that `from` does not.
+    pub fn commits_between(
+        &self,
+        dir: &Path,
+        from: &CommitId,
+        to: &CommitId,
+    ) -> Result<u64, GitError> {
+        let range = format!("{from}..{to}");
+        let args = ["rev-list", "--count", range.as_str()];
+        let output = self.answer(dir, &args)?;
+        output.parse().map_err(|_| GitError::Unexpected {
+            args: args.join(" "),
+            output,
+        })
+    }
+
     /// Remove the worktree at `path`, from its repository. One holding
     /// changes not committed is refused, and kept.
     pub fn remove_worktree(&self, path: &Path) -> Result<(), GitError> {

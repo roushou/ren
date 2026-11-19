@@ -358,3 +358,47 @@ fn worktrees_are_made_on_a_new_branch_and_removed_only_when_clean() {
         BranchRemoval::Unmerged
     );
 }
+
+/// The real git: what a fetch brings is checked out in a detached worktree
+/// of Ren's own, moved on by the next fetch, and counted behind. Skipped
+/// where no git is installed.
+#[test]
+fn a_fetched_branch_is_checked_out_detached_and_counted() {
+    let _turn = turn();
+    let dir = tempfile::tempdir().unwrap();
+    let (origin, local) = (dir.path().join("origin"), dir.path().join("local"));
+    std::fs::create_dir(&origin).unwrap();
+    std::fs::create_dir(&local).unwrap();
+    let git = Git::inherited();
+    if git.init(&origin).is_err() {
+        return;
+    }
+    git.init(&local).unwrap();
+    commit(&origin, "README.md");
+    let main = git.head_commit(&origin).unwrap();
+    let Repository::At(Head::Branch(name)) = Git::repository(&origin) else {
+        panic!("origin is on a branch");
+    };
+    let branch: Branch = name.parse().unwrap();
+    let remote = origin.to_str().unwrap();
+    assert_eq!(git.fetch(&local, remote, &branch).unwrap(), main);
+
+    let tree = dir.path().join("factory");
+    git.check_out_detached(&local, &tree, &main).unwrap();
+    assert_eq!(git.head_commit(&tree).unwrap(), main);
+    assert_eq!(
+        Git::repository(&tree),
+        Repository::At(Head::Detached(main.clone()))
+    );
+
+    commit(&origin, "CHANGELOG.md");
+    commit(&origin, "LICENSE");
+    let tip = git.fetch(&local, remote, &branch).unwrap();
+    assert_eq!(git.commits_between(&local, &main, &tip).unwrap(), 2);
+    assert_eq!(git.commits_between(&local, &tip, &main).unwrap(), 0);
+    // What a build left in the worktree does not hold the next checkout.
+    std::fs::write(tree.join("README.md"), "built over").unwrap();
+    git.check_out_detached(&local, &tree, &tip).unwrap();
+    assert_eq!(git.head_commit(&tree).unwrap(), tip);
+    assert!(tree.join("LICENSE").is_file());
+}
