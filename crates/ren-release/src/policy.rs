@@ -32,11 +32,29 @@ pub struct Window {
 )]
 pub struct MinuteOfDay(u16);
 
-/// The release settings, `~/.config/ren/release.toml`.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+/// The release settings, `~/.config/ren/release.toml`: Ren's own policy,
+/// and each project's, by its repository's folder name.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct ReleaseOptions {
     pub promote: Policy,
+    pub projects: std::collections::BTreeMap<String, ProjectRelease>,
+}
+
+/// One project's release settings.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct ProjectRelease {
+    pub promote: Policy,
+}
+
+impl ReleaseOptions {
+    /// `project`'s policy; manual for one not named.
+    pub fn project(&self, project: &str) -> Policy {
+        self.projects
+            .get(project)
+            .map_or(Policy::Manual, |release| release.promote)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -197,8 +215,12 @@ mod tests {
     fn the_settings_default_to_manual() {
         let options: ReleaseOptions = serde_json::from_str("{}").unwrap();
         assert_eq!(options.promote, Policy::Manual);
-        let options: ReleaseOptions =
-            serde_json::from_str(r#"{ "promote": "02:00-05:00" }"#).unwrap();
+        let options: ReleaseOptions = serde_json::from_str(
+            r#"{ "promote": "02:00-05:00", "projects": { "acme-web": { "promote": "automatic" } } }"#,
+        )
+        .unwrap();
         assert_eq!(options.promote.to_string(), "02:00-05:00");
+        assert_eq!(options.project("acme-web"), Policy::Automatic);
+        assert_eq!(options.project("acme-api"), Policy::Manual);
     }
 }

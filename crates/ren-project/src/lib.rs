@@ -22,7 +22,13 @@
 //!
 //! [quiesce]
 //! run = ["curl", "-fsS", "-X", "POST", "http://127.0.0.1:{port}/drain"]
+//!
+//! [deploy]
+//! run = ["./deploy.sh", "production"]
 //! ```
+//!
+//! Deploying runs in a build the canary checked, when the operator's
+//! promotion policy says (`ren project canary`, `ren project promote`).
 //!
 //! Every command is an argv, never a shell line. Arguments and values may
 //! name the place a step runs for ([`Place`]): `{port}` (its first port),
@@ -45,6 +51,7 @@ pub struct ProjectContract {
     serve: Option<Serve>,
     checks: Vec<NamedCheck>,
     quiesce: Option<Step>,
+    deploy: Option<Step>,
 }
 
 /// One command: its argv and the environment it adds.
@@ -117,6 +124,7 @@ struct ContractFile {
     #[serde(default)]
     check: Vec<CheckFile>,
     quiesce: Option<StepFile>,
+    deploy: Option<StepFile>,
 }
 
 #[derive(Deserialize)]
@@ -196,11 +204,16 @@ impl ProjectContract {
             .quiesce
             .map(|step| Step::read(step.run, step.env))
             .transpose()?;
+        let deploy = file
+            .deploy
+            .map(|step| Step::read(step.run, step.env))
+            .transpose()?;
         Ok(Self {
             build,
             serve,
             checks,
             quiesce,
+            deploy,
         })
     }
 
@@ -220,6 +233,12 @@ impl ProjectContract {
     /// What drains it before it is stopped, if anything.
     pub fn quiesce(&self) -> Option<&Step> {
         self.quiesce.as_ref()
+    }
+
+    /// What puts a checked build into production, if the project declares
+    /// how; without it, it is never promoted.
+    pub fn deploy(&self) -> Option<&Step> {
+        self.deploy.as_ref()
     }
 }
 
@@ -319,6 +338,9 @@ run = ["npm", "test"]
 
 [quiesce]
 run = ["curl", "-fsS", "-X", "POST", "http://127.0.0.1:{port}/drain"]
+
+[deploy]
+run = ["./deploy.sh", "{workspace}"]
 "#;
 
     fn place() -> Place {
@@ -358,6 +380,10 @@ run = ["curl", "-fsS", "-X", "POST", "http://127.0.0.1:{port}/drain"]
         assert_eq!(
             contract.quiesce().unwrap().expand(&place()).unwrap().argv[4],
             "http://127.0.0.1:20100/drain"
+        );
+        assert_eq!(
+            contract.deploy().unwrap().expand(&place()).unwrap().argv,
+            ["./deploy.sh", "/data/worktrees/acme-web-2"]
         );
         // A contract may declare as little as nothing.
         let empty = ProjectContract::read("").unwrap();

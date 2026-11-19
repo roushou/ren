@@ -11,6 +11,6 @@ mod release;
 mod verdict;
 
 pub use build::{Build, Commit, Comparison, Revision, RevisionError, Tree};
-pub use policy::{MinuteOfDay, Policy, PolicyError, ReleaseOptions, Window};
+pub use policy::{MinuteOfDay, Policy, PolicyError, ProjectRelease, ReleaseOptions, Window};
 pub use release::{Assessment, Attempt, Canary, Decision, Lineage, Release};
 pub use verdict::{Check, CheckKind, Outcome, Suite, Verdict};
