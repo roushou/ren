@@ -454,7 +454,7 @@ stops its preview with it, and takes it off the session's work items.
 ### Projects
 
 A repository declares how Ren builds, serves, checks, and quiesces it in
-`ren-project.toml` at its root, and a workspace of it then gets checks and
+`.ren/project.toml` at its root, and a workspace of it then gets checks and
 a preview as Ren's own do:
 
 ```toml

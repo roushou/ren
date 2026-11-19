@@ -344,6 +344,9 @@ program_at = "acme-lint"
             if !contract.exists() {
                 for (name, text) in Self::site(project) {
                     let path = folder.join(name);
+                    if let Some(parent) = path.parent() {
+                        fs::create_dir_all(parent).map_err(FileError::at(parent))?;
+                    }
                     fs::write(&path, text).map_err(FileError::at(&path))?;
                 }
                 git.commit_all(

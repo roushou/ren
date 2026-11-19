@@ -849,10 +849,10 @@ async fn project_steps_run_with_rens_toolset_and_refuse_tools_it_lacks() {
     ));
 
     let project = temp.path().join("acme");
-    std::fs::create_dir(&project).unwrap();
+    std::fs::create_dir_all(project.join(".ren")).unwrap();
     let check = |tools: &str| {
         std::fs::write(
-            project.join("ren-project.toml"),
+            project.join(".ren/project.toml"),
             format!("tools = [{tools}]\n[[check]]\nname = \"tool\"\nrun = [\"acme-tool\"]\n"),
         )
         .unwrap();

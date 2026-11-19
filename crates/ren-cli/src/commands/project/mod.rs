@@ -1,4 +1,4 @@
-//! `ren project`: a project's declared contract (`ren-project.toml`) at
+//! `ren project`: a project's declared contract (`.ren/project.toml`) at
 //! work on this host: its checks (`check`), and a preview of a workspace's
 //! branch (`preview up`, `preview down`), as Ren's own (`cargo xtask
 //! preview`) runs for Ren.
@@ -60,7 +60,7 @@ pub struct ProjectCmd {
 
 #[derive(Subcommand)]
 enum ProjectAction {
-    /// Run the checks `ren-project.toml` declares, in order; fails when one
+    /// Run the checks `.ren/project.toml` declares, in order; fails when one
     /// does.
     Check(CheckArgs),
     /// A preview of this workspace's branch.
